@@ -6,6 +6,29 @@ GitHub is authoritative for branches, commits, pull requests, checks and merges.
 
 The configured writer provider inherits `builtin:codex` and appends `-m gpt-5.6-sol`. M2 observed and proved that effective model on a real writer session. Mechanical decisions such as exit codes, diffs, SHAs, PR state and check conclusions are L0 deterministic work.
 
+## Provider routing
+
+- **PROVEN primary — Codex/Sol:** `codex` remains the workspace default and the
+  only normal writer. Use it for Backend/Frontend implementation and keep the
+  one-writer-per-rig rule.
+- **CONFIGURED secondary — Claude:** the explicit `claude` provider inherits
+  Gas City `v1.4.1`'s `builtin:claude`, pins the host CLI to `2.1.236`, selects
+  `claude-sonnet-5`, and defaults to `plan`. The `claude-reviewer` template is
+  on-demand only. Use it for fallback analysis or an independent GUARDED review
+  when the risk justifies L3; it is not a global reviewer and must not overlap a
+  writer on the same rig.
+- **EXPERIMENTAL local candidate — OpenCode/Ollama:** Gas City already provides
+  `builtin:opencode`, and OpenCode supports Ollama through its standard
+  OpenAI-compatible provider plus denyable edit/shell permissions. Do not add a
+  `local-*` provider until WSL-to-Ollama transport and repository read-only
+  behavior are both proven. Even then, limit it initially to summaries, triage,
+  documentation exploration and mechanical assistance; never use it as the
+  authoritative security writer or reviewer.
+
+The local lane may replace paid inference only for those low-risk L0/L1 classes
+after its Gas City canary passes. A direct Windows-model response is not proof
+of a usable factory lane.
+
 ## Profiles
 
 | Profile | Selection | Required path | LLM level | Gate |
