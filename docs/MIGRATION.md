@@ -95,7 +95,17 @@ M1 exit:
 
 ## M2 — Canary
 
-Ready after M1. Use one city-scoped Codex writer and a reversible documentation-only change to prove bead -> Gas City dispatch -> Codex -> Git commit -> GitHub PR/check -> merge -> closed bead. Do not introduce parallel writers or a complex formula.
+**Status: DONE**
+
+Proven on 2026-09-12 with one city-scoped Codex writer and the minimal `mol-do-work` formula:
+
+- work bead `af-v7a`, workflow `af-c3u`, input convoy `af-6zq`, writer session `af-iil` (`codex-1`);
+- effective writer command used `--model gpt-5.6-sol` with `model_reasoning_effort=xhigh`;
+- branch `canary/m2-e2e`, commit `77f206a85ab97352aa2e6f9bd2a4f2e653db6d69`;
+- GitHub PR #9 targeted `main`, was `CLEAN`/mergeable, had no configured automated checks, passed operator diff review, and merged as `43614760bce9a855a6aeecbfb38090461a905e70`;
+- the only delivery artifact was the three-line `docs/CANARY.md`; `git diff --check` passed;
+- work bead, formula workflow, formula steps, and convoy closed with `gc.outcome=pass`; writer drained cleanly;
+- post-canary `gc doctor --fix` repaired the managed Codex hook recreated during ephemeral session materialization. The remaining durable warnings are the three already accepted at M1.
 
 ## M3 — Durability
 
