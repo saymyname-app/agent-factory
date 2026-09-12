@@ -111,7 +111,21 @@ Proven on 2026-09-12 with one city-scoped Codex writer and the minimal `mol-do-w
 
 ## M3 — Durability
 
-Not started. Prove backup/restore into a fresh location and controller restart/recovery.
+**Status: DONE**
+
+Proven on 2026-09-12 with the pinned Beads `1.2.2` Dolt-native backup primitive:
+
+- M3 work bead `af-d6j`; canonical source SHA `28a1ab77e5f710c6bc5e6476b0372a68b49ebac8`;
+- `bd backup init` plus `bd backup sync` produced an atomic 57.5 MB backup of the managed `hq` database under the Git-ignored `.gc/backups/m3-beads` path;
+- the canonical City was suspended, stopped, and unregistered before any restored controller was registered;
+- the backup was restored into the managed `hq` store of a fresh GitHub clone at `/tmp/m3-restore/agent-factory`, never over the source store;
+- the restored store retained the `af` prefix, the closed M2 canary `af-v7a`, its commit/outcome metadata, and workflow dependency `af-c3u -> af-hhx`;
+- the restored City started under the supervisor, passed doctor with zero failures, and survived `gc restart` without losing those invariants;
+- the restored City was stopped before the canonical City was re-registered, started and resumed; canonical Git remained clean at the source SHA and canonical doctor returned **79 passed, 4 warnings, 0 failed**.
+
+The fresh path must retain both the canonical basename and City identity `agent-factory`; a temporary registration alias changes the derived issue prefix. Beads standalone init also targets `.beads/embeddeddolt`, whereas Gas City uses `.beads/dolt/hq`. The recovery runbook therefore restores the Dolt-native backup into the Gas City-managed `hq` layout and does not delete either source store.
+
+No existing DoltHub credential was available. GitHub authentication alone is not a Dolt-native backup endpoint, so no raw runtime was pushed to GitHub. Off-box durability remains the single M3 limitation; local backup plus fresh-location restore and runtime recovery are proven.
 
 ## M4 — Delivery v1
 

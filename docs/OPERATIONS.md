@@ -164,7 +164,66 @@ Final M1 warning interpretation after controller restart:
 
 ## Backup / restore
 
-M3 will define and prove the exact commands for the deployed Beads mode. Do not claim backup is complete merely because JSONL exports exist. A fresh-location restore test is mandatory before cutover.
+Use Beads `1.2.2` Dolt-native backup, not JSONL export. JSONL is an interchange format and does not preserve Dolt branches, commit history, working sets, or non-issue tables.
+
+Create and refresh the local backup while the City is suspended so the work snapshot is stable:
+
+```bash
+cd ~/agent-factory
+gc suspend
+mkdir -p .gc/backups
+bd backup init "$PWD/.gc/backups/m3-beads"
+bd backup sync
+bd backup status
+```
+
+The configured path is host-local and ignored by Git. It contains the complete Dolt-native backup and may contain durable factory data; never commit or upload it as a generic Git artifact. A supported DoltHub destination can replace the filesystem path when separately authenticated, private, and verified. GitHub CLI authentication is not DoltHub authentication.
+
+For a recovery drill, keep exactly one controller and restore into a fresh clone whose basename and City identity remain `agent-factory`:
+
+```bash
+gc stop ~/agent-factory
+git clone --branch main --single-branch \
+  https://github.com/benjamin-hurand/agent-factory.git \
+  /tmp/m3-restore/agent-factory
+
+# Let Gas City create its managed .beads/dolt/hq layout. With Beads 1.2.2,
+# this bootstrap may stop when refs/dolt/data already exists; unregister it
+# before completing the offline restore.
+gc start /tmp/m3-restore/agent-factory || true
+gc unregister /tmp/m3-restore/agent-factory || true
+
+cd /tmp/m3-restore/agent-factory/.beads/dolt
+dolt backup restore --force \
+  file://$HOME/agent-factory/.gc/backups/m3-beads hq
+
+gc register /tmp/m3-restore/agent-factory --yes
+gc start /tmp/m3-restore/agent-factory
+gc status
+gc bd config get issue_prefix
+gc bd show af-v7a
+gc doctor
+gc restart
+gc status
+gc doctor
+```
+
+`--force` above is scoped only to the newly created disposable `hq` target; it is not a generic repair and must never target the canonical store. Do not use `bd init --force` or `bd init --reinit-local`, and never delete `.beads/embeddeddolt`.
+
+Return to the canonical City before removing any temporary recovery clone:
+
+```bash
+gc stop /tmp/m3-restore/agent-factory
+gc start ~/agent-factory
+gc resume
+gc status
+gc bd config get issue_prefix
+gc bd show af-v7a
+gc doctor
+git -C ~/agent-factory status --short --branch
+```
+
+The 2026-09-12 drill restored `af-v7a`, its M2 commit/outcome metadata, the `af-c3u -> af-hhx` workflow dependency, and `issue_prefix=af`; the restored City survived restart. Canonical recovery ended at **79 passed, 4 warnings, 0 failed** with no data loss. Off-box backup is not yet configured because no existing DoltHub credential/private destination was available; this is a durability limitation, not a reason to push the raw runtime to GitHub.
 
 ## Upgrade
 
