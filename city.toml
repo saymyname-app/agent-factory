@@ -4,6 +4,7 @@ provider = "codex"
 [providers]
 [providers.codex]
 base = "builtin:codex"
+args_append = ["-m", "gpt-5.6-sol"]
 ready_delay_ms = 0
 
 [defaults]
