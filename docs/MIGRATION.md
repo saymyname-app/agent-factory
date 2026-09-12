@@ -27,7 +27,26 @@ Upstream verified for bootstrap:
 - Gas City `v1.4.1` CI dependency pins: Beads `v1.2.2`, Dolt `2.1.7`.
 - Gas City requires Linux runtime dependencies including `tmux`, `jq`, `git`, `dolt`, `bd`, `flock`; `gh` is optional but needed by this factory for GitHub evidence/gates.
 
+Observed/proven host state on 2026-09-12:
+
+- Dedicated `Ubuntu-24.04` WSL2 distribution provisioned for the factory; do not use Docker Desktop's internal WSL distribution as the City host.
+- Kernel observed: `6.6.87.2-microsoft-standard-WSL2` on `x86_64`.
+- `systemd` observed running.
+- Base tooling verified: Git `2.43.0`, GitHub CLI `2.45.0`, tmux `3.4`, jq `1.7`, flock/util-linux `2.39.3`.
+- Pinned factory binaries installed from verified release artifacts: Gas City `1.4.1`, Beads `1.2.2`, Dolt `2.1.7`.
+- Release archive checksums passed before installation.
+- Dolt reports a newer upstream release exists; this is expected and does not trigger an upgrade because the factory follows the Gas City `v1.4.1` pin for bootstrap.
+
 No City configuration is marked CONFIGURED until `gc init` generates/validates it locally. Do not hand-author speculative `city.toml`, `pack.toml` or `packs.lock` before that bootstrap.
+
+M1 remaining work:
+
+- make `Ubuntu-24.04` the default WSL distribution to avoid accidental entry into `docker-desktop`;
+- authenticate `gh` inside Ubuntu and clone `agent-factory` into the Linux filesystem;
+- initialize City files non-interactively with provider readiness skipped and startup disabled;
+- inspect/version generated config;
+- install and authenticate at least one writer provider CLI;
+- start the City and obtain a healthy `gc doctor`.
 
 M1 exit:
 
