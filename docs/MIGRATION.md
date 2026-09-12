@@ -22,7 +22,7 @@ M0 exit still requires local proof that no other ledger/lock/session is in-fligh
 
 ## M1 — Linux/WSL bootstrap
 
-**Status: IN PROGRESS**
+**Status: DONE**
 
 Upstream verified for bootstrap:
 
@@ -66,13 +66,20 @@ Known warnings requiring bounded handling:
 - `bd-split-store`: active `.beads/dolt`; inactive `.beads/embeddeddolt` contains one Dolt repo. Gas City upstream issue #1436 remains open and documents a parasitic embedded store as a bootstrap/recovery side effect. Do not delete either store before explicit inspection/reconciliation.
 - `beads-store`: native store preflight is unavailable because `.beads/metadata.json` is absent; current operations fall back to BdStore fork-per-op. Re-evaluate after store reconciliation/start rather than inventing a custom metadata file.
 
-M1 remaining work:
+Final proof collected on 2026-09-12:
 
-- inspect the inactive `.beads/embeddeddolt` store and reconcile only if needed;
-- inspect and commit only the versionable generated City configuration (`.gitignore`, `agents/`, `city.toml`, `pack.toml`, `packs.lock`); keep `.gc`, `.beads`, credentials and runtime state untracked;
-- install and authenticate at least one writer provider CLI (Codex first);
-- start the City and obtain a stable `gc doctor`/controller state;
-- only then declare M1 complete and move to one bounded M2 canary.
+- local `main` divergence was inspected and preserved: the local `bd init` commit contained only six Beads/Dolt ignore rules; it was rebased without force over GitHub `main` at `f1562a5`;
+- `gc restart` replaced supervisor PID `8443` with PID `70035`, rematerialized the always-on Mayor as session/bead `af-hkb`, and retained access to the canonical store and `issue_prefix=af`;
+- the rematerialized Mayor command and live OS process both use `--model gpt-5.6-sol`; an independent authenticated `codex exec -m gpt-5.6-sol` returned `SOL_AUTH_OK`;
+- `gc doctor --fix` upgraded the managed Codex hook after session materialization; final M1 doctor result: **80 passed, 3 warnings, 0 failed**;
+- a non-mutating WSL-to-Windows call returned `POWERSHELL_INTEROP_OK Microsoft Windows NT 10.0.26200.0`;
+- the inactive `.beads/embeddeddolt/beads` repository contains zero issues, wisps, comments, dependencies, labels, and events. It is a known side effect of the upstream managed-store re-init bug. It remains preserved because the doctor remediation explicitly says to keep both stores until reconciliation is proven; the canonical managed store remains active and healthy.
+
+Remaining doctor warnings are understood and non-blocking for M1:
+
+- `formula-requirements`: 34 warnings in the pinned upstream pack; no local fork or patch;
+- `jsonl-archive`: local-only archive accepted for M1; off-box backup and a fresh-location restore are M3 exit criteria;
+- `bd-split-store`: inactive, empty-of-work parasite preserved pending an upstream-supported cleanup path.
 
 M1 exit:
 
@@ -88,7 +95,7 @@ M1 exit:
 
 ## M2 — Canary
 
-Not started. One simple, non-critical rig/task only. Prove bead -> agent -> result -> durable state. No complex Formula.
+Ready after M1. Use one city-scoped Codex writer and a reversible documentation-only change to prove bead -> Gas City dispatch -> Codex -> Git commit -> GitHub PR/check -> merge -> closed bead. Do not introduce parallel writers or a complex formula.
 
 ## M3 — Durability
 
