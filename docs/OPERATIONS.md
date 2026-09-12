@@ -7,52 +7,85 @@ Pin versions; never auto-follow `latest` on an active factory.
 Verified upstream baseline for this bootstrap on 2026-09-12:
 
 - Gas City `v1.4.1`
-- Beads `v1.2.2` (Gas City `v1.4.1` CI pin)
-- Dolt `2.1.7` (Gas City `v1.4.1` CI pin)
+- Beads `v1.2.2` (Gas City `v1.4.1` pin)
+- Dolt `2.1.7` (Gas City `v1.4.1` pin)
 
 These are bootstrap choices, not permanent upgrade policy.
 
 ## M1 preflight
 
-Run in the intended WSL2 Linux distribution from a normal shell. The first goal is inventory, not mutation.
+The factory host is the dedicated `Ubuntu-24.04` WSL2 distribution, not Docker Desktop's internal `docker-desktop` distribution.
 
-```bash
-set -u
-printf '== OS ==\n'
-uname -a
-printf '\n== WSL ==\n'
-grep -iE 'microsoft|wsl' /proc/version || true
-printf '\n== binaries ==\n'
-for c in git gh tmux jq flock gc bd dolt codex claude ollama; do
-  printf '%-8s ' "$c"
-  command -v "$c" || echo MISSING
-done
-printf '\n== versions ==\n'
-git --version || true
-gh --version | head -n 1 || true
-tmux -V || true
-jq --version || true
-command gc version || true
-bd version || true
-dolt version || true
-codex --version || true
-claude --version || true
-ollama --version || true
-printf '\n== GitHub auth ==\n'
-gh auth status || true
-printf '\n== repository ==\n'
-if [ -d "$HOME/agent-factory/.git" ]; then
-  git -C "$HOME/agent-factory" status --short --branch
-else
-  echo 'agent-factory not cloned at ~/agent-factory'
-fi
+Observed base versions:
+
+- Git `2.43.0`
+- GitHub CLI `2.45.0`
+- tmux `3.4`
+- jq `1.7`
+- flock/util-linux `2.39.3`
+- Gas City `1.4.1`
+- Beads `1.2.2`
+- Dolt `2.1.7`
+
+GitHub CLI auth inside Ubuntu is required before repository operations.
+
+## WSL and Docker Desktop coexistence
+
+Docker Desktop and the factory Ubuntu distribution can coexist. They are separate WSL2 distributions.
+
+`wsl --shutdown` stops the whole WSL VM set, including Docker Desktop's internal WSL distribution. Docker Desktop may therefore report that its WSL distro terminated abruptly after such a command. This is expected operational impact, not evidence that the factory Ubuntu distribution conflicts with Docker Desktop.
+
+For a factory-only restart while Docker should remain available, prefer a distribution-scoped restart from Windows, for example:
+
+```powershell
+wsl --terminate Ubuntu-24.04
+wsl -d Ubuntu-24.04 --user benja --cd ~
 ```
 
-Do not install/upgrade anything until this inventory has been reviewed against the pinned bootstrap versions.
+Use global `wsl --shutdown` only when intentionally stopping all WSL consumers, then restart Docker Desktop if needed.
 
 ## City initialization
 
-Not yet CONFIGURED. After prerequisites are validated, initialize using Gas City's official `gc init` flow rather than hand-creating runtime config. Version generated/configurable City files only after inspection.
+The first City bootstrap uses Gas City's official flow and deliberately avoids provider execution:
+
+```bash
+gc init \
+  --template gascity \
+  --providers codex \
+  --default-provider codex \
+  --skip-provider-readiness \
+  --no-start \
+  --preserve-existing \
+  .
+```
+
+On the observed host, this created the runtime scaffold, hooks, prompts, `pack.toml` and City configuration, then stopped on the Gas City Dolt-author preflight because Dolt global `user.name` and `user.email` were absent.
+
+This is a recoverable bootstrap blocker. Configure a non-secret Dolt author identity before store finalization:
+
+```bash
+dolt config --global --add user.name "<author name>"
+dolt config --global --add user.email "<author email>"
+```
+
+Prefer reusing the operator's normal Git author identity if it is already configured and appropriate. Do not put credentials or tokens in these values.
+
+After setting identity, inspect before starting anything:
+
+```bash
+cd ~/agent-factory
+git status --short --branch
+printf '\n--- city.toml ---\n'
+cat city.toml
+printf '\n--- pack.toml ---\n'
+cat pack.toml
+printf '\n--- packs.lock ---\n'
+cat packs.lock 2>/dev/null || echo 'packs.lock absent'
+printf '\n--- doctor ---\n'
+gc doctor || true
+```
+
+Do not start provider sessions until the generated configuration has been inspected and at least one provider CLI has been installed/authenticated.
 
 Host-local runtime state, credentials, local paths and caches must remain untracked.
 
