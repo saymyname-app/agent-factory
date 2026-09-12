@@ -87,7 +87,7 @@ gc doctor --fix
 gc doctor
 ```
 
-On the current host this installed/synchronized four remote imports, generated `packs.lock`, and registered all 13 Gas City-required custom bead types. Initial post-fix doctor result: **81 passed, 5 warnings, 0 failed**. After controller startup and restart, the stable result is **79 passed, 4 warnings, 0 failed** because the v1.4.1 reconciler restores an older Codex hook payload after the official fix.
+On the current host this installed/synchronized four remote imports, generated `packs.lock`, and registered all 13 Gas City-required custom bead types. Initial post-fix doctor result: **81 passed, 5 warnings, 0 failed**. After the final controller restart, session materialization, and official hook fix, the settled result is **80 passed, 3 warnings, 0 failed**.
 
 Do not start provider sessions until generated configuration is inspected and at least one provider CLI is installed/authenticated.
 
@@ -141,7 +141,7 @@ codex exec --skip-git-repo-check --sandbox read-only -m gpt-5.6-sol \
 
 M1 observed the effective Mayor command as `codex --dangerously-bypass-approvals-and-sandbox --model gpt-5.6-sol -c model_reasoning_effort=xhigh`, the matching process was live, and the authenticated probe returned `SOL_AUTH_OK`.
 
-Gas City `v1.4.1` contains a hook convergence conflict: `gc doctor --fix` installs the current city-qualified hook, while the pinned pack's `per-provider/codex` overlay rewrites an older payload after session reconciliation. Official restart/fix, alignment of host-local `.gc/settings.json`, an inherited provider alias, and a local last-layer overlay were tested; the corrected hash still reverted after roughly 30 seconds. Do not patch the pinned upstream pack or make the file immutable as a bootstrap workaround. Treat `codex-hooks-drift` as an upstream M1 blocker until a pinned upstream fix or supported remediation is available.
+Gas City `v1.4.1` can restage an older pinned-pack Codex hook during configuration reload or session rematerialization. Do not treat an immediate pre-restart fix as final. Finish configuration changes, complete the restart/materialization, then run `gc doctor --fix` and verify both the corrected hook hash and a following doctor in the settled runtime. No upstream pack patch or filesystem immutability workaround is required.
 
 WSL/Windows operator interop was proven non-destructively with:
 
@@ -160,7 +160,7 @@ Final M1 warning interpretation after controller restart:
 - `bd-split-store`: the inactive embedded repository was inspected and contains zero issues, wisps, comments, dependencies, labels, and events. The active managed store is healthy. Preserve the inactive store until an upstream-supported cleanup path exists; never auto-delete it.
 - `jsonl-archive`: local-only mode is accepted for M1. Configure and prove off-box backup plus fresh-location restore in M3 rather than adding an unvalidated remote during bootstrap.
 
-`codex-hooks-drift` remains non-convergent as described above. `agent-sessions`, `orphan-sessions`, and `beads-store` are healthy after startup.
+`codex-hooks-drift` is healthy after applying the official fix at the end of the settled restart sequence. `agent-sessions`, `orphan-sessions`, and `beads-store` are healthy after startup.
 
 ## Backup / restore
 
