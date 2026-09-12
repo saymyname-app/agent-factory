@@ -1,0 +1,22 @@
+# Host-local Gas City/runtime state
+.gc/
+
+# Credentials and local secrets
+credentials.toml
+*.credentials.toml
+.env
+.env.*
+!.env.example
+*.secret
+*.secrets
+
+# Local caches/runtime artifacts
+.cache/
+tmp/
+*.log
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
