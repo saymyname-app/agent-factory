@@ -162,11 +162,64 @@ The official provider option `accept_startup_dialogs = true` is configured becau
 
 ## M6 — Cutover/decommission
 
-Not started. Stop legacy router/Scheduled Task only when there is no ambiguous or in-flight legacy dispatch. Preserve historical receipts/ledgers read-only.
+**Status: DONE**
+
+Cutover boundary: `2026-09-12T16:38:00Z`. From this instant, new executable
+SayMyName work is authoritative only when created JIT in the `smb` or `smf`
+Beads store. Linear remains historical/product reference during retirement;
+GitHub remains authoritative for code, PR, CI and merge; versioned factory docs
+remain the durable contract.
+
+Revalidated before mutation:
+
+- Backend, Frontend and Automation had no open PR; the nine runner ledgers were
+  all `queueConsumed`, exit code 0, with their referenced PRs merged;
+- remaining Automation branches were tied to already merged PRs; historical
+  worktree registrations were prunable/missing rather than active writers;
+- no runner process, Windows service, registry Run entry or Startup item matched
+  the legacy path;
+- the only matching Scheduled Task was the managed
+  `SayMyName-LocalCodexRunner`, already disabled with last result 0;
+- both rigs/stores/backups were healthy, M5 Frontend PR #40 remained merged,
+  and pre-cutover doctor was **98 passed, 5 warnings, 0 failed**.
+
+Automation PR #20 added only a `LEGACY / DECOMMISSIONED` banner and rollback
+order; it merged as `16080d2f`. The private repository was then archived at
+`2026-09-12T16:39:53Z`. Archiving is reversible and makes the former GitHub
+queue read-only, so the documented hourly external ChatGPT router cannot create
+new queue issues even though that saved automation is not administrable from
+this host. No runner logic, local secrets, receipts, ledgers, logs or worktrees
+were deleted or modified.
+
+Availability probe `smf-358` was created, read and closed as a no-op without
+dispatch or code change, proving the new work path remains available. A
+post-cutover observation window ran through `2026-09-12T16:45:41Z`, exceeding
+the former five-minute local cadence: the Scheduled Task remained disabled, no
+matching process appeared, the 16-file legacy state/receipt inventory retained
+SHA-256 `677362f38d743563c18312a0c2caf23949348d23d21b0ab0196f310a49c6fc37`,
+and no legacy PR or queue item was created. Final proof and the exact factory
+merge SHA are recorded in M6 bead `af-4ag`.
 
 ## M7 — Cloud portability
 
-Not started. Restore the same factory on a simple Linux VM after stopping the corresponding local controller. Re-provision provider auth explicitly.
+**Status: DECISION PREPARED — no resource created**
+
+Minimum path: an Ubuntu VM with persistent SSD, systemd, Git/gh/tmux/jq plus the
+pinned Gas City/Beads/Dolt binaries. Restore the private Git repositories and a
+Dolt-native backup, rebind rig paths, and reprovision GitHub/Codex credentials
+from their providers. Runtime caches, `.gc/site.toml`, OS services and secrets
+must be rebuilt; they are not portable Git artifacts. Stop the local controller
+before the cloud controller starts and reverse that order for rollback.
+
+Current paid reference options, to recheck at purchase: [Hetzner
+CX22](https://www.hetzner.com/pressroom/new-cx-plans/) advertises 2 vCPU/4 GB/40
+GB from EUR 3.79/month; [DigitalOcean Basic
+Droplets](https://www.digitalocean.com/pricing/droplets) advertise a USD 4/month
+entry point; [AWS Lightsail](https://aws.amazon.com/lightsail/pricing/) lists
+Linux bundles from USD 5/month and 4 GB at USD 24/month. A 4 GB VM is the safer
+initial Dolt/controller target.
+M7 requires Benjamin to choose provider/region/budget and supply or authorize
+credentials; no VM, disk, IP or paid backup was provisioned in M6.
 
 ## Cutover gate
 

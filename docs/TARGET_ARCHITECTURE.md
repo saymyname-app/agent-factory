@@ -28,6 +28,7 @@ A City has one active controller. Execution may later move to remote runtimes or
 |---|---|
 | Approved outcome / priority | City Beads; durable ADR/docs when structural |
 | Executable task / dependency | Rig Beads |
+| Historical product/backlog reference | Linear, read-only during retirement; never an execution trigger |
 | Session/runtime state | Gas City |
 | Code, branch, SHA, PR, CI, merge | Git/GitHub |
 | Architecture/contracts | versioned docs + ADRs |
@@ -40,6 +41,9 @@ A City has one active controller. Execution may later move to remote runtimes or
 - Rig store: tasks that directly modify one repository.
 - Cross-repo dependencies must be explicit; never infer them from chat or naming.
 - Decompose just in time. Do not mirror an entire legacy backlog.
+- Since the M6 cutover at `2026-09-12T16:38:00Z`, every new executable
+  SayMyName task is created JIT in `smb` or `smf`. Linear history may inform a
+  decision, but a Linear status or label cannot dispatch execution.
 
 ## Providers
 
