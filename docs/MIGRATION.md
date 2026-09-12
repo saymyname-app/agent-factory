@@ -22,7 +22,7 @@ M0 exit still requires local proof that no other ledger/lock/session is in-fligh
 
 ## M1 — Linux/WSL bootstrap
 
-**Status: IN PROGRESS — upstream hook convergence blocker**
+**Status: DONE**
 
 Upstream verified for bootstrap:
 
@@ -71,7 +71,7 @@ Final proof collected on 2026-09-12:
 - local `main` divergence was inspected and preserved: the local `bd init` commit contained only six Beads/Dolt ignore rules; it was rebased without force over GitHub `main` at `f1562a5`;
 - `gc restart` replaced supervisor PID `8443` with PID `70035`, rematerialized the always-on Mayor as session/bead `af-hkb`, and retained access to the canonical store and `issue_prefix=af`;
 - the rematerialized Mayor command and live OS process both use `--model gpt-5.6-sol`; an independent authenticated `codex exec -m gpt-5.6-sol` returned `SOL_AUTH_OK`;
-- `gc doctor --fix` upgrades the managed Codex hook immediately, but v1.4.1 session reconciliation restores the older pinned pack overlay after roughly 30 seconds; the stable final result is **79 passed, 4 warnings, 0 failed**;
+- `gc doctor --fix` upgraded the managed Codex hook after the final configuration restart/materialization; the corrected hash remained current in the settled runtime and the final result is **80 passed, 3 warnings, 0 failed**;
 - a non-mutating WSL-to-Windows call returned `POWERSHELL_INTEROP_OK Microsoft Windows NT 10.0.26200.0`;
 - the inactive `.beads/embeddeddolt/beads` repository contains zero issues, wisps, comments, dependencies, labels, and events. It is a known side effect of the upstream managed-store re-init bug. It remains preserved because the doctor remediation explicitly says to keep both stores until reconciliation is proven; the canonical managed store remains active and healthy.
 
@@ -81,7 +81,7 @@ Remaining doctor warnings are understood and non-blocking for M1:
 - `jsonl-archive`: local-only archive accepted for M1; off-box backup and a fresh-location restore are M3 exit criteria;
 - `bd-split-store`: inactive, empty-of-work parasite preserved pending an upstream-supported cleanup path.
 
-`codex-hooks-drift` is the remaining M1 blocker. Official fix/restart, host-local source alignment, provider aliasing, and a local last-layer overlay were each tested; every corrected hash was eventually replaced by the older v1.4.1 pack payload. No pack or binary was patched and no filesystem immutability workaround was installed.
+`codex-hooks-drift` can reappear transiently when v1.4.1 reloads or rematerializes provider overlays. The proven procedure is to finish configuration changes and session materialization first, then run `gc doctor --fix` and verify a following doctor. No pack or binary patch and no filesystem immutability workaround is used.
 
 M1 exit:
 
@@ -107,7 +107,7 @@ Proven on 2026-09-12 with one city-scoped Codex writer and the minimal `mol-do-w
 - GitHub PR #9 targeted `main`, was `CLEAN`/mergeable, had no configured automated checks, passed operator diff review, and merged as `43614760bce9a855a6aeecbfb38090461a905e70`;
 - the only delivery artifact was the three-line `docs/CANARY.md`; `git diff --check` passed;
 - work bead, formula workflow, formula steps, and convoy closed with `gc.outcome=pass`; writer drained cleanly;
-- post-canary, the pinned pack's `per-provider/codex` overlay repeatedly overwrote the current hook emitted by `gc doctor --fix`. Official restart/fix, runtime-source alignment, provider aliasing, and a local overlay did not converge. The stable post-canary doctor is **79 passed, 4 warnings, 0 failed**; M2 delivery remains proven, while M1 stays in progress on this upstream hook blocker.
+- post-canary configuration experiments restaged the pinned pack hook after each reload. After restoring the canonical provider config, completing the final restart/materialization, and running the official fix last, the settled doctor is **80 passed, 3 warnings, 0 failed** and `codex-hooks-drift` is healthy.
 
 ## M3 — Durability
 
