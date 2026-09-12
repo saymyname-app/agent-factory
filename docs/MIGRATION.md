@@ -129,7 +129,18 @@ No existing DoltHub credential was available. GitHub authentication alone is not
 
 ## M4 — Delivery v1
 
-Not started. FAST / STANDARD / GUARDED only, one writer per rig, GitHub CI retained, explicit human gate only where needed.
+**Status: DONE**
+
+The durable contract is in `DELIVERY.md`: FAST / STANDARD / GUARDED only, one writer per rig, lowest sufficient L0-L3 complexity, no default paid/LLM review, and GitHub authoritative for code/PR/check/merge state.
+
+Proof collected on 2026-09-12:
+
+- upstream inventory confirmed existing Gas City packs, formulas, orders, provider inheritance and `gc sling`; Beads supplies dependencies plus human/timer/GitHub gates and blocker-aware `bd ready`;
+- M2 remains the representative FAST proof with bead `af-v7a`, one Codex/Sol writer, deterministic validation, PR #9 and merge `43614760bce9a855a6aeecbfb38090461a905e70`;
+- reversible gate `af-q4v` blocked only guarded probe `af-wisp-2o0m`; independent probe `af-wisp-r31o` remained ready; resolving the gate made the guarded probe ready, and all probe artifacts were closed;
+- GitHub reports no Actions workflows or check rollup for this repository. Rulesets/branch protection return HTTP 403 on the current private-repository plan. STANDARD therefore requires the target rig's existing CI/check contract and cannot claim CI here.
+
+No runner, formula, reviewer provider, or concurrency primitive was added. SayMyName onboarding remains the next transition and must observe each rig's actual tests, CI and review rules before enabling STANDARD delivery.
 
 ## M5 — SayMyName
 

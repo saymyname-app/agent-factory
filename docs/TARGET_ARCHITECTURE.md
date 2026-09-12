@@ -67,3 +67,5 @@ Later M4 introduces only three initial routes:
 - `GUARDED`: significant contract/security/data risk, strong writer + CI + independent review/gate.
 
 No additional route is added without measured need.
+
+M4 is now proven at the factory-contract level. `DELIVERY.md` is authoritative for profile selection, evidence and gates. FAST delivery and scoped GUARDED gate isolation are proven; STANDARD CI remains target-rig-specific and must be observed during onboarding before it is claimed for a rig.
