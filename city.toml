@@ -8,6 +8,20 @@ args_append = ["-m", "gpt-5.6-sol"]
 ready_delay_ms = 0
 accept_startup_dialogs = true
 
+[providers.claude]
+base = "builtin:claude"
+command = "/home/benja/.local/bin/claude"
+accept_startup_dialogs = true
+
+[providers.claude.env]
+CLAUDE_CONFIG_DIR = "/mnt/c/Users/benja/.claude"
+DISABLE_AUTOUPDATER = "1"
+
+[providers.claude.option_defaults]
+permission_mode = "plan"
+model = "sonnet-5"
+effort = "high"
+
 [defaults]
 [defaults.rig]
 [defaults.rig.imports]

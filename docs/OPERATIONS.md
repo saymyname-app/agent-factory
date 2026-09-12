@@ -141,6 +141,42 @@ codex exec --skip-git-repo-check --sandbox read-only -m gpt-5.6-sol \
 
 M1 observed the effective Mayor command as `codex --dangerously-bypass-approvals-and-sandbox --model gpt-5.6-sol -c model_reasoning_effort=xhigh`, the matching process was live, and the authenticated probe returned `SOL_AUTH_OK`.
 
+## Secondary provider qualification
+
+Gas City `v1.4.1` supplies both `builtin:claude` and `builtin:opencode`; use
+provider inheritance rather than an adapter. The workspace default remains
+`codex`/`gpt-5.6-sol`.
+
+The host-local Claude provider uses pinned CLI `2.1.236`, the existing
+Claude.ai Pro subscription, `claude-sonnet-5`, and plan mode. Its authentication
+configuration path is intentionally machine-local and contains no token in Git.
+Verify configuration and subscription without repository writes:
+
+```bash
+gc config explain --provider claude --json
+CLAUDE_CONFIG_DIR=/mnt/c/Users/benja/.claude DISABLE_AUTOUPDATER=1 \
+  /home/benja/.local/bin/claude -p --model claude-sonnet-5 \
+  --permission-mode plan --output-format json \
+  'Do not use tools. Reply exactly CLAUDE_SUBSCRIPTION_CANARY_OK'
+```
+
+The direct probe on 2026-09-12 returned the marker and reported effective model
+`claude-sonnet-5` through the first-party subscription. The Linux CLI keeps
+first-run state separately from the shared subscription configuration; after
+copying only the non-secret onboarding flags locally, Gas City session
+`af-wisp-z5p9e` ran the resolved plan-mode command, returned
+`GAS_CITY_CLAUDE_CANARY_OK`, and was closed. No API key was introduced.
+
+Windows Ollama `0.33.3` exposes installed model `qwen3:8b` (~5.2 GB). A direct,
+tool-free synthetic canary returned `LOCAL_CANARY_OK` and selected `README.md`
+correctly in about 66 seconds on a cold load. WSL could not reach TCP 11434 on
+loopback or the WSL adapter. A narrowly scoped Windows firewall change was not
+authorized, so no Gas City `local-*` provider is configured and no repository
+read-only claim is made. The supported future path is `builtin:opencode` plus
+OpenCode's Ollama provider and explicit denial of edit, bash, task, and external
+directory access, after the network boundary is separately authorized and
+tested. Do not add port proxies, firewall rules, or a custom adapter silently.
+
 Gas City `v1.4.1` restages an older pinned-pack Codex hook after the official fix, including after configuration and sessions appear settled. Repeated 20–45 second windows reproduced the rollback from corrected hash `3234b7de…` to stale hash `cabcf576…`. Official fix/restart, runtime-source alignment, provider aliasing, and local-overlay experiments did not converge. Do not patch the pinned pack/binary or make the file immutable as a bootstrap workaround; require a pinned upstream fix or supported remediation before closing M1.
 
 WSL/Windows operator interop was proven non-destructively with:

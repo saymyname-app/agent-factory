@@ -221,6 +221,34 @@ initial Dolt/controller target.
 M7 requires Benjamin to choose provider/region/budget and supply or authorize
 credentials; no VM, disk, IP or paid backup was provisioned in M6.
 
+## Provider diversity qualification
+
+**TARGET:** Codex/Sol remains the principal writer; Claude is a strong
+subscription-backed fallback and selective independent reviewer; a local model
+is a cheap read-only experimental lane.
+
+**CONFIGURED:** the workspace default is unchanged. Provider `claude` inherits
+the official Gas City `v1.4.1` builtin, pins Claude Code `2.1.236`, selects
+`claude-sonnet-5` in plan mode, and is exposed only through the on-demand
+`claude-reviewer` template. No mandatory reviewer or additional writer was
+added. No local provider was declared.
+
+**OBSERVED:** the direct Claude subscription canary returned
+`CLAUDE_SUBSCRIPTION_CANARY_OK`, reported `claude-sonnet-5` and first-party Pro
+authentication. Windows Ollama `0.33.3` has `qwen3:8b`; its tool-free synthetic
+canary followed the two-line instruction and completed in about 66 seconds.
+Gas City exposes official `builtin:opencode`, and upstream OpenCode supports
+Ollama plus denyable write/shell permissions.
+
+**PROVEN:** Codex `0.154.0` still answered through `gpt-5.6-sol`; Claude's pinned
+CLI, first-party Pro subscription and effective model work non-destructively.
+Gas City session `af-wisp-z5p9e` resolved provider `claude`, launched
+`claude-sonnet-5` in plan mode, returned `GAS_CITY_CLAUDE_CANARY_OK`, and was
+closed without repository changes. WSL-to-Windows Ollama transport and local
+repository read-only behavior are not proven, so the local lane remains
+unconfigured. This limitation changes neither the default provider nor either
+SayMyName rig.
+
 ## Cutover gate
 
 Do not decommission the old path until all are PROVEN:
