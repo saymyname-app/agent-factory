@@ -20,3 +20,8 @@ tmp/
 Thumbs.db
 .vscode/
 .idea/
+
+# Gas City
+.beads/*
+!.beads/identity.toml
+hooks/
