@@ -37,14 +37,14 @@ Important Docker Desktop setting: if **Enable integration with my default WSL di
 
 `wsl --shutdown` stops the whole WSL VM set, including Docker Desktop's internal WSL distribution. Docker Desktop may therefore report that its WSL distro terminated abruptly after such a command. This is expected operational impact, not evidence that the factory Ubuntu distribution conflicts with Docker Desktop.
 
-For a factory-only restart while Docker should remain available, prefer a distribution-scoped restart from Windows, for example:
+For a factory-only restart while Docker should remain available, prefer a distribution-scoped restart from Windows:
 
 ```powershell
 wsl --terminate Ubuntu-24.04
 wsl -d Ubuntu-24.04 --user benja --cd ~
 ```
 
-If the distribution hangs with `HCS_E_CONNECTION_TIMEOUT`, a restart of `WslService` can recover WSL without deleting the distribution:
+If the distribution hangs with `HCS_E_CONNECTION_TIMEOUT`, a restart of `WslService` recovered the observed host non-destructively:
 
 ```powershell
 Restart-Service WslService -Force
@@ -71,39 +71,56 @@ gc init \
   .
 ```
 
-On the observed host, this created the runtime scaffold, hooks, prompts, `pack.toml` and City configuration, then stopped on the Gas City Dolt-author preflight because Dolt global `user.name` and `user.email` were absent.
+Dolt author identity is required before managed storage finalization. Use a non-secret stable factory identity or the operator's normal Git author identity where appropriate.
 
-This is a recoverable bootstrap blocker. Configure a non-secret Dolt author identity before store finalization:
+Beads maintainer role is explicit for this HTTPS clone:
 
 ```bash
-dolt config --global --add user.name "<author name>"
-dolt config --global --add user.email "<author email>"
+git config --global beads.role maintainer
 ```
 
-Prefer reusing the operator's normal Git author identity if it is already configured and appropriate. Do not put credentials or tokens in these values.
-
-After setting identity, inspect before starting anything:
+The observed deterministic repair after first bootstrap is:
 
 ```bash
 cd ~/agent-factory
-git status --short --branch
-printf '\n--- city.toml ---\n'
-cat city.toml
-printf '\n--- pack.toml ---\n'
-cat pack.toml
-printf '\n--- packs.lock ---\n'
-cat packs.lock 2>/dev/null || echo 'packs.lock absent'
-printf '\n--- doctor ---\n'
-gc doctor || true
+gc doctor --fix
+gc doctor
 ```
 
-Do not start provider sessions until the generated configuration has been inspected and at least one provider CLI has been installed/authenticated.
+On the current host this installed/synchronized four remote imports, generated `packs.lock`, and registered all 13 Gas City-required custom bead types. Post-fix doctor result: **81 passed, 5 warnings, 0 failed**.
+
+Do not start provider sessions until generated configuration is inspected and at least one provider CLI is installed/authenticated.
 
 Host-local runtime state, credentials, local paths and caches must remain untracked.
 
+## Split-store warning
+
+The current bootstrap reports:
+
+- active store: `.beads/dolt` (`endpoint_origin=managed_city`);
+- inactive store: `.beads/embeddeddolt`, containing one Dolt repository.
+
+Gas City upstream issue `gastownhall/gascity#1436` is open and documents a parasitic `.beads/embeddeddolt` store created by some bootstrap/recovery paths. Treat this as an upstream limitation, not permission to delete data.
+
+Before deleting or reconciling an inactive store:
+
+1. inspect its repository path and tables;
+2. determine whether it contains any issues/data not present in the active store;
+3. if data exists, export to JSONL, review with `bd import --dry-run`, then import into the active store;
+4. keep both directories until reconciliation is proven.
+
+Do **not** use `bd init --force` or `bd init --reinit-local` as a generic bootstrap fix; upstream issue reports show those paths can create the parasitic embedded store and disturb custom types.
+
 ## Doctor
 
-M1 is not complete until `gc doctor` is healthy in the actual City. Record command output/evidence in the migration bead or a durable operational note where appropriate; do not rely on chat memory.
+M1 is not complete until the actual City has no unresolved hard failures and remaining warnings are understood/documented.
+
+Current warning interpretation before controller start:
+
+- `formula-requirements`: upstream pack warnings; no local rewrite during M1 unless they block the canary.
+- `agent-sessions` and `orphan-sessions`: expected while controller/tmux sessions are not running.
+- `bd-split-store`: requires explicit inspection/reconciliation; never auto-delete.
+- `beads-store` native-store preflight unavailable because `.beads/metadata.json` is absent: keep fallback behavior for now and re-evaluate after store reconciliation/start. Do not hand-create metadata.
 
 ## Backup / restore
 
