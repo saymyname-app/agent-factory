@@ -141,7 +141,7 @@ codex exec --skip-git-repo-check --sandbox read-only -m gpt-5.6-sol \
 
 M1 observed the effective Mayor command as `codex --dangerously-bypass-approvals-and-sandbox --model gpt-5.6-sol -c model_reasoning_effort=xhigh`, the matching process was live, and the authenticated probe returned `SOL_AUTH_OK`.
 
-`gc restart` can materialize a stale managed Codex hook before the new session is fully created. Run `gc doctor --fix` after materialization and prove that a following `gc doctor` reports `codex-hooks-drift` healthy.
+`gc restart` can materialize a stale managed Codex hook before the new session is fully created. Run `gc doctor --fix` after materialization and prove that a following `gc doctor` reports `codex-hooks-drift` healthy. On the M1/M2 host, the legacy hook payload in host-local `.gc/settings.json` initially rewrote `.codex/hooks.json` after the fix. The bounded recovery was to suspend the City/session, align only the hook commands in `.gc/settings.json` with the city-qualified, `--hook-format codex` commands emitted by `gc doctor --fix`, rematerialize Mayor, and run `gc doctor --fix` again. A 15-second stability check then retained the corrected hook hash and doctor reported **80 passed, 3 warnings, 0 failed**. This is host-local runtime state, not a pack fork or a versioned provider override.
 
 WSL/Windows operator interop was proven non-destructively with:
 
@@ -160,7 +160,7 @@ Final M1 warning interpretation after controller restart:
 - `bd-split-store`: the inactive embedded repository was inspected and contains zero issues, wisps, comments, dependencies, labels, and events. The active managed store is healthy. Preserve the inactive store until an upstream-supported cleanup path exists; never auto-delete it.
 - `jsonl-archive`: local-only mode is accepted for M1. Configure and prove off-box backup plus fresh-location restore in M3 rather than adding an unvalidated remote during bootstrap.
 
-`codex-hooks-drift` is resolved by the official `gc doctor --fix` path after the Mayor session has materialized. `agent-sessions`, `orphan-sessions`, and `beads-store` are healthy after startup.
+`codex-hooks-drift` is resolved by the official `gc doctor --fix` path after the Mayor session has materialized, with the host-local `.gc/settings.json` convergence step above required on this bootstrap. `agent-sessions`, `orphan-sessions`, and `beads-store` are healthy after startup.
 
 ## Backup / restore
 

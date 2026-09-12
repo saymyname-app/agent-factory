@@ -105,7 +105,7 @@ Proven on 2026-09-12 with one city-scoped Codex writer and the minimal `mol-do-w
 - GitHub PR #9 targeted `main`, was `CLEAN`/mergeable, had no configured automated checks, passed operator diff review, and merged as `43614760bce9a855a6aeecbfb38090461a905e70`;
 - the only delivery artifact was the three-line `docs/CANARY.md`; `git diff --check` passed;
 - work bead, formula workflow, formula steps, and convoy closed with `gc.outcome=pass`; writer drained cleanly;
-- post-canary `gc doctor --fix` repaired the managed Codex hook recreated during ephemeral session materialization. The remaining durable warnings are the three already accepted at M1.
+- post-canary, a legacy hook payload in host-local `.gc/settings.json` repeatedly overwrote the official repair. After aligning that runtime source with the city-qualified commands emitted by `gc doctor --fix`, rematerializing Mayor as `af-2ue`, and rerunning the official fix, the corrected hook hash remained stable and doctor reported **80 passed, 3 warnings, 0 failed**. The remaining durable warnings are the three already accepted at M1.
 
 ## M3 — Durability
 
