@@ -87,7 +87,7 @@ gc doctor --fix
 gc doctor
 ```
 
-On the current host this installed/synchronized four remote imports, generated `packs.lock`, and registered all 13 Gas City-required custom bead types. Post-fix doctor result: **81 passed, 5 warnings, 0 failed**.
+On the current host this installed/synchronized four remote imports, generated `packs.lock`, and registered all 13 Gas City-required custom bead types. Initial post-fix doctor result: **81 passed, 5 warnings, 0 failed**. After controller startup, restart, session materialization, and a second official hook upgrade, the final M1 result was **80 passed, 3 warnings, 0 failed**.
 
 Do not start provider sessions until generated configuration is inspected and at least one provider CLI is installed/authenticated.
 
@@ -111,16 +111,56 @@ Before deleting or reconciling an inactive store:
 
 Do **not** use `bd init --force` or `bd init --reinit-local` as a generic bootstrap fix; upstream issue reports show those paths can create the parasitic embedded store and disturb custom types.
 
+## Proven M1 lifecycle
+
+The following lifecycle was executed successfully on 2026-09-12:
+
+```bash
+gc suspend
+gc session suspend mayor
+gc restart
+gc resume
+gc start
+gc status
+gc session list
+bd config get issue_prefix
+gc doctor --fix
+gc doctor
+```
+
+The supervisor was replaced (`PID 8443` to `PID 70035`) and remained systemd/supervisor-managed. The canonical Dolt store remained accessible, `issue_prefix` remained `af`, and the always-on Mayor rematerialized as session/bead `af-hkb`.
+
+The configured provider pin is not sufficient evidence by itself. Verify both the session metadata and the live process:
+
+```bash
+gc bd show <mayor-session-bead>
+pgrep -af 'codex.*gpt-5.6-sol'
+codex exec --skip-git-repo-check --sandbox read-only -m gpt-5.6-sol \
+  'Reply with exactly: SOL_AUTH_OK'
+```
+
+M1 observed the effective Mayor command as `codex --dangerously-bypass-approvals-and-sandbox --model gpt-5.6-sol -c model_reasoning_effort=xhigh`, the matching process was live, and the authenticated probe returned `SOL_AUTH_OK`.
+
+`gc restart` can materialize a stale managed Codex hook before the new session is fully created. Run `gc doctor --fix` after materialization and prove that a following `gc doctor` reports `codex-hooks-drift` healthy.
+
+WSL/Windows operator interop was proven non-destructively with:
+
+```bash
+powershell.exe -NoProfile -NonInteractive -Command \
+  "Write-Output ('POWERSHELL_INTEROP_OK ' + [System.Environment]::OSVersion.VersionString)"
+```
+
 ## Doctor
 
 M1 is not complete until the actual City has no unresolved hard failures and remaining warnings are understood/documented.
 
-Current warning interpretation before controller start:
+Final M1 warning interpretation after controller restart:
 
 - `formula-requirements`: upstream pack warnings; no local rewrite during M1 unless they block the canary.
-- `agent-sessions` and `orphan-sessions`: expected while controller/tmux sessions are not running.
-- `bd-split-store`: requires explicit inspection/reconciliation; never auto-delete.
-- `beads-store` native-store preflight unavailable because `.beads/metadata.json` is absent: keep fallback behavior for now and re-evaluate after store reconciliation/start. Do not hand-create metadata.
+- `bd-split-store`: the inactive embedded repository was inspected and contains zero issues, wisps, comments, dependencies, labels, and events. The active managed store is healthy. Preserve the inactive store until an upstream-supported cleanup path exists; never auto-delete it.
+- `jsonl-archive`: local-only mode is accepted for M1. Configure and prove off-box backup plus fresh-location restore in M3 rather than adding an unvalidated remote during bootstrap.
+
+`codex-hooks-drift` is resolved by the official `gc doctor --fix` path after the Mayor session has materialized. `agent-sessions`, `orphan-sessions`, and `beads-store` are healthy after startup.
 
 ## Backup / restore
 

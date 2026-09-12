@@ -25,3 +25,11 @@ Thumbs.db
 .beads/*
 !.beads/identity.toml
 hooks/
+.codex/
+.dolt-backup/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
