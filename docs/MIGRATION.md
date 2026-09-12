@@ -4,21 +4,21 @@ Migration path: M0 -> M7. Keep dual-run short. Existing in-flight legacy work ma
 
 ## M0 — Freeze and inventory
 
-**Status: IN PROGRESS**
+**Status: DONE — refreshed by M5**
 
 Latest GitHub refresh on 2026-09-12:
 
-- Backend `dev`: `5f9dce7714eabb1b060b725ae3c915f2450e866b` after merge of PR #23 / SMN-54.
-- Frontend `dev`: `9743ded353ea32d31796b673c55b6df606a7dce6`.
+- Backend `dev`: `297cbd87d02b86120644ea3542c10e6688cc3ae6`.
+- Frontend `dev`: `aa82099a183c64e0b02af80979dc1e28353edc4c` after M5 PR #40.
 - Automation `main`: `eae2110d21a7118ca2ea5af66085ee319f26f0b3`.
-- Backend PR #23 / SMN-54 is merged and no longer in-flight.
-- Backend PR #24 / SMN-50 is open/draft and runner-owned; treat as legacy in-flight work.
-- Frontend PR #39 / SMN-78 is open and runner-owned; treat as legacy in-flight work.
-- Automation has no open PR observed in this refresh.
+- Backend, Frontend and Automation have no open PR.
+- Every PR referenced by the nine legacy state files is merged; each state is `queueConsumed`, with exit code 0 and no recorded error.
+- Windows Scheduled Task `SayMyName-LocalCodexRunner` is disabled, last result is 0, and no matching legacy runner process is active.
+- Legacy receipts, state files and registered/prunable worktrees remain preserved for the M6 rollback/audit boundary.
 
 Freeze rule remains effective: no new generic orchestration feature goes into the legacy Linear/PowerShell runner except transition or safety work.
 
-M0 exit still requires local proof that no other ledger/lock/session is in-flight and a live refresh of legacy work tracking before the relevant cutover step. Do not stop the legacy dispatcher while PR #24 / PR #39 or any corresponding local ledger remains active.
+The local ledger, Scheduled Task, process list and GitHub PR state now agree that no legacy dispatch is in flight. Do not delete its receipts or worktrees during cutover; M6 owns reversible archival and decommissioning.
 
 ## M1 — Linux/WSL bootstrap
 
@@ -144,7 +144,21 @@ No runner, formula, reviewer provider, or concurrency primitive was added. SayMy
 
 ## M5 — SayMyName
 
-Not started. Add backend/frontend and only then legacy automation as rigs if still useful. Migrate active/future work only; do not recreate Done history.
+**Status: DONE**
+
+Proven on 2026-09-12:
+
+- Gas City rigs `saymyname-backend` (`smb`, default `dev`) and `saymyname-frontend` (`smf`, default `dev`) were added with `gc rig add`, initialized in clean Linux clones, resumed, and backed up through registered Dolt backup remotes;
+- no generated `.beads`, `.gc`, `.codex` or ignore-file changes were committed to either application repository; the local rig clones exclude those runtime paths through `.git/info/exclude`;
+- Backend contract observed Java 21/Maven, Flyway/Testcontainers and GitHub `Backend CI` running `mvn -B -ntp -Pit verify`; local unit suites passed, while integration tests require a Docker engine not exposed to this WSL session;
+- Frontend contract observed Node 22/npm and GitHub `Frontend CI` running install, non-blocking lint, tests and build. The baseline lint has 197 errors/31 warnings; tests passed (108 unit plus 2 component) and build passed;
+- new work was created JIT in the Frontend store as bead `smf-0jx` with `delivery:standard`; no historical Done tickets were imported;
+- Gas City workflow `smf-7og` dispatched one Codex writer session `af-4g6`, whose effective command used `gpt-5.6-sol`;
+- the writer fixed conditional hook ordering in `CourseQuickStart` on branch `factory/smf-course-quick-start-hooks`, commit `ba6745cd7193f79811471c8956698c1929303f2c`, and opened Frontend PR #40;
+- GitHub `Frontend CI` run `34704878684` passed. The repository's automatic Claude review failed only by reaching its configured five-turn limit and produced no comments; it was not a required gate for this one-line low-risk change under the M4 contract;
+- verified one-file/one-line behavior-preserving diff was squash-merged as `aa82099a183c64e0b02af80979dc1e28353edc4c`; `smf-0jx` is closed with session, model, validation, PR and merge evidence.
+
+The official provider option `accept_startup_dialogs = true` is configured because the first ephemeral Codex session encountered the CLI trust prompt; after an official session recycle, Gas City accepted it and the writer proceeded. Automation was deliberately not added as a rig.
 
 ## M6 — Cutover/decommission
 

@@ -225,6 +225,31 @@ git -C ~/agent-factory status --short --branch
 
 The 2026-09-12 drill restored `af-v7a`, its M2 commit/outcome metadata, the `af-c3u -> af-hhx` workflow dependency, and `issue_prefix=af`; the restored City survived restart. Canonical recovery ended at **79 passed, 4 warnings, 0 failed** with no data loss. Off-box backup is not yet configured because no existing DoltHub credential/private destination was available; this is a durability limitation, not a reason to push the raw runtime to GitHub.
 
+## SayMyName rig operations
+
+The two application rigs use clean Linux clones under the host-local, Git-ignored `~/agent-factory/rigs/` directory. Their site-bound paths remain in `.gc/site.toml`; `city.toml` versions only names, unique prefixes, default branches and pinned imports.
+
+```bash
+gc rig list
+gc rig status saymyname-backend
+gc rig status saymyname-frontend
+gc bd --rig saymyname-backend config get issue_prefix  # smb
+gc bd --rig saymyname-frontend config get issue_prefix # smf
+gc doctor
+```
+
+Gas City runtime paths generated inside application clones must remain untracked. Each clone uses local `.git/info/exclude` entries for `.beads/`, `.codex/`, `.gc/` and `rigs/`; do not modify an application `.gitignore` merely to host a rig.
+
+The host toolchains proven during M5 are Temurin Java `21.0.12.1`, Maven `3.9.9`, Node `22.23.2` and npm `10.9.8`. Backend integration verification needs Docker/Testcontainers; when Docker is unavailable locally, record that limitation and require the existing GitHub `Backend CI` before merge. Frontend full lint is a known non-gating baseline; require tests/build and task-scoped lint evidence rather than claiming the baseline is clean.
+
+Each rig has a registered Dolt backup remote at `.dolt-backup/smb` or `.dolt-backup/smf`. Refresh them through the managed Dolt server before risky maintenance, using the port reported by `gc dolt status` and the official `CALL DOLT_BACKUP('sync', '<prefix>-backup')` primitive. These directories contain runtime data and remain excluded from Git.
+
+`accept_startup_dialogs = true` is configured on the Codex provider. This is the supported Gas City option that lets a newly materialized ephemeral session pass Codex's startup trust dialog; it does not weaken repository, GitHub or human delivery gates.
+
+### Legacy cutover boundary
+
+The Windows repo at `/mnt/c/Dev/Projects/SayMyName/Automation` remains read-only during M5 and is not a Gas City rig. Its Scheduled Task `SayMyName-LocalCodexRunner` is disabled, no matching process is active, and every PR referenced by `.runner/state/*.json` is merged. Preserve `.runner/state`, receipts, recovery receipts, logs and legacy worktrees for audit/rollback. M6 may archive and decommission the path only after repeating these checks; it must not recreate the runner in Gas City.
+
 ## Upgrade
 
 Before every active-factory upgrade:

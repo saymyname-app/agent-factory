@@ -26,11 +26,12 @@ The DOCX *Migration Gas City + Beads — Plan directeur A à Z V2* is the approv
 
 ## Current bootstrap snapshot
 
-Verified from GitHub on 2026-09-12 before bootstrap:
+Verified from GitHub after M5 delivery on 2026-09-12:
 
-- SayMyName backend `dev`: `15bfc27ec00f04ba1c5be1a301e8129d7c68b727`
-- SayMyName frontend `dev`: `9743ded353ea32d31796b673c55b6df606a7dce6`
+- SayMyName backend `dev`: `297cbd87d02b86120644ea3542c10e6688cc3ae6`
+- SayMyName frontend `dev`: `aa82099a183c64e0b02af80979dc1e28353edc4c`
 - Legacy automation `main`: `eae2110d21a7118ca2ea5af66085ee319f26f0b3`
-- Backend PR #23 / SMN-54 remains open and therefore in-flight.
+- Backend and Frontend have no open PR; all PRs referenced by the legacy ledger are merged.
+- Windows Scheduled Task `SayMyName-LocalCodexRunner` is disabled; historical receipts and worktrees remain preserved.
 
 This snapshot is not a substitute for live refresh before mutation.

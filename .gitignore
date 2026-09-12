@@ -27,6 +27,7 @@ Thumbs.db
 hooks/
 .codex/
 .dolt-backup/
+/rigs/
 
 # Beads / Dolt files (added by bd init)
 .dolt/

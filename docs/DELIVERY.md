@@ -49,3 +49,21 @@ The gate must state the decision and evidence required. Continue any independent
 - **CONFIGURED STANDARD contract:** target rigs must declare their own deterministic tests and GitHub CI/check requirements before STANDARD delivery is claimed. The Agent Factory repository currently proves PR transport/review, not CI execution.
 
 These classifications are deliberately separate: the three contracts are durable and usable, FAST and gate isolation are proven, while target-repository CI remains to be observed during rig onboarding.
+
+## SayMyName rig contracts
+
+### Backend — `saymyname-backend` / `smb`
+
+- **CONFIGURED:** default branch `dev`; one Codex/Sol writer; GitHub PR is the delivery boundary.
+- **OBSERVED:** Java 21, Maven and Spring Boot 3.3.1; `Backend CI` executes `mvn -B -ntp -Pit verify` on pull requests to `dev`/`main`; Flyway and Testcontainers/MySQL are present. The `dev` branch has no GitHub branch protection observable through the API.
+- **PROVEN locally:** unit test modules pass with Java 21. The web integration suite reaches Testcontainers but cannot start without a Docker endpoint in the current WSL environment; GitHub CI is authoritative for a STANDARD delivery.
+- **FAST:** documentation or bounded test-only maintenance with task-specific deterministic validation. **STANDARD:** ordinary bounded backend changes with `-Pit verify` green in GitHub CI. **GUARDED:** Flyway/schema changes, persistent data changes, production actions, secrets, security-sensitive changes or irreversible transitions.
+
+### Frontend — `saymyname-frontend` / `smf`
+
+- **CONFIGURED:** default branch `dev`; one Codex/Sol writer; GitHub PR is the delivery boundary.
+- **OBSERVED:** Node 22/npm; `Frontend CI` runs `npm ci`, non-blocking `npm run lint`, `npm test`, and `npm run build` on pull requests to `dev`/`main`. The `dev` branch has no GitHub branch protection observable through the API.
+- **PROVEN:** baseline tests pass (108 unit and 2 component) and the production build passes with CI placeholders. Full lint is currently non-gating and reports 197 errors/31 warnings; a task must still avoid introducing a scoped lint regression.
+- **FAST:** documentation, isolated tests or bounded low-risk maintenance. **STANDARD:** ordinary bounded UI bugs/features with tests and build green in GitHub CI. **GUARDED:** production deployment/configuration, secrets, irreversible operations, security-sensitive changes or substantive product decisions.
+
+M5 provides the first **PROVEN STANDARD** path: `smf-0jx` -> workflow `smf-7og` -> session `af-4g6` on `gpt-5.6-sol` -> commit `ba6745cd7193f79811471c8956698c1929303f2c` -> Frontend PR #40 -> successful `Frontend CI` -> merge `aa82099a183c64e0b02af80979dc1e28353edc4c`. The existing Claude review workflow exhausted its own turn limit without comments; M4 does not promote that optional paid reviewer into a gate for this low-risk one-line change.
