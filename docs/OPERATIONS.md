@@ -33,6 +33,8 @@ GitHub CLI auth inside Ubuntu is required before repository operations.
 
 Docker Desktop and the factory Ubuntu distribution can coexist. They are separate WSL2 distributions.
 
+Important Docker Desktop setting: if **Enable integration with my default WSL distro** is enabled and `Ubuntu-24.04` is the Windows default WSL distribution, Docker integrates with Ubuntu even when the per-distro `Ubuntu-24.04` toggle under "additional distros" is disabled. During M1 bootstrap, disable the default-distro integration as well so the City host is isolated from Docker's distro proxy. Re-enable Docker integration later only when a project needs it (for example Testcontainers) and after a dedicated canary proves WSL stability.
+
 `wsl --shutdown` stops the whole WSL VM set, including Docker Desktop's internal WSL distribution. Docker Desktop may therefore report that its WSL distro terminated abruptly after such a command. This is expected operational impact, not evidence that the factory Ubuntu distribution conflicts with Docker Desktop.
 
 For a factory-only restart while Docker should remain available, prefer a distribution-scoped restart from Windows, for example:
@@ -41,6 +43,16 @@ For a factory-only restart while Docker should remain available, prefer a distri
 wsl --terminate Ubuntu-24.04
 wsl -d Ubuntu-24.04 --user benja --cd ~
 ```
+
+If the distribution hangs with `HCS_E_CONNECTION_TIMEOUT`, a restart of `WslService` can recover WSL without deleting the distribution:
+
+```powershell
+Restart-Service WslService -Force
+Start-Sleep -Seconds 10
+wsl -d Ubuntu-24.04 --user benja --exec /bin/echo WSL_OK
+```
+
+A successful `WSL_OK` proves the distro can start non-interactively. Do not use `wsl --unregister` as a recovery step; it deletes the distribution.
 
 Use global `wsl --shutdown` only when intentionally stopping all WSL consumers, then restart Docker Desktop if needed.
 
