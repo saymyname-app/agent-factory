@@ -254,6 +254,8 @@ assert_no_active_rig_agents() {
   city_status=$("$GC_BIN" status --json) || die "Gas City status is unavailable; refusing preview start."
   jq -e '.health.usable == true' <<<"$city_status" >/dev/null \
     || die "Gas City health is not usable; refusing preview start."
+  jq -e '.agents | type == "array"' <<<"$city_status" >/dev/null \
+    || die "Gas City agent inventory is missing or malformed; refusing preview start."
 
   for rig in "$BACKEND_RIG" "$FRONTEND_RIG"; do
     jq -e --arg rig "$rig" \
@@ -262,7 +264,7 @@ assert_no_active_rig_agents() {
       || die "Gas City rig $rig must remain suspended during preview."
 
     jq -e --arg prefix "$rig/" \
-      'all(.agents[]?; ((((.qualified_name // "") | startswith($prefix)) and (.running == true)) | not))' \
+      'all(.agents[]; ((((.qualified_name // "") | startswith($prefix)) and (.running == true)) | not))' \
       <<<"$city_status" >/dev/null \
       || die "Gas City reports an active agent in $rig; refusing concurrent preview work."
   done

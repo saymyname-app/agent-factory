@@ -96,6 +96,25 @@ EOF
   printf '%s\n' "$fake_gc"
 }
 
+write_fake_gc_without_agents() {
+  local fake_gc="$TEST_ROOT/fake-gc-without-agents"
+
+  cat >"$fake_gc" <<'EOF'
+#!/usr/bin/env bash
+cat <<'JSON'
+{
+  "health": {"usable": true},
+  "rigs": [
+    {"name": "saymyname-backend", "suspended": true},
+    {"name": "saymyname-frontend", "suspended": true}
+  ]
+}
+JSON
+EOF
+  chmod +x "$fake_gc"
+  printf '%s\n' "$fake_gc"
+}
+
 clean_repo=$(create_remote_and_clone clean)
 clean_origin=$(git -C "$clean_repo" remote get-url origin)
 assert_passes "clean dev repository should pass" \
@@ -120,6 +139,10 @@ assert_fails "a local-ahead dev branch must fail closed" \
 
 GC_BIN=$(write_fake_gc false)
 assert_passes "suspended rigs without active agents should pass" \
+  assert_no_active_rig_agents
+
+GC_BIN=$(write_fake_gc_without_agents)
+assert_fails "a missing agent inventory must fail closed" \
   assert_no_active_rig_agents
 
 GC_BIN=$(write_fake_gc true)
