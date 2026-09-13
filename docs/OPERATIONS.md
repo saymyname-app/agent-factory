@@ -150,6 +150,63 @@ codex exec --skip-git-repo-check --sandbox read-only -m gpt-5.6-sol \
 
 M1 observed the effective Mayor command as `codex --dangerously-bypass-approvals-and-sandbox --model gpt-5.6-sol -c model_reasoning_effort=xhigh`, the matching process was live, and the authenticated probe returned `SOL_AUTH_OK`.
 
+## Operator dashboard
+
+Gas City `1.4.1` embeds its dashboard SPA in the supervisor and serves the UI and API from the same origin. Use this upstream dashboard; there is no separate dashboard process or factory-owned UI to install, start or upgrade. In this City the operator URL is:
+
+```text
+http://127.0.0.1:8372
+```
+
+Keep the listener on loopback. The dashboard exposes operational data including beads and provider transcripts, so do not bind it to a LAN interface, publish the port from WSL, or place it behind a network proxy without a separately reviewed authentication and transport design. Windows access through WSL localhost forwarding does not require changing the bind address.
+
+### Start, open and stop
+
+Start the City and resolve the supervisor-owned URL from Ubuntu:
+
+```bash
+cd ~/agent-factory
+gc start
+gc dashboard --no-open
+```
+
+`gc dashboard serve` is a compatibility command that also prints the supervisor URL; in `1.4.1` it does not start another static server. To open the dashboard in a Windows browser or verify the Windows-to-WSL path from PowerShell:
+
+```powershell
+Start-Process http://127.0.0.1:8372
+(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8372/).StatusCode
+```
+
+The second command should return `200`. Stop this City with `gc stop`; this stops its sessions and Dolt runtime. The machine-wide supervisor and root dashboard listener may remain available for other registered cities, while `agent-factory` data and API views show the stopped or unavailable City state. There is no dashboard-only stop command.
+
+### Health and recovery
+
+Check the supervisor, loopback listener and both health layers from Ubuntu:
+
+```bash
+gc status --json
+ss -ltnp 'sport = :8372'
+curl --fail --silent --show-error http://127.0.0.1:8372/health
+curl --fail --silent --show-error \
+  http://127.0.0.1:8372/v0/city/agent-factory/health | jq .
+```
+
+The listener must be `127.0.0.1:8372`, not `0.0.0.0:8372`. The City health response should report `status: ok`, `version: 1.4.1`, and `city: agent-factory`.
+
+If the URL is unavailable:
+
+1. Run `gc status --json` and confirm that the controller is running and City health is usable.
+2. Run `gc start` if the City is stopped.
+3. Run `gc restart` if the City is registered but the supervisor-owned UI or API remains unavailable, then repeat both health checks.
+4. If Ubuntu itself is unavailable, use the distribution-scoped WSL recovery in [WSL and Docker Desktop coexistence](#wsl-and-docker-desktop-coexistence); do not add a replacement dashboard server.
+
+### 2026-09-13 evidence
+
+- **TARGET:** use the dashboard embedded in the pinned Gas City supervisor, expose it on localhost only, and cover agents, beads, runs, activity/transcripts and health with a real SayMyName workflow as canary.
+- **CONFIGURED:** `gc version` reported `1.4.1`; `gc dashboard --no-open` resolved `http://127.0.0.1:8372`; `ss` showed PID `14033` listening only on `127.0.0.1:8372` during the check. PIDs and live counts are observational and will change.
+- **OBSERVED:** `/`, `/health`, and the city-scoped `/health`, `/agents`, `/beads`, `/runs/census`, `/events?limit=5`, `/workflow/smf-xir`, and current Mayor session transcript endpoints under `/v0/city/agent-factory` all returned HTTP `200`. The API reported six agents, 75 beads, five requested recent events, and a conversation-format Codex Mayor transcript with 1,597 turns at the instant of verification. The root response set `Cache-Control: no-store`, a same-origin `Content-Security-Policy` with `frame-ancestors 'none'`, `X-Frame-Options: DENY`, and `X-Content-Type-Options: nosniff`.
+- **PROVEN:** City health returned `status=ok`, `version=1.4.1`, and `city=agent-factory`. The existing SayMyName frontend workflow `smf-xir` resolved from `rig:saymyname-frontend` with nine beads and `partial=false`. Windows PowerShell `Invoke-WebRequest` to the same localhost URL returned HTTP `200`. These checks prove current reachability and API/UI coverage, not durable availability; rerun them after supervisor or WSL recovery.
+
 ## Secondary provider qualification
 
 Gas City `v1.4.1` supplies both `builtin:claude` and `builtin:opencode`; use
