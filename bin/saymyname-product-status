@@ -1,0 +1,321 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+PROGRAM_NAME="saymyname-product-status"
+GC_BIN="${GC_BIN:-gc}"
+GH_BIN="${GH_BIN:-gh}"
+PRODUCT_ROOT_BEAD="${SAYMYNAME_PRODUCT_ROOT_BEAD:-af-1vr4}"
+
+log() {
+  printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2
+}
+
+die() {
+  log "ERROR: $1"
+  exit 1
+}
+
+usage() {
+  cat <<'USAGE'
+Usage: saymyname-product-status
+
+Print the current SayMyName product outcome, active agent when applicable,
+last GitHub-verified delivery, approved next outcome, and pending human decision.
+USAGE
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command is unavailable: $1"
+}
+
+gc_json() {
+  "$GC_BIN" "$@"
+}
+
+gh_json() {
+  "$GH_BIN" "$@"
+}
+
+capture_json() {
+  local destination=$1
+  local source_name=$2
+  local output
+  shift 2
+
+  if ! output=$("$@"); then
+    die "$source_name source command failed. Restore that source, then retry."
+  fi
+  jq -e . >/dev/null 2>&1 <<<"$output" \
+    || die "$source_name returned invalid JSON. Restore that source, then retry."
+  printf -v "$destination" '%s' "$output"
+}
+
+single_issue() {
+  local json=$1
+  local label=$2
+  local issue
+
+  issue=$(jq -ce 'if type == "array" and length == 1 and .[0].id then .[0] else error("expected one issue") end' \
+    <<<"$json") || die "$label did not resolve to exactly one Bead."
+  printf '%s\n' "$issue"
+}
+
+required_string() {
+  local json=$1
+  local expression=$2
+  local label=$3
+  local value
+
+  value=$(jq -er "$expression | select(type == \"string\" and length > 0)" <<<"$json") \
+    || die "$label is missing or invalid."
+  [[ $value != *$'\n'* && $value != *$'\r'* ]] || die "$label must be a single line."
+  printf '%s\n' "$value"
+}
+
+metadata_string() {
+  local issue=$1
+  local key=$2
+  local label=$3
+  local value
+
+  value=$(jq -er --arg key "$key" \
+    '.metadata[$key] | select(type == "string" and length > 0)' <<<"$issue") \
+    || die "$label is missing or invalid."
+  [[ $value != *$'\n'* && $value != *$'\r'* ]] || die "$label must be a single line."
+  printf '%s\n' "$value"
+}
+
+show_issue() {
+  local destination=$1
+  local issue_id=$2
+  local label=$3
+  local response
+
+  capture_json response "Beads ($label)" gc_json bd show "$issue_id" --json
+  printf -v "$destination" '%s' "$(single_issue "$response" "$label")"
+}
+
+phase_for_step() {
+  case "$1" in
+    *.load-context|*.workspace-setup) printf 'preparing\n' ;;
+    *.preflight-tests) printf 'pre-flight validation\n' ;;
+    *.implement) printf 'implementation\n' ;;
+    *.self-review) printf 'validation\n' ;;
+    *.commit-and-push) printf 'delivery\n' ;;
+    *) die "Active workflow phase is unsupported: $1" ;;
+  esac
+}
+
+convoy_tracks_issue() {
+  local convoy=$1
+  local issue_id=$2
+
+  jq -e --arg issue_id "$issue_id" '
+    any(.dependencies[]?;
+      ((.id // .depends_on_id // "") == $issue_id) and
+      ((.dependency_type // .type // "") == "tracks"))
+  ' >/dev/null <<<"$convoy"
+}
+
+derive_active_context() {
+  local current_issue=$1
+  local current_id=$2
+  local current_status
+  local workflows_response workflow convoy_id convoy_response convoy
+  local -a matching_workflows=()
+  local workflow_id session_name city_response steps_response current_step step_ref
+
+  CURRENT_OUTCOME=$(required_string "$current_issue" '.title' "Current outcome title")
+  current_status=$(required_string "$current_issue" '.status' "Current outcome status")
+
+  case "$current_status" in
+    open)
+      CURRENT_PHASE="queued"
+      CURRENT_AGENT="none"
+      return
+      ;;
+    in_progress) ;;
+    *) die "Current outcome $current_id has inconsistent status: $current_status" ;;
+  esac
+
+  capture_json workflows_response "Beads workflow inventory" \
+    gc_json bd list --status=in_progress --json
+  jq -e 'type == "array"' >/dev/null <<<"$workflows_response" \
+    || die "Beads workflow inventory is not an array."
+
+  while IFS= read -r workflow; do
+    convoy_id=$(metadata_string "$workflow" "gc.input_convoy_id" "Workflow input convoy")
+    capture_json convoy_response "Beads workflow convoy $convoy_id" \
+      gc_json bd show "$convoy_id" --json
+    convoy=$(single_issue "$convoy_response" "Workflow convoy $convoy_id")
+    if convoy_tracks_issue "$convoy" "$current_id"; then
+      matching_workflows+=("$workflow")
+    fi
+  done < <(jq -c '.[] | select(
+    .status == "in_progress" and
+    .metadata["gc.kind"] == "workflow" and
+    (.metadata["gc.input_convoy_id"] | type == "string" and length > 0))' \
+    <<<"$workflows_response")
+
+  if [[ ${#matching_workflows[@]} -eq 0 ]]; then
+    CURRENT_PHASE="in progress"
+    CURRENT_AGENT="none"
+    return
+  fi
+  [[ ${#matching_workflows[@]} -eq 1 ]] \
+    || die "Multiple active workflows track current outcome $current_id."
+
+  workflow=${matching_workflows[0]}
+  workflow_id=$(required_string "$workflow" '.id' "Active workflow ID")
+  session_name=$(metadata_string "$workflow" "gc.session_name" "Active workflow session")
+
+  capture_json city_response "Gas City status" gc_json status --json
+  jq -e '.ok == true and .health.usable == true and (.agents | type == "array")' \
+    >/dev/null <<<"$city_response" \
+    || die "Gas City status is unusable or lacks its agent inventory."
+  [[ $(jq --arg session "$session_name" \
+    '[.agents[] | select(.qualified_name == $session and .running == true)] | length' \
+    <<<"$city_response") -eq 1 ]] \
+    || die "Workflow session $session_name is not uniquely running in Gas City."
+
+  capture_json steps_response "Beads workflow steps" \
+    gc_json bd list --assignee="$session_name" --json
+  jq -e 'type == "array"' >/dev/null <<<"$steps_response" \
+    || die "Beads workflow step inventory is not an array."
+  current_step=$(jq -ce --arg root "$workflow_id" --arg session "$session_name" '
+    [.[] | select(
+      (.status == "open" or .status == "in_progress") and
+      .metadata["gc.root_bead_id"] == $root and
+      .metadata["gc.session_name"] == $session)] |
+    if length == 1 then .[0] else error("expected one current step") end
+  ' <<<"$steps_response") || die "Active workflow does not expose exactly one current step."
+  step_ref=$(metadata_string "$current_step" "gc.step_ref" "Active workflow step")
+
+  CURRENT_PHASE=$(phase_for_step "$step_ref")
+  CURRENT_AGENT=$session_name
+}
+
+check_summary() {
+  local checks=$1
+  local count states
+
+  jq -e 'type == "array"' >/dev/null <<<"$checks" \
+    || die "GitHub PR check rollup is missing or invalid."
+  count=$(jq 'length' <<<"$checks")
+  if [[ $count -eq 0 ]]; then
+    printf 'CI not configured\n'
+    return
+  fi
+
+  states=$(jq -c '[.[] | ((.conclusion // .state // "UNKNOWN") | ascii_upcase)]' <<<"$checks")
+  if jq -e 'all(.[]; . == "SUCCESS")' >/dev/null <<<"$states"; then
+    printf 'CI green (%s checks)\n' "$count"
+  elif jq -e 'any(.[]; . == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED")' \
+    >/dev/null <<<"$states"; then
+    printf 'CI failing (%s)\n' "$(jq -r 'join(", ")' <<<"$states")"
+  elif jq -e 'any(.[]; . == "PENDING" or . == "EXPECTED" or . == "QUEUED" or . == "IN_PROGRESS" or . == "UNKNOWN")' \
+    >/dev/null <<<"$states"; then
+    printf 'CI pending (%s)\n' "$(jq -r 'join(", ")' <<<"$states")"
+  else
+    printf 'CI not green (%s)\n' "$(jq -r 'join(", ")' <<<"$states")"
+  fi
+}
+
+derive_delivery() {
+  local delivered_issue=$1
+  local delivered_id=$2
+  local delivery_status work_outcome github_repo pr_number pr_head merge_commit
+  local pr_response check_rollup ci_evidence short_merge
+
+  LAST_OUTCOME=$(required_string "$delivered_issue" '.title' "Last delivered outcome title")
+  [[ $(required_string "$delivered_issue" '.status' "Last delivered outcome status") == closed ]] \
+    || die "Last delivered Bead $delivered_id is not closed."
+  delivery_status=$(metadata_string "$delivered_issue" "gc.delivery_status" "Delivery status")
+  work_outcome=$(metadata_string "$delivered_issue" "gc.work_outcome" "Delivery work outcome")
+  [[ $delivery_status == merged && $work_outcome == shipped ]] \
+    || die "Last delivered Bead $delivered_id is not recorded as shipped and merged."
+  github_repo=$(metadata_string "$delivered_issue" "gc.github_repo" "Delivered GitHub repository")
+  [[ $github_repo =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$ ]] \
+    || die "Delivered GitHub repository must be a valid owner/repository name."
+  pr_number=$(jq -er '.metadata["gc.pr_number"] |
+    select((type == "number" and . > 0 and floor == .) or (type == "string" and test("^[1-9][0-9]*$"))) |
+    tostring' <<<"$delivered_issue") || die "Last delivered PR number is missing or invalid."
+  pr_head=$(metadata_string "$delivered_issue" "gc.pr_head" "Delivered PR head")
+  merge_commit=$(metadata_string "$delivered_issue" "gc.merge_commit" "Delivered merge commit")
+  [[ $pr_head =~ ^[0-9a-f]{40}$ && $merge_commit =~ ^[0-9a-f]{40}$ ]] \
+    || die "Delivered Git commit metadata is invalid."
+
+  capture_json pr_response "GitHub PR $pr_number" gh_json pr view "$pr_number" \
+    --repo "$github_repo" \
+    --json number,state,mergedAt,mergeCommit,headRefOid,statusCheckRollup,url
+  jq -e --argjson number "$pr_number" --arg head "$pr_head" --arg merge "$merge_commit" '
+    .number == $number and
+    .state == "MERGED" and
+    (.mergedAt | type == "string" and length > 0) and
+    .headRefOid == $head and
+    .mergeCommit.oid == $merge
+  ' >/dev/null <<<"$pr_response" \
+    || die "GitHub PR $pr_number does not match the delivered Bead head and merge evidence."
+
+  check_rollup=$(jq -c '.statusCheckRollup' <<<"$pr_response")
+  ci_evidence=$(check_summary "$check_rollup")
+  short_merge=${merge_commit:0:12}
+  LAST_DELIVERY="PR $pr_number — merged as $short_merge; $ci_evidence"
+}
+
+main() {
+  local parent_response parent current_id current_issue last_id delivered_issue
+
+  case "${1:-}" in
+    "") ;;
+    -h|--help|help)
+      usage
+      return 0
+      ;;
+    *)
+      usage >&2
+      return 2
+      ;;
+  esac
+  [[ $# -eq 0 ]] || return 2
+
+  require_command jq
+  require_command "$GC_BIN"
+  require_command "$GH_BIN"
+
+  capture_json parent_response "Beads product coordination" \
+    gc_json bd show "$PRODUCT_ROOT_BEAD" --json
+  parent=$(single_issue "$parent_response" "Product coordination root $PRODUCT_ROOT_BEAD")
+  [[ $(required_string "$parent" '.id' "Product coordination root ID") == "$PRODUCT_ROOT_BEAD" ]] \
+    || die "Product coordination root ID is inconsistent."
+
+  current_id=$(jq -er '.metadata["gc.current_jit"] // "none" |
+    select(type == "string")' <<<"$parent") || die "Current outcome pointer is invalid."
+  if [[ -z $current_id || $current_id == none ]]; then
+    CURRENT_OUTCOME="none"
+    CURRENT_PHASE="idle"
+    CURRENT_AGENT="none"
+  else
+    show_issue current_issue "$current_id" "Current outcome $current_id"
+    derive_active_context "$current_issue" "$current_id"
+  fi
+
+  last_id=$(metadata_string "$parent" "gc.last_delivered" "Last delivered pointer")
+  show_issue delivered_issue "$last_id" "Last delivered outcome $last_id"
+  derive_delivery "$delivered_issue" "$last_id"
+
+  NEXT_OUTCOME=$(metadata_string "$parent" "gc.next_outcome" "Next approved outcome")
+  NEEDS_BENJAMIN=$(metadata_string "$parent" "gc.needs_benjamin" "Human decision")
+
+  printf 'SAYMYNAME\n'
+  printf 'CURRENT: %s — %s\n' "$CURRENT_OUTCOME" "$CURRENT_PHASE"
+  printf 'CURRENT AGENT: %s\n' "$CURRENT_AGENT"
+  printf 'LAST DELIVERED: %s — %s\n' "$LAST_OUTCOME" "$LAST_DELIVERY"
+  printf 'NEXT: %s\n' "$NEXT_OUTCOME"
+  printf 'NEEDS BENJAMIN: %s\n' "$NEEDS_BENJAMIN"
+}
+
+if [[ ${SAYMYNAME_PRODUCT_STATUS_SOURCE_ONLY:-0} != 1 ]]; then
+  main "$@"
+fi
