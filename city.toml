@@ -14,7 +14,7 @@ command = "/home/benja/.local/bin/claude"
 accept_startup_dialogs = true
 
 [providers.claude.env]
-CLAUDE_CONFIG_DIR = "/mnt/c/Users/benja/.claude"
+CLAUDE_CONFIG_DIR = "/home/benja/.claude"
 DISABLE_AUTOUPDATER = "1"
 
 [providers.claude.option_defaults]

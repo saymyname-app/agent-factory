@@ -150,7 +150,7 @@ Proven on 2026-09-12:
 
 - Gas City rigs `saymyname-backend` (`smb`, default `dev`) and `saymyname-frontend` (`smf`, default `dev`) were added with `gc rig add`, initialized in clean Linux clones, resumed, and backed up through registered Dolt backup remotes;
 - no generated `.beads`, `.gc`, `.codex` or ignore-file changes were committed to either application repository; the local rig clones exclude those runtime paths through `.git/info/exclude`;
-- Backend contract observed Java 21/Maven, Flyway/Testcontainers and GitHub `Backend CI` running `mvn -B -ntp -Pit verify`; local unit suites passed, while integration tests require a Docker engine not exposed to this WSL session;
+- Backend contract observed Java 21/Maven, Flyway/Testcontainers and GitHub `Backend CI` running `mvn -B -ntp -Pit verify`; local unit suites passed during M5. On 2026-09-13, after the pinned WSL/Docker remediation, the scoped `CourseKnowledgeTenantIsolationIT` integration canary also passed 2/2 locally with Ryuk, MySQL 8.0.41 and Flyway V1-V9;
 - Frontend contract observed Node 22/npm and GitHub `Frontend CI` running install, non-blocking lint, tests and build. The baseline lint has 197 errors/31 warnings; tests passed (108 unit plus 2 component) and build passed;
 - new work was created JIT in the Frontend store as bead `smf-0jx` with `delivery:standard`; no historical Done tickets were imported;
 - Gas City workflow `smf-7og` dispatched one Codex writer session `af-4g6`, whose effective command used `gpt-5.6-sol`;
