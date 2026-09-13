@@ -79,7 +79,7 @@ These classifications are deliberately separate: the three contracts are durable
 
 - **CONFIGURED:** default branch `dev`; one Codex/Sol writer; GitHub PR is the delivery boundary.
 - **OBSERVED:** Java 21, Maven and Spring Boot 3.3.1; `Backend CI` executes `mvn -B -ntp -Pit verify` on pull requests to `dev`/`main`; Flyway and Testcontainers/MySQL are present. The `dev` branch has no GitHub branch protection observable through the API.
-- **PROVEN locally:** unit test modules pass with Java 21. The web integration suite reaches Testcontainers but cannot start without a Docker endpoint in the current WSL environment; GitHub CI is authoritative for a STANDARD delivery.
+- **PROVEN locally:** unit test modules pass with Java 21. After the 2026-09-13 WSL/Docker remediation, `CourseKnowledgeTenantIsolationIT` passed 2/2 through Testcontainers, Ryuk, MySQL 8.0.41 and Flyway V1-V9. This scoped canary does not replace the full GitHub `Backend CI`, which remains authoritative for a STANDARD delivery.
 - **FAST:** documentation or bounded test-only maintenance with task-specific deterministic validation. **STANDARD:** ordinary bounded backend changes with `-Pit verify` green in GitHub CI. **GUARDED:** Flyway/schema changes, persistent data changes, production actions, secrets, security-sensitive changes or irreversible transitions.
 
 ### Frontend — `saymyname-frontend` / `smf`

@@ -33,6 +33,15 @@ GitHub CLI auth inside Ubuntu is required before repository operations.
 
 Docker Desktop and the factory Ubuntu distribution can coexist. They are separate WSL2 distributions.
 
+### 2026-09-13 stability remediation
+
+- **TARGET:** stable WSL `2.7.13` and Docker Desktop `4.90.0`, with the existing `Ubuntu-24.04` distribution, Docker Desktop WSL2 architecture, 10 GB memory, 6 GB swap, `autoMemoryReclaim=gradual`, and Resource Saver disabled for unattended operation.
+- **CONFIGURED:** WSL `2.7.13.0` in place with kernel `6.18.33.2-2`; Docker Desktop `4.90.0.238679` in place; `Ubuntu-24.04` integration enabled; `UseResourceSaver=false`; Claude Code uses Linux-native `CLAUDE_CONFIG_DIR=/home/benja/.claude`. The Windows Claude configuration is retained only as rollback.
+- **OBSERVED:** the former pair was WSL `2.6.3.0` / kernel `6.6.87.2-1` and Docker Desktop `4.34.3`, with Resource Saver enabled. A genuine WSL VM/session failure was captured independently of the interactive shell. Docker causality was not proven. Claude and `bd` processes were also observed waiting in `p9_client_rpc` while using Windows-backed paths.
+- **PROVEN:** 20 repeated Windows-to-Ubuntu probes passed; Docker `hello-world` passed; `CourseKnowledgeTenantIsolationIT` passed 2/2 with Ryuk, MySQL 8.0.41 and Flyway V1-V9; 15- and 30-minute idle windows passed; a 60.9-minute factory canary passed 13/13 independent WSL, Docker and Beads probes with zero timeouts and zero observed D-state `p9_client_rpc` backlog. Eight-hour unattended reliability remains unproven until an actual eight-hour run completes.
+
+Docker Engine `29.7.2` rejects the API `1.32` default used by the pinned Testcontainers/docker-java client. The reversible host-local compatibility setting is `~/.docker-java.properties` with `api.version=1.44`; do not encode this machine compatibility setting in an application repository. No native Ubuntu Docker daemon is used alongside Docker Desktop.
+
 Important Docker Desktop setting: if **Enable integration with my default WSL distro** is enabled and `Ubuntu-24.04` is the Windows default WSL distribution, Docker integrates with Ubuntu even when the per-distro `Ubuntu-24.04` toggle under "additional distros" is disabled. During M1 bootstrap, disable the default-distro integration as well so the City host is isolated from Docker's distro proxy. Re-enable Docker integration later only when a project needs it (for example Testcontainers) and after a dedicated canary proves WSL stability.
 
 `wsl --shutdown` stops the whole WSL VM set, including Docker Desktop's internal WSL distribution. Docker Desktop may therefore report that its WSL distro terminated abruptly after such a command. This is expected operational impact, not evidence that the factory Ubuntu distribution conflicts with Docker Desktop.
@@ -154,18 +163,19 @@ Verify configuration and subscription without repository writes:
 
 ```bash
 gc config explain --provider claude --json
-CLAUDE_CONFIG_DIR=/mnt/c/Users/benja/.claude DISABLE_AUTOUPDATER=1 \
+CLAUDE_CONFIG_DIR=/home/benja/.claude DISABLE_AUTOUPDATER=1 \
   /home/benja/.local/bin/claude -p --model claude-sonnet-5 \
   --permission-mode plan --output-format json \
   'Do not use tools. Reply exactly CLAUDE_SUBSCRIPTION_CANARY_OK'
 ```
 
-The direct probe on 2026-09-12 returned the marker and reported effective model
-`claude-sonnet-5` through the first-party subscription. The Linux CLI keeps
-first-run state separately from the shared subscription configuration; after
-copying only the non-secret onboarding flags locally, Gas City session
-`af-wisp-z5p9e` ran the resolved plan-mode command, returned
-`GAS_CITY_CLAUDE_CANARY_OK`, and was closed. No API key was introduced.
+Complete the supported Claude Code OAuth/onboarding flow inside Linux; never
+copy, print, or migrate credential material manually. The direct Linux-native
+probe on 2026-09-13 returned `CLAUDE_LINUX_NATIVE_CANARY_OK` using the Claude.ai
+Pro subscription. Gas City session `af-wisp-a1rvl` then returned
+`GAS_CITY_CLAUDE_LINUX_NATIVE_CANARY_OK` in plan mode. Normal Claude mutable
+configuration, plugin and cache paths resolve under `/home/benja`, not `/mnt/c`.
+No API key was introduced.
 
 Windows Ollama `0.33.3` exposes installed model `qwen3:8b` (~5.2 GB). A direct,
 tool-free synthetic canary returned `LOCAL_CANARY_OK` and selected `README.md`
@@ -276,7 +286,7 @@ gc doctor
 
 Gas City runtime paths generated inside application clones must remain untracked. Each clone uses local `.git/info/exclude` entries for `.beads/`, `.codex/`, `.gc/` and `rigs/`; do not modify an application `.gitignore` merely to host a rig.
 
-The host toolchains proven during M5 are Temurin Java `21.0.12.1`, Maven `3.9.9`, Node `22.23.2` and npm `10.9.8`. Backend integration verification needs Docker/Testcontainers; when Docker is unavailable locally, record that limitation and require the existing GitHub `Backend CI` before merge. Frontend full lint is a known non-gating baseline; require tests/build and task-scoped lint evidence rather than claiming the baseline is clean.
+The host toolchains proven during M5 are Temurin Java `21.0.12.1`, Maven `3.9.9`, Node `22.23.2` and npm `10.9.8`. Backend Docker/Testcontainers integration is now proven locally through the scoped `CourseKnowledgeTenantIsolationIT` canary; the existing GitHub `Backend CI` remains authoritative before merge. Frontend full lint is a known non-gating baseline; require tests/build and task-scoped lint evidence rather than claiming the baseline is clean.
 
 Each rig has a registered Dolt backup remote at `.dolt-backup/smb` or `.dolt-backup/smf`. Refresh them through the managed Dolt server before risky maintenance, using the port reported by `gc dolt status` and the official `CALL DOLT_BACKUP('sync', '<prefix>-backup')` primitive. These directories contain runtime data and remain excluded from Git.
 
