@@ -253,7 +253,7 @@ assert_no_active_rig_agents() {
       || die "Gas City rig $rig must remain suspended during preview."
 
     jq -e --arg prefix "$rig/" \
-      'all(.agents[]?; ((.qualified_name | startswith($prefix)) and .running == true) | not)' \
+      'all(.agents[]?; ((((.qualified_name // "") | startswith($prefix)) and (.running == true)) | not))' \
       <<<"$city_status" >/dev/null \
       || die "Gas City reports an active agent in $rig; refusing concurrent preview work."
   done
@@ -417,7 +417,7 @@ cleanup_owned_resources() {
 
 port_is_listening() {
   local port=$1
-  ss -ltnH "sport = :$port" 2>/dev/null | read -r _
+  [[ -n $(ss -ltnH "sport = :$port" 2>/dev/null) ]]
 }
 
 wait_for_url() {

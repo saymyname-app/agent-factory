@@ -111,6 +111,16 @@ GC_BIN=$(write_fake_gc true)
 assert_fails "an active rig agent must fail closed" \
   assert_no_active_rig_agents
 
+ss() {
+  printf 'LISTEN 0 511 127.0.0.1:8080 0.0.0.0:*\n'
+}
+assert_passes "an occupied port must be detected" port_is_listening 8080
+ss() {
+  :
+}
+assert_fails "a free port must not be reported as occupied" port_is_listening 8080
+unset -f ss
+
 STATE_DIR="$TEST_ROOT/state"
 RUN_DIR="$STATE_DIR/run"
 STATE_INITIALIZED=1

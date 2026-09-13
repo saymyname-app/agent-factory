@@ -444,7 +444,7 @@ requires manual investigation.
 - **TARGET:** provide one deterministic Factory-owned command that previews the latest merged application `dev` branches without mutating persistent application data.
 - **CONFIGURED:** the wrapper pins the canonical application remotes, `dev` branches, MySQL `8.0.41`, loopback application ports, an ephemeral database `tmpfs`, and generated preview-only configuration.
 - **OBSERVED:** Backend resolved to `2cba440d2815ded53dfea7bfd3beecdf57355c50` and Frontend to `b98e1ee176b7ed8af62987fdd84b35065b49c9e1`; MySQL used loopback-only random ports and both application repositories remained clean on `dev`.
-- **PROVEN:** clean start and restart cycles reached Backend HTTP `204` at `/api/auth/csrf` and Frontend HTTP `200`; independent status reported both healthy with the exact SHAs. Stop removed the owned process groups, container, and runtime state, after which status returned `3` and the preview listeners were absent. Eight deterministic safety tests also proved the repository, writer, and runtime-directory fail-closed checks.
+- **PROVEN:** clean start and restart cycles reached Backend HTTP `204` at `/api/auth/csrf` and Frontend HTTP `200`; independent status reported both healthy with the exact SHAs. Stop removed the owned process groups, container, and runtime state, after which status returned `3` and the preview listeners were absent. Ten deterministic safety tests also proved the repository, writer, port, and runtime-directory fail-closed checks.
 
 ### Legacy cutover boundary
 
