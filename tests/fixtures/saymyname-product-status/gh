@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+[[ ${1:-} == pr && ${2:-} == view && ${3:-} == 24 ]] || exit 64
+
+merge_commit="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+checks='[]'
+[[ ${STATUS_SCENARIO:-active} != mismatch ]] \
+  || merge_commit="cccccccccccccccccccccccccccccccccccccccc"
+[[ ${STATUS_SCENARIO:-active} != green ]] \
+  || checks='[{"conclusion":"SUCCESS"},{"conclusion":"SUCCESS"}]'
+cat <<JSON
+{"number":24,"state":"MERGED","mergedAt":"2026-09-13T22:46:33Z","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mergeCommit":{"oid":"$merge_commit"},"statusCheckRollup":$checks,"url":"https://github.example.invalid/pull/24"}
+JSON

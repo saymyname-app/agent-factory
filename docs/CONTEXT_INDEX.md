@@ -9,6 +9,7 @@ Use progressive disclosure. Do not read every document by default.
 | Current migration state, cutover and rollback | `MIGRATION.md` |
 | Install/start/stop/doctor/backup/restore/recovery | `OPERATIONS.md` |
 | Operator dashboard URL, lifecycle and recovery | `OPERATIONS.md` |
+| SayMyName product status command and recovery | `OPERATIONS.md` |
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Trust boundaries, secrets and concurrency | `SECURITY.md` |

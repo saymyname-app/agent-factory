@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+scenario=${STATUS_SCENARIO:-active}
+command_name=${1:-}
+
+emit_parent() {
+  local current="af-current"
+  local needs="none"
+
+  [[ $scenario != idle ]] || current="none"
+  [[ $scenario != human ]] || needs="Choose whether to prioritize bounded intent intake"
+  cat <<JSON
+[{"id":"af-1vr4","status":"in_progress","metadata":{"gc.current_jit":"$current","gc.last_delivered":"af-delivered","gc.next_outcome":"Evaluate supported ChatGPT plugin/MCP bridge","gc.needs_benjamin":"$needs"}}]
+JSON
+}
+
+emit_current() {
+  local status="in_progress"
+  [[ $scenario != human ]] || status="open"
+  cat <<JSON
+[{"id":"af-current","title":"Expose SayMyName product status summary","status":"$status","parent":"af-1vr4","metadata":{}}]
+JSON
+}
+
+emit_delivered() {
+  cat <<'JSON'
+[{"id":"af-delivered","title":"Deterministic local preview","status":"closed","parent":"af-1vr4","metadata":{"gc.delivery_status":"merged","gc.work_outcome":"shipped","gc.pr_number":24,"gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}]
+JSON
+}
+
+emit_workflows() {
+  cat <<'JSON'
+[{"id":"af-workflow","status":"in_progress","metadata":{"gc.kind":"workflow","gc.input_convoy_id":"af-convoy","gc.session_name":"codex-af-test"}}]
+JSON
+}
+
+emit_convoy() {
+  cat <<'JSON'
+[{"id":"af-convoy","status":"open","dependencies":[{"id":"af-current","dependency_type":"tracks"}],"metadata":{}}]
+JSON
+}
+
+emit_steps() {
+  cat <<'JSON'
+[{"id":"af-step","status":"open","assignee":"codex-af-test","metadata":{"gc.root_bead_id":"af-workflow","gc.session_name":"codex-af-test","gc.step_ref":"mol-polecat-commit.implement"}}]
+JSON
+}
+
+case "$command_name" in
+  show)
+    issue_id=${2:-}
+    [[ ${3:-} == --json ]] || exit 64
+    if [[ $scenario == source-failure && $issue_id == af-1vr4 ]]; then
+      printf 'fixture Beads outage\n' >&2
+      exit 42
+    fi
+    case "$issue_id" in
+      af-1vr4) emit_parent ;;
+      af-current) emit_current ;;
+      af-delivered) emit_delivered ;;
+      af-convoy) emit_convoy ;;
+      *) printf 'unknown fixture issue: %s\n' "$issue_id" >&2; exit 64 ;;
+    esac
+    ;;
+  list)
+    case "${2:-}" in
+      --status=in_progress) emit_workflows ;;
+      --assignee=codex-af-test) emit_steps ;;
+      *) printf 'unsupported fixture list: %s\n' "$*" >&2; exit 64 ;;
+    esac
+    ;;
+  *)
+    printf 'unsupported fixture bd command: %s\n' "$*" >&2
+    exit 64
+    ;;
+esac

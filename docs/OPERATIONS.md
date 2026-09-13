@@ -401,6 +401,52 @@ Each rig has a registered Dolt backup remote at `.dolt-backup/smb` or `.dolt-bac
 
 `accept_startup_dialogs = true` is configured on the Codex provider. This is the supported Gas City option that lets a newly materialized ephemeral session pass Codex's startup trust dialog; it does not weaken repository, GitHub or human delivery gates.
 
+### Deterministic product status
+
+From the canonical Factory checkout, print one product-oriented SayMyName
+snapshot with:
+
+```bash
+cd ~/agent-factory
+./bin/saymyname-product-status
+```
+
+The command is a read-only L0 projection. It reads coordination pointers from
+parent Bead `af-1vr4` (`gc.current_jit`, `gc.last_delivered`,
+`gc.next_outcome`, and `gc.needs_benjamin`), validates the referenced current
+and delivered child Beads, and derives an active delivery phase from the
+current Beads workflow. It prints a current agent only when `gc status --json`
+confirms that workflow's exact session is running. It validates the last
+delivery's PR number, head SHA, merge SHA, merged state, and check rollup with
+`gh pr view`; an empty rollup is reported as `CI not configured`, never as
+green. The output is emitted only after every required source agrees.
+
+The normal exit code is `0`; invalid usage returns `2`; an unavailable,
+missing, or inconsistent Beads, Gas City, or GitHub source returns `1` with a
+specific error on stderr and no partial snapshot. For recovery, inspect only
+the named authoritative source:
+
+```bash
+bd show af-1vr4 --json
+gc status --json
+gh auth status
+gh pr view <number> --repo benjamin-hurand/agent-factory \
+  --json number,state,mergedAt,mergeCommit,headRefOid,statusCheckRollup,url
+```
+
+Restore source availability or correct the parent coordination pointer at its
+authoritative Bead; do not copy product state into the wrapper or treat its
+output as a second backlog. `GC_BIN`, `BD_BIN`, and `GH_BIN` are injectable for
+the deterministic fixture suite, while the operator defaults remain `gc`,
+`bd`, and `gh`.
+
+#### 2026-09-14 product-status evidence
+
+- **TARGET:** expose current outcome and phase, applicable live agent, last delivered outcome with GitHub merge/CI evidence, approved next outcome, and a precise Benjamin decision without exposing Formula internals.
+- **CONFIGURED:** `bin/saymyname-product-status` uses only the existing `bd`, `gc`, `gh`, and `jq` primitives and parent `af-1vr4` coordination metadata; it has no database, service, dashboard, or write path.
+- **OBSERVED:** the live projection resolved `af-1vr4.2` to the active `codex-af-yzra` implementation session and validated Factory PR #24 at merge `1f680299144535331f308aa6e52b63bc1a22f24d` with no configured CI checks.
+- **PROVEN:** seven deterministic fixture scenarios cover active and idle work, a human decision, exact merged delivery, absent and green CI, mismatched GitHub evidence, source failure, and missing live-agent confirmation; the live command also completed successfully against Beads, Gas City, and GitHub.
+
 ### Deterministic local product preview
 
 Run the latest merged Backend and Frontend `dev` branches from the canonical
