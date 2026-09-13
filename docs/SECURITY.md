@@ -30,6 +30,10 @@ Secrets and provider credentials never go into:
 
 Use host/provider credential stores and grant only the credentials necessary for the current provider/repository.
 
+## Operator dashboard
+
+The Gas City dashboard is a local operator surface, not a public service. Keep its supervisor listener on `127.0.0.1`; the embedded UI can expose beads, workflow activity and provider transcripts. Windows browser access through WSL localhost forwarding stays within the supported host-local boundary. Any non-loopback bind, port publication or reverse proxy requires a separate security design covering authentication, authorization and transport encryption.
+
 ## Human gates
 
 Human approval is reserved for:

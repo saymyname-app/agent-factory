@@ -8,6 +8,7 @@ Use progressive disclosure. Do not read every document by default.
 | Durable target architecture | `TARGET_ARCHITECTURE.md` |
 | Current migration state, cutover and rollback | `MIGRATION.md` |
 | Install/start/stop/doctor/backup/restore/recovery | `OPERATIONS.md` |
+| Operator dashboard URL, lifecycle and recovery | `OPERATIONS.md` |
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
 | Trust boundaries, secrets and concurrency | `SECURITY.md` |
 | Structural decisions | `decisions/ADR-0001-foundation.md` |
