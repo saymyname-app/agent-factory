@@ -48,6 +48,15 @@ gate, or escalate the dependent decision; do not relax this boundary.
 
 The Gas City dashboard is a local operator surface, not a public service. Keep its supervisor listener on `127.0.0.1`; the embedded UI can expose beads, workflow activity and provider transcripts. Windows browser access through WSL localhost forwarding stays within the supported host-local boundary. Any non-loopback bind, port publication or reverse proxy requires a separate security design covering authentication, authorization and transport encryption.
 
+The reviewed exception is Tailscale Serve on the dedicated host: it terminates
+tailnet HTTPS and proxies to the unchanged `127.0.0.1:8372` listener. Access is
+limited by Tailscale identity and tailnet ACLs and is appropriate only for
+trusted operators, because the UI includes operational history and provider
+transcripts. Do not enable Tailscale Funnel, advertise a public URL, bind Gas
+City beyond loopback, or treat Serve as application-level authorization. Check
+the node's complete Serve configuration before resetting it so unrelated
+tailnet routes are not removed accidentally.
+
 ## Human gates
 
 Human approval is reserved for:
