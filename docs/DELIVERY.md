@@ -47,6 +47,50 @@ L4 multi-agent execution is not a delivery profile and requires a concrete, meas
 - `gc github pr` supplies GitHub PR monitoring where configured. GitHub remains authoritative for actual PR/check/merge state.
 - Provider inheritance supplies the pinned writer model; profile selection does not silently replace it.
 
+## External Evidence Gate
+
+This gate adapts Compound Engineering's [`ce-plan` Phase 1.2 research-intent
+triage](https://github.com/EveryInc/compound-engineering-plugin/blob/44d65ad64a0ac8e542eabee31ce031a7aeb41b28/skills/ce-plan/references/research.md#12-decide-on-external-research)
+at official commit `44d65ad64a0ac8e542eabee31ce031a7aeb41b28`: explicit external requests,
+intent classification, then local-pattern, risk, and uncertainty signals. This
+is a pinned policy reference, not an imported pack or delegated decision.
+
+The Mayor owns the judgment to **RUN**, **SKIP**, or mark external research
+**UNAVAILABLE**. Record that judgment and its rationale in the work Bead before
+it affects implementation. Deterministic signals may identify potentially
+stale, version-sensitive, security-sensitive, or disputed claims, but they are
+advisory: they do not launch research, establish truth, or replace the Mayor's
+judgment.
+
+- **RUN** when an unresolved external fact is material to a decision and cannot
+  be established from the repository, configured runtime, deterministic tools,
+  or already-recorded authoritative evidence.
+- **SKIP** for trivial deterministic work and when local source, tests, runtime
+  inspection, Beads, Git, or GitHub can answer the question authoritatively.
+- **UNAVAILABLE** when load-bearing evidence cannot be obtained without
+  speculation, prohibited disclosure, or an inaccessible source. Name the
+  missing evidence and the affected decision; narrow the claim, retain the
+  relevant gate, or escalate instead of presenting an unsupported conclusion.
+
+Research reuses upstream `mol-polecat-report` as a report-only route and stores
+the resulting Research Brief, or a durable link to it, in Beads notes. It does
+not authorize source changes. The research worker may mutate only workflow and
+Bead records needed to run and record the report. It must baseline Git HEAD and
+working-tree status before research and recheck both afterward; it must not edit
+files, create branches, push, comment, or otherwise mutate external systems.
+Use one researcher by default. Fan out to two or three researchers only when
+the Mayor records distinct, independent evidence axes and why parallel work has
+measured value; do not duplicate the same query. No custom research service,
+formula, broad methodology pack, or provider route is implied by this policy.
+
+Each run uses the reusable [Research Brief template](RESEARCH_BRIEF.md). Prefer
+dated primary official sources, identify the exact relevant product/runtime
+version, and explain why every finding applies to the current decision.
+Separate **TARGET**, **CONFIGURED**, **OBSERVED**, and **PROVEN** claims. Record
+risks and unknowns, confidence with a reason, and the evidence's concrete impact
+on the decision. Secondary sources may help discovery but cannot silently
+replace available primary evidence for a load-bearing claim.
+
 ## Selection and completion contract
 
 Choose the lowest-risk sufficient profile when creating the work bead and record the profile as a label (`delivery:fast`, `delivery:standard`, or `delivery:guarded`). The bead description names the repository, allowed scope, required deterministic validations and the merge authority. Risk escalation changes the profile before the risky step; it does not broaden the original authorization.
@@ -78,14 +122,16 @@ These classifications are deliberately separate: the three contracts are durable
 ### Backend — `saymyname-backend` / `smb`
 
 - **CONFIGURED:** default branch `dev`; one Codex/Sol writer; GitHub PR is the delivery boundary.
-- **OBSERVED:** Java 21, Maven and Spring Boot 3.3.1; `Backend CI` executes `mvn -B -ntp -Pit verify` on pull requests to `dev`/`main`; Flyway and Testcontainers/MySQL are present. The `dev` branch has no GitHub branch protection observable through the API.
+- **OBSERVED:** Java 21, Maven and Spring Boot 3.3.1; `Backend CI` executes `mvn -B -ntp -Pit verify` on pull requests to `dev`/`main`; Flyway and Testcontainers/MySQL are present. Active GitHub ruleset `22629508` requires the `Maven verify` status check.
+- **PROVEN GitHub cleanup:** PR #27 merged at `5fc753308a1522c5f4f5d0ccc98df69bc982cc7b` with the required check green.
 - **PROVEN locally:** unit test modules pass with Java 21. After the 2026-09-13 WSL/Docker remediation, `CourseKnowledgeTenantIsolationIT` passed 2/2 through Testcontainers, Ryuk, MySQL 8.0.41 and Flyway V1-V9. This scoped canary does not replace the full GitHub `Backend CI`, which remains authoritative for a STANDARD delivery.
 - **FAST:** documentation or bounded test-only maintenance with task-specific deterministic validation. **STANDARD:** ordinary bounded backend changes with `-Pit verify` green in GitHub CI. **GUARDED:** Flyway/schema changes, persistent data changes, production actions, secrets, security-sensitive changes or irreversible transitions.
 
 ### Frontend — `saymyname-frontend` / `smf`
 
 - **CONFIGURED:** default branch `dev`; one Codex/Sol writer; GitHub PR is the delivery boundary.
-- **OBSERVED:** Node 22/npm; `Frontend CI` runs `npm ci`, non-blocking `npm run lint`, `npm test`, and `npm run build` on pull requests to `dev`/`main`. The `dev` branch has no GitHub branch protection observable through the API.
+- **OBSERVED:** Node 22/npm; `Frontend CI` runs `npm ci`, non-blocking `npm run lint`, `npm test`, and `npm run build` on pull requests to `dev`/`main`. Active GitHub ruleset `22629678` requires the `Tests and build` status check.
+- **PROVEN GitHub cleanup:** PR #41 merged at `b98e1ee176b7ed8af62987fdd84b35065b49c9e1` with the required check green.
 - **PROVEN:** baseline tests pass (108 unit and 2 component) and the production build passes with CI placeholders. Full lint is currently non-gating and reports 197 errors/31 warnings; a task must still avoid introducing a scoped lint regression.
 - **FAST:** documentation, isolated tests or bounded low-risk maintenance. **STANDARD:** ordinary bounded UI bugs/features with tests and build green in GitHub CI. **GUARDED:** production deployment/configuration, secrets, irreversible operations, security-sensitive changes or substantive product decisions.
 
