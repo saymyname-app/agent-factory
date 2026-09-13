@@ -16,7 +16,6 @@ run_fixture() {
   local scenario=$1
   STATUS_SCENARIO="$scenario" \
     GC_BIN="$FIXTURE_ROOT/gc" \
-    BD_BIN="$FIXTURE_ROOT/bd" \
     GH_BIN="$FIXTURE_ROOT/gh" \
     "$STATUS_SCRIPT"
 }
@@ -87,7 +86,18 @@ NEEDS BENJAMIN: none
 EXPECTED
 )"
 
+assert_output routed "$(cat <<'EXPECTED'
+SAYMYNAME
+CURRENT: Implement backend product outcome — implementation
+CURRENT AGENT: codex-af-test
+LAST DELIVERED: Deliver frontend product outcome — PR 24 — merged as bbbbbbbbbbbb; CI not configured
+NEXT: Evaluate supported ChatGPT plugin/MCP bridge
+NEEDS BENJAMIN: none
+EXPECTED
+)"
+
 assert_failure mismatch "does not match the delivered Bead head and merge evidence"
+assert_failure invalid-repo "must be a valid owner/repository name"
 assert_failure source-failure "Beads product coordination source command failed"
 assert_failure agent-missing "is not uniquely running in Gas City"
 

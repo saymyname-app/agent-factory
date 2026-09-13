@@ -2,6 +2,11 @@
 
 set -Eeuo pipefail
 
+if [[ ${1:-} == bd ]]; then
+  fixture_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+  exec "$fixture_root/bd" "${@:2}"
+fi
+
 [[ ${1:-} == status && ${2:-} == --json ]] || exit 64
 
 running=true

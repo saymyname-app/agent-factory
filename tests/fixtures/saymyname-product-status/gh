@@ -4,6 +4,21 @@ set -Eeuo pipefail
 
 [[ ${1:-} == pr && ${2:-} == view && ${3:-} == 24 ]] || exit 64
 
+repo=""
+while [[ $# -gt 0 ]]; do
+  if [[ $1 == --repo ]]; then
+    repo=${2:-}
+    break
+  fi
+  shift
+done
+expected_repo="benjamin-hurand/agent-factory"
+[[ ${STATUS_SCENARIO:-active} != routed ]] || expected_repo="saymyname/frontend"
+[[ $repo == "$expected_repo" ]] || {
+  printf 'unexpected fixture repository: %s\n' "$repo" >&2
+  exit 64
+}
+
 merge_commit="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 checks='[]'
 [[ ${STATUS_SCENARIO:-active} != mismatch ]] \

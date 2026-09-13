@@ -4,10 +4,8 @@ set -Eeuo pipefail
 
 PROGRAM_NAME="saymyname-product-status"
 GC_BIN="${GC_BIN:-gc}"
-BD_BIN="${BD_BIN:-bd}"
 GH_BIN="${GH_BIN:-gh}"
 PRODUCT_ROOT_BEAD="${SAYMYNAME_PRODUCT_ROOT_BEAD:-af-1vr4}"
-FACTORY_GITHUB_REPO="${SAYMYNAME_FACTORY_GITHUB_REPO:-benjamin-hurand/agent-factory}"
 
 log() {
   printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2
@@ -33,10 +31,6 @@ require_command() {
 
 gc_json() {
   "$GC_BIN" "$@"
-}
-
-bd_json() {
-  "$BD_BIN" "$@"
 }
 
 gh_json() {
@@ -98,7 +92,7 @@ show_issue() {
   local label=$3
   local response
 
-  capture_json response "Beads ($label)" bd_json show "$issue_id" --json
+  capture_json response "Beads ($label)" gc_json bd show "$issue_id" --json
   printf -v "$destination" '%s' "$(single_issue "$response" "$label")"
 }
 
@@ -146,14 +140,14 @@ derive_active_context() {
   esac
 
   capture_json workflows_response "Beads workflow inventory" \
-    bd_json list --status=in_progress --json
+    gc_json bd list --status=in_progress --json
   jq -e 'type == "array"' >/dev/null <<<"$workflows_response" \
     || die "Beads workflow inventory is not an array."
 
   while IFS= read -r workflow; do
     convoy_id=$(metadata_string "$workflow" "gc.input_convoy_id" "Workflow input convoy")
     capture_json convoy_response "Beads workflow convoy $convoy_id" \
-      bd_json show "$convoy_id" --json
+      gc_json bd show "$convoy_id" --json
     convoy=$(single_issue "$convoy_response" "Workflow convoy $convoy_id")
     if convoy_tracks_issue "$convoy" "$current_id"; then
       matching_workflows+=("$workflow")
@@ -186,7 +180,7 @@ derive_active_context() {
     || die "Workflow session $session_name is not uniquely running in Gas City."
 
   capture_json steps_response "Beads workflow steps" \
-    bd_json list --assignee="$session_name" --json
+    gc_json bd list --assignee="$session_name" --json
   jq -e 'type == "array"' >/dev/null <<<"$steps_response" \
     || die "Beads workflow step inventory is not an array."
   current_step=$(jq -ce --arg root "$workflow_id" --arg session "$session_name" '
@@ -231,7 +225,7 @@ check_summary() {
 derive_delivery() {
   local delivered_issue=$1
   local delivered_id=$2
-  local delivery_status work_outcome pr_number pr_head merge_commit
+  local delivery_status work_outcome github_repo pr_number pr_head merge_commit
   local pr_response check_rollup ci_evidence short_merge
 
   LAST_OUTCOME=$(required_string "$delivered_issue" '.title' "Last delivered outcome title")
@@ -241,6 +235,9 @@ derive_delivery() {
   work_outcome=$(metadata_string "$delivered_issue" "gc.work_outcome" "Delivery work outcome")
   [[ $delivery_status == merged && $work_outcome == shipped ]] \
     || die "Last delivered Bead $delivered_id is not recorded as shipped and merged."
+  github_repo=$(metadata_string "$delivered_issue" "gc.github_repo" "Delivered GitHub repository")
+  [[ $github_repo =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$ ]] \
+    || die "Delivered GitHub repository must be a valid owner/repository name."
   pr_number=$(jq -er '.metadata["gc.pr_number"] |
     select((type == "number" and . > 0 and floor == .) or (type == "string" and test("^[1-9][0-9]*$"))) |
     tostring' <<<"$delivered_issue") || die "Last delivered PR number is missing or invalid."
@@ -250,7 +247,7 @@ derive_delivery() {
     || die "Delivered Git commit metadata is invalid."
 
   capture_json pr_response "GitHub PR $pr_number" gh_json pr view "$pr_number" \
-    --repo "$FACTORY_GITHUB_REPO" \
+    --repo "$github_repo" \
     --json number,state,mergedAt,mergeCommit,headRefOid,statusCheckRollup,url
   jq -e --argjson number "$pr_number" --arg head "$pr_head" --arg merge "$merge_commit" '
     .number == $number and
@@ -285,11 +282,10 @@ main() {
 
   require_command jq
   require_command "$GC_BIN"
-  require_command "$BD_BIN"
   require_command "$GH_BIN"
 
   capture_json parent_response "Beads product coordination" \
-    bd_json show "$PRODUCT_ROOT_BEAD" --json
+    gc_json bd show "$PRODUCT_ROOT_BEAD" --json
   parent=$(single_issue "$parent_response" "Product coordination root $PRODUCT_ROOT_BEAD")
   [[ $(required_string "$parent" '.id' "Product coordination root ID") == "$PRODUCT_ROOT_BEAD" ]] \
     || die "Product coordination root ID is inconsistent."
@@ -302,15 +298,11 @@ main() {
     CURRENT_AGENT="none"
   else
     show_issue current_issue "$current_id" "Current outcome $current_id"
-    [[ $(required_string "$current_issue" '.parent' "Current outcome parent") == "$PRODUCT_ROOT_BEAD" ]] \
-      || die "Current outcome $current_id is not a child of $PRODUCT_ROOT_BEAD."
     derive_active_context "$current_issue" "$current_id"
   fi
 
   last_id=$(metadata_string "$parent" "gc.last_delivered" "Last delivered pointer")
   show_issue delivered_issue "$last_id" "Last delivered outcome $last_id"
-  [[ $(required_string "$delivered_issue" '.parent' "Last delivered outcome parent") == "$PRODUCT_ROOT_BEAD" ]] \
-    || die "Last delivered outcome $last_id is not a child of $PRODUCT_ROOT_BEAD."
   derive_delivery "$delivered_issue" "$last_id"
 
   NEXT_OUTCOME=$(metadata_string "$parent" "gc.next_outcome" "Next approved outcome")
