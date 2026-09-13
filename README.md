@@ -27,6 +27,11 @@ Start with [`docs/CONTEXT_INDEX.md`](docs/CONTEXT_INDEX.md).
 
 Durable architecture, migration, operations, security and decisions live under `docs/`. Runtime work will live in Beads once the City is initialized.
 
+For a deterministic local preview of the latest merged SayMyName Backend and
+Frontend `dev` branches, use `./bin/saymyname-preview start` and
+`./bin/saymyname-preview stop`. The complete safety, status, recovery, and
+tailnet dashboard procedures are in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+
 ## Core constraints
 
 - One active controller per City.

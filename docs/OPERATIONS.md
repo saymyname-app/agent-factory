@@ -200,6 +200,58 @@ If the URL is unavailable:
 3. Run `gc restart` if the City is registered but the supervisor-owned UI or API remains unavailable, then repeat both health checks.
 4. If Ubuntu itself is unavailable, use the distribution-scoped WSL recovery in [WSL and Docker Desktop coexistence](#wsl-and-docker-desktop-coexistence); do not add a replacement dashboard server.
 
+### Tailnet HTTPS access with Tailscale Serve
+
+Tailscale Serve is the approved remote operator path for this host. It leaves
+the Gas City supervisor on loopback and publishes that loopback service only
+inside the authenticated tailnet. Tailscale Funnel is prohibited for the
+dashboard.
+
+The Windows Tailscale client is installed separately from Docker Desktop.
+Invoke it from WSL using its explicit path, and fail closed unless the Funnel
+status explicitly says the route is tailnet-only:
+
+```bash
+TAILSCALE_EXE='/mnt/c/Program Files/Tailscale/tailscale.exe'
+"$TAILSCALE_EXE" serve --bg --yes http://127.0.0.1:8372
+"$TAILSCALE_EXE" serve status --json | jq .
+FUNNEL_STATUS=$("$TAILSCALE_EXE" funnel status)
+printf '%s\n' "$FUNNEL_STATUS"
+case "$FUNNEL_STATUS" in
+  *'(Funnel on)'*) echo 'ERROR: public Funnel exposure is enabled' >&2; exit 1 ;;
+  *'(tailnet only)'*) ;;
+  *) echo 'ERROR: could not prove that Funnel is disabled' >&2; exit 1 ;;
+esac
+curl --fail --silent --show-error http://127.0.0.1:8372/health
+curl --fail --silent --show-error \
+  https://benforge.tail9f1386.ts.net/health
+```
+
+The browser URL is `https://benforge.tail9f1386.ts.net/`. Tailnet identity and
+ACL policy are the access boundary; never add `tailscale funnel`, change the
+supervisor bind address, or expose port `8372` directly.
+
+Stop this node's Serve configuration only after confirming it contains no
+other routes that must remain available:
+
+```bash
+"$TAILSCALE_EXE" serve status --json | jq .
+"$TAILSCALE_EXE" serve reset
+```
+
+After a supervisor, WSL, or Tailscale interruption, first restore `gc status`
+and the loopback `/health` response. Then check both `serve status` and `funnel
+status`, reapply the background Serve command if needed, prove the route still
+says `(tailnet only)`, and verify the tailnet HTTPS health URL. Do not work
+around a failure by enabling Funnel or a non-loopback listener.
+
+### 2026-09-14 Tailscale Serve evidence
+
+- **TARGET:** make the existing loopback-only dashboard available to authenticated tailnet operators over HTTPS without a public route.
+- **CONFIGURED:** Tailscale Serve maps HTTPS port `443` for `benforge.tail9f1386.ts.net` to `http://127.0.0.1:8372`; the Gas City listener remains on `127.0.0.1:8372`.
+- **OBSERVED:** the independently installed Windows Tailscale client reported version `1.102.4`, backend state `Running`, the node online, the HTTPS web proxy handler configured, and `funnel status` labeled the route `(tailnet only)`.
+- **PROVEN:** both the loopback and tailnet `/health` endpoints returned the same healthy Gas City `1.4.1` service, while the client reported no public Funnel route. This proves the path at the time of verification, not durable availability after restart.
+
 ### 2026-09-13 evidence
 
 - **TARGET:** use the dashboard embedded in the pinned Gas City supervisor, expose it on localhost only, and cover agents, beads, runs, activity/transcripts and health with a real SayMyName workflow as canary.
@@ -348,6 +400,67 @@ The host toolchains proven during M5 are Temurin Java `21.0.12.1`, Maven `3.9.9`
 Each rig has a registered Dolt backup remote at `.dolt-backup/smb` or `.dolt-backup/smf`. Refresh them through the managed Dolt server before risky maintenance, using the port reported by `gc dolt status` and the official `CALL DOLT_BACKUP('sync', '<prefix>-backup')` primitive. These directories contain runtime data and remain excluded from Git.
 
 `accept_startup_dialogs = true` is configured on the Codex provider. This is the supported Gas City option that lets a newly materialized ephemeral session pass Codex's startup trust dialog; it does not weaken repository, GitHub or human delivery gates.
+
+### Deterministic local product preview
+
+Run the latest merged Backend and Frontend `dev` branches from the canonical
+Factory checkout with:
+
+```bash
+cd ~/agent-factory
+./bin/saymyname-preview start
+./bin/saymyname-preview status
+./bin/saymyname-preview restart
+./bin/saymyname-preview stop
+```
+
+The host prerequisites are Docker Desktop WSL integration, Java 21, Maven,
+Node/npm, and `curl`, `jq`, `flock`, `openssl`, `ss`, and `git`. Both application
+rigs must be suspended, with no active rig writer. Their canonical Linux clones
+must be on `dev`, clean including untracked files, no commits ahead of
+`origin/dev`, and their only registered worktree. The command verifies the
+canonical GitHub remotes, fetches, and uses only
+`git merge --ff-only origin/dev`; it fails closed on dirty, wrong-branch, ahead, diverged,
+multi-worktree, or active-writer state.
+
+Each successful start builds both applications and creates a new preview-only
+runtime under `/run/user/<uid>/agent-factory/saymyname-preview` (or a guarded
+Linux `/tmp` fallback). It generates synthetic credentials and Spring config
+there without printing them. MySQL is pinned to `mysql:8.0.41`, stores its data
+on container `tmpfs`, and publishes a random loopback port. Backend and Frontend
+listen only on `127.0.0.1:8080` and `127.0.0.1:5173`; the browser URL is:
+
+```text
+http://127.0.0.1:5173/
+```
+
+This is a local preview, not a production deployment. It never uses a
+persistent database, production credentials, or production mail: the Backend
+runs its existing `dev` profile and console mailer with a synthetic Google
+audience. `status` prints the exact source SHAs and health without secrets; it
+returns `0` when healthy, `1` when degraded, and `3` when stopped.
+
+`stop` validates the run marker, process start times, process-group ownership,
+container label, and run ID before removing anything. On a degraded or stale
+run, inspect `status` and the runtime logs, then use `stop` and fix the reported
+repository, rig, port, Docker, or toolchain condition before `start` or
+`restart`. Never kill an arbitrary PID, free a port, or delete a similarly
+named container to make the preview pass; ownership uncertainty intentionally
+requires manual investigation.
+
+`status` and `stop` derive the City root from this Factory checkout, so they
+remain available when the Gas City API is down. `start` still requires usable
+Gas City health and suspended application rigs with no active writer. A custom
+`SAYMYNAME_PREVIEW_STATE_DIR` must be absolute and end with
+`/agent-factory/saymyname-preview`; the wrapper rejects broader targets before
+creating directories, changing permissions, or writing ownership state.
+
+#### 2026-09-14 preview evidence
+
+- **TARGET:** provide one deterministic Factory-owned command that previews the latest merged application `dev` branches without mutating persistent application data.
+- **CONFIGURED:** the wrapper pins the canonical application remotes, `dev` branches, MySQL `8.0.41`, loopback application ports, an ephemeral database `tmpfs`, and generated preview-only configuration.
+- **OBSERVED:** Backend resolved to `2cba440d2815ded53dfea7bfd3beecdf57355c50` and Frontend to `b98e1ee176b7ed8af62987fdd84b35065b49c9e1`; MySQL used loopback-only random ports and both application repositories remained clean on `dev`.
+- **PROVEN:** clean start and restart cycles reached Backend HTTP `204` at `/api/auth/csrf` and Frontend HTTP `200`; independent status reported both healthy with the exact SHAs. Stop removed the owned process groups, container, and runtime state, after which status returned `3` and the preview listeners were absent. Deterministic safety tests also prove the repository, writer, port, state-target, runtime-directory, and Gas-City-outage recovery checks.
 
 ### Legacy cutover boundary
 

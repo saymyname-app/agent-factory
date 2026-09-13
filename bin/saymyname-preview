@@ -1,0 +1,773 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+PROGRAM_NAME="saymyname-preview"
+BACKEND_RIG="saymyname-backend"
+FRONTEND_RIG="saymyname-frontend"
+BACKEND_ORIGIN="https://github.com/saymyname-app/Say-my-name-back.git"
+FRONTEND_ORIGIN="https://github.com/saymyname-app/Say-my-name-front.git"
+MYSQL_IMAGE="mysql:8.0.41"
+MYSQL_CONTAINER="agent-factory-saymyname-preview-mysql"
+OWNER_LABEL_KEY="com.agent-factory.preview"
+OWNER_LABEL_VALUE="saymyname"
+STATE_MARKER_VALUE="agent-factory-saymyname-preview-v1"
+BACKEND_PORT=8080
+FRONTEND_PORT=5173
+
+GC_BIN="${GC_BIN:-gc}"
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+START_IN_PROGRESS=0
+STATE_INITIALIZED=0
+
+log() {
+  printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2
+}
+
+die() {
+  local message=$1
+  local exit_code=${2:-1}
+
+  log "ERROR: $message"
+  if [[ $START_IN_PROGRESS -eq 1 ]]; then
+    START_IN_PROGRESS=0
+    log "Start failed; removing only resources owned by this preview run."
+    set +e
+    cleanup_owned_resources
+    set -e
+  fi
+  exit "$exit_code"
+}
+
+on_unexpected_error() {
+  local exit_code=$1
+  local line_number=$2
+
+  trap - ERR
+  log "ERROR: command failed at line $line_number (exit $exit_code)."
+  if [[ $START_IN_PROGRESS -eq 1 ]]; then
+    START_IN_PROGRESS=0
+    log "Start failed; removing only resources owned by this preview run."
+    set +e
+    cleanup_owned_resources
+    set -e
+  fi
+  exit "$exit_code"
+}
+
+on_signal() {
+  local signal_name=$1
+
+  trap - ERR INT TERM
+  log "Interrupted by $signal_name."
+  if [[ $START_IN_PROGRESS -eq 1 ]]; then
+    START_IN_PROGRESS=0
+    set +e
+    cleanup_owned_resources
+    set -e
+  fi
+  exit 130
+}
+
+trap 'on_unexpected_error $? $LINENO' ERR
+trap 'on_signal INT' INT
+trap 'on_signal TERM' TERM
+
+usage() {
+  cat <<'USAGE'
+Usage: saymyname-preview <start|status|stop|restart>
+
+  start    Safely sync dev, build both apps, and start the local preview
+  status   Report ownership, process/container health, exact SHAs, and URL
+  stop     Stop and destroy only preview-owned runtime resources
+  restart  Stop preview-owned resources, then perform a fresh safe start
+USAGE
+}
+
+require_command() {
+  local command_name=$1
+  command -v "$command_name" >/dev/null 2>&1 || die "Required command is unavailable: $command_name"
+}
+
+canonical_path() {
+  realpath -m -- "$1"
+}
+
+default_state_dir() {
+  local runtime_parent="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+  if [[ ! -d $runtime_parent || ! -w $runtime_parent ]]; then
+    runtime_parent="/tmp/agent-factory-$(id -u)"
+  fi
+  printf '%s/agent-factory/saymyname-preview\n' "$runtime_parent"
+}
+
+default_city_root() {
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P
+}
+
+assert_safe_state_dir_path() {
+  local state_dir=$1
+
+  case "$state_dir" in
+    */agent-factory/saymyname-preview) ;;
+    *)
+      die "Preview state directory must end with /agent-factory/saymyname-preview: $state_dir"
+      ;;
+  esac
+}
+
+initialize_context() {
+  local requested_state_dir
+
+  require_command realpath
+  require_command flock
+  require_command jq
+
+  CITY_ROOT=$(canonical_path "${SAYMYNAME_PREVIEW_CITY_ROOT:-$(default_city_root)}")
+
+  BACKEND_DIR=$(canonical_path "${SAYMYNAME_PREVIEW_BACKEND_DIR:-$CITY_ROOT/rigs/$BACKEND_RIG}")
+  FRONTEND_DIR=$(canonical_path "${SAYMYNAME_PREVIEW_FRONTEND_DIR:-$CITY_ROOT/rigs/$FRONTEND_RIG}")
+  requested_state_dir=${SAYMYNAME_PREVIEW_STATE_DIR:-$(default_state_dir)}
+  [[ $requested_state_dir == /* ]] || die "Preview state path must be absolute: $requested_state_dir"
+  [[ ! -L $requested_state_dir ]] \
+    || die "Preview state directory must not be a symbolic link: $requested_state_dir"
+  STATE_DIR=$(canonical_path "$requested_state_dir")
+  assert_safe_state_dir_path "$STATE_DIR"
+
+  case "$STATE_DIR" in
+    /mnt/c|/mnt/c/*)
+      die "Preview runtime state must stay on the Linux filesystem, not under /mnt/c."
+      ;;
+  esac
+
+  umask 077
+  mkdir -p -- "$STATE_DIR"
+  chmod 700 -- "$STATE_DIR"
+
+  if [[ -e $STATE_DIR/.owner ]]; then
+    [[ $(<"$STATE_DIR/.owner") == "$STATE_MARKER_VALUE" ]] \
+      || die "State directory has an unexpected ownership marker: $STATE_DIR"
+  else
+    printf '%s\n' "$STATE_MARKER_VALUE" >"$STATE_DIR/.owner"
+  fi
+
+  RUN_DIR="$STATE_DIR/run"
+  exec 9>"$STATE_DIR/lock"
+  flock -x 9
+  STATE_INITIALIZED=1
+}
+
+assert_state_owner() {
+  [[ $STATE_INITIALIZED -eq 1 ]] || die "Internal error: preview state is not initialized."
+  [[ -f $STATE_DIR/.owner ]] || die "Preview state ownership marker is missing: $STATE_DIR"
+  [[ $(<"$STATE_DIR/.owner") == "$STATE_MARKER_VALUE" ]] \
+    || die "Preview state ownership marker is invalid: $STATE_DIR"
+  [[ $RUN_DIR == "$STATE_DIR/run" && $RUN_DIR != / && $RUN_DIR != "$STATE_DIR" ]] \
+    || die "Refusing unsafe runtime cleanup target: $RUN_DIR"
+  [[ ! -L $RUN_DIR ]] || die "Preview runtime directory must not be a symbolic link: $RUN_DIR"
+}
+
+clear_run_dir() {
+  assert_state_owner
+  if [[ -e $RUN_DIR ]]; then
+    rm -rf -- "$RUN_DIR"
+  fi
+}
+
+state_write() {
+  local key=$1
+  local value=$2
+  local temporary_file="$RUN_DIR/.$key.tmp"
+
+  printf '%s\n' "$value" >"$temporary_file"
+  mv -f -- "$temporary_file" "$RUN_DIR/$key"
+}
+
+state_read() {
+  local key=$1
+
+  [[ -f $RUN_DIR/$key ]] || return 1
+  IFS= read -r REPLY <"$RUN_DIR/$key" || [[ -n ${REPLY:-} ]]
+  printf '%s\n' "${REPLY:-}"
+}
+
+normalize_origin() {
+  local origin=$1
+  origin=${origin%.git}
+  printf '%s\n' "$origin"
+}
+
+assert_single_canonical_worktree() {
+  local repo_dir=$1
+  local repo_real
+  local worktree_real
+  local -a worktrees=()
+
+  repo_real=$(canonical_path "$repo_dir")
+  mapfile -t worktrees < <(git -C "$repo_dir" worktree list --porcelain | sed -n 's/^worktree //p')
+  [[ ${#worktrees[@]} -eq 1 ]] \
+    || die "$repo_dir must have exactly one worktree; found ${#worktrees[@]}."
+  worktree_real=$(canonical_path "${worktrees[0]}")
+  [[ $worktree_real == "$repo_real" ]] \
+    || die "$repo_dir is not the repository's sole canonical worktree."
+}
+
+assert_repo_safe() {
+  local repo_dir=$1
+  local expected_origin=$2
+  local phase=$3
+  local branch
+  local actual_origin
+  local ahead
+  local behind
+
+  [[ -d $repo_dir ]] || die "Canonical repository is missing: $repo_dir"
+  git -C "$repo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || die "Not a Git worktree: $repo_dir"
+
+  branch=$(git -C "$repo_dir" symbolic-ref --quiet --short HEAD) \
+    || die "$repo_dir has a detached HEAD during $phase."
+  [[ $branch == dev ]] || die "$repo_dir must be on dev during $phase; found $branch."
+
+  [[ -z $(git -C "$repo_dir" status --porcelain=v1 --untracked-files=all) ]] \
+    || die "$repo_dir is not clean during $phase; no files were changed or stashed."
+
+  actual_origin=$(git -C "$repo_dir" remote get-url origin) \
+    || die "$repo_dir has no origin remote."
+  [[ $(normalize_origin "$actual_origin") == $(normalize_origin "$expected_origin") ]] \
+    || die "$repo_dir origin is not the expected canonical GitHub repository."
+
+  assert_single_canonical_worktree "$repo_dir"
+
+  git -C "$repo_dir" show-ref --verify --quiet refs/remotes/origin/dev \
+    || die "$repo_dir has no origin/dev tracking ref."
+  read -r ahead behind < <(git -C "$repo_dir" rev-list --left-right --count dev...origin/dev)
+  [[ $ahead -eq 0 ]] \
+    || die "$repo_dir dev is ahead or diverged during $phase (ahead=$ahead, behind=$behind)."
+}
+
+assert_no_active_rig_agents() {
+  local city_status
+  local rig
+
+  city_status=$("$GC_BIN" status --json) || die "Gas City status is unavailable; refusing preview start."
+  jq -e '.health.usable == true' <<<"$city_status" >/dev/null \
+    || die "Gas City health is not usable; refusing preview start."
+  jq -e '.agents | type == "array"' <<<"$city_status" >/dev/null \
+    || die "Gas City agent inventory is missing or malformed; refusing preview start."
+
+  for rig in "$BACKEND_RIG" "$FRONTEND_RIG"; do
+    jq -e --arg rig "$rig" \
+      'any(.rigs[]?; .name == $rig and .suspended == true)' \
+      <<<"$city_status" >/dev/null \
+      || die "Gas City rig $rig must remain suspended during preview."
+
+    jq -e --arg prefix "$rig/" \
+      'all(.agents[]; ((((.qualified_name // "") | startswith($prefix)) and (.running == true)) | not))' \
+      <<<"$city_status" >/dev/null \
+      || die "Gas City reports an active agent in $rig; refusing concurrent preview work."
+  done
+}
+
+sync_repo() {
+  local repo_dir=$1
+  local expected_origin=$2
+
+  git -C "$repo_dir" fetch --prune origin
+  assert_repo_safe "$repo_dir" "$expected_origin" "post-fetch"
+  git -C "$repo_dir" merge --ff-only origin/dev
+  assert_repo_safe "$repo_dir" "$expected_origin" "post-fast-forward"
+}
+
+process_start_time() {
+  local pid=$1
+  awk '{sub(/^.*\) /, ""); print $20}' "/proc/$pid/stat"
+}
+
+process_has_run_id() {
+  local pid=$1
+  local expected_run_id=$2
+  local entry
+
+  [[ -r /proc/$pid/environ ]] || return 1
+  while IFS= read -r -d '' entry; do
+    if [[ $entry == "SAYMYNAME_PREVIEW_RUN_ID=$expected_run_id" ]]; then
+      return 0
+    fi
+  done <"/proc/$pid/environ"
+  return 1
+}
+
+process_is_owned_and_running() {
+  local component=$1
+  local pid
+  local expected_start
+  local expected_run_id
+  local current_start
+
+  pid=$(state_read "$component.pid") || return 1
+  expected_start=$(state_read "$component.start") || return 2
+  expected_run_id=$(state_read run.id) || return 2
+  [[ $pid =~ ^[1-9][0-9]*$ ]] || return 2
+  [[ -r /proc/$pid/stat ]] || return 1
+  current_start=$(process_start_time "$pid") || return 1
+  [[ $current_start == "$expected_start" ]] || return 2
+  process_has_run_id "$pid" "$expected_run_id" || return 2
+  return 0
+}
+
+record_process() {
+  local component=$1
+  local pid=$2
+  local start_time
+
+  start_time=$(process_start_time "$pid") \
+    || die "Could not record $component process ownership (PID $pid)."
+  state_write "$component.pid" "$pid"
+  state_write "$component.start" "$start_time"
+}
+
+stop_owned_process() {
+  local component=$1
+  local pid
+  local pgid
+  local attempt
+
+  [[ -f $RUN_DIR/$component.pid ]] || return 0
+  pid=$(state_read "$component.pid") || return 0
+
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  if ! process_is_owned_and_running "$component"; then
+    log "Refusing to stop PID $pid: $component ownership metadata does not match."
+    return 1
+  fi
+
+  pgid=$(ps -o pgid= -p "$pid" | tr -d '[:space:]')
+  if [[ $pgid != "$pid" ]]; then
+    log "Refusing to stop PID $pid: expected an isolated process group, found $pgid."
+    return 1
+  fi
+
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  for attempt in {1..50}; do
+    if ! kill -0 -- "-$pgid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  kill -KILL -- "-$pgid" 2>/dev/null || true
+  for attempt in {1..25}; do
+    if ! kill -0 -- "-$pgid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  log "Preview-owned $component process group $pgid did not stop."
+  return 1
+}
+
+container_label() {
+  local container_ref=$1
+  local label_key=$2
+
+  "$DOCKER_BIN" inspect --format "{{index .Config.Labels \"$label_key\"}}" "$container_ref" 2>/dev/null
+}
+
+container_is_owned() {
+  local container_ref=$1
+  local expected_run_id
+
+  expected_run_id=$(state_read run.id) || return 1
+  [[ $(container_label "$container_ref" "$OWNER_LABEL_KEY" 2>/dev/null || true) == "$OWNER_LABEL_VALUE" ]] || return 1
+  [[ $(container_label "$container_ref" com.agent-factory.city-root 2>/dev/null || true) == "$CITY_ROOT" ]] || return 1
+  [[ $(container_label "$container_ref" com.agent-factory.preview-run-id 2>/dev/null || true) == "$expected_run_id" ]]
+}
+
+remove_owned_container() {
+  local container_ref=$1
+
+  if ! "$DOCKER_BIN" inspect "$container_ref" >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! container_is_owned "$container_ref"; then
+    log "Refusing to remove container $container_ref: City/run ownership labels do not match."
+    return 1
+  fi
+  "$DOCKER_BIN" rm --force "$container_ref" >/dev/null
+}
+
+cleanup_owned_resources() {
+  local cleanup_failed=0
+  local container_ref
+
+  if [[ $STATE_INITIALIZED -ne 1 ]]; then
+    return 0
+  fi
+  assert_state_owner || return 1
+
+  stop_owned_process frontend || cleanup_failed=1
+  stop_owned_process backend || cleanup_failed=1
+
+  if [[ -f $RUN_DIR/mysql.cid ]]; then
+    container_ref=$(state_read mysql.cid) || container_ref=$MYSQL_CONTAINER
+  else
+    container_ref=$MYSQL_CONTAINER
+  fi
+  remove_owned_container "$container_ref" || cleanup_failed=1
+
+  if [[ $cleanup_failed -eq 0 ]]; then
+    clear_run_dir
+  else
+    log "Runtime state was preserved because at least one resource could not be safely removed."
+  fi
+  return "$cleanup_failed"
+}
+
+port_is_listening() {
+  local port=$1
+  [[ -n $(ss -ltnH "sport = :$port" 2>/dev/null) ]]
+}
+
+wait_for_url() {
+  local component=$1
+  local url=$2
+  local attempts=$3
+  local attempt
+
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if curl --fail --silent --show-error --output /dev/null --max-time 2 "$url" 2>/dev/null; then
+      return 0
+    fi
+    if ! process_is_owned_and_running "$component"; then
+      log "$component exited before readiness. Last log lines:"
+      tail -n 60 "$RUN_DIR/$component.log" >&2 2>/dev/null || true
+      return 1
+    fi
+    sleep 0.5
+  done
+
+  log "$component did not become ready at $url. Last log lines:"
+  tail -n 60 "$RUN_DIR/$component.log" >&2 2>/dev/null || true
+  return 1
+}
+
+wait_for_mysql() {
+  local container_ref=$1
+  local attempt
+
+  for attempt in {1..120}; do
+    if "$DOCKER_BIN" exec "$container_ref" sh -ceu \
+      'MYSQL_PWD="$(cat "$MYSQL_PASSWORD_FILE")" exec mysqladmin ping --host=127.0.0.1 --user="$MYSQL_USER" --silent' \
+      >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ $("$DOCKER_BIN" inspect --format '{{.State.Running}}' "$container_ref" 2>/dev/null || true) != true ]]; then
+      log "MySQL container exited before readiness. Last log lines:"
+      "$DOCKER_BIN" logs --tail 60 "$container_ref" >&2 2>/dev/null || true
+      return 1
+    fi
+    sleep 0.5
+  done
+
+  log "MySQL did not become ready. Last log lines:"
+  "$DOCKER_BIN" logs --tail 60 "$container_ref" >&2 2>/dev/null || true
+  return 1
+}
+
+create_synthetic_configuration() {
+  local mysql_port=$1
+  local mysql_password
+  local jwt_secret
+  local config_dir="$RUN_DIR/config"
+
+  mysql_password=$(<"$RUN_DIR/mysql-secrets/password")
+  jwt_secret=$(<"$RUN_DIR/app-secrets/jwt")
+
+  printf '%s\n' "preview" >"$config_dir/db.username"
+  printf '%s\n' "$mysql_password" >"$config_dir/db.password"
+  printf '%s\n' "jdbc:mysql://127.0.0.1:$mysql_port/saymyname?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC" >"$config_dir/db.url"
+  printf '%s\n' "preview" >"$config_dir/spring.flyway.user"
+  printf '%s\n' "$mysql_password" >"$config_dir/spring.flyway.password"
+  printf '%s\n' "jdbc:mysql://127.0.0.1:$mysql_port/saymyname?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC" >"$config_dir/spring.flyway.url"
+  printf '%s\n' "$jwt_secret" >"$config_dir/app.jwt.secret-base64"
+  printf '%s\n' "127.0.0.1" >"$config_dir/server.address"
+  printf '%s\n' "$BACKEND_PORT" >"$config_dir/server.port"
+  printf '%s\n' "$RUN_DIR/photos" >"$config_dir/photos.storage.root"
+  printf '%s\n' "http://127.0.0.1:$FRONTEND_PORT,http://localhost:$FRONTEND_PORT" >"$config_dir/security.cors.allowed-origins"
+  printf '%s\n' "preview-only.invalid" >"$config_dir/security.google.allowed-audiences"
+  printf '%s\n' "http://127.0.0.1:$FRONTEND_PORT" >"$config_dir/app.frontend.base-url"
+  chmod 600 -- "$config_dir"/*
+}
+
+prepare_run_state() {
+  local run_id
+
+  clear_run_dir
+  mkdir -p -- "$RUN_DIR/config" "$RUN_DIR/mysql-secrets" "$RUN_DIR/app-secrets" "$RUN_DIR/photos"
+  chmod 700 -- "$RUN_DIR" "$RUN_DIR/config" "$RUN_DIR/mysql-secrets" "$RUN_DIR/app-secrets" "$RUN_DIR/photos"
+  run_id=$(openssl rand -hex 16)
+  state_write run.id "$run_id"
+  openssl rand -hex 24 >"$RUN_DIR/mysql-secrets/root-password"
+  openssl rand -hex 24 >"$RUN_DIR/mysql-secrets/password"
+  openssl rand -base64 48 | tr -d '\n' >"$RUN_DIR/app-secrets/jwt"
+  printf '\n' >>"$RUN_DIR/app-secrets/jwt"
+  chmod 600 -- "$RUN_DIR/mysql-secrets"/* "$RUN_DIR/app-secrets"/*
+}
+
+run_state_kind() {
+  local backend_state=stopped
+  local frontend_state=stopped
+  local mysql_state=stopped
+  local cid
+
+  [[ -d $RUN_DIR ]] || {
+    printf 'stopped\n'
+    return 0
+  }
+
+  if process_is_owned_and_running backend; then
+    backend_state=running
+  elif [[ $? -eq 2 ]]; then
+    backend_state=foreign
+  fi
+  if process_is_owned_and_running frontend; then
+    frontend_state=running
+  elif [[ $? -eq 2 ]]; then
+    frontend_state=foreign
+  fi
+
+  if cid=$(state_read mysql.cid 2>/dev/null) && "$DOCKER_BIN" inspect "$cid" >/dev/null 2>&1; then
+    if ! container_is_owned "$cid"; then
+      mysql_state=foreign
+    elif [[ $("$DOCKER_BIN" inspect --format '{{.State.Running}}' "$cid" 2>/dev/null || true) == true ]]; then
+      mysql_state=running
+    else
+      mysql_state=stopped
+    fi
+  fi
+
+  if [[ $backend_state == running && $frontend_state == running && $mysql_state == running ]]; then
+    printf 'running\n'
+  elif [[ $backend_state == stopped && $frontend_state == stopped && $mysql_state == stopped ]]; then
+    printf 'stale\n'
+  else
+    printf 'degraded\n'
+  fi
+}
+
+print_status() {
+  local kind
+  local backend_sha=unknown
+  local frontend_sha=unknown
+  local mysql_port=unknown
+  local backend_health=down
+  local frontend_health=down
+
+  kind=$(run_state_kind)
+  if [[ -d $RUN_DIR ]]; then
+    backend_sha=$(state_read backend.sha 2>/dev/null || printf 'unknown')
+    frontend_sha=$(state_read frontend.sha 2>/dev/null || printf 'unknown')
+    mysql_port=$(state_read mysql.port 2>/dev/null || printf 'unknown')
+  fi
+  if [[ $kind == running ]]; then
+    curl --fail --silent --output /dev/null --max-time 2 "http://127.0.0.1:$BACKEND_PORT/api/auth/csrf" 2>/dev/null \
+      && backend_health=ready
+    curl --fail --silent --output /dev/null --max-time 2 "http://127.0.0.1:$FRONTEND_PORT/" 2>/dev/null \
+      && frontend_health=ready
+    if [[ $backend_health != ready || $frontend_health != ready ]]; then
+      kind=degraded
+    fi
+  fi
+
+  printf 'STATE=%s\n' "$kind"
+  printf 'BACKEND_SHA=%s\n' "$backend_sha"
+  printf 'FRONTEND_SHA=%s\n' "$frontend_sha"
+  printf 'MYSQL=127.0.0.1:%s (%s)\n' "$mysql_port" "$MYSQL_IMAGE"
+  printf 'BACKEND_HEALTH=%s\n' "$backend_health"
+  printf 'FRONTEND_HEALTH=%s\n' "$frontend_health"
+  printf 'BROWSER_URL=http://127.0.0.1:%s/\n' "$FRONTEND_PORT"
+
+  case "$kind" in
+    running) return 0 ;;
+    stopped) return 3 ;;
+    *) return 1 ;;
+  esac
+}
+
+start_preview() {
+  local existing_state
+  local backend_sha
+  local frontend_sha
+  local cid
+  local mysql_mapping
+  local mysql_port
+  local run_id
+  local backend_pid
+  local frontend_pid
+  local backend_jar="$BACKEND_DIR/webapp/target/webapp-1.0-SNAPSHOT.jar"
+
+  require_command git
+  require_command sed
+  require_command ss
+  require_command curl
+  require_command openssl
+  require_command mvn
+  require_command npm
+  require_command java
+  require_command setsid
+  require_command ps
+  require_command tail
+  require_command "$DOCKER_BIN"
+
+  assert_repo_safe "$BACKEND_DIR" "$BACKEND_ORIGIN" "pre-fetch"
+  assert_repo_safe "$FRONTEND_DIR" "$FRONTEND_ORIGIN" "pre-fetch"
+  assert_no_active_rig_agents
+
+  existing_state=$(run_state_kind)
+  if [[ $existing_state == running ]]; then
+    log "Preview is already running; use restart to sync a newer dev."
+    print_status
+    return 0
+  fi
+  if [[ $existing_state != stopped ]]; then
+    log "Recovering preview-owned stale or partial runtime state."
+    cleanup_owned_resources || die "Stale runtime state could not be removed safely."
+  fi
+
+  sync_repo "$BACKEND_DIR" "$BACKEND_ORIGIN"
+  sync_repo "$FRONTEND_DIR" "$FRONTEND_ORIGIN"
+  backend_sha=$(git -C "$BACKEND_DIR" rev-parse HEAD)
+  frontend_sha=$(git -C "$FRONTEND_DIR" rev-parse HEAD)
+
+  log "Building Backend dev at $backend_sha with Maven."
+  (cd "$BACKEND_DIR" && mvn -pl webapp -am -DskipUnitTests=true package)
+  [[ -f $backend_jar ]] || die "Backend build did not produce $backend_jar"
+
+  log "Installing and building Frontend dev at $frontend_sha with npm."
+  (cd "$FRONTEND_DIR" && npm ci && npm run build)
+
+  assert_repo_safe "$BACKEND_DIR" "$BACKEND_ORIGIN" "post-build"
+  assert_repo_safe "$FRONTEND_DIR" "$FRONTEND_ORIGIN" "post-build"
+  assert_no_active_rig_agents
+  port_is_listening "$BACKEND_PORT" && die "Port $BACKEND_PORT is already in use."
+  port_is_listening "$FRONTEND_PORT" && die "Port $FRONTEND_PORT is already in use."
+
+  prepare_run_state
+  START_IN_PROGRESS=1
+  state_write backend.sha "$backend_sha"
+  state_write frontend.sha "$frontend_sha"
+
+  remove_owned_container "$MYSQL_CONTAINER" \
+    || die "A non-preview container blocks the reserved name $MYSQL_CONTAINER."
+  log "Starting ephemeral $MYSQL_IMAGE on a loopback-only random port."
+  cid=$("$DOCKER_BIN" run --detach \
+    --name "$MYSQL_CONTAINER" \
+    --label "$OWNER_LABEL_KEY=$OWNER_LABEL_VALUE" \
+    --label "com.agent-factory.city-root=$CITY_ROOT" \
+    --label "com.agent-factory.preview-run-id=$(state_read run.id)" \
+    --tmpfs /var/lib/mysql:rw,nosuid,noexec,size=1g \
+    --mount "type=bind,src=$RUN_DIR/mysql-secrets,dst=/run/agent-factory-preview-secrets,readonly" \
+    --publish 127.0.0.1::3306 \
+    --env MYSQL_DATABASE=saymyname \
+    --env MYSQL_USER=preview \
+    --env MYSQL_PASSWORD_FILE=/run/agent-factory-preview-secrets/password \
+    --env MYSQL_ROOT_PASSWORD_FILE=/run/agent-factory-preview-secrets/root-password \
+    "$MYSQL_IMAGE")
+  state_write mysql.cid "$cid"
+  mysql_mapping=$("$DOCKER_BIN" port "$cid" 3306/tcp)
+  mysql_port=${mysql_mapping##*:}
+  [[ $mysql_port =~ ^[1-9][0-9]*$ ]] || die "Could not resolve the ephemeral MySQL host port."
+  state_write mysql.port "$mysql_port"
+  wait_for_mysql "$cid" || die "Ephemeral MySQL readiness check failed."
+
+  create_synthetic_configuration "$mysql_port"
+  run_id=$(state_read run.id)
+
+  log "Starting Backend on http://127.0.0.1:$BACKEND_PORT."
+  (
+    cd "$BACKEND_DIR"
+    exec 9>&-
+    exec setsid env \
+      SAYMYNAME_PREVIEW_RUN_ID="$run_id" \
+      SPRING_PROFILES_ACTIVE=dev \
+      SPRING_CONFIG_IMPORT="configtree:$RUN_DIR/config/" \
+      java -jar "$backend_jar"
+  ) >"$RUN_DIR/backend.log" 2>&1 < /dev/null &
+  backend_pid=$!
+  record_process backend "$backend_pid"
+  wait_for_url backend "http://127.0.0.1:$BACKEND_PORT/api/auth/csrf" 180 \
+    || die "Backend readiness check failed."
+
+  log "Starting Frontend on http://127.0.0.1:$FRONTEND_PORT."
+  (
+    cd "$FRONTEND_DIR"
+    exec 9>&-
+    exec setsid env \
+      SAYMYNAME_PREVIEW_RUN_ID="$run_id" \
+      VITE_API_BASE_URL="http://127.0.0.1:$BACKEND_PORT/api" \
+      VITE_GOOGLE_CLIENT_ID="preview-only.invalid" \
+      npm run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort
+  ) >"$RUN_DIR/frontend.log" 2>&1 < /dev/null &
+  frontend_pid=$!
+  record_process frontend "$frontend_pid"
+  wait_for_url frontend "http://127.0.0.1:$FRONTEND_PORT/" 120 \
+    || die "Frontend readiness check failed."
+
+  START_IN_PROGRESS=0
+  log "Preview is ready. Synthetic credentials are preview-only and were not printed."
+  print_status
+}
+
+stop_preview() {
+  if [[ $(run_state_kind) == stopped && ! -d $RUN_DIR ]]; then
+    log "Preview is already stopped."
+    return 0
+  fi
+  cleanup_owned_resources || die "One or more resources were not stopped because ownership could not be proven."
+  log "Preview-owned processes, container, and ephemeral runtime state were removed."
+}
+
+restart_preview() {
+  cleanup_owned_resources || die "Existing preview resources could not be stopped safely."
+  start_preview
+}
+
+main() {
+  local action=${1:-}
+
+  case "$action" in
+    start|status|stop|restart) ;;
+    -h|--help|help)
+      usage
+      return 0
+      ;;
+    *)
+      usage >&2
+      return 2
+      ;;
+  esac
+  [[ $# -eq 1 ]] || die "Expected exactly one action."
+
+  initialize_context
+  case "$action" in
+    start) start_preview ;;
+    status)
+      if print_status; then
+        return 0
+      else
+        local status_code=$?
+        trap - ERR
+        return "$status_code"
+      fi
+      ;;
+    stop) stop_preview ;;
+    restart) restart_preview ;;
+  esac
+}
+
+if [[ ${SAYMYNAME_PREVIEW_SOURCE_ONLY:-0} != 1 ]]; then
+  main "$@"
+fi
