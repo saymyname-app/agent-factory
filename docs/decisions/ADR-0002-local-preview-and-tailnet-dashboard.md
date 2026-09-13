@@ -23,10 +23,12 @@ loopback-only dashboard without making its operational data public.
    no persistent or production database and no production secret is accepted.
 4. Application listeners and the database port stay on loopback. Cleanup acts
    only on processes, state, and a container whose exact run ownership is
-   proven.
+   proven. State paths must retain the Factory preview namespace, and broad
+   filesystem targets are rejected before any directory or permission change.
 5. Remote dashboard access uses Tailscale Serve to proxy HTTPS within the
    authenticated tailnet to the unchanged Gas City loopback listener.
-   Tailscale Funnel and direct non-loopback publication are prohibited.
+   Tailscale Funnel and direct non-loopback publication are prohibited; the
+   operator procedure explicitly proves `funnel status` is tailnet-only.
 
 ## Consequences
 
@@ -36,5 +38,7 @@ loopback-only dashboard without making its operational data public.
   operator; the wrapper will not stash, reset, force-update, or delete them.
 - Tailnet availability depends on both Gas City and Tailscale. Recovery restores
   and verifies the loopback service before the Serve mapping.
+- Local preview `status` and `stop` do not depend on Gas City API availability;
+  `start` retains the suspended-rig and active-writer checks.
 - Changes that introduce persistent data, real credentials, public ingress, or
   a second application writer require a new security and architecture review.

@@ -54,8 +54,10 @@ limited by Tailscale identity and tailnet ACLs and is appropriate only for
 trusted operators, because the UI includes operational history and provider
 transcripts. Do not enable Tailscale Funnel, advertise a public URL, bind Gas
 City beyond loopback, or treat Serve as application-level authorization. Check
-the node's complete Serve configuration before resetting it so unrelated
-tailnet routes are not removed accidentally.
+the node's complete Serve configuration and explicitly verify `tailscale
+funnel status` reports `(tailnet only)` before relying on or resetting the
+route, so public exposure fails visibly and unrelated tailnet routes are not
+removed accidentally.
 
 ## Human gates
 

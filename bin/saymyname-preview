@@ -102,28 +102,38 @@ default_state_dir() {
   printf '%s/agent-factory/saymyname-preview\n' "$runtime_parent"
 }
 
+default_city_root() {
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P
+}
+
+assert_safe_state_dir_path() {
+  local state_dir=$1
+
+  case "$state_dir" in
+    */agent-factory/saymyname-preview) ;;
+    *)
+      die "Preview state directory must end with /agent-factory/saymyname-preview: $state_dir"
+      ;;
+  esac
+}
+
 initialize_context() {
-  local city_status
   local requested_state_dir
 
   require_command realpath
   require_command flock
   require_command jq
 
-  if [[ -n ${SAYMYNAME_PREVIEW_CITY_ROOT:-} ]]; then
-    CITY_ROOT=$(canonical_path "$SAYMYNAME_PREVIEW_CITY_ROOT")
-  else
-    city_status=$("$GC_BIN" status --json) || die "Gas City status is unavailable."
-    CITY_ROOT=$(jq -er '.city_path | select(type == "string" and length > 0)' <<<"$city_status") \
-      || die "Gas City status did not identify the City root."
-    CITY_ROOT=$(canonical_path "$CITY_ROOT")
-  fi
+  CITY_ROOT=$(canonical_path "${SAYMYNAME_PREVIEW_CITY_ROOT:-$(default_city_root)}")
 
   BACKEND_DIR=$(canonical_path "${SAYMYNAME_PREVIEW_BACKEND_DIR:-$CITY_ROOT/rigs/$BACKEND_RIG}")
   FRONTEND_DIR=$(canonical_path "${SAYMYNAME_PREVIEW_FRONTEND_DIR:-$CITY_ROOT/rigs/$FRONTEND_RIG}")
   requested_state_dir=${SAYMYNAME_PREVIEW_STATE_DIR:-$(default_state_dir)}
   [[ $requested_state_dir == /* ]] || die "Preview state path must be absolute: $requested_state_dir"
+  [[ ! -L $requested_state_dir ]] \
+    || die "Preview state directory must not be a symbolic link: $requested_state_dir"
   STATE_DIR=$(canonical_path "$requested_state_dir")
+  assert_safe_state_dir_path "$STATE_DIR"
 
   case "$STATE_DIR" in
     /mnt/c|/mnt/c/*)
@@ -131,7 +141,6 @@ initialize_context() {
       ;;
   esac
 
-  [[ ! -L $STATE_DIR ]] || die "Preview state directory must not be a symbolic link: $STATE_DIR"
   umask 077
   mkdir -p -- "$STATE_DIR"
   chmod 700 -- "$STATE_DIR"

@@ -7,7 +7,8 @@ trap 'rm -rf -- "$TEST_ROOT"' EXIT
 
 export SAYMYNAME_PREVIEW_SOURCE_ONLY=1
 # shellcheck source=../bin/saymyname-preview
-source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/bin/saymyname-preview"
+PREVIEW_SCRIPT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/bin/saymyname-preview"
+source "$PREVIEW_SCRIPT"
 
 TESTS_RUN=0
 
@@ -32,6 +33,20 @@ assert_fails() {
   if ("$@") >/dev/null 2>&1; then
     fail_test "$description"
   fi
+}
+
+assert_exit_code() {
+  local expected=$1
+  local description=$2
+  local actual
+  shift 2
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if ("$@") >/dev/null 2>&1; then
+    actual=0
+  else
+    actual=$?
+  fi
+  [[ $actual -eq $expected ]] || fail_test "$description (expected $expected, got $actual)"
 }
 
 create_remote_and_clone() {
@@ -111,6 +126,10 @@ GC_BIN=$(write_fake_gc true)
 assert_fails "an active rig agent must fail closed" \
   assert_no_active_rig_agents
 
+GC_BIN=false
+assert_fails "unavailable Gas City must fail the writer check closed" \
+  assert_no_active_rig_agents
+
 ss() {
   printf 'LISTEN 0 511 127.0.0.1:8080 0.0.0.0:*\n'
 }
@@ -120,6 +139,39 @@ ss() {
 }
 assert_fails "a free port must not be reported as occupied" port_is_listening 8080
 unset -f ss
+
+assert_fails "the filesystem root must never be accepted as preview state" \
+  assert_safe_state_dir_path /
+assert_passes "a namespaced preview state path should be accepted" \
+  assert_safe_state_dir_path "$TEST_ROOT/agent-factory/saymyname-preview"
+
+broad_state_dir="$TEST_ROOT/broad-state"
+mkdir -p "$broad_state_dir"
+chmod 755 "$broad_state_dir"
+assert_fails "an override without the preview namespace must fail before mutation" \
+  env -u SAYMYNAME_PREVIEW_SOURCE_ONLY GC_BIN=false \
+    SAYMYNAME_PREVIEW_STATE_DIR="$broad_state_dir" "$PREVIEW_SCRIPT" status
+[[ $(stat -c '%a' "$broad_state_dir") == 755 ]] \
+  || fail_test "rejected broad state directory permissions were changed"
+[[ ! -e $broad_state_dir/.owner ]] \
+  || fail_test "rejected broad state directory received an ownership marker"
+
+recovery_state_dir="$TEST_ROOT/recovery/agent-factory/saymyname-preview"
+assert_exit_code 3 "status must report stopped while Gas City is unavailable" \
+  env -u SAYMYNAME_PREVIEW_SOURCE_ONLY GC_BIN=false \
+    SAYMYNAME_PREVIEW_STATE_DIR="$recovery_state_dir" "$PREVIEW_SCRIPT" status
+
+fake_docker="$TEST_ROOT/fake-docker"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$fake_docker"
+chmod +x "$fake_docker"
+mkdir -p "$recovery_state_dir/run"
+printf '%s\n' "$STATE_MARKER_VALUE" >"$recovery_state_dir/.owner"
+printf 'stale\n' >"$recovery_state_dir/run/probe"
+assert_passes "stop must clean owned stale state while Gas City is unavailable" \
+  env -u SAYMYNAME_PREVIEW_SOURCE_ONLY GC_BIN=false DOCKER_BIN="$fake_docker" \
+    SAYMYNAME_PREVIEW_STATE_DIR="$recovery_state_dir" "$PREVIEW_SCRIPT" stop
+[[ ! -e $recovery_state_dir/run ]] \
+  || fail_test "stop left owned stale state behind while Gas City was unavailable"
 
 STATE_DIR="$TEST_ROOT/state"
 RUN_DIR="$STATE_DIR/run"

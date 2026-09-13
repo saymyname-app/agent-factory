@@ -207,13 +207,21 @@ the Gas City supervisor on loopback and publishes that loopback service only
 inside the authenticated tailnet. Tailscale Funnel is prohibited for the
 dashboard.
 
-Docker Desktop currently supplies the Windows Tailscale client, so invoke it
-from WSL using its explicit path:
+The Windows Tailscale client is installed separately from Docker Desktop.
+Invoke it from WSL using its explicit path, and fail closed unless the Funnel
+status explicitly says the route is tailnet-only:
 
 ```bash
 TAILSCALE_EXE='/mnt/c/Program Files/Tailscale/tailscale.exe'
 "$TAILSCALE_EXE" serve --bg --yes http://127.0.0.1:8372
 "$TAILSCALE_EXE" serve status --json | jq .
+FUNNEL_STATUS=$("$TAILSCALE_EXE" funnel status)
+printf '%s\n' "$FUNNEL_STATUS"
+case "$FUNNEL_STATUS" in
+  *'(Funnel on)'*) echo 'ERROR: public Funnel exposure is enabled' >&2; exit 1 ;;
+  *'(tailnet only)'*) ;;
+  *) echo 'ERROR: could not prove that Funnel is disabled' >&2; exit 1 ;;
+esac
 curl --fail --silent --show-error http://127.0.0.1:8372/health
 curl --fail --silent --show-error \
   https://benforge.tail9f1386.ts.net/health
@@ -232,16 +240,17 @@ other routes that must remain available:
 ```
 
 After a supervisor, WSL, or Tailscale interruption, first restore `gc status`
-and the loopback `/health` response. Then check `serve status`, reapply the
-background Serve command if needed, and verify the tailnet HTTPS health URL.
-Do not work around a failure by enabling Funnel or a non-loopback listener.
+and the loopback `/health` response. Then check both `serve status` and `funnel
+status`, reapply the background Serve command if needed, prove the route still
+says `(tailnet only)`, and verify the tailnet HTTPS health URL. Do not work
+around a failure by enabling Funnel or a non-loopback listener.
 
 ### 2026-09-14 Tailscale Serve evidence
 
 - **TARGET:** make the existing loopback-only dashboard available to authenticated tailnet operators over HTTPS without a public route.
 - **CONFIGURED:** Tailscale Serve maps HTTPS port `443` for `benforge.tail9f1386.ts.net` to `http://127.0.0.1:8372`; the Gas City listener remains on `127.0.0.1:8372`.
-- **OBSERVED:** the Windows Tailscale client reported version `1.102.4`, backend state `Running`, the node online, and the HTTPS web proxy handler configured.
-- **PROVEN:** both the loopback and tailnet `/health` endpoints returned the same healthy Gas City `1.4.1` service. This proves the path at the time of verification, not durable availability after restart.
+- **OBSERVED:** the independently installed Windows Tailscale client reported version `1.102.4`, backend state `Running`, the node online, the HTTPS web proxy handler configured, and `funnel status` labeled the route `(tailnet only)`.
+- **PROVEN:** both the loopback and tailnet `/health` endpoints returned the same healthy Gas City `1.4.1` service, while the client reported no public Funnel route. This proves the path at the time of verification, not durable availability after restart.
 
 ### 2026-09-13 evidence
 
@@ -439,12 +448,19 @@ repository, rig, port, Docker, or toolchain condition before `start` or
 named container to make the preview pass; ownership uncertainty intentionally
 requires manual investigation.
 
+`status` and `stop` derive the City root from this Factory checkout, so they
+remain available when the Gas City API is down. `start` still requires usable
+Gas City health and suspended application rigs with no active writer. A custom
+`SAYMYNAME_PREVIEW_STATE_DIR` must be absolute and end with
+`/agent-factory/saymyname-preview`; the wrapper rejects broader targets before
+creating directories, changing permissions, or writing ownership state.
+
 #### 2026-09-14 preview evidence
 
 - **TARGET:** provide one deterministic Factory-owned command that previews the latest merged application `dev` branches without mutating persistent application data.
 - **CONFIGURED:** the wrapper pins the canonical application remotes, `dev` branches, MySQL `8.0.41`, loopback application ports, an ephemeral database `tmpfs`, and generated preview-only configuration.
 - **OBSERVED:** Backend resolved to `2cba440d2815ded53dfea7bfd3beecdf57355c50` and Frontend to `b98e1ee176b7ed8af62987fdd84b35065b49c9e1`; MySQL used loopback-only random ports and both application repositories remained clean on `dev`.
-- **PROVEN:** clean start and restart cycles reached Backend HTTP `204` at `/api/auth/csrf` and Frontend HTTP `200`; independent status reported both healthy with the exact SHAs. Stop removed the owned process groups, container, and runtime state, after which status returned `3` and the preview listeners were absent. Ten deterministic safety tests also proved the repository, writer, port, and runtime-directory fail-closed checks.
+- **PROVEN:** clean start and restart cycles reached Backend HTTP `204` at `/api/auth/csrf` and Frontend HTTP `200`; independent status reported both healthy with the exact SHAs. Stop removed the owned process groups, container, and runtime state, after which status returned `3` and the preview listeners were absent. Deterministic safety tests also prove the repository, writer, port, state-target, runtime-directory, and Gas-City-outage recovery checks.
 
 ### Legacy cutover boundary
 
