@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
 import sys
+import tempfile
 import threading
 import unittest
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,9 +12,13 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from factory_cockpit import (  # noqa: E402
     FactoryCollector,
+    ProductMemory,
     MayorBridge,
     SnapshotCache,
     SourceError,
+    TokenReader,
+    _last_matching_json,
+    _safe_identifier,
     _human_objective,
 )
 
@@ -174,6 +180,53 @@ class FakeGasCity:
 
 
 class FactoryCockpitTest(unittest.TestCase):
+    def test_product_memory_projects_roadmap_and_decisions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            strategy = root / "strategy.md"
+            decisions = root / "decisions.md"
+            strategy.write_text(
+                "# Product\n\n## Product thesis\n\nA useful product.\n\n"
+                "## Product roadmap\n\n1. First outcome.\n2. Second outcome.\n\nItems remain queued.\n\n"
+                "## Human decisions still required\n\n- Choose the pilot.\n",
+                encoding="utf-8",
+            )
+            decisions.write_text(
+                "# Decisions\n\n## Accepted\n\n### 2026-09-14 — Keep it simple\n\nA durable choice.\n\n## Open\n",
+                encoding="utf-8",
+            )
+            result = ProductMemory(strategy, decisions).collect()
+            self.assertEqual(2, len(result["roadmap"]))
+            self.assertEqual("First outcome.", result["roadmap"][0]["title"])
+            self.assertEqual(2, len(result["decisions"]))
+            self.assertEqual("pending", result["decisions"][0]["status"])
+
+    def test_identifiers_are_strict(self):
+        self.assertEqual("af-u8id.1", _safe_identifier("af-u8id.1"))
+        with self.assertRaises(ValueError):
+            _safe_identifier("../secret")
+
+    def test_last_token_record_and_provider_usage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex_dir = root / ".codex" / "sessions" / "2026" / "09" / "14"
+            codex_dir.mkdir(parents=True)
+            record = codex_dir / "rollout-session-key.jsonl"
+            record.write_text(
+                json.dumps({"type": "token_usage_record", "payload": {"thread_token_usage": {"input_tokens": 8, "cached_input_tokens": 5, "output_tokens": 3, "reasoning_output_tokens": 1, "total_tokens": 11}}}) + "\n",
+                encoding="utf-8",
+            )
+            self.assertEqual("token_usage_record", _last_matching_json(record, "token_usage_record")["type"])
+
+            class TokenRunner:
+                def json(self, *args):
+                    return {"sessions": [{"id": "af-m", "alias": "mayor", "provider": "codex", "session_key": "session-key"}]}
+
+            result = TokenReader(TokenRunner(), root).collect()
+            self.assertEqual(11, result["factory"]["known_total_tokens"])
+            self.assertEqual("exact", result["factory"]["sessions"][0]["confidence"])
+            self.assertEqual(0, result["monitoring"]["tokens"])
+
     def test_stale_snapshot_returns_immediately_while_refreshing(self):
         refresh_started = threading.Event()
         refresh_release = threading.Event()

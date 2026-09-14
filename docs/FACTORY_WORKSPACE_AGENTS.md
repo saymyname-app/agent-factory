@@ -31,6 +31,12 @@ Factory's normal evidence and delivery rules.
   the UI must state that this can consume tokens.
 - The Mayor remains the only product-work orchestrator. UI visibility never
   grants the cockpit interrupt, dispatch, retry, merge, or recovery authority.
+- Keep its product-memory projection sourced from the versioned SayMyName
+  `PRODUCT_STRATEGY.md` and `DECISIONS.md`. Do not scrape chat databases or make
+  conversation history a source of truth.
+- Token observability must identify provider, scope and confidence. Load detailed
+  counters and session activity only on demand, redact credentials, and never
+  present hidden reasoning or an inferred monetary cost as fact.
 
 ## Useful requests
 

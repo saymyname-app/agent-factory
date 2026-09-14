@@ -119,9 +119,13 @@ migration execution needs explicit authorization and tests use isolated database
 
 ## Open
 
-- Which precise onboarding outcome should be the next JIT slice.
-- Primary customer/profile, business model and product success metric.
-- V1 production/cloud launch criteria.
+- Administration or student-association distribution for the first cohort.
+- First challenge themes after content and image feasibility.
+- Pilot success thresholds and duration.
+- Exact group visibility, expiry and post-group retention rules.
+- First buyer and pricing test.
+- First external connector justified by observed user data.
+- Brand/name evolution after the broader value proposition is tested.
 
 ## Update rule
 

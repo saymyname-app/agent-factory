@@ -200,6 +200,11 @@ Stopping the cockpit does not stop Gas City or its agents. Its HTTP surface is:
 
 - `GET /api/snapshot`: deterministic monitoring snapshot;
 - `GET /api/mayor/conversation`: recent cockpit-origin Mayor exchange;
+- `GET /api/item?store=<store>&id=<bead>`: bounded Bead detail loaded on click;
+- `GET /api/agent?id=<session>`: active session messages and sanitized local
+  activity loaded on click; hidden reasoning is not exposed;
+- `GET /api/tokens`: on-demand local provider counters, including exact scope
+  and confidence labels; this read makes zero model calls;
 - `POST /api/mayor/message`: explicit bounded human message to the Mayor.
 
 ## Detailed Gas City dashboard
