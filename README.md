@@ -2,41 +2,66 @@
 
 Generic agentic software factory based on **Gas City + Beads/Dolt + GitHub** with interchangeable agent providers.
 
-SayMyName is the first migration target, but this repository is deliberately project-agnostic.
+SayMyName is the first managed product, but this repository is deliberately project-agnostic.
 
 ## Current status
 
-- **M0 — Freeze & inventory:** in progress
-- **M1 — Linux/WSL bootstrap:** in progress
-- No production City is configured or proven yet.
-- The legacy SayMyName Automation runner remains available only to finish already in-flight work during cutover.
+- The local WSL Factory has been delivered and proven through migration milestones M2–M6.
+- Gas City, the Mayor, Beads/Dolt, both SayMyName rigs, product status, local preview, and tailnet dashboard access are configured.
+- The old SayMyName Linear/PowerShell runner is retired and preserved only as historical evidence.
+- M7 remains a future cloud-placement decision; no cloud resource is implied by this repository.
+
+Runtime state is volatile. Confirm it from the host rather than inferring it from this summary.
+
+## Pilot it with Codex
+
+Open Codex on host **BenForge** with `/home/benja/agent-factory` as the working
+folder, or start it from PowerShell:
+
+```powershell
+wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory
+codex
+```
+
+Then speak in product terms, for example: `Où en est SayMyName ?`, `Discutons de
+la prochaine priorité sans rien modifier`, or `Fais réaliser ce bug par la
+Factory`. The same workflow can be resumed from a phone through Codex Remote
+while BenForge and its Codex app remain available.
+
+The complete protocol, authority levels, and recovery checks are in
+[`docs/OPERATOR_BRIDGE.md`](docs/OPERATOR_BRIDGE.md).
+
+For a read-only SayMyName snapshot without Factory noise:
+
+```bash
+./bin/saymyname-product-status
+```
+
+For the deterministic local product preview, use `./bin/saymyname-preview start`
+and `./bin/saymyname-preview stop`. Detailed operation and recovery procedures
+are in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ## Source of truth
 
-1. Observed runtime state: Gas City, Beads/Dolt, Git and GitHub.
+1. Observed runtime state: Gas City, Beads/Dolt, Git, and GitHub.
 2. This repository and the repositories of managed projects.
-3. Current official Gas City, Beads, Dolt and provider documentation/release notes.
+3. Current official Gas City, Beads, Dolt, provider, and runtime documentation.
 4. Historical migration baseline: *Migration Gas City + Beads — Plan directeur A à Z V2*.
-5. Chat history only as secondary context.
+5. Chat history and model memory only as secondary context.
 
 Never infer operational state from a conversation.
 
 ## Documentation
 
-Start with [`docs/CONTEXT_INDEX.md`](docs/CONTEXT_INDEX.md).
-
-Durable architecture, migration, operations, security and decisions live under `docs/`. Runtime work will live in Beads once the City is initialized.
-
-For a deterministic local preview of the latest merged SayMyName Backend and
-Frontend `dev` branches, use `./bin/saymyname-preview start` and
-`./bin/saymyname-preview stop`. The complete safety, status, recovery, and
-tailnet dashboard procedures are in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+Start with [`docs/CONTEXT_INDEX.md`](docs/CONTEXT_INDEX.md). It provides a
+progressive-disclosure map so Codex does not load the whole Factory history.
+Architecture, migration, operations, delivery, security, and accepted decisions
+live under `docs/`; executable work and dependencies live in Beads.
 
 ## Core constraints
 
-- One active controller per City.
-- V1: one writer per rig until worktree isolation is proven.
-- GitHub remains authoritative for code, branches, SHA, PR, CI and merge evidence.
-- Beads becomes authoritative for executable work and dependencies.
-- No new generic capability is added to the legacy Linear/PowerShell orchestrator except transition or safety work.
-- Secrets never belong in Git, Beads or prompts.
+- One active controller per City and one writer per rig until isolation is proven.
+- The Mayor is the product-work orchestration entry point.
+- GitHub remains authoritative for code and delivery evidence; Beads is authoritative for work.
+- Access capability is not standing authorization: production, secrets, public exposure, spend, and destructive actions remain explicit decisions.
+- Secrets never belong in Git, Beads, prompts, logs, or responses.

@@ -5,36 +5,45 @@ Use progressive disclosure. Do not read every document by default.
 | Need | Read |
 |---|---|
 | Factory invariants / agent bootstrap | `../AGENTS.md` |
+| Codex desktop, CLI, remote/mobile protocol and authority | `OPERATOR_BRIDGE.md` |
 | Durable target architecture | `TARGET_ARCHITECTURE.md` |
 | Current migration state, cutover and rollback | `MIGRATION.md` |
 | Install/start/stop/doctor/backup/restore/recovery | `OPERATIONS.md` |
-| Operator dashboard URL, lifecycle and recovery | `OPERATIONS.md` |
-| SayMyName product status command and recovery | `OPERATIONS.md` |
+| Operator dashboard, SayMyName status, and preview | `OPERATIONS.md` |
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
-| Trust boundaries, secrets and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0001-foundation.md`, `decisions/ADR-0002-local-preview-and-tailnet-dashboard.md` |
+| Trust boundaries, secrets, and concurrency | `SECURITY.md` |
+| Structural decisions | `decisions/ADR-0001-foundation.md`, `decisions/ADR-0002-local-preview-and-tailnet-dashboard.md`, `decisions/ADR-0003-native-codex-operator-bridge.md` |
 
 ## Authority order
 
-1. Observed runtime state: Gas City, Beads/Dolt, Git and GitHub.
-2. Versioned repository documentation and the affected project repositories.
+1. Observed runtime state: Gas City, Beads/Dolt, Git, and GitHub.
+2. Versioned Factory documentation and the affected project repositories.
 3. Current official upstream documentation and release notes.
 4. Historical Plan directeur V2.
-5. Chats/memory as secondary context only.
+5. Chats and model memory as secondary context only.
+
+When sources conflict, report the conflict and repair the highest durable source
+within scope. A dated snapshot, chat summary, or generated status is never a
+replacement for a live refresh before mutation.
+
+## Minimal session bootstrap
+
+- Product question: run `./bin/saymyname-product-status`; load nothing else unless a field needs recovery.
+- Factory health question: read `OPERATOR_BRIDGE.md`, then run its read-only health check.
+- Tracked change: read the root and nearest project `AGENTS.md`, the relevant Bead, and only the linked contract needed by the change.
+- Architecture or policy change: also read the relevant ADRs and update/supersede them in the same change.
+
+## Durable versus live context
+
+Durable facts include architectural decisions, safety boundaries, commands, and
+project contracts. They belong in Git. Current work, dependency state, and
+coordination pointers belong in Beads. Processes, sessions, branches, commits,
+PRs, and checks must be observed from their live systems. Do not embed volatile
+SHAs, PIDs, open-task lists, or “currently running” claims in this index.
 
 ## Historical baseline
 
-The DOCX *Migration Gas City + Beads — Plan directeur A à Z V2* is the approved conceptual baseline dated 2026-09-12. It becomes historical/reference material as this repository gains verified operational documentation.
-
-## Current bootstrap snapshot
-
-Verified from GitHub after M5 delivery on 2026-09-12:
-
-- SayMyName backend `dev`: `297cbd87d02b86120644ea3542c10e6688cc3ae6`
-- SayMyName frontend `dev`: `aa82099a183c64e0b02af80979dc1e28353edc4c`
-- Legacy automation `main`: `eae2110d21a7118ca2ea5af66085ee319f26f0b3`
-- Backend and Frontend have no open PR; all PRs referenced by the legacy ledger are merged.
-- Windows Scheduled Task `SayMyName-LocalCodexRunner` is disabled; historical receipts and worktrees remain preserved.
-
-This snapshot is not a substitute for live refresh before mutation.
+The DOCX *Migration Gas City + Beads — Plan directeur A à Z V2* is the approved
+conceptual baseline dated 2026-09-12. It is historical/reference material now
+that this repository contains verified operational documentation.
