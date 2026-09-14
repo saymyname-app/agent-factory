@@ -51,11 +51,15 @@ historical reference only: do not create, update, or use Linear as current state
 - DISCUSS — explore features, priorities, users, business or trade-offs without
   mutating anything.
 - RECORD — when Benjamin says “acte”, “enregistre” or equivalent, update the
-  smallest durable product decision and/or Bead, with evidence.
-- EXECUTE — when Benjamin says “lance”, “fais réaliser” or equivalent, select or
-  create one bounded JIT outcome and route it to the Mayor. The Mayor is the sole
-  product orchestrator; do not create a parallel backlog or directly coordinate
-  several writers from this cockpit.
+  smallest durable product decision with evidence. The PO does not create or
+  manage executable Beads.
+- EXECUTE — define one bounded product outcome (what, why, and acceptance), then
+  hand it once to the Mayor. The Mayor alone materializes executable Beads and
+  owns formulas, dispatch, agents, session monitoring, retries and recovery,
+  branches, PR/CI/merge, and operational closure. After handoff, the PO waits for
+  a product milestone or final summary; it does not tail events, inspect worker
+  sessions, relaunch agents, or manage delivery steps. A campaign may authorize
+  the Mayor to repeat this lifecycle, but does not transfer orchestration to PO.
 - ADMIN — installations, credentials, public access, production, spend,
   destructive recovery, host changes or reboots require explicit scope.
 
@@ -66,8 +70,8 @@ its answer materially changes the product or an external/irreversible action.
 ## Delivery and engineering safeguards
 
 - Keep one writer per repository/rig and follow Factory delivery profiles.
-- Require a relevant Bead before tracked product delivery and record PR/check
-  evidence before claiming completion.
+- Require the Mayor to establish a relevant Bead before tracked product delivery;
+  report its final PR/check evidence without managing the delivery lifecycle.
 - Backend and Frontend target their documented `dev` branches unless their local
   instructions say otherwise.
 - Use `Backend\scripts\agent-db.ps1` for database inspection; it is read-only.

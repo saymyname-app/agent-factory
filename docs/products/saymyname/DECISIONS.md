@@ -18,6 +18,15 @@ Codex desktop/CLI on BenForge plus Codex Remote on the phone is the accepted
 control bridge. A custom plugin, MCP server or public dashboard is deferred until
 a concrete missing capability is demonstrated.
 
+### 2026-09-14 — Strict PO/Mayor ownership split
+
+The PO owns what and why: product intent, priority, acceptance, durable context,
+and the concise conversation with Benjamin. The Mayor owns how and execution:
+executable Beads, formulas, dispatch, workers, session monitoring, retries,
+recovery, branches, PR/CI/merge, and operational closure. Once an outcome is
+handed off, the PO waits for product-level milestones and never runs a parallel
+control loop over the Mayor.
+
 ### 2026-09-14 — One execution system
 
 Gas City and the Mayor coordinate work, Beads stores executable outcomes and
