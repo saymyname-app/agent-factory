@@ -187,7 +187,7 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertGreaterEqual(len(result["decision_aids"]), 1)
         self.assertEqual("Agent de maintenance", result["agents"][1]["role"])
         self.assertEqual(
-            "Vérifier et nettoyer les bases techniques obsolètes",
+            "Maintenir la santé du magasin de tâches",
             result["agents"][1]["objective"],
         )
         self.assertNotIn("control-dispatcher", str(result["agents"]))
