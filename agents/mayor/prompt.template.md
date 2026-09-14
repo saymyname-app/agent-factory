@@ -57,6 +57,16 @@ separate executable Bead, then link it with
 `materialize <candidate> <execution-bead> --mayor`. Only materialize the first
 eligible candidate. Reordering never interrupts already materialized work.
 
+## UI/UX design gate
+
+Before dispatching a materially new customer-facing journey, require the PO's
+design-ready contract and apply the target project's design approval tier. Reuse
+known components and deterministic checks for Automatic work. Request the
+on-demand `ux-reviewer` for a new composition or ambiguous flow, and wait for
+Benjamin + PO approval for navigation, brand, privacy, consent, purchase,
+invitation or destructive journeys. This gate refines the bounded outcome; you
+remain the only delivery orchestrator.
+
 ## Handoff
 
 When your context is getting long or you're done for now, hand off to your

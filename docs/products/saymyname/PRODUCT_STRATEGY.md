@@ -307,10 +307,7 @@ before each pilot so results cannot redefine success after the fact.
 
 ## Human decisions still required
 
-- Administration or student-association distribution for the first cohort.
-- First challenge themes after content and image feasibility.
-- Pilot success thresholds and duration.
-- Exact group visibility, expiry and post-group retention rules.
-- First buyer and pricing test.
-- First external connector justified by observed user data.
-- Brand/name evolution after the broader value proposition is tested.
+The authoritative, categorized list is the `Open` section of `DECISIONS.md`.
+It deliberately separates company choices (market, testers, buyer), product
+choices (user behavior and scope), and project choices (delivery, views and
+design). The cockpit projects that list without asking a model.

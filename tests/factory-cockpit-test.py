@@ -185,6 +185,16 @@ class FakeGasCity:
 
 
 class FactoryCockpitTest(unittest.TestCase):
+    def test_saymyname_governance_domains_and_inventory_are_complete(self):
+        memory = ProductMemory().collect()
+        pending = [item for item in memory["decisions"] if item["status"] == "pending"]
+        counts = {domain: sum(item.get("domain") == domain for item in pending) for domain in ("enterprise", "product", "project")}
+        self.assertEqual({"enterprise": 5, "product": 3, "project": 3}, counts)
+        self.assertGreaterEqual(len(memory["view_inventory"]), 10)
+        self.assertEqual(0, memory["inventory_freshness"]["model_calls"])
+        self.assertEqual(7, len(memory["delivery_workflow"]))
+        self.assertEqual(4, len(memory["business"]["objectives"]))
+
     def test_product_config_rejects_dangling_graph_edges(self):
         with tempfile.TemporaryDirectory(dir=ROOT / ".gc" / "runtime") as directory:
             config_path = Path(directory) / "product.json"
@@ -194,10 +204,15 @@ class FactoryCockpitTest(unittest.TestCase):
                 "name": "Test Product",
                 "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
                 "decisions": "docs/products/saymyname/DECISIONS.md",
+                "project_inventory": "docs/products/saymyname/PROJECT_INVENTORY.md",
+                "design_governance": "docs/products/saymyname/DESIGN_GOVERNANCE.md",
                 "po_workspace": "/tmp/test-product",
                 "queue_command": ["bin/test-queue"],
                 "capabilities": [{"id": "known", "title": "Known", "area": "Core", "roadmap": 1}],
                 "relations": [["known", "missing"]],
+                "business_objectives": [],
+                "view_inventory": [],
+                "delivery_workflow": [],
             }), encoding="utf-8")
             with self.assertRaisesRegex(SourceError, "Relation"):
                 load_product_config(config_path)
@@ -247,7 +262,8 @@ class FactoryCockpitTest(unittest.TestCase):
                 encoding="utf-8",
             )
             decisions.write_text(
-                "# Decisions\n\n## Accepted\n\n### 2026-09-14 — Keep it simple\n\nA durable choice.\n\n## Open\n",
+                "# Decisions\n\n## Accepted\n\n### 2026-09-14 — Keep it simple\n\nA durable choice.\n\n"
+                "## Open\n\n### Product\n\n- **Choose the pilot** — Decide who should test.\n",
                 encoding="utf-8",
             )
             result = ProductMemory(strategy, decisions).collect()
@@ -255,6 +271,7 @@ class FactoryCockpitTest(unittest.TestCase):
             self.assertEqual("First outcome.", result["roadmap"][0]["title"])
             self.assertEqual(2, len(result["decisions"]))
             self.assertEqual("pending", result["decisions"][0]["status"])
+            self.assertEqual("product", result["decisions"][0]["domain"])
 
     def test_identifiers_are_strict(self):
         self.assertEqual("af-u8id.1", _safe_identifier("af-u8id.1"))

@@ -119,16 +119,33 @@ migration execution needs explicit authorization and tests use isolated database
 
 ## Open
 
-- Administration or student-association distribution for the first cohort.
-- First challenge themes after content and image feasibility.
-- Pilot success thresholds and duration.
-- Exact group visibility, expiry and post-group retention rules.
-- First buyer and pricing test.
-- First external connector justified by observed user data.
-- Brand/name evolution after the broader value proposition is tested.
+### Enterprise
+
+- **Responsable et canal du premier pilote** — Choisir si l’administration de l’ancienne école, l’association étudiante ou un autre sponsor porte le recrutement et la diffusion.
+- **Première cohorte de testeurs** — Définir le premier vivier nominatif, sa taille cible, les critères et la manière d’inviter les testeurs consentants.
+- **Contrat de réussite du pilote** — Fixer durée et seuils de succès avant l’observation afin de ne pas redéfinir le résultat après coup.
+- **Premier acheteur et test de prix** — Identifier le premier profil acheteur et le premier entretien, test d’offre ou de volonté de payer; le pilote gratuit ne répond pas seul à cette question.
+- **Point de contrôle marque et nom** — Décider à quel niveau de preuve conserver ou faire évoluer le nom et le positionnement SayMyName.
+
+### Product
+
+- **Premiers thèmes de challenges publics** — Choisir un catalogue volontairement petit après vérification de la valeur éditoriale et des portraits réutilisables légalement.
+- **Visibilité et conservation des groupes** — Décider la visibilité des profils, l’expiration du groupe et les données d’apprentissage conservées après la fin d’accès.
+- **Premier connecteur externe** — Choisir Google, Microsoft, les contacts natifs ou une autre source uniquement selon les frictions observées et la faisabilité fournisseur.
+
+### Project
+
+- **Architecture des vues produit** — Valider l’inventaire complet des vues et l’ordre de conception puis livraison des parcours manquants.
+- **Socle du workflow design** — Confirmer une gouvernance design-system code-first et le seuil à partir duquel un prototype Figma devient utile.
+- **Environnement pilote et boucle de retours** — Choisir l’URL ou environnement pilote, le canal de retour, le responsable support et le chemin d’incident avant le recrutement.
 
 ## Update rule
 
 Add or amend an entry only after Benjamin approves or explicitly asks to record a
 decision. If a new decision supersedes an old one, mark the old entry superseded
 and link the replacement rather than silently rewriting history.
+
+Every open decision belongs to exactly one domain: Enterprise decides market and
+company outcomes; Product decides user value and behavior; Project decides how
+the product is shaped and safely delivered. Do not duplicate one choice across
+domains; link related decisions in the explanation instead.
