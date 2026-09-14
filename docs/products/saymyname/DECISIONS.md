@@ -37,6 +37,17 @@ account. Published content requires versioned editorial review, factual and imag
 provenance, license/rights handling and withdrawal. Editorial roles remain scoped
 to the public catalogue rather than creating an omnipotent global super-admin.
 
+### 2026-09-14 — Presidents first for the localized public demo
+
+The V1 public demo targets France first while keeping the challenge format
+reusable internationally. Its first collection is French presidents. For each
+additional national audience deliberately supported, the initial catalogue stays
+limited to one collection and presents that country's presidents when applicable
+and available. The catalogue and editorial path must make later sets easy to add,
+but V1 does not require broad international coverage. Country selection and
+fallback behavior remain implementation choices. Every localized collection
+still requires verified factual and image provenance and lawful reuse.
+
 ### 2026-09-14 — Three organization archetypes
 
 Planned organization needs are covered by participative groups, administered
@@ -129,7 +140,6 @@ migration execution needs explicit authorization and tests use isolated database
 
 ### Product
 
-- **Premiers thèmes de challenges publics** — Choisir un catalogue volontairement petit après vérification de la valeur éditoriale et des portraits réutilisables légalement.
 - **Visibilité et conservation des groupes** — Décider la visibilité des profils, l’expiration du groupe et les données d’apprentissage conservées après la fin d’accès.
 - **Premier connecteur externe** — Choisir Google, Microsoft, les contacts natifs ou une autre source uniquement selon les frictions observées et la faisabilité fournisseur.
 

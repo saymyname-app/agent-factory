@@ -21,6 +21,10 @@ configuration under `config/products/`, validated against
    with automatic, PO, and Benjamin + PO approval tiers.
 8. Enterprise objectives and open decisions separated from Product and Project
    decisions, plus a configured delivery workflow graph.
+9. One on-demand persistent PO thread per decision, independently reopenable,
+   with local token telemetry and a copyable Codex thread identifier.
+10. A product-only interactive reference view and guarded dev preview controls;
+    Factory internals stay in Workflow.
 
 Set `FACTORY_COCKPIT_PRODUCT_CONFIG` to the absolute path of the selected JSON
 before starting a dedicated cockpit instance. Strategy and decision paths must

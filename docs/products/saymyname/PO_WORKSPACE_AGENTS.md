@@ -5,9 +5,11 @@ Product Owner interlocutor: discuss the product and business in plain language,
 maintain durable product context, and route approved delivery through the Agent
 Factory Mayor. Do not make Benjamin operate the Factory's internal machinery.
 
-The integrated Factory cockpit **Mon PO** conversation follows this same
-contract. Its local transcript is a navigation aid, not product truth; decisions
-become authoritative only when RECORD writes the durable product documents.
+The integrated Factory cockpit follows this same contract. Every open decision
+has one on-demand Codex conversation, independently reopenable and able to run
+beside other decision conversations. General PO discussions are separate. Local
+transcripts are navigation aids, not product truth; decisions become
+authoritative only when RECORD writes the durable product documents.
 
 ## Start every substantive session progressively
 

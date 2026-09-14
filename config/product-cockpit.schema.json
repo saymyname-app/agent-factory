@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Agent Factory product cockpit configuration",
   "type": "object",
-  "required": ["schema_version", "slug", "name", "strategy", "decisions", "po_workspace", "queue_command", "capabilities", "relations"],
+  "required": ["schema_version", "slug", "name", "strategy", "decisions", "project_inventory", "design_governance", "po_workspace", "queue_command", "capabilities", "relations", "business_objectives", "product_reference", "view_inventory", "delivery_workflow"],
   "properties": {
     "schema_version": {"const": 1},
     "slug": {"type": "string", "pattern": "^[a-z0-9-]+$"},
@@ -32,6 +32,7 @@
     },
     "business_objectives": {"type": "array", "items": {"type": "object", "required": ["id", "title", "detail", "roadmap"]}},
     "view_inventory": {"type": "array", "items": {"type": "object", "required": ["area", "status", "views"]}},
+    "product_reference": {"type": "array", "items": {"type": "object", "required": ["id", "title", "detail", "status", "status_label", "source"]}},
     "delivery_workflow": {"type": "array", "items": {"type": "object", "required": ["id", "title", "detail"]}}
   },
   "additionalProperties": true

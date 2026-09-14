@@ -149,10 +149,14 @@ Public challenges use recognizable public figures and are both a real consumer
 use and an acquisition path. They are not fake organizations and should be
 presented as `Challenges` or `Collections`.
 
-The first catalogue should be deliberately small. Candidate themes include
-French presidents, prime ministers, scientists, cinema, sport and music. Final
-selection depends on editorial usefulness and portraits that can be lawfully
-reused; the rap example is illustrative, not an accepted first theme.
+The V1 public demo targets France first while keeping the format reusable
+internationally. It starts with one French-presidents collection. Each additional
+national audience deliberately supported initially gets at most one collection,
+showing that country's presidents when applicable and available. Country
+selection and fallback behavior remain implementation choices. The catalogue and
+editorial path must make later sets easy to add without requiring broad
+international coverage in V1. Every set still depends on editorial usefulness
+and portraits that can be lawfully reused.
 
 Anonymous visitors can play a short challenge. They create an account only to
 save progress, continue scheduled reviews, add other sources or create a group.
