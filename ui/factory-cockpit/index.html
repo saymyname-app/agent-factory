@@ -15,6 +15,8 @@
         </div>
         <div class="top-actions">
           <div id="factory-state" class="status-pill waiting">Chargement…</div>
+          <button id="copy-summary" type="button" title="Copier un résumé humain dans le presse-papiers">Copier le résumé</button>
+          <button id="pause-refresh" type="button" title="Suspendre uniquement l’actualisation de cet écran">Pause</button>
           <button id="refresh" type="button">Actualiser</button>
         </div>
       </header>
@@ -46,8 +48,19 @@
           <p class="eyebrow">BESOIN DE BENJAMIN</p>
           <h2 id="needs-benjamin">Rien pour l’instant</h2>
           <p id="last-delivery" class="muted">Dernière livraison : —</p>
-          <div class="zero-token"><span class="pulse"></span> Automatique · 0 appel de modèle</div>
+          <div class="zero-token"><span class="pulse"></span> Surveillance · 0 appel de modèle</div>
         </article>
+      </section>
+
+      <section class="panel advice-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">AIDE À LA DÉCISION</p>
+            <h2>Est-ce que tout va bien ? <button class="info" type="button" data-tooltip="Ces conseils viennent de règles déterministes appliquées aux signaux locaux. Aucun modèle IA ne les rédige.">?</button></h2>
+          </div>
+          <span id="advice-count" class="count">0</span>
+        </div>
+        <div id="decision-aids" class="advice-list"></div>
       </section>
 
       <section class="panel">
@@ -59,6 +72,28 @@
           <span id="agent-count" class="count">0</span>
         </div>
         <div id="agents" class="agent-grid"></div>
+      </section>
+
+      <section class="panel product-work-panel">
+        <div class="section-heading product-work-heading">
+          <div>
+            <p class="eyebrow">SOURCE DE VÉRITÉ DU TRAVAIL</p>
+            <h2>Travail produit dans Beads <button class="info" type="button" data-tooltip="Cette vue conserve les objectifs, livraisons JIT et candidats produit. Sessions, workflows, convoys, maintenance et tâches synthétiques sont exclus.">?</button></h2>
+          </div>
+          <span id="product-work-count" class="count">0</span>
+        </div>
+        <p class="muted section-intro">Ce qui doit être fait et son état viennent de Beads. Gas City confirme qui tourne; GitHub confirme ce qui est livré.</p>
+        <div class="work-toolbar">
+          <div id="work-filters" class="filter-group" role="group" aria-label="Filtrer le travail produit">
+            <button class="filter" type="button" data-filter="all">Tout</button>
+            <button class="filter active" type="button" data-filter="active">Actif</button>
+            <button class="filter" type="button" data-filter="queued">À venir</button>
+            <button class="filter" type="button" data-filter="blocked">Bloqué</button>
+            <button class="filter" type="button" data-filter="delivered">Livré</button>
+          </div>
+          <input id="work-search" type="search" placeholder="Rechercher un objectif…" aria-label="Rechercher dans le travail produit">
+        </div>
+        <div id="product-work" class="product-work-list"></div>
       </section>
 
       <section class="lower-grid">
@@ -85,14 +120,66 @@
         </article>
       </section>
 
+      <section class="lower-grid conversation-grid">
+        <article class="panel mayor-chat-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">POINT DE VUE DE L’USINE</p>
+              <h2>Parler au Mayor <button class="info" type="button" data-tooltip="Le Mayor est l’IA coordinatrice persistante de Gas City. Il peut expliquer, planifier et piloter les workflows dans les limites de ton message.">?</button></h2>
+            </div>
+            <span id="mayor-chat-state" class="status-pill idle">Disponible</span>
+          </div>
+          <p class="token-warning">Envoyer un message réveille ou sollicite l’IA Mayor et peut consommer des tokens. Lire le cockpit n’en consomme aucun.</p>
+          <div class="prompt-suggestions">
+            <button type="button" data-prompt="Est-ce que tout va bien dans l'usine ? Réponds en langage simple et dis-moi seulement si je dois agir.">Est-ce que tout va bien ?</button>
+            <button type="button" data-prompt="Explique-moi ce que tu attends actuellement et pourquoi, sans modifier l'usine.">Qu’attends-tu ?</button>
+            <button type="button" data-prompt="Quels sont les prochains risques ou décisions que je devrais connaître, sans lancer de travail ?">Quels risques ?</button>
+          </div>
+          <label for="mayor-message">Ton message</label>
+          <textarea id="mayor-message" maxlength="4000" rows="4" placeholder="Pose une question ou donne une instruction claire au Mayor…"></textarea>
+          <div class="chat-actions">
+            <select id="mayor-intent" aria-label="Type de message">
+              <option value="question">Question normale</option>
+              <option value="follow_up">À faire après le travail actuel</option>
+            </select>
+            <button id="send-mayor" class="primary" type="button">Envoyer au Mayor</button>
+          </div>
+          <p id="mayor-feedback" class="feedback" aria-live="polite"></p>
+        </article>
+
+        <article class="panel conversation-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">CONVERSATION RÉCENTE</p>
+              <h2>Réponse du Mayor</h2>
+            </div>
+            <button id="refresh-conversation" type="button">Relire</button>
+          </div>
+          <div id="mayor-conversation" class="conversation"></div>
+        </article>
+      </section>
+
       <details class="panel technical-panel">
         <summary>Voir la mécanique technique</summary>
         <div id="technical" class="technical-content"></div>
       </details>
 
+      <details class="panel help-panel">
+        <summary>Comprendre le cockpit</summary>
+        <div class="glossary">
+          <div><strong>Mayor</strong><span>L’IA coordinatrice : elle transforme un résultat autorisé en travail, choisit les agents et contrôle la livraison.</span></div>
+          <div><strong>Bead produit</strong><span>Un objectif ou travail durable. C’est la vérité de ce qui doit être fait, pas la preuve qu’un processus tourne.</span></div>
+          <div><strong>File produit</strong><span>Les futurs résultats ordonnés. Une file vide empêche un nouveau départ produit après la fin du travail courant.</span></div>
+          <div><strong>Étapes prouvées</strong><span>Étapes du workflow réellement closes. 3/3 peut encore attendre la PR, la CI ou la clôture du Mayor.</span></div>
+          <div><strong>Dernier signal</strong><span>Dernière activité observée. Un signal ancien n’est pas automatiquement un échec, mais mérite vérification.</span></div>
+          <div><strong>CI verte</strong><span>Les contrôles GitHub ont réussi. GitHub reste la preuve finale d’une livraison de code.</span></div>
+          <div><strong>Zéro token</strong><span>L’actualisation et les conseils déterministes ne sollicitent aucune IA. Seul un message envoyé au Mayor peut consommer des tokens.</span></div>
+        </div>
+      </details>
+
       <footer>
         <span id="refreshed">Jamais actualisé</span>
-        <span>Actualisation automatique toutes les 5 secondes</span>
+        <span id="refresh-mode">Actualisation automatique toutes les 5 secondes</span>
       </footer>
     </main>
     <script src="/app.js"></script>

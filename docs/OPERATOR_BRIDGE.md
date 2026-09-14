@@ -56,7 +56,7 @@ For Factory engineering, use the local Codex project rooted at
 repository, not a clone. Its commands enter
 `/home/benja/agent-factory` explicitly.
 
-Open the read-only human cockpit with:
+Open the human decision cockpit with:
 
 ```bash
 ./bin/factory-cockpit open
@@ -64,10 +64,17 @@ Open the read-only human cockpit with:
 
 The browser opens `http://127.0.0.1:8383`. It shows understandable Mayor and
 agent objectives, evidence-based phase/step progress, elapsed time, signal age,
-future product candidates, the last delivery, and any Benjamin decision. It
-refreshes from existing local sources and performs zero model calls. Use the
-upstream Gas City dashboard at port `8372` only when detailed sessions, Beads,
-runs, events, or transcripts are actually needed.
+filtered product Beads, future candidates, the last delivery, deterministic
+decision aids, and any Benjamin decision. Automatic monitoring performs zero
+model calls. Search, pause, copy-summary, tooltips and the integrated glossary
+remain local.
+
+Benjamin may also type an explicit question or non-interrupting follow-up to the
+persistent Mayor. Sending may consume model tokens and is visibly labelled as
+such. It does not create a second orchestrator: the cockpit cannot interrupt,
+dispatch, retry, merge, or recover work. Use the upstream Gas City dashboard at
+port `8372` only when detailed sessions, runs, events, or full transcripts are
+actually needed.
 
 ### Speak in intent, not commands
 
