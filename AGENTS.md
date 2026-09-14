@@ -15,6 +15,10 @@ For “where is SayMyName?”, first run `./bin/saymyname-product-status` and an
 with CURRENT, LAST DELIVERED, NEXT, NEEDS BENJAMIN, and any real risk. Do not
 dump sessions, issues, Formula steps, or logs unless asked.
 
+For “what is the Factory doing?” or one-glance visibility, use the read-only
+`./bin/factory-cockpit snapshot` projection. Open its local UI with
+`./bin/factory-cockpit open`. Do not infer progress from session existence.
+
 For a change:
 
 1. Read the applicable `AGENTS.md` chain, including the nearest file in the target rig.

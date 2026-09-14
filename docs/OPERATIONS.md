@@ -150,9 +150,44 @@ codex exec --skip-git-repo-check --sandbox read-only -m gpt-5.6-sol \
 
 M1 observed the effective Mayor command as `codex --dangerously-bypass-approvals-and-sandbox --model gpt-5.6-sol -c model_reasoning_effort=xhigh`, the matching process was live, and the authenticated probe returned `SOL_AUTH_OK`.
 
-## Operator dashboard
+## Human Factory cockpit
 
-Gas City `1.4.1` embeds its dashboard SPA in the supervisor and serves the UI and API from the same origin. Use this upstream dashboard; there is no separate dashboard process or factory-owned UI to install, start or upgrade. In this City the operator URL is:
+The default one-glance view is the Factory-owned, read-only cockpit:
+
+```bash
+cd ~/agent-factory
+./bin/factory-cockpit open
+./bin/factory-cockpit status
+./bin/factory-cockpit snapshot | jq .
+./bin/factory-cockpit stop
+```
+
+It serves `http://127.0.0.1:8383` from a small Python standard-library process.
+`open` starts it if necessary and opens the Windows default browser. The UI polls
+a five-second cache of local `gc`, `bd`, workflow API, and product-queue signals.
+It calls no model and has no write, dispatch, retry, PR, merge, or recovery route.
+
+Progress is semantic and evidence-based: completed workflow steps, the current
+phase, elapsed wall time, and age of the latest source signal. A session marked
+active is not by itself presented as productive work. When sources disagree or
+fail, the UI reports partial visibility. Infrastructure such as the deterministic
+control dispatcher is collapsed under technical details by default.
+
+The listener rejects non-loopback hosts. Do not publish port `8383`, proxy it
+through Tailscale, or make it public without a separately reviewed authenticated
+access design. Runtime PID/log state is under
+`${XDG_RUNTIME_DIR:-/tmp}/agent-factory-cockpit-<uid>-8383` and contains no
+credentials or transcripts.
+
+If startup fails, inspect the exact log path printed by the lifecycle command,
+check `python3`, `curl`, port `8383`, and then run `./bin/factory-cockpit restart`.
+Stopping the cockpit does not stop Gas City or its agents.
+
+## Detailed Gas City dashboard
+
+Gas City `1.4.1` embeds its detailed dashboard SPA in the supervisor and serves
+the UI and API from the same origin. Use it for engineering detail; the human
+cockpit above is a separate read-only projection. In this City the Gas City URL is:
 
 ```text
 http://127.0.0.1:8372
