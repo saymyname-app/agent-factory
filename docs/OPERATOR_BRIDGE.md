@@ -35,6 +35,19 @@ whose working folder is `/home/benja/agent-factory`. BenForge, its network, and
 the Codex desktop app must remain available. The remote session uses the host's
 files and tools; it does not copy the Factory onto the phone.
 
+### SayMyName PO cockpit
+
+For normal SayMyName product work, open the local Codex project whose primary
+folder is `C:\Dev\Projects\SayMyName`. This is the single PO cockpit: it exposes
+the Backend and Frontend Windows repositories, local MySQL/Flyway helpers, and
+the Factory through explicit WSL commands. Its canonical instructions and
+configuration live in `docs/products/saymyname/` and are synchronized into the
+Windows workspace.
+
+The Factory project remains the direct engineering/operations entrance. The PO
+cockpit is the default human entrance when Benjamin wants to discuss the product,
+record a decision, choose a priority, or have the Mayor route delivery.
+
 ### Speak in intent, not commands
 
 Examples:

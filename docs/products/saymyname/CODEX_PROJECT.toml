@@ -1,0 +1,5 @@
+# Canonical Codex project configuration for C:\Dev\Projects\SayMyName.
+# Full access is a host capability; AGENTS.md still enforces product authority.
+approval_policy = "on-request"
+sandbox_mode = "danger-full-access"
+project_doc_max_bytes = 32768
