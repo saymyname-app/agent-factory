@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import sys
+import threading
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from factory_cockpit import (  # noqa: E402
     FactoryCollector,
     MayorBridge,
+    SnapshotCache,
     SourceError,
     _human_objective,
 )
@@ -172,6 +174,30 @@ class FakeGasCity:
 
 
 class FactoryCockpitTest(unittest.TestCase):
+    def test_stale_snapshot_returns_immediately_while_refreshing(self):
+        refresh_started = threading.Event()
+        refresh_release = threading.Event()
+
+        class Collector:
+            calls = 0
+
+            def collect(self):
+                self.calls += 1
+                if self.calls == 2:
+                    refresh_started.set()
+                    refresh_release.wait(timeout=2)
+                return {"version": self.calls}
+
+        collector = Collector()
+        cache = SnapshotCache(collector, ttl=0)
+        self.assertEqual(1, cache.get()["version"])
+        self.assertEqual(1, cache.get()["version"])
+        self.assertTrue(refresh_started.wait(timeout=1))
+        refresh_release.set()
+        with cache.condition:
+            self.assertTrue(cache.condition.wait_for(lambda: not cache.refreshing, timeout=1))
+            self.assertEqual(2, cache.value["version"])
+
     def test_human_projection_and_zero_token_contract(self):
         result = FactoryCollector(FakeRunner(), FakeGasCity()).collect()
         self.assertEqual("À finaliser par le Mayor", result["focus"]["state_label"])
