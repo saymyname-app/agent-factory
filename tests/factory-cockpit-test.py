@@ -609,6 +609,27 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertIsNone(result["effective_blockers"][0]["decision_id"])
         self.assertEqual(2, len(result["general_decisions"]))
 
+    def test_today_leaves_absent_configured_decision_target_unlinked(self):
+        needs = "Benjamin must decide before af-hxji can continue without changing this exact text."
+        decisions = [
+            {"id": "enterprise-open", "title": "Enterprise open", "status": "pending", "domain": "enterprise"},
+            {"id": "product-open", "title": "Product open", "status": "pending", "domain": "product"},
+            {"id": "project-open", "title": "Project open", "status": "pending", "domain": "project"},
+        ]
+        result = _today_projection(needs, decisions, [{
+            "work_ref": "af-hxji",
+            "decision_ref": "Absent durable decision",
+        }])
+        blocker = result["effective_blockers"][0]
+        self.assertEqual(needs, blocker["text"])
+        self.assertIsNone(blocker["decision_id"])
+        self.assertEqual(
+            [{"id": item["id"], "title": item["title"], "domain": item["domain"]} for item in decisions],
+            result["general_decisions"],
+        )
+        script = (ROOT / "ui" / "factory-cockpit" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('action.classList.toggle("hidden", !blocker?.decision_id)', script)
+
     def test_identifiers_are_strict(self):
         self.assertEqual("af-u8id.1", _safe_identifier("af-u8id.1"))
         with self.assertRaises(ValueError):
