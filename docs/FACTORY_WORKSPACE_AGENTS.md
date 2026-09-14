@@ -40,6 +40,9 @@ Factory's normal evidence and delivery rules.
 - Keep its product-memory projection sourced from the versioned SayMyName
   `PRODUCT_STRATEGY.md` and `DECISIONS.md`. Do not scrape chat databases or make
   conversation history a source of truth.
+- Preserve the Enterprise/Product/Project decision split. Design work follows
+  `DESIGN_GOVERNANCE.md`: code-first and automatic for proven low-risk patterns,
+  PO review for new compositions, Benjamin + PO for novel or sensitive journeys.
 - Token observability must identify provider, scope and confidence. Load detailed
   counters and session activity only on demand, redact credentials, and never
   present hidden reasoning or an inferred monetary cost as fact.

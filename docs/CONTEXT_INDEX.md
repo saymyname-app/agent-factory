@@ -10,6 +10,7 @@ Use progressive disclosure. Do not read every document by default.
 | Integrated product PO, project/context graphs, reusable cockpit products | `PRODUCT_COCKPIT_TEMPLATE.md`, `config/product-cockpit.schema.json` |
 | SayMyName product vision, priorities, unknowns | `products/saymyname/PRODUCT_CONTEXT.md` |
 | SayMyName durable product decisions | `products/saymyname/DECISIONS.md` |
+| SayMyName reviewed views/features and UI/UX governance | `products/saymyname/PROJECT_INVENTORY.md`, `products/saymyname/DESIGN_GOVERNANCE.md` |
 | SayMyName PO cockpit instructions and Codex config | `products/saymyname/PO_WORKSPACE_AGENTS.md`, `products/saymyname/CODEX_PROJECT.toml` |
 | Ordered product candidates and Mayor materialization | `PRODUCT_QUEUE.md` |
 | Durable target architecture | `TARGET_ARCHITECTURE.md` |
@@ -19,7 +20,7 @@ Use progressive disclosure. Do not read every document by default.
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0001-foundation.md`, `decisions/ADR-0002-local-preview-and-tailnet-dashboard.md`, `decisions/ADR-0003-native-codex-operator-bridge.md`, `decisions/ADR-0004-saymyname-po-cockpit.md`, `decisions/ADR-0005-mayor-owned-product-queue.md`, `decisions/ADR-0006-token-free-human-factory-cockpit.md`, `decisions/ADR-0007-human-decision-center-and-mayor-channel.md`, `decisions/ADR-0008-product-operations-cockpit.md`, `decisions/ADR-0009-integrated-po-and-product-map.md` |
+| Structural decisions | `decisions/ADR-0001-foundation.md`, `decisions/ADR-0002-local-preview-and-tailnet-dashboard.md`, `decisions/ADR-0003-native-codex-operator-bridge.md`, `decisions/ADR-0004-saymyname-po-cockpit.md`, `decisions/ADR-0005-mayor-owned-product-queue.md`, `decisions/ADR-0006-token-free-human-factory-cockpit.md`, `decisions/ADR-0007-human-decision-center-and-mayor-channel.md`, `decisions/ADR-0008-product-operations-cockpit.md`, `decisions/ADR-0009-integrated-po-and-product-map.md`, `decisions/ADR-0010-governance-domains-and-design-loop.md` |
 
 ## Authority order
 

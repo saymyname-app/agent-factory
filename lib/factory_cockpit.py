@@ -43,7 +43,9 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         raise SourceError(f"Configuration produit invalide: {exc}") from exc
     required = {
         "slug", "name", "strategy", "decisions", "po_workspace",
-        "queue_command", "capabilities", "relations",
+        "queue_command", "capabilities", "relations", "project_inventory",
+        "design_governance", "business_objectives", "view_inventory",
+        "delivery_workflow",
     }
     if value.get("schema_version") != 1 or not required.issubset(value):
         raise SourceError("Configuration produit incomplète ou version non prise en charge.")
@@ -69,7 +71,7 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
             endpoint in capability_ids for endpoint in relation
         ):
             raise SourceError("Relation de capacité produit invalide.")
-    for field in ("strategy", "decisions"):
+    for field in ("strategy", "decisions", "project_inventory", "design_governance"):
         resolved = (ROOT / str(value[field])).resolve()
         if ROOT.resolve() not in resolved.parents:
             raise SourceError(f"Le chemin {field} doit rester dans le dépôt Factory.")
@@ -492,6 +494,27 @@ class ProductMemory:
         self.config = config or load_product_config()
         self.strategy = strategy or self.config["strategy_path"]
         self.decisions = decisions or self.config["decisions_path"]
+        self.project_inventory = self.config["project_inventory_path"]
+        self.design_governance = self.config["design_governance_path"]
+
+    def _inventory_freshness(self) -> dict[str, Any]:
+        reviewed = self.project_inventory.stat().st_mtime
+        workspace = Path(str(self.config["po_workspace"])).resolve()
+        observed = []
+        for relative in self.config.get("inventory_watch", []):
+            target = (workspace / str(relative)).resolve()
+            if target != workspace and workspace not in target.parents:
+                continue
+            try:
+                observed.append(target.stat().st_mtime)
+            except OSError:
+                continue
+        latest = max(observed, default=None)
+        return {
+            "state": "review_due" if latest and latest > reviewed else "current",
+            "label": "Revue à actualiser" if latest and latest > reviewed else "Revue à jour",
+            "model_calls": 0,
+        }
 
     def collect(self) -> dict[str, Any]:
         strategy = self.strategy.read_text(encoding="utf-8")
@@ -521,17 +544,24 @@ class ProductMemory:
                 r"(?ms)^###\s+\d{4}-\d{2}-\d{2}\s+—\s+(.*?)\s*$\n(.*?)(?=^### |\Z)", accepted_raw
             ))
         ]
-        required_raw = _markdown_section(strategy, "Human decisions still required")
-        pending = [
-            {
-                "id": f"pending-{index + 1}",
-                "title": item.strip(),
-                "status": "pending",
-                "detail": "Décision volontairement laissée à Benjamin; la Factory ne doit pas l'inventer.",
-                "source": "PRODUCT_STRATEGY.md · Human decisions still required",
-            }
-            for index, item in enumerate(re.findall(r"(?m)^-\s+(.+)$", required_raw))
-        ]
+        domain_names = {"Enterprise": "enterprise", "Product": "product", "Project": "project"}
+        pending = []
+        open_raw = _markdown_section(decisions, "Open")
+        for heading, body in re.findall(r"(?ms)^###\s+(.+?)\s*$\n(.*?)(?=^### |\Z)", open_raw):
+            domain = domain_names.get(heading.strip())
+            if not domain:
+                continue
+            for raw in re.findall(r"(?m)^-\s+(.+)$", body):
+                match = re.match(r"\*\*(.+?)\*\*\s+—\s+(.+)", raw.strip())
+                title, detail = (match.group(1), match.group(2)) if match else (raw.strip(), "Décision volontairement laissée à Benjamin.")
+                pending.append({
+                    "id": f"pending-{domain}-{len(pending) + 1}",
+                    "title": title,
+                    "status": "pending",
+                    "domain": domain,
+                    "detail": detail,
+                    "source": f"DECISIONS.md · Open · {heading.strip()}",
+                })
         capabilities = []
         stage_status = {item["order"]: item["stage"] for item in roadmap}
         for item in self.config.get("capabilities", []):
@@ -541,6 +571,11 @@ class ProductMemory:
                 **item,
                 "status": stage_status.get(item.get("roadmap"), "later"),
             })
+        business_objectives = [
+            {**item, "status": stage_status.get(item.get("roadmap"), "later")}
+            for item in self.config.get("business_objectives", [])
+            if isinstance(item, dict)
+        ]
         return {
             "product": self.config["name"],
             "slug": self.config["slug"],
@@ -551,12 +586,26 @@ class ProductMemory:
                 "nodes": capabilities,
                 "edges": self.config.get("relations", []),
             },
+            "business": {
+                "north_star": "Prouver que SayMyName aide une personne à mieux retrouver les gens qu’elle a choisi de mémoriser, puis trouver un canal et un acheteur répétables.",
+                "objectives": business_objectives,
+            },
+            "view_inventory": self.config.get("view_inventory", []),
+            "inventory_freshness": self._inventory_freshness(),
+            "delivery_workflow": self.config.get("delivery_workflow", []),
             "updated_at": datetime.fromtimestamp(
-                max(self.strategy.stat().st_mtime, self.decisions.stat().st_mtime), timezone.utc
+                max(
+                    self.strategy.stat().st_mtime,
+                    self.decisions.stat().st_mtime,
+                    self.project_inventory.stat().st_mtime,
+                    self.design_governance.stat().st_mtime,
+                ), timezone.utc
             ).isoformat(),
             "sources": [
                 "docs/products/saymyname/PRODUCT_STRATEGY.md",
                 "docs/products/saymyname/DECISIONS.md",
+                "docs/products/saymyname/PROJECT_INVENTORY.md",
+                "docs/products/saymyname/DESIGN_GOVERNANCE.md",
             ],
         }
 

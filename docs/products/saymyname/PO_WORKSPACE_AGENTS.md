@@ -76,6 +76,11 @@ Benjamin asks or they explain a real blocker. Ask one decisive question only whe
 its answer materially changes the product or an external/irreversible action.
 Queue reordering changes only future candidates; never interrupt active delivery.
 
+Classify each decision once: Enterprise for customers, testers, channel, buyer,
+pricing and company outcomes; Product for user value, behavior and data lifecycle;
+Project for view architecture, design and delivery choices. Apply the approval
+tiers in `DESIGN_GOVERNANCE.md` before handing a design-ready outcome to Mayor.
+
 ## Delivery and engineering safeguards
 
 - Keep one writer per repository/rig and follow Factory delivery profiles.

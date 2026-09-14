@@ -84,6 +84,12 @@ or resuming the underlying discussion. Full host access is available to inspect
 the product and Factory, but it does not widen authority: only an explicit
 EXECUTE request may be handed to the Mayor.
 
+The cockpit keeps governance domains explicit: Enterprise covers customers,
+testers, channel, buyer and pricing; Product covers user value and behavior;
+Project covers views, design and delivery choices. The design loop is code-first
+and risk-tiered; Figma is an optional exploration/handoff tool, never a second
+product or implementation truth store.
+
 For private phone access, run once from Ubuntu:
 
 ```bash

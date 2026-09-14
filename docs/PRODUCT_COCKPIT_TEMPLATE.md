@@ -17,6 +17,10 @@ configuration under `config/products/`, validated against
    describe conceptual dependencies.
 6. A Gas City rig and Mayor-owned delivery contract. The PO never becomes a
    second dispatcher.
+7. A reviewed view/feature inventory and a code-first design-governance contract
+   with automatic, PO, and Benjamin + PO approval tiers.
+8. Enterprise objectives and open decisions separated from Product and Project
+   decisions, plus a configured delivery workflow graph.
 
 Set `FACTORY_COCKPIT_PRODUCT_CONFIG` to the absolute path of the selected JSON
 before starting a dedicated cockpit instance. Strategy and decision paths must

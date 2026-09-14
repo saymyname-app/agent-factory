@@ -4,6 +4,12 @@
   "name": "SayMyName",
   "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
   "decisions": "docs/products/saymyname/DECISIONS.md",
+  "project_inventory": "docs/products/saymyname/PROJECT_INVENTORY.md",
+  "design_governance": "docs/products/saymyname/DESIGN_GOVERNANCE.md",
+  "inventory_watch": [
+    "Frontend/.git/logs/HEAD",
+    "Backend/.git/logs/HEAD"
+  ],
   "po_workspace": "/mnt/c/Dev/Projects/SayMyName",
   "po_add_dirs": [
     "/home/benja/agent-factory"
@@ -40,5 +46,34 @@
     ["connectors", "imports"],
     ["federation", "organizations"],
     ["learning", "business"]
+  ],
+  "business_objectives": [
+    {"id": "value", "title": "Prouver la valeur utilisateur", "detail": "Un visiteur comprend, essaie puis souhaite continuer à mémoriser.", "roadmap": 1},
+    {"id": "pilot", "title": "Réussir un premier pilote", "detail": "Une cohorte réelle s’active, revient et rapporte une utilité en situation.", "roadmap": 2},
+    {"id": "buyer", "title": "Identifier le premier acheteur", "detail": "Une personne précise reconnaît le problème et accepte de tester une offre.", "roadmap": 9},
+    {"id": "launch", "title": "Rendre le lancement répétable", "detail": "Acquisition, activation, support et mesure fonctionnent sans bricolage fondateur.", "roadmap": 9}
+  ],
+  "view_inventory": [
+    {"area": "Accès", "status": "existing", "views": ["Connexion", "Inscription", "Vérification email", "Mot de passe"]},
+    {"area": "Invitation et onboarding", "status": "existing", "views": ["Invitation", "Acceptation", "Onboarding"]},
+    {"area": "Apprentissage", "status": "existing", "views": ["Options", "Cours", "Quiz", "Progression"]},
+    {"area": "Personnes", "status": "existing", "views": ["Trombinoscope", "Profil", "Recherche", "Sélections"]},
+    {"area": "Administration", "status": "existing", "views": ["Dashboard", "Membres", "Invitations", "Attributs", "Demandes"]},
+    {"area": "Challenge public", "status": "building", "views": ["Découverte", "Challenge", "Résultat", "Continuer"]},
+    {"area": "Espace personnel", "status": "building", "views": ["Aujourd’hui", "Mes apprentissages", "Sources", "Mes personnes"]},
+    {"area": "Groupes et promotions", "status": "next", "views": ["Créer", "Rejoindre", "Participants", "Visibilité"]},
+    {"area": "Imports", "status": "planned", "views": ["Source", "Mapping", "Aperçu", "Résultat"]},
+    {"area": "Éditorial", "status": "planned", "views": ["Brouillons", "Droits", "Publication", "Retrait"]},
+    {"area": "Recherche intelligente", "status": "planned", "views": ["Indices", "Candidats", "Affinage"]},
+    {"area": "Offre", "status": "evidence", "views": ["Offres", "Prix", "Souscription"]}
+  ],
+  "delivery_workflow": [
+    {"id": "intent", "title": "Benjamin", "detail": "Intention ou décision"},
+    {"id": "po", "title": "PO", "detail": "Résultat et critères"},
+    {"id": "mayor", "title": "Mayor", "detail": "Plan de livraison"},
+    {"id": "beads", "title": "Beads", "detail": "Travail et dépendances"},
+    {"id": "agents", "title": "Agents", "detail": "Implémentation bornée"},
+    {"id": "proof", "title": "Tests + PR", "detail": "Preuve vérifiable"},
+    {"id": "close", "title": "Mayor", "detail": "Clôture et prochain résultat"}
   ]
 }

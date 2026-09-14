@@ -176,6 +176,13 @@ active is not by itself presented as productive work. When sources disagree or
 fail, the UI reports partial visibility. Infrastructure such as the deterministic
 control dispatcher is collapsed under technical details by default.
 
+Navigation separates Enterprise objectives, Product capabilities/views, the
+Roadmap, three decision domains, delivery Work, the live Workflow graph, Agents,
+PO and Tokens. The reviewed view catalogue distinguishes code presence from a
+validated customer journey. Enterprise/Product/Project decisions come from the
+categorized durable decision log; the automatic projection never reclassifies
+them with a model.
+
 The product-work view queries product-marked Beads across the City and registered
 rigs, then removes sessions, workflows, convoys, gates, synthetic work, order
 tracking, and maintenance. Beads states what should be done, Gas City states who
