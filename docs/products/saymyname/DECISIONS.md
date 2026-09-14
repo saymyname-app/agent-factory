@@ -32,6 +32,14 @@ control loop over the Mayor.
 Gas City and the Mayor coordinate work, Beads stores executable outcomes and
 dependencies, and GitHub proves delivery. Linear is historical reference only.
 
+### 2026-09-14 — Ordered product candidate queue
+
+Benjamin and the PO may keep future outcomes in an exact, reorderable queue of
+deferred Beads. Candidates are not executable work, paused entries are skipped,
+and urgency does not silently change order. The Mayor alone materializes the
+first eligible candidate into a separate execution Bead; reprioritization never
+interrupts work already underway.
+
 ### 2026-09-14 — Full access with bounded authority
 
 The SayMyName cockpit may be configured with full host access so it can reach the

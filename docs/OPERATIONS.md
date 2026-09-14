@@ -450,6 +450,24 @@ Bead reads intentionally go through `gc bd` for store routing.
 - **OBSERVED:** the live projection resolved `af-1vr4.2` to the active `codex-af-yzra` implementation session and validated Factory PR #24 at merge `1f680299144535331f308aa6e52b63bc1a22f24d` with no configured CI checks.
 - **PROVEN:** nine deterministic fixture scenarios cover active and idle work, a human decision, exact merged delivery, absent and green CI, invalid repository metadata, mismatched GitHub evidence, source failure, missing live-agent confirmation, and prefix-routed non-child outcomes delivered from a non-Factory GitHub repository; the live command also completed successfully against Beads, Gas City, and GitHub.
 
+### Ordered product candidates
+
+Keep future SayMyName outcomes out of the executable worker queue with:
+
+```bash
+cd ~/agent-factory
+./bin/saymyname-product-queue list
+./bin/saymyname-product-queue next
+./bin/saymyname-product-queue --help
+```
+
+Candidates are durable Beads in `deferred` status. The command rejects malformed
+or duplicate ranks and serializes local mutations. Use `list --json` or
+`next --json` for compact automation. The PO may mutate candidates only after a
+RECORD request. The Mayor follows `docs/PRODUCT_QUEUE.md` to create a separate
+execution Bead and materialize only the first eligible candidate. Never change a
+candidate to `open` or dispatch it directly.
+
 ### Deterministic local product preview
 
 Run the latest merged Backend and Frontend `dev` branches from the canonical

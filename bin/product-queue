@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+PROGRAM_NAME="product-queue"
+BD_BIN="${BD_BIN:-bd}"
+GC_BIN="${GC_BIN:-gc}"
+PRODUCT="${PRODUCT_QUEUE_PRODUCT:-}"
+DEFAULT_GOAL="${PRODUCT_QUEUE_DEFAULT_GOAL:-none}"
+
+die() {
+  printf '%s: ERROR: %s\n' "$PROGRAM_NAME" "$1" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'USAGE'
+Usage: PRODUCT_QUEUE_PRODUCT=<slug> product-queue <command> [arguments]
+
+Commands:
+  list [--json]                              Show the ordered candidate queue.
+  next [--json]                              Show the first queued candidate.
+  add --title TEXT [--goal ID] [--urgency LEVEL]
+      [--why TEXT] [--acceptance TEXT]       Append a deferred candidate.
+  move ID POSITION                           Move a candidate to an exact position.
+  urgency ID normal|urgent|critical          Change urgency without changing order.
+  pause ID [REASON]                          Skip a candidate while retaining order.
+  resume ID                                  Make a paused candidate eligible again.
+  cancel ID [REASON]                         Close a candidate without executing it.
+  materialize ID EXECUTION_BEAD --mayor      Link and close the first candidate.
+
+Queue candidates are deferred Beads and never worker-ready. Only the Mayor may
+materialize the first eligible candidate into a separately created executable
+Bead. Order and urgency are intentionally independent.
+USAGE
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command is unavailable: $1"
+}
+
+validate_product() {
+  [[ $PRODUCT =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] \
+    || die "PRODUCT_QUEUE_PRODUCT must be a lowercase product slug."
+}
+
+priority_for_urgency() {
+  case "$1" in
+    normal) printf '2\n' ;;
+    urgent) printf '1\n' ;;
+    critical) printf '0\n' ;;
+    *) die "Urgency must be normal, urgent, or critical." ;;
+  esac
+}
+
+load_inventory() {
+  local raw
+  raw=$("$BD_BIN" list --status deferred --label product-queue \
+    --label "product:$PRODUCT" --limit 0 --json) \
+    || die "Beads queue inventory is unavailable."
+
+  INVENTORY=$(jq -ce --arg product "$PRODUCT" '
+    if type != "array" then error("inventory must be an array") else . end |
+    map(select(
+      .status == "deferred" and
+      .metadata["gc.queue_product"] == $product and
+      (.metadata["gc.queue_state"] == "queued" or
+       .metadata["gc.queue_state"] == "paused"))) |
+    if all(.[].metadata["gc.queue_rank"];
+      (tostring | test("^[1-9][0-9]*$"))) then .
+    else error("invalid rank") end |
+    if all(.[].metadata["gc.queue_urgency"];
+      . == "normal" or . == "urgent" or . == "critical") then .
+    else error("invalid urgency") end |
+    sort_by((.metadata["gc.queue_rank"] | tonumber), .id) |
+    . as $items |
+    if ([$items[].metadata["gc.queue_rank"] | tonumber] | unique | length) == ($items | length)
+    then $items else error("duplicate rank") end
+  ' <<<"$raw") || die "Product queue metadata is inconsistent; repair it before mutation."
+}
+
+require_candidate() {
+  local id=$1
+  CANDIDATE=$(jq -ce --arg id "$id" \
+    '[.[] | select(.id == $id)] | if length == 1 then .[0] else error("not found") end' \
+    <<<"$INVENTORY") || die "Candidate $id is not in the active $PRODUCT queue."
+}
+
+list_queue() {
+  local format=${1:-}
+  load_inventory
+  if [[ $format == --json ]]; then
+    jq -c '[to_entries[] | {
+      position: (.key + 1),
+      id: .value.id,
+      title: .value.title,
+      state: .value.metadata["gc.queue_state"],
+      urgency: .value.metadata["gc.queue_urgency"],
+      goal: .value.metadata["gc.queue_goal"]
+    }]' <<<"$INVENTORY"
+    return
+  fi
+  [[ -z $format ]] || die "Unsupported list option: $format"
+  printf 'PRODUCT QUEUE: %s\n' "$PRODUCT"
+  if [[ $(jq 'length' <<<"$INVENTORY") -eq 0 ]]; then
+    printf 'EMPTY\n'
+    return
+  fi
+  jq -r 'to_entries[] |
+    "\(.key + 1). [" + .value.metadata["gc.queue_state"] + "]" +
+    "[" + .value.metadata["gc.queue_urgency"] + "] \(.value.title) (\(.value.id))"' \
+    <<<"$INVENTORY"
+}
+
+next_candidate() {
+  local format=${1:-}
+  local next
+  load_inventory
+  next=$(jq -c '[.[] | select(.metadata["gc.queue_state"] == "queued")][0] // null' \
+    <<<"$INVENTORY")
+  if [[ $format == --json ]]; then
+    printf '%s\n' "$next"
+    return
+  fi
+  [[ -z $format ]] || die "Unsupported next option: $format"
+  if [[ $next == null ]]; then
+    printf 'NEXT: none\n'
+  else
+    jq -r '"NEXT: \(.title) (\(.id)) — " + .metadata["gc.queue_urgency"]' <<<"$next"
+  fi
+}
+
+add_candidate() {
+  local title= goal=$DEFAULT_GOAL urgency=normal why= acceptance=
+  local priority rank metadata response id
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title) [[ $# -ge 2 ]] || die "--title needs a value."; title=$2; shift 2 ;;
+      --goal) [[ $# -ge 2 ]] || die "--goal needs a value."; goal=$2; shift 2 ;;
+      --urgency) [[ $# -ge 2 ]] || die "--urgency needs a value."; urgency=$2; shift 2 ;;
+      --why) [[ $# -ge 2 ]] || die "--why needs a value."; why=$2; shift 2 ;;
+      --acceptance) [[ $# -ge 2 ]] || die "--acceptance needs a value."; acceptance=$2; shift 2 ;;
+      *) die "Unsupported add argument: $1" ;;
+    esac
+  done
+  [[ -n $title && $title != *$'\n'* && $title != *$'\r'* ]] \
+    || die "A single-line --title is required."
+  [[ $goal =~ ^[A-Za-z0-9._-]+$ || $goal == none ]] || die "Invalid goal ID."
+  priority=$(priority_for_urgency "$urgency")
+  [[ -n $why ]] || why="Queued product outcome for $PRODUCT; refine scope before Mayor materialization."
+  [[ -n $acceptance ]] || acceptance="The PO and Mayor must refine measurable acceptance before execution."
+
+  load_inventory
+  rank=$(jq '[.[].metadata["gc.queue_rank"] | tonumber] | max // 0 | . + 1000' \
+    <<<"$INVENTORY")
+  metadata=$(jq -cn --arg product "$PRODUCT" --arg state queued \
+    --arg urgency "$urgency" --arg goal "$goal" --argjson rank "$rank" '{
+      "gc.queue_product": $product,
+      "gc.queue_state": $state,
+      "gc.queue_rank": $rank,
+      "gc.queue_urgency": $urgency,
+      "gc.queue_goal": $goal
+    }')
+  response=$("$BD_BIN" create "$title" --type feature --priority "$priority" \
+    --defer 2125-01-01 \
+    --labels "product-queue,product:$PRODUCT" --description "$why" \
+    --acceptance "$acceptance" --metadata "$metadata" --json) \
+    || die "Candidate creation failed."
+  id=$(jq -er '.id // (if type == "array" then .[0].id else empty end)' <<<"$response") \
+    || die "Beads did not return the created candidate ID."
+  if ! "$BD_BIN" update "$id" --status deferred >/dev/null; then
+    "$BD_BIN" close "$id" --reason "Queue insertion rollback: could not defer candidate" \
+      >/dev/null 2>&1 || true
+    die "Candidate $id could not be made non-executable and was rolled back."
+  fi
+  printf 'ADDED: %s — position %s (%s)\n' "$id" "$(( $(jq 'length' <<<"$INVENTORY") + 1 ))" "$urgency"
+}
+
+move_candidate() {
+  local id=${1:-} position=${2:-}
+  local count new_order index rank updated_id original_id original_rank
+  [[ -n $id && $position =~ ^[1-9][0-9]*$ ]] || die "Usage: $PROGRAM_NAME move ID POSITION"
+  load_inventory
+  require_candidate "$id"
+  count=$(jq 'length' <<<"$INVENTORY")
+  (( position <= count )) || die "Position must be between 1 and $count."
+  new_order=$(jq -ce --arg id "$id" --argjson position "$position" '
+    [.[].id] as $ids |
+    ($ids | index($id)) as $old |
+    ($ids | del(.[$old])) as $without |
+    ($without[0:($position - 1)] + [$id] + $without[($position - 1):])
+  ' <<<"$INVENTORY") || die "Could not calculate the new order."
+
+  index=0
+  while IFS= read -r updated_id; do
+    index=$((index + 1))
+    rank=$((index * 1000))
+    if ! "$BD_BIN" update "$updated_id" --set-metadata "gc.queue_rank=$rank" >/dev/null; then
+      while IFS=$'\t' read -r original_id original_rank; do
+        "$BD_BIN" update "$original_id" --set-metadata "gc.queue_rank=$original_rank" \
+          >/dev/null 2>&1 || true
+      done < <(jq -r '.[] | [.id, (.metadata["gc.queue_rank"] | tostring)] | @tsv' \
+        <<<"$INVENTORY")
+      die "Reorder failed and the previous ranks were restored."
+    fi
+  done < <(jq -r '.[]' <<<"$new_order")
+  printf 'MOVED: %s — position %s\n' "$id" "$position"
+}
+
+set_state() {
+  local id=$1 state=$2 reason=${3:-}
+  load_inventory
+  require_candidate "$id"
+  if [[ -n $reason ]]; then
+    "$BD_BIN" update "$id" --set-metadata "gc.queue_state=$state" \
+      --append-notes "Product queue $state: $reason" >/dev/null
+  else
+    "$BD_BIN" update "$id" --set-metadata "gc.queue_state=$state" >/dev/null
+  fi
+  printf '%s: %s\n' "${state^^}" "$id"
+}
+
+set_urgency() {
+  local id=${1:-} urgency=${2:-} priority
+  [[ -n $id && -n $urgency ]] || die "Usage: $PROGRAM_NAME urgency ID LEVEL"
+  priority=$(priority_for_urgency "$urgency")
+  load_inventory
+  require_candidate "$id"
+  "$BD_BIN" update "$id" --priority "$priority" \
+    --set-metadata "gc.queue_urgency=$urgency" >/dev/null
+  printf 'URGENCY: %s — %s\n' "$id" "$urgency"
+}
+
+cancel_candidate() {
+  local id=${1:-} reason=${2:-Cancelled by the Product Owner}
+  [[ -n $id ]] || die "Usage: $PROGRAM_NAME cancel ID [REASON]"
+  load_inventory
+  require_candidate "$id"
+  "$BD_BIN" update "$id" --set-metadata gc.queue_state=cancelled \
+    --append-notes "Product queue cancelled: $reason" >/dev/null
+  "$BD_BIN" close "$id" --reason "$reason" >/dev/null
+  printf 'CANCELLED: %s\n' "$id"
+}
+
+materialize_candidate() {
+  local id=${1:-} execution_id=${2:-} authority=${3:-}
+  local first response execution_status
+  [[ -n $id && -n $execution_id && $authority == --mayor ]] \
+    || die "Usage: $PROGRAM_NAME materialize ID EXECUTION_BEAD --mayor"
+  require_command "$GC_BIN"
+  load_inventory
+  require_candidate "$id"
+  first=$(jq -er '[.[] | select(.metadata["gc.queue_state"] == "queued")][0].id // empty' \
+    <<<"$INVENTORY") || die "The queue has no eligible candidate."
+  [[ $id == "$first" ]] || die "Only the first eligible candidate ($first) may be materialized."
+
+  response=$("$GC_BIN" bd show "$execution_id" --json) \
+    || die "Execution Bead $execution_id is unavailable."
+  execution_status=$(jq -er 'if type == "array" and length == 1 then .[0].status else empty end' \
+    <<<"$response") || die "Execution Bead $execution_id did not resolve uniquely."
+  [[ $execution_status == open || $execution_status == in_progress ]] \
+    || die "Execution Bead $execution_id is not open or in progress."
+
+  "$BD_BIN" update "$id" --set-metadata gc.queue_state=materialized \
+    --set-metadata "gc.materialized_bead=$execution_id" \
+    --append-notes "Mayor materialized as executable Bead $execution_id" >/dev/null
+  "$BD_BIN" close "$id" --reason "Materialized by Mayor as $execution_id" >/dev/null
+  printf 'MATERIALIZED: %s -> %s\n' "$id" "$execution_id"
+}
+
+main() {
+  local command=${1:-}
+  [[ -n $command ]] || { usage; return 2; }
+  shift
+  case "$command" in
+    -h|--help|help) usage ;;
+    list) list_queue "$@" ;;
+    next) next_candidate "$@" ;;
+    add) add_candidate "$@" ;;
+    move) [[ $# -eq 2 ]] || die "Usage: $PROGRAM_NAME move ID POSITION"; move_candidate "$@" ;;
+    urgency) [[ $# -eq 2 ]] || die "Usage: $PROGRAM_NAME urgency ID LEVEL"; set_urgency "$@" ;;
+    pause) [[ $# -le 2 ]] || die "Usage: $PROGRAM_NAME pause ID [REASON]"; set_state "${1:-}" paused "${2:-}" ;;
+    resume) [[ $# -eq 1 ]] || die "Usage: $PROGRAM_NAME resume ID"; set_state "$1" queued ;;
+    cancel) [[ $# -le 2 ]] || die "Usage: $PROGRAM_NAME cancel ID [REASON]"; cancel_candidate "$@" ;;
+    materialize) [[ $# -eq 3 ]] || die "Usage: $PROGRAM_NAME materialize ID EXECUTION_BEAD --mayor"; materialize_candidate "$@" ;;
+    *) usage >&2; return 2 ;;
+  esac
+}
+
+validate_product
+require_command jq
+require_command "$BD_BIN"
+require_command flock
+LOCK_FILE="${PRODUCT_QUEUE_LOCK_FILE:-${TMPDIR:-/tmp}/agent-factory-product-queue-${PRODUCT}.lock}"
+exec 9>"$LOCK_FILE"
+flock -w 10 9 || die "Could not acquire the product queue lock."
+main "$@"

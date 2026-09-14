@@ -10,9 +10,10 @@ machinery, and receive a concise authoritative answer or route bounded work to
 the Mayor. GitHub does not need to be open on the phone: Codex uses the host's
 local repository, shell, authenticated tools, and approval flow.
 
-This bridge does not create a second orchestrator or backlog. Gas City and the
-Mayor coordinate product work, Beads holds executable work and dependencies,
-and GitHub proves code delivery.
+This bridge does not create a second orchestrator or execution system. A small
+ordered product-candidate view may store deferred ideas in Beads, but Gas City
+and the Mayor alone coordinate executable work and dependencies, and GitHub
+proves code delivery.
 
 ## Simplest operating protocol
 
@@ -57,6 +58,9 @@ Examples:
 - `Explique les détails de l'usine, sans rien modifier.`
 - `Discutons de cette idée; ne l'enregistre pas encore.`
 - `Enregistre cette décision et propose la prochaine priorité.`
+- `Ajoute cette idée à la file sans la lancer.`
+- `Mets cette idée en premier; ne touche pas au travail en cours.`
+- `Montre-moi seulement la file produit.`
 - `Fais réaliser ce bug par la Factory et préviens-moi quand il est livré.`
 - `Diagnostique la Factory en lecture seule.`
 
@@ -97,6 +101,21 @@ Raw issues, agents, sessions, Formula steps, logs, and infrastructure details
 stay hidden unless requested or needed to explain a verified risk. If an
 authoritative source disagrees, Codex fails closed and names the source to fix
 instead of inventing a clean summary.
+
+## Product candidate queue
+
+For future SayMyName outcomes, Codex uses:
+
+```bash
+./bin/saymyname-product-queue list
+```
+
+The list is a separate, low-token view from current delivery status. Under
+RECORD authority the PO may add, reorder, mark urgency, pause, resume, or cancel
+deferred candidates. These candidates never become worker-ready. Under EXECUTE
+authority, the PO hands the selected outcome once to the Mayor; the Mayor alone
+creates and links executable work. Exact commands and state semantics are in
+`PRODUCT_QUEUE.md`.
 
 ## How Codex resolves context
 

@@ -45,6 +45,11 @@ dispatch, workers, recovery, branches, PR/CI/merge and operational closure. The 
 receives product milestones and never becomes a second orchestrator. Gas City,
 Beads and GitHub remain execution truth; Linear and chats do not.
 
+Future outcomes may be kept in the ordered SayMyName product queue as deferred,
+non-executable candidates. Benjamin and the PO may revise candidate intent and
+order; the Mayor alone materializes the first eligible candidate into executable
+work. Queue changes never interrupt the outcome already in delivery.
+
 ## Known constraints and debt
 
 - Backend and Frontend are separate Git repositories with their own safeguards.

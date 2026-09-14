@@ -48,6 +48,15 @@ The rig is auto-detected from the bead prefix when possible:
 
 For city-level beads (no rig), `gc bd` works the same way without `--rig`.
 
+## Product candidates
+
+The Factory may expose a deferred product-candidate queue through
+`bin/<product>-product-queue`. It is not worker-ready work. When asked to launch
+the next result, read `next --json`, refine the scope and acceptance, create the
+separate executable Bead, then link it with
+`materialize <candidate> <execution-bead> --mayor`. Only materialize the first
+eligible candidate. Reordering never interrupts already materialized work.
+
 ## Handoff
 
 When your context is getting long or you're done for now, hand off to your
