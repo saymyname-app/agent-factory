@@ -11,17 +11,48 @@ STATE_DIR="$RUNTIME_ROOT/agent-factory-cockpit-${UID}-${PORT}"
 PID_FILE="$STATE_DIR/server.pid"
 LOG_FILE="$STATE_DIR/server.log"
 URL="http://$HOST:$PORT"
+PHONE_PORT=${FACTORY_COCKPIT_PHONE_PORT:-8443}
+TAILSCALE_EXE=${FACTORY_COCKPIT_TAILSCALE_EXE:-/mnt/c/Program Files/Tailscale/tailscale.exe}
+REMOTE_URL_FILE="$ROOT/.gc/runtime/factory-cockpit-remote-url"
 
 die() { printf 'factory-cockpit: ERROR: %s\n' "$1" >&2; exit 1; }
 
 usage() {
   cat <<'USAGE'
-Usage: factory-cockpit start|stop|restart|status|open|snapshot
+Usage: factory-cockpit start|stop|restart|status|open|snapshot|phone-enable|phone-status
 
 Runs a loopback-only human decision view of Gas City and Beads signals.
 Monitoring performs zero model calls. Only an explicit typed message can contact
-the Mayor; the cockpit cannot interrupt, dispatch, retry, merge, or recover work.
+the PO or Mayor; the cockpit cannot interrupt, dispatch, retry, merge, or recover
+work. Phone access uses tailnet-only Tailscale Serve and never enables Funnel.
 USAGE
+}
+
+phone_enable() {
+  [[ -x $TAILSCALE_EXE ]] || die "Windows Tailscale CLI is unavailable."
+  command -v jq >/dev/null || die "jq is unavailable."
+  start >/dev/null
+  local dns_name remote_url status_json
+  status_json=$("$TAILSCALE_EXE" status --json) || die "Tailscale is not running."
+  dns_name=$(jq -r '.Self.DNSName // empty' <<<"$status_json" | sed 's/\.$//')
+  [[ -n $dns_name ]] || die "Tailscale MagicDNS name is unavailable."
+  "$TAILSCALE_EXE" serve --bg --yes --https="$PHONE_PORT" "$URL" >/dev/null
+  remote_url="https://${dns_name}:${PHONE_PORT}"
+  mkdir -p -- "$(dirname -- "$REMOTE_URL_FILE")"
+  printf '%s\n' "$remote_url" >"$REMOTE_URL_FILE"
+  chmod 600 "$REMOTE_URL_FILE"
+  printf 'PHONE: %s — tailnet only, Funnel not enabled\n' "$remote_url"
+}
+
+phone_status() {
+  [[ -x $TAILSCALE_EXE ]] || die "Windows Tailscale CLI is unavailable."
+  if [[ -s $REMOTE_URL_FILE ]]; then
+    printf 'PHONE: %s\n' "$(<"$REMOTE_URL_FILE")"
+  else
+    printf 'PHONE: disabled\n'
+    return 1
+  fi
+  "$TAILSCALE_EXE" serve status
 }
 
 valid_pid() {
@@ -111,6 +142,8 @@ case ${1:-} in
   status) status ;;
   open) open_cockpit ;;
   snapshot) exec "$PYTHON_BIN" "$ROOT/lib/factory_cockpit.py" snapshot ;;
+  phone-enable) phone_enable ;;
+  phone-status) phone_status ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

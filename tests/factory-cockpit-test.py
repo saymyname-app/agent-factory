@@ -5,6 +5,8 @@ import tempfile
 import threading
 import unittest
 import json
+import subprocess
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,12 +15,14 @@ sys.path.insert(0, str(ROOT / "lib"))
 from factory_cockpit import (  # noqa: E402
     FactoryCollector,
     ProductMemory,
+    POBridge,
     MayorBridge,
     SnapshotCache,
     SourceError,
     TokenReader,
     _last_matching_json,
     _safe_identifier,
+    load_product_config,
     _human_objective,
     _human_phase,
 )
@@ -181,6 +185,56 @@ class FakeGasCity:
 
 
 class FactoryCockpitTest(unittest.TestCase):
+    def test_product_config_rejects_dangling_graph_edges(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / ".gc" / "runtime") as directory:
+            config_path = Path(directory) / "product.json"
+            config_path.write_text(json.dumps({
+                "schema_version": 1,
+                "slug": "test-product",
+                "name": "Test Product",
+                "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
+                "decisions": "docs/products/saymyname/DECISIONS.md",
+                "po_workspace": "/tmp/test-product",
+                "queue_command": ["bin/test-queue"],
+                "capabilities": [{"id": "known", "title": "Known", "area": "Core", "roadmap": 1}],
+                "relations": [["known", "missing"]],
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(SourceError, "Relation"):
+                load_product_config(config_path)
+
+    def test_po_console_is_explicit_persistent_and_archives_without_loss(self):
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+
+            def execute(command, **kwargs):
+                calls.append(command)
+                output = Path(command[command.index("-o") + 1])
+                output.write_text("Voici les options produit.", encoding="utf-8")
+                return subprocess.CompletedProcess(
+                    command, 0,
+                    stdout=json.dumps({"type": "thread.started", "thread_id": "01po-thread"}) + "\n",
+                    stderr="",
+                )
+
+            bridge = POBridge(
+                load_product_config(), Path(directory) / "po.json", execute
+            )
+            result = bridge.submit("Aide-moi à décider", "discuss", "pending-1")
+            self.assertTrue(result["accepted"])
+            for _ in range(100):
+                if bridge.conversation()["status"] != "running":
+                    time.sleep(0.01)
+                if bridge.conversation()["status"] == "idle":
+                    break
+            conversation = bridge.conversation()
+            self.assertEqual("01po-thread", conversation["thread_id"])
+            self.assertEqual("Voici les options produit.", conversation["messages"][-1]["text"])
+            self.assertIn("--dangerously-bypass-approvals-and-sandbox", calls[0])
+            self.assertIn("DISCUSS", calls[0][-1])
+            bridge.new_conversation()
+            self.assertEqual(1, len(bridge.conversation()["archives"]))
+            self.assertEqual([], bridge.conversation()["messages"])
+
     def test_product_memory_projects_roadmap_and_decisions(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

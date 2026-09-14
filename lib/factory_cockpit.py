@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Zero-model monitoring projection and explicit human-to-Mayor cockpit bridge."""
+"""Zero-model monitoring plus explicit human-to-PO and human-to-Mayor bridges."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -23,14 +24,67 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_ROOT = ROOT / "ui" / "factory-cockpit"
-PRODUCT_STRATEGY = ROOT / "docs" / "products" / "saymyname" / "PRODUCT_STRATEGY.md"
-PRODUCT_DECISIONS = ROOT / "docs" / "products" / "saymyname" / "DECISIONS.md"
+PRODUCT_CONFIG_PATH = Path(os.environ.get(
+    "FACTORY_COCKPIT_PRODUCT_CONFIG", ROOT / "config" / "products" / "saymyname.json"
+))
+REMOTE_ACCESS_FILE = ROOT / ".gc" / "runtime" / "factory-cockpit-remote-url"
 COORDINATION_BEAD = os.environ.get("FACTORY_COCKPIT_COORDINATION_BEAD", "af-1vr4")
 GAS_CITY_URL = os.environ.get("FACTORY_COCKPIT_GAS_CITY_URL", "http://127.0.0.1:8372")
 
 
 class SourceError(RuntimeError):
     pass
+
+
+def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SourceError(f"Configuration produit invalide: {exc}") from exc
+    required = {
+        "slug", "name", "strategy", "decisions", "po_workspace",
+        "queue_command", "capabilities", "relations",
+    }
+    if value.get("schema_version") != 1 or not required.issubset(value):
+        raise SourceError("Configuration produit incomplète ou version non prise en charge.")
+    if not re.fullmatch(r"[a-z0-9-]+", str(value["slug"])) or not str(value["name"]).strip():
+        raise SourceError("Identité de produit invalide.")
+    if not isinstance(value["queue_command"], list) or not value["queue_command"] or not all(
+        isinstance(part, str) and part for part in value["queue_command"]
+    ):
+        raise SourceError("Commande de file produit invalide.")
+    if not isinstance(value["capabilities"], list) or not isinstance(value["relations"], list):
+        raise SourceError("Graphe produit invalide.")
+    capability_ids: set[str] = set()
+    for item in value["capabilities"]:
+        if not isinstance(item, dict) or not {"id", "title", "area", "roadmap"}.issubset(item):
+            raise SourceError("Capacité produit incomplète.")
+        if not isinstance(item["id"], str) or not item["id"] or item["id"] in capability_ids:
+            raise SourceError("Identifiant de capacité produit invalide ou dupliqué.")
+        if not isinstance(item["roadmap"], int) or isinstance(item["roadmap"], bool) or item["roadmap"] < 1:
+            raise SourceError("Référence roadmap invalide dans le graphe produit.")
+        capability_ids.add(item["id"])
+    for relation in value["relations"]:
+        if not isinstance(relation, list) or len(relation) != 2 or not all(
+            endpoint in capability_ids for endpoint in relation
+        ):
+            raise SourceError("Relation de capacité produit invalide.")
+    for field in ("strategy", "decisions"):
+        resolved = (ROOT / str(value[field])).resolve()
+        if ROOT.resolve() not in resolved.parents:
+            raise SourceError(f"Le chemin {field} doit rester dans le dépôt Factory.")
+        value[f"{field}_path"] = resolved
+    return value
+
+
+def remote_access() -> dict[str, Any]:
+    try:
+        url = REMOTE_ACCESS_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        url = ""
+    if url and re.fullmatch(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/?", url):
+        return {"enabled": True, "url": url.rstrip("/"), "mode": "Tailscale Serve", "public": False}
+    return {"enabled": False, "url": None, "mode": "loopback seulement", "public": False}
 
 
 class CommandRunner:
@@ -220,7 +274,10 @@ def _is_internal_bead(bead: dict[str, Any]) -> bool:
     return False
 
 
-def _product_bead(bead: dict[str, Any], store: str, current_id: str | None) -> dict[str, Any] | None:
+def _product_bead(
+    bead: dict[str, Any], store: str, current_id: str | set[str] | None,
+    product_name: str = "SayMyName",
+) -> dict[str, Any] | None:
     if _is_internal_bead(bead):
         return None
     labels = {str(label) for label in bead.get("labels", [])}
@@ -268,7 +325,7 @@ def _product_bead(bead: dict[str, Any], store: str, current_id: str | None) -> d
         kind = "Objectif"
     else:
         kind = "Livraison"
-    product = metadata.get("gc.queue_product") or "SayMyName"
+    product = metadata.get("gc.queue_product") or product_name
     if isinstance(product, str):
         product = product.replace("saymyname", "SayMyName")
     return {
@@ -426,9 +483,15 @@ class ProductMemory:
 
     ROADMAP_STAGE = ["now", "next", "next", "later", "later", "later", "evidence", "later", "evidence"]
 
-    def __init__(self, strategy: Path = PRODUCT_STRATEGY, decisions: Path = PRODUCT_DECISIONS) -> None:
-        self.strategy = strategy
-        self.decisions = decisions
+    def __init__(
+        self,
+        strategy: Path | None = None,
+        decisions: Path | None = None,
+        config: dict[str, Any] | None = None,
+    ) -> None:
+        self.config = config or load_product_config()
+        self.strategy = strategy or self.config["strategy_path"]
+        self.decisions = decisions or self.config["decisions_path"]
 
     def collect(self) -> dict[str, Any]:
         strategy = self.strategy.read_text(encoding="utf-8")
@@ -469,11 +532,25 @@ class ProductMemory:
             }
             for index, item in enumerate(re.findall(r"(?m)^-\s+(.+)$", required_raw))
         ]
+        capabilities = []
+        stage_status = {item["order"]: item["stage"] for item in roadmap}
+        for item in self.config.get("capabilities", []):
+            if not isinstance(item, dict):
+                continue
+            capabilities.append({
+                **item,
+                "status": stage_status.get(item.get("roadmap"), "later"),
+            })
         return {
-            "product": "SayMyName",
+            "product": self.config["name"],
+            "slug": self.config["slug"],
             "thesis": _paragraph(_markdown_section(strategy, "Product thesis")),
             "roadmap": roadmap,
             "decisions": pending + accepted,
+            "project_graph": {
+                "nodes": capabilities,
+                "edges": self.config.get("relations", []),
+            },
             "updated_at": datetime.fromtimestamp(
                 max(self.strategy.stat().st_mtime, self.decisions.stat().st_mtime), timezone.utc
             ).isoformat(),
@@ -730,9 +807,18 @@ class TokenReader:
 
 
 class FactoryCollector:
-    def __init__(self, runner: Any | None = None, gas_city: Any | None = None) -> None:
+    def __init__(
+        self, runner: Any | None = None, gas_city: Any | None = None,
+        product_config: dict[str, Any] | None = None,
+    ) -> None:
         self.runner = runner or CommandRunner()
         self.gas_city = gas_city or GasCityReader(timeout=15)
+        self.product_config = product_config or load_product_config()
+        queue_command = list(self.product_config["queue_command"])
+        if queue_command and not Path(queue_command[0]).is_absolute():
+            queue_command[0] = str(ROOT / queue_command[0])
+        self.queue_command = tuple(queue_command)
+        self.product_memory = ProductMemory(config=self.product_config)
 
     def collect(self) -> dict[str, Any]:
         warnings: list[str] = []
@@ -753,7 +839,7 @@ class FactoryCollector:
                 "factory": pool.submit(read, "factory", lambda: self.runner.json("gc", "status", "--json"), {}),
                 "sessions": pool.submit(read, "sessions", lambda: self.runner.json("gc", "session", "list", "--json"), {}),
                 "coordination": pool.submit(read, "coordination", lambda: self.runner.json("gc", "bd", "show", COORDINATION_BEAD, "--json"), []),
-                "queue": pool.submit(read, "queue", lambda: self.runner.json(str(ROOT / "bin" / "saymyname-product-queue"), "list", "--json"), []),
+                "queue": pool.submit(read, "queue", lambda: self.runner.json(*self.queue_command), []),
                 "factory_work": pool.submit(read, "factory_work", lambda: self.runner.json("bd", "list", "--status", "in_progress", "--limit", "0", "--json"), []),
             }
             base = {name: future.result() for name, future in pending.items()}
@@ -855,7 +941,9 @@ class FactoryCollector:
             for bead in beads:
                 if not isinstance(bead, dict):
                     continue
-                item = _product_bead(bead, store, current_product_ids)
+                item = _product_bead(
+                    bead, store, current_product_ids, self.product_config["name"]
+                )
                 if item and item.get("id"):
                     product_by_id[str(item["id"])] = item
         product_work = _sort_product_work(list(product_by_id.values()))
@@ -916,7 +1004,7 @@ class FactoryCollector:
             (mayor_session or {}).get("last_active"),
         )
         focus = {
-            "product": "SayMyName",
+            "product": self.product_config["name"],
             "id": (display_current or {}).get("id"),
             "execution_id": (current or {}).get("id"),
             "title": _human_product_title((display_current or {}).get("title")) if display_current else "Aucun résultat produit en cours",
@@ -1064,7 +1152,7 @@ class FactoryCollector:
             "agents": agent_cards,
             "queue": queue,
             "product_work": product_work,
-            "product_memory": ProductMemory().collect(),
+            "product_memory": self.product_memory.collect(),
             "decision_aids": decision_aids,
             "last_delivery": last_delivery,
             "needs_benjamin": needs_benjamin,
@@ -1076,6 +1164,7 @@ class FactoryCollector:
                 "model_calls": 0,
                 "description": "Surveillance et conseils locaux : 0 appel de modèle. Un message explicitement envoyé au Mayor peut consommer des tokens.",
             },
+            "remote_access": remote_access(),
         }
 
 
@@ -1226,15 +1315,217 @@ class MayorBridge:
         }
 
 
+class POBridge:
+    """Persistent, explicit-send Codex PO console for the configured product."""
+
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        state_path: Path | None = None,
+        executor: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    ) -> None:
+        self.config = config or load_product_config()
+        self.memory = ProductMemory(config=self.config)
+        self.state_path = state_path or ROOT / ".gc" / "runtime" / "factory-cockpit-po.json"
+        self.executor = executor or subprocess.run
+        self.lock = threading.Lock()
+        self.running = False
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        state = self._load()
+        if state.get("active", {}).get("status") in {"queued", "running"}:
+            state["active"]["status"] = "interrupted"
+            state["active"]["error"] = "Le cockpit a redémarré pendant la réponse; renvoie ton message si nécessaire."
+            self._write(state)
+
+    def _empty(self) -> dict[str, Any]:
+        return {"schema_version": 1, "active": {"thread_id": None, "status": "idle", "messages": []}, "archives": []}
+
+    def _load(self) -> dict[str, Any]:
+        try:
+            value = json.loads(self.state_path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) and isinstance(value.get("active"), dict) else self._empty()
+        except (OSError, json.JSONDecodeError):
+            return self._empty()
+
+    def _write(self, value: dict[str, Any]) -> None:
+        handle, filename = tempfile.mkstemp(prefix="cockpit-po-", suffix=".json", dir=self.state_path.parent)
+        try:
+            os.fchmod(handle, 0o600)
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                json.dump(value, stream, ensure_ascii=False, indent=2)
+            Path(filename).replace(self.state_path)
+        except Exception:
+            try:
+                os.close(handle)
+            except OSError:
+                pass
+            Path(filename).unlink(missing_ok=True)
+            raise
+
+    def _decision(self, decision_id: Any) -> dict[str, Any] | None:
+        if not decision_id:
+            return None
+        return next(
+            (item for item in self.memory.collect()["decisions"] if item.get("id") == decision_id),
+            None,
+        )
+
+    def submit(self, message: Any, intent: Any = "discuss", decision_id: Any = None) -> dict[str, Any]:
+        if not isinstance(message, str) or not message.strip() or len(message.strip()) > 6000 or "\x00" in message:
+            raise ValueError("Le message PO doit contenir entre 1 et 6000 caractères.")
+        if intent not in {"discuss", "record"}:
+            raise ValueError("L’intention PO doit être discuter ou enregistrer.")
+        decision = self._decision(decision_id)
+        with self.lock:
+            if self.running:
+                raise RuntimeError("Le PO prépare déjà une réponse.")
+            state = self._load()
+            active = state["active"]
+            active.setdefault("messages", []).append({
+                "role": "Benjamin", "text": message.strip(), "intent": intent,
+                "decision_id": decision.get("id") if decision else None,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            active["status"] = "queued"
+            active["error"] = None
+            self._write(state)
+            self.running = True
+        threading.Thread(
+            target=self._run,
+            args=(message.strip(), intent, decision),
+            name="factory-cockpit-po",
+            daemon=True,
+        ).start()
+        return {"accepted": True, "status": "queued", "thread_id": active.get("thread_id")}
+
+    def _prompt(self, message: str, intent: str, decision: dict[str, Any] | None) -> str:
+        context = ""
+        if decision:
+            context = (
+                f"\nDécision ouverte sélectionnée: {decision['title']}\n"
+                f"Contexte durable: {decision['detail']}\nSource: {decision['source']}\n"
+            )
+        action = (
+            "DISCUSS: explore les options sans modifier quoi que ce soit."
+            if intent == "discuss"
+            else "RECORD: traite ce message comme une décision explicite de Benjamin; mets à jour la plus petite mémoire produit durable appropriée, vérifie-la et explique exactement ce qui a été enregistré."
+        )
+        return (
+            "Tu es le Product Owner GPT intégré de SayMyName et l’unique interlocuteur produit de Benjamin. "
+            "Travaille en français, au niveau produit/utilisateur/entreprise. Charge progressivement les instructions du workspace et la mémoire durable. "
+            "Le contexte supérieur appartient à Benjamin et au PO; le Mayor reste seul orchestrateur de l’exécution Factory. "
+            "Ne lance pas de livraison, ne pilote pas d’agent et ne contacte pas le Mayor sauf demande EXECUTE explicite de Benjamin. "
+            "Tu disposes des outils complets du host mais l’accès complet est une capacité, pas une autorisation générale. "
+            f"Mode demandé: {action}{context}\nMessage de Benjamin: {message}"
+        )
+
+    def _run(self, message: str, intent: str, decision: dict[str, Any] | None) -> None:
+        output_path = self.state_path.parent / f"po-last-{os.getpid()}-{threading.get_ident()}.txt"
+        try:
+            state = self._load()
+            state["active"]["status"] = "running"
+            self._write(state)
+            thread_id = state["active"].get("thread_id")
+            prompt = self._prompt(message, intent, decision)
+            if thread_id:
+                command = [
+                    "codex", "exec", "resume", "--dangerously-bypass-approvals-and-sandbox",
+                    "--json", "-o", str(output_path), str(thread_id), prompt,
+                ]
+            else:
+                command = [
+                    "codex", "exec", "--dangerously-bypass-approvals-and-sandbox",
+                    "--skip-git-repo-check",
+                    "--json", "-o", str(output_path), "-C", str(self.config["po_workspace"]),
+                ]
+                for directory in self.config.get("po_add_dirs", []):
+                    command.extend(["--add-dir", str(directory)])
+                command.append(prompt)
+            result = self.executor(
+                command, cwd=ROOT, capture_output=True, text=True, timeout=1200,
+                env={**os.environ, "NO_COLOR": "1"},
+            )
+            observed_thread = thread_id
+            for raw in result.stdout.splitlines():
+                try:
+                    event = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                thread_value = event.get("thread")
+                nested_thread = thread_value.get("id") if isinstance(thread_value, dict) else None
+                observed_thread = event.get("thread_id") or nested_thread or observed_thread
+            response = output_path.read_text(encoding="utf-8", errors="replace").strip() if output_path.exists() else ""
+            if result.returncode != 0:
+                raise SourceError(_redact(result.stderr.strip() or "Le processus PO a échoué.")[:4000])
+            if not response:
+                response = "Le PO a terminé sans produire de réponse visible."
+            state = self._load()
+            state["active"]["thread_id"] = observed_thread
+            state["active"]["status"] = "idle"
+            state["active"]["messages"].append({
+                "role": "PO", "text": _redact(response)[:16000],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            self._write(state)
+        except Exception as exc:
+            state = self._load()
+            state["active"]["status"] = "error"
+            state["active"]["error"] = _redact(str(exc))[:4000]
+            self._write(state)
+        finally:
+            output_path.unlink(missing_ok=True)
+            with self.lock:
+                self.running = False
+
+    def new_conversation(self) -> dict[str, Any]:
+        with self.lock:
+            if self.running:
+                raise RuntimeError("Attends la réponse du PO avant de changer de discussion.")
+            state = self._load()
+            active = state["active"]
+            if active.get("messages"):
+                state.setdefault("archives", []).insert(0, {
+                    **active,
+                    "archived_at": datetime.now(timezone.utc).isoformat(),
+                })
+                state["archives"] = state["archives"][:20]
+            state["active"] = {"thread_id": None, "status": "idle", "messages": []}
+            self._write(state)
+        return {"created": True}
+
+    def conversation(self) -> dict[str, Any]:
+        state = self._load()
+        return {
+            "product": self.config["name"],
+            "workspace": self.config["po_workspace"],
+            "full_access": True,
+            "thread_id": state["active"].get("thread_id"),
+            "status": state["active"].get("status", "idle"),
+            "error": state["active"].get("error"),
+            "messages": state["active"].get("messages", [])[-40:],
+            "archives": [
+                {
+                    "thread_id": item.get("thread_id"),
+                    "archived_at": item.get("archived_at"),
+                    "message_count": len(item.get("messages", [])),
+                    "preview": next((msg.get("text", "")[:120] for msg in item.get("messages", []) if msg.get("role") == "Benjamin"), "Discussion PO"),
+                }
+                for item in state.get("archives", [])[:10]
+            ],
+        }
+
+
 def handler_factory(
     cache: SnapshotCache,
     mayor_bridge: MayorBridge | None = None,
     detail_reader: DetailReader | None = None,
     token_cache: SnapshotCache | None = None,
+    po_bridge: POBridge | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     bridge = mayor_bridge or MayorBridge()
     details = detail_reader or DetailReader()
     tokens = token_cache or SnapshotCache(TokenReader(), ttl=30)
+    po = po_bridge or POBridge()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "FactoryCockpit/1"
@@ -1299,6 +1590,9 @@ def handler_factory(
                 except SourceError as exc:
                     self._json_response(503, {"error": str(exc)})
                 return
+            if path == "/api/po/conversation":
+                self._json_response(200, po.conversation())
+                return
             files = {
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -1314,15 +1608,16 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
-            if path != "/api/mayor/message":
+            if path not in {"/api/mayor/message", "/api/po/message", "/api/po/new"}:
                 self._json_response(404, {"error": "Not found"})
                 return
             origin = self.headers.get("Origin")
             host = self.headers.get("Host")
-            if not origin or not host or origin != f"http://{host}":
+            if not origin or not host or origin not in {f"http://{host}", f"https://{host}"}:
                 self._json_response(403, {"error": "Origine refusée."})
                 return
-            if self.headers.get("X-Factory-Cockpit") != "human-message":
+            expected_header = "human-message" if path == "/api/mayor/message" else "human-po-message"
+            if self.headers.get("X-Factory-Cockpit") != expected_header:
                 self._json_response(403, {"error": "Confirmation de cockpit absente."})
                 return
             if not self.headers.get("Content-Type", "").startswith("application/json"):
@@ -1332,12 +1627,20 @@ def handler_factory(
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 length = 0
-            if length <= 0 or length > 8192:
+            if length <= 0 or length > 12288:
                 self._json_response(413, {"error": "Message trop grand ou vide."})
                 return
             try:
                 request = json.loads(self.rfile.read(length))
-                result = bridge.submit(request.get("message"), request.get("intent", "question"))
+                if path == "/api/mayor/message":
+                    result = bridge.submit(request.get("message"), request.get("intent", "question"))
+                elif path == "/api/po/message":
+                    result = po.submit(
+                        request.get("message"), request.get("intent", "discuss"),
+                        request.get("decision_id"),
+                    )
+                else:
+                    result = po.new_conversation()
                 self._json_response(202, result)
             except json.JSONDecodeError:
                 self._json_response(400, {"error": "JSON invalide."})

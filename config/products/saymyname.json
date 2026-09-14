@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "slug": "saymyname",
+  "name": "SayMyName",
+  "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
+  "decisions": "docs/products/saymyname/DECISIONS.md",
+  "po_workspace": "/mnt/c/Dev/Projects/SayMyName",
+  "po_add_dirs": [
+    "/home/benja/agent-factory"
+  ],
+  "status_command": [
+    "bin/saymyname-product-status"
+  ],
+  "queue_command": [
+    "bin/saymyname-product-queue",
+    "list",
+    "--json"
+  ],
+  "capabilities": [
+    {"id": "challenge", "title": "Challenges publics", "area": "Acquisition", "roadmap": 1},
+    {"id": "personal", "title": "Espace personnel", "area": "Produit cœur", "roadmap": 1},
+    {"id": "learning", "title": "Moteur d’apprentissage", "area": "Produit cœur", "roadmap": 1},
+    {"id": "groups", "title": "Promotions et événements", "area": "Collaboration", "roadmap": 2},
+    {"id": "organizations", "title": "Organisations administrées", "area": "B2B", "roadmap": 3},
+    {"id": "imports", "title": "Imports de personnes", "area": "Activation", "roadmap": 3},
+    {"id": "editorial", "title": "Publication éditoriale", "area": "Contenu", "roadmap": 5},
+    {"id": "retrieval", "title": "Recherche par indices", "area": "Produit cœur", "roadmap": 6},
+    {"id": "connectors", "title": "Connecteurs externes", "area": "Activation", "roadmap": 7},
+    {"id": "federation", "title": "Organisation fédérée", "area": "Entreprise", "roadmap": 8},
+    {"id": "business", "title": "Prix et lancement", "area": "Entreprise", "roadmap": 9}
+  ],
+  "relations": [
+    ["challenge", "personal"],
+    ["groups", "personal"],
+    ["organizations", "imports"],
+    ["imports", "personal"],
+    ["personal", "learning"],
+    ["editorial", "challenge"],
+    ["personal", "retrieval"],
+    ["connectors", "imports"],
+    ["federation", "organizations"],
+    ["learning", "business"]
+  ]
+}

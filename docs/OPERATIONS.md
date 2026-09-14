@@ -159,6 +159,8 @@ cd ~/agent-factory
 ./bin/factory-cockpit open
 ./bin/factory-cockpit status
 ./bin/factory-cockpit snapshot | jq .
+./bin/factory-cockpit phone-enable
+./bin/factory-cockpit phone-status
 ./bin/factory-cockpit stop
 ```
 
@@ -180,17 +182,24 @@ tracking, and maintenance. Beads states what should be done, Gas City states who
 is executing it, and GitHub/CI proves delivery. An empty product queue does not
 stop infrastructure or current work, but no next product result can start.
 
-The **Parler au Mayor** panel is the only write capability. A typed and explicit
-send uses `gc session submit mayor` with either normal or follow-up intent and may
-consume model tokens. Advice buttons only prefill text. The server never exposes
+The **Parler au Mayor** and **Mon PO** panels are the only write capabilities.
+A typed and explicit Mayor send uses `gc session submit mayor`; a typed and
+explicit PO send starts or resumes a local authenticated Codex session in the
+configured product workspace. Both may consume model tokens. The PO supports
+DISCUSS (no durable mutation) and RECORD (persist only the specifically approved
+decision). EXECUTE is handed once to the Mayor: the PO never becomes a second
+delivery orchestrator. Advice buttons only prefill text. The server never exposes
 interrupt, dispatch, retry, merge, or recovery controls; it requires same-origin
-bounded JSON, a cockpit confirmation header, and a five-second send interval.
-The conversation view reads only the most recent cockpit-origin exchanges and
-does not display the complete provider transcript or system prompts.
+bounded JSON, a purpose-specific confirmation header, and a five-second send
+interval. Conversation views contain only cockpit-origin exchanges and never
+expose system prompts or hidden reasoning.
 
-The listener rejects non-loopback hosts. Do not publish port `8383`, proxy it
-through Tailscale, or make it public without a separately reviewed authenticated
-access design. Runtime PID/log state is under
+The listener remains loopback-only. `phone-enable` configures a dedicated
+Tailscale Serve HTTPS endpoint on port `8443`, reachable only by devices in
+Benjamin's tailnet, while preserving the existing Gas City mapping on port 443.
+It never enables Tailscale Funnel or binds the cockpit to the LAN. Do not publish
+port `8383` or replace this private endpoint with public exposure without a new
+security review. Runtime PID/log state is under
 `${XDG_RUNTIME_DIR:-/tmp}/agent-factory-cockpit-<uid>-8383` and contains no
 credentials or transcripts.
 
@@ -205,7 +214,10 @@ Stopping the cockpit does not stop Gas City or its agents. Its HTTP surface is:
   activity loaded on click; hidden reasoning is not exposed;
 - `GET /api/tokens`: on-demand local provider counters, including exact scope
   and confidence labels; this read makes zero model calls;
-- `POST /api/mayor/message`: explicit bounded human message to the Mayor.
+- `GET /api/po/conversation`: local PO conversation and archived cockpit views;
+- `POST /api/mayor/message`: explicit bounded human message to the Mayor;
+- `POST /api/po/message`: explicit DISCUSS or RECORD message to the persistent PO;
+- `POST /api/po/new`: archive the current cockpit view and begin a fresh PO thread.
 
 ## Detailed Gas City dashboard
 

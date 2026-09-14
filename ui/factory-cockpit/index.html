@@ -11,8 +11,10 @@
 </header>
 <nav class="app-nav" aria-label="Cockpit">
   <button class="nav-item active" data-view="today"><span>Aujourd’hui</span><small>Situation</small></button>
+  <button class="nav-item" data-view="project"><span>Projet</span><small>Carte globale</small></button>
   <button class="nav-item" data-view="roadmap"><span>Roadmap</span><small>Now · Next · Later</small></button>
   <button class="nav-item" data-view="decisions"><span>Décisions</span><small id="nav-decision-count">—</small></button>
+  <button class="nav-item" data-view="po"><span>Mon PO</span><small id="nav-po-state">GPT · prêt</small></button>
   <button class="nav-item" data-view="work"><span>Travail</span><small>Board produit</small></button>
   <button class="nav-item" data-view="agents"><span>Agents</span><small id="nav-agent-count">—</small></button>
   <button class="nav-item" data-view="tokens"><span>Tokens</span><small>Du détail au global</small></button>
@@ -34,12 +36,25 @@
     <section class="panel conversation-panel"><div class="section-heading"><div><p class="eyebrow">ÉCHANGES DEPUIS CE COCKPIT</p><h2>Mayor</h2></div><button id="refresh-conversation">Relire</button></div><div id="mayor-conversation" class="conversation"></div></section>
   </section>
 
+  <section class="view" data-view-panel="project">
+    <div class="view-heading"><div><p class="eyebrow">VUE D’ENSEMBLE</p><h1>Comprendre le produit et son système</h1><p class="lede">Deux cartes séparent les capacités du produit et la chaîne de contexte qui décide puis livre.</p></div><span id="project-progress" class="status-pill idle">—</span></div>
+    <section class="panel graph-panel"><div class="section-heading"><div><p class="eyebrow">DÉCOUPE CONCEPTUELLE</p><h2>Capacités SayMyName et dépendances</h2></div><button class="info" data-tooltip="Chaque bloc est une capacité produit. Sa couleur vient de sa position roadmap, pas d’un pourcentage fictif.">?</button></div><div id="capability-legend" class="graph-legend"></div><div id="capability-graph" class="capability-graph"></div></section>
+    <section class="panel graph-panel"><div class="section-heading"><div><p class="eyebrow">QUI SAIT QUOI ?</p><h2>Contexte, décisions et exécution</h2></div></div><div id="context-graph" class="context-graph"></div></section>
+    <section class="two-grid"><article class="panel"><p class="eyebrow">CONTEXTE SUPÉRIEUR</p><h2>Benjamin + PO</h2><p class="muted">Vision, utilisateurs, stratégie, roadmap, décisions et priorités. Ce contexte détermine pourquoi on construit.</p><div id="upper-context" class="context-list"></div></article><article class="panel"><p class="eyebrow">CONTEXTE D’EXÉCUTION</p><h2>Mayor + agents</h2><p class="muted">Résultat autorisé, critères, Beads, workflow, dépôts et preuves. Ce contexte détermine comment on livre.</p><div id="execution-context" class="context-list"></div></article></section>
+    <article class="panel mobile-access"><div><p class="eyebrow">SUR TON TÉLÉPHONE</p><h2>Accès privé par Tailscale</h2><p id="mobile-access-copy" class="muted">Vérification de l’accès distant…</p></div><a id="mobile-access-link" class="button-link hidden" href="#">Ouvrir sur le téléphone</a></article>
+  </section>
+
   <section class="view" data-view-panel="roadmap">
-    <div class="view-heading"><div><p class="eyebrow">DIRECTION PRODUIT</p><h1>Roadmap par résultat utilisateur</h1><p id="product-thesis" class="lede"></p></div><button id="copy-po-prompt">Préparer une discussion PO</button></div><div id="roadmap" class="roadmap-grid"></div><p class="source-note">Stratégie : documents Git validés. Exécution : Beads, Gas City et GitHub.</p>
+    <div class="view-heading"><div><p class="eyebrow">DIRECTION PRODUIT</p><h1>Roadmap par résultat utilisateur</h1><p id="product-thesis" class="lede"></p></div><button id="copy-po-prompt">En parler avec le PO</button></div><div id="roadmap" class="roadmap-grid"></div><p class="source-note">Stratégie : documents Git validés. Exécution : Beads, Gas City et GitHub.</p>
   </section>
 
   <section class="view" data-view-panel="decisions">
     <div class="view-heading"><div><p class="eyebrow">MÉMOIRE PRODUIT</p><h1>Décisions à prendre et décisions acquises</h1><p class="lede">Les choix ouverts restent visibles; l’usine ne les invente jamais à ta place.</p></div></div><div class="decision-columns"><section><div class="column-title"><h2>À décider</h2><span id="pending-count" class="count">0</span></div><div id="pending-decisions" class="stack"></div></section><section><div class="column-title"><h2>Décidé</h2><span id="accepted-count" class="count">0</span></div><div id="accepted-decisions" class="stack"></div></section></div>
+  </section>
+
+  <section class="view" data-view-panel="po">
+    <div class="view-heading"><div><p class="eyebrow">TON INTERLOCUTEUR PRODUIT</p><h1>PO GPT SayMyName</h1><p class="lede">Discute fonctionnalités, utilisateurs, entreprise et priorités. Le PO peut enregistrer une décision explicite; le Mayor reste seul pilote de la livraison.</p></div><div class="po-heading-actions"><span id="po-state" class="status-pill idle">Prêt</span><button id="new-po-conversation">Nouvelle discussion</button></div></div>
+    <div class="po-layout"><section class="panel po-console"><div id="po-messages" class="po-messages"></div><div class="po-composer"><label for="po-decision">Sujet</label><select id="po-decision"><option value="">Discussion générale</option></select><label for="po-message">Ton message ou ta réponse</label><textarea id="po-message" maxlength="6000" rows="5" placeholder="Ex. Pour le pilote, je préfère passer par l’association étudiante parce que…"></textarea><div class="po-compose-actions"><select id="po-intent"><option value="discuss">Discuter sans enregistrer</option><option value="record">Acter et enregistrer ma décision</option></select><button id="send-po" class="primary">Envoyer au PO</button></div><p class="token-warning">L’envoi démarre ou reprend une vraie session GPT avec accès complet au workspace. Il consomme des tokens; l’affichage seul n’en consomme pas.</p><p id="po-feedback" class="feedback"></p></div></section><aside class="panel po-side"><p class="eyebrow">CONTRAT</p><h2>PO au-dessus, Mayor en dessous</h2><ul><li>Le PO connaît le projet complet et t’aide à décider.</li><li>Il modifie la mémoire seulement quand tu choisis « Acter ».</li><li>Il ne pilote pas les agents à la place du Mayor.</li><li>L’accès complet est disponible, mais limité par ton intention.</li></ul><div class="thread-box"><span>Discussion Codex</span><strong id="po-thread">Pas encore créée</strong><button id="copy-po-thread" disabled>Copier l’identifiant</button></div><details><summary>Anciennes discussions</summary><div id="po-archives" class="stack"></div></details></aside></div>
   </section>
 
   <section class="view" data-view-panel="work">
