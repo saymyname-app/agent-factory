@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+command=${1:-}
+shift || true
+case "$command" in
+  list)
+    printf '%s\n' "${QUEUE_INVENTORY:-[]}"
+    ;;
+  show)
+    id=${1:?missing ID}
+    jq -c --arg id "$id" '[.[] | select(.id == $id)]' <<<"${QUEUE_INVENTORY:-[]}"
+    ;;
+  create)
+    printf 'create' >>"$QUEUE_LOG"
+    printf ' <%s>' "$@" >>"$QUEUE_LOG"
+    printf '\n' >>"$QUEUE_LOG"
+    printf '{"id":"af-new"}\n'
+    ;;
+  update|close)
+    printf '%s' "$command" >>"$QUEUE_LOG"
+    printf ' <%s>' "$@" >>"$QUEUE_LOG"
+    printf '\n' >>"$QUEUE_LOG"
+    printf '{}\n'
+    ;;
+  *)
+    printf 'unsupported fake bd command: %s\n' "$command" >&2
+    exit 1
+    ;;
+esac

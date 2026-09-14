@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+if [[ ${1:-} == bd && ${2:-} == show && -n ${3:-} && ${4:-} == --json ]]; then
+  printf '[{"id":"%s","status":"open"}]\n' "$3"
+  exit 0
+fi
+printf 'unsupported fake gc invocation\n' >&2
+exit 1

@@ -9,6 +9,7 @@ Use progressive disclosure. Do not read every document by default.
 | SayMyName product vision, priorities, unknowns | `products/saymyname/PRODUCT_CONTEXT.md` |
 | SayMyName durable product decisions | `products/saymyname/DECISIONS.md` |
 | SayMyName PO cockpit instructions and Codex config | `products/saymyname/PO_WORKSPACE_AGENTS.md`, `products/saymyname/CODEX_PROJECT.toml` |
+| Ordered product candidates and Mayor materialization | `PRODUCT_QUEUE.md` |
 | Durable target architecture | `TARGET_ARCHITECTURE.md` |
 | Current migration state, cutover and rollback | `MIGRATION.md` |
 | Install/start/stop/doctor/backup/restore/recovery | `OPERATIONS.md` |
@@ -16,7 +17,7 @@ Use progressive disclosure. Do not read every document by default.
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0001-foundation.md`, `decisions/ADR-0002-local-preview-and-tailnet-dashboard.md`, `decisions/ADR-0003-native-codex-operator-bridge.md`, `decisions/ADR-0004-saymyname-po-cockpit.md` |
+| Structural decisions | `decisions/ADR-0001-foundation.md`, `decisions/ADR-0002-local-preview-and-tailnet-dashboard.md`, `decisions/ADR-0003-native-codex-operator-bridge.md`, `decisions/ADR-0004-saymyname-po-cockpit.md`, `decisions/ADR-0005-mayor-owned-product-queue.md` |
 
 ## Authority order
 

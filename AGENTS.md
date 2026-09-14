@@ -25,7 +25,10 @@ For a change:
 ## Codex bridge contract
 
 - Desktop Codex, CLI Codex, and Codex Remote are operator surfaces for the same local Factory.
-- The Mayor remains the sole product-work orchestrator; do not create an independent competing queue.
+- `bin/product-queue` is the deferred product-candidate projection over Beads,
+  not an executable queue. A PO may manage candidates under RECORD authority;
+  only the Mayor materializes the first eligible candidate as separate executable
+  work. The Mayor remains the sole product-work orchestrator.
 - A remote/mobile session has the same authority as its request, not broader authority because the host is reachable.
 - “Full access” means the tools may be available. It never means blanket permission to mutate, publish, expose, spend, handle secrets, or perform destructive operations.
 - Follow `docs/OPERATOR_BRIDGE.md` for the human protocol and access boundaries.

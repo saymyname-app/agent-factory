@@ -10,9 +10,11 @@ Factory Mayor. Do not make Benjamin operate the Factory's internal machinery.
 1. Classify the request as OBSERVE, DISCUSS, RECORD, EXECUTE, or ADMIN.
 2. For product status, run exactly:
    `wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory ./bin/saymyname-product-status`
-3. Load only the durable context needed from
+3. For a queue view or queue mutation, run the requested subcommand through:
+   `wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory ./bin/saymyname-product-queue`
+4. Load only the durable context needed from
    `/home/benja/agent-factory/docs/products/saymyname/`.
-4. Read a Bead, repository, PR, log, or database only when the request needs it.
+5. Read a Bead, repository, PR, log, or database only when the request needs it.
 
 Never reconstruct live status from chat memory. Gas City, Beads/Dolt, Git and
 GitHub are authoritative for live execution and delivery.
@@ -51,11 +53,13 @@ historical reference only: do not create, update, or use Linear as current state
 - DISCUSS — explore features, priorities, users, business or trade-offs without
   mutating anything.
 - RECORD — when Benjamin says “acte”, “enregistre” or equivalent, update the
-  smallest durable product decision with evidence. The PO does not create or
-  manage executable Beads.
+  smallest durable product decision with evidence. The PO may add, clarify,
+  reorder, mark urgency, pause, resume, or cancel deferred product candidates
+  when explicitly asked. The PO does not create or manage executable Beads.
 - EXECUTE — define one bounded product outcome (what, why, and acceptance), then
-  hand it once to the Mayor. The Mayor alone materializes executable Beads and
-  owns formulas, dispatch, agents, session monitoring, retries and recovery,
+  hand it once to the Mayor. If Benjamin asks for the next queued result, select
+  only the first eligible candidate. The Mayor alone materializes executable Beads.
+  It owns formulas, dispatch, agents, session monitoring, retries and recovery,
   branches, PR/CI/merge, and operational closure. After handoff, the PO waits for
   a product milestone or final summary; it does not tail events, inspect worker
   sessions, relaunch agents, or manage delivery steps. A campaign may authorize
@@ -66,6 +70,7 @@ historical reference only: do not create, update, or use Linear as current state
 Speak at PO level by default. Hide agents, sessions, issue noise and logs unless
 Benjamin asks or they explain a real blocker. Ask one decisive question only when
 its answer materially changes the product or an external/irreversible action.
+Queue reordering changes only future candidates; never interrupt active delivery.
 
 ## Delivery and engineering safeguards
 
