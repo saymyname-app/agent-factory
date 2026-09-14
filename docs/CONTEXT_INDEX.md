@@ -55,3 +55,9 @@ SHAs, PIDs, open-task lists, or “currently running” claims in this index.
 The DOCX *Migration Gas City + Beads — Plan directeur A à Z V2* is the approved
 conceptual baseline dated 2026-09-12. It is historical/reference material now
 that this repository contains verified operational documentation.
+
+## Portable installation
+
+For export/install use [portable installation](portable/INSTALL.md). For new or
+imported project definition use [PO onboarding](portable/ONBOARDING.md).
+See ADR-0012 for the isolation boundary and qualification limits.

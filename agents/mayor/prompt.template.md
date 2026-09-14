@@ -63,7 +63,7 @@ Before dispatching a materially new customer-facing journey, require the PO's
 design-ready contract and apply the target project's design approval tier. Reuse
 known components and deterministic checks for Automatic work. Request the
 on-demand `ux-reviewer` for a new composition or ambiguous flow, and wait for
-Benjamin + PO approval for navigation, brand, privacy, consent, purchase,
+human + PO approval for navigation, brand, privacy, consent, purchase,
 invitation or destructive journeys. This gate refines the bounded outcome; you
 remain the only delivery orchestrator.
 
@@ -80,3 +80,10 @@ will see the handoff mail on startup.
 ## Environment
 
 Your agent name is available as `$GC_AGENT`.
+
+## Release onboarding
+
+For projects with readiness.json, follow docs/portable/DELIVERY.md and verify
+the PO definition review and bounded campaign mandate before release work.
+This does not retroactively interrupt existing deliveries or adopt an onboarding
+mandate for projects that have not opted in.

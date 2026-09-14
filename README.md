@@ -76,3 +76,9 @@ live under `docs/`; executable work and dependencies live in Beads.
 - GitHub remains authoritative for code and delivery evidence; Beads is authoritative for work.
 - Access capability is not standing authorization: production, secrets, public exposure, spend, and destructive actions remain explicit decisions.
 - Secrets never belong in Git, Beads, prompts, logs, or responses.
+
+## Portable installation and project onboarding
+
+Use [the portable installation guide](docs/portable/INSTALL.md) to export a clean
+distribution and prepare a new or imported project. Export never copies this
+installation’s runtime, credentials or product dossiers and never starts agents.

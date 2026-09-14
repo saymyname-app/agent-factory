@@ -29,7 +29,8 @@ PRODUCT_CONFIG_PATH = Path(os.environ.get(
     "FACTORY_COCKPIT_PRODUCT_CONFIG", ROOT / "config" / "products" / "saymyname.json"
 ))
 REMOTE_ACCESS_FILE = ROOT / ".gc" / "runtime" / "factory-cockpit-remote-url"
-COORDINATION_BEAD = os.environ.get("FACTORY_COCKPIT_COORDINATION_BEAD", "af-1vr4")
+COORDINATION_BEAD = os.environ.get("FACTORY_COCKPIT_COORDINATION_BEAD", "af-1vr4" if (ROOT / "config/products/saymyname.json").exists() else "")
+CITY_NAME = os.environ.get("FACTORY_COCKPIT_CITY_NAME", "agent-factory")
 GAS_CITY_URL = os.environ.get("FACTORY_COCKPIT_GAS_CITY_URL", "http://127.0.0.1:8372")
 
 
@@ -56,6 +57,12 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         isinstance(part, str) and part for part in value["queue_command"]
     ):
         raise SourceError("Commande de file produit invalide.")
+    if value.get("po_sandbox") not in {None, "read-only", "workspace-write"}:
+        raise SourceError("Sandbox PO portable invalide.")
+    if "po_model" in value and (not isinstance(value["po_model"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}", value["po_model"])):
+        raise SourceError("Modèle PO invalide.")
+    if "preview_command" in value and (not isinstance(value["preview_command"], list) or not all(isinstance(x, str) and x for x in value["preview_command"])):
+        raise SourceError("Commande de prévisualisation invalide.")
     if not isinstance(value["capabilities"], list) or not isinstance(value["relations"], list):
         raise SourceError("Graphe produit invalide.")
     capability_ids: set[str] = set()
@@ -409,7 +416,7 @@ def _decision_aids(
     if needs_benjamin:
         advice.append({
             "severity": "decision",
-            "title": "Une décision de Benjamin est nécessaire",
+            "title": "Une décision humaine est nécessaire",
             "explanation": needs_benjamin,
             "action": "Répondre au point de décision avant de poursuivre la livraison.",
             "prompt": f"Explique-moi simplement cette décision, recommande une option et ses conséquences : {needs_benjamin}",
@@ -554,7 +561,7 @@ class ProductMemory:
                 continue
             for raw in re.findall(r"(?m)^-\s+(.+)$", body):
                 match = re.match(r"\*\*(.+?)\*\*\s+—\s+(.+)", raw.strip())
-                title, detail = (match.group(1), match.group(2)) if match else (raw.strip(), "Décision volontairement laissée à Benjamin.")
+                title, detail = (match.group(1), match.group(2)) if match else (raw.strip(), "Décision laissée au responsable du projet.")
                 pending.append({
                     "id": f"pending-{domain}-{hashlib.sha256(title.encode('utf-8')).hexdigest()[:12]}",
                     "title": title,
@@ -588,7 +595,7 @@ class ProductMemory:
                 "edges": self.config.get("relations", []),
             },
             "business": {
-                "north_star": "Prouver que SayMyName aide une personne à mieux retrouver les gens qu’elle a choisi de mémoriser, puis trouver un canal et un acheteur répétables.",
+                "north_star": self.config.get("north_star", "Voir la stratégie produit pour la vision et les critères de succès."),
                 "objectives": business_objectives,
             },
             "view_inventory": self.config.get("view_inventory", []),
@@ -604,10 +611,10 @@ class ProductMemory:
                 ), timezone.utc
             ).isoformat(),
             "sources": [
-                "docs/products/saymyname/PRODUCT_STRATEGY.md",
-                "docs/products/saymyname/DECISIONS.md",
-                "docs/products/saymyname/PROJECT_INVENTORY.md",
-                "docs/products/saymyname/DESIGN_GOVERNANCE.md",
+                self.config["strategy"],
+                self.config["decisions"],
+                self.config["project_inventory"],
+                self.config["design_governance"],
             ],
         }
 
@@ -676,7 +683,7 @@ class DetailReader:
         if not session:
             raise SourceError("Session active introuvable.")
         transcript = self.gas_city.json(
-            f"/v0/city/agent-factory/session/{quote(session_id, safe='')}/transcript"
+            f"/v0/city/{quote(CITY_NAME, safe='')}/session/{quote(session_id, safe='')}/transcript"
         )
         messages = []
         for turn in transcript.get("turns", []) if isinstance(transcript, dict) else []:
@@ -1018,7 +1025,7 @@ class FactoryCollector:
             workflow = read(
                 "workflow",
                 lambda: self.gas_city.json(
-                    f"/v0/city/agent-factory/workflow/{quote(workflow_id, safe='')}"
+                    f"/v0/city/{quote(CITY_NAME, safe='')}/workflow/{quote(workflow_id, safe='')}"
                 ),
                 None,
             )
@@ -1203,7 +1210,7 @@ class FactoryCollector:
                 "label": factory_label,
                 "running": bool(city.get("running")),
                 "usable": bool(health.get("usable")),
-                "city": city.get("city_name", "agent-factory"),
+                "city": city.get("city_name", CITY_NAME),
             },
             "focus": focus,
             "agents": agent_cards,
@@ -1282,6 +1289,8 @@ class MayorBridge:
 
     def __init__(self, runner: Any | None = None, gas_city: Any | None = None) -> None:
         self.runner = runner or CommandRunner()
+        self.operator = load_product_config().get("operator_name", "Benjamin")
+        self.PREFIX = "[Cockpit " + self.operator + "] "
         self.gas_city = gas_city or GasCityReader(timeout=15)
         self.lock = threading.Lock()
         self.last_submit = 0.0
@@ -1327,7 +1336,7 @@ class MayorBridge:
         if not mayor or not mayor.get("id"):
             raise SourceError("La session Mayor est indisponible.")
         transcript = self.gas_city.json(
-            f"/v0/city/agent-factory/session/{quote(str(mayor['id']), safe='')}/transcript"
+            f"/v0/city/{quote(CITY_NAME, safe='')}/session/{quote(str(mayor['id']), safe='')}/transcript"
         )
         turns = transcript.get("turns", []) if isinstance(transcript, dict) else []
         cockpit_indices = [
@@ -1350,7 +1359,7 @@ class MayorBridge:
                     continue
                 capturing = True
                 text = text[len(self.PREFIX) :].strip()
-                visible_role = "Benjamin"
+                visible_role = self.operator
             elif role == "assistant":
                 if not capturing or not text or text in {"[thinking]", "[exec]"}:
                     continue
@@ -1383,7 +1392,7 @@ class POBridge:
     ) -> None:
         self.config = config or load_product_config()
         self.memory = ProductMemory(config=self.config)
-        self.state_path = state_path or ROOT / ".gc" / "runtime" / "factory-cockpit-po.json"
+        self.state_path = state_path or ROOT / ".gc" / "runtime" / ("factory-cockpit-po.json" if self.config["slug"] == "saymyname" else "factory-cockpit-po-" + self.config["slug"] + ".json")
         self.executor = executor or subprocess.run
         self.lock = threading.Lock()
         self.running: set[str] = set()
@@ -1488,7 +1497,7 @@ class POBridge:
             if key in self.running or conversation.get("status") in {"queued", "running"}:
                 raise RuntimeError("Le PO prépare déjà une réponse pour ce sujet.")
             conversation.setdefault("messages", []).append({
-                "role": "Benjamin", "text": message.strip(), "intent": intent,
+                "role": self.config.get("operator_name", "Benjamin"), "text": message.strip(), "intent": intent,
                 "decision_id": decision.get("id") if decision else None,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
@@ -1506,26 +1515,28 @@ class POBridge:
         return {"accepted": True, "status": "queued", "key": key, "thread_id": conversation.get("thread_id")}
 
     def _prompt(self, message: str, intent: str, decision: dict[str, Any] | None) -> str:
+        operator = self.config.get("operator_name", "responsable du projet")
+        product = self.config["name"]
         context = ""
         if decision:
             context = (
                 f"\nEspace de décision dédié ({decision.get('domain', 'produit')}): {decision['title']}\n"
                 f"Contexte durable: {decision['detail']}\nSource: {decision['source']}\n"
-                "Aide Benjamin à décider: reformule le choix, propose 2 à 4 options réellement distinctes, "
+                f"Aide {operator} à décider: reformule le choix, propose 2 à 4 options réellement distinctes, "
                 "recommande-en une avec ses compromis, puis termine par la prochaine question ou une réponse-type courte.\n"
             )
         action = (
             "DISCUSS: explore les options sans modifier quoi que ce soit."
             if intent == "discuss"
-            else "RECORD: traite ce message comme une décision explicite de Benjamin; mets à jour la plus petite mémoire produit durable appropriée, vérifie-la et explique exactement ce qui a été enregistré."
+            else f"RECORD: traite ce message comme une décision explicite de {operator}; mets à jour la plus petite mémoire produit durable appropriée, vérifie-la et explique exactement ce qui a été enregistré."
         )
         return (
-            "Tu es le Product Owner GPT intégré de SayMyName et l’unique interlocuteur produit de Benjamin. "
+            f"Tu es le Product Owner intégré de {product} et l’interlocuteur produit de {operator}. "
             "Travaille en français, au niveau produit/utilisateur/entreprise. Charge progressivement les instructions du workspace et la mémoire durable. "
-            "Le contexte supérieur appartient à Benjamin et au PO; le Mayor reste seul orchestrateur de l’exécution Factory. "
-            "Ne lance pas de livraison, ne pilote pas d’agent et ne contacte pas le Mayor sauf demande EXECUTE explicite de Benjamin. "
+            f"Le contexte supérieur appartient à {operator} et au PO; le Mayor reste seul orchestrateur de l’exécution Factory. "
+            f"Ne lance pas de livraison, ne pilote pas d’agent et ne contacte pas le Mayor sauf demande EXECUTE explicite de {operator}. "
             "Tu disposes des outils complets du host mais l’accès complet est une capacité, pas une autorisation générale. "
-            f"Mode demandé: {action}{context}\nMessage de Benjamin: {message}"
+            f"Mode demandé: {action}{context}\nMessage de {operator}: {message}"
         )
 
     def _run(self, key: str, message: str, intent: str, decision: dict[str, Any] | None) -> None:
@@ -1551,6 +1562,11 @@ class POBridge:
                 for directory in self.config.get("po_add_dirs", []):
                     command.extend(["--add-dir", str(directory)])
                 command.append(prompt)
+            if self.config.get("po_sandbox"):
+                command.remove("--dangerously-bypass-approvals-and-sandbox")
+                command[2:2] = ["-c", 'sandbox_mode="' + self.config["po_sandbox"] + '"']
+            if self.config.get("po_model"):
+                command[2:2] = ["-m", self.config["po_model"]]
             result = self.executor(
                 command, cwd=ROOT, capture_output=True, text=True, timeout=1200,
                 env={**os.environ, "NO_COLOR": "1"},
@@ -1651,7 +1667,7 @@ class POBridge:
         return {
             "product": self.config["name"],
             "workspace": self.config["po_workspace"],
-            "full_access": True,
+            "full_access": not bool(self.config.get("po_sandbox")),
             **self._public(conversation),
             "conversations": sorted(
                 [self._public(item) for item in state["conversations"].values()],
@@ -1663,7 +1679,9 @@ class POBridge:
 class PreviewBridge:
     """Safe asynchronous facade over the repository-owned SayMyName preview wrapper."""
 
-    def __init__(self, executor: Callable[..., subprocess.CompletedProcess[str]] | None = None) -> None:
+    def __init__(self, executor: Callable[..., subprocess.CompletedProcess[str]] | None = None, config: dict[str, Any] | None = None) -> None:
+        self.config = config or load_product_config()
+        self.command = self.config.get("preview_command", [str(ROOT / "bin" / "saymyname-preview")] if self.config["slug"] == "saymyname" else [])
         self.executor = executor or subprocess.run
         self.lock = threading.Lock()
         self.running_action: str | None = None
@@ -1679,8 +1697,10 @@ class PreviewBridge:
         }
 
     def status(self) -> dict[str, Any]:
+        if not self.command:
+            return {"state": "unconfigured", "browser_url": None, "action": None, "error": None}
         result = self.executor(
-            [str(ROOT / "bin" / "saymyname-preview"), "status"], cwd=ROOT,
+            [*self.command, "status"], cwd=ROOT,
             capture_output=True, text=True, timeout=30,
         )
         values = self._parse(result.stdout)
@@ -1698,6 +1718,8 @@ class PreviewBridge:
         }
 
     def submit(self, action: Any) -> dict[str, Any]:
+        if not self.command:
+            raise ValueError("Prévisualisation non configurée pour ce projet.")
         if action not in {"start", "stop", "restart"}:
             raise ValueError("Action de prévisualisation invalide.")
         with self.lock:
@@ -1705,13 +1727,13 @@ class PreviewBridge:
                 raise RuntimeError(f"L’action {self.running_action} est déjà en cours.")
             self.running_action = str(action)
             self.error = None
-        threading.Thread(target=self._run, args=(str(action),), daemon=True, name="saymyname-preview").start()
+        threading.Thread(target=self._run, args=(str(action),), daemon=True, name="product-preview").start()
         return {"accepted": True, "action": action}
 
     def _run(self, action: str) -> None:
         try:
             result = self.executor(
-                [str(ROOT / "bin" / "saymyname-preview"), action], cwd=ROOT,
+                [*self.command, action], cwd=ROOT,
                 capture_output=True, text=True, timeout=1800,
             )
             if result.returncode != 0:
