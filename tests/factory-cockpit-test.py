@@ -20,6 +20,7 @@ from factory_cockpit import (  # noqa: E402
     _last_matching_json,
     _safe_identifier,
     _human_objective,
+    _human_phase,
 )
 
 
@@ -280,6 +281,10 @@ class FactoryCockpitTest(unittest.TestCase):
 
     def test_unknown_formula_is_humanized_without_model(self):
         self.assertEqual("Review stale branches", _human_objective("mol-review-stale-branches"))
+        self.assertEqual(
+            "L’agent réalise, vérifie et prépare la livraison",
+            _human_phase("Read assignment, implement, verify, commit, and close"),
+        )
 
     def test_closed_focus_does_not_reuse_stale_workflow_progress(self):
         runner = FakeRunner()

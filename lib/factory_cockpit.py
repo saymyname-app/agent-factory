@@ -176,6 +176,9 @@ def _human_phase(value: Any) -> str | None:
         "mayor-acceptance-review": "Contrôle final des preuves par le Mayor",
         "implementation": "Réalisation",
         "verification": "Vérification",
+        "Read assignment, implement, verify, commit, and close": "L’agent réalise, vérifie et prépare la livraison",
+        "Review the implementation and record the verdict": "Un second agent contrôle la livraison",
+        "Verify exact-head CI and merge": "Le Mayor vérifie la CI puis fusionne",
     }
     return known.get(raw, _human_objective(raw) if raw and raw != "none" else None)
 
@@ -895,7 +898,7 @@ class FactoryCollector:
             elif workflow_summary["active_step"] or worker_sessions:
                 focus_state = "working"
                 focus_label = "En cours"
-                phase = workflow_summary["active_step"] or _human_phase(
+                phase = _human_phase(workflow_summary["active_step"]) or _human_phase(
                     coordination_meta.get("gc.current_phase") or current_meta.get("gc.current_phase")
                 ) or "Agent en activité"
             else:
@@ -970,7 +973,7 @@ class FactoryCollector:
                 "state": "working" if recently_active else "waiting",
                 "state_label": "En activité" if recently_active else "Signal ancien",
                 "phase": (
-                    workflow_summary["active_step"]
+                    _human_phase(workflow_summary["active_step"])
                     if is_product_worker and workflow_summary["active_step"]
                     else "Maintenance automatique de l'usine"
                     if maintenance
