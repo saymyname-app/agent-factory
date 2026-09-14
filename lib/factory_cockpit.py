@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -15,12 +17,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import URLError
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_ROOT = ROOT / "ui" / "factory-cockpit"
+PRODUCT_STRATEGY = ROOT / "docs" / "products" / "saymyname" / "PRODUCT_STRATEGY.md"
+PRODUCT_DECISIONS = ROOT / "docs" / "products" / "saymyname" / "DECISIONS.md"
 COORDINATION_BEAD = os.environ.get("FACTORY_COCKPIT_COORDINATION_BEAD", "af-1vr4")
 GAS_CITY_URL = os.environ.get("FACTORY_COCKPIT_GAS_CITY_URL", "http://127.0.0.1:8372")
 
@@ -47,6 +51,20 @@ class CommandRunner:
             )
             return json.loads(result.stdout)
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+            raise SourceError(f"{' '.join(args)}: {exc}") from exc
+
+    def text(self, *args: str) -> str:
+        try:
+            return subprocess.run(
+                args,
+                cwd=self.cwd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                env={**os.environ, "NO_COLOR": "1"},
+            ).stdout
+        except (OSError, subprocess.SubprocessError) as exc:
             raise SourceError(f"{' '.join(args)}: {exc}") from exc
 
 
@@ -150,6 +168,38 @@ def _human_objective(title: Any) -> str:
     return raw.replace("-", " ").strip().capitalize() or "Maintenance automatique"
 
 
+def _human_phase(value: Any) -> str | None:
+    raw = str(value or "")
+    known = {
+        "external-evidence": "Vérification externe : contenu et droits",
+        "external-evidence-correction": "Correction des preuves de contenu et de droits",
+        "mayor-acceptance-review": "Contrôle final des preuves par le Mayor",
+        "implementation": "Réalisation",
+        "verification": "Vérification",
+    }
+    return known.get(raw, _human_objective(raw) if raw and raw != "none" else None)
+
+
+def _human_product_title(value: Any) -> str:
+    raw = str(value or "").strip()
+    known = {
+        "Deliver public cultural challenge and minimal personal learning home": "Livrer un challenge culturel public et un espace d’apprentissage personnel minimal",
+        "Prove one public challenge content and image rights manifest": "Prouver le contenu et les droits d’images d’un premier challenge public",
+        "Create and join a participative promotion or event": "Créer et rejoindre une promotion ou un événement participatif",
+        "Create an administered organization and import people by CSV": "Créer une organisation administrée et importer ses membres par CSV",
+        "Import personal people and choose private memory targets": "Importer ses contacts et choisir ce que l’on veut mémoriser",
+        "Publish cultural challenges through a scoped editorial workflow": "Publier des challenges culturels avec un circuit éditorial sûr",
+        "Retrieve an authorized person from natural-language clues": "Retrouver une personne autorisée à partir d’indices en langage naturel",
+        "Add the first evidence-selected external people connector": "Ajouter le premier connecteur de contacts choisi par les preuves du pilote",
+        "Support a federated organization with governed workspaces": "Prendre en charge une organisation fédérée avec des espaces gouvernés",
+        "Turn pilot evidence into pricing and launch readiness": "Transformer les preuves du pilote en prix et préparation au lancement",
+        "Evidence-based pricing and launch readiness.": "Prix et préparation au lancement fondés sur les preuves.",
+        "Natural-language retrieval among authorized people.": "Recherche en langage naturel parmi les personnes autorisées.",
+        "First Google or Microsoft connector chosen from pilot evidence.": "Premier connecteur Google ou Microsoft choisi à partir du pilote.",
+    }
+    return known.get(raw, raw or "Travail produit sans titre")
+
+
 def _is_internal_bead(bead: dict[str, Any]) -> bool:
     labels = {str(label) for label in bead.get("labels", [])}
     metadata = _metadata(bead)
@@ -183,7 +233,8 @@ def _product_bead(bead: dict[str, Any], store: str, current_id: str | None) -> d
 
     status = str(bead.get("status", "unknown"))
     queue_state = metadata.get("gc.queue_state")
-    if bead.get("id") == current_id:
+    is_current = bead.get("id") in current_id if isinstance(current_id, set) else bead.get("id") == current_id
+    if is_current:
         state = "current"
         state_label = "Objectif actuel"
     elif status == "blocked":
@@ -219,7 +270,8 @@ def _product_bead(bead: dict[str, Any], store: str, current_id: str | None) -> d
         product = product.replace("saymyname", "SayMyName")
     return {
         "id": bead.get("id"),
-        "title": bead.get("title") or "Travail produit sans titre",
+        "title": _human_product_title(bead.get("title")),
+        "raw_title": bead.get("title"),
         "product": product,
         "store": store,
         "kind": kind,
@@ -353,6 +405,327 @@ def _decision_aids(
     return advice
 
 
+def _markdown_section(text: str, heading: str) -> str:
+    match = re.search(
+        rf"^## {re.escape(heading)}\s*$\n(.*?)(?=^## |\Z)",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _paragraph(text: str) -> str:
+    return re.sub(r"\s+", " ", text.split("\n\n", 1)[0]).strip()
+
+
+class ProductMemory:
+    """Deterministic projection of the Git-versioned PO memory."""
+
+    ROADMAP_STAGE = ["now", "next", "next", "later", "later", "later", "evidence", "later", "evidence"]
+
+    def __init__(self, strategy: Path = PRODUCT_STRATEGY, decisions: Path = PRODUCT_DECISIONS) -> None:
+        self.strategy = strategy
+        self.decisions = decisions
+
+    def collect(self) -> dict[str, Any]:
+        strategy = self.strategy.read_text(encoding="utf-8")
+        decisions = self.decisions.read_text(encoding="utf-8")
+        roadmap_raw = _markdown_section(strategy, "Product roadmap").split("\n\nItems", 1)[0]
+        roadmap = []
+        for index, match in enumerate(re.finditer(r"(?ms)^\d+\.\s+(.*?)(?=^\d+\.\s|\Z)", roadmap_raw)):
+            title = _human_product_title(re.sub(r"\s+", " ", match.group(1)).strip())
+            roadmap.append({
+                "id": f"roadmap-{index + 1}",
+                "order": index + 1,
+                "title": title,
+                "stage": self.ROADMAP_STAGE[index] if index < len(self.ROADMAP_STAGE) else "later",
+                "source": "PRODUCT_STRATEGY.md · Product roadmap",
+            })
+
+        accepted_raw = _markdown_section(decisions, "Accepted")
+        accepted = [
+            {
+                "id": f"accepted-{index + 1}",
+                "title": match.group(1).strip(),
+                "status": "accepted",
+                "detail": _paragraph(match.group(2)),
+                "source": "DECISIONS.md · Accepted",
+            }
+            for index, match in enumerate(re.finditer(
+                r"(?ms)^###\s+\d{4}-\d{2}-\d{2}\s+—\s+(.*?)\s*$\n(.*?)(?=^### |\Z)", accepted_raw
+            ))
+        ]
+        required_raw = _markdown_section(strategy, "Human decisions still required")
+        pending = [
+            {
+                "id": f"pending-{index + 1}",
+                "title": item.strip(),
+                "status": "pending",
+                "detail": "Décision volontairement laissée à Benjamin; la Factory ne doit pas l'inventer.",
+                "source": "PRODUCT_STRATEGY.md · Human decisions still required",
+            }
+            for index, item in enumerate(re.findall(r"(?m)^-\s+(.+)$", required_raw))
+        ]
+        return {
+            "product": "SayMyName",
+            "thesis": _paragraph(_markdown_section(strategy, "Product thesis")),
+            "roadmap": roadmap,
+            "decisions": pending + accepted,
+            "updated_at": datetime.fromtimestamp(
+                max(self.strategy.stat().st_mtime, self.decisions.stat().st_mtime), timezone.utc
+            ).isoformat(),
+            "sources": [
+                "docs/products/saymyname/PRODUCT_STRATEGY.md",
+                "docs/products/saymyname/DECISIONS.md",
+            ],
+        }
+
+
+def _safe_identifier(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value or ""):
+        raise ValueError("Identifiant invalide.")
+    return value
+
+
+def _redact(text: str) -> str:
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    patterns = [
+        r"(?i)(api[_-]?key|authorization|bearer|password|secret|token)\s*[:=]\s*[^\s]+",
+        r"(?i)bearer\s+[A-Za-z0-9._-]+",
+    ]
+    for pattern in patterns:
+        text = re.sub(pattern, "[secret masqué]", text)
+    return text
+
+
+class DetailReader:
+    def __init__(self, runner: Any | None = None, gas_city: Any | None = None) -> None:
+        self.runner = runner or CommandRunner(timeout=15)
+        self.gas_city = gas_city or GasCityReader(timeout=15)
+
+    def item(self, store: str, item_id: str) -> dict[str, Any]:
+        store, item_id = _safe_identifier(store), _safe_identifier(item_id)
+        command = ("bd", "show", item_id, "--json") if store == "city" else (
+            "gc", "bd", "--rig", store, "show", item_id, "--json"
+        )
+        bead = _single(self.runner.json(*command))
+        if not bead:
+            raise SourceError("Travail introuvable.")
+        metadata = _metadata(bead)
+        allowed_metadata = {
+            key: value for key, value in metadata.items()
+            if key.startswith("gc.") and not re.search(r"(?i)secret|token|password|key", key)
+        }
+        relations = []
+        for field in ("dependencies", "dependents"):
+            for relation in bead.get(field, []) if isinstance(bead.get(field), list) else []:
+                if isinstance(relation, dict):
+                    relations.append({
+                        "direction": field,
+                        "id": relation.get("id") or relation.get("issue_id") or relation.get("depends_on_id"),
+                        "title": relation.get("title"),
+                        "type": relation.get("dependency_type") or relation.get("type"),
+                    })
+        return {
+            "id": bead.get("id"), "store": store, "title": _human_product_title(bead.get("title")),
+            "status": bead.get("status"), "priority": bead.get("priority"),
+            "type": bead.get("issue_type"), "description": bead.get("description") or bead.get("body"),
+            "acceptance": bead.get("acceptance_criteria") or bead.get("acceptance"),
+            "notes": str(bead.get("notes") or "")[-12000:], "labels": bead.get("labels", []),
+            "assignee": bead.get("assignee"), "created_at": bead.get("created_at"),
+            "updated_at": bead.get("updated_at"), "closed_at": bead.get("closed_at"),
+            "relations": relations, "metadata": allowed_metadata,
+        }
+
+    def agent(self, session_id: str) -> dict[str, Any]:
+        session_id = _safe_identifier(session_id)
+        payload = self.runner.json("gc", "session", "list", "--json")
+        sessions = payload.get("sessions", []) if isinstance(payload, dict) else []
+        session = next((item for item in sessions if item.get("id") == session_id), None)
+        if not session:
+            raise SourceError("Session active introuvable.")
+        transcript = self.gas_city.json(
+            f"/v0/city/agent-factory/session/{quote(session_id, safe='')}/transcript"
+        )
+        messages = []
+        for turn in transcript.get("turns", []) if isinstance(transcript, dict) else []:
+            role, value = turn.get("role"), str(turn.get("text", "")).strip()
+            if role not in {"user", "assistant"} or not value or value in {"[thinking]", "[exec]"}:
+                continue
+            if role == "user" and ("Pool Worker" in value or len(value) > 8000):
+                continue
+            messages.append({"role": role, "text": _redact(value)[:6000], "timestamp": turn.get("timestamp")})
+        try:
+            peek = _redact(self.runner.text("gc", "session", "peek", session_id, "--lines", "120"))[-30000:]
+        except SourceError:
+            peek = "Journal terminal indisponible."
+        return {
+            "session": {key: session.get(key) for key in (
+                "id", "alias", "name", "provider", "state", "created_at", "last_active", "work_dir"
+            )},
+            "messages": messages[-20:], "activity": peek,
+            "privacy": "Sortie locale nettoyée et limitée. Le raisonnement privé interne n'est jamais exposé.",
+        }
+
+
+def _last_matching_json(path: Path, wanted_type: str) -> dict[str, Any] | None:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position, remainder = handle.tell(), b""
+            while position > 0:
+                size = min(65536, position)
+                position -= size
+                handle.seek(position)
+                chunk = handle.read(size) + remainder
+                lines = chunk.split(b"\n")
+                remainder = lines[0]
+                for raw in reversed(lines[1:]):
+                    try:
+                        value = json.loads(raw)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+                    if value.get("type") == wanted_type:
+                        return value
+            if remainder:
+                value = json.loads(remainder)
+                return value if value.get("type") == wanted_type else None
+    except (OSError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def _compact_tokens(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+class TokenReader:
+    """Reads provider-written local telemetry; never calls a model."""
+
+    def __init__(self, runner: Any | None = None, home: Path | None = None) -> None:
+        self.runner = runner or CommandRunner(timeout=15)
+        self.home = home or Path.home()
+
+    def _codex_usage(self, session_key: str) -> dict[str, Any] | None:
+        files = list((self.home / ".codex" / "sessions").glob(f"**/*{session_key}*.jsonl"))
+        if not files:
+            return None
+        record = _last_matching_json(max(files, key=lambda path: path.stat().st_mtime), "token_usage_record")
+        usage = ((record or {}).get("payload") or {}).get("thread_token_usage")
+        if not isinstance(usage, dict):
+            return None
+        return {key: _compact_tokens(usage.get(key)) for key in (
+            "input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"
+        )}
+
+    def _claude_usage(self, work_dir: str, created_at: Any) -> dict[str, Any] | None:
+        project_dir = self.home / ".claude" / "projects" / work_dir.replace("/", "-")
+        files = list(project_dir.glob("*.jsonl")) if project_dir.is_dir() else []
+        if not files:
+            return None
+        try:
+            created = datetime.fromisoformat(str(created_at).replace("Z", "+00:00")).timestamp()
+        except (TypeError, ValueError):
+            created = 0
+        candidates = [path for path in files if path.stat().st_mtime >= created - 120]
+        if not candidates:
+            return None
+        path = max(candidates, key=lambda item: item.stat().st_mtime)
+        usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "reasoning_output_tokens": 0}
+        messages = 0
+        try:
+            for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                try:
+                    value = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                message = value.get("message")
+                current = message.get("usage") if isinstance(message, dict) else None
+                if not isinstance(current, dict):
+                    continue
+                messages += 1
+                usage["input_tokens"] += _compact_tokens(current.get("input_tokens"))
+                usage["cached_input_tokens"] += _compact_tokens(current.get("cache_read_input_tokens")) + _compact_tokens(current.get("cache_creation_input_tokens"))
+                usage["output_tokens"] += _compact_tokens(current.get("output_tokens"))
+                details = current.get("output_tokens_details")
+                if isinstance(details, dict):
+                    usage["reasoning_output_tokens"] += _compact_tokens(details.get("thinking_tokens"))
+        except OSError:
+            return None
+        if not messages:
+            return None
+        usage["total_tokens"] = usage["input_tokens"] + usage["cached_input_tokens"] + usage["output_tokens"]
+        return usage
+
+    def collect(self) -> dict[str, Any]:
+        sessions_payload = self.runner.json("gc", "session", "list", "--json")
+        sessions = sessions_payload.get("sessions", []) if isinstance(sessions_payload, dict) else []
+        details, known_total = [], 0
+        for session in sessions:
+            provider = session.get("provider")
+            if provider == "codex" and session.get("session_key"):
+                usage = self._codex_usage(str(session["session_key"]))
+                if usage:
+                    known_total += usage["total_tokens"]
+                    details.append({
+                        "session_id": session.get("id"), "name": session.get("alias"), "provider": "Codex",
+                        "scope": "session Factory", "confidence": "exact", "usage": usage,
+                    })
+            elif provider == "claude" and session.get("id"):
+                usage = self._claude_usage(str(session.get("work_dir") or ""), session.get("created_at"))
+                if usage:
+                    known_total += usage["total_tokens"]
+                    details.append({
+                        "session_id": session.get("id"), "name": session.get("alias"), "provider": "Claude",
+                        "scope": "session Factory", "confidence": "exact (journal local fournisseur)",
+                        "usage": usage,
+                    })
+                    continue
+                try:
+                    peek = self.runner.text("gc", "session", "peek", str(session["id"]), "--lines", "8")
+                    match = re.search(r"↓\s*([0-9]+(?:\.[0-9]+)?)\s*([kKmM]?)\s*tokens", peek)
+                except SourceError:
+                    match = None
+                if match:
+                    factor = {"": 1, "k": 1000, "m": 1000000}[match.group(2).lower()]
+                    total = int(float(match.group(1)) * factor)
+                    known_total += total
+                    details.append({
+                        "session_id": session.get("id"), "name": session.get("alias"), "provider": "Claude",
+                        "scope": "session Factory", "confidence": "estimation affichée par le fournisseur",
+                        "usage": {"total_tokens": total},
+                    })
+
+        cutoff = time.time() - 86400
+        host_sessions, host_total = 0, 0
+        for filename in glob.glob(str(self.home / ".codex" / "sessions" / "**" / "*.jsonl"), recursive=True):
+            path = Path(filename)
+            try:
+                if path.stat().st_mtime < cutoff:
+                    continue
+            except OSError:
+                continue
+            record = _last_matching_json(path, "token_usage_record")
+            usage = ((record or {}).get("payload") or {}).get("thread_token_usage")
+            if isinstance(usage, dict):
+                host_sessions += 1
+                host_total += _compact_tokens(usage.get("total_tokens"))
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "factory": {"known_total_tokens": known_total, "sessions": details, "coverage": f"{len(details)} session(s) mesurée(s)"},
+            "host_codex_24h": {"total_tokens": host_total, "sessions": host_sessions, "scope": "fichiers Codex modifiés dans les dernières 24 h"},
+            "monitoring": {"model_calls": 0, "tokens": 0},
+            "notes": [
+                "Les compteurs Codex viennent des journaux locaux exacts du fournisseur.",
+                "Claude est exact quand son journal local est corrélé; sinon le cockpit utilise l'estimation live affichée par Claude Code.",
+                "Les tokens de cache sont inclus dans les totaux fournisseur; ce tableau ne prétend pas calculer un coût en euros.",
+            ],
+        }
+
+
 class FactoryCollector:
     def __init__(self, runner: Any | None = None, gas_city: Any | None = None) -> None:
         self.runner = runner or CommandRunner()
@@ -407,6 +780,16 @@ class FactoryCollector:
                 last = _single(last_future.result()) if last_future else None
 
         current_meta = _metadata(current)
+        parent_outcome_id = _meaningful(current_meta.get("gc.parent_outcome"))
+        parent_outcome = None
+        if parent_outcome_id:
+            parent_outcome = _single(read(
+                "parent_outcome",
+                lambda: self.runner.json("gc", "bd", "show", parent_outcome_id, "--json"),
+                [],
+            ))
+        display_current = parent_outcome or current
+        current_product_ids = {value for value in (current_id, parent_outcome_id) if value}
         city_rigs = (
             base["factory"].get("rigs", [])
             if isinstance(base["factory"], dict)
@@ -469,7 +852,7 @@ class FactoryCollector:
             for bead in beads:
                 if not isinstance(bead, dict):
                     continue
-                item = _product_bead(bead, store, current_id)
+                item = _product_bead(bead, store, current_product_ids)
                 if item and item.get("id"):
                     product_by_id[str(item["id"])] = item
         product_work = _sort_product_work(list(product_by_id.values()))
@@ -512,7 +895,9 @@ class FactoryCollector:
             elif workflow_summary["active_step"] or worker_sessions:
                 focus_state = "working"
                 focus_label = "En cours"
-                phase = workflow_summary["active_step"] or "Agent en activité"
+                phase = workflow_summary["active_step"] or _human_phase(
+                    coordination_meta.get("gc.current_phase") or current_meta.get("gc.current_phase")
+                ) or "Agent en activité"
             else:
                 focus_state = "queued"
                 focus_label = "En attente du Mayor"
@@ -529,12 +914,13 @@ class FactoryCollector:
         )
         focus = {
             "product": "SayMyName",
-            "id": (current or {}).get("id"),
-            "title": (current or {}).get("title") or "Aucun résultat produit en cours",
+            "id": (display_current or {}).get("id"),
+            "execution_id": (current or {}).get("id"),
+            "title": _human_product_title((display_current or {}).get("title")) if display_current else "Aucun résultat produit en cours",
             "state": focus_state,
             "state_label": focus_label,
             "phase": phase,
-            "started_at": (current or {}).get("started_at") or (current or {}).get("created_at"),
+            "started_at": (display_current or {}).get("started_at") or (display_current or {}).get("created_at"),
             "last_signal_at": heartbeat,
             "steps": workflow_summary,
             "agent": workflow_summary["assignees"][0] if workflow_summary["assignees"] else None,
@@ -542,6 +928,8 @@ class FactoryCollector:
 
         agent_cards = [{
             "name": "Mayor",
+            "session_id": (mayor_session or {}).get("id"),
+            "provider": (mayor_session or {}).get("provider"),
             "role": "Pilote la livraison",
             "objective": focus["title"],
             "state": focus["state"],
@@ -575,6 +963,8 @@ class FactoryCollector:
             )
             agent_cards.append({
                 "name": session.get("alias") or session.get("name") or "Agent",
+                "session_id": session.get("id"),
+                "provider": session.get("provider"),
                 "role": "Agent de maintenance" if maintenance else "Agent de réalisation",
                 "objective": objective,
                 "state": "working" if recently_active else "waiting",
@@ -633,6 +1023,10 @@ class FactoryCollector:
             "closed_at": (last or {}).get("closed_at") or (last or {}).get("updated_at"),
         }
         queue = base["queue"] if isinstance(base["queue"], list) else []
+        queue = [
+            {**item, "raw_title": item.get("title"), "title": _human_product_title(item.get("title"))}
+            for item in queue if isinstance(item, dict)
+        ]
         decision_aids = _decision_aids(
             factory_ok,
             warnings,
@@ -667,6 +1061,7 @@ class FactoryCollector:
             "agents": agent_cards,
             "queue": queue,
             "product_work": product_work,
+            "product_memory": ProductMemory().collect(),
             "decision_aids": decision_aids,
             "last_delivery": last_delivery,
             "needs_benjamin": needs_benjamin,
@@ -829,9 +1224,14 @@ class MayorBridge:
 
 
 def handler_factory(
-    cache: SnapshotCache, mayor_bridge: MayorBridge | None = None
+    cache: SnapshotCache,
+    mayor_bridge: MayorBridge | None = None,
+    detail_reader: DetailReader | None = None,
+    token_cache: SnapshotCache | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     bridge = mayor_bridge or MayorBridge()
+    details = detail_reader or DetailReader()
+    tokens = token_cache or SnapshotCache(TokenReader(), ttl=30)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "FactoryCockpit/1"
@@ -855,7 +1255,9 @@ def handler_factory(
             self.wfile.write(payload)
 
         def do_GET(self) -> None:  # noqa: N802
-            path = urlparse(self.path).path
+            parsed = urlparse(self.path)
+            path = parsed.path
+            query = parse_qs(parsed.query)
             if path == "/health":
                 self._json_response(
                     200, {"ok": True, "model_calls": 0, "monitoring_model_calls": 0}
@@ -863,6 +1265,30 @@ def handler_factory(
                 return
             if path == "/api/snapshot":
                 self._json_response(200, cache.get())
+                return
+            if path == "/api/tokens":
+                try:
+                    self._json_response(200, tokens.get())
+                except SourceError as exc:
+                    self._json_response(503, {"error": str(exc)})
+                return
+            if path == "/api/item":
+                try:
+                    self._json_response(200, details.item(
+                        query.get("store", ["city"])[0], query.get("id", [""])[0]
+                    ))
+                except ValueError as exc:
+                    self._json_response(400, {"error": str(exc)})
+                except SourceError as exc:
+                    self._json_response(404, {"error": str(exc)})
+                return
+            if path == "/api/agent":
+                try:
+                    self._json_response(200, details.agent(query.get("id", [""])[0]))
+                except ValueError as exc:
+                    self._json_response(400, {"error": str(exc)})
+                except SourceError as exc:
+                    self._json_response(404, {"error": str(exc)})
                 return
             if path == "/api/mayor/conversation":
                 try:

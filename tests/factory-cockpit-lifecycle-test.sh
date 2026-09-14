@@ -21,14 +21,17 @@ trap cleanup EXIT
 output=$("$COCKPIT" start)
 [[ $output == STARTED:* ]]
 curl --fail --silent "$URL/health" | jq -e '.ok == true and .model_calls == 0' >/dev/null
-curl --fail --silent "$URL/" | grep -Fq 'Ce que l’usine fait maintenant'
+curl --fail --silent "$URL/" | grep -Fq 'Comprendre l’usine en un coup d’œil'
 curl --fail --silent "$URL/" | grep -Fq 'AIDE À LA DÉCISION'
 curl --fail --silent "$URL/" | grep -Fq 'Parler au Mayor'
+curl --fail --silent "$URL/" | grep -Fq 'Tokens, du détail au global'
 curl --fail --silent "$URL/styles.css" | grep -Fq -- '--green:'
 curl --fail --silent "$URL/app.js" | grep -Fq 'textContent'
 [[ $(curl --silent --output /dev/null --write-out '%{http_code}' "$URL/../AGENTS.md") == 404 ]]
 curl --fail --silent "$URL/api/snapshot" | jq -e \
-  '.schema_version == 1 and .zero_token_contract.model_calls == 0 and (.agents | length) >= 1 and (.product_work | type) == "array" and (.decision_aids | length) >= 1' >/dev/null
+  '.schema_version == 1 and .zero_token_contract.model_calls == 0 and (.agents | length) >= 1 and (.product_work | type) == "array" and (.product_memory.roadmap | length) >= 1 and (.decision_aids | length) >= 1' >/dev/null
+curl --fail --silent "$URL/api/tokens" | jq -e \
+  '.monitoring.model_calls == 0 and .monitoring.tokens == 0 and (.factory.sessions | type) == "array"' >/dev/null
 [[ $(curl --silent --output /dev/null --write-out '%{http_code}' \
   --request POST --header 'Content-Type: application/json' \
   --data '{"message":"must not send"}' "$URL/api/mayor/message") == 403 ]]

@@ -6,6 +6,71 @@ Beads and GitHub.
 
 ## Accepted
 
+### 2026-09-14 — Social-memory companion product vision
+
+SayMyName is not limited to an organizational directory. Its durable purpose is
+to help a person recognize faces, recall names and retain chosen useful context
+for real-world social interactions across public culture, organizations and
+private life. The defensible promise is improvement on people and information
+actually trained, not broad intelligence, health or therapeutic claims.
+
+### 2026-09-14 — Personal learning home in V1
+
+A minimal personal home is part of V1 and remains independent of organization
+membership. It combines available sources, the learner's explicit selections,
+due reviews and private progress. It is not modeled as a personal organization
+and does not require a full personal CRM in V1.
+
+### 2026-09-14 — Three sources and learner choice
+
+People may become available through public challenges, authorized organizations
+or personal additions/imports. Availability never enrolls a person or every field
+into learning automatically; the learner chooses what to practice. Their
+selection, attempts, errors, schedule and progress are private from organizations
+and other users.
+
+### 2026-09-14 — Public cultural challenges are product
+
+Challenges featuring recognizable public figures are a legitimate consumer use
+and acquisition path. Anonymous trial is allowed; saving progress requires an
+account. Published content requires versioned editorial review, factual and image
+provenance, license/rights handling and withdrawal. Editorial roles remain scoped
+to the public catalogue rather than creating an omnipotent global super-admin.
+
+### 2026-09-14 — Three organization archetypes
+
+Planned organization needs are covered by participative groups, administered
+organizations and federated organizations. Promotions, events and communities
+are configurations of a participative group; an officially imported school or
+company population is administered; multiple access spaces and delegated central
+governance are federated. Size, sector and duration do not create additional
+technical organization types.
+
+### 2026-09-14 — Import is core, authority remains explicit
+
+Personal and organization imports are core friction-reduction paths. CSV is the
+universal first source; Google, Microsoft, contacts, HRIS and social-network
+connectors are selected only after evidence and provider feasibility. Public
+availability, OAuth authorization and lawful reuse are distinct: every import
+must have a defined destination, provenance, scope, revocation behavior and data
+authority. Importing a profile never silently creates an account or invitation.
+
+### 2026-09-14 — Intelligent retrieval without invented identity
+
+SayMyName should eventually retrieve a person using remembered natural-language
+clues, but only within profiles the learner may access. Results explain matches
+from existing fields and the product asks for another clue or abstains when
+evidence is insufficient. This is not camera-based facial recognition and must
+not infer sensitive characteristics.
+
+### 2026-09-14 — Free student-cohort pilot before payment
+
+The first accessible validation target is a new adult student cohort reached
+through Benjamin's former school administration or student association. The
+pilot is free, requires no payment method and tests onboarding, delayed recall,
+return and real-interaction usefulness. Payment implementation and exact pricing
+wait for evidence and buyer conversations.
+
 ### 2026-09-14 — Single PO cockpit
 
 Benjamin's normal SayMyName entrance is the Codex local project rooted at
@@ -54,9 +119,13 @@ migration execution needs explicit authorization and tests use isolated database
 
 ## Open
 
-- Which precise onboarding outcome should be the next JIT slice.
-- Primary customer/profile, business model and product success metric.
-- V1 production/cloud launch criteria.
+- Administration or student-association distribution for the first cohort.
+- First challenge themes after content and image feasibility.
+- Pilot success thresholds and duration.
+- Exact group visibility, expiry and post-group retention rules.
+- First buyer and pricing test.
+- First external connector justified by observed user data.
+- Brand/name evolution after the broader value proposition is tested.
 
 ## Update rule
 
