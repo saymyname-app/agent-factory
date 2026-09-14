@@ -2,6 +2,8 @@
   "schema_version": 1,
   "slug": "saymyname",
   "name": "SayMyName",
+  "operator_name": "Benjamin",
+  "north_star": "Prouver que SayMyName aide une personne à mieux retrouver les gens qu’elle a choisi de mémoriser, puis trouver un canal et un acheteur répétables.",
   "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
   "decisions": "docs/products/saymyname/DECISIONS.md",
   "project_inventory": "docs/products/saymyname/PROJECT_INVENTORY.md",

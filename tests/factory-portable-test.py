@@ -145,6 +145,7 @@ class PortableTests(unittest.TestCase):
         self.project()
         with patch.object(cockpit, "ROOT", self.dest):
             config = cockpit.load_product_config(self.dest / "config/products/demo.json")
+            self.assertTrue(Path(config["queue_command"][0]).is_absolute())
             bridge = cockpit.POBridge(config, self.base / "po-state.json")
             prompt = bridge._prompt("Prepare scope", "discuss", None)
             self.assertIn("Demo", prompt)

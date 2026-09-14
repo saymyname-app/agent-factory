@@ -61,3 +61,7 @@ that this repository contains verified operational documentation.
 For export/install use [portable installation](portable/INSTALL.md). For new or
 imported project definition use [PO onboarding](portable/ONBOARDING.md).
 See ADR-0012 for the isolation boundary and qualification limits.
+
+Related operator contracts: [Codex bridge](decisions/ADR-0003-native-codex-operator-bridge.md),
+[human decision center](decisions/ADR-0007-human-decision-center-and-mayor-channel.md).
+[governance domains](decisions/ADR-0010-governance-domains-and-design-loop.md).
