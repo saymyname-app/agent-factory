@@ -5,31 +5,80 @@ live work with `./bin/saymyname-product-status` and the relevant Bead.
 
 ## Product intent
 
-SayMyName helps people learn and remember the names and useful attributes of the
-people in their organization. The product should turn an awkward memory problem
-into a short, clear and trustworthy learning loop while giving authorized admins
-simple control over membership and data.
+SayMyName is a social-memory companion. It helps people recognize a face, recall
+the right name and retain useful context for future real-world interactions. The
+product combines a private personal learning home with three sources of people:
+public cultural challenges, organizations the learner may access, and people the
+learner adds personally.
+
+The product should turn an awkward memory problem into a short, clear and
+trustworthy learning loop: choose, learn, recall, meet, and adjust. Organizations
+remain authoritative for the profiles they provide, while the learner alone
+controls their selection, attempts, schedule and progress.
 
 ## Core users
 
-- Member/learner: recognizes colleagues and improves recall through quizzes.
-- Workspace administrator: manages the tenant, people and learning data safely.
+- Individual learner: chooses people and information to learn across public,
+  organizational and personal sources; their progress is private.
+- Participant/member: joins a promotion, event or community and may maintain
+  their own shared profile.
+- Organizer: creates a participative group and controls admission, visibility,
+  duration and ownership.
+- Organization administrator: imports and maintains an authorized population,
+  publishes profiles and grants access without seeing private learning errors.
+- Federated organization administrator: governs multiple access spaces and data
+  sources while delegating local administration.
 - Benjamin/Product Owner: decides product value and priority through the PO
   cockpit; he should not need to interpret Factory internals.
 
-## Approved outcome sequence
+## Approved product direction
 
-1. Onboarding and tenant lifecycle.
-2. Quiz and learning engine.
-3. Admin and data management.
-4. V1 release readiness and launch evidence.
-5. Competitive or expansion work only after the V1 path is explicit.
+1. A minimal personal home is part of V1. It is not a personal tenant or a full
+   CRM: it holds sources, explicit learning selections, due reviews, private
+   progress and small personal additions.
+2. Public challenges with recognizable people are a legitimate product and an
+   acquisition loop, not disposable fake demos. Visitors may try them without an
+   account; an account is required to save progress.
+3. Organizations supply authorized content. A learner chooses which available
+   people and fields to learn; joining an organization never exposes their
+   individual attempts to its administrators.
+4. Three organization archetypes cover the planned needs: participative group,
+   administered organization and federated organization. Sector, duration and
+   size configure an archetype rather than create more product types.
+5. Imports are a core friction-reduction capability for personal and
+   organizational use. CSV is the universal first path; platform connectors are
+   selected from customer evidence and their actual authorization constraints.
+6. Natural-language retrieval of a forgotten person is a planned extension over
+   data the learner is already authorized to access. The product abstains rather
+   than inventing an identity.
+7. The first accessible pilot is a new adult student cohort reached through
+   Benjamin's former school administration or its student association. The pilot
+   is free and validates usage before payment is implemented.
+
+The detailed durable strategy and roadmap are in `PRODUCT_STRATEGY.md`.
 
 The active/next item is never inferred from this list; Beads is authoritative.
 
 ## Product principles
 
-- Optimize for recognition and learning clarity, not feature count.
+- Optimize for useful real-world recall, not profile count, time in app or feature
+  count.
+- Distinguish recognition, active recall, preparation, reminders and lookup; not
+  every stored fact should be memorized.
+- Use retrieval practice, correction and spacing without making unsupported
+  claims about intelligence, health or broad cognitive transfer.
+- Let the learner explicitly choose people and fields; never enroll every
+  accessible person into learning automatically.
+- Keep learning selections, mistakes, schedules and progress private from
+  organizations, subjects and other users.
+- Preserve source authority: losing access to organization content stops its
+  consultation and review; private selection is not an uncontrolled copy.
+- Treat public availability, OAuth access and permission to reuse as different
+  concepts. Import only with a defined authority, destination and provenance.
+- Keep person/profile, user account, membership, learning selection and payer as
+  distinct concepts.
+- Prefer an editorial publisher role scoped to public challenges over an
+  omnipotent SayMyName super-admin account.
 - The backend is authoritative for identity, tenant boundaries and persisted data.
 - Never show invented progress, fake statistics, or success without evidence.
 - Prefer a simple, usable path over exposing technical machinery to users.
@@ -60,9 +109,16 @@ work. Queue changes never interrupt the outcome already in delivery.
 
 ## Product questions still owned by Benjamin
 
-- Primary first customer/profile and the purchasing decision-maker.
-- V1 success metric and acceptable onboarding/learning outcome.
-- Business model, pricing and distribution path.
+- Whether the first school pilot is distributed officially by the administration
+  or by the student association; this does not block building the shared path.
+- The first two or three public challenge themes after image/source feasibility is
+  checked.
+- Numerical go/no-go thresholds for onboarding, delayed recall, return and
+  reported help in a real interaction.
+- The first paid buyer and tested price after the free cohort pilot.
+- The first external connector justified by pilot data: personal contacts,
+  Google, Microsoft or another source.
+- Whether the brand name still fits after evidence for uses beyond names.
 - Exact production launch criteria and acceptable operational risk.
 
 These are open decisions, not blockers unless a selected outcome depends on them.
