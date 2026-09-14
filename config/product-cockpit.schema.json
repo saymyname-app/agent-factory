@@ -22,6 +22,18 @@
     "status_command": {"$ref": "#/$defs/command"},
     "queue_command": {"$ref": "#/$defs/command"},
     "queue_mutation_command": {"$ref": "#/$defs/command"},
+    "decision_blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["work_ref", "decision_ref"],
+        "properties": {
+          "work_ref": {"$ref": "#/$defs/workRef"},
+          "decision_ref": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
     "capabilities": {
       "type": "array",
       "items": {
@@ -107,6 +119,7 @@
   },
   "$defs": {
     "id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+    "workRef": {"type": "string", "pattern": "^[a-z][a-z0-9]*-[a-z0-9]+(?:\\.[a-z0-9]+)*$"},
     "idList": {"type": "array", "items": {"$ref": "#/$defs/id"}},
     "textList": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "repositoryPath": {

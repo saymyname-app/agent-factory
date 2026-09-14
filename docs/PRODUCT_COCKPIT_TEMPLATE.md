@@ -29,6 +29,8 @@ configuration under `config/products/`, validated against
 11. A first-class roadmap that combines Git-versioned outcomes with delivered
     evidence, immutable active work, the authoritative candidate queue, decision
     gates, and separately identified non-product Factory campaigns.
+12. Optional `decision_blockers` mappings from stable work references to durable
+    open-decision titles when coordination text should open one exact decision.
 
 Set `FACTORY_COCKPIT_PRODUCT_CONFIG` to the absolute path of the selected JSON
 before starting a dedicated cockpit instance. Strategy and decision paths must
@@ -41,6 +43,13 @@ projections. Startup rejects path traversal, absolute source paths, dangling
 graph IDs and unresolved decision or roadmap links. A missing, empty or invalid
 source is shown as a source error; the cockpit never substitutes filename or
 configuration summary text for the document body.
+
+Each `decision_blockers` entry contains one `work_ref` and one `decision_ref`.
+Today treats `gc.needs_benjamin` as an effective blocker when present, but only
+attaches a decision target when the coordination text names a configured work
+reference and exactly one currently open durable decision has the configured
+title. Missing, closed, or ambiguous targets stay visible as unlinked blocker
+text; the cockpit never guesses from prose.
 
 Reference Markdown is parsed into inert headings, paragraphs, lists, tables and
 code blocks. The browser builds DOM nodes with `textContent`; it does not inject

@@ -203,9 +203,13 @@ confirmation, rollback and recovery states remain visible. The bridge delegates
 only to `bin/saymyname-product-queue` and exposes no materialize, dispatch,
 interrupt, arbitrary-command or merge path.
 
-The Today attention card opens the existing Decisions view in place through the
-same navigation state. It is a labelled keyboard target with visible focus; it
-does not create a new route, tab, decision workspace, or model call. Opening the
+The Today attention card separates all open general decisions from effective
+blockers explicitly projected by coordination. It preserves the exact
+`gc.needs_benjamin` text and exposes a native keyboard-accessible action only
+when the configured work reference resolves to exactly one open durable
+decision; that action opens the decision's existing dedicated workspace in the
+same cockpit. An unresolved target remains plain text and is never activatable.
+This navigation creates no route, tab, session, or model call. Opening the
 Roadmap resolves exact delivery evidence on demand through the existing
 `bin/saymyname-product-status` contract, while an unavailable proof remains
 explicit instead of being inferred from the live projection.

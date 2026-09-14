@@ -27,6 +27,7 @@ from factory_cockpit import (  # noqa: E402
     TokenReader,
     _last_matching_json,
     _safe_identifier,
+    _today_projection,
     load_product_config,
     _human_objective,
     _human_phase,
@@ -249,6 +250,15 @@ class FactoryCockpitTest(unittest.TestCase):
             with self.assertRaisesRegex(SourceError, "contrats dédiés"):
                 load_product_config(config_path)
 
+    def test_product_config_rejects_invalid_decision_blocker_mapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "product.json"
+            value = json.loads((ROOT / "config" / "products" / "saymyname.json").read_text(encoding="utf-8"))
+            value["decision_blockers"] = [{"work_ref": "../af-hxji", "decision_ref": "Visibilité et conservation des groupes"}]
+            config_path.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(SourceError, "blocage décisionnel"):
+                load_product_config(config_path)
+
     def test_product_reference_is_structured_safe_and_has_provenance(self):
         reader = ProductReferenceReader()
         result = reader.get("vision")
@@ -469,10 +479,12 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertIn("ENTERPRISE_IGNORE_KEY", script)
         self.assertIn("URLSearchParams", script)
         self.assertIn('id="attention-card"', html)
-        self.assertIn('role="button" aria-label="Ouvrir les décisions qui demandent ton attention"', html)
-        self.assertIn('id="decisions-title" tabindex="-1"', html)
-        self.assertIn('makeActivatable($("attention-card"), openAttentionDecisions)', script)
-        self.assertIn('function openAttentionDecisions() { activateView("decisions")', script)
+        self.assertNotIn('id="attention-card" tabindex="0"', html)
+        self.assertIn('id="open-blocker-decision" class="primary hidden" type="button" aria-label="Ouvrir la décision bloquante"', html)
+        self.assertIn('$("open-blocker-decision").addEventListener("click"', script)
+        self.assertIn('if (id) openDecisionById(id)', script)
+        self.assertIn('blocker?.text || "Aucun blocage effectif."', script)
+        self.assertNotIn('makeActivatable($("attention-card")', script)
         self.assertIn('[tabindex]:focus-visible', styles)
         self.assertIn('fetch("/api/delivery-evidence"', script)
         self.assertNotIn(".innerHTML", script)
@@ -547,6 +559,77 @@ class FactoryCockpitTest(unittest.TestCase):
             self.assertEqual("pending", result["decisions"][0]["status"])
             self.assertEqual("product", result["decisions"][0]["domain"])
 
+    def test_today_separates_general_decisions_from_one_effective_blocker(self):
+        needs = "Approve or refine the af-hxji contract without changing this exact text."
+        decisions = [
+            {"id": f"general-{index}", "title": f"General {index}", "status": "pending", "domain": domain}
+            for index, domain in enumerate(("enterprise", "enterprise", "product", "project", "project"), 1)
+        ]
+        decisions.append({
+            "id": "pending-product-target",
+            "title": "Visibilité et conservation des groupes",
+            "status": "pending",
+            "domain": "product",
+        })
+        result = _today_projection(needs, decisions, [{
+            "work_ref": "af-hxji",
+            "decision_ref": "Visibilité et conservation des groupes",
+        }])
+        self.assertEqual(5, len(result["general_decisions"]))
+        self.assertEqual(needs, result["effective_blockers"][0]["text"])
+        self.assertEqual("pending-product-target", result["effective_blockers"][0]["decision_id"])
+        self.assertEqual(
+            {"enterprise": 2, "product": 1, "project": 2},
+            {
+                domain: sum(item["domain"] == domain for item in result["general_decisions"])
+                for domain in ("enterprise", "product", "project")
+            },
+        )
+
+    def test_today_reports_zero_blockers_without_losing_general_decisions(self):
+        decisions = [
+            {"id": f"general-{index}", "title": f"General {index}", "status": "pending", "domain": "product"}
+            for index in range(5)
+        ]
+        result = _today_projection(None, decisions, [])
+        self.assertEqual([], result["effective_blockers"])
+        self.assertEqual(5, len(result["general_decisions"]))
+
+    def test_today_leaves_ambiguous_blocker_target_unlinked(self):
+        needs = "Benjamin must decide before af-hxji can continue."
+        decisions = [
+            {"id": "one", "title": "One", "status": "pending", "domain": "product"},
+            {"id": "two", "title": "Two", "status": "pending", "domain": "project"},
+        ]
+        result = _today_projection(needs, decisions, [
+            {"work_ref": "af-hxji", "decision_ref": "One"},
+            {"work_ref": "af-hxji", "decision_ref": "Two"},
+        ])
+        self.assertEqual(needs, result["effective_blockers"][0]["text"])
+        self.assertIsNone(result["effective_blockers"][0]["decision_id"])
+        self.assertEqual(2, len(result["general_decisions"]))
+
+    def test_today_leaves_absent_configured_decision_target_unlinked(self):
+        needs = "Benjamin must decide before af-hxji can continue without changing this exact text."
+        decisions = [
+            {"id": "enterprise-open", "title": "Enterprise open", "status": "pending", "domain": "enterprise"},
+            {"id": "product-open", "title": "Product open", "status": "pending", "domain": "product"},
+            {"id": "project-open", "title": "Project open", "status": "pending", "domain": "project"},
+        ]
+        result = _today_projection(needs, decisions, [{
+            "work_ref": "af-hxji",
+            "decision_ref": "Absent durable decision",
+        }])
+        blocker = result["effective_blockers"][0]
+        self.assertEqual(needs, blocker["text"])
+        self.assertIsNone(blocker["decision_id"])
+        self.assertEqual(
+            [{"id": item["id"], "title": item["title"], "domain": item["domain"]} for item in decisions],
+            result["general_decisions"],
+        )
+        script = (ROOT / "ui" / "factory-cockpit" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('action.classList.toggle("hidden", !blocker?.decision_id)', script)
+
     def test_identifiers_are_strict(self):
         self.assertEqual("af-u8id.1", _safe_identifier("af-u8id.1"))
         with self.assertRaises(ValueError):
@@ -609,6 +692,8 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertEqual(2, len(result["agents"]))
         self.assertEqual(1, len(result["product_work"]))
         self.assertEqual("Rendre l'onboarding autonome", result["product_work"][0]["title"])
+        self.assertEqual([], result["today"]["effective_blockers"])
+        self.assertEqual(10, len(result["today"]["general_decisions"]))
         self.assertGreaterEqual(len(result["decision_aids"]), 1)
         self.assertEqual("Agent de maintenance", result["agents"][1]["role"])
         self.assertEqual(
@@ -617,6 +702,21 @@ class FactoryCockpitTest(unittest.TestCase):
         )
         self.assertNotIn("control-dispatcher", str(result["agents"]))
         self.assertIn("control-dispatcher", str(result["infrastructure"]))
+
+    def test_human_projection_links_exact_needs_benjamin_decision(self):
+        runner = FakeRunner()
+        needs = "Approve or refine a design-ready contract for af-hxji, especially admission, profile visibility, revocation, and navigation for the participative event/community journey."
+        runner.responses[("gc", "bd", "show", "af-1vr4", "--json")][0]["metadata"]["gc.needs_benjamin"] = needs
+        result = FactoryCollector(runner, FakeGasCity()).collect()
+        blocker = result["today"]["effective_blockers"][0]
+        target = next(
+            item for item in result["product_memory"]["decisions"]
+            if item["title"] == "Visibilité et conservation des groupes"
+        )
+        self.assertEqual(needs, blocker["text"])
+        self.assertEqual(target["id"], blocker["decision_id"])
+        self.assertNotIn(target["id"], {item["id"] for item in result["today"]["general_decisions"]})
+        self.assertEqual(0, result["zero_token_contract"]["model_calls"])
 
     def test_source_failure_is_visible_and_fails_factory_health_closed(self):
         result = FactoryCollector(FakeRunner(fail_factory=True), FakeGasCity()).collect()

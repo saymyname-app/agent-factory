@@ -25,6 +25,9 @@
   "queue_mutation_command": [
     "bin/saymyname-product-queue"
   ],
+  "decision_blockers": [
+    {"work_ref": "af-hxji", "decision_ref": "Visibilité et conservation des groupes"}
+  ],
   "capabilities": [
     {"id": "challenge", "title": "Challenges publics", "area": "Acquisition", "roadmap": 1, "source_refs": ["vision", "journeys", "rights", "roadmap"], "decision_refs": ["Public cultural challenges are product", "Presidents first for the localized public demo"]},
     {"id": "personal", "title": "Espace personnel", "area": "Produit cœur", "roadmap": 1, "source_refs": ["vision", "users", "journeys", "rights"], "decision_refs": ["Personal learning home in V1", "Three sources and learner choice"]},
