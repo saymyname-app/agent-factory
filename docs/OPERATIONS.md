@@ -152,7 +152,7 @@ M1 observed the effective Mayor command as `codex --dangerously-bypass-approvals
 
 ## Human Factory cockpit
 
-The default one-glance view is the Factory-owned, read-only cockpit:
+The default one-glance view is the Factory-owned human cockpit:
 
 ```bash
 cd ~/agent-factory
@@ -165,13 +165,28 @@ cd ~/agent-factory
 It serves `http://127.0.0.1:8383` from a small Python standard-library process.
 `open` starts it if necessary and opens the Windows default browser. The UI polls
 a five-second cache of local `gc`, `bd`, workflow API, and product-queue signals.
-It calls no model and has no write, dispatch, retry, PR, merge, or recovery route.
+Monitoring, search, filters, advice, tooltips, glossary, and copied summaries call
+no model. Pause freezes automatic source refresh; **Actualiser** remains manual.
 
 Progress is semantic and evidence-based: completed workflow steps, the current
 phase, elapsed wall time, and age of the latest source signal. A session marked
 active is not by itself presented as productive work. When sources disagree or
 fail, the UI reports partial visibility. Infrastructure such as the deterministic
 control dispatcher is collapsed under technical details by default.
+
+The product-work view queries product-marked Beads across the City and registered
+rigs, then removes sessions, workflows, convoys, gates, synthetic work, order
+tracking, and maintenance. Beads states what should be done, Gas City states who
+is executing it, and GitHub/CI proves delivery. An empty product queue does not
+stop infrastructure or current work, but no next product result can start.
+
+The **Parler au Mayor** panel is the only write capability. A typed and explicit
+send uses `gc session submit mayor` with either normal or follow-up intent and may
+consume model tokens. Advice buttons only prefill text. The server never exposes
+interrupt, dispatch, retry, merge, or recovery controls; it requires same-origin
+bounded JSON, a cockpit confirmation header, and a five-second send interval.
+The conversation view reads only the most recent cockpit-origin exchanges and
+does not display the complete provider transcript or system prompts.
 
 The listener rejects non-loopback hosts. Do not publish port `8383`, proxy it
 through Tailscale, or make it public without a separately reviewed authenticated
@@ -181,7 +196,11 @@ credentials or transcripts.
 
 If startup fails, inspect the exact log path printed by the lifecycle command,
 check `python3`, `curl`, port `8383`, and then run `./bin/factory-cockpit restart`.
-Stopping the cockpit does not stop Gas City or its agents.
+Stopping the cockpit does not stop Gas City or its agents. Its HTTP surface is:
+
+- `GET /api/snapshot`: deterministic monitoring snapshot;
+- `GET /api/mayor/conversation`: recent cockpit-origin Mayor exchange;
+- `POST /api/mayor/message`: explicit bounded human message to the Mayor.
 
 ## Detailed Gas City dashboard
 

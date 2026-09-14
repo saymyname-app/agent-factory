@@ -17,7 +17,8 @@ dump sessions, issues, Formula steps, or logs unless asked.
 
 For “what is the Factory doing?” or one-glance visibility, use the read-only
 `./bin/factory-cockpit snapshot` projection. Open its local UI with
-`./bin/factory-cockpit open`. Do not infer progress from session existence.
+`./bin/factory-cockpit open`. Its monitoring is zero-token; only an explicit
+human send may message the Mayor. Do not infer progress from session existence.
 
 For a change:
 

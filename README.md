@@ -38,13 +38,15 @@ For a read-only SayMyName snapshot without Factory noise:
 ```
 
 For a one-glance browser view of the Mayor, active agents, real step progress,
-elapsed time, and the human product queue, run:
+filtered product Beads, decision aids, and the human product queue, run:
 
 ```bash
 ./bin/factory-cockpit open
 ```
 
-This loopback-only cockpit is read-only and performs zero model calls.
+This loopback-only cockpit performs zero model calls while monitoring. Its one
+explicit Mayor message box may consume model tokens; it cannot interrupt or
+orchestrate work itself.
 
 For the deterministic local product preview, use `./bin/saymyname-preview start`
 and `./bin/saymyname-preview stop`. Detailed operation and recovery procedures
