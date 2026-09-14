@@ -553,11 +553,16 @@ class FactoryCollector:
             ),
         }]
         for session in worker_sessions:
-            is_product_worker = (
-                session.get("alias") in workflow_summary["assignees"]
-                or session.get("name") in workflow_summary["assignees"]
-            )
             maintenance = str(session.get("template", "")).startswith("bd.dog")
+            is_product_worker = (
+                not maintenance
+                and current is not None
+                and (
+                    session.get("alias") in workflow_summary["assignees"]
+                    or session.get("name") in workflow_summary["assignees"]
+                    or session.get("state") == "active"
+                )
+            )
             objective = (
                 focus["title"]
                 if is_product_worker
@@ -681,15 +686,51 @@ class SnapshotCache:
         self.collector = collector
         self.ttl = ttl
         self.lock = threading.Lock()
+        self.condition = threading.Condition(self.lock)
         self.value: dict[str, Any] | None = None
         self.collected_at = 0.0
+        self.refreshing = False
+
+    def _refresh(self, background: bool) -> dict[str, Any] | None:
+        try:
+            value = self.collector.collect()
+        except Exception:
+            if not background:
+                raise
+            value = None
+        finally:
+            with self.condition:
+                if "value" in locals() and value is not None:
+                    self.value = value
+                    self.collected_at = time.monotonic()
+                self.refreshing = False
+                self.condition.notify_all()
+        return value
+
+    def _start_background_refresh(self) -> None:
+        self.refreshing = True
+        threading.Thread(
+            target=self._refresh,
+            args=(True,),
+            name="factory-cockpit-refresh",
+            daemon=True,
+        ).start()
 
     def get(self) -> dict[str, Any]:
-        with self.lock:
-            if self.value is None or time.monotonic() - self.collected_at >= self.ttl:
-                self.value = self.collector.collect()
-                self.collected_at = time.monotonic()
-            return self.value
+        with self.condition:
+            if self.value is not None:
+                if time.monotonic() - self.collected_at >= self.ttl and not self.refreshing:
+                    self._start_background_refresh()
+                return self.value
+            if self.refreshing:
+                self.condition.wait_for(lambda: self.value is not None or not self.refreshing, timeout=60)
+                if self.value is not None:
+                    return self.value
+            self.refreshing = True
+        value = self._refresh(background=False)
+        if value is None:
+            raise SourceError("Le premier relevé du cockpit a échoué.")
+        return value
 
 
 class MayorBridge:
