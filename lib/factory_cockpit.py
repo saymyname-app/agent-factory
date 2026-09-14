@@ -1603,11 +1603,36 @@ class POBridge:
 
     def _public(self, conversation: dict[str, Any]) -> dict[str, Any]:
         thread_id = conversation.get("thread_id")
+        messages = conversation.get("messages", [])
+        last = messages[-1] if messages else {}
         return {
             **conversation,
-            "messages": conversation.get("messages", [])[-60:],
+            "messages": messages[-60:],
+            "last_role": last.get("role"),
+            "last_message_at": last.get("timestamp"),
             "usage": self.tokens.codex_thread(thread_id),
             "codex_url": f"codex://threads/{quote(thread_id, safe='')}" if thread_id else None,
+        }
+
+    def index(self) -> dict[str, Any]:
+        """Lightweight conversation states for navigation; no token journal scan."""
+        state = self._load()
+        conversations = []
+        for item in state["conversations"].values():
+            messages = item.get("messages", [])
+            last = messages[-1] if messages else {}
+            conversations.append({
+                "key": item.get("key"), "kind": item.get("kind"),
+                "decision_id": item.get("decision_id"), "domain": item.get("domain"),
+                "title": item.get("title"), "status": item.get("status", "idle"),
+                "thread_id": item.get("thread_id"), "updated_at": item.get("updated_at"),
+                "last_role": last.get("role"), "last_message_at": last.get("timestamp"),
+            })
+        return {
+            "model_calls": 0,
+            "conversations": sorted(
+                conversations, key=lambda item: item.get("updated_at") or "", reverse=True
+            ),
         }
 
     def conversation(self, decision_id: Any = None, conversation_key: Any = None) -> dict[str, Any]:
@@ -1779,6 +1804,9 @@ def handler_factory(
                 self._json_response(200, po.conversation(
                     query.get("decision_id", [None])[0], query.get("key", [None])[0]
                 ))
+                return
+            if path == "/api/po/index":
+                self._json_response(200, po.index())
                 return
             if path == "/api/preview/status":
                 try:
