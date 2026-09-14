@@ -857,6 +857,22 @@ class ProductMemory:
                 "stage": self.ROADMAP_STAGE[index] if index < len(self.ROADMAP_STAGE) else "later",
                 "source": "PRODUCT_STRATEGY.md · Product roadmap",
             })
+        configured_roadmap = {
+            item.get("roadmap")
+            for collection in (
+                self.config.get("capabilities", []), self.config.get("journeys", []),
+                self.config.get("business_objectives", []),
+            )
+            for item in collection if isinstance(item, dict)
+        }
+        dangling_roadmap = sorted(
+            value for value in configured_roadmap
+            if isinstance(value, int) and value > len(roadmap)
+        )
+        if dangling_roadmap and self.strict_relationships:
+            raise SourceError(
+                "Référence roadmap introuvable: " + ", ".join(map(str, dangling_roadmap))
+            )
 
         accepted_raw = _markdown_section(decisions, "Accepted")
         accepted = [

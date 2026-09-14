@@ -5,9 +5,11 @@ import tempfile
 import threading
 import unittest
 import json
+import http.client
 import subprocess
 import time
 from pathlib import Path
+from http.server import ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -27,6 +29,7 @@ from factory_cockpit import (  # noqa: E402
     load_product_config,
     _human_objective,
     _human_phase,
+    handler_factory,
 )
 
 
@@ -310,6 +313,94 @@ class FactoryCockpitTest(unittest.TestCase):
             bridge.mutate("move", {"id": "af-next", "position": 1, "command": "gc sling"})
         with self.assertRaisesRegex(ValueError, "confirmée"):
             bridge.mutate("cancel", {"id": "af-next", "reason": "No", "confirmed": False})
+
+    def test_http_queue_guard_and_reference_endpoint(self):
+        class Cache:
+            invalidated = False
+
+            def get(self):
+                return {"ok": True}
+
+            def invalidate(self):
+                self.invalidated = True
+
+        class Queue:
+            calls = []
+
+            def mutate(self, action, payload):
+                if action not in {"add", "move", "urgency", "pause", "resume", "cancel"}:
+                    raise ValueError("Action de file produit interdite.")
+                self.calls.append((action, payload))
+                return {"accepted": True, "queue": [], "model_calls": 0}
+
+        class Stub:
+            def conversation(self, *args):
+                return {}
+
+            def index(self):
+                return {}
+
+            def status(self):
+                return {}
+
+        cache, queue = Cache(), Queue()
+        handler = handler_factory(
+            cache, mayor_bridge=Stub(), detail_reader=Stub(), token_cache=cache,
+            po_bridge=Stub(), preview_bridge=Stub(),
+            reference_reader=ProductReferenceReader(), queue_bridge=queue,
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            body = json.dumps({"action": "resume", "payload": {"id": "af-next"}})
+            headers = {
+                "Content-Type": "application/json", "X-Factory-Cockpit": "human-queue-record",
+                "Origin": f"http://127.0.0.1:{server.server_port}",
+            }
+            connection.request("POST", "/api/product-queue", body, headers)
+            response = connection.getresponse()
+            self.assertEqual(202, response.status)
+            self.assertIn("object-src 'none'", response.getheader("Content-Security-Policy"))
+            response.read()
+            self.assertTrue(cache.invalidated)
+
+            connection.request("POST", "/api/product-queue", body, {"Content-Type": "application/json", "Origin": headers["Origin"]})
+            self.assertEqual(403, connection.getresponse().status)
+            connection.close()
+
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            forbidden = json.dumps({"action": "materialize", "payload": {"id": "af-next"}})
+            connection.request("POST", "/api/product-queue", forbidden, headers)
+            self.assertEqual(400, connection.getresponse().status)
+            connection.close()
+
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request("GET", "/api/reference?id=vision")
+            response = connection.getresponse()
+            value = json.loads(response.read())
+            self.assertEqual(200, response.status)
+            self.assertEqual("ready", value["state"])
+            self.assertEqual(0, value["model_calls"])
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_static_product_navigation_accessibility_and_deep_links(self):
+        html = (ROOT / "ui" / "factory-cockpit" / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "ui" / "factory-cockpit" / "app.js").read_text(encoding="utf-8")
+        styles = (ROOT / "ui" / "factory-cockpit" / "styles.css").read_text(encoding="utf-8")
+        self.assertLess(html.index('data-view="today"'), html.index('data-view="project"'))
+        self.assertLess(html.index('data-view="project"'), html.index('data-view="roadmap"'))
+        self.assertLess(html.index('data-view="roadmap"'), html.index('data-view="decisions"'))
+        self.assertIn("<details class=\"nav-more\">", html)
+        self.assertIn('for="reference-search"', html)
+        self.assertIn("human-queue-record", script)
+        self.assertIn("ENTERPRISE_IGNORE_KEY", script)
+        self.assertIn("URLSearchParams", script)
+        self.assertNotIn(".innerHTML", script)
+        self.assertIn("@media(max-width:800px)", styles)
 
     def test_po_console_creates_one_on_demand_session_per_decision(self):
         with tempfile.TemporaryDirectory() as directory:
