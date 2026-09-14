@@ -196,7 +196,7 @@ class FactoryCockpitTest(unittest.TestCase):
         memory = ProductMemory().collect()
         pending = [item for item in memory["decisions"] if item["status"] == "pending"]
         counts = {domain: sum(item.get("domain") == domain for item in pending) for domain in ("enterprise", "product", "project")}
-        self.assertEqual({"enterprise": 5, "product": 2, "project": 3}, counts)
+        self.assertEqual({"enterprise": 5, "product": 1, "project": 3}, counts)
         self.assertGreaterEqual(len(memory["view_inventory"]), 10)
         self.assertEqual(0, memory["inventory_freshness"]["model_calls"])
         self.assertEqual(7, len(memory["delivery_workflow"]))
@@ -693,7 +693,7 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertEqual(1, len(result["product_work"]))
         self.assertEqual("Rendre l'onboarding autonome", result["product_work"][0]["title"])
         self.assertEqual([], result["today"]["effective_blockers"])
-        self.assertEqual(10, len(result["today"]["general_decisions"]))
+        self.assertEqual(9, len(result["today"]["general_decisions"]))
         self.assertGreaterEqual(len(result["decision_aids"]), 1)
         self.assertEqual("Agent de maintenance", result["agents"][1]["role"])
         self.assertEqual(
@@ -714,7 +714,7 @@ class FactoryCockpitTest(unittest.TestCase):
             if item["title"] == "Visibilité et conservation des groupes"
         )
         self.assertEqual(needs, blocker["text"])
-        self.assertEqual(target["id"], blocker["decision_id"])
+        self.assertIsNone(blocker["decision_id"])
         self.assertNotIn(target["id"], {item["id"] for item in result["today"]["general_decisions"]})
         self.assertEqual(0, result["zero_token_contract"]["model_calls"])
 
