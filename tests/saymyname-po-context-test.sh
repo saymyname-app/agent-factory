@@ -13,7 +13,9 @@ test -s "$config"
 test "$(wc -c < "$agent")" -le 8192
 
 grep -Fq 'wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory' "$agent"
-grep -Fq 'Mayor is the sole' "$agent"
+grep -Fq 'Mayor alone materializes executable Beads' "$agent"
+grep -Fq 'it does not tail events' "$agent"
+grep -Fq 'The PO does not create or' "$agent"
 grep -Fq 'Linear is' "$agent"
 grep -Fq 'danger-full-access' "$agent"
 grep -Fq 'agent-db.ps1' "$agent"

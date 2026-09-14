@@ -38,10 +38,12 @@ The active/next item is never inferred from this list; Beads is authoritative.
 
 ## Operating model
 
-Benjamin speaks to the SayMyName PO cockpit. The PO records approved decisions,
-selects one bounded outcome, and asks the Factory Mayor to route implementation.
-Beads stores executable work; Gas City coordinates runtime; GitHub PRs and checks
-prove delivery. Linear and chat history are not current state stores.
+Benjamin speaks to the SayMyName PO cockpit. The PO owns product intent,
+priorities, acceptance and durable decisions, then hands a bounded outcome to the
+Factory Mayor. The Mayor exclusively translates it into executable Beads and owns
+dispatch, workers, recovery, branches, PR/CI/merge and operational closure. The PO
+receives product milestones and never becomes a second orchestrator. Gas City,
+Beads and GitHub remain execution truth; Linear and chats do not.
 
 ## Known constraints and debt
 
