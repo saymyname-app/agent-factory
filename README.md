@@ -37,6 +37,15 @@ For a read-only SayMyName snapshot without Factory noise:
 ./bin/saymyname-product-status
 ```
 
+For a one-glance browser view of the Mayor, active agents, real step progress,
+elapsed time, and the human product queue, run:
+
+```bash
+./bin/factory-cockpit open
+```
+
+This loopback-only cockpit is read-only and performs zero model calls.
+
 For the deterministic local product preview, use `./bin/saymyname-preview start`
 and `./bin/saymyname-preview stop`. Detailed operation and recovery procedures
 are in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).

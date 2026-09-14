@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Agent Factory · Cockpit</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">AGENT FACTORY</p>
+          <h1>Ce que l’usine fait maintenant</h1>
+        </div>
+        <div class="top-actions">
+          <div id="factory-state" class="status-pill waiting">Chargement…</div>
+          <button id="refresh" type="button">Actualiser</button>
+        </div>
+      </header>
+
+      <section id="alert" class="alert hidden" aria-live="polite"></section>
+
+      <section class="hero-grid">
+        <article class="panel focus-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">OBJECTIF ACTUEL</p>
+              <h2 id="focus-title">Lecture des signaux…</h2>
+            </div>
+            <span id="focus-state" class="status-pill waiting">—</span>
+          </div>
+          <p id="focus-phase" class="phase">—</p>
+          <div class="facts">
+            <div><span>Depuis</span><strong id="focus-elapsed">—</strong></div>
+            <div><span>Dernier signal</span><strong id="focus-signal">—</strong></div>
+            <div><span>Étapes prouvées</span><strong id="focus-steps">—</strong></div>
+          </div>
+          <div class="step-track" aria-label="Progression des étapes prouvées">
+            <div id="step-fill" class="step-fill"></div>
+          </div>
+          <p class="truth-note">Pas de pourcentage inventé : uniquement les étapes et signaux réellement observés.</p>
+        </article>
+
+        <article class="panel decision-panel">
+          <p class="eyebrow">BESOIN DE BENJAMIN</p>
+          <h2 id="needs-benjamin">Rien pour l’instant</h2>
+          <p id="last-delivery" class="muted">Dernière livraison : —</p>
+          <div class="zero-token"><span class="pulse"></span> Automatique · 0 appel de modèle</div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">QUI FAIT QUOI</p>
+            <h2>Mayor et agents</h2>
+          </div>
+          <span id="agent-count" class="count">0</span>
+        </div>
+        <div id="agents" class="agent-grid"></div>
+      </section>
+
+      <section class="lower-grid">
+        <article class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">À VENIR</p>
+              <h2>File produit</h2>
+            </div>
+            <span id="queue-count" class="count">0</span>
+          </div>
+          <ol id="queue" class="queue-list"></ol>
+        </article>
+
+        <article class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">AUTRE ACTIVITÉ</p>
+              <h2>Travaux Factory suivis</h2>
+            </div>
+            <span id="factory-work-count" class="count">0</span>
+          </div>
+          <div id="factory-work" class="compact-list"></div>
+        </article>
+      </section>
+
+      <details class="panel technical-panel">
+        <summary>Voir la mécanique technique</summary>
+        <div id="technical" class="technical-content"></div>
+      </details>
+
+      <footer>
+        <span id="refreshed">Jamais actualisé</span>
+        <span>Actualisation automatique toutes les 5 secondes</span>
+      </footer>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

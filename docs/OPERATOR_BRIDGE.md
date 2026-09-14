@@ -49,6 +49,26 @@ The Factory project remains the direct engineering/operations entrance. The PO
 cockpit is the default human entrance when Benjamin wants to discuss the product,
 record a decision, choose a priority, or have the Mayor route delivery.
 
+### Factory workspace and human cockpit
+
+For Factory engineering, use the local Codex project rooted at
+`C:\Dev\Projects\AgentFactory`. It is a small Windows bridge to the canonical WSL
+repository, not a clone. Its commands enter
+`/home/benja/agent-factory` explicitly.
+
+Open the read-only human cockpit with:
+
+```bash
+./bin/factory-cockpit open
+```
+
+The browser opens `http://127.0.0.1:8383`. It shows understandable Mayor and
+agent objectives, evidence-based phase/step progress, elapsed time, signal age,
+future product candidates, the last delivery, and any Benjamin decision. It
+refreshes from existing local sources and performs zero model calls. Use the
+upstream Gas City dashboard at port `8372` only when detailed sessions, Beads,
+runs, events, or transcripts are actually needed.
+
 ### Speak in intent, not commands
 
 Examples:
