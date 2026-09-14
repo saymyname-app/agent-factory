@@ -9,7 +9,8 @@ Ubuntu WSL at `/home/benja/agent-factory`; do not create a second Windows clone.
 1. Classify the request as OBSERVE, DISCUSS, RECORD, EXECUTE, or ADMIN.
 2. Run Factory commands through:
    `wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory <command>`
-3. For one-glance human visibility, use `./bin/factory-cockpit open`.
+3. For one-glance human visibility, use `./bin/factory-cockpit open`; use
+   `./bin/factory-cockpit phone-enable` once for private tailnet phone access.
 4. For detailed engineering work, read the canonical root `AGENTS.md` and the
    minimum document selected by `docs/CONTEXT_INDEX.md`.
 
@@ -27,10 +28,15 @@ Factory's normal evidence and delivery rules.
   because its session exists. Distinguish working, waiting, stale, and idle.
 - The cockpit refresh performs zero model calls. Do not add model summarization,
   inference, or autonomous actions to that path. Only Benjamin explicitly
-  pressing send may submit a bounded normal/follow-up message to the Mayor, and
-  the UI must state that this can consume tokens.
+  pressing send may submit a bounded message to the Mayor or persistent PO, and
+  the UI must state that this can consume tokens. The PO defaults to DISCUSS;
+  RECORD persists only the approved product decision.
 - The Mayor remains the only product-work orchestrator. UI visibility never
   grants the cockpit interrupt, dispatch, retry, merge, or recovery authority.
+- The reusable product adapter is `config/products/<slug>.json`, validated
+  against `config/product-cockpit.schema.json`. It selects durable context,
+  workspace, status/queue commands, and the conceptual project graph without
+  forking the cockpit implementation.
 - Keep its product-memory projection sourced from the versioned SayMyName
   `PRODUCT_STRATEGY.md` and `DECISIONS.md`. Do not scrape chat databases or make
   conversation history a source of truth.
@@ -44,6 +50,8 @@ Factory's normal evidence and delivery rules.
 - “Est-ce que l'usine tourne et sur quel objectif ?”
 - “Explique le signal ancien sans rien modifier.”
 - “Prépare cette question pour le Mayor sans l'envoyer.”
+- “Discute cette décision avec mon PO sans rien enregistrer.”
+- “Acte ma réponse à cette décision.”
 - “Montre les détails techniques de cette tâche.”
 - “Améliore la Factory et livre la modification.”
 

@@ -76,6 +76,25 @@ dispatch, retry, merge, or recover work. Use the upstream Gas City dashboard at
 port `8372` only when detailed sessions, runs, events, or full transcripts are
 actually needed.
 
+The **Mon PO** view embeds a persistent, authenticated local Codex conversation
+with the same SayMyName PO contract as the dedicated workspace. A decision card
+can prefill that conversation, Benjamin can DISCUSS without mutation or RECORD
+an approved answer, and the Codex thread identifier remains visible for opening
+or resuming the underlying discussion. Full host access is available to inspect
+the product and Factory, but it does not widen authority: only an explicit
+EXECUTE request may be handed to the Mayor.
+
+For private phone access, run once from Ubuntu:
+
+```bash
+./bin/factory-cockpit phone-enable
+./bin/factory-cockpit phone-status
+```
+
+Open the reported HTTPS address on a phone connected to Benjamin's Tailscale
+tailnet. The cockpit stays bound to loopback; Tailscale Serve terminates HTTPS
+and does not expose it publicly. Automatic views still make zero model calls.
+
 ### Speak in intent, not commands
 
 Examples:
@@ -155,7 +174,9 @@ creates and links executable work. Exact commands and state semantics are in
 This order lets the bridge adapt to SayMyName or a future rig without copying
 the full Factory history into every prompt. A new project is ready only when it
 has a registered rig, a concise project `AGENTS.md`, authoritative build/test
-commands, and a product-status projection or explicit fallback.
+commands, and a product-status projection or explicit fallback. Its cockpit
+adapter is a validated `config/products/<slug>.json`; the reproducible onboarding
+checklist is in `PRODUCT_COCKPIT_TEMPLATE.md`.
 
 ## Self-improvement protocol
 
@@ -189,8 +210,8 @@ snapshot or a precise recovery error. Operational recovery is documented in
 
 ## Current decision
 
-The native Codex local/remote path is the accepted bridge. A custom ChatGPT
-plugin, MCP server, or public dashboard is deferred until a concrete missing
-capability is demonstrated. Notifications may be added as a thin product event
-projection; they must not become a second state store or require polling the
-entire backlog.
+The native Codex local/remote path plus the private product cockpit is the
+accepted bridge. A custom ChatGPT plugin, MCP server, or public dashboard is
+deferred until a concrete missing capability is demonstrated. Notifications may
+be added as a thin product event projection; they must not become a second state
+store or require polling the entire backlog.
