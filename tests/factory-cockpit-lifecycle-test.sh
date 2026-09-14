@@ -35,7 +35,7 @@ curl --fail --silent "$URL/styles.css" | grep -Fq -- '--green:'
 curl --fail --silent "$URL/app.js" | grep -Fq 'textContent'
 [[ $(curl --silent --output /dev/null --write-out '%{http_code}' "$URL/../AGENTS.md") == 404 ]]
 curl --fail --silent "$URL/api/snapshot" | jq -e \
-  '.schema_version == 1 and .zero_token_contract.model_calls == 0 and (.agents | length) >= 1 and (.product_work | type) == "array" and (.product_memory.roadmap | length) >= 1 and (.product_memory.business.objectives | length) >= 1 and (.product_memory.product_reference | length) >= 1 and (.product_memory.view_inventory | length) >= 1 and .product_memory.inventory_freshness.model_calls == 0 and (.product_memory.delivery_workflow | length) >= 1 and (.decision_aids | length) >= 1' >/dev/null
+  '.schema_version == 1 and .zero_token_contract.model_calls == 0 and (.agents | length) >= 1 and (.product_work | type) == "array" and (.product_memory.roadmap | length) >= 1 and (.product_memory.business.objectives | length) >= 1 and (.product_memory.product_reference | length) >= 1 and (.product_memory.view_inventory | length) >= 1 and .product_memory.inventory_freshness.model_calls == 0 and (.product_memory.delivery_workflow | length) >= 1 and (.decision_aids | length) >= 1 and (.today.general_decisions | type) == "array" and (.today.effective_blockers | type) == "array"' >/dev/null
 curl --fail --silent "$URL/api/tokens" | jq -e \
   '.monitoring.model_calls == 0 and .monitoring.tokens == 0 and (.factory.sessions | type) == "array"' >/dev/null
 curl --fail --silent "$URL/api/po/conversation" | jq -e \

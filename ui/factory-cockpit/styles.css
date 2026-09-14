@@ -55,6 +55,8 @@ h1,h2,h3,p{overflow-wrap:anywhere}
 .truth-note,.feedback{margin:.6rem 0 0;color:#7f8c86;font-size:.72rem}
 .attention-panel{display:flex;flex-direction:column}
 .attention-panel h2{margin:.4rem 0 1rem;line-height:1.4}
+.today-attention-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.8rem;margin-top:auto}
+.today-attention-stats .mini-stat{margin-top:0}
 .muted{color:var(--muted)}
 .mini-stat{display:flex;align-items:baseline;gap:.5rem;margin-top:auto;padding-top:1rem}
 .mini-stat strong{font-size:1.8rem}

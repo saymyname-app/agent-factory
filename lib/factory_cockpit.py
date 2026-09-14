@@ -94,6 +94,17 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         raise SourceError("Les commandes doivent utiliser les contrats dédiés au produit configuré.")
     if not isinstance(value["capabilities"], list) or not isinstance(value["relations"], list):
         raise SourceError("Graphe produit invalide.")
+    decision_blockers = value.get("decision_blockers", [])
+    if not isinstance(decision_blockers, list) or not all(
+        isinstance(item, dict)
+        and set(item) == {"work_ref", "decision_ref"}
+        and isinstance(item["work_ref"], str)
+        and re.fullmatch(r"[a-z][a-z0-9]*-[a-z0-9]+(?:\.[a-z0-9]+)*", item["work_ref"])
+        and isinstance(item["decision_ref"], str)
+        and item["decision_ref"].strip()
+        for item in decision_blockers
+    ):
+        raise SourceError("Correspondance de blocage décisionnel invalide.")
     references = value.get("product_reference")
     if not isinstance(references, list) or not references:
         raise SourceError("Références produit manquantes.")
@@ -567,6 +578,51 @@ def _decision_aids(
     return advice
 
 
+def _today_projection(
+    needs_benjamin: str | None,
+    decisions: list[dict[str, Any]],
+    blocker_mappings: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Separate open decisions from blockers explicitly tied to coordination."""
+    pending = [item for item in decisions if item.get("status") == "pending"]
+    matched: dict[str, dict[str, Any]] = {}
+    if needs_benjamin:
+        for mapping in blocker_mappings:
+            work_ref = str(mapping.get("work_ref", ""))
+            if not re.search(
+                rf"(?<![A-Za-z0-9.-]){re.escape(work_ref)}(?![A-Za-z0-9.-])",
+                needs_benjamin,
+            ):
+                continue
+            decision_ref = mapping.get("decision_ref")
+            for decision in pending:
+                if decision.get("title") == decision_ref and decision.get("id"):
+                    matched[str(decision["id"])] = decision
+
+    target = next(iter(matched.values())) if len(matched) == 1 else None
+    target_id = str(target["id"]) if target else None
+    general = [item for item in pending if str(item.get("id")) != target_id]
+    blockers = []
+    if needs_benjamin:
+        blockers.append({
+            "id": "needs-benjamin",
+            "source": "gc.needs_benjamin",
+            "text": needs_benjamin,
+            "decision_id": target_id,
+        })
+    return {
+        "general_decisions": [
+            {
+                "id": item.get("id"),
+                "title": item.get("title"),
+                "domain": item.get("domain"),
+            }
+            for item in general
+        ],
+        "effective_blockers": blockers,
+    }
+
+
 def _markdown_section(text: str, heading: str) -> str:
     match = re.search(
         rf"^## {re.escape(heading)}\s*$\n(.*?)(?=^## |\Z)",
@@ -934,6 +990,11 @@ class ProductMemory:
             if isinstance(item, dict)
             for title in item.get("decision_refs", [])
         }
+        configured_decisions.update(
+            item["decision_ref"]
+            for item in self.config.get("decision_blockers", [])
+            if isinstance(item, dict) and isinstance(item.get("decision_ref"), str)
+        )
         missing_decisions = sorted(configured_decisions - decisions_by_title.keys())
         if missing_decisions and self.strict_relationships:
             raise SourceError(
@@ -1600,6 +1661,12 @@ class FactoryCollector:
             factory_label = "Usine active · au repos"
 
         needs_benjamin = _meaningful(coordination_meta.get("gc.needs_benjamin"))
+        product_memory = self.product_memory.collect()
+        today = _today_projection(
+            needs_benjamin,
+            product_memory["decisions"],
+            self.product_config.get("decision_blockers", []),
+        )
         last_meta = _metadata(last)
         last_delivery = {
             "id": (last or {}).get("id"),
@@ -1654,7 +1721,8 @@ class FactoryCollector:
             "agents": agent_cards,
             "queue": queue,
             "product_work": product_work,
-            "product_memory": self.product_memory.collect(),
+            "product_memory": product_memory,
+            "today": today,
             "decision_aids": decision_aids,
             "last_delivery": last_delivery,
             "needs_benjamin": needs_benjamin,
