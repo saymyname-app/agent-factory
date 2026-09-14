@@ -4,7 +4,7 @@
   "type": "object",
   "required": [
     "schema_version", "slug", "name", "strategy", "decisions",
-    "project_inventory", "design_governance", "po_workspace", "queue_command",
+    "project_inventory", "design_governance", "po_workspace", "status_command", "queue_command",
     "queue_mutation_command", "capabilities", "relations", "journeys",
     "business_objectives", "product_reference", "view_inventory", "delivery_workflow"
   ],

@@ -62,7 +62,8 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         raise SourceError(f"Configuration produit invalide: {exc}") from exc
     required = {
         "slug", "name", "strategy", "decisions", "po_workspace",
-        "queue_command", "capabilities", "relations", "project_inventory",
+        "status_command", "queue_command", "queue_mutation_command",
+        "capabilities", "relations", "project_inventory",
         "design_governance", "business_objectives", "view_inventory",
         "delivery_workflow", "product_reference",
     }
@@ -79,6 +80,18 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         isinstance(part, str) and part for part in value["queue_mutation_command"]
     ):
         raise SourceError("Commande de mutation de file produit invalide.")
+    if not isinstance(value.get("status_command"), list) or len(value["status_command"]) != 1:
+        raise SourceError("Commande de statut produit invalide.")
+    if len(value["queue_mutation_command"]) != 1 or value["queue_command"][1:] != ["list", "--json"]:
+        raise SourceError("Les commandes de file doivent utiliser le contrat list --json borné.")
+    for field in ("status_command", "queue_command", "queue_mutation_command"):
+        value[f"{field}_path"] = _repo_path(value[field][0], field)
+    if value["queue_command_path"] != value["queue_mutation_command_path"]:
+        raise SourceError("Lecture et mutation doivent utiliser le même contrat de file produit.")
+    expected_queue = _repo_path(f"bin/{value['slug']}-product-queue", "queue_command")
+    expected_status = _repo_path(f"bin/{value['slug']}-product-status", "status_command")
+    if value["queue_command_path"] != expected_queue or value["status_command_path"] != expected_status:
+        raise SourceError("Les commandes doivent utiliser les contrats dédiés au produit configuré.")
     if not isinstance(value["capabilities"], list) or not isinstance(value["relations"], list):
         raise SourceError("Graphe produit invalide.")
     references = value.get("product_reference")
@@ -92,8 +105,14 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         }.issubset(item):
             raise SourceError("Référence produit incomplète.")
         reference_id = item.get("id")
-        if not isinstance(reference_id, str) or not reference_id or reference_id in reference_ids:
+        if (
+            not isinstance(reference_id, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", reference_id)
+            or reference_id in reference_ids
+        ):
             raise SourceError("Identifiant de référence produit invalide ou dupliqué.")
+        if item.get("status") not in {"validated", "review", "live"}:
+            raise SourceError(f"État invalide pour la référence {reference_id}.")
         sources = item.get("sources")
         if not isinstance(sources, list) or not sources:
             raise SourceError(f"La référence {reference_id} doit configurer au moins une source.")
@@ -117,7 +136,7 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
             "id", "title", "area", "roadmap", "source_refs", "decision_refs",
         }.issubset(item):
             raise SourceError("Capacité produit incomplète.")
-        if not isinstance(item["id"], str) or not item["id"] or item["id"] in capability_ids:
+        if not isinstance(item["id"], str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", item["id"]) or item["id"] in capability_ids:
             raise SourceError("Identifiant de capacité produit invalide ou dupliqué.")
         if not isinstance(item["roadmap"], int) or isinstance(item["roadmap"], bool) or item["roadmap"] < 1:
             raise SourceError("Référence roadmap invalide dans le graphe produit.")
@@ -140,7 +159,7 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         }.issubset(item):
             raise SourceError("Parcours produit incomplet.")
         journey_id = item.get("id")
-        if not isinstance(journey_id, str) or not journey_id or journey_id in journey_ids:
+        if not isinstance(journey_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", journey_id) or journey_id in journey_ids:
             raise SourceError("Identifiant de parcours invalide ou dupliqué.")
         if not isinstance(item["roadmap"], int) or isinstance(item["roadmap"], bool) or item["roadmap"] < 1:
             raise SourceError("Référence roadmap invalide dans un parcours.")
@@ -670,9 +689,10 @@ class ProductReferenceReader:
             parts.append({"type": "text", "text": suffix})
         return parts or [{"type": "text", "text": ""}]
 
-    @staticmethod
-    def _section_anchor(source_path: Path, heading: str) -> str:
-        return f"reference-{_anchor(source_path.stem)}-{_anchor(heading)}"
+    def _section_anchor(self, source_path: Path, heading: str) -> str:
+        relative = source_path.resolve().relative_to(self.root)
+        path_key = hashlib.sha256(relative.as_posix().encode("utf-8")).hexdigest()[:8]
+        return f"reference-{_anchor(source_path.stem)}-{path_key}-{_anchor(heading)}"
 
     def _blocks(self, lines: list[str], source_path: Path) -> list[dict[str, Any]]:
         blocks: list[dict[str, Any]] = []
@@ -1728,15 +1748,8 @@ class QueueBridge:
         self.executor = executor or subprocess.run
         self.lock = threading.Lock()
         self.last_submit = 0.0
-        self.list_command = self._absolute(self.config["queue_command"])
-        self.mutation_command = self._absolute(self.config["queue_mutation_command"])
-
-    @staticmethod
-    def _absolute(command: list[str]) -> list[str]:
-        result = list(command)
-        if result and not Path(result[0]).is_absolute():
-            result[0] = str(ROOT / result[0])
-        return result
+        self.list_command = [str(self.config["queue_command_path"]), *self.config["queue_command"][1:]]
+        self.mutation_command = [str(self.config["queue_mutation_command_path"])]
 
     def _execute(self, command: list[str]) -> str:
         try:
@@ -1833,6 +1846,34 @@ class QueueBridge:
             "action": action,
             "message": message,
             "queue": refreshed,
+            "model_calls": 0,
+        }
+
+
+class DeliveryEvidenceReader:
+    """On-demand exact GitHub evidence through the existing product-status contract."""
+
+    def __init__(self, config: dict[str, Any] | None = None, runner: Any | None = None) -> None:
+        self.config = config or load_product_config()
+        self.runner = runner or CommandRunner(timeout=60)
+
+    def collect(self) -> dict[str, Any]:
+        output = self.runner.text(str(self.config["status_command_path"]))
+        values = {}
+        for raw in output.splitlines():
+            if ": " in raw:
+                key, value = raw.split(": ", 1)
+                values[key] = value.strip()
+        required = {"CURRENT", "CURRENT AGENT", "LAST DELIVERED", "NEXT", "NEEDS BENJAMIN"}
+        if not required.issubset(values):
+            raise SourceError("Le statut produit exact est incomplet.")
+        return {
+            "current": values["CURRENT"],
+            "current_agent": values["CURRENT AGENT"],
+            "last_delivered": values["LAST DELIVERED"],
+            "next": values["NEXT"],
+            "needs_benjamin": values["NEEDS BENJAMIN"],
+            "verified_by": "bin/saymyname-product-status · Beads + Gas City + GitHub",
             "model_calls": 0,
         }
 
@@ -2292,6 +2333,7 @@ def handler_factory(
     preview_bridge: PreviewBridge | None = None,
     reference_reader: ProductReferenceReader | None = None,
     queue_bridge: QueueBridge | None = None,
+    delivery_reader: DeliveryEvidenceReader | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     bridge = mayor_bridge or MayorBridge()
     details = detail_reader or DetailReader()
@@ -2300,6 +2342,7 @@ def handler_factory(
     preview = preview_bridge or PreviewBridge()
     references = reference_reader or ProductReferenceReader()
     queue = queue_bridge or QueueBridge()
+    delivery = delivery_reader or DeliveryEvidenceReader()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "FactoryCockpit/1"
@@ -2386,6 +2429,12 @@ def handler_factory(
                     self._json_response(400, {"error": str(exc), "state": "invalid"})
                 except SourceError as exc:
                     self._json_response(422, {"error": str(exc), "state": "source_error"})
+                return
+            if path == "/api/delivery-evidence":
+                try:
+                    self._json_response(200, delivery.collect())
+                except SourceError as exc:
+                    self._json_response(503, {"error": str(exc), "state": "source_error"})
                 return
             files = {
                 "/": ("index.html", "text/html; charset=utf-8"),

@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from factory_cockpit import (  # noqa: E402
     FactoryCollector,
+    DeliveryEvidenceReader,
     ProductMemory,
     ProductReferenceReader,
     POBridge,
@@ -219,8 +220,9 @@ class FactoryCockpitTest(unittest.TestCase):
                 "project_inventory": "docs/products/saymyname/PROJECT_INVENTORY.md",
                 "design_governance": "docs/products/saymyname/DESIGN_GOVERNANCE.md",
                 "po_workspace": "/tmp/test-product",
-                "queue_command": ["bin/test-queue"],
-                "queue_mutation_command": ["bin/test-queue"],
+                "status_command": ["bin/test-product-product-status"],
+                "queue_command": ["bin/test-product-product-queue", "list", "--json"],
+                "queue_mutation_command": ["bin/test-product-product-queue"],
                 "capabilities": [{"id": "known", "title": "Known", "area": "Core", "roadmap": 1, "source_refs": ["reference"], "decision_refs": []}],
                 "relations": [["known", "missing"]],
                 "journeys": [],
@@ -230,6 +232,21 @@ class FactoryCockpitTest(unittest.TestCase):
                 "delivery_workflow": [],
             }), encoding="utf-8")
             with self.assertRaisesRegex(SourceError, "Relation"):
+                load_product_config(config_path)
+
+    def test_product_config_rejects_an_arbitrary_queue_executable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "product.json"
+            value = json.loads((ROOT / "config" / "products" / "saymyname.json").read_text(encoding="utf-8"))
+            value["queue_mutation_command"] = ["/bin/sh"]
+            config_path.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(SourceError, "relatif"):
+                load_product_config(config_path)
+
+            value["queue_command"] = ["bin/factory-cockpit", "list", "--json"]
+            value["queue_mutation_command"] = ["bin/factory-cockpit"]
+            config_path.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(SourceError, "contrats dédiés"):
                 load_product_config(config_path)
 
     def test_product_reference_is_structured_safe_and_has_provenance(self):
@@ -282,6 +299,25 @@ class FactoryCockpitTest(unittest.TestCase):
                 with self.assertRaises(SourceError, msg=unsafe):
                     reader.get("safe")
 
+    def test_product_reference_anchors_distinguish_equal_stems_in_different_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = []
+            for folder in ("one", "two"):
+                path = root / folder / "reference.md"
+                path.parent.mkdir()
+                path.write_text("# Reference\n\n## Shared section\n\nSafe.\n", encoding="utf-8")
+                sources.append({"path": f"{folder}/reference.md", "sections": ["Shared section"]})
+            config = {
+                "product_reference": [{
+                    "id": "safe", "title": "Safe", "summary": "Safe reference",
+                    "status": "live", "status_label": "Live", "sources": sources,
+                }],
+            }
+            documents = ProductReferenceReader(config, root).get("safe")["documents"]
+            anchors = [document["sections"][0]["anchor"] for document in documents]
+            self.assertEqual(2, len(set(anchors)))
+
     def test_queue_bridge_allows_only_structured_record_actions(self):
         inventory = [{
             "position": 1, "id": "af-next", "title": "Next", "state": "queued",
@@ -314,6 +350,23 @@ class FactoryCockpitTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "confirmée"):
             bridge.mutate("cancel", {"id": "af-next", "reason": "No", "confirmed": False})
 
+    def test_delivery_evidence_uses_exact_status_contract_without_a_model(self):
+        class Runner:
+            def text(self, *args):
+                self.args = args
+                return (
+                    "SAYMYNAME\nCURRENT: Current outcome — implementation\nCURRENT AGENT: codex-1\n"
+                    "LAST DELIVERED: Delivered outcome — PR 42 — merged as abcdef123456; CI green (3 checks)\n"
+                    "NEXT: Next outcome\nNEEDS BENJAMIN: none\n"
+                )
+
+        runner = Runner()
+        result = DeliveryEvidenceReader(load_product_config(), runner).collect()
+        self.assertIn("PR 42", result["last_delivered"])
+        self.assertIn("CI green", result["last_delivered"])
+        self.assertEqual(0, result["model_calls"])
+        self.assertEqual(str(ROOT / "bin" / "saymyname-product-status"), runner.args[0])
+
     def test_http_queue_guard_and_reference_endpoint(self):
         class Cache:
             invalidated = False
@@ -343,11 +396,19 @@ class FactoryCockpitTest(unittest.TestCase):
             def status(self):
                 return {}
 
+            def collect(self):
+                return {
+                    "last_delivered": "Delivered outcome — PR 42 — CI green",
+                    "verified_by": "fixture",
+                    "model_calls": 0,
+                }
+
         cache, queue = Cache(), Queue()
         handler = handler_factory(
             cache, mayor_bridge=Stub(), detail_reader=Stub(), token_cache=cache,
             po_bridge=Stub(), preview_bridge=Stub(),
             reference_reader=ProductReferenceReader(), queue_bridge=queue,
+            delivery_reader=Stub(),
         )
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -383,6 +444,14 @@ class FactoryCockpitTest(unittest.TestCase):
             self.assertEqual(200, response.status)
             self.assertEqual("ready", value["state"])
             self.assertEqual(0, value["model_calls"])
+
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request("GET", "/api/delivery-evidence")
+            response = connection.getresponse()
+            value = json.loads(response.read())
+            self.assertEqual(200, response.status)
+            self.assertIn("PR 42", value["last_delivered"])
+            self.assertEqual(0, value["model_calls"])
         finally:
             server.shutdown()
             server.server_close()
@@ -399,6 +468,13 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertIn("human-queue-record", script)
         self.assertIn("ENTERPRISE_IGNORE_KEY", script)
         self.assertIn("URLSearchParams", script)
+        self.assertIn('id="attention-card"', html)
+        self.assertIn('role="button" aria-label="Ouvrir les décisions qui demandent ton attention"', html)
+        self.assertIn('id="decisions-title" tabindex="-1"', html)
+        self.assertIn('makeActivatable($("attention-card"), openAttentionDecisions)', script)
+        self.assertIn('function openAttentionDecisions() { activateView("decisions")', script)
+        self.assertIn('[tabindex]:focus-visible', styles)
+        self.assertIn('fetch("/api/delivery-evidence"', script)
         self.assertNotIn(".innerHTML", script)
         self.assertIn("@media(max-width:800px)", styles)
 

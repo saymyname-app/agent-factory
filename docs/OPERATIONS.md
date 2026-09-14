@@ -203,6 +203,13 @@ confirmation, rollback and recovery states remain visible. The bridge delegates
 only to `bin/saymyname-product-queue` and exposes no materialize, dispatch,
 interrupt, arbitrary-command or merge path.
 
+The Today attention card opens the existing Decisions view in place through the
+same navigation state. It is a labelled keyboard target with visible focus; it
+does not create a new route, tab, decision workspace, or model call. Opening the
+Roadmap resolves exact delivery evidence on demand through the existing
+`bin/saymyname-product-status` contract, while an unavailable proof remains
+explicit instead of being inferred from the live projection.
+
 The product-work view queries product-marked Beads across the City and registered
 rigs, then removes sessions, workflows, convoys, gates, synthetic work, order
 tracking, and maintenance. Beads states what should be done, Gas City states who
@@ -250,6 +257,8 @@ Stopping the cockpit does not stop Gas City or its agents. Its HTTP surface is:
 - `POST /api/preview/action`: guarded `start`, `restart`, or `stop` through `bin/saymyname-preview`.
 - `GET /api/reference?id=<configured-id>`: allowlisted structured Markdown with
   contents anchors and freshness provenance;
+- `GET /api/delivery-evidence`: on-demand exact last-delivery evidence through
+  `bin/saymyname-product-status` (Beads, Gas City and GitHub), with zero model calls;
 - `POST /api/product-queue`: same-origin, `human-queue-record` confirmed RECORD
   action limited to add/move/urgency/pause/resume/confirmed cancel.
 
