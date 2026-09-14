@@ -176,12 +176,39 @@ active is not by itself presented as productive work. When sources disagree or
 fail, the UI reports partial visibility. Infrastructure such as the deterministic
 control dispatcher is collapsed under technical details by default.
 
-Navigation separates Enterprise objectives, Product capabilities/views, the
-Roadmap, three decision domains, delivery Work, the live Workflow graph, Agents,
-PO and Tokens. The reviewed view catalogue distinguishes code presence from a
-validated customer journey. Enterprise/Product/Project decisions come from the
-categorized durable decision log; the automatic projection never reclassifies
-them with a model.
+Navigation prioritizes Today, Product graphs and source content, Roadmap,
+Product/Project Decisions, PO, then the delivery Board. Enterprise and technical
+Workflow/Agents/Tokens views remain directly accessible under `More / Factory`.
+Enterprise decisions are collapsed by default and may be individually or wholly
+ignored through a reversible browser-local preference. Ignore changes no Git or
+Beads state and never edits, closes or resolves the durable decision.
+
+Product references open actual configured Markdown sections as inert headings,
+paragraphs, lists, tables, code and safe links. A table of contents, stable deep
+links and search provide quick navigation; configured path, file modification
+time and SHA-256 provenance make freshness explicit. Only schema-v2 allowlisted
+repository sources are readable. Missing/empty sections, parse errors, traversal,
+external files, unsafe links and active content fail visibly without fallback
+content. Capability and journey nodes link to these sources, roadmap outcomes and
+decisions; decision pages show the reverse relationships.
+
+The Roadmap combines durable V1 outcomes, exact last-delivery PR/CI evidence,
+the current immutable outcome, queued and evidence-paused candidates, decision
+gates and the separate Factory campaign. Under explicit RECORD interaction it
+can add a candidate with what/why/acceptance, move it to an exact position, set
+urgency independently, pause with reason, resume, and cancel after confirmation.
+Keyboard/mobile buttons are the primary reorder mechanism. Success rereads Beads
+and refreshes roadmap/capability projections immediately; lock, conflict,
+confirmation, rollback and recovery states remain visible. The bridge delegates
+only to `bin/saymyname-product-queue` and exposes no materialize, dispatch,
+interrupt, arbitrary-command or merge path.
+
+The Today attention card opens the existing Decisions view in place through the
+same navigation state. It is a labelled keyboard target with visible focus; it
+does not create a new route, tab, decision workspace, or model call. Opening the
+Roadmap resolves exact delivery evidence on demand through the existing
+`bin/saymyname-product-status` contract, while an unavailable proof remains
+explicit instead of being inferred from the live projection.
 
 The product-work view queries product-marked Beads across the City and registered
 rigs, then removes sessions, workflows, convoys, gates, synthetic work, order
@@ -228,6 +255,12 @@ Stopping the cockpit does not stop Gas City or its agents. Its HTTP surface is:
 - `POST /api/po/new`: prepare a fresh general workspace without creating a model session;
 - `GET /api/preview/status`: zero-model-call preview health and exact repository SHAs;
 - `POST /api/preview/action`: guarded `start`, `restart`, or `stop` through `bin/saymyname-preview`.
+- `GET /api/reference?id=<configured-id>`: allowlisted structured Markdown with
+  contents anchors and freshness provenance;
+- `GET /api/delivery-evidence`: on-demand exact last-delivery evidence through
+  `bin/saymyname-product-status` (Beads, Gas City and GitHub), with zero model calls;
+- `POST /api/product-queue`: same-origin, `human-queue-record` confirmed RECORD
+  action limited to add/move/urgency/pause/resume/confirmed cancel.
 
 ## Detailed Gas City dashboard
 

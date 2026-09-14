@@ -5,17 +5,22 @@ import tempfile
 import threading
 import unittest
 import json
+import http.client
 import subprocess
 import time
 from pathlib import Path
+from http.server import ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 from factory_cockpit import (  # noqa: E402
     FactoryCollector,
+    DeliveryEvidenceReader,
     ProductMemory,
+    ProductReferenceReader,
     POBridge,
+    QueueBridge,
     MayorBridge,
     SnapshotCache,
     SourceError,
@@ -25,6 +30,7 @@ from factory_cockpit import (  # noqa: E402
     load_product_config,
     _human_objective,
     _human_phase,
+    handler_factory,
 )
 
 
@@ -195,12 +201,18 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertEqual(7, len(memory["delivery_workflow"]))
         self.assertEqual(4, len(memory["business"]["objectives"]))
         self.assertGreaterEqual(len(memory["product_reference"]), 7)
+        self.assertTrue(all(item["state"] == "ready" for item in memory["product_reference"]))
+        self.assertEqual(5, len(memory["journeys"]))
+        self.assertTrue(memory["project_graph"]["nodes"][0]["sources"])
+        related = next(item for item in pending if item["title"] == "Premier connecteur externe")
+        self.assertTrue(related["capabilities"])
+        self.assertTrue(related["journeys"] or related["roadmap"])
 
     def test_product_config_rejects_dangling_graph_edges(self):
-        with tempfile.TemporaryDirectory(dir=ROOT / ".gc" / "runtime") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "product.json"
             config_path.write_text(json.dumps({
-                "schema_version": 1,
+                "schema_version": 2,
                 "slug": "test-product",
                 "name": "Test Product",
                 "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
@@ -208,16 +220,263 @@ class FactoryCockpitTest(unittest.TestCase):
                 "project_inventory": "docs/products/saymyname/PROJECT_INVENTORY.md",
                 "design_governance": "docs/products/saymyname/DESIGN_GOVERNANCE.md",
                 "po_workspace": "/tmp/test-product",
-                "queue_command": ["bin/test-queue"],
-                "capabilities": [{"id": "known", "title": "Known", "area": "Core", "roadmap": 1}],
+                "status_command": ["bin/test-product-product-status"],
+                "queue_command": ["bin/test-product-product-queue", "list", "--json"],
+                "queue_mutation_command": ["bin/test-product-product-queue"],
+                "capabilities": [{"id": "known", "title": "Known", "area": "Core", "roadmap": 1, "source_refs": ["reference"], "decision_refs": []}],
                 "relations": [["known", "missing"]],
+                "journeys": [],
                 "business_objectives": [],
-                "product_reference": [],
+                "product_reference": [{"id": "reference", "title": "Reference", "summary": "Summary", "status": "live", "status_label": "Live", "sources": [{"path": "docs/products/saymyname/PRODUCT_STRATEGY.md", "sections": ["Product thesis"]}]}],
                 "view_inventory": [],
                 "delivery_workflow": [],
             }), encoding="utf-8")
             with self.assertRaisesRegex(SourceError, "Relation"):
                 load_product_config(config_path)
+
+    def test_product_config_rejects_an_arbitrary_queue_executable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "product.json"
+            value = json.loads((ROOT / "config" / "products" / "saymyname.json").read_text(encoding="utf-8"))
+            value["queue_mutation_command"] = ["/bin/sh"]
+            config_path.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(SourceError, "relatif"):
+                load_product_config(config_path)
+
+            value["queue_command"] = ["bin/factory-cockpit", "list", "--json"]
+            value["queue_mutation_command"] = ["bin/factory-cockpit"]
+            config_path.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(SourceError, "contrats dédiés"):
+                load_product_config(config_path)
+
+    def test_product_reference_is_structured_safe_and_has_provenance(self):
+        reader = ProductReferenceReader()
+        result = reader.get("vision")
+        self.assertEqual("ready", result["state"])
+        self.assertEqual(0, result["model_calls"])
+        document = result["documents"][0]
+        self.assertEqual("docs/products/saymyname/PRODUCT_STRATEGY.md", document["configured_path"])
+        self.assertRegex(document["sha256"], r"^[0-9a-f]{64}$")
+        blocks = [block for section in document["sections"] for block in section["blocks"]]
+        self.assertIn("heading", {block["type"] for block in blocks})
+        self.assertIn("table", {block["type"] for block in blocks})
+        anchors = [block["anchor"] for block in blocks if block["type"] == "heading"]
+        self.assertEqual(len(anchors), len(set(anchors)))
+
+    def test_product_reference_rejects_active_external_and_traversal_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.md"
+            target = root / "target.md"
+            target.write_text("# Target\n\n## Safe target\n\nSafe.\n", encoding="utf-8")
+            config = {
+                "product_reference": [{
+                    "id": "safe", "title": "Safe", "summary": "Safe reference",
+                    "status": "live", "status_label": "Live",
+                    "sources": [
+                        {"path": "source.md", "sections": ["Section"]},
+                        {"path": "target.md", "sections": ["Safe target"]},
+                    ],
+                }],
+            }
+            source.write_text(
+                "# Source\n\n## Section\n\nA <strong>safe</strong> [link](target.md#safe-target).\n",
+                encoding="utf-8",
+            )
+            reader = ProductReferenceReader(config, root)
+            result = reader.get("safe")
+            paragraph = result["documents"][0]["sections"][0]["blocks"][1]
+            self.assertNotIn("<strong>", str(paragraph))
+            self.assertEqual("safe", next(part for part in paragraph["inlines"] if part["type"] == "link")["reference_id"])
+
+            for unsafe in (
+                "[outside](https://example.com)",
+                "[traversal](../secret.md)",
+                '<script>alert("x")</script>',
+                '<img src=x onerror="alert(1)">',
+            ):
+                source.write_text(f"# Source\n\n## Section\n\n{unsafe}\n", encoding="utf-8")
+                with self.assertRaises(SourceError, msg=unsafe):
+                    reader.get("safe")
+
+    def test_product_reference_anchors_distinguish_equal_stems_in_different_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = []
+            for folder in ("one", "two"):
+                path = root / folder / "reference.md"
+                path.parent.mkdir()
+                path.write_text("# Reference\n\n## Shared section\n\nSafe.\n", encoding="utf-8")
+                sources.append({"path": f"{folder}/reference.md", "sections": ["Shared section"]})
+            config = {
+                "product_reference": [{
+                    "id": "safe", "title": "Safe", "summary": "Safe reference",
+                    "status": "live", "status_label": "Live", "sources": sources,
+                }],
+            }
+            documents = ProductReferenceReader(config, root).get("safe")["documents"]
+            anchors = [document["sections"][0]["anchor"] for document in documents]
+            self.assertEqual(2, len(set(anchors)))
+
+    def test_queue_bridge_allows_only_structured_record_actions(self):
+        inventory = [{
+            "position": 1, "id": "af-next", "title": "Next", "state": "queued",
+            "urgency": "normal", "goal": "af-goal",
+        }]
+
+        def execute(command, **kwargs):
+            if command[-2:] == ["list", "--json"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps(inventory), "")
+            return subprocess.CompletedProcess(command, 0, "UPDATED", "")
+
+        config = load_product_config()
+        cases = [
+            ("add", {"title": "Outcome", "why": "Useful", "acceptance": "Observable", "urgency": "normal"}),
+            ("move", {"id": "af-next", "position": 1}),
+            ("urgency", {"id": "af-next", "urgency": "urgent"}),
+            ("pause", {"id": "af-next", "reason": "Waiting for evidence"}),
+            ("resume", {"id": "af-next"}),
+            ("cancel", {"id": "af-next", "reason": "No longer useful", "confirmed": True}),
+        ]
+        for action, payload in cases:
+            result = QueueBridge(config, execute).mutate(action, payload)
+            self.assertEqual(0, result["model_calls"])
+            self.assertEqual(action, result["action"])
+        bridge = QueueBridge(config, execute)
+        with self.assertRaisesRegex(ValueError, "interdite"):
+            bridge.mutate("materialize", {"id": "af-next"})
+        with self.assertRaisesRegex(ValueError, "Champs"):
+            bridge.mutate("move", {"id": "af-next", "position": 1, "command": "gc sling"})
+        with self.assertRaisesRegex(ValueError, "confirmée"):
+            bridge.mutate("cancel", {"id": "af-next", "reason": "No", "confirmed": False})
+
+    def test_delivery_evidence_uses_exact_status_contract_without_a_model(self):
+        class Runner:
+            def text(self, *args):
+                self.args = args
+                return (
+                    "SAYMYNAME\nCURRENT: Current outcome — implementation\nCURRENT AGENT: codex-1\n"
+                    "LAST DELIVERED: Delivered outcome — PR 42 — merged as abcdef123456; CI green (3 checks)\n"
+                    "NEXT: Next outcome\nNEEDS BENJAMIN: none\n"
+                )
+
+        runner = Runner()
+        result = DeliveryEvidenceReader(load_product_config(), runner).collect()
+        self.assertIn("PR 42", result["last_delivered"])
+        self.assertIn("CI green", result["last_delivered"])
+        self.assertEqual(0, result["model_calls"])
+        self.assertEqual(str(ROOT / "bin" / "saymyname-product-status"), runner.args[0])
+
+    def test_http_queue_guard_and_reference_endpoint(self):
+        class Cache:
+            invalidated = False
+
+            def get(self):
+                return {"ok": True}
+
+            def invalidate(self):
+                self.invalidated = True
+
+        class Queue:
+            calls = []
+
+            def mutate(self, action, payload):
+                if action not in {"add", "move", "urgency", "pause", "resume", "cancel"}:
+                    raise ValueError("Action de file produit interdite.")
+                self.calls.append((action, payload))
+                return {"accepted": True, "queue": [], "model_calls": 0}
+
+        class Stub:
+            def conversation(self, *args):
+                return {}
+
+            def index(self):
+                return {}
+
+            def status(self):
+                return {}
+
+            def collect(self):
+                return {
+                    "last_delivered": "Delivered outcome — PR 42 — CI green",
+                    "verified_by": "fixture",
+                    "model_calls": 0,
+                }
+
+        cache, queue = Cache(), Queue()
+        handler = handler_factory(
+            cache, mayor_bridge=Stub(), detail_reader=Stub(), token_cache=cache,
+            po_bridge=Stub(), preview_bridge=Stub(),
+            reference_reader=ProductReferenceReader(), queue_bridge=queue,
+            delivery_reader=Stub(),
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            body = json.dumps({"action": "resume", "payload": {"id": "af-next"}})
+            headers = {
+                "Content-Type": "application/json", "X-Factory-Cockpit": "human-queue-record",
+                "Origin": f"http://127.0.0.1:{server.server_port}",
+            }
+            connection.request("POST", "/api/product-queue", body, headers)
+            response = connection.getresponse()
+            self.assertEqual(202, response.status)
+            self.assertIn("object-src 'none'", response.getheader("Content-Security-Policy"))
+            response.read()
+            self.assertTrue(cache.invalidated)
+
+            connection.request("POST", "/api/product-queue", body, {"Content-Type": "application/json", "Origin": headers["Origin"]})
+            self.assertEqual(403, connection.getresponse().status)
+            connection.close()
+
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            forbidden = json.dumps({"action": "materialize", "payload": {"id": "af-next"}})
+            connection.request("POST", "/api/product-queue", forbidden, headers)
+            self.assertEqual(400, connection.getresponse().status)
+            connection.close()
+
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request("GET", "/api/reference?id=vision")
+            response = connection.getresponse()
+            value = json.loads(response.read())
+            self.assertEqual(200, response.status)
+            self.assertEqual("ready", value["state"])
+            self.assertEqual(0, value["model_calls"])
+
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request("GET", "/api/delivery-evidence")
+            response = connection.getresponse()
+            value = json.loads(response.read())
+            self.assertEqual(200, response.status)
+            self.assertIn("PR 42", value["last_delivered"])
+            self.assertEqual(0, value["model_calls"])
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_static_product_navigation_accessibility_and_deep_links(self):
+        html = (ROOT / "ui" / "factory-cockpit" / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "ui" / "factory-cockpit" / "app.js").read_text(encoding="utf-8")
+        styles = (ROOT / "ui" / "factory-cockpit" / "styles.css").read_text(encoding="utf-8")
+        self.assertLess(html.index('data-view="today"'), html.index('data-view="project"'))
+        self.assertLess(html.index('data-view="project"'), html.index('data-view="roadmap"'))
+        self.assertLess(html.index('data-view="roadmap"'), html.index('data-view="decisions"'))
+        self.assertIn("<details class=\"nav-more\">", html)
+        self.assertIn('for="reference-search"', html)
+        self.assertIn("human-queue-record", script)
+        self.assertIn("ENTERPRISE_IGNORE_KEY", script)
+        self.assertIn("URLSearchParams", script)
+        self.assertIn('id="attention-card"', html)
+        self.assertIn('role="button" aria-label="Ouvrir les décisions qui demandent ton attention"', html)
+        self.assertIn('id="decisions-title" tabindex="-1"', html)
+        self.assertIn('makeActivatable($("attention-card"), openAttentionDecisions)', script)
+        self.assertIn('function openAttentionDecisions() { activateView("decisions")', script)
+        self.assertIn('[tabindex]:focus-visible', styles)
+        self.assertIn('fetch("/api/delivery-evidence"', script)
+        self.assertNotIn(".innerHTML", script)
+        self.assertIn("@media(max-width:800px)", styles)
 
     def test_po_console_creates_one_on_demand_session_per_decision(self):
         with tempfile.TemporaryDirectory() as directory:
