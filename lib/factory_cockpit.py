@@ -503,47 +503,6 @@ class FactoryCollector:
             if session.get("alias") != "mayor"
             and "control-dispatcher" not in str(session.get("template", ""))
         ]
-        worker_context: dict[str, dict[str, Any] | None] = {}
-        if worker_sessions:
-            with ThreadPoolExecutor(max_workers=4) as pool:
-                session_reads = {
-                    session["id"]: pool.submit(
-                        read,
-                        f"session:{session['id']}",
-                        lambda session_id=session["id"]: self.runner.json(
-                            "gc", "bd", "show", session_id, "--json"
-                        ),
-                        [],
-                    )
-                    for session in worker_sessions
-                    if session.get("id")
-                }
-                session_beads = {
-                    session_id: _single(future.result())
-                    for session_id, future in session_reads.items()
-                }
-            trigger_ids = {
-                session_id: _meaningful(_metadata(bead).get("gc.trigger_bead_id"))
-                for session_id, bead in session_beads.items()
-            }
-            with ThreadPoolExecutor(max_workers=4) as pool:
-                trigger_reads = {
-                    session_id: pool.submit(
-                        read,
-                        f"trigger:{trigger_id}",
-                        lambda bead_id=trigger_id: self.runner.json(
-                            "gc", "bd", "show", bead_id, "--json"
-                        ),
-                        [],
-                    )
-                    for session_id, trigger_id in trigger_ids.items()
-                    if trigger_id
-                }
-                worker_context = {
-                    session_id: _single(future.result())
-                    for session_id, future in trigger_reads.items()
-                }
-
         work_done = current_meta.get("gc.work_outcome") in {"shipped", "pass"}
         if current:
             if work_done or workflow_summary["complete"]:
@@ -598,11 +557,14 @@ class FactoryCollector:
                 session.get("alias") in workflow_summary["assignees"]
                 or session.get("name") in workflow_summary["assignees"]
             )
-            trigger = worker_context.get(session.get("id"))
-            objective = focus["title"] if is_product_worker else _human_objective(
-                (trigger or {}).get("title") or session.get("title")
-            )
             maintenance = str(session.get("template", "")).startswith("bd.dog")
+            objective = (
+                focus["title"]
+                if is_product_worker
+                else "Maintenir la santé du magasin de tâches"
+                if maintenance
+                else _human_objective(session.get("title"))
+            )
             recently_active = session.get("state") == "active" and _is_recent(
                 session.get("last_active")
             )

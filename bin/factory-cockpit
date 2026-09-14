@@ -18,8 +18,9 @@ usage() {
   cat <<'USAGE'
 Usage: factory-cockpit start|stop|restart|status|open|snapshot
 
-Runs a read-only, loopback-only human view of Gas City and Beads signals.
-It performs zero model calls and does not dispatch or mutate Factory work.
+Runs a loopback-only human decision view of Gas City and Beads signals.
+Monitoring performs zero model calls. Only an explicit typed message can contact
+the Mayor; the cockpit cannot interrupt, dispatch, retry, merge, or recover work.
 USAGE
 }
 
@@ -86,7 +87,7 @@ stop() {
 
 status() {
   if valid_pid && curl --fail --silent "$URL/health" >/dev/null 2>&1; then
-    printf 'RUNNING: %s (PID %s) — zero model calls\n' "$URL" "$(<"$PID_FILE")"
+    printf 'RUNNING: %s (PID %s) — monitoring: zero model calls\n' "$URL" "$(<"$PID_FILE")"
     return
   fi
   printf 'STOPPED\n'
