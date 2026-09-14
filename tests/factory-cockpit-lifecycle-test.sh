@@ -40,6 +40,8 @@ curl --fail --silent "$URL/api/tokens" | jq -e \
   '.monitoring.model_calls == 0 and .monitoring.tokens == 0 and (.factory.sessions | type) == "array"' >/dev/null
 curl --fail --silent "$URL/api/po/conversation" | jq -e \
   '.product == "SayMyName" and .full_access == true and .status == "not_started" and (.messages | type) == "array" and (.conversations | type) == "array"' >/dev/null
+curl --fail --silent "$URL/api/po/index" | jq -e \
+  '.model_calls == 0 and (.conversations | type) == "array"' >/dev/null
 curl --fail --silent "$URL/api/preview/status" | jq -e \
   '.state != null and .commands.frontend == "npm run dev"' >/dev/null
 [[ $(curl --silent --output /dev/null --write-out '%{http_code}' \
