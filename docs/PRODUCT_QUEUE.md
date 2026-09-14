@@ -39,6 +39,15 @@ The generic entry point is `bin/product-queue`; set
 `PRODUCT_QUEUE_DEFAULT_GOAL=<bead-id>`. `list --json` and `next --json` are the
 stable low-token projections for other tools.
 
+The Factory cockpit Roadmap may expose these same operations under an explicit
+human RECORD interaction. Its server invokes `bin/saymyname-product-queue` with
+an allowlisted argument vector; it does not reproduce locking, ranks, rollback or
+audit behavior. Cancellation requires a separate confirmation, pause requires a
+reason, and successful writes reread the command's JSON projection immediately.
+The active delivery outcome is shown separately and is never a reorder target.
+The candidate whose goal is `none` is displayed as a non-product Factory campaign
+rather than being blended into the product roadmap.
+
 ## Human protocol
 
 Benjamin can speak naturally:
