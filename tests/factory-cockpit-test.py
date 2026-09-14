@@ -15,7 +15,9 @@ sys.path.insert(0, str(ROOT / "lib"))
 from factory_cockpit import (  # noqa: E402
     FactoryCollector,
     ProductMemory,
+    ProductReferenceReader,
     POBridge,
+    QueueBridge,
     MayorBridge,
     SnapshotCache,
     SourceError,
@@ -195,12 +197,18 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertEqual(7, len(memory["delivery_workflow"]))
         self.assertEqual(4, len(memory["business"]["objectives"]))
         self.assertGreaterEqual(len(memory["product_reference"]), 7)
+        self.assertTrue(all(item["state"] == "ready" for item in memory["product_reference"]))
+        self.assertEqual(5, len(memory["journeys"]))
+        self.assertTrue(memory["project_graph"]["nodes"][0]["sources"])
+        related = next(item for item in pending if item["title"] == "Premier connecteur externe")
+        self.assertTrue(related["capabilities"])
+        self.assertTrue(related["journeys"] or related["roadmap"])
 
     def test_product_config_rejects_dangling_graph_edges(self):
-        with tempfile.TemporaryDirectory(dir=ROOT / ".gc" / "runtime") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "product.json"
             config_path.write_text(json.dumps({
-                "schema_version": 1,
+                "schema_version": 2,
                 "slug": "test-product",
                 "name": "Test Product",
                 "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
@@ -209,15 +217,99 @@ class FactoryCockpitTest(unittest.TestCase):
                 "design_governance": "docs/products/saymyname/DESIGN_GOVERNANCE.md",
                 "po_workspace": "/tmp/test-product",
                 "queue_command": ["bin/test-queue"],
-                "capabilities": [{"id": "known", "title": "Known", "area": "Core", "roadmap": 1}],
+                "queue_mutation_command": ["bin/test-queue"],
+                "capabilities": [{"id": "known", "title": "Known", "area": "Core", "roadmap": 1, "source_refs": ["reference"], "decision_refs": []}],
                 "relations": [["known", "missing"]],
+                "journeys": [],
                 "business_objectives": [],
-                "product_reference": [],
+                "product_reference": [{"id": "reference", "title": "Reference", "summary": "Summary", "status": "live", "status_label": "Live", "sources": [{"path": "docs/products/saymyname/PRODUCT_STRATEGY.md", "sections": ["Product thesis"]}]}],
                 "view_inventory": [],
                 "delivery_workflow": [],
             }), encoding="utf-8")
             with self.assertRaisesRegex(SourceError, "Relation"):
                 load_product_config(config_path)
+
+    def test_product_reference_is_structured_safe_and_has_provenance(self):
+        reader = ProductReferenceReader()
+        result = reader.get("vision")
+        self.assertEqual("ready", result["state"])
+        self.assertEqual(0, result["model_calls"])
+        document = result["documents"][0]
+        self.assertEqual("docs/products/saymyname/PRODUCT_STRATEGY.md", document["configured_path"])
+        self.assertRegex(document["sha256"], r"^[0-9a-f]{64}$")
+        blocks = [block for section in document["sections"] for block in section["blocks"]]
+        self.assertIn("heading", {block["type"] for block in blocks})
+        self.assertIn("table", {block["type"] for block in blocks})
+        anchors = [block["anchor"] for block in blocks if block["type"] == "heading"]
+        self.assertEqual(len(anchors), len(set(anchors)))
+
+    def test_product_reference_rejects_active_external_and_traversal_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.md"
+            target = root / "target.md"
+            target.write_text("# Target\n\n## Safe target\n\nSafe.\n", encoding="utf-8")
+            config = {
+                "product_reference": [{
+                    "id": "safe", "title": "Safe", "summary": "Safe reference",
+                    "status": "live", "status_label": "Live",
+                    "sources": [
+                        {"path": "source.md", "sections": ["Section"]},
+                        {"path": "target.md", "sections": ["Safe target"]},
+                    ],
+                }],
+            }
+            source.write_text(
+                "# Source\n\n## Section\n\nA <strong>safe</strong> [link](target.md#safe-target).\n",
+                encoding="utf-8",
+            )
+            reader = ProductReferenceReader(config, root)
+            result = reader.get("safe")
+            paragraph = result["documents"][0]["sections"][0]["blocks"][1]
+            self.assertNotIn("<strong>", str(paragraph))
+            self.assertEqual("safe", next(part for part in paragraph["inlines"] if part["type"] == "link")["reference_id"])
+
+            for unsafe in (
+                "[outside](https://example.com)",
+                "[traversal](../secret.md)",
+                '<script>alert("x")</script>',
+                '<img src=x onerror="alert(1)">',
+            ):
+                source.write_text(f"# Source\n\n## Section\n\n{unsafe}\n", encoding="utf-8")
+                with self.assertRaises(SourceError, msg=unsafe):
+                    reader.get("safe")
+
+    def test_queue_bridge_allows_only_structured_record_actions(self):
+        inventory = [{
+            "position": 1, "id": "af-next", "title": "Next", "state": "queued",
+            "urgency": "normal", "goal": "af-goal",
+        }]
+
+        def execute(command, **kwargs):
+            if command[-2:] == ["list", "--json"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps(inventory), "")
+            return subprocess.CompletedProcess(command, 0, "UPDATED", "")
+
+        config = load_product_config()
+        cases = [
+            ("add", {"title": "Outcome", "why": "Useful", "acceptance": "Observable", "urgency": "normal"}),
+            ("move", {"id": "af-next", "position": 1}),
+            ("urgency", {"id": "af-next", "urgency": "urgent"}),
+            ("pause", {"id": "af-next", "reason": "Waiting for evidence"}),
+            ("resume", {"id": "af-next"}),
+            ("cancel", {"id": "af-next", "reason": "No longer useful", "confirmed": True}),
+        ]
+        for action, payload in cases:
+            result = QueueBridge(config, execute).mutate(action, payload)
+            self.assertEqual(0, result["model_calls"])
+            self.assertEqual(action, result["action"])
+        bridge = QueueBridge(config, execute)
+        with self.assertRaisesRegex(ValueError, "interdite"):
+            bridge.mutate("materialize", {"id": "af-next"})
+        with self.assertRaisesRegex(ValueError, "Champs"):
+            bridge.mutate("move", {"id": "af-next", "position": 1, "command": "gc sling"})
+        with self.assertRaisesRegex(ValueError, "confirmée"):
+            bridge.mutate("cancel", {"id": "af-next", "reason": "No", "confirmed": False})
 
     def test_po_console_creates_one_on_demand_session_per_decision(self):
         with tempfile.TemporaryDirectory() as directory:

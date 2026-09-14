@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -37,6 +38,23 @@ class SourceError(RuntimeError):
     pass
 
 
+class ConflictError(SourceError):
+    """A bounded mutation lost a lock or source-state race."""
+
+
+def _repo_path(value: Any, field: str, root: Path = ROOT) -> Path:
+    if not isinstance(value, str) or not value.strip():
+        raise SourceError(f"Le chemin {field} est invalide.")
+    candidate = Path(value)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise SourceError(f"Le chemin {field} doit être relatif au dépôt Factory.")
+    resolved = (root / candidate).resolve()
+    repository = root.resolve()
+    if resolved == repository or repository not in resolved.parents:
+        raise SourceError(f"Le chemin {field} doit rester dans le dépôt Factory.")
+    return resolved
+
+
 def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -48,7 +66,8 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         "design_governance", "business_objectives", "view_inventory",
         "delivery_workflow", "product_reference",
     }
-    if value.get("schema_version") != 1 or not required.issubset(value):
+    required.add("journeys")
+    if value.get("schema_version") != 2 or not required.issubset(value):
         raise SourceError("Configuration produit incomplète ou version non prise en charge.")
     if not re.fullmatch(r"[a-z0-9-]+", str(value["slug"])) or not str(value["name"]).strip():
         raise SourceError("Identité de produit invalide.")
@@ -56,27 +75,88 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         isinstance(part, str) and part for part in value["queue_command"]
     ):
         raise SourceError("Commande de file produit invalide.")
+    if not isinstance(value.get("queue_mutation_command"), list) or not value["queue_mutation_command"] or not all(
+        isinstance(part, str) and part for part in value["queue_mutation_command"]
+    ):
+        raise SourceError("Commande de mutation de file produit invalide.")
     if not isinstance(value["capabilities"], list) or not isinstance(value["relations"], list):
         raise SourceError("Graphe produit invalide.")
+    references = value.get("product_reference")
+    if not isinstance(references, list) or not references:
+        raise SourceError("Références produit manquantes.")
+    reference_ids: set[str] = set()
+    reference_paths: set[Path] = set()
+    for item in references:
+        if not isinstance(item, dict) or not {
+            "id", "title", "summary", "status", "status_label", "sources",
+        }.issubset(item):
+            raise SourceError("Référence produit incomplète.")
+        reference_id = item.get("id")
+        if not isinstance(reference_id, str) or not reference_id or reference_id in reference_ids:
+            raise SourceError("Identifiant de référence produit invalide ou dupliqué.")
+        sources = item.get("sources")
+        if not isinstance(sources, list) or not sources:
+            raise SourceError(f"La référence {reference_id} doit configurer au moins une source.")
+        for source in sources:
+            if not isinstance(source, dict) or not {"path", "sections"}.issubset(source):
+                raise SourceError(f"Source incomplète pour la référence {reference_id}.")
+            sections = source.get("sections")
+            if not isinstance(sections, list) or not sections or not all(
+                isinstance(section, str) and section.strip() for section in sections
+            ):
+                raise SourceError(f"Sections invalides pour la référence {reference_id}.")
+            source["resolved_path"] = _repo_path(
+                source.get("path"), f"product_reference.{reference_id}.source"
+            )
+            reference_paths.add(source["resolved_path"])
+        reference_ids.add(reference_id)
+
     capability_ids: set[str] = set()
     for item in value["capabilities"]:
-        if not isinstance(item, dict) or not {"id", "title", "area", "roadmap"}.issubset(item):
+        if not isinstance(item, dict) or not {
+            "id", "title", "area", "roadmap", "source_refs", "decision_refs",
+        }.issubset(item):
             raise SourceError("Capacité produit incomplète.")
         if not isinstance(item["id"], str) or not item["id"] or item["id"] in capability_ids:
             raise SourceError("Identifiant de capacité produit invalide ou dupliqué.")
         if not isinstance(item["roadmap"], int) or isinstance(item["roadmap"], bool) or item["roadmap"] < 1:
             raise SourceError("Référence roadmap invalide dans le graphe produit.")
+        if not isinstance(item["source_refs"], list) or not set(item["source_refs"]).issubset(reference_ids):
+            raise SourceError("Référence documentaire invalide dans le graphe produit.")
+        if not isinstance(item["decision_refs"], list) or not all(
+            isinstance(title, str) and title for title in item["decision_refs"]
+        ):
+            raise SourceError("Référence de décision invalide dans le graphe produit.")
         capability_ids.add(item["id"])
     for relation in value["relations"]:
         if not isinstance(relation, list) or len(relation) != 2 or not all(
             endpoint in capability_ids for endpoint in relation
         ):
             raise SourceError("Relation de capacité produit invalide.")
+    journey_ids: set[str] = set()
+    for item in value["journeys"]:
+        if not isinstance(item, dict) or not {
+            "id", "title", "detail", "roadmap", "capability_refs", "source_refs", "decision_refs",
+        }.issubset(item):
+            raise SourceError("Parcours produit incomplet.")
+        journey_id = item.get("id")
+        if not isinstance(journey_id, str) or not journey_id or journey_id in journey_ids:
+            raise SourceError("Identifiant de parcours invalide ou dupliqué.")
+        if not isinstance(item["roadmap"], int) or isinstance(item["roadmap"], bool) or item["roadmap"] < 1:
+            raise SourceError("Référence roadmap invalide dans un parcours.")
+        if not isinstance(item["capability_refs"], list) or not set(item["capability_refs"]).issubset(capability_ids):
+            raise SourceError("Référence de capacité invalide dans un parcours.")
+        if not isinstance(item["source_refs"], list) or not set(item["source_refs"]).issubset(reference_ids):
+            raise SourceError("Référence documentaire invalide dans un parcours.")
+        if not isinstance(item["decision_refs"], list) or not all(
+            isinstance(title, str) and title for title in item["decision_refs"]
+        ):
+            raise SourceError("Référence de décision invalide dans un parcours.")
+        journey_ids.add(journey_id)
     for field in ("strategy", "decisions", "project_inventory", "design_governance"):
-        resolved = (ROOT / str(value[field])).resolve()
-        if ROOT.resolve() not in resolved.parents:
-            raise SourceError(f"Le chemin {field} doit rester dans le dépôt Factory.")
+        resolved = _repo_path(value[field], field)
         value[f"{field}_path"] = resolved
+    value["reference_paths"] = reference_paths
     return value
 
 
@@ -481,6 +561,250 @@ def _paragraph(text: str) -> str:
     return re.sub(r"\s+", " ", text.split("\n\n", 1)[0]).strip()
 
 
+def _anchor(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "-", normalized.lower()).strip("-")
+    return slug or hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def _clean_markdown_text(value: str) -> str:
+    if "\x00" in value or re.search(
+        r"(?is)<\s*(script|style|iframe|object|embed|svg|math)\b|\bon[a-z]+\s*=|javascript\s*:|data\s*:\s*text/html",
+        value,
+    ):
+        raise SourceError("La source Markdown contient du contenu actif interdit.")
+    return re.sub(r"<[^>]*>", "", value)
+
+
+def _extract_markdown_section(text: str, wanted: str) -> tuple[int, list[str]]:
+    lines = text.splitlines()
+    start = -1
+    level = 0
+    for index, line in enumerate(lines):
+        match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if match and match.group(2).strip() == wanted:
+            start, level = index, len(match.group(1))
+            break
+    if start < 0:
+        raise SourceError(f"Section Markdown introuvable: {wanted}")
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        match = re.match(r"^(#{1,6})\s+", lines[index])
+        if match and len(match.group(1)) <= level:
+            end = index
+            break
+    selected = lines[start:end]
+    if not any(line.strip() for line in selected[1:]):
+        raise SourceError(f"Section Markdown vide: {wanted}")
+    return level, selected
+
+
+class ProductReferenceReader:
+    """Parse only configured repository Markdown into inert structured blocks."""
+
+    def __init__(self, config: dict[str, Any] | None = None, root: Path = ROOT) -> None:
+        self.config = config or load_product_config()
+        self.root = root.resolve()
+        self.references = {
+            str(item["id"]): item for item in self.config.get("product_reference", [])
+        }
+        self.allowed_paths = {
+            Path(source.get("resolved_path") or _repo_path(source.get("path"), "reference", self.root)).resolve()
+            for item in self.references.values()
+            for source in item.get("sources", [])
+        }
+
+    def _target(self, source_path: Path, raw_href: str) -> dict[str, Any]:
+        href = raw_href.strip()
+        parsed = urlparse(href)
+        if (
+            not href
+            or parsed.scheme
+            or parsed.netloc
+            or href.startswith(("/", "\\", "//"))
+            or ".." in Path(parsed.path or ".").parts
+        ):
+            raise SourceError(f"Lien Markdown non autorisé: {raw_href}")
+        target = source_path if not parsed.path else (source_path.parent / parsed.path).resolve()
+        if target not in self.allowed_paths:
+            raise SourceError(f"Le lien Markdown sort des sources configurées: {raw_href}")
+        fragment = parsed.fragment.strip()
+        candidates = []
+        for reference in self.references.values():
+            for configured in reference.get("sources", []):
+                configured_path = Path(
+                    configured.get("resolved_path")
+                    or _repo_path(configured.get("path"), "reference", self.root)
+                ).resolve()
+                if configured_path != target:
+                    continue
+                headings = configured.get("sections", [])
+                if not fragment or any(_anchor(heading) == _anchor(fragment) for heading in headings):
+                    candidates.append((reference, headings))
+        if not candidates:
+            raise SourceError(f"La cible du lien Markdown n’est pas configurée: {raw_href}")
+        reference, headings = candidates[0]
+        heading = next(
+            (item for item in headings if fragment and _anchor(item) == _anchor(fragment)),
+            headings[0],
+        )
+        return {
+            "reference_id": reference["id"],
+            "section_anchor": self._section_anchor(target, heading),
+        }
+
+    def _inlines(self, value: str, source_path: Path) -> list[dict[str, Any]]:
+        parts: list[dict[str, Any]] = []
+        position = 0
+        for match in re.finditer(r"\[([^\]\n]+)\]\(([^)\n]+)\)", value):
+            prefix = _clean_markdown_text(value[position:match.start()])
+            if prefix:
+                parts.append({"type": "text", "text": prefix})
+            label = _clean_markdown_text(match.group(1)).strip()
+            if not label:
+                raise SourceError("Un lien Markdown doit avoir un libellé.")
+            parts.append({"type": "link", "text": label, **self._target(source_path, match.group(2))})
+            position = match.end()
+        suffix = _clean_markdown_text(value[position:])
+        if suffix:
+            parts.append({"type": "text", "text": suffix})
+        return parts or [{"type": "text", "text": ""}]
+
+    @staticmethod
+    def _section_anchor(source_path: Path, heading: str) -> str:
+        return f"reference-{_anchor(source_path.stem)}-{_anchor(heading)}"
+
+    def _blocks(self, lines: list[str], source_path: Path) -> list[dict[str, Any]]:
+        blocks: list[dict[str, Any]] = []
+        index = 0
+        while index < len(lines):
+            raw = lines[index]
+            if not raw.strip():
+                index += 1
+                continue
+            fence = re.match(r"^\s*```([^`]*)$", raw)
+            if fence:
+                language = _clean_markdown_text(fence.group(1)).strip()
+                index += 1
+                code: list[str] = []
+                while index < len(lines) and not re.match(r"^\s*```\s*$", lines[index]):
+                    code.append(lines[index])
+                    index += 1
+                if index >= len(lines):
+                    raise SourceError("Bloc de code Markdown non fermé.")
+                blocks.append({"type": "code", "language": language, "text": "\n".join(code)})
+                index += 1
+                continue
+            heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", raw)
+            if heading:
+                text = _clean_markdown_text(heading.group(2)).strip()
+                blocks.append({
+                    "type": "heading", "level": len(heading.group(1)), "text": text,
+                    "anchor": self._section_anchor(source_path, text),
+                })
+                index += 1
+                continue
+            if (
+                "|" in raw
+                and index + 1 < len(lines)
+                and re.match(r"^\s*\|?\s*:?-{3,}", lines[index + 1])
+            ):
+                def cells(line: str) -> list[str]:
+                    return [_clean_markdown_text(cell).strip() for cell in line.strip().strip("|").split("|")]
+
+                headers = cells(raw)
+                index += 2
+                rows = []
+                while index < len(lines) and "|" in lines[index] and lines[index].strip():
+                    rows.append(cells(lines[index]))
+                    index += 1
+                blocks.append({"type": "table", "headers": headers, "rows": rows})
+                continue
+            list_match = re.match(r"^\s*(?:[-*+]|(\d+)\.)\s+(.+)$", raw)
+            if list_match:
+                ordered = bool(list_match.group(1))
+                items = []
+                while index < len(lines):
+                    item = re.match(r"^\s*(?:[-*+]|(\d+)\.)\s+(.+)$", lines[index])
+                    if not item or bool(item.group(1)) != ordered:
+                        break
+                    items.append(self._inlines(item.group(2), source_path))
+                    index += 1
+                blocks.append({"type": "list", "ordered": ordered, "items": items})
+                continue
+            paragraph = [raw.strip()]
+            index += 1
+            while index < len(lines) and lines[index].strip():
+                candidate = lines[index]
+                if re.match(r"^(#{1,6})\s+|^\s*```|^\s*(?:[-*+]|\d+\.)\s+", candidate):
+                    break
+                if "|" in candidate and index + 1 < len(lines) and re.match(
+                    r"^\s*\|?\s*:?-{3,}", lines[index + 1]
+                ):
+                    break
+                paragraph.append(candidate.strip())
+                index += 1
+            blocks.append({"type": "paragraph", "inlines": self._inlines(" ".join(paragraph), source_path)})
+        return blocks
+
+    def get(self, reference_id: Any) -> dict[str, Any]:
+        reference_id = _safe_identifier(str(reference_id or ""))
+        reference = self.references.get(reference_id)
+        if not reference:
+            raise ValueError("Référence produit inconnue.")
+        documents = []
+        for source in reference["sources"]:
+            path = Path(source.get("resolved_path") or _repo_path(source["path"], "reference", self.root)).resolve()
+            if path not in self.allowed_paths or not path.is_file():
+                raise SourceError(f"Source Markdown configurée indisponible: {source['path']}")
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                raise SourceError(f"Lecture Markdown impossible pour {source['path']}: {exc}") from exc
+            sections = []
+            for heading in source["sections"]:
+                _, lines = _extract_markdown_section(text, heading)
+                blocks = self._blocks(lines, path)
+                if not blocks:
+                    raise SourceError(f"Section Markdown vide: {heading}")
+                sections.append({
+                    "heading": heading,
+                    "anchor": self._section_anchor(path, heading),
+                    "blocks": blocks,
+                })
+            stat = path.stat()
+            documents.append({
+                "configured_path": source["path"],
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "sections": sections,
+            })
+        return {
+            "id": reference_id,
+            "title": reference["title"],
+            "summary": reference["summary"],
+            "status": reference["status"],
+            "status_label": reference["status_label"],
+            "state": "ready",
+            "documents": documents,
+            "model_calls": 0,
+        }
+
+    def summary(self, reference_id: str) -> dict[str, Any]:
+        reference = self.references[reference_id]
+        base = {
+            "id": reference_id, "title": reference["title"], "summary": reference["summary"],
+            "status": reference["status"], "status_label": reference["status_label"],
+            "configured_paths": [source["path"] for source in reference["sources"]],
+        }
+        try:
+            document = self.get(reference_id)
+            timestamps = [source["modified_at"] for source in document["documents"]]
+            return {**base, "state": "ready", "freshness": max(timestamps), "error": None}
+        except (SourceError, ValueError) as exc:
+            return {**base, "state": "source_error", "freshness": None, "error": _redact(str(exc))[:1000]}
+
+
 class ProductMemory:
     """Deterministic projection of the Git-versioned PO memory."""
 
@@ -492,11 +816,13 @@ class ProductMemory:
         decisions: Path | None = None,
         config: dict[str, Any] | None = None,
     ) -> None:
+        self.strict_relationships = strategy is None and decisions is None
         self.config = config or load_product_config()
         self.strategy = strategy or self.config["strategy_path"]
         self.decisions = decisions or self.config["decisions_path"]
         self.project_inventory = self.config["project_inventory_path"]
         self.design_governance = self.config["design_governance_path"]
+        self.reference_reader = ProductReferenceReader(self.config)
 
     def _inventory_freshness(self) -> dict[str, Any]:
         reviewed = self.project_inventory.stat().st_mtime
@@ -535,7 +861,7 @@ class ProductMemory:
         accepted_raw = _markdown_section(decisions, "Accepted")
         accepted = [
             {
-                "id": f"accepted-{index + 1}",
+                "id": f"accepted-{hashlib.sha256(match.group(1).strip().encode('utf-8')).hexdigest()[:12]}",
                 "title": match.group(1).strip(),
                 "status": "accepted",
                 "detail": _paragraph(match.group(2)),
@@ -563,6 +889,26 @@ class ProductMemory:
                     "detail": detail,
                     "source": f"DECISIONS.md · Open · {heading.strip()}",
                 })
+        decisions_projected = pending + accepted
+        decisions_by_title = {item["title"]: item for item in decisions_projected}
+        configured_decisions = {
+            title
+            for collection in (self.config.get("capabilities", []), self.config.get("journeys", []))
+            for item in collection
+            if isinstance(item, dict)
+            for title in item.get("decision_refs", [])
+        }
+        missing_decisions = sorted(configured_decisions - decisions_by_title.keys())
+        if missing_decisions and self.strict_relationships:
+            raise SourceError(
+                "Référence de décision introuvable: " + ", ".join(missing_decisions)
+            )
+
+        references = [
+            self.reference_reader.summary(reference_id)
+            for reference_id in self.reference_reader.references
+        ]
+        reference_by_id = {item["id"]: item for item in references}
         capabilities = []
         stage_status = {item["order"]: item["stage"] for item in roadmap}
         for item in self.config.get("capabilities", []):
@@ -571,7 +917,64 @@ class ProductMemory:
             capabilities.append({
                 **item,
                 "status": stage_status.get(item.get("roadmap"), "later"),
+                "sources": [reference_by_id[reference] for reference in item["source_refs"]],
+                "decisions": [decisions_by_title[title] for title in item["decision_refs"] if title in decisions_by_title],
             })
+        capability_by_id = {item["id"]: item for item in capabilities}
+        for capability in capabilities:
+            capability["relations"] = [
+                {
+                    "direction": "requires" if target == capability["id"] else "supports",
+                    "id": source if target == capability["id"] else target,
+                    "title": capability_by_id[source if target == capability["id"] else target]["title"],
+                }
+                for source, target in self.config.get("relations", [])
+                if capability["id"] in {source, target}
+            ]
+        journeys = []
+        for item in self.config.get("journeys", []):
+            journeys.append({
+                **item,
+                "status": stage_status.get(item.get("roadmap"), "later"),
+                "capabilities": [capability_by_id[reference] for reference in item["capability_refs"]],
+                "sources": [reference_by_id[reference] for reference in item["source_refs"]],
+                "decisions": [decisions_by_title[title] for title in item["decision_refs"] if title in decisions_by_title],
+            })
+        for decision in decisions_projected:
+            decision["capabilities"] = [
+                {"id": item["id"], "title": item["title"]}
+                for item in capabilities if decision["title"] in item["decision_refs"]
+            ]
+            decision["journeys"] = [
+                {"id": item["id"], "title": item["title"]}
+                for item in journeys if decision["title"] in item["decision_refs"]
+            ]
+            decision["roadmap"] = sorted({
+                item["roadmap"]
+                for item in capabilities + journeys if decision["title"] in item["decision_refs"]
+            })
+            decision["sources"] = [
+                reference_by_id[reference]
+                for reference in dict.fromkeys(
+                    reference
+                    for item in capabilities + journeys
+                    if decision["title"] in item["decision_refs"]
+                    for reference in item["source_refs"]
+                )
+            ]
+        for outcome in roadmap:
+            outcome["capabilities"] = [
+                {"id": item["id"], "title": item["title"]}
+                for item in capabilities if item["roadmap"] == outcome["order"]
+            ]
+            outcome["journeys"] = [
+                {"id": item["id"], "title": item["title"]}
+                for item in journeys if item["roadmap"] == outcome["order"]
+            ]
+            outcome["decisions"] = [
+                {"id": item["id"], "title": item["title"], "status": item["status"]}
+                for item in decisions_projected if outcome["order"] in item["roadmap"]
+            ]
         business_objectives = [
             {**item, "status": stage_status.get(item.get("roadmap"), "later")}
             for item in self.config.get("business_objectives", [])
@@ -582,17 +985,18 @@ class ProductMemory:
             "slug": self.config["slug"],
             "thesis": _paragraph(_markdown_section(strategy, "Product thesis")),
             "roadmap": roadmap,
-            "decisions": pending + accepted,
+            "decisions": decisions_projected,
             "project_graph": {
                 "nodes": capabilities,
                 "edges": self.config.get("relations", []),
             },
+            "journeys": journeys,
             "business": {
                 "north_star": "Prouver que SayMyName aide une personne à mieux retrouver les gens qu’elle a choisi de mémoriser, puis trouver un canal et un acheteur répétables.",
                 "objectives": business_objectives,
             },
             "view_inventory": self.config.get("view_inventory", []),
-            "product_reference": self.config.get("product_reference", []),
+            "product_reference": references,
             "inventory_freshness": self._inventory_freshness(),
             "delivery_workflow": self.config.get("delivery_workflow", []),
             "updated_at": datetime.fromtimestamp(
@@ -1172,7 +1576,12 @@ class FactoryCollector:
         }
         queue = base["queue"] if isinstance(base["queue"], list) else []
         queue = [
-            {**item, "raw_title": item.get("title"), "title": _human_product_title(item.get("title"))}
+            {
+                **item,
+                "raw_title": item.get("title"),
+                "title": _human_product_title(item.get("title")),
+                "kind": "factory_campaign" if item.get("goal") in {None, "none"} else "product_candidate",
+            }
             for item in queue if isinstance(item, dict)
         ]
         decision_aids = _decision_aids(
@@ -1275,6 +1684,141 @@ class SnapshotCache:
         if value is None:
             raise SourceError("Le premier relevé du cockpit a échoué.")
         return value
+
+    def invalidate(self) -> None:
+        with self.condition:
+            self.value = None
+            self.collected_at = 0.0
+
+
+class QueueBridge:
+    """Structured RECORD-only facade over the existing product queue contract."""
+
+    ACTION_FIELDS = {
+        "add": {"title", "why", "acceptance", "urgency"},
+        "move": {"id", "position"},
+        "urgency": {"id", "urgency"},
+        "pause": {"id", "reason"},
+        "resume": {"id"},
+        "cancel": {"id", "reason", "confirmed"},
+    }
+
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        executor: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    ) -> None:
+        self.config = config or load_product_config()
+        self.executor = executor or subprocess.run
+        self.lock = threading.Lock()
+        self.last_submit = 0.0
+        self.list_command = self._absolute(self.config["queue_command"])
+        self.mutation_command = self._absolute(self.config["queue_mutation_command"])
+
+    @staticmethod
+    def _absolute(command: list[str]) -> list[str]:
+        result = list(command)
+        if result and not Path(result[0]).is_absolute():
+            result[0] = str(ROOT / result[0])
+        return result
+
+    def _execute(self, command: list[str]) -> str:
+        try:
+            result = self.executor(
+                command, cwd=ROOT, capture_output=True, text=True, timeout=45,
+                env={**os.environ, "NO_COLOR": "1"},
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SourceError(f"File produit indisponible: {exc}") from exc
+        if result.returncode != 0:
+            message = _redact(result.stderr.strip() or result.stdout.strip() or "Mutation refusée.")[:2000]
+            if re.search(r"lock|inconsistent|conflict|previous ranks|not in the active|position", message, re.I):
+                raise ConflictError(message)
+            raise SourceError(message)
+        return result.stdout.strip()
+
+    def list(self) -> list[dict[str, Any]]:
+        output = self._execute(self.list_command)
+        try:
+            value = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise SourceError("La file produit n’a pas renvoyé de JSON valide.") from exc
+        if not isinstance(value, list):
+            raise SourceError("La projection de file produit est invalide.")
+        return [
+            {
+                **item,
+                "kind": "factory_campaign" if item.get("goal") in {None, "none"} else "product_candidate",
+            }
+            for item in value if isinstance(item, dict)
+        ]
+
+    @staticmethod
+    def _text(value: Any, name: str, maximum: int, single_line: bool = False) -> str:
+        if not isinstance(value, str):
+            raise ValueError(f"{name} doit être du texte.")
+        result = value.strip()
+        if not result or len(result) > maximum or "\x00" in result:
+            raise ValueError(f"{name} doit contenir entre 1 et {maximum} caractères.")
+        if single_line and ("\n" in result or "\r" in result):
+            raise ValueError(f"{name} doit tenir sur une ligne.")
+        return result
+
+    def mutate(self, action: Any, payload: Any) -> dict[str, Any]:
+        if action not in self.ACTION_FIELDS:
+            raise ValueError("Action de file produit interdite.")
+        if not isinstance(payload, dict) or set(payload) != self.ACTION_FIELDS[action]:
+            raise ValueError("Champs de mutation de file invalides.")
+        inventory = self.list()
+        by_id = {str(item.get("id")): item for item in inventory if item.get("id")}
+        command = [*self.mutation_command, str(action)]
+        if action == "add":
+            title = self._text(payload["title"], "Le résultat", 160, single_line=True)
+            why = self._text(payload["why"], "La raison", 2000)
+            acceptance = self._text(payload["acceptance"], "L’acceptation", 2000)
+            urgency = payload["urgency"]
+            if urgency not in {"normal", "urgent", "critical"}:
+                raise ValueError("Urgence invalide.")
+            command.extend([
+                "--title", title, "--why", why, "--acceptance", acceptance,
+                "--urgency", urgency,
+            ])
+        else:
+            item_id = _safe_identifier(str(payload.get("id") or ""))
+            if item_id not in by_id:
+                raise ConflictError("Ce candidat n’est plus dans la file active; actualise avant de réessayer.")
+            if action == "move":
+                position = payload["position"]
+                if isinstance(position, bool) or not isinstance(position, int) or not 1 <= position <= len(inventory):
+                    raise ValueError("Position de file invalide.")
+                command.extend([item_id, str(position)])
+            elif action == "urgency":
+                urgency = payload["urgency"]
+                if urgency not in {"normal", "urgent", "critical"}:
+                    raise ValueError("Urgence invalide.")
+                command.extend([item_id, urgency])
+            elif action == "pause":
+                command.extend([item_id, self._text(payload["reason"], "La raison de pause", 1000)])
+            elif action == "resume":
+                command.append(item_id)
+            else:
+                if payload["confirmed"] is not True:
+                    raise ValueError("L’annulation doit être confirmée explicitement.")
+                command.extend([item_id, self._text(payload["reason"], "La raison d’annulation", 1000)])
+        with self.lock:
+            now = time.monotonic()
+            if now - self.last_submit < 0.75:
+                raise ConflictError("Une mutation est déjà en cours; actualise puis réessaie.")
+            message = self._execute(command)
+            self.last_submit = now
+            refreshed = self.list()
+        return {
+            "accepted": True,
+            "action": action,
+            "message": message,
+            "queue": refreshed,
+            "model_calls": 0,
+        }
 
 
 class MayorBridge:
@@ -1730,12 +2274,16 @@ def handler_factory(
     token_cache: SnapshotCache | None = None,
     po_bridge: POBridge | None = None,
     preview_bridge: PreviewBridge | None = None,
+    reference_reader: ProductReferenceReader | None = None,
+    queue_bridge: QueueBridge | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     bridge = mayor_bridge or MayorBridge()
     details = detail_reader or DetailReader()
     tokens = token_cache or SnapshotCache(TokenReader(), ttl=30)
     po = po_bridge or POBridge()
     preview = preview_bridge or PreviewBridge()
+    references = reference_reader or ProductReferenceReader()
+    queue = queue_bridge or QueueBridge()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "FactoryCockpit/1"
@@ -1749,7 +2297,8 @@ def handler_factory(
             self.send_header(
                 "Content-Security-Policy",
                 "default-src 'self'; connect-src 'self'; img-src 'self'; "
-                "style-src 'self'; script-src 'self'; frame-ancestors 'none'",
+                "style-src 'self'; script-src 'self'; object-src 'none'; "
+                "base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
             )
             self.end_headers()
 
@@ -1814,6 +2363,14 @@ def handler_factory(
                 except Exception as exc:
                     self._json_response(503, {"error": _redact(str(exc))[:1000]})
                 return
+            if path == "/api/reference":
+                try:
+                    self._json_response(200, references.get(query.get("id", [""])[0]))
+                except ValueError as exc:
+                    self._json_response(400, {"error": str(exc), "state": "invalid"})
+                except SourceError as exc:
+                    self._json_response(422, {"error": str(exc), "state": "source_error"})
+                return
             files = {
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -1829,7 +2386,10 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
-            if path not in {"/api/mayor/message", "/api/po/message", "/api/po/new", "/api/preview/action"}:
+            if path not in {
+                "/api/mayor/message", "/api/po/message", "/api/po/new",
+                "/api/preview/action", "/api/product-queue",
+            }:
                 self._json_response(404, {"error": "Not found"})
                 return
             origin = self.headers.get("Origin")
@@ -1840,6 +2400,7 @@ def handler_factory(
             expected_header = (
                 "human-message" if path == "/api/mayor/message"
                 else "human-preview-action" if path == "/api/preview/action"
+                else "human-queue-record" if path == "/api/product-queue"
                 else "human-po-message"
             )
             if self.headers.get("X-Factory-Cockpit") != expected_header:
@@ -1866,6 +2427,9 @@ def handler_factory(
                     )
                 elif path == "/api/preview/action":
                     result = preview.submit(request.get("action"))
+                elif path == "/api/product-queue":
+                    result = queue.mutate(request.get("action"), request.get("payload"))
+                    cache.invalidate()
                 else:
                     result = po.new_conversation()
                 self._json_response(202, result)
@@ -1873,10 +2437,12 @@ def handler_factory(
                 self._json_response(400, {"error": "JSON invalide."})
             except ValueError as exc:
                 self._json_response(400, {"error": str(exc)})
-            except RuntimeError as exc:
-                self._json_response(429, {"error": str(exc)})
+            except ConflictError as exc:
+                self._json_response(409, {"error": str(exc), "state": "conflict"})
             except SourceError as exc:
                 self._json_response(503, {"error": str(exc)})
+            except RuntimeError as exc:
+                self._json_response(429, {"error": str(exc)})
 
         def log_message(self, pattern: str, *args: Any) -> None:
             if os.environ.get("FACTORY_COCKPIT_ACCESS_LOG") == "1":
