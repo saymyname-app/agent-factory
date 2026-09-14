@@ -51,6 +51,11 @@ class PortableTests(unittest.TestCase):
         with self.assertRaises(ValueError): portable.export(self.base / "nested")
         self.assertFalse((self.base / "nested").exists())
 
+    def test_global_gc_home_cache_is_not_a_city(self):
+        (self.base / ".gc").mkdir()
+        portable.export(self.base / "share-with-global-cache")
+        self.assertTrue((self.base / "share-with-global-cache/distribution.json").exists())
+
     def test_export_rejects_symlink_source(self):
         path = self.dest / "bin/product-queue"
         path.unlink()

@@ -54,7 +54,7 @@ def fresh_destination(value):
         raise ValueError("Destination already exists; no overwrite or in-place migration is supported.")
     path = raw.resolve()
     for parent in [path.parent, *path.parents]:
-        if (parent / ".gc").exists() or (parent / "city.toml").exists():
+        if (parent / "city.toml").exists() or ((parent / ".gc").exists() and (parent / "pack.toml").exists()):
             raise ValueError("Destination must be outside any existing Factory.")
     if path == ROOT or ROOT in path.parents:
         raise ValueError("Destination must be outside the source distribution.")
