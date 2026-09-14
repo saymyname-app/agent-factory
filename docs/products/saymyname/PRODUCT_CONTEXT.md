@@ -54,6 +54,13 @@ controls their selection, attempts, schedule and progress.
 7. The first accessible pilot is a new adult student cohort reached through
    Benjamin's former school administration or its student association. The pilot
    is free and validates usage before payment is implemented.
+8. The V1 public demo targets France first with one French-presidents collection.
+   The format remains reusable internationally: each additional supported
+   national audience initially gets at most one presidents collection when
+   applicable and available. More sets must be easy to add later, without making
+   broad international coverage a V1 requirement. Country selection and fallback
+   behavior remain implementation choices, and every collection remains subject
+   to verified content and image rights.
 
 The detailed durable strategy and roadmap are in `PRODUCT_STRATEGY.md`.
 
@@ -111,8 +118,6 @@ work. Queue changes never interrupt the outcome already in delivery.
 
 - Whether the first school pilot is distributed officially by the administration
   or by the student association; this does not block building the shared path.
-- The first two or three public challenge themes after image/source feasibility is
-  checked.
 - Numerical go/no-go thresholds for onboarding, delayed recall, return and
   reported help in a real interaction.
 - The first paid buyer and tested price after the free cohort pilot.
