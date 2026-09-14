@@ -12,6 +12,8 @@ credentials.toml
 
 # Local caches/runtime artifacts
 .cache/
+__pycache__/
+*.py[cod]
 tmp/
 *.log
 

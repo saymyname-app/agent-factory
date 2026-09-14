@@ -189,11 +189,12 @@ class FactoryCockpitTest(unittest.TestCase):
         memory = ProductMemory().collect()
         pending = [item for item in memory["decisions"] if item["status"] == "pending"]
         counts = {domain: sum(item.get("domain") == domain for item in pending) for domain in ("enterprise", "product", "project")}
-        self.assertEqual({"enterprise": 5, "product": 3, "project": 3}, counts)
+        self.assertEqual({"enterprise": 5, "product": 2, "project": 3}, counts)
         self.assertGreaterEqual(len(memory["view_inventory"]), 10)
         self.assertEqual(0, memory["inventory_freshness"]["model_calls"])
         self.assertEqual(7, len(memory["delivery_workflow"]))
         self.assertEqual(4, len(memory["business"]["objectives"]))
+        self.assertGreaterEqual(len(memory["product_reference"]), 7)
 
     def test_product_config_rejects_dangling_graph_edges(self):
         with tempfile.TemporaryDirectory(dir=ROOT / ".gc" / "runtime") as directory:
@@ -211,13 +212,14 @@ class FactoryCockpitTest(unittest.TestCase):
                 "capabilities": [{"id": "known", "title": "Known", "area": "Core", "roadmap": 1}],
                 "relations": [["known", "missing"]],
                 "business_objectives": [],
+                "product_reference": [],
                 "view_inventory": [],
                 "delivery_workflow": [],
             }), encoding="utf-8")
             with self.assertRaisesRegex(SourceError, "Relation"):
                 load_product_config(config_path)
 
-    def test_po_console_is_explicit_persistent_and_archives_without_loss(self):
+    def test_po_console_creates_one_on_demand_session_per_decision(self):
         with tempfile.TemporaryDirectory() as directory:
             calls = []
 
@@ -234,21 +236,30 @@ class FactoryCockpitTest(unittest.TestCase):
             bridge = POBridge(
                 load_product_config(), Path(directory) / "po.json", execute
             )
-            result = bridge.submit("Aide-moi à décider", "discuss", "pending-1")
+            decision_id = next(
+                item["id"] for item in bridge.memory.collect()["decisions"]
+                if item["status"] == "pending"
+            )
+            untouched = bridge.conversation(decision_id)
+            self.assertEqual("not_started", untouched["status"])
+            self.assertIsNone(untouched["thread_id"])
+            self.assertEqual([], calls)
+            result = bridge.submit("Aide-moi à décider", "discuss", decision_id)
             self.assertTrue(result["accepted"])
             for _ in range(100):
-                if bridge.conversation()["status"] != "running":
+                if bridge.conversation(decision_id)["status"] != "running":
                     time.sleep(0.01)
-                if bridge.conversation()["status"] == "idle":
+                if bridge.conversation(decision_id)["status"] == "idle":
                     break
-            conversation = bridge.conversation()
+            conversation = bridge.conversation(decision_id)
             self.assertEqual("01po-thread", conversation["thread_id"])
             self.assertEqual("Voici les options produit.", conversation["messages"][-1]["text"])
             self.assertIn("--dangerously-bypass-approvals-and-sandbox", calls[0])
             self.assertIn("DISCUSS", calls[0][-1])
-            bridge.new_conversation()
-            self.assertEqual(1, len(bridge.conversation()["archives"]))
-            self.assertEqual([], bridge.conversation()["messages"])
+            general = bridge.new_conversation()
+            self.assertFalse(general["session_created"])
+            self.assertEqual("not_started", bridge.conversation(conversation_key=general["key"])["status"])
+            self.assertEqual(1, len(bridge.conversation(decision_id)["conversations"]))
 
     def test_product_memory_projects_roadmap_and_decisions(self):
         with tempfile.TemporaryDirectory() as directory:

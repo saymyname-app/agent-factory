@@ -53,6 +53,15 @@
     {"id": "buyer", "title": "Identifier le premier acheteur", "detail": "Une personne précise reconnaît le problème et accepte de tester une offre.", "roadmap": 9},
     {"id": "launch", "title": "Rendre le lancement répétable", "detail": "Acquisition, activation, support et mesure fonctionnent sans bricolage fondateur.", "roadmap": 9}
   ],
+  "product_reference": [
+    {"id": "vision", "title": "Vision et promesse", "detail": "Pourquoi SayMyName existe, pour qui et quelle amélioration humaine il doit produire.", "status": "validated", "status_label": "Validé", "source": "PRODUCT_STRATEGY.md"},
+    {"id": "users", "title": "Utilisateurs et situations", "detail": "Visiteur, membre, organisateur et administrateur; besoins et contextes d’usage.", "status": "review", "status_label": "À consolider", "source": "PRODUCT_STRATEGY.md · PROJECT_INVENTORY.md"},
+    {"id": "journeys", "title": "Parcours de bout en bout", "detail": "Découvrir, essayer, mémoriser, retrouver puis revenir; parcours individuels et collectifs.", "status": "review", "status_label": "À valider", "source": "PROJECT_INVENTORY.md"},
+    {"id": "domain", "title": "Concepts et droits", "detail": "Personnes, apprentissages, groupes, organisations, invitations, visibilité et accès.", "status": "validated", "status_label": "Documenté", "source": "PRODUCT_CONTEXT.md"},
+    {"id": "views", "title": "Vues et états UI", "detail": "Inventaire des écrans existants, en construction, planifiés et dépendants d’une preuve.", "status": "live", "status_label": "Suivi vivant", "source": "PROJECT_INVENTORY.md"},
+    {"id": "acceptance", "title": "Critères et preuves", "detail": "Ce qu’un humain doit pouvoir observer pour valider une capacité avant sa livraison.", "status": "review", "status_label": "À enrichir", "source": "PRODUCT_STRATEGY.md · Beads produit"},
+    {"id": "roadmap", "title": "Roadmap et décisions", "detail": "Ordre des résultats, hypothèses à tester et décisions explicites encore attendues.", "status": "live", "status_label": "Suivi vivant", "source": "PRODUCT_STRATEGY.md · DECISIONS.md"}
+  ],
   "view_inventory": [
     {"area": "Accès", "status": "existing", "views": ["Connexion", "Inscription", "Vérification email", "Mot de passe"]},
     {"area": "Invitation et onboarding", "status": "existing", "views": ["Invitation", "Acceptation", "Onboarding"]},

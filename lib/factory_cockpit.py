@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
@@ -45,7 +46,7 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         "slug", "name", "strategy", "decisions", "po_workspace",
         "queue_command", "capabilities", "relations", "project_inventory",
         "design_governance", "business_objectives", "view_inventory",
-        "delivery_workflow",
+        "delivery_workflow", "product_reference",
     }
     if value.get("schema_version") != 1 or not required.issubset(value):
         raise SourceError("Configuration produit incomplète ou version non prise en charge.")
@@ -555,7 +556,7 @@ class ProductMemory:
                 match = re.match(r"\*\*(.+?)\*\*\s+—\s+(.+)", raw.strip())
                 title, detail = (match.group(1), match.group(2)) if match else (raw.strip(), "Décision volontairement laissée à Benjamin.")
                 pending.append({
-                    "id": f"pending-{domain}-{len(pending) + 1}",
+                    "id": f"pending-{domain}-{hashlib.sha256(title.encode('utf-8')).hexdigest()[:12]}",
                     "title": title,
                     "status": "pending",
                     "domain": domain,
@@ -591,6 +592,7 @@ class ProductMemory:
                 "objectives": business_objectives,
             },
             "view_inventory": self.config.get("view_inventory", []),
+            "product_reference": self.config.get("product_reference", []),
             "inventory_freshness": self._inventory_freshness(),
             "delivery_workflow": self.config.get("delivery_workflow", []),
             "updated_at": datetime.fromtimestamp(
@@ -749,6 +751,12 @@ class TokenReader:
         return {key: _compact_tokens(usage.get(key)) for key in (
             "input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"
         )}
+
+    def codex_thread(self, thread_id: Any) -> dict[str, Any] | None:
+        """Return provider-written usage for one thread without making a model call."""
+        if not isinstance(thread_id, str) or not thread_id:
+            return None
+        return self._codex_usage(thread_id)
 
     def _claude_usage(self, work_dir: str, created_at: Any) -> dict[str, Any] | None:
         project_dir = self.home / ".claude" / "projects" / work_dir.replace("/", "-")
@@ -1365,7 +1373,7 @@ class MayorBridge:
 
 
 class POBridge:
-    """Persistent, explicit-send Codex PO console for the configured product."""
+    """Independent, on-demand Codex PO conversations for product decisions."""
 
     def __init__(
         self,
@@ -1378,21 +1386,42 @@ class POBridge:
         self.state_path = state_path or ROOT / ".gc" / "runtime" / "factory-cockpit-po.json"
         self.executor = executor or subprocess.run
         self.lock = threading.Lock()
-        self.running = False
+        self.running: set[str] = set()
+        self.tokens = TokenReader()
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         state = self._load()
-        if state.get("active", {}).get("status") in {"queued", "running"}:
-            state["active"]["status"] = "interrupted"
-            state["active"]["error"] = "Le cockpit a redémarré pendant la réponse; renvoie ton message si nécessaire."
+        changed = False
+        for conversation in state["conversations"].values():
+            if conversation.get("status") in {"queued", "running"}:
+                conversation["status"] = "interrupted"
+                conversation["error"] = "Le cockpit a redémarré pendant la réponse; renvoie ton message si nécessaire."
+                changed = True
+        if changed:
             self._write(state)
 
     def _empty(self) -> dict[str, Any]:
-        return {"schema_version": 1, "active": {"thread_id": None, "status": "idle", "messages": []}, "archives": []}
+        return {"schema_version": 2, "conversations": {}, "current_general": None}
 
     def _load(self) -> dict[str, Any]:
         try:
             value = json.loads(self.state_path.read_text(encoding="utf-8"))
-            return value if isinstance(value, dict) and isinstance(value.get("active"), dict) else self._empty()
+            if not isinstance(value, dict):
+                return self._empty()
+            if isinstance(value.get("conversations"), dict):
+                return value
+            if isinstance(value.get("active"), dict):
+                migrated = self._empty()
+                active = value["active"]
+                if active.get("messages") or active.get("thread_id"):
+                    key = "general:migrated"
+                    migrated["conversations"][key] = {
+                        **active, "key": key, "kind": "general", "title": "Discussion PO précédente",
+                        "decision_id": None, "created_at": active.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    migrated["current_general"] = key
+                return migrated
+            return self._empty()
         except (OSError, json.JSONDecodeError):
             return self._empty()
 
@@ -1419,40 +1448,71 @@ class POBridge:
             None,
         )
 
-    def submit(self, message: Any, intent: Any = "discuss", decision_id: Any = None) -> dict[str, Any]:
+    def _new_general_key(self) -> str:
+        return f"general:{time.time_ns()}"
+
+    def _ensure_conversation(
+        self, state: dict[str, Any], decision: dict[str, Any] | None, conversation_key: Any = None
+    ) -> tuple[str, dict[str, Any]]:
+        if decision:
+            key, title, kind = f"decision:{decision['id']}", decision["title"], "decision"
+        else:
+            key = str(conversation_key or state.get("current_general") or self._new_general_key())
+            if not key.startswith("general:"):
+                raise ValueError("Discussion PO générale invalide.")
+            title, kind = "Discussion générale", "general"
+            state["current_general"] = key
+        conversation = state["conversations"].setdefault(key, {
+            "key": key, "kind": kind, "title": title,
+            "decision_id": decision.get("id") if decision else None,
+            "domain": decision.get("domain") if decision else None,
+            "thread_id": None, "status": "idle", "messages": [],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return key, conversation
+
+    def submit(
+        self, message: Any, intent: Any = "discuss", decision_id: Any = None,
+        conversation_key: Any = None,
+    ) -> dict[str, Any]:
         if not isinstance(message, str) or not message.strip() or len(message.strip()) > 6000 or "\x00" in message:
             raise ValueError("Le message PO doit contenir entre 1 et 6000 caractères.")
         if intent not in {"discuss", "record"}:
             raise ValueError("L’intention PO doit être discuter ou enregistrer.")
         decision = self._decision(decision_id)
+        if decision_id and not decision:
+            raise ValueError("Cette décision n’existe plus dans la mémoire produit.")
         with self.lock:
-            if self.running:
-                raise RuntimeError("Le PO prépare déjà une réponse.")
             state = self._load()
-            active = state["active"]
-            active.setdefault("messages", []).append({
+            key, conversation = self._ensure_conversation(state, decision, conversation_key)
+            if key in self.running or conversation.get("status") in {"queued", "running"}:
+                raise RuntimeError("Le PO prépare déjà une réponse pour ce sujet.")
+            conversation.setdefault("messages", []).append({
                 "role": "Benjamin", "text": message.strip(), "intent": intent,
                 "decision_id": decision.get("id") if decision else None,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
-            active["status"] = "queued"
-            active["error"] = None
+            conversation["status"] = "queued"
+            conversation["error"] = None
+            conversation["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._write(state)
-            self.running = True
+            self.running.add(key)
         threading.Thread(
             target=self._run,
-            args=(message.strip(), intent, decision),
-            name="factory-cockpit-po",
+            args=(key, message.strip(), intent, decision),
+            name=f"factory-cockpit-po-{key.replace(':', '-')}",
             daemon=True,
         ).start()
-        return {"accepted": True, "status": "queued", "thread_id": active.get("thread_id")}
+        return {"accepted": True, "status": "queued", "key": key, "thread_id": conversation.get("thread_id")}
 
     def _prompt(self, message: str, intent: str, decision: dict[str, Any] | None) -> str:
         context = ""
         if decision:
             context = (
-                f"\nDécision ouverte sélectionnée: {decision['title']}\n"
+                f"\nEspace de décision dédié ({decision.get('domain', 'produit')}): {decision['title']}\n"
                 f"Contexte durable: {decision['detail']}\nSource: {decision['source']}\n"
+                "Aide Benjamin à décider: reformule le choix, propose 2 à 4 options réellement distinctes, "
+                "recommande-en une avec ses compromis, puis termine par la prochaine question ou une réponse-type courte.\n"
             )
         action = (
             "DISCUSS: explore les options sans modifier quoi que ce soit."
@@ -1468,13 +1528,14 @@ class POBridge:
             f"Mode demandé: {action}{context}\nMessage de Benjamin: {message}"
         )
 
-    def _run(self, message: str, intent: str, decision: dict[str, Any] | None) -> None:
+    def _run(self, key: str, message: str, intent: str, decision: dict[str, Any] | None) -> None:
         output_path = self.state_path.parent / f"po-last-{os.getpid()}-{threading.get_ident()}.txt"
         try:
-            state = self._load()
-            state["active"]["status"] = "running"
-            self._write(state)
-            thread_id = state["active"].get("thread_id")
+            with self.lock:
+                state = self._load()
+                state["conversations"][key]["status"] = "running"
+                self._write(state)
+                thread_id = state["conversations"][key].get("thread_id")
             prompt = self._prompt(message, intent, decision)
             if thread_id:
                 command = [
@@ -1508,61 +1569,134 @@ class POBridge:
                 raise SourceError(_redact(result.stderr.strip() or "Le processus PO a échoué.")[:4000])
             if not response:
                 response = "Le PO a terminé sans produire de réponse visible."
-            state = self._load()
-            state["active"]["thread_id"] = observed_thread
-            state["active"]["status"] = "idle"
-            state["active"]["messages"].append({
-                "role": "PO", "text": _redact(response)[:16000],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
-            self._write(state)
+            with self.lock:
+                state = self._load()
+                conversation = state["conversations"][key]
+                conversation["thread_id"] = observed_thread
+                conversation["status"] = "idle"
+                conversation["updated_at"] = datetime.now(timezone.utc).isoformat()
+                conversation["messages"].append({
+                    "role": "PO", "text": _redact(response)[:16000],
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+                self._write(state)
         except Exception as exc:
-            state = self._load()
-            state["active"]["status"] = "error"
-            state["active"]["error"] = _redact(str(exc))[:4000]
-            self._write(state)
+            with self.lock:
+                state = self._load()
+                if key in state["conversations"]:
+                    state["conversations"][key]["status"] = "error"
+                    state["conversations"][key]["error"] = _redact(str(exc))[:4000]
+                    state["conversations"][key]["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    self._write(state)
         finally:
             output_path.unlink(missing_ok=True)
             with self.lock:
-                self.running = False
+                self.running.discard(key)
 
     def new_conversation(self) -> dict[str, Any]:
         with self.lock:
-            if self.running:
-                raise RuntimeError("Attends la réponse du PO avant de changer de discussion.")
             state = self._load()
-            active = state["active"]
-            if active.get("messages"):
-                state.setdefault("archives", []).insert(0, {
-                    **active,
-                    "archived_at": datetime.now(timezone.utc).isoformat(),
-                })
-                state["archives"] = state["archives"][:20]
-            state["active"] = {"thread_id": None, "status": "idle", "messages": []}
+            key = self._new_general_key()
+            state["current_general"] = key
             self._write(state)
-        return {"created": True}
+        return {"created": True, "key": key, "session_created": False}
 
-    def conversation(self) -> dict[str, Any]:
+    def _public(self, conversation: dict[str, Any]) -> dict[str, Any]:
+        thread_id = conversation.get("thread_id")
+        return {
+            **conversation,
+            "messages": conversation.get("messages", [])[-60:],
+            "usage": self.tokens.codex_thread(thread_id),
+            "codex_url": f"codex://threads/{quote(thread_id, safe='')}" if thread_id else None,
+        }
+
+    def conversation(self, decision_id: Any = None, conversation_key: Any = None) -> dict[str, Any]:
         state = self._load()
+        decision = self._decision(decision_id)
+        key = f"decision:{decision['id']}" if decision else str(conversation_key or state.get("current_general") or "")
+        conversation = state["conversations"].get(key)
+        if not conversation:
+            conversation = {
+                "key": key or None, "kind": "decision" if decision else "general",
+                "title": decision.get("title") if decision else "Discussion générale",
+                "decision_id": decision.get("id") if decision else None,
+                "domain": decision.get("domain") if decision else None,
+                "thread_id": None, "status": "not_started", "messages": [],
+            }
         return {
             "product": self.config["name"],
             "workspace": self.config["po_workspace"],
             "full_access": True,
-            "thread_id": state["active"].get("thread_id"),
-            "status": state["active"].get("status", "idle"),
-            "error": state["active"].get("error"),
-            "messages": state["active"].get("messages", [])[-40:],
-            "archives": [
-                {
-                    "thread_id": item.get("thread_id"),
-                    "archived_at": item.get("archived_at"),
-                    "message_count": len(item.get("messages", [])),
-                    "preview": next((msg.get("text", "")[:120] for msg in item.get("messages", []) if msg.get("role") == "Benjamin"), "Discussion PO"),
-                }
-                for item in state.get("archives", [])[:10]
-            ],
+            **self._public(conversation),
+            "conversations": sorted(
+                [self._public(item) for item in state["conversations"].values()],
+                key=lambda item: item.get("updated_at") or item.get("created_at") or "", reverse=True,
+            ),
         }
 
+
+class PreviewBridge:
+    """Safe asynchronous facade over the repository-owned SayMyName preview wrapper."""
+
+    def __init__(self, executor: Callable[..., subprocess.CompletedProcess[str]] | None = None) -> None:
+        self.executor = executor or subprocess.run
+        self.lock = threading.Lock()
+        self.running_action: str | None = None
+        self.error: str | None = None
+
+    @staticmethod
+    def _parse(output: str) -> dict[str, str]:
+        return {
+            key: value
+            for raw in output.splitlines()
+            if "=" in raw
+            for key, value in [raw.split("=", 1)]
+        }
+
+    def status(self) -> dict[str, Any]:
+        result = self.executor(
+            [str(ROOT / "bin" / "saymyname-preview"), "status"], cwd=ROOT,
+            capture_output=True, text=True, timeout=30,
+        )
+        values = self._parse(result.stdout)
+        return {
+            "state": values.get("STATE", "unknown"),
+            "backend_sha": values.get("BACKEND_SHA", "unknown"),
+            "frontend_sha": values.get("FRONTEND_SHA", "unknown"),
+            "backend_health": values.get("BACKEND_HEALTH", "unknown"),
+            "frontend_health": values.get("FRONTEND_HEALTH", "unknown"),
+            "browser_url": values.get("BROWSER_URL", "http://127.0.0.1:5173/"),
+            "action": self.running_action,
+            "error": self.error,
+            "commands": {"frontend": "npm run dev", "backend": "./mvnw spring-boot:run"},
+            "version_policy": "dev synchronisé avec origin/dev, dépôts propres, SHA affichés",
+        }
+
+    def submit(self, action: Any) -> dict[str, Any]:
+        if action not in {"start", "stop", "restart"}:
+            raise ValueError("Action de prévisualisation invalide.")
+        with self.lock:
+            if self.running_action:
+                raise RuntimeError(f"L’action {self.running_action} est déjà en cours.")
+            self.running_action = str(action)
+            self.error = None
+        threading.Thread(target=self._run, args=(str(action),), daemon=True, name="saymyname-preview").start()
+        return {"accepted": True, "action": action}
+
+    def _run(self, action: str) -> None:
+        try:
+            result = self.executor(
+                [str(ROOT / "bin" / "saymyname-preview"), action], cwd=ROOT,
+                capture_output=True, text=True, timeout=1800,
+            )
+            if result.returncode != 0:
+                raise SourceError(_redact(result.stderr.strip() or result.stdout.strip() or "La prévisualisation a échoué.")[:4000])
+        except Exception as exc:
+            with self.lock:
+                self.error = _redact(str(exc))[:4000]
+        finally:
+            with self.lock:
+                self.running_action = None
 
 def handler_factory(
     cache: SnapshotCache,
@@ -1570,11 +1704,13 @@ def handler_factory(
     detail_reader: DetailReader | None = None,
     token_cache: SnapshotCache | None = None,
     po_bridge: POBridge | None = None,
+    preview_bridge: PreviewBridge | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     bridge = mayor_bridge or MayorBridge()
     details = detail_reader or DetailReader()
     tokens = token_cache or SnapshotCache(TokenReader(), ttl=30)
     po = po_bridge or POBridge()
+    preview = preview_bridge or PreviewBridge()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "FactoryCockpit/1"
@@ -1640,7 +1776,15 @@ def handler_factory(
                     self._json_response(503, {"error": str(exc)})
                 return
             if path == "/api/po/conversation":
-                self._json_response(200, po.conversation())
+                self._json_response(200, po.conversation(
+                    query.get("decision_id", [None])[0], query.get("key", [None])[0]
+                ))
+                return
+            if path == "/api/preview/status":
+                try:
+                    self._json_response(200, preview.status())
+                except Exception as exc:
+                    self._json_response(503, {"error": _redact(str(exc))[:1000]})
                 return
             files = {
                 "/": ("index.html", "text/html; charset=utf-8"),
@@ -1657,7 +1801,7 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
-            if path not in {"/api/mayor/message", "/api/po/message", "/api/po/new"}:
+            if path not in {"/api/mayor/message", "/api/po/message", "/api/po/new", "/api/preview/action"}:
                 self._json_response(404, {"error": "Not found"})
                 return
             origin = self.headers.get("Origin")
@@ -1665,7 +1809,11 @@ def handler_factory(
             if not origin or not host or origin not in {f"http://{host}", f"https://{host}"}:
                 self._json_response(403, {"error": "Origine refusée."})
                 return
-            expected_header = "human-message" if path == "/api/mayor/message" else "human-po-message"
+            expected_header = (
+                "human-message" if path == "/api/mayor/message"
+                else "human-preview-action" if path == "/api/preview/action"
+                else "human-po-message"
+            )
             if self.headers.get("X-Factory-Cockpit") != expected_header:
                 self._json_response(403, {"error": "Confirmation de cockpit absente."})
                 return
@@ -1686,8 +1834,10 @@ def handler_factory(
                 elif path == "/api/po/message":
                     result = po.submit(
                         request.get("message"), request.get("intent", "discuss"),
-                        request.get("decision_id"),
+                        request.get("decision_id"), request.get("conversation_key"),
                     )
+                elif path == "/api/preview/action":
+                    result = preview.submit(request.get("action"))
                 else:
                     result = po.new_conversation()
                 self._json_response(202, result)

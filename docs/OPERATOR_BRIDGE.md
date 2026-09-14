@@ -76,13 +76,22 @@ dispatch, retry, merge, or recover work. Use the upstream Gas City dashboard at
 port `8372` only when detailed sessions, runs, events, or full transcripts are
 actually needed.
 
-The **Mon PO** view embeds a persistent, authenticated local Codex conversation
-with the same SayMyName PO contract as the dedicated workspace. A decision card
-can prefill that conversation, Benjamin can DISCUSS without mutation or RECORD
-an approved answer, and the Codex thread identifier remains visible for opening
-or resuming the underlying discussion. Full host access is available to inspect
-the product and Factory, but it does not widen authority: only an explicit
-EXECUTE request may be handed to the Mayor.
+The **Mon PO** view is a portfolio of authenticated local Codex conversations.
+Every decision owns one independent thread, created only on its first explicit
+send and reopened from that decision page; several decisions may therefore run
+in parallel. General vision/documentation discussions remain separate. Benjamin
+can DISCUSS without mutation or RECORD an approved answer. Local provider token
+counters, a Codex link and a copyable thread identifier are navigation aids and
+make no extra model call. Full host access is available to inspect the product
+and Factory, but it does not widen authority: only an explicit EXECUTE request
+may be handed to the Mayor.
+
+The **Produit** view is exclusively the interactive SayMyName reference: vision,
+users, concepts, journeys, views, criteria, roadmap and decisions. Factory
+context (PO, Mayor, Beads, agents, GitHub) belongs under **Workflow**. The product
+reference is drafted with the PO, represented clearly, approved by Benjamin,
+then used to feed the Factory in order. Preview buttons reuse the guarded
+`bin/saymyname-preview` lifecycle and display the exact frontend/backend SHAs.
 
 The cockpit keeps governance domains explicit: Enterprise covers customers,
 testers, channel, buyer and pricing; Product covers user value and behavior;

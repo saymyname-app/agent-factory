@@ -221,10 +221,13 @@ Stopping the cockpit does not stop Gas City or its agents. Its HTTP surface is:
   activity loaded on click; hidden reasoning is not exposed;
 - `GET /api/tokens`: on-demand local provider counters, including exact scope
   and confidence labels; this read makes zero model calls;
-- `GET /api/po/conversation`: local PO conversation and archived cockpit views;
+- `GET /api/po/conversation?decision_id=<id>`: the persistent workspace for one decision, without creating a session;
+- `GET /api/po/conversation?key=<key>`: one general PO discussion plus the conversation index;
 - `POST /api/mayor/message`: explicit bounded human message to the Mayor;
-- `POST /api/po/message`: explicit DISCUSS or RECORD message to the persistent PO;
-- `POST /api/po/new`: archive the current cockpit view and begin a fresh PO thread.
+- `POST /api/po/message`: explicit DISCUSS or RECORD message; first send creates the selected decision thread;
+- `POST /api/po/new`: prepare a fresh general workspace without creating a model session;
+- `GET /api/preview/status`: zero-model-call preview health and exact repository SHAs;
+- `POST /api/preview/action`: guarded `start`, `restart`, or `stop` through `bin/saymyname-preview`.
 
 ## Detailed Gas City dashboard
 
