@@ -261,24 +261,42 @@ open until the free pilot produces usage evidence and buyer conversations.
 
 ## Product roadmap
 
-The roadmap is a sequence of customer outcomes, not engineering tickets:
+The roadmap is a sequence of customer outcomes, not engineering tickets. The
+frozen V1 baseline adopted on 2026-09-14 is:
 
-1. Public cultural challenge playable anonymously, with account save and minimal
-   personal learning home.
-2. Participative promotion/event with join link or QR, voluntary profiles and
-   private learning selection.
-3. Administered organization creation and CSV import through first useful quiz.
-4. Personal people import and chosen contextual memory.
-5. Safe editorial creation and versioned publication of challenges.
-6. Natural-language retrieval among authorized people.
-7. First Google or Microsoft connector chosen from pilot evidence.
-8. Federated organizations with real workspaces, delegated administration,
+1. **Delivered foundation** — public cultural challenge playable anonymously,
+   account save and minimal personal learning home. The shipped proof currently
+   uses a U.S. Founding Fathers collection; it proves the reusable format but does
+   not satisfy the later France-first catalogue decision.
+2. **Pilot-ready participative journey** — promotion/event/community creation,
+   join link or QR, voluntary claimed profiles, private learning selection,
+   revocation and aggregate-only organizer adoption.
+3. **France-first public catalogue** — one verified French-presidents collection
+   using the delivered challenge foundation.
+4. **Administered organization path** — organization creation and CSV import
+   through the first useful quiz.
+5. **Personal import path** — personal people import and chosen contextual
+   memory.
+6. **Sustainable public publishing** — safe editorial creation, versioned
+   publication and withdrawal of challenges.
+
+Items 1–3 form the pilot-ready V1 boundary. Items 1–6 form the complete V1 core.
+The exact candidate order is stored in the product queue; at this baseline it is
+2, 3, 4, 5, then 6 after the delivered foundation.
+
+The following remain ordered, visible, evidence-gated extensions rather than V1
+completion criteria:
+
+7. Natural-language retrieval among authorized people.
+8. First external people connector chosen from pilot evidence.
+9. Federated organizations with governed workspaces, delegated administration,
    synchronized lifecycle and enterprise identity.
-9. Evidence-based pricing and launch readiness.
+10. Evidence-based pricing and launch readiness.
 
-Items that depend on customer evidence may remain paused in the product candidate
-queue. The Mayor owns decomposition into executable Beads and delivery order
-within each materialized outcome.
+Evidence-gated items may remain paused in the product candidate queue. The Mayor
+owns decomposition into executable Beads and delivery order within each
+materialized outcome. The separate campaign-mode candidate improves Factory
+operation and is not part of the SayMyName roadmap.
 
 ## Measurement
 

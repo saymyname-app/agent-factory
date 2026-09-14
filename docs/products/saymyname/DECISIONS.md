@@ -29,6 +29,42 @@ into learning automatically; the learner chooses what to practice. Their
 selection, attempts, errors, schedule and progress are private from organizations
 and other users.
 
+### 2026-09-14 — Group visibility, expiry and consented personal continuity
+
+Groups are private by default: profiles are visible only to authorized active
+members, and no profile is exposed in a join preview. Time-bounded groups require
+an explicit end date and advance reminders; durable communities may remain open.
+Closing a group or losing membership ends access to its protected profiles and
+stops their scheduled reviews.
+
+A person who controls a claimed profile has both an account-wide sharing default
+and a clear per-group choice, with the specific choice taking precedence. The
+protective default is group-only visibility with no retention after access ends.
+The choice is requested when the profile is created or claimed, shown again when
+joining a group, and reviewable before that group expires. It is granular,
+reversible and never inferred from silence.
+
+Personal continuity is an explicit, authorized copy rather than a silent export.
+When the profile owner permits it, a learner may keep only the approved fields and
+photo in their private personal home, together with provenance and the private
+learning state. Revocation removes the source-provided fields and media from
+personal copies and prevents further review unless the learner has a separate
+lawful personal source.
+
+For an organization-imported profile that no user has claimed, the organization
+may control visibility only inside the group and within its declared authority.
+The profile is not personally copyable after access ends by default, and the
+organization cannot turn ordinary directory access into permanent member copies.
+Claiming the profile lets the person choose prospectively. Without authorized
+continuity, per-person learning state and identifying content are removed at the
+end of access; only genuinely anonymized aggregate learning measures may remain.
+
+Learners may create private personal profiles and add their own notes, facts and
+photos, including material found publicly, when they have a lawful right to use
+it. Public availability alone is not permission to copy or share: SayMyName keeps
+source/provenance, provides correction and removal paths, and does not republish
+personal additions without separate authority.
+
 ### 2026-09-14 — Public cultural challenges are product
 
 Challenges featuring recognizable public figures are a legitimate consumer use
@@ -47,6 +83,20 @@ and available. The catalogue and editorial path must make later sets easy to add
 but V1 does not require broad international coverage. Country selection and
 fallback behavior remain implementation choices. Every localized collection
 still requires verified factual and image provenance and lawful reuse.
+
+### 2026-09-14 — Frozen V1 product boundary
+
+The delivered public-challenge and personal-home foundation is the first V1
+increment, not the whole V1. The pilot-ready boundary additionally requires the
+participative promotion/event journey and the France-first French-presidents
+collection. The complete V1 core then adds administered-organization CSV import,
+personal people import and the scoped editorial publication workflow.
+
+Natural-language retrieval, the first external connector, federation, pricing
+and general launch readiness remain evidence-gated extensions. They stay visible
+and ordered on the product board, but they are not allowed to silently expand the
+V1 completion contract. The Mayor campaign-mode candidate is an operating-system
+improvement and is not part of the SayMyName product V1.
 
 ### 2026-09-14 — Three organization archetypes
 
@@ -128,6 +178,14 @@ spend money, reboot the host or perform irreversible/destructive actions.
 Agent database inspection is read-only. Flyway owns schema migrations; persistent
 migration execution needs explicit authorization and tests use isolated databases.
 
+### 2026-09-14 — Code-first design governance
+
+The versioned product code and its reusable tokens, components and interaction
+states are the default design system. Figma is used only when a genuinely
+ambiguous or high-impact journey benefits from comparison before implementation;
+it never becomes a second implementation truth. The approval tiers and the
+design-ready checklist in `DESIGN_GOVERNANCE.md` apply to every outcome.
+
 ## Open
 
 ### Enterprise
@@ -140,13 +198,11 @@ migration execution needs explicit authorization and tests use isolated database
 
 ### Product
 
-- **Visibilité et conservation des groupes** — Décider la visibilité des profils, l’expiration du groupe et les données d’apprentissage conservées après la fin d’accès.
 - **Premier connecteur externe** — Choisir Google, Microsoft, les contacts natifs ou une autre source uniquement selon les frictions observées et la faisabilité fournisseur.
 
 ### Project
 
-- **Architecture des vues produit** — Valider l’inventaire complet des vues et l’ordre de conception puis livraison des parcours manquants.
-- **Socle du workflow design** — Confirmer une gouvernance design-system code-first et le seuil à partir duquel un prototype Figma devient utile.
+- **Contrat du parcours participatif** — Approuver ou amender le contrat design-ready de `af-hxji`: entrée depuis l’accueil personnel, création guidée d’une promotion/événement/communauté, admission par invitation ou lien/QR révocable, aperçu sans profils, profil volontaire revendiqué par la personne, visibilité privée aux membres actifs, choix de continuité explicite, sortie/révocation compréhensible, états mobile/accessibilité/erreur et statistiques organisateur strictement agrégées. Cette décision Benjamin + PO est requise avant matérialisation car elle introduit navigation, invitation, consentement et exposition de données personnelles.
 - **Environnement pilote et boucle de retours** — Choisir l’URL ou environnement pilote, le canal de retour, le responsable support et le chemin d’incident avant le recrutement.
 
 ## Update rule

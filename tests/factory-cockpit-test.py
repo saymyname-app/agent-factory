@@ -189,7 +189,7 @@ class FactoryCockpitTest(unittest.TestCase):
         memory = ProductMemory().collect()
         pending = [item for item in memory["decisions"] if item["status"] == "pending"]
         counts = {domain: sum(item.get("domain") == domain for item in pending) for domain in ("enterprise", "product", "project")}
-        self.assertEqual({"enterprise": 5, "product": 2, "project": 3}, counts)
+        self.assertEqual({"enterprise": 5, "product": 1, "project": 2}, counts)
         self.assertGreaterEqual(len(memory["view_inventory"]), 10)
         self.assertEqual(0, memory["inventory_freshness"]["model_calls"])
         self.assertEqual(7, len(memory["delivery_workflow"]))

@@ -61,6 +61,11 @@ controls their selection, attempts, schedule and progress.
    broad international coverage a V1 requirement. Country selection and fallback
    behavior remain implementation choices, and every collection remains subject
    to verified content and image rights.
+9. The frozen V1 boundary has two checkpoints: pilot-ready adds the participative
+   journey and French-presidents collection to the delivered public/personal
+   foundation; complete V1 also adds administered CSV import, personal import and
+   scoped editorial publishing. Retrieval, connectors, federation and pricing
+   remain evidence-gated extensions rather than hidden V1 completion criteria.
 
 The detailed durable strategy and roadmap are in `PRODUCT_STRATEGY.md`.
 
@@ -114,8 +119,11 @@ work. Queue changes never interrupt the outcome already in delivery.
   isolate it as an explicit outcome when it affects delivery.
 - Production/cloud mutation and public exposure remain explicit ADMIN decisions.
 
-## Product questions still owned by Benjamin
+## Open decisions still owned by Benjamin
 
+- Approval or amendment of the design-ready participative journey contract,
+  required before the next candidate can be materialized because it introduces
+  navigation, invitation, consent and personal-profile visibility.
 - Whether the first school pilot is distributed officially by the administration
   or by the student association; this does not block building the shared path.
 - Numerical go/no-go thresholds for onboarding, delayed recall, return and
@@ -124,6 +132,9 @@ work. Queue changes never interrupt the outcome already in delivery.
 - The first external connector justified by pilot data: personal contacts,
   Google, Microsoft or another source.
 - Whether the brand name still fits after evidence for uses beyond names.
+- The pilot environment, feedback channel, support owner and incident path.
 - Exact production launch criteria and acceptable operational risk.
 
-These are open decisions, not blockers unless a selected outcome depends on them.
+The categorized `Open` section of `DECISIONS.md` is authoritative. These choices
+are not blockers unless the selected outcome depends on them; the participative
+journey approval is the current exception.
