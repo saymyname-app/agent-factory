@@ -262,9 +262,10 @@ class FactoryCockpitTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "product.json"
             config_path.write_text(json.dumps({
-                "schema_version": 3,
+                "schema_version": 4,
                 "slug": "test-product",
                 "name": "Test Product",
+                "operator_name": "Test Operator",
                 "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
                 "decisions": "docs/products/saymyname/DECISIONS.md",
                 "release_contract": "tests/fixtures/product-queue/test-product-release.json",
@@ -336,6 +337,9 @@ class FactoryCockpitTest(unittest.TestCase):
     def test_product_config_rejects_invalid_operator_fields(self):
         cases = [
             ({"operator_name": "  "}, "opérateur"),
+            ({"preview_components": []}, "Composants de prévisualisation"),
+            ({"preview_browser_url": "http://example.test/"}, "boucle locale"),
+            ({"preview_version_policy": " "}, "Politique de version"),
             ({"north_star": ""}, "Nord magnétique"),
             ({"po_model": "../../bin/sh"}, "Modèle PO"),
             ({"po_sandbox": "full-access"}, "Sandbox PO"),
@@ -348,9 +352,10 @@ class FactoryCockpitTest(unittest.TestCase):
                 with self.assertRaisesRegex(SourceError, message):
                     load_product_config(self._portable_config(directory, **overrides))
 
-    def test_operator_name_defaults_to_the_historical_operator(self):
-        self.assertEqual("Benjamin", _operator_name({}))
-        self.assertEqual("Benjamin", _operator_name({"operator_name": "   "}))
+    def test_operator_name_must_be_configured_not_assumed(self):
+        for absent in ({}, {"operator_name": "   "}):
+            with self.subTest(config=absent), self.assertRaisesRegex(SourceError, "opérateur"):
+                _operator_name(absent)
         self.assertEqual("[Cockpit Benjamin] ", MayorBridge(FakeRunner(), FakeGasCity()).PREFIX)
 
     def test_operator_name_drives_the_cockpit_prefix_and_the_po_prompt(self):
@@ -1316,17 +1321,17 @@ class FactoryCockpitTest(unittest.TestCase):
         }
         self.assertEqual(("materialized", "Matérialisé"), candidate_record_lifecycle(materialized))
         self.assertEqual(("cancelled", "Annulé"), candidate_record_lifecycle(cancelled))
-        self.assertEqual("materialized", _product_bead(materialized, "city", None)["state"])
-        self.assertEqual("cancelled", _product_bead(cancelled, "city", None)["state"])
+        self.assertEqual("materialized", _product_bead(materialized, "city", None, "Produit Test", "produit-test")["state"])
+        self.assertEqual("cancelled", _product_bead(cancelled, "city", None, "Produit Test", "produit-test")["state"])
         delivered = _product_bead({
             "id": "af-done", "title": "Done", "status": "closed", "labels": ["jit"],
             "metadata": {"gc.work_outcome": "shipped"},
-        }, "city", None)
+        }, "city", None, "Produit Test", "produit-test")
         self.assertEqual(("delivered", "Livré"), (delivered["state"], delivered["state_label"]))
         blocked_current = _product_bead({
             "id": "af-blocked", "title": "Blocked current", "status": "blocked",
             "labels": ["jit"], "metadata": {"gc.blocked_reason": "Preuve absente"},
-        }, "city", "af-blocked")
+        }, "city", "af-blocked", "Produit Test", "produit-test")
         self.assertEqual(("blocked", "Bloqué", "Preuve absente"), (
             blocked_current["state"], blocked_current["state_label"], blocked_current["cause"],
         ))
@@ -1340,7 +1345,7 @@ class FactoryCockpitTest(unittest.TestCase):
                 "id": "af-bad", "title": "Bad", "status": "closed",
                 "labels": ["product-queue"],
                 "metadata": {"gc.queue_state": "queued"},
-            }, "city", None)
+            }, "city", None, "Produit Test", "produit-test")
 
     def test_unknown_formula_is_humanized_without_model(self):
         self.assertEqual("Review stale branches", _human_objective("mol-review-stale-branches"))

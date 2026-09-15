@@ -1,0 +1,48 @@
+{
+  "$schema": "../product-cockpit.schema.json",
+  "schema_version": 4,
+  "slug": "example",
+  "name": "Example Product",
+  "operator_name": "Alex",
+  "north_star": "Prove that a second product can declare itself with data alone and drive the same cockpit.",
+  "strategy": "docs/products/example/PRODUCT_STRATEGY.md",
+  "decisions": "docs/products/example/DECISIONS.md",
+  "release_contract": "config/releases/example-v1.json",
+  "project_inventory": "docs/products/example/PROJECT_INVENTORY.md",
+  "design_governance": "docs/products/example/DESIGN_GOVERNANCE.md",
+  "inventory_watch": [],
+  "po_workspace": "/tmp/example-product",
+  "po_add_dirs": [],
+  "status_command": ["bin/example-product-status"],
+  "queue_command": ["bin/example-product-queue", "list", "--json"],
+  "queue_mutation_command": ["bin/example-product-queue"],
+  "decision_blockers": [],
+  "capabilities": [
+    {"id": "loop", "title": "Core loop", "area": "Product", "roadmap": 1, "source_refs": ["thesis", "views"], "decision_refs": ["Example core loop is the product", "Example view ownership"]},
+    {"id": "cohort", "title": "Cohort return", "area": "Growth", "roadmap": 2, "source_refs": ["thesis"], "decision_refs": ["Example retention rule"]},
+    {"id": "offer", "title": "Priced offer", "area": "Business", "roadmap": 3, "source_refs": ["thesis"], "decision_refs": ["Example first buyer"]}
+  ],
+  "relations": [
+    ["cohort", "loop"],
+    ["offer", "cohort"]
+  ],
+  "journeys": [
+    {"id": "first-run", "title": "First run", "detail": "Arrive, start the loop and see a result worth returning for.", "roadmap": 1, "capability_refs": ["loop"], "source_refs": ["thesis", "views"], "decision_refs": ["Example core loop is the product"]}
+  ],
+  "business_objectives": [
+    {"id": "prove-loop", "title": "Prove the loop", "detail": "One person completes the core action unaided.", "roadmap": 1},
+    {"id": "prove-offer", "title": "Prove the offer", "detail": "One buyer accepts a priced, repeatable version.", "roadmap": 3}
+  ],
+  "product_reference": [
+    {"id": "thesis", "title": "Thesis and roadmap", "summary": "Why the example pack exists and in what order its outcomes come.", "status": "validated", "status_label": "Validated", "sources": [{"path": "docs/products/example/PRODUCT_STRATEGY.md", "sections": ["Product thesis", "Product roadmap"]}]},
+    {"id": "views", "title": "Views and governance", "summary": "The example view catalogue and the rule that makes a view design-ready.", "status": "live", "status_label": "Live", "sources": [{"path": "docs/products/example/PROJECT_INVENTORY.md", "sections": ["View catalogue"]}, {"path": "docs/products/example/DESIGN_GOVERNANCE.md", "sections": ["Definition of design-ready"]}]}
+  ],
+  "view_inventory": [
+    {"area": "Loop", "status": "existing", "views": ["Start", "Result"]}
+  ],
+  "delivery_workflow": [
+    {"id": "intent", "title": "Operator", "detail": "Intent or decision"},
+    {"id": "po", "title": "PO", "detail": "Outcome and criteria"},
+    {"id": "mayor", "title": "Mayor", "detail": "Delivery plan"}
+  ]
+}
