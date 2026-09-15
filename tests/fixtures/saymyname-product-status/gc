@@ -16,6 +16,9 @@ usable=true
 degraded=false
 [[ ${STATUS_SCENARIO:-active} != health-down ]] || { city_running=false; usable=false; }
 [[ ${STATUS_SCENARIO:-active} != health-partial ]] || degraded=true
+direct_agent='{"id":"af-jqla","qualified_name":"saymyname-backend/codex-1","name":"saymyname-backend/codex-1","running":true}'
+[[ ${STATUS_SCENARIO:-active} != direct ]] || direct_agent='{"qualified_name":"codex-af-jqla","name":"codex-af-jqla","running":true}'
+[[ ${STATUS_SCENARIO:-active} != direct-ambiguous ]] || direct_agent='{"qualified_name":"codex-af-jqla","running":true},{"name":"codex-af-jqla","running":true}'
 cat <<JSON
-{"ok":true,"running":$city_running,"health":{"usable":$usable,"degraded":$degraded},"agents":[{"qualified_name":"core.control-dispatcher","running":true},{"qualified_name":"codex-af-test","running":$running}]}
+{"ok":true,"running":$city_running,"health":{"usable":$usable,"degraded":$degraded},"agents":[{"id":"dispatcher","qualified_name":"core.control-dispatcher","running":true},{"id":"af-test","qualified_name":"codex-af-test","running":$running},$direct_agent]}
 JSON

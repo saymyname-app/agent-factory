@@ -11,7 +11,7 @@ case ${STATUS_SCENARIO:-active} in
   no-candidate)
     printf '[]\n'
     ;;
-  all-paused)
+  all-paused|campaign-all-paused)
     cat <<'JSON'
 [{"position":1,"id":"af-next","title":"Evaluate supported ChatGPT plugin/MCP bridge","state":"paused","state_label":"En pause","eligible":false,"reason":"Preuve pilote manquante","pause_reason":"Preuve pilote manquante","urgency":"normal","urgency_label":"Normale","goal":"af-u8id","kind":"product_candidate","queue_state":"paused","technical_status":"deferred","technical_explanation":"Conservé techniquement différé dans Beads.","contract":"agent-factory-human-state/v1"}]
 JSON

@@ -29,12 +29,13 @@ Commands:
   pause ID REASON                            Skip a candidate while retaining order.
   resume ID                                  Make a paused candidate eligible again.
   cancel ID [REASON]                         Close a candidate without executing it.
-  materialize ID EXECUTION_BEAD --mayor      Link and close the first candidate.
+  materialize ID EXECUTION_BEAD --mayor      Link and close the first candidate in its lane.
 
 Human states are "Éligible · non programmé" and "En pause". Candidates stay
 technically deferred in Beads so they are never worker-ready. Only the Mayor may
-materialize the first eligible candidate into a separately created executable
-Bead. Order and urgency are intentionally independent.
+materialize the first eligible candidate in its product or Factory-campaign lane
+into a separately created executable Bead. Order and urgency are intentionally
+independent; NEXT remains product-only.
 USAGE
 }
 
@@ -261,15 +262,25 @@ cancel_candidate() {
 
 materialize_candidate() {
   local id=${1:-} execution_id=${2:-} authority=${3:-}
-  local first response execution_status
+  local first response execution_status candidate_goal lane lane_filter
   [[ -n $id && -n $execution_id && $authority == --mayor ]] \
     || die "Usage: $PROGRAM_NAME materialize ID EXECUTION_BEAD --mayor"
   require_command "$GC_BIN"
   load_inventory
   require_candidate "$id"
-  first=$(jq -er '[.[] | select(.metadata["gc.queue_state"] == "queued")][0].id // empty' \
-    <<<"$INVENTORY") || die "The queue has no eligible candidate."
-  [[ $id == "$first" ]] || die "Only the first eligible candidate ($first) may be materialized."
+  candidate_goal=$(jq -er '.metadata["gc.queue_goal"] | select(type == "string" and length > 0)' \
+    <<<"$CANDIDATE") || die "Candidate $id has no valid lane."
+  if [[ $candidate_goal == none ]]; then
+    lane="Factory campaign"
+    lane_filter='(.metadata["gc.queue_goal"] == "none")'
+  else
+    lane="product"
+    lane_filter='(.metadata["gc.queue_goal"] != "none")'
+  fi
+  first=$(jq -er "[.[] | select(.metadata[\"gc.queue_state\"] == \"queued\" and $lane_filter)][0].id // empty" \
+    <<<"$INVENTORY") || die "The $lane lane has no eligible candidate."
+  [[ $id == "$first" ]] \
+    || die "Only the first eligible candidate in the $lane lane ($first) may be materialized."
 
   response=$("$GC_BIN" bd show "$execution_id" --json) \
     || die "Execution Bead $execution_id is unavailable."

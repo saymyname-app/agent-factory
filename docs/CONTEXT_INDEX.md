@@ -20,7 +20,7 @@ Use progressive disclosure. Do not read every document by default.
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0011-decision-workspaces-and-product-reference.md` |
+| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0013-mayor-owned-continuous-campaign.md` |
 
 ## Authority order
 

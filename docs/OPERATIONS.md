@@ -176,6 +176,12 @@ controller may therefore coexist with no active delivery and a manual optional
 launch action. Source disagreement degrades health and neutralizes resume advice
 instead of being rendered as idle or as an empty queue.
 
+When the Mayor-owned campaign is active, the same contract also exposes its
+persistent state, continuation condition, owner, exact action, blocker kind and
+notification idempotency. A blocked campaign is rendered as `BLOQUÉ` both in the
+global navigation and on Today. This signal does not turn the cockpit into a
+control surface: only the guarded CLI and the Mayor may change campaign lifecycle.
+
 Progress is semantic and evidence-based: completed workflow steps, the current
 phase, elapsed wall time, and age of the latest source signal. A session marked
 active is not by itself presented as productive work. When sources disagree or
@@ -610,6 +616,54 @@ or duplicate ranks and serializes local mutations. Use `list --json` or
 RECORD request. The Mayor follows `docs/PRODUCT_QUEUE.md` to create a separate
 execution Bead and materialize only the first eligible candidate. Never change a
 candidate to `open` or dispatch it directly.
+
+### Mayor-owned continuous campaign
+
+The campaign is persistent Beads policy plus a deterministic Gas City Order; it
+is not another worker or orchestrator. Confirm installation after deploying the
+merged Factory head:
+
+```bash
+gc order show mayor-campaign
+gc order check --json | jq '.orders[] | select(.name == "mayor-campaign")'
+./bin/mayor-campaign status | jq .
+```
+
+Activation is a two-step Mayor guard. Materialize the first eligible candidate
+in the distinct Factory-campaign lane, then activate its already-linked execution
+Bead:
+
+```bash
+./bin/saymyname-product-queue materialize <campaign-candidate> <execution-bead> --mayor
+./bin/mayor-campaign activate <campaign-candidate> <execution-bead> --mayor
+gc order run mayor-campaign
+```
+
+The Order runs `./bin/mayor-campaign sentinel` every minute. It performs one
+canonical status read, no model call, and sends durable mail only when the Mayor
+must materialize the next result, resume an agentless materialized result,
+finalize the current result, or record an empty campaign. It never invokes queue
+materialization, dispatch, GitHub, merge, or Bead closure itself. An observed
+current result suppresses next-result notification, preserving one-at-a-time
+delivery across controller restarts.
+
+Record a real stop with its owner and exact action; do not put ADMIN failures in
+`gc.needs_benjamin`:
+
+```bash
+./bin/mayor-campaign block --kind admin --cause "<cause>" \
+  --owner Benjamin --action "<exact authorized action>" --mayor
+./bin/mayor-campaign resume --mayor
+./bin/mayor-campaign complete --mayor
+```
+
+`decision` requires an effective `gc.needs_benjamin`; `admin`, `limit`,
+`result_blocker`, `all_paused`, and `durable_failure` remain separate typed
+causes. Queue/source contention is retried. After three consecutive sentinel
+failures, one metadata update persists `blocked + durable_failure + Mayor + exact
+resume command`; repair the named source and run `resume --mayor`. A restart in
+`wake_state=pending` safely resends the same durable mail before marking it
+`sent`; duplicate mail cannot bypass the first-eligible materialization guard.
 
 ### Deterministic local product preview
 

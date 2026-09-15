@@ -14,6 +14,11 @@ emit_parent() {
   [[ $scenario != no-candidate ]] || current="none"
   [[ $scenario != all-paused ]] || current="none"
   [[ $scenario != idle-campaign ]] || current="none"
+  [[ $scenario != campaign-admin ]] || current="none"
+  [[ $scenario != campaign-durable ]] || current="none"
+  [[ $scenario != campaign-retry ]] || current="none"
+  [[ $scenario != campaign-all-paused ]] || current="none"
+  [[ $scenario != direct && $scenario != direct-ambiguous ]] || current="smb-direct"
   [[ $scenario != human ]] || needs="Choose whether to prioritize bounded intent intake"
   if [[ $scenario == routed ]]; then
     current="smb-current"
@@ -23,9 +28,20 @@ emit_parent() {
   local resume=''
   [[ $scenario != no-candidate ]] || next="none"
   [[ $scenario != mismatch-next ]] || next="A different candidate"
-  [[ $scenario != idle-campaign ]] || resume=',"gc.resume_mode":"automatic_campaign","gc.resume_condition":"Le créneau de campagne autorisé s’ouvre"'
+  local campaign=''
+  if [[ $scenario == idle-campaign || $scenario == campaign-retry || $scenario == campaign-all-paused ]]; then
+    resume=',"gc.resume_mode":"automatic_campaign","gc.resume_condition":"Le Mayor enchaîne le premier candidat éligible"'
+    campaign=',"gc.campaign_mode":"automatic","gc.campaign_state":"active","gc.campaign_candidate":"af-cm1l","gc.campaign_condition":"Le Mayor enchaîne le premier candidat éligible","gc.campaign_owner":"Mayor","gc.campaign_action":"Aucune action de Benjamin","gc.campaign_wake_state":"none","gc.campaign_failure_count":"0"'
+  elif [[ $scenario == campaign-admin ]]; then
+    resume=',"gc.resume_mode":"automatic_campaign","gc.resume_condition":"Le Mayor enchaîne le premier candidat éligible"'
+    campaign=',"gc.campaign_mode":"automatic","gc.campaign_state":"blocked","gc.campaign_candidate":"af-cm1l","gc.campaign_condition":"Le Mayor enchaîne le premier candidat éligible","gc.campaign_owner":"Benjamin","gc.campaign_action":"Autoriser explicitement la rotation du secret","gc.campaign_block_kind":"admin","gc.campaign_cause":"Une rotation de secret ADMIN est requise","gc.campaign_wake_state":"none","gc.campaign_failure_count":"0"'
+  elif [[ $scenario == campaign-durable ]]; then
+    resume=',"gc.resume_mode":"automatic_campaign","gc.resume_condition":"Le Mayor enchaîne le premier candidat éligible"'
+    campaign=',"gc.campaign_mode":"automatic","gc.campaign_state":"blocked","gc.campaign_candidate":"af-cm1l","gc.campaign_condition":"Le Mayor enchaîne le premier candidat éligible","gc.campaign_owner":"Mayor","gc.campaign_action":"Diagnostiquer puis reprendre avec mayor-campaign resume --mayor","gc.campaign_block_kind":"durable_failure","gc.campaign_cause":"Trois lectures déterministes ont échoué","gc.campaign_wake_state":"none","gc.campaign_failure_count":"3","gc.campaign_last_error":"queue lock timeout"'
+  fi
+  [[ $scenario != campaign-retry ]] || campaign=',"gc.campaign_mode":"automatic","gc.campaign_state":"active","gc.campaign_candidate":"af-cm1l","gc.campaign_condition":"Le Mayor enchaîne le premier candidat éligible","gc.campaign_owner":"Mayor","gc.campaign_action":"Aucune action de Benjamin","gc.campaign_wake_state":"none","gc.campaign_failure_count":"1","gc.campaign_last_error":"queue lock timeout"'
   cat <<JSON
-[{"id":"af-1vr4","status":"in_progress","metadata":{"gc.current_jit":"$current","gc.last_delivered":"$delivered","gc.next_outcome":"$next","gc.needs_benjamin":"$needs"$resume}}]
+[{"id":"af-1vr4","status":"in_progress","metadata":{"gc.current_jit":"$current","gc.last_delivered":"$delivered","gc.next_outcome":"$next","gc.needs_benjamin":"$needs"$resume$campaign}}]
 JSON
 }
 
@@ -41,10 +57,16 @@ emit_current() {
     title="Implement backend product outcome"
     parent="smb-product-goal"
   fi
+  if [[ $scenario == direct || $scenario == direct-ambiguous ]]; then
+    issue_id="smb-direct"
+    title="Publish verified French presidents challenge"
+    parent="smb-product-goal"
+  fi
   local metadata='{}'
   [[ $scenario != blocked ]] || metadata='{"gc.blocked_reason":"La preuve externe requise manque"}'
   [[ $scenario != dependency ]] || metadata='{"gc.resume_mode":"automatic_dependency","gc.resume_condition":"La dépendance af-proof se ferme"}'
   [[ $scenario != finalizing ]] || metadata='{"gc.work_outcome":"pass"}'
+  [[ $scenario != direct && $scenario != direct-ambiguous ]] || metadata='{"gc.session_id":"af-jqla","gc.session_name":"codex-af-jqla","gc.routed_to":"saymyname-backend/codex"}'
   cat <<JSON
 [{"id":"$issue_id","title":"$title","status":"$status","parent":"$parent","metadata":$metadata}]
 JSON
@@ -97,7 +119,7 @@ case "$command_name" in
     fi
     case "$issue_id" in
       af-1vr4) emit_parent ;;
-      af-current|smb-current) emit_current ;;
+      af-current|smb-current|smb-direct) emit_current ;;
       af-delivered|smf-delivered) emit_delivered ;;
       af-convoy) emit_convoy ;;
       *) printf 'unknown fixture issue: %s\n' "$issue_id" >&2; exit 64 ;;

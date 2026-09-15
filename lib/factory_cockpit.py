@@ -268,6 +268,48 @@ def _metadata(bead: dict[str, Any] | None) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _direct_assigned_session(
+    current: dict[str, Any] | None,
+    sessions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Resolve one direct --no-formula assignment without session inference."""
+    if not current:
+        return None
+    metadata = _metadata(current)
+    session_id = _meaningful(metadata.get("gc.session_id"))
+    session_name = _meaningful(metadata.get("gc.session_name"))
+    if not session_id and not session_name:
+        return None
+    if session_id:
+        matches = [item for item in sessions if str(item.get("id") or "") == session_id]
+        if not matches and session_name:
+            matches = [
+                item for item in sessions
+                if not item.get("id") and session_name in {
+                    str(item.get("qualified_name") or ""),
+                    str(item.get("name") or ""),
+                    str(item.get("alias") or ""),
+                }
+            ]
+    else:
+        matches = [
+            item for item in sessions
+            if session_name in {
+                str(item.get("qualified_name") or ""),
+                str(item.get("name") or ""),
+                str(item.get("alias") or ""),
+            }
+        ]
+    if len(matches) > 1:
+        raise SourceError("L'affectation directe correspond à plusieurs sessions Gas City.")
+    if not matches:
+        return None
+    session = matches[0]
+    if session.get("state") == "active" or session.get("running") is True:
+        return session
+    return None
+
+
 def _meaningful(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -539,6 +581,14 @@ def _decision_aids(
             "explanation": activity["detail"],
             "action": resume["action"],
             "prompt": resume["prompt"],
+        })
+    elif resume["mode"] == "campaign_blocked":
+        advice.append({
+            "severity": "critical",
+            "title": "BLOQUÉ · la campagne ne peut pas poursuivre",
+            "explanation": human_state["campaign"]["cause"],
+            "action": resume["action"],
+            "prompt": resume.get("prompt") or "Explique le blocage de campagne sans lancer d'autre résultat.",
         })
     elif resume["mode"] == "mayor_finalization":
         advice.append({
@@ -1560,6 +1610,12 @@ class FactoryCollector:
             if session.get("alias") != "mayor"
             and "control-dispatcher" not in str(session.get("template", ""))
         ]
+        direct_session = None
+        try:
+            direct_session = _direct_assigned_session(current, worker_sessions)
+        except SourceError as exc:
+            sources["current"] = False
+            warnings.append(str(exc))
         assigned_worker_sessions = [
             session for session in worker_sessions
             if session.get("state") == "active" and (
@@ -1567,6 +1623,8 @@ class FactoryCollector:
                 or session.get("name") in workflow_summary["assignees"]
             )
         ]
+        if direct_session and direct_session not in assigned_worker_sessions:
+            assigned_worker_sessions.append(direct_session)
         work_done = current_meta.get("gc.work_outcome") in {"shipped", "pass"}
         if current:
             current_status = str(current.get("status", ""))
@@ -1590,7 +1648,7 @@ class FactoryCollector:
                 focus_state = "waiting"
                 focus_label = "Attend une dépendance automatique"
                 phase = resume_condition
-            elif workflow_summary["active_step"] and assigned_worker_sessions:
+            elif assigned_worker_sessions and (workflow_summary["active_step"] or direct_session):
                 focus_state = "working"
                 focus_label = "En cours"
                 phase = _human_phase(workflow_summary["active_step"]) or _human_phase(
@@ -1622,7 +1680,8 @@ class FactoryCollector:
             "last_signal_at": heartbeat,
             "steps": workflow_summary,
             "agent": (
-                assigned_worker_sessions[0].get("alias")
+                assigned_worker_sessions[0].get("qualified_name")
+                or assigned_worker_sessions[0].get("alias")
                 or assigned_worker_sessions[0].get("name")
                 if assigned_worker_sessions else None
             ),
@@ -1648,6 +1707,8 @@ class FactoryCollector:
                 not maintenance
                 and current is not None
                 and (
+                    session is direct_session
+                    or
                     session.get("alias") in workflow_summary["assignees"]
                     or session.get("name") in workflow_summary["assignees"]
                 )
@@ -1792,6 +1853,7 @@ class FactoryCollector:
             "needs_benjamin": needs_benjamin,
             "blockers": blocked_work,
             "resume_policy": {"mode": resume_mode, "condition": resume_condition},
+            "campaign_metadata": coordination_meta,
         }
         try:
             human_state = project_human_state(observations)
@@ -1806,6 +1868,7 @@ class FactoryCollector:
                 "needs_benjamin": None,
                 "blockers": [],
                 "resume_policy": {"mode": "manual"},
+                "campaign_metadata": {},
             })
 
         factory_state = {
@@ -1857,6 +1920,7 @@ class FactoryCollector:
             "health": human_state["health"],
             "activity": human_state["activity"],
             "resume": human_state["resume"],
+            "campaign": human_state["campaign"],
             "focus": focus,
             "agents": agent_cards,
             "queue": queue,

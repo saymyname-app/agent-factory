@@ -11,6 +11,11 @@ from typing import Any
 
 
 CONTRACT = "agent-factory-human-state/v1"
+CAMPAIGN_STATES = {"inactive", "active", "awaiting_mayor", "running", "blocked", "completed"}
+CAMPAIGN_BLOCK_KINDS = {
+    "decision", "admin", "durable_failure", "limit", "result_blocker", "all_paused",
+    "source_failure", "transient_failure",
+}
 TECHNICAL_DEFERRED_EXPLANATION = (
     "Conservé techniquement différé dans Beads : ce candidat ne peut pas être "
     "pris par un agent avant sa matérialisation explicite par le Mayor."
@@ -39,6 +44,104 @@ def _structured_pause_reason(notes: Any) -> str | None:
         if line.startswith(prefix) and line[len(prefix):].strip()
     ]
     return reasons[-1] if reasons else None
+
+
+def project_campaign_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Validate persistent campaign metadata stored on the coordination Bead."""
+    if not isinstance(metadata, dict):
+        raise StateContractError("Les métadonnées de campagne doivent former un objet.")
+    mode = _text(metadata.get("gc.campaign_mode")) or "inactive"
+    if mode == "inactive":
+        return {
+            "enabled": False,
+            "mode": "inactive",
+            "state": "inactive",
+            "state_label": "Campagne inactive",
+            "automatic": False,
+            "candidate_id": None,
+            "condition": None,
+            "owner": "none",
+            "owner_label": "Aucun responsable attendu",
+            "action": "Aucune action de campagne.",
+            "blocked": False,
+            "blocker_kind": None,
+            "cause": None,
+            "wake_key": None,
+            "wake_state": "none",
+            "failure_count": 0,
+            "last_error": None,
+        }
+    if mode != "automatic":
+        raise StateContractError(f"Mode campagne inconnu: {mode}.")
+
+    state = _text(metadata.get("gc.campaign_state"))
+    condition = _text(metadata.get("gc.campaign_condition"))
+    candidate_id = _text(metadata.get("gc.campaign_candidate"))
+    owner = _text(metadata.get("gc.campaign_owner")) or "Mayor"
+    action = _text(metadata.get("gc.campaign_action"))
+    blocker_kind = _text(metadata.get("gc.campaign_block_kind"))
+    cause = _text(metadata.get("gc.campaign_cause"))
+    wake_key = _text(metadata.get("gc.campaign_wake_key"))
+    wake_state = _text(metadata.get("gc.campaign_wake_state")) or "none"
+    failure_raw = metadata.get("gc.campaign_failure_count", 0)
+    try:
+        failure_count = int(failure_raw)
+    except (TypeError, ValueError) as exc:
+        raise StateContractError("Le compteur d'échec de campagne est invalide.") from exc
+    if failure_count < 0:
+        raise StateContractError("Le compteur d'échec de campagne est négatif.")
+    if state not in CAMPAIGN_STATES - {"inactive"}:
+        raise StateContractError("État de campagne automatique manquant ou inconnu.")
+    if not condition or not candidate_id:
+        raise StateContractError("Une campagne active doit exposer sa condition et son candidat d'autorisation.")
+    if owner not in {"system", "Mayor", "Benjamin", "none"}:
+        raise StateContractError("Responsable de campagne inconnu.")
+    if wake_state not in {"none", "pending", "sent"}:
+        raise StateContractError("État d'idempotence de campagne inconnu.")
+    if wake_state != "none" and not wake_key:
+        raise StateContractError("Un réveil de campagne doit exposer sa clé d'idempotence.")
+    if wake_state == "none" and wake_key:
+        raise StateContractError("Une clé de réveil sans état d'idempotence est incohérente.")
+    if state == "active" and wake_state in {"pending", "sent"}:
+        state = "awaiting_mayor"
+    if state == "blocked":
+        if blocker_kind not in CAMPAIGN_BLOCK_KINDS or not cause or not action:
+            raise StateContractError("Une campagne bloquée doit exposer type, cause et action exacte.")
+    elif blocker_kind or cause:
+        raise StateContractError("Une campagne non bloquée ne peut pas conserver une cause de blocage.")
+
+    labels = {
+        "active": "Campagne active",
+        "awaiting_mayor": "Campagne active · Mayor réveillé",
+        "running": "Campagne active · livraison en cours",
+        "blocked": "BLOQUÉ",
+        "completed": "Campagne terminée · aucun candidat éligible",
+    }
+    default_actions = {
+        "active": "Aucune action de Benjamin; le sentinelle réveille le Mayor au prochain résultat.",
+        "awaiting_mayor": "Aucune action de Benjamin; le Mayor a reçu la transition à exécuter.",
+        "running": "Aucune action humaine; le Mayor poursuit une livraison à la fois.",
+        "completed": "Aucune action immédiate; enregistrer un nouveau candidat lorsqu'il devient utile.",
+    }
+    return {
+        "enabled": True,
+        "mode": "automatic",
+        "state": state,
+        "state_label": labels[state],
+        "automatic": state not in {"blocked", "completed"},
+        "candidate_id": candidate_id,
+        "condition": condition,
+        "owner": owner,
+        "owner_label": "Système" if owner == "system" else owner if owner != "none" else "Aucun responsable attendu",
+        "action": action or default_actions[state],
+        "blocked": state == "blocked",
+        "blocker_kind": blocker_kind,
+        "cause": cause,
+        "wake_key": wake_key,
+        "wake_state": wake_state,
+        "failure_count": failure_count,
+        "last_error": _text(metadata.get("gc.campaign_last_error")),
+    }
 
 
 def project_candidate(item: dict[str, Any], position: int | None = None) -> dict[str, Any]:
@@ -228,6 +331,26 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
         raise StateContractError("Mode de reprise inconnu.")
     if resume_mode != "manual" and not resume_condition:
         raise StateContractError("Une reprise automatique doit exposer sa condition.")
+    campaign = project_campaign_metadata(observed.get("campaign_metadata", {}))
+    if resume_mode == "automatic_campaign" and not campaign["enabled"]:
+        raise StateContractError("La reprise campagne est déclarée sans campagne persistante active.")
+    if campaign["enabled"] and resume_mode != "automatic_campaign":
+        raise StateContractError("La campagne persistante et la politique de reprise se contredisent.")
+
+    def effective_campaign_block(
+        kind: str, cause: str, owner: str, action: str, *, automatic: bool = False,
+    ) -> None:
+        campaign.update({
+            "state": "blocked",
+            "state_label": "BLOQUÉ",
+            "automatic": automatic,
+            "owner": owner,
+            "owner_label": "Système" if owner == "system" else owner,
+            "action": action,
+            "blocked": True,
+            "blocker_kind": kind,
+            "cause": cause,
+        })
 
     # Missing or contradictory required sources always disables action-oriented
     # conclusions, even when the City process itself still answers.
@@ -248,6 +371,10 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
             "prompt": "Diagnostique l’état de la Factory en lecture seule et réconcilie ses sources avant toute reprise.",
             "required": True,
         }
+        if campaign["enabled"]:
+            effective_campaign_block(
+                "source_failure", health["detail"], "Mayor", resume["action"]
+            )
     elif needs_benjamin:
         activity = {
             "state": "waiting_action",
@@ -264,6 +391,62 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
             "action": "Répondre à la décision bloquante.",
             "prompt": f"Explique cette décision bloquante et ses options : {needs_benjamin}",
             "required": True,
+        }
+        if campaign["enabled"]:
+            effective_campaign_block(
+                "decision", needs_benjamin, "Benjamin", resume["action"]
+            )
+    elif campaign["enabled"] and campaign["state"] == "blocked":
+        if campaign["blocker_kind"] == "decision" and not needs_benjamin:
+            raise StateContractError(
+                "Un blocage de campagne décisionnel doit être la décision NEEDS BENJAMIN effective."
+            )
+        activity = {
+            "state": "waiting_action",
+            "label": "BLOQUÉ · campagne arrêtée",
+            "detail": campaign["cause"],
+        }
+        resume = {
+            "automatic": False,
+            "mode": "campaign_blocked",
+            "trigger": None,
+            "condition": campaign["cause"],
+            "owner": campaign["owner"],
+            "owner_label": campaign["owner_label"],
+            "action": campaign["action"],
+            "prompt": (
+                f"Reprends la campagne autorisée après avoir exécuté exactement cette action : {campaign['action']}"
+                if campaign["owner"] == "Mayor" else None
+            ),
+            "required": True,
+        }
+    elif campaign["enabled"] and campaign["failure_count"] > 0 and campaign["last_error"]:
+        cause = (
+            f"Le sentinelle n'a pas pu vérifier ou réveiller le Mayor "
+            f"({campaign['failure_count']}/3) : {campaign['last_error']}"
+        )
+        effective_campaign_block(
+            "transient_failure",
+            cause,
+            "system",
+            "Aucune action de Benjamin; une nouvelle tentative automatique est programmée.",
+            automatic=True,
+        )
+        activity = {
+            "state": "waiting_automatic",
+            "label": "BLOQUÉ · nouvelle tentative automatique",
+            "detail": cause,
+        }
+        resume = {
+            "automatic": True,
+            "mode": "automatic_campaign",
+            "trigger": campaign["condition"],
+            "condition": "Nouvelle tentative du sentinelle au prochain intervalle.",
+            "owner": "system",
+            "owner_label": "Système",
+            "action": campaign["action"],
+            "prompt": None,
+            "required": False,
         }
     elif current.get("stage") == "blocked" or blocker_cause:
         cause = current.get("cause") or blocker_cause
@@ -283,23 +466,33 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
             "prompt": f"Diagnostique et lève uniquement ce blocage déjà autorisé : {cause}",
             "required": True,
         }
+        if campaign["enabled"]:
+            effective_campaign_block("result_blocker", cause, "Mayor", resume["action"])
     elif current.get("stage") == "finalizing":
         activity = {
-            "state": "waiting_action",
-            "label": "Attend la finalisation du Mayor",
+            "state": "waiting_automatic" if campaign["enabled"] else "waiting_action",
+            "label": (
+                "Attend automatiquement la finalisation du Mayor"
+                if campaign["enabled"] else "Attend la finalisation du Mayor"
+            ),
             "detail": current["phase"],
         }
         resume = {
-            "automatic": False,
+            "automatic": campaign["enabled"],
             "mode": "mayor_finalization",
             "trigger": None,
             "condition": "Revue, preuves exactes, fusion et clôture par le Mayor.",
             "owner": "Mayor",
             "owner_label": "Mayor",
-            "action": "Le Mayor finalise la livraison déjà autorisée.",
+            "action": (
+                "Aucune action de Benjamin; le sentinelle réveille le Mayor pour finaliser."
+                if campaign["enabled"] else "Le Mayor finalise la livraison déjà autorisée."
+            ),
             "prompt": f"Finalise la livraison déjà autorisée « {current['title']} » avec ses preuves exactes.",
-            "required": True,
+            "required": not campaign["enabled"],
         }
+        if campaign["enabled"]:
+            campaign.update({"state": "running", "state_label": "Campagne active · livraison en cours"})
     elif current.get("stage") == "waiting_dependency" or resume_mode == "automatic_dependency":
         condition = resume_condition or current["phase"]
         activity = {
@@ -327,7 +520,7 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
         resume = {
             "automatic": True,
             "mode": "active_delivery",
-            "trigger": "Le workflow en cours poursuit ses étapes autorisées.",
+            "trigger": "La livraison en cours poursuit ses étapes autorisées.",
             "condition": current["phase"],
             "owner": "system",
             "owner_label": "Système",
@@ -335,27 +528,34 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
             "prompt": None,
             "required": False,
         }
+        if campaign["enabled"]:
+            campaign.update({"state": "running", "state_label": "Campagne active · livraison en cours"})
     elif current.get("state") == "materialized" or current.get("state") == "active":
         activity = {
-            "state": "waiting_action",
-            "label": "Attend une action du Mayor",
+            "state": "waiting_automatic" if campaign["enabled"] else "waiting_action",
+            "label": "Attend automatiquement le Mayor" if campaign["enabled"] else "Attend une action du Mayor",
             "detail": "Un résultat est matérialisé, mais aucun agent produit n'est actif.",
         }
         resume = {
-            "automatic": False,
+            "automatic": campaign["enabled"],
             "mode": "materialized_without_agent",
             "trigger": None,
             "condition": "Affectation ou reprise du résultat matérialisé.",
             "owner": "Mayor",
             "owner_label": "Mayor",
-            "action": "Le Mayor affecte ou reprend le résultat déjà matérialisé.",
+            "action": (
+                "Aucune action de Benjamin; le sentinelle réveille le Mayor pour reprendre ce résultat."
+                if campaign["enabled"] else "Le Mayor affecte ou reprend le résultat déjà matérialisé."
+            ),
             "prompt": f"Reprends le résultat matérialisé « {current['title']} » sans élargir son périmètre.",
-            "required": True,
+            "required": not campaign["enabled"],
         }
+        if campaign["enabled"]:
+            campaign.update({"state": "running", "state_label": "Campagne active · livraison en cours"})
     elif resume_mode == "automatic_campaign" and eligible:
         activity = {
             "state": "waiting_automatic",
-            "label": "Attend automatiquement la prochaine campagne",
+            "label": "Attend automatiquement le prochain résultat",
             "detail": resume_condition,
         }
         resume = {
@@ -363,12 +563,14 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
             "mode": "automatic_campaign",
             "trigger": resume_condition,
             "condition": resume_condition,
-            "owner": "system",
-            "owner_label": "Système",
-            "action": "Aucune action humaine nécessaire.",
+            "owner": "Mayor",
+            "owner_label": "Mayor",
+            "action": "Aucune action de Benjamin; le sentinelle réveille le Mayor pour lancer le prochain résultat.",
             "prompt": None,
             "required": False,
         }
+        if campaign["state"] != "awaiting_mayor":
+            campaign.update({"state": "active", "state_label": "Campagne active"})
     elif eligible:
         activity = {
             "state": "waiting_action",
@@ -403,6 +605,26 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
             "prompt": "Explique les raisons de pause des candidats, sans en reprendre ni en lancer aucun.",
             "required": False,
         }
+        if campaign["enabled"]:
+            cause = "Tous les candidats produit sont en pause; aucun résultat n'est éligible."
+            action = "Aucune action immédiate de Benjamin; le Mayor vérifie la raison de chaque pause et signale seulement la décision réellement nécessaire."
+            effective_campaign_block("all_paused", cause, "Mayor", action)
+            activity = {
+                "state": "waiting_action",
+                "label": "BLOQUÉ · tous les candidats sont en pause",
+                "detail": cause,
+            }
+            resume = {
+                "automatic": False,
+                "mode": "campaign_blocked",
+                "trigger": None,
+                "condition": cause,
+                "owner": "Mayor",
+                "owner_label": "Mayor",
+                "action": action,
+                "prompt": "Vérifie les raisons de pause de la campagne et demande Benjamin seulement si sa décision est indispensable.",
+                "required": True,
+            }
     else:
         activity = {
             "state": "stopped",
@@ -420,6 +642,18 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
             "prompt": None,
             "required": False,
         }
+        if campaign["enabled"]:
+            campaign.update({
+                "state": "completed",
+                "state_label": "Campagne terminée · aucun candidat éligible",
+                "automatic": False,
+                "owner": "none",
+                "owner_label": "Aucun responsable attendu",
+                "action": "Aucune action immédiate; enregistrer un nouveau candidat lorsqu'il devient utile.",
+                "blocked": False,
+                "blocker_kind": None,
+                "cause": None,
+            })
 
     return {
         "contract": CONTRACT,
@@ -428,6 +662,7 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
         "activity": activity,
         "result": current,
         "resume": resume,
+        "campaign": campaign,
         "next_candidate": eligible,
         "queue": queue,
         "needs_benjamin": needs_benjamin,

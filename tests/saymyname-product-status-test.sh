@@ -77,16 +77,23 @@ assert_json agent-missing '.resume.mode + ":" + .resume.owner' 'materialized_wit
 assert_json health-down '.health.state + ":" + .activity.state' 'unavailable:stopped'
 assert_json health-partial '.health.state + ":" + .activity.state' 'degraded:stopped'
 assert_json idle-campaign '.resume.mode + ":" + (.resume.automatic | tostring)' 'automatic_campaign:true'
+assert_json idle-campaign '.campaign.state + ":" + .campaign.owner' 'active:Mayor'
+assert_json campaign-admin '.campaign.state + ":" + .campaign.blocker_kind + ":" + .campaign.owner + ":" + (.needs_benjamin == null | tostring)' 'blocked:admin:Benjamin:true'
+assert_json campaign-durable '.resume.mode + ":" + .campaign.cause' 'campaign_blocked:Trois lectures déterministes ont échoué'
+assert_json campaign-retry '.activity.state + ":" + (.resume.automatic | tostring) + ":" + .campaign.blocker_kind' 'waiting_automatic:true:transient_failure'
+assert_json campaign-all-paused '.campaign.state + ":" + .campaign.owner + ":" + (.needs_benjamin == null | tostring)' 'blocked:Mayor:true'
 assert_json all-paused '.resume.mode + ":" + (.next_candidate == null | tostring)' 'all_paused:true'
 assert_json no-candidate '.activity.state + ":" + .resume.owner' 'stopped:none'
 assert_json green '.last_delivery.evidence' 'PR 24 — merged as bbbbbbbbbbbb; CI green (2 checks)'
 assert_json routed '.result.title + ":" + .last_delivery.title' 'Implement backend product outcome:Deliver frontend product outcome'
+assert_json direct '.activity.state + ":" + .result.agent' 'working:codex-af-jqla'
 
 idle_output=$(run_fixture idle)
 [[ $idle_output == *'SANTÉ: Infrastructure disponible'* ]] || fail_test 'idle health missing'
 [[ $idle_output == *'ACTIVITÉ: Attend une action facultative'* ]] || fail_test 'idle activity missing'
 [[ $idle_output == *'NEXT: af-next — Evaluate supported ChatGPT plugin/MCP bridge — Éligible · non programmé'* ]] || fail_test 'idle NEXT is not canonical'
 [[ $idle_output == *'REPRISE AUTOMATIQUE: non'* ]] || fail_test 'idle resume mode missing'
+[[ $idle_output == *'CAMPAGNE: Campagne inactive'* ]] || fail_test 'idle campaign state missing'
 [[ $idle_output == *'ACTION UTILE: Demander « Lance le prochain résultat ».'* ]] || fail_test 'idle action missing'
 [[ $idle_output == *'NEEDS BENJAMIN: none — aucune décision bloquante'* ]] || fail_test 'idle blocker distinction missing'
 [[ $idle_output != *'si cet état persiste'* ]] || fail_test 'misleading wait advice remains'
@@ -97,5 +104,6 @@ assert_failure source-failure "Beads product coordination source command failed"
 assert_failure queue-failure "SayMyName product queue source command failed"
 assert_failure queue-inconsistent "canonical human candidate contract"
 assert_failure mismatch-next "Coordination NEXT disagrees"
+assert_failure direct-ambiguous "Direct assignment session for smb-direct is ambiguous"
 
 printf 'PASS: %d deterministic product-status checks\n' "$TESTS_RUN"

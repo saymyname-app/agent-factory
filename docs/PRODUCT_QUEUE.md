@@ -77,10 +77,14 @@ For EXECUTE, the PO hands the desired result to the Mayor once. The Mayor:
 4. runs `./bin/saymyname-product-queue materialize <candidate> <execution-bead> --mayor`;
 5. owns dispatch through verified delivery and closure.
 
-`materialize` accepts only the first eligible candidate, verifies that the
+`materialize` accepts only the first eligible candidate in its lane, verifies that the
 execution Bead exists and is open or in progress, records the link, and closes
 the candidate. The `--mayor` switch is an explicit policy guard and audit cue;
 the durable PO/Mayor instruction boundary remains the authority control.
+The product lane contains candidates whose goal is not `none`; the separate
+Factory campaign lane contains `goal=none`. Each lane preserves its own strict
+first-eligible guard, while `next` always remains product-only. Materializing a
+campaign therefore cannot reorder or bypass an ordinary product candidate.
 
 ## Stored fields
 

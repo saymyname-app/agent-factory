@@ -722,6 +722,29 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertNotIn("control-dispatcher", str(result["agents"]))
         self.assertIn("control-dispatcher", str(result["infrastructure"]))
 
+    def test_direct_assignment_uses_exact_active_session_without_a_workflow(self):
+        runner = FakeRunner()
+        coordination = runner.responses[("gc", "bd", "show", "af-1vr4", "--json")][0]
+        coordination["metadata"]["gc.current_jit"] = "smb-direct"
+        coordination["metadata"].pop("gc.current_workflow", None)
+        runner.responses[("gc", "bd", "show", "smb-direct", "--json")] = [{
+            "id": "smb-direct", "title": "Publish verified French presidents challenge",
+            "status": "in_progress", "metadata": {
+                "gc.session_id": "af-jqla", "gc.session_name": "codex-af-jqla",
+                "gc.routed_to": "saymyname-backend/codex",
+            },
+        }]
+        runner.responses[("gc", "session", "list", "--json")]["sessions"].append({
+            "id": "af-jqla", "name": "saymyname-backend/codex-1",
+            "qualified_name": "saymyname-backend/codex-1", "state": "active",
+            "last_active": "2026-09-15T10:00:00Z",
+        })
+        result = FactoryCollector(runner, FakeGasCity()).collect()
+        self.assertEqual(("working", "active", "saymyname-backend/codex-1"), (
+            result["activity"]["state"], result["human_state"]["result"]["state"],
+            result["human_state"]["result"]["agent"],
+        ))
+
     def test_human_projection_links_exact_needs_benjamin_decision(self):
         runner = FakeRunner()
         needs = "Approve or refine a design-ready contract for af-hxji, especially admission, profile visibility, revocation, and navigation for the participative event/community journey."
@@ -890,6 +913,12 @@ class FactoryCockpitTest(unittest.TestCase):
         automatic = project_human_state({
             **base, "queue": [campaign, eligible],
             "resume_policy": {"mode": "automatic_campaign", "condition": "Fenêtre autorisée"},
+            "campaign_metadata": {
+                "gc.campaign_mode": "automatic", "gc.campaign_state": "active",
+                "gc.campaign_candidate": "af-cm1l", "gc.campaign_condition": "Fenêtre autorisée",
+                "gc.campaign_owner": "Mayor", "gc.campaign_action": "Aucune action de Benjamin",
+                "gc.campaign_wake_state": "none", "gc.campaign_failure_count": "0",
+            },
         })
         self.assertEqual("af-next", automatic["next_candidate"]["id"])
         self.assertEqual(("waiting_automatic", True), (
@@ -912,6 +941,22 @@ class FactoryCockpitTest(unittest.TestCase):
                 **base, "queue": [eligible],
                 "resume_policy": {"mode": "automatic_campaign"},
             })
+
+        blocked = project_human_state({
+            **base, "queue": [eligible],
+            "resume_policy": {"mode": "automatic_campaign", "condition": "Fenêtre autorisée"},
+            "campaign_metadata": {
+                "gc.campaign_mode": "automatic", "gc.campaign_state": "blocked",
+                "gc.campaign_candidate": "af-cm1l", "gc.campaign_condition": "Fenêtre autorisée",
+                "gc.campaign_owner": "Benjamin", "gc.campaign_action": "Autoriser l'action ADMIN exacte",
+                "gc.campaign_block_kind": "admin", "gc.campaign_cause": "Action ADMIN requise",
+                "gc.campaign_wake_state": "none", "gc.campaign_failure_count": "0",
+            },
+        })
+        self.assertEqual(("blocked", "campaign_blocked", "Benjamin", None), (
+            blocked["campaign"]["state"], blocked["resume"]["mode"],
+            blocked["campaign"]["owner"], blocked["needs_benjamin"],
+        ))
 
     def test_candidate_history_never_reappears_as_eligible(self):
         materialized = {

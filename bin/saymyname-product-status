@@ -142,6 +142,7 @@ derive_active_context() {
   local workflows_response workflow convoy_id convoy_response convoy cause resume_mode work_outcome
   local -a matching_workflows=()
   local workflow_id session_name steps_response current_step step_ref live_count active_count
+  local direct_session_id direct_session_name direct_matches direct_agent
 
   CURRENT_OUTCOME=$(required_string "$current_issue" '.title' "Current outcome title")
   current_status=$(required_string "$current_issue" '.status' "Current outcome status")
@@ -173,6 +174,43 @@ derive_active_context() {
     CURRENT_STATE="finalizing"
     CURRENT_PHASE="Réalisation terminée · revue, fusion ou clôture par le Mayor"
     CURRENT_AGENT="none"
+    return
+  fi
+
+  # A deliberately direct `gc sling --no-formula` assignment has no workflow
+  # root. Prefer its stable Gas City session ID; accept an exact unique session
+  # name only when no ID was recorded. Never infer work from an unrelated session.
+  direct_session_id=$(metadata_optional "$current_issue" "gc.session_id")
+  direct_session_name=$(metadata_optional "$current_issue" "gc.session_name")
+  if [[ -n $direct_session_id || -n $direct_session_name ]]; then
+    if [[ -n $direct_session_id ]]; then
+      direct_matches=$(jq --arg id "$direct_session_id" \
+        '[.agents[]? | select((.id // "") == $id)]' <<<"$CITY_RESPONSE")
+      if [[ $(jq 'length' <<<"$direct_matches") -eq 0 && -n $direct_session_name ]]; then
+        direct_matches=$(jq --arg name "$direct_session_name" \
+          '[.agents[]? | select(((.id // "") == "") and ((.qualified_name // "") == $name or (.name // "") == $name or (.alias // "") == $name))]' \
+          <<<"$CITY_RESPONSE")
+      fi
+    else
+      direct_matches=$(jq --arg name "$direct_session_name" \
+        '[.agents[]? | select((.qualified_name // "") == $name or (.name // "") == $name or (.alias // "") == $name)]' \
+        <<<"$CITY_RESPONSE")
+    fi
+    [[ $(jq 'length' <<<"$direct_matches") -le 1 ]] \
+      || die "Direct assignment session for $current_id is ambiguous in Gas City."
+    if [[ $(jq 'length' <<<"$direct_matches") -eq 1 ]] && jq -e \
+      '.[0] | ((.running // false) == true or (.state // "") == "active")' \
+      >/dev/null <<<"$direct_matches"; then
+      direct_agent=$(jq -er '.[0] | .qualified_name // .name // .alias // .id' <<<"$direct_matches") \
+        || die "Direct assignment session has no stable display identity."
+      CURRENT_STATE="active"
+      CURRENT_PHASE="Réalisation"
+      CURRENT_AGENT=$direct_agent
+    else
+      CURRENT_STATE="materialized"
+      CURRENT_PHASE="Résultat affecté directement, aucun agent produit actif"
+      CURRENT_AGENT="none"
+    fi
     return
   fi
 
@@ -324,7 +362,7 @@ derive_delivery() {
 main() {
   local parent_response parent current_id current_issue last_id delivered_issue format=text
   local queue_response next_pointer candidate_matches next_candidate resume_mode resume_condition
-  local current_json observed state_json needs_json degraded
+  local current_json observed state_json needs_json degraded campaign_metadata
 
   case "${1:-}" in
     "") ;;
@@ -433,6 +471,7 @@ main() {
     [[ -n $resume_condition ]] || die "Automatic dependency wait has no explicit condition."
   fi
   degraded=$(jq -r '.health.degraded // false' <<<"$CITY_RESPONSE")
+  campaign_metadata=$(jq -c '.metadata' <<<"$parent")
   observed=$(jq -cn \
     --argjson running "$(jq '.ok and .running' <<<"$CITY_RESPONSE")" \
     --argjson usable "$(jq '.health.usable' <<<"$CITY_RESPONSE")" \
@@ -441,14 +480,15 @@ main() {
     --argjson queue "$queue_response" \
     --argjson needs "$needs_json" \
     --arg mode "$resume_mode" --arg condition "$resume_condition" \
-    --arg cause "$CURRENT_CAUSE" '{
+    --arg cause "$CURRENT_CAUSE" --argjson campaign_metadata "$campaign_metadata" '{
       infrastructure: {running: $running, usable: $usable, degraded: $degraded},
       sources_consistent: true,
       current: $current,
       queue: $queue,
       needs_benjamin: $needs,
       blockers: (if $cause == "" then [] else [{cause: $cause}] end),
-      resume_policy: {mode: $mode, condition: (if $condition == "" then null else $condition end)}
+      resume_policy: {mode: $mode, condition: (if $condition == "" then null else $condition end)},
+      campaign_metadata: $campaign_metadata
     }')
   if ! state_json=$("$HUMAN_STATE_BIN" state <<<"$observed"); then
     die "Canonical human state projection failed closed."
@@ -477,6 +517,10 @@ main() {
       "$(jq -r '.state_label' <<<"$next_candidate")"
   fi
   printf 'REPRISE AUTOMATIQUE: %s\n' "$(jq -r 'if .resume.automatic then "oui" else "non" end' <<<"$state_json")"
+  printf 'CAMPAGNE: %s\n' "$(jq -r '.campaign.state_label' <<<"$state_json")"
+  if [[ $(jq -r '.campaign.blocked' <<<"$state_json") == true ]]; then
+    printf 'BLOCAGE CAMPAGNE: %s\n' "$(jq -r '.campaign.cause' <<<"$state_json")"
+  fi
   printf 'CONDITION: %s\n' "$(jq -r '.resume.condition // "aucune"' <<<"$state_json")"
   printf 'RESPONSABLE: %s\n' "$(jq -r '.resume.owner_label' <<<"$state_json")"
   printf 'ACTION UTILE: %s\n' "$(jq -r '.resume.action' <<<"$state_json")"

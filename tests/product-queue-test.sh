@@ -75,10 +75,31 @@ grep -Fq 'gc.queue_state=materialized' "$QUEUE_LOG"
 grep -Fq 'gc.materialized_bead=smf-exec' "$QUEUE_LOG"
 grep -Fq 'close <af-a>' "$QUEUE_LOG"
 
+# Factory campaigns have a separate lane: their first eligible candidate may be
+# materialized without bypassing or reordering the first eligible product.
+export QUEUE_INVENTORY='[
+  {"id":"af-product-first","title":"First product","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}},
+  {"id":"af-campaign-first","title":"Campaign","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":2000,"gc.queue_urgency":"normal","gc.queue_goal":"none"}},
+  {"id":"af-product-second","title":"Second product","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":3000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}},
+  {"id":"af-campaign-second","title":"Later campaign","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":4000,"gc.queue_urgency":"normal","gc.queue_goal":"none"}}
+]'
+[[ $("$QUEUE" next) == 'NEXT: First product (af-product-first) — Éligible · non programmé; lancement non automatique' ]] \
+  || fail 'a Factory campaign must never replace product NEXT'
+if "$QUEUE" materialize af-product-second smf-exec --mayor >/dev/null 2>&1; then
+  fail 'the product lane must remain strictly first-eligible'
+fi
+if "$QUEUE" materialize af-campaign-second smf-exec --mayor >/dev/null 2>&1; then
+  fail 'the Factory campaign lane must remain strictly first-eligible'
+fi
 : >"$QUEUE_LOG"
-"$QUEUE" cancel af-c 'No longer useful' >/dev/null
+"$QUEUE" materialize af-campaign-first smf-exec --mayor >/dev/null
+grep -Fq 'gc.queue_state=materialized' "$QUEUE_LOG"
+grep -Fq 'close <af-campaign-first>' "$QUEUE_LOG"
+
+: >"$QUEUE_LOG"
+"$QUEUE" cancel af-product-second 'No longer useful' >/dev/null
 grep -Fq 'gc.queue_state=cancelled' "$QUEUE_LOG"
-grep -Fq 'close <af-c>' "$QUEUE_LOG"
+grep -Fq 'close <af-product-second>' "$QUEUE_LOG"
 
 export QUEUE_INVENTORY='[
   {"id":"af-live","title":"Live","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}},

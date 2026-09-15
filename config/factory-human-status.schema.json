@@ -11,6 +11,7 @@
     "activity",
     "result",
     "resume",
+    "campaign",
     "next_candidate",
     "queue",
     "needs_benjamin",
@@ -69,6 +70,7 @@
             "active_delivery",
             "materialized_without_agent",
             "automatic_campaign",
+            "campaign_blocked",
             "manual",
             "all_paused",
             "no_candidate"
@@ -81,6 +83,37 @@
         "action": {"type": "string", "minLength": 1},
         "prompt": {"type": ["string", "null"]},
         "required": {"type": "boolean"}
+      }
+    },
+    "campaign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled", "mode", "state", "state_label", "automatic", "candidate_id",
+        "condition", "owner", "owner_label", "action", "blocked", "blocker_kind",
+        "cause", "wake_key", "wake_state", "failure_count", "last_error"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "mode": {"enum": ["inactive", "automatic"]},
+        "state": {"enum": ["inactive", "active", "awaiting_mayor", "running", "blocked", "completed"]},
+        "state_label": {"type": "string", "minLength": 1},
+        "automatic": {"type": "boolean"},
+        "candidate_id": {"type": ["string", "null"]},
+        "condition": {"type": ["string", "null"]},
+        "owner": {"enum": ["system", "Mayor", "Benjamin", "none"]},
+        "owner_label": {"type": "string", "minLength": 1},
+        "action": {"type": "string", "minLength": 1},
+        "blocked": {"type": "boolean"},
+        "blocker_kind": {
+          "type": ["string", "null"],
+          "enum": [null, "decision", "admin", "durable_failure", "limit", "result_blocker", "all_paused", "source_failure", "transient_failure"]
+        },
+        "cause": {"type": ["string", "null"]},
+        "wake_key": {"type": ["string", "null"]},
+        "wake_state": {"enum": ["none", "pending", "sent"]},
+        "failure_count": {"type": "integer", "minimum": 0},
+        "last_error": {"type": ["string", "null"]}
       }
     },
     "next_candidate": {"anyOf": [{"$ref": "#/$defs/candidate"}, {"type": "null"}]},

@@ -28,9 +28,10 @@ All human surfaces use `agent-factory-human-state/v1`, documented by
 `NEEDS BENJAMIN` remains reserved for a blocking decision. Asking to launch an
 eligible but unscheduled candidate is an optional action. Automatic campaign
 resume exists only when coordination metadata explicitly provides
-`gc.resume_mode=automatic_campaign` and a non-empty `gc.resume_condition`.
-There is no implicit campaign loop. A `goal=none` Factory campaign is never the
-next product result.
+`gc.resume_mode=automatic_campaign`, a non-empty `gc.resume_condition`, and the
+persistent campaign fields defined by ADR-0013. There is no implicit campaign
+authorization: the guarded Mayor lifecycle must activate an already materialized
+`goal=none` Factory campaign. That campaign is never the next product result.
 
 Candidates remain `status=deferred` in Beads as a safety mechanism, but the
 human label is “Éligible · non programmé” or “En pause”. The queue validates its
@@ -50,5 +51,6 @@ or unavailable fail-closed state. Refresh remains read-only and zero-token.
   combining them into “active/idle” wording.
 - Materialized and cancelled candidates remain auditable in product history but
   cannot reappear in the active human queue.
-- The existing Mayor remains the only orchestrator; no polling loop, LLM refresh,
-  automatic dispatch, or second control plane is introduced.
+- The existing Mayor remains the only orchestrator; no LLM refresh, automatic
+  dispatch, or second control plane is introduced. The deterministic campaign
+  Order may only persist safety bookkeeping and durably notify that Mayor.

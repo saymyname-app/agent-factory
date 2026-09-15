@@ -10,6 +10,7 @@
   <div class="header-actions"><span id="factory-state" class="status-pill waiting">Chargement…</span><button id="copy-summary">Copier le point</button><button id="refresh">Actualiser</button></div>
 </header>
 <nav class="app-nav" aria-label="Cockpit">
+  <button id="campaign-block-global" class="campaign-block-global hidden" data-view="today" type="button"><strong>BLOQUÉ</strong><span id="campaign-block-global-cause">Campagne interrompue</span><small id="campaign-block-global-action">Ouvrir Aujourd’hui pour voir l’action exacte</small></button>
   <div class="nav-group"><span class="nav-group-title">Priorité</span><button class="nav-item active" data-view="today"><span>Aujourd’hui</span><small>Situation</small></button></div>
   <div class="nav-group"><span class="nav-group-title">Produit</span><button class="nav-item" data-view="project"><span>Produit</span><small>Graphes & référence</small></button><button class="nav-item" data-view="roadmap"><span>Roadmap</span><small>Résultats & file</small></button><button class="nav-item" data-view="decisions"><span>Décisions</span><small id="nav-decision-count">—</small></button><button class="nav-item" data-view="po"><span>Mon PO</span><small id="nav-po-state">GPT · prêt</small></button></div>
   <div class="nav-group"><span class="nav-group-title">Livraison</span><button class="nav-item" data-view="work"><span>Board</span><small>Livraison produit</small></button></div>
@@ -24,6 +25,10 @@
       <article class="panel state-axis"><p class="eyebrow">SANTÉ DE L’INFRASTRUCTURE</p><h2 id="health-label">Lecture…</h2><p id="health-detail" class="muted">—</p></article>
       <article class="panel state-axis"><p class="eyebrow">ACTIVITÉ DE LIVRAISON</p><h2 id="activity-label">Lecture…</h2><p id="activity-detail" class="muted">—</p></article>
       <article class="panel state-axis resume-axis"><div><p class="eyebrow">REPRISE</p><h2 id="resume-label">Lecture…</h2></div><dl class="resume-facts"><dt>Condition</dt><dd id="resume-condition">—</dd><dt>Responsable</dt><dd id="resume-owner">—</dd></dl><p id="resume-action-copy" class="muted">—</p><button id="resume-action" class="primary hidden" type="button">Préparer l’action utile</button></article>
+    </section>
+    <section id="campaign-block-today" class="campaign-block-today hidden" role="alert" aria-live="assertive">
+      <div><p class="eyebrow">CONTINUITÉ DE LIVRAISON</p><h2>BLOQUÉ</h2><p id="campaign-block-today-cause">—</p></div>
+      <dl class="resume-facts"><dt>Propriétaire de la reprise</dt><dd id="campaign-block-today-owner">—</dd><dt>Action exacte</dt><dd id="campaign-block-today-action">—</dd></dl>
     </section>
     <section class="hero-grid">
       <article class="panel focus-panel clickable" id="focus-card" tabindex="0"><div class="section-heading"><div><p class="eyebrow">RÉSULTAT PRODUIT ACTUEL</p><h2 id="focus-title">Lecture des signaux…</h2></div><span id="focus-state" class="status-pill waiting">—</span></div><p id="focus-phase" class="phase">—</p><div class="facts"><div><span>En cours depuis</span><strong id="focus-elapsed">—</strong></div><div><span>Dernier signal</span><strong id="focus-signal">—</strong></div><div><span>Étapes prouvées</span><strong id="focus-steps">—</strong></div></div><div class="step-track"><div id="step-fill" class="step-fill"></div></div><p class="truth-note">Clique pour voir contexte, critères, sous-travaux et preuves. Aucun pourcentage inventé.</p></article>
