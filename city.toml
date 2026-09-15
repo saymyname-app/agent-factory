@@ -8,6 +8,17 @@ args_append = ["-m", "gpt-5.6-sol"]
 ready_delay_ms = 0
 accept_startup_dialogs = true
 
+# Fast/cheap-at-the-margin Codex profile: rides the ChatGPT Pro Spark
+# allocation (separate from the standard Codex usage pool, which is
+# exhausted as of 2026-09-15). Scope to bounded, mechanical FAST-tier work
+# only — not proven for unattended judgment-heavy tasks. Point an agent at
+# this by setting provider = "codex-spark" in its agent.toml.
+[providers.codex-spark]
+base = "builtin:codex"
+args_append = ["-m", "gpt-5.3-codex-spark"]
+ready_delay_ms = 0
+accept_startup_dialogs = true
+
 [providers.claude]
 base = "builtin:claude"
 command = "/home/benja/.local/bin/claude"
@@ -21,6 +32,25 @@ DISABLE_AUTOUPDATER = "1"
 permission_mode = "unrestricted"
 model = "sonnet-5"
 effort = "high"
+
+# Lower-cost profile for high-volume/routine roles (orchestration, dispatch,
+# mechanical steps) that don't need the top reasoning tier. Same account,
+# same subscription billing, same base engine as [providers.claude] — only
+# the reasoning effort differs. Point an agent at this by setting
+# provider = "claude-standard" in its agents/<name>/agent.toml.
+[providers.claude-standard]
+base = "builtin:claude"
+command = "/home/benja/.local/bin/claude"
+accept_startup_dialogs = true
+
+[providers.claude-standard.env]
+CLAUDE_CONFIG_DIR = "/home/benja/.claude"
+DISABLE_AUTOUPDATER = "1"
+
+[providers.claude-standard.option_defaults]
+permission_mode = "unrestricted"
+model = "sonnet-5"
+effort = "medium"
 
 [defaults]
 [defaults.rig]
