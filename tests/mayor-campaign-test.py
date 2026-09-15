@@ -104,6 +104,66 @@ class MayorCampaignTest(unittest.TestCase):
         self.assertEqual(("automatic", "active", "af-cm1l"), (
             value["gc.campaign_mode"], value["gc.campaign_state"], value["gc.campaign_candidate"],
         ))
+        again = self.invoke("activate", "af-cm1l", "af-hho5", "--mayor")
+        self.assertIn("ALREADY ACTIVE", again.stdout)
+
+    def test_activation_never_overwrites_blocked_or_human_resume_state(self):
+        blocked = metadata("blocked")
+        blocked.update({
+            "gc.campaign_block_kind": "admin", "gc.campaign_cause": "ADMIN requise",
+            "gc.campaign_owner": "Benjamin", "gc.campaign_action": "Autoriser l'action exacte",
+        })
+        self.write_state(blocked)
+        denied = self.invoke("activate", "af-cm1l", "af-hho5", "--mayor", check=False)
+        self.assertNotEqual(0, denied.returncode)
+        self.assertEqual(("blocked", "ADMIN requise"), (
+            self.current_metadata()["gc.campaign_state"], self.current_metadata()["gc.campaign_cause"],
+        ))
+
+        completed = metadata("completed")
+        completed.update({
+            "gc.campaign_owner": "none",
+            "gc.campaign_action": "Aucune action immédiate",
+        })
+        self.write_state(completed)
+        denied = self.invoke("activate", "af-cm1l", "af-hho5", "--mayor", check=False)
+        self.assertNotEqual(0, denied.returncode)
+        self.assertEqual("completed", self.current_metadata()["gc.campaign_state"])
+
+        inactive = {"gc.current_jit": "none", "gc.needs_benjamin": "Choisir le contrat"}
+        self.write_state(inactive)
+        denied = self.invoke("activate", "af-cm1l", "af-hho5", "--mayor", check=False)
+        self.assertIn("NEEDS BENJAMIN", denied.stderr)
+        self.assertNotIn("gc.campaign_mode", self.current_metadata())
+
+        dependency = {
+            "gc.current_jit": "none", "gc.needs_benjamin": "none",
+            "gc.resume_mode": "automatic_dependency",
+        }
+        self.write_state(dependency)
+        denied = self.invoke("activate", "af-cm1l", "af-hho5", "--mayor", check=False)
+        self.assertIn("automatic_dependency", denied.stderr)
+        self.assertNotIn("gc.campaign_mode", self.current_metadata())
+
+    def test_shared_lock_serializes_concurrent_activation(self):
+        self.write_state({"gc.current_jit": "none", "gc.needs_benjamin": "none"})
+        if self.log_file.exists():
+            self.log_file.unlink()
+        command = (str(ROOT / "bin" / "mayor-campaign"), "activate", "af-cm1l", "af-hho5", "--mayor")
+        env = {**self.env, "CAMPAIGN_UPDATE_DELAY": "0.2"}
+        first = subprocess.Popen(command, cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        second = subprocess.Popen(command, cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        first_output = first.communicate(timeout=10)
+        second_output = second.communicate(timeout=10)
+        self.assertEqual((0, 0), (first.returncode, second.returncode), (first_output, second_output))
+        outputs = first_output[0] + second_output[0]
+        self.assertIn("ACTIVATED", outputs)
+        self.assertIn("ALREADY ACTIVE", outputs)
+        updates = [
+            line for line in self.log_file.read_text(encoding="utf-8").splitlines()
+            if "bd update af-1vr4" in line
+        ]
+        self.assertEqual(1, len(updates))
 
     def test_restart_idempotency_and_pending_recovery(self):
         self.invoke("sentinel")
@@ -135,6 +195,27 @@ class MayorCampaignTest(unittest.TestCase):
         self.assertIn("mayor-campaign resume --mayor", value["gc.campaign_action"])
         noop = self.invoke("sentinel")
         self.assertIn("campaign blocked", noop.stdout)
+
+    def test_malformed_coordination_is_counted_and_store_outage_is_explicit(self):
+        malformed = metadata()
+        malformed["gc.campaign_state"] = "unknown"
+        self.write_state(malformed)
+        for expected in (1, 2, 3):
+            result = self.invoke("sentinel", check=False)
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual(str(expected), self.current_metadata()["gc.campaign_failure_count"])
+        value = self.current_metadata()
+        self.assertEqual(("blocked", "durable_failure"), (
+            value["gc.campaign_state"], value["gc.campaign_block_kind"],
+        ))
+
+        before = json.dumps(value, sort_keys=True)
+        unavailable = self.invoke(
+            "sentinel", check=False, extra_env={"CAMPAIGN_COORDINATION_FAIL": "1"},
+        )
+        self.assertIn("fail-closed", unavailable.stderr)
+        self.assertIn("non persistable", unavailable.stderr)
+        self.assertEqual(before, json.dumps(self.current_metadata(), sort_keys=True))
 
     def test_block_resume_and_complete_lifecycle_are_mayor_guarded(self):
         self.invoke(

@@ -282,10 +282,12 @@ def _direct_assigned_session(
         return None
     if session_id:
         matches = [item for item in sessions if str(item.get("id") or "") == session_id]
-        if not matches and session_name:
+        if len(matches) > 1:
+            raise SourceError("L'affectation directe correspond à plusieurs identifiants de session Gas City.")
+        if not matches and session_name and not any(item.get("id") for item in sessions):
             matches = [
                 item for item in sessions
-                if not item.get("id") and session_name in {
+                if session_name in {
                     str(item.get("qualified_name") or ""),
                     str(item.get("name") or ""),
                     str(item.get("alias") or ""),
@@ -455,7 +457,10 @@ def _product_bead(
 
     status = str(bead.get("status", "unknown"))
     is_current = bead.get("id") in current_id if isinstance(current_id, set) else bead.get("id") == current_id
-    if is_current:
+    if status == "blocked":
+        state = "blocked"
+        state_label = "Bloqué"
+    elif is_current:
         state = "current"
         state_label = "Objectif actuel"
     elif "product-queue" in labels:
@@ -463,9 +468,6 @@ def _product_bead(
             state, state_label = candidate_record_lifecycle(bead)
         except StateContractError as exc:
             raise SourceError(f"Candidat {bead.get('id') or '?'} incohérent: {exc}") from exc
-    elif status == "blocked":
-        state = "blocked"
-        state_label = "Bloqué"
     elif status == "closed":
         state = "delivered"
         state_label = "Livré"

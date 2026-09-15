@@ -9,7 +9,10 @@ printf '\n' >>"$log"
 
 if [[ ${1:-} == bd && ${2:-} == show && ${4:-} == --json ]]; then
   case ${3:-} in
-    af-1vr4) jq -c '[.]' "$state" ;;
+    af-1vr4)
+      [[ ${CAMPAIGN_COORDINATION_FAIL:-0} != 1 ]] || { printf 'coordination store unavailable\n' >&2; exit 42; }
+      jq -c '[.]' "$state"
+      ;;
     af-cm1l) printf '[{"id":"af-cm1l","status":"closed","metadata":{"gc.queue_state":"materialized","gc.queue_goal":"none","gc.materialized_bead":"af-hho5"}}]\n' ;;
     af-hho5) printf '[{"id":"af-hho5","status":"in_progress","metadata":{}}]\n' ;;
     *) exit 64 ;;
@@ -18,6 +21,8 @@ if [[ ${1:-} == bd && ${2:-} == show && ${4:-} == --json ]]; then
 fi
 
 if [[ ${1:-} == bd && ${2:-} == update && ${3:-} == af-1vr4 ]]; then
+  [[ ${CAMPAIGN_COORDINATION_FAIL:-0} != 1 ]] || { printf 'coordination store unavailable\n' >&2; exit 42; }
+  [[ -z ${CAMPAIGN_UPDATE_DELAY:-} ]] || sleep "$CAMPAIGN_UPDATE_DELAY"
   shift 3
   tmp="${state}.tmp"
   cp "$state" "$tmp"

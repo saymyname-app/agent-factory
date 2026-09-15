@@ -745,6 +745,44 @@ class FactoryCockpitTest(unittest.TestCase):
             result["human_state"]["result"]["agent"],
         ))
 
+    def test_direct_assignment_never_infers_an_unrelated_session(self):
+        runner = FakeRunner()
+        coordination = runner.responses[("gc", "bd", "show", "af-1vr4", "--json")][0]
+        coordination["metadata"]["gc.current_jit"] = "smb-direct"
+        coordination["metadata"].pop("gc.current_workflow", None)
+        runner.responses[("gc", "bd", "show", "smb-direct", "--json")] = [{
+            "id": "smb-direct", "title": "Direct result", "status": "in_progress",
+            "metadata": {"gc.session_id": "af-wanted", "gc.session_name": "codex-af-wanted"},
+        }]
+        runner.responses[("gc", "session", "list", "--json")]["sessions"].append({
+            "id": "af-other", "alias": "codex-unrelated", "state": "active",
+        })
+        result = FactoryCollector(runner, FakeGasCity()).collect()
+        self.assertEqual(("materialized", None, "materialized_without_agent"), (
+            result["human_state"]["result"]["state"], result["human_state"]["result"]["agent"],
+            result["resume"]["mode"],
+        ))
+
+    def test_direct_assignment_ambiguity_fails_closed(self):
+        runner = FakeRunner()
+        coordination = runner.responses[("gc", "bd", "show", "af-1vr4", "--json")][0]
+        coordination["metadata"]["gc.current_jit"] = "smb-direct"
+        coordination["metadata"].pop("gc.current_workflow", None)
+        runner.responses[("gc", "bd", "show", "smb-direct", "--json")] = [{
+            "id": "smb-direct", "title": "Direct result", "status": "in_progress",
+            "metadata": {"gc.session_id": "af-duplicate", "gc.session_name": "codex-af-duplicate"},
+        }]
+        sessions = runner.responses[("gc", "session", "list", "--json")]["sessions"]
+        sessions.extend([
+            {"id": "af-duplicate", "alias": "worker-one", "state": "active"},
+            {"id": "af-duplicate", "alias": "worker-two", "state": "active"},
+        ])
+        result = FactoryCollector(runner, FakeGasCity()).collect()
+        self.assertEqual(("fail_closed", "degraded", False), (
+            result["resume"]["mode"], result["health"]["state"], result["sources"]["current"],
+        ))
+        self.assertTrue(any("plusieurs identifiants" in item for item in result["warnings"]))
+
     def test_human_projection_links_exact_needs_benjamin_decision(self):
         runner = FakeRunner()
         needs = "Approve or refine a design-ready contract for af-hxji, especially admission, profile visibility, revocation, and navigation for the participative event/community journey."
@@ -976,6 +1014,13 @@ class FactoryCockpitTest(unittest.TestCase):
             "metadata": {"gc.work_outcome": "shipped"},
         }, "city", None)
         self.assertEqual(("delivered", "Livré"), (delivered["state"], delivered["state_label"]))
+        blocked_current = _product_bead({
+            "id": "af-blocked", "title": "Blocked current", "status": "blocked",
+            "labels": ["jit"], "metadata": {"gc.blocked_reason": "Preuve absente"},
+        }, "city", "af-blocked")
+        self.assertEqual(("blocked", "Bloqué", "Preuve absente"), (
+            blocked_current["state"], blocked_current["state_label"], blocked_current["cause"],
+        ))
         with self.assertRaisesRegex(StateContractError, "incohérent"):
             candidate_record_lifecycle({
                 "id": "af-bad", "status": "closed",

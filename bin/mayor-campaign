@@ -73,8 +73,18 @@ def show_issue(issue_id: str) -> dict[str, Any]:
     return single_issue(json_run(GC_BIN, "bd", "show", issue_id, "--json"), issue_id)
 
 
+def coordination_issue() -> dict[str, Any]:
+    try:
+        return show_issue(COORDINATION_BEAD)
+    except CampaignCommandError as exc:
+        raise CampaignCommandError(
+            "Le magasin de coordination est indisponible; état fail-closed et échec non persistable: "
+            f"{failure_detail(exc)}"
+        ) from exc
+
+
 def coordination() -> tuple[dict[str, Any], dict[str, Any]]:
-    issue = show_issue(COORDINATION_BEAD)
+    issue = coordination_issue()
     metadata = issue.get("metadata")
     if not isinstance(metadata, dict):
         raise CampaignCommandError("Les métadonnées de coordination sont indisponibles.")
@@ -106,13 +116,19 @@ def require_mayor(authority: bool) -> None:
 
 def activate(args: argparse.Namespace) -> None:
     require_mayor(args.authority)
+    issue, campaign = coordination()
+    coordination_metadata = issue.get("metadata", {})
+    needs = str(coordination_metadata.get("gc.needs_benjamin", "")).strip()
+    if needs and not needs.lower().startswith("none"):
+        raise CampaignCommandError("La campagne ne peut pas être activée pendant une décision NEEDS BENJAMIN.")
+    resume_mode = str(coordination_metadata.get("gc.resume_mode", "manual")).strip() or "manual"
     candidate = show_issue(args.candidate)
-    metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+    candidate_metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
     if not (
         candidate.get("status") == "closed"
-        and metadata.get("gc.queue_state") == "materialized"
-        and metadata.get("gc.queue_goal") == "none"
-        and metadata.get("gc.materialized_bead") == args.execution
+        and candidate_metadata.get("gc.queue_state") == "materialized"
+        and candidate_metadata.get("gc.queue_goal") == "none"
+        and candidate_metadata.get("gc.materialized_bead") == args.execution
     ):
         raise CampaignCommandError(
             "Le candidat campagne doit d'abord être matérialisé dans son Bead d'exécution par le Mayor."
@@ -120,6 +136,30 @@ def activate(args: argparse.Namespace) -> None:
     execution = show_issue(args.execution)
     if execution.get("status") not in {"open", "in_progress", "closed"}:
         raise CampaignCommandError("Le Bead d'exécution de campagne a un état incompatible.")
+    if campaign["enabled"]:
+        if campaign["state"] in {"blocked", "completed"}:
+            raise CampaignCommandError(
+                f"La campagne est déjà {campaign['state']}; utiliser la transition gardée appropriée."
+            )
+        if (
+            campaign["state"] in {"active", "awaiting_mayor", "running"}
+            and campaign["candidate_id"] == args.candidate
+            and campaign["condition"] == args.condition
+            and resume_mode == "automatic_campaign"
+        ):
+            print(f"ALREADY ACTIVE: {args.candidate} -> {args.execution}")
+            return
+        raise CampaignCommandError("Une campagne automatique différente est déjà activée.")
+    if resume_mode != "manual":
+        raise CampaignCommandError(f"La politique de reprise {resume_mode} interdit l'activation de campagne.")
+    current_id = str(coordination_metadata.get("gc.current_jit", "")).strip()
+    if current_id and not current_id.lower().startswith("none"):
+        current = show_issue(current_id)
+        current_metadata = current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
+        if current.get("status") == "blocked":
+            raise CampaignCommandError("Le résultat courant est bloqué; l'activation ne peut pas contourner sa reprise.")
+        if current_metadata.get("gc.resume_mode") == "automatic_dependency":
+            raise CampaignCommandError("Le résultat courant attend une dépendance; préserver sa politique de reprise.")
     update_metadata({
         "gc.campaign_mode": "automatic",
         "gc.campaign_state": "active",
@@ -188,6 +228,8 @@ def complete(args: argparse.Namespace) -> None:
     _, campaign = coordination()
     if not campaign["enabled"]:
         raise CampaignCommandError("Aucune campagne automatique n'est active.")
+    if campaign["state"] == "blocked":
+        raise CampaignCommandError("Une campagne bloquée doit être reprise, pas marquée terminée.")
     status = json_run(STATUS_BIN, "--json")
     if status.get("result", {}).get("id") is not None or status.get("next_candidate") is not None:
         raise CampaignCommandError("La campagne ne peut être marquée terminée tant qu'un résultat est actif ou éligible.")
@@ -209,8 +251,11 @@ def failure_detail(exc: Exception) -> str:
     return re.sub(r"\s+", " ", str(exc)).strip()[:400] or "échec sans détail"
 
 
-def record_failure(campaign: dict[str, Any], exc: Exception) -> int:
-    count = int(campaign.get("failure_count", 0)) + 1
+def record_failure(metadata: dict[str, Any], exc: Exception) -> int:
+    try:
+        count = int(metadata.get("gc.campaign_failure_count", 0)) + 1
+    except (TypeError, ValueError):
+        count = 1
     values = {
         "gc.campaign_failure_count": str(count),
         "gc.campaign_last_error": failure_detail(exc),
@@ -231,71 +276,83 @@ def record_failure(campaign: dict[str, Any], exc: Exception) -> int:
             "gc.campaign_block_kind": "durable_failure",
             "gc.campaign_cause": cause,
         })
-    update_metadata(values)
+    try:
+        update_metadata(values)
+    except CampaignCommandError as persist_exc:
+        raise CampaignCommandError(
+            "État fail-closed: le compteur d'échec ne peut pas être persisté sur la coordination: "
+            f"{failure_detail(persist_exc)}"
+        ) from persist_exc
     return count
 
 
 def sentinel(_: argparse.Namespace) -> None:
-    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with LOCK_PATH.open("a+", encoding="utf-8") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        _, campaign = coordination()
-        if not campaign["enabled"]:
-            print("NOOP: campaign inactive")
-            return
-        if campaign["state"] == "blocked":
-            print("NOOP: campaign blocked; guarded Mayor resume required")
-            return
-        try:
-            status = json_run(STATUS_BIN, "--json")
-            decision = plan_transition(status)
-        except (CampaignCommandError, CampaignDecisionError) as exc:
-            count = record_failure(campaign, exc)
-            mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
-            raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
+    issue = coordination_issue()
+    metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+    try:
+        campaign = project_campaign_metadata(metadata)
+    except StateContractError as exc:
+        count = record_failure(metadata, exc)
+        mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
+        raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
+    if not campaign["enabled"]:
+        print("NOOP: campaign inactive")
+        return
+    if campaign["state"] == "blocked":
+        print("NOOP: campaign blocked; guarded Mayor resume required")
+        return
+    try:
+        status = json_run(STATUS_BIN, "--json")
+        decision = plan_transition(status)
+    except (CampaignCommandError, CampaignDecisionError) as exc:
+        count = record_failure(metadata, exc)
+        mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
+        raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
 
-        if campaign["failure_count"] or campaign["last_error"]:
-            update_metadata({"gc.campaign_failure_count": "0", "gc.campaign_last_error": ""})
-            _, campaign = coordination()
+    if campaign["failure_count"] or campaign["last_error"]:
+        update_metadata({"gc.campaign_failure_count": "0", "gc.campaign_last_error": ""})
+        issue, campaign = coordination()
+        metadata = issue.get("metadata", {})
 
-        if decision["action"] != "wake_mayor":
-            if campaign["wake_state"] == "sent" and decision["reason"] in {
-                "active_delivery", "automatic_dependency",
-            }:
-                update_metadata({"gc.campaign_wake_key": "", "gc.campaign_wake_state": "none"})
-            print(f"NOOP: {decision['reason']}")
-            return
+    if decision["action"] != "wake_mayor":
+        if campaign["wake_state"] == "sent" and decision["reason"] in {
+            "active_delivery", "automatic_dependency",
+        }:
+            update_metadata({"gc.campaign_wake_key": "", "gc.campaign_wake_state": "none"})
+        print(f"NOOP: {decision['reason']}")
+        return
 
-        wake_key = str(decision["wake_key"])
-        if campaign["wake_key"] == wake_key and campaign["wake_state"] == "sent":
-            print(f"NOOP: already notified {wake_key}")
-            return
-        if campaign["wake_state"] == "pending" and campaign["wake_key"] != wake_key:
-            count = record_failure(
-                campaign,
-                CampaignCommandError(
-                    f"La transition pending {campaign['wake_key']} diffère de la transition due {wake_key}."
-                ),
-            )
-            raise CampaignCommandError(
-                f"automatic retry {count}/{FAILURE_THRESHOLD}: transition pending incohérente"
-            )
+    wake_key = str(decision["wake_key"])
+    if campaign["wake_key"] == wake_key and campaign["wake_state"] == "sent":
+        print(f"NOOP: already notified {wake_key}")
+        return
+    if campaign["wake_state"] == "pending" and campaign["wake_key"] != wake_key:
+        count = record_failure(
+            metadata,
+            CampaignCommandError(
+                f"La transition pending {campaign['wake_key']} diffère de la transition due {wake_key}."
+            ),
+        )
+        raise CampaignCommandError(
+            f"automatic retry {count}/{FAILURE_THRESHOLD}: transition pending incohérente"
+        )
 
-        if campaign["wake_state"] != "pending":
-            update_metadata({"gc.campaign_wake_key": wake_key, "gc.campaign_wake_state": "pending"})
-        try:
-            run(
-                GC_BIN, "mail", "send", "mayor", "--from", "mayor-campaign-sentinel",
-                "--subject", str(decision["subject"]), "--message", str(decision["message"]),
-                "--notify", "--json",
-            )
-        except CampaignCommandError as exc:
-            _, latest = coordination()
-            count = record_failure(latest, exc)
-            mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
-            raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
-        update_metadata({"gc.campaign_wake_key": wake_key, "gc.campaign_wake_state": "sent"})
-        print(f"NOTIFIED: mayor — {wake_key}")
+    if campaign["wake_state"] != "pending":
+        update_metadata({"gc.campaign_wake_key": wake_key, "gc.campaign_wake_state": "pending"})
+    try:
+        run(
+            GC_BIN, "mail", "send", "mayor", "--from", "mayor-campaign-sentinel",
+            "--subject", str(decision["subject"]), "--message", str(decision["message"]),
+            "--notify", "--json",
+        )
+    except CampaignCommandError as exc:
+        latest_issue = coordination_issue()
+        latest_metadata = latest_issue.get("metadata") if isinstance(latest_issue.get("metadata"), dict) else {}
+        count = record_failure(latest_metadata, exc)
+        mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
+        raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
+    update_metadata({"gc.campaign_wake_key": wake_key, "gc.campaign_wake_state": "sent"})
+    print(f"NOTIFIED: mayor — {wake_key}")
 
 
 def status(_: argparse.Namespace) -> None:
@@ -337,7 +394,13 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     try:
         args = parser().parse_args()
-        args.handler(args)
+        if args.command == "status":
+            args.handler(args)
+        else:
+            LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with LOCK_PATH.open("a+", encoding="utf-8") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                args.handler(args)
         return 0
     except CampaignCommandError as exc:
         print(f"{PROGRAM}: ERROR: {exc}", file=sys.stderr)

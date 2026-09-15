@@ -21,6 +21,13 @@ guarded deterministic lifecycle command for `activate`, `block`, `resume`, and
 that the `goal=none` campaign candidate has already been materialized by the
 Mayor into its execution Bead.
 
+Every mutating command, including the sentinel, takes the same host-local flock.
+Activation is idempotent only for the exact same materialized campaign,
+execution link, condition and automatic resume policy. It refuses an enabled
+blocked/completed campaign, an effective `NEEDS BENJAMIN`, a non-manual prior
+resume policy, a blocked current result, or an automatic dependency wait. It can
+therefore neither erase a stop nor use campaign activation as a recovery bypass.
+
 The city-local `orders/mayor-campaign.toml` cooldown Order runs the `sentinel`
 command once per minute. The sentinel performs zero model calls. It reads the
 canonical SayMyName status once and may only:
@@ -36,6 +43,10 @@ close product work, reorder the queue, or make a product/design decision. A mail
 left `pending` by a restart is safely resent with the same key; duplicate delivery
 is harmless because queue and lifecycle guards remain authoritative. A sent key
 suppresses repeats until the observed result transition changes.
+Malformed campaign projection is counted through the same deterministic failure
+path whenever the coordination Bead can still be updated. If that store itself
+cannot be read or written, the command reports that the failure cannot be
+persisted and exits fail-closed; it never claims a durable transition occurred.
 
 The persistent metadata contract is:
 

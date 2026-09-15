@@ -639,6 +639,11 @@ Bead:
 gc order run mayor-campaign
 ```
 
+All five mutation paths (`activate`, `block`, `resume`, `complete`, `sentinel`)
+share one host-local flock. Repeating the exact active activation is a no-op;
+activation refuses to overwrite a blocked/completed campaign or to bypass
+`NEEDS BENJAMIN`, a blocked result, or an existing automatic resume condition.
+
 The Order runs `./bin/mayor-campaign sentinel` every minute. It performs one
 canonical status read, no model call, and sends durable mail only when the Mayor
 must materialize the next result, resume an agentless materialized result,
