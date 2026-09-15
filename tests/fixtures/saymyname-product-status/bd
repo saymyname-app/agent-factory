@@ -14,12 +14,14 @@ emit_parent() {
   [[ $scenario != no-candidate ]] || current="none"
   [[ $scenario != all-paused ]] || current="none"
   [[ $scenario != idle-campaign ]] || current="none"
+  [[ $scenario != campaign-decision ]] || current="none"
   [[ $scenario != campaign-admin ]] || current="none"
   [[ $scenario != campaign-durable ]] || current="none"
   [[ $scenario != campaign-retry ]] || current="none"
   [[ $scenario != campaign-all-paused ]] || current="none"
   [[ $scenario != direct && $scenario != direct-ambiguous ]] || current="smb-direct"
   [[ $scenario != human ]] || needs="Choose whether to prioritize bounded intent intake"
+  [[ $scenario != campaign-decision ]] || needs="Choisir le périmètre du prochain résultat"
   if [[ $scenario == routed ]]; then
     current="smb-current"
     delivered="smf-delivered"
@@ -32,6 +34,9 @@ emit_parent() {
   if [[ $scenario == idle-campaign || $scenario == campaign-retry || $scenario == campaign-all-paused ]]; then
     resume=',"gc.resume_mode":"automatic_campaign","gc.resume_condition":"Le Mayor enchaîne le premier candidat éligible"'
     campaign=',"gc.campaign_mode":"automatic","gc.campaign_state":"active","gc.campaign_candidate":"af-cm1l","gc.campaign_condition":"Le Mayor enchaîne le premier candidat éligible","gc.campaign_owner":"Mayor","gc.campaign_action":"Aucune action de Benjamin","gc.campaign_wake_state":"none","gc.campaign_failure_count":"0"'
+  elif [[ $scenario == campaign-decision ]]; then
+    resume=',"gc.resume_mode":"automatic_campaign","gc.resume_condition":"Le Mayor enchaîne le premier candidat éligible"'
+    campaign=',"gc.campaign_mode":"automatic","gc.campaign_state":"blocked","gc.campaign_candidate":"af-cm1l","gc.campaign_condition":"Le Mayor enchaîne le premier candidat éligible","gc.campaign_owner":"Benjamin","gc.campaign_action":"Valider le périmètre puis demander au Mayor de reprendre","gc.campaign_block_kind":"decision","gc.campaign_cause":"La campagne attend le choix de périmètre","gc.campaign_wake_state":"none","gc.campaign_failure_count":"0"'
   elif [[ $scenario == campaign-admin ]]; then
     resume=',"gc.resume_mode":"automatic_campaign","gc.resume_condition":"Le Mayor enchaîne le premier candidat éligible"'
     campaign=',"gc.campaign_mode":"automatic","gc.campaign_state":"blocked","gc.campaign_candidate":"af-cm1l","gc.campaign_condition":"Le Mayor enchaîne le premier candidat éligible","gc.campaign_owner":"Benjamin","gc.campaign_action":"Autoriser explicitement la rotation du secret","gc.campaign_block_kind":"admin","gc.campaign_cause":"Une rotation de secret ADMIN est requise","gc.campaign_wake_state":"none","gc.campaign_failure_count":"0"'

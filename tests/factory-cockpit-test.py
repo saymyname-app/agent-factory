@@ -894,6 +894,37 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertNotIn(target["id"], {item["id"] for item in result["today"]["general_decisions"]})
         self.assertEqual(0, result["zero_token_contract"]["model_calls"])
 
+    def test_cockpit_exposes_the_exact_persisted_campaign_decision_action(self):
+        runner = FakeRunner()
+        exact_action = "Valider le périmètre puis demander au Mayor de reprendre."
+        coordination = runner.responses[("gc", "bd", "show", "af-1vr4", "--json")][0]
+        coordination["metadata"].update({
+            "gc.needs_benjamin": "Choisir le périmètre du prochain résultat.",
+            "gc.resume_mode": "automatic_campaign",
+            "gc.resume_condition": "Le Mayor enchaîne le premier candidat éligible",
+            "gc.campaign_mode": "automatic",
+            "gc.campaign_state": "blocked",
+            "gc.campaign_candidate": "af-cm1l",
+            "gc.campaign_condition": "Le Mayor enchaîne le premier candidat éligible",
+            "gc.campaign_owner": "Benjamin",
+            "gc.campaign_action": exact_action,
+            "gc.campaign_block_kind": "decision",
+            "gc.campaign_cause": "La campagne attend le choix de périmètre.",
+            "gc.campaign_wake_state": "none",
+            "gc.campaign_failure_count": "0",
+        })
+
+        result = FactoryCollector(runner, FakeGasCity()).collect()
+
+        self.assertEqual((exact_action, exact_action, exact_action), (
+            result["resume"]["action"], result["campaign"]["action"],
+            result["decision_aids"][0]["action"],
+        ))
+        self.assertEqual(("Benjamin", "La campagne attend le choix de périmètre."), (
+            result["campaign"]["owner"], result["campaign"]["cause"],
+        ))
+        self.assertNotEqual("Répondre à la décision bloquante.", result["resume"]["action"])
+
     def test_source_failure_is_visible_and_fails_factory_health_closed(self):
         result = FactoryCollector(FakeRunner(fail_factory=True), FakeGasCity()).collect()
         self.assertEqual("down", result["factory"]["state"])
@@ -975,15 +1006,60 @@ class FactoryCockpitTest(unittest.TestCase):
             dependency["resume"]["owner"],
         ))
         decision = state(needs_benjamin="Choisir le contrat de consentement")
-        self.assertEqual(("blocking_decision", "Benjamin", True), (
+        self.assertEqual(("blocking_decision", "Benjamin", True, "Répondre à la décision bloquante."), (
             decision["resume"]["mode"], decision["resume"]["owner"],
-            decision["resume"]["required"],
+            decision["resume"]["required"], decision["resume"]["action"],
         ))
         blocked = state(current={
             "id": "af-exec", "title": "Delivery", "state": "blocked",
             "cause": "Preuve externe absente", "phase": "Bloqué",
         })
         self.assertEqual("Preuve externe absente", blocked["resume"]["condition"])
+
+    def test_campaign_decision_preserves_its_exact_persisted_action(self):
+        exact_action = (
+            "Benjamin valide le périmètre, puis demande au Mayor de reprendre la campagne."
+        )
+        campaign_metadata = {
+            "gc.campaign_mode": "automatic",
+            "gc.campaign_state": "blocked",
+            "gc.campaign_candidate": "af-cm1l",
+            "gc.campaign_condition": "Le Mayor enchaîne le premier candidat éligible",
+            "gc.campaign_owner": "Benjamin",
+            "gc.campaign_action": exact_action,
+            "gc.campaign_block_kind": "decision",
+            "gc.campaign_cause": "La campagne attend le choix de périmètre.",
+            "gc.campaign_wake_state": "none",
+            "gc.campaign_failure_count": "0",
+        }
+        observed = {
+            "infrastructure": {"running": True, "usable": True, "degraded": False},
+            "sources_consistent": True,
+            "current": None,
+            "queue": [],
+            "needs_benjamin": "Choisir le périmètre du prochain résultat.",
+            "blockers": [],
+            "resume_policy": {
+                "mode": "automatic_campaign",
+                "condition": "Le Mayor enchaîne le premier candidat éligible",
+            },
+            "campaign_metadata": campaign_metadata,
+        }
+
+        value = project_human_state(observed)
+
+        self.assertEqual((exact_action, exact_action), (
+            value["resume"]["action"], value["campaign"]["action"],
+        ))
+        self.assertEqual(("Benjamin", "Benjamin", "La campagne attend le choix de périmètre."), (
+            value["resume"]["owner"], value["campaign"]["owner"],
+            value["campaign"]["cause"],
+        ))
+        self.assertNotEqual("Répondre à la décision bloquante.", value["resume"]["action"])
+
+        campaign_metadata["gc.campaign_owner"] = "Mayor"
+        with self.assertRaisesRegex(StateContractError, "Benjamin comme responsable"):
+            project_human_state(observed)
 
     def test_canonical_state_matches_versioned_schema_shape(self):
         schema = json.loads(

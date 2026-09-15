@@ -78,6 +78,9 @@ assert_json health-down '.health.state + ":" + .activity.state' 'unavailable:sto
 assert_json health-partial '.health.state + ":" + .activity.state' 'degraded:stopped'
 assert_json idle-campaign '.resume.mode + ":" + (.resume.automatic | tostring)' 'automatic_campaign:true'
 assert_json idle-campaign '.campaign.state + ":" + .campaign.owner' 'active:Mayor'
+assert_json campaign-decision '.resume.action' 'Valider le périmètre puis demander au Mayor de reprendre'
+assert_json campaign-decision '.campaign.action' 'Valider le périmètre puis demander au Mayor de reprendre'
+assert_json campaign-decision '.campaign.cause + ":" + .campaign.owner' 'La campagne attend le choix de périmètre:Benjamin'
 assert_json campaign-admin '.campaign.state + ":" + .campaign.blocker_kind + ":" + .campaign.owner + ":" + (.needs_benjamin == null | tostring)' 'blocked:admin:Benjamin:true'
 assert_json campaign-durable '.resume.mode + ":" + .campaign.cause' 'campaign_blocked:Trois lectures déterministes ont échoué'
 assert_json campaign-retry '.activity.state + ":" + (.resume.automatic | tostring) + ":" + .campaign.blocker_kind' 'waiting_automatic:true:transient_failure'
@@ -97,6 +100,13 @@ idle_output=$(run_fixture idle)
 [[ $idle_output == *'ACTION UTILE: Demander « Lance le prochain résultat ».'* ]] || fail_test 'idle action missing'
 [[ $idle_output == *'NEEDS BENJAMIN: none — aucune décision bloquante'* ]] || fail_test 'idle blocker distinction missing'
 [[ $idle_output != *'si cet état persiste'* ]] || fail_test 'misleading wait advice remains'
+
+TESTS_RUN=$((TESTS_RUN + 1))
+campaign_decision_output=$(run_fixture campaign-decision)
+[[ $campaign_decision_output == *'ACTION UTILE: Valider le périmètre puis demander au Mayor de reprendre'* ]] \
+  || fail_test 'campaign decision exact action is missing from the human CLI'
+[[ $campaign_decision_output != *'ACTION UTILE: Répondre à la décision bloquante.'* ]] \
+  || fail_test 'campaign decision uses the misleading fallback action'
 
 assert_failure mismatch "does not match the delivered Bead head and merge evidence"
 assert_failure invalid-repo "must be a valid owner/repository name"

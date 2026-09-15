@@ -107,6 +107,10 @@ def project_campaign_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     if state == "blocked":
         if blocker_kind not in CAMPAIGN_BLOCK_KINDS or not cause or not action:
             raise StateContractError("Une campagne bloquée doit exposer type, cause et action exacte.")
+        if blocker_kind == "decision" and owner != "Benjamin":
+            raise StateContractError(
+                "Un blocage décisionnel de campagne doit désigner Benjamin comme responsable."
+            )
     elif blocker_kind or cause:
         raise StateContractError("Une campagne non bloquée ne peut pas conserver une cause de blocage.")
 
@@ -376,6 +380,17 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
                 "source_failure", health["detail"], "Mayor", resume["action"]
             )
     elif needs_benjamin:
+        persisted_decision_block = (
+            campaign["enabled"]
+            and campaign["state"] == "blocked"
+            and campaign["blocker_kind"] == "decision"
+        )
+        decision_owner = campaign["owner"] if persisted_decision_block else "Benjamin"
+        decision_action = (
+            campaign["action"]
+            if persisted_decision_block
+            else "Répondre à la décision bloquante."
+        )
         activity = {
             "state": "waiting_action",
             "label": "Attend une décision de Benjamin",
@@ -386,13 +401,13 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
             "mode": "blocking_decision",
             "trigger": None,
             "condition": needs_benjamin,
-            "owner": "Benjamin",
-            "owner_label": "Benjamin",
-            "action": "Répondre à la décision bloquante.",
+            "owner": decision_owner,
+            "owner_label": decision_owner,
+            "action": decision_action,
             "prompt": f"Explique cette décision bloquante et ses options : {needs_benjamin}",
             "required": True,
         }
-        if campaign["enabled"]:
+        if campaign["enabled"] and not persisted_decision_block:
             effective_campaign_block(
                 "decision", needs_benjamin, "Benjamin", resume["action"]
             )
