@@ -21,12 +21,14 @@ from factory_cockpit import (  # noqa: E402
     ProductMemory,
     ProductReferenceReader,
     POBridge,
+    PreviewBridge,
     QueueBridge,
     MayorBridge,
     SnapshotCache,
     SourceError,
     TokenReader,
     _last_matching_json,
+    _operator_name,
     _safe_identifier,
     _today_projection,
     load_product_config,
@@ -306,6 +308,123 @@ class FactoryCockpitTest(unittest.TestCase):
             config_path.write_text(json.dumps(value), encoding="utf-8")
             with self.assertRaisesRegex(SourceError, "blocage décisionnel"):
                 load_product_config(config_path)
+
+    def _portable_config(self, directory, **overrides):
+        config_path = Path(directory) / "product.json"
+        value = json.loads((ROOT / "config" / "products" / "saymyname.json").read_text(encoding="utf-8"))
+        value.update(overrides)
+        config_path.write_text(json.dumps(value), encoding="utf-8")
+        return config_path
+
+    def test_product_config_accepts_the_portable_operator_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = load_product_config(self._portable_config(
+                directory,
+                operator_name="Alice",
+                north_star="Prouver la valeur puis la répétabilité.",
+                po_model="gpt-5.3-codex-spark",
+                po_sandbox="read-only",
+            ))
+            self.assertEqual("Alice", _operator_name(config))
+            self.assertEqual("gpt-5.3-codex-spark", config["po_model"])
+            self.assertEqual("read-only", config["po_sandbox"])
+            self.assertEqual(
+                (ROOT / "bin" / "saymyname-preview").resolve(),
+                config["preview_command_path"],
+            )
+
+    def test_product_config_rejects_invalid_operator_fields(self):
+        cases = [
+            ({"operator_name": "  "}, "opérateur"),
+            ({"north_star": ""}, "Nord magnétique"),
+            ({"po_model": "../../bin/sh"}, "Modèle PO"),
+            ({"po_sandbox": "full-access"}, "Sandbox PO"),
+            ({"preview_command": []}, "prévisualisation"),
+            ({"preview_command": ["/bin/sh"]}, "relatif"),
+            ({"preview_command": ["../escape"]}, "relatif"),
+        ]
+        for overrides, message in cases:
+            with self.subTest(overrides=overrides), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(SourceError, message):
+                    load_product_config(self._portable_config(directory, **overrides))
+
+    def test_operator_name_defaults_to_the_historical_operator(self):
+        self.assertEqual("Benjamin", _operator_name({}))
+        self.assertEqual("Benjamin", _operator_name({"operator_name": "   "}))
+        self.assertEqual("[Cockpit Benjamin] ", MayorBridge(FakeRunner(), FakeGasCity()).PREFIX)
+
+    def test_operator_name_drives_the_cockpit_prefix_and_the_po_prompt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = load_product_config(self._portable_config(directory, operator_name="Alice"))
+            self.assertEqual(
+                "[Cockpit Alice] ",
+                MayorBridge(FakeRunner(), FakeGasCity(), None, config).PREFIX,
+            )
+            bridge = POBridge(config, Path(directory) / "po.json", lambda *a, **k: None)
+            prompt = bridge._prompt("Message", "discuss", None)
+            self.assertIn("Alice", prompt)
+            self.assertNotIn("Benjamin", prompt)
+            self.assertIn("SayMyName", prompt)
+
+    def test_po_console_applies_the_configured_model_and_sandbox(self):
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+
+            def execute(command, **kwargs):
+                calls.append(command)
+                Path(command[command.index("-o") + 1]).write_text("Réponse.", encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            config = load_product_config(self._portable_config(
+                directory, po_model="gpt-5.3-codex-spark", po_sandbox="read-only",
+            ))
+            bridge = POBridge(config, Path(directory) / "po.json", execute)
+            bridge.submit("Discutons", "discuss", None)
+            for _ in range(200):
+                if bridge.conversation()["status"] in {"idle", "error"}:
+                    break
+                time.sleep(0.01)
+            self.assertEqual("idle", bridge.conversation()["status"])
+            command = calls[0]
+            self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
+            self.assertIn('sandbox_mode="read-only"', command)
+            self.assertEqual(["-m", "gpt-5.3-codex-spark"], command[2:4])
+            self.assertFalse(bridge.conversation()["full_access"])
+
+    def test_po_console_keeps_full_access_and_the_default_model_without_overrides(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bridge = POBridge(
+                load_product_config(), Path(directory) / "po.json", lambda *a, **k: None
+            )
+            self.assertTrue(bridge.conversation()["full_access"])
+
+    def test_preview_bridge_is_inert_without_a_configured_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = json.loads((ROOT / "config" / "products" / "saymyname.json").read_text(encoding="utf-8"))
+            value.pop("preview_command")
+            config_path = Path(directory) / "product.json"
+            config_path.write_text(json.dumps(value), encoding="utf-8")
+
+            def fail(*args, **kwargs):
+                raise AssertionError("Aucune commande ne doit être exécutée.")
+
+            bridge = PreviewBridge(fail, load_product_config(config_path))
+            self.assertEqual("unconfigured", bridge.status()["state"])
+            with self.assertRaisesRegex(ValueError, "non configurée"):
+                bridge.submit("start")
+
+    def test_preview_bridge_runs_the_configured_repository_command(self):
+        calls = []
+
+        def execute(command, **kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, "STATE=running\n", "")
+
+        bridge = PreviewBridge(execute, load_product_config())
+        self.assertEqual("running", bridge.status()["state"])
+        self.assertEqual(
+            [str((ROOT / "bin" / "saymyname-preview").resolve()), "status"], calls[0]
+        )
 
     def test_product_reference_is_structured_safe_and_has_provenance(self):
         reader = ProductReferenceReader()

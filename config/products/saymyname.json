@@ -2,6 +2,8 @@
   "schema_version": 3,
   "slug": "saymyname",
   "name": "SayMyName",
+  "operator_name": "Benjamin",
+  "north_star": "Prouver que SayMyName aide une personne à mieux retrouver les gens qu’elle a choisi de mémoriser, puis trouver un canal et un acheteur répétables.",
   "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
   "decisions": "docs/products/saymyname/DECISIONS.md",
   "release_contract": "config/releases/saymyname-v1.json",
@@ -25,6 +27,9 @@
   ],
   "queue_mutation_command": [
     "bin/saymyname-product-queue"
+  ],
+  "preview_command": [
+    "bin/saymyname-preview"
   ],
   "decision_blockers": [
     {"work_ref": "af-hxji", "decision_ref": "Visibilité et conservation des groupes"}
