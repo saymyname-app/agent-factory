@@ -42,6 +42,17 @@ fi
 
 if [[ ${1:-} == mail && ${2:-} == send ]]; then
   [[ ${CAMPAIGN_MAIL_FAIL:-0} != 1 ]] || { printf 'mail unavailable\n' >&2; exit 42; }
+  [[ ${3:-} == mayor ]] || { printf 'unknown mail recipient\n' >&2; exit 64; }
+  sender=
+  shift 3
+  while [[ $# -gt 0 ]]; do
+    if [[ $1 == --from && $# -ge 2 ]]; then
+      sender=$2
+      break
+    fi
+    shift
+  done
+  [[ $sender == mayor ]] || { printf 'unknown configured sender\n' >&2; exit 64; }
   printf '{"ok":true,"id":"af-mail"}\n'
   exit 0
 fi

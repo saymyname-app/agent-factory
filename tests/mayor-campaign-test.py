@@ -183,6 +183,14 @@ class MayorCampaignTest(unittest.TestCase):
         for forbidden in ("bd create", "product-queue materialize", "sling", "gh pr", "bd close"):
             self.assertNotIn(forbidden, calls)
 
+    def test_notification_uses_the_configured_mayor_sender(self):
+        self.invoke("sentinel")
+
+        calls = self.log_file.read_text(encoding="utf-8")
+        self.assertIn("mail send mayor --from mayor", calls)
+        self.assertNotIn("mayor-campaign-sentinel", calls)
+        self.assertEqual("sent", self.current_metadata()["gc.campaign_wake_state"])
+
     def test_three_failures_persist_durable_block_with_exact_recovery(self):
         for expected in (1, 2, 3):
             result = self.invoke("sentinel", check=False, extra_env={"CAMPAIGN_STATUS_FAIL": "1"})
