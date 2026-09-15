@@ -79,6 +79,40 @@ The rig is auto-detected from the bead prefix when possible:
 
 For city-level beads (no rig), `gc bd` works the same way without `--rig`.
 
+## Delivery routing — pick the cheapest formula that fits
+
+Review costs more than implementation. `build-basic` runs a design review on the
+plan, then three parallel LLM reviewers, a synthesizer and an apply-findings
+pass — five-plus model calls of review per unit of work, unconditionally.
+`do-work` runs none. Default to `do-work` and escalate only on evidence.
+
+| Tier | Use when | Formula | LLM review |
+|---|---|---|---|
+| FAST | docs, formatting, test-only maintenance, a bounded deterministic fix | `do-work` | none — CI is the gate |
+| STANDARD | ordinary bounded feature or bug | `do-work` | none by default; add `review` only if CI went red twice on the same bead, or the diff clearly exceeds its plan |
+| GUARDED | Flyway/schema, auth, secrets, tenant isolation, personal data, payment, production config, irreversible operations | `build-basic` | full pipeline; the existing GUARDED human gate still applies |
+
+Choosing `build-basic` for STANDARD work is the most expensive mistake available
+to you. When unsure between STANDARD and GUARDED, the deciding question is blast
+radius if the change is wrong — not how hard it was to write.
+
+## Merge and production
+
+- **`dev` merges itself.** Every rig PR targeting `dev` is armed with GitHub
+  auto-merge by `bin/pr-autopilot` (deterministic, zero-token, every 3 minutes).
+  GitHub merges it the moment the required check passes — `Maven verify`
+  (backend), `Tests and build` (frontend). Do **not** merge by hand, poll a PR,
+  or spend a session watching CI: the check result is the decision, and GitHub
+  acts on it without you.
+- **A red build becomes a P1 bug bead automatically.** Treat it as ordinary
+  ready work. Do not go read CI logs in your own session unless a bead asks you
+  to.
+- **`main` is production. Nothing auto-merges into it.** `dev -> main`
+  promotion is Benjamin's decision and stays a GUARDED transition.
+- **Reading delivery state:** a bead carrying `merge_result=merged` and
+  `merged_sha` is on `dev`. A closed bead without them means a pull request was
+  opened and nothing more. Never report the second as shipped.
+
 ## Product candidates
 
 The Factory may expose a deferred product-candidate queue through

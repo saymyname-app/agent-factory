@@ -1,0 +1,6 @@
+[order]
+description = "Deterministic zero-token merge actor: arm GitHub auto-merge on rig PRs targeting dev, reconcile merged PRs onto their beads, flag red builds. Never touches PRs targeting main."
+trigger = "cooldown"
+interval = "3m"
+exec = "/home/benja/agent-factory/bin/pr-autopilot"
+timeout = "120s"
