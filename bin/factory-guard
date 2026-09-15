@@ -117,10 +117,13 @@ while read -r b; do
     [ "${n:-0}" = "0" ] && continue
   elif [ "$remote" = "$local_sha" ]; then
     continue
+  elif git merge-base --is-ancestor "$local_sha" "$remote" 2>/dev/null; then
+    # purely behind origin: nothing exists only here, so nothing is at risk
+    continue
   else
-    # never touch a branch the remote has moved ahead on
+    # real divergence: local has commits the remote lacks AND vice versa
     git merge-base --is-ancestor "$remote" "$local_sha" 2>/dev/null || {
-      bad "branch '$b' has diverged from origin — needs a human"; continue; }
+      bad "branch '$b' has truly diverged from origin — needs a human"; continue; }
   fi
   AT_RISK=$((AT_RISK+1))
   if [ "$CHECK_ONLY" = "1" ]; then
@@ -142,12 +145,18 @@ for rig in saymyname-backend saymyname-frontend; do
   running=$(gc session list 2>/dev/null \
     | grep -c "$rig/core.control-dispatcher.*active" || true)
   ready=$(cd "rigs/$rig" && gc bd ready 2>/dev/null | grep -c . || echo 0)
-  if [ "${running:-0}" -gt 0 ]; then
+  # This city runs its agents scale-to-zero: a dispatcher stops itself with
+  # "drain acknowledged by agent" once nothing is claimable, and the reconciler
+  # brings it back when work is slung. A stopped dispatcher is therefore NOT a
+  # fault on its own, and treating it as one produced a false alarm for hours.
+  # Only a suspended rig genuinely blocks delivery.
+  suspended=$(gc rig status --rig "$rig" 2>/dev/null | grep -c "Suspended:  yes" || true)
+  if [ "${suspended:-0}" -gt 0 ]; then
+    bad "rig '$rig' is SUSPENDED — no work can be dispatched to it"
+  elif [ "${running:-0}" -gt 0 ]; then
     say "✓ rig:$rig — dispatcher running ($ready ready)"
-  elif [ "${ready:-0}" -gt 0 ]; then
-    bad "rig '$rig' has $ready ready item(s) but no running dispatcher"
   else
-    say "✓ rig:$rig — dispatcher stopped, no ready work"
+    say "· rig:$rig — dispatcher idle (scale-to-zero), $ready ready, not suspended"
   fi
 done
 
