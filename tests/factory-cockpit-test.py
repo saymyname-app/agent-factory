@@ -10,6 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 from http.server import ThreadingHTTPServer
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -222,9 +223,25 @@ class ActiveWorkflowGasCity(FakeGasCity):
 
 
 class FactoryCockpitTest(unittest.TestCase):
+    def setUp(self):
+        # Redirect the shared blocker runtime store to an isolated, per-test
+        # path so tests never read or mutate the real repo's .gc/runtime
+        # state and never leak synthesized blockers across test methods.
+        self._blocker_state_dir = tempfile.TemporaryDirectory()
+        self._blocker_state_patch = patch(
+            "factory_cockpit.BLOCKER_STATE_PATH",
+            Path(self._blocker_state_dir.name) / "factory-cockpit-blockers.json",
+        )
+        self._blocker_state_patch.start()
+        self.addCleanup(self._blocker_state_patch.stop)
+        self.addCleanup(self._blocker_state_dir.cleanup)
+
     def test_saymyname_governance_domains_and_inventory_are_complete(self):
         memory = ProductMemory().collect()
-        pending = [item for item in memory["decisions"] if item["status"] == "pending"]
+        pending = [
+            item for item in memory["decisions"]
+            if item["status"] == "pending" and item.get("origin") != "blocker"
+        ]
         counts = {domain: sum(item.get("domain") == domain for item in pending) for domain in ("enterprise", "product", "project")}
         self.assertEqual({"enterprise": 5, "product": 1, "project": 3}, counts)
         self.assertGreaterEqual(len(memory["view_inventory"]), 10)
