@@ -455,6 +455,67 @@ dependent capability or edge; independent eligible work continues whenever safe.
 Every release must at minimum be testable and usable, while the user-selected
 maturity target determines the stronger release gates.
 
+### 2026-09-15 — Administered CSV import: authority, correction and withdrawal
+
+Arbitrated by the PO under an explicit live delegation from Benjamin on
+2026-09-15 ("tranche à ma place"). Benjamin delegated the arbitration; he did not
+approve these seven points individually. Any of them may be reopened at no cost
+while the V1 campaign has not frozen.
+
+Resolves the seven decisions gated on Benjamin + PO in `af-u8id.3.1` and unblocks
+`af-u8id.3`.
+
+1. **Creator eligibility.** Administered-organization creation requires a
+   server-granted entitlement or pre-provisioned admin status. No unrestricted
+   self-service.
+2. **Default workspace and publication.** One implicit `All people` workspace is
+   created with the organization. Imports land as admin-only drafts; explicit
+   publication exposes approved fields to active members of that workspace only;
+   no automatic learning selection.
+3. **Invitations.** Nominative and separate in V1. Import and publication never
+   create accounts, send invitations or issue group links.
+4. **Duplicates.** Possible duplicates are skipped by default, with an explicit
+   *Create separate*. Merge and update-existing are deferred beyond V1.
+5. **Retention.** The raw file is deleted after parsing. Parsed staging is kept at
+   most 30 days, then purged. Applied audit and provenance keep hashes, mapping,
+   actor, timestamps and counts, never raw values.
+6. **Field authority, correction and withdrawal.** The mechanism already exists
+   and is not rebuilt: `Attribute.editPolicy` declares authority per field and
+   `FactService.applyChangesForPerson` enforces it server-side — `FREE` allows a
+   direct edit, `RESTRICTED` returns 403 and makes change-request approval the
+   only write path, `DERIVED` is immutable even through a change request. What
+   this decision settles is which policy applies, because every attribute
+   currently defaults to `FREE`:
+
+   - identity components and organization-supplied fields imported by an
+     administered organization are created `RESTRICTED`, set explicitly at import
+     rather than inherited;
+   - a contact detail the person adds for themselves stays `FREE`;
+   - a photo supplied by the organization is `RESTRICTED` for modification.
+
+   Correction therefore flows through the existing change-request queue and the
+   organization resolves it, including by refusing it.
+
+   **Withdrawal does not.** Withdrawing a photo, and withdrawing one's published
+   profile, are unconditional rights exercised directly by the person: they never
+   enter the change-request queue and the organization cannot refuse them. A
+   correction is negotiable; a withdrawal is not. Two reasons: the product's whole
+   promise rests on people accepting to be memorized, and a directory that can
+   refuse removal is the fastest way to lose that consent; and it costs the
+   organization nothing, because withdrawal is unpublication, not deletion.
+
+   Withdrawal unpublishes: the profile leaves the published workspace, other
+   members lose access to it, and its scheduled reviews stop — consistent with the
+   2026-09-14 group-visibility decision. Organization-authored facts remain the
+   organization's records, and the audit trail keeps hashes, mapping, actor and
+   timestamps without raw values, consistent with point 5.
+7. **One implicit default workspace as the initial access boundary.** Accepted.
+
+Open consequence, deliberately accepted: an organization can refuse a correction
+indefinitely. That asymmetry is tolerable only because withdrawal is not
+refusable. If withdrawal ever becomes negotiable, this decision must be reopened.
+
+
 ## Open
 
 ### Enterprise
