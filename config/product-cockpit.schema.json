@@ -3,17 +3,18 @@
   "title": "Agent Factory product cockpit configuration",
   "type": "object",
   "required": [
-    "schema_version", "slug", "name", "strategy", "decisions",
+    "schema_version", "slug", "name", "strategy", "decisions", "release_contract",
     "project_inventory", "design_governance", "po_workspace", "status_command", "queue_command",
     "queue_mutation_command", "capabilities", "relations", "journeys",
     "business_objectives", "product_reference", "view_inventory", "delivery_workflow"
   ],
   "properties": {
-    "schema_version": {"const": 2},
+    "schema_version": {"const": 3},
     "slug": {"type": "string", "pattern": "^[a-z0-9-]+$"},
     "name": {"type": "string", "minLength": 1},
     "strategy": {"$ref": "#/$defs/repositoryPath"},
     "decisions": {"$ref": "#/$defs/repositoryPath"},
+    "release_contract": {"$ref": "#/$defs/repositoryPath"},
     "project_inventory": {"$ref": "#/$defs/repositoryPath"},
     "design_governance": {"$ref": "#/$defs/repositoryPath"},
     "inventory_watch": {"type": "array", "items": {"type": "string", "minLength": 1}},

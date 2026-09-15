@@ -599,6 +599,63 @@ Bead reads intentionally go through `gc bd` for store routing.
   infrastructure, exact GitHub evidence, routed Beads, queue/source failure, and
   pointer divergence. Live verification must be repeated from the merged head.
 
+### Versioned product release contract
+
+Git, not the Product view or the campaign, owns the versioned SayMyName
+release target. From the canonical Factory checkout:
+
+```bash
+cd ~/agent-factory
+./bin/product-release validate                     # config/releases/saymyname-v1.json
+./bin/product-release project
+./bin/product-release transition --to approved
+./bin/product-release start-next --version V2
+```
+
+`lib/product_release.py` is a pure module: it reads no live state, writes no
+files, and never calls a model. `validate_release_contract` enforces the
+invariants JSON Schema (`config/product-release.schema.json`) cannot express —
+every capability, journey, criterion, dependency, and `work_graph` node must be
+schema-valid and cross-referenced; `work_graph` node IDs and dedupe keys are
+globally unique and acyclic; every node is traceable to at least one approved
+criterion; and `af-cm1l` can never be recorded as a V1 product capability,
+only as a Factory improvement. `transition_release` and `start_next_version`
+are idempotent and fail-closed: `draft → approved → executing → frozen` is the
+only path, a `frozen` contract is immutable, and starting `V2` first freezes
+`V1` and returns its frozen evidence rather than mutating it in place.
+
+`select_campaign_work` is the only function the Mayor campaign may call to
+pick work from a release. It returns exactly one deduplicated, criterion-
+traceable, dependency-satisfied, proven-independent candidate, or an explicit
+stop reason (`release_not_executable`, `independence_unknown`,
+`blocked_<decision|admin|limit|durable_failure|dependency>`,
+`release_target_proven`, or `no_proven_independent_work`) with an owner and an
+exact recovery action. It never reorders the product queue and never
+materializes work itself. `project_release` adds human-facing status labels
+and the campaign/intervention projection for the Product view;
+`project_operational_release` overlays only the runtime `truth_state` versus
+`operational_state` distinction — an `approved`/`executing` release with the
+campaign enabled shows as executing, a `draft` release can never be reported
+as campaign-executing, and a `frozen` release stays frozen regardless of
+campaign state.
+
+- **TARGET:** one schema-validated, versioned release contract per product
+  drives the Product view, the campaign, and V1→V2 freeze semantics, with no
+  second orchestrator, queue, or UI.
+- **CONFIGURED:** `config/product-release.schema.json` plus
+  `lib/product_release.py`/`bin/product-release`; `config/releases/saymyname-v1.json`
+  is the current SayMyName V1 contract, referenced from
+  `config/products/saymyname.json#release_contract`.
+- **PROVEN:** `tests/product-release-test.py` covers schema-required-field
+  parity, semantic validation edge cases (dangling references, duplicate IDs,
+  graph cycles, self-dependency, blocker/decision consistency, the `af-cm1l`
+  guard), the full transition state machine including frozen immutability and
+  V2 freeze, and campaign graph selection (order tie-break, an
+  unknown-independence node not blocking a later proven candidate, dependency
+  gating, and blocker tie-break by kind then cause). It also loads and
+  projects the real `config/releases/saymyname-v1.json` contract. Live
+  verification through the Product view must be repeated from the merged head.
+
 ### Ordered product candidates
 
 Keep future SayMyName outcomes out of the executable worker queue with:

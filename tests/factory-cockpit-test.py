@@ -243,11 +243,12 @@ class FactoryCockpitTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "product.json"
             config_path.write_text(json.dumps({
-                "schema_version": 2,
+                "schema_version": 3,
                 "slug": "test-product",
                 "name": "Test Product",
                 "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
                 "decisions": "docs/products/saymyname/DECISIONS.md",
+                "release_contract": "tests/fixtures/product-queue/test-product-release.json",
                 "project_inventory": "docs/products/saymyname/PROJECT_INVENTORY.md",
                 "design_governance": "docs/products/saymyname/DESIGN_GOVERNANCE.md",
                 "po_workspace": "/tmp/test-product",

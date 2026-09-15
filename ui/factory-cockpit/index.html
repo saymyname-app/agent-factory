@@ -51,6 +51,26 @@
 
   <section class="view" data-view-panel="project">
     <div class="view-heading"><div><p class="eyebrow">RÉFÉRENCE SAYMYNAME</p><h1>Comprendre le produit</h1><p class="lede">La vision, les parcours, les vues et leurs validations — sans le bruit du fonctionnement de l’usine.</p></div><span id="project-progress" class="status-pill idle">—</span></div>
+    <section class="panel release-contract" aria-labelledby="release-title">
+      <div class="section-heading"><div><p class="eyebrow">CIBLE DE RELEASE SAYMYNAME</p><h2 id="release-title">Release sélectionnée</h2><p id="release-maturity" class="muted">Lecture du contrat Git…</p></div><div class="release-heading-actions"><label for="release-version">Version</label><select id="release-version"><option value="V1">V1</option></select><span id="release-state" class="status-pill waiting">—</span></div></div>
+      <p id="release-state-detail" class="truth-note">La vérité Git et l’état opérationnel sont projetés séparément.</p>
+      <div class="release-summary-grid">
+        <article><span class="release-badge product">Produit</span><h3>Inclus dans V1</h3><div id="release-included" class="release-list"></div></article>
+        <article><span class="release-badge product">Produit</span><h3>Exclus de V1</h3><div id="release-excluded" class="release-list"></div></article>
+        <article><span class="release-badge product">Produit</span><h3>Dépendances et preuves</h3><div id="release-dependencies" class="release-list"></div></article>
+      </div>
+      <div class="section-heading release-subheading"><div><p class="eyebrow">CAPACITÉS ET PARCOURS V1</p><h3>État prouvé, partiel ou à décider</h3></div><span class="zero-token">Projection Git · 0 token</span></div>
+      <div id="release-capabilities" class="release-card-grid"></div>
+      <div id="release-intervention" class="release-intervention hidden" tabindex="-1">
+        <div><span class="release-badge product">Produit · V1</span><h3 id="release-decision-title">Point d’intervention</h3><p class="muted">Un choix direct est audité localement sans modèle. Le PO reste seul à transformer ce choix en vérité Git.</p></div>
+        <label class="confirm-check"><input id="release-decision-confirm" type="checkbox"> Je confirme ce choix Benjamin + PO à risque élevé.</label>
+        <div class="decision-actions"><button id="release-accept" class="primary" type="button">Accepter</button><button id="release-reject" type="button">Refuser</button><select id="release-option" aria-label="Option structurée"><option value="">Choisir une option…</option></select><button id="release-option-submit" type="button">Valider l’option</button></div>
+        <label for="release-other">Autre <span class="muted">(champ vide par défaut; le contenu n’entre pas dans la télémétrie)</span></label><textarea id="release-other" maxlength="1000" rows="2"></textarea><div class="decision-actions"><button id="release-other-submit" type="button">Enregistrer Autre</button><button id="release-talk" type="button">Parler au PO · appel modèle explicite</button></div><p id="release-decision-feedback" class="feedback" aria-live="polite"></p>
+      </div>
+      <div class="section-heading release-subheading"><div><p class="eyebrow">AMÉLIORATIONS DE L’USINE</p><h3>Hors capacités produit V1</h3></div><span class="release-badge factory">Factory</span></div>
+      <div id="release-factory" class="release-card-grid"></div>
+      <div class="decision-actions"><button id="release-propose" type="button">Proposer une modification · sans modèle</button><button id="release-validate" type="button">Valider une modification proposée</button></div><p id="release-change-feedback" class="feedback" aria-live="polite"></p>
+    </section>
     <section class="panel reference-flow"><div class="section-heading"><div><p class="eyebrow">DU BESOIN À LA RÉFÉRENCE</p><h2>Documentation produit validée par l’humain</h2></div><button id="build-reference-with-po">Travailler avec le PO</button></div><div id="reference-lifecycle" class="workflow-flow"></div><p class="truth-note">Seul un contenu validé devient une référence pour alimenter la Factory.</p></section>
     <section class="panel graph-panel"><div class="section-heading"><div><p class="eyebrow">DÉCOUPE CONCEPTUELLE</p><h2>Capacités SayMyName et dépendances</h2></div><button class="info" data-tooltip="Chaque bloc est une capacité produit. Sa couleur vient de sa position roadmap, pas d’un pourcentage fictif.">?</button></div><div id="capability-legend" class="graph-legend"></div><div id="capability-graph" class="capability-graph"></div></section>
     <section class="panel graph-panel"><div class="section-heading"><div><p class="eyebrow">PARCOURS DE BOUT EN BOUT</p><h2>Du besoin humain aux capacités</h2></div><span class="zero-token">Relations validées · 0 token</span></div><div id="journey-graph" class="journey-graph"></div></section>

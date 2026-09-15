@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-factory.local/schemas/product-release-v1.json",
+  "title": "Agent Factory versioned product release",
+  "type": "object",
+  "required": [
+    "$schema", "contract", "schema_version", "product", "version", "title", "state",
+    "maturity", "capabilities", "journeys", "included", "excluded", "dependencies",
+    "decisions", "criteria", "work_graph", "factory_improvements", "next_version"
+  ],
+  "properties": {
+    "$schema": {"type": "string", "minLength": 1},
+    "contract": {"const": "agent-factory-product-release/v1"},
+    "schema_version": {"const": 1},
+    "product": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+    "version": {"$ref": "#/$defs/version"},
+    "title": {"type": "string", "minLength": 1},
+    "state": {"enum": ["draft", "approved", "executing", "frozen"]},
+    "next_version": {"anyOf": [{"$ref": "#/$defs/version"}, {"type": "null"}]},
+    "maturity": {
+      "type": "object",
+      "required": ["level", "label", "criteria"],
+      "properties": {
+        "level": {"enum": ["not_ready", "partial", "release_ready", "production_autonomous"]},
+        "label": {"type": "string", "minLength": 1},
+        "criteria": {"$ref": "#/$defs/idList"}
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evidencedBlock"}},
+    "journeys": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "allOf": [
+          {"$ref": "#/$defs/evidencedBlock"},
+          {"type": "object", "required": ["capability_refs"], "properties": {"capability_refs": {"$ref": "#/$defs/idList"}}}
+        ]
+      }
+    },
+    "included": {"type": "array", "items": {"$ref": "#/$defs/scopedBlock"}},
+    "excluded": {"type": "array", "items": {"$ref": "#/$defs/scopedBlock"}},
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          {"$ref": "#/$defs/evidencedBlock"},
+          {"type": "object", "required": ["required_for"], "properties": {"required_for": {"$ref": "#/$defs/idList"}}}
+        ]
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "source_ref", "status", "risk", "revision", "capability_refs", "dependency_refs", "options"],
+        "properties": {
+          "id": {"$ref": "#/$defs/id"},
+          "title": {"type": "string", "minLength": 1},
+          "source_ref": {"type": "string", "minLength": 1},
+          "status": {"enum": ["accepted", "decision_required", "superseded"]},
+          "risk": {"enum": ["low", "high"]},
+          "revision": {"type": "integer", "minimum": 1},
+          "capability_refs": {"$ref": "#/$defs/idList"},
+          "dependency_refs": {"$ref": "#/$defs/idList"},
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object", "required": ["id", "label"],
+              "properties": {"id": {"$ref": "#/$defs/id"}, "label": {"type": "string", "minLength": 1}},
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "criteria": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "allOf": [
+          {"$ref": "#/$defs/evidencedBlock"},
+          {"type": "object", "required": ["capability_refs", "journey_refs"], "properties": {
+            "capability_refs": {"$ref": "#/$defs/idList"},
+            "journey_refs": {"$ref": "#/$defs/idList"}
+          }}
+        ]
+      }
+    },
+    "work_graph": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "work_ref", "title", "kind", "state", "order", "dedupe_key", "criterion_refs", "depends_on", "independence", "blocker"],
+        "properties": {
+          "id": {"$ref": "#/$defs/id"},
+          "work_ref": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+          "title": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["product", "factory"]},
+          "state": {"enum": ["candidate", "materialized", "active", "blocked", "delivered", "cancelled", "paused"]},
+          "order": {"type": "integer", "minimum": 1},
+          "dedupe_key": {"$ref": "#/$defs/id"},
+          "criterion_refs": {"$ref": "#/$defs/idList"},
+          "depends_on": {"$ref": "#/$defs/idList"},
+          "independence": {"enum": ["proven", "unknown"]},
+          "blocker": {
+            "anyOf": [
+              {"type": "null"},
+              {
+                "type": "object", "required": ["kind", "cause", "owner", "action"],
+                "properties": {
+                  "kind": {"enum": ["decision", "admin", "limit", "durable_failure", "dependency"]},
+                  "decision_id": {"$ref": "#/$defs/id"},
+                  "cause": {"type": "string", "minLength": 1},
+                  "owner": {"type": "string", "minLength": 1},
+                  "action": {"type": "string", "minLength": 1}
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "factory_improvements": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          {"$ref": "#/$defs/scopedBlock"},
+          {"type": "object", "required": ["work_ref"], "properties": {"work_ref": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]}}}
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{0,95}$"},
+    "version": {"type": "string", "pattern": "^V[1-9][0-9]*$"},
+    "idList": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "status": {"enum": ["proven", "partial", "unverified", "absent", "out_of_version", "decision_required"]},
+    "evidence": {
+      "type": "object",
+      "required": ["kind", "ref", "status"],
+      "properties": {
+        "kind": {"enum": ["ui", "api", "data", "test", "document", "bead", "github"]},
+        "ref": {"type": "string", "minLength": 1},
+        "status": {"$ref": "#/$defs/status"}
+      },
+      "additionalProperties": false
+    },
+    "evidencedBlock": {
+      "type": "object",
+      "required": ["id", "title", "description", "status", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "title": {"type": "string", "minLength": 1},
+        "description": {"type": "string", "minLength": 1},
+        "status": {"$ref": "#/$defs/status"},
+        "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evidence"}}
+      }
+    },
+    "scopedBlock": {
+      "allOf": [
+        {"$ref": "#/$defs/evidencedBlock"},
+        {"type": "object", "required": ["kind"], "properties": {"kind": {"enum": ["product", "factory"]}}}
+      ]
+    }
+  },
+  "additionalProperties": false
+}

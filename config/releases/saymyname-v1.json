@@ -1,0 +1,259 @@
+{
+  "$schema": "../product-release.schema.json",
+  "contract": "agent-factory-product-release/v1",
+  "schema_version": 1,
+  "product": "saymyname",
+  "version": "V1",
+  "title": "SayMyName V1 · boucle sociale personnelle et autonome",
+  "state": "approved",
+  "next_version": "V2",
+  "maturity": {
+    "level": "partial",
+    "label": "Cible définie · preuves de release encore partielles",
+    "criteria": ["personal-return", "public-first-session", "private-learning", "admin-csv-first-quiz", "release-e2e", "production-autonomy"]
+  },
+  "capabilities": [
+    {
+      "id": "account-access", "title": "Accès et continuité de compte",
+      "description": "Créer, vérifier, retrouver et reprendre un compte avant une session d’apprentissage.", "status": "proven",
+      "evidence": [
+        {"kind": "ui", "ref": "Frontend routes: sign in, sign up, verification, recovery", "status": "proven"},
+        {"kind": "api", "ref": "Backend authentication and invitation controllers", "status": "proven"},
+        {"kind": "document", "ref": "docs/products/saymyname/PROJECT_INVENTORY.md#view-catalogue", "status": "proven"}
+      ]
+    },
+    {
+      "id": "public-challenge", "title": "Challenge public Présidents de la République française",
+      "description": "Essayer sans compte une collection éditoriale vérifiée, puis créer un compte pour conserver la progression.", "status": "partial",
+      "evidence": [
+        {"kind": "ui", "ref": "Frontend public challenge journey", "status": "partial"},
+        {"kind": "api", "ref": "Backend public challenge endpoints", "status": "partial"},
+        {"kind": "test", "ref": "Integrated anonymous-to-account journey", "status": "unverified"}
+      ]
+    },
+    {
+      "id": "personal-home", "title": "Espace personnel minimal",
+      "description": "Voir ses sources, sélections, révisions dues, ajouts personnels et progression privée.", "status": "partial",
+      "evidence": [
+        {"kind": "ui", "ref": "Frontend PersonalHomePage", "status": "partial"},
+        {"kind": "api", "ref": "Backend PersonalLearningService", "status": "partial"},
+        {"kind": "test", "ref": "Personal-home attempt and replay tests", "status": "proven"}
+      ]
+    },
+    {
+      "id": "learning-loop", "title": "Boucle choisir, apprendre, rappeler et ajuster",
+      "description": "Pratiquer la reconnaissance et le rappel actif sur les personnes et champs explicitement choisis.", "status": "partial",
+      "evidence": [
+        {"kind": "ui", "ref": "Frontend course, quiz and training options", "status": "proven"},
+        {"kind": "api", "ref": "Backend quiz, answer and progress APIs", "status": "proven"},
+        {"kind": "test", "ref": "Selected-only first useful quiz end-to-end proof", "status": "unverified"}
+      ]
+    },
+    {
+      "id": "private-selection", "title": "Sélections et progression privées",
+      "description": "L’apprenant choisit personnes et champs sans exposer erreurs, rythme ou progression à une organisation.", "status": "partial",
+      "evidence": [
+        {"kind": "document", "ref": "docs/products/saymyname/PRODUCT_CONTEXT.md#product-principles", "status": "proven"},
+        {"kind": "api", "ref": "Tenant-scoped person and learning APIs", "status": "partial"},
+        {"kind": "test", "ref": "Cross-role privacy and selected-field tests", "status": "unverified"}
+      ]
+    },
+    {
+      "id": "administered-csv", "title": "Import administré CSV jusqu’au premier quiz utile",
+      "description": "Importer en brouillon, résoudre les erreurs, publier et inviter séparément, puis atteindre un vrai quiz.", "status": "decision_required",
+      "evidence": [
+        {"kind": "data", "ref": "Backend V1 schema import_batches, import_mappings, import_rows", "status": "partial"},
+        {"kind": "ui", "ref": "Frontend administered import journey", "status": "absent"},
+        {"kind": "bead", "ref": "af-u8id.3.1 design-ready contract", "status": "decision_required"}
+      ]
+    }
+  ],
+  "journeys": [
+    {
+      "id": "anonymous-to-saved-learning", "title": "Découvrir puis conserver son apprentissage",
+      "description": "Essayer le challenge public, créer un compte sans perdre le contexte, choisir quoi retenir et revenir.",
+      "status": "partial", "capability_refs": ["account-access", "public-challenge", "personal-home", "learning-loop"],
+      "evidence": [
+        {"kind": "ui", "ref": "Public challenge → authentication → personal home", "status": "partial"},
+        {"kind": "test", "ref": "Anonymous-to-saved-learning browser proof", "status": "unverified"}
+      ]
+    },
+    {
+      "id": "personal-return-loop", "title": "Revenir apprendre en privé",
+      "description": "Ouvrir l’espace personnel, voir les révisions dues, pratiquer une sélection et retrouver un progrès réel.",
+      "status": "partial", "capability_refs": ["personal-home", "private-selection", "learning-loop"],
+      "evidence": [
+        {"kind": "ui", "ref": "Frontend personal home and quiz flow", "status": "partial"},
+        {"kind": "api", "ref": "Backend personal learning replay contract", "status": "proven"},
+        {"kind": "test", "ref": "Delayed return end-to-end evidence", "status": "unverified"}
+      ]
+    },
+    {
+      "id": "admin-csv-to-first-quiz", "title": "Importer une population jusqu’au premier quiz",
+      "description": "Créer l’organisation, importer et publier explicitement, inviter, sélectionner en privé et répondre à une question réelle.",
+      "status": "decision_required", "capability_refs": ["account-access", "administered-csv", "private-selection", "learning-loop"],
+      "evidence": [
+        {"kind": "bead", "ref": "af-u8id.3 and af-u8id.3.1", "status": "decision_required"},
+        {"kind": "test", "ref": "Ephemeral administered CSV end-to-end proof", "status": "absent"}
+      ]
+    }
+  ],
+  "included": [
+    {
+      "id": "france-presidents-demo", "title": "Une collection France : présidents",
+      "description": "Une seule collection publique France avec faits, images, droits et retrait vérifiés.", "kind": "product", "status": "partial",
+      "evidence": [{"kind": "document", "ref": "docs/products/saymyname/DECISIONS.md#presidents-first-for-the-localized-public-demo", "status": "proven"}]
+    },
+    {
+      "id": "minimal-personal-home", "title": "Espace personnel sans CRM complet",
+      "description": "Sources, choix explicites, révisions dues, petits ajouts et progrès privé.", "kind": "product", "status": "partial",
+      "evidence": [{"kind": "document", "ref": "docs/products/saymyname/DECISIONS.md#personal-learning-home-in-v1", "status": "proven"}]
+    },
+    {
+      "id": "csv-first-path", "title": "CSV comme premier chemin d’import",
+      "description": "Import contrôlé et idempotent sans création implicite de compte, invitation ou publication.", "kind": "product", "status": "decision_required",
+      "evidence": [{"kind": "bead", "ref": "af-u8id.3.1", "status": "decision_required"}]
+    }
+  ],
+  "excluded": [
+    {
+      "id": "payment", "title": "Paiement et tarification",
+      "description": "Différés après preuve du pilote gratuit et identification d’un acheteur.", "kind": "product", "status": "out_of_version",
+      "evidence": [{"kind": "document", "ref": "docs/products/saymyname/PRODUCT_CONTEXT.md#approved-product-direction", "status": "out_of_version"}]
+    },
+    {
+      "id": "natural-language-retrieval", "title": "Recherche naturelle par indices",
+      "description": "Extension ultérieure sur données autorisées; aucune identité inventée.", "kind": "product", "status": "out_of_version",
+      "evidence": [{"kind": "document", "ref": "docs/products/saymyname/DECISIONS.md#intelligent-retrieval-without-invented-identity", "status": "out_of_version"}]
+    },
+    {
+      "id": "broad-international", "title": "Couverture internationale large",
+      "description": "V1 limite le catalogue au public délibérément pris en charge.", "kind": "product", "status": "out_of_version",
+      "evidence": [{"kind": "document", "ref": "docs/products/saymyname/DECISIONS.md#presidents-first-for-the-localized-public-demo", "status": "out_of_version"}]
+    }
+  ],
+  "dependencies": [
+    {
+      "id": "content-rights", "title": "Provenance factuelle et droits d’image",
+      "description": "Chaque profil public doit être vérifié, licencié, versionné et retirable.", "status": "partial",
+      "required_for": ["public-challenge", "anonymous-to-saved-learning"],
+      "evidence": [{"kind": "document", "ref": "docs/products/saymyname/DECISIONS.md#public-cultural-challenges-are-product", "status": "proven"}]
+    },
+    {
+      "id": "csv-design-approval", "title": "Décision Benjamin + PO sur le parcours CSV",
+      "description": "Sept choix d’autorisation, publication, invitation, doublon, rétention, champs et workspace restent à approuver.", "status": "decision_required",
+      "required_for": ["administered-csv", "admin-csv-to-first-quiz"],
+      "evidence": [{"kind": "bead", "ref": "af-u8id.3.1#decisions-requiring-benjamin-po-approval", "status": "decision_required"}]
+    },
+    {
+      "id": "release-observability", "title": "Preuve E2E et exploitation production-autonome",
+      "description": "Santé, reprise, sauvegarde, rollback et preuves parcours doivent être opérables sans bricolage fondateur.", "status": "unverified",
+      "required_for": ["anonymous-to-saved-learning", "personal-return-loop", "admin-csv-to-first-quiz"],
+      "evidence": [{"kind": "document", "ref": "docs/OPERATIONS.md", "status": "partial"}]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "release-v1-contract", "title": "V1 is a versioned production-autonomous release contract",
+      "source_ref": "docs/products/saymyname/DECISIONS.md#2026-09-15-v1-is-a-versioned-production-autonomous-release-contract",
+      "status": "accepted", "risk": "high", "revision": 1,
+      "capability_refs": ["public-challenge", "personal-home", "learning-loop", "private-selection", "administered-csv"],
+      "dependency_refs": ["content-rights", "release-observability"], "options": []
+    },
+    {
+      "id": "af-u8id.3-design", "title": "Approuver ou amender les sept recommandations du parcours CSV administré",
+      "source_ref": "af-u8id.3.1#decisions-requiring-benjamin-po-approval",
+      "status": "decision_required", "risk": "high", "revision": 1,
+      "capability_refs": ["administered-csv", "private-selection", "learning-loop"],
+      "dependency_refs": ["csv-design-approval"],
+      "options": [
+        {"id": "approve-recommendations", "label": "Approuver les sept recommandations"},
+        {"id": "amend-recommendations", "label": "Amender une ou plusieurs recommandations"},
+        {"id": "keep-blocked", "label": "Maintenir ce sous-graphe en attente"}
+      ]
+    }
+  ],
+  "criteria": [
+    {
+      "id": "personal-return", "title": "Retour personnel utile",
+      "description": "Un apprenant revient, voit une révision due, pratique sa sélection et retrouve une progression persistée.",
+      "status": "partial", "capability_refs": ["personal-home", "learning-loop"], "journey_refs": ["personal-return-loop"],
+      "evidence": [{"kind": "test", "ref": "Personal home deterministic tests", "status": "partial"}]
+    },
+    {
+      "id": "public-first-session", "title": "Première session publique cohérente",
+      "description": "Un visiteur France essaie les présidents, comprend le produit et conserve explicitement sa progression après inscription.",
+      "status": "partial", "capability_refs": ["public-challenge", "account-access"], "journey_refs": ["anonymous-to-saved-learning"],
+      "evidence": [{"kind": "test", "ref": "Anonymous public challenge browser proof", "status": "unverified"}]
+    },
+    {
+      "id": "private-learning", "title": "Choix et apprentissage privés",
+      "description": "Aucune organisation ne voit les sélections, erreurs, réponses, planning ou progression individuelle.",
+      "status": "unverified", "capability_refs": ["private-selection", "learning-loop"], "journey_refs": ["personal-return-loop", "admin-csv-to-first-quiz"],
+      "evidence": [{"kind": "test", "ref": "Cross-role privacy integration proof", "status": "unverified"}]
+    },
+    {
+      "id": "admin-csv-first-quiz", "title": "CSV administré jusqu’au premier quiz réel",
+      "description": "Import idempotent en brouillon, publication et invitation séparées, sélection privée et première réponse persistée.",
+      "status": "decision_required", "capability_refs": ["administered-csv", "private-selection", "learning-loop"], "journey_refs": ["admin-csv-to-first-quiz"],
+      "evidence": [{"kind": "bead", "ref": "af-u8id.3.1", "status": "decision_required"}]
+    },
+    {
+      "id": "release-e2e", "title": "Preuves V1 de bout en bout",
+      "description": "Chaque parcours inclus possède une preuve UI/API/données/tests fraîche et reproductible.",
+      "status": "unverified", "capability_refs": ["public-challenge", "personal-home", "learning-loop", "administered-csv"], "journey_refs": ["anonymous-to-saved-learning", "personal-return-loop", "admin-csv-to-first-quiz"],
+      "evidence": [{"kind": "test", "ref": "V1 release evidence matrix", "status": "absent"}]
+    },
+    {
+      "id": "production-autonomy", "title": "Maturité production-autonome",
+      "description": "La release expose santé, incidents, reprise, rollback et action humaine exacte sans faux succès.",
+      "status": "partial", "capability_refs": ["account-access", "personal-home"], "journey_refs": ["anonymous-to-saved-learning", "personal-return-loop"],
+      "evidence": [{"kind": "document", "ref": "docs/OPERATIONS.md", "status": "partial"}]
+    }
+  ],
+  "work_graph": [
+    {
+      "id": "v1-foundation", "work_ref": "af-u8id.2", "title": "Fondation espace personnel et groupes livrée",
+      "kind": "product", "state": "delivered", "order": 10, "dedupe_key": "v1-foundation",
+      "criterion_refs": ["personal-return", "private-learning"], "depends_on": [], "independence": "proven", "blocker": null
+    },
+    {
+      "id": "admin-csv", "work_ref": "af-u8id.3", "title": "CSV administré jusqu’au premier quiz",
+      "kind": "product", "state": "blocked", "order": 20, "dedupe_key": "admin-csv-first-quiz",
+      "criterion_refs": ["admin-csv-first-quiz", "private-learning"], "depends_on": ["v1-foundation"], "independence": "proven",
+      "blocker": {
+        "kind": "decision", "decision_id": "af-u8id.3-design",
+        "cause": "Les sept recommandations de confidentialité, autorisation et navigation attendent Benjamin + PO.",
+        "owner": "Benjamin", "action": "Choisir Accepter, Refuser, une option ou Autre dans le point d’intervention af-u8id.3."
+      }
+    },
+    {
+      "id": "personal-csv", "work_ref": "af-ccvr", "title": "Importer des personnes dans l’espace personnel",
+      "kind": "product", "state": "candidate", "order": 30, "dedupe_key": "personal-csv-private-targets",
+      "criterion_refs": ["personal-return", "private-learning", "release-e2e"], "depends_on": ["v1-foundation"],
+      "independence": "proven", "blocker": null
+    },
+    {
+      "id": "factory-campaign", "work_ref": "af-cm1l", "title": "Campagne Mayor continue",
+      "kind": "factory", "state": "delivered", "order": 100, "dedupe_key": "factory-mayor-campaign",
+      "criterion_refs": ["production-autonomy"], "depends_on": [], "independence": "proven", "blocker": null
+    }
+  ],
+  "factory_improvements": [
+    {
+      "id": "shared-human-state", "work_ref": "af-hho5", "title": "État humain partagé",
+      "description": "Santé, activité, reprise et blocage projetés depuis un seul contrat.", "kind": "factory", "status": "proven",
+      "evidence": [{"kind": "github", "ref": "Factory PRs 44, 45 and 46", "status": "proven"}]
+    },
+    {
+      "id": "continuous-mayor-campaign", "work_ref": "af-cm1l", "title": "Campagne Mayor déterministe",
+      "description": "Sentinelle zéro modèle; le Mayor reste seul orchestrateur.", "kind": "factory", "status": "proven",
+      "evidence": [{"kind": "test", "ref": "tests/mayor-campaign-test.py", "status": "proven"}]
+    },
+    {
+      "id": "versioned-release-control", "work_ref": "af-hho5.4", "title": "Contrat de release versionné",
+      "description": "Vérité Git, automate de gel, décisions directes et sélection graph-aware.", "kind": "factory", "status": "partial",
+      "evidence": [{"kind": "test", "ref": "tests/product-release-test.py", "status": "partial"}]
+    }
+  ]
+}
