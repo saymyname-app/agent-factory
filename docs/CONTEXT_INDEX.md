@@ -6,13 +6,14 @@ Use progressive disclosure. Do not read every document by default.
 |---|---|
 | Factory invariants / agent bootstrap | `../AGENTS.md` |
 | Codex desktop, CLI, remote/mobile protocol and authority | `OPERATOR_BRIDGE.md` |
-| Human Factory cockpit, product roadmap/decisions/board, agent drill-down, token usage, Mayor channel | `FACTORY_WORKSPACE_AGENTS.md`, `OPERATIONS.md` |
+| Human Factory cockpit, product roadmap/decisions/board, state/resume contract, agent drill-down, token usage, Mayor channel | `FACTORY_WORKSPACE_AGENTS.md`, `OPERATIONS.md`, `decisions/ADR-0012-human-state-and-resume-contract.md` |
 | Integrated product PO, project/context graphs, reusable cockpit products | `PRODUCT_COCKPIT_TEMPLATE.md`, `config/product-cockpit.schema.json` |
 | SayMyName product vision, priorities, unknowns | `products/saymyname/PRODUCT_CONTEXT.md` |
 | SayMyName durable product decisions | `products/saymyname/DECISIONS.md` |
 | SayMyName reviewed views/features and UI/UX governance | `products/saymyname/PROJECT_INVENTORY.md`, `products/saymyname/DESIGN_GOVERNANCE.md` |
 | SayMyName PO cockpit instructions and Codex config | `products/saymyname/PO_WORKSPACE_AGENTS.md`, `products/saymyname/CODEX_PROJECT.toml` |
 | Ordered product candidates and Mayor materialization | `PRODUCT_QUEUE.md` |
+| Versioned product release contract, states, and graph-aware campaign selection | `OPERATIONS.md` (Versioned product release contract), `config/product-release.schema.json`, `decisions/ADR-0014-versioned-product-release-contract.md` |
 | Durable target architecture | `TARGET_ARCHITECTURE.md` |
 | Current migration state, cutover and rollback | `MIGRATION.md` |
 | Install/start/stop/doctor/backup/restore/recovery | `OPERATIONS.md` |
@@ -20,7 +21,7 @@ Use progressive disclosure. Do not read every document by default.
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0011-decision-workspaces-and-product-reference.md` |
+| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0014-versioned-product-release-contract.md` |
 
 ## Authority order
 

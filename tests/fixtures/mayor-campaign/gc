@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+state=${CAMPAIGN_STATE_FILE:?}
+log=${CAMPAIGN_CALL_LOG:?}
+printf '%q ' "$@" >>"$log"
+printf '\n' >>"$log"
+
+if [[ ${1:-} == bd && ${2:-} == show && ${4:-} == --json ]]; then
+  case ${3:-} in
+    af-1vr4)
+      [[ ${CAMPAIGN_COORDINATION_FAIL:-0} != 1 ]] || { printf 'coordination store unavailable\n' >&2; exit 42; }
+      jq -c '[.]' "$state"
+      ;;
+    af-cm1l) printf '[{"id":"af-cm1l","status":"closed","metadata":{"gc.queue_state":"materialized","gc.queue_goal":"none","gc.materialized_bead":"af-hho5"}}]\n' ;;
+    af-hho5) printf '[{"id":"af-hho5","status":"in_progress","metadata":{}}]\n' ;;
+    *) exit 64 ;;
+  esac
+  exit 0
+fi
+
+if [[ ${1:-} == bd && ${2:-} == update && ${3:-} == af-1vr4 ]]; then
+  [[ ${CAMPAIGN_COORDINATION_FAIL:-0} != 1 ]] || { printf 'coordination store unavailable\n' >&2; exit 42; }
+  [[ -z ${CAMPAIGN_UPDATE_DELAY:-} ]] || sleep "$CAMPAIGN_UPDATE_DELAY"
+  shift 3
+  tmp="${state}.tmp"
+  cp "$state" "$tmp"
+  while [[ $# -gt 0 ]]; do
+    [[ $1 == --set-metadata && $# -ge 2 ]] || exit 64
+    pair=$2
+    key=${pair%%=*}
+    value=${pair#*=}
+    jq --arg key "$key" --arg value "$value" '.metadata[$key] = $value' "$tmp" >"${tmp}.next"
+    mv "${tmp}.next" "$tmp"
+    shift 2
+  done
+  mv "$tmp" "$state"
+  printf '{}\n'
+  exit 0
+fi
+
+if [[ ${1:-} == mail && ${2:-} == send ]]; then
+  [[ ${CAMPAIGN_MAIL_FAIL:-0} != 1 ]] || { printf 'mail unavailable\n' >&2; exit 42; }
+  [[ ${3:-} == mayor ]] || { printf 'unknown mail recipient\n' >&2; exit 64; }
+  sender=
+  shift 3
+  while [[ $# -gt 0 ]]; do
+    if [[ $1 == --from && $# -ge 2 ]]; then
+      sender=$2
+      break
+    fi
+    shift
+  done
+  [[ $sender == mayor ]] || { printf 'unknown configured sender\n' >&2; exit 64; }
+  printf '{"ok":true,"id":"af-mail"}\n'
+  exit 0
+fi
+
+printf 'unsupported gc fixture command\n' >&2
+exit 64

@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Validate and project a versioned product release without mutating Git."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+from product_release import (  # noqa: E402
+    ReleaseContractError,
+    load_release_contract,
+    project_release,
+    start_next_version,
+    transition_release,
+)
+
+
+DEFAULT_RELEASE = ROOT / "config" / "releases" / "saymyname-v1.json"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="product-release")
+    parser.add_argument("command", choices=("validate", "project", "transition", "start-next"))
+    parser.add_argument("path", nargs="?", type=Path, default=DEFAULT_RELEASE)
+    parser.add_argument("--to", choices=("draft", "approved", "executing", "frozen"))
+    parser.add_argument("--version")
+    args = parser.parse_args()
+    try:
+        value = load_release_contract(args.path)
+        if args.command == "validate":
+            output = {"valid": True, "contract": value["contract"], "product": value["product"], "version": value["version"]}
+        elif args.command == "project":
+            output = project_release(value)
+        elif args.command == "transition":
+            if not args.to:
+                parser.error("transition exige --to")
+            output = {"transition": transition_release(value, args.to), "persisted": False}
+        else:
+            if not args.version:
+                parser.error("start-next exige --version")
+            output = {"transition": start_next_version(value, args.version), "persisted": False}
+        print(json.dumps(output, ensure_ascii=False, separators=(",", ":")))
+        return 0
+    except ReleaseContractError as exc:
+        print(f"product-release: ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
