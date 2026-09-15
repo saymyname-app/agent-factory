@@ -21,21 +21,39 @@ trap cleanup EXIT
 output=$("$COCKPIT" start)
 [[ $output == STARTED:* ]]
 curl --fail --silent "$URL/health" | jq -e '.ok == true and .model_calls == 0' >/dev/null
-curl --fail --silent "$URL/" | grep -Fq 'Comprendre l’usine en un coup d’œil'
-curl --fail --silent "$URL/" | grep -Fq 'AIDE À LA DÉCISION'
-curl --fail --silent "$URL/" | grep -Fq 'Parler au Mayor'
-curl --fail --silent "$URL/" | grep -Fq 'Tokens, du détail au global'
-curl --fail --silent "$URL/" | grep -Fq 'Mon PO GPT'
-curl --fail --silent "$URL/" | grep -Fq 'Comprendre le produit'
-curl --fail --silent "$URL/" | grep -Fq 'Documentation produit validée par l’humain'
-curl --fail --silent "$URL/" | grep -Fq 'Objectifs, marché et validation'
-curl --fail --silent "$URL/" | grep -Fq 'Décisions séparées par niveau'
-curl --fail --silent "$URL/" | grep -Fq 'Du choix humain à la preuve'
+page=$(curl --fail --silent "$URL/")
+grep -Fq 'Comprendre l’usine en un coup d’œil' <<<"$page"
+grep -Fq 'SANTÉ DE L’INFRASTRUCTURE' <<<"$page"
+grep -Fq 'ACTIVITÉ DE LIVRAISON' <<<"$page"
+grep -Fq 'REPRISE' <<<"$page"
+grep -Fq 'id="campaign-block-global"' <<<"$page"
+grep -Fq 'id="campaign-block-global" class="campaign-block-global hidden" data-view="today" type="button" role="alert" aria-live="assertive"' <<<"$page"
+grep -Fq 'id="campaign-block-today"' <<<"$page"
+grep -Fq 'Propriétaire de la reprise' <<<"$page"
+grep -Fq 'Candidats produit' <<<"$page"
+grep -Fq 'AIDE À LA DÉCISION' <<<"$page"
+grep -Fq 'Parler au Mayor' <<<"$page"
+grep -Fq 'Tokens, du détail au global' <<<"$page"
+grep -Fq 'Mon PO GPT' <<<"$page"
+grep -Fq 'Comprendre le produit' <<<"$page"
+grep -Fq 'Documentation produit validée par l’humain' <<<"$page"
+grep -Fq 'Objectifs, marché et validation' <<<"$page"
+grep -Fq 'Décisions séparées par niveau' <<<"$page"
+grep -Fq 'Du choix humain à la preuve' <<<"$page"
 curl --fail --silent "$URL/styles.css" | grep -Fq -- '--green:'
-curl --fail --silent "$URL/app.js" | grep -Fq 'textContent'
+script=$(curl --fail --silent "$URL/app.js")
+grep -Fq 'textContent' <<<"$script"
+grep -Fq 'renderOperationalState' <<<"$script"
+grep -Fq 'renderCampaignState' <<<"$script"
+grep -Fq 'campaign-block-global-cause' <<<"$script"
+grep -Fq 'campaign-block-today-action' <<<"$script"
+if grep -Fq 'si cet état persiste' <<<"$script"; then
+  printf 'cockpit still contains the misleading persistence advice\n' >&2
+  exit 1
+fi
 [[ $(curl --silent --output /dev/null --write-out '%{http_code}' "$URL/../AGENTS.md") == 404 ]]
 curl --fail --silent "$URL/api/snapshot" | jq -e \
-  '.schema_version == 1 and .zero_token_contract.model_calls == 0 and (.agents | length) >= 1 and (.product_work | type) == "array" and (.product_memory.roadmap | length) >= 1 and (.product_memory.business.objectives | length) >= 1 and (.product_memory.product_reference | length) >= 1 and (.product_memory.view_inventory | length) >= 1 and .product_memory.inventory_freshness.model_calls == 0 and (.product_memory.delivery_workflow | length) >= 1 and (.decision_aids | length) >= 1 and (.today.general_decisions | type) == "array" and (.today.effective_blockers | type) == "array"' >/dev/null
+  '.schema_version == 2 and .human_state.contract == "agent-factory-human-state/v1" and (.health.state == "available" or .health.state == "degraded" or .health.state == "unavailable") and (.activity.state == "working" or .activity.state == "waiting_automatic" or .activity.state == "waiting_action" or .activity.state == "stopped") and (.resume.automatic | type) == "boolean" and (.resume.owner == "system" or .resume.owner == "Mayor" or .resume.owner == "Benjamin" or .resume.owner == "none") and (.campaign.enabled | type) == "boolean" and (.campaign.blocked | type) == "boolean" and .zero_token_contract.model_calls == 0 and (.agents | length) >= 1 and (.product_work | type) == "array" and ([.queue[] | select(.state != "eligible" and .state != "paused")] | length) == 0 and ([.product_work[] | select((.state == "eligible") and (.id == "af-s1rv" or .id == "af-hxji"))] | length) == 0 and (.product_memory.roadmap | length) >= 1 and (.product_memory.business.objectives | length) >= 1 and (.product_memory.product_reference | length) >= 1 and (.product_memory.view_inventory | length) >= 1 and .product_memory.inventory_freshness.model_calls == 0 and (.product_memory.delivery_workflow | length) >= 1 and (.decision_aids | length) >= 1 and (.today.general_decisions | type) == "array" and (.today.effective_blockers | type) == "array"' >/dev/null
 curl --fail --silent "$URL/api/tokens" | jq -e \
   '.monitoring.model_calls == 0 and .monitoring.tokens == 0 and (.factory.sessions | type) == "array"' >/dev/null
 curl --fail --silent "$URL/api/po/conversation" | jq -e \

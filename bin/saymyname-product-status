@@ -3,8 +3,11 @@
 set -Eeuo pipefail
 
 PROGRAM_NAME="saymyname-product-status"
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 GC_BIN="${GC_BIN:-gc}"
 GH_BIN="${GH_BIN:-gh}"
+QUEUE_BIN="${SAYMYNAME_QUEUE_BIN:-$SCRIPT_DIR/saymyname-product-queue}"
+HUMAN_STATE_BIN="${FACTORY_HUMAN_STATE_BIN:-$SCRIPT_DIR/factory-human-state}"
 PRODUCT_ROOT_BEAD="${SAYMYNAME_PRODUCT_ROOT_BEAD:-af-1vr4}"
 
 log() {
@@ -18,10 +21,11 @@ die() {
 
 usage() {
   cat <<'USAGE'
-Usage: saymyname-product-status
+Usage: saymyname-product-status [--json]
 
-Print the current SayMyName product outcome, active agent when applicable,
-last GitHub-verified delivery, approved next outcome, and pending human decision.
+Print the canonical human Factory state, current SayMyName delivery, exact last
+delivery evidence, next eligible candidate, resume semantics, and any blocking
+Benjamin decision. --json emits the versioned machine contract.
 USAGE
 }
 
@@ -86,6 +90,19 @@ metadata_string() {
   printf '%s\n' "$value"
 }
 
+metadata_optional() {
+  local issue=$1
+  local key=$2
+  local value
+  value=$(jq -er --arg key "$key" '
+    (.metadata[$key] // "") |
+    if type == "string" then . else error("not a string") end
+  ' <<<"$issue") || die "Optional metadata $key is invalid."
+  [[ $value != *$'\n'* && $value != *$'\r'* ]] \
+    || die "Optional metadata $key must be a single line."
+  printf '%s\n' "$value"
+}
+
 show_issue() {
   local destination=$1
   local issue_id=$2
@@ -98,11 +115,11 @@ show_issue() {
 
 phase_for_step() {
   case "$1" in
-    *.load-context|*.workspace-setup) printf 'preparing\n' ;;
-    *.preflight-tests) printf 'pre-flight validation\n' ;;
-    *.implement) printf 'implementation\n' ;;
-    *.self-review) printf 'validation\n' ;;
-    *.commit-and-push) printf 'delivery\n' ;;
+    *.load-context|*.workspace-setup) printf 'Préparation\n' ;;
+    *.preflight-tests) printf 'Validation préalable\n' ;;
+    *.implement) printf 'Réalisation\n' ;;
+    *.self-review) printf 'Vérification\n' ;;
+    *.commit-and-push) printf 'Livraison\n' ;;
     *) die "Active workflow phase is unsupported: $1" ;;
   esac
 }
@@ -122,22 +139,80 @@ derive_active_context() {
   local current_issue=$1
   local current_id=$2
   local current_status
-  local workflows_response workflow convoy_id convoy_response convoy
+  local workflows_response workflow convoy_id convoy_response convoy cause resume_mode work_outcome
   local -a matching_workflows=()
-  local workflow_id session_name city_response steps_response current_step step_ref
+  local workflow_id session_name steps_response current_step step_ref live_count active_count
+  local direct_session_id direct_session_name direct_matches direct_agent
 
   CURRENT_OUTCOME=$(required_string "$current_issue" '.title' "Current outcome title")
   current_status=$(required_string "$current_issue" '.status' "Current outcome status")
+  resume_mode=$(metadata_optional "$current_issue" "gc.resume_mode")
+  work_outcome=$(metadata_optional "$current_issue" "gc.work_outcome")
 
   case "$current_status" in
     open)
-      CURRENT_PHASE="queued"
+      CURRENT_STATE="materialized"
+      CURRENT_PHASE="Matérialisé, aucun agent produit actif"
+      CURRENT_AGENT="none"
+      return
+      ;;
+    blocked)
+      cause=$(metadata_optional "$current_issue" "gc.blocked_reason")
+      [[ -n $cause ]] || cause=$(metadata_optional "$current_issue" "gc.blocker")
+      [[ -n $cause ]] || die "Blocked current outcome $current_id has no explicit cause."
+      CURRENT_STATE="blocked"
+      CURRENT_CAUSE=$cause
+      CURRENT_PHASE=$cause
       CURRENT_AGENT="none"
       return
       ;;
     in_progress) ;;
     *) die "Current outcome $current_id has inconsistent status: $current_status" ;;
   esac
+
+  if [[ $work_outcome == shipped || $work_outcome == pass ]]; then
+    CURRENT_STATE="finalizing"
+    CURRENT_PHASE="Réalisation terminée · revue, fusion ou clôture par le Mayor"
+    CURRENT_AGENT="none"
+    return
+  fi
+
+  # A deliberately direct `gc sling --no-formula` assignment has no workflow
+  # root. Prefer its stable Gas City session ID; accept an exact unique session
+  # name only when no ID was recorded. Never infer work from an unrelated session.
+  direct_session_id=$(metadata_optional "$current_issue" "gc.session_id")
+  direct_session_name=$(metadata_optional "$current_issue" "gc.session_name")
+  if [[ -n $direct_session_id || -n $direct_session_name ]]; then
+    if [[ -n $direct_session_id ]]; then
+      direct_matches=$(jq --arg id "$direct_session_id" \
+        '[.agents[]? | select((.id // "") == $id)]' <<<"$CITY_RESPONSE")
+      if [[ $(jq 'length' <<<"$direct_matches") -eq 0 && -n $direct_session_name ]]; then
+        direct_matches=$(jq --arg name "$direct_session_name" \
+          '[.agents[]? | select(((.id // "") == "") and ((.qualified_name // "") == $name or (.name // "") == $name or (.alias // "") == $name))]' \
+          <<<"$CITY_RESPONSE")
+      fi
+    else
+      direct_matches=$(jq --arg name "$direct_session_name" \
+        '[.agents[]? | select((.qualified_name // "") == $name or (.name // "") == $name or (.alias // "") == $name)]' \
+        <<<"$CITY_RESPONSE")
+    fi
+    [[ $(jq 'length' <<<"$direct_matches") -le 1 ]] \
+      || die "Direct assignment session for $current_id is ambiguous in Gas City."
+    if [[ $(jq 'length' <<<"$direct_matches") -eq 1 ]] && jq -e \
+      '.[0] | ((.running // false) == true or (.state // "") == "active")' \
+      >/dev/null <<<"$direct_matches"; then
+      direct_agent=$(jq -er '.[0] | .qualified_name // .name // .alias // .id' <<<"$direct_matches") \
+        || die "Direct assignment session has no stable display identity."
+      CURRENT_STATE="active"
+      CURRENT_PHASE="Réalisation"
+      CURRENT_AGENT=$direct_agent
+    else
+      CURRENT_STATE="materialized"
+      CURRENT_PHASE="Résultat affecté directement, aucun agent produit actif"
+      CURRENT_AGENT="none"
+    fi
+    return
+  fi
 
   capture_json workflows_response "Beads workflow inventory" \
     gc_json bd list --status=in_progress --json
@@ -159,7 +234,8 @@ derive_active_context() {
     <<<"$workflows_response")
 
   if [[ ${#matching_workflows[@]} -eq 0 ]]; then
-    CURRENT_PHASE="in progress"
+    CURRENT_STATE="materialized"
+    CURRENT_PHASE="Résultat matérialisé, aucun agent produit actif"
     CURRENT_AGENT="none"
     return
   fi
@@ -170,30 +246,49 @@ derive_active_context() {
   workflow_id=$(required_string "$workflow" '.id' "Active workflow ID")
   session_name=$(metadata_string "$workflow" "gc.session_name" "Active workflow session")
 
-  capture_json city_response "Gas City status" gc_json status --json
-  jq -e '.ok == true and .health.usable == true and (.agents | type == "array")' \
-    >/dev/null <<<"$city_response" \
-    || die "Gas City status is unusable or lacks its agent inventory."
-  [[ $(jq --arg session "$session_name" \
-    '[.agents[] | select(.qualified_name == $session and .running == true)] | length' \
-    <<<"$city_response") -eq 1 ]] \
-    || die "Workflow session $session_name is not uniquely running in Gas City."
-
   capture_json steps_response "Beads workflow steps" \
     gc_json bd list --assignee="$session_name" --json
   jq -e 'type == "array"' >/dev/null <<<"$steps_response" \
     || die "Beads workflow step inventory is not an array."
+  active_count=$(jq --arg root "$workflow_id" --arg session "$session_name" '
+    [.[] | select(
+      (.status == "open" or .status == "in_progress") and
+      .metadata["gc.root_bead_id"] == $root and
+      .metadata["gc.session_name"] == $session)] | length
+  ' <<<"$steps_response")
+  if [[ $active_count -eq 0 ]]; then
+    CURRENT_STATE="finalizing"
+    CURRENT_PHASE="Réalisation terminée · revue, fusion ou clôture par le Mayor"
+    CURRENT_AGENT="none"
+    return
+  fi
+  [[ $active_count -eq 1 ]] \
+    || die "Active workflow does not expose exactly one current step."
   current_step=$(jq -ce --arg root "$workflow_id" --arg session "$session_name" '
     [.[] | select(
       (.status == "open" or .status == "in_progress") and
       .metadata["gc.root_bead_id"] == $root and
-      .metadata["gc.session_name"] == $session)] |
-    if length == 1 then .[0] else error("expected one current step") end
-  ' <<<"$steps_response") || die "Active workflow does not expose exactly one current step."
+      .metadata["gc.session_name"] == $session)][0]
+  ' <<<"$steps_response")
   step_ref=$(metadata_string "$current_step" "gc.step_ref" "Active workflow step")
 
   CURRENT_PHASE=$(phase_for_step "$step_ref")
-  CURRENT_AGENT=$session_name
+  if [[ $resume_mode == automatic_dependency ]]; then
+    CURRENT_STATE="waiting_dependency"
+    CURRENT_AGENT="none"
+    return
+  fi
+  live_count=$(jq --arg session "$session_name" \
+    '[.agents[]? | select(.qualified_name == $session and .running == true)] | length' \
+    <<<"$CITY_RESPONSE")
+  [[ $live_count -le 1 ]] || die "Workflow session $session_name is not unique in Gas City."
+  if [[ $live_count -eq 1 ]]; then
+    CURRENT_STATE="active"
+    CURRENT_AGENT=$session_name
+  else
+    CURRENT_STATE="materialized"
+    CURRENT_AGENT="none"
+  fi
 }
 
 check_summary() {
@@ -265,10 +360,13 @@ derive_delivery() {
 }
 
 main() {
-  local parent_response parent current_id current_issue last_id delivered_issue
+  local parent_response parent current_id current_issue last_id delivered_issue format=text
+  local queue_response next_pointer candidate_matches next_candidate resume_mode resume_condition
+  local current_json observed state_json needs_json degraded campaign_metadata
 
   case "${1:-}" in
     "") ;;
+    --json) format=json ;;
     -h|--help|help)
       usage
       return 0
@@ -278,11 +376,29 @@ main() {
       return 2
       ;;
   esac
-  [[ $# -eq 0 ]] || return 2
+  [[ $# -le 1 ]] || return 2
 
   require_command jq
   require_command "$GC_BIN"
   require_command "$GH_BIN"
+  [[ -x $QUEUE_BIN ]] || die "Product queue projection is unavailable: $QUEUE_BIN"
+  [[ -x $HUMAN_STATE_BIN ]] || die "Human state projector is unavailable: $HUMAN_STATE_BIN"
+
+  capture_json CITY_RESPONSE "Gas City status" gc_json status --json
+  jq -e '
+    (.ok | type == "boolean") and (.running | type == "boolean") and
+    (.health.usable | type == "boolean") and
+    ((.health.degraded // false) | type == "boolean") and
+    (.agents | type == "array")
+  ' >/dev/null <<<"$CITY_RESPONSE" \
+    || die "Gas City health contract is incomplete."
+
+  capture_json queue_response "SayMyName product queue" "$QUEUE_BIN" list --json
+  jq -e 'type == "array" and all(.[];
+    .contract == "agent-factory-human-state/v1" and
+    (.state == "eligible" or .state == "paused") and
+    .technical_status == "deferred")' >/dev/null <<<"$queue_response" \
+    || die "Product queue did not return the canonical human candidate contract."
 
   capture_json parent_response "Beads product coordination" \
     gc_json bd show "$PRODUCT_ROOT_BEAD" --json
@@ -292,28 +408,123 @@ main() {
 
   current_id=$(jq -er '.metadata["gc.current_jit"] // "none" |
     select(type == "string")' <<<"$parent") || die "Current outcome pointer is invalid."
+  CURRENT_CAUSE=""
   if [[ -z $current_id || $current_id == none ]]; then
     CURRENT_OUTCOME="none"
-    CURRENT_PHASE="idle"
+    CURRENT_STATE="none"
+    CURRENT_PHASE="Aucune livraison produit n'est active"
     CURRENT_AGENT="none"
+    current_json=null
   else
     show_issue current_issue "$current_id" "Current outcome $current_id"
     derive_active_context "$current_issue" "$current_id"
+    current_json=$(jq -cn \
+      --arg id "$current_id" --arg title "$CURRENT_OUTCOME" \
+      --arg state "$CURRENT_STATE" --arg phase "$CURRENT_PHASE" \
+      --arg agent "$CURRENT_AGENT" --arg cause "$CURRENT_CAUSE" '{
+        id: $id, title: $title, state: $state, phase: $phase,
+        agent: (if $agent == "none" then null else $agent end),
+        cause: (if $cause == "" then null else $cause end)
+      }')
   fi
 
   last_id=$(metadata_string "$parent" "gc.last_delivered" "Last delivered pointer")
   show_issue delivered_issue "$last_id" "Last delivered outcome $last_id"
   derive_delivery "$delivered_issue" "$last_id"
 
-  NEXT_OUTCOME=$(metadata_string "$parent" "gc.next_outcome" "Next approved outcome")
+  next_pointer=$(metadata_string "$parent" "gc.next_outcome" "Next approved outcome")
   NEEDS_BENJAMIN=$(metadata_string "$parent" "gc.needs_benjamin" "Human decision")
+  needs_json=$(jq -cn --arg value "$NEEDS_BENJAMIN" \
+    'if ($value | ascii_downcase) == "none" then null else $value end')
 
+  # The queue is authoritative for eligibility.  The coordination prose must
+  # still identify exactly the same first active product candidate.
+  next_candidate=$(jq -c '[.[] | select(.state == "eligible" and .goal != "none")][0] // null' \
+    <<<"$queue_response")
+  if [[ $next_candidate == null ]]; then
+    candidate_matches=$(jq --arg pointer "$next_pointer" '
+      [.[] as $item | select($item.goal != "none" and
+        ($pointer == $item.id or $pointer == $item.title or
+         ($pointer | contains($item.id)) or ($pointer | contains($item.title))))] | length
+    ' <<<"$queue_response")
+    if [[ $candidate_matches -eq 0 && ${next_pointer,,} != none ]]; then
+      die "Coordination NEXT does not identify any active product candidate."
+    fi
+  else
+    candidate_matches=$(jq --arg pointer "$next_pointer" --arg id "$(jq -r '.id' <<<"$next_candidate")" \
+      --arg title "$(jq -r '.title' <<<"$next_candidate")" '
+      [.[] | select(.goal != "none" and
+        (.id == $id or .title == $title) and
+        ($pointer == .id or $pointer == .title or
+         ($pointer | contains($id)) or ($pointer | contains($title))))] | length
+    ' <<<"$queue_response")
+    [[ $candidate_matches -eq 1 ]] \
+      || die "Coordination NEXT disagrees with the first eligible product candidate."
+  fi
+
+  resume_mode=$(metadata_optional "$parent" "gc.resume_mode")
+  resume_condition=$(metadata_optional "$parent" "gc.resume_condition")
+  [[ -n $resume_mode ]] || resume_mode=manual
+  if [[ $CURRENT_STATE == waiting_dependency ]]; then
+    resume_mode=automatic_dependency
+    [[ -n $resume_condition ]] || resume_condition=$(metadata_optional "$current_issue" "gc.resume_condition")
+    [[ -n $resume_condition ]] || die "Automatic dependency wait has no explicit condition."
+  fi
+  degraded=$(jq -r '.health.degraded // false' <<<"$CITY_RESPONSE")
+  campaign_metadata=$(jq -c '.metadata' <<<"$parent")
+  observed=$(jq -cn \
+    --argjson running "$(jq '.ok and .running' <<<"$CITY_RESPONSE")" \
+    --argjson usable "$(jq '.health.usable' <<<"$CITY_RESPONSE")" \
+    --argjson degraded "$degraded" \
+    --argjson current "$current_json" \
+    --argjson queue "$queue_response" \
+    --argjson needs "$needs_json" \
+    --arg mode "$resume_mode" --arg condition "$resume_condition" \
+    --arg cause "$CURRENT_CAUSE" --argjson campaign_metadata "$campaign_metadata" '{
+      infrastructure: {running: $running, usable: $usable, degraded: $degraded},
+      sources_consistent: true,
+      current: $current,
+      queue: $queue,
+      needs_benjamin: $needs,
+      blockers: (if $cause == "" then [] else [{cause: $cause}] end),
+      resume_policy: {mode: $mode, condition: (if $condition == "" then null else $condition end)},
+      campaign_metadata: $campaign_metadata
+    }')
+  if ! state_json=$("$HUMAN_STATE_BIN" state <<<"$observed"); then
+    die "Canonical human state projection failed closed."
+  fi
+  state_json=$(jq -c \
+    --arg product SAYMYNAME --arg last_title "$LAST_OUTCOME" \
+    --arg last_evidence "$LAST_DELIVERY" \
+    '. + {product: $product, last_delivery: {title: $last_title, evidence: $last_evidence}, model_calls: 0}' \
+    <<<"$state_json")
+
+  if [[ $format == json ]]; then
+    printf '%s\n' "$state_json"
+    return
+  fi
   printf 'SAYMYNAME\n'
-  printf 'CURRENT: %s — %s\n' "$CURRENT_OUTCOME" "$CURRENT_PHASE"
+  printf 'SANTÉ: %s — %s\n' "$(jq -r '.health.label' <<<"$state_json")" "$(jq -r '.health.detail' <<<"$state_json")"
+  printf 'ACTIVITÉ: %s — %s\n' "$(jq -r '.activity.label' <<<"$state_json")" "$(jq -r '.activity.detail' <<<"$state_json")"
+  printf 'CURRENT: %s — %s\n' "$CURRENT_OUTCOME" "$(jq -r '.result.state_label' <<<"$state_json")"
   printf 'CURRENT AGENT: %s\n' "$CURRENT_AGENT"
   printf 'LAST DELIVERED: %s — %s\n' "$LAST_OUTCOME" "$LAST_DELIVERY"
-  printf 'NEXT: %s\n' "$NEXT_OUTCOME"
-  printf 'NEEDS BENJAMIN: %s\n' "$NEEDS_BENJAMIN"
+  if [[ $next_candidate == null ]]; then
+    printf 'NEXT: none — aucun candidat produit éligible\n'
+  else
+    printf 'NEXT: %s — %s — %s\n' \
+      "$(jq -r '.id' <<<"$next_candidate")" "$(jq -r '.title' <<<"$next_candidate")" \
+      "$(jq -r '.state_label' <<<"$next_candidate")"
+  fi
+  printf 'REPRISE AUTOMATIQUE: %s\n' "$(jq -r 'if .resume.automatic then "oui" else "non" end' <<<"$state_json")"
+  printf 'CAMPAGNE: %s\n' "$(jq -r '.campaign.state_label' <<<"$state_json")"
+  if [[ $(jq -r '.campaign.blocked' <<<"$state_json") == true ]]; then
+    printf 'BLOCAGE CAMPAGNE: %s\n' "$(jq -r '.campaign.cause' <<<"$state_json")"
+  fi
+  printf 'CONDITION: %s\n' "$(jq -r '.resume.condition // "aucune"' <<<"$state_json")"
+  printf 'RESPONSABLE: %s\n' "$(jq -r '.resume.owner_label' <<<"$state_json")"
+  printf 'ACTION UTILE: %s\n' "$(jq -r '.resume.action' <<<"$state_json")"
+  printf 'NEEDS BENJAMIN: %s\n' "$(jq -r '.needs_benjamin // "none — aucune décision bloquante"' <<<"$state_json")"
 }
 
 if [[ ${SAYMYNAME_PRODUCT_STATUS_SOURCE_ONLY:-0} != 1 ]]; then

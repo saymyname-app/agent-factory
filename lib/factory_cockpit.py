@@ -23,6 +23,13 @@ from urllib.error import URLError
 from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import urlopen
 
+from factory_state import (
+    CONTRACT as HUMAN_STATE_CONTRACT,
+    StateContractError,
+    candidate_record_lifecycle,
+    project_human_state,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_ROOT = ROOT / "ui" / "factory-cockpit"
@@ -261,6 +268,89 @@ def _metadata(bead: dict[str, Any] | None) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _direct_assigned_session(
+    current: dict[str, Any] | None,
+    sessions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Resolve one direct --no-formula assignment without session inference."""
+    if not current:
+        return None
+    metadata = _metadata(current)
+    session_id = _meaningful(metadata.get("gc.session_id"))
+    session_name = _meaningful(metadata.get("gc.session_name"))
+    if not session_id and not session_name:
+        return None
+    if session_id:
+        matches = [item for item in sessions if str(item.get("id") or "") == session_id]
+        if len(matches) > 1:
+            raise SourceError("L'affectation directe correspond à plusieurs identifiants de session Gas City.")
+        if not matches and session_name and not any(item.get("id") for item in sessions):
+            matches = [
+                item for item in sessions
+                if session_name in {
+                    str(item.get("qualified_name") or ""),
+                    str(item.get("name") or ""),
+                    str(item.get("alias") or ""),
+                }
+            ]
+    else:
+        matches = [
+            item for item in sessions
+            if session_name in {
+                str(item.get("qualified_name") or ""),
+                str(item.get("name") or ""),
+                str(item.get("alias") or ""),
+            }
+        ]
+    if len(matches) > 1:
+        raise SourceError("L'affectation directe correspond à plusieurs sessions Gas City.")
+    if not matches:
+        return None
+    session = matches[0]
+    if session.get("state") == "active" or session.get("running") is True:
+        return session
+    return None
+
+
+def _workflow_assigned_session(
+    workflow_summary: dict[str, Any],
+    sessions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Resolve an active workflow assignee without inferring a worker session."""
+    if not _meaningful(workflow_summary.get("active_step")):
+        return None
+    assignees = [
+        value
+        for item in workflow_summary.get("assignees", [])
+        if (value := _meaningful(item))
+    ]
+    if not assignees:
+        return None
+    if len(assignees) > 1:
+        raise SourceError(
+            "L'étape active du workflow désigne plusieurs agents Gas City."
+        )
+    assignee = assignees[0]
+    matches = [
+        session
+        for session in sessions
+        if (session.get("state") == "active" or session.get("running") is True)
+        and assignee in {
+            str(session.get("id") or ""),
+            str(session.get("qualified_name") or ""),
+            str(session.get("name") or ""),
+            str(session.get("alias") or ""),
+        }
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise SourceError(
+            f"L'agent workflow {assignee} correspond à plusieurs sessions Gas City."
+        )
+    return matches[0]
+
+
 def _meaningful(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -405,20 +495,18 @@ def _product_bead(
         return None
 
     status = str(bead.get("status", "unknown"))
-    queue_state = metadata.get("gc.queue_state")
     is_current = bead.get("id") in current_id if isinstance(current_id, set) else bead.get("id") == current_id
-    if is_current:
-        state = "current"
-        state_label = "Objectif actuel"
-    elif status == "blocked":
+    if status == "blocked":
         state = "blocked"
         state_label = "Bloqué"
-    elif "product-queue" in labels and queue_state == "paused":
-        state = "paused"
-        state_label = "En pause"
+    elif is_current:
+        state = "current"
+        state_label = "Objectif actuel"
     elif "product-queue" in labels:
-        state = "queued"
-        state_label = "Dans la file"
+        try:
+            state, state_label = candidate_record_lifecycle(bead)
+        except StateContractError as exc:
+            raise SourceError(f"Candidat {bead.get('id') or '?'} incohérent: {exc}") from exc
     elif status == "closed":
         state = "delivered"
         state_label = "Livré"
@@ -455,6 +543,8 @@ def _product_bead(
         "updated_at": bead.get("closed_at") or bead.get("updated_at") or bead.get("created_at"),
         "pr": metadata.get("gc.pr_number") or metadata.get("gc.pr"),
         "ci": metadata.get("gc.postmerge_ci_conclusion") or metadata.get("gc.ci_conclusion"),
+        "cause": metadata.get("gc.blocked_reason") or metadata.get("gc.blocker"),
+        "execution_id": metadata.get("gc.materialized_bead"),
     }
 
 
@@ -464,10 +554,12 @@ def _sort_product_work(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "active": 1,
         "blocked": 2,
         "ready": 3,
-        "queued": 4,
+        "eligible": 4,
         "paused": 5,
+        "materialized": 6,
         "planned": 6,
         "delivered": 7,
+        "cancelled": 8,
     }
     def time_key(item: dict[str, Any]) -> float:
         value = item.get("updated_at")
@@ -491,73 +583,92 @@ def _sort_product_work(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _decision_aids(
-    factory_ok: bool,
-    warnings: list[str],
-    focus: dict[str, Any],
-    queue: list[dict[str, Any]],
-    product_work: list[dict[str, Any]],
-    needs_benjamin: str | None,
+    human_state: dict[str, Any],
     last_delivery: dict[str, Any],
 ) -> list[dict[str, str]]:
     advice: list[dict[str, str]] = []
-    if not factory_ok:
+    health = human_state["health"]
+    activity = human_state["activity"]
+    resume = human_state["resume"]
+    next_candidate = human_state.get("next_candidate")
+    if health["state"] == "unavailable":
         advice.append({
             "severity": "critical",
-            "title": "L'usine ne répond pas correctement",
-            "explanation": "Le contrôleur ou sa santé n'est pas confirmé.",
-            "action": "Demander au Mayor de diagnostiquer la Factory en lecture seule.",
-            "prompt": "Diagnostique pourquoi la Factory n'est pas utilisable, sans rien modifier, et donne-moi la prochaine action sûre.",
+            "title": health["label"],
+            "explanation": health["detail"],
+            "action": resume["action"],
+            "prompt": resume.get("prompt") or "Diagnostique la Factory en lecture seule.",
         })
-    if warnings:
+    elif health["state"] == "degraded":
         advice.append({
             "severity": "warning",
-            "title": "La visibilité est partielle",
-            "explanation": "Au moins une source locale n'a pas répondu; le résumé peut être incomplet.",
-            "action": "Consulter les détails techniques ou demander un diagnostic au Mayor.",
-            "prompt": "Explique les sources du cockpit actuellement indisponibles et ce qu'il faut vérifier, sans rien modifier.",
+            "title": health["label"],
+            "explanation": health["detail"],
+            "action": resume["action"],
+            "prompt": resume.get("prompt") or "Explique les sources incohérentes sans rien modifier.",
         })
-    if needs_benjamin:
+    elif resume["mode"] == "blocking_decision":
         advice.append({
             "severity": "decision",
             "title": "Une décision de Benjamin est nécessaire",
-            "explanation": needs_benjamin,
-            "action": "Répondre au point de décision avant de poursuivre la livraison.",
-            "prompt": f"Explique-moi simplement cette décision, recommande une option et ses conséquences : {needs_benjamin}",
+            "explanation": activity["detail"],
+            "action": resume["action"],
+            "prompt": resume["prompt"],
         })
-    blocked = [item for item in product_work if item.get("state") == "blocked"]
-    if blocked:
+    elif resume["mode"] == "blocked":
         advice.append({
             "severity": "warning",
-            "title": f"{len(blocked)} travail produit bloqué",
-            "explanation": "Un blocage empêche au moins un résultat produit d'avancer.",
-            "action": "Demander au Mayor la cause et la plus petite action de déblocage.",
-            "prompt": "Quels travaux produit sont bloqués, pourquoi, et quelle est la plus petite action nécessaire de ma part ?",
+            "title": "Un résultat est bloqué",
+            "explanation": activity["detail"],
+            "action": resume["action"],
+            "prompt": resume["prompt"],
         })
-    if focus.get("state") == "waiting" and focus.get("steps", {}).get("complete"):
+    elif resume["mode"] == "campaign_blocked":
+        advice.append({
+            "severity": "critical",
+            "title": "BLOQUÉ · la campagne ne peut pas poursuivre",
+            "explanation": human_state["campaign"]["cause"],
+            "action": resume["action"],
+            "prompt": resume.get("prompt") or "Explique le blocage de campagne sans lancer d'autre résultat.",
+        })
+    elif resume["mode"] == "mayor_finalization":
         advice.append({
             "severity": "warning",
             "title": "Le code est terminé mais la livraison reste à finaliser",
-            "explanation": "Les étapes de réalisation sont finies; le Mayor doit encore publier, vérifier ou clôturer.",
-            "action": "Demander au Mayor de confirmer le blocage avant toute relance.",
-            "prompt": f"Où en est la finalisation de « {focus.get('title')} » ? Explique le blocage éventuel et termine seulement les étapes déjà autorisées.",
+            "explanation": activity["detail"],
+            "action": resume["action"],
+            "prompt": resume["prompt"],
         })
-    if focus.get("state") == "idle" and not queue:
+    elif resume["mode"] == "materialized_without_agent":
+        advice.append({
+            "severity": "warning",
+            "title": "Un résultat matérialisé n'a pas d'agent actif",
+            "explanation": activity["detail"],
+            "action": resume["action"],
+            "prompt": resume["prompt"],
+        })
+    elif resume["mode"] == "manual" and next_candidate:
         advice.append({
             "severity": "info",
-            "title": "La production produit n'a plus de prochain résultat",
-            "explanation": "L'infrastructure peut rester allumée, mais aucun nouveau travail produit ne démarrera.",
-            "action": "Ajouter ou choisir un prochain résultat produit.",
-            "prompt": "Propose-moi les trois prochains résultats produit les plus utiles, sans créer de Bead ni lancer de travail.",
+            "title": "Un candidat est éligible, mais non programmé",
+            "explanation": (
+                f"{next_candidate['id']} · « {next_candidate['title']} ». "
+                "La reprise n'est pas automatique car le mode campagne n'est pas actif."
+            ),
+            "action": resume["action"],
+            "prompt": resume["prompt"],
         })
-    eligible_queue = [item for item in queue if item.get("state") != "paused"]
-    if focus.get("state") == "idle" and eligible_queue:
-        next_title = eligible_queue[0].get("title", "le premier candidat")
+    elif resume["mode"] == "all_paused":
         advice.append({
-            "severity": "info",
-            "title": "Un prochain résultat est prêt dans la file",
-            "explanation": f"L'usine est au repos; le prochain candidat éligible est « {next_title} ».",
-            "action": "Aucune action immédiate; demander au Mayor seulement si cet état persiste.",
-            "prompt": f"L'usine est au repos alors que « {next_title} » est premier candidat. Est-ce une transition normale ou faut-il agir ? Ne lance rien sans autorité explicite.",
+            "severity": "info", "title": "Tous les candidats sont en pause",
+            "explanation": activity["detail"], "action": resume["action"],
+            "prompt": resume["prompt"],
+        })
+    elif resume["mode"] == "no_candidate":
+        advice.append({
+            "severity": "info", "title": "Aucun prochain résultat n'est défini",
+            "explanation": activity["detail"], "action": resume["action"],
+            "prompt": "Propose trois prochains résultats utiles sans créer de Bead ni lancer de travail.",
         })
     if last_delivery.get("ci") and last_delivery.get("ci") != "success":
         advice.append({
@@ -570,9 +681,9 @@ def _decision_aids(
     if not advice:
         advice.append({
             "severity": "ok",
-            "title": "Tout est cohérent pour l'instant",
-            "explanation": "L'usine répond, aucune décision ni anomalie visible ne demande ton intervention.",
-            "action": "Aucune action nécessaire.",
+            "title": activity["label"],
+            "explanation": activity["detail"],
+            "action": resume["action"],
             "prompt": "Donne-moi un résumé très court de la santé actuelle de l'usine et du prochain jalon.",
         })
     return advice
@@ -1499,9 +1610,14 @@ class FactoryCollector:
             for bead in beads:
                 if not isinstance(bead, dict):
                     continue
-                item = _product_bead(
-                    bead, store, current_product_ids, self.product_config["name"]
-                )
+                try:
+                    item = _product_bead(
+                        bead, store, current_product_ids, self.product_config["name"]
+                    )
+                except SourceError as exc:
+                    sources[f"product_work:{store}"] = False
+                    warnings.append(str(exc))
+                    continue
                 if item and item.get("id"):
                     product_by_id[str(item["id"])] = item
         product_work = _sort_product_work(list(product_by_id.values()))
@@ -1535,13 +1651,54 @@ class FactoryCollector:
             if session.get("alias") != "mayor"
             and "control-dispatcher" not in str(session.get("template", ""))
         ]
+        workflow_session = None
+        try:
+            workflow_session = _workflow_assigned_session(
+                workflow_summary, worker_sessions
+            )
+        except SourceError as exc:
+            sources["workflow_session"] = False
+            warnings.append(str(exc))
+        direct_session = None
+        try:
+            direct_session = _direct_assigned_session(current, worker_sessions)
+        except SourceError as exc:
+            sources["current"] = False
+            warnings.append(str(exc))
+        assigned_worker_session = workflow_session
+        if direct_session:
+            if assigned_worker_session and direct_session is not workflow_session:
+                sources["current"] = False
+                warnings.append(
+                    "Le résultat courant revendique deux sessions distinctes via le workflow et l'affectation directe."
+                )
+                assigned_worker_session = None
+            elif not assigned_worker_session:
+                assigned_worker_session = direct_session
         work_done = current_meta.get("gc.work_outcome") in {"shipped", "pass"}
         if current:
-            if work_done or workflow_summary["complete"]:
+            current_status = str(current.get("status", ""))
+            blocked_cause = _meaningful(
+                current_meta.get("gc.blocked_reason") or current_meta.get("gc.blocker")
+            )
+            resume_mode = _meaningful(current_meta.get("gc.resume_mode"))
+            resume_condition = _meaningful(current_meta.get("gc.resume_condition"))
+            if current_status == "blocked":
+                focus_state = "attention"
+                focus_label = "Bloqué"
+                phase = blocked_cause or "Cause de blocage non renseignée"
+                if not blocked_cause:
+                    sources["current"] = False
+                    warnings.append("Le résultat courant est bloqué sans cause explicite.")
+            elif work_done or workflow_summary["complete"]:
                 focus_state = "waiting"
                 focus_label = "À finaliser par le Mayor"
                 phase = "Implémentation terminée · publication et clôture en attente"
-            elif workflow_summary["active_step"] or worker_sessions:
+            elif resume_mode == "automatic_dependency" and resume_condition:
+                focus_state = "waiting"
+                focus_label = "Attend une dépendance automatique"
+                phase = resume_condition
+            elif assigned_worker_session and (workflow_summary["active_step"] or direct_session):
                 focus_state = "working"
                 focus_label = "En cours"
                 phase = _human_phase(workflow_summary["active_step"]) or _human_phase(
@@ -1560,7 +1717,7 @@ class FactoryCollector:
             current_meta.get("gc.last_heartbeat_at"),
             (current or {}).get("updated_at"),
             (mayor_session or {}).get("last_active"),
-        )
+        ) if current else None
         focus = {
             "product": self.product_config["name"],
             "id": (display_current or {}).get("id"),
@@ -1572,7 +1729,12 @@ class FactoryCollector:
             "started_at": (display_current or {}).get("started_at") or (display_current or {}).get("created_at"),
             "last_signal_at": heartbeat,
             "steps": workflow_summary,
-            "agent": workflow_summary["assignees"][0] if workflow_summary["assignees"] else None,
+            "agent": (
+                assigned_worker_session.get("qualified_name")
+                or assigned_worker_session.get("alias")
+                or assigned_worker_session.get("name")
+                if assigned_worker_session else None
+            ),
         }
 
         agent_cards = [{
@@ -1594,11 +1756,7 @@ class FactoryCollector:
             is_product_worker = (
                 not maintenance
                 and current is not None
-                and (
-                    session.get("alias") in workflow_summary["assignees"]
-                    or session.get("name") in workflow_summary["assignees"]
-                    or session.get("state") == "active"
-                )
+                and session is assigned_worker_session
             )
             objective = (
                 focus["title"]
@@ -1643,22 +1801,6 @@ class FactoryCollector:
 
         city = base["factory"] if isinstance(base["factory"], dict) else {}
         health = city.get("health", {}) if isinstance(city.get("health"), dict) else {}
-        factory_ok = bool(city.get("running") and health.get("usable"))
-        if not factory_ok:
-            factory_state = "down"
-            factory_label = "Usine indisponible"
-        elif warnings:
-            factory_state = "attention"
-            factory_label = "Usine active · visibilité partielle"
-        elif focus_state == "working":
-            factory_state = "working"
-            factory_label = "Usine en production"
-        elif focus_state in {"queued", "waiting"}:
-            factory_state = "waiting"
-            factory_label = "Usine active · action en attente"
-        else:
-            factory_state = "idle"
-            factory_label = "Usine active · au repos"
 
         needs_benjamin = _meaningful(coordination_meta.get("gc.needs_benjamin"))
         product_memory = self.product_memory.collect()
@@ -1677,25 +1819,126 @@ class FactoryCollector:
             or last_meta.get("gc.ci_conclusion"),
             "closed_at": (last or {}).get("closed_at") or (last or {}).get("updated_at"),
         }
-        queue = base["queue"] if isinstance(base["queue"], list) else []
-        queue = [
-            {
-                **item,
-                "raw_title": item.get("title"),
-                "title": _human_product_title(item.get("title")),
-                "kind": "factory_campaign" if item.get("goal") in {None, "none"} else "product_candidate",
+        raw_queue = base["queue"] if isinstance(base["queue"], list) else []
+        queue = []
+        try:
+            if not all(
+                isinstance(item, dict)
+                and item.get("contract") == HUMAN_STATE_CONTRACT
+                and item.get("technical_status") == "deferred"
+                for item in raw_queue
+            ):
+                raise StateContractError("La file n'utilise pas le contrat humain canonique.")
+            queue = [
+                {
+                    **item,
+                    "raw_title": item.get("title"),
+                }
+                for item in raw_queue
+            ]
+        except StateContractError as exc:
+            sources["queue"] = False
+            warnings.append(str(exc))
+
+        resume_mode = _meaningful(coordination_meta.get("gc.resume_mode")) or "manual"
+        resume_condition = _meaningful(coordination_meta.get("gc.resume_condition"))
+        if resume_mode not in {"manual", "automatic_dependency", "automatic_campaign"}:
+            sources["coordination"] = False
+            warnings.append(f"Politique de reprise inconnue: {resume_mode}.")
+            resume_mode = "manual"
+        if resume_mode != "manual" and not resume_condition:
+            sources["coordination"] = False
+            warnings.append("Une reprise automatique est déclarée sans condition explicite.")
+            resume_mode = "manual"
+
+        human_current = None
+        if current:
+            current_status = str(current.get("status", ""))
+            blocked_cause = _meaningful(
+                current_meta.get("gc.blocked_reason") or current_meta.get("gc.blocker")
+            )
+            if current_status == "blocked":
+                stage = "blocked"
+            elif work_done or workflow_summary["complete"]:
+                stage = "finalizing"
+            elif _meaningful(current_meta.get("gc.resume_mode")) == "automatic_dependency":
+                stage = "waiting_dependency"
+                resume_mode = "automatic_dependency"
+                resume_condition = _meaningful(current_meta.get("gc.resume_condition"))
+                if not resume_condition:
+                    sources["current"] = False
+                    warnings.append("La dépendance automatique n'expose pas sa condition.")
+            elif focus_state == "working":
+                stage = "active"
+            else:
+                stage = "materialized"
+            human_current = {
+                "id": current.get("id"),
+                "title": (display_current or {}).get("title"),
+                "state": stage,
+                "phase": phase,
+                "agent": focus.get("agent"),
+                "cause": blocked_cause,
             }
-            for item in queue if isinstance(item, dict)
+
+        blocked_work = [
+            {"cause": item.get("cause")}
+            for item in product_work
+            if item.get("state") == "blocked" and item.get("cause")
         ]
-        decision_aids = _decision_aids(
-            factory_ok,
-            warnings,
-            focus,
-            queue,
-            product_work,
-            needs_benjamin,
-            last_delivery,
-        )
+        observations = {
+            "infrastructure": {
+                "running": bool(city.get("ok") and city.get("running")),
+                "usable": bool(health.get("usable")),
+                "degraded": bool(health.get("degraded")),
+            },
+            "sources_consistent": bool(sources) and all(sources.values()),
+            "current": human_current,
+            "queue": queue,
+            "needs_benjamin": needs_benjamin,
+            "blockers": blocked_work,
+            "resume_policy": {"mode": resume_mode, "condition": resume_condition},
+            "campaign_metadata": coordination_meta,
+        }
+        try:
+            human_state = project_human_state(observations)
+        except StateContractError as exc:
+            warnings.append(f"Contrat d'état humain incohérent: {exc}")
+            sources["human_state"] = False
+            human_state = project_human_state({
+                "infrastructure": observations["infrastructure"],
+                "sources_consistent": False,
+                "current": None,
+                "queue": [],
+                "needs_benjamin": None,
+                "blockers": [],
+                "resume_policy": {"mode": "manual"},
+                "campaign_metadata": {},
+            })
+
+        factory_state = {
+            "available": "idle", "degraded": "attention", "unavailable": "down",
+        }[human_state["health"]["state"]]
+        factory_label = human_state["health"]["label"]
+        focus_state = {
+            "none": "idle", "materialized": "queued", "active": "working",
+            "blocked": "attention", "delivered": "idle", "cancelled": "idle",
+        }.get(human_state["result"]["state"], "waiting")
+        if human_state["result"].get("stage") in {"finalizing", "waiting_dependency"}:
+            focus_state = "waiting"
+        focus.update({
+            "title": human_state["result"]["title"],
+            "state": focus_state,
+            "state_label": human_state["result"]["state_label"],
+            "phase": human_state["result"]["phase"],
+        })
+        agent_cards[0].update({
+            "objective": focus["title"],
+            "state": focus["state"],
+            "state_label": focus["state_label"],
+            "phase": focus["phase"],
+        })
+        decision_aids = _decision_aids(human_state, last_delivery)
 
         infrastructure = [
             {
@@ -1708,15 +1951,21 @@ class FactoryCollector:
         ]
 
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "factory": {
                 "state": factory_state,
                 "label": factory_label,
                 "running": bool(city.get("running")),
                 "usable": bool(health.get("usable")),
+                "degraded": bool(health.get("degraded")),
                 "city": city.get("city_name", "agent-factory"),
             },
+            "human_state": human_state,
+            "health": human_state["health"],
+            "activity": human_state["activity"],
+            "resume": human_state["resume"],
+            "campaign": human_state["campaign"],
             "focus": focus,
             "agents": agent_cards,
             "queue": queue,

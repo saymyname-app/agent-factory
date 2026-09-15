@@ -19,6 +19,7 @@ h1,h2,h3,p{overflow-wrap:anywhere}
 .brand-mark{display:grid;place-items:center;width:2.25rem;height:2.25rem;border-radius:.7rem;color:#092016;background:var(--green);font-weight:900}
 .header-actions{gap:.55rem}
 .app-nav{position:sticky;z-index:25;top:4.5rem;display:flex;gap:.45rem;padding:.65rem max(1rem,calc((100vw - 1280px)/2));overflow:auto;border-bottom:1px solid var(--line);background:rgba(15,20,19,.94);backdrop-filter:blur(14px)}
+.campaign-block-global{display:grid;flex:0 0 auto;grid-template-columns:auto minmax(12rem,1fr);gap:.08rem .5rem;align-items:center;border:2px solid var(--red);color:#fff;background:#681d1d;text-align:left}.campaign-block-global:hover{background:#7d2323}.campaign-block-global strong{grid-row:1/3;font-size:.82rem;letter-spacing:.08em}.campaign-block-global span{font-size:.76rem;font-weight:800}.campaign-block-global small{color:#ffd5d2;font-size:.65rem}
 .nav-group{position:relative;display:flex;flex:0 0 auto;gap:.35rem;padding:.95rem .55rem 0 0;border-right:1px solid var(--line)}
 .nav-group:last-child{border-right:0}
 .nav-group-title{position:absolute;top:0;left:.1rem;color:#66756f;font-size:.57rem;font-weight:850;letter-spacing:.13em;text-transform:uppercase}
@@ -40,6 +41,8 @@ h1,h2,h3,p{overflow-wrap:anywhere}
 .panel{min-width:0;padding:1.15rem;border:1px solid var(--line);border-radius:1rem;background:rgba(21,27,26,.94);box-shadow:0 1rem 3rem rgba(0,0,0,.12)}
 .section-heading,.column-title{justify-content:space-between;gap:1rem}
 .section-heading h2,.column-title h2,.panel h2{margin:0;font-size:1.08rem}
+.state-contract-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem;margin-bottom:1rem}.state-axis h2{font-size:1rem;margin:.28rem 0}.resume-facts{display:grid;grid-template-columns:auto 1fr;gap:.28rem .65rem;margin:.6rem 0;font-size:.75rem}.resume-facts dt{color:var(--muted)}.resume-facts dd{margin:0;font-weight:700}.resume-axis button{margin-top:.55rem}
+.campaign-block-today{display:grid;grid-template-columns:minmax(15rem,1fr) minmax(18rem,1fr);gap:1rem;margin:0 0 1rem;padding:1.15rem;border:2px solid var(--red);border-radius:1rem;background:linear-gradient(110deg,rgba(159,39,39,.34),rgba(65,20,20,.8));box-shadow:0 0 0 .25rem rgba(255,124,116,.08)}.campaign-block-today h2{margin:.15rem 0;color:#fff;font-size:clamp(1.6rem,4vw,2.4rem);letter-spacing:.08em}.campaign-block-today p:not(.eyebrow){margin:.4rem 0 0;color:#ffe2df;line-height:1.45}.campaign-block-today .resume-facts{align-content:center;margin:0}.campaign-block-today .resume-facts dt{color:#ffb7b2}
 .hero-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(18rem,1fr);gap:1rem;margin-bottom:1rem}
 .two-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem}
 .clickable{cursor:pointer;transition:border-color .15s,transform .15s}
@@ -191,7 +194,7 @@ dialog::backdrop{background:rgba(0,0,0,.58)}
 .shell{width:min(100% - 1rem,1280px);padding-top:1rem}
 .header-actions{width:100%;flex-wrap:wrap}
 .view-heading,.section-heading{align-items:flex-start}
-.hero-grid,.two-grid,.decision-columns,.metric-grid{grid-template-columns:1fr}
+.state-contract-grid,.hero-grid,.two-grid,.decision-columns,.metric-grid{grid-template-columns:1fr}
 .facts{grid-template-columns:1fr}
 .roadmap-grid{grid-template-columns:repeat(4,85vw)}
 .work-board{grid-template-columns:repeat(6,80vw)}
@@ -329,4 +332,4 @@ button.reference-card{width:100%;text-align:left}
 .workflow-node.active .workflow-index{color:#0a1529;background:var(--blue)}
 .workflow-live{display:block;margin-top:.7rem;color:var(--blue);font-size:.63rem;font-weight:850;text-transform:uppercase}
 @media(max-width:1000px){.decision-domain-grid{grid-template-columns:1fr 1fr}.decision-domain.project{grid-column:1/-1}.reference-layout{grid-template-columns:1fr}.reference-index{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));max-height:none}}
-@media(max-width:800px){.po-layout{grid-template-columns:1fr}.po-console{min-height:32rem}.context-graph{justify-content:start}.mobile-access,.design-contract,.decision-switcher-heading,.preference-panel{align-items:flex-start;flex-direction:column}.capability-graph{grid-template-columns:repeat(2,minmax(0,1fr))}.po-compose-actions{align-items:stretch;flex-direction:column}.decision-domain-grid,.decision-domain-grid.primary-decisions,.roadmap-evidence{grid-template-columns:1fr}.decision-domain.project{grid-column:auto}.nav-group{padding-top:.9rem}.workflow-node{flex-basis:11rem}.decision-switch{flex-basis:78vw}.queue-add form{grid-template-columns:1fr}.reference-index{grid-template-columns:1fr}.nav-more-items{position:fixed;top:auto;right:.5rem;bottom:.5rem;left:.5rem;width:auto}.confirmation-dialog{width:calc(100vw - 1rem)}}
+@media(max-width:800px){.po-layout{grid-template-columns:1fr}.po-console{min-height:32rem}.context-graph{justify-content:start}.mobile-access,.design-contract,.decision-switcher-heading,.preference-panel{align-items:flex-start;flex-direction:column}.capability-graph{grid-template-columns:repeat(2,minmax(0,1fr))}.po-compose-actions{align-items:stretch;flex-direction:column}.decision-domain-grid,.decision-domain-grid.primary-decisions,.roadmap-evidence,.campaign-block-today{grid-template-columns:1fr}.decision-domain.project{grid-column:auto}.nav-group{padding-top:.9rem}.workflow-node{flex-basis:11rem}.decision-switch{flex-basis:78vw}.queue-add form{grid-template-columns:1fr}.reference-index{grid-template-columns:1fr}.nav-more-items{position:fixed;top:auto;right:.5rem;bottom:.5rem;left:.5rem;width:auto}.confirmation-dialog{width:calc(100vw - 1rem)}}
