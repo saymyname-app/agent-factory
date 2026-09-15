@@ -23,6 +23,9 @@ accept_startup_dialogs = true
 base = "builtin:claude"
 command = "/home/benja/.local/bin/claude"
 accept_startup_dialogs = true
+# Unattended agent, nobody at the terminal: never let it pause waiting for a
+# human answer. Make the reasonable call and record it instead of stalling.
+args_append = ["--disallowedTools", "AskUserQuestion"]
 
 [providers.claude.env]
 CLAUDE_CONFIG_DIR = "/home/benja/.claude"
@@ -42,6 +45,7 @@ effort = "high"
 base = "builtin:claude"
 command = "/home/benja/.local/bin/claude"
 accept_startup_dialogs = true
+args_append = ["--disallowedTools", "AskUserQuestion"]
 
 [providers.claude-standard.env]
 CLAUDE_CONFIG_DIR = "/home/benja/.claude"
@@ -63,6 +67,7 @@ effort = "medium"
 base = "builtin:claude"
 command = "/home/benja/.local/bin/claude"
 accept_startup_dialogs = true
+args_append = ["--disallowedTools", "AskUserQuestion"]
 
 [providers.claude-cheap.env]
 CLAUDE_CONFIG_DIR = "/home/benja/.claude"
