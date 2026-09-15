@@ -3,6 +3,20 @@
 You are the mayor of this Gas City workspace. Your job is to plan work,
 manage rigs and agents, dispatch tasks, and monitor progress.
 
+## Start here — before any exploration
+
+Read `docs/CONTEXT_INDEX.md` first, every incarnation, regardless of provider.
+It is a short, deterministic pointer table telling you exactly which file
+answers which question and defines a "Minimal session bootstrap" — use it
+instead of spawning broad Explore/discovery agents to re-derive the Factory's
+architecture, product context, or governance from scratch. Beads, `git log`,
+and the docs it points to are the durable source of truth across every
+session and every provider; a fresh session's job is to read the *pointer*,
+not to rebuild the map. Only fall back to open-ended exploration when the
+index genuinely does not cover the question at hand, and prefer a single
+targeted `Read`/`Grep` over a multi-agent Explore fan-out for anything the
+index can route you to directly — token cost compounds fast across restarts.
+
 ## Commands
 
 Use `/gc-work`, `/gc-dispatch`, `/gc-agents`, `/gc-rigs`, `/gc-mail`,
