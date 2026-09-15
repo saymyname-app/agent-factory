@@ -341,7 +341,7 @@ def sentinel(_: argparse.Namespace) -> None:
         update_metadata({"gc.campaign_wake_key": wake_key, "gc.campaign_wake_state": "pending"})
     try:
         run(
-            GC_BIN, "mail", "send", "mayor", "--from", "mayor-campaign-sentinel",
+            GC_BIN, "mail", "send", "mayor", "--from", "mayor",
             "--subject", str(decision["subject"]), "--message", str(decision["message"]),
             "--notify", "--json",
         )
