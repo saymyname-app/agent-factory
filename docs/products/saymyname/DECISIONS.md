@@ -298,6 +298,23 @@ spend money, reboot the host or perform irreversible/destructive actions.
 Agent database inspection is read-only. Flyway owns schema migrations; persistent
 migration execution needs explicit authorization and tests use isolated databases.
 
+### 2026-09-14 — Visibilité et conservation des groupes
+
+Primary classification: **Product**. Design validation: **Benjamin + PO
+satisfied**.
+
+A person enters a participative group only through an invitation or a revocable,
+expiring link or QR code. Before admission, member profiles are invisible. After
+admission, a member sees only the minimal profile information required by the
+group and by memorization that the group authorizes. The organizer may revoke
+access, and every member has an explicit action to leave the group.
+
+Retaining a personal profile beyond the event requires separate consent. The
+navigation starts in the personal space, continues through groups and then
+create or join, and always offers an explicit return to the personal space. This
+contract does not change the universal participative-group model or any already
+accepted presets.
+
 ### 2026-09-14 — Code-first design governance
 
 The versioned product code and its reusable tokens, components and interaction
@@ -520,7 +537,30 @@ refusable. If withdrawal ever becomes negotiable, this decision must be reopened
 
 ### Enterprise
 
-No open enterprise decision is currently recorded.
+- **Responsable et canal du premier pilote** — Choisir si l’administration de l’ancienne école, l’association étudiante ou un autre sponsor porte le recrutement et la diffusion.
+- **Première cohorte de testeurs** — Définir le premier vivier nominatif, sa taille cible, les critères et la manière d’inviter les testeurs consentants.
+- **Contrat de réussite du pilote** — Fixer durée et seuils de succès avant l’observation afin de ne pas redéfinir le résultat après coup.
+- **Premier acheteur et test de prix** — Identifier le premier profil acheteur et le premier entretien, test d’offre ou de volonté de payer; le pilote gratuit ne répond pas seul à cette question.
+- **Point de contrôle marque et nom** — Décider à quel niveau de preuve conserver ou faire évoluer le nom et le positionnement SayMyName.
+
+### Product
+
+- **Premier connecteur externe** — Choisir Google, Microsoft, les contacts natifs ou une autre source uniquement selon les frictions observées et la faisabilité fournisseur.
+
+### Project
+
+- **Architecture des vues produit** — Valider l’inventaire complet des vues et l’ordre de conception puis livraison des parcours manquants.
+- **Socle du workflow design** — Confirmer une gouvernance design-system code-first et le seuil à partir duquel un prototype Figma devient utile.
+- **Environnement pilote et boucle de retours** — Choisir l’URL ou environnement pilote, le canal de retour, le responsable support et le chemin d’incident avant le recrutement.
+
+## Superseded
+
+### 2026-09-14 — Open Product question: Visibilité et conservation des groupes
+
+Superseded by [Visibilité et conservation des
+groupes](#2026-09-14--visibilité-et-conservation-des-groupes). The prior open
+question was: “Décider la visibilité des profils, l’expiration du groupe et les
+données d’apprentissage conservées après la fin d’accès.”
 
 ## Update rule
 

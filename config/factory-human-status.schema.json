@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://saymyname.local/schemas/agent-factory-human-state-v1.json",
+  "title": "Agent Factory human state",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "contract",
+    "schema_version",
+    "health",
+    "activity",
+    "result",
+    "resume",
+    "campaign",
+    "next_candidate",
+    "queue",
+    "needs_benjamin",
+    "blocking_decision"
+  ],
+  "properties": {
+    "contract": {"const": "agent-factory-human-state/v1"},
+    "schema_version": {"const": 1},
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "label", "detail"],
+      "properties": {
+        "state": {"enum": ["available", "degraded", "unavailable"]},
+        "label": {"type": "string", "minLength": 1},
+        "detail": {"type": "string", "minLength": 1}
+      }
+    },
+    "activity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "label", "detail"],
+      "properties": {
+        "state": {"enum": ["working", "waiting_automatic", "waiting_action", "stopped"]},
+        "label": {"type": "string", "minLength": 1},
+        "detail": {"type": "string", "minLength": 1}
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "title", "state", "state_label", "cause", "agent", "phase"],
+      "properties": {
+        "id": {"type": ["string", "null"]},
+        "title": {"type": "string", "minLength": 1},
+        "state": {"enum": ["none", "materialized", "active", "blocked", "delivered", "cancelled"]},
+        "state_label": {"type": "string", "minLength": 1},
+        "cause": {"type": ["string", "null"]},
+        "agent": {"type": ["string", "null"]},
+        "phase": {"type": "string", "minLength": 1}
+      }
+    },
+    "resume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["automatic", "mode", "trigger", "condition", "owner", "owner_label", "action", "prompt", "required"],
+      "properties": {
+        "automatic": {"type": "boolean"},
+        "mode": {
+          "enum": [
+            "fail_closed",
+            "blocking_decision",
+            "blocked",
+            "mayor_finalization",
+            "automatic_dependency",
+            "active_delivery",
+            "materialized_without_agent",
+            "automatic_campaign",
+            "campaign_blocked",
+            "manual",
+            "all_paused",
+            "no_candidate"
+          ]
+        },
+        "trigger": {"type": ["string", "null"]},
+        "condition": {"type": ["string", "null"]},
+        "owner": {"enum": ["system", "Mayor", "Benjamin", "none"]},
+        "owner_label": {"type": "string", "minLength": 1},
+        "action": {"type": "string", "minLength": 1},
+        "prompt": {"type": ["string", "null"]},
+        "required": {"type": "boolean"}
+      }
+    },
+    "campaign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled", "mode", "state", "state_label", "automatic", "candidate_id",
+        "condition", "owner", "owner_label", "action", "blocked", "blocker_kind",
+        "cause", "wake_key", "wake_state", "failure_count", "last_error"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "mode": {"enum": ["inactive", "automatic"]},
+        "state": {"enum": ["inactive", "active", "awaiting_mayor", "running", "blocked", "completed"]},
+        "state_label": {"type": "string", "minLength": 1},
+        "automatic": {"type": "boolean"},
+        "candidate_id": {"type": ["string", "null"]},
+        "condition": {"type": ["string", "null"]},
+        "owner": {"enum": ["system", "Mayor", "Benjamin", "none"]},
+        "owner_label": {"type": "string", "minLength": 1},
+        "action": {"type": "string", "minLength": 1},
+        "blocked": {"type": "boolean"},
+        "blocker_kind": {
+          "type": ["string", "null"],
+          "enum": [null, "decision", "admin", "durable_failure", "limit", "result_blocker", "all_paused", "source_failure", "transient_failure"]
+        },
+        "cause": {"type": ["string", "null"]},
+        "wake_key": {"type": ["string", "null"]},
+        "wake_state": {"enum": ["none", "pending", "sent"]},
+        "failure_count": {"type": "integer", "minimum": 0},
+        "last_error": {"type": ["string", "null"]}
+      }
+    },
+    "next_candidate": {"anyOf": [{"$ref": "#/$defs/candidate"}, {"type": "null"}]},
+    "queue": {"type": "array", "items": {"$ref": "#/$defs/candidate"}},
+    "needs_benjamin": {"type": ["string", "null"]},
+    "blocking_decision": {"type": ["string", "null"]}
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "position", "id", "title", "state", "state_label", "eligible",
+        "reason", "pause_reason", "urgency", "urgency_label", "goal", "kind", "kind_label", "queue_state",
+        "technical_status", "technical_explanation", "contract"
+      ],
+      "properties": {
+        "position": {"type": ["integer", "null"], "minimum": 1},
+        "id": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1},
+        "state": {"enum": ["eligible", "paused"]},
+        "state_label": {"enum": ["Éligible · non programmé", "En pause"]},
+        "eligible": {"type": "boolean"},
+        "reason": {"type": "string", "minLength": 1},
+        "pause_reason": {"type": ["string", "null"]},
+        "urgency": {"enum": ["normal", "urgent", "critical"]},
+        "urgency_label": {"enum": ["Normale", "Urgente", "Critique"]},
+        "goal": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["product_candidate", "factory_campaign"]},
+        "kind_label": {"enum": ["Candidat produit", "Campagne Factory · hors produit"]},
+        "queue_state": {"enum": ["queued", "paused"]},
+        "technical_status": {"const": "deferred"},
+        "technical_explanation": {"type": "string", "minLength": 1},
+        "contract": {"const": "agent-factory-human-state/v1"}
+      }
+    }
+  }
+}

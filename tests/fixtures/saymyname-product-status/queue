@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+[[ ${1:-} == list && ${2:-} == --json ]] || exit 64
+case ${STATUS_SCENARIO:-active} in
+  queue-failure)
+    printf 'fixture queue outage\n' >&2
+    exit 42
+    ;;
+  no-candidate)
+    printf '[]\n'
+    ;;
+  all-paused|campaign-all-paused)
+    cat <<'JSON'
+[{"position":1,"id":"af-next","title":"Evaluate supported ChatGPT plugin/MCP bridge","state":"paused","state_label":"En pause","eligible":false,"reason":"Preuve pilote manquante","pause_reason":"Preuve pilote manquante","urgency":"normal","urgency_label":"Normale","goal":"af-u8id","kind":"product_candidate","queue_state":"paused","technical_status":"deferred","technical_explanation":"Conservé techniquement différé dans Beads.","contract":"agent-factory-human-state/v1"}]
+JSON
+    ;;
+  queue-inconsistent)
+    printf '[{"id":"af-next","title":"Broken","state":"queued"}]\n'
+    ;;
+  *)
+    cat <<'JSON'
+[{"position":1,"id":"af-next","title":"Evaluate supported ChatGPT plugin/MCP bridge","state":"eligible","state_label":"Éligible · non programmé","eligible":true,"reason":"Attend une autorisation EXECUTE et sa matérialisation par le Mayor.","pause_reason":null,"urgency":"normal","urgency_label":"Normale","goal":"af-u8id","kind":"product_candidate","queue_state":"queued","technical_status":"deferred","technical_explanation":"Conservé techniquement différé dans Beads.","contract":"agent-factory-human-state/v1"}]
+JSON
+    ;;
+esac

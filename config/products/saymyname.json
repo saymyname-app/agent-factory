@@ -1,9 +1,10 @@
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "slug": "saymyname",
   "name": "SayMyName",
   "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
   "decisions": "docs/products/saymyname/DECISIONS.md",
+  "release_contract": "config/releases/saymyname-v1.json",
   "project_inventory": "docs/products/saymyname/PROJECT_INVENTORY.md",
   "design_governance": "docs/products/saymyname/DESIGN_GOVERNANCE.md",
   "inventory_watch": [
@@ -22,18 +23,24 @@
     "list",
     "--json"
   ],
+  "queue_mutation_command": [
+    "bin/saymyname-product-queue"
+  ],
+  "decision_blockers": [
+    {"work_ref": "af-hxji", "decision_ref": "Visibilité et conservation des groupes"}
+  ],
   "capabilities": [
-    {"id": "challenge", "title": "Challenges publics", "area": "Acquisition", "roadmap": 1},
-    {"id": "personal", "title": "Espace personnel", "area": "Produit cœur", "roadmap": 1},
-    {"id": "learning", "title": "Moteur d’apprentissage", "area": "Produit cœur", "roadmap": 1},
-    {"id": "groups", "title": "Promotions et événements", "area": "Collaboration", "roadmap": 2},
-    {"id": "organizations", "title": "Organisations administrées", "area": "B2B", "roadmap": 3},
-    {"id": "imports", "title": "Imports de personnes", "area": "Activation", "roadmap": 3},
-    {"id": "editorial", "title": "Publication éditoriale", "area": "Contenu", "roadmap": 5},
-    {"id": "retrieval", "title": "Recherche par indices", "area": "Produit cœur", "roadmap": 6},
-    {"id": "connectors", "title": "Connecteurs externes", "area": "Activation", "roadmap": 7},
-    {"id": "federation", "title": "Organisation fédérée", "area": "Entreprise", "roadmap": 8},
-    {"id": "business", "title": "Prix et lancement", "area": "Entreprise", "roadmap": 9}
+    {"id": "challenge", "title": "Challenges publics", "area": "Acquisition", "roadmap": 1, "source_refs": ["vision", "journeys", "rights", "roadmap"], "decision_refs": ["Public cultural challenges are product", "Presidents first for the localized public demo"]},
+    {"id": "personal", "title": "Espace personnel", "area": "Produit cœur", "roadmap": 1, "source_refs": ["vision", "users", "journeys", "rights"], "decision_refs": ["Personal learning home in V1", "Three sources and learner choice"]},
+    {"id": "learning", "title": "Moteur d’apprentissage", "area": "Produit cœur", "roadmap": 1, "source_refs": ["vision", "acceptance"], "decision_refs": ["Social-memory companion product vision"]},
+    {"id": "groups", "title": "Promotions et événements", "area": "Collaboration", "roadmap": 2, "source_refs": ["users", "journeys", "rights", "roadmap"], "decision_refs": ["Visibilité et conservation des groupes", "Responsable et canal du premier pilote"]},
+    {"id": "organizations", "title": "Organisations administrées", "area": "B2B", "roadmap": 3, "source_refs": ["users", "journeys", "rights"], "decision_refs": ["Three organization archetypes", "Première cohorte de testeurs"]},
+    {"id": "imports", "title": "Imports de personnes", "area": "Activation", "roadmap": 3, "source_refs": ["journeys", "rights", "future"], "decision_refs": ["Import is core, authority remains explicit", "Premier connecteur externe"]},
+    {"id": "editorial", "title": "Publication éditoriale", "area": "Contenu", "roadmap": 5, "source_refs": ["journeys", "rights", "roadmap"], "decision_refs": ["Public cultural challenges are product"]},
+    {"id": "retrieval", "title": "Recherche par indices", "area": "Produit cœur", "roadmap": 6, "source_refs": ["journeys", "rights", "future"], "decision_refs": ["Intelligent retrieval without invented identity"]},
+    {"id": "connectors", "title": "Connecteurs externes", "area": "Activation", "roadmap": 7, "source_refs": ["journeys", "rights", "future"], "decision_refs": ["Premier connecteur externe"]},
+    {"id": "federation", "title": "Organisation fédérée", "area": "Entreprise", "roadmap": 8, "source_refs": ["rights", "future"], "decision_refs": ["Three organization archetypes"]},
+    {"id": "business", "title": "Prix et lancement", "area": "Entreprise", "roadmap": 9, "source_refs": ["roadmap", "acceptance", "future"], "decision_refs": ["Premier acheteur et test de prix", "Contrat de réussite du pilote", "Environnement pilote et boucle de retours"]}
   ],
   "relations": [
     ["challenge", "personal"],
@@ -47,6 +54,13 @@
     ["federation", "organizations"],
     ["learning", "business"]
   ],
+  "journeys": [
+    {"id": "discover-learn", "title": "Découvrir puis apprendre", "detail": "Essayer un challenge public, choisir quoi retenir et revenir dans son espace personnel.", "roadmap": 1, "capability_refs": ["challenge", "personal", "learning"], "source_refs": ["vision", "journeys", "acceptance"], "decision_refs": ["Public cultural challenges are product", "Personal learning home in V1"]},
+    {"id": "group-pilot", "title": "Rejoindre une promotion", "detail": "Entrer par lien ou QR, créer ou vérifier son profil puis choisir des personnes à apprendre en privé.", "roadmap": 2, "capability_refs": ["groups", "personal", "learning"], "source_refs": ["users", "journeys", "rights", "acceptance"], "decision_refs": ["Visibilité et conservation des groupes", "Responsable et canal du premier pilote", "Première cohorte de testeurs"]},
+    {"id": "csv-activation", "title": "Importer jusqu’au premier quiz", "detail": "Mapper, prévisualiser et confirmer un CSV sans confondre profil, compte, invitation ou publication.", "roadmap": 3, "capability_refs": ["organizations", "imports", "personal", "learning"], "source_refs": ["journeys", "rights", "acceptance"], "decision_refs": ["Import is core, authority remains explicit"]},
+    {"id": "publish-challenge", "title": "Publier un challenge sûr", "detail": "Préparer, vérifier les droits, publier et pouvoir retirer une collection versionnée.", "roadmap": 5, "capability_refs": ["editorial", "challenge"], "source_refs": ["journeys", "rights"], "decision_refs": ["Public cultural challenges are product"]},
+    {"id": "find-person", "title": "Retrouver avec des indices", "detail": "Chercher seulement parmi les personnes autorisées, expliquer les correspondances et s’abstenir si nécessaire.", "roadmap": 6, "capability_refs": ["personal", "retrieval"], "source_refs": ["journeys", "rights", "future"], "decision_refs": ["Intelligent retrieval without invented identity"]}
+  ],
   "business_objectives": [
     {"id": "value", "title": "Prouver la valeur utilisateur", "detail": "Un visiteur comprend, essaie puis souhaite continuer à mémoriser.", "roadmap": 1},
     {"id": "pilot", "title": "Réussir un premier pilote", "detail": "Une cohorte réelle s’active, revient et rapporte une utilité en situation.", "roadmap": 2},
@@ -54,13 +68,14 @@
     {"id": "launch", "title": "Rendre le lancement répétable", "detail": "Acquisition, activation, support et mesure fonctionnent sans bricolage fondateur.", "roadmap": 9}
   ],
   "product_reference": [
-    {"id": "vision", "title": "Vision et promesse", "detail": "Pourquoi SayMyName existe, pour qui et quelle amélioration humaine il doit produire.", "status": "validated", "status_label": "Validé", "source": "PRODUCT_STRATEGY.md"},
-    {"id": "users", "title": "Utilisateurs et situations", "detail": "Visiteur, membre, organisateur et administrateur; besoins et contextes d’usage.", "status": "review", "status_label": "À consolider", "source": "PRODUCT_STRATEGY.md · PROJECT_INVENTORY.md"},
-    {"id": "journeys", "title": "Parcours de bout en bout", "detail": "Découvrir, essayer, mémoriser, retrouver puis revenir; parcours individuels et collectifs.", "status": "review", "status_label": "À valider", "source": "PROJECT_INVENTORY.md"},
-    {"id": "domain", "title": "Concepts et droits", "detail": "Personnes, apprentissages, groupes, organisations, invitations, visibilité et accès.", "status": "validated", "status_label": "Documenté", "source": "PRODUCT_CONTEXT.md"},
-    {"id": "views", "title": "Vues et états UI", "detail": "Inventaire des écrans existants, en construction, planifiés et dépendants d’une preuve.", "status": "live", "status_label": "Suivi vivant", "source": "PROJECT_INVENTORY.md"},
-    {"id": "acceptance", "title": "Critères et preuves", "detail": "Ce qu’un humain doit pouvoir observer pour valider une capacité avant sa livraison.", "status": "review", "status_label": "À enrichir", "source": "PRODUCT_STRATEGY.md · Beads produit"},
-    {"id": "roadmap", "title": "Roadmap et décisions", "detail": "Ordre des résultats, hypothèses à tester et décisions explicites encore attendues.", "status": "live", "status_label": "Suivi vivant", "source": "PRODUCT_STRATEGY.md · DECISIONS.md"}
+    {"id": "vision", "title": "Vision et promesse", "summary": "Pourquoi SayMyName existe, pour qui et quelle amélioration humaine il doit produire.", "status": "validated", "status_label": "Validé", "sources": [{"path": "docs/products/saymyname/PRODUCT_STRATEGY.md", "sections": ["Product thesis", "Four memory jobs"]}]},
+    {"id": "users", "title": "Utilisateurs et situations", "summary": "Apprenant, membre, organisateur et administrateur dans leurs contextes d’usage.", "status": "review", "status_label": "À consolider", "sources": [{"path": "docs/products/saymyname/PRODUCT_CONTEXT.md", "sections": ["Core users"]}]},
+    {"id": "journeys", "title": "Parcours de bout en bout", "summary": "Découvrir, mémoriser, rejoindre, importer, publier et retrouver.", "status": "review", "status_label": "À valider", "sources": [{"path": "docs/products/saymyname/PRODUCT_STRATEGY.md", "sections": ["Personal home", "Initial school pilot", "Public challenges", "Imports", "Intelligent retrieval"]}]},
+    {"id": "rights", "title": "Concepts et droits", "summary": "Personnes, comptes, sélections, groupes, organisations, sources et accès.", "status": "validated", "status_label": "Documenté", "sources": [{"path": "docs/products/saymyname/PRODUCT_STRATEGY.md", "sections": ["People and access model", "Organization archetypes"]}, {"path": "docs/products/saymyname/PRODUCT_CONTEXT.md", "sections": ["Product principles"]}]},
+    {"id": "views", "title": "Vues et états UI", "summary": "Inventaire des écrans existants, en construction, planifiés et dépendants d’une preuve.", "status": "live", "status_label": "Suivi vivant", "sources": [{"path": "docs/products/saymyname/PROJECT_INVENTORY.md", "sections": ["View catalogue", "Functional capabilities already present"]}, {"path": "docs/products/saymyname/DESIGN_GOVERNANCE.md", "sections": ["Definition of design-ready"]}]},
+    {"id": "acceptance", "title": "Critères et preuves", "summary": "Ce qu’un humain doit pouvoir observer pour valider valeur, sécurité et livraison.", "status": "review", "status_label": "À enrichir", "sources": [{"path": "docs/products/saymyname/PRODUCT_STRATEGY.md", "sections": ["Measurement"]}, {"path": "docs/products/saymyname/DESIGN_GOVERNANCE.md", "sections": ["Approval tiers", "Definition of design-ready"]}]},
+    {"id": "roadmap", "title": "Roadmap et décisions", "summary": "Ordre durable des résultats, hypothèses et décisions explicites encore attendues.", "status": "live", "status_label": "Suivi vivant", "sources": [{"path": "docs/products/saymyname/PRODUCT_STRATEGY.md", "sections": ["Product roadmap"]}, {"path": "docs/products/saymyname/DECISIONS.md", "sections": ["Open"]}]},
+    {"id": "future", "title": "Frontières et futur", "summary": "Extensions après preuve et comportements explicitement différés ou interdits.", "status": "validated", "status_label": "Borné", "sources": [{"path": "docs/products/saymyname/PRODUCT_STRATEGY.md", "sections": ["Offers and payment hypothesis", "Explicitly deferred or prohibited by default"]}]}
   ],
   "view_inventory": [
     {"area": "Accès", "status": "existing", "views": ["Connexion", "Inscription", "Vérification email", "Mot de passe"]},

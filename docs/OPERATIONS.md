@@ -169,6 +169,18 @@ It serves `http://127.0.0.1:8383` from a small Python standard-library process.
 a five-second cache of local `gc`, `bd`, workflow API, and product-queue signals.
 Monitoring, search, filters, advice, tooltips, glossary, and copied summaries call
 no model. Pause freezes automatic source refresh; **Actualiser** remains manual.
+The one-glance state follows `agent-factory-human-state/v1` (schema in
+`config/factory-human-status.schema.json`). It always separates infrastructure
+health, delivery activity, result lifecycle and resume semantics. A healthy
+controller may therefore coexist with no active delivery and a manual optional
+launch action. Source disagreement degrades health and neutralizes resume advice
+instead of being rendered as idle or as an empty queue.
+
+When the Mayor-owned campaign is active, the same contract also exposes its
+persistent state, continuation condition, owner, exact action, blocker kind and
+notification idempotency. A blocked campaign is rendered as `BLOQUÉ` both in the
+global navigation and on Today. This signal does not turn the cockpit into a
+control surface: only the guarded CLI and the Mayor may change campaign lifecycle.
 
 Progress is semantic and evidence-based: completed workflow steps, the current
 phase, elapsed wall time, and age of the latest source signal. A session marked
@@ -176,12 +188,43 @@ active is not by itself presented as productive work. When sources disagree or
 fail, the UI reports partial visibility. Infrastructure such as the deterministic
 control dispatcher is collapsed under technical details by default.
 
-Navigation separates Enterprise objectives, Product capabilities/views, the
-Roadmap, three decision domains, delivery Work, the live Workflow graph, Agents,
-PO and Tokens. The reviewed view catalogue distinguishes code presence from a
-validated customer journey. Enterprise/Product/Project decisions come from the
-categorized durable decision log; the automatic projection never reclassifies
-them with a model.
+Navigation prioritizes Today, Product graphs and source content, Roadmap,
+Product/Project Decisions, PO, then the delivery Board. Enterprise and technical
+Workflow/Agents/Tokens views remain directly accessible under `More / Factory`.
+Enterprise decisions are collapsed by default and may be individually or wholly
+ignored through a reversible browser-local preference. Ignore changes no Git or
+Beads state and never edits, closes or resolves the durable decision.
+
+Product references open actual configured Markdown sections as inert headings,
+paragraphs, lists, tables, code and safe links. A table of contents, stable deep
+links and search provide quick navigation; configured path, file modification
+time and SHA-256 provenance make freshness explicit. Only schema-v2 allowlisted
+repository sources are readable. Missing/empty sections, parse errors, traversal,
+external files, unsafe links and active content fail visibly without fallback
+content. Capability and journey nodes link to these sources, roadmap outcomes and
+decisions; decision pages show the reverse relationships.
+
+The Roadmap combines durable V1 outcomes, exact last-delivery PR/CI evidence,
+the current immutable outcome, eligible-unscheduled and evidence-paused candidates, decision
+gates and the separate Factory campaign. Under explicit RECORD interaction it
+can add a candidate with what/why/acceptance, move it to an exact position, set
+urgency independently, pause with reason, resume, and cancel after confirmation.
+Keyboard/mobile buttons are the primary reorder mechanism. Success rereads Beads
+and refreshes roadmap/capability projections immediately; lock, conflict,
+confirmation, rollback and recovery states remain visible. The bridge delegates
+only to `bin/saymyname-product-queue` and exposes no materialize, dispatch,
+interrupt, arbitrary-command or merge path.
+
+The Today attention card separates all open general decisions from effective
+blockers explicitly projected by coordination. It preserves the exact
+`gc.needs_benjamin` text and exposes a native keyboard-accessible action only
+when the configured work reference resolves to exactly one open durable
+decision; that action opens the decision's existing dedicated workspace in the
+same cockpit. An unresolved target remains plain text and is never activatable.
+This navigation creates no route, tab, session, or model call. Opening the
+Roadmap resolves exact delivery evidence on demand through the existing
+`bin/saymyname-product-status` contract, while an unavailable proof remains
+explicit instead of being inferred from the live projection.
 
 The product-work view queries product-marked Beads across the City and registered
 rigs, then removes sessions, workflows, convoys, gates, synthetic work, order
@@ -228,6 +271,12 @@ Stopping the cockpit does not stop Gas City or its agents. Its HTTP surface is:
 - `POST /api/po/new`: prepare a fresh general workspace without creating a model session;
 - `GET /api/preview/status`: zero-model-call preview health and exact repository SHAs;
 - `POST /api/preview/action`: guarded `start`, `restart`, or `stop` through `bin/saymyname-preview`.
+- `GET /api/reference?id=<configured-id>`: allowlisted structured Markdown with
+  contents anchors and freshness provenance;
+- `GET /api/delivery-evidence`: on-demand exact last-delivery evidence through
+  `bin/saymyname-product-status` (Beads, Gas City and GitHub), with zero model calls;
+- `POST /api/product-queue`: same-origin, `human-queue-record` confirmed RECORD
+  action limited to add/move/urgency/pause/resume/confirmed cancel.
 
 ## Detailed Gas City dashboard
 
@@ -492,9 +541,14 @@ cd ~/agent-factory
 ./bin/saymyname-product-status
 ```
 
-The command is a read-only L0 projection. It reads coordination pointers from
-parent Bead `af-1vr4` (`gc.current_jit`, `gc.last_delivered`,
-`gc.next_outcome`, and `gc.needs_benjamin`). It resolves the referenced current
+The command is a read-only L0 projection. `--json` emits the canonical
+`agent-factory-human-state/v1` contract; the default French text is only its
+human rendering plus exact delivery evidence. It reads coordination pointers
+from parent Bead `af-1vr4` (`gc.current_jit`, `gc.last_delivered`,
+`gc.next_outcome`, `gc.needs_benjamin`, and any explicit resume policy). It
+also reads the live product-queue projection and fails closed unless
+`gc.next_outcome` identifies the same first eligible product candidate. A
+`goal=none` Factory campaign never counts as `NEXT`. It resolves the referenced current
 and delivered Beads through prefix-aware `gc bd` routing, so an outcome may be
 attached to a durable product goal or stored in an application rig rather than
 being a direct child of `af-1vr4`. It derives an active delivery phase from the
@@ -504,6 +558,13 @@ requires `gc.github_repo` in `owner/repository` form and passes that repository
 to `gh pr view` while validating the PR number, head SHA, merge SHA, merged
 state, and check rollup. An empty rollup is reported as `CI not configured`,
 never as green. The output is emitted only after every required source agrees.
+
+Health uses `ok`, `running`, `health.usable`, and `health.degraded` independently
+from delivery activity. Resume is automatic only for an active delivery or when
+durable coordination explicitly configures an automatic dependency/campaign and
+its condition. Otherwise an idle eligible candidate is “Éligible · non
+programmé”; Benjamin may optionally ask “Lance le prochain résultat”. This is
+not a blocking `NEEDS BENJAMIN` decision.
 
 The normal exit code is `0`; invalid usage returns `2`; an unavailable,
 missing, or inconsistent Beads, Gas City, or GitHub source returns `1` with a
@@ -524,12 +585,76 @@ output as a second backlog. `GC_BIN` and `GH_BIN` are injectable for the
 deterministic fixture suite, while the operator defaults remain `gc` and `gh`;
 Bead reads intentionally go through `gc bd` for store routing.
 
-#### 2026-09-14 product-status evidence
+#### 2026-09-15 product-status and human-state evidence
 
-- **TARGET:** expose current outcome and phase, applicable live agent, last delivered outcome with GitHub merge/CI evidence, approved next outcome, and a precise Benjamin decision without exposing Formula internals.
-- **CONFIGURED:** `bin/saymyname-product-status` uses only the existing `bd`, `gc`, `gh`, and `jq` primitives and parent `af-1vr4` coordination metadata; it has no database, service, dashboard, or write path.
-- **OBSERVED:** the live projection resolved `af-1vr4.2` to the active `codex-af-yzra` implementation session and validated Factory PR #24 at merge `1f680299144535331f308aa6e52b63bc1a22f24d` with no configured CI checks.
-- **PROVEN:** nine deterministic fixture scenarios cover active and idle work, a human decision, exact merged delivery, absent and green CI, invalid repository metadata, mismatched GitHub evidence, source failure, missing live-agent confirmation, and prefix-routed non-child outcomes delivered from a non-Factory GitHub repository; the live command also completed successfully against Beads, Gas City, and GitHub.
+- **TARGET:** expose infrastructure health, delivery activity, result lifecycle,
+  exact delivery evidence, the next eligible product candidate, and explicit
+  resume owner/action without confusing an optional launch with a blocker.
+- **CONFIGURED:** `bin/saymyname-product-status` uses only deterministic local
+  `bd`, `gc`, `gh`, `jq`, product-queue, and pure Python projection primitives;
+  it has no database, model, scheduler, or write path.
+- **PROVEN:** the fixture suite covers active and agentless materialized work,
+  Mayor finalization, automatic dependency/campaign policy, manual idle, all
+  paused, empty queue, Benjamin decision, explicit blocker, healthy/degraded/down
+  infrastructure, exact GitHub evidence, routed Beads, queue/source failure, and
+  pointer divergence. Live verification must be repeated from the merged head.
+
+### Versioned product release contract
+
+Git, not the Product view or the campaign, owns the versioned SayMyName
+release target. From the canonical Factory checkout:
+
+```bash
+cd ~/agent-factory
+./bin/product-release validate                     # config/releases/saymyname-v1.json
+./bin/product-release project
+./bin/product-release transition --to approved
+./bin/product-release start-next --version V2
+```
+
+`lib/product_release.py` is a pure module: it reads no live state, writes no
+files, and never calls a model. `validate_release_contract` enforces the
+invariants JSON Schema (`config/product-release.schema.json`) cannot express —
+every capability, journey, criterion, dependency, and `work_graph` node must be
+schema-valid and cross-referenced; `work_graph` node IDs and dedupe keys are
+globally unique and acyclic; every node is traceable to at least one approved
+criterion; and `af-cm1l` can never be recorded as a V1 product capability,
+only as a Factory improvement. `transition_release` and `start_next_version`
+are idempotent and fail-closed: `draft → approved → executing → frozen` is the
+only path, a `frozen` contract is immutable, and starting `V2` first freezes
+`V1` and returns its frozen evidence rather than mutating it in place.
+
+`select_campaign_work` is the only function the Mayor campaign may call to
+pick work from a release. It returns exactly one deduplicated, criterion-
+traceable, dependency-satisfied, proven-independent candidate, or an explicit
+stop reason (`release_not_executable`, `independence_unknown`,
+`blocked_<decision|admin|limit|durable_failure|dependency>`,
+`release_target_proven`, or `no_proven_independent_work`) with an owner and an
+exact recovery action. It never reorders the product queue and never
+materializes work itself. `project_release` adds human-facing status labels
+and the campaign/intervention projection for the Product view;
+`project_operational_release` overlays only the runtime `truth_state` versus
+`operational_state` distinction — an `approved`/`executing` release with the
+campaign enabled shows as executing, a `draft` release can never be reported
+as campaign-executing, and a `frozen` release stays frozen regardless of
+campaign state.
+
+- **TARGET:** one schema-validated, versioned release contract per product
+  drives the Product view, the campaign, and V1→V2 freeze semantics, with no
+  second orchestrator, queue, or UI.
+- **CONFIGURED:** `config/product-release.schema.json` plus
+  `lib/product_release.py`/`bin/product-release`; `config/releases/saymyname-v1.json`
+  is the current SayMyName V1 contract, referenced from
+  `config/products/saymyname.json#release_contract`.
+- **PROVEN:** `tests/product-release-test.py` covers schema-required-field
+  parity, semantic validation edge cases (dangling references, duplicate IDs,
+  graph cycles, self-dependency, blocker/decision consistency, the `af-cm1l`
+  guard), the full transition state machine including frozen immutability and
+  V2 freeze, and campaign graph selection (order tie-break, an
+  unknown-independence node not blocking a later proven candidate, dependency
+  gating, and blocker tie-break by kind then cause). It also loads and
+  projects the real `config/releases/saymyname-v1.json` contract. Live
+  verification through the Product view must be repeated from the merged head.
 
 ### Ordered product candidates
 
@@ -548,6 +673,59 @@ or duplicate ranks and serializes local mutations. Use `list --json` or
 RECORD request. The Mayor follows `docs/PRODUCT_QUEUE.md` to create a separate
 execution Bead and materialize only the first eligible candidate. Never change a
 candidate to `open` or dispatch it directly.
+
+### Mayor-owned continuous campaign
+
+The campaign is persistent Beads policy plus a deterministic Gas City Order; it
+is not another worker or orchestrator. Confirm installation after deploying the
+merged Factory head:
+
+```bash
+gc order show mayor-campaign
+gc order check --json | jq '.orders[] | select(.name == "mayor-campaign")'
+./bin/mayor-campaign status | jq .
+```
+
+Activation is a two-step Mayor guard. Materialize the first eligible candidate
+in the distinct Factory-campaign lane, then activate its already-linked execution
+Bead:
+
+```bash
+./bin/saymyname-product-queue materialize <campaign-candidate> <execution-bead> --mayor
+./bin/mayor-campaign activate <campaign-candidate> <execution-bead> --mayor
+gc order run mayor-campaign
+```
+
+All five mutation paths (`activate`, `block`, `resume`, `complete`, `sentinel`)
+share one host-local flock. Repeating the exact active activation is a no-op;
+activation refuses to overwrite a blocked/completed campaign or to bypass
+`NEEDS BENJAMIN`, a blocked result, or an existing automatic resume condition.
+
+The Order runs `./bin/mayor-campaign sentinel` every minute. It performs one
+canonical status read, no model call, and sends durable mail only when the Mayor
+must materialize the next result, resume an agentless materialized result,
+finalize the current result, or record an empty campaign. It never invokes queue
+materialization, dispatch, GitHub, merge, or Bead closure itself. An observed
+current result suppresses next-result notification, preserving one-at-a-time
+delivery across controller restarts.
+
+Record a real stop with its owner and exact action; do not put ADMIN failures in
+`gc.needs_benjamin`:
+
+```bash
+./bin/mayor-campaign block --kind admin --cause "<cause>" \
+  --owner Benjamin --action "<exact authorized action>" --mayor
+./bin/mayor-campaign resume --mayor
+./bin/mayor-campaign complete --mayor
+```
+
+`decision` requires an effective `gc.needs_benjamin`; `admin`, `limit`,
+`result_blocker`, `all_paused`, and `durable_failure` remain separate typed
+causes. Queue/source contention is retried. After three consecutive sentinel
+failures, one metadata update persists `blocked + durable_failure + Mayor + exact
+resume command`; repair the named source and run `resume --mayor`. A restart in
+`wake_state=pending` safely resends the same durable mail before marking it
+`sent`; duplicate mail cannot bypass the first-eligible materialization guard.
 
 ### Deterministic local product preview
 

@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +23,19 @@ from urllib.error import URLError
 from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import urlopen
 
+from factory_state import (
+    CONTRACT as HUMAN_STATE_CONTRACT,
+    StateContractError,
+    candidate_record_lifecycle,
+    project_human_state,
+)
+from product_release import (
+    ReleaseContractError,
+    load_release_contract,
+    project_operational_release,
+    project_release,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_ROOT = ROOT / "ui" / "factory-cockpit"
@@ -29,8 +43,6 @@ PRODUCT_CONFIG_PATH = Path(os.environ.get(
     "FACTORY_COCKPIT_PRODUCT_CONFIG", ROOT / "config" / "products" / "saymyname.json"
 ))
 REMOTE_ACCESS_FILE = ROOT / ".gc" / "runtime" / "factory-cockpit-remote-url"
-BLOCKER_STATE_PATH = ROOT / ".gc" / "runtime" / "factory-cockpit-blockers.json"
-DECISION_DOMAINS = ("enterprise", "product", "project")
 COORDINATION_BEAD = os.environ.get("FACTORY_COCKPIT_COORDINATION_BEAD", "af-1vr4")
 GAS_CITY_URL = os.environ.get("FACTORY_COCKPIT_GAS_CITY_URL", "http://127.0.0.1:8372")
 
@@ -39,18 +51,41 @@ class SourceError(RuntimeError):
     pass
 
 
+class ConflictError(SourceError):
+    """A bounded mutation lost a lock or source-state race."""
+
+
+class StaleError(ConflictError):
+    """A direct choice targeted an obsolete release-decision revision."""
+
+
+def _repo_path(value: Any, field: str, root: Path = ROOT) -> Path:
+    if not isinstance(value, str) or not value.strip():
+        raise SourceError(f"Le chemin {field} est invalide.")
+    candidate = Path(value)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise SourceError(f"Le chemin {field} doit être relatif au dépôt Factory.")
+    resolved = (root / candidate).resolve()
+    repository = root.resolve()
+    if resolved == repository or repository not in resolved.parents:
+        raise SourceError(f"Le chemin {field} doit rester dans le dépôt Factory.")
+    return resolved
+
+
 def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise SourceError(f"Configuration produit invalide: {exc}") from exc
     required = {
-        "slug", "name", "strategy", "decisions", "po_workspace",
-        "queue_command", "capabilities", "relations", "project_inventory",
+        "slug", "name", "strategy", "decisions", "release_contract", "po_workspace",
+        "status_command", "queue_command", "queue_mutation_command",
+        "capabilities", "relations", "project_inventory",
         "design_governance", "business_objectives", "view_inventory",
         "delivery_workflow", "product_reference",
     }
-    if value.get("schema_version") != 1 or not required.issubset(value):
+    required.add("journeys")
+    if value.get("schema_version") != 3 or not required.issubset(value):
         raise SourceError("Configuration produit incomplète ou version non prise en charge.")
     if not re.fullmatch(r"[a-z0-9-]+", str(value["slug"])) or not str(value["name"]).strip():
         raise SourceError("Identité de produit invalide.")
@@ -58,27 +93,123 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         isinstance(part, str) and part for part in value["queue_command"]
     ):
         raise SourceError("Commande de file produit invalide.")
+    if not isinstance(value.get("queue_mutation_command"), list) or not value["queue_mutation_command"] or not all(
+        isinstance(part, str) and part for part in value["queue_mutation_command"]
+    ):
+        raise SourceError("Commande de mutation de file produit invalide.")
+    if not isinstance(value.get("status_command"), list) or len(value["status_command"]) != 1:
+        raise SourceError("Commande de statut produit invalide.")
+    if len(value["queue_mutation_command"]) != 1 or value["queue_command"][1:] != ["list", "--json"]:
+        raise SourceError("Les commandes de file doivent utiliser le contrat list --json borné.")
+    for field in ("status_command", "queue_command", "queue_mutation_command"):
+        value[f"{field}_path"] = _repo_path(value[field][0], field)
+    if value["queue_command_path"] != value["queue_mutation_command_path"]:
+        raise SourceError("Lecture et mutation doivent utiliser le même contrat de file produit.")
+    expected_queue = _repo_path(f"bin/{value['slug']}-product-queue", "queue_command")
+    expected_status = _repo_path(f"bin/{value['slug']}-product-status", "status_command")
+    if value["queue_command_path"] != expected_queue or value["status_command_path"] != expected_status:
+        raise SourceError("Les commandes doivent utiliser les contrats dédiés au produit configuré.")
     if not isinstance(value["capabilities"], list) or not isinstance(value["relations"], list):
         raise SourceError("Graphe produit invalide.")
+    decision_blockers = value.get("decision_blockers", [])
+    if not isinstance(decision_blockers, list) or not all(
+        isinstance(item, dict)
+        and set(item) == {"work_ref", "decision_ref"}
+        and isinstance(item["work_ref"], str)
+        and re.fullmatch(r"[a-z][a-z0-9]*-[a-z0-9]+(?:\.[a-z0-9]+)*", item["work_ref"])
+        and isinstance(item["decision_ref"], str)
+        and item["decision_ref"].strip()
+        for item in decision_blockers
+    ):
+        raise SourceError("Correspondance de blocage décisionnel invalide.")
+    references = value.get("product_reference")
+    if not isinstance(references, list) or not references:
+        raise SourceError("Références produit manquantes.")
+    reference_ids: set[str] = set()
+    reference_paths: set[Path] = set()
+    for item in references:
+        if not isinstance(item, dict) or not {
+            "id", "title", "summary", "status", "status_label", "sources",
+        }.issubset(item):
+            raise SourceError("Référence produit incomplète.")
+        reference_id = item.get("id")
+        if (
+            not isinstance(reference_id, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", reference_id)
+            or reference_id in reference_ids
+        ):
+            raise SourceError("Identifiant de référence produit invalide ou dupliqué.")
+        if item.get("status") not in {"validated", "review", "live"}:
+            raise SourceError(f"État invalide pour la référence {reference_id}.")
+        sources = item.get("sources")
+        if not isinstance(sources, list) or not sources:
+            raise SourceError(f"La référence {reference_id} doit configurer au moins une source.")
+        for source in sources:
+            if not isinstance(source, dict) or not {"path", "sections"}.issubset(source):
+                raise SourceError(f"Source incomplète pour la référence {reference_id}.")
+            sections = source.get("sections")
+            if not isinstance(sections, list) or not sections or not all(
+                isinstance(section, str) and section.strip() for section in sections
+            ):
+                raise SourceError(f"Sections invalides pour la référence {reference_id}.")
+            source["resolved_path"] = _repo_path(
+                source.get("path"), f"product_reference.{reference_id}.source"
+            )
+            reference_paths.add(source["resolved_path"])
+        reference_ids.add(reference_id)
+
     capability_ids: set[str] = set()
     for item in value["capabilities"]:
-        if not isinstance(item, dict) or not {"id", "title", "area", "roadmap"}.issubset(item):
+        if not isinstance(item, dict) or not {
+            "id", "title", "area", "roadmap", "source_refs", "decision_refs",
+        }.issubset(item):
             raise SourceError("Capacité produit incomplète.")
-        if not isinstance(item["id"], str) or not item["id"] or item["id"] in capability_ids:
+        if not isinstance(item["id"], str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", item["id"]) or item["id"] in capability_ids:
             raise SourceError("Identifiant de capacité produit invalide ou dupliqué.")
         if not isinstance(item["roadmap"], int) or isinstance(item["roadmap"], bool) or item["roadmap"] < 1:
             raise SourceError("Référence roadmap invalide dans le graphe produit.")
+        if not isinstance(item["source_refs"], list) or not set(item["source_refs"]).issubset(reference_ids):
+            raise SourceError("Référence documentaire invalide dans le graphe produit.")
+        if not isinstance(item["decision_refs"], list) or not all(
+            isinstance(title, str) and title for title in item["decision_refs"]
+        ):
+            raise SourceError("Référence de décision invalide dans le graphe produit.")
         capability_ids.add(item["id"])
     for relation in value["relations"]:
         if not isinstance(relation, list) or len(relation) != 2 or not all(
             endpoint in capability_ids for endpoint in relation
         ):
             raise SourceError("Relation de capacité produit invalide.")
-    for field in ("strategy", "decisions", "project_inventory", "design_governance"):
-        resolved = (ROOT / str(value[field])).resolve()
-        if ROOT.resolve() not in resolved.parents:
-            raise SourceError(f"Le chemin {field} doit rester dans le dépôt Factory.")
+    journey_ids: set[str] = set()
+    for item in value["journeys"]:
+        if not isinstance(item, dict) or not {
+            "id", "title", "detail", "roadmap", "capability_refs", "source_refs", "decision_refs",
+        }.issubset(item):
+            raise SourceError("Parcours produit incomplet.")
+        journey_id = item.get("id")
+        if not isinstance(journey_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", journey_id) or journey_id in journey_ids:
+            raise SourceError("Identifiant de parcours invalide ou dupliqué.")
+        if not isinstance(item["roadmap"], int) or isinstance(item["roadmap"], bool) or item["roadmap"] < 1:
+            raise SourceError("Référence roadmap invalide dans un parcours.")
+        if not isinstance(item["capability_refs"], list) or not set(item["capability_refs"]).issubset(capability_ids):
+            raise SourceError("Référence de capacité invalide dans un parcours.")
+        if not isinstance(item["source_refs"], list) or not set(item["source_refs"]).issubset(reference_ids):
+            raise SourceError("Référence documentaire invalide dans un parcours.")
+        if not isinstance(item["decision_refs"], list) or not all(
+            isinstance(title, str) and title for title in item["decision_refs"]
+        ):
+            raise SourceError("Référence de décision invalide dans un parcours.")
+        journey_ids.add(journey_id)
+    for field in ("strategy", "decisions", "release_contract", "project_inventory", "design_governance"):
+        resolved = _repo_path(value[field], field)
         value[f"{field}_path"] = resolved
+    try:
+        release = load_release_contract(value["release_contract_path"])
+    except ReleaseContractError as exc:
+        raise SourceError(f"Contrat de release invalide: {exc}") from exc
+    if release["product"] != value["slug"]:
+        raise SourceError("Le contrat de release ne correspond pas au produit configuré.")
+    value["reference_paths"] = reference_paths
     return value
 
 
@@ -151,6 +282,89 @@ def _single(value: Any) -> dict[str, Any] | None:
 def _metadata(bead: dict[str, Any] | None) -> dict[str, Any]:
     value = (bead or {}).get("metadata", {})
     return value if isinstance(value, dict) else {}
+
+
+def _direct_assigned_session(
+    current: dict[str, Any] | None,
+    sessions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Resolve one direct --no-formula assignment without session inference."""
+    if not current:
+        return None
+    metadata = _metadata(current)
+    session_id = _meaningful(metadata.get("gc.session_id"))
+    session_name = _meaningful(metadata.get("gc.session_name"))
+    if not session_id and not session_name:
+        return None
+    if session_id:
+        matches = [item for item in sessions if str(item.get("id") or "") == session_id]
+        if len(matches) > 1:
+            raise SourceError("L'affectation directe correspond à plusieurs identifiants de session Gas City.")
+        if not matches and session_name and not any(item.get("id") for item in sessions):
+            matches = [
+                item for item in sessions
+                if session_name in {
+                    str(item.get("qualified_name") or ""),
+                    str(item.get("name") or ""),
+                    str(item.get("alias") or ""),
+                }
+            ]
+    else:
+        matches = [
+            item for item in sessions
+            if session_name in {
+                str(item.get("qualified_name") or ""),
+                str(item.get("name") or ""),
+                str(item.get("alias") or ""),
+            }
+        ]
+    if len(matches) > 1:
+        raise SourceError("L'affectation directe correspond à plusieurs sessions Gas City.")
+    if not matches:
+        return None
+    session = matches[0]
+    if session.get("state") == "active" or session.get("running") is True:
+        return session
+    return None
+
+
+def _workflow_assigned_session(
+    workflow_summary: dict[str, Any],
+    sessions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Resolve an active workflow assignee without inferring a worker session."""
+    if not _meaningful(workflow_summary.get("active_step")):
+        return None
+    assignees = [
+        value
+        for item in workflow_summary.get("assignees", [])
+        if (value := _meaningful(item))
+    ]
+    if not assignees:
+        return None
+    if len(assignees) > 1:
+        raise SourceError(
+            "L'étape active du workflow désigne plusieurs agents Gas City."
+        )
+    assignee = assignees[0]
+    matches = [
+        session
+        for session in sessions
+        if (session.get("state") == "active" or session.get("running") is True)
+        and assignee in {
+            str(session.get("id") or ""),
+            str(session.get("qualified_name") or ""),
+            str(session.get("name") or ""),
+            str(session.get("alias") or ""),
+        }
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise SourceError(
+            f"L'agent workflow {assignee} correspond à plusieurs sessions Gas City."
+        )
+    return matches[0]
 
 
 def _meaningful(value: Any) -> str | None:
@@ -297,20 +511,18 @@ def _product_bead(
         return None
 
     status = str(bead.get("status", "unknown"))
-    queue_state = metadata.get("gc.queue_state")
     is_current = bead.get("id") in current_id if isinstance(current_id, set) else bead.get("id") == current_id
-    if is_current:
-        state = "current"
-        state_label = "Objectif actuel"
-    elif status == "blocked":
+    if status == "blocked":
         state = "blocked"
         state_label = "Bloqué"
-    elif "product-queue" in labels and queue_state == "paused":
-        state = "paused"
-        state_label = "En pause"
+    elif is_current:
+        state = "current"
+        state_label = "Objectif actuel"
     elif "product-queue" in labels:
-        state = "queued"
-        state_label = "Dans la file"
+        try:
+            state, state_label = candidate_record_lifecycle(bead)
+        except StateContractError as exc:
+            raise SourceError(f"Candidat {bead.get('id') or '?'} incohérent: {exc}") from exc
     elif status == "closed":
         state = "delivered"
         state_label = "Livré"
@@ -347,8 +559,8 @@ def _product_bead(
         "updated_at": bead.get("closed_at") or bead.get("updated_at") or bead.get("created_at"),
         "pr": metadata.get("gc.pr_number") or metadata.get("gc.pr"),
         "ci": metadata.get("gc.postmerge_ci_conclusion") or metadata.get("gc.ci_conclusion"),
-        "needs_benjamin": _meaningful(metadata.get("gc.needs_benjamin")),
-        "decision_domain": metadata.get("gc.decision_domain"),
+        "cause": metadata.get("gc.blocked_reason") or metadata.get("gc.blocker"),
+        "execution_id": metadata.get("gc.materialized_bead"),
     }
 
 
@@ -358,10 +570,12 @@ def _sort_product_work(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "active": 1,
         "blocked": 2,
         "ready": 3,
-        "queued": 4,
+        "eligible": 4,
         "paused": 5,
+        "materialized": 6,
         "planned": 6,
         "delivered": 7,
+        "cancelled": 8,
     }
     def time_key(item: dict[str, Any]) -> float:
         value = item.get("updated_at")
@@ -384,153 +598,93 @@ def _sort_product_work(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
-def _normalized_title(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
-
-
-def _blocker_decision(bead_id: Any, text: str, domain_hint: Any = None) -> dict[str, Any]:
-    """Shape a blocking bead like a DECISIONS.md Open entry so it opens a workspace."""
-    compact = re.sub(r"\s+", " ", text).strip()
-    title = re.split(r"(?<=[.!?])\s+", compact)[0].strip(" .") or "Décision de livraison à prendre"
-    if len(title) > 120:
-        title = title[:117].rstrip() + "…"
-    domain = str(domain_hint or "").strip().lower()
-    if domain not in DECISION_DOMAINS:
-        domain = "product"
-    return {
-        "id": "pending-%s-blocker-%s" % (domain, _safe_identifier(str(bead_id))),
-        "title": title,
-        "status": "pending",
-        "domain": domain,
-        "detail": compact,
-        "source": "Bead %s · gc.needs_benjamin" % bead_id,
-        "origin": "blocker",
-        "bead": str(bead_id),
-    }
-
-
-def _collect_blockers(
-    coordination_id: Any,
-    coordination_meta: dict[str, Any],
-    product_work: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    candidates: list[tuple[Any, Any, Any]] = [(
-        coordination_id,
-        _meaningful(coordination_meta.get("gc.needs_benjamin")),
-        coordination_meta.get("gc.decision_domain"),
-    )]
-    for item in product_work:
-        if isinstance(item, dict):
-            candidates.append((item.get("id"), item.get("needs_benjamin"), item.get("decision_domain")))
-    decisions: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for bead_id, text, domain_hint in candidates:
-        if not bead_id or not _meaningful(text):
-            continue
-        decision = _blocker_decision(bead_id, str(text), domain_hint)
-        if decision["id"] in seen:
-            continue
-        seen.add(decision["id"])
-        decisions.append(decision)
-    return decisions
-
-
-def _write_blockers(decisions: list[dict[str, Any]], path: Path | None = None) -> None:
-    """Publish blockers so the PO bridge resolves the same ids as the snapshot."""
-    target = path or BLOCKER_STATE_PATH
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        handle = tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=target.parent, delete=False, suffix=".tmp"
-        )
-        with handle:
-            json.dump({"schema_version": 1, "decisions": decisions}, handle, ensure_ascii=False)
-        Path(handle.name).replace(target)
-    except OSError:
-        pass
-
-
-def _read_blockers(path: Path | None = None) -> list[dict[str, Any]]:
-    try:
-        value = json.loads((path or BLOCKER_STATE_PATH).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    decisions = value.get("decisions") if isinstance(value, dict) else None
-    if not isinstance(decisions, list):
-        return []
-    return [item for item in decisions if isinstance(item, dict) and item.get("id")]
-
-
 def _decision_aids(
-    factory_ok: bool,
-    warnings: list[str],
-    focus: dict[str, Any],
-    queue: list[dict[str, Any]],
-    product_work: list[dict[str, Any]],
-    needs_benjamin: str | None,
+    human_state: dict[str, Any],
     last_delivery: dict[str, Any],
-    blocker_id: str | None = None,
 ) -> list[dict[str, str]]:
     advice: list[dict[str, str]] = []
-    if not factory_ok:
+    health = human_state["health"]
+    activity = human_state["activity"]
+    resume = human_state["resume"]
+    next_candidate = human_state.get("next_candidate")
+    if health["state"] == "unavailable":
         advice.append({
             "severity": "critical",
-            "title": "L'usine ne répond pas correctement",
-            "explanation": "Le contrôleur ou sa santé n'est pas confirmé.",
-            "action": "Demander au Mayor de diagnostiquer la Factory en lecture seule.",
-            "prompt": "Diagnostique pourquoi la Factory n'est pas utilisable, sans rien modifier, et donne-moi la prochaine action sûre.",
+            "title": health["label"],
+            "explanation": health["detail"],
+            "action": resume["action"],
+            "prompt": resume.get("prompt") or "Diagnostique la Factory en lecture seule.",
         })
-    if warnings:
+    elif health["state"] == "degraded":
         advice.append({
             "severity": "warning",
-            "title": "La visibilité est partielle",
-            "explanation": "Au moins une source locale n'a pas répondu; le résumé peut être incomplet.",
-            "action": "Consulter les détails techniques ou demander un diagnostic au Mayor.",
-            "prompt": "Explique les sources du cockpit actuellement indisponibles et ce qu'il faut vérifier, sans rien modifier.",
+            "title": health["label"],
+            "explanation": health["detail"],
+            "action": resume["action"],
+            "prompt": resume.get("prompt") or "Explique les sources incohérentes sans rien modifier.",
         })
-    if needs_benjamin:
+    elif resume["mode"] == "blocking_decision":
         advice.append({
             "severity": "decision",
             "title": "Une décision de Benjamin est nécessaire",
-            "explanation": needs_benjamin,
-            "action": "Ouvre l’espace de décision pour répondre; la livraison reprend ensuite.",
-            "prompt": f"Explique-moi simplement cette décision, recommande une option et ses conséquences : {needs_benjamin}",
-            "decision_id": blocker_id or "",
+            "explanation": activity["detail"],
+            "action": resume["action"],
+            "prompt": resume["prompt"],
         })
-    blocked = [item for item in product_work if item.get("state") == "blocked"]
-    if blocked and not needs_benjamin:
+    elif resume["mode"] == "blocked":
         advice.append({
             "severity": "warning",
-            "title": f"{len(blocked)} travail produit bloqué",
-            "explanation": "Un blocage empêche au moins un résultat produit d'avancer.",
-            "action": "Demander au Mayor la cause et la plus petite action de déblocage.",
-            "prompt": "Quels travaux produit sont bloqués, pourquoi, et quelle est la plus petite action nécessaire de ma part ?",
+            "title": "Un résultat est bloqué",
+            "explanation": activity["detail"],
+            "action": resume["action"],
+            "prompt": resume["prompt"],
         })
-    if focus.get("state") == "waiting" and focus.get("steps", {}).get("complete"):
+    elif resume["mode"] == "campaign_blocked":
+        advice.append({
+            "severity": "critical",
+            "title": "BLOQUÉ · la campagne ne peut pas poursuivre",
+            "explanation": human_state["campaign"]["cause"],
+            "action": resume["action"],
+            "prompt": resume.get("prompt") or "Explique le blocage de campagne sans lancer d'autre résultat.",
+        })
+    elif resume["mode"] == "mayor_finalization":
         advice.append({
             "severity": "warning",
             "title": "Le code est terminé mais la livraison reste à finaliser",
-            "explanation": "Les étapes de réalisation sont finies; le Mayor doit encore publier, vérifier ou clôturer.",
-            "action": "Demander au Mayor de confirmer le blocage avant toute relance.",
-            "prompt": f"Où en est la finalisation de « {focus.get('title')} » ? Explique le blocage éventuel et termine seulement les étapes déjà autorisées.",
+            "explanation": activity["detail"],
+            "action": resume["action"],
+            "prompt": resume["prompt"],
         })
-    if focus.get("state") == "idle" and not queue:
+    elif resume["mode"] == "materialized_without_agent":
+        advice.append({
+            "severity": "warning",
+            "title": "Un résultat matérialisé n'a pas d'agent actif",
+            "explanation": activity["detail"],
+            "action": resume["action"],
+            "prompt": resume["prompt"],
+        })
+    elif resume["mode"] == "manual" and next_candidate:
         advice.append({
             "severity": "info",
-            "title": "La production produit n'a plus de prochain résultat",
-            "explanation": "L'infrastructure peut rester allumée, mais aucun nouveau travail produit ne démarrera.",
-            "action": "Ajouter ou choisir un prochain résultat produit.",
-            "prompt": "Propose-moi les trois prochains résultats produit les plus utiles, sans créer de Bead ni lancer de travail.",
+            "title": "Un candidat est éligible, mais non programmé",
+            "explanation": (
+                f"{next_candidate['id']} · « {next_candidate['title']} ». "
+                "La reprise n'est pas automatique car le mode campagne n'est pas actif."
+            ),
+            "action": resume["action"],
+            "prompt": resume["prompt"],
         })
-    eligible_queue = [item for item in queue if item.get("state") != "paused"]
-    if focus.get("state") == "idle" and eligible_queue:
-        next_title = eligible_queue[0].get("title", "le premier candidat")
+    elif resume["mode"] == "all_paused":
         advice.append({
-            "severity": "info",
-            "title": "Un prochain résultat est prêt dans la file",
-            "explanation": f"L'usine est au repos; le prochain candidat éligible est « {next_title} ».",
-            "action": "Aucune action immédiate; demander au Mayor seulement si cet état persiste.",
-            "prompt": f"L'usine est au repos alors que « {next_title} » est premier candidat. Est-ce une transition normale ou faut-il agir ? Ne lance rien sans autorité explicite.",
+            "severity": "info", "title": "Tous les candidats sont en pause",
+            "explanation": activity["detail"], "action": resume["action"],
+            "prompt": resume["prompt"],
+        })
+    elif resume["mode"] == "no_candidate":
+        advice.append({
+            "severity": "info", "title": "Aucun prochain résultat n'est défini",
+            "explanation": activity["detail"], "action": resume["action"],
+            "prompt": "Propose trois prochains résultats utiles sans créer de Bead ni lancer de travail.",
         })
     if last_delivery.get("ci") and last_delivery.get("ci") != "success":
         advice.append({
@@ -543,12 +697,57 @@ def _decision_aids(
     if not advice:
         advice.append({
             "severity": "ok",
-            "title": "Tout est cohérent pour l'instant",
-            "explanation": "L'usine répond, aucune décision ni anomalie visible ne demande ton intervention.",
-            "action": "Aucune action nécessaire.",
+            "title": activity["label"],
+            "explanation": activity["detail"],
+            "action": resume["action"],
             "prompt": "Donne-moi un résumé très court de la santé actuelle de l'usine et du prochain jalon.",
         })
     return advice
+
+
+def _today_projection(
+    needs_benjamin: str | None,
+    decisions: list[dict[str, Any]],
+    blocker_mappings: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Separate open decisions from blockers explicitly tied to coordination."""
+    pending = [item for item in decisions if item.get("status") == "pending"]
+    matched: dict[str, dict[str, Any]] = {}
+    if needs_benjamin:
+        for mapping in blocker_mappings:
+            work_ref = str(mapping.get("work_ref", ""))
+            if not re.search(
+                rf"(?<![A-Za-z0-9.-]){re.escape(work_ref)}(?![A-Za-z0-9.-])",
+                needs_benjamin,
+            ):
+                continue
+            decision_ref = mapping.get("decision_ref")
+            for decision in pending:
+                if decision.get("title") == decision_ref and decision.get("id"):
+                    matched[str(decision["id"])] = decision
+
+    target = next(iter(matched.values())) if len(matched) == 1 else None
+    target_id = str(target["id"]) if target else None
+    general = [item for item in pending if str(item.get("id")) != target_id]
+    blockers = []
+    if needs_benjamin:
+        blockers.append({
+            "id": "needs-benjamin",
+            "source": "gc.needs_benjamin",
+            "text": needs_benjamin,
+            "decision_id": target_id,
+        })
+    return {
+        "general_decisions": [
+            {
+                "id": item.get("id"),
+                "title": item.get("title"),
+                "domain": item.get("domain"),
+            }
+            for item in general
+        ],
+        "effective_blockers": blockers,
+    }
 
 
 def _markdown_section(text: str, heading: str) -> str:
@@ -564,6 +763,251 @@ def _paragraph(text: str) -> str:
     return re.sub(r"\s+", " ", text.split("\n\n", 1)[0]).strip()
 
 
+def _anchor(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "-", normalized.lower()).strip("-")
+    return slug or hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def _clean_markdown_text(value: str) -> str:
+    if "\x00" in value or re.search(
+        r"(?is)<\s*(script|style|iframe|object|embed|svg|math)\b|\bon[a-z]+\s*=|javascript\s*:|data\s*:\s*text/html",
+        value,
+    ):
+        raise SourceError("La source Markdown contient du contenu actif interdit.")
+    return re.sub(r"<[^>]*>", "", value)
+
+
+def _extract_markdown_section(text: str, wanted: str) -> tuple[int, list[str]]:
+    lines = text.splitlines()
+    start = -1
+    level = 0
+    for index, line in enumerate(lines):
+        match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if match and match.group(2).strip() == wanted:
+            start, level = index, len(match.group(1))
+            break
+    if start < 0:
+        raise SourceError(f"Section Markdown introuvable: {wanted}")
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        match = re.match(r"^(#{1,6})\s+", lines[index])
+        if match and len(match.group(1)) <= level:
+            end = index
+            break
+    selected = lines[start:end]
+    if not any(line.strip() for line in selected[1:]):
+        raise SourceError(f"Section Markdown vide: {wanted}")
+    return level, selected
+
+
+class ProductReferenceReader:
+    """Parse only configured repository Markdown into inert structured blocks."""
+
+    def __init__(self, config: dict[str, Any] | None = None, root: Path = ROOT) -> None:
+        self.config = config or load_product_config()
+        self.root = root.resolve()
+        self.references = {
+            str(item["id"]): item for item in self.config.get("product_reference", [])
+        }
+        self.allowed_paths = {
+            Path(source.get("resolved_path") or _repo_path(source.get("path"), "reference", self.root)).resolve()
+            for item in self.references.values()
+            for source in item.get("sources", [])
+        }
+
+    def _target(self, source_path: Path, raw_href: str) -> dict[str, Any]:
+        href = raw_href.strip()
+        parsed = urlparse(href)
+        if (
+            not href
+            or parsed.scheme
+            or parsed.netloc
+            or href.startswith(("/", "\\", "//"))
+            or ".." in Path(parsed.path or ".").parts
+        ):
+            raise SourceError(f"Lien Markdown non autorisé: {raw_href}")
+        target = source_path if not parsed.path else (source_path.parent / parsed.path).resolve()
+        if target not in self.allowed_paths:
+            raise SourceError(f"Le lien Markdown sort des sources configurées: {raw_href}")
+        fragment = parsed.fragment.strip()
+        candidates = []
+        for reference in self.references.values():
+            for configured in reference.get("sources", []):
+                configured_path = Path(
+                    configured.get("resolved_path")
+                    or _repo_path(configured.get("path"), "reference", self.root)
+                ).resolve()
+                if configured_path != target:
+                    continue
+                headings = configured.get("sections", [])
+                if not fragment or any(_anchor(heading) == _anchor(fragment) for heading in headings):
+                    candidates.append((reference, headings))
+        if not candidates:
+            raise SourceError(f"La cible du lien Markdown n’est pas configurée: {raw_href}")
+        reference, headings = candidates[0]
+        heading = next(
+            (item for item in headings if fragment and _anchor(item) == _anchor(fragment)),
+            headings[0],
+        )
+        return {
+            "reference_id": reference["id"],
+            "section_anchor": self._section_anchor(target, heading),
+        }
+
+    def _inlines(self, value: str, source_path: Path) -> list[dict[str, Any]]:
+        parts: list[dict[str, Any]] = []
+        position = 0
+        for match in re.finditer(r"\[([^\]\n]+)\]\(([^)\n]+)\)", value):
+            prefix = _clean_markdown_text(value[position:match.start()])
+            if prefix:
+                parts.append({"type": "text", "text": prefix})
+            label = _clean_markdown_text(match.group(1)).strip()
+            if not label:
+                raise SourceError("Un lien Markdown doit avoir un libellé.")
+            parts.append({"type": "link", "text": label, **self._target(source_path, match.group(2))})
+            position = match.end()
+        suffix = _clean_markdown_text(value[position:])
+        if suffix:
+            parts.append({"type": "text", "text": suffix})
+        return parts or [{"type": "text", "text": ""}]
+
+    def _section_anchor(self, source_path: Path, heading: str) -> str:
+        relative = source_path.resolve().relative_to(self.root)
+        path_key = hashlib.sha256(relative.as_posix().encode("utf-8")).hexdigest()[:8]
+        return f"reference-{_anchor(source_path.stem)}-{path_key}-{_anchor(heading)}"
+
+    def _blocks(self, lines: list[str], source_path: Path) -> list[dict[str, Any]]:
+        blocks: list[dict[str, Any]] = []
+        index = 0
+        while index < len(lines):
+            raw = lines[index]
+            if not raw.strip():
+                index += 1
+                continue
+            fence = re.match(r"^\s*```([^`]*)$", raw)
+            if fence:
+                language = _clean_markdown_text(fence.group(1)).strip()
+                index += 1
+                code: list[str] = []
+                while index < len(lines) and not re.match(r"^\s*```\s*$", lines[index]):
+                    code.append(lines[index])
+                    index += 1
+                if index >= len(lines):
+                    raise SourceError("Bloc de code Markdown non fermé.")
+                blocks.append({"type": "code", "language": language, "text": "\n".join(code)})
+                index += 1
+                continue
+            heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", raw)
+            if heading:
+                text = _clean_markdown_text(heading.group(2)).strip()
+                blocks.append({
+                    "type": "heading", "level": len(heading.group(1)), "text": text,
+                    "anchor": self._section_anchor(source_path, text),
+                })
+                index += 1
+                continue
+            if (
+                "|" in raw
+                and index + 1 < len(lines)
+                and re.match(r"^\s*\|?\s*:?-{3,}", lines[index + 1])
+            ):
+                def cells(line: str) -> list[str]:
+                    return [_clean_markdown_text(cell).strip() for cell in line.strip().strip("|").split("|")]
+
+                headers = cells(raw)
+                index += 2
+                rows = []
+                while index < len(lines) and "|" in lines[index] and lines[index].strip():
+                    rows.append(cells(lines[index]))
+                    index += 1
+                blocks.append({"type": "table", "headers": headers, "rows": rows})
+                continue
+            list_match = re.match(r"^\s*(?:[-*+]|(\d+)\.)\s+(.+)$", raw)
+            if list_match:
+                ordered = bool(list_match.group(1))
+                items = []
+                while index < len(lines):
+                    item = re.match(r"^\s*(?:[-*+]|(\d+)\.)\s+(.+)$", lines[index])
+                    if not item or bool(item.group(1)) != ordered:
+                        break
+                    items.append(self._inlines(item.group(2), source_path))
+                    index += 1
+                blocks.append({"type": "list", "ordered": ordered, "items": items})
+                continue
+            paragraph = [raw.strip()]
+            index += 1
+            while index < len(lines) and lines[index].strip():
+                candidate = lines[index]
+                if re.match(r"^(#{1,6})\s+|^\s*```|^\s*(?:[-*+]|\d+\.)\s+", candidate):
+                    break
+                if "|" in candidate and index + 1 < len(lines) and re.match(
+                    r"^\s*\|?\s*:?-{3,}", lines[index + 1]
+                ):
+                    break
+                paragraph.append(candidate.strip())
+                index += 1
+            blocks.append({"type": "paragraph", "inlines": self._inlines(" ".join(paragraph), source_path)})
+        return blocks
+
+    def get(self, reference_id: Any) -> dict[str, Any]:
+        reference_id = _safe_identifier(str(reference_id or ""))
+        reference = self.references.get(reference_id)
+        if not reference:
+            raise ValueError("Référence produit inconnue.")
+        documents = []
+        for source in reference["sources"]:
+            path = Path(source.get("resolved_path") or _repo_path(source["path"], "reference", self.root)).resolve()
+            if path not in self.allowed_paths or not path.is_file():
+                raise SourceError(f"Source Markdown configurée indisponible: {source['path']}")
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                raise SourceError(f"Lecture Markdown impossible pour {source['path']}: {exc}") from exc
+            sections = []
+            for heading in source["sections"]:
+                _, lines = _extract_markdown_section(text, heading)
+                blocks = self._blocks(lines, path)
+                if not blocks:
+                    raise SourceError(f"Section Markdown vide: {heading}")
+                sections.append({
+                    "heading": heading,
+                    "anchor": self._section_anchor(path, heading),
+                    "blocks": blocks,
+                })
+            stat = path.stat()
+            documents.append({
+                "configured_path": source["path"],
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "sections": sections,
+            })
+        return {
+            "id": reference_id,
+            "title": reference["title"],
+            "summary": reference["summary"],
+            "status": reference["status"],
+            "status_label": reference["status_label"],
+            "state": "ready",
+            "documents": documents,
+            "model_calls": 0,
+        }
+
+    def summary(self, reference_id: str) -> dict[str, Any]:
+        reference = self.references[reference_id]
+        base = {
+            "id": reference_id, "title": reference["title"], "summary": reference["summary"],
+            "status": reference["status"], "status_label": reference["status_label"],
+            "configured_paths": [source["path"] for source in reference["sources"]],
+        }
+        try:
+            document = self.get(reference_id)
+            timestamps = [source["modified_at"] for source in document["documents"]]
+            return {**base, "state": "ready", "freshness": max(timestamps), "error": None}
+        except (SourceError, ValueError) as exc:
+            return {**base, "state": "source_error", "freshness": None, "error": _redact(str(exc))[:1000]}
+
+
 class ProductMemory:
     """Deterministic projection of the Git-versioned PO memory."""
 
@@ -574,14 +1018,14 @@ class ProductMemory:
         strategy: Path | None = None,
         decisions: Path | None = None,
         config: dict[str, Any] | None = None,
-        blockers: Path | None = None,
     ) -> None:
+        self.strict_relationships = strategy is None and decisions is None
         self.config = config or load_product_config()
-        self.blockers = blockers or BLOCKER_STATE_PATH
         self.strategy = strategy or self.config["strategy_path"]
         self.decisions = decisions or self.config["decisions_path"]
         self.project_inventory = self.config["project_inventory_path"]
         self.design_governance = self.config["design_governance_path"]
+        self.reference_reader = ProductReferenceReader(self.config)
 
     def _inventory_freshness(self) -> dict[str, Any]:
         reviewed = self.project_inventory.stat().st_mtime
@@ -616,11 +1060,27 @@ class ProductMemory:
                 "stage": self.ROADMAP_STAGE[index] if index < len(self.ROADMAP_STAGE) else "later",
                 "source": "PRODUCT_STRATEGY.md · Product roadmap",
             })
+        configured_roadmap = {
+            item.get("roadmap")
+            for collection in (
+                self.config.get("capabilities", []), self.config.get("journeys", []),
+                self.config.get("business_objectives", []),
+            )
+            for item in collection if isinstance(item, dict)
+        }
+        dangling_roadmap = sorted(
+            value for value in configured_roadmap
+            if isinstance(value, int) and value > len(roadmap)
+        )
+        if dangling_roadmap and self.strict_relationships:
+            raise SourceError(
+                "Référence roadmap introuvable: " + ", ".join(map(str, dangling_roadmap))
+            )
 
         accepted_raw = _markdown_section(decisions, "Accepted")
         accepted = [
             {
-                "id": f"accepted-{index + 1}",
+                "id": f"accepted-{hashlib.sha256(match.group(1).strip().encode('utf-8')).hexdigest()[:12]}",
                 "title": match.group(1).strip(),
                 "status": "accepted",
                 "detail": _paragraph(match.group(2)),
@@ -648,15 +1108,31 @@ class ProductMemory:
                     "detail": detail,
                     "source": f"DECISIONS.md · Open · {heading.strip()}",
                 })
-        known = {_normalized_title(item["title"]) for item in pending}
-        blockers = []
-        for blocker in _read_blockers(self.blockers):
-            key = _normalized_title(blocker.get("title"))
-            if not key or key in known:
-                continue
-            known.add(key)
-            blockers.append(blocker)
-        pending = blockers + pending
+        decisions_projected = pending + accepted
+        decisions_by_title = {item["title"]: item for item in decisions_projected}
+        configured_decisions = {
+            title
+            for collection in (self.config.get("capabilities", []), self.config.get("journeys", []))
+            for item in collection
+            if isinstance(item, dict)
+            for title in item.get("decision_refs", [])
+        }
+        configured_decisions.update(
+            item["decision_ref"]
+            for item in self.config.get("decision_blockers", [])
+            if isinstance(item, dict) and isinstance(item.get("decision_ref"), str)
+        )
+        missing_decisions = sorted(configured_decisions - decisions_by_title.keys())
+        if missing_decisions and self.strict_relationships:
+            raise SourceError(
+                "Référence de décision introuvable: " + ", ".join(missing_decisions)
+            )
+
+        references = [
+            self.reference_reader.summary(reference_id)
+            for reference_id in self.reference_reader.references
+        ]
+        reference_by_id = {item["id"]: item for item in references}
         capabilities = []
         stage_status = {item["order"]: item["stage"] for item in roadmap}
         for item in self.config.get("capabilities", []):
@@ -665,7 +1141,64 @@ class ProductMemory:
             capabilities.append({
                 **item,
                 "status": stage_status.get(item.get("roadmap"), "later"),
+                "sources": [reference_by_id[reference] for reference in item["source_refs"]],
+                "decisions": [decisions_by_title[title] for title in item["decision_refs"] if title in decisions_by_title],
             })
+        capability_by_id = {item["id"]: item for item in capabilities}
+        for capability in capabilities:
+            capability["relations"] = [
+                {
+                    "direction": "requires" if target == capability["id"] else "supports",
+                    "id": source if target == capability["id"] else target,
+                    "title": capability_by_id[source if target == capability["id"] else target]["title"],
+                }
+                for source, target in self.config.get("relations", [])
+                if capability["id"] in {source, target}
+            ]
+        journeys = []
+        for item in self.config.get("journeys", []):
+            journeys.append({
+                **item,
+                "status": stage_status.get(item.get("roadmap"), "later"),
+                "capabilities": [capability_by_id[reference] for reference in item["capability_refs"]],
+                "sources": [reference_by_id[reference] for reference in item["source_refs"]],
+                "decisions": [decisions_by_title[title] for title in item["decision_refs"] if title in decisions_by_title],
+            })
+        for decision in decisions_projected:
+            decision["capabilities"] = [
+                {"id": item["id"], "title": item["title"]}
+                for item in capabilities if decision["title"] in item["decision_refs"]
+            ]
+            decision["journeys"] = [
+                {"id": item["id"], "title": item["title"]}
+                for item in journeys if decision["title"] in item["decision_refs"]
+            ]
+            decision["roadmap"] = sorted({
+                item["roadmap"]
+                for item in capabilities + journeys if decision["title"] in item["decision_refs"]
+            })
+            decision["sources"] = [
+                reference_by_id[reference]
+                for reference in dict.fromkeys(
+                    reference
+                    for item in capabilities + journeys
+                    if decision["title"] in item["decision_refs"]
+                    for reference in item["source_refs"]
+                )
+            ]
+        for outcome in roadmap:
+            outcome["capabilities"] = [
+                {"id": item["id"], "title": item["title"]}
+                for item in capabilities if item["roadmap"] == outcome["order"]
+            ]
+            outcome["journeys"] = [
+                {"id": item["id"], "title": item["title"]}
+                for item in journeys if item["roadmap"] == outcome["order"]
+            ]
+            outcome["decisions"] = [
+                {"id": item["id"], "title": item["title"], "status": item["status"]}
+                for item in decisions_projected if outcome["order"] in item["roadmap"]
+            ]
         business_objectives = [
             {**item, "status": stage_status.get(item.get("roadmap"), "later")}
             for item in self.config.get("business_objectives", [])
@@ -676,17 +1209,18 @@ class ProductMemory:
             "slug": self.config["slug"],
             "thesis": _paragraph(_markdown_section(strategy, "Product thesis")),
             "roadmap": roadmap,
-            "decisions": pending + accepted,
+            "decisions": decisions_projected,
             "project_graph": {
                 "nodes": capabilities,
                 "edges": self.config.get("relations", []),
             },
+            "journeys": journeys,
             "business": {
                 "north_star": "Prouver que SayMyName aide une personne à mieux retrouver les gens qu’elle a choisi de mémoriser, puis trouver un canal et un acheteur répétables.",
                 "objectives": business_objectives,
             },
             "view_inventory": self.config.get("view_inventory", []),
-            "product_reference": self.config.get("product_reference", []),
+            "product_reference": references,
             "inventory_freshness": self._inventory_freshness(),
             "delivery_workflow": self.config.get("delivery_workflow", []),
             "updated_at": datetime.fromtimestamp(
@@ -970,6 +1504,7 @@ class FactoryCollector:
             queue_command[0] = str(ROOT / queue_command[0])
         self.queue_command = tuple(queue_command)
         self.product_memory = ProductMemory(config=self.product_config)
+        self.release_contract = load_release_contract(self.product_config["release_contract_path"])
 
     def collect(self) -> dict[str, Any]:
         warnings: list[str] = []
@@ -1092,9 +1627,14 @@ class FactoryCollector:
             for bead in beads:
                 if not isinstance(bead, dict):
                     continue
-                item = _product_bead(
-                    bead, store, current_product_ids, self.product_config["name"]
-                )
+                try:
+                    item = _product_bead(
+                        bead, store, current_product_ids, self.product_config["name"]
+                    )
+                except SourceError as exc:
+                    sources[f"product_work:{store}"] = False
+                    warnings.append(str(exc))
+                    continue
                 if item and item.get("id"):
                     product_by_id[str(item["id"])] = item
         product_work = _sort_product_work(list(product_by_id.values()))
@@ -1128,13 +1668,54 @@ class FactoryCollector:
             if session.get("alias") != "mayor"
             and "control-dispatcher" not in str(session.get("template", ""))
         ]
+        workflow_session = None
+        try:
+            workflow_session = _workflow_assigned_session(
+                workflow_summary, worker_sessions
+            )
+        except SourceError as exc:
+            sources["workflow_session"] = False
+            warnings.append(str(exc))
+        direct_session = None
+        try:
+            direct_session = _direct_assigned_session(current, worker_sessions)
+        except SourceError as exc:
+            sources["current"] = False
+            warnings.append(str(exc))
+        assigned_worker_session = workflow_session
+        if direct_session:
+            if assigned_worker_session and direct_session is not workflow_session:
+                sources["current"] = False
+                warnings.append(
+                    "Le résultat courant revendique deux sessions distinctes via le workflow et l'affectation directe."
+                )
+                assigned_worker_session = None
+            elif not assigned_worker_session:
+                assigned_worker_session = direct_session
         work_done = current_meta.get("gc.work_outcome") in {"shipped", "pass"}
         if current:
-            if work_done or workflow_summary["complete"]:
+            current_status = str(current.get("status", ""))
+            blocked_cause = _meaningful(
+                current_meta.get("gc.blocked_reason") or current_meta.get("gc.blocker")
+            )
+            resume_mode = _meaningful(current_meta.get("gc.resume_mode"))
+            resume_condition = _meaningful(current_meta.get("gc.resume_condition"))
+            if current_status == "blocked":
+                focus_state = "attention"
+                focus_label = "Bloqué"
+                phase = blocked_cause or "Cause de blocage non renseignée"
+                if not blocked_cause:
+                    sources["current"] = False
+                    warnings.append("Le résultat courant est bloqué sans cause explicite.")
+            elif work_done or workflow_summary["complete"]:
                 focus_state = "waiting"
                 focus_label = "À finaliser par le Mayor"
                 phase = "Implémentation terminée · publication et clôture en attente"
-            elif workflow_summary["active_step"] or worker_sessions:
+            elif resume_mode == "automatic_dependency" and resume_condition:
+                focus_state = "waiting"
+                focus_label = "Attend une dépendance automatique"
+                phase = resume_condition
+            elif assigned_worker_session and (workflow_summary["active_step"] or direct_session):
                 focus_state = "working"
                 focus_label = "En cours"
                 phase = _human_phase(workflow_summary["active_step"]) or _human_phase(
@@ -1153,7 +1734,7 @@ class FactoryCollector:
             current_meta.get("gc.last_heartbeat_at"),
             (current or {}).get("updated_at"),
             (mayor_session or {}).get("last_active"),
-        )
+        ) if current else None
         focus = {
             "product": self.product_config["name"],
             "id": (display_current or {}).get("id"),
@@ -1165,7 +1746,12 @@ class FactoryCollector:
             "started_at": (display_current or {}).get("started_at") or (display_current or {}).get("created_at"),
             "last_signal_at": heartbeat,
             "steps": workflow_summary,
-            "agent": workflow_summary["assignees"][0] if workflow_summary["assignees"] else None,
+            "agent": (
+                assigned_worker_session.get("qualified_name")
+                or assigned_worker_session.get("alias")
+                or assigned_worker_session.get("name")
+                if assigned_worker_session else None
+            ),
         }
 
         agent_cards = [{
@@ -1187,11 +1773,7 @@ class FactoryCollector:
             is_product_worker = (
                 not maintenance
                 and current is not None
-                and (
-                    session.get("alias") in workflow_summary["assignees"]
-                    or session.get("name") in workflow_summary["assignees"]
-                    or session.get("state") == "active"
-                )
+                and session is assigned_worker_session
             )
             objective = (
                 focus["title"]
@@ -1236,28 +1818,14 @@ class FactoryCollector:
 
         city = base["factory"] if isinstance(base["factory"], dict) else {}
         health = city.get("health", {}) if isinstance(city.get("health"), dict) else {}
-        factory_ok = bool(city.get("running") and health.get("usable"))
-        if not factory_ok:
-            factory_state = "down"
-            factory_label = "Usine indisponible"
-        elif warnings:
-            factory_state = "attention"
-            factory_label = "Usine active · visibilité partielle"
-        elif focus_state == "working":
-            factory_state = "working"
-            factory_label = "Usine en production"
-        elif focus_state in {"queued", "waiting"}:
-            factory_state = "waiting"
-            factory_label = "Usine active · action en attente"
-        else:
-            factory_state = "idle"
-            factory_label = "Usine active · au repos"
 
         needs_benjamin = _meaningful(coordination_meta.get("gc.needs_benjamin"))
-        blockers = _collect_blockers(COORDINATION_BEAD, coordination_meta, product_work)
-        _write_blockers(blockers, self.product_memory.blockers)
-        if not needs_benjamin and blockers:
-            needs_benjamin = blockers[0]["detail"]
+        product_memory = self.product_memory.collect()
+        today = _today_projection(
+            needs_benjamin,
+            product_memory["decisions"],
+            self.product_config.get("decision_blockers", []),
+        )
         last_meta = _metadata(last)
         last_delivery = {
             "id": (last or {}).get("id"),
@@ -1268,21 +1836,126 @@ class FactoryCollector:
             or last_meta.get("gc.ci_conclusion"),
             "closed_at": (last or {}).get("closed_at") or (last or {}).get("updated_at"),
         }
-        queue = base["queue"] if isinstance(base["queue"], list) else []
-        queue = [
-            {**item, "raw_title": item.get("title"), "title": _human_product_title(item.get("title"))}
-            for item in queue if isinstance(item, dict)
+        raw_queue = base["queue"] if isinstance(base["queue"], list) else []
+        queue = []
+        try:
+            if not all(
+                isinstance(item, dict)
+                and item.get("contract") == HUMAN_STATE_CONTRACT
+                and item.get("technical_status") == "deferred"
+                for item in raw_queue
+            ):
+                raise StateContractError("La file n'utilise pas le contrat humain canonique.")
+            queue = [
+                {
+                    **item,
+                    "raw_title": item.get("title"),
+                }
+                for item in raw_queue
+            ]
+        except StateContractError as exc:
+            sources["queue"] = False
+            warnings.append(str(exc))
+
+        resume_mode = _meaningful(coordination_meta.get("gc.resume_mode")) or "manual"
+        resume_condition = _meaningful(coordination_meta.get("gc.resume_condition"))
+        if resume_mode not in {"manual", "automatic_dependency", "automatic_campaign"}:
+            sources["coordination"] = False
+            warnings.append(f"Politique de reprise inconnue: {resume_mode}.")
+            resume_mode = "manual"
+        if resume_mode != "manual" and not resume_condition:
+            sources["coordination"] = False
+            warnings.append("Une reprise automatique est déclarée sans condition explicite.")
+            resume_mode = "manual"
+
+        human_current = None
+        if current:
+            current_status = str(current.get("status", ""))
+            blocked_cause = _meaningful(
+                current_meta.get("gc.blocked_reason") or current_meta.get("gc.blocker")
+            )
+            if current_status == "blocked":
+                stage = "blocked"
+            elif work_done or workflow_summary["complete"]:
+                stage = "finalizing"
+            elif _meaningful(current_meta.get("gc.resume_mode")) == "automatic_dependency":
+                stage = "waiting_dependency"
+                resume_mode = "automatic_dependency"
+                resume_condition = _meaningful(current_meta.get("gc.resume_condition"))
+                if not resume_condition:
+                    sources["current"] = False
+                    warnings.append("La dépendance automatique n'expose pas sa condition.")
+            elif focus_state == "working":
+                stage = "active"
+            else:
+                stage = "materialized"
+            human_current = {
+                "id": current.get("id"),
+                "title": (display_current or {}).get("title"),
+                "state": stage,
+                "phase": phase,
+                "agent": focus.get("agent"),
+                "cause": blocked_cause,
+            }
+
+        blocked_work = [
+            {"cause": item.get("cause")}
+            for item in product_work
+            if item.get("state") == "blocked" and item.get("cause")
         ]
-        decision_aids = _decision_aids(
-            factory_ok,
-            warnings,
-            focus,
-            queue,
-            product_work,
-            needs_benjamin,
-            last_delivery,
-            blockers[0]["id"] if blockers else None,
-        )
+        observations = {
+            "infrastructure": {
+                "running": bool(city.get("ok") and city.get("running")),
+                "usable": bool(health.get("usable")),
+                "degraded": bool(health.get("degraded")),
+            },
+            "sources_consistent": bool(sources) and all(sources.values()),
+            "current": human_current,
+            "queue": queue,
+            "needs_benjamin": needs_benjamin,
+            "blockers": blocked_work,
+            "resume_policy": {"mode": resume_mode, "condition": resume_condition},
+            "campaign_metadata": coordination_meta,
+        }
+        try:
+            human_state = project_human_state(observations)
+        except StateContractError as exc:
+            warnings.append(f"Contrat d'état humain incohérent: {exc}")
+            sources["human_state"] = False
+            human_state = project_human_state({
+                "infrastructure": observations["infrastructure"],
+                "sources_consistent": False,
+                "current": None,
+                "queue": [],
+                "needs_benjamin": None,
+                "blockers": [],
+                "resume_policy": {"mode": "manual"},
+                "campaign_metadata": {},
+            })
+
+        factory_state = {
+            "available": "idle", "degraded": "attention", "unavailable": "down",
+        }[human_state["health"]["state"]]
+        factory_label = human_state["health"]["label"]
+        focus_state = {
+            "none": "idle", "materialized": "queued", "active": "working",
+            "blocked": "attention", "delivered": "idle", "cancelled": "idle",
+        }.get(human_state["result"]["state"], "waiting")
+        if human_state["result"].get("stage") in {"finalizing", "waiting_dependency"}:
+            focus_state = "waiting"
+        focus.update({
+            "title": human_state["result"]["title"],
+            "state": focus_state,
+            "state_label": human_state["result"]["state_label"],
+            "phase": human_state["result"]["phase"],
+        })
+        agent_cards[0].update({
+            "objective": focus["title"],
+            "state": focus["state"],
+            "state_label": focus["state_label"],
+            "phase": focus["phase"],
+        })
+        decision_aids = _decision_aids(human_state, last_delivery)
 
         infrastructure = [
             {
@@ -1295,24 +1968,33 @@ class FactoryCollector:
         ]
 
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "factory": {
                 "state": factory_state,
                 "label": factory_label,
                 "running": bool(city.get("running")),
                 "usable": bool(health.get("usable")),
+                "degraded": bool(health.get("degraded")),
                 "city": city.get("city_name", "agent-factory"),
             },
+            "human_state": human_state,
+            "health": human_state["health"],
+            "activity": human_state["activity"],
+            "resume": human_state["resume"],
+            "campaign": human_state["campaign"],
             "focus": focus,
             "agents": agent_cards,
             "queue": queue,
             "product_work": product_work,
-            "product_memory": self.product_memory.collect(),
+            "product_memory": product_memory,
+            "release": project_operational_release(
+                project_release(self.release_contract), human_state["campaign"]
+            ),
+            "today": today,
             "decision_aids": decision_aids,
             "last_delivery": last_delivery,
             "needs_benjamin": needs_benjamin,
-            "blocking_decisions": blockers,
             "factory_work": factory_work,
             "infrastructure": infrastructure,
             "warnings": warnings,
@@ -1376,15 +2058,221 @@ class SnapshotCache:
             raise SourceError("Le premier relevé du cockpit a échoué.")
         return value
 
+    def invalidate(self) -> None:
+        with self.condition:
+            self.value = None
+            self.collected_at = 0.0
+
+
+class QueueBridge:
+    """Structured RECORD-only facade over the existing product queue contract."""
+
+    ACTION_FIELDS = {
+        "add": {"title", "why", "acceptance", "urgency"},
+        "move": {"id", "position"},
+        "urgency": {"id", "urgency"},
+        "pause": {"id", "reason"},
+        "resume": {"id"},
+        "cancel": {"id", "reason", "confirmed"},
+    }
+
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        executor: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    ) -> None:
+        self.config = config or load_product_config()
+        self.executor = executor or subprocess.run
+        self.lock = threading.Lock()
+        self.last_submit = 0.0
+        self.list_command = [str(self.config["queue_command_path"]), *self.config["queue_command"][1:]]
+        self.mutation_command = [str(self.config["queue_mutation_command_path"])]
+
+    def _execute(self, command: list[str]) -> str:
+        try:
+            result = self.executor(
+                command, cwd=ROOT, capture_output=True, text=True, timeout=45,
+                env={**os.environ, "NO_COLOR": "1"},
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SourceError(f"File produit indisponible: {exc}") from exc
+        if result.returncode != 0:
+            message = _redact(result.stderr.strip() or result.stdout.strip() or "Mutation refusée.")[:2000]
+            if re.search(r"lock|inconsistent|conflict|previous ranks|not in the active|position", message, re.I):
+                raise ConflictError(message)
+            raise SourceError(message)
+        return result.stdout.strip()
+
+    def list(self) -> list[dict[str, Any]]:
+        output = self._execute(self.list_command)
+        try:
+            value = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise SourceError("La file produit n’a pas renvoyé de JSON valide.") from exc
+        if not isinstance(value, list):
+            raise SourceError("La projection de file produit est invalide.")
+        return [
+            {
+                **item,
+                "kind": "factory_campaign" if item.get("goal") in {None, "none"} else "product_candidate",
+            }
+            for item in value if isinstance(item, dict)
+        ]
+
+    @staticmethod
+    def _text(value: Any, name: str, maximum: int, single_line: bool = False) -> str:
+        if not isinstance(value, str):
+            raise ValueError(f"{name} doit être du texte.")
+        result = value.strip()
+        if not result or len(result) > maximum or "\x00" in result:
+            raise ValueError(f"{name} doit contenir entre 1 et {maximum} caractères.")
+        if single_line and ("\n" in result or "\r" in result):
+            raise ValueError(f"{name} doit tenir sur une ligne.")
+        return result
+
+    def mutate(self, action: Any, payload: Any) -> dict[str, Any]:
+        if action not in self.ACTION_FIELDS:
+            raise ValueError("Action de file produit interdite.")
+        if not isinstance(payload, dict) or set(payload) != self.ACTION_FIELDS[action]:
+            raise ValueError("Champs de mutation de file invalides.")
+        inventory = self.list()
+        by_id = {str(item.get("id")): item for item in inventory if item.get("id")}
+        command = [*self.mutation_command, str(action)]
+        if action == "add":
+            title = self._text(payload["title"], "Le résultat", 160, single_line=True)
+            why = self._text(payload["why"], "La raison", 2000)
+            acceptance = self._text(payload["acceptance"], "L’acceptation", 2000)
+            urgency = payload["urgency"]
+            if urgency not in {"normal", "urgent", "critical"}:
+                raise ValueError("Urgence invalide.")
+            command.extend([
+                "--title", title, "--why", why, "--acceptance", acceptance,
+                "--urgency", urgency,
+            ])
+        else:
+            item_id = _safe_identifier(str(payload.get("id") or ""))
+            if item_id not in by_id:
+                raise ConflictError("Ce candidat n’est plus dans la file active; actualise avant de réessayer.")
+            if action == "move":
+                position = payload["position"]
+                if isinstance(position, bool) or not isinstance(position, int) or not 1 <= position <= len(inventory):
+                    raise ValueError("Position de file invalide.")
+                command.extend([item_id, str(position)])
+            elif action == "urgency":
+                urgency = payload["urgency"]
+                if urgency not in {"normal", "urgent", "critical"}:
+                    raise ValueError("Urgence invalide.")
+                command.extend([item_id, urgency])
+            elif action == "pause":
+                command.extend([item_id, self._text(payload["reason"], "La raison de pause", 1000)])
+            elif action == "resume":
+                command.append(item_id)
+            else:
+                if payload["confirmed"] is not True:
+                    raise ValueError("L’annulation doit être confirmée explicitement.")
+                command.extend([item_id, self._text(payload["reason"], "La raison d’annulation", 1000)])
+        with self.lock:
+            now = time.monotonic()
+            if now - self.last_submit < 0.75:
+                raise ConflictError("Une mutation est déjà en cours; actualise puis réessaie.")
+            message = self._execute(command)
+            self.last_submit = now
+            refreshed = self.list()
+        return {
+            "accepted": True,
+            "action": action,
+            "message": message,
+            "queue": refreshed,
+            "model_calls": 0,
+        }
+
+
+class DeliveryEvidenceReader:
+    """On-demand exact GitHub evidence through the existing product-status contract."""
+
+    def __init__(self, config: dict[str, Any] | None = None, runner: Any | None = None) -> None:
+        self.config = config or load_product_config()
+        self.runner = runner or CommandRunner(timeout=60)
+
+    def collect(self) -> dict[str, Any]:
+        output = self.runner.text(str(self.config["status_command_path"]))
+        values = {}
+        for raw in output.splitlines():
+            if ": " in raw:
+                key, value = raw.split(": ", 1)
+                values[key] = value.strip()
+        required = {"CURRENT", "CURRENT AGENT", "LAST DELIVERED", "NEXT", "NEEDS BENJAMIN"}
+        if not required.issubset(values):
+            raise SourceError("Le statut produit exact est incomplet.")
+        return {
+            "current": values["CURRENT"],
+            "current_agent": values["CURRENT AGENT"],
+            "last_delivered": values["LAST DELIVERED"],
+            "next": values["NEXT"],
+            "needs_benjamin": values["NEEDS BENJAMIN"],
+            "verified_by": "bin/saymyname-product-status · Beads + Gas City + GitHub",
+            "model_calls": 0,
+        }
+
 
 class MayorBridge:
     PREFIX = "[Cockpit Benjamin] "
+    CHANNEL_LABELS = {
+        "transmitting": "Transmission",
+        "delivered": "Remis",
+        "waiting": "En attente",
+        "responded": "Répondu",
+        "failed": "Échec",
+        "late_response": "Réponse tardive",
+        "empty_response": "Réponse vide",
+        "idle": "Disponible",
+    }
 
-    def __init__(self, runner: Any | None = None, gas_city: Any | None = None) -> None:
+    def __init__(
+        self, runner: Any | None = None, gas_city: Any | None = None,
+        state_path: Path | None = None,
+    ) -> None:
         self.runner = runner or CommandRunner()
         self.gas_city = gas_city or GasCityReader(timeout=15)
         self.lock = threading.Lock()
         self.last_submit = 0.0
+        self.state_path = state_path or ROOT / ".gc" / "runtime" / "factory-cockpit-mayor-channel.json"
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _channel(self) -> dict[str, Any]:
+        try:
+            value = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {"state": "idle", "updated_at": None}
+        except (OSError, json.JSONDecodeError):
+            return {"state": "failed", "updated_at": None, "detail": "Journal du canal illisible."}
+        if not isinstance(value, dict) or value.get("state") not in self.CHANNEL_LABELS:
+            return {"state": "failed", "updated_at": None, "detail": "Journal du canal invalide."}
+        return value
+
+    def _set_channel(self, state: str, **details: Any) -> dict[str, Any]:
+        value = {
+            "state": state,
+            "label": self.CHANNEL_LABELS[state],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            **details,
+        }
+        handle, filename = tempfile.mkstemp(
+            prefix="cockpit-mayor-channel-", suffix=".json", dir=self.state_path.parent,
+        )
+        try:
+            os.fchmod(handle, 0o600)
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                json.dump(value, stream, ensure_ascii=False, indent=2)
+            Path(filename).replace(self.state_path)
+        except Exception:
+            try:
+                os.close(handle)
+            except OSError:
+                pass
+            Path(filename).unlink(missing_ok=True)
+            raise
+        return value
 
     def submit(self, message: Any, intent: Any = "question") -> dict[str, Any]:
         if not isinstance(message, str):
@@ -1399,22 +2287,40 @@ class MayorBridge:
             now = time.monotonic()
             if now - self.last_submit < 5:
                 raise RuntimeError("Attends cinq secondes avant un nouvel envoi.")
-            result = self.runner.json(
-                "gc",
-                "session",
-                "submit",
-                "mayor",
-                f"{self.PREFIX}{message}",
-                "--intent",
-                intent_map[intent],
-                "--json",
-            )
+            request_id = f"mayor-{time.time_ns()}"
+            message_hash = hashlib.sha256(message.encode()).hexdigest()
+            self._set_channel("transmitting", request_id=request_id, message_hash=message_hash)
+            try:
+                result = self.runner.json(
+                    "gc",
+                    "session",
+                    "submit",
+                    "mayor",
+                    f"{self.PREFIX}{message}",
+                    "--intent",
+                    intent_map[intent],
+                    "--json",
+                )
+                delivery = result.get("delivery") if isinstance(result, dict) else None
+                if delivery not in {"queued", "accepted", "delivered"}:
+                    raise SourceError("Le provider n'a pas confirmé la remise au Mayor.")
+                channel = self._set_channel(
+                    "delivered", request_id=request_id, message_hash=message_hash,
+                    provider_delivery=delivery,
+                )
+            except Exception as exc:
+                self._set_channel(
+                    "failed", request_id=request_id, message_hash=message_hash,
+                    detail=_redact(str(exc))[:1000],
+                )
+                raise
             self.last_submit = now
         return {
             "accepted": True,
             "intent": intent,
             "submitted_at": datetime.now(timezone.utc).isoformat(),
-            "delivery": result.get("delivery") if isinstance(result, dict) else None,
+            "delivery": delivery,
+            "channel": channel,
         }
 
     def conversation(self) -> dict[str, Any]:
@@ -1437,10 +2343,20 @@ class MayorBridge:
             and str(turn.get("text", "")).startswith(self.PREFIX)
         ]
         if not cockpit_indices:
-            return {"session": "Mayor", "state": mayor.get("state"), "messages": []}
+            previous = self._channel()
+            return {
+                "session": "Mayor", "state": mayor.get("state"), "messages": [],
+                "channel": {
+                    **previous,
+                    "label": self.CHANNEL_LABELS.get(previous.get("state"), "Échec"),
+                },
+            }
         start = cockpit_indices[-min(3, len(cockpit_indices))]
         messages = []
         capturing = False
+        last_human_at = None
+        last_response_at = None
+        empty_response = False
         for turn in turns[start:]:
             role = turn.get("role")
             text = str(turn.get("text", "")).strip()
@@ -1451,10 +2367,18 @@ class MayorBridge:
                 capturing = True
                 text = text[len(self.PREFIX) :].strip()
                 visible_role = "Benjamin"
+                last_human_at = turn.get("timestamp")
+                last_response_at = None
+                empty_response = False
             elif role == "assistant":
-                if not capturing or not text or text in {"[thinking]", "[exec]"}:
+                if not capturing or text in {"[thinking]", "[exec]"}:
+                    continue
+                if not text:
+                    empty_response = True
+                    last_response_at = turn.get("timestamp")
                     continue
                 visible_role = "Mayor"
+                last_response_at = turn.get("timestamp")
             else:
                 continue
             messages.append(
@@ -1463,13 +2387,210 @@ class MayorBridge:
                     "text": text[:5000],
                     "truncated": len(text) > 5000,
                     "timestamp": turn.get("timestamp"),
+                    "delivery_state": "delivered" if visible_role == "Benjamin" else "responded",
                 }
             )
+        previous = self._channel()
+        if empty_response:
+            channel_state = "empty_response"
+        elif last_response_at:
+            channel_state = "responded"
+            try:
+                human_time = datetime.fromisoformat(str(last_human_at).replace("Z", "+00:00"))
+                response_time = datetime.fromisoformat(str(last_response_at).replace("Z", "+00:00"))
+                if (response_time - human_time).total_seconds() > 120 or previous.get("state") == "failed":
+                    channel_state = "late_response"
+            except (TypeError, ValueError):
+                pass
+        elif last_human_at:
+            channel_state = "waiting"
+        else:
+            channel_state = previous.get("state", "idle")
+        channel = {
+            "state": channel_state,
+            "label": self.CHANNEL_LABELS[channel_state],
+            "updated_at": last_response_at or last_human_at or previous.get("updated_at"),
+            "detail": (
+                "La demande est visible; aucune réponse Mayor n'est encore observée."
+                if channel_state == "waiting"
+                else "Le Mayor a répondu sans contenu visible."
+                if channel_state == "empty_response"
+                else previous.get("detail")
+            ),
+        }
         return {
             "session": "Mayor",
             "state": mayor.get("state"),
             "messages": messages[-12:],
+            "channel": channel,
         }
+
+
+class DirectDecisionStore:
+    """Local zero-model audit for explicit structured human choices.
+
+    The audit stores stable choice identifiers and an optional detail digest,
+    never the free-form decision content.  The PO alone can turn the recorded
+    choice into versioned Git truth.
+    """
+
+    ACTIONS = {"accept", "reject", "option", "other", "propose", "validate"}
+
+    def __init__(
+        self, config: dict[str, Any] | None = None, state_path: Path | None = None,
+    ) -> None:
+        self.config = config or load_product_config()
+        self.release = load_release_contract(self.config["release_contract_path"])
+        self.state_path = state_path or ROOT / ".gc" / "runtime" / "factory-cockpit-direct-decisions.json"
+        self.lock = threading.Lock()
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _empty() -> dict[str, Any]:
+        return {"schema_version": 1, "events": {}, "errors": 0}
+
+    def _load(self) -> dict[str, Any]:
+        try:
+            value = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return self._empty()
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SourceError(f"Audit des décisions directes illisible: {exc}") from exc
+        if (
+            not isinstance(value, dict) or value.get("schema_version") != 1
+            or not isinstance(value.get("events"), dict)
+            or not isinstance(value.get("errors"), int)
+        ):
+            raise SourceError("Audit des décisions directes invalide; aucune décision n'est supposée enregistrée.")
+        return value
+
+    def _write(self, value: dict[str, Any]) -> None:
+        handle, filename = tempfile.mkstemp(
+            prefix="cockpit-direct-decision-", suffix=".json", dir=self.state_path.parent,
+        )
+        try:
+            os.fchmod(handle, 0o600)
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                json.dump(value, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            Path(filename).replace(self.state_path)
+        except Exception:
+            try:
+                os.close(handle)
+            except OSError:
+                pass
+            Path(filename).unlink(missing_ok=True)
+            raise
+
+    def _decision(self, decision_id: Any) -> dict[str, Any]:
+        if not isinstance(decision_id, str):
+            raise ValueError("Identifiant de décision directe invalide.")
+        decision = next(
+            (item for item in self.release["decisions"] if item["id"] == decision_id), None,
+        )
+        if not decision:
+            raise ValueError("La décision directe n'existe pas dans la release sélectionnée.")
+        return decision
+
+    def collect(self) -> dict[str, Any]:
+        state = self._load()
+        events = list(state["events"].values())
+        by_decision = {item["decision_id"]: item for item in events}
+        decisions = []
+        for decision in self.release["decisions"]:
+            decisions.append({
+                **decision,
+                "record": by_decision.get(decision["id"]),
+                "deep_link": f"#view=project&releaseDecision={decision['id']}",
+            })
+        durations = [item["elapsed_ms"] for item in events if isinstance(item.get("elapsed_ms"), int)]
+        return {
+            "contract": "agent-factory-direct-decision-audit/v1",
+            "release": self.release["version"],
+            "decisions": decisions,
+            "telemetry": {
+                "direct_decisions": len(events),
+                "conversations_avoided": len(events),
+                "average_time_to_choice_ms": round(sum(durations) / len(durations)) if durations else None,
+                "errors": state["errors"],
+                "sensitive_content_stored": False,
+                "model_calls": 0,
+            },
+        }
+
+    def record_error(self) -> None:
+        with self.lock:
+            state = self._load()
+            state["errors"] += 1
+            self._write(state)
+
+    def record(self, request: Any) -> dict[str, Any]:
+        if not isinstance(request, dict):
+            raise ValueError("Choix direct invalide.")
+        decision = self._decision(request.get("decision_id"))
+        action = request.get("action")
+        if action not in self.ACTIONS:
+            raise ValueError("Action directe inconnue.")
+        if action in {"accept", "reject", "option", "other"} and decision["status"] != "decision_required":
+            raise ConflictError("Cette décision n'est plus ouverte dans la vérité Git.")
+        revision = request.get("expected_revision")
+        if revision != decision["revision"]:
+            raise StaleError("La décision a changé; recharge la release avant de choisir.")
+        key = request.get("idempotency_key")
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", key):
+            raise ValueError("Clé d'idempotence invalide.")
+        option_id = request.get("option_id")
+        option_ids = {item["id"] for item in decision["options"]}
+        if action == "option" and option_id not in option_ids:
+            raise ValueError("Option directe inconnue ou absente.")
+        if action != "option" and option_id is not None:
+            raise ValueError("Une option ne peut accompagner que l'action option.")
+        detail = request.get("detail")
+        if action == "other":
+            if not isinstance(detail, str) or not detail.strip() or len(detail.strip()) > 1000 or "\x00" in detail:
+                raise ValueError("Autre exige un texte borné entre 1 et 1000 caractères.")
+            detail_digest = hashlib.sha256(detail.strip().encode()).hexdigest()
+        elif detail not in {None, ""}:
+            raise ValueError("Le détail libre est réservé à Autre.")
+        else:
+            detail_digest = None
+        if decision["risk"] == "high" and action != "propose" and request.get("confirmed") is not True:
+            raise ValueError("Cette décision Benjamin + PO exige une confirmation explicite.")
+        elapsed_ms = request.get("elapsed_ms")
+        if elapsed_ms is not None and (
+            not isinstance(elapsed_ms, int) or isinstance(elapsed_ms, bool) or elapsed_ms < 0 or elapsed_ms > 86_400_000
+        ):
+            raise ValueError("Durée de décision invalide.")
+        normalized = {
+            "decision_id": decision["id"], "action": action,
+            "option_id": option_id, "detail_digest": detail_digest,
+            "expected_revision": revision, "confirmed": request.get("confirmed") is True,
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        with self.lock:
+            state = self._load()
+            existing = state["events"].get(key)
+            if existing:
+                if existing.get("fingerprint") != fingerprint:
+                    raise ConflictError("Cette clé d'idempotence désigne déjà un autre choix.")
+                return {"accepted": True, "state": "already_recorded", "record": existing, "model_calls": 0}
+            prior = next(
+                (item for item in state["events"].values() if item.get("decision_id") == decision["id"]),
+                None,
+            )
+            if prior and action not in {"propose", "validate"}:
+                raise ConflictError("Un choix est déjà enregistré pour cette révision; ouvre le PO pour le faire évoluer.")
+            event = {
+                **normalized,
+                "choice": option_id if action == "option" else action,
+                "risk": decision["risk"], "elapsed_ms": elapsed_ms,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "fingerprint": fingerprint,
+            }
+            state["events"][key] = event
+            self._write(state)
+        return {"accepted": True, "state": "recorded", "record": event, "model_calls": 0}
 
 
 class POBridge:
@@ -1830,12 +2951,20 @@ def handler_factory(
     token_cache: SnapshotCache | None = None,
     po_bridge: POBridge | None = None,
     preview_bridge: PreviewBridge | None = None,
+    reference_reader: ProductReferenceReader | None = None,
+    queue_bridge: QueueBridge | None = None,
+    delivery_reader: DeliveryEvidenceReader | None = None,
+    decision_store: DirectDecisionStore | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     bridge = mayor_bridge or MayorBridge()
     details = detail_reader or DetailReader()
     tokens = token_cache or SnapshotCache(TokenReader(), ttl=30)
     po = po_bridge or POBridge()
     preview = preview_bridge or PreviewBridge()
+    references = reference_reader or ProductReferenceReader()
+    queue = queue_bridge or QueueBridge()
+    delivery = delivery_reader or DeliveryEvidenceReader()
+    direct_decisions = decision_store or DirectDecisionStore()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "FactoryCockpit/1"
@@ -1849,7 +2978,8 @@ def handler_factory(
             self.send_header(
                 "Content-Security-Policy",
                 "default-src 'self'; connect-src 'self'; img-src 'self'; "
-                "style-src 'self'; script-src 'self'; frame-ancestors 'none'",
+                "style-src 'self'; script-src 'self'; object-src 'none'; "
+                "base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
             )
             self.end_headers()
 
@@ -1914,6 +3044,26 @@ def handler_factory(
                 except Exception as exc:
                     self._json_response(503, {"error": _redact(str(exc))[:1000]})
                 return
+            if path == "/api/reference":
+                try:
+                    self._json_response(200, references.get(query.get("id", [""])[0]))
+                except ValueError as exc:
+                    self._json_response(400, {"error": str(exc), "state": "invalid"})
+                except SourceError as exc:
+                    self._json_response(422, {"error": str(exc), "state": "source_error"})
+                return
+            if path == "/api/delivery-evidence":
+                try:
+                    self._json_response(200, delivery.collect())
+                except SourceError as exc:
+                    self._json_response(503, {"error": str(exc), "state": "source_error"})
+                return
+            if path == "/api/direct-decisions":
+                try:
+                    self._json_response(200, direct_decisions.collect())
+                except SourceError as exc:
+                    self._json_response(503, {"error": str(exc), "state": "source_error"})
+                return
             files = {
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -1929,7 +3079,11 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
-            if path not in {"/api/mayor/message", "/api/po/message", "/api/po/new", "/api/preview/action"}:
+            if path not in {
+                "/api/mayor/message", "/api/po/message", "/api/po/new",
+                "/api/preview/action", "/api/product-queue",
+                "/api/direct-decision",
+            }:
                 self._json_response(404, {"error": "Not found"})
                 return
             origin = self.headers.get("Origin")
@@ -1940,6 +3094,8 @@ def handler_factory(
             expected_header = (
                 "human-message" if path == "/api/mayor/message"
                 else "human-preview-action" if path == "/api/preview/action"
+                else "human-queue-record" if path == "/api/product-queue"
+                else "human-direct-decision" if path == "/api/direct-decision"
                 else "human-po-message"
             )
             if self.headers.get("X-Factory-Cockpit") != expected_header:
@@ -1966,6 +3122,11 @@ def handler_factory(
                     )
                 elif path == "/api/preview/action":
                     result = preview.submit(request.get("action"))
+                elif path == "/api/product-queue":
+                    result = queue.mutate(request.get("action"), request.get("payload"))
+                    cache.invalidate()
+                elif path == "/api/direct-decision":
+                    result = direct_decisions.record(request)
                 else:
                     result = po.new_conversation()
                 self._json_response(202, result)
@@ -1973,10 +3134,14 @@ def handler_factory(
                 self._json_response(400, {"error": "JSON invalide."})
             except ValueError as exc:
                 self._json_response(400, {"error": str(exc)})
-            except RuntimeError as exc:
-                self._json_response(429, {"error": str(exc)})
+            except StaleError as exc:
+                self._json_response(409, {"error": str(exc), "state": "stale"})
+            except ConflictError as exc:
+                self._json_response(409, {"error": str(exc), "state": "conflict"})
             except SourceError as exc:
                 self._json_response(503, {"error": str(exc)})
+            except RuntimeError as exc:
+                self._json_response(429, {"error": str(exc)})
 
         def log_message(self, pattern: str, *args: Any) -> None:
             if os.environ.get("FACTORY_COCKPIT_ACCESS_LOG") == "1":

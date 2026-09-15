@@ -53,13 +53,7 @@ controls their selection, attempts, schedule and progress.
    than inventing an identity.
 7. The first accessible pilot is a new adult student cohort reached through
    Benjamin's former school administration or its student association. The pilot
-   is free and validates usage before payment is implemented. V1 does not assign
-   recruitment or distribution to either body by default: Benjamin and the school
-   choose the owner and channel together when preparing the pilot and may adjust
-   the arrangement later. The first price test then targets the first qualified
-   school or employer sponsor reached with budget access: a real EUR 1,500
-   excluding-tax founding offer for one cohort, three months and up to 100 invited
-   learners. Donations do not count as willingness-to-pay evidence.
+   is free and validates usage before payment is implemented.
 8. The V1 public demo targets France first with one French-presidents collection.
    The format remains reusable internationally: each additional supported
    national audience initially gets at most one presidents collection when
@@ -67,11 +61,6 @@ controls their selection, attempts, schedule and progress.
    broad international coverage a V1 requirement. Country selection and fallback
    behavior remain implementation choices, and every collection remains subject
    to verified content and image rights.
-9. The frozen V1 boundary has two checkpoints: pilot-ready adds the participative
-   journey and French-presidents collection to the delivered public/personal
-   foundation; complete V1 also adds administered CSV import, personal import and
-   scoped editorial publishing. Retrieval, connectors, federation and pricing
-   remain evidence-gated extensions rather than hidden V1 completion criteria.
 
 The detailed durable strategy and roadmap are in `PRODUCT_STRATEGY.md`.
 
@@ -125,10 +114,16 @@ work. Queue changes never interrupt the outcome already in delivery.
   isolate it as an explicit outcome when it affects delivery.
 - Production/cloud mutation and public exposure remain explicit ADMIN decisions.
 
-## Open decisions still owned by Benjamin
+## Product questions still owned by Benjamin
 
+- Whether the first school pilot is distributed officially by the administration
+  or by the student association; this does not block building the shared path.
+- Numerical go/no-go thresholds for onboarding, delayed recall, return and
+  reported help in a real interaction.
+- The first paid buyer and tested price after the free cohort pilot.
+- The first external connector justified by pilot data: personal contacts,
+  Google, Microsoft or another source.
 - Whether the brand name still fits after evidence for uses beyond names.
 - Exact production launch criteria and acceptable operational risk.
 
-The categorized `Open` section of `DECISIONS.md` is authoritative. These choices
-are not blockers unless the selected outcome depends on them.
+These are open decisions, not blockers unless a selected outcome depends on them.

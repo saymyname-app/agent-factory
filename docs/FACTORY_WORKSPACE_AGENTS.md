@@ -25,7 +25,16 @@ Factory's normal evidence and delivery rules.
   objectives, phases, product Beads, signal freshness, agents, queue, explainable
   decision aids, integrated help, and source warnings.
 - Never invent a percentage or claim that a process is making progress merely
-  because its session exists. Distinguish working, waiting, stale, and idle.
+  because its session exists. Use `agent-factory-human-state/v1` to keep system
+  health, delivery activity, result lifecycle, and resume responsibility
+  separate. Working requires the exact workflow assignee to have an active
+  session; an unrelated session is never delivery evidence.
+- An eligible candidate is “Éligible · non programmé”. In one-shot/manual mode,
+  it will not start without a new EXECUTE request. Under the explicitly activated
+  Mayor campaign from ADR-0013, the deterministic sentinelle instead wakes the
+  sole Mayor to continue one result at a time. Present “Lance le prochain
+  résultat” as an optional action only in manual mode, never as `NEEDS BENJAMIN`;
+  reserve that field for an effective blocking decision.
 - The cockpit refresh performs zero model calls. Do not add model summarization,
   inference, or autonomous actions to that path. Only Benjamin explicitly
   pressing send may submit a bounded message to the Mayor or persistent PO, and
@@ -33,6 +42,9 @@ Factory's normal evidence and delivery rules.
   RECORD persists only the approved product decision.
 - The Mayor remains the only product-work orchestrator. UI visibility never
   grants the cockpit interrupt, dispatch, retry, merge, or recovery authority.
+- When the campaign is blocked, both the global navigation and Today must expose
+  `BLOQUÉ`, the same understandable cause, the resume owner, and the exact action.
+  A retry owned by the system must explicitly say that Benjamin need not act.
 - The reusable product adapter is `config/products/<slug>.json`, validated
   against `config/product-cockpit.schema.json`. It selects durable context,
   workspace, status/queue commands, and the conceptual project graph without
