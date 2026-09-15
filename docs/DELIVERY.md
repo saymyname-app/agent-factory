@@ -134,6 +134,90 @@ bd ready --explain
 
 The gate must state the decision and evidence required. Continue any independent ready beads. Resolve the gate only after the named authority decides; do not encode secrets in its reason or notes.
 
+## Closed-loop status — where "done" actually ends
+
+Verified 2026-09-15 against the imported pack, the city configuration and live
+`gc` state. **This city has no automatic merge and no close-bead-on-merge.**
+The delivery loop terminates at *pull request published*, not at *merged*.
+
+This section exists because the section above names the condition ("merge only
+when required deterministic gates pass") without naming the *actor*, which has
+been read as an automated merge that does not exist.
+
+### What is actually wired
+
+The rigs import `gascity/roles` (`sha:3b3b89f2011e06d84459aa7bea1552382f13930a`),
+which provides twelve agent roles: `design-author`,
+`design-implementation-reviewer`, `design-test-risk-reviewer`, `gap-analyst`,
+`implementation-reviewer`, `implementation-worker`, `issue-triager`,
+`publisher`, `requirements-planner`, `review-synthesizer`, `run-operator`,
+`task-decomposer`.
+
+`publisher` is the terminal role — "authorized pushes, PR creation, and
+publication surfaces". It closes **its own work bead** once the PR exists. No
+imported formula (`publish`, `review`, `implement`, `do-work`, `build-basic`)
+contains `gh pr merge`, a merge-conditioned `bd close`, or `merge_result`
+metadata; the grep count is zero for all of them.
+
+Consequence: a work bead reaching `closed` proves a pull request was opened. It
+does **not** prove the change is on `dev`.
+
+### What exists upstream but is NOT imported
+
+`mol-refinery-patrol.toml` implements the full closed loop. Its `direct`
+strategy fast-forward merges, pushes, re-reads `origin/$TARGET` to confirm the
+push landed, writes `merge_result=merged` and `merged_sha`, then runs
+`gc bd close "$WORK" --reason "Merged to $TARGET at $MERGED_SHORT"`.
+
+It lives in the **Gastown example pack**
+(`examples/gastown/packs/gastown/formulas/`), which this city does not import.
+It is absent from `gc formula list`. Note that even importing it would only
+give close-on-merge under `direct`: its `mr`/`pr` strategy closes the bead at
+`"Pull request ready: $PR_URL"`, i.e. the same PR-terminal semantics we already
+have.
+
+No bead in the city carries `merge_strategy` metadata (count: 0), and the key
+appears nowhere in `city.toml` or the rig configuration. The refinery's `local`
+strategy escalates to the Mayor rather than merging.
+
+### The gate conditions do exist — on GitHub, not in the city
+
+Branch protection supplies the "under conditions" half of the loop:
+
+- backend ruleset `22629508` requires the `Maven verify` check
+- frontend ruleset `22629678` requires the `Tests and build` check
+
+These block a bad merge. They do not perform a good one. Nothing in the city
+observes "required checks green" and acts on it.
+
+### Current operational consequence
+
+Both rigs are `suspended_on_start = true`, and `claude-reviewer` / `ux-reviewer`
+are `suspended = true`, so no rig-side delivery runs at all today. Factory
+PR #47 (`feat(af-hho5.4): versioned SayMyName V1 release contract`) has been
+open and unmerged since 2026-09-14 — the expected steady state of a loop that
+ends at publication.
+
+### Current policy — de facto, not yet a recorded decision
+
+Until a merge actor is chosen and wired, **merging is Benjamin's step.** A
+closed work bead must be read as "PR ready for merge", and any agent reporting
+a bead as delivered must state which of the two meanings it intends.
+
+Closing the loop requires an explicit decision on three points, none of which
+has been made:
+
+1. **Which actor merges** — import the refinery under `direct`, add a
+   `gh pr merge --auto` step to the `publish` formula, or enable GitHub
+   auto-merge on the repositories so branch protection releases the merge
+   itself once checks pass.
+2. **Which profiles may merge without a human** — FAST only, or FAST and
+   STANDARD. GUARDED must stay gated in every option, per the profile table
+   above.
+3. **Where the bead closes** — at PR-ready (today) or at merged. Moving it to
+   merged is what makes a closed bead mean "shipped", and requires the
+   `merge_result` / `merged_sha` forensic metadata the refinery writes.
+
 ## Observed and proven baseline
 
 - **PROVEN FAST:** M2 bead `af-v7a` used one Codex/Sol writer, deterministic diff validation, commit `77f206a85ab97352aa2e6f9bd2a4f2e653db6d69`, PR #9 and merge `43614760bce9a855a6aeecbfb38090461a905e70`.
