@@ -100,8 +100,21 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
         case "$after" in
           MERGED*) log "    already merged server-side"; ARMED=$((ARMED+1)) ;;
           *true)   log "    auto-merge is armed server-side"; ARMED=$((ARMED+1)) ;;
-          *)       log "    ARM FAILED (server state: ${after:-unknown}) — left for a human"
-                   ERRORS=$((ERRORS+1)) ;;
+          *)
+            # GitHub refuses allow_auto_merge on a private repo without Pro, so
+            # arming is simply unavailable there. Fall back to the documented
+            # direct path: merge only once the required checks are actually
+            # green, which is the same gate auto-merge would have waited for.
+            if [ "$checks" = "OK" ] && [ "$state" = "CLEAN" ]; then
+              log "    auto-merge unavailable; checks green -> direct squash merge"
+              if gh pr merge "$num" --repo "$repo" --squash --delete-branch >/dev/null 2>&1; then
+                log "    merged"; ARMED=$((ARMED+1))
+              else
+                log "    direct merge failed — left for a human"; ERRORS=$((ERRORS+1))
+              fi
+            else
+              log "    not armable and checks are '$checks'/'$state' — waiting, not merging"
+            fi ;;
         esac
       fi
     fi
