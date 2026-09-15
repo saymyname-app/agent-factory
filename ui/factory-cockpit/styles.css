@@ -73,6 +73,9 @@ h1,h2,h3,p{overflow-wrap:anywhere}
 .advice-card p,.memory-card p{margin:.4rem 0;color:#c3cbc7;font-size:.8rem;line-height:1.45}
 .advice-card small{color:var(--muted)}
 .ask-mayor{align-self:flex-start;padding:.42rem .58rem;font-size:.7rem}
+.advice-actions{display:flex;flex-wrap:wrap;gap:.45rem;align-items:center}
+.advice-actions .primary{padding:.42rem .6rem;font-size:.7rem}
+.attention-panel .primary{align-self:flex-start;margin-top:.75rem}
 .info{position:relative;width:1.3rem;height:1.3rem;padding:0;border-radius:50%;color:var(--blue);font-size:.7rem}
 .info:after{content:attr(data-tooltip);position:absolute;z-index:50;bottom:calc(100% + .5rem);left:50%;width:min(18rem,70vw);padding:.65rem;border:1px solid var(--line);border-radius:.55rem;color:var(--ink);background:#101615;line-height:1.4;text-align:left;transform:translateX(-50%);opacity:0;visibility:hidden}
 .info:hover:after,.info:focus:after{opacity:1;visibility:visible}

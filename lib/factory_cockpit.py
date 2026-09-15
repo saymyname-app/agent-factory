@@ -29,6 +29,8 @@ PRODUCT_CONFIG_PATH = Path(os.environ.get(
     "FACTORY_COCKPIT_PRODUCT_CONFIG", ROOT / "config" / "products" / "saymyname.json"
 ))
 REMOTE_ACCESS_FILE = ROOT / ".gc" / "runtime" / "factory-cockpit-remote-url"
+BLOCKER_STATE_PATH = ROOT / ".gc" / "runtime" / "factory-cockpit-blockers.json"
+DECISION_DOMAINS = ("enterprise", "product", "project")
 COORDINATION_BEAD = os.environ.get("FACTORY_COCKPIT_COORDINATION_BEAD", "af-1vr4")
 GAS_CITY_URL = os.environ.get("FACTORY_COCKPIT_GAS_CITY_URL", "http://127.0.0.1:8372")
 
@@ -345,6 +347,8 @@ def _product_bead(
         "updated_at": bead.get("closed_at") or bead.get("updated_at") or bead.get("created_at"),
         "pr": metadata.get("gc.pr_number") or metadata.get("gc.pr"),
         "ci": metadata.get("gc.postmerge_ci_conclusion") or metadata.get("gc.ci_conclusion"),
+        "needs_benjamin": _meaningful(metadata.get("gc.needs_benjamin")),
+        "decision_domain": metadata.get("gc.decision_domain"),
     }
 
 
@@ -380,6 +384,83 @@ def _sort_product_work(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def _normalized_title(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def _blocker_decision(bead_id: Any, text: str, domain_hint: Any = None) -> dict[str, Any]:
+    """Shape a blocking bead like a DECISIONS.md Open entry so it opens a workspace."""
+    compact = re.sub(r"\s+", " ", text).strip()
+    title = re.split(r"(?<=[.!?])\s+", compact)[0].strip(" .") or "Décision de livraison à prendre"
+    if len(title) > 120:
+        title = title[:117].rstrip() + "…"
+    domain = str(domain_hint or "").strip().lower()
+    if domain not in DECISION_DOMAINS:
+        domain = "product"
+    return {
+        "id": "pending-%s-blocker-%s" % (domain, _safe_identifier(str(bead_id))),
+        "title": title,
+        "status": "pending",
+        "domain": domain,
+        "detail": compact,
+        "source": "Bead %s · gc.needs_benjamin" % bead_id,
+        "origin": "blocker",
+        "bead": str(bead_id),
+    }
+
+
+def _collect_blockers(
+    coordination_id: Any,
+    coordination_meta: dict[str, Any],
+    product_work: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    candidates: list[tuple[Any, Any, Any]] = [(
+        coordination_id,
+        _meaningful(coordination_meta.get("gc.needs_benjamin")),
+        coordination_meta.get("gc.decision_domain"),
+    )]
+    for item in product_work:
+        if isinstance(item, dict):
+            candidates.append((item.get("id"), item.get("needs_benjamin"), item.get("decision_domain")))
+    decisions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for bead_id, text, domain_hint in candidates:
+        if not bead_id or not _meaningful(text):
+            continue
+        decision = _blocker_decision(bead_id, str(text), domain_hint)
+        if decision["id"] in seen:
+            continue
+        seen.add(decision["id"])
+        decisions.append(decision)
+    return decisions
+
+
+def _write_blockers(decisions: list[dict[str, Any]], path: Path | None = None) -> None:
+    """Publish blockers so the PO bridge resolves the same ids as the snapshot."""
+    target = path or BLOCKER_STATE_PATH
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=target.parent, delete=False, suffix=".tmp"
+        )
+        with handle:
+            json.dump({"schema_version": 1, "decisions": decisions}, handle, ensure_ascii=False)
+        Path(handle.name).replace(target)
+    except OSError:
+        pass
+
+
+def _read_blockers(path: Path | None = None) -> list[dict[str, Any]]:
+    try:
+        value = json.loads((path or BLOCKER_STATE_PATH).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    decisions = value.get("decisions") if isinstance(value, dict) else None
+    if not isinstance(decisions, list):
+        return []
+    return [item for item in decisions if isinstance(item, dict) and item.get("id")]
+
+
 def _decision_aids(
     factory_ok: bool,
     warnings: list[str],
@@ -388,6 +469,7 @@ def _decision_aids(
     product_work: list[dict[str, Any]],
     needs_benjamin: str | None,
     last_delivery: dict[str, Any],
+    blocker_id: str | None = None,
 ) -> list[dict[str, str]]:
     advice: list[dict[str, str]] = []
     if not factory_ok:
@@ -411,11 +493,12 @@ def _decision_aids(
             "severity": "decision",
             "title": "Une décision de Benjamin est nécessaire",
             "explanation": needs_benjamin,
-            "action": "Répondre au point de décision avant de poursuivre la livraison.",
+            "action": "Ouvre l’espace de décision pour répondre; la livraison reprend ensuite.",
             "prompt": f"Explique-moi simplement cette décision, recommande une option et ses conséquences : {needs_benjamin}",
+            "decision_id": blocker_id or "",
         })
     blocked = [item for item in product_work if item.get("state") == "blocked"]
-    if blocked:
+    if blocked and not needs_benjamin:
         advice.append({
             "severity": "warning",
             "title": f"{len(blocked)} travail produit bloqué",
@@ -491,8 +574,10 @@ class ProductMemory:
         strategy: Path | None = None,
         decisions: Path | None = None,
         config: dict[str, Any] | None = None,
+        blockers: Path | None = None,
     ) -> None:
         self.config = config or load_product_config()
+        self.blockers = blockers or BLOCKER_STATE_PATH
         self.strategy = strategy or self.config["strategy_path"]
         self.decisions = decisions or self.config["decisions_path"]
         self.project_inventory = self.config["project_inventory_path"]
@@ -563,6 +648,15 @@ class ProductMemory:
                     "detail": detail,
                     "source": f"DECISIONS.md · Open · {heading.strip()}",
                 })
+        known = {_normalized_title(item["title"]) for item in pending}
+        blockers = []
+        for blocker in _read_blockers(self.blockers):
+            key = _normalized_title(blocker.get("title"))
+            if not key or key in known:
+                continue
+            known.add(key)
+            blockers.append(blocker)
+        pending = blockers + pending
         capabilities = []
         stage_status = {item["order"]: item["stage"] for item in roadmap}
         for item in self.config.get("capabilities", []):
@@ -1160,6 +1254,10 @@ class FactoryCollector:
             factory_label = "Usine active · au repos"
 
         needs_benjamin = _meaningful(coordination_meta.get("gc.needs_benjamin"))
+        blockers = _collect_blockers(COORDINATION_BEAD, coordination_meta, product_work)
+        _write_blockers(blockers, self.product_memory.blockers)
+        if not needs_benjamin and blockers:
+            needs_benjamin = blockers[0]["detail"]
         last_meta = _metadata(last)
         last_delivery = {
             "id": (last or {}).get("id"),
@@ -1183,6 +1281,7 @@ class FactoryCollector:
             product_work,
             needs_benjamin,
             last_delivery,
+            blockers[0]["id"] if blockers else None,
         )
 
         infrastructure = [
@@ -1213,6 +1312,7 @@ class FactoryCollector:
             "decision_aids": decision_aids,
             "last_delivery": last_delivery,
             "needs_benjamin": needs_benjamin,
+            "blocking_decisions": blockers,
             "factory_work": factory_work,
             "infrastructure": infrastructure,
             "warnings": warnings,
