@@ -1,9 +1,9 @@
 # Proposal — token-efficient, provider-agnostic orchestration
 
-Status: **proposal, not yet approved**. Written by Claude (acting PO/Tech Lead)
-on 2026-09-15 at Benjamin's request, after taking over Mayor piloting from a
-quota-exhausted Codex. Nothing below is implemented except the items marked
-`[DONE]`. Benjamin reviews this before the rest is built.
+Status: **approved by Benjamin 2026-09-15, being implemented incrementally.**
+Written by Claude (acting PO/Tech Lead) after taking over Mayor piloting from
+a quota-exhausted Codex. Items marked `[DONE]` are implemented; the rest
+tracks remaining work as it lands.
 
 ## 0. What Benjamin asked for
 
@@ -190,6 +190,41 @@ data/config change — no new token spend, ever, by construction.
   (Gas City's own invariant) is standard practice, not something to relax
   for convenience.
 
+## 8. Follow-up round `[DONE]` — model routing, mail format, context discipline
+
+Implemented after Benjamin's approval:
+
+- `city.toml`: added `claude-standard` (Sonnet 5, effort `medium`, same OAuth
+  subscription as `claude` — confirmed via `~/.claude/.credentials.json`
+  holding a `claudeAiOauth` token, not a raw API key) and `codex-spark`
+  (`gpt-5.3-codex-spark`) provider profiles. Mayor now runs on
+  `claude-standard`. Discovered along the way: per-agent `[option_defaults]`
+  overrides in `agent.toml` are silently ignored by this `gc` version — the
+  real per-role knob is defining named provider *profiles* in `city.toml` and
+  pointing an agent's `provider` field at the one you want.
+- `city.toml`: enabled `[mail].retention_ttl = "168h"` — it had been fully
+  commented out, so read mail never purged (found 55/56 messages unread when
+  checked, though the `--inject` mechanism itself already caps/truncates to a
+  few previews, so this was a hygiene gap rather than the active token drain
+  it first looked like).
+- `AGENTS.md`: added an inter-agent mail format section using a compact
+  ACTION/STATE/EVIDENCE/NEXT record for routine coordination mail instead of
+  free narrative, grounded in PACT (2026) showing this halves downstream
+  input tokens with no performance loss.
+- `AGENTS.md` cost policy + `agents/mayor/prompt.template.md`: added a
+  concrete compaction trigger — hand off at roughly half the context window,
+  not near the hard limit (measured practice shows quality degrades well
+  before the window actually fills) — and a reminder to keep each agent's
+  tool/skill surface minimal, since every available tool is a standing
+  context tax whether used or not. Checked: the Factory's own Claude sessions
+  have no MCP servers configured, so there was no bloat to trim there today.
+- Checked and left alone: the per-rig multi-reviewer pipeline
+  (`design-implementation-reviewer`, `design-test-risk-reviewer`,
+  `review-synthesizer`, etc.) lives in the imported remote pack
+  (`gascity-packs`), not this repo — redundancy-filtering techniques like
+  S²-MAD (up to 94.5% token reduction in multi-agent debate settings) would
+  apply there, but it's vendor-owned, not something to patch locally.
+
 ## Sources
 
 - [Beam.ai — 6 Multi-Agent Orchestration Patterns for Production (2026)](https://beam.ai/agentic-insights/multi-agent-orchestration-patterns-production)
@@ -203,3 +238,7 @@ data/config change — no new token spend, ever, by construction.
 - [codex.danielvaughan.com — Codex CLI Model Routing in May 2026](https://codex.danielvaughan.com/2026/05/07/codex-cli-model-routing-may-2026-gpt55-gpt54-spark-decision-framework/)
 - [CloudZero — Claude pricing in 2026](https://www.cloudzero.com/blog/claude-pricing/)
 - [Finout — Anthropic API Pricing in 2026](https://www.finout.io/blog/anthropic-api-pricing)
+- [Sourcegraph — Context Engineering: A Practical Guide for AI Agents (2026)](https://sourcegraph.com/blog/context-engineering)
+- [mem0.ai — Context Engineering AI: How To Build Smarter LLM Agents In 2026](https://mem0.ai/blog/context-engineering-ai-agents-guide)
+- [arXiv 2502.04790 — S²-MAD: Breaking the Token Barrier to Enhance Multi-Agent Debate Efficiency](https://arxiv.org/abs/2502.04790)
+- [arXiv 2606.05304 — What Should Agents Say? Action-state Communication for Efficient Multi-Agent Systems (PACT)](https://arxiv.org/abs/2606.05304)
