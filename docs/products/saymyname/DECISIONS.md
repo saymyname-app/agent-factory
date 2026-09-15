@@ -107,6 +107,38 @@ company population is administered; multiple access spaces and delegated central
 governance are federated. Size, sector and duration do not create additional
 technical organization types.
 
+### 2026-09-14 — Universal participative group with guided presets
+
+The participative journey starts from the personal home with one user-facing
+group concept rather than separate promotion, event and community products.
+Creation asks what brings people together and offers four understandable starting
+presets: a moment, a period, an ongoing group, or custom settings. Promotion,
+training, conference, club and similar terms are contextual examples, not fixed
+product or technical types. Presets supply editable defaults for duration,
+admission and continuity; organizers may change them without replacing the group
+or losing its configuration.
+
+Participative groups use the planned tenant/workspace model as their access and
+isolation boundary. The tenant remains an implementation and authorization
+concept rather than another choice exposed during onboarding, and a preset never
+creates or weakens a separate security boundary.
+
+Admission supports direct invitation or a revocable link/QR, with direct entry or
+organizer approval. Before joining, visitors see the group's purpose, organizer,
+timing and applicable rules but no member profiles. A member voluntarily creates
+or claims their own profile; only active members may see shared profiles, and
+each learner's selections, attempts, errors, schedule and progress remain private.
+Organizer analytics are strictly aggregate and are withheld when the group is too
+small to prevent inference about an individual.
+
+Names, presets, dates and admission settings remain understandable and editable,
+but an edit that broadens the audience or extends profile visibility cannot apply
+retroactively through silence. In particular, continuing a time-bounded group as
+an ongoing group requires an explicit choice from each member. Leaving, removal,
+link revocation, expiry and recovery from invitation or permission errors must be
+clear. The delivered journey includes mobile, keyboard, focus, loading, empty,
+error and recovery states.
+
 ### 2026-09-14 — Import is core, authority remains explicit
 
 Personal and organization imports are core friction-reduction paths. CSV is the
@@ -115,6 +147,73 @@ connectors are selected only after evidence and provider feasibility. Public
 availability, OAuth authorization and lawful reuse are distinct: every import
 must have a defined destination, provenance, scope, revocation behavior and data
 authority. Importing a profile never silently creates an account or invitation.
+
+### 2026-09-15 — Administered CSV journey approval
+
+Benjamin approved the seven blocking administered-CSV choices in a PO
+conversation prior to 2026-09-15, and reconfirmed that approval with Claude
+acting as PO on 2026-09-15 after a cockpit display bug had hidden the pending
+decision from his interface, wrongly suggesting it was still unanswered.
+Creating an administered organization
+requires a server-granted entitlement or pre-provisioned administrator status;
+unrestricted public self-service is excluded. Creation atomically provisions one
+implicit **All people** workspace and its owner boundary. Imports begin as
+administrator-only drafts. Publication is a separate explicit action exposing
+only approved fields to active authorized workspace members and never creating a
+private learning selection.
+
+V1 invitations are nominative and always triggered separately. Import and
+publication create no account, invitation or group link. Exact replay and an
+already-applied stable external row identifier are idempotent no-ops. Possible
+duplicates are skipped by default; creating a separate person requires an
+explicit row choice. Automatic merge and update-existing behavior are excluded
+from V1, and no existing correction or private note is silently overwritten.
+
+The raw file is deleted after successful parsing. Parsed staging rows remain
+only until apply or discard, for at most 30 days, then are purged. Applied audit
+keeps only necessary provenance, mapping and policy versions, actor, timestamps,
+content hash, lawful stable external identifiers and aggregate counts, never raw
+cell values.
+
+Publishable organization-supplied fields are limited to declared, authorized
+identity and learning context: display/preferred name, given and family name when
+authorized, pronunciation, photo, role or function, and organization context
+such as cohort, team or department. Email, telephone, internal identifiers and
+private notes are hidden by default; email is used only for nominative invitation
+unless a later explicit policy says otherwise. A participant has a clear
+correction path. A disputed field may be hidden until resolution. Unpublishing,
+removal or loss of access immediately ends workspace visibility and future review
+from that organization source; no durable personal copy survives without consent
+or a separate lawful source.
+
+### 2026-09-14 — Google Contacts as the first external connector candidate
+
+Superseded by [Google Contacts selected as the first external connector](#2026-09-15--google-contacts-selected-as-the-first-external-connector).
+
+The first external connector candidate was Google Contacts, for importing
+selected people into the learner's personal home. The choice was still
+conditional on observed friction and Google People API feasibility.
+
+### 2026-09-15 — Google Contacts selected as the first external connector
+
+Google Contacts is the selected first external connector for importing chosen
+people into the learner's personal home. It is the simplest cross-device default:
+one cloud source can serve the same learner on PC and mobile, it fits the existing
+Google sign-in path and it is likely to suit the intended student audience. This
+choice deliberately accepts that Microsoft-first users and contacts stored only
+on a phone are not covered initially.
+
+Contact access remains separate from Google sign-in: authentication does not
+grant it. The connector requires its own minimal OAuth scopes, explicit contact
+selection and preview, provenance, retention and revocation behavior. It must
+import into SayMyName rather than silently synchronize or modify the user's
+address book.
+
+This is a product choice, not delivery authorization. Implementation remains
+after the core CSV paths and is conditional on confirming Google People API
+provider feasibility and that observed import friction justifies the connector.
+School or company directories remain organization imports rather than variants
+of this personal connector.
 
 ### 2026-09-14 — Intelligent retrieval without invented identity
 
@@ -131,6 +230,27 @@ through Benjamin's former school administration or student association. The
 pilot is free, requires no payment method and tests onboarding, delayed recall,
 return and real-interaction usefulness. Payment implementation and exact pricing
 wait for evidence and buyer conversations.
+
+### 2026-09-14 — Dedicated private pilot environment and single feedback loop
+
+The first student pilot runs on a dedicated, private and stable environment,
+separate from both technical staging and public production. It has an identifiable
+pilot URL, access restricted to the invited cohort and controlled changes during
+the observation period. The exact hostname remains an implementation choice.
+
+Testers use one short feedback form as the canonical channel, reachable from the
+product and pilot communications, with email as a fallback rather than parallel
+informal channels. The previous assignment of recruitment and collective relays
+to a school sponsor is superseded by [Pilot recruitment ownership deliberately
+unspecified in V1](#2026-09-15--pilot-recruitment-ownership-deliberately-unspecified-in-v1)
+below. Benjamin is the named SayMyName support owner and remains accountable for
+replies and triage. An LLM may assist him later, but this is optional support
+rather than a transfer of responsibility or a prerequisite for the first pilot.
+
+Ordinary feedback is grouped for analysis without promising an immediate change
+for every suggestion. Any suspected personal-data exposure, unauthorized access
+or defective consent suspends the affected journey conservatively and triggers
+technical escalation before it is reopened.
 
 ### 2026-09-14 — Single PO cockpit
 
@@ -186,24 +306,160 @@ ambiguous or high-impact journey benefits from comparison before implementation;
 it never becomes a second implementation truth. The approval tiers and the
 design-ready checklist in `DESIGN_GOVERNANCE.md` apply to every outcome.
 
+### 2026-09-15 — Pilot recruitment ownership deliberately unspecified in V1
+
+V1 does not designate the former school's administration, its student
+association or another sponsor by default to own recruitment and distribution
+for the first pilot. Benjamin and the school will choose the appropriate owner
+and channel together when preparing the V1 pilot, based on the actual counterpart
+and conditions at that time. They may adjust that arrangement later if needed;
+this operational choice does not change the V1 product boundary.
+
+### 2026-09-15 — ITEEM as the first tester pool
+
+The first pilot recruitment pool is Benjamin's former school, ITEEM. Cohorts
+contain about 65 students; because some year groups are away on internships, the
+working assumption is that two or three cohorts will be reachable at school and
+that one cohort will be especially interested. Pilot planning therefore uses an
+initial reachable pool of about 100 people, with 300 as an absolute upper bound.
+
+These figures estimate people who may be invited, not consented or active
+testers. A later extension to the wider Centrale Lille population remains an
+option if the ITEEM pilot justifies broadening recruitment; it is not part of the
+first cohort by default.
+
+### 2026-09-15 — Open opt-in for the first ITEEM cohort
+
+The first ITEEM pilot is open to every adult student in the confirmed reachable
+pool rather than being hand-picked in advance. The invitation uses one common,
+clear message through the relay agreed with ITEEM, explains the pilot commitment
+and personal-data use, and requires each tester to opt in explicitly. Silence,
+presence in an existing contact base and receipt of the invitation never count as
+consent.
+
+The recruitment target is **25 consented testers**, sought across the reachable
+year groups during a defined enrolment window. If more than 25 volunteer, the
+pilot may include up to **30**, prioritizing a useful spread across those year
+groups rather than speed of response alone. If fewer volunteer, the pilot keeps
+the actual volunteers and records the shortfall as recruitment evidence; it does
+not pressure students or silently broaden recruitment beyond ITEEM. The exact
+names, reachable pool size, invitation relay and dates are confirmed when the
+pilot is prepared, without reopening this composition rule.
+
+### 2026-09-15 — Balanced success contract for the first pilot
+
+The first ITEEM pilot has a one-week enrolment period followed by four weeks of
+observation. Its conclusions are judged against the following thresholds fixed
+before observation begins:
+
+- at least **15 activated testers**;
+- at least **60% activation** among people who start registration, where
+  activation means completing their profile, selecting people to learn and
+  completing a first learning session;
+- at least **50% return** among activated testers, measured by completing another
+  learning session at least seven days later;
+- a median improvement of at least **20 percentage points in delayed recall**
+  between the first attempt and a comparable check at least seven days later;
+- at least **40% reported real-life usefulness** among testers who had a relevant
+  interaction opportunity, meaning SayMyName helped them at least once;
+- **no serious privacy, consent or unauthorized-access incident**.
+
+The pilot supports continuation when all thresholds are met and no serious
+incident occurs. It supports correction followed by another test when the sample
+is insufficient, or when only one quantitative threshold misses by fewer than ten
+percentage points and an identifiable cause can be addressed. The value
+proposition is reconsidered when both delayed recall and real-life usefulness
+remain weak despite satisfactory activation.
+
+This contract validates initial user value, not pricing, the identity of the
+buyer or acquisition at scale. Those require separate evidence.
+
+### 2026-09-15 — First price test is a paid founding-organization pilot
+
+The first paid-buyer profile is not tied in advance to a named institution or
+sector. It is the first qualified sponsor reached at a school or employer who has
+a concrete need to help a bounded cohort learn one another, can judge the outcome
+and has access to the relevant budget. Benjamin's former school, another school
+and his former ESN are all valid routes; an interested learner without buying
+authority is not the first-buyer test.
+
+The free ITEEM cohort pilot remains free and does not require a payment method.
+Once there is enough usage evidence to present the outcome credibly, the first
+price test is one real, written founding offer: **EUR 1,500 excluding tax for
+three months and up to 100 invited learners**, covering one organization cohort,
+assisted onboarding and an outcome review. The price is a test, not the final
+tariff. Success requires a signed order or payment; a budget holder's written
+commitment blocked only by normal procurement is directional evidence, while a
+hypothetical “I would pay” is not. A refusal and its stated reason are retained as
+evidence before changing the price or package.
+
+An optional donation may later coexist with the free personal experience, but it
+is not the first price test and is not treated as evidence of product willingness
+to pay. Consumer Premium remains a later evidence-gated offer for recurring user
+value; SayMyName does not design consumable spending or “whale” mechanics around
+a small number of disproportionate spenders.
+
+Evidence considered: RevenueCat's 2026 dataset reports a 2.1% median
+download-to-paid conversion for freemium subscription apps, an Education annual
+price median of USD 44.99, and materially different iOS and Android conversion;
+an approximately 100-person pilot would therefore provide a weak consumer price
+signal. A meta-analysis of 77 willingness-to-pay studies estimates average
+hypothetical bias at 21%, supporting a real offer over a stated-price survey.
+Pay-what-you-want field experiments also show that voluntary pricing can measure
+fairness and self-image and can reduce purchase participation. Sources:
+[RevenueCat 2026](https://www.revenuecat.com/state-of-subscription-apps),
+[Schmidt and Bijmolt (2020)](https://doi.org/10.1007/s11747-019-00666-6), and
+[Gneezy et al. (2012)](https://doi.org/10.1073/pnas.1120893109).
+
+### 2026-09-15 — SayMyName remains the working name through the first pilot
+
+SayMyName remains the product's working name through the first pilot rather than
+being treated now as either a definitive public brand or a name that must be
+changed on intuition alone. During this period it is accompanied by a short
+descriptive promise conveying the broader value, such as helping people retain
+faces, names and useful context; the exact wording may evolve without reopening
+the naming decision.
+
+The name and positioning are reviewed after the pilot using evidence in three
+areas: user understanding of the proposition, trust and comfort with the framing,
+and relevance to prospective buyers. A change is justified by repeated
+misunderstanding, a recurring trust objection, a material commercial mismatch,
+or a serious legal or digital availability obstacle, not by an isolated naming
+preference. Legal and digital availability must be checked before material public
+brand investment and may force an earlier change.
+
+### 2026-09-15 — V1 is a versioned production-autonomous release contract
+
+Benjamin defines the target and maturity of each SayMyName release. For V1, the
+target is the complete product perimeter approved by Benjamin, publishable in
+production and usable autonomously by its intended users. The contract covers the
+whole product, including existing capabilities such as authentication, profiles,
+trombinoscope, quizzes, training, settings, theme and design as well as newly
+delivered capabilities. A list of recent or future work is not the V1 definition.
+
+The versioned product documentation is the durable product truth. The cockpit's
+Product view is its understandable, editable V1 projection: it shows included and
+excluded capabilities, user journeys, end-to-end evidence, dependencies, open
+decisions and release readiness. Benjamin may amend V1 through this product
+presentation while no V2 campaign has started. Starting execution of the V2
+campaign freezes the V1 contract and its evidence as immutable history; later
+changes belong to V2 or a subsequent version rather than silently rewriting V1.
+
+The PO behaves as Benjamin's product expert: it reconstructs an existing project
+from durable intent and observed UI, API, data and tests; identifies incomplete or
+unproven end-to-end journeys; proposes a bounded release contract; and asks
+Benjamin only for decisions that materially change product behavior, scope,
+exposure or operations. The Mayor may create and execute all work demonstrably
+required by the approved release target. A blocking decision suspends only the
+dependent capability or edge; independent eligible work continues whenever safe.
+Every release must at minimum be testable and usable, while the user-selected
+maturity target determines the stronger release gates.
+
 ## Open
 
 ### Enterprise
 
-- **Responsable et canal du premier pilote** — Choisir si l’administration de l’ancienne école, l’association étudiante ou un autre sponsor porte le recrutement et la diffusion.
-- **Première cohorte de testeurs** — Définir le premier vivier nominatif, sa taille cible, les critères et la manière d’inviter les testeurs consentants.
-- **Contrat de réussite du pilote** — Fixer durée et seuils de succès avant l’observation afin de ne pas redéfinir le résultat après coup.
-- **Premier acheteur et test de prix** — Identifier le premier profil acheteur et le premier entretien, test d’offre ou de volonté de payer; le pilote gratuit ne répond pas seul à cette question.
-- **Point de contrôle marque et nom** — Décider à quel niveau de preuve conserver ou faire évoluer le nom et le positionnement SayMyName.
-
-### Product
-
-- **Premier connecteur externe** — Choisir Google, Microsoft, les contacts natifs ou une autre source uniquement selon les frictions observées et la faisabilité fournisseur.
-
-### Project
-
-- **Contrat du parcours participatif** — Approuver ou amender le contrat design-ready de `af-hxji`: entrée depuis l’accueil personnel, création guidée d’une promotion/événement/communauté, admission par invitation ou lien/QR révocable, aperçu sans profils, profil volontaire revendiqué par la personne, visibilité privée aux membres actifs, choix de continuité explicite, sortie/révocation compréhensible, états mobile/accessibilité/erreur et statistiques organisateur strictement agrégées. Cette décision Benjamin + PO est requise avant matérialisation car elle introduit navigation, invitation, consentement et exposition de données personnelles.
-- **Environnement pilote et boucle de retours** — Choisir l’URL ou environnement pilote, le canal de retour, le responsable support et le chemin d’incident avant le recrutement.
+No open enterprise decision is currently recorded.
 
 ## Update rule
 
