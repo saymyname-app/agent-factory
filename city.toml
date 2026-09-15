@@ -52,6 +52,27 @@ permission_mode = "unrestricted"
 model = "sonnet-5"
 effort = "medium"
 
+# Cheapest Claude tier (~$1/$5 per 1M tokens vs Sonnet 5's ~$2-3/$10-15) for
+# genuinely low-judgment, high-volume work: classification, triage, simple
+# deterministic-ish checks. Not yet assigned to any agent — the natural
+# targets (issue-triager and similar) are defined in the imported remote
+# pack, not this repo, and pack-scoped agents haven't been confirmed to
+# accept a local provider override. Verify that before relying on this for
+# anything pack-provided.
+[providers.claude-cheap]
+base = "builtin:claude"
+command = "/home/benja/.local/bin/claude"
+accept_startup_dialogs = true
+
+[providers.claude-cheap.env]
+CLAUDE_CONFIG_DIR = "/home/benja/.claude"
+DISABLE_AUTOUPDATER = "1"
+
+[providers.claude-cheap.option_defaults]
+permission_mode = "unrestricted"
+model = "haiku"
+effort = "low"
+
 [defaults]
 [defaults.rig]
 [defaults.rig.imports]
