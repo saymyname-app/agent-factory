@@ -260,9 +260,10 @@ class FactoryCockpitTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "product.json"
             config_path.write_text(json.dumps({
-                "schema_version": 3,
+                "schema_version": 4,
                 "slug": "test-product",
                 "name": "Test Product",
+                "north_star": "Prouver que le noyau reste agnostique du produit.",
                 "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
                 "decisions": "docs/products/saymyname/DECISIONS.md",
                 "release_contract": "tests/fixtures/product-queue/test-product-release.json",
@@ -1197,17 +1198,17 @@ class FactoryCockpitTest(unittest.TestCase):
         }
         self.assertEqual(("materialized", "Matérialisé"), candidate_record_lifecycle(materialized))
         self.assertEqual(("cancelled", "Annulé"), candidate_record_lifecycle(cancelled))
-        self.assertEqual("materialized", _product_bead(materialized, "city", None)["state"])
-        self.assertEqual("cancelled", _product_bead(cancelled, "city", None)["state"])
+        self.assertEqual("materialized", _product_bead(materialized, "city", None, "Produit Test", "produit-test")["state"])
+        self.assertEqual("cancelled", _product_bead(cancelled, "city", None, "Produit Test", "produit-test")["state"])
         delivered = _product_bead({
             "id": "af-done", "title": "Done", "status": "closed", "labels": ["jit"],
             "metadata": {"gc.work_outcome": "shipped"},
-        }, "city", None)
+        }, "city", None, "Produit Test", "produit-test")
         self.assertEqual(("delivered", "Livré"), (delivered["state"], delivered["state_label"]))
         blocked_current = _product_bead({
             "id": "af-blocked", "title": "Blocked current", "status": "blocked",
             "labels": ["jit"], "metadata": {"gc.blocked_reason": "Preuve absente"},
-        }, "city", "af-blocked")
+        }, "city", "af-blocked", "Produit Test", "produit-test")
         self.assertEqual(("blocked", "Bloqué", "Preuve absente"), (
             blocked_current["state"], blocked_current["state_label"], blocked_current["cause"],
         ))
@@ -1221,7 +1222,7 @@ class FactoryCockpitTest(unittest.TestCase):
                 "id": "af-bad", "title": "Bad", "status": "closed",
                 "labels": ["product-queue"],
                 "metadata": {"gc.queue_state": "queued"},
-            }, "city", None)
+            }, "city", None, "Produit Test", "produit-test")
 
     def test_unknown_formula_is_humanized_without_model(self):
         self.assertEqual("Review stale branches", _human_objective("mol-review-stale-branches"))

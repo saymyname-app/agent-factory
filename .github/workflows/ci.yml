@@ -34,6 +34,12 @@ jobs:
       - name: Cockpit tests
         run: python tests/factory-cockpit-test.py
 
+      - name: Cockpit blocker tests
+        run: python tests/factory-cockpit-blocker-test.py
+
+      - name: Cockpit product-genericity tests
+        run: python tests/factory-cockpit-genericity-test.py
+
       - name: Product release tests
         run: python tests/product-release-test.py
 

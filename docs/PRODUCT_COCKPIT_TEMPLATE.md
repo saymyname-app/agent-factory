@@ -5,6 +5,11 @@ Factory product adopts the same separation of concerns with one JSON
 configuration under `config/products/`, validated against
 `config/product-cockpit.schema.json`.
 
+**Step-by-step instructions: `docs/ADD_A_PRODUCT.md`.** A complete working
+reference pack ships as `config/products/example.json` plus
+`docs/products/example/`; `tests/factory-cockpit-genericity-test.py` proves the
+core carries no product identity of its own.
+
 ## Required product package
 
 1. A product strategy document containing `Product thesis`, `Product roadmap`,
@@ -32,11 +37,16 @@ configuration under `config/products/`, validated against
 12. Optional `decision_blockers` mappings from stable work references to durable
     open-decision titles when coordination text should open one exact decision.
 
-Set `FACTORY_COCKPIT_PRODUCT_CONFIG` to the absolute path of the selected JSON
-before starting a dedicated cockpit instance. Strategy and decision paths must
-remain inside the Factory repository; the PO workspace may be a bridge folder.
+`config/cockpit.json` names the served pack (`{"active_product": "<slug>"}`).
+Set `FACTORY_COCKPIT_PRODUCT_CONFIG` to the absolute path of another pack to
+override that selection for one cockpit instance. Strategy and decision paths
+must remain inside the Factory repository; the PO workspace may be a bridge
+folder.
 
-Schema version 2 requires every product-reference entry to declare one or more
+Schema version 4 adds a required `north_star` sentence and an optional
+`preview` block (`bin/<slug>-preview`, loopback URL, declared components); a
+product without that block simply has no preview panel. It requires every
+product-reference entry to declare one or more
 repository-relative Markdown `sources`, each with exact `sections`. A reference
 ID is the reusable link target for capability, journey, roadmap and decision
 projections. Startup rejects path traversal, absolute source paths, dangling

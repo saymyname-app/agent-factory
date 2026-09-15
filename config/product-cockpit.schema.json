@@ -3,15 +3,40 @@
   "title": "Agent Factory product cockpit configuration",
   "type": "object",
   "required": [
-    "schema_version", "slug", "name", "strategy", "decisions", "release_contract",
+    "schema_version", "slug", "name", "north_star", "strategy", "decisions", "release_contract",
     "project_inventory", "design_governance", "po_workspace", "status_command", "queue_command",
     "queue_mutation_command", "capabilities", "relations", "journeys",
     "business_objectives", "product_reference", "view_inventory", "delivery_workflow"
   ],
   "properties": {
-    "schema_version": {"const": 3},
+    "schema_version": {"const": 4},
     "slug": {"type": "string", "pattern": "^[a-z0-9-]+$"},
     "name": {"type": "string", "minLength": 1},
+    "north_star": {"type": "string", "minLength": 1},
+    "preview": {
+      "type": "object",
+      "required": ["command", "browser_url", "version_policy", "components"],
+      "properties": {
+        "command": {"$ref": "#/$defs/command"},
+        "browser_url": {"type": "string", "pattern": "^http://(?:127\\.0\\.0\\.1|localhost)(?::[0-9]{1,5})?/"},
+        "version_policy": {"type": "string", "minLength": 1},
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "label", "command"],
+            "properties": {
+              "id": {"$ref": "#/$defs/id"},
+              "label": {"type": "string", "minLength": 1},
+              "command": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "strategy": {"$ref": "#/$defs/repositoryPath"},
     "decisions": {"$ref": "#/$defs/repositoryPath"},
     "release_contract": {"$ref": "#/$defs/repositoryPath"},

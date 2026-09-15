@@ -39,9 +39,10 @@ from product_release import (
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_ROOT = ROOT / "ui" / "factory-cockpit"
-PRODUCT_CONFIG_PATH = Path(os.environ.get(
-    "FACTORY_COCKPIT_PRODUCT_CONFIG", ROOT / "config" / "products" / "saymyname.json"
+COCKPIT_CONFIG_PATH = Path(os.environ.get(
+    "FACTORY_COCKPIT_CONFIG", ROOT / "config" / "cockpit.json"
 ))
+PRODUCTS_ROOT = ROOT / "config" / "products"
 REMOTE_ACCESS_FILE = ROOT / ".gc" / "runtime" / "factory-cockpit-remote-url"
 BLOCKER_STATE_PATH = ROOT / ".gc" / "runtime" / "factory-cockpit-blockers.json"
 DECISION_DOMAINS = ("enterprise", "product", "project")
@@ -74,7 +75,62 @@ def _repo_path(value: Any, field: str, root: Path = ROOT) -> Path:
     return resolved
 
 
-def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
+def _validate_preview(value: dict[str, Any]) -> None:
+    """A product pack may, but need not, own a local preview wrapper."""
+    preview = value.get("preview")
+    if preview is None:
+        return
+    if not isinstance(preview, dict) or not {
+        "command", "components", "browser_url", "version_policy",
+    }.issubset(preview):
+        raise SourceError("Bloc de prévisualisation produit incomplet.")
+    command = preview["command"]
+    if not isinstance(command, list) or len(command) != 1 or not isinstance(command[0], str):
+        raise SourceError("Commande de prévisualisation invalide.")
+    preview["command_path"] = _repo_path(command[0], "preview.command")
+    if preview["command_path"] != _repo_path(f"bin/{value['slug']}-preview", "preview.command"):
+        raise SourceError("La prévisualisation doit utiliser le contrat dédié au produit configuré.")
+    components = preview["components"]
+    if not isinstance(components, list) or not components:
+        raise SourceError("Composants de prévisualisation manquants.")
+    component_ids: set[str] = set()
+    for component in components:
+        if not isinstance(component, dict) or not {"id", "label", "command"}.issubset(component):
+            raise SourceError("Composant de prévisualisation incomplet.")
+        component_id = component["id"]
+        if (
+            not isinstance(component_id, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", component_id)
+            or component_id in component_ids
+        ):
+            raise SourceError("Identifiant de composant de prévisualisation invalide ou dupliqué.")
+        if not all(isinstance(component[key], str) and component[key].strip() for key in ("label", "command")):
+            raise SourceError(f"Composant de prévisualisation {component_id} mal décrit.")
+        component_ids.add(component_id)
+    url = preview["browser_url"]
+    if not isinstance(url, str) or not re.fullmatch(r"http://(?:127\.0\.0\.1|localhost)(?::[0-9]{1,5})?/[^\s]*", url):
+        raise SourceError("La prévisualisation doit rester en boucle locale.")
+    if not isinstance(preview["version_policy"], str) or not preview["version_policy"].strip():
+        raise SourceError("Politique de version de prévisualisation manquante.")
+
+
+def active_product_config_path() -> Path:
+    """Resolve the served product pack from configuration, never from code."""
+    override = os.environ.get("FACTORY_COCKPIT_PRODUCT_CONFIG")
+    if override:
+        return Path(override)
+    try:
+        selection = json.loads(COCKPIT_CONFIG_PATH.read_text(encoding="utf-8"))
+        slug = str(selection["active_product"])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise SourceError(f"Produit actif non configuré: {exc}") from exc
+    if not re.fullmatch(r"[a-z0-9-]+", slug):
+        raise SourceError("Slug de produit actif invalide.")
+    return PRODUCTS_ROOT / f"{slug}.json"
+
+
+def load_product_config(path: Path | None = None) -> dict[str, Any]:
+    path = path or active_product_config_path()
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -87,10 +143,13 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         "delivery_workflow", "product_reference",
     }
     required.add("journeys")
-    if value.get("schema_version") != 3 or not required.issubset(value):
+    required.add("north_star")
+    if value.get("schema_version") != 4 or not required.issubset(value):
         raise SourceError("Configuration produit incomplète ou version non prise en charge.")
     if not re.fullmatch(r"[a-z0-9-]+", str(value["slug"])) or not str(value["name"]).strip():
         raise SourceError("Identité de produit invalide.")
+    if not isinstance(value["north_star"], str) or not value["north_star"].strip():
+        raise SourceError("Étoile polaire produit manquante.")
     if not isinstance(value["queue_command"], list) or not value["queue_command"] or not all(
         isinstance(part, str) and part for part in value["queue_command"]
     ):
@@ -202,6 +261,7 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         ):
             raise SourceError("Référence de décision invalide dans un parcours.")
         journey_ids.add(journey_id)
+    _validate_preview(value)
     for field in ("strategy", "decisions", "release_contract", "project_inventory", "design_governance"):
         resolved = _repo_path(value[field], field)
         value[f"{field}_path"] = resolved
@@ -497,7 +557,7 @@ def _is_internal_bead(bead: dict[str, Any]) -> bool:
 
 def _product_bead(
     bead: dict[str, Any], store: str, current_id: str | set[str] | None,
-    product_name: str = "SayMyName",
+    product_name: str, product_slug: str,
 ) -> dict[str, Any] | None:
     if _is_internal_bead(bead):
         return None
@@ -545,8 +605,8 @@ def _product_bead(
     else:
         kind = "Livraison"
     product = metadata.get("gc.queue_product") or product_name
-    if isinstance(product, str):
-        product = product.replace("saymyname", "SayMyName")
+    if isinstance(product, str) and product_slug:
+        product = product.replace(product_slug, product_name)
     return {
         "id": bead.get("id"),
         "title": _human_product_title(bead.get("title")),
@@ -1147,7 +1207,7 @@ class ProductMemory:
                 "order": index + 1,
                 "title": title,
                 "stage": self.ROADMAP_STAGE[index] if index < len(self.ROADMAP_STAGE) else "later",
-                "source": "PRODUCT_STRATEGY.md · Product roadmap",
+                "source": f"{self.strategy.name} · Product roadmap",
             })
         configured_roadmap = {
             item.get("roadmap")
@@ -1173,7 +1233,7 @@ class ProductMemory:
                 "title": match.group(1).strip(),
                 "status": "accepted",
                 "detail": _paragraph(match.group(2)),
-                "source": "DECISIONS.md · Accepted",
+                "source": f"{self.decisions.name} · Accepted",
             }
             for index, match in enumerate(re.finditer(
                 r"(?ms)^###\s+\d{4}-\d{2}-\d{2}\s+—\s+(.*?)\s*$\n(.*?)(?=^### |\Z)", accepted_raw
@@ -1195,7 +1255,7 @@ class ProductMemory:
                     "status": "pending",
                     "domain": domain,
                     "detail": detail,
-                    "source": f"DECISIONS.md · Open · {heading.strip()}",
+                    "source": f"{self.decisions.name} · Open · {heading.strip()}",
                 })
         known_titles = {_normalized_title(item["title"]) for item in pending}
         blockers = []
@@ -1314,7 +1374,7 @@ class ProductMemory:
             },
             "journeys": journeys,
             "business": {
-                "north_star": "Prouver que SayMyName aide une personne à mieux retrouver les gens qu’elle a choisi de mémoriser, puis trouver un canal et un acheteur répétables.",
+                "north_star": self.config["north_star"],
                 "objectives": business_objectives,
             },
             "view_inventory": self.config.get("view_inventory", []),
@@ -1330,10 +1390,8 @@ class ProductMemory:
                 ), timezone.utc
             ).isoformat(),
             "sources": [
-                "docs/products/saymyname/PRODUCT_STRATEGY.md",
-                "docs/products/saymyname/DECISIONS.md",
-                "docs/products/saymyname/PROJECT_INVENTORY.md",
-                "docs/products/saymyname/DESIGN_GOVERNANCE.md",
+                str(self.config[field])
+                for field in ("strategy", "decisions", "project_inventory", "design_governance")
             ],
         }
 
@@ -1727,7 +1785,8 @@ class FactoryCollector:
                     continue
                 try:
                     item = _product_bead(
-                        bead, store, current_product_ids, self.product_config["name"]
+                        bead, store, current_product_ids,
+                        self.product_config["name"], self.product_config["slug"],
                     )
                 except SourceError as exc:
                     sources[f"product_work:{store}"] = False
@@ -2315,7 +2374,7 @@ class DeliveryEvidenceReader:
             "last_delivered": values["LAST DELIVERED"],
             "next": values["NEXT"],
             "needs_benjamin": values["NEEDS BENJAMIN"],
-            "verified_by": "bin/saymyname-product-status · Beads + Gas City + GitHub",
+            "verified_by": f"{self.config['status_command'][0]} · Beads + Gas City + GitHub",
             "model_calls": 0,
         }
 
@@ -2846,7 +2905,7 @@ class POBridge:
             else "RECORD: traite ce message comme une décision explicite de Benjamin; mets à jour la plus petite mémoire produit durable appropriée, vérifie-la et explique exactement ce qui a été enregistré."
         )
         return (
-            "Tu es le Product Owner GPT intégré de SayMyName et l’unique interlocuteur produit de Benjamin. "
+            f"Tu es le Product Owner GPT intégré de {self.config['name']} et l’unique interlocuteur produit de Benjamin. "
             "Travaille en français, au niveau produit/utilisateur/entreprise. Charge progressivement les instructions du workspace et la mémoire durable. "
             "Le contexte supérieur appartient à Benjamin et au PO; le Mayor reste seul orchestrateur de l’exécution Factory. "
             "Ne lance pas de livraison, ne pilote pas d’agent et ne contacte pas le Mayor sauf demande EXECUTE explicite de Benjamin. "
@@ -2987,13 +3046,28 @@ class POBridge:
 
 
 class PreviewBridge:
-    """Safe asynchronous facade over the repository-owned SayMyName preview wrapper."""
+    """Safe asynchronous facade over the preview wrapper owned by the product pack."""
 
-    def __init__(self, executor: Callable[..., subprocess.CompletedProcess[str]] | None = None) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        executor: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    ) -> None:
+        self.config = config or load_product_config()
+        self.preview = self.config.get("preview")
         self.executor = executor or subprocess.run
         self.lock = threading.Lock()
         self.running_action: str | None = None
         self.error: str | None = None
+
+    @property
+    def available(self) -> bool:
+        return isinstance(self.preview, dict)
+
+    def _command(self, action: str) -> list[str]:
+        if not self.available:
+            raise SourceError("Le produit configuré ne déclare aucune prévisualisation locale.")
+        return [str(self.preview["command_path"]), action]
 
     @staticmethod
     def _parse(output: str) -> dict[str, str]:
@@ -3005,39 +3079,58 @@ class PreviewBridge:
         }
 
     def status(self) -> dict[str, Any]:
+        if not self.available:
+            return {
+                "available": False, "state": "unsupported", "components": [], "commands": {},
+                "browser_url": None, "action": None, "error": None,
+                "version_policy": "Le produit configuré ne déclare aucune prévisualisation locale.",
+            }
         result = self.executor(
-            [str(ROOT / "bin" / "saymyname-preview"), "status"], cwd=ROOT,
+            self._command("status"), cwd=ROOT,
             capture_output=True, text=True, timeout=30,
         )
         values = self._parse(result.stdout)
+        components = [
+            {
+                "id": component["id"],
+                "label": component["label"],
+                "command": component["command"],
+                "sha": values.get(f"{component['id'].upper()}_SHA", "unknown"),
+                "health": values.get(f"{component['id'].upper()}_HEALTH", "unknown"),
+            }
+            for component in self.preview["components"]
+        ]
         return {
+            "available": True,
             "state": values.get("STATE", "unknown"),
-            "backend_sha": values.get("BACKEND_SHA", "unknown"),
-            "frontend_sha": values.get("FRONTEND_SHA", "unknown"),
-            "backend_health": values.get("BACKEND_HEALTH", "unknown"),
-            "frontend_health": values.get("FRONTEND_HEALTH", "unknown"),
-            "browser_url": values.get("BROWSER_URL", "http://127.0.0.1:5173/"),
+            "components": components,
+            "browser_url": values.get("BROWSER_URL", self.preview["browser_url"]),
             "action": self.running_action,
             "error": self.error,
-            "commands": {"frontend": "npm run dev", "backend": "./mvnw spring-boot:run"},
-            "version_policy": "dev synchronisé avec origin/dev, dépôts propres, SHA affichés",
+            "commands": {item["id"]: item["command"] for item in components},
+            "version_policy": self.preview["version_policy"],
         }
 
     def submit(self, action: Any) -> dict[str, Any]:
         if action not in {"start", "stop", "restart"}:
             raise ValueError("Action de prévisualisation invalide.")
+        if not self.available:
+            raise SourceError("Le produit configuré ne déclare aucune prévisualisation locale.")
         with self.lock:
             if self.running_action:
                 raise RuntimeError(f"L’action {self.running_action} est déjà en cours.")
             self.running_action = str(action)
             self.error = None
-        threading.Thread(target=self._run, args=(str(action),), daemon=True, name="saymyname-preview").start()
+        threading.Thread(
+            target=self._run, args=(str(action),), daemon=True,
+            name=f"{self.config['slug']}-preview",
+        ).start()
         return {"accepted": True, "action": action}
 
     def _run(self, action: str) -> None:
         try:
             result = self.executor(
-                [str(ROOT / "bin" / "saymyname-preview"), action], cwd=ROOT,
+                self._command(action), cwd=ROOT,
                 capture_output=True, text=True, timeout=1800,
             )
             if result.returncode != 0:
