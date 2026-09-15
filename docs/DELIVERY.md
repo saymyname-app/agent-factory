@@ -47,6 +47,32 @@ L4 multi-agent execution is not a delivery profile and requires a concrete, meas
 - `gc github pr` supplies GitHub PR monitoring where configured. GitHub remains authoritative for actual PR/check/merge state.
 - Provider inheritance supplies the pinned writer model; profile selection does not silently replace it.
 
+## Review synthesis — redundancy filtering
+
+`review-synthesizer` (and any bead that merges output from more than one
+reviewer, e.g. `design-implementation-reviewer` + `design-test-risk-reviewer`
++ `gap-analyst` on the same change) runs the vendor pack's generic role
+prompt, which executes exactly the claimed bead's description — there is no
+built-in deduplication of agreeing reviewer findings at the framework level.
+Research on multi-agent debate (S²-MAD, 2025) shows filtering out redundant,
+agreeing exchanges before synthesis cuts token cost up to 94.5% with under
+2% performance loss, by keeping only findings that differ from what's
+already been said rather than re-stating consensus.
+
+Whoever authors a review-synthesis bead description for this Factory (Mayor,
+design-author, or a formula) must therefore say so explicitly in that
+description, since the generic role prompt won't do it on its own:
+
+- Merge inputs by **distinct finding**, not by reviewer — when two or more
+  reviewers report the same issue, keep it once with a note of which
+  reviewers agreed, not each reviewer's full restatement.
+- Only carry forward a reviewer's finding verbatim when it *disagrees* with
+  or adds to what another reviewer already said; summarize agreement in one
+  line instead.
+- The synthesized verdict is the deliverable; raw per-reviewer transcripts
+  stay in their own beads/mail for audit, not duplicated into the synthesis
+  output.
+
 ## External Evidence Gate
 
 This gate adapts Compound Engineering's [`ce-plan` Phase 1.2 research-intent
