@@ -59,11 +59,11 @@ effort = "medium"
 source = "https://github.com/gastownhall/gascity-packs/tree/main/gascity/roles"
 version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
 
-# [mail]
+[mail]
 # retention_ttl controls how long read messages are retained before purge.
 # 0 disables retention; use "168h" for 7 days.
 # "7d" is not a valid Go duration.
-# retention_ttl = "0"
+retention_ttl = "168h"
 
 [[rigs]]
 name = "saymyname-backend"

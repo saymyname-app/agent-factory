@@ -66,3 +66,33 @@ Use the lowest sufficient level: L0 deterministic tool; L1 cheap/local model for
 proven low-risk class; L2 one strong writer; L3 writer plus independent review for
 meaningful risk; L4 multi-agent only when decomposition has measured value. Never
 load whole backlogs or histories by default.
+
+## Inter-agent mail format
+
+`gc mail` (agent-to-agent and agent-to-human messages) is a notification and
+coordination layer, not a second copy of durable state — Beads, Git, and PR
+evidence remain authoritative, so a message should point at that evidence
+rather than restate it:
+
+- **Reference, don't restate.** Cite a bead ID, commit SHA, or PR number and
+  let the recipient pull detail on demand (`gc bd show <id>`) instead of
+  re-describing full context they can already reach.
+- **Structured over narrative** for routine status/verdict mail: lead with a
+  one-line outcome (e.g. `SHIPPED`, `PASS`, `BLOCKED: <reason>`), then only
+  the facts that changed the outcome. A short list of key:value facts beats a
+  paragraph restating the same facts in prose.
+- **No exported reasoning.** Deliberation, dead ends, and internal scratch
+  work stay in the sender's own session — mail carries only what the
+  recipient needs to decide or act.
+- **Target a couple hundred words** for a routine message; a genuinely
+  complex multi-part verdict may run longer, but treat length past that as a
+  signal to split into a follow-up bead rather than one long message.
+- **Keep the mailbox drained.** Archive or mark-read mail once acted on
+  (`gc.retention_ttl` purges read mail after 7 days, but an unbounded unread
+  backlog still buries the signal that actually needs a response).
+
+This mirrors current multi-agent-systems practice: unrestricted context
+sharing and verbose unstructured exchange are the documented drivers of
+multi-agent token overhead relative to a single agent doing the same task,
+while structured/compact message formats have shown large measured token
+reductions with little accuracy loss.
