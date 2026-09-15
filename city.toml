@@ -1,5 +1,10 @@
 [workspace]
-provider = "codex"
+# Codex's standard usage pool is exhausted until ~2026-09-21. Until it returns,
+# the city default is Claude at medium effort so rig work actually executes.
+# REVERT TO provider = "codex" WHEN THE CODEX QUOTA RESETS — Codex remains the
+# PROVEN primary writer per docs/DELIVERY.md; this is a temporary swap, not a
+# change of architecture.
+provider = "claude-standard"
 
 [providers]
 [providers.codex]
@@ -95,7 +100,7 @@ retention_ttl = "168h"
 name = "saymyname-backend"
 prefix = "smb"
 default_branch = "dev"
-suspended_on_start = true
+suspended_on_start = false
 [rigs.imports]
 [rigs.imports.gc]
 source = "https://github.com/gastownhall/gascity-packs/tree/main/gascity/roles"
@@ -105,7 +110,7 @@ version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
 name = "saymyname-frontend"
 prefix = "smf"
 default_branch = "dev"
-suspended_on_start = true
+suspended_on_start = false
 [rigs.imports]
 [rigs.imports.gc]
 source = "https://github.com/gastownhall/gascity-packs/tree/main/gascity/roles"
