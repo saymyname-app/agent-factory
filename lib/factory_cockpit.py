@@ -312,6 +312,45 @@ def _direct_assigned_session(
     return None
 
 
+def _workflow_assigned_session(
+    workflow_summary: dict[str, Any],
+    sessions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Resolve an active workflow assignee without inferring a worker session."""
+    if not _meaningful(workflow_summary.get("active_step")):
+        return None
+    assignees = [
+        value
+        for item in workflow_summary.get("assignees", [])
+        if (value := _meaningful(item))
+    ]
+    if not assignees:
+        return None
+    if len(assignees) > 1:
+        raise SourceError(
+            "L'étape active du workflow désigne plusieurs agents Gas City."
+        )
+    assignee = assignees[0]
+    matches = [
+        session
+        for session in sessions
+        if (session.get("state") == "active" or session.get("running") is True)
+        and assignee in {
+            str(session.get("id") or ""),
+            str(session.get("qualified_name") or ""),
+            str(session.get("name") or ""),
+            str(session.get("alias") or ""),
+        }
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise SourceError(
+            f"L'agent workflow {assignee} correspond à plusieurs sessions Gas City."
+        )
+    return matches[0]
+
+
 def _meaningful(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -1612,21 +1651,30 @@ class FactoryCollector:
             if session.get("alias") != "mayor"
             and "control-dispatcher" not in str(session.get("template", ""))
         ]
+        workflow_session = None
+        try:
+            workflow_session = _workflow_assigned_session(
+                workflow_summary, worker_sessions
+            )
+        except SourceError as exc:
+            sources["workflow_session"] = False
+            warnings.append(str(exc))
         direct_session = None
         try:
             direct_session = _direct_assigned_session(current, worker_sessions)
         except SourceError as exc:
             sources["current"] = False
             warnings.append(str(exc))
-        assigned_worker_sessions = [
-            session for session in worker_sessions
-            if session.get("state") == "active" and (
-                session.get("alias") in workflow_summary["assignees"]
-                or session.get("name") in workflow_summary["assignees"]
-            )
-        ]
-        if direct_session and direct_session not in assigned_worker_sessions:
-            assigned_worker_sessions.append(direct_session)
+        assigned_worker_session = workflow_session
+        if direct_session:
+            if assigned_worker_session and direct_session is not workflow_session:
+                sources["current"] = False
+                warnings.append(
+                    "Le résultat courant revendique deux sessions distinctes via le workflow et l'affectation directe."
+                )
+                assigned_worker_session = None
+            elif not assigned_worker_session:
+                assigned_worker_session = direct_session
         work_done = current_meta.get("gc.work_outcome") in {"shipped", "pass"}
         if current:
             current_status = str(current.get("status", ""))
@@ -1650,7 +1698,7 @@ class FactoryCollector:
                 focus_state = "waiting"
                 focus_label = "Attend une dépendance automatique"
                 phase = resume_condition
-            elif assigned_worker_sessions and (workflow_summary["active_step"] or direct_session):
+            elif assigned_worker_session and (workflow_summary["active_step"] or direct_session):
                 focus_state = "working"
                 focus_label = "En cours"
                 phase = _human_phase(workflow_summary["active_step"]) or _human_phase(
@@ -1682,10 +1730,10 @@ class FactoryCollector:
             "last_signal_at": heartbeat,
             "steps": workflow_summary,
             "agent": (
-                assigned_worker_sessions[0].get("qualified_name")
-                or assigned_worker_sessions[0].get("alias")
-                or assigned_worker_sessions[0].get("name")
-                if assigned_worker_sessions else None
+                assigned_worker_session.get("qualified_name")
+                or assigned_worker_session.get("alias")
+                or assigned_worker_session.get("name")
+                if assigned_worker_session else None
             ),
         }
 
@@ -1708,12 +1756,7 @@ class FactoryCollector:
             is_product_worker = (
                 not maintenance
                 and current is not None
-                and (
-                    session is direct_session
-                    or
-                    session.get("alias") in workflow_summary["assignees"]
-                    or session.get("name") in workflow_summary["assignees"]
-                )
+                and session is assigned_worker_session
             )
             objective = (
                 focus["title"]

@@ -201,6 +201,26 @@ class FakeGasCity:
         raise AssertionError(path)
 
 
+class ActiveWorkflowGasCity(FakeGasCity):
+    def __init__(self, assignee="codex-workflow"):
+        self.assignee = assignee
+
+    def json(self, path):
+        if path == "/v0/city/agent-factory/workflow/smf-flow":
+            return {
+                "beads": [
+                    {"kind": "workflow", "status": "active"},
+                    {
+                        "kind": "task",
+                        "status": "in_progress",
+                        "title": "Implement the bounded result",
+                        "assignee": self.assignee,
+                    },
+                ]
+            }
+        return super().json(path)
+
+
 class FactoryCockpitTest(unittest.TestCase):
     def test_saymyname_governance_domains_and_inventory_are_complete(self):
         memory = ProductMemory().collect()
@@ -782,6 +802,82 @@ class FactoryCockpitTest(unittest.TestCase):
             result["resume"]["mode"], result["health"]["state"], result["sources"]["current"],
         ))
         self.assertTrue(any("plusieurs identifiants" in item for item in result["warnings"]))
+
+    def test_workflow_assignment_uses_one_exact_active_session_for_focus_and_card(self):
+        runner = FakeRunner()
+        current = runner.responses[("gc", "bd", "show", "smf-now", "--json")][0]
+        current["status"] = "in_progress"
+        current["metadata"].pop("gc.work_outcome")
+        sessions = runner.responses[("gc", "session", "list", "--json")]["sessions"]
+        sessions.extend([
+            {
+                "id": "af-workflow",
+                "alias": "codex-workflow",
+                "name": "saymyname-backend/codex-1",
+                "qualified_name": "saymyname-backend/codex-1",
+                "state": "active",
+                "title": "Bounded implementation",
+            },
+            {
+                "id": "af-unrelated",
+                "alias": "codex-unrelated",
+                "state": "active",
+                "title": "Unrelated task",
+            },
+        ])
+
+        result = FactoryCollector(runner, ActiveWorkflowGasCity()).collect()
+
+        self.assertEqual(("working", "active", "saymyname-backend/codex-1"), (
+            result["activity"]["state"], result["human_state"]["result"]["state"],
+            result["focus"]["agent"],
+        ))
+        cards = {item["name"]: item for item in result["agents"]}
+        self.assertEqual(result["focus"]["title"], cards["codex-workflow"]["objective"])
+        self.assertEqual("Unrelated task", cards["codex-unrelated"]["objective"])
+
+    def test_workflow_assignment_never_infers_an_unrelated_session(self):
+        runner = FakeRunner()
+        current = runner.responses[("gc", "bd", "show", "smf-now", "--json")][0]
+        current["status"] = "in_progress"
+        current["metadata"].pop("gc.work_outcome")
+        runner.responses[("gc", "session", "list", "--json")]["sessions"].append({
+            "id": "af-unrelated",
+            "alias": "codex-unrelated",
+            "state": "active",
+        })
+
+        result = FactoryCollector(runner, ActiveWorkflowGasCity()).collect()
+
+        self.assertEqual(("materialized", None, "materialized_without_agent", "available"), (
+            result["human_state"]["result"]["state"],
+            result["human_state"]["result"]["agent"],
+            result["resume"]["mode"], result["health"]["state"],
+        ))
+        self.assertTrue(all(result["sources"].values()))
+        cards = {item["name"]: item for item in result["agents"]}
+        self.assertNotEqual(result["focus"]["title"], cards["codex-unrelated"]["objective"])
+
+    def test_workflow_assignment_ambiguity_fails_closed(self):
+        runner = FakeRunner()
+        current = runner.responses[("gc", "bd", "show", "smf-now", "--json")][0]
+        current["status"] = "in_progress"
+        current["metadata"].pop("gc.work_outcome")
+        sessions = runner.responses[("gc", "session", "list", "--json")]["sessions"]
+        sessions.extend([
+            {"id": "af-first", "alias": "codex-workflow", "state": "active"},
+            {"id": "af-second", "alias": "codex-workflow", "state": "active"},
+        ])
+
+        result = FactoryCollector(runner, ActiveWorkflowGasCity()).collect()
+
+        self.assertEqual(("fail_closed", "degraded", False), (
+            result["resume"]["mode"], result["health"]["state"],
+            result["sources"]["workflow_session"],
+        ))
+        self.assertTrue(any(
+            "plusieurs sessions" in item for item in result["warnings"]
+        ))
 
     def test_human_projection_links_exact_needs_benjamin_decision(self):
         runner = FakeRunner()
