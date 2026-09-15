@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# factory-guard — deterministic (L0, zero-token) protection for the live Factory.
+#
+# Every failure this guards against actually happened on 2026-09-15:
+#
+#   1. BRANCH DRIFT     a `git checkout` in the live root swapped city.toml,
+#                       agents/ and bin/ out from under the running city —
+#                       permission_mode silently returned to "plan" (which
+#                       strands unattended Claude agents), three provider
+#                       profiles vanished, and bin/pr-autopilot was deleted
+#                       from disk, taking the merge actor offline.
+#   2. WORK ON DISK ONLY  5 commits existed nowhere but this machine; three of
+#                       them had already lost their remote branch.
+#   3. SILENT REGRESSION  none of the above raised anything. It was found by
+#                       accident, ~20 minutes later.
+#
+# Default run is safe and self-healing: it always backs up unpushed work, and
+# restores the pinned branch ONLY when drift has actually broken an invariant.
+# --check-only reports without touching anything.
+#
+# Usage: factory-guard [--check-only] [--quiet] [--pin <branch>]
+set -uo pipefail
+
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+STATE="$ROOT/.gc/factory-guard.branch"
+CHECK_ONLY=0
+QUIET=0
+PIN=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check-only) CHECK_ONLY=1 ;;
+    --quiet) QUIET=1 ;;
+    --pin) PIN="${2:-}"; shift ;;
+    -h|--help)
+      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+cd "$ROOT" || { echo "factory-guard: $ROOT unreachable"; exit 2; }
+
+PROBLEMS=(); ACTIONS=(); STATUS=0
+say()  { [ "$QUIET" = "1" ] || printf '%s\n' "$*"; }
+bad()  { PROBLEMS+=("$1"); STATUS=1; }
+did()  { ACTIONS+=("$1"); say "  FIXED: $1"; }
+
+# --- pin the expected branch -------------------------------------------------
+if [ -n "$PIN" ]; then
+  printf '%s\n' "$PIN" > "$STATE"
+  say "pinned live-root branch: $PIN"
+fi
+if [ ! -f "$STATE" ]; then
+  git rev-parse --abbrev-ref HEAD > "$STATE"
+  say "pinned live-root branch (first run): $(cat "$STATE")"
+fi
+EXPECTED="$(cat "$STATE")"
+CURRENT="$(git rev-parse --abbrev-ref HEAD)"
+
+say "factory-guard — $ROOT"
+say ""
+
+# --- 1. critical runtime files ----------------------------------------------
+CRITICAL="bin/pr-autopilot orders/pr-autopilot.toml bin/factory-guard orders/factory-guard.toml"
+MISSING=""
+for f in $CRITICAL; do [ -e "$f" ] || MISSING="$MISSING $f"; done
+
+# --- 2. config invariants ----------------------------------------------------
+BROKEN_CFG=""
+if grep -qE '^\s*permission_mode\s*=\s*"plan"' city.toml 2>/dev/null; then
+  BROKEN_CFG="permission_mode=plan (strands unattended agents)"
+fi
+for p in codex codex-spark claude claude-standard claude-cheap; do
+  gc config explain --provider "$p" >/dev/null 2>&1 || \
+    BROKEN_CFG="${BROKEN_CFG:+$BROKEN_CFG; }provider '$p' does not resolve"
+done
+
+# --- 3. branch drift, and self-heal only if it broke something ---------------
+if [ "$CURRENT" != "$EXPECTED" ]; then
+  say "✗ branch-drift — live root is on '$CURRENT', pinned '$EXPECTED'"
+  if [ -n "$MISSING" ] || [ -n "$BROKEN_CFG" ]; then
+    say "  drift has broken live invariants:${MISSING:+ missing:$MISSING}${BROKEN_CFG:+ config: $BROKEN_CFG}"
+    if [ "$CHECK_ONLY" = "1" ]; then
+      bad "branch drift to '$CURRENT' broke live config; run factory-guard to restore"
+    elif [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+      bad "branch drift to '$CURRENT' broke live config, but the tree has uncommitted changes — refusing to checkout; resolve by hand"
+    elif git checkout "$EXPECTED" >/dev/null 2>&1; then
+      did "restored live root to '$EXPECTED' (was '$CURRENT')"
+      CURRENT="$EXPECTED"; MISSING=""; BROKEN_CFG=""
+      for f in $CRITICAL; do [ -e "$f" ] || MISSING="$MISSING $f"; done
+      grep -qE '^\s*permission_mode\s*=\s*"plan"' city.toml 2>/dev/null && \
+        BROKEN_CFG="permission_mode=plan"
+    else
+      bad "branch drift to '$CURRENT' broke live config and checkout back to '$EXPECTED' failed"
+    fi
+  else
+    say "  (invariants still intact — leaving the checkout alone; use --pin to adopt it)"
+  fi
+else
+  say "✓ branch — live root on pinned '$EXPECTED'"
+fi
+
+[ -n "$MISSING" ] && bad "missing critical runtime file(s):$MISSING"
+[ -z "$MISSING" ] && say "✓ runtime-files — all present"
+[ -n "$BROKEN_CFG" ] && bad "config invariant broken: $BROKEN_CFG"
+[ -z "$BROKEN_CFG" ] && say "✓ config-invariants — permission_mode sane, all 5 providers resolve"
+
+# --- 4. back up work that exists only on this machine ------------------------
+AT_RISK=0; PUSHED=0
+while read -r b; do
+  [ -z "$b" ] && continue
+  remote=$(git ls-remote --heads origin "$b" 2>/dev/null | awk '{print $1}')
+  local_sha=$(git rev-parse "$b")
+  if [ -z "$remote" ]; then
+    n=$(git rev-list --count origin/main.."$b" 2>/dev/null || echo 0)
+    [ "${n:-0}" = "0" ] && continue
+  elif [ "$remote" = "$local_sha" ]; then
+    continue
+  else
+    # never touch a branch the remote has moved ahead on
+    git merge-base --is-ancestor "$remote" "$local_sha" 2>/dev/null || {
+      bad "branch '$b' has diverged from origin — needs a human"; continue; }
+  fi
+  AT_RISK=$((AT_RISK+1))
+  if [ "$CHECK_ONLY" = "1" ]; then
+    bad "unpushed work on '$b'"
+  elif git push origin "$b:$b" >/dev/null 2>&1; then
+    did "backed up '$b' to origin"; PUSHED=$((PUSHED+1))
+  else
+    bad "could not back up '$b' to origin"
+  fi
+done < <(git for-each-ref --format='%(refname:short)' refs/heads/)
+[ "$AT_RISK" = "0" ] && say "✓ work-backup — nothing exists only on this machine"
+
+# --- 5. a rig with ready work but no dispatcher ------------------------------
+for rig in saymyname-backend saymyname-frontend; do
+  [ -d "rigs/$rig" ] || continue
+  # `gc rig status` reports "unknown (partial status)" whenever its runtime
+  # probe times out, which silently hid a genuinely stopped dispatcher. The
+  # session list is authoritative — use that instead.
+  running=$(gc session list 2>/dev/null \
+    | grep -c "$rig/core.control-dispatcher.*active" || true)
+  ready=$(cd "rigs/$rig" && gc bd ready 2>/dev/null | grep -c . || echo 0)
+  if [ "${running:-0}" -gt 0 ]; then
+    say "✓ rig:$rig — dispatcher running ($ready ready)"
+  elif [ "${ready:-0}" -gt 0 ]; then
+    bad "rig '$rig' has $ready ready item(s) but no running dispatcher"
+  else
+    say "✓ rig:$rig — dispatcher stopped, no ready work"
+  fi
+done
+
+# --- report ------------------------------------------------------------------
+say ""
+if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
+if [ "${#PROBLEMS[@]}" -gt 0 ]; then
+  say "UNRESOLVED ${#PROBLEMS[@]}:"; printf '  ! %s\n' "${PROBLEMS[@]}"
+else
+  say "healthy"
+fi
+exit "$STATUS"

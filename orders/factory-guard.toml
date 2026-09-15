@@ -1,0 +1,6 @@
+[order]
+description = "Deterministic zero-token protection for the live Factory: pins the live-root branch and self-heals a checkout that broke live config, verifies runtime files and provider/permission invariants, backs up any commit that exists only on this machine, and reports a rig holding ready work with no dispatcher."
+trigger = "cooldown"
+interval = "5m"
+exec = "/home/benja/agent-factory/bin/factory-guard --quiet"
+timeout = "180s"

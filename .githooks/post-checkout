@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Warn when someone switches branches in the LIVE Factory root. This directory
+# is not just a repo: city.toml, agents/, bin/ and orders/ ARE the running
+# city's configuration. Switching branches reconfigures it instantly.
+[ "$3" = "1" ] || exit 0            # only on branch checkouts
+root=$(git rev-parse --show-toplevel 2>/dev/null)
+[ "$root" = "/home/benja/agent-factory" ] || exit 0   # worktrees are fine
+pinned_file="$root/.gc/factory-guard.branch"
+[ -f "$pinned_file" ] || exit 0
+pinned=$(cat "$pinned_file")
+now=$(git rev-parse --abbrev-ref HEAD)
+[ "$now" = "$pinned" ] && exit 0
+cat >&2 <<WARN
+
+  ┌──────────────────────────────────────────────────────────────────┐
+  │  WARNING — you switched the LIVE Factory root to '$now'
+  │  Pinned branch is '$pinned'.
+  │
+  │  city.toml, agents/, bin/ and orders/ have just been replaced.
+  │  The running city is now using THIS branch's configuration.
+  │  bin/pr-autopilot and the merge actor may no longer exist.
+  │
+  │  To work on another branch, use a worktree instead:
+  │    git worktree add /home/benja/<name>-worktree <branch>
+  │
+  │  To restore now:  git checkout $pinned
+  │  factory-guard will also self-heal within 5 minutes.
+  └──────────────────────────────────────────────────────────────────┘
+
+WARN
