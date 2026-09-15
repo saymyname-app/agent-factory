@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+#
+# Deterministic host-resource guard for the factory. Zero model calls.
+#
+# gc doctor checks the city; nothing checked whether the host can still carry
+# it. This reports the headroom that actually decides whether Windows survives
+# a working factory, and exits non-zero when it does not.
+
+set -Eeuo pipefail
+
+PROGRAM_NAME="factory-resources"
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+GC_BIN="${GC_BIN:-gc}"
+
+# Guest memory left before Linux starts reclaiming hard.
+GUEST_AVAILABLE_WARN_PERCENT=${FACTORY_RESOURCES_AVAILABLE_WARN:-25}
+GUEST_AVAILABLE_CRITICAL_PERCENT=${FACTORY_RESOURCES_AVAILABLE_CRITICAL:-12}
+# Swap in use means the guest already exceeded its cap.
+SWAP_USED_WARN_PERCENT=${FACTORY_RESOURCES_SWAP_WARN:-10}
+# RAM the Windows host must keep for itself, in GiB.
+HOST_RESERVE_GIB=${FACTORY_RESOURCES_HOST_RESERVE_GIB:-6}
+
+WINDOWS_PROFILE_ROOT=${FACTORY_RESOURCES_WINDOWS_PROFILE:-}
+
+status=0
+findings=()
+
+log() { printf '%s\n' "$*"; }
+
+record() {
+  local level=$1 check=$2 message=$3 hint=${4:-}
+  local mark
+  case $level in
+    critical) mark='✗'; status=2 ;;
+    warning) mark='⚠'; [[ $status -lt 1 ]] && status=1 ;;
+    *) mark='✓' ;;
+  esac
+  findings+=("$mark $check — $message")
+  [[ -n $hint ]] && findings+=("      hint: $hint")
+  return 0
+}
+
+meminfo_kib() {
+  awk -v key="$1:" '$1 == key { print $2; exit }' /proc/meminfo
+}
+
+percent_of() {
+  local part=$1 whole=$2
+  [[ $whole -gt 0 ]] || { printf '0'; return; }
+  printf '%d' $(( part * 100 / whole ))
+}
+
+gib() {
+  awk -v kib="$1" 'BEGIN { printf "%.1f", kib / 1048576 }'
+}
+
+check_guest_memory() {
+  local total available swap_total swap_free swap_used available_percent swap_percent
+  total=$(meminfo_kib MemTotal)
+  available=$(meminfo_kib MemAvailable)
+  swap_total=$(meminfo_kib SwapTotal)
+  swap_free=$(meminfo_kib SwapFree)
+  available_percent=$(percent_of "$available" "$total")
+
+  if [[ $available_percent -le $GUEST_AVAILABLE_CRITICAL_PERCENT ]]; then
+    record critical guest-memory \
+      "$(gib "$available") GiB available of $(gib "$total") GiB (${available_percent}%)" \
+      "stop idle agent sessions, or raise [wsl2] memory in %USERPROFILE%\\.wslconfig"
+  elif [[ $available_percent -le $GUEST_AVAILABLE_WARN_PERCENT ]]; then
+    record warning guest-memory \
+      "$(gib "$available") GiB available of $(gib "$total") GiB (${available_percent}%)" \
+      "headroom is thin; avoid starting another writer rig now"
+  else
+    record ok guest-memory \
+      "$(gib "$available") GiB available of $(gib "$total") GiB (${available_percent}%)"
+  fi
+
+  if [[ $swap_total -gt 0 ]]; then
+    swap_used=$(( swap_total - swap_free ))
+    swap_percent=$(percent_of "$swap_used" "$swap_total")
+    if [[ $swap_percent -ge $SWAP_USED_WARN_PERCENT ]]; then
+      record warning guest-swap \
+        "$(gib "$swap_used") GiB swap in use (${swap_percent}%)" \
+        "the guest already exceeded its RAM cap; expect host stalls"
+    else
+      record ok guest-swap "$(gib "$swap_used") GiB swap in use (${swap_percent}%)"
+    fi
+  fi
+}
+
+check_host_headroom() {
+  local total_kib guest_gib host_total_gib remaining
+  if [[ -z $WINDOWS_PROFILE_ROOT ]]; then
+    local candidate
+    candidate=$(wslpath "$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')" 2>/dev/null || true)
+    [[ -d ${candidate:-} ]] && WINDOWS_PROFILE_ROOT=$candidate
+  fi
+  if [[ -z $WINDOWS_PROFILE_ROOT || ! -d $WINDOWS_PROFILE_ROOT ]]; then
+    record ok host-config "Windows profile not reachable; skipped .wslconfig review"
+    return 0
+  fi
+
+  local config="$WINDOWS_PROFILE_ROOT/.wslconfig"
+  if [[ ! -f $config ]]; then
+    record warning host-config \
+      "no .wslconfig; WSL may claim up to 50% of host RAM and every logical processor" \
+      "create $config with [wsl2] memory= and processors= caps"
+    return 0
+  fi
+
+  total_kib=$(meminfo_kib MemTotal)
+  guest_gib=$(gib "$total_kib")
+  host_total_gib=$(awk -v g="$guest_gib" 'BEGIN { printf "%.1f", g }')
+
+  if ! grep -qiE '^[[:space:]]*processors[[:space:]]*=' "$config"; then
+    record warning host-cpu \
+      "no [wsl2] processors cap; the guest can saturate all $(nproc) logical processors" \
+      "add processors=$(( $(nproc) / 2 )) to $config"
+  else
+    record ok host-cpu "[wsl2] processors cap is declared"
+  fi
+
+  remaining=$(awk -v reserve="$HOST_RESERVE_GIB" -v guest="$host_total_gib" \
+    'BEGIN { printf "%.1f", guest + reserve }')
+  record ok host-config \
+    "guest cap $(gib "$total_kib") GiB; Windows needs about ${HOST_RESERVE_GIB} GiB beyond it (${remaining} GiB total)"
+}
+
+check_top_consumers() {
+  local output
+  output=$(ps -eo rss,comm --no-headers --sort=-rss 2>/dev/null | head -5 || true)
+  [[ -n $output ]] || return 0
+  findings+=("  top memory consumers in the guest:")
+  while read -r rss comm; do
+    [[ -n ${rss:-} ]] || continue
+    findings+=("    $(gib "$rss") GiB  $comm")
+  done <<<"$output"
+}
+
+check_sessions() {
+  command -v "$GC_BIN" >/dev/null 2>&1 || { record ok sessions "gc unavailable; skipped"; return 0; }
+  local payload count
+  payload=$("$GC_BIN" session list --json 2>/dev/null || true)
+  [[ -n $payload ]] || { record ok sessions "no session data available"; return 0; }
+  command -v jq >/dev/null 2>&1 || { record ok sessions "jq unavailable; skipped"; return 0; }
+  count=$(jq '[.sessions[]? | select(.state == "active")] | length' <<<"$payload" 2>/dev/null || printf '0')
+  record ok sessions "$count active session(s)"
+}
+
+main() {
+  case ${1:-} in
+    -h|--help|help)
+      printf 'Usage: %s\n\nReports whether the host can still carry the factory. Zero model calls.\nExit 0 healthy, 1 warnings, 2 critical.\n' "$PROGRAM_NAME"
+      return 0
+      ;;
+  esac
+
+  log "$PROGRAM_NAME — host capacity for $ROOT"
+  log ""
+  check_guest_memory
+  check_host_headroom
+  check_sessions
+  check_top_consumers
+  printf '  %s\n' "${findings[@]}"
+  log ""
+  case $status in
+    0) log "healthy" ;;
+    1) log "warnings present" ;;
+    2) log "critical — the host is at risk" ;;
+  esac
+  return "$status"
+}
+
+main "$@"
