@@ -67,26 +67,46 @@ proven low-risk class; L2 one strong writer; L3 writer plus independent review f
 meaningful risk; L4 multi-agent only when decomposition has measured value. Never
 load whole backlogs or histories by default.
 
+Context engineering discipline (write / select / compress / isolate):
+measured practice shows agent output quality degrades once a session's
+context passes roughly half of its window, well before the hard limit —
+treat that as the trigger for compaction/handoff, not the window's actual
+ceiling (see the Mayor's session-budget guidance in its prompt template).
+Assemble prompts and durable docs so the load-bearing instruction is at the
+start or end, not buried mid-document — models attend to context edges more
+reliably than the middle. Give each agent role the smallest tool/skill
+surface that covers its job; a tool an agent never needs is still a standing
+tax on every turn's context.
+
 ## Inter-agent mail format
 
 `gc mail` (agent-to-agent and agent-to-human messages) is a notification and
 coordination layer, not a second copy of durable state — Beads, Git, and PR
 evidence remain authoritative, so a message should point at that evidence
-rather than restate it:
+rather than restate it. Prefer a compact **action-state record** over free
+narrative for routine coordination mail — research on inter-agent
+communication (PACT, 2026) shows this halves input tokens downstream with no
+loss of task performance, because the recipient needs the resulting state
+and what to do with it, not the story of how the sender got there:
+
+```
+ACTION: <what the sender did, one line>
+STATE:  <resulting state — SHIPPED / PASS / FAIL / BLOCKED: <reason> / etc.>
+EVIDENCE: <bead id(s), commit SHA(s), PR number(s) — references, not restatement>
+NEXT:   <what happens next, or "none">
+```
 
 - **Reference, don't restate.** Cite a bead ID, commit SHA, or PR number and
   let the recipient pull detail on demand (`gc bd show <id>`) instead of
   re-describing full context they can already reach.
-- **Structured over narrative** for routine status/verdict mail: lead with a
-  one-line outcome (e.g. `SHIPPED`, `PASS`, `BLOCKED: <reason>`), then only
-  the facts that changed the outcome. A short list of key:value facts beats a
-  paragraph restating the same facts in prose.
 - **No exported reasoning.** Deliberation, dead ends, and internal scratch
   work stay in the sender's own session — mail carries only what the
   recipient needs to decide or act.
-- **Target a couple hundred words** for a routine message; a genuinely
-  complex multi-part verdict may run longer, but treat length past that as a
-  signal to split into a follow-up bead rather than one long message.
+- Use the ACTION/STATE/EVIDENCE/NEXT shape above for routine status/verdict
+  mail. A genuinely ambiguous escalation that needs human judgment may still
+  read as prose — clarity for a human decision outweighs the token saving
+  there — but keep it under a couple hundred words; treat more than that as
+  a signal to split into a follow-up bead rather than one long message.
 - **Keep the mailbox drained.** Archive or mark-read mail once acted on
   (`gc.retention_ttl` purges read mail after 7 days, but an unbounded unread
   backlog still buries the signal that actually needs a response).

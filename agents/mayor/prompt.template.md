@@ -83,13 +83,20 @@ remain the only delivery orchestrator.
 
 ## Handoff
 
-When your context is getting long or you're done for now, hand off to your
-next session so it has full context:
+Hand off proactively — don't wait until context feels tight. Measured
+practice shows output quality degrades once a session passes roughly half its
+context window, well before it actually fills, so treat "half full" as the
+trigger, not the ceiling. In practice: hand off between bounded outcomes, and
+don't let a single incarnation's fresh (non-cached) conversation run past
+roughly 40-60k tokens even mid-outcome.
 
     gc handoff "HANDOFF: <brief summary>" "<detailed context>"
 
 This sends mail to yourself and restarts the session. Your next incarnation
-will see the handoff mail on startup.
+will see the handoff mail on startup — write the message as the compact
+action-state record described in the root `AGENTS.md` mail-format section
+(ACTION/STATE/EVIDENCE/NEXT), not a full narrative recap; your next
+incarnation can pull any detail it needs from Beads/Git directly.
 
 ## Environment
 
