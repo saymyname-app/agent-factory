@@ -3,8 +3,10 @@
 set -Eeuo pipefail
 
 PROGRAM_NAME="product-queue"
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 BD_BIN="${BD_BIN:-bd}"
 GC_BIN="${GC_BIN:-gc}"
+HUMAN_STATE_BIN="${PRODUCT_QUEUE_HUMAN_STATE_BIN:-$SCRIPT_DIR/factory-human-state}"
 PRODUCT="${PRODUCT_QUEUE_PRODUCT:-}"
 DEFAULT_GOAL="${PRODUCT_QUEUE_DEFAULT_GOAL:-none}"
 
@@ -18,18 +20,19 @@ usage() {
 Usage: PRODUCT_QUEUE_PRODUCT=<slug> product-queue <command> [arguments]
 
 Commands:
-  list [--json]                              Show the ordered candidate queue.
-  next [--json]                              Show the first queued candidate.
+  list [--json]                              Show the ordered active candidate queue.
+  next [--json]                              Show the first eligible candidate.
   add --title TEXT [--goal ID] [--urgency LEVEL]
       [--why TEXT] [--acceptance TEXT]       Append a deferred candidate.
   move ID POSITION                           Move a candidate to an exact position.
   urgency ID normal|urgent|critical          Change urgency without changing order.
-  pause ID [REASON]                          Skip a candidate while retaining order.
+  pause ID REASON                            Skip a candidate while retaining order.
   resume ID                                  Make a paused candidate eligible again.
   cancel ID [REASON]                         Close a candidate without executing it.
   materialize ID EXECUTION_BEAD --mayor      Link and close the first candidate.
 
-Queue candidates are deferred Beads and never worker-ready. Only the Mayor may
+Human states are "Éligible · non programmé" and "En pause". Candidates stay
+technically deferred in Beads so they are never worker-ready. Only the Mayor may
 materialize the first eligible candidate into a separately created executable
 Bead. Order and urgency are intentionally independent.
 USAGE
@@ -55,15 +58,25 @@ priority_for_urgency() {
 
 load_inventory() {
   local raw
-  raw=$("$BD_BIN" list --status deferred --label product-queue \
+  raw=$("$BD_BIN" list --all --label product-queue \
     --label "product:$PRODUCT" --limit 0 --json) \
     || die "Beads queue inventory is unavailable."
 
   INVENTORY=$(jq -ce --arg product "$PRODUCT" '
     if type != "array" then error("inventory must be an array") else . end |
+    map(select(.metadata["gc.queue_product"] == $product)) as $candidates |
+    if all($candidates[];
+      (.status == "deferred" and
+       (.metadata["gc.queue_state"] == "queued" or .metadata["gc.queue_state"] == "paused"))
+      or
+      (.status == "closed" and .metadata["gc.queue_state"] == "cancelled")
+      or
+      (.status == "closed" and .metadata["gc.queue_state"] == "materialized" and
+       (.metadata["gc.materialized_bead"] | type == "string" and
+        test("^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(?:\\.[A-Za-z0-9]+)*$"))))
+    then $candidates else error("invalid candidate status/state tuple") end |
     map(select(
       .status == "deferred" and
-      .metadata["gc.queue_product"] == $product and
       (.metadata["gc.queue_state"] == "queued" or
        .metadata["gc.queue_state"] == "paused"))) |
     if all(.[].metadata["gc.queue_rank"];
@@ -79,6 +92,11 @@ load_inventory() {
   ' <<<"$raw") || die "Product queue metadata is inconsistent; repair it before mutation."
 }
 
+project_inventory() {
+  PROJECTED_INVENTORY=$("$HUMAN_STATE_BIN" candidates <<<"$INVENTORY") \
+    || die "Human candidate projection failed closed; repair queue metadata before continuing."
+}
+
 require_candidate() {
   local id=$1
   CANDIDATE=$(jq -ce --arg id "$id" \
@@ -89,15 +107,9 @@ require_candidate() {
 list_queue() {
   local format=${1:-}
   load_inventory
+  project_inventory
   if [[ $format == --json ]]; then
-    jq -c '[to_entries[] | {
-      position: (.key + 1),
-      id: .value.id,
-      title: .value.title,
-      state: .value.metadata["gc.queue_state"],
-      urgency: .value.metadata["gc.queue_urgency"],
-      goal: .value.metadata["gc.queue_goal"]
-    }]' <<<"$INVENTORY"
+    printf '%s\n' "$PROJECTED_INVENTORY"
     return
   fi
   [[ -z $format ]] || die "Unsupported list option: $format"
@@ -106,18 +118,21 @@ list_queue() {
     printf 'EMPTY\n'
     return
   fi
-  jq -r 'to_entries[] |
-    "\(.key + 1). [" + .value.metadata["gc.queue_state"] + "]" +
-    "[" + .value.metadata["gc.queue_urgency"] + "] \(.value.title) (\(.value.id))"' \
-    <<<"$INVENTORY"
+  jq -r '.[] |
+    "\(.position). [" +
+    (if .kind == "factory_campaign" then "\(.kind_label) · " else "" end) +
+    "\(.state_label)][urgence \(.urgency_label)] \(.title) (\(.id))" +
+    (if .state == "paused" then " — \(.reason)" else "" end)' <<<"$PROJECTED_INVENTORY"
+  printf '%s\n' "GARDE-FOU: candidats techniquement différés dans Beads; seul le Mayor peut les matérialiser après autorisation EXECUTE."
 }
 
 next_candidate() {
   local format=${1:-}
   local next
   load_inventory
-  next=$(jq -c '[.[] | select(.metadata["gc.queue_state"] == "queued")][0] // null' \
-    <<<"$INVENTORY")
+  project_inventory
+  next=$(jq -c '[.[] | select(.state == "eligible" and .kind == "product_candidate")][0] // null' \
+    <<<"$PROJECTED_INVENTORY")
   if [[ $format == --json ]]; then
     printf '%s\n' "$next"
     return
@@ -126,7 +141,7 @@ next_candidate() {
   if [[ $next == null ]]; then
     printf 'NEXT: none\n'
   else
-    jq -r '"NEXT: \(.title) (\(.id)) — " + .metadata["gc.queue_urgency"]' <<<"$next"
+    jq -r '"NEXT: \(.title) (\(.id)) — \(.state_label); lancement non automatique"' <<<"$next"
   fi
 }
 
@@ -213,9 +228,11 @@ set_state() {
   require_candidate "$id"
   if [[ -n $reason ]]; then
     "$BD_BIN" update "$id" --set-metadata "gc.queue_state=$state" \
+      --set-metadata "gc.queue_pause_reason=$reason" \
       --append-notes "Product queue $state: $reason" >/dev/null
   else
-    "$BD_BIN" update "$id" --set-metadata "gc.queue_state=$state" >/dev/null
+    "$BD_BIN" update "$id" --set-metadata "gc.queue_state=$state" \
+      --set-metadata "gc.queue_pause_reason=" >/dev/null
   fi
   printf '%s: %s\n' "${state^^}" "$id"
 }
@@ -279,7 +296,7 @@ main() {
     add) add_candidate "$@" ;;
     move) [[ $# -eq 2 ]] || die "Usage: $PROGRAM_NAME move ID POSITION"; move_candidate "$@" ;;
     urgency) [[ $# -eq 2 ]] || die "Usage: $PROGRAM_NAME urgency ID LEVEL"; set_urgency "$@" ;;
-    pause) [[ $# -le 2 ]] || die "Usage: $PROGRAM_NAME pause ID [REASON]"; set_state "${1:-}" paused "${2:-}" ;;
+    pause) [[ $# -eq 2 ]] || die "Usage: $PROGRAM_NAME pause ID REASON"; set_state "$1" paused "$2" ;;
     resume) [[ $# -eq 1 ]] || die "Usage: $PROGRAM_NAME resume ID"; set_state "$1" queued ;;
     cancel) [[ $# -le 2 ]] || die "Usage: $PROGRAM_NAME cancel ID [REASON]"; cancel_candidate "$@" ;;
     materialize) [[ $# -eq 3 ]] || die "Usage: $PROGRAM_NAME materialize ID EXECUTION_BEAD --mayor"; materialize_candidate "$@" ;;
@@ -291,6 +308,7 @@ validate_product
 require_command jq
 require_command "$BD_BIN"
 require_command flock
+[[ -x $HUMAN_STATE_BIN ]] || die "Human state projector is unavailable: $HUMAN_STATE_BIN"
 LOCK_FILE="${PRODUCT_QUEUE_LOCK_FILE:-${TMPDIR:-/tmp}/agent-factory-product-queue-${PRODUCT}.lock}"
 exec 9>"$LOCK_FILE"
 flock -w 10 9 || die "Could not acquire the product queue lock."

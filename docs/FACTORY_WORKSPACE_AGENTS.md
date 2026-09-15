@@ -25,7 +25,14 @@ Factory's normal evidence and delivery rules.
   objectives, phases, product Beads, signal freshness, agents, queue, explainable
   decision aids, integrated help, and source warnings.
 - Never invent a percentage or claim that a process is making progress merely
-  because its session exists. Distinguish working, waiting, stale, and idle.
+  because its session exists. Use `agent-factory-human-state/v1` to keep system
+  health, delivery activity, result lifecycle, and resume responsibility
+  separate. Working requires the exact workflow assignee to have an active
+  session; an unrelated session is never delivery evidence.
+- An eligible candidate is “Éligible · non programmé”. In one-shot/manual mode,
+  it will not start without a new EXECUTE request. Present “Lance le prochain
+  résultat” as an optional action, never as `NEEDS BENJAMIN`; reserve that field
+  for an effective blocking decision.
 - The cockpit refresh performs zero model calls. Do not add model summarization,
   inference, or autonomous actions to that path. Only Benjamin explicitly
   pressing send may submit a bounded message to the Mayor or persistent PO, and

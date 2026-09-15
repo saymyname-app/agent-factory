@@ -6,7 +6,7 @@ Use progressive disclosure. Do not read every document by default.
 |---|---|
 | Factory invariants / agent bootstrap | `../AGENTS.md` |
 | Codex desktop, CLI, remote/mobile protocol and authority | `OPERATOR_BRIDGE.md` |
-| Human Factory cockpit, product roadmap/decisions/board, agent drill-down, token usage, Mayor channel | `FACTORY_WORKSPACE_AGENTS.md`, `OPERATIONS.md` |
+| Human Factory cockpit, product roadmap/decisions/board, state/resume contract, agent drill-down, token usage, Mayor channel | `FACTORY_WORKSPACE_AGENTS.md`, `OPERATIONS.md`, `decisions/ADR-0012-human-state-and-resume-contract.md` |
 | Integrated product PO, project/context graphs, reusable cockpit products | `PRODUCT_COCKPIT_TEMPLATE.md`, `config/product-cockpit.schema.json` |
 | SayMyName product vision, priorities, unknowns | `products/saymyname/PRODUCT_CONTEXT.md` |
 | SayMyName durable product decisions | `products/saymyname/DECISIONS.md` |

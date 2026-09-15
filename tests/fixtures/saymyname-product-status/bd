@@ -11,13 +11,21 @@ emit_parent() {
   local needs="none"
 
   [[ $scenario != idle ]] || current="none"
+  [[ $scenario != no-candidate ]] || current="none"
+  [[ $scenario != all-paused ]] || current="none"
+  [[ $scenario != idle-campaign ]] || current="none"
   [[ $scenario != human ]] || needs="Choose whether to prioritize bounded intent intake"
   if [[ $scenario == routed ]]; then
     current="smb-current"
     delivered="smf-delivered"
   fi
+  local next="Evaluate supported ChatGPT plugin/MCP bridge"
+  local resume=''
+  [[ $scenario != no-candidate ]] || next="none"
+  [[ $scenario != mismatch-next ]] || next="A different candidate"
+  [[ $scenario != idle-campaign ]] || resume=',"gc.resume_mode":"automatic_campaign","gc.resume_condition":"Le créneau de campagne autorisé s’ouvre"'
   cat <<JSON
-[{"id":"af-1vr4","status":"in_progress","metadata":{"gc.current_jit":"$current","gc.last_delivered":"$delivered","gc.next_outcome":"Evaluate supported ChatGPT plugin/MCP bridge","gc.needs_benjamin":"$needs"}}]
+[{"id":"af-1vr4","status":"in_progress","metadata":{"gc.current_jit":"$current","gc.last_delivered":"$delivered","gc.next_outcome":"$next","gc.needs_benjamin":"$needs"$resume}}]
 JSON
 }
 
@@ -27,13 +35,18 @@ emit_current() {
   local parent="af-1vr4"
   local status="in_progress"
   [[ $scenario != human ]] || status="open"
+  [[ $scenario != blocked ]] || status="blocked"
   if [[ $scenario == routed ]]; then
     issue_id="smb-current"
     title="Implement backend product outcome"
     parent="smb-product-goal"
   fi
+  local metadata='{}'
+  [[ $scenario != blocked ]] || metadata='{"gc.blocked_reason":"La preuve externe requise manque"}'
+  [[ $scenario != dependency ]] || metadata='{"gc.resume_mode":"automatic_dependency","gc.resume_condition":"La dépendance af-proof se ferme"}'
+  [[ $scenario != finalizing ]] || metadata='{"gc.work_outcome":"pass"}'
   cat <<JSON
-[{"id":"$issue_id","title":"$title","status":"$status","parent":"$parent","metadata":{}}]
+[{"id":"$issue_id","title":"$title","status":"$status","parent":"$parent","metadata":$metadata}]
 JSON
 }
 

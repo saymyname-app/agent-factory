@@ -40,6 +40,7 @@ h1,h2,h3,p{overflow-wrap:anywhere}
 .panel{min-width:0;padding:1.15rem;border:1px solid var(--line);border-radius:1rem;background:rgba(21,27,26,.94);box-shadow:0 1rem 3rem rgba(0,0,0,.12)}
 .section-heading,.column-title{justify-content:space-between;gap:1rem}
 .section-heading h2,.column-title h2,.panel h2{margin:0;font-size:1.08rem}
+.state-contract-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem;margin-bottom:1rem}.state-axis h2{font-size:1rem;margin:.28rem 0}.resume-facts{display:grid;grid-template-columns:auto 1fr;gap:.28rem .65rem;margin:.6rem 0;font-size:.75rem}.resume-facts dt{color:var(--muted)}.resume-facts dd{margin:0;font-weight:700}.resume-axis button{margin-top:.55rem}
 .hero-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(18rem,1fr);gap:1rem;margin-bottom:1rem}
 .two-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem}
 .clickable{cursor:pointer;transition:border-color .15s,transform .15s}
@@ -191,7 +192,7 @@ dialog::backdrop{background:rgba(0,0,0,.58)}
 .shell{width:min(100% - 1rem,1280px);padding-top:1rem}
 .header-actions{width:100%;flex-wrap:wrap}
 .view-heading,.section-heading{align-items:flex-start}
-.hero-grid,.two-grid,.decision-columns,.metric-grid{grid-template-columns:1fr}
+.state-contract-grid,.hero-grid,.two-grid,.decision-columns,.metric-grid{grid-template-columns:1fr}
 .facts{grid-template-columns:1fr}
 .roadmap-grid{grid-template-columns:repeat(4,85vw)}
 .work-board{grid-template-columns:repeat(6,80vw)}

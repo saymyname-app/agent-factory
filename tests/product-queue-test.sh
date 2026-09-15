@@ -20,17 +20,22 @@ export QUEUE_INVENTORY='[
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 assert_contains() { [[ $1 == *"$2"* ]] || fail "missing '$2' in '$1'"; }
+assert_not_contains() { [[ $1 != *"$2"* ]] || fail "unexpected '$2' in '$1'"; }
 
 output=$("$QUEUE" list)
-assert_contains "$output" '1. [queued][normal] Alpha (af-a)'
-assert_contains "$output" '2. [paused][urgent] Beta (af-b)'
-assert_contains "$output" '3. [queued][critical] Gamma (af-c)'
+assert_contains "$output" '1. [Éligible · non programmé][urgence Normale] Alpha (af-a)'
+assert_contains "$output" '2. [En pause][urgence Urgente] Beta (af-b) — Raison de pause non renseignée'
+assert_contains "$output" '3. [Éligible · non programmé][urgence Critique] Gamma (af-c)'
+assert_contains "$output" 'techniquement différés dans Beads'
 
 output=$("$QUEUE" list --json)
 assert_contains "$output" '"position":1,"id":"af-a"'
+assert_contains "$output" '"state":"eligible","state_label":"Éligible · non programmé"'
+assert_contains "$output" '"technical_status":"deferred"'
+assert_contains "$output" '"contract":"agent-factory-human-state/v1"'
 
 output=$("$QUEUE" next)
-[[ $output == 'NEXT: Alpha (af-a) — normal' ]] || fail "wrong next candidate: $output"
+[[ $output == 'NEXT: Alpha (af-a) — Éligible · non programmé; lancement non automatique' ]] || fail "wrong next candidate: $output"
 
 : >"$QUEUE_LOG"
 "$QUEUE" move af-c 1 >/dev/null
@@ -43,6 +48,10 @@ grep -Fq 'update <af-b> <--set-metadata> <gc.queue_rank=3000>' "$QUEUE_LOG"
 grep -Fq 'update <af-a> <--priority> <1> <--set-metadata> <gc.queue_urgency=urgent>' "$QUEUE_LOG"
 "$QUEUE" pause af-a 'Waiting for product decision' >/dev/null
 grep -Fq 'gc.queue_state=paused' "$QUEUE_LOG"
+grep -Fq 'gc.queue_pause_reason=Waiting for product decision' "$QUEUE_LOG"
+if "$QUEUE" pause af-a >/dev/null 2>&1; then
+  fail 'pause without a reason must fail closed'
+fi
 "$QUEUE" resume af-b >/dev/null
 grep -Fq 'gc.queue_state=queued' "$QUEUE_LOG"
 
@@ -71,4 +80,36 @@ grep -Fq 'close <af-a>' "$QUEUE_LOG"
 grep -Fq 'gc.queue_state=cancelled' "$QUEUE_LOG"
 grep -Fq 'close <af-c>' "$QUEUE_LOG"
 
-printf 'PASS: product queue ordering and authority contract\n'
+export QUEUE_INVENTORY='[
+  {"id":"af-live","title":"Live","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}},
+  {"id":"af-old","title":"Already delivered candidate","status":"closed","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"materialized","gc.queue_rank":2000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id","gc.materialized_bead":"af-exec.1"}},
+  {"id":"af-cancel","title":"Cancelled","status":"closed","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"cancelled","gc.queue_rank":3000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}}
+]'
+output=$("$QUEUE" list --json)
+assert_contains "$output" '"id":"af-live"'
+assert_not_contains "$output" 'af-old'
+assert_not_contains "$output" 'af-cancel'
+
+export QUEUE_INVENTORY='[
+  {"id":"af-bad","title":"Bad tuple","status":"closed","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}}
+]'
+if "$QUEUE" list --json >/dev/null 2>&1; then
+  fail 'an inconsistent status/state tuple must fail closed'
+fi
+for invalid_metadata in \
+  '"gc.queue_state":"materialized","gc.materialized_bead":"af-exec"' \
+  '"gc.queue_state":"cancelled"' \
+  '"gc.queue_state":"unknown"' \
+  '"gc.some_other_field":"missing-state"'
+do
+  export QUEUE_INVENTORY="[{
+    \"id\":\"af-bad\",\"title\":\"Bad tuple\",\"status\":\"deferred\",
+    \"metadata\":{\"gc.queue_product\":\"saymyname\",$invalid_metadata,
+      \"gc.queue_rank\":1000,\"gc.queue_urgency\":\"normal\",\"gc.queue_goal\":\"af-u8id\"}
+  }]"
+  if "$QUEUE" list --json >/dev/null 2>&1; then
+    fail "invalid deferred tuple must fail closed: $invalid_metadata"
+  fi
+done
+
+printf 'PASS: product queue ordering, lifecycle, and authority contract\n'

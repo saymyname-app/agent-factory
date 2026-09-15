@@ -9,7 +9,8 @@ without turning the PO into an orchestrator or exposing Factory noise.
 - A **candidate** says what product result may be worth doing and why.
 - An **execution Bead** is the Mayor's scoped, dependency-aware unit of work.
 - Candidates are Beads with `status=deferred`; they never appear in `bd ready`.
-- The first non-paused candidate is eligible. Reordering never interrupts work
+- The first non-paused product candidate is **eligible but not scheduled**.
+  Reordering never interrupts work
   that the Mayor has already materialized.
 - Order answers “what should be considered next?”. Urgency is an independent
   signal; changing urgency does not silently change order.
@@ -37,7 +38,11 @@ Run from `/home/benja/agent-factory`:
 The generic entry point is `bin/product-queue`; set
 `PRODUCT_QUEUE_PRODUCT=<slug>` and optionally
 `PRODUCT_QUEUE_DEFAULT_GOAL=<bead-id>`. `list --json` and `next --json` are the
-stable low-token projections for other tools.
+stable low-token projections for other tools. Their JSON candidate objects use
+`agent-factory-human-state/v1`: `eligible` is displayed as “Éligible · non
+programmé”, while `paused` is displayed with its structured reason or the
+explicit fallback “Raison de pause non renseignée”. The technical Beads word
+`deferred` appears only in `technical_status` and its safety explanation.
 
 The Factory cockpit Roadmap may expose these same operations under an explicit
 human RECORD interaction. Its server invokes `bin/saymyname-product-queue` with
@@ -88,8 +93,16 @@ Candidates have labels `product-queue` and `product:<slug>` plus these metadata:
 | `gc.queue_rank` | Exact order, normalized in steps of 1000 |
 | `gc.queue_urgency` | `normal`, `urgent`, or `critical` |
 | `gc.queue_goal` | Durable product goal, or `none` |
+| `gc.queue_pause_reason` | Structured reason while paused; empty after resume |
 | `gc.materialized_bead` | Execution Bead after Mayor materialization |
 
 Cancellation and materialization close the candidate but retain its Beads
 history. Dependencies are not improvised at candidate level; the Mayor records
 them on the executable work after scope is understood.
+
+Before presenting or mutating the active queue, the CLI reads the complete
+candidate inventory and validates the only accepted lifecycle tuples:
+`deferred+(queued|paused)`, `closed+materialized` with a valid execution Bead,
+or `closed+cancelled`. It fails closed on every other tuple, then removes the two
+closed historical states from the active queue. A `goal=none` Factory campaign
+remains visible separately but never becomes `NEXT` for the product.

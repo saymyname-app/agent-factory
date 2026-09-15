@@ -169,6 +169,12 @@ It serves `http://127.0.0.1:8383` from a small Python standard-library process.
 a five-second cache of local `gc`, `bd`, workflow API, and product-queue signals.
 Monitoring, search, filters, advice, tooltips, glossary, and copied summaries call
 no model. Pause freezes automatic source refresh; **Actualiser** remains manual.
+The one-glance state follows `agent-factory-human-state/v1` (schema in
+`config/factory-human-status.schema.json`). It always separates infrastructure
+health, delivery activity, result lifecycle and resume semantics. A healthy
+controller may therefore coexist with no active delivery and a manual optional
+launch action. Source disagreement degrades health and neutralizes resume advice
+instead of being rendered as idle or as an empty queue.
 
 Progress is semantic and evidence-based: completed workflow steps, the current
 phase, elapsed wall time, and age of the latest source signal. A session marked
@@ -193,7 +199,7 @@ content. Capability and journey nodes link to these sources, roadmap outcomes an
 decisions; decision pages show the reverse relationships.
 
 The Roadmap combines durable V1 outcomes, exact last-delivery PR/CI evidence,
-the current immutable outcome, queued and evidence-paused candidates, decision
+the current immutable outcome, eligible-unscheduled and evidence-paused candidates, decision
 gates and the separate Factory campaign. Under explicit RECORD interaction it
 can add a candidate with what/why/acceptance, move it to an exact position, set
 urgency independently, pause with reason, resume, and cancel after confirmation.
@@ -529,9 +535,14 @@ cd ~/agent-factory
 ./bin/saymyname-product-status
 ```
 
-The command is a read-only L0 projection. It reads coordination pointers from
-parent Bead `af-1vr4` (`gc.current_jit`, `gc.last_delivered`,
-`gc.next_outcome`, and `gc.needs_benjamin`). It resolves the referenced current
+The command is a read-only L0 projection. `--json` emits the canonical
+`agent-factory-human-state/v1` contract; the default French text is only its
+human rendering plus exact delivery evidence. It reads coordination pointers
+from parent Bead `af-1vr4` (`gc.current_jit`, `gc.last_delivered`,
+`gc.next_outcome`, `gc.needs_benjamin`, and any explicit resume policy). It
+also reads the live product-queue projection and fails closed unless
+`gc.next_outcome` identifies the same first eligible product candidate. A
+`goal=none` Factory campaign never counts as `NEXT`. It resolves the referenced current
 and delivered Beads through prefix-aware `gc bd` routing, so an outcome may be
 attached to a durable product goal or stored in an application rig rather than
 being a direct child of `af-1vr4`. It derives an active delivery phase from the
@@ -541,6 +552,13 @@ requires `gc.github_repo` in `owner/repository` form and passes that repository
 to `gh pr view` while validating the PR number, head SHA, merge SHA, merged
 state, and check rollup. An empty rollup is reported as `CI not configured`,
 never as green. The output is emitted only after every required source agrees.
+
+Health uses `ok`, `running`, `health.usable`, and `health.degraded` independently
+from delivery activity. Resume is automatic only for an active delivery or when
+durable coordination explicitly configures an automatic dependency/campaign and
+its condition. Otherwise an idle eligible candidate is “Éligible · non
+programmé”; Benjamin may optionally ask “Lance le prochain résultat”. This is
+not a blocking `NEEDS BENJAMIN` decision.
 
 The normal exit code is `0`; invalid usage returns `2`; an unavailable,
 missing, or inconsistent Beads, Gas City, or GitHub source returns `1` with a
@@ -561,12 +579,19 @@ output as a second backlog. `GC_BIN` and `GH_BIN` are injectable for the
 deterministic fixture suite, while the operator defaults remain `gc` and `gh`;
 Bead reads intentionally go through `gc bd` for store routing.
 
-#### 2026-09-14 product-status evidence
+#### 2026-09-15 product-status and human-state evidence
 
-- **TARGET:** expose current outcome and phase, applicable live agent, last delivered outcome with GitHub merge/CI evidence, approved next outcome, and a precise Benjamin decision without exposing Formula internals.
-- **CONFIGURED:** `bin/saymyname-product-status` uses only the existing `bd`, `gc`, `gh`, and `jq` primitives and parent `af-1vr4` coordination metadata; it has no database, service, dashboard, or write path.
-- **OBSERVED:** the live projection resolved `af-1vr4.2` to the active `codex-af-yzra` implementation session and validated Factory PR #24 at merge `1f680299144535331f308aa6e52b63bc1a22f24d` with no configured CI checks.
-- **PROVEN:** nine deterministic fixture scenarios cover active and idle work, a human decision, exact merged delivery, absent and green CI, invalid repository metadata, mismatched GitHub evidence, source failure, missing live-agent confirmation, and prefix-routed non-child outcomes delivered from a non-Factory GitHub repository; the live command also completed successfully against Beads, Gas City, and GitHub.
+- **TARGET:** expose infrastructure health, delivery activity, result lifecycle,
+  exact delivery evidence, the next eligible product candidate, and explicit
+  resume owner/action without confusing an optional launch with a blocker.
+- **CONFIGURED:** `bin/saymyname-product-status` uses only deterministic local
+  `bd`, `gc`, `gh`, `jq`, product-queue, and pure Python projection primitives;
+  it has no database, model, scheduler, or write path.
+- **PROVEN:** the fixture suite covers active and agentless materialized work,
+  Mayor finalization, automatic dependency/campaign policy, manual idle, all
+  paused, empty queue, Benjamin decision, explicit blocker, healthy/degraded/down
+  infrastructure, exact GitHub evidence, routed Beads, queue/source failure, and
+  pointer divergence. Live verification must be repeated from the merged head.
 
 ### Ordered product candidates
 

@@ -31,7 +31,15 @@ from factory_cockpit import (  # noqa: E402
     load_product_config,
     _human_objective,
     _human_phase,
+    _product_bead,
     handler_factory,
+)
+from factory_state import (  # noqa: E402
+    CONTRACT as HUMAN_STATE_CONTRACT,
+    StateContractError,
+    candidate_record_lifecycle,
+    project_candidate,
+    project_human_state,
 )
 
 
@@ -41,9 +49,10 @@ class FakeRunner:
         self.calls = []
         self.responses = {
             ("gc", "status", "--json"): {
+                "ok": True,
                 "running": True,
                 "city_name": "agent-factory",
-                "health": {"usable": True},
+                "health": {"usable": True, "degraded": False},
                 "rigs": [],
             },
             ("gc", "session", "list", "--json"): {
@@ -81,14 +90,15 @@ class FakeRunner:
                     "gc.current_workflow": "smf-flow",
                 },
             }],
-            (str(ROOT / "bin" / "saymyname-product-queue"), "list", "--json"): [{
+            (str(ROOT / "bin" / "saymyname-product-queue"), "list", "--json"): [project_candidate({
                 "position": 1,
                 "id": "af-next",
                 "title": "Simplifier le premier écran",
-                "state": "queued",
+                "queue_state": "queued",
+                "technical_status": "deferred",
                 "urgency": "normal",
                 "goal": "af-u8id",
-            }],
+            })],
             ("bd", "list", "--status", "in_progress", "--limit", "0", "--json"): [{
                 "id": "af-ui",
                 "title": "Create the human cockpit",
@@ -484,6 +494,11 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertIn('$("open-blocker-decision").addEventListener("click"', script)
         self.assertIn('if (id) openDecisionById(id)', script)
         self.assertIn('blocker?.text || "Aucun blocage effectif."', script)
+        self.assertIn('id="health-label"', html)
+        self.assertIn('id="activity-label"', html)
+        self.assertIn('id="resume-condition"', html)
+        self.assertIn("function renderOperationalState(data)", script)
+        self.assertNotIn("si cet état persiste", script)
         self.assertNotIn('makeActivatable($("attention-card")', script)
         self.assertIn('[tabindex]:focus-visible', styles)
         self.assertIn('fetch("/api/delivery-evidence"', script)
@@ -682,11 +697,15 @@ class FactoryCockpitTest(unittest.TestCase):
 
     def test_human_projection_and_zero_token_contract(self):
         result = FactoryCollector(FakeRunner(), FakeGasCity()).collect()
-        self.assertEqual("À finaliser par le Mayor", result["focus"]["state_label"])
+        self.assertEqual("En finalisation par le Mayor", result["focus"]["state_label"])
         self.assertEqual(2, result["focus"]["steps"]["completed"])
         self.assertEqual(2, result["focus"]["steps"]["total"])
         self.assertEqual(0, result["zero_token_contract"]["model_calls"])
         self.assertEqual(1, len(result["queue"]))
+        self.assertEqual("eligible", result["queue"][0]["state"])
+        self.assertEqual(HUMAN_STATE_CONTRACT, result["human_state"]["contract"])
+        self.assertEqual("available", result["health"]["state"])
+        self.assertEqual("mayor_finalization", result["resume"]["mode"])
         self.assertEqual(33, result["last_delivery"]["pr"])
         self.assertEqual("success", result["last_delivery"]["ci"])
         self.assertEqual(2, len(result["agents"]))
@@ -721,8 +740,208 @@ class FactoryCockpitTest(unittest.TestCase):
     def test_source_failure_is_visible_and_fails_factory_health_closed(self):
         result = FactoryCollector(FakeRunner(fail_factory=True), FakeGasCity()).collect()
         self.assertEqual("down", result["factory"]["state"])
+        self.assertEqual("unavailable", result["health"]["state"])
+        self.assertEqual("stopped", result["activity"]["state"])
+        self.assertEqual("fail_closed", result["resume"]["mode"])
         self.assertFalse(result["sources"]["factory"])
         self.assertIn("factory unavailable", result["warnings"][0])
+
+    def test_human_state_contract_covers_health_activity_and_resume_matrix(self):
+        candidate = project_candidate({
+            "id": "af-next", "title": "Next result", "state": "queued",
+            "status": "deferred", "urgency": "normal", "goal": "af-goal",
+        })
+
+        def state(**overrides):
+            observed = {
+                "infrastructure": {"running": True, "usable": True, "degraded": False},
+                "sources_consistent": True,
+                "current": None,
+                "queue": [candidate],
+                "needs_benjamin": None,
+                "blockers": [],
+                "resume_policy": {"mode": "manual"},
+            }
+            observed.update(overrides)
+            return project_human_state(observed)
+
+        healthy = state()
+        self.assertEqual("available", healthy["health"]["state"])
+        self.assertEqual("waiting_action", healthy["activity"]["state"])
+        self.assertFalse(healthy["resume"]["automatic"])
+        self.assertFalse(healthy["resume"]["required"])
+        self.assertEqual("Benjamin", healthy["resume"]["owner"])
+        self.assertEqual("Éligible · non programmé", healthy["next_candidate"]["state_label"])
+
+        down = state(infrastructure={"running": False, "usable": False, "degraded": False})
+        self.assertEqual(("unavailable", "stopped", "fail_closed"), (
+            down["health"]["state"], down["activity"]["state"], down["resume"]["mode"],
+        ))
+        partial = state(infrastructure={"running": True, "usable": True, "degraded": True})
+        self.assertEqual(("degraded", "stopped"), (
+            partial["health"]["state"], partial["activity"]["state"],
+        ))
+        inconsistent = state(sources_consistent=False)
+        self.assertEqual(("degraded", "fail_closed"), (
+            inconsistent["health"]["state"], inconsistent["resume"]["mode"],
+        ))
+
+        active = state(current={
+            "id": "af-exec", "title": "Delivery", "state": "active",
+            "agent": "codex-exact", "phase": "Réalisation",
+        })
+        self.assertEqual(("working", "active_delivery"), (
+            active["activity"]["state"], active["resume"]["mode"],
+        ))
+        materialized = state(current={
+            "id": "af-exec", "title": "Delivery", "state": "materialized",
+            "agent": None, "phase": "Aucun agent",
+        })
+        self.assertEqual(("waiting_action", "Mayor", "materialized"), (
+            materialized["activity"]["state"], materialized["resume"]["owner"],
+            materialized["result"]["state"],
+        ))
+        finalizing = state(current={
+            "id": "af-exec", "title": "Delivery", "state": "finalizing",
+            "agent": None, "phase": "Preuves et fusion",
+        })
+        self.assertEqual("mayor_finalization", finalizing["resume"]["mode"])
+        dependency = state(
+            current={
+                "id": "af-exec", "title": "Delivery", "state": "waiting_dependency",
+                "agent": None, "phase": "CI exacte",
+            },
+            resume_policy={"mode": "automatic_dependency", "condition": "CI exacte verte"},
+        )
+        self.assertEqual(("waiting_automatic", True, "system"), (
+            dependency["activity"]["state"], dependency["resume"]["automatic"],
+            dependency["resume"]["owner"],
+        ))
+        decision = state(needs_benjamin="Choisir le contrat de consentement")
+        self.assertEqual(("blocking_decision", "Benjamin", True), (
+            decision["resume"]["mode"], decision["resume"]["owner"],
+            decision["resume"]["required"],
+        ))
+        blocked = state(current={
+            "id": "af-exec", "title": "Delivery", "state": "blocked",
+            "cause": "Preuve externe absente", "phase": "Bloqué",
+        })
+        self.assertEqual("Preuve externe absente", blocked["resume"]["condition"])
+
+    def test_canonical_state_matches_versioned_schema_shape(self):
+        schema = json.loads(
+            (ROOT / "config" / "factory-human-status.schema.json").read_text(encoding="utf-8")
+        )
+        value = project_human_state({
+            "infrastructure": {"running": True, "usable": True, "degraded": False},
+            "sources_consistent": True,
+            "current": None,
+            "queue": [project_candidate({
+                "id": "af-next", "title": "Next", "status": "deferred",
+                "state": "queued", "urgency": "normal", "goal": "af-goal",
+            })],
+            "needs_benjamin": None, "blockers": [],
+            "resume_policy": {"mode": "manual"},
+        })
+        self.assertEqual(schema["properties"]["contract"]["const"], value["contract"])
+        self.assertEqual(schema["properties"]["schema_version"]["const"], value["schema_version"])
+        self.assertTrue(set(schema["required"]).issubset(value))
+        self.assertIn(
+            value["health"]["state"],
+            schema["properties"]["health"]["properties"]["state"]["enum"],
+        )
+        self.assertIn(
+            value["activity"]["state"],
+            schema["properties"]["activity"]["properties"]["state"]["enum"],
+        )
+        self.assertTrue(
+            set(schema["$defs"]["candidate"]["required"]).issubset(value["queue"][0])
+        )
+
+    def test_human_state_contract_covers_idle_campaign_empty_and_paused(self):
+        eligible = project_candidate({
+            "id": "af-next", "title": "Next", "status": "deferred",
+            "state": "queued", "urgency": "normal", "goal": "af-goal",
+        })
+        campaign = project_candidate({
+            "id": "af-campaign", "title": "Maintenance campaign", "status": "deferred",
+            "state": "queued", "urgency": "normal", "goal": "none",
+        })
+        paused = project_candidate({
+            "id": "af-paused", "title": "Paused", "status": "deferred",
+            "state": "paused", "pause_reason": "Attend les entretiens",
+            "urgency": "normal", "goal": "af-goal",
+        })
+        legacy_paused = project_candidate({
+            "id": "af-legacy", "title": "Legacy pause", "status": "deferred",
+            "state": "paused", "notes": (
+                "Unrelated prose must be ignored\n"
+                "Product queue paused: Première raison\n"
+                "Product queue paused: Dernière raison structurée"
+            ),
+            "urgency": "normal", "goal": "af-goal",
+        })
+        self.assertEqual("Dernière raison structurée", legacy_paused["pause_reason"])
+        base = {
+            "infrastructure": {"running": True, "usable": True, "degraded": False},
+            "sources_consistent": True, "current": None, "needs_benjamin": None,
+            "blockers": [],
+        }
+        automatic = project_human_state({
+            **base, "queue": [campaign, eligible],
+            "resume_policy": {"mode": "automatic_campaign", "condition": "Fenêtre autorisée"},
+        })
+        self.assertEqual("af-next", automatic["next_candidate"]["id"])
+        self.assertEqual(("waiting_automatic", True), (
+            automatic["activity"]["state"], automatic["resume"]["automatic"],
+        ))
+        all_paused = project_human_state({
+            **base, "queue": [campaign, paused], "resume_policy": {"mode": "manual"},
+        })
+        self.assertEqual(("all_paused", "Attend les entretiens"), (
+            all_paused["resume"]["mode"], all_paused["queue"][1]["reason"],
+        ))
+        empty = project_human_state({
+            **base, "queue": [campaign], "resume_policy": {"mode": "manual"},
+        })
+        self.assertEqual(("stopped", "no_candidate", "none"), (
+            empty["activity"]["state"], empty["resume"]["mode"], empty["resume"]["owner"],
+        ))
+        with self.assertRaisesRegex(StateContractError, "condition"):
+            project_human_state({
+                **base, "queue": [eligible],
+                "resume_policy": {"mode": "automatic_campaign"},
+            })
+
+    def test_candidate_history_never_reappears_as_eligible(self):
+        materialized = {
+            "id": "af-old", "status": "closed", "labels": ["product-queue"],
+            "metadata": {"gc.queue_state": "materialized", "gc.materialized_bead": "af-exec"},
+        }
+        cancelled = {
+            "id": "af-no", "status": "closed", "labels": ["product-queue"],
+            "metadata": {"gc.queue_state": "cancelled"},
+        }
+        self.assertEqual(("materialized", "Matérialisé"), candidate_record_lifecycle(materialized))
+        self.assertEqual(("cancelled", "Annulé"), candidate_record_lifecycle(cancelled))
+        self.assertEqual("materialized", _product_bead(materialized, "city", None)["state"])
+        self.assertEqual("cancelled", _product_bead(cancelled, "city", None)["state"])
+        delivered = _product_bead({
+            "id": "af-done", "title": "Done", "status": "closed", "labels": ["jit"],
+            "metadata": {"gc.work_outcome": "shipped"},
+        }, "city", None)
+        self.assertEqual(("delivered", "Livré"), (delivered["state"], delivered["state_label"]))
+        with self.assertRaisesRegex(StateContractError, "incohérent"):
+            candidate_record_lifecycle({
+                "id": "af-bad", "status": "closed",
+                "metadata": {"gc.queue_state": "queued"},
+            })
+        with self.assertRaisesRegex(SourceError, "incohérent"):
+            _product_bead({
+                "id": "af-bad", "title": "Bad", "status": "closed",
+                "labels": ["product-queue"],
+                "metadata": {"gc.queue_state": "queued"},
+            }, "city", None)
 
     def test_unknown_formula_is_humanized_without_model(self):
         self.assertEqual("Review stale branches", _human_objective("mol-review-stale-branches"))

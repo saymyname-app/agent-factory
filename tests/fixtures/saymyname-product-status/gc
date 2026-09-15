@@ -11,6 +11,11 @@ fi
 
 running=true
 [[ ${STATUS_SCENARIO:-active} != agent-missing ]] || running=false
+city_running=true
+usable=true
+degraded=false
+[[ ${STATUS_SCENARIO:-active} != health-down ]] || { city_running=false; usable=false; }
+[[ ${STATUS_SCENARIO:-active} != health-partial ]] || degraded=true
 cat <<JSON
-{"ok":true,"health":{"usable":true},"agents":[{"qualified_name":"core.control-dispatcher","running":true},{"qualified_name":"codex-af-test","running":$running}]}
+{"ok":true,"running":$city_running,"health":{"usable":$usable,"degraded":$degraded},"agents":[{"qualified_name":"core.control-dispatcher","running":true},{"qualified_name":"codex-af-test","running":$running}]}
 JSON
