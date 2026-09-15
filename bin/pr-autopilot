@@ -31,6 +31,11 @@ done
 RIGS=(
   "rigs/saymyname-backend|saymyname-app/Say-my-name-back|dev"
   "rigs/saymyname-frontend|saymyname-app/Say-my-name-front|dev"
+  # The Factory's own repo. Its only long-lived branch is main and it now has a
+  # required check (Factory CI), so the same rule applies: green check merges
+  # itself, red check becomes a bead. Without this, agent-factory branches pile
+  # up unmerged — 28 of them by 2026-09-15.
+  ".|benjamin-hurand/agent-factory|main"
 )
 
 log()  { printf '%s\n' "$*"; }

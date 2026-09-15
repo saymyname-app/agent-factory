@@ -1,0 +1,41 @@
+name: Factory CI
+
+# The gate that lets agent-factory PRs merge themselves. Without a required
+# check there is nothing to gate on, so branches pile up unmerged — which is
+# exactly what happened up to 2026-09-15 (28 branches, 21 commits of drift).
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Syntax check every Python and shell entry point
+        run: |
+          set -euo pipefail
+          python -m compileall -q lib tests
+          for f in bin/*; do
+            head -1 "$f" | grep -q 'bash\|sh$' && bash -n "$f" && echo "ok $f" || true
+          done
+
+      - name: Cockpit tests
+        run: python tests/factory-cockpit-test.py
+
+      - name: Product release tests
+        run: python tests/product-release-test.py
+
+      - name: Mayor campaign tests
+        run: python tests/mayor-campaign-test.py
