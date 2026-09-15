@@ -29,6 +29,12 @@ from factory_state import (
     candidate_record_lifecycle,
     project_human_state,
 )
+from product_release import (
+    ReleaseContractError,
+    load_release_contract,
+    project_operational_release,
+    project_release,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +53,10 @@ class SourceError(RuntimeError):
 
 class ConflictError(SourceError):
     """A bounded mutation lost a lock or source-state race."""
+
+
+class StaleError(ConflictError):
+    """A direct choice targeted an obsolete release-decision revision."""
 
 
 def _repo_path(value: Any, field: str, root: Path = ROOT) -> Path:
@@ -68,14 +78,14 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError) as exc:
         raise SourceError(f"Configuration produit invalide: {exc}") from exc
     required = {
-        "slug", "name", "strategy", "decisions", "po_workspace",
+        "slug", "name", "strategy", "decisions", "release_contract", "po_workspace",
         "status_command", "queue_command", "queue_mutation_command",
         "capabilities", "relations", "project_inventory",
         "design_governance", "business_objectives", "view_inventory",
         "delivery_workflow", "product_reference",
     }
     required.add("journeys")
-    if value.get("schema_version") != 2 or not required.issubset(value):
+    if value.get("schema_version") != 3 or not required.issubset(value):
         raise SourceError("Configuration produit incomplète ou version non prise en charge.")
     if not re.fullmatch(r"[a-z0-9-]+", str(value["slug"])) or not str(value["name"]).strip():
         raise SourceError("Identité de produit invalide.")
@@ -190,9 +200,15 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         ):
             raise SourceError("Référence de décision invalide dans un parcours.")
         journey_ids.add(journey_id)
-    for field in ("strategy", "decisions", "project_inventory", "design_governance"):
+    for field in ("strategy", "decisions", "release_contract", "project_inventory", "design_governance"):
         resolved = _repo_path(value[field], field)
         value[f"{field}_path"] = resolved
+    try:
+        release = load_release_contract(value["release_contract_path"])
+    except ReleaseContractError as exc:
+        raise SourceError(f"Contrat de release invalide: {exc}") from exc
+    if release["product"] != value["slug"]:
+        raise SourceError("Le contrat de release ne correspond pas au produit configuré.")
     value["reference_paths"] = reference_paths
     return value
 
@@ -1488,6 +1504,7 @@ class FactoryCollector:
             queue_command[0] = str(ROOT / queue_command[0])
         self.queue_command = tuple(queue_command)
         self.product_memory = ProductMemory(config=self.product_config)
+        self.release_contract = load_release_contract(self.product_config["release_contract_path"])
 
     def collect(self) -> dict[str, Any]:
         warnings: list[str] = []
@@ -1971,6 +1988,9 @@ class FactoryCollector:
             "queue": queue,
             "product_work": product_work,
             "product_memory": product_memory,
+            "release": project_operational_release(
+                project_release(self.release_contract), human_state["campaign"]
+            ),
             "today": today,
             "decision_aids": decision_aids,
             "last_delivery": last_delivery,
@@ -2197,12 +2217,62 @@ class DeliveryEvidenceReader:
 
 class MayorBridge:
     PREFIX = "[Cockpit Benjamin] "
+    CHANNEL_LABELS = {
+        "transmitting": "Transmission",
+        "delivered": "Remis",
+        "waiting": "En attente",
+        "responded": "Répondu",
+        "failed": "Échec",
+        "late_response": "Réponse tardive",
+        "empty_response": "Réponse vide",
+        "idle": "Disponible",
+    }
 
-    def __init__(self, runner: Any | None = None, gas_city: Any | None = None) -> None:
+    def __init__(
+        self, runner: Any | None = None, gas_city: Any | None = None,
+        state_path: Path | None = None,
+    ) -> None:
         self.runner = runner or CommandRunner()
         self.gas_city = gas_city or GasCityReader(timeout=15)
         self.lock = threading.Lock()
         self.last_submit = 0.0
+        self.state_path = state_path or ROOT / ".gc" / "runtime" / "factory-cockpit-mayor-channel.json"
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _channel(self) -> dict[str, Any]:
+        try:
+            value = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {"state": "idle", "updated_at": None}
+        except (OSError, json.JSONDecodeError):
+            return {"state": "failed", "updated_at": None, "detail": "Journal du canal illisible."}
+        if not isinstance(value, dict) or value.get("state") not in self.CHANNEL_LABELS:
+            return {"state": "failed", "updated_at": None, "detail": "Journal du canal invalide."}
+        return value
+
+    def _set_channel(self, state: str, **details: Any) -> dict[str, Any]:
+        value = {
+            "state": state,
+            "label": self.CHANNEL_LABELS[state],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            **details,
+        }
+        handle, filename = tempfile.mkstemp(
+            prefix="cockpit-mayor-channel-", suffix=".json", dir=self.state_path.parent,
+        )
+        try:
+            os.fchmod(handle, 0o600)
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                json.dump(value, stream, ensure_ascii=False, indent=2)
+            Path(filename).replace(self.state_path)
+        except Exception:
+            try:
+                os.close(handle)
+            except OSError:
+                pass
+            Path(filename).unlink(missing_ok=True)
+            raise
+        return value
 
     def submit(self, message: Any, intent: Any = "question") -> dict[str, Any]:
         if not isinstance(message, str):
@@ -2217,22 +2287,40 @@ class MayorBridge:
             now = time.monotonic()
             if now - self.last_submit < 5:
                 raise RuntimeError("Attends cinq secondes avant un nouvel envoi.")
-            result = self.runner.json(
-                "gc",
-                "session",
-                "submit",
-                "mayor",
-                f"{self.PREFIX}{message}",
-                "--intent",
-                intent_map[intent],
-                "--json",
-            )
+            request_id = f"mayor-{time.time_ns()}"
+            message_hash = hashlib.sha256(message.encode()).hexdigest()
+            self._set_channel("transmitting", request_id=request_id, message_hash=message_hash)
+            try:
+                result = self.runner.json(
+                    "gc",
+                    "session",
+                    "submit",
+                    "mayor",
+                    f"{self.PREFIX}{message}",
+                    "--intent",
+                    intent_map[intent],
+                    "--json",
+                )
+                delivery = result.get("delivery") if isinstance(result, dict) else None
+                if delivery not in {"queued", "accepted", "delivered"}:
+                    raise SourceError("Le provider n'a pas confirmé la remise au Mayor.")
+                channel = self._set_channel(
+                    "delivered", request_id=request_id, message_hash=message_hash,
+                    provider_delivery=delivery,
+                )
+            except Exception as exc:
+                self._set_channel(
+                    "failed", request_id=request_id, message_hash=message_hash,
+                    detail=_redact(str(exc))[:1000],
+                )
+                raise
             self.last_submit = now
         return {
             "accepted": True,
             "intent": intent,
             "submitted_at": datetime.now(timezone.utc).isoformat(),
-            "delivery": result.get("delivery") if isinstance(result, dict) else None,
+            "delivery": delivery,
+            "channel": channel,
         }
 
     def conversation(self) -> dict[str, Any]:
@@ -2255,10 +2343,20 @@ class MayorBridge:
             and str(turn.get("text", "")).startswith(self.PREFIX)
         ]
         if not cockpit_indices:
-            return {"session": "Mayor", "state": mayor.get("state"), "messages": []}
+            previous = self._channel()
+            return {
+                "session": "Mayor", "state": mayor.get("state"), "messages": [],
+                "channel": {
+                    **previous,
+                    "label": self.CHANNEL_LABELS.get(previous.get("state"), "Échec"),
+                },
+            }
         start = cockpit_indices[-min(3, len(cockpit_indices))]
         messages = []
         capturing = False
+        last_human_at = None
+        last_response_at = None
+        empty_response = False
         for turn in turns[start:]:
             role = turn.get("role")
             text = str(turn.get("text", "")).strip()
@@ -2269,10 +2367,18 @@ class MayorBridge:
                 capturing = True
                 text = text[len(self.PREFIX) :].strip()
                 visible_role = "Benjamin"
+                last_human_at = turn.get("timestamp")
+                last_response_at = None
+                empty_response = False
             elif role == "assistant":
-                if not capturing or not text or text in {"[thinking]", "[exec]"}:
+                if not capturing or text in {"[thinking]", "[exec]"}:
+                    continue
+                if not text:
+                    empty_response = True
+                    last_response_at = turn.get("timestamp")
                     continue
                 visible_role = "Mayor"
+                last_response_at = turn.get("timestamp")
             else:
                 continue
             messages.append(
@@ -2281,13 +2387,210 @@ class MayorBridge:
                     "text": text[:5000],
                     "truncated": len(text) > 5000,
                     "timestamp": turn.get("timestamp"),
+                    "delivery_state": "delivered" if visible_role == "Benjamin" else "responded",
                 }
             )
+        previous = self._channel()
+        if empty_response:
+            channel_state = "empty_response"
+        elif last_response_at:
+            channel_state = "responded"
+            try:
+                human_time = datetime.fromisoformat(str(last_human_at).replace("Z", "+00:00"))
+                response_time = datetime.fromisoformat(str(last_response_at).replace("Z", "+00:00"))
+                if (response_time - human_time).total_seconds() > 120 or previous.get("state") == "failed":
+                    channel_state = "late_response"
+            except (TypeError, ValueError):
+                pass
+        elif last_human_at:
+            channel_state = "waiting"
+        else:
+            channel_state = previous.get("state", "idle")
+        channel = {
+            "state": channel_state,
+            "label": self.CHANNEL_LABELS[channel_state],
+            "updated_at": last_response_at or last_human_at or previous.get("updated_at"),
+            "detail": (
+                "La demande est visible; aucune réponse Mayor n'est encore observée."
+                if channel_state == "waiting"
+                else "Le Mayor a répondu sans contenu visible."
+                if channel_state == "empty_response"
+                else previous.get("detail")
+            ),
+        }
         return {
             "session": "Mayor",
             "state": mayor.get("state"),
             "messages": messages[-12:],
+            "channel": channel,
         }
+
+
+class DirectDecisionStore:
+    """Local zero-model audit for explicit structured human choices.
+
+    The audit stores stable choice identifiers and an optional detail digest,
+    never the free-form decision content.  The PO alone can turn the recorded
+    choice into versioned Git truth.
+    """
+
+    ACTIONS = {"accept", "reject", "option", "other", "propose", "validate"}
+
+    def __init__(
+        self, config: dict[str, Any] | None = None, state_path: Path | None = None,
+    ) -> None:
+        self.config = config or load_product_config()
+        self.release = load_release_contract(self.config["release_contract_path"])
+        self.state_path = state_path or ROOT / ".gc" / "runtime" / "factory-cockpit-direct-decisions.json"
+        self.lock = threading.Lock()
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _empty() -> dict[str, Any]:
+        return {"schema_version": 1, "events": {}, "errors": 0}
+
+    def _load(self) -> dict[str, Any]:
+        try:
+            value = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return self._empty()
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SourceError(f"Audit des décisions directes illisible: {exc}") from exc
+        if (
+            not isinstance(value, dict) or value.get("schema_version") != 1
+            or not isinstance(value.get("events"), dict)
+            or not isinstance(value.get("errors"), int)
+        ):
+            raise SourceError("Audit des décisions directes invalide; aucune décision n'est supposée enregistrée.")
+        return value
+
+    def _write(self, value: dict[str, Any]) -> None:
+        handle, filename = tempfile.mkstemp(
+            prefix="cockpit-direct-decision-", suffix=".json", dir=self.state_path.parent,
+        )
+        try:
+            os.fchmod(handle, 0o600)
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                json.dump(value, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            Path(filename).replace(self.state_path)
+        except Exception:
+            try:
+                os.close(handle)
+            except OSError:
+                pass
+            Path(filename).unlink(missing_ok=True)
+            raise
+
+    def _decision(self, decision_id: Any) -> dict[str, Any]:
+        if not isinstance(decision_id, str):
+            raise ValueError("Identifiant de décision directe invalide.")
+        decision = next(
+            (item for item in self.release["decisions"] if item["id"] == decision_id), None,
+        )
+        if not decision:
+            raise ValueError("La décision directe n'existe pas dans la release sélectionnée.")
+        return decision
+
+    def collect(self) -> dict[str, Any]:
+        state = self._load()
+        events = list(state["events"].values())
+        by_decision = {item["decision_id"]: item for item in events}
+        decisions = []
+        for decision in self.release["decisions"]:
+            decisions.append({
+                **decision,
+                "record": by_decision.get(decision["id"]),
+                "deep_link": f"#view=project&releaseDecision={decision['id']}",
+            })
+        durations = [item["elapsed_ms"] for item in events if isinstance(item.get("elapsed_ms"), int)]
+        return {
+            "contract": "agent-factory-direct-decision-audit/v1",
+            "release": self.release["version"],
+            "decisions": decisions,
+            "telemetry": {
+                "direct_decisions": len(events),
+                "conversations_avoided": len(events),
+                "average_time_to_choice_ms": round(sum(durations) / len(durations)) if durations else None,
+                "errors": state["errors"],
+                "sensitive_content_stored": False,
+                "model_calls": 0,
+            },
+        }
+
+    def record_error(self) -> None:
+        with self.lock:
+            state = self._load()
+            state["errors"] += 1
+            self._write(state)
+
+    def record(self, request: Any) -> dict[str, Any]:
+        if not isinstance(request, dict):
+            raise ValueError("Choix direct invalide.")
+        decision = self._decision(request.get("decision_id"))
+        action = request.get("action")
+        if action not in self.ACTIONS:
+            raise ValueError("Action directe inconnue.")
+        if action in {"accept", "reject", "option", "other"} and decision["status"] != "decision_required":
+            raise ConflictError("Cette décision n'est plus ouverte dans la vérité Git.")
+        revision = request.get("expected_revision")
+        if revision != decision["revision"]:
+            raise StaleError("La décision a changé; recharge la release avant de choisir.")
+        key = request.get("idempotency_key")
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", key):
+            raise ValueError("Clé d'idempotence invalide.")
+        option_id = request.get("option_id")
+        option_ids = {item["id"] for item in decision["options"]}
+        if action == "option" and option_id not in option_ids:
+            raise ValueError("Option directe inconnue ou absente.")
+        if action != "option" and option_id is not None:
+            raise ValueError("Une option ne peut accompagner que l'action option.")
+        detail = request.get("detail")
+        if action == "other":
+            if not isinstance(detail, str) or not detail.strip() or len(detail.strip()) > 1000 or "\x00" in detail:
+                raise ValueError("Autre exige un texte borné entre 1 et 1000 caractères.")
+            detail_digest = hashlib.sha256(detail.strip().encode()).hexdigest()
+        elif detail not in {None, ""}:
+            raise ValueError("Le détail libre est réservé à Autre.")
+        else:
+            detail_digest = None
+        if decision["risk"] == "high" and action != "propose" and request.get("confirmed") is not True:
+            raise ValueError("Cette décision Benjamin + PO exige une confirmation explicite.")
+        elapsed_ms = request.get("elapsed_ms")
+        if elapsed_ms is not None and (
+            not isinstance(elapsed_ms, int) or isinstance(elapsed_ms, bool) or elapsed_ms < 0 or elapsed_ms > 86_400_000
+        ):
+            raise ValueError("Durée de décision invalide.")
+        normalized = {
+            "decision_id": decision["id"], "action": action,
+            "option_id": option_id, "detail_digest": detail_digest,
+            "expected_revision": revision, "confirmed": request.get("confirmed") is True,
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        with self.lock:
+            state = self._load()
+            existing = state["events"].get(key)
+            if existing:
+                if existing.get("fingerprint") != fingerprint:
+                    raise ConflictError("Cette clé d'idempotence désigne déjà un autre choix.")
+                return {"accepted": True, "state": "already_recorded", "record": existing, "model_calls": 0}
+            prior = next(
+                (item for item in state["events"].values() if item.get("decision_id") == decision["id"]),
+                None,
+            )
+            if prior and action not in {"propose", "validate"}:
+                raise ConflictError("Un choix est déjà enregistré pour cette révision; ouvre le PO pour le faire évoluer.")
+            event = {
+                **normalized,
+                "choice": option_id if action == "option" else action,
+                "risk": decision["risk"], "elapsed_ms": elapsed_ms,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "fingerprint": fingerprint,
+            }
+            state["events"][key] = event
+            self._write(state)
+        return {"accepted": True, "state": "recorded", "record": event, "model_calls": 0}
 
 
 class POBridge:
@@ -2651,6 +2954,7 @@ def handler_factory(
     reference_reader: ProductReferenceReader | None = None,
     queue_bridge: QueueBridge | None = None,
     delivery_reader: DeliveryEvidenceReader | None = None,
+    decision_store: DirectDecisionStore | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     bridge = mayor_bridge or MayorBridge()
     details = detail_reader or DetailReader()
@@ -2660,6 +2964,7 @@ def handler_factory(
     references = reference_reader or ProductReferenceReader()
     queue = queue_bridge or QueueBridge()
     delivery = delivery_reader or DeliveryEvidenceReader()
+    direct_decisions = decision_store or DirectDecisionStore()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "FactoryCockpit/1"
@@ -2753,6 +3058,12 @@ def handler_factory(
                 except SourceError as exc:
                     self._json_response(503, {"error": str(exc), "state": "source_error"})
                 return
+            if path == "/api/direct-decisions":
+                try:
+                    self._json_response(200, direct_decisions.collect())
+                except SourceError as exc:
+                    self._json_response(503, {"error": str(exc), "state": "source_error"})
+                return
             files = {
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -2771,6 +3082,7 @@ def handler_factory(
             if path not in {
                 "/api/mayor/message", "/api/po/message", "/api/po/new",
                 "/api/preview/action", "/api/product-queue",
+                "/api/direct-decision",
             }:
                 self._json_response(404, {"error": "Not found"})
                 return
@@ -2783,6 +3095,7 @@ def handler_factory(
                 "human-message" if path == "/api/mayor/message"
                 else "human-preview-action" if path == "/api/preview/action"
                 else "human-queue-record" if path == "/api/product-queue"
+                else "human-direct-decision" if path == "/api/direct-decision"
                 else "human-po-message"
             )
             if self.headers.get("X-Factory-Cockpit") != expected_header:
@@ -2812,6 +3125,8 @@ def handler_factory(
                 elif path == "/api/product-queue":
                     result = queue.mutate(request.get("action"), request.get("payload"))
                     cache.invalidate()
+                elif path == "/api/direct-decision":
+                    result = direct_decisions.record(request)
                 else:
                     result = po.new_conversation()
                 self._json_response(202, result)
@@ -2819,6 +3134,8 @@ def handler_factory(
                 self._json_response(400, {"error": "JSON invalide."})
             except ValueError as exc:
                 self._json_response(400, {"error": str(exc)})
+            except StaleError as exc:
+                self._json_response(409, {"error": str(exc), "state": "stale"})
             except ConflictError as exc:
                 self._json_response(409, {"error": str(exc), "state": "conflict"})
             except SourceError as exc:

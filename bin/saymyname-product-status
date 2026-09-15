@@ -8,6 +8,8 @@ GC_BIN="${GC_BIN:-gc}"
 GH_BIN="${GH_BIN:-gh}"
 QUEUE_BIN="${SAYMYNAME_QUEUE_BIN:-$SCRIPT_DIR/saymyname-product-queue}"
 HUMAN_STATE_BIN="${FACTORY_HUMAN_STATE_BIN:-$SCRIPT_DIR/factory-human-state}"
+RELEASE_BIN="${PRODUCT_RELEASE_BIN:-$SCRIPT_DIR/product-release}"
+RELEASE_FILE="${SAYMYNAME_RELEASE_FILE:-$SCRIPT_DIR/../config/releases/saymyname-v1.json}"
 PRODUCT_ROOT_BEAD="${SAYMYNAME_PRODUCT_ROOT_BEAD:-af-1vr4}"
 
 log() {
@@ -362,7 +364,7 @@ derive_delivery() {
 main() {
   local parent_response parent current_id current_issue last_id delivered_issue format=text
   local queue_response next_pointer candidate_matches next_candidate resume_mode resume_condition
-  local current_json observed state_json needs_json degraded campaign_metadata
+  local current_json observed state_json needs_json degraded campaign_metadata release_json
 
   case "${1:-}" in
     "") ;;
@@ -383,6 +385,7 @@ main() {
   require_command "$GH_BIN"
   [[ -x $QUEUE_BIN ]] || die "Product queue projection is unavailable: $QUEUE_BIN"
   [[ -x $HUMAN_STATE_BIN ]] || die "Human state projector is unavailable: $HUMAN_STATE_BIN"
+  [[ -x $RELEASE_BIN ]] || die "Product release projector is unavailable: $RELEASE_BIN"
 
   capture_json CITY_RESPONSE "Gas City status" gc_json status --json
   jq -e '
@@ -493,10 +496,15 @@ main() {
   if ! state_json=$("$HUMAN_STATE_BIN" state <<<"$observed"); then
     die "Canonical human state projection failed closed."
   fi
+  capture_json release_json "SayMyName release contract" "$RELEASE_BIN" project "$RELEASE_FILE"
   state_json=$(jq -c \
     --arg product SAYMYNAME --arg last_title "$LAST_OUTCOME" \
-    --arg last_evidence "$LAST_DELIVERY" \
-    '. + {product: $product, last_delivery: {title: $last_title, evidence: $last_evidence}, model_calls: 0}' \
+    --arg last_evidence "$LAST_DELIVERY" --argjson release "$release_json" \
+    '. as $state | ($release + {
+      operational_state: (if $state.campaign.enabled and ($release.truth_state == "approved" or $release.truth_state == "executing") then "executing" else $release.truth_state end),
+      operational_state_label: (if $state.campaign.enabled and ($release.truth_state == "approved" or $release.truth_state == "executing") then "En exécution par la campagne" elif $release.truth_state == "approved" then "Approuvée · campagne non activée" elif $release.truth_state == "frozen" then "Figée" else "Brouillon Git" end)
+    }) as $operational_release |
+    . + {product: $product, release: $operational_release, last_delivery: {title: $last_title, evidence: $last_evidence}, model_calls: 0}' \
     <<<"$state_json")
 
   if [[ $format == json ]]; then

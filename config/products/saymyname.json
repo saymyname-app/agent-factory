@@ -1,9 +1,10 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "slug": "saymyname",
   "name": "SayMyName",
   "strategy": "docs/products/saymyname/PRODUCT_STRATEGY.md",
   "decisions": "docs/products/saymyname/DECISIONS.md",
+  "release_contract": "config/releases/saymyname-v1.json",
   "project_inventory": "docs/products/saymyname/PROJECT_INVENTORY.md",
   "design_governance": "docs/products/saymyname/DESIGN_GOVERNANCE.md",
   "inventory_watch": [
