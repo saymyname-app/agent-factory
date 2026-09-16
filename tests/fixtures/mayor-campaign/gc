@@ -73,6 +73,16 @@ if [[ ${1:-} == bd && ${2:-} == update ]]; then
   exit 0
 fi
 
+if [[ ${1:-} == bd && ${2:-} == ready && ${3:-} == --json ]]; then
+  [[ ${CAMPAIGN_READY_FAIL:-0} != 1 ]] || { printf 'ready query failed\n' >&2; exit 42; }
+  if [[ -n ${CAMPAIGN_READY_FILE:-} && -f ${CAMPAIGN_READY_FILE} ]]; then
+    cat "$CAMPAIGN_READY_FILE"
+  else
+    printf '[]\n'
+  fi
+  exit 0
+fi
+
 if [[ ${1:-} == bd && ${2:-} == create ]]; then
   printf '{"id":"af-repair"}\n'
   exit 0

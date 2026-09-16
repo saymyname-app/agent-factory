@@ -9,9 +9,10 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+NOW = 1789555200.0  # 2026-09-16T10:40:00Z, fixed so throttling is deterministic
 sys.path.insert(0, str(ROOT / "lib"))
 
-from factory_campaign import plan_transition  # noqa: E402
+from factory_campaign import is_ladder_bead, plan_idle_ladder, plan_transition  # noqa: E402
 
 
 def metadata(state="active"):
@@ -56,7 +57,7 @@ def status_with_release_mismatch(node_id="af-node9", other_id="af-other"):
     }
 
 
-class MayorCampaignTest(unittest.TestCase):
+class CampaignFixture:
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -106,6 +107,8 @@ class MayorCampaignTest(unittest.TestCase):
             return 0
         return sum("mail send mayor" in line for line in self.log_file.read_text(encoding="utf-8").splitlines())
 
+
+class MayorCampaignTest(CampaignFixture, unittest.TestCase):
     def test_plans_only_one_authorized_transition(self):
         planned = plan_transition(status())
         self.assertEqual(("wake_mayor", "materialize:af-next"), (planned["action"], planned["wake_key"]))
@@ -284,8 +287,242 @@ class MayorCampaignTest(unittest.TestCase):
         completed = status(next_id=None, mode="no_candidate")
         completed["campaign"]["state"] = "completed"
         self.write_status(completed)
-        self.assertIn("campaign_complete", self.invoke("sentinel").stdout)
+        # A completed product campaign is not an idle factory (ADR-0016 s.7):
+        # with no Factory bead ready, it walks the generative rungs, once each...
+        first = self.invoke("sentinel", extra_env={"CAMPAIGN_NOW": str(NOW)}).stdout
+        self.assertIn("ladder:tests:", first)
+        second = self.invoke("sentinel", extra_env={"CAMPAIGN_NOW": str(NOW + 60)}).stdout
+        self.assertIn("ladder:docs:", second)
+        # ...and only then rests, without mailing anyone.
+        third = self.invoke("sentinel", extra_env={"CAMPAIGN_NOW": str(NOW + 120)}).stdout
+        self.assertIn("ladder_rested", third)
+        self.assertEqual(2, self.mail_count())
+
+
+def bead(bead_id, **extra):
+    value = {"id": bead_id, "title": f"Titre {bead_id}", "status": "open",
+             "issue_type": "task", "priority": 2, "labels": None, "metadata": {},
+             "assignee": "", "created_at": "2026-09-16T08:00:00Z"}
+    value.update(extra)
+    return value
+
+
+class IdleLadderPlanTest(unittest.TestCase):
+    """ADR-0016 s.7: 'no eligible product candidate' is not inactivity."""
+
+    def test_only_ready_factory_work_is_eligible(self):
+        self.assertTrue(is_ladder_bead(bead("af-ok")))
+        self.assertTrue(is_ladder_bead(bead("af-bug", issue_type="bug")))
+        self.assertTrue(is_ladder_bead(bead("af-mine", assignee="mayor")))
+        rejected = {
+            "session": bead("af-s", issue_type="session"),
+            "convoy": bead("af-c", issue_type="convoy"),
+            "nudge": bead("af-n", issue_type="chore", labels=["gc:nudge"]),
+            "product": bead("af-p", issue_type="feature", labels=["product-goal", "saymyname"]),
+            "upstream": bead("af-u", issue_type="bug", labels=["upstream"]),
+            "workflow step": bead("af-w", metadata={"gc.step_ref": "x", "gc.root_bead_id": "af-r"}),
+            "waiting": bead("af-wait", metadata={"gc.waiting_on": "po"}),
+            "needs benjamin": bead("af-nb", metadata={"gc.needs_benjamin": "choix de périmètre"}),
+            "someone else's": bead("af-o", assignee="po-techlead"),
+            "not open": bead("af-ip", status="in_progress"),
+        }
+        for why, item in rejected.items():
+            with self.subTest(why):
+                self.assertFalse(is_ladder_bead(item))
+        # "none" is how the store says nobody is needed.
+        self.assertTrue(is_ladder_bead(bead("af-none", metadata={"gc.needs_benjamin": "none"})))
+
+    def test_highest_priority_factory_bead_first(self):
+        plan = plan_idle_ladder(
+            [bead("af-low", priority=3), bead("af-hi", priority=1),
+             bead("af-sess", issue_type="session", priority=0)],
+            NOW,
+        )
+        self.assertEqual(("wake_mayor", "ladder:factory:af-hi", "af-hi"),
+                         (plan["action"], plan["wake_key"], plan["ladder_bead"]))
+        self.assertIn("gc.waiting_on", plan["message"])
+
+    def test_one_factory_bead_at_a_time(self):
+        tracked = bead("af-hi", status="in_progress", updated_at="2026-09-16T10:00:00Z")
+        plan = plan_idle_ladder([bead("af-next")], NOW, tracked=tracked)
+        self.assertEqual(("none", "ladder_active"), (plan["action"], plan["reason"]))
+
+    def test_a_bead_in_progress_for_hours_is_not_progress(self):
+        tracked = bead("af-hi", status="in_progress", updated_at="2026-09-16T01:00:00Z")
+        plan = plan_idle_ladder([], NOW, tracked=tracked)
+        self.assertEqual("ladder_stalled", plan["reason"])
+
+    def test_a_closed_tracked_bead_releases_the_next_one(self):
+        plan = plan_idle_ladder([bead("af-next")], NOW, tracked=bead("af-hi", status="closed"))
+        self.assertEqual("ladder:factory:af-next", plan["wake_key"])
+
+    def test_generative_rungs_are_throttled_then_rest(self):
+        first = plan_idle_ladder([], NOW)
+        self.assertEqual("ladder_tests", first["reason"])
+        just_ran = "2026-09-16T10:30:00Z"
+        second = plan_idle_ladder([], NOW, {"tests": just_ran})
+        self.assertEqual("ladder_docs", second["reason"])
+        rested = plan_idle_ladder([], NOW, {"tests": just_ran, "docs": just_ran})
+        self.assertEqual(("none", "ladder_rested"), (rested["action"], rested["reason"]))
+        later = plan_idle_ladder([], NOW + 13 * 3600, {"tests": just_ran, "docs": just_ran})
+        self.assertEqual("ladder_tests", later["reason"])
+        # Factory beads always outrank generative audits.
+        self.assertEqual("ladder_factory", plan_idle_ladder([bead("af-x")], NOW)["reason"])
+
+
+class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
+    """The acceptance scenario of af-gxt1, end to end through the sentinel."""
+
+    def setUp(self):
+        super().setUp()
+        self.ready_file = self.root / "ready.json"
+        self.env["CAMPAIGN_READY_FILE"] = str(self.ready_file)
+        self.ready_file.write_text(json.dumps([
+            bead("af-sess", issue_type="session", priority=0),
+            bead("af-fix", issue_type="bug", priority=1, title="Réparer le test"),
+        ]), encoding="utf-8")
+
+    def sentinel(self, at, **env):
+        return self.invoke("sentinel", extra_env={"CAMPAIGN_NOW": str(at), **env})
+
+    def test_empty_product_queue_dispatches_a_factory_bead(self):
+        self.write_status(status(next_id=None))  # automatic campaign, nothing eligible
+        out = self.sentinel(NOW).stdout
+        self.assertIn("NOTIFIED: mayor — ladder:factory:af-fix", out)
+        meta = self.current_metadata()
+        self.assertEqual("af-fix", meta["gc.campaign_ladder_bead"])
+        self.assertEqual("2026-09-16T10:40:00Z", meta["gc.campaign_progress_at"])
+        self.assertEqual("2026-09-16T10:40:00Z", meta["gc.campaign_sentinel_at"])
+        # Same bead, same key: announced once.
+        self.assertIn("already notified", self.sentinel(NOW + 60).stdout)
+        self.assertEqual(1, self.mail_count())
+
+    def test_the_claimed_factory_bead_counts_as_progress(self):
+        self.write_status(status(next_id=None))
+        self.sentinel(NOW)
+        (self.node_dir / "af-fix.json").write_text(json.dumps({
+            "id": "af-fix", "status": "in_progress", "metadata": {},
+            "updated_at": "2026-09-16T10:41:00Z",
+        }), encoding="utf-8")
+        later = NOW + 600
+        self.assertIn("ladder_active", self.sentinel(later).stdout)
+        self.assertEqual("2026-09-16T10:50:00Z", self.current_metadata()["gc.campaign_progress_at"])
+        self.assertEqual(1, self.mail_count())
+
+    def test_product_work_in_flight_never_triggers_the_ladder(self):
+        self.write_status(status(result={"id": "af-exec", "state": "active"}, mode="active_delivery"))
+        self.assertIn("NOOP: active_delivery", self.sentinel(NOW).stdout)
         self.assertEqual(0, self.mail_count())
+        self.assertIn("gc.campaign_progress_at", self.current_metadata())
+
+    def test_an_admin_window_stays_quiet_but_the_loop_still_proves_it_lives(self):
+        self.invoke("block", "--kind", "admin", "--cause", "Fenêtre de maintenance",
+                    "--owner", "Benjamin", "--action", "Rien pendant la fenêtre", "--mayor")
+        self.assertIn("campaign blocked", self.sentinel(NOW).stdout)
+        self.assertEqual(0, self.mail_count())
+        meta = self.current_metadata()
+        self.assertEqual("2026-09-16T10:40:00Z", meta["gc.campaign_sentinel_at"])
+        self.assertNotIn("gc.campaign_progress_at", meta)
+
+    def test_a_product_decision_parks_product_work_not_the_factory(self):
+        # The block command itself refuses a decision block with nothing pending.
+        self.write_state({**metadata(), "gc.needs_benjamin": "Choix de périmètre du résultat"})
+        self.invoke("block", "--kind", "decision", "--cause", "Choix de périmètre",
+                    "--owner", "Benjamin", "--action", "Répondre à la décision", "--mayor")
+        out = self.sentinel(NOW, CAMPAIGN_STATUS_FAIL="1").stdout
+        # The product status is not even consulted, and Factory work goes on.
+        self.assertIn("ladder:factory:af-fix", out)
+        self.assertEqual(1, self.mail_count())
+
+    def test_an_unreadable_ready_queue_is_reported_not_counted_as_a_failure(self):
+        self.write_status(status(next_id=None))
+        out = self.sentinel(NOW, CAMPAIGN_READY_FAIL="1").stdout
+        self.assertIn("ladder_unavailable", out)
+        self.assertEqual("0", self.current_metadata()["gc.campaign_failure_count"])
+        self.assertEqual(0, self.mail_count())
+
+    def test_watching_starts_once_and_only_without_progress(self):
+        # Exactly the live state on 2026-09-16: a resume wake already sent and
+        # never acted on. Re-announcing it is not progress, so only the watch
+        # reference can make this stall measurable.
+        self.write_state({**metadata(), "gc.campaign_wake_key": "resume:af-exec",
+                          "gc.campaign_wake_state": "sent",
+                          "gc.campaign_wake_sent_at": "2026-09-16T10:39:00Z"})
+        self.write_status(status(result={"id": "af-exec", "state": "materialized"},
+                                 mode="materialized_without_agent"))
+        self.assertIn("already notified", self.sentinel(NOW).stdout)
+        meta = self.current_metadata()
+        self.assertEqual("2026-09-16T10:40:00Z", meta["gc.campaign_watch_since"])
+        self.assertNotIn("gc.campaign_progress_at", meta)
+        self.sentinel(NOW + 900)
+        self.assertEqual("2026-09-16T10:40:00Z", self.current_metadata()["gc.campaign_watch_since"])
+        self.assertEqual(0, self.mail_count())
+
+    def stalled_resume(self, **extra):
+        self.write_state({**metadata(), "gc.campaign_wake_key": "resume:af-exec",
+                          "gc.campaign_wake_state": "sent", **extra})
+        self.write_status(status(result={"id": "af-exec", "state": "materialized"},
+                                 mode="materialized_without_agent"))
+
+    def test_a_wake_that_predates_the_rule_is_reminded_at_once(self):
+        """The live case: a sent wake with no send time, forgotten by a restart."""
+        self.stalled_resume()
+        out = self.sentinel(NOW).stdout
+        self.assertIn("REMINDED: mayor — resume:af-exec (1/3)", out)
+        self.assertEqual(1, self.mail_count())
+        meta = self.current_metadata()
+        self.assertEqual("1", meta["gc.campaign_wake_resends"])
+        # A reminder is not progress: liveness can still see the stall.
+        self.assertNotIn("gc.campaign_progress_at", meta)
+        log = self.log_file.read_text(encoding="utf-8")
+        self.assertIn("RAPPEL", log)
+
+    def test_reminders_are_spaced_and_capped(self):
+        self.stalled_resume(**{"gc.campaign_wake_sent_at": "2026-09-16T10:30:00Z"})
+        self.assertIn("already notified", self.sentinel(NOW).stdout)  # 10 min: too soon
+        at = NOW + 20 * 60
+        self.assertIn("REMINDED", self.sentinel(at).stdout)            # 30 min
+        self.assertIn("already notified", self.sentinel(at + 60).stdout)
+        at += 30 * 60
+        self.assertIn("(2/3)", self.sentinel(at).stdout)
+        at += 30 * 60
+        self.assertIn("(3/3)", self.sentinel(at).stdout)
+        at += 30 * 60
+        self.assertIn("already notified", self.sentinel(at).stdout)    # capped
+        self.assertEqual(3, self.mail_count())
+
+    def test_progress_after_the_wake_cancels_the_reminder(self):
+        self.stalled_resume(**{"gc.campaign_wake_sent_at": "2026-09-16T09:00:00Z",
+                               "gc.campaign_progress_at": "2026-09-16T09:10:00Z"})
+        self.assertIn("already notified", self.sentinel(NOW).stdout)
+        self.assertEqual(0, self.mail_count())
+
+    def test_optional_generative_rungs_are_never_chased(self):
+        key = "ladder:tests:" + str(int(NOW // (12 * 3600)))
+        self.write_state({**metadata(), "gc.campaign_wake_key": key,
+                          "gc.campaign_wake_state": "sent",
+                          "gc.campaign_ladder_docs_at": "2026-09-16T10:00:00Z"})
+        self.ready_file.write_text("[]", encoding="utf-8")
+        self.write_status(status(next_id=None))
+        self.assertIn("already notified", self.sentinel(NOW).stdout)
+        self.assertEqual(0, self.mail_count())
+
+    def test_a_new_wake_resets_the_reminder_count(self):
+        self.stalled_resume(**{"gc.campaign_wake_resends": "3",
+                               "gc.campaign_wake_sent_at": "2026-09-16T08:00:00Z"})
+        self.write_status(status())  # a different transition is now due
+        self.assertIn("NOTIFIED: mayor — materialize:af-next", self.sentinel(NOW).stdout)
+        meta = self.current_metadata()
+        self.assertEqual(("0", "2026-09-16T10:40:00Z"),
+                         (meta["gc.campaign_wake_resends"], meta["gc.campaign_wake_sent_at"]))
+
+    def test_heartbeats_are_throttled(self):
+        self.write_status(status(result={"id": "af-exec", "state": "active"}, mode="active_delivery"))
+        self.sentinel(NOW)
+        self.sentinel(NOW + 120)  # within five minutes: no rewrite
+        self.assertEqual("2026-09-16T10:40:00Z", self.current_metadata()["gc.campaign_progress_at"])
+        self.sentinel(NOW + 301)
+        self.assertEqual("2026-09-16T10:45:01Z", self.current_metadata()["gc.campaign_progress_at"])
 
 
 if __name__ == "__main__":

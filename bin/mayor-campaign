@@ -10,13 +10,18 @@ import os
 import re
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from factory_campaign import FAILURE_THRESHOLD, CampaignDecisionError, plan_transition  # noqa: E402
+from factory_campaign import (  # noqa: E402
+    FAILURE_THRESHOLD, LADDER_GENERATIVE_RUNGS, CampaignDecisionError,
+    plan_idle_ladder, plan_transition,
+)
 from factory_state import StateContractError, project_campaign_metadata  # noqa: E402
 
 
@@ -349,9 +354,117 @@ def record_failure(metadata: dict[str, Any], exc: Exception) -> int:
     return count
 
 
+# Liveness (ADR-0016 section 5.3). The sentinel leaves two timestamps on the
+# coordination bead, and factory-guard reads them:
+#   gc.campaign_sentinel_at -- this loop ran at all (proves the wake loop lives)
+#   gc.campaign_progress_at -- something actually advanced
+# A guard that only checked health reported "healthy" through six idle hours on
+# 2026-09-15. Writes are throttled so a one-minute loop does not churn Dolt.
+HEARTBEAT_SECONDS = 300
+PROGRESS_REASONS = {"active_delivery", "automatic_dependency", "ladder_active"}
+# Product work is genuinely under way: the ladder must not add a second thing.
+LADDER_SKIPPED_REASONS = {"active_delivery", "automatic_dependency", "campaign_inactive"}
+# "Already notified" used to mean "never again". On 2026-09-16 the Mayor read a
+# resume wake, the city was restarted for maintenance, and the new Mayor session
+# came up with no memory of it and no unread mail -- while the sentinel, having
+# marked the wake sent, stayed silent forever. A wake that produced no progress
+# is re-sent after REWAKE_SECONDS, at most MAX_REWAKES times; after that the
+# liveness watchdog files a defect instead of mailing into the void.
+REWAKE_SECONDS = 30 * 60
+MAX_REWAKES = 3
+# Generative ladder rungs are optional by nature: "nothing worth doing" is a
+# valid answer, so they are never chased with reminders.
+NO_REWAKE_PREFIXES = ("ladder:tests:", "ladder:docs:")
+
+
+def epoch_of(value: Any) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def rewake_due(metadata: dict[str, Any], wake_key: str, now: float) -> bool:
+    if wake_key.startswith(NO_REWAKE_PREFIXES):
+        return False
+    try:
+        resends = int(metadata.get("gc.campaign_wake_resends") or 0)
+    except (TypeError, ValueError):
+        resends = 0
+    if resends >= MAX_REWAKES:
+        return False
+    sent_at = epoch_of(metadata.get("gc.campaign_wake_sent_at"))
+    progress = epoch_of(metadata.get("gc.campaign_progress_at"))
+    if sent_at is not None and progress is not None and progress > sent_at + 1:
+        return False  # something moved after the wake went out
+    # A wake with no recorded send time predates this rule: treat it as old.
+    return sent_at is None or now - sent_at >= REWAKE_SECONDS
+
+
+def current_time() -> float:
+    override = os.environ.get("CAMPAIGN_NOW")
+    return float(override) if override else time.time()
+
+
+def iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def stamp_due(metadata: dict[str, Any], key: str, now: float) -> bool:
+    value = str(metadata.get(key) or "").strip()
+    if not value:
+        return True
+    try:
+        last = datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return True
+    return now - last >= HEARTBEAT_SECONDS
+
+
+def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
+    """Rungs 2-4 of the idle ladder; never raises for an unavailable store."""
+    try:
+        ready = json_run(GC_BIN, "bd", "ready", "--json")
+    except CampaignCommandError as exc:
+        return {"action": "none", "reason": f"ladder_unavailable: {failure_detail(exc)}",
+                "wake_key": None}
+    if not isinstance(ready, list):
+        ready = []
+    tracked = None
+    tracked_id = str(metadata.get("gc.campaign_ladder_bead") or "").strip()
+    if tracked_id:
+        try:
+            tracked = node_issue(tracked_id)
+        except CampaignCommandError:
+            tracked = None
+    last = {rung: metadata.get(f"gc.campaign_ladder_{rung}_at")
+            for rung, _ in LADDER_GENERATIVE_RUNGS}
+    return plan_idle_ladder(ready, now, last, tracked)
+
+
 def sentinel(_: argparse.Namespace) -> None:
+    now = current_time()
     issue = coordination_issue()
     metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+    heartbeat: dict[str, str] = {}
+    if stamp_due(metadata, "gc.campaign_sentinel_at", now):
+        heartbeat["gc.campaign_sentinel_at"] = iso(now)
+    # Without a reference point, a campaign that never advances after this code
+    # ships would never be called stale: "no progress yet" forever. Record, once,
+    # when watching began; liveness measures from there until real progress.
+    if not str(metadata.get("gc.campaign_progress_at") or "").strip() \
+            and not str(metadata.get("gc.campaign_watch_since") or "").strip():
+        heartbeat["gc.campaign_watch_since"] = iso(now)
+    if heartbeat:
+        # Best effort: a failed heartbeat must not stop the loop it describes.
+        try:
+            update_metadata(heartbeat)
+            metadata = {**metadata, **heartbeat}
+        except CampaignCommandError:
+            pass
     try:
         campaign = project_campaign_metadata(metadata)
     except StateContractError as exc:
@@ -361,51 +474,76 @@ def sentinel(_: argparse.Namespace) -> None:
     if not campaign["enabled"]:
         print("NOOP: campaign inactive")
         return
+
+    # A product decision waiting on Benjamin parks product work, never the
+    # factory (ADR-0016 section 4): the ladder keeps running. Every other block
+    # -- an admin window, exhausted providers, a durable failure -- stays quiet.
+    ladder_only = False
     if campaign["state"] == "blocked":
-        print("NOOP: campaign blocked; guarded Mayor resume required")
-        return
-    try:
-        status = json_run(STATUS_BIN, "--json")
-    except CampaignCommandError as exc:
-        count = record_failure(metadata, exc)
-        mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
-        raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
+        if campaign["blocker_kind"] != "decision":
+            print("NOOP: campaign blocked; guarded Mayor resume required")
+            return
+        ladder_only = True
 
-    try:
-        decision = plan_transition(status)
-    except CampaignDecisionError as exc:
-        node_id = status_node_id(status)
-        if node_id:
-            try:
-                count = record_node_failure(node_id, exc)
-            except CampaignCommandError:
-                node_id = None
-            else:
-                mode = "automatic retry" if count < FAILURE_THRESHOLD else "node quarantined"
-                raise CampaignCommandError(
-                    f"{mode} {count}/{FAILURE_THRESHOLD} on {node_id}: {failure_detail(exc)}"
-                ) from exc
-        count = record_failure(metadata, exc)
-        mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
-        raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
+    if ladder_only:
+        decision = ladder_decision(metadata, now)
+    else:
+        try:
+            status = json_run(STATUS_BIN, "--json")
+        except CampaignCommandError as exc:
+            count = record_failure(metadata, exc)
+            mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
+            raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
 
-    if campaign["failure_count"] or campaign["last_error"]:
-        update_metadata({"gc.campaign_failure_count": "0", "gc.campaign_last_error": ""})
-        issue, campaign = coordination()
-        metadata = issue.get("metadata", {})
+        try:
+            decision = plan_transition(status)
+        except CampaignDecisionError as exc:
+            node_id = status_node_id(status)
+            if node_id:
+                try:
+                    count = record_node_failure(node_id, exc)
+                except CampaignCommandError:
+                    node_id = None
+                else:
+                    mode = "automatic retry" if count < FAILURE_THRESHOLD else "node quarantined"
+                    raise CampaignCommandError(
+                        f"{mode} {count}/{FAILURE_THRESHOLD} on {node_id}: {failure_detail(exc)}"
+                    ) from exc
+            count = record_failure(metadata, exc)
+            mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
+            raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
+
+        if campaign["failure_count"] or campaign["last_error"]:
+            update_metadata({"gc.campaign_failure_count": "0", "gc.campaign_last_error": ""})
+            issue, campaign = coordination()
+            metadata = issue.get("metadata", {})
+
+        if decision["action"] != "wake_mayor" and decision["reason"] not in LADDER_SKIPPED_REASONS:
+            # No product work to do is not inactivity: walk the ladder.
+            decision = ladder_decision(metadata, now)
 
     if decision["action"] != "wake_mayor":
+        updates: dict[str, str] = {}
         if campaign["wake_state"] == "sent" and decision["reason"] in {
             "active_delivery", "automatic_dependency",
         }:
-            update_metadata({"gc.campaign_wake_key": "", "gc.campaign_wake_state": "none"})
+            updates.update({"gc.campaign_wake_key": "", "gc.campaign_wake_state": "none"})
+        if decision["reason"] in PROGRESS_REASONS and stamp_due(metadata, "gc.campaign_progress_at", now):
+            updates["gc.campaign_progress_at"] = iso(now)
+        if updates:
+            update_metadata(updates)
         print(f"NOOP: {decision['reason']}")
         return
 
     wake_key = str(decision["wake_key"])
+    reminder = False
     if campaign["wake_key"] == wake_key and campaign["wake_state"] == "sent":
-        print(f"NOOP: already notified {wake_key}")
-        return
+        if not rewake_due(metadata, wake_key, now):
+            # Re-announcing the same thing is not progress. If the Mayor never
+            # acts on it, the liveness watchdog is what notices.
+            print(f"NOOP: already notified {wake_key}")
+            return
+        reminder = True
     if campaign["wake_state"] == "pending" and campaign["wake_key"] != wake_key:
         count = record_failure(
             metadata,
@@ -417,12 +555,25 @@ def sentinel(_: argparse.Namespace) -> None:
             f"automatic retry {count}/{FAILURE_THRESHOLD}: transition pending incohérente"
         )
 
-    if campaign["wake_state"] != "pending":
+    subject = str(decision["subject"])
+    message = str(decision["message"])
+    try:
+        resends = int(metadata.get("gc.campaign_wake_resends") or 0)
+    except (TypeError, ValueError):
+        resends = 0
+    if reminder:
+        subject = f"RAPPEL {resends + 1}/{MAX_REWAKES} · {subject}"
+        message = (
+            "Rappel automatique : cette transition t'a déjà été envoyée et rien n'a avancé "
+            "depuis. Si ta session a redémarré, tu ne l'as peut-être jamais vue. "
+            + message
+        )
+    elif campaign["wake_state"] != "pending":
         update_metadata({"gc.campaign_wake_key": wake_key, "gc.campaign_wake_state": "pending"})
     try:
         run(
             GC_BIN, "mail", "send", "mayor", "--from", "mayor",
-            "--subject", str(decision["subject"]), "--message", str(decision["message"]),
+            "--subject", subject, "--message", message,
             "--notify", "--json",
         )
     except CampaignCommandError as exc:
@@ -431,7 +582,28 @@ def sentinel(_: argparse.Namespace) -> None:
         count = record_failure(latest_metadata, exc)
         mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
         raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
-    update_metadata({"gc.campaign_wake_key": wake_key, "gc.campaign_wake_state": "sent"})
+    if reminder:
+        # A reminder is an action, not progress: liveness must still be able to
+        # see that the first wake achieved nothing.
+        update_metadata({
+            "gc.campaign_wake_sent_at": iso(now),
+            "gc.campaign_wake_resends": str(resends + 1),
+        })
+        print(f"REMINDED: mayor — {wake_key} ({resends + 1}/{MAX_REWAKES})")
+        return
+    sent = {
+        "gc.campaign_wake_key": wake_key,
+        "gc.campaign_wake_state": "sent",
+        "gc.campaign_wake_sent_at": iso(now),
+        "gc.campaign_wake_resends": "0",
+        "gc.campaign_progress_at": iso(now),
+    }
+    rung = decision.get("rung")
+    if rung == "factory":
+        sent["gc.campaign_ladder_bead"] = str(decision.get("ladder_bead") or "")
+    elif rung:
+        sent[f"gc.campaign_ladder_{rung}_at"] = iso(now)
+    update_metadata(sent)
     print(f"NOTIFIED: mayor — {wake_key}")
 
 

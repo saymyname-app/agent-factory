@@ -78,5 +78,11 @@ jobs:
       - name: Doctor triage classification
         run: python tests/factory-doctor-test.py
 
+      - name: Campaign liveness rules
+        run: python tests/factory-liveness-test.py
+
+      - name: Factory guard checks liveness
+        run: bash tests/factory-guard-liveness-test.sh
+
       - name: Every test is registered in CI
         run: bash tests/ci-registration-test.sh

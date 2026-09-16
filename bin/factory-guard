@@ -21,6 +21,10 @@
 #                       entries -- two Accepted ADRs among them -- existed
 #                       nowhere else. It now also watches the working tree and
 #                       snapshots it off-box without touching HEAD.
+#   5. HEALTHY BUT IDLE  every check was green through six hours in which
+#                       the campaign advanced nothing. It now also checks
+#                       liveness from the sentinel's heartbeats, and files
+#                       one defect for the Mayor when the factory stalls.
 #
 # Default run is safe and self-healing: it always backs up unpushed work, and
 # restores the pinned branch ONLY when drift has actually broken an invariant.
@@ -277,6 +281,78 @@ while read -r wt; do
 done < <(git worktree list --porcelain | awk '/^worktree /{print $2}')
 if [ "$STALE" = "0" ]; then
   say "✓ worktrees — $LIVE_WT human worktree(s), none pinning a merged branch"
+fi
+
+# --- 7. campaign liveness, not only health (ADR-0016 s5.3, af-vc39) ---------
+# Every check above asks "are the parts in place". None asks "did anything
+# move". On the night of 2026-09-15 all of them were green while the wake loop
+# was dead for six hours. This reads the heartbeats the sentinel leaves on the
+# coordination bead; lib/factory_liveness.py holds the rules and the thresholds.
+# It only runs against a real city: a scratch repo has no coordination bead,
+# and a guard test must never file a defect into the live store.
+GUARD_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd)"
+COORD="${CAMPAIGN_COORDINATION_BEAD:-af-1vr4}"
+if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 \
+   || [ ! -f "$GUARD_LIB/factory_liveness.py" ]; then
+  say "· liveness — not checked (not a city root, or gc unavailable)"
+else
+  coord_json=$(gc bd show "$COORD" --json 2>/dev/null || true)
+  verdict=$(printf '%s' "$coord_json" | python3 "$GUARD_LIB/factory_liveness.py")
+  level=$(printf '%s' "$verdict" | cut -f1)
+  code=$(printf '%s' "$verdict" | cut -f2)
+  msg=$(printf '%s' "$verdict" | cut -f3-)
+  case "$level" in
+    ok)   say "✓ liveness — $msg" ;;
+    info) say "· liveness — $msg" ;;
+    *)
+      bad "liveness — $msg"
+      # "Diagnose it, repair it or file it, and say so." A silent loop or a
+      # stalled campaign becomes one open defect for the Mayor, never a pile.
+      if [ "$CHECK_ONLY" != "1" ] && { [ "$code" = "silent" ] || [ "$code" = "stale" ]; }; then
+        prior=$(printf '%s' "$coord_json" | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    print((v.get("metadata") or {}).get("gc.campaign_liveness_bead", ""))
+except Exception:
+    print("")')
+        still_open=0
+        if [ -n "$prior" ]; then
+          prior_status=$(gc bd show "$prior" --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    print(v.get("status", ""))
+except Exception:
+    print("")')
+          [ -n "$prior_status" ] && [ "$prior_status" != "closed" ] && still_open=1
+        fi
+        if [ "$still_open" = "1" ]; then
+          say "  liveness defect already filed: $prior"
+        else
+          created=$(gc bd create "Campagne vivante mais immobile — diagnostiquer" \
+            -p 1 -t bug \
+            -d "Détecté par factory-guard (vivacité, ADR-0016 §5.3) : $msg. Diagnostiquer pourquoi la campagne n'avance plus — sentinelle, file produit, échelle d'inactivité, Mayor qui ne réagit pas — puis réparer ou documenter, et fermer ce bead avec la cause." \
+            --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    print(v.get("id", ""))
+except Exception:
+    print("")')
+          if [ -n "$created" ]; then
+            gc bd update "$COORD" --set-metadata "gc.campaign_liveness_bead=$created" >/dev/null 2>&1 || true
+            did "filed liveness defect $created for the Mayor"
+          else
+            bad "could not file the liveness defect"
+          fi
+        fi
+      fi
+      ;;
+  esac
 fi
 
 # --- report ------------------------------------------------------------------

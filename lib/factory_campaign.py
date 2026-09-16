@@ -115,3 +115,175 @@ def plan_transition(status: dict[str, Any]) -> dict[str, Any]:
             ),
         }
     return {"action": "none", "reason": str(resume_mode or "not_actionable"), "wake_key": None}
+
+
+# --- Idle ladder (ADR-0016 section 7) -----------------------------------------
+#
+# "No eligible product candidate" used to be a state the campaign reported and
+# waited in: the sentinel woke the Mayor once to record completion -- with the
+# explicit instruction to create nothing -- and then returned NOOP forever. The
+# factory could sit idle for hours with a queue of Factory work in front of it.
+#
+# The ladder replaces that state. Rung 1 (product) is plan_transition above.
+# When it has nothing to do, the sentinel walks down:
+#
+#   2. a ready, city-level Factory bead -- repair items, improvement tasks;
+#   3. test hardening and flake removal   -- a bounded audit, at most every 12h;
+#   4. backlog grooming and documentation debt -- at most every 24h.
+#
+# Rungs 3 and 4 are generative: there is no bead to point at, so the Mayor is
+# asked to find one bounded thing and file it. They are throttled because a
+# wake costs tokens, and an audit repeated every minute finds nothing new. The
+# only NOOP left is "rested": every generative rung ran within its window and
+# no Factory bead is ready. That is a deliberate, time-boxed pause, not a stop.
+
+LADDER_GENERATIVE_RUNGS = (
+    ("tests", 12 * 3600),
+    ("docs", 24 * 3600),
+)
+LADDER_STALE_SECONDS = 6 * 3600
+
+# Not Factory work, or not ours to take.
+_LADDER_EXCLUDED_TYPES = {
+    "session", "convoy", "message", "molecule", "epic", "gate", "event", "agent",
+}
+_LADDER_EXCLUDED_LABELS = {
+    "product-goal", "roadmap", "saymyname", "gc:session", "gc:nudge",
+    # Upstream problems are not ours to work (Benjamin, 2026-09-16).
+    "upstream",
+}
+# Present on internal workflow steps and on work explicitly waiting on someone.
+_LADDER_EXCLUDED_METADATA = ("gc.step_ref", "gc.root_bead_id", "gc.synthetic", "gc.waiting_on")
+
+
+def _labels(bead: dict[str, Any]) -> set[str]:
+    value = bead.get("labels")
+    return {str(item) for item in value} if isinstance(value, list) else set()
+
+
+def is_ladder_bead(bead: Any) -> bool:
+    """True for a ready, city-level Factory bead the Mayor may take."""
+    if not isinstance(bead, dict) or not bead.get("id"):
+        return False
+    if str(bead.get("status") or "open") != "open":
+        return False
+    kind = str(bead.get("issue_type") or bead.get("type") or "").lower()
+    if kind in _LADDER_EXCLUDED_TYPES:
+        return False
+    if _labels(bead) & _LADDER_EXCLUDED_LABELS:
+        return False
+    metadata = bead.get("metadata") if isinstance(bead.get("metadata"), dict) else {}
+    if any(str(metadata.get(key) or "").strip() for key in _LADDER_EXCLUDED_METADATA):
+        return False
+    needs = str(metadata.get("gc.needs_benjamin") or "").strip().lower()
+    if needs and not needs.startswith("none"):
+        return False
+    assignee = str(bead.get("assignee") or "").strip()
+    if assignee and assignee != "mayor":
+        return False
+    return True
+
+
+def _priority(bead: dict[str, Any]) -> int:
+    try:
+        return int(bead.get("priority"))
+    except (TypeError, ValueError):
+        return 9
+
+
+def _epoch(value: Any) -> float | None:
+    from datetime import datetime
+
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def plan_idle_ladder(
+    ready: list[dict[str, Any]],
+    now: float,
+    last_generative: dict[str, Any] | None = None,
+    tracked: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Pick the next rung when product work has nothing to do.
+
+    ``ready`` is ``gc bd ready --json`` for the city store. ``last_generative``
+    maps a generative rung name to the ISO time it was last sent.
+    ``tracked`` is the rung-2 bead the Mayor was last pointed at, if any.
+    """
+    last_generative = last_generative or {}
+
+    # One Factory bead at a time, exactly like product results.
+    if isinstance(tracked, dict) and tracked.get("status") == "in_progress":
+        updated = _epoch(tracked.get("updated_at"))
+        if updated is not None and now - updated > LADDER_STALE_SECONDS:
+            # Not progress: the liveness watchdog must be allowed to see it.
+            return {"action": "none", "reason": "ladder_stalled", "wake_key": None,
+                    "ladder_bead": tracked.get("id")}
+        return {"action": "none", "reason": "ladder_active", "wake_key": None,
+                "ladder_bead": tracked.get("id")}
+
+    candidates = sorted(
+        (bead for bead in ready if is_ladder_bead(bead)),
+        key=lambda bead: (_priority(bead), str(bead.get("created_at") or ""), str(bead["id"])),
+    )
+    if candidates:
+        bead = candidates[0]
+        bead_id = str(bead["id"])
+        title = str(bead.get("title") or "").strip()
+        return {
+            "action": "wake_mayor",
+            "reason": "ladder_factory",
+            "rung": "factory",
+            "ladder_bead": bead_id,
+            "wake_key": f"ladder:factory:{bead_id}",
+            "subject": f"USINE · amélioration {bead_id}",
+            "message": (
+                "Aucun résultat produit n'est éligible : ce n'est pas de l'inactivité "
+                "(ADR-0016 §7, échelle d'inactivité, échelon 2). "
+                f"Prends le bead Factory {bead_id} — « {title} » (P{_priority(bead)}). "
+                f"Réclame-le (`gc bd update {bead_id} --claim`), livre-le par le flux normal "
+                "avec ses preuves, puis ferme-le. S'il attend quelqu'un ou quelque chose, pose "
+                f"`gc bd update {bead_id} --set-metadata gc.waiting_on=<qui>` : l'échelle le "
+                "sautera. Un seul à la fois ; si un candidat produit redevient éligible, il passe devant."
+            ),
+        }
+
+    for rung, period in LADDER_GENERATIVE_RUNGS:
+        last = _epoch(last_generative.get(rung))
+        if last is not None and now - last < period:
+            continue
+        bucket = int(now // period)
+        hours = period // 3600
+        if rung == "tests":
+            subject = "USINE · durcissement des tests"
+            body = (
+                "Ni produit ni bead Factory prêt (échelle d'inactivité, échelon 3). "
+                "Cherche UN test instable ou UN trou de couverture sur l'usine : échecs récents "
+                "(`gh run list --status failure --limit 20`), tests marqués `# ci: local-only`, "
+                "`./bin/factory-doctor`. Crée un bead Factory étiqueté `factory-ladder` pour ce "
+                "que tu entreprends, puis livre-le. Si rien ne le mérite, ne crée rien."
+            )
+        else:
+            subject = "USINE · backlog et dette documentaire"
+            body = (
+                "Ni produit ni bead Factory prêt (échelle d'inactivité, échelon 4). "
+                "Fais UNE passe bornée : ferme les beads obsolètes ou en double, corrige une "
+                "dérive entre docs/CONTEXT_INDEX.md et la réalité, ou une commande périmée dans "
+                "docs/. Crée un bead Factory étiqueté `factory-ladder` pour ce que tu entreprends. "
+                "Si rien ne le mérite, ne crée rien."
+            )
+        return {
+            "action": "wake_mayor",
+            "reason": f"ladder_{rung}",
+            "rung": rung,
+            "ladder_bead": None,
+            "wake_key": f"ladder:{rung}:{bucket}",
+            "subject": subject,
+            "message": f"{body} Prochain passage de cet échelon au plus tôt dans {hours} h.",
+        }
+
+    return {"action": "none", "reason": "ladder_rested", "wake_key": None}
