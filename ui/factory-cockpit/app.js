@@ -418,6 +418,7 @@ function renderDecisionConversation(data) {
   const working = ["queued", "running"].includes(data.status); const lastPO = [...(data.messages || [])].reverse().find((message) => message.role === "PO" && message.timestamp); if (lastPO && currentDecision) localStorage.setItem(`factory-cockpit-decision-seen:${currentDecision.id}`, lastPO.timestamp); renderDecisionSwitcher(data); const messages = $("decision-messages"); messages.replaceChildren();
   (data.messages || []).forEach((message) => { const bubble = node("article", `po-message ${["PO", "Mayor"].includes(message.role) ? "from-po" : "from-human"}`); bubble.append(node("strong", "", message.role), node("p", "", message.text)); messages.append(bubble); }); if (!messages.children.length) messages.append(node("div", "empty", "Cette décision n’a pas encore de session. Elle sera créée uniquement quand tu enverras le premier message.")); if (working) messages.append(node("div", "po-thinking", "Le PO travaille sur cette décision; ouvre un autre sujet avec la barre ci-dessus."));
   $("send-decision-po").disabled = working; $("send-decision-po").textContent = data.status === "not_started" ? "Commencer avec le PO" : "Envoyer au PO"; setStatus($("decision-current-state"), working ? "working" : data.status === "error" ? "down" : "idle", working ? "PO travaille" : data.status === "not_started" ? "Pas lancée" : data.status === "error" ? "Erreur" : "À toi"); $("decision-token-usage").textContent = data.usage ? `${formatTokens(data.usage.total_tokens)} tokens · compteur local` : "Aucun token consommé"; $("copy-decision-thread").disabled = !data.thread_id; $("copy-decision-thread").dataset.threadId = data.thread_id || ""; const link = $("open-decision-codex"); link.classList.toggle("hidden", !data.codex_url); if (data.codex_url) link.href = data.codex_url; if (data.error) $("decision-feedback").textContent = data.error;
+  renderMobileDecisionConversation(data);
   clearTimeout(decisionPoll); if (currentDecision) decisionPoll = setTimeout(loadDecisionConversation, 3000);
 }
 async function loadDecisionConversation() { if (!currentDecision) return; try { const expectedId = currentDecision.id; const response = await fetch(`/api/po/conversation?decision_id=${encodeURIComponent(expectedId)}`, { cache: "no-store" }); const data = await response.json(); if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`); if (currentDecision?.id === expectedId) renderDecisionConversation(data); } catch (error) { $("decision-feedback").textContent = `PO indisponible : ${error.message}`; } }
@@ -438,18 +439,18 @@ function render(data) {
   snapshot = data; applyIdentity(data.product_memory?.product, data.operator); setStatus($("factory-state"), data.factory.state, data.factory.label); renderOperationalState(data); renderCampaignState(data); $("focus-title").textContent = data.focus.title; setStatus($("focus-state"), data.focus.state, data.focus.state_label); $("focus-phase").textContent = data.focus.phase; timed($("focus-elapsed"), data.focus.started_at); $("focus-signal").dataset.signalTime = data.focus.last_signal_at || ""; $("focus-signal").textContent = signalAge(data.focus.last_signal_at); const steps = data.focus.steps; $("focus-steps").textContent = steps.total ? `${steps.completed} / ${steps.total}` : "aucune étape exposée"; $("step-fill").style.width = steps.total ? `${Math.round((steps.completed / steps.total) * 100)}%` : "0%"; renderTodayAttention(data.today); const delivered = data.last_delivery; $("last-delivery").textContent = `Dernière livraison : ${delivered.title}${delivered.pr ? ` · PR ${delivered.pr}` : ""}${delivered.ci === "success" ? " · CI verte" : ""}`;
   renderDecisionAids(data.decision_aids || []); renderQueue(data.queue || []); renderMemory(data.product_memory, data.today); renderBusiness(data.product_memory); renderProject(data.product_memory, data); renderRoadmap(data); renderWorkflow(data.product_memory, data); renderBoard(data.product_work || []); renderAgents(data.agents || []);
   const factoryWork = $("factory-work"); factoryWork.replaceChildren(); (data.factory_work || []).forEach((item) => factoryWork.append(node("div", "compact-item", item.title))); if (!factoryWork.children.length) factoryWork.append(node("p", "muted", "Aucun autre travail Factory.")); const infrastructure = $("infrastructure"); infrastructure.replaceChildren(); (data.infrastructure || []).forEach((item) => infrastructure.append(node("div", "compact-item", `${item.name} · ${item.state}`)));
-  const alert = $("alert"); if (data.warnings.length) { alert.textContent = `Visibilité partielle : ${data.warnings.join(" · ")}`; alert.classList.remove("hidden"); } else alert.classList.add("hidden"); compareVisit(data); updateClocks(); restoreDeepLink();
+  const alert = $("alert"); if (data.warnings.length) { alert.textContent = `Visibilité partielle : ${data.warnings.join(" · ")}`; alert.classList.remove("hidden"); } else alert.classList.add("hidden"); renderMobile(data); compareVisit(data); updateClocks(); restoreDeepLink();
 }
 
-async function refresh() { if (loading) return; loading = true; $("refresh").disabled = true; try { const response = await fetch("/api/snapshot", { cache: "no-store" }); if (!response.ok) throw new Error(`HTTP ${response.status}`); render(await response.json()); } catch (error) { $("alert").textContent = `Cockpit indisponible : ${error.message}`; $("alert").classList.remove("hidden"); setStatus($("factory-state"), "down", "Cockpit indisponible"); } finally { loading = false; $("refresh").disabled = false; } }
+async function refresh() { if (loading) return; loading = true; $("refresh").disabled = true; try { const response = await fetch("/api/snapshot", { cache: "no-store" }); if (!response.ok) throw new Error(`HTTP ${response.status}`); render(await response.json()); } catch (error) { $("alert").textContent = `Cockpit indisponible : ${error.message}`; $("alert").classList.remove("hidden"); setStatus($("factory-state"), "down", "Cockpit indisponible"); setStatus($("mobile-factory-state"), "down", "Cockpit indisponible"); } finally { loading = false; $("refresh").disabled = false; } }
 
 async function loadTokens() {
   $("refresh-tokens").disabled = true; $("token-sessions").replaceChildren(node("div", "empty", "Lecture des compteurs locaux…"));
   try { const response = await fetch("/api/tokens", { cache: "no-store" }); const data = await response.json(); if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`); tokenLoaded = true; const cards = $("token-summary").children; cards[1].querySelector("strong").textContent = formatTokens(data.factory.known_total_tokens); cards[1].querySelector("small").textContent = data.factory.coverage; cards[2].querySelector("strong").textContent = formatTokens(data.host_codex_24h.total_tokens); cards[2].querySelector("small").textContent = `${data.host_codex_24h.sessions} sessions Codex locales`; const table = $("token-sessions"); table.replaceChildren(); (data.factory.sessions || []).forEach((entry) => { const row = node("article", "token-row"); const identity = node("div"); identity.append(node("strong", "", entry.name), node("small", "", `${entry.provider} · ${entry.confidence}`)); const total = node("strong", "token-total", formatTokens(entry.usage.total_tokens)); const breakdown = node("div", "token-breakdown", [entry.usage.input_tokens !== undefined && `entrée ${formatTokens(entry.usage.input_tokens)}`, entry.usage.cached_input_tokens !== undefined && `cache ${formatTokens(entry.usage.cached_input_tokens)}`, entry.usage.output_tokens !== undefined && `sortie ${formatTokens(entry.usage.output_tokens)}`, entry.usage.reasoning_output_tokens !== undefined && `raisonnement ${formatTokens(entry.usage.reasoning_output_tokens)}`].filter(Boolean).join(" · ") || "total estimé"); row.append(identity, total, breakdown); table.append(row); }); if (!table.children.length) table.append(node("div", "empty", "Aucun compteur Factory corrélé.")); const notes = $("token-notes"); notes.replaceChildren(); data.notes.forEach((note) => notes.append(node("p", "", note))); } catch (error) { $("token-sessions").replaceChildren(node("div", "empty", `Compteurs indisponibles : ${error.message}`)); } finally { $("refresh-tokens").disabled = false; }
 }
 
-function renderConversation(data) { const container = $("mayor-conversation"); container.replaceChildren(); const channel = data.channel || { state: "idle", label: "Disponible" }; const visual = { transmitting: "working", delivered: "waiting", waiting: "waiting", responded: "idle", failed: "down", late_response: "attention", empty_response: "down", idle: "idle" }; setStatus($("mayor-chat-state"), visual[channel.state] || "waiting", channel.label); (data.messages || []).forEach((message) => { const bubble = node("article", `message ${message.role === "Mayor" ? "from-mayor" : "from-human"}`); bubble.append(node("strong", "", message.role), node("p", "", message.text), node("small", "muted", message.delivery_state === "delivered" ? "Remis" : "Réponse observée")); container.append(bubble); }); if (!container.children.length) container.append(node("div", "empty", "Aucun échange récent depuis ce cockpit.")); if (channel.detail) $("mayor-feedback").textContent = channel.detail; if (["transmitting", "delivered", "waiting"].includes(channel.state)) setTimeout(loadConversation, 3000); }
-async function loadConversation() { try { const response = await fetch("/api/mayor/conversation", { cache: "no-store" }); const data = await response.json(); if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`); renderConversation(data); } catch (error) { $("mayor-conversation").replaceChildren(node("div", "empty", `Conversation indisponible : ${error.message}`)); setStatus($("mayor-chat-state"), "down", "Échec"); } }
+function renderConversation(data) { const container = $("mayor-conversation"); container.replaceChildren(); const channel = data.channel || { state: "idle", label: "Disponible" }; const visual = { transmitting: "working", delivered: "waiting", waiting: "waiting", responded: "idle", failed: "down", late_response: "attention", empty_response: "down", idle: "idle" }; setStatus($("mayor-chat-state"), visual[channel.state] || "waiting", channel.label); (data.messages || []).forEach((message) => { const bubble = node("article", `message ${message.role === "Mayor" ? "from-mayor" : "from-human"}`); bubble.append(node("strong", "", message.role), node("p", "", message.text), node("small", "muted", message.delivery_state === "delivered" ? "Remis" : "Réponse observée")); container.append(bubble); }); if (!container.children.length) container.append(node("div", "empty", "Aucun échange récent depuis ce cockpit.")); if (channel.detail) $("mayor-feedback").textContent = channel.detail; if (["transmitting", "delivered", "waiting"].includes(channel.state)) setTimeout(loadConversation, 3000); renderMobileMayor(data); }
+async function loadConversation() { try { const response = await fetch("/api/mayor/conversation", { cache: "no-store" }); const data = await response.json(); if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`); renderConversation(data); } catch (error) { $("mayor-conversation").replaceChildren(node("div", "empty", `Conversation indisponible : ${error.message}`)); setStatus($("mayor-chat-state"), "down", "Échec"); $("mobile-mayor-conversation").replaceChildren(node("div", "empty", `Canal indisponible : ${error.message}`)); setStatus($("mobile-mayor-state"), "down", "Échec"); $("mobile-tab-mayor-count").textContent = "échec"; } }
 async function sendMayor() { const message = $("mayor-message").value.trim(); if (!message) return; $("send-mayor").disabled = true; setStatus($("mayor-chat-state"), "working", "Transmission"); $("mayor-feedback").textContent = "Transmission au Mayor…"; try { const response = await fetch("/api/mayor/message", { method: "POST", headers: { "Content-Type": "application/json", "X-Factory-Cockpit": "human-message" }, body: JSON.stringify({ message, intent: $("mayor-intent").value }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`); $("mayor-message").value = ""; $("mayor-feedback").textContent = `${data.channel?.label || "Remis"}; attente d’une réponse observée.`; setStatus($("mayor-chat-state"), "waiting", data.channel?.label || "Remis"); setTimeout(loadConversation, 1000); } catch (error) { $("mayor-feedback").textContent = `Envoi impossible : ${error.message}`; setStatus($("mayor-chat-state"), "down", "Échec"); } finally { $("send-mayor").disabled = false; } }
 function humanSummary(data) { const state = data.human_state; return [`Agent Factory`, `Santé : ${state.health.label}`, `Activité : ${state.activity.label} — ${state.activity.detail}`, `Résultat : ${state.result.title} — ${state.result.state_label}`, `Campagne : ${state.campaign.state_label}${state.campaign.blocked ? ` — ${state.campaign.cause}` : ""}`, `Reprise automatique : ${state.resume.automatic ? "oui" : "non"}`, `Condition : ${state.resume.condition || "aucune"}`, `Responsable : ${state.resume.owner_label}`, `Action utile : ${state.resume.action}`, `Décision bloquante ${operatorName() || "opérateur"} : ${state.needs_benjamin || "aucune"}`, `Blocages effectifs : ${(data.today?.effective_blockers || []).length}`, `Décisions générales ouvertes : ${(data.today?.general_decisions || []).length}`, `Prochain candidat : ${state.next_candidate ? `${state.next_candidate.id} · ${state.next_candidate.title} · ${state.next_candidate.state_label}` : "aucun"}`].join("\n"); }
 
@@ -472,3 +473,94 @@ $("queue-cancel-submit").addEventListener("click", (event) => { event.preventDef
 document.querySelectorAll("[data-reference]").forEach((button) => button.addEventListener("click", () => { activateView("project"); loadReference(button.dataset.reference); }));
 window.addEventListener("hashchange", () => restoreDeepLink(true));
 $("mayor-conversation").replaceChildren(node("div", "empty", "Clique sur « Relire » pour charger les échanges.")); refresh(); loadPOIndex(); setInterval(refresh, 5000); setInterval(loadPOIndex, 5000); setInterval(updateClocks, 1000);
+
+
+/* ---- Profil mobile -------------------------------------------------------
+   Trois écrans seulement : État · Décisions à prendre · Répondre au Mayor.
+   Le cockpit complet reste le poste de travail; personne ne pilote une usine
+   au téléphone. Tout est rendu depuis le snapshot déjà chargé, donc lire
+   reste à 0 token; seuls les deux envois explicites en consomment. */
+let mobileDecision = null;
+let mobileMayorLoaded = false;
+function mobilePendingDecisions() { const memory = snapshot?.product_memory; if (!memory) return []; return visiblePending(memory).filter((item) => item.domain !== "enterprise"); }
+function activateMobileView(view) {
+  document.querySelectorAll(".mobile-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.mobileView === view));
+  document.querySelectorAll(".mobile-screen").forEach((panel) => panel.classList.toggle("active", panel.dataset.mobilePanel === view));
+  if (view === "mayor" && !mobileMayorLoaded) { mobileMayorLoaded = true; loadConversation(); }
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+function renderMobile(data) {
+  const state = data.human_state; const resume = state.resume; const campaign = state.campaign || {};
+  setStatus($("mobile-factory-state"), data.factory.state, data.factory.label);
+  $("mobile-health").textContent = state.health.label; $("mobile-health-detail").textContent = state.health.detail;
+  $("mobile-activity").textContent = state.activity.label; $("mobile-activity-detail").textContent = state.activity.detail;
+  $("mobile-resume").textContent = resume.automatic ? "Automatique" : resume.required ? "Action requise" : "Non automatique \u00b7 action facultative";
+  $("mobile-resume-condition").textContent = resume.condition || "Aucune"; $("mobile-resume-owner").textContent = resume.owner_label; $("mobile-resume-action").textContent = resume.action;
+  const blockers = Array.isArray(data.today?.effective_blockers) ? data.today.effective_blockers : []; const blocker = blockers[0];
+  $("mobile-blockers").textContent = blocker?.text || "Aucun blocage effectif.";
+  $("mobile-tab-state-count").textContent = blockers.length ? `${blockers.length} blocage${blockers.length > 1 ? "s" : ""}` : "rien à lever";
+  const unblock = $("mobile-open-blocker"); unblock.dataset.decisionId = blocker?.decision_id || ""; unblock.classList.toggle("hidden", !blocker?.decision_id);
+  const blockedModes = new Set(["fail_closed", "blocking_decision", "blocked", "campaign_blocked"]);
+  const blocked = Boolean(campaign.blocked || blockedModes.has(resume.mode));
+  $("mobile-block").classList.toggle("hidden", !blocked);
+  if (blocked) { $("mobile-block-cause").textContent = campaign.cause || resume.condition || state.activity.detail || "La livraison ne peut pas poursuivre."; $("mobile-block-action").textContent = `Reprise : ${campaign.blocked ? campaign.owner_label : resume.owner_label} \u00b7 ${campaign.blocked ? campaign.action : resume.action}`; }
+  const delivered = data.last_delivery; $("mobile-last-delivery").textContent = `Derni\u00e8re livraison : ${delivered.title}${delivered.pr ? ` \u00b7 PR ${delivered.pr}` : ""}${delivered.ci === "success" ? " \u00b7 CI verte" : ""}`;
+  renderMobileDecisionList();
+}
+function renderMobileDecisionList() {
+  const items = mobilePendingDecisions(); const list = $("mobile-decision-list"); list.replaceChildren();
+  $("mobile-tab-decisions-count").textContent = items.length ? `${items.length} \u00e0 trancher` : "rien";
+  items.forEach((item) => { const card = node("button", "mobile-decision-card"); card.type = "button"; card.append(node("span", "eyebrow", `D\u00c9CISION ${item.domain.toUpperCase()}`), node("strong", "", item.title), node("small", "muted", item.detail)); card.addEventListener("click", () => openMobileDecision(item)); list.append(card); });
+  if (!items.length) list.append(node("div", "empty", "Rien \u00e0 trancher. Tu peux poser le t\u00e9l\u00e9phone."));
+  const enterprise = snapshot ? visiblePending(snapshot.product_memory).filter((item) => item.domain === "enterprise").length : 0;
+  $("mobile-enterprise-note").textContent = enterprise ? `${enterprise} d\u00e9cision${enterprise > 1 ? "s" : ""} entreprise \u00b7 \u00e0 traiter sur ordinateur` : "";
+}
+async function openMobileDecision(decision) {
+  mobileDecision = decision; currentDecision = decision;
+  $("mobile-decision-domain").textContent = `D\u00c9CISION ${decision.domain.toUpperCase()}`; $("mobile-decision-title").textContent = decision.title; $("mobile-decision-detail-copy").textContent = decision.detail;
+  $("mobile-decision-message").value = decisionPrompt(decision); $("mobile-decision-feedback").textContent = "";
+  $("mobile-decision-messages").replaceChildren(node("div", "empty", "Lecture de la session\u2026"));
+  $("mobile-decision-detail").classList.remove("hidden"); $("mobile-decision-browse").classList.add("hidden");
+  await loadDecisionConversation();
+}
+function closeMobileDecision() { clearTimeout(decisionPoll); mobileDecision = null; currentDecision = null; $("mobile-decision-detail").classList.add("hidden"); $("mobile-decision-browse").classList.remove("hidden"); }
+function renderMobileDecisionConversation(data) {
+  if (!mobileDecision) return;
+  const box = $("mobile-decision-messages"); box.replaceChildren();
+  (data.messages || []).forEach((message) => { const bubble = node("article", `po-message ${["PO", "Mayor"].includes(message.role) ? "from-po" : "from-human"}`); bubble.append(node("strong", "", message.role), node("p", "", message.text)); box.append(bubble); });
+  if (!box.children.length) box.append(node("div", "empty", "Aucune session. Elle na\u00eet \u00e0 ton premier envoi."));
+  const working = ["queued", "running"].includes(data.status);
+  $("mobile-send-decision").disabled = working; $("mobile-send-decision").textContent = data.status === "not_started" ? "Commencer avec le PO" : "Envoyer au PO";
+  if (working) $("mobile-decision-feedback").textContent = "Le PO pr\u00e9pare sa r\u00e9ponse\u2026";
+  box.scrollTop = box.scrollHeight;
+}
+async function sendMobileDecision() {
+  if (!mobileDecision) return; const message = $("mobile-decision-message").value.trim();
+  if (!message) { $("mobile-decision-feedback").textContent = "\u00c9cris ta r\u00e9ponse."; return; }
+  $("mobile-send-decision").disabled = true; $("mobile-decision-feedback").textContent = "Remis au PO\u2026";
+  try { const response = await fetch("/api/po/message", { method: "POST", headers: { "Content-Type": "application/json", "X-Factory-Cockpit": "human-po-message" }, body: JSON.stringify({ message, intent: $("mobile-decision-intent").value, decision_id: mobileDecision.id }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`); $("mobile-decision-message").value = ""; $("mobile-decision-feedback").textContent = "Le PO r\u00e9pond ici."; loadDecisionConversation(); } catch (error) { $("mobile-decision-feedback").textContent = `Envoi impossible : ${error.message}`; $("mobile-send-decision").disabled = false; }
+}
+function renderMobileMayor(data) {
+  const channel = data.channel || { state: "idle", label: "Disponible" };
+  const visual = { transmitting: "working", delivered: "waiting", waiting: "waiting", responded: "idle", failed: "down", late_response: "attention", empty_response: "down", idle: "idle" };
+  setStatus($("mobile-mayor-state"), visual[channel.state] || "waiting", channel.label);
+  $("mobile-tab-mayor-count").textContent = channel.label;
+  const box = $("mobile-mayor-conversation"); box.replaceChildren();
+  (data.messages || []).forEach((message) => { const bubble = node("article", `message ${message.role === "Mayor" ? "from-mayor" : "from-human"}`); bubble.append(node("strong", "", message.role), node("p", "", message.text), node("small", "muted", message.delivery_state === "delivered" ? "Remis" : "R\u00e9ponse observ\u00e9e")); box.append(bubble); });
+  if (!box.children.length) box.append(node("div", "empty", "Aucun \u00e9change r\u00e9cent depuis ce cockpit."));
+  if (channel.detail) $("mobile-mayor-feedback").textContent = channel.detail;
+  box.scrollTop = box.scrollHeight;
+}
+async function sendMobileMayor() {
+  const message = $("mobile-mayor-message").value.trim();
+  if (!message) { $("mobile-mayor-feedback").textContent = "\u00c9cris ton message."; return; }
+  $("mobile-send-mayor").disabled = true; $("mobile-mayor-feedback").textContent = "Transmission au Mayor\u2026";
+  try { const response = await fetch("/api/mayor/message", { method: "POST", headers: { "Content-Type": "application/json", "X-Factory-Cockpit": "human-message" }, body: JSON.stringify({ message, intent: $("mobile-mayor-intent").value }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`); $("mobile-mayor-message").value = ""; $("mobile-mayor-feedback").textContent = `${data.channel?.label || "Remis"}; attente d\u2019une r\u00e9ponse observ\u00e9e.`; setTimeout(loadConversation, 1000); } catch (error) { $("mobile-mayor-feedback").textContent = `Envoi impossible : ${error.message}`; } finally { $("mobile-send-mayor").disabled = false; }
+}
+document.querySelectorAll(".mobile-tab").forEach((tab) => tab.addEventListener("click", () => activateMobileView(tab.dataset.mobileView)));
+document.querySelectorAll("[data-mobile-prompt]").forEach((button) => button.addEventListener("click", () => { $("mobile-mayor-message").value = button.dataset.mobilePrompt; $("mobile-mayor-message").focus(); }));
+$("mobile-decision-back").addEventListener("click", closeMobileDecision);
+$("mobile-send-decision").addEventListener("click", sendMobileDecision);
+$("mobile-send-mayor").addEventListener("click", sendMobileMayor);
+$("mobile-refresh").addEventListener("click", refresh);
+$("mobile-open-blocker").addEventListener("click", () => { const id = $("mobile-open-blocker").dataset.decisionId; const decision = id ? snapshot?.product_memory?.decisions.find((item) => item.id === id) : null; if (decision) { activateMobileView("decisions"); openMobileDecision(decision); } });

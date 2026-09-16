@@ -126,5 +126,46 @@
 <dialog id="detail-drawer"><div class="drawer-shell"><header><div><p id="drawer-eyebrow" class="eyebrow">DÉTAIL</p><h2 id="drawer-title">—</h2></div><button id="close-drawer" aria-label="Fermer">✕</button></header><div id="drawer-tabs" class="drawer-tabs"></div><div id="drawer-content" class="drawer-content"></div></div></dialog>
 <dialog id="queue-cancel-dialog" class="confirmation-dialog"><form method="dialog"><p class="eyebrow">CONFIRMATION RECORD</p><h2>Annuler ce candidat ?</h2><p id="queue-cancel-title" class="muted"></p><label>Raison<textarea id="queue-cancel-reason" maxlength="1000" rows="3" required></textarea></label><label class="confirm-check"><input id="queue-cancel-confirmed" type="checkbox"> Je confirme que ce candidat sera clos sans être exécuté.</label><div class="chat-actions"><button value="cancel">Retour</button><button id="queue-cancel-submit" class="primary" value="default">Confirmer l’annulation</button></div></form></dialog>
 <div id="toast" class="toast hidden" aria-live="polite"></div>
+<div id="mobile-app" class="mobile-app">
+<header class="mobile-header"><div><strong data-product-text="%s">Cockpit</strong><small data-operator-text="Cockpit de %s">Cockpit</small></div><div class="mobile-header-actions"><span id="mobile-factory-state" class="status-pill waiting">Chargement…</span><button id="mobile-refresh" type="button" aria-label="Actualiser">↻</button></div></header>
+<main class="mobile-screens">
+  <section class="mobile-screen active" data-mobile-panel="state" aria-label="État">
+    <div id="mobile-block" class="mobile-block hidden" role="alert" aria-live="assertive"><strong>BLOQUÉ</strong><p id="mobile-block-cause">—</p><p id="mobile-block-action" class="muted">—</p></div>
+    <article class="panel mobile-card"><p class="eyebrow">EST-CE QUE ÇA TOURNE ?</p><h2 id="mobile-health">Lecture…</h2><p id="mobile-health-detail" class="muted">—</p></article>
+    <article class="panel mobile-card"><p class="eyebrow">ACTIVITÉ DE LIVRAISON</p><h2 id="mobile-activity">Lecture…</h2><p id="mobile-activity-detail" class="muted">—</p></article>
+    <article class="panel mobile-card"><p class="eyebrow">REPRISE</p><h2 id="mobile-resume">Lecture…</h2><dl class="resume-facts"><dt>Condition</dt><dd id="mobile-resume-condition">—</dd><dt>Responsable</dt><dd id="mobile-resume-owner">—</dd></dl><p id="mobile-resume-action" class="muted">—</p></article>
+    <article class="panel mobile-card"><p class="eyebrow">BLOCAGES EFFECTIFS</p><h2 id="mobile-blockers" aria-live="polite">Lecture…</h2><button id="mobile-open-blocker" class="primary hidden" type="button">Débloquer</button><p id="mobile-last-delivery" class="muted">Dernière livraison : —</p></article>
+    <p class="zero-token">Lecture live · 0 token</p>
+  </section>
+  <section class="mobile-screen" data-mobile-panel="decisions" aria-label="Décisions à prendre">
+    <div id="mobile-decision-browse">
+      <div id="mobile-decision-list" class="mobile-list"></div>
+      <p id="mobile-enterprise-note" class="muted"></p>
+    </div>
+    <section id="mobile-decision-detail" class="mobile-detail hidden">
+      <button id="mobile-decision-back" type="button">← Toutes les décisions</button>
+      <p id="mobile-decision-domain" class="eyebrow">DÉCISION</p><h2 id="mobile-decision-title">—</h2><p id="mobile-decision-detail-copy" class="muted">—</p>
+      <div id="mobile-decision-messages" class="mobile-messages"></div>
+      <p class="token-warning">Seul l’envoi sollicite l’IA et peut consommer des tokens.</p>
+      <textarea id="mobile-decision-message" maxlength="6000" rows="4" placeholder="Ta réponse…"></textarea>
+      <div class="mobile-actions"><select id="mobile-decision-intent"><option value="discuss">Discuter sans enregistrer</option><option value="record">Acter et enregistrer</option></select><button id="mobile-send-decision" class="primary">Envoyer au PO</button></div>
+      <p id="mobile-decision-feedback" class="feedback" aria-live="polite"></p>
+    </section>
+  </section>
+  <section class="mobile-screen" data-mobile-panel="mayor" aria-label="Répondre au Mayor">
+    <article class="panel mobile-card"><div class="mobile-card-head"><p class="eyebrow">CANAL MAYOR</p><span id="mobile-mayor-state" class="status-pill idle">Disponible</span></div><div id="mobile-mayor-conversation" class="mobile-messages"></div></article>
+    <div class="prompt-suggestions"><button type="button" data-mobile-prompt="Est-ce que tout va bien dans l'usine ? Réponds simplement et dis seulement si je dois agir.">Tout va bien ?</button><button type="button" data-mobile-prompt="Explique ce que tu attends actuellement et pourquoi, sans modifier l'usine.">Qu’attends-tu ?</button></div>
+    <p class="token-warning">Seul l’envoi sollicite l’IA et peut consommer des tokens.</p>
+    <textarea id="mobile-mayor-message" maxlength="4000" rows="3" placeholder="Réponse ou question au Mayor…"></textarea>
+    <div class="mobile-actions"><select id="mobile-mayor-intent"><option value="question">Question</option><option value="follow_up">Après le travail actuel</option></select><button id="mobile-send-mayor" class="primary">Envoyer</button></div>
+    <p id="mobile-mayor-feedback" class="feedback" aria-live="polite"></p>
+  </section>
+</main>
+<nav class="mobile-tabs" aria-label="Écrans mobiles">
+  <button class="mobile-tab active" data-mobile-view="state" type="button"><span>État</span><small id="mobile-tab-state-count">—</small></button>
+  <button class="mobile-tab" data-mobile-view="decisions" type="button"><span>Décisions</span><small id="mobile-tab-decisions-count">—</small></button>
+  <button class="mobile-tab" data-mobile-view="mayor" type="button"><span>Mayor</span><small id="mobile-tab-mayor-count">canal</small></button>
+</nav>
+</div>
 <script src="/app.js"></script>
 </body></html>
