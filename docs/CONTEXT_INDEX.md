@@ -18,7 +18,8 @@ Use progressive disclosure. Do not read every document by default.
 | Current migration state, cutover and rollback | `MIGRATION.md` |
 | Install/start/stop/doctor/backup/restore/recovery | `OPERATIONS.md` |
 | Stopping and restarting the whole factory, and proving nothing was lost | `RUNBOOK_STOP_AND_RESTART.md` |
-| What `factory-guard`, `factory-resources` and `mayor-campaign` do, and when to run them | `FACTORY_TOOLS.md` |
+| What `factory-guard`, `factory-resources`, `factory-doctor` and `mayor-campaign` do, and when to run them | `FACTORY_TOOLS.md` |
+| Is anything wrong that we can actually fix (vs upstream noise) | run `./bin/factory-doctor`; see `FACTORY_TOOLS.md` |
 | The four conditions every factory improvement must meet | `decisions/ADR-0017-four-conditions-for-factory-improvements.md` |
 | Operator dashboard, SayMyName status, and preview | `OPERATIONS.md` |
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
@@ -43,6 +44,7 @@ replacement for a live refresh before mutation.
 - Product question: run `./bin/saymyname-product-status`; load nothing else unless a field needs recovery.
 - Factory health question: read `OPERATOR_BRIDGE.md`, then run its read-only health check.
 - Host capacity, unsaved work, or "is the factory safe to touch": run `./bin/factory-guard --check-only` and `./bin/factory-resources`; see `FACTORY_TOOLS.md`.
+- Health triage: run `./bin/factory-doctor` rather than reading raw `gc doctor` — it separates what we can fix from upstream and advisory noise.
 - One-glance Factory activity: run `./bin/factory-cockpit snapshot`; open the UI only when requested.
 - Tracked change: read the root and nearest project `AGENTS.md`, the relevant Bead, and only the linked contract needed by the change.
 - Architecture or policy change: also read the relevant ADRs and update/supersede them in the same change.

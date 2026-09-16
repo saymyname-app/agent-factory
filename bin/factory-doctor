@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""factory-doctor — answer "is anything wrong that I can actually fix?"
+
+`gc doctor` reports on the whole stack, ours and its own dependencies alike.
+On 2026-09-16 it carried 34 warnings that no one here can act on: every single
+one is `contract = "graph.v2"` inside the upstream gascity pack, read-only in
+~/.gc/cache, still unmigrated on that project's own main branch (88 hits), and
+therefore unchanged by updating the pin. Working that out cost a full
+investigation — and left standing, it costs the next agent the same
+investigation, every time, forever.
+
+Noise is not harmless. Thirty-four permanent warnings are where a real one
+hides.
+
+So this classifies instead of suppressing. Nothing is muted by name and there
+is no ignore-list to curate, because a suppression list is exactly the thing
+that goes stale and blinds you. The verdict is re-derived from evidence on
+every run:
+
+  ACTIONABLE  a blocking-severity problem with evidence inside this factory.
+  UPSTREAM    blocking-severity, but every path it cites lives in the pack
+              cache. Not ours to fix; report it upstream or wait.
+  ADVISORY    gc doctor's own advisory severity: self-healing or expected.
+
+If upstream ever fixes those formulas the warnings simply stop appearing, and
+if one of them ever starts citing a path in this repo it is reclassified as
+ACTIONABLE automatically. Exit status is non-zero only for ACTIONABLE, so this
+is safe to wire into a check.
+
+Usage: factory-doctor [--all] [--json] [--quiet]
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+
+ROOT = os.environ.get("FACTORY_ROOT", "/home/benja/agent-factory")
+PACK_CACHE = re.compile(r"/\.gc/cache/repos/")
+DID_NOT_ANSWER = re.compile(r"timed out|timeout|abandoned", re.I)
+# A path starts a token. Without that anchor, the "parent/child conflicts"
+# in gc doctor's own fix_hint yields "/child", which is not a path — and one
+# stray non-cache "path" is enough to misclassify an upstream-only warning as
+# actionable. That is exactly what it did on the first run.
+PATH_IN_TEXT = re.compile(r"""(?:^|(?<=[\s(\["']))(/[^\s()"']+)""")
+
+
+def collect(payload):
+    """gc doctor nests results; pull out every object that is a check."""
+    out = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if "status" in node and "name" in node:
+                out.append(node)
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(payload)
+    return out
+
+
+def evidence_paths(check):
+    """Every filesystem path the check cites, message and details alike."""
+    text = " ".join(
+        [str(check.get("message", "")), str(check.get("fix_hint", ""))]
+        + [str(d) for d in (check.get("details") or [])]
+    )
+    return PATH_IN_TEXT.findall(text)
+
+
+def classify(check):
+    # A check that timed out did not fail — it did not answer. Reporting "no
+    # answer" as "something is broken here" is the same error as a guard
+    # asserting what it never checked, and it would make this tool flap: on
+    # 2026-09-16 `order-firing-current` timed out once at load 13 and was clean
+    # on the next three runs at load 21. A tool that cries wolf gets ignored,
+    # which is precisely the failure it exists to prevent. Reported always,
+    # never counted as a failure. A PERSISTENT one is worth chasing.
+    if DID_NOT_ANSWER.search(str(check.get("message", ""))):
+        return "UNKNOWN"
+    if str(check.get("severity", "")).lower() == "advisory":
+        return "ADVISORY"
+    paths = evidence_paths(check)
+    # Upstream only when there IS evidence and ALL of it is in the pack cache.
+    # A check citing one path here and one there is ours to look at.
+    if paths and all(PACK_CACHE.search(p) for p in paths):
+        return "UPSTREAM"
+    return "ACTIONABLE"
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--all", action="store_true",
+                    help="also list the UPSTREAM and ADVISORY entries in full")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("-h", "--help", action="store_true")
+    args = ap.parse_args()
+    if args.help:
+        print(__doc__)
+        return 0
+
+    try:
+        proc = subprocess.run(
+            ["gc", "doctor", "--json"], cwd=ROOT,
+            capture_output=True, text=True, timeout=600,
+        )
+    except FileNotFoundError:
+        print("factory-doctor: gc not found on PATH", file=sys.stderr)
+        return 2
+    except subprocess.TimeoutExpired:
+        print("factory-doctor: gc doctor did not finish in 10 minutes", file=sys.stderr)
+        return 2
+
+    # gc doctor exits non-zero when it warns; that is not a failure to parse.
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        print("factory-doctor: gc doctor produced no usable JSON", file=sys.stderr)
+        if proc.stderr.strip():
+            print(proc.stderr.strip()[:500], file=sys.stderr)
+        return 2
+
+    buckets = {"ACTIONABLE": [], "UNKNOWN": [], "UPSTREAM": [], "ADVISORY": []}
+    passed = 0
+    for check in collect(payload):
+        if str(check.get("status", "")).lower() == "ok":
+            passed += 1
+            continue
+        buckets[classify(check)].append(check)
+
+    if args.json:
+        print(json.dumps(
+            {"passed": passed,
+             **{k.lower(): [{"name": c.get("name"), "message": c.get("message"),
+                             "fix_hint": c.get("fix_hint")} for c in v]
+                for k, v in buckets.items()}},
+            indent=2, ensure_ascii=False))
+        return 1 if buckets["ACTIONABLE"] else 0
+
+    def say(*a):
+        if not args.quiet:
+            print(*a)
+
+    say("factory-doctor — %s" % ROOT)
+    say("")
+
+    if buckets["ACTIONABLE"]:
+        say("ACTIONABLE HERE (%d):" % len(buckets["ACTIONABLE"]))
+        for c in buckets["ACTIONABLE"]:
+            say("  ! %s — %s" % (c.get("name"), c.get("message")))
+            if c.get("fix_hint"):
+                say("      fix: %s" % c["fix_hint"])
+        say("")
+    else:
+        say("✓ nothing actionable here — %d checks passed" % passed)
+        say("")
+
+    if buckets["UNKNOWN"]:
+        say("DID NOT ANSWER (%d) — not a failure; chase it only if it persists:"
+            % len(buckets["UNKNOWN"]))
+        for c in buckets["UNKNOWN"]:
+            say("  ? %s — %s" % (c.get("name"), c.get("message")))
+        say("")
+
+    for bucket, blurb in (
+        ("UPSTREAM", "in the pack cache, not fixable from this repo"),
+        ("ADVISORY", "self-healing or expected"),
+    ):
+        items = buckets[bucket]
+        if not items:
+            continue
+        if args.all:
+            say("%s (%d) — %s:" % (bucket, len(items), blurb))
+            for c in items:
+                say("  · %s — %s" % (c.get("name"), c.get("message")))
+                if bucket == "UPSTREAM":
+                    for p in sorted({p for p in evidence_paths(c)})[:2]:
+                        say("      %s" % p)
+            say("")
+        else:
+            say("%-10s %d suppressed — %s (use --all)" % (bucket + ":", len(items), blurb))
+
+    return 1 if buckets["ACTIONABLE"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

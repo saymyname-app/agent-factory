@@ -110,6 +110,53 @@ d'être écrasé par un diagnostic de panne.
 
 ---
 
+## `./bin/factory-doctor` — « y a-t-il quelque chose que je puisse réparer ? »
+
+`gc doctor` rapporte sur toute la pile, la nôtre **et ses dépendances**. Ce
+script relit sa sortie JSON et trie chaque problème par son **origine réelle**,
+pour que le signal ne se noie pas dans ce qui ne nous appartient pas.
+
+```bash
+./bin/factory-doctor          # seulement ce qui est actionnable ici
+./bin/factory-doctor --all    # détaille aussi ce qui est écarté, et pourquoi
+./bin/factory-doctor --json
+```
+
+Quatre verdicts, **tous redérivés des preuves à chaque exécution** :
+
+| Verdict | Signification |
+|---|---|
+| `ACTIONABLE` | problème bloquant dont les preuves sont dans ce dépôt — **le seul qui fait sortir en non-zéro** |
+| `DID NOT ANSWER` | le contrôle a expiré. Il n'a pas échoué : il n'a pas répondu. Toujours affiché, jamais compté comme une panne. À poursuivre **seulement s'il persiste** |
+| `UPSTREAM` | bloquant, mais tous les chemins cités sont dans le cache de packs : pas réparable d'ici |
+| `ADVISORY` | la sévérité consultative de `gc doctor` — auto-résolutif ou attendu |
+
+**Rien n'est masqué par son nom, et il n'y a aucune liste d'exceptions à
+entretenir** — c'est précisément ce genre de liste qui se périme et rend
+aveugle. Si l'amont corrige un jour ses formules, le warning cesse simplement
+d'apparaître ; s'il se met à citer un fichier de ce dépôt, il repasse
+`ACTIONABLE` tout seul, sans que personne n'édite quoi que ce soit.
+
+Comme seul `ACTIONABLE` sort en non-zéro, ce script est sûr à câbler dans un
+contrôle automatique.
+
+### Pourquoi il existe : les 34 warnings de formules
+
+Enquête du 2026-09-16, faite une fois pour ne plus jamais être refaite :
+
+- Les **34** warnings `formula-requirements` sont **une seule et même cause** :
+  `contract = "graph.v2"`, déprécié.
+- **Aucun n'est dans ce dépôt.** Tous sont dans les formules du pack `gascity`,
+  en lecture seule sous `~/.gc/cache/repos/`.
+- **Mettre le pack à jour n'y changerait rien** : la branche `main` de
+  `gastownhall/gascity-packs` porte encore la forme dépréciée, 88 occurrences,
+  et notre copie épinglée en est identique.
+- `daemon.formula_v2` est **déjà** à `true` de notre côté. Rien n'est cassé.
+
+Il n'y a donc rien à corriger ici, et rien à attendre d'une mise à jour. Le seul
+levier restant est de le signaler à l'amont. En attendant, le tri les écarte
+pour qu'ils cessent de coûter une enquête à chaque session.
+
 ## `gc doctor` — la santé de la cité
 
 ```bash
