@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+#
+# Close a Factory delivery-outcome Bead only after independently verifying,
+# via `gh pr view`, that the named GitHub pull request is actually merged.
+#
+# ADR-0016 invariant 2: closing a delivery bead without its six proof fields
+# (gc.delivery_status, gc.work_outcome, gc.github_repo, gc.pr_number,
+# gc.pr_head, gc.merge_commit) must be refused, never silent. This script is
+# the only path that is allowed to set gc.delivery_status=merged: it derives
+# all six fields from a verified GitHub PR and writes them in the same `gc bd
+# update` call that closes the bead, so a delivery bead can never end up
+# closed-but-undocumented. On any verification failure it exits non-zero and
+# makes no metadata change at all.
+
+set -Eeuo pipefail
+
+PROGRAM_NAME="deliver-close"
+GC_BIN="${GC_BIN:-gc}"
+GH_BIN="${GH_BIN:-gh}"
+
+log() {
+  printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2
+}
+
+die() {
+  log "ERROR: $1"
+  exit 1
+}
+
+usage() {
+  cat <<'USAGE'
+Usage: deliver-close <bead-id> --repo <owner/repository> --pr <number> [--reason <text>]
+
+Verifies with `gh pr view` that the pull request is merged, then closes
+<bead-id> with all six ADR-0016 delivery-proof fields set from that verified
+evidence: gc.delivery_status=merged, gc.work_outcome=shipped,
+gc.github_repo, gc.pr_number, gc.pr_head, gc.merge_commit.
+
+Refuses to close the bead (no metadata change at all) when the PR cannot be
+verified as merged.
+USAGE
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command is unavailable: $1"
+}
+
+capture_json() {
+  local destination=$1
+  local source_name=$2
+  local output
+  shift 2
+
+  if ! output=$("$@"); then
+    die "$source_name source command failed."
+  fi
+  jq -e . >/dev/null 2>&1 <<<"$output" || die "$source_name returned invalid JSON."
+  printf -v "$destination" '%s' "$output"
+}
+
+main() {
+  local bead_id="" repo="" pr_number="" reason="Delivery verified and closed"
+
+  bead_id=${1:-}
+  [[ -n $bead_id && $bead_id != -* ]] || { usage >&2; return 2; }
+  shift
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        [[ $# -ge 2 ]] || { usage >&2; return 2; }
+        repo=$2
+        shift 2
+        ;;
+      --pr)
+        [[ $# -ge 2 ]] || { usage >&2; return 2; }
+        pr_number=$2
+        shift 2
+        ;;
+      --reason)
+        [[ $# -ge 2 ]] || { usage >&2; return 2; }
+        reason=$2
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        return 0
+        ;;
+      *)
+        usage >&2
+        return 2
+        ;;
+    esac
+  done
+
+  require_command jq
+  require_command "$GC_BIN"
+  require_command "$GH_BIN"
+
+  [[ -n $repo ]] || die "--repo owner/repository is required; refusing to close $bead_id without it."
+  [[ $repo =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$ ]] \
+    || die "--repo must be a valid owner/repository name."
+  [[ $pr_number =~ ^[1-9][0-9]*$ ]] \
+    || die "--pr must be a positive pull request number; refusing to close $bead_id without it."
+
+  local pr_response
+  capture_json pr_response "GitHub PR $pr_number" "$GH_BIN" pr view "$pr_number" \
+    --repo "$repo" --json number,state,mergedAt,mergeCommit,headRefOid,url
+
+  jq -e --argjson number "$pr_number" '
+    .number == $number and
+    .state == "MERGED" and
+    (.mergedAt | type == "string" and length > 0) and
+    (.headRefOid | type == "string" and test("^[0-9a-f]{40}$")) and
+    (.mergeCommit.oid | type == "string" and test("^[0-9a-f]{40}$"))
+  ' >/dev/null <<<"$pr_response" \
+    || die "PR $pr_number in $repo is not verifiably merged; refusing to close $bead_id without proof (gc.delivery_status stays whatever it already was)."
+
+  local pr_head merge_commit
+  pr_head=$(jq -r '.headRefOid' <<<"$pr_response")
+  merge_commit=$(jq -r '.mergeCommit.oid' <<<"$pr_response")
+
+  "$GC_BIN" bd update "$bead_id" \
+    --set-metadata "gc.delivery_status=merged" \
+    --set-metadata "gc.work_outcome=shipped" \
+    --set-metadata "gc.github_repo=$repo" \
+    --set-metadata "gc.pr_number=$pr_number" \
+    --set-metadata "gc.pr_head=$pr_head" \
+    --set-metadata "gc.merge_commit=$merge_commit" \
+    --status=closed \
+    --notes "$reason" \
+    || die "Beads update failed for $bead_id after PR verification succeeded; re-run 'gc bd show $bead_id' before retrying so a partial write is never assumed closed."
+
+  log "Closed $bead_id with all six delivery-proof fields verified against $repo#$pr_number ($merge_commit)."
+}
+
+if [[ ${DELIVER_CLOSE_SOURCE_ONLY:-0} != 1 ]]; then
+  main "$@"
+fi

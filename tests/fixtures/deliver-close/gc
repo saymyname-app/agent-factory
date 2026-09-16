@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+[[ ${1:-} == bd && ${2:-} == update ]] || exit 64
+shift 2
+
+: "${DELIVER_CLOSE_CALL_LOG:?DELIVER_CLOSE_CALL_LOG must be set by the test}"
+printf '%s\n' "$*" >> "$DELIVER_CLOSE_CALL_LOG"

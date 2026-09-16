@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+[[ ${1:-} == pr && ${2:-} == view ]] || exit 64
+pr_arg=$3
+shift 3
+
+repo=""
+while [[ $# -gt 0 ]]; do
+  if [[ $1 == --repo ]]; then
+    repo=${2:-}
+    break
+  fi
+  shift
+done
+
+scenario=${DELIVER_SCENARIO:-merged}
+
+if [[ $scenario == gh-failure ]]; then
+  printf 'gh: could not resolve pull request\n' >&2
+  exit 1
+fi
+
+number=$pr_arg
+state="MERGED"
+merged_at="2026-09-16T07:00:00Z"
+head_ref="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+merge_oid="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+case "$scenario" in
+  merged) ;;
+  not-merged) state="OPEN"; merged_at="" ;;
+  number-mismatch) number=$((pr_arg + 1)) ;;
+  short-sha) head_ref="abc123" ;;
+  *) printf 'unknown DELIVER_SCENARIO: %s\n' "$scenario" >&2; exit 64 ;;
+esac
+
+cat <<JSON
+{"number":$number,"state":"$state","mergedAt":"$merged_at","headRefOid":"$head_ref","mergeCommit":{"oid":"$merge_oid"},"url":"https://github.example.invalid/$repo/pull/$pr_arg"}
+JSON

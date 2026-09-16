@@ -585,6 +585,27 @@ output as a second backlog. `GC_BIN` and `GH_BIN` are injectable for the
 deterministic fixture suite, while the operator defaults remain `gc` and `gh`;
 Bead reads intentionally go through `gc bd` for store routing.
 
+#### Closing the delivered-outcome Bead
+
+`gc.last_delivered` must only ever point at a Bead that carries all six
+ADR-0016 delivery-proof fields (`gc.delivery_status`, `gc.work_outcome`,
+`gc.github_repo`, `gc.pr_number`, `gc.pr_head`, `gc.merge_commit`), because
+`derive_delivery()` above requires every one of them and fails closed
+otherwise. Never close that Bead by hand with `gc bd close` or a raw `gc bd
+update --status=closed`; use the deterministic wrapper instead:
+
+```bash
+./bin/deliver-close <bead-id> --repo <owner/repository> --pr <number>
+```
+
+It independently verifies with `gh pr view` that the named pull request is
+merged, then writes all six fields from that verified evidence and closes the
+Bead in the same call. If the PR cannot be verified as merged it refuses to
+close the Bead and makes no metadata change at all — never a bead that looks
+closed but is silently missing its proof. `tests/deliver-close-test.sh` covers
+the merged/not-merged/mismatched-evidence/GitHub-failure paths against
+`GC_BIN`/`GH_BIN` fixtures.
+
 #### 2026-09-15 product-status and human-state evidence
 
 - **TARGET:** expose infrastructure health, delivery activity, result lifecycle,
