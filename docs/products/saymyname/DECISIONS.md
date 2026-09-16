@@ -639,23 +639,46 @@ has not frozen. This resolves the block on `af-7700`; delivery resumes.
 
 ### Enterprise
 
-- **Responsable et canal du premier pilote** — Choisir si l’administration de l’ancienne école, l’association étudiante ou un autre sponsor porte le recrutement et la diffusion.
-- **Première cohorte de testeurs** — Définir le premier vivier nominatif, sa taille cible, les critères et la manière d’inviter les testeurs consentants.
-- **Contrat de réussite du pilote** — Fixer durée et seuils de succès avant l’observation afin de ne pas redéfinir le résultat après coup.
-- **Premier acheteur et test de prix** — Identifier le premier profil acheteur et le premier entretien, test d’offre ou de volonté de payer; le pilote gratuit ne répond pas seul à cette question.
-- **Point de contrôle marque et nom** — Décider à quel niveau de preuve conserver ou faire évoluer le nom et le positionnement SayMyName.
-
-### Product
-
-- **Premier connecteur externe** — Choisir Google, Microsoft, les contacts natifs ou une autre source uniquement selon les frictions observées et la faisabilité fournisseur.
-
-### Project
-
-- **Architecture des vues produit** — Valider l’inventaire complet des vues et l’ordre de conception puis livraison des parcours manquants.
-- **Socle du workflow design** — Confirmer une gouvernance design-system code-first et le seuil à partir duquel un prototype Figma devient utile.
-- **Environnement pilote et boucle de retours** — Choisir l’URL ou environnement pilote, le canal de retour, le responsable support et le chemin d’incident avant le recrutement.
+- **Responsable et canal du premier pilote** — voir [Pilot recruitment
+  ownership deliberately unspecified in
+  V1](#2026-09-15--pilot-recruitment-ownership-deliberately-unspecified-in-v1) ;
+  Benjamin et ITEEM choisissent ensemble le porteur et le canal au moment de
+  préparer le pilote. Seul item réellement encore ouvert de cette liste — voir
+  l'entrée `Superseded` ci-dessous pour les sept autres, retirés.
 
 ## Superseded
+
+### 2026-09-16 — Stale `## Open` list superseded by existing decisions
+
+The `## Open` list carried seven items that already had `Accepted` decisions
+above them and were never removed when those decisions landed, found stale
+during an intake-protocol dry run:
+
+- Premier connecteur externe → [Google Contacts selected as the first external
+  connector](#2026-09-15--google-contacts-selected-as-the-first-external-connector)
+- Première cohorte de testeurs → [ITEEM as the first tester
+  pool](#2026-09-15--iteem-as-the-first-tester-pool)
+- Contrat de réussite du pilote → [Balanced success contract for the first
+  pilot](#2026-09-15--balanced-success-contract-for-the-first-pilot)
+- Premier acheteur et test de prix → [First price test is a paid
+  founding-organization
+  pilot](#2026-09-15--first-price-test-is-a-paid-founding-organization-pilot)
+- Point de contrôle marque et nom → [SayMyName remains the working name
+  through the first
+  pilot](#2026-09-15--saymyname-remains-the-working-name-through-the-first-pilot)
+- Environnement pilote et boucle de retours → [Dedicated private pilot
+  environment and single feedback
+  loop](#2026-09-14--dedicated-private-pilot-environment-and-single-feedback-loop)
+- Socle du workflow design → [Code-first design
+  governance](#2026-09-14--code-first-design-governance)
+- Architecture des vues produit → reviewed baseline already exists in
+  `PROJECT_INVENTORY.md`, not a `DECISIONS.md` item
+
+Removed rather than left to mislead the next reading — an earlier session
+(this one) nearly re-decided all seven from scratch before catching the
+duplication. The one item that was genuinely still open — who owns pilot
+recruitment — already has its own dated entry declaring it deliberately
+unspecified, and is kept as the sole `## Open` entry above.
 
 ### 2026-09-14 — Open Product question: Visibilité et conservation des groupes
 

@@ -449,3 +449,63 @@ Two things are deliberately *not* recorded here and must not be invented later:
 - **Nothing was added to `docs/products/saymyname/DECISIONS.md`.** This is a
   structural Factory decision, so an ADR is its home; the product decision
   register stays for product truth.
+
+## Intake protocol v1 — dry-run validated 2026-09-16
+
+This section is the concrete interaction procedure this ADR's schema needs to
+actually run. It is versioned on its own (`v1`), separately from the contract
+schema version, so a different protocol can be tried later against the same
+contract shape without reopening this ADR's decision.
+
+**Procedure:**
+
+1. **Minimal input.** A one-line pitch, plus (for a resumed project) the
+   existing repository and durable docs. Nothing else is asked up front.
+2. **The AI drafts the full canvas alone** — objective, primary user, non-goals,
+   MVP, evolution horizon, references, differentiation, existing-code stance,
+   hard limits, autonomy level — by reading what exists, not by interviewing.
+3. **Each field is tagged**, against objective tests rather than a judgment
+   call:
+   - widens who sees real personal data → `à trancher`
+   - involves money, a real third party, or publication → `à trancher`
+   - irreversible within the current version → `à trancher`
+   - otherwise → `déduit`: decided now, recorded with its basis and its
+     reversal, same as any other delegated decision under ADR-0016
+4. **One human reading pass**, on the `à trancher` fields only, each with a
+   recommendation already attached so the human confirms or corrects rather
+   than drafts from nothing.
+5. **Execution is gated**: nothing starts before this pass is confirmed
+   (`intake` precedes `draft`, per this ADR's lifecycle).
+6. **A resumed project ports, it does not re-litigate.** Existing durable
+   decisions (`OBJECTIVE.md`, `DECISIONS.md`, `PRODUCT_STRATEGY.md` or
+   equivalent) are read in full — not sampled from the tail of a file — and
+   carried into the new contract fields as already-answered. Only fields the
+   old format never had are asked fresh.
+
+**Dry run on SayMyName, 2026-09-16 — what it found:**
+
+Applied by hand (no tooling yet) against `docs/products/saymyname/DECISIONS.md`.
+First pass read only the file's trailing `## Open` list and proposed fresh
+answers for all nine items — step 6 was skipped, the file's body was not read
+in full. Second pass read the whole file and found seven of those nine already
+`Accepted`, dated 2026-09-14/15, and better-specified than the fresh answers
+just proposed (concrete thresholds and figures where the redo offered generic
+ones). Only one item was genuinely open, and it already had its own entry
+saying so. Cleanup recorded in `DECISIONS.md` under `## Superseded`,
+2026-09-16.
+
+**What this validates and what it corrects:**
+
+- The tag mechanism (step 3) worked: every genuinely `à trancher` field in the
+  dry run was one that touched a real third party, money, or entry into the
+  `piloted` stage — exactly the intended trigger, nothing over- or
+  under-flagged.
+- Step 6 is upgraded from a preference to a hard rule after this run: **read
+  the full durable document before drafting, never the tail alone.** A partial
+  read looks identical to a clean deduction until it collides with an existing
+  decision, which is the failure mode this run hit.
+- Confirms a boundary from the standing delegation
+  ([[agentfactory-standing-delegation]]): fields that resolve to `déduit`
+  under the tests above are still decided *incrementally*, one item at a time,
+  not batched into a heavier "resolve everything now" pass — the batch is what
+  produced the duplicate-decision risk here.

@@ -14,6 +14,7 @@ Use progressive disclosure. Do not read every document by default.
 | SayMyName PO cockpit instructions and Codex config | `products/saymyname/PO_WORKSPACE_AGENTS.md`, `products/saymyname/CODEX_PROJECT.toml` |
 | Ordered product candidates and Mayor materialization | `PRODUCT_QUEUE.md` |
 | Versioned product release contract, states, and graph-aware campaign selection | `OPERATIONS.md` (Versioned product release contract), `config/product-release.schema.json`, `decisions/ADR-0014-versioned-product-release-contract.md` |
+| Project intake gate, declared autonomy, and the draft-first/confirm-by-exception protocol | `decisions/ADR-0015-project-intake-and-target-contract.md` (Intake protocol v1 section) |
 | Durable target architecture | `TARGET_ARCHITECTURE.md` |
 | Current migration state, cutover and rollback | `MIGRATION.md` |
 | Install/start/stop/doctor/backup/restore/recovery | `OPERATIONS.md` |
