@@ -28,6 +28,7 @@ from factory_cockpit import (  # noqa: E402
     SnapshotCache,
     SourceError,
     TokenReader,
+    _write_blockers,
     _last_matching_json,
     _operator_name,
     _safe_identifier,
@@ -247,7 +248,10 @@ class FactoryCockpitTest(unittest.TestCase):
             if item["status"] == "pending" and item.get("origin") != "blocker"
         ]
         counts = {domain: sum(item.get("domain") == domain for item in pending) for domain in ("enterprise", "product", "project")}
-        self.assertEqual({"enterprise": 1, "product": 0, "project": 0}, counts)
+        # All Enterprise-tier decisions (including the last one, pilot
+        # recruitment ownership) were retracted 2026-09-16 and deferred until
+        # after V1 release -- DECISIONS.md's `## Open` is now empty by design.
+        self.assertEqual({"enterprise": 0, "product": 0, "project": 0}, counts)
         self.assertGreaterEqual(len(memory["view_inventory"]), 10)
         self.assertEqual(0, memory["inventory_freshness"]["model_calls"])
         self.assertEqual(7, len(memory["delivery_workflow"]))
@@ -256,9 +260,6 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertTrue(all(item["state"] == "ready" for item in memory["product_reference"]))
         self.assertEqual(5, len(memory["journeys"]))
         self.assertTrue(memory["project_graph"]["nodes"][0]["sources"])
-        related = next(item for item in pending if item["title"] == "Responsable et canal du premier pilote")
-        self.assertTrue(related["capabilities"])
-        self.assertTrue(related["journeys"] or related["roadmap"])
 
     def test_product_config_rejects_dangling_graph_edges(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -829,6 +830,19 @@ class FactoryCockpitTest(unittest.TestCase):
 
     def test_po_console_creates_one_on_demand_session_per_decision(self):
         with tempfile.TemporaryDirectory() as directory:
+            # All Enterprise-tier decisions were retracted 2026-09-16 (deferred
+            # until after V1 release), so DECISIONS.md now has zero live pending
+            # items. Seed one synthetic blocker via the already-isolated
+            # BLOCKER_STATE_PATH (patched in setUp) purely to exercise the
+            # PO-console session-per-decision plumbing this test targets.
+            _write_blockers([{
+                "id": "test-po-console-decision",
+                "title": "Décision de test",
+                "status": "pending",
+                "domain": "product",
+                "detail": "Décision synthétique pour vérifier la création de session PO.",
+                "source": "test fixture",
+            }])
             calls = []
 
             def execute(command, **kwargs):
@@ -1034,7 +1048,9 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertEqual(1, len(result["product_work"]))
         self.assertEqual("Rendre l'onboarding autonome", result["product_work"][0]["title"])
         self.assertEqual([], result["today"]["effective_blockers"])
-        self.assertEqual(1, len(result["today"]["general_decisions"]))
+        # Enterprise-tier decisions retracted 2026-09-16; no live pending
+        # decision remains until one is newly opened or that domain reopens.
+        self.assertEqual(0, len(result["today"]["general_decisions"]))
         self.assertGreaterEqual(len(result["decision_aids"]), 1)
         self.assertEqual("Agent de maintenance", result["agents"][1]["role"])
         self.assertEqual(
