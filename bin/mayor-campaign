@@ -517,6 +517,15 @@ def sentinel(_: argparse.Namespace) -> None:
             update_metadata({"gc.campaign_failure_count": "0", "gc.campaign_last_error": ""})
             issue, campaign = coordination()
             metadata = issue.get("metadata", {})
+            # The status we just read was projected while the failure counter
+            # was still set, so it reports a transient-failure retry instead of
+            # the real product state. Acting on it is acting blind: on
+            # 2026-09-16 it hid a result awaiting finalization and the idle
+            # ladder dispatched Factory work over it. Clear the counter and let
+            # the next tick, a minute later, see the truth.
+            if (status.get("campaign") or {}).get("blocker_kind") == "transient_failure":
+                print("NOOP: recovered from a transient failure; re-reading next tick")
+                return
 
         if decision["action"] != "wake_mayor" and decision["reason"] not in LADDER_SKIPPED_REASONS:
             # No product work to do is not inactivity: walk the ladder.

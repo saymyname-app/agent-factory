@@ -154,6 +154,8 @@ renvoyé au bout de **30 min**, marqué `RAPPEL n/3`, **trois fois au plus**.
 Ensuite, c'est la vivacité qui ouvre un signalement. Les échelons 3 et 4,
 facultatifs par nature, ne sont jamais relancés.
 
+Au passage qui suit un échec transitoire, la sentinelle ne fait rien : l'état qu'elle vient de lire était masqué par cet échec. Elle agit au passage suivant.
+
 `--kind admin` est le type prévu pour une fenêtre de maintenance. Depuis le
 2026-09-16, un blocage `admin` enregistré survit à l'arrêt du contrôleur au lieu
 d'être écrasé par un diagnostic de panne.

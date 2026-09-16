@@ -115,7 +115,13 @@ class MayorCampaignTest(CampaignFixture, unittest.TestCase):
         active = status(result={"id": "af-exec", "state": "active"}, mode="active_delivery")
         self.assertEqual("none", plan_transition(active)["action"])
         finalizing = status(result={"id": "af-exec", "state": "active"}, mode="mayor_finalization")
-        self.assertEqual("finalize:af-exec", plan_transition(finalizing)["wake_key"])
+        finalize = plan_transition(finalizing)
+        self.assertEqual("finalize:af-exec", finalize["wake_key"])
+        # It says what finalizing means, so an already-closed result is not
+        # mistaken for finished work (af-7700, 2026-09-16).
+        self.assertIn("./bin/deliver-close af-exec", finalize["message"])
+        self.assertIn("jamais `gc bd close`", finalize["message"])
+        self.assertIn("gc.last_delivered", finalize["message"])
         materialized = status(result={"id": "af-exec", "state": "materialized"}, mode="materialized_without_agent")
         self.assertEqual("resume:af-exec", plan_transition(materialized)["wake_key"])
 
@@ -515,6 +521,21 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         meta = self.current_metadata()
         self.assertEqual(("0", "2026-09-16T10:40:00Z"),
                          (meta["gc.campaign_wake_resends"], meta["gc.campaign_wake_sent_at"]))
+
+    def test_no_action_on_a_status_masked_by_a_transient_failure(self):
+        """Seen live: the masked status let the ladder run over a result awaiting finalization."""
+        self.write_state({**metadata(), "gc.campaign_failure_count": "1",
+                          "gc.campaign_last_error": "product queue lock"})
+        masked = status(next_id=None)
+        masked["campaign"]["blocker_kind"] = "transient_failure"
+        self.write_status(masked)
+        out = self.sentinel(NOW).stdout
+        self.assertIn("recovered from a transient failure", out)
+        self.assertEqual(0, self.mail_count())
+        self.assertEqual("0", self.current_metadata()["gc.campaign_failure_count"])
+        # Next tick, with the real state, acts normally.
+        self.write_status(status(result={"id": "af-7700", "state": "active"}, mode="mayor_finalization"))
+        self.assertIn("NOTIFIED: mayor — finalize:af-7700", self.sentinel(NOW + 60).stdout)
 
     def test_heartbeats_are_throttled(self):
         self.write_status(status(result={"id": "af-exec", "state": "active"}, mode="active_delivery"))

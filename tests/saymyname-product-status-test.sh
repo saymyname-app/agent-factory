@@ -95,6 +95,14 @@ assert_json active '.activity.state' working
 assert_json idle '.resume.mode + ":" + (.resume.automatic | tostring) + ":" + .next_candidate.state' 'manual:false:eligible'
 assert_json human '.resume.mode + ":" + .resume.owner' 'blocking_decision:Benjamin'
 assert_json finalizing '.resume.mode + ":" + .result.stage' 'mayor_finalization:finalizing'
+# A current result closed without being finalized (af-7700, 2026-09-16) is the
+# Mayor's finalization, not a result waiting for an agent -- and it must not
+# even need the degrade path.
+assert_json closed-current '.resume.mode + ":" + .result.stage' 'mayor_finalization:finalizing'
+assert_json closed-current '.result.phase' 'Fermé mais non finalisé · enregistrer les preuves avec bin/deliver-close, puis avancer gc.last_delivered et gc.current'
+TESTS_RUN=$((TESTS_RUN + 1))
+run_fixture_json closed-current >/dev/null 2>"$STDERR_FILE" || fail_test "closed-current should succeed"
+[[ $(cat "$STDERR_FILE") != *WARNING* ]] || fail_test "closed-current went through the degrade path"
 assert_json dependency '.activity.state + ":" + .resume.condition' 'waiting_automatic:La dépendance af-proof se ferme'
 assert_json blocked '.resume.mode + ":" + .result.cause' 'blocked:La preuve externe requise manque'
 assert_json agent-missing '.resume.mode + ":" + .resume.owner' 'materialized_without_agent:Mayor'

@@ -57,6 +57,7 @@ emit_current() {
   local status="in_progress"
   [[ $scenario != human ]] || status="open"
   [[ $scenario != blocked ]] || status="blocked"
+  [[ $scenario != closed-current ]] || status="closed"
   if [[ $scenario == routed ]]; then
     issue_id="smb-current"
     title="Implement backend product outcome"

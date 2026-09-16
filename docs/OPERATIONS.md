@@ -606,6 +606,13 @@ closed but is silently missing its proof. `tests/deliver-close-test.sh` covers
 the merged/not-merged/mismatched-evidence/GitHub-failure paths against
 `GC_BIN`/`GH_BIN` fixtures.
 
+If a delivered result is closed by hand anyway while it is still the
+coordination's `gc.current`, the projection reports it as **finalizing**
+(`mayor_finalization`), not as an agentless materialized result, and the
+campaign wakes the Mayor with `finalize:<id>` spelling out the three steps:
+`deliver-close`, then `gc.last_delivered`, then `gc.current`. Until they are
+done the next eligible candidate cannot start (af-7700, 2026-09-16).
+
 #### 2026-09-15 product-status and human-state evidence
 
 - **TARGET:** expose infrastructure health, delivery activity, result lifecycle,

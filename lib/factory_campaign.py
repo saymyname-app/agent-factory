@@ -41,7 +41,11 @@ def plan_transition(status: dict[str, Any]) -> dict[str, Any]:
             "subject": f"CAMPAGNE · finaliser {result_id}",
             "message": (
                 f"La campagne autorisée attend la finalisation du résultat {result_id}. "
-                "Vérifie la revue exacte, la CI, la fusion et la clôture, puis poursuis un seul résultat à la fois."
+                "Vérifie la revue exacte, la CI, la fusion et la clôture, puis poursuis un seul résultat à la fois. "
+                f"Finaliser veut dire : clore {result_id} avec `./bin/deliver-close {result_id} --repo <owner/repo> "
+                "--pr <n>` (jamais `gc bd close`, même s'il est déjà fermé : ses six preuves manquent sinon), puis "
+                f"pointer `gc.last_delivered` sur {result_id} et avancer `gc.current` sur la coordination. "
+                "Tant que ce n'est pas fait, la campagne ne peut pas lancer le candidat suivant."
             ),
         }
     if resume_mode == "materialized_without_agent" and result_id:

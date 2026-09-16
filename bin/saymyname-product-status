@@ -169,6 +169,20 @@ derive_active_context() {
       return
       ;;
     in_progress) ;;
+    closed)
+      # A result closed while it is still the coordination's current pointer
+      # has not been finalized: its six delivery proofs and the campaign
+      # pointers (gc.last_delivered, gc.current) are still owed. On
+      # 2026-09-16 af-7700 was delivered and closed with a raw `gc bd close`;
+      # this case used to die(), the degrade path then reported it as
+      # "materialized, no agent", and the campaign kept asking the Mayor to
+      # resume a result he had rightly finished -- while the next eligible
+      # candidate never started. Finalization is the Mayor's exact next step.
+      CURRENT_STATE="finalizing"
+      CURRENT_PHASE="Fermé mais non finalisé · enregistrer les preuves avec bin/deliver-close, puis avancer gc.last_delivered et gc.current"
+      CURRENT_AGENT="none"
+      return
+      ;;
     *) die "Current outcome $current_id has inconsistent status: $current_status" ;;
   esac
 
