@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+#
+# factory-main-gate — refuse a `git push` that lands a broken commit on `main`.
+#
+# Incident (2026-09-16): commit 8d92c13 ("Defer all Enterprise-tier SayMyName
+# decisions...") landed directly on `main` and broke referential integrity
+# between docs/products/saymyname/DECISIONS.md and
+# config/products/saymyname.json's decision_refs — exactly what
+# tests/factory-cockpit-test.py already checked (13 failing cases once it
+# broke). The check existed; nothing forced it to run before the commit
+# reached `main`. Factory CI runs on push too (see .github/workflows/ci.yml),
+# but by then the breakage is already live on `main` and in the cockpit —
+# CI going red after the fact is exactly the "hours before being noticed"
+# failure mode this closes.
+#
+# This script runs the same tests locally, before the push leaves the
+# machine, and only for refs landing on `main`. It is installed as
+# `.githooks/pre-push` (core.hooksPath=.githooks is already configured for
+# this repo), so it fires from the live root and from every worktree.
+#
+# It deliberately does NOT touch:
+#   - bin/pr-autopilot: it lands PRs via `gh pr merge` (a GitHub-side API
+#     call), never a local `git push`, so this hook never runs on that path.
+#   - PRs into rig dev branches (saymyname-backend/frontend): those are
+#     gated by their own required GitHub CI checks, unchanged by this.
+#
+# The test list is read from .github/workflows/ci.yml itself (every
+# `python`/`bash` invocation of a tests/*.py or tests/*.sh file under the
+# Tests job) rather than duplicated here, so this gate can never drift from
+# CI the way ci.yml's own job list once did (tests/ci-registration-test.sh).
+#
+# Usage (as a git pre-push hook): reads "<local-ref> <local-sha> <remote-ref>
+# <remote-sha>" lines from stdin, exactly as git provides them to pre-push.
+#   factory-main-gate [--repo-root DIR] [--ci-yml FILE]
+#
+# Emergency bypass: git push --no-verify (standard git escape hatch).
+
+set -Eeuo pipefail
+
+REPO_ROOT="${FACTORY_GATE_REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)}"
+CI_YML="${FACTORY_GATE_CI_YML:-}"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo-root) REPO_ROOT=$2; shift 2 ;;
+    --ci-yml) CI_YML=$2; shift 2 ;;
+    *) echo "factory-main-gate: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$CI_YML" ] || CI_YML="$REPO_ROOT/.github/workflows/ci.yml"
+
+targets_main=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -z "${remote_ref:-}" ] && continue
+  [ "$remote_ref" = "refs/heads/main" ] && targets_main=1
+done
+
+[ "$targets_main" = "1" ] || exit 0
+
+if [ ! -f "$CI_YML" ]; then
+  echo "factory-main-gate: $CI_YML not found -- refusing to push to main unverified" >&2
+  exit 1
+fi
+
+mapfile -t cmds < <(grep -oE '(python3?|bash) tests/[A-Za-z0-9_.-]+\.(py|sh)' "$CI_YML" | sort -u)
+if [ "${#cmds[@]}" -eq 0 ]; then
+  echo "factory-main-gate: no tests found in $CI_YML -- refusing to push to main unverified" >&2
+  exit 1
+fi
+
+echo "factory-main-gate: push targets main -- running ${#cmds[@]} guarded test(s) first"
+out=$(mktemp)
+trap 'rm -f "$out"' EXIT
+failed=0
+for cmd in "${cmds[@]}"; do
+  interp=${cmd%% *}
+  file=${cmd#* }
+  [ "$interp" = "python" ] && interp=python3
+  printf '  %-70s ' "$file"
+  if ( cd "$REPO_ROOT" && "$interp" "$file" ) >"$out" 2>&1; then
+    echo OK
+  else
+    echo FAIL
+    sed 's/^/    /' "$out" >&2
+    failed=1
+  fi
+done
+
+if [ "$failed" != "0" ]; then
+  cat >&2 <<'MSG'
+
+factory-main-gate: BLOCKED -- a guarded test failed, so this push to `main`
+was refused (see 2026-09-16 incident 8d92c13 in docs/decisions for why this
+exists). Fix the failure, or route the change through a PR so CI verdicts it
+before merge.
+
+Emergency bypass (only if you know exactly why this must land unverified):
+  git push --no-verify
+MSG
+  exit 1
+fi
+
+echo "factory-main-gate: all guarded tests passed -- push to main allowed"
+exit 0

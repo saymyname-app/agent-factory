@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Runs bin/factory-main-gate before any push that lands a ref on `main`.
+# See bin/factory-main-gate for why (2026-09-16 incident 8d92c13).
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+gate="$root/bin/factory-main-gate"
+[ -x "$gate" ] || exit 0
+exec "$gate" --repo-root "$root"
