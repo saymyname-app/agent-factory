@@ -578,6 +578,19 @@ instead of a product's:
       party, or publication; irreversible within the current version. Any
       trigger firing → `à trancher`. None firing and a citation exists →
       `déduit`, decided now with its basis and its reversal.
+- [ ] A fourth tag, `deferred`: a field whose answer only matters once a
+      later, not-yet-reached project phase actually starts (e.g. a
+      go-to-market question asked during a pre-release build) is tagged
+      `deferred`, not `à trancher`. It is not asked, decided, or acted on
+      before that phase begins, however confident a recommendation could be.
+      Added 2026-09-16 from a real failure on SayMyName: several
+      Enterprise-tier decisions (pilot recruitment, pricing, brand) had been
+      answered early by accepting the first offered recommendation, or by an
+      answer that did not really engage the question — not because the
+      recommendation was bad, but because the question was asked before it
+      was load-bearing. The fix is not a better recommendation; it is not
+      asking yet. A `deferred` field is re-tagged, not silently dropped, the
+      first time the intake procedure runs again after that phase begins.
 
 **Verify** (independent, before the human sees the draft)
 - [ ] A separate reasoning pass re-derives each `déduit` field from its cited

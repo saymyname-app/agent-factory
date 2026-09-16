@@ -116,14 +116,15 @@ work. Queue changes never interrupt the outcome already in delivery.
 
 ## Product questions still owned by Benjamin
 
-- Whether the first school pilot is distributed officially by the administration
-  or by the student association; this does not block building the shared path.
-- Numerical go/no-go thresholds for onboarding, delayed recall, return and
-  reported help in a real interaction.
-- The first paid buyer and tested price after the free cohort pilot.
 - The first external connector justified by pilot data: personal contacts,
-  Google, Microsoft or another source.
-- Whether the brand name still fits after evidence for uses beyond names.
+  Google, Microsoft or another source (already decided as Google Contacts,
+  see `DECISIONS.md`; kept here as a placeholder for whichever connector
+  actually gets built from real friction evidence).
 - Exact production launch criteria and acceptable operational risk.
+
+Every Enterprise-tier question — pilot distribution, cohort, go/no-go
+thresholds, buyer, price, brand — is deferred until after V1 release; see
+`DECISIONS.md#deferred--enterprise-until-after-v1-release`. Not tracked as a
+live open question before then.
 
 These are open decisions, not blockers unless a selected outcome depends on them.

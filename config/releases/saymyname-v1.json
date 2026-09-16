@@ -122,6 +122,11 @@
       "evidence": [{"kind": "document", "ref": "docs/products/saymyname/PRODUCT_CONTEXT.md#approved-product-direction", "status": "out_of_version"}]
     },
     {
+      "id": "enterprise-decisions", "title": "Décisions entreprise (pilote, testeurs, prix, marque)",
+      "description": "Retirées le 2026-09-16 à la demande de Benjamin — répondues trop tôt, avant d’être réellement structurantes. Aucune décision entreprise n’est reprise avant la sortie de V1.", "kind": "product", "status": "out_of_version",
+      "evidence": [{"kind": "document", "ref": "docs/products/saymyname/DECISIONS.md#deferred--enterprise-until-after-v1-release", "status": "out_of_version"}]
+    },
+    {
       "id": "natural-language-retrieval", "title": "Recherche naturelle par indices",
       "description": "Extension ultérieure sur données autorisées; aucune identité inventée.", "kind": "product", "status": "out_of_version",
       "evidence": [{"kind": "document", "ref": "docs/products/saymyname/DECISIONS.md#intelligent-retrieval-without-invented-identity", "status": "out_of_version"}]

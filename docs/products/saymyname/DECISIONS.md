@@ -223,35 +223,6 @@ from existing fields and the product asks for another clue or abstains when
 evidence is insufficient. This is not camera-based facial recognition and must
 not infer sensitive characteristics.
 
-### 2026-09-14 — Free student-cohort pilot before payment
-
-The first accessible validation target is a new adult student cohort reached
-through Benjamin's former school administration or student association. The
-pilot is free, requires no payment method and tests onboarding, delayed recall,
-return and real-interaction usefulness. Payment implementation and exact pricing
-wait for evidence and buyer conversations.
-
-### 2026-09-14 — Dedicated private pilot environment and single feedback loop
-
-The first student pilot runs on a dedicated, private and stable environment,
-separate from both technical staging and public production. It has an identifiable
-pilot URL, access restricted to the invited cohort and controlled changes during
-the observation period. The exact hostname remains an implementation choice.
-
-Testers use one short feedback form as the canonical channel, reachable from the
-product and pilot communications, with email as a fallback rather than parallel
-informal channels. The previous assignment of recruitment and collective relays
-to a school sponsor is superseded by [Pilot recruitment ownership deliberately
-unspecified in V1](#2026-09-15--pilot-recruitment-ownership-deliberately-unspecified-in-v1)
-below. Benjamin is the named SayMyName support owner and remains accountable for
-replies and triage. An LLM may assist him later, but this is optional support
-rather than a transfer of responsibility or a prerequisite for the first pilot.
-
-Ordinary feedback is grouped for analysis without promising an immediate change
-for every suggestion. Any suspected personal-data exposure, unauthorized access
-or defective consent suspends the affected journey conservatively and triggers
-technical escalation before it is reopened.
-
 ### 2026-09-14 — Single PO cockpit
 
 Benjamin's normal SayMyName entrance is the Codex local project rooted at
@@ -322,128 +293,6 @@ states are the default design system. Figma is used only when a genuinely
 ambiguous or high-impact journey benefits from comparison before implementation;
 it never becomes a second implementation truth. The approval tiers and the
 design-ready checklist in `DESIGN_GOVERNANCE.md` apply to every outcome.
-
-### 2026-09-15 — Pilot recruitment ownership deliberately unspecified in V1
-
-V1 does not designate the former school's administration, its student
-association or another sponsor by default to own recruitment and distribution
-for the first pilot. Benjamin and the school will choose the appropriate owner
-and channel together when preparing the V1 pilot, based on the actual counterpart
-and conditions at that time. They may adjust that arrangement later if needed;
-this operational choice does not change the V1 product boundary.
-
-### 2026-09-15 — ITEEM as the first tester pool
-
-The first pilot recruitment pool is Benjamin's former school, ITEEM. Cohorts
-contain about 65 students; because some year groups are away on internships, the
-working assumption is that two or three cohorts will be reachable at school and
-that one cohort will be especially interested. Pilot planning therefore uses an
-initial reachable pool of about 100 people, with 300 as an absolute upper bound.
-
-These figures estimate people who may be invited, not consented or active
-testers. A later extension to the wider Centrale Lille population remains an
-option if the ITEEM pilot justifies broadening recruitment; it is not part of the
-first cohort by default.
-
-### 2026-09-15 — Open opt-in for the first ITEEM cohort
-
-The first ITEEM pilot is open to every adult student in the confirmed reachable
-pool rather than being hand-picked in advance. The invitation uses one common,
-clear message through the relay agreed with ITEEM, explains the pilot commitment
-and personal-data use, and requires each tester to opt in explicitly. Silence,
-presence in an existing contact base and receipt of the invitation never count as
-consent.
-
-The recruitment target is **25 consented testers**, sought across the reachable
-year groups during a defined enrolment window. If more than 25 volunteer, the
-pilot may include up to **30**, prioritizing a useful spread across those year
-groups rather than speed of response alone. If fewer volunteer, the pilot keeps
-the actual volunteers and records the shortfall as recruitment evidence; it does
-not pressure students or silently broaden recruitment beyond ITEEM. The exact
-names, reachable pool size, invitation relay and dates are confirmed when the
-pilot is prepared, without reopening this composition rule.
-
-### 2026-09-15 — Balanced success contract for the first pilot
-
-The first ITEEM pilot has a one-week enrolment period followed by four weeks of
-observation. Its conclusions are judged against the following thresholds fixed
-before observation begins:
-
-- at least **15 activated testers**;
-- at least **60% activation** among people who start registration, where
-  activation means completing their profile, selecting people to learn and
-  completing a first learning session;
-- at least **50% return** among activated testers, measured by completing another
-  learning session at least seven days later;
-- a median improvement of at least **20 percentage points in delayed recall**
-  between the first attempt and a comparable check at least seven days later;
-- at least **40% reported real-life usefulness** among testers who had a relevant
-  interaction opportunity, meaning SayMyName helped them at least once;
-- **no serious privacy, consent or unauthorized-access incident**.
-
-The pilot supports continuation when all thresholds are met and no serious
-incident occurs. It supports correction followed by another test when the sample
-is insufficient, or when only one quantitative threshold misses by fewer than ten
-percentage points and an identifiable cause can be addressed. The value
-proposition is reconsidered when both delayed recall and real-life usefulness
-remain weak despite satisfactory activation.
-
-This contract validates initial user value, not pricing, the identity of the
-buyer or acquisition at scale. Those require separate evidence.
-
-### 2026-09-15 — First price test is a paid founding-organization pilot
-
-The first paid-buyer profile is not tied in advance to a named institution or
-sector. It is the first qualified sponsor reached at a school or employer who has
-a concrete need to help a bounded cohort learn one another, can judge the outcome
-and has access to the relevant budget. Benjamin's former school, another school
-and his former ESN are all valid routes; an interested learner without buying
-authority is not the first-buyer test.
-
-The free ITEEM cohort pilot remains free and does not require a payment method.
-Once there is enough usage evidence to present the outcome credibly, the first
-price test is one real, written founding offer: **EUR 1,500 excluding tax for
-three months and up to 100 invited learners**, covering one organization cohort,
-assisted onboarding and an outcome review. The price is a test, not the final
-tariff. Success requires a signed order or payment; a budget holder's written
-commitment blocked only by normal procurement is directional evidence, while a
-hypothetical “I would pay” is not. A refusal and its stated reason are retained as
-evidence before changing the price or package.
-
-An optional donation may later coexist with the free personal experience, but it
-is not the first price test and is not treated as evidence of product willingness
-to pay. Consumer Premium remains a later evidence-gated offer for recurring user
-value; SayMyName does not design consumable spending or “whale” mechanics around
-a small number of disproportionate spenders.
-
-Evidence considered: RevenueCat's 2026 dataset reports a 2.1% median
-download-to-paid conversion for freemium subscription apps, an Education annual
-price median of USD 44.99, and materially different iOS and Android conversion;
-an approximately 100-person pilot would therefore provide a weak consumer price
-signal. A meta-analysis of 77 willingness-to-pay studies estimates average
-hypothetical bias at 21%, supporting a real offer over a stated-price survey.
-Pay-what-you-want field experiments also show that voluntary pricing can measure
-fairness and self-image and can reduce purchase participation. Sources:
-[RevenueCat 2026](https://www.revenuecat.com/state-of-subscription-apps),
-[Schmidt and Bijmolt (2020)](https://doi.org/10.1007/s11747-019-00666-6), and
-[Gneezy et al. (2012)](https://doi.org/10.1073/pnas.1120893109).
-
-### 2026-09-15 — SayMyName remains the working name through the first pilot
-
-SayMyName remains the product's working name through the first pilot rather than
-being treated now as either a definitive public brand or a name that must be
-changed on intuition alone. During this period it is accompanied by a short
-descriptive promise conveying the broader value, such as helping people retain
-faces, names and useful context; the exact wording may evolve without reopening
-the naming decision.
-
-The name and positioning are reviewed after the pilot using evidence in three
-areas: user understanding of the proposition, trust and comfort with the framing,
-and relevance to prospective buyers. A change is justified by repeated
-misunderstanding, a recurring trust objection, a material commercial mismatch,
-or a serious legal or digital availability obstacle, not by an isolated naming
-preference. Legal and digital availability must be checked before material public
-brand investment and may force an earlier change.
 
 ### 2026-09-15 — V1 is a versioned production-autonomous release contract
 
@@ -637,14 +486,42 @@ has not frozen. This resolves the block on `af-7700`; delivery resumes.
 
 ## Open
 
-### Enterprise
+None. All Enterprise-tier questions are deferred — see `## Deferred` below —
+and every Product/Project question is either decided above or does not exist
+yet at this stage of delivery.
 
-- **Responsable et canal du premier pilote** — voir [Pilot recruitment
-  ownership deliberately unspecified in
-  V1](#2026-09-15--pilot-recruitment-ownership-deliberately-unspecified-in-v1) ;
-  Benjamin et ITEEM choisissent ensemble le porteur et le canal au moment de
-  préparer le pilote. Seul item réellement encore ouvert de cette liste — voir
-  l'entrée `Superseded` ci-dessous pour les sept autres, retirés.
+## Deferred — Enterprise, until after V1 release
+
+**2026-09-16, Benjamin, in conversation, with immediate effect.** Every
+Enterprise-tier decision made so far — pilot recruitment ownership, the ITEEM
+tester pool and its opt-in composition, the pilot's success contract, the
+first paid-buyer/price test, and the brand/name review — is retracted, not
+merely superseded. Benjamin's own assessment: most were answered by accepting
+the first recommendation offered, or by a reply that did not really engage
+the question, at a point in the project where none of them were yet
+load-bearing. They are removed from active scope rather than kept as
+decisions that happen to agree with what a later, more considered pass might
+produce.
+
+**Standing rule going forward:** no Enterprise-tier question — who recruits
+or tests, pricing, buyer identity, brand/name — is raised, decided, or acted
+on by the PO or the Mayor before V1 is released. This extends the existing V1
+boundary that already deferred payment (`Frozen V1 product boundary`,
+2026-09-14) to the whole Enterprise domain. Reopening this is Benjamin's act
+alone, when the project is actually approaching that phase.
+
+The seven retracted titles, for reference only — their full text is not
+repeated here and remains recoverable from this file's Git history if ever
+genuinely needed, but is not to be read as live or binding:
+
+- Free student-cohort pilot before payment (2026-09-14)
+- Dedicated private pilot environment and single feedback loop (2026-09-14)
+- Pilot recruitment ownership deliberately unspecified in V1 (2026-09-15)
+- ITEEM as the first tester pool (2026-09-15)
+- Open opt-in for the first ITEEM cohort (2026-09-15)
+- Balanced success contract for the first pilot (2026-09-15)
+- First price test is a paid founding-organization pilot (2026-09-15)
+- SayMyName remains the working name through the first pilot (2026-09-15)
 
 ## Superseded
 
@@ -652,33 +529,17 @@ has not frozen. This resolves the block on `af-7700`; delivery resumes.
 
 The `## Open` list carried seven items that already had `Accepted` decisions
 above them and were never removed when those decisions landed, found stale
-during an intake-protocol dry run:
-
-- Premier connecteur externe → [Google Contacts selected as the first external
-  connector](#2026-09-15--google-contacts-selected-as-the-first-external-connector)
-- Première cohorte de testeurs → [ITEEM as the first tester
-  pool](#2026-09-15--iteem-as-the-first-tester-pool)
-- Contrat de réussite du pilote → [Balanced success contract for the first
-  pilot](#2026-09-15--balanced-success-contract-for-the-first-pilot)
-- Premier acheteur et test de prix → [First price test is a paid
-  founding-organization
-  pilot](#2026-09-15--first-price-test-is-a-paid-founding-organization-pilot)
-- Point de contrôle marque et nom → [SayMyName remains the working name
-  through the first
-  pilot](#2026-09-15--saymyname-remains-the-working-name-through-the-first-pilot)
-- Environnement pilote et boucle de retours → [Dedicated private pilot
-  environment and single feedback
-  loop](#2026-09-14--dedicated-private-pilot-environment-and-single-feedback-loop)
-- Socle du workflow design → [Code-first design
-  governance](#2026-09-14--code-first-design-governance)
-- Architecture des vues produit → reviewed baseline already exists in
-  `PROJECT_INVENTORY.md`, not a `DECISIONS.md` item
+during an intake-protocol dry run: the first external connector, the first
+tester pool, the pilot's success contract, the first buyer/price test, the
+brand/name checkpoint, the pilot environment/feedback loop, the design
+workflow threshold, and the product view architecture. Six of those eight
+target decisions (all but the connector and the design-workflow choice) were
+themselves retracted the same day — see `## Deferred` above — so the links
+that once pointed to them are removed here rather than left dead.
 
 Removed rather than left to mislead the next reading — an earlier session
 (this one) nearly re-decided all seven from scratch before catching the
-duplication. The one item that was genuinely still open — who owns pilot
-recruitment — already has its own dated entry declaring it deliberately
-unspecified, and is kept as the sole `## Open` entry above.
+duplication.
 
 ### 2026-09-14 — Open Product question: Visibilité et conservation des groupes
 
