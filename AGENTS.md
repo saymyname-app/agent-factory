@@ -54,6 +54,11 @@ For a change:
 - Beads is authoritative for executable work and dependencies.
 - One active Gas City controller per City.
 - V1 allows one writer per rig until worktree isolation is proven by canary.
+- Branch work happens in a `git worktree`, never by checking out in the live
+  root (the root is the running city). Remove the worktree when its PR merges
+  or closes: one left pinning a merged branch makes `gh pr merge
+  --delete-branch` exit non-zero after merging, which reads as a failed merge.
+  `factory-guard` names any that are left; it does not remove them for you.
 - Do not extend the retired SayMyName Linear/PowerShell runner except for transition or safety work.
 - Check Gas City, Beads, GitHub, the provider/runtime, and standards before inventing a proprietary primitive.
 - Never put secrets in Git, Beads, logs, prompts, or responses.

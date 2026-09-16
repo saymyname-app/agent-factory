@@ -110,7 +110,19 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
               if gh pr merge "$num" --repo "$repo" --squash --delete-branch >/dev/null 2>&1; then
                 log "    merged"; ARMED=$((ARMED+1))
               else
-                log "    direct merge failed — left for a human"; ERRORS=$((ERRORS+1))
+                # A non-zero exit here does NOT mean the merge failed. gh also
+                # returns non-zero when it merged fine but could not delete the
+                # local branch -- which is what happens whenever a leftover
+                # worktree still pins it. Same rule as above: never retry, ask
+                # the server what actually happened.
+                final=$(gh pr view "$num" --repo "$repo" --json state \
+                  --jq .state 2>/dev/null)
+                if [ "$final" = "MERGED" ]; then
+                  log "    merged (local cleanup failed; see factory-guard worktrees)"
+                  ARMED=$((ARMED+1))
+                else
+                  log "    direct merge failed — left for a human"; ERRORS=$((ERRORS+1))
+                fi
               fi
             else
               log "    not armable and checks are '$checks'/'$state' — waiting, not merging"
