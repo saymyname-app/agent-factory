@@ -15,7 +15,18 @@ if [[ ${1:-} == bd && ${2:-} == show && ${4:-} == --json ]]; then
       ;;
     af-cm1l) printf '[{"id":"af-cm1l","status":"closed","metadata":{"gc.queue_state":"materialized","gc.queue_goal":"none","gc.materialized_bead":"af-hho5"}}]\n' ;;
     af-hho5) printf '[{"id":"af-hho5","status":"in_progress","metadata":{}}]\n' ;;
-    *) exit 64 ;;
+    *)
+      node_dir=${CAMPAIGN_NODE_DIR:-}
+      node_file=
+      [[ -z $node_dir ]] || node_file="$node_dir/${3}.json"
+      if [[ -n $node_file && -f $node_file ]]; then
+        jq -c '[.]' "$node_file"
+      elif [[ -n $node_dir ]]; then
+        printf '[{"id":"%s","status":"open","metadata":{}}]\n' "$3"
+      else
+        exit 64
+      fi
+      ;;
   esac
   exit 0
 fi
@@ -37,6 +48,33 @@ if [[ ${1:-} == bd && ${2:-} == update && ${3:-} == af-1vr4 ]]; then
   done
   mv "$tmp" "$state"
   printf '{}\n'
+  exit 0
+fi
+
+if [[ ${1:-} == bd && ${2:-} == update ]]; then
+  node_dir=${CAMPAIGN_NODE_DIR:?}
+  node_id=$3
+  node_file="$node_dir/${node_id}.json"
+  [[ -f $node_file ]] || printf '{"id":"%s","status":"open","metadata":{}}' "$node_id" >"$node_file"
+  shift 3
+  tmp="${node_file}.tmp"
+  cp "$node_file" "$tmp"
+  while [[ $# -gt 0 ]]; do
+    [[ $1 == --set-metadata && $# -ge 2 ]] || exit 64
+    pair=$2
+    key=${pair%%=*}
+    value=${pair#*=}
+    jq --arg key "$key" --arg value "$value" '.metadata[$key] = $value' "$tmp" >"${tmp}.next"
+    mv "${tmp}.next" "$tmp"
+    shift 2
+  done
+  mv "$tmp" "$node_file"
+  printf '{}\n'
+  exit 0
+fi
+
+if [[ ${1:-} == bd && ${2:-} == create ]]; then
+  printf '{"id":"af-repair"}\n'
   exit 0
 fi
 

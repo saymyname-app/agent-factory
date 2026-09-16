@@ -742,11 +742,20 @@ Record a real stop with its owner and exact action; do not put ADMIN failures in
 
 `decision` requires an effective `gc.needs_benjamin`; `admin`, `limit`,
 `result_blocker`, `all_paused`, and `durable_failure` remain separate typed
-causes. Queue/source contention is retried. After three consecutive sentinel
-failures, one metadata update persists `blocked + durable_failure + Mayor + exact
-resume command`; repair the named source and run `resume --mayor`. A restart in
-`wake_state=pending` safely resends the same durable mail before marking it
-`sent`; duplicate mail cannot bypass the first-eligible materialization guard.
+causes. Queue/source contention is retried. A local reason never produces a
+global stop (ADR-0016 §7): when three consecutive sentinel failures are
+attributable to one candidate/node (its ID comes from the same status read
+that failed to plan a transition), the sentinel quarantines that node alone —
+`gc.queue_state=blocked_durable_failure` plus a pause reason on the node's own
+Bead — and opens a repair Bead referencing it (`gc.repair_for=<node id>`); the
+coordination Bead's `gc.campaign_state` is left `active` and the campaign keeps
+selecting other eligible work. Only a failure that cannot be tied to a
+candidate — the coordination store itself unavailable, or its own metadata
+malformed — still persists `blocked + durable_failure + Mayor + exact resume
+command` on the shared coordination Bead; repair the named source and run
+`resume --mayor`. A restart in `wake_state=pending` safely resends the same
+durable mail before marking it `sent`; duplicate mail cannot bypass the
+first-eligible materialization guard.
 
 ### Deterministic local product preview
 

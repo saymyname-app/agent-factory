@@ -251,6 +251,69 @@ def failure_detail(exc: Exception) -> str:
     return re.sub(r"\s+", " ", str(exc)).strip()[:400] or "échec sans détail"
 
 
+def node_issue(node_id: str) -> dict[str, Any]:
+    return single_issue(json_run(GC_BIN, "bd", "show", node_id, "--json"), node_id)
+
+
+def status_node_id(status: Any) -> str | None:
+    """Best-effort extraction of the candidate/result node a decision was about."""
+    if not isinstance(status, dict):
+        return None
+    for key in ("next_candidate", "result"):
+        item = status.get(key)
+        if isinstance(item, dict):
+            node_id = item.get("id")
+            if isinstance(node_id, str) and node_id.strip():
+                return node_id.strip()
+    return None
+
+
+def quarantine_node(node_id: str, exc: Exception) -> None:
+    """Isolate the one failing node so the campaign can keep selecting other work."""
+    cause = (
+        f"Panne durable de campagne sur {node_id} après {FAILURE_THRESHOLD} échecs "
+        f"consécutifs du sentinelle : {failure_detail(exc)}"
+    )
+    run(
+        GC_BIN, "bd", "update", node_id,
+        "--set-metadata", "gc.queue_state=blocked_durable_failure",
+        "--set-metadata", f"gc.queue_pause_reason={safe_value(cause)}",
+        "--set-metadata", "gc.campaign_node_failure_count=0",
+        "--set-metadata", "gc.campaign_node_last_error=",
+    )
+    run(
+        GC_BIN, "bd", "create",
+        f"Réparer {node_id} — panne durable de campagne",
+        "-p", "1", "-t", "bug",
+        "-d", (
+            f"Le nœud {node_id} a été mis en quarantaine par le sentinelle de campagne "
+            f"après {FAILURE_THRESHOLD} échecs consécutifs. Cause : {failure_detail(exc)}. "
+            "Diagnostiquer et corriger la source, puis reprendre ce nœud une fois réparé "
+            "(le reste de la campagne continue sans lui)."
+        ),
+        "--set-metadata", f"gc.repair_for={node_id}",
+    )
+
+
+def record_node_failure(node_id: str, exc: Exception) -> int:
+    """Count a failure against the one node it is attributable to, not the campaign."""
+    node = node_issue(node_id)
+    node_metadata = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+    try:
+        count = int(node_metadata.get("gc.campaign_node_failure_count", 0)) + 1
+    except (TypeError, ValueError):
+        count = 1
+    if count >= FAILURE_THRESHOLD:
+        quarantine_node(node_id, exc)
+    else:
+        run(
+            GC_BIN, "bd", "update", node_id,
+            "--set-metadata", f"gc.campaign_node_failure_count={count}",
+            "--set-metadata", f"gc.campaign_node_last_error={safe_value(failure_detail(exc))}",
+        )
+    return count
+
+
 def record_failure(metadata: dict[str, Any], exc: Exception) -> int:
     try:
         count = int(metadata.get("gc.campaign_failure_count", 0)) + 1
@@ -303,8 +366,25 @@ def sentinel(_: argparse.Namespace) -> None:
         return
     try:
         status = json_run(STATUS_BIN, "--json")
+    except CampaignCommandError as exc:
+        count = record_failure(metadata, exc)
+        mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
+        raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
+
+    try:
         decision = plan_transition(status)
-    except (CampaignCommandError, CampaignDecisionError) as exc:
+    except CampaignDecisionError as exc:
+        node_id = status_node_id(status)
+        if node_id:
+            try:
+                count = record_node_failure(node_id, exc)
+            except CampaignCommandError:
+                node_id = None
+            else:
+                mode = "automatic retry" if count < FAILURE_THRESHOLD else "node quarantined"
+                raise CampaignCommandError(
+                    f"{mode} {count}/{FAILURE_THRESHOLD} on {node_id}: {failure_detail(exc)}"
+                ) from exc
         count = record_failure(metadata, exc)
         mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
         raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc

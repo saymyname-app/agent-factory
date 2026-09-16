@@ -41,6 +41,21 @@ def status(next_id="af-next", result=None, mode="automatic_campaign"):
     }
 
 
+def status_with_release_mismatch(node_id="af-node9", other_id="af-other"):
+    return {
+        "contract": "agent-factory-human-state/v1",
+        "campaign": {"enabled": True, "state": "active", "blocked": False, "wake_key": None, "wake_state": "none"},
+        "resume": {"mode": "automatic_campaign"},
+        "result": {"id": None, "state": "none"},
+        "next_candidate": {"id": node_id},
+        "release": {
+            "contract": "agent-factory-product-release/v1",
+            "state": "approved",
+            "campaign": {"selected": {"work_ref": other_id, "criterion_refs": []}},
+        },
+    }
+
+
 class MayorCampaignTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -49,6 +64,8 @@ class MayorCampaignTest(unittest.TestCase):
         self.status_file = self.root / "status.json"
         self.log_file = self.root / "calls.log"
         self.lock_file = self.root / "campaign.lock"
+        self.node_dir = self.root / "nodes"
+        self.node_dir.mkdir()
         self.fixture = ROOT / "tests" / "fixtures" / "mayor-campaign"
         self.env = {
             **os.environ,
@@ -58,6 +75,7 @@ class MayorCampaignTest(unittest.TestCase):
             "CAMPAIGN_STATUS_FILE": str(self.status_file),
             "CAMPAIGN_CALL_LOG": str(self.log_file),
             "CAMPAIGN_LOCK_FILE": str(self.lock_file),
+            "CAMPAIGN_NODE_DIR": str(self.node_dir),
         }
         self.write_state(metadata())
         self.write_status(status())
@@ -79,6 +97,9 @@ class MayorCampaignTest(unittest.TestCase):
 
     def current_metadata(self):
         return json.loads(self.state_file.read_text(encoding="utf-8"))["metadata"]
+
+    def node_metadata(self, node_id):
+        return json.loads((self.node_dir / f"{node_id}.json").read_text(encoding="utf-8"))["metadata"]
 
     def mail_count(self):
         if not self.log_file.exists():
@@ -203,6 +224,30 @@ class MayorCampaignTest(unittest.TestCase):
         self.assertIn("mayor-campaign resume --mayor", value["gc.campaign_action"])
         noop = self.invoke("sentinel")
         self.assertIn("campaign blocked", noop.stdout)
+
+    def test_durable_failure_tied_to_one_node_quarantines_only_that_node(self):
+        self.write_status(status_with_release_mismatch())
+        for expected in (1, 2, 3):
+            result = self.invoke("sentinel", check=False)
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("af-node9", result.stderr)
+
+        # The failing node alone is quarantined, with a repair item opened for it.
+        node = self.node_metadata("af-node9")
+        self.assertEqual("blocked_durable_failure", node["gc.queue_state"])
+        calls = self.log_file.read_text(encoding="utf-8")
+        self.assertIn("bd create", calls)
+        self.assertIn("af-node9", calls)
+
+        # The campaign itself was never blocked -- only the local node was.
+        coordination = self.current_metadata()
+        self.assertEqual("active", coordination["gc.campaign_state"])
+        self.assertEqual("0", coordination.get("gc.campaign_failure_count", "0"))
+
+        # The rest of the campaign keeps going: a different candidate wakes the Mayor normally.
+        self.write_status(status(next_id="af-next2"))
+        resumed = self.invoke("sentinel")
+        self.assertIn("materialize:af-next2", resumed.stdout)
 
     def test_malformed_coordination_is_counted_and_store_outage_is_explicit(self):
         malformed = metadata()
