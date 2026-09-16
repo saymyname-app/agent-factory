@@ -196,6 +196,40 @@ and `merge_result` across `publish`, `review`, `implement`, `do-work` and
 `build-basic`. No bead carried `merge_strategy` or `pr_number` metadata, which
 is why `pr-autopilot` links PR to bead by branch name instead.
 
+## Main-landing gate — `main` cannot go red silently anymore
+
+**As of 2026-09-16, `git push` to `main` in `benjamin-hurand/agent-factory`
+runs the guarded local test suite first and refuses the push if it fails**
+(`bin/factory-main-gate`, installed as `.githooks/pre-push`, ADR-0020).
+
+This closes a real gap: commit `8d92c13` landed directly on `main` and broke
+referential integrity between `docs/products/saymyname/DECISIONS.md` and
+`config/products/saymyname.json`'s `decision_refs` — a check
+`tests/factory-cockpit-test.py` already had. Nothing forced that suite to run
+before the commit reached `main`; Factory CI (which also runs `on: push` to
+`main`, see `.github/workflows/ci.yml`) only reported it after the fact, and
+both CI and the live cockpit stayed broken for hours before it was noticed.
+This repository cannot use GitHub branch protection or a required check —
+private repo, no GitHub Pro, `403` on the branches API — so a local gate is
+the available mechanism, not a fallback choice.
+
+The gate reads its test list straight out of `.github/workflows/ci.yml`
+(every `python`/`bash tests/*.py|*.sh` line under the `Tests` job), so it can
+never drift from CI's own list the way that list once drifted from the tests
+directory (ADR-0017, `tests/ci-registration-test.sh`).
+
+**It does not touch the automated delivery loop.** `bin/pr-autopilot` lands
+merges with `gh pr merge` — a GitHub-side API call, never a local `git push`
+— so this hook never runs on that path. Rig PRs into `dev` are unaffected;
+they are still gated purely by their own required GitHub CI checks as
+described above. Only a `git push` that includes `refs/heads/main` in this
+repository is gated, and only by the same tests CI already runs.
+
+Emergency bypass is the standard git escape hatch, `git push --no-verify` —
+this is a local convenience gate, not a security boundary. See ADR-0020 for
+the full decision record and `tests/factory-main-gate-test.sh` for the proof
+that it actually blocks a broken push and never blocks anything else.
+
 ## Réversibilité par défaut
 
 Règle (ADR-0019, ADR-0016 §7) : un changement doit pouvoir être défait dans la

@@ -27,9 +27,10 @@ Use progressive disclosure. Do not read every document by default.
 | Operator dashboard, SayMyName status, and preview | `OPERATIONS.md` |
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
 | Is a schema change undoable; migration declarations; what pr-autopilot holds | `DELIVERY.md` (Réversibilité par défaut), `decisions/ADR-0019-reversibility-by-default.md`, `./bin/reversibility-check` |
+| Why a `git push` to `main` can be refused, and why `pr-autopilot` is unaffected | `DELIVERY.md` (Main-landing gate), `decisions/ADR-0020-main-landing-gate.md`, `./bin/factory-main-gate` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0019-reversibility-by-default.md` |
+| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0020-main-landing-gate.md` |
 
 ## Authority order
 
