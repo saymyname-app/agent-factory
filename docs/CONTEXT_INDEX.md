@@ -15,6 +15,7 @@ Use progressive disclosure. Do not read every document by default.
 | Ordered product candidates and Mayor materialization | `PRODUCT_QUEUE.md` |
 | Versioned product release contract, states, and graph-aware campaign selection | `OPERATIONS.md` (Versioned product release contract), `config/product-release.schema.json`, `decisions/ADR-0014-versioned-product-release-contract.md` |
 | Project intake gate, declared autonomy, and the draft-first/confirm-by-exception protocol | `decisions/ADR-0015-project-intake-and-target-contract.md` (Intake protocol v2 section; v1 kept for its dry-run record) |
+| Existing-code review tiers for takeover projects (existant/cible reconciliation) | `decisions/ADR-0021-existing-code-review-tiers.md`, `INTAKE_REVIEW_TIERS.md` |
 | Durable target architecture | `TARGET_ARCHITECTURE.md` |
 | Current migration state, cutover and rollback | `MIGRATION.md` |
 | Install/start/stop/doctor/backup/restore/recovery | `OPERATIONS.md` |
@@ -30,7 +31,7 @@ Use progressive disclosure. Do not read every document by default.
 | Why a `git push` to `main` can be refused, and why `pr-autopilot` is unaffected | `DELIVERY.md` (Main-landing gate), `decisions/ADR-0020-main-landing-gate.md`, `./bin/factory-main-gate` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0020-main-landing-gate.md` |
+| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0021-existing-code-review-tiers.md` |
 
 ## Authority order
 
