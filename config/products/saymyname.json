@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "slug": "saymyname",
   "name": "SayMyName",
   "operator_name": "Benjamin",
@@ -30,6 +30,12 @@
   ],
   "preview_command": [
     "bin/saymyname-preview"
+  ],
+  "preview_browser_url": "http://127.0.0.1:5173/",
+  "preview_version_policy": "dev synchronisé avec origin/dev, dépôts propres, SHA affichés",
+  "preview_components": [
+    {"id": "frontend", "label": "Frontend", "command": "npm run dev"},
+    {"id": "backend", "label": "Backend", "command": "./mvnw spring-boot:run"}
   ],
   "decision_blockers": [
     {"work_ref": "af-hxji", "decision_ref": "Visibilité et conservation des groupes"}

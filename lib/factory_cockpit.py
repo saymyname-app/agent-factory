@@ -39,9 +39,10 @@ from product_release import (
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_ROOT = ROOT / "ui" / "factory-cockpit"
-PRODUCT_CONFIG_PATH = Path(os.environ.get(
-    "FACTORY_COCKPIT_PRODUCT_CONFIG", ROOT / "config" / "products" / "saymyname.json"
+COCKPIT_CONFIG_PATH = Path(os.environ.get(
+    "FACTORY_COCKPIT_CONFIG", ROOT / "config" / "cockpit.json"
 ))
+PRODUCTS_ROOT = ROOT / "config" / "products"
 REMOTE_ACCESS_FILE = ROOT / ".gc" / "runtime" / "factory-cockpit-remote-url"
 BLOCKER_STATE_PATH = ROOT / ".gc" / "runtime" / "factory-cockpit-blockers.json"
 DECISION_DOMAINS = ("enterprise", "product", "project")
@@ -63,9 +64,11 @@ class StaleError(ConflictError):
 
 
 def _operator_name(config: dict[str, Any]) -> str:
-    """Human the cockpit speaks to. Defaults to the historical operator."""
+    """Human the cockpit speaks to. Declared by the pack, never by the core."""
     value = config.get("operator_name")
-    return value if isinstance(value, str) and value.strip() else "Benjamin"
+    if not isinstance(value, str) or not value.strip():
+        raise SourceError("Nom d’opérateur non configuré.")
+    return value.strip()
 
 
 def _repo_path(value: Any, field: str, root: Path = ROOT) -> Path:
@@ -81,7 +84,58 @@ def _repo_path(value: Any, field: str, root: Path = ROOT) -> Path:
     return resolved
 
 
-def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
+def _validate_preview_surface(value: dict[str, Any]) -> None:
+    """A pack that owns a preview wrapper must also describe what it shows."""
+    expected = _repo_path(f"bin/{value['slug']}-preview", "preview_command")
+    if value["preview_command_path"] != expected:
+        raise SourceError("La prévisualisation doit utiliser le contrat dédié au produit configuré.")
+    components = value.get("preview_components")
+    if not isinstance(components, list) or not components:
+        raise SourceError("Composants de prévisualisation manquants.")
+    seen: set[str] = set()
+    for component in components:
+        if not isinstance(component, dict) or not {"id", "label", "command"}.issubset(component):
+            raise SourceError("Composant de prévisualisation incomplet.")
+        component_id = component["id"]
+        if (
+            not isinstance(component_id, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", component_id)
+            or component_id in seen
+        ):
+            raise SourceError("Identifiant de composant de prévisualisation invalide ou dupliqué.")
+        if not all(
+            isinstance(component[key], str) and component[key].strip()
+            for key in ("label", "command")
+        ):
+            raise SourceError(f"Composant de prévisualisation {component_id} mal décrit.")
+        seen.add(component_id)
+    url = value.get("preview_browser_url")
+    if not isinstance(url, str) or not re.fullmatch(
+        r"http://(?:127\.0\.0\.1|localhost)(?::[0-9]{1,5})?/[^\s]*", url
+    ):
+        raise SourceError("La prévisualisation doit rester en boucle locale.")
+    policy = value.get("preview_version_policy")
+    if not isinstance(policy, str) or not policy.strip():
+        raise SourceError("Politique de version de prévisualisation manquante.")
+
+
+def active_product_config_path() -> Path:
+    """Resolve the served product pack from configuration, never from code."""
+    override = os.environ.get("FACTORY_COCKPIT_PRODUCT_CONFIG")
+    if override:
+        return Path(override)
+    try:
+        selection = json.loads(COCKPIT_CONFIG_PATH.read_text(encoding="utf-8"))
+        slug = str(selection["active_product"])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise SourceError(f"Produit actif non configuré: {exc}") from exc
+    if not re.fullmatch(r"[a-z0-9-]+", slug):
+        raise SourceError("Slug de produit actif invalide.")
+    return PRODUCTS_ROOT / f"{slug}.json"
+
+
+def load_product_config(path: Path | None = None) -> dict[str, Any]:
+    path = path or active_product_config_path()
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -94,11 +148,12 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         "delivery_workflow", "product_reference",
     }
     required.add("journeys")
-    if value.get("schema_version") != 3 or not required.issubset(value):
+    required.add("operator_name")
+    if value.get("schema_version") != 4 or not required.issubset(value):
         raise SourceError("Configuration produit incomplète ou version non prise en charge.")
     if not re.fullmatch(r"[a-z0-9-]+", str(value["slug"])) or not str(value["name"]).strip():
         raise SourceError("Identité de produit invalide.")
-    if "operator_name" in value and (not isinstance(value["operator_name"], str) or not value["operator_name"].strip()):
+    if not isinstance(value["operator_name"], str) or not value["operator_name"].strip():
         raise SourceError("Nom d’opérateur invalide.")
     if "north_star" in value and (not isinstance(value["north_star"], str) or not value["north_star"].strip()):
         raise SourceError("Nord magnétique produit invalide.")
@@ -135,6 +190,7 @@ def load_product_config(path: Path = PRODUCT_CONFIG_PATH) -> dict[str, Any]:
         ):
             raise SourceError("Commande de prévisualisation invalide.")
         value["preview_command_path"] = _repo_path(value["preview_command"][0], "preview_command")
+        _validate_preview_surface(value)
     if not isinstance(value["capabilities"], list) or not isinstance(value["relations"], list):
         raise SourceError("Graphe produit invalide.")
     decision_blockers = value.get("decision_blockers", [])
@@ -521,7 +577,7 @@ def _is_internal_bead(bead: dict[str, Any]) -> bool:
 
 def _product_bead(
     bead: dict[str, Any], store: str, current_id: str | set[str] | None,
-    product_name: str = "SayMyName",
+    product_name: str, product_slug: str,
 ) -> dict[str, Any] | None:
     if _is_internal_bead(bead):
         return None
@@ -569,8 +625,8 @@ def _product_bead(
     else:
         kind = "Livraison"
     product = metadata.get("gc.queue_product") or product_name
-    if isinstance(product, str):
-        product = product.replace("saymyname", "SayMyName")
+    if isinstance(product, str) and product_slug:
+        product = product.replace(product_slug, product_name)
     return {
         "id": bead.get("id"),
         "title": _human_product_title(bead.get("title")),
@@ -707,7 +763,7 @@ def _read_blockers(path: Path | None = None) -> list[dict[str, Any]]:
 def _decision_aids(
     human_state: dict[str, Any],
     last_delivery: dict[str, Any],
-    operator: str = "Benjamin",
+    operator: str,
 ) -> list[dict[str, str]]:
     advice: list[dict[str, str]] = []
     health = human_state["health"]
@@ -1172,7 +1228,7 @@ class ProductMemory:
                 "order": index + 1,
                 "title": title,
                 "stage": self.ROADMAP_STAGE[index] if index < len(self.ROADMAP_STAGE) else "later",
-                "source": "PRODUCT_STRATEGY.md · Product roadmap",
+                "source": f"{self.strategy.name} · Product roadmap",
             })
         configured_roadmap = {
             item.get("roadmap")
@@ -1198,7 +1254,7 @@ class ProductMemory:
                 "title": match.group(1).strip(),
                 "status": "accepted",
                 "detail": _paragraph(match.group(2)),
-                "source": "DECISIONS.md · Accepted",
+                "source": f"{self.decisions.name} · Accepted",
             }
             for index, match in enumerate(re.finditer(
                 r"(?ms)^###\s+\d{4}-\d{2}-\d{2}\s+—\s+(.*?)\s*$\n(.*?)(?=^### |\Z)", accepted_raw
@@ -1220,7 +1276,7 @@ class ProductMemory:
                     "status": "pending",
                     "domain": domain,
                     "detail": detail,
-                    "source": f"DECISIONS.md · Open · {heading.strip()}",
+                    "source": f"{self.decisions.name} · Open · {heading.strip()}",
                 })
         known_titles = {_normalized_title(item["title"]) for item in pending}
         blockers = []
@@ -1755,7 +1811,8 @@ class FactoryCollector:
                     continue
                 try:
                     item = _product_bead(
-                        bead, store, current_product_ids, self.product_config["name"]
+                        bead, store, current_product_ids,
+                        self.product_config["name"], self.product_config["slug"],
                     )
                 except SourceError as exc:
                     sources[f"product_work:{store}"] = False
@@ -2105,6 +2162,7 @@ class FactoryCollector:
         return {
             "schema_version": 2,
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            "operator": _operator_name(self.product_config),
             "factory": {
                 "state": factory_state,
                 "label": factory_label,
@@ -2345,7 +2403,7 @@ class DeliveryEvidenceReader:
             "last_delivered": values["LAST DELIVERED"],
             "next": values["NEXT"],
             "needs_benjamin": values["NEEDS BENJAMIN"],
-            "verified_by": "bin/saymyname-product-status · Beads + Gas City + GitHub",
+            "verified_by": f"{self.config['status_command'][0]} · Beads + Gas City + GitHub",
             "model_calls": 0,
         }
 
@@ -2745,9 +2803,8 @@ class POBridge:
     ) -> None:
         self.config = config or load_product_config()
         self.memory = ProductMemory(config=self.config)
-        self.state_path = state_path or ROOT / ".gc" / "runtime" / (
-            "factory-cockpit-po.json" if self.config["slug"] == "saymyname"
-            else f"factory-cockpit-po-{self.config['slug']}.json"
+        self.state_path = state_path or (
+            ROOT / ".gc" / "runtime" / f"factory-cockpit-po-{self.config['slug']}.json"
         )
         self.executor = executor or subprocess.run
         self.lock = threading.Lock()
@@ -3062,25 +3119,33 @@ class PreviewBridge:
     def status(self) -> dict[str, Any]:
         if not self.command:
             return {
-                "state": "unconfigured", "browser_url": None,
-                "action": None, "error": None,
+                "state": "unconfigured", "browser_url": None, "components": [],
+                "commands": {}, "action": None, "error": None,
+                "version_policy": "Ce produit ne déclare aucune prévisualisation locale.",
             }
         result = self.executor(
             [*self.command, "status"], cwd=ROOT,
             capture_output=True, text=True, timeout=30,
         )
         values = self._parse(result.stdout)
+        components = [
+            {
+                "id": component["id"],
+                "label": component["label"],
+                "command": component["command"],
+                "sha": values.get(f"{component['id'].upper()}_SHA", "unknown"),
+                "health": values.get(f"{component['id'].upper()}_HEALTH", "unknown"),
+            }
+            for component in self.config["preview_components"]
+        ]
         return {
             "state": values.get("STATE", "unknown"),
-            "backend_sha": values.get("BACKEND_SHA", "unknown"),
-            "frontend_sha": values.get("FRONTEND_SHA", "unknown"),
-            "backend_health": values.get("BACKEND_HEALTH", "unknown"),
-            "frontend_health": values.get("FRONTEND_HEALTH", "unknown"),
-            "browser_url": values.get("BROWSER_URL", "http://127.0.0.1:5173/"),
+            "components": components,
+            "browser_url": values.get("BROWSER_URL", self.config["preview_browser_url"]),
             "action": self.running_action,
             "error": self.error,
-            "commands": {"frontend": "npm run dev", "backend": "./mvnw spring-boot:run"},
-            "version_policy": "dev synchronisé avec origin/dev, dépôts propres, SHA affichés",
+            "commands": {item["id"]: item["command"] for item in components},
+            "version_policy": self.config["preview_version_policy"],
         }
 
     def submit(self, action: Any) -> dict[str, Any]:
@@ -3093,7 +3158,10 @@ class PreviewBridge:
                 raise RuntimeError(f"L’action {self.running_action} est déjà en cours.")
             self.running_action = str(action)
             self.error = None
-        threading.Thread(target=self._run, args=(str(action),), daemon=True, name="product-preview").start()
+        threading.Thread(
+            target=self._run, args=(str(action),), daemon=True,
+            name=f"{self.config['slug']}-preview",
+        ).start()
         return {"accepted": True, "action": action}
 
     def _run(self, action: str) -> None:

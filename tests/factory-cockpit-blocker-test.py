@@ -124,13 +124,13 @@ class BlockerDecisionWorkspaceTest(unittest.TestCase):
                 "gc.decision_domain": "product",
             },
         }
-        item = _product_bead(bead, "city", None)
+        item = _product_bead(bead, "city", None, "Produit Test", "produit-test")
         self.assertEqual("Choisir le périmètre de l'import administré.", item["needs_benjamin"])
         self.assertEqual("product", item["decision_domain"])
 
     def test_product_bead_without_blocker_metadata_reports_none(self):
         bead = {"id": "af-clean", "title": "Nothing to see", "status": "open", "labels": ["jit"]}
-        item = _product_bead(bead, "city", None)
+        item = _product_bead(bead, "city", None, "Produit Test", "produit-test")
         self.assertIsNone(item["needs_benjamin"])
         self.assertIsNone(item["decision_domain"])
 

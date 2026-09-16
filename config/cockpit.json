@@ -1,0 +1,5 @@
+{
+  "$comment": "Which product pack the cockpit serves. Override per process with FACTORY_COCKPIT_PRODUCT_CONFIG.",
+  "schema_version": 1,
+  "active_product": "saymyname"
+}
