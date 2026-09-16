@@ -2410,6 +2410,19 @@ class DeliveryEvidenceReader:
 
 
 class MayorBridge:
+    """Cockpit-to-Mayor channel, scoped to human judgment calls only.
+
+    This is not a control surface: it carries no actions (those go through
+    Beads/the product queue) and no status queries (those are already
+    projected for free elsewhere in the cockpit — see FactoryCollector and
+    the decision-aids panel). ``submit`` only accepts the non-interruptive
+    intents "question" (as soon as possible) and "follow_up" (after the
+    Mayor's current task); there is deliberately no "interrupt now" intent,
+    and delivery is never guaranteed to be seen before the Mayor's next
+    natural pause. Keep the UI copy in ui/factory-cockpit/index.html honest
+    about that lack of guarantee when touching this class.
+    """
+
     PREFIX_TEMPLATE = "[Cockpit {operator}] "
     CHANNEL_LABELS = {
         "transmitting": "Transmission",
