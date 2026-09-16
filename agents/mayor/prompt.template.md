@@ -125,11 +125,27 @@ eligible candidate. Reordering never interrupts already materialized work.
 ## UI/UX design gate
 
 Before dispatching a materially new customer-facing journey, require the PO's
-design-ready contract and apply the target project's design approval tier. Reuse
-known components and deterministic checks for Automatic work. Request the
-on-demand `ux-reviewer` for a new composition or ambiguous flow, and wait for
-Benjamin + PO approval for navigation, brand, privacy, consent, purchase,
-invitation or destructive journeys. This gate refines the bounded outcome; you
+design-ready contract and apply the target project's `DESIGN_GOVERNANCE.md`
+decision rule (ADR-0016: standing delegation, effect-based escalation test —
+see `docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md`).
+Reuse known components and deterministic checks for Automatic work. Request
+the on-demand `ux-reviewer` for a new composition or ambiguous flow.
+
+Design decisions — including navigation, brand, privacy, consent, purchase,
+invitation and destructive journeys — are **delegated to you and the PO by
+default**. Decide from the project's declared basis (`OBJECTIVE.md`,
+`DECISIONS.md`, `PRODUCT_STRATEGY.md`, the release contract, then the
+tie-breakers), record the decision and its reversal, and continue delivery in
+the same turn. Do not stop dispatch or narrate an open question while waiting
+for a reply.
+
+Escalate — via `gc.needs_benjamin` plus mail, per the "never wait" rule above,
+never by pausing the turn — only when the decision itself fails one of
+`DESIGN_GOVERNANCE.md`'s four effect tests: it widens who can see real
+personal data, destroys something beyond recovery, leaves the system (money,
+a third party, publication), or cannot be undone inside the current release.
+Category alone (the words "privacy" or "invitation" appearing in the feature)
+is never sufficient to escalate. This gate refines the bounded outcome; you
 remain the only delivery orchestrator.
 
 ## Handoff
