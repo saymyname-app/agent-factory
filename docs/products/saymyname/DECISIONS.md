@@ -532,6 +532,108 @@ Open consequence, deliberately accepted: an organization can refuse a correction
 indefinitely. That asymmetry is tolerable only because withdrawal is not
 refusable. If withdrawal ever becomes negotiable, this decision must be reopened.
 
+### 2026-09-16 — Personal CSV import: the seven af-hr1v decisions
+
+**Tier: delegated.** Taken under the standing design-decision delegation Benjamin
+recorded in `DESIGN_GOVERNANCE.md` on 2026-09-16. Verified against the four
+escalation tests before recording: the sole reader of an imported personal
+contact is the importing person (nothing widens), nothing leaves the system, and
+every change below is undoable within the current release by a code revert plus
+a reversible migration — none of the seven fails a test. Design-ready options and
+recommendations are in `af-hr1v` (40988-char contract, mayor-verified persisted
+2026-09-15/16).
+
+1. **Personal tenant provisioning trigger.** Lazily and atomically provision a
+   `TenantPersonal` (+ membership + default workspace + identity attributes) the
+   first time the user opens the personal-import entry point, gated only on
+   `!existsByOwnerUserId`, no separate entitlement.
+   Basis: `DECISIONS.md` "Personal learning home in V1" (independent of
+   organization membership, no personal CRM) plus tie-breaker 2, reusing
+   `ManagedOrganizationService`'s already-tested atomic-provisioning pattern.
+   Reversal: revert the provisioning commit; drop any provisioned empty personal
+   tenants via a reversible down-migration (no imported data is lost, since
+   provisioning alone creates no person rows).
+2. **Reuse vs. fork of `ImportService`/`ImportController` for personal scope.**
+   Reuse the existing, already-shipped classes unmodified; add a route-level
+   guard rejecting `PERSONAL`-kind tenants from `/publish`/`/invite`-adjacent
+   endpoints, while `confirm()` auto-publishes internally for that kind.
+   Basis: the 2026-09-15 "Administered CSV import" decision (reuse the same
+   shipped, tested import mechanism) and tie-breaker 2.
+   Reversal: revert the tenant-kind branch; personal scope loses the guard and
+   the service reverts to organization-only behavior.
+3. **Duplicate policy for personal imports.** Inherit the organization policy
+   unchanged: possible duplicates skipped by default, explicit "Create
+   separate" per row, computed strictly within the caller's own tenant.
+   Basis: the 2026-09-15 "Administered CSV import" decision point 4 (identical
+   policy) plus "Three sources and learner choice" (private, tenant-isolated).
+   Reversal: revert the config; duplicate detection is a UX filter, not
+   data-destructive, so reversal loses no data.
+4. **Review/scheduling model for personal-imported people.** Fork
+   `PersonalLearningService`'s scheduler onto a new
+   `PersonalPersonSelection`/`PersonalPersonSchedule` model; do not weaken the
+   organization `QuizEngine`'s mandatory-approved-photo join.
+   Basis: "Three sources and learner choice" (learner selects, private
+   progress) plus tie-breakers 2 and 3 — reuses an already-tested scheduler and
+   keeps the narrower exposure by leaving the shared org pipeline untouched.
+   Reversal: revert the new model and its additive migration via a reversible
+   down-migration; the organization quiz pipeline is never touched, so nothing
+   else to restore.
+5. **Retention and deletion timing for personal data.** Shorten parsed-staging
+   retention to 7 days (organization import uses 30). Deletion of an imported
+   person is an immediate, ungraced hard delete server-side, with only a
+   client-side confirmation dialog against accidental clicks — no server-side
+   grace window.
+   Basis: **Benjamin, 2026-09-16, in conversation** — standing rule: "pour
+   trancher il faut faire le même choix que mes concurrents feraient."
+   Applied: comparable products that hold user-owned personal data
+   (Google Contacts, Apple Contacts, Notion, Gmail, photo libraries) converge
+   on a recoverable delete with a user-visible recovery window of about 30
+   days, a permanent purge afterwards, and an explicit "delete permanently
+   now" action for anyone who wants it immediate. A bounded, documented window
+   remains compatible with GDPR erasure "without undue delay".
+   **Decision: recoverable delete with a 30-day owner-visible recovery window,
+   an explicit permanent-delete action, and hard purge at expiry.** Parsed
+   staging retention is aligned to the same 30 days as the organization import
+   rather than shortened to 7, so there is one retention rule instead of two.
+   History: an earlier PO recommendation (relayed 2026-09-16, misrecorded that
+   day as Benjamin's own instruction) argued for an immediate server-side hard
+   delete. That was the minority choice and it is superseded here. The
+   correction matters beyond this entry: PO mail is sent under the `human`
+   identity, so a PO recommendation must never again be recorded as Benjamin's
+   word.
+   **No longer escalated.** The point was escalated on 2026-09-16 because an
+   ungraced hard delete met escalation test 2 (destruction beyond recovery).
+   A recoverable delete does not meet that test, so the escalation is resolved
+   by the choice itself rather than by accepting a risk. The deletion subgraph
+   is unparked.
+   Reversal: the window length is a config value; the recovery model is a
+   revertible code path plus a reversible additive migration for the
+   soft-deleted state. Nothing is destroyed while the window is open.
+
+6. **Publication/visibility default for personal imports.** Skip Draft/Published
+   entirely for personal scope: `confirm()` auto-invokes the existing
+   idempotent `WorkspacePersonDao.publish` for `PERSONAL`-kind tenants; the
+   frontend never shows a Publish action.
+   Basis: "Personal learning home in V1" and "Three sources and learner
+   choice" (private from organizations and other users; a personal tenant
+   structurally has only one viewer) plus tie-breaker 2 (reuse the existing
+   idempotent `publish()`).
+   Reversal: revert the auto-publish branch; personal imports would then need
+   an explicit publish action again, no data implication.
+7. **`person_sources`/provenance schema boundary.** Do not use `person_sources`
+   for personal imports in V1; rely solely on
+   `import_batches`/`workspace_persons.source_batch_id`, exactly as the
+   organization `ImportService` already does today.
+   Basis: consistency with the already-shipped organization path (tie-breaker
+   2) and tie-breaker 4 (the smaller, already-provable slice); fixing
+   `person_sources.fk_ps_tenant`'s generic-tenant ambiguity is real, separate
+   work, not bundled here.
+   Reversal: this decision changes nothing (no new schema use), so there is
+   nothing to revert.
+
+Date and deciding role: 2026-09-16, Mayor, under the standing PO/Mayor design
+delegation. Any of the seven may be reopened at no cost while the V1 campaign
+has not frozen. This resolves the block on `af-7700`; delivery resumes.
 
 ## Open
 

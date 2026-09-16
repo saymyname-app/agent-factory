@@ -1,0 +1,1276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-factory.local/schemas/product-release-v1-extended.draft.json",
+  "title": "Agent Factory versioned product release — v1, extended for intake (ADR-0015, Accepted)",
+  "description": "In-place extension of config/product-release.schema.json, NOT a new contract. Benjamin, 2026-09-16: the contract stays agent-factory-product-release/v1 with schema_version 1 — the Factory is unpublished, so there is no external reader to keep compatible and the only consumers are in-repo (lib/product_release.py, lib/factory_cockpit.py, lib/factory_campaign.py, bin/product-release, the tests, and the single document config/releases/saymyname-v1.json). Because nothing external reads it, the new fields are REQUIRED rather than optional and the one existing document is migrated in the same change, which keeps validate_release_contract fail-closed. Adds the upstream intake half: project origin, deterministic discovery, takeover conflicts, the human-only objective that bounds L3 autonomy, declared autonomy, budgeted questions, recorded assumptions, a loop guard, and contract revision. On implementation this file replaces product-release.schema.json outright. SPECIFICATION ONLY — not wired in.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "contract",
+    "schema_version",
+    "product",
+    "version",
+    "title",
+    "state",
+    "revision",
+    "objective",
+    "origin",
+    "autonomy",
+    "intake",
+    "assumptions",
+    "budget",
+    "maturity",
+    "capabilities",
+    "journeys",
+    "included",
+    "excluded",
+    "dependencies",
+    "decisions",
+    "criteria",
+    "work_graph",
+    "factory_improvements",
+    "next_version"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contract": {
+      "const": "agent-factory-product-release/v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "product": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "version": {
+      "$ref": "#/$defs/version"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state": {
+      "enum": [
+        "intake",
+        "draft",
+        "approved",
+        "executing",
+        "frozen"
+      ],
+      "description": "intake is fail-closed for execution exactly like draft: select_campaign_work returns release_not_executable. intake -> draft additionally requires intake.state == complete."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic. The campaign reads the contract only at a selection boundary, so a revision never interrupts an active node."
+    },
+    "next_version": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/version"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "objective": {
+      "type": "object",
+      "description": "The ceiling L3 autonomy may not move. The human's durable statement of what the product must become, above and outliving any single version. Readable by the Factory, NEVER writable by it at any autonomy level: a revision that would contradict the objective is not a revision, it raises a reserved `outcome` decision. Set and changed by the human alone.",
+      "required": [
+        "statement",
+        "set_by",
+        "set_at"
+      ],
+      "properties": {
+        "statement": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Verbatim. Never rewritten, never summarised by the Factory."
+        },
+        "set_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "set_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "origin": {
+      "type": "object",
+      "description": "Where this project came from and what was mechanically observed about it before any question was asked.",
+      "required": [
+        "kind",
+        "statement",
+        "sources",
+        "discovery"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "greenfield",
+            "takeover",
+            "migration"
+          ]
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The human's own words for what they want. Verbatim, never rewritten."
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "ref"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "repository",
+                  "document",
+                  "system",
+                  "database",
+                  "conversation"
+                ]
+              },
+              "ref": {
+                "type": "string",
+                "minLength": 1
+              },
+              "access": {
+                "enum": [
+                  "read",
+                  "read_write",
+                  "none"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "conflicts": {
+          "type": "array",
+          "description": "Takeover contradictions: the existing code does X, origin.statement says the target is not-X. Benjamin, 2026-09-16: neither side wins by default. Each entry must raise exactly one reserved `outcome` decision offering keep_target / adapt_target / mix, and intake cannot complete while one is unanswered.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "summary",
+              "code_evidence",
+              "intent_ref",
+              "decision_id",
+              "resolution"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1
+              },
+              "code_evidence": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/$defs/evidence"
+                }
+              },
+              "intent_ref": {
+                "type": "string",
+                "minLength": 1
+              },
+              "decision_id": {
+                "$ref": "#/$defs/id"
+              },
+              "resolution": {
+                "enum": [
+                  "pending",
+                  "keep_target",
+                  "adapt_target",
+                  "mix"
+                ]
+              },
+              "resolution_detail": {
+                "type": "string",
+                "description": "Required when resolution = mix: which part of the target stands and which part bends."
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "discovery": {
+          "type": "object",
+          "required": [
+            "generated_at",
+            "method",
+            "findings"
+          ],
+          "properties": {
+            "generated_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "method": {
+              "enum": [
+                "deterministic_scan",
+                "model_assisted",
+                "human_statement"
+              ],
+              "description": "Pass 1 of intake must be deterministic_scan: 0 model calls."
+            },
+            "findings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "area",
+                  "summary",
+                  "evidence"
+                ],
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/id"
+                  },
+                  "area": {
+                    "enum": [
+                      "stack",
+                      "routes",
+                      "data",
+                      "tests",
+                      "ci",
+                      "docs",
+                      "issues",
+                      "history",
+                      "deployment"
+                    ]
+                  },
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "$ref": "#/$defs/evidence"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "autonomy": {
+      "type": "object",
+      "description": "How much is asked — never what may be skipped. reserved_questions must always contain the full reserved set at every level; validate_release_contract enforces it. L3 (granted for SayMyName by Benjamin, 2026-09-16) lets the Factory revise the target inside a version, bounded by `objective`; freezing a version and opening the next one stays one human confirmation because permanent irreversibility is a reserved class.",
+      "required": [
+        "level",
+        "label",
+        "granted_by",
+        "granted_at",
+        "reserved_questions"
+      ],
+      "properties": {
+        "level": {
+          "enum": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ]
+        },
+        "version_transition_requires_human": {
+          "type": "boolean",
+          "default": true,
+          "description": "start_next_version freezes the current release permanently. Must stay true at every level, L3 included; false is invalid and validate_release_contract rejects it."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "granted_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "granted_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reserved_questions": {
+          "type": "array",
+          "minItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/reservedClass"
+          }
+        },
+        "escalations": {
+          "type": "array",
+          "description": "Additional, project-specific classes the human wants asked beyond the reserved set.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "intake": {
+      "type": "object",
+      "required": [
+        "state",
+        "question_budget",
+        "questions",
+        "exit_criteria"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "not_started",
+            "discovering",
+            "drafting",
+            "awaiting_human",
+            "complete"
+          ]
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "question_budget": {
+          "type": "object",
+          "required": [
+            "max_first_pass",
+            "max_per_iteration",
+            "spent",
+            "exhausted"
+          ],
+          "properties": {
+            "max_first_pass": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10,
+              "default": 5
+            },
+            "max_per_iteration": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5,
+              "default": 2
+            },
+            "spent": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "exhausted": {
+              "type": "boolean"
+            },
+            "on_exhausted": {
+              "enum": [
+                "proceed_on_assumptions",
+                "stop_and_ask"
+              ],
+              "description": "ADR-0015 open question Q2. Recommended: proceed_on_assumptions."
+            }
+          },
+          "additionalProperties": false
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "prompt",
+              "admitted_by",
+              "status"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "kind": {
+                "$ref": "#/$defs/reservedClass"
+              },
+              "prompt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "admitted_by": {
+                "enum": [
+                  "reserved",
+                  "leverage"
+                ],
+                "description": "reserved = always asked. leverage = two admissible answers produce two different select_campaign_work selections over the next three selections."
+              },
+              "leverage_refs": {
+                "$ref": "#/$defs/idList",
+                "description": "work_graph or criteria ids whose selection the answer changes. Required when admitted_by = leverage."
+              },
+              "asked_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "asked",
+                  "answered",
+                  "dropped_over_budget",
+                  "withdrawn"
+                ]
+              },
+              "answer": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "answer_ref": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Durable reference to where the answer was recorded (DECISIONS.md anchor, decision id, bead)."
+              },
+              "produced_decision_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "produced_assumption_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "exit_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Machine-checked, not asserted. See ADR-0015 section 2 pass 4.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "statement",
+              "satisfied"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "statement": {
+                "type": "string",
+                "minLength": 1
+              },
+              "satisfied": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "assumptions": {
+      "type": "array",
+      "description": "The opposite of a question is not silence, it is a recorded assumption. Every one is visible in the derived doc and refutable in one click.",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "statement",
+          "rationale",
+          "confidence",
+          "status",
+          "scope_refs",
+          "invalidated_by"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "statement": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "status": {
+            "enum": [
+              "standing",
+              "confirmed",
+              "refuted",
+              "promoted_decision"
+            ]
+          },
+          "scope_refs": {
+            "$ref": "#/$defs/idList",
+            "description": "Capabilities, journeys, criteria or work_graph nodes that rest on this assumption. Refutation marks all of them for re-derivation and raises exactly one decision_required."
+          },
+          "invalidated_by": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/evidence"
+            },
+            "description": "Typed evidence whose arrival forces re-evaluation."
+          },
+          "promoted_decision_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "skills": {
+      "type": "object",
+      "description": "DEFERRED (Benjamin, 2026-09-16) — reserved and optional, not required, with an empty default. A registry pays off at the second project; AGENTS.md covers the first. Kept defined so picking it up later fills a field instead of reopening the contract. Design when picked up: curated registry, selected at scoping, no self-invention at execution time — a new skill is proposed as a factory_improvements entry and lands through normal review.",
+      "default": {
+        "registry_ref": "skills/registry.json",
+        "project_type": "unclassified",
+        "packs": []
+      },
+      "required": [
+        "registry_ref",
+        "project_type",
+        "packs"
+      ],
+      "properties": {
+        "registry_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project_type": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9.-]{0,63}$"
+        },
+        "packs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "version",
+              "selected_by",
+              "reason"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1
+              },
+              "selected_by": {
+                "enum": [
+                  "registry_match",
+                  "human_override"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "proposals": {
+          "type": "array",
+          "description": "Skill gaps the Factory noticed. Each must point at a factory_improvements entry; it is Factory-kind work with a PR and a human review.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "improvement_ref"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "improvement_ref": {
+                "$ref": "#/$defs/id"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "budget": {
+      "type": "object",
+      "description": "Not a spend ceiling. Benjamin, 2026-09-16: token and wall-clock ceilings are removed — the subscriptions are flat-rate, so a ceiling protects nothing and can stop a campaign short of the result. What remains is a loop guard plus separate accounting. Progress is measured on the contract (a work_graph state change or an evidence status change), never on agent activity.",
+      "required": [
+        "max_consecutive_no_progress",
+        "spent"
+      ],
+      "properties": {
+        "max_consecutive_no_progress": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3,
+          "description": "Consecutive selections with no contract-observable change before the campaign stops with no_progress. Mirrors FAILURE_THRESHOLD in lib/factory_campaign.py."
+        },
+        "provider_fallback": {
+          "type": "array",
+          "description": "Provider profiles from city.toml, in order. provider_quota_exhausted switches to the next one and only stops the campaign when every entry is exhausted.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "spent": {
+          "type": "object",
+          "description": "Observation only — no value here gates anything. delivery_tokens and clarification_tokens are kept apart (Benjamin, 2026-09-16: separate): reading the target well must stay visibly free of delivery and must never be throttled by it.",
+          "required": [
+            "delivery_tokens",
+            "clarification_tokens",
+            "consecutive_no_progress"
+          ],
+          "properties": {
+            "delivery_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "clarification_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "wall_clock_minutes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "consecutive_no_progress": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "stop_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/stopReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "maturity": {
+      "type": "object",
+      "required": [
+        "level",
+        "label",
+        "criteria"
+      ],
+      "properties": {
+        "level": {
+          "enum": [
+            "intake",
+            "not_ready",
+            "partial",
+            "release_ready",
+            "production_autonomous"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "criteria": {
+          "$ref": "#/$defs/idList"
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/evidencedBlock"
+      }
+    },
+    "journeys": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/evidencedBlock"
+          },
+          {
+            "type": "object",
+            "required": [
+              "capability_refs"
+            ],
+            "properties": {
+              "capability_refs": {
+                "$ref": "#/$defs/idList"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "included": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/scopedBlock"
+      }
+    },
+    "excluded": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/scopedBlock"
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/evidencedBlock"
+          },
+          {
+            "type": "object",
+            "required": [
+              "required_for"
+            ],
+            "properties": {
+              "required_for": {
+                "$ref": "#/$defs/idList"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "source_ref",
+          "status",
+          "risk",
+          "revision",
+          "capability_refs",
+          "dependency_refs",
+          "options"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "decision_required",
+              "superseded"
+            ]
+          },
+          "risk": {
+            "enum": [
+              "low",
+              "high"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reserved_class": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/reservedClass"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when this decision came from a reserved intake question, so the doc can show why a human was asked."
+          },
+          "origin_question_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capability_refs": {
+            "$ref": "#/$defs/idList"
+          },
+          "dependency_refs": {
+            "$ref": "#/$defs/idList"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "label"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/id"
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/evidencedBlock"
+          },
+          {
+            "type": "object",
+            "required": [
+              "capability_refs",
+              "journey_refs",
+              "acceptance"
+            ],
+            "properties": {
+              "capability_refs": {
+                "$ref": "#/$defs/idList"
+              },
+              "journey_refs": {
+                "$ref": "#/$defs/idList"
+              },
+              "acceptance": {
+                "type": "string",
+                "minLength": 1,
+                "description": "What a human must be able to observe. Required in v2: an intake cannot complete while any criterion lacks one."
+              }
+            }
+          }
+        ]
+      }
+    },
+    "work_graph": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "work_ref",
+          "title",
+          "kind",
+          "state",
+          "order",
+          "dedupe_key",
+          "criterion_refs",
+          "depends_on",
+          "independence",
+          "blocker"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "work_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "enum": [
+              "product",
+              "factory"
+            ]
+          },
+          "state": {
+            "enum": [
+              "candidate",
+              "materialized",
+              "active",
+              "blocked",
+              "delivered",
+              "cancelled",
+              "paused",
+              "superseded_pending"
+            ],
+            "description": "superseded_pending: a contract revision invalidated this node while it was active. It is allowed to land rather than being killed mid-flight."
+          },
+          "order": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "dedupe_key": {
+            "$ref": "#/$defs/id"
+          },
+          "criterion_refs": {
+            "$ref": "#/$defs/idList"
+          },
+          "assumption_refs": {
+            "$ref": "#/$defs/idList",
+            "description": "Assumptions this node rests on. Refuting one of them marks this node for re-derivation."
+          },
+          "depends_on": {
+            "$ref": "#/$defs/idList"
+          },
+          "independence": {
+            "enum": [
+              "proven",
+              "unknown"
+            ]
+          },
+          "introduced_in_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "blocker": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "cause",
+                  "owner",
+                  "action"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "decision",
+                      "admin",
+                      "limit",
+                      "durable_failure",
+                      "dependency"
+                    ]
+                  },
+                  "decision_id": {
+                    "$ref": "#/$defs/id"
+                  },
+                  "cause": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "owner": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "action": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "factory_improvements": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/scopedBlock"
+          },
+          {
+            "type": "object",
+            "required": [
+              "work_ref"
+            ],
+            "properties": {
+              "work_ref": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]{0,95}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^V[1-9][0-9]*$"
+    },
+    "idList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/id"
+      }
+    },
+    "reservedClass": {
+      "enum": [
+        "outcome",
+        "identity_and_consent",
+        "irreversible",
+        "money",
+        "authority",
+        "legal"
+      ],
+      "description": "Always asked of the human, at every autonomy level. An assumption may never stand in for one."
+    },
+    "stopReason": {
+      "enum": [
+        "release_target_proven",
+        "all_remaining_blocked_by_decision",
+        "blocked_decision",
+        "blocked_admin",
+        "blocked_limit",
+        "blocked_durable_failure",
+        "blocked_dependency",
+        "independence_unknown",
+        "no_proven_independent_work",
+        "release_not_executable",
+        "intake_incomplete",
+        "provider_quota_exhausted",
+        "no_progress"
+      ]
+    },
+    "status": {
+      "enum": [
+        "proven",
+        "partial",
+        "unverified",
+        "absent",
+        "out_of_version",
+        "decision_required",
+        "assumed"
+      ],
+      "description": "v2 adds `assumed`: established by Factory inference, not by proof. The derived doc renders it distinctly so nothing is guessed invisibly."
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "kind",
+        "ref",
+        "status"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "ui",
+            "api",
+            "data",
+            "test",
+            "document",
+            "bead",
+            "github",
+            "scan"
+          ]
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidencedBlock": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "description",
+        "status",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      }
+    },
+    "scopedBlock": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/evidencedBlock"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "product",
+                "factory"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

@@ -36,3 +36,9 @@ hooks/
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Gas City skill projections (symlinks into ~/.gc/cache — machine-local)
+.claude/skills/
+
+# Local pre-edit safety copies; git history is the authoritative backup
+*.before-*
