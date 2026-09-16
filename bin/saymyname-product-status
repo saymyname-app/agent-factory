@@ -361,6 +361,70 @@ derive_delivery() {
   LAST_DELIVERY="PR $pr_number — merged as $short_merge; $ci_evidence"
 }
 
+degrade_active_context() {
+  local current_id=$1
+  log "WARNING: current outcome $current_id has a malformed live-state signal (see the ERROR above); reporting it as materialized with no live agent instead of aborting the projection."
+  CURRENT_STATE="materialized"
+  CURRENT_PHASE="Projection dégradée : bead malformé pour le résultat courant, voir le journal du contrôleur."
+  CURRENT_AGENT="none"
+  CURRENT_CAUSE=""
+}
+
+# Runs derive_active_context inside a subshell so a die() triggered by a
+# malformed current-outcome Bead only aborts that isolated computation. A
+# single bad Bead must never take the whole projection down (governance
+# invariant a, af-wisp-c3zmg6): on failure we degrade CURRENT_* to a
+# still-usable value instead of exiting non-zero.
+derive_active_context_or_degrade() {
+  local current_issue=$1
+  local current_id=$2
+  local context_json
+
+  if context_json=$(
+    derive_active_context "$current_issue" "$current_id"
+    jq -cn \
+      --arg outcome "$CURRENT_OUTCOME" --arg state "$CURRENT_STATE" \
+      --arg phase "$CURRENT_PHASE" --arg agent "$CURRENT_AGENT" \
+      --arg cause "${CURRENT_CAUSE:-}" \
+      '{outcome:$outcome, state:$state, phase:$phase, agent:$agent, cause:$cause}'
+  ); then
+    CURRENT_OUTCOME=$(jq -r '.outcome' <<<"$context_json")
+    CURRENT_STATE=$(jq -r '.state' <<<"$context_json")
+    CURRENT_PHASE=$(jq -r '.phase' <<<"$context_json")
+    CURRENT_AGENT=$(jq -r '.agent' <<<"$context_json")
+    CURRENT_CAUSE=$(jq -r '.cause' <<<"$context_json")
+    return
+  fi
+
+  CURRENT_OUTCOME=$(jq -r '.title // empty' <<<"$current_issue")
+  [[ -n $CURRENT_OUTCOME ]] || CURRENT_OUTCOME="$current_id (titre indisponible)"
+  degrade_active_context "$current_id"
+}
+
+# Runs derive_delivery inside a subshell so a die() triggered by a malformed
+# last-delivered Bead (e.g. missing proof fields, the af-u8id.3 incident)
+# only aborts that isolated computation instead of the whole projection.
+derive_delivery_or_degrade() {
+  local delivered_issue=$1
+  local delivered_id=$2
+  local delivery_json
+
+  if delivery_json=$(
+    derive_delivery "$delivered_issue" "$delivered_id"
+    jq -cn --arg outcome "$LAST_OUTCOME" --arg evidence "$LAST_DELIVERY" \
+      '{outcome:$outcome, evidence:$evidence}'
+  ); then
+    LAST_OUTCOME=$(jq -r '.outcome' <<<"$delivery_json")
+    LAST_DELIVERY=$(jq -r '.evidence' <<<"$delivery_json")
+    return
+  fi
+
+  log "WARNING: last delivered outcome $delivered_id has missing or invalid delivery proof (see the ERROR above); reporting it as degraded instead of aborting the projection."
+  LAST_OUTCOME=$(jq -r '.title // empty' <<<"$delivered_issue")
+  [[ -n $LAST_OUTCOME ]] || LAST_OUTCOME="$delivered_id (titre indisponible)"
+  LAST_DELIVERY="Preuve de livraison manquante ou invalide pour $delivered_id ; voir le journal du contrôleur."
+}
+
 main() {
   local parent_response parent current_id current_issue last_id delivered_issue format=text
   local queue_response next_pointer candidate_matches next_candidate resume_mode resume_condition
@@ -420,7 +484,7 @@ main() {
     current_json=null
   else
     show_issue current_issue "$current_id" "Current outcome $current_id"
-    derive_active_context "$current_issue" "$current_id"
+    derive_active_context_or_degrade "$current_issue" "$current_id"
     current_json=$(jq -cn \
       --arg id "$current_id" --arg title "$CURRENT_OUTCOME" \
       --arg state "$CURRENT_STATE" --arg phase "$CURRENT_PHASE" \
@@ -433,7 +497,7 @@ main() {
 
   last_id=$(metadata_string "$parent" "gc.last_delivered" "Last delivered pointer")
   show_issue delivered_issue "$last_id" "Last delivered outcome $last_id"
-  derive_delivery "$delivered_issue" "$last_id"
+  derive_delivery_or_degrade "$delivered_issue" "$last_id"
 
   next_pointer=$(metadata_string "$parent" "gc.next_outcome" "Next approved outcome")
   NEEDS_BENJAMIN=$(metadata_string "$parent" "gc.needs_benjamin" "Human decision")

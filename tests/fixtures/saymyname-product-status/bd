@@ -89,6 +89,12 @@ emit_delivered() {
     github_repo="saymyname/frontend"
   fi
   [[ $scenario != invalid-repo ]] || github_repo="not a repository"
+  if [[ $scenario == proof-missing ]]; then
+    cat <<JSON
+[{"id":"$issue_id","title":"$title","status":"closed","parent":"$parent","metadata":{"gc.delivery_status":"merged"}}]
+JSON
+    return
+  fi
   cat <<JSON
 [{"id":"$issue_id","title":"$title","status":"closed","parent":"$parent","metadata":{"gc.delivery_status":"merged","gc.work_outcome":"shipped","gc.github_repo":"$github_repo","gc.pr_number":24,"gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}]
 JSON

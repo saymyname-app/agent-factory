@@ -6,6 +6,8 @@ REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 STATUS_SCRIPT="$REPO_ROOT/bin/saymyname-product-status"
 FIXTURE_ROOT="$REPO_ROOT/tests/fixtures/saymyname-product-status"
 TESTS_RUN=0
+STDERR_FILE=$(mktemp)
+trap 'rm -f "$STDERR_FILE"' EXIT
 
 fail_test() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -67,6 +69,28 @@ assert_json() {
   [[ $(jq -r '.model_calls' <<<"$output") == 0 ]] || fail_test "$scenario used a model"
 }
 
+# A malformed Bead in one section (last delivered outcome, or current
+# outcome) must degrade that section only: the projection still succeeds,
+# still carries the canonical contract, and still logs an operator-visible
+# WARNING -- it must never die() and take the whole projection down
+# (governance invariant a, af-wisp-c3zmg6).
+assert_degraded() {
+  local scenario=$1 expression=$2 expected_substring=$3 warning_substring=$4
+  local output actual stderr_output
+
+  TESTS_RUN=$((TESTS_RUN + 1))
+  output=$(run_fixture_json "$scenario" 2>"$STDERR_FILE") \
+    || fail_test "$scenario should degrade, not fail closed"
+  actual=$(jq -er "$expression" <<<"$output") || fail_test "$scenario JSON path failed: $expression"
+  [[ $actual == *"$expected_substring"* ]] \
+    || fail_test "$scenario: expected '$actual' to contain '$expected_substring'"
+  [[ $(jq -r '.contract' <<<"$output") == agent-factory-human-state/v1 ]] \
+    || fail_test "$scenario contract differs while degraded"
+  stderr_output=$(cat "$STDERR_FILE")
+  [[ $stderr_output == *"WARNING"*"$warning_substring"* ]] \
+    || fail_test "$scenario did not log the expected degrade WARNING: $stderr_output"
+}
+
 assert_json active '.activity.state' working
 assert_json idle '.resume.mode + ":" + (.resume.automatic | tostring) + ":" + .next_candidate.state' 'manual:false:eligible'
 assert_json human '.resume.mode + ":" + .resume.owner' 'blocking_decision:Benjamin'
@@ -108,12 +132,14 @@ campaign_decision_output=$(run_fixture campaign-decision)
 [[ $campaign_decision_output != *'ACTION UTILE: Répondre à la décision bloquante.'* ]] \
   || fail_test 'campaign decision uses the misleading fallback action'
 
-assert_failure mismatch "does not match the delivered Bead head and merge evidence"
-assert_failure invalid-repo "must be a valid owner/repository name"
+assert_degraded proof-missing '.last_delivery.evidence' 'Preuve de livraison manquante ou invalide pour af-delivered' 'af-delivered'
+assert_json proof-missing '.activity.state' working
+assert_degraded mismatch '.last_delivery.evidence' 'Preuve de livraison manquante ou invalide pour af-delivered' 'af-delivered'
+assert_degraded invalid-repo '.last_delivery.evidence' 'Preuve de livraison manquante ou invalide pour af-delivered' 'af-delivered'
+assert_degraded direct-ambiguous '.result.stage' 'materialized' 'smb-direct'
 assert_failure source-failure "Beads product coordination source command failed"
 assert_failure queue-failure "SayMyName product queue source command failed"
 assert_failure queue-inconsistent "canonical human candidate contract"
 assert_failure mismatch-next "Coordination NEXT disagrees"
-assert_failure direct-ambiguous "Direct assignment session for smb-direct is ambiguous"
 
 printf 'PASS: %d deterministic product-status checks\n' "$TESTS_RUN"
