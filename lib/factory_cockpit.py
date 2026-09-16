@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -2202,25 +2203,51 @@ class FactoryCollector:
 
 
 class SnapshotCache:
-    def __init__(self, collector: FactoryCollector, ttl: float = 5.0) -> None:
+    """Caches a collector's snapshot, refreshing it in the background.
+
+    A collect() call can, in principle, hang (a wedged subprocess, a lock
+    that never releases). Without a ceiling on that, a single stuck
+    background refresh would pin `refreshing` forever: every later request
+    would see `refreshing=True`, skip starting a new attempt, and the cache
+    would keep serving its last snapshot indefinitely with no error and no
+    log line to explain why (observed 2026-09-16: the HTTP cockpit served a
+    ~3-hour-old degraded snapshot while a fresh CLI collect() succeeded
+    immediately). `refresh_timeout` bounds how long a refresh is trusted to
+    still be in flight before it's treated as abandoned, and `max_stale`
+    bounds how old data this cache will ever hand out silently — past that,
+    `get()` pays for one synchronous, correct refresh instead.
+    """
+
+    def __init__(
+        self,
+        collector: FactoryCollector,
+        ttl: float = 5.0,
+        max_stale: float = 120.0,
+        refresh_timeout: float = 30.0,
+    ) -> None:
         self.collector = collector
         self.ttl = ttl
+        self.max_stale = max_stale
+        self.refresh_timeout = refresh_timeout
         self.lock = threading.Lock()
         self.condition = threading.Condition(self.lock)
         self.value: dict[str, Any] | None = None
         self.collected_at = 0.0
         self.refreshing = False
+        self.refresh_started_at = 0.0
 
     def _refresh(self, background: bool) -> dict[str, Any] | None:
+        value = None
         try:
             value = self.collector.collect()
-        except Exception:
+        except Exception as exc:
+            kind = "background" if background else "foreground"
+            print(f"[factory-cockpit] {kind} snapshot refresh failed: {exc!r}", file=sys.stderr, flush=True)
             if not background:
                 raise
-            value = None
         finally:
             with self.condition:
-                if "value" in locals() and value is not None:
+                if value is not None:
                     self.value = value
                     self.collected_at = time.monotonic()
                 self.refreshing = False
@@ -2229,6 +2256,7 @@ class SnapshotCache:
 
     def _start_background_refresh(self) -> None:
         self.refreshing = True
+        self.refresh_started_at = time.monotonic()
         threading.Thread(
             target=self._refresh,
             args=(True,),
@@ -2236,17 +2264,27 @@ class SnapshotCache:
             daemon=True,
         ).start()
 
+    def _abandon_stuck_refresh_locked(self) -> None:
+        if self.refreshing and time.monotonic() - self.refresh_started_at >= self.refresh_timeout:
+            self.refreshing = False
+
     def get(self) -> dict[str, Any]:
         with self.condition:
+            self._abandon_stuck_refresh_locked()
             if self.value is not None:
-                if time.monotonic() - self.collected_at >= self.ttl and not self.refreshing:
-                    self._start_background_refresh()
-                return self.value
+                age = time.monotonic() - self.collected_at
+                if age < self.max_stale:
+                    if age >= self.ttl and not self.refreshing:
+                        self._start_background_refresh()
+                    return self.value
+                # Older than we're willing to serve silently: fall through
+                # and fetch a value this request can actually trust.
             if self.refreshing:
                 self.condition.wait_for(lambda: self.value is not None or not self.refreshing, timeout=60)
-                if self.value is not None:
+                if self.value is not None and time.monotonic() - self.collected_at < self.max_stale:
                     return self.value
             self.refreshing = True
+            self.refresh_started_at = time.monotonic()
         value = self._refresh(background=False)
         if value is None:
             raise SourceError("Le premier relevé du cockpit a échoué.")
