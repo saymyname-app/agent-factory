@@ -1,0 +1,414 @@
+#!/usr/bin/env python3
+"""provider-failover — keep every agent on a model provider that can work.
+
+L0, deterministic, zero model tokens. Runs every two minutes as an order.
+
+  tick     look at every live model session, record any quota wall it shows,
+           choose a provider per target, write city.provider.toml, reload the
+           city if that changed, restart sessions stuck on an exhausted pool,
+           and park / resume the campaign when *nothing* is left
+  apply    regenerate city.provider.toml from the current state (no detection)
+  status   what is chosen and why (--json for the cockpit)
+  set      one manual control, as used by the cockpit:
+             set --action mark    --args '{"pool":"openai","until":"2026-09-21T05:22:00Z"}'
+             set --action clear   --args '{"pool":"openai"}'
+             set --action disable --args '{"provider":"codex-spark","reason":"..."}'
+             set --action enable  --args '{"provider":"codex-spark"}'
+             set --action force   --args '{"target":"mayor","provider":"claude"}'   (provider "auto" undoes it)
+             set --action chain   --args '{"target":"workspace","chain":["claude","codex"]}'  ("default" undoes it)
+             set --action auto    --args '{"enabled":false}'
+
+Policy: config/provider-policy.json (versioned). State: .gc/provider-state.json
+(host-local). Design and rules: docs/decisions/ADR-0018-automatic-provider-failover.md.
+"""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+import provider_failover as pf  # noqa: E402
+
+FACTORY_ROOT = Path(os.environ.get("FACTORY_ROOT") or ROOT)
+POLICY_FILE = Path(os.environ.get("PROVIDER_POLICY_FILE") or FACTORY_ROOT / "config" / "provider-policy.json")
+STATE_FILE = Path(os.environ.get("PROVIDER_STATE_FILE") or FACTORY_ROOT / ".gc" / "provider-state.json")
+OVERLAY_FILE = Path(os.environ.get("PROVIDER_OVERLAY_FILE") or FACTORY_ROOT / "city.provider.toml")
+GC_BIN = os.environ.get("GC_BIN", "gc")
+CAMPAIGN_BIN = os.environ.get("CAMPAIGN_BIN", str(ROOT / "bin" / "mayor-campaign"))
+COORDINATION_BEAD = os.environ.get("CAMPAIGN_COORDINATION_BEAD", "af-1vr4")
+PARK_MARKER = "[provider-failover]"
+# Reading a pane through `gc session peek` cost 8 s and ~5 s of CPU per call on
+# 2026-09-16: one tick took 54 s wall, 22 s CPU, every two minutes. tmux
+# answers the same question in milliseconds, so it is tried first; gc stays
+# the fallback for any runtime that is not tmux.
+TMUX_BIN = os.environ.get("PROVIDER_TMUX_BIN", "tmux")
+TMUX_SOCKET = os.environ.get("PROVIDER_TMUX_SOCKET") or FACTORY_ROOT.name
+
+
+def local_tz() -> str:
+    override = os.environ.get("PROVIDER_LOCAL_TZ")
+    if override:
+        return override
+    try:
+        return Path("/etc/timezone").read_text(encoding="utf-8").strip() or "Europe/Paris"
+    except OSError:
+        return "Europe/Paris"
+
+
+def now() -> float:
+    value = os.environ.get("PROVIDER_NOW")
+    return float(value) if value else time.time()
+
+
+def gc(*args: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [GC_BIN, *args], cwd=FACTORY_ROOT, text=True, capture_output=True,
+        timeout=timeout, env={**os.environ, "NO_COLOR": "1"},
+    )
+
+
+def load_policy() -> dict[str, Any]:
+    try:
+        return pf.validate_policy(json.loads(POLICY_FILE.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise pf.PolicyError(f"cannot read {POLICY_FILE}: {exc}") from exc
+
+
+def load_state(policy: dict[str, Any]) -> dict[str, Any]:
+    try:
+        raw = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw = None  # a missing or damaged state degrades to defaults, never fails
+    return pf.normalize_state(raw, policy)
+
+
+def atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def save_state(state: dict[str, Any]) -> None:
+    atomic_write(STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+
+
+class Locked:
+    """One writer at a time: the order, the cockpit and a human can all call in."""
+
+    def __enter__(self) -> "Locked":
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = open(STATE_FILE.with_name(STATE_FILE.name + ".lock"), "w")
+        fcntl.flock(self.handle, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        fcntl.flock(self.handle, fcntl.LOCK_UN)
+        self.handle.close()
+
+
+def live_sessions() -> list[dict[str, Any]]:
+    try:
+        result = gc("session", "list", "--json")
+        value = json.loads(result.stdout or "[]")
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return []
+    if isinstance(value, dict):
+        value = value.get("sessions") or []
+    return [s for s in value if isinstance(s, dict) and s.get("state") == "active"]
+
+
+def pane_text(session: dict[str, Any]) -> str:
+    name = str(session.get("session_name") or "").strip()
+    if name:
+        try:
+            result = subprocess.run(
+                [TMUX_BIN, "-L", TMUX_SOCKET, "capture-pane", "-p", "-J",
+                 "-t", f"={name}:", "-S", "-60"],
+                text=True, capture_output=True, timeout=5,
+            )
+            if result.returncode == 0:
+                return result.stdout
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        return gc("session", "peek", str(session.get("id")), timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def write_overlay(policy: dict[str, Any], state: dict[str, Any], resolution: dict[str, Any],
+                  moment: float, dry_run: bool) -> tuple[bool, list[str]]:
+    text, effective = pf.render_overlay(policy, resolution, state.get("effective") or {})
+    try:
+        current = OVERLAY_FILE.read_text(encoding="utf-8")
+    except OSError:
+        current = None
+    switches = []
+    previous = state.get("effective") or {}
+    for target, provider in effective.items():
+        if previous.get(target) and previous[target] != provider:
+            why = resolution[target]["reason"]
+            switches.append(f"{target}: {previous[target]} → {provider} ({why})")
+    changed = current != text
+    if changed and not dry_run:
+        atomic_write(OVERLAY_FILE, text)
+    for line in switches:
+        pf.note(state, moment, "switch", line)
+    state["effective"] = effective
+    return changed, switches
+
+
+def reload_city() -> str:
+    try:
+        result = gc("reload", timeout=90)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"reload failed: {exc}"
+    lines = (result.stdout or result.stderr or "").strip().splitlines()
+    return lines[-1] if lines else "reloaded"
+
+
+def coordination_metadata() -> dict[str, Any] | None:
+    try:
+        value = json.loads(gc("bd", "show", COORDINATION_BEAD, "--json").stdout or "null")
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return None
+    if isinstance(value, list):
+        value = value[0] if value else None
+    return value.get("metadata") if isinstance(value, dict) else None
+
+
+def campaign_action(state: dict[str, Any], resolution: dict[str, Any], moment: float,
+                    dry_run: bool) -> str | None:
+    """Park only when no worker can run at all; resume only what we parked.
+
+    Reading the coordination bead is a store round-trip that took 13 s on a
+    busy afternoon, so it happens only when there is something to decide:
+    nothing is left to run, or this tool parked the campaign and owes a resume.
+    """
+    workspace = resolution[pf.WORKSPACE]
+    if workspace["provider"] is not None and not state.get("parked"):
+        return None
+    metadata = coordination_metadata()
+    if not metadata or metadata.get("gc.campaign_mode") != "automatic":
+        return None
+    campaign_state = metadata.get("gc.campaign_state")
+    kind = metadata.get("gc.campaign_block_kind")
+    ours = str(metadata.get("gc.campaign_cause") or "").startswith(PARK_MARKER)
+    if workspace["provider"] is None and campaign_state != "blocked":
+        reset = workspace.get("next_reset")
+        when = f"vers {reset}" if reset else "dès qu'un fournisseur redevient disponible"
+        cause = (f"{PARK_MARKER} Tous les fournisseurs de la chaîne des ouvriers sont épuisés "
+                 f"ou désactivés; reprise automatique {when}.")
+        action = ("Aucune action requise : la campagne reprend seule à la réinitialisation "
+                  "des quotas. Pour reprendre plus tôt, rétablir un fournisseur depuis le cockpit.")
+        if dry_run:
+            return f"would park: {cause}"
+        subprocess.run([CAMPAIGN_BIN, "block", "--mayor", "--kind", "limit", "--owner", "Mayor",
+                        "--cause", cause, "--action", action],
+                       cwd=FACTORY_ROOT, text=True, capture_output=True, timeout=60)
+        state["parked"] = True
+        return f"parked campaign: {cause}"
+    if workspace["provider"] is not None and campaign_state == "blocked" and kind == "limit" and ours:
+        if dry_run:
+            return "would resume campaign"
+        subprocess.run([CAMPAIGN_BIN, "resume", "--mayor"],
+                       cwd=FACTORY_ROOT, text=True, capture_output=True, timeout=60)
+        state["parked"] = False
+        return f"resumed campaign on {workspace['provider']}"
+    if workspace["provider"] is not None and not (campaign_state == "blocked" and kind == "limit" and ours):
+        # Someone else already resumed it, or it was never ours: forget the debt.
+        state["parked"] = False
+    return None
+
+
+def tick(args: argparse.Namespace) -> int:
+    moment = now()
+    policy = load_policy()
+    with Locked():
+        state = load_state(policy)
+        stuck = []
+        sessions = live_sessions()
+        state["sessions"] = [
+            {"id": x.get("id"), "alias": x.get("alias"), "template": x.get("template"),
+             "provider": x.get("provider"), "target": pf.target_of(x, policy)}
+            for x in sessions if pf.target_of(x, policy)
+        ]
+        state["sessions_at"] = pf.iso(moment)
+        for session in sessions:
+            provider = session.get("provider")
+            if provider not in policy["providers"]:
+                continue
+            finding = pf.detect(pane_text(session), moment, local_tz())
+            if not finding:
+                continue
+            pool = policy["providers"][provider]["pool"]
+            if pf.record_detection(state, policy, pool, finding, moment):
+                pf.note(state, moment, f"detected:{finding['kind']}",
+                        f"{session.get('alias') or session.get('id')} ({provider}) — {finding.get('evidence', '')[:160]}")
+            if finding["kind"] == "exhausted":
+                stuck.append(session)
+        resolution = pf.resolve(policy, state, moment)
+        changed, switches = write_overlay(policy, state, resolution, moment, args.dry_run)
+        messages = list(switches)
+        if changed and not args.dry_run:
+            messages.append(f"overlay rewritten; {reload_city()}")
+        for session in stuck:
+            target = pf.target_of(session, policy)
+            chosen = resolution.get(target, {}).get("provider") if target else None
+            if chosen and chosen != session.get("provider"):
+                if not args.dry_run:
+                    gc("session", "reset", str(session.get("id")), timeout=60)
+                line = f"restarted {session.get('alias') or session.get('id')}: {session.get('provider')} → {chosen}"
+                pf.note(state, moment, "restart", line)
+                messages.append(line)
+        park = campaign_action(state, resolution, moment, args.dry_run)
+        if park:
+            pf.note(state, moment, "campaign", park)
+            messages.append(park)
+        if not args.dry_run:
+            save_state(state)
+    if not args.quiet or messages:
+        for target, pick in resolution.items():
+            print(f"{target:16} {pick['provider'] or '—':16} {pick['reason']}")
+        for line in messages:
+            print(f"  · {line}")
+    return 0
+
+
+def apply(args: argparse.Namespace) -> int:
+    moment = now()
+    policy = load_policy()
+    with Locked():
+        state = load_state(policy)
+        resolution = pf.resolve(policy, state, moment)
+        changed, switches = write_overlay(policy, state, resolution, moment, False)
+        if changed and not args.no_reload:
+            switches.append(reload_city())
+        save_state(state)
+    for line in switches:
+        print(f"  · {line}")
+    print("overlay " + ("written" if changed else "unchanged") + f": {OVERLAY_FILE}")
+    return 0
+
+
+def status_payload(policy: dict[str, Any], state: dict[str, Any], moment: float) -> dict[str, Any]:
+    resolution = pf.resolve(policy, state, moment)
+    # The cockpit polls this every 30 s. It reads the sessions the last tick
+    # saw (at most two minutes old) instead of asking gc each time.
+    sessions = list(state.get("sessions") or [])
+    return {
+        "contract": "agent-factory-provider-status/v1",
+        "generated_at": pf.iso(moment),
+        "auto": state["auto"],
+        "overlay_present": OVERLAY_FILE.exists(),
+        "pools": {
+            name: {"label": pool["label"], **pf.pool_status(state, policy, name, moment)}
+            for name, pool in policy["pools"].items()
+        },
+        "providers": {
+            name: {"label": p["label"], "tier": p.get("tier"),
+                   **pf.provider_status(state, policy, name, moment)}
+            for name, p in policy["providers"].items()
+        },
+        "targets": {
+            name: {
+                "label": t["label"], "why": t.get("why"),
+                "default_chain": t["chain"],
+                "chain_overridden": name in state["chains"],
+                "forced": state["forced"].get(name),
+                "effective": (state.get("effective") or {}).get(name),
+                **resolution[name],
+            }
+            for name, t in policy["targets"].items()
+        },
+        "sessions": sessions,
+        "sessions_at": state.get("sessions_at"),
+        "history": list(reversed(state["history"][-15:])),
+    }
+
+
+def status(args: argparse.Namespace) -> int:
+    policy = load_policy()
+    moment = now()
+    payload = status_payload(policy, load_state(policy), moment)
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+    print(f"provider-failover — auto={'on' if payload['auto'] else 'OFF'}  overlay={'ok' if payload['overlay_present'] else 'MISSING'}")
+    for name, pool in payload["pools"].items():
+        extra = f" until {pool['until']}" if pool.get("until") else ""
+        print(f"  pool {name:13} {pool['state']:10}{extra}  {pool.get('evidence') or ''}"[:160])
+    for name, target in payload["targets"].items():
+        print(f"  {name:16} → {target['provider'] or '—':16} ({target['reason']})  chain: {' › '.join(target['default_chain'] if not target['chain_overridden'] else [e['provider'] for e in target['chain']])}")
+    return 0
+
+
+def set_control(args: argparse.Namespace) -> int:
+    policy = load_policy()
+    try:
+        control = json.loads(args.args or "{}")
+    except json.JSONDecodeError:
+        print(json.dumps({"ok": False, "error": "arguments JSON invalides"}))
+        return 2
+    if not isinstance(control, dict):
+        print(json.dumps({"ok": False, "error": "arguments JSON invalides"}))
+        return 2
+    moment = now()
+    with Locked():
+        state = load_state(policy)
+        try:
+            summary = pf.apply_control(state, policy, args.action, control, moment, args.by[:60])
+        except pf.PolicyError as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 2
+        resolution = pf.resolve(policy, state, moment)
+        changed, switches = write_overlay(policy, state, resolution, moment, False)
+        reload_note = reload_city() if changed and not args.no_reload else None
+        park = campaign_action(state, resolution, moment, False) if not args.no_reload else None
+        if park:
+            pf.note(state, moment, "campaign", park)
+        save_state(state)
+    print(json.dumps({"ok": True, "summary": summary, "switches": switches,
+                      "reload": reload_note, "campaign": park,
+                      "status": status_payload(policy, load_state(policy), moment)},
+                     ensure_ascii=False))
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="provider-failover", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    t = sub.add_parser("tick")
+    t.add_argument("--quiet", action="store_true")
+    t.add_argument("--dry-run", action="store_true")
+    a = sub.add_parser("apply")
+    a.add_argument("--no-reload", action="store_true")
+    s = sub.add_parser("status")
+    s.add_argument("--json", action="store_true")
+    c = sub.add_parser("set")
+    c.add_argument("--action", required=True,
+                   choices=["mark", "clear", "disable", "enable", "force", "chain", "auto"])
+    c.add_argument("--args", default="{}")
+    c.add_argument("--by", default="operator")
+    c.add_argument("--no-reload", action="store_true")
+    args = parser.parse_args()
+    try:
+        return {"tick": tick, "apply": apply, "status": status, "set": set_control}[args.command](args)
+    except pf.PolicyError as exc:
+        print(f"provider-failover: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

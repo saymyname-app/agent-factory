@@ -84,5 +84,11 @@ jobs:
       - name: Factory guard checks liveness
         run: bash tests/factory-guard-liveness-test.sh
 
+      - name: Provider failover
+        run: python tests/provider-failover-test.py
+
+      - name: Factory guard regenerates the provider overlay
+        run: bash tests/factory-guard-provider-overlay-test.sh
+
       - name: Every test is registered in CI
         run: bash tests/ci-registration-test.sh

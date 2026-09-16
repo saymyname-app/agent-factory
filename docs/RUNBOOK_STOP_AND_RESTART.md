@@ -127,6 +127,7 @@ Docker Desktop. C'est un impact attendu, pas un incident.
 Dans cet ordre :
 
 ```bash
+./bin/provider-failover apply --no-reload   # city.provider.toml doit exister avant de démarrer
 gc supervisor start
 gc resume            # la cité était suspendue
 gc start             # ré-enregistre et adopte les sessions
@@ -197,3 +198,4 @@ Si quelque chose ne revient pas, réparez-le **avant** de continuer.
 | `.wslconfig` `memory` | `10GB` | `8GB` | pic réel observé ~3,7 Go ; Windows n'avait aucune réserve |
 | `[maintenance.dolt] enabled` | absent | `true` | la compaction n'arrivait que si un humain la remarquait |
 | `core/jsonl-archive` remote | absent | dépôt privé | les exports ne quittaient jamais la machine |
+| `include = ["city.provider.toml"]` | absent | présent | le fournisseur de chaque cible est choisi automatiquement (ADR-0018) |

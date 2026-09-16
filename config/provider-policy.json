@@ -1,0 +1,87 @@
+{
+  "contract": "agent-factory-provider-policy/v1",
+  "description": "Ordre de repli par défaut, par cible. Les réglages faits depuis le cockpit (ordre, marquages, désactivations, fournisseur imposé) vivent dans .gc/provider-state.json et ne modifient jamais ce fichier. Voir docs/decisions/ADR-0018-automatic-provider-failover.md.",
+  "unknown_reset_minutes": 60,
+  "low_percent": 5,
+  "low_hold_minutes": 360,
+  "pools": {
+    "openai": {
+      "label": "OpenAI · Codex (quota standard)",
+      "note": "Quota Codex standard de l’abonnement ChatGPT Pro."
+    },
+    "openai-spark": {
+      "label": "OpenAI · Codex Spark (allocation séparée)",
+      "note": "Allocation Spark, distincte du quota Codex standard."
+    },
+    "anthropic": {
+      "label": "Anthropic · Claude (compte partagé)",
+      "note": "Un seul compte : une limite de session ou hebdomadaire épuise tous les profils Claude d’un coup."
+    }
+  },
+  "providers": {
+    "codex": {
+      "label": "GPT-5.6 Sol (Codex)",
+      "pool": "openai",
+      "tier": "premium"
+    },
+    "codex-spark": {
+      "label": "GPT-5.3 Codex Spark",
+      "pool": "openai-spark",
+      "tier": "fast"
+    },
+    "claude": {
+      "label": "Claude Sonnet 5 · effort élevé",
+      "pool": "anthropic",
+      "tier": "premium"
+    },
+    "claude-standard": {
+      "label": "Claude Sonnet 5 · effort moyen",
+      "pool": "anthropic",
+      "tier": "standard"
+    },
+    "claude-cheap": {
+      "label": "Claude Haiku · effort bas",
+      "pool": "anthropic",
+      "tier": "cheap"
+    }
+  },
+  "targets": {
+    "workspace": {
+      "label": "Ouvriers des rigs (par défaut)",
+      "why": "Codex est le rédacteur principal éprouvé. Claude Sonnet garde la qualité produit quand Codex est épuisé ; Spark puis Haiku servent en dernier recours, pour que le travail continue plutôt que de s’arrêter.",
+      "chain": [
+        "codex",
+        "claude-standard",
+        "codex-spark",
+        "claude-cheap"
+      ]
+    },
+    "mayor": {
+      "label": "Mayor (orchestration)",
+      "why": "Codex pilote normalement le Mayor ; Claude Sonnet est le remplaçant éprouvé.",
+      "chain": [
+        "codex",
+        "claude-standard",
+        "codex-spark"
+      ]
+    },
+    "claude-reviewer": {
+      "label": "Relecteur Claude",
+      "why": "Relit un travail normalement écrit par Codex. Ne passe sur Codex qu’en dernier recours : un relecteur sur le modèle de l’auteur perd son indépendance.",
+      "chain": [
+        "claude",
+        "claude-standard",
+        "codex"
+      ]
+    },
+    "ux-reviewer": {
+      "label": "Relecteur UX",
+      "why": "Reste sur OpenAI tant que les rédacteurs sont sur Claude, pour la même raison d’indépendance ; Claude en dernier.",
+      "chain": [
+        "codex",
+        "codex-spark",
+        "claude"
+      ]
+    }
+  }
+}

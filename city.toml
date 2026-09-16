@@ -1,9 +1,13 @@
+# Effective model providers come from city.provider.toml, generated and kept
+# current by bin/provider-failover from config/provider-policy.json and the
+# quota walls it detects (ADR-0018). It must stay the first key of this file.
+# Change providers from the cockpit (Fournisseurs IA), never by editing here.
+include = ["city.provider.toml"]
+
 [workspace]
-# Codex's standard usage pool is exhausted until ~2026-09-21. Until it returns,
-# the city default is Claude at medium effort so rig work actually executes.
-# REVERT TO provider = "codex" WHEN THE CODEX QUOTA RESETS — Codex remains the
-# PROVEN primary writer per docs/DELIVERY.md; this is a temporary swap, not a
-# change of architecture.
+# Fallback only, used if the generated overlay says nothing. Nobody has to
+# remember to "revert" anything any more: failover returns to Codex on its own
+# once its quota resets.
 provider = "claude-standard"
 
 [providers]

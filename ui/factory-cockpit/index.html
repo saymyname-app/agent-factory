@@ -30,6 +30,18 @@
       <div><p class="eyebrow">CONTINUITÉ DE LIVRAISON</p><h2>BLOQUÉ</h2><p id="campaign-block-today-cause">—</p></div>
       <dl class="resume-facts"><dt>Propriétaire de la reprise</dt><dd id="campaign-block-today-owner">—</dd><dt>Action exacte</dt><dd id="campaign-block-today-action">—</dd></dl>
     </section>
+    <section id="providers-panel" class="panel providers-panel" aria-labelledby="providers-title">
+      <div class="section-heading"><div><p class="eyebrow">FOURNISSEURS IA</p><h2 id="providers-title">Quel modèle fait tourner l’usine <button class="info" data-tooltip="Quand un quota GPT ou Claude est atteint, l’usine bascule seule sur le suivant et revient quand il se réinitialise. Tu peux marquer un quota, réordonner, désactiver ou imposer un fournisseur. Tout est réversible.">?</button></h2></div><div class="provider-heading-actions"><label class="provider-auto"><input id="providers-auto" type="checkbox"> Repli automatique</label><button id="providers-refresh" type="button">Relire</button></div></div>
+      <p id="providers-summary" class="provider-summary">Lecture…</p>
+      <p id="providers-feedback" class="feedback" aria-live="polite"></p>
+      <p id="providers-overlay-warning" class="feedback error hidden">Le fichier de fournisseurs généré est absent : le garde-fou le régénère à son prochain passage.</p>
+      <h3 class="provider-subtitle">Quotas</h3>
+      <div id="providers-pools" class="provider-pools"></div>
+      <h3 class="provider-subtitle">Qui tourne sur quoi</h3>
+      <div id="providers-targets" class="provider-targets"></div>
+      <details class="provider-history"><summary>Derniers changements</summary><ol id="providers-history"></ol></details>
+      <p class="zero-token">Lecture et réglages · 0 token</p>
+    </section>
     <section class="hero-grid">
       <article class="panel focus-panel clickable" id="focus-card" tabindex="0"><div class="section-heading"><div><p class="eyebrow">RÉSULTAT PRODUIT ACTUEL</p><h2 id="focus-title">Lecture des signaux…</h2></div><span id="focus-state" class="status-pill waiting">—</span></div><p id="focus-phase" class="phase">—</p><div class="facts"><div><span>En cours depuis</span><strong id="focus-elapsed">—</strong></div><div><span>Dernier signal</span><strong id="focus-signal">—</strong></div><div><span>Étapes prouvées</span><strong id="focus-steps">—</strong></div></div><div class="step-track"><div id="step-fill" class="step-fill"></div></div><p class="truth-note">Clique pour voir contexte, critères, sous-travaux et preuves. Aucun pourcentage inventé.</p></article>
       <article class="panel attention-panel" id="attention-card" aria-labelledby="needs-benjamin"><p class="eyebrow">BLOCAGES EFFECTIFS</p><h2 id="needs-benjamin" aria-live="polite">Lecture de la coordination…</h2><div class="decision-actions"><button id="open-blocker-decision" class="primary hidden" type="button" aria-label="Ouvrir la décision bloquante">Ouvrir la décision bloquante</button></div><p id="last-delivery" class="muted">Dernière livraison : —</p><div class="today-attention-stats"><div class="mini-stat"><strong id="today-blockers">—</strong><span>blocage effectif</span></div><div class="mini-stat"><strong id="today-pending">—</strong><span>décisions générales ouvertes</span></div></div></article>
@@ -131,6 +143,7 @@
 <main class="mobile-screens">
   <section class="mobile-screen active" data-mobile-panel="state" aria-label="État">
     <div id="mobile-block" class="mobile-block hidden" role="alert" aria-live="assertive"><strong>BLOQUÉ</strong><p id="mobile-block-cause">—</p><p id="mobile-block-action" class="muted">—</p></div>
+    <article id="mobile-providers" class="panel mobile-card"><p class="eyebrow">FOURNISSEURS IA</p><h2 id="mobile-providers-summary">Lecture…</h2><div id="mobile-providers-pools" class="provider-pools compact"></div><p id="mobile-providers-feedback" class="feedback" aria-live="polite"></p></article>
     <article class="panel mobile-card"><p class="eyebrow">EST-CE QUE ÇA TOURNE ?</p><h2 id="mobile-health">Lecture…</h2><p id="mobile-health-detail" class="muted">—</p></article>
     <article class="panel mobile-card"><p class="eyebrow">ACTIVITÉ DE LIVRAISON</p><h2 id="mobile-activity">Lecture…</h2><p id="mobile-activity-detail" class="muted">—</p></article>
     <article class="panel mobile-card"><p class="eyebrow">REPRISE</p><h2 id="mobile-resume">Lecture…</h2><dl class="resume-facts"><dt>Condition</dt><dd id="mobile-resume-condition">—</dd><dt>Responsable</dt><dd id="mobile-resume-owner">—</dd></dl><p id="mobile-resume-action" class="muted">—</p></article>
@@ -168,4 +181,5 @@
 </nav>
 </div>
 <script src="/app.js"></script>
+<script src="/providers.js"></script>
 </body></html>

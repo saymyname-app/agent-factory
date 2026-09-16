@@ -63,17 +63,11 @@ For a change:
 - Check Gas City, Beads, GitHub, the provider/runtime, and standards before inventing a proprietary primitive.
 - Never put secrets in Git, Beads, logs, prompts, or responses.
 - Architecture changes update durable documentation in the same change.
-- **Every factory improvement must be verified, increase autonomy, optimise
-  something, and be documented for agents AND humans** — the four conditions of
-  `docs/decisions/ADR-0017-four-conditions-for-factory-improvements.md`. A
-  change that cannot meet all four is incomplete: finish it, or state plainly
-  which condition you did not meet and why. "It should now work" is not
-  evidence, and a change that adds a step somebody must remember has not
-  increased autonomy.
-- Stopping or restarting the factory follows
-  `docs/RUNBOOK_STOP_AND_RESTART.md`. Do not improvise a shutdown: Dolt needs
-  SIGTERM and time to flush, and `gc stop` unregisters the city, which takes
-  `gc maintenance` offline with it.
+- **Every factory improvement is verified, adds autonomy, optimises something,
+  and is documented for agents and humans** (ADR-0017), or it is unfinished.
+- Switch models only via the cockpit or `./bin/provider-failover set --by <you>`
+  (ADR-0018), never by editing config.
+- Stop/restart only per `docs/RUNBOOK_STOP_AND_RESTART.md`.
 - Discoveries outside scope become separate Beads work, not silent scope expansion.
 
 ## Cost policy

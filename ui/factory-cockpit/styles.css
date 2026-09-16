@@ -382,3 +382,35 @@ button.reference-card{width:100%;text-align:left}
 .mobile-tab small{max-width:100%;overflow:hidden;color:var(--muted);font-size:.68rem;text-overflow:ellipsis;white-space:nowrap}
 .mobile-tab.active{border-color:rgba(104,220,152,.45);background:rgba(104,220,152,.12)}
 }
+
+/* Fournisseurs IA (ADR-0018) */
+.providers-panel{margin:1rem 0}
+.provider-heading-actions{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+.provider-auto{display:flex;align-items:center;gap:.4rem;color:var(--muted)}
+.provider-summary{margin:.4rem 0 .8rem;font-weight:600}
+.provider-summary.down{color:var(--red)}
+.provider-summary.attention{color:var(--amber)}
+.provider-summary.working{color:var(--green)}
+.provider-subtitle{margin:1rem 0 .5rem;font-size:.95rem;color:var(--muted)}
+.provider-pools{display:grid;grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));gap:.7rem}
+.provider-pools.compact{grid-template-columns:1fr;margin-top:.6rem}
+.provider-row,.provider-target{padding:.75rem;border:1px solid var(--line);border-radius:.75rem;background:var(--panel2)}
+.provider-row.exhausted{border-color:rgba(255,124,116,.45)}
+.provider-row.low{border-color:rgba(243,196,94,.45)}
+.provider-row p{margin:.35rem 0}
+.provider-row-head{display:flex;align-items:center;justify-content:space-between;gap:.6rem;flex-wrap:wrap}
+.provider-evidence{font-size:.8rem;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+.provider-actions{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-top:.5rem}
+.provider-actions select,.provider-actions input{padding:.5rem;border:1px solid var(--line);border-radius:.6rem;color:var(--ink);background:var(--panel)}
+.provider-targets{display:grid;grid-template-columns:repeat(auto-fit,minmax(20rem,1fr));gap:.7rem}
+.provider-effective{color:var(--green);font-weight:600}
+.provider-effective.none{color:var(--red)}
+.provider-chain{margin:.5rem 0;padding-left:1.2rem}
+.provider-chain li{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin:.3rem 0}
+.provider-chain-controls{display:inline-flex;gap:.3rem;margin-left:auto}
+.provider-chain-controls button{padding:.25rem .55rem}
+.provider-history{margin-top:.8rem;color:var(--muted)}
+.provider-history ol{margin:.4rem 0;padding-left:1.2rem}
+.feedback.error{color:var(--red)}
+.provider-fold summary{cursor:pointer;color:var(--muted);padding:.4rem 0}
+.provider-fold .provider-row{margin-top:.5rem}

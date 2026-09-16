@@ -37,6 +37,7 @@ from factory_cockpit import (  # noqa: E402
     _human_phase,
     _product_bead,
     handler_factory,
+    ProviderBridge,
 )
 from factory_state import (  # noqa: E402
     CONTRACT as HUMAN_STATE_CONTRACT,
@@ -549,6 +550,125 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertIn("CI green", result["last_delivered"])
         self.assertEqual(0, result["model_calls"])
         self.assertEqual(str(ROOT / "bin" / "saymyname-product-status"), runner.args[0])
+
+    def test_provider_bridge_reads_and_writes_only_through_the_tool(self):
+        """ADR-0018: the cockpit asks bin/provider-failover; it never edits config."""
+        calls = []
+
+        def executor(args, **kwargs):
+            calls.append(args)
+            if args[1] == "status":
+                return subprocess.CompletedProcess(args, 0, json.dumps({"contract": "agent-factory-provider-status/v1"}), "")
+            payload = json.loads(args[args.index("--args") + 1])
+            if payload.get("pool") == "nope":
+                return subprocess.CompletedProcess(args, 2, json.dumps({"ok": False, "error": "pool inconnu : 'nope'"}), "")
+            return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "summary": "fait", "status": {}}), "")
+
+        bridge = ProviderBridge(executor=executor, command=["provider-failover"])
+        self.assertEqual("agent-factory-provider-status/v1", bridge.status()["contract"])
+        self.assertTrue(bridge.submit("mark", {"pool": "openai", "minutes": 60})["ok"])
+        self.assertEqual(["provider-failover", "set", "--action", "mark", "--args",
+                          '{"pool": "openai", "minutes": 60}', "--by", "cockpit"], calls[-1])
+        with self.assertRaisesRegex(ValueError, "inconnu"):
+            bridge.submit("mark", {"pool": "nope"})
+        for action, args in [("rm -rf", {}), ("mark", "openai"), ("mark", {"reason": "x" * 3000})]:
+            with self.subTest(action=action):
+                with self.assertRaises(ValueError):
+                    bridge.submit(action, args)
+        # Refused before the tool was even called.
+        self.assertEqual(3, len(calls))
+
+        broken = ProviderBridge(
+            executor=lambda args, **kw: subprocess.CompletedProcess(args, 2, "", "policy unreadable"),
+            command=["provider-failover"],
+        )
+        with self.assertRaises(SourceError):
+            broken.status()
+
+    def test_http_provider_routes_are_guarded(self):
+        class Providers:
+            submitted = []
+
+            def status(self):
+                return {"contract": "agent-factory-provider-status/v1", "targets": {}}
+
+            def submit(self, action, args):
+                if action not in ProviderBridge.ACTIONS:
+                    raise ValueError("Réglage de fournisseur inconnu.")
+                self.submitted.append((action, args))
+                return {"ok": True, "summary": "fait"}
+
+        class Cache:
+            def get(self):
+                return {"ok": True}
+
+            def invalidate(self):
+                pass
+
+        class Stub:
+            def conversation(self, *args):
+                return {}
+
+            def index(self):
+                return {}
+
+            def status(self):
+                return {}
+
+            def collect(self):
+                return {}
+
+        providers = Providers()
+        cache = Cache()
+        handler = handler_factory(
+            cache, mayor_bridge=Stub(), detail_reader=Stub(), token_cache=cache,
+            po_bridge=Stub(), preview_bridge=Stub(), reference_reader=Stub(),
+            queue_bridge=Stub(), delivery_reader=Stub(), decision_store=Stub(),
+            provider_bridge=providers,
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        origin = f"http://127.0.0.1:{server.server_port}"
+        try:
+            def call(method, path, body=None, headers=None):
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+                connection.request(method, path, body, headers or {})
+                response = connection.getresponse()
+                data = response.read()
+                connection.close()
+                return response.status, data
+
+            status, body = call("GET", "/api/providers")
+            self.assertEqual(200, status)
+            self.assertEqual("agent-factory-provider-status/v1", json.loads(body)["contract"])
+            status, body = call("GET", "/providers.js")
+            self.assertEqual(200, status)
+            self.assertIn(b"human-provider-control", body)
+
+            good = {"Content-Type": "application/json", "Origin": origin,
+                    "X-Factory-Cockpit": "human-provider-control"}
+            payload = json.dumps({"action": "clear", "args": {"pool": "openai"}})
+            self.assertEqual(202, call("POST", "/api/providers", payload, good)[0])
+            self.assertEqual([("clear", {"pool": "openai"})], providers.submitted)
+            # Another surface's confirmation header does not open this one.
+            wrong = {**good, "X-Factory-Cockpit": "human-queue-record"}
+            self.assertEqual(403, call("POST", "/api/providers", payload, wrong)[0])
+            self.assertEqual(403, call("POST", "/api/providers", payload, {**good, "Origin": "http://evil"})[0])
+            bad = json.dumps({"action": "shutdown", "args": {}})
+            self.assertEqual(400, call("POST", "/api/providers", bad, good)[0])
+            self.assertEqual(1, len(providers.submitted))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_provider_panel_is_on_the_desktop_and_the_phone(self):
+        html = (ROOT / "ui" / "factory-cockpit" / "index.html").read_text(encoding="utf-8")
+        for anchor in ("providers-panel", "providers-pools", "providers-targets", "providers-auto",
+                       "mobile-providers", "mobile-providers-pools", '<script src="/providers.js">'):
+            self.assertIn(anchor, html)
+        # The phone card lives inside the État screen, not in a new view.
+        state_screen = html.split('data-mobile-panel="state"', 1)[1].split('data-mobile-panel="decisions"', 1)[0]
+        self.assertIn("mobile-providers", state_screen)
 
     def test_http_queue_guard_and_reference_endpoint(self):
         class Cache:

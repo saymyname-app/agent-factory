@@ -74,9 +74,25 @@ say "factory-guard — $ROOT"
 say ""
 
 # --- 1. critical runtime files ----------------------------------------------
-CRITICAL="bin/pr-autopilot orders/pr-autopilot.toml bin/factory-guard orders/factory-guard.toml"
+CRITICAL="bin/pr-autopilot orders/pr-autopilot.toml bin/factory-guard orders/factory-guard.toml bin/provider-failover orders/provider-failover.toml"
 MISSING=""
 for f in $CRITICAL; do [ -e "$f" ] || MISSING="$MISSING $f"; done
+
+# --- 1b. the generated provider overlay (ADR-0018) --------------------------
+# city.toml includes city.provider.toml. The file is generated and gitignored,
+# so git cannot bring it back -- and without it the whole city config fails to
+# load. Regenerate it before the config checks below, which would fail too.
+if grep -qE '^[[:space:]]*include[[:space:]]*=.*city\.provider\.toml' city.toml 2>/dev/null \
+   && [ ! -f city.provider.toml ]; then
+  if [ "$CHECK_ONLY" = "1" ]; then
+    bad "city.provider.toml is missing — the city config cannot load; run factory-guard to regenerate it"
+  elif [ -x bin/provider-failover ] && bin/provider-failover apply --no-reload >/dev/null 2>&1 \
+       && [ -f city.provider.toml ]; then
+    did "regenerated the missing provider overlay city.provider.toml"
+  else
+    bad "city.provider.toml is missing and could not be regenerated — the city config cannot load"
+  fi
+fi
 
 # --- 2. config invariants ----------------------------------------------------
 BROKEN_CFG=""

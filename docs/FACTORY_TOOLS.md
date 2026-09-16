@@ -31,6 +31,8 @@ Ce qu'il contrôle :
 | `work-tree` | **sauvegarde** l'arbre de travail modifié ou non suivi (voir plus bas) |
 | `rig:*` | un rig suspendu bloque la livraison ; un dispatcher au repos, non |
 | `worktrees` | nomme les worktrees qui épinglent encore une branche fusionnée |
+| `provider overlay` | **régénère** `city.provider.toml` s'il a disparu (sans lui, la config de la cité ne charge plus) |
+| `liveness` | vérifie que la campagne **avance**, pas seulement que les pièces répondent ; ouvre **un** signalement pour le Mayor si elle stagne |
 
 **La sauvegarde de l'arbre de travail** mérite une explication. Un fichier que
 `.gitignore` couvre est hors périmètre par déclaration du dépôt. Tout le reste
@@ -58,6 +60,26 @@ mis le merge actor hors ligne et fait retomber `permission_mode` sur `plan`,
 qui bloque les agents non surveillés. Rien ne l'a signalé pendant vingt minutes.
 Le 2026-09-16, le contrôle `work-backup` affichait « nothing exists only on this
 machine » alors que vingt entrées, dont deux ADR acceptés, n'existaient que là.
+
+---
+
+### La vivacité, en clair
+
+Un contrôle de santé répond à « les pièces sont-elles là ». La vivacité répond à
+« quelque chose a-t-il bougé ». La nuit du 2026-09-15, tout était vert pendant
+six heures d'immobilité.
+
+La sentinelle de campagne laisse deux horodatages sur le bead de coordination :
+`gc.campaign_sentinel_at` (la boucle a tourné) et `gc.campaign_progress_at`
+(quelque chose a avancé : livraison en cours, bead Factory en cours, ou
+**nouveau** réveil envoyé au Mayor). Le garde-fou alerte si :
+
+- la boucle est muette depuis **10 min** ;
+- la campagne vit mais n'avance plus depuis **60 min** (réglable :
+  `FACTORY_LIVENESS_MINUTES`).
+
+Une pause volontaire (fenêtre de maintenance, quotas épuisés) est affichée,
+jamais signalée comme panne. Les règles sont dans `lib/factory_liveness.py`.
 
 ---
 
@@ -103,6 +125,34 @@ Les transitions exigent le garde `--mayor`. C'est un garde « transition
 délibérée », **pas** une revendication d'identité : déclarez l'auteur réel dans
 `--cause`. Le Mayor lit ce champ et peut prendre une recommandation du PO pour
 une décision de Benjamin.
+
+### Ce que fait la sentinelle quand il n'y a pas de travail produit
+
+Rien de produit à faire n'est pas de l'inactivité (ADR-0016 §7). La sentinelle
+descend l'**échelle d'inactivité** :
+
+1. travail produit (inchangé) ;
+2. un bead Factory prêt dans le store de la cité, le plus prioritaire, **un à la fois** ;
+3. durcissement des tests et chasse aux tests instables — au plus toutes les 12 h ;
+4. ménage du backlog et dette documentaire — au plus toutes les 24 h ;
+
+puis se repose. Ne sont jamais proposés : sessions, nudges, convois, étapes
+internes, objectifs produit, beads étiquetés `upstream`, beads tenus par
+quelqu'un d'autre, beads qui attendent Benjamin ou qui portent
+`gc.waiting_on=<qui>` (c'est ainsi qu'un agent fait sauter un bead à l'échelle).
+
+Une décision produit en attente ne met en pause **que** le travail produit :
+l'échelle continue. Une fenêtre `admin`, une limite de fournisseurs ou une panne
+durable, elles, font taire la sentinelle.
+
+### Un réveil qui n'a rien donné est renvoyé
+
+Un réveil marqué « envoyé » l'était pour toujours. Le 2026-09-16, un simple
+redémarrage a suffi : la nouvelle session du Mayor ne savait plus rien, et la
+sentinelle ne le lui redisait jamais. Désormais, un réveil sans progrès est
+renvoyé au bout de **30 min**, marqué `RAPPEL n/3`, **trois fois au plus**.
+Ensuite, c'est la vivacité qui ouvre un signalement. Les échelons 3 et 4,
+facultatifs par nature, ne sont jamais relancés.
 
 `--kind admin` est le type prévu pour une fenêtre de maintenance. Depuis le
 2026-09-16, un blocage `admin` enregistré survit à l'arrêt du contrôleur au lieu
@@ -156,6 +206,64 @@ Enquête du 2026-09-16, faite une fois pour ne plus jamais être refaite :
 Il n'y a donc rien à corriger ici, et rien à attendre d'une mise à jour. Le seul
 levier restant est de le signaler à l'amont. En attendant, le tri les écarte
 pour qu'ils cessent de coûter une enquête à chaque session.
+
+## `./bin/provider-failover` — quel modèle fait tourner l'usine
+
+Quand un quota GPT ou Claude est atteint, l'usine **bascule seule** sur le
+fournisseur suivant, et **revient seule** quand le quota se réinitialise. Plus
+personne n'a à éditer `city.toml` ni à se souvenir de « revenir à Codex ».
+Détails et règles : `decisions/ADR-0018-automatic-provider-failover.md`.
+
+**Depuis le cockpit** (ordinateur : « Aujourd'hui » › Fournisseurs IA ;
+téléphone : écran État) :
+
+| Réglage | Effet |
+|---|---|
+| Marquer épuisé (durée ou date) | pour une limite que l'usine n'a pas vue |
+| Rétablir | le quota est de nouveau utilisable |
+| Désactiver / Réactiver | exclut un fournisseur de toutes les chaînes |
+| ↑ / ↓ | change l'ordre de repli d'une cible |
+| Forcer | impose un fournisseur à une cible, même épuisé |
+| Repli automatique (case) | désactivé : les limites détectées sont affichées mais plus appliquées |
+
+Tout est réversible et ne consomme aucun token.
+
+**En ligne de commande** :
+
+```bash
+./bin/provider-failover status                    # qui tourne sur quoi, et pourquoi
+./bin/provider-failover tick --dry-run            # ce que ferait le prochain passage
+./bin/provider-failover set --action mark --by <qui> \
+    --args '{"pool":"anthropic","until":"2026-09-16T16:50:00Z"}'
+./bin/provider-failover set --action clear --by <qui> --args '{"pool":"anthropic"}'
+./bin/provider-failover apply                     # régénère city.provider.toml
+```
+
+Trois fichiers, un seul écrivain :
+
+| Fichier | Rôle | Versionné |
+|---|---|---|
+| `config/provider-policy.json` | pools, fournisseurs, chaîne de repli par cible | oui |
+| `.gc/provider-state.json` | limites détectées, réglages du cockpit, historique | non |
+| `city.provider.toml` | surcouche **générée**, incluse par `city.toml` | non |
+
+**Ne jamais éditer `city.provider.toml` à la main**, ni le fournisseur dans
+`city.toml` (ce n'est plus qu'une valeur de secours). **Ne jamais supprimer**
+`city.provider.toml` : sans lui la config ne charge plus — le garde-fou le
+régénère, mais autant ne pas lui en donner l'occasion.
+
+Un quota s'applique à un **pool** : les trois profils Claude partagent le même
+compte, donc une limite Claude les épuise tous. Codex standard et Codex Spark
+sont deux pools distincts.
+
+Si **aucun** fournisseur ne reste pour les ouvriers, la campagne est mise en
+pause (`limit`, cause `[provider-failover]`) avec l'heure de reprise la plus
+proche, puis **reprise automatiquement**. Cela ne demande jamais Benjamin.
+
+La tâche planifiée `provider-failover` tourne toutes les 2 min (~1 s, < 1 s de
+CPU : les écrans sont lus via tmux, pas via `gc session peek` qui coûtait 8 s).
+
+---
 
 ## `gc doctor` — la santé de la cité
 
