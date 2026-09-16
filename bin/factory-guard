@@ -371,6 +371,42 @@ except Exception:
   esac
 fi
 
+# --- 8. delivery-bead proof-field completeness (ADR-0016 s5.3 invariant 2) --
+# bin/deliver-close is the only sanctioned door for CLOSING a delivery bead,
+# and it already refuses to write without independently verifying a merged
+# PR first. Nothing used to check the door OUT — a raw `gc bd close` bypasses
+# deliver-close entirely, which is exactly what happened to delivery bead
+# af-7700 on 2026-09-16: closed with none of the six proof fields set, which
+# silently blocked mayor-campaign status / product-status (both read those
+# fields off the last delivered bead) for about half a day before anyone
+# noticed. bin/factory-delivery-guard is that missing check: it backfills
+# proof fields it can independently verify via `gh pr view`, and flags (once,
+# never repeatedly) whatever it cannot verify. See that script and
+# lib/factory_delivery_proof.py for the exact rules.
+DELIVERY_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-delivery-guard"
+if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || ! command -v gh >/dev/null 2>&1 \
+   || [ ! -x "$DELIVERY_GUARD" ]; then
+  say "· delivery-proof — not checked (not a city root, or gc/gh unavailable)"
+else
+  DG_ARGS=()
+  [ "$CHECK_ONLY" = "1" ] && DG_ARGS+=(--check-only)
+  DG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$DELIVERY_GUARD" "${DG_ARGS[@]}" 2>&1)
+  DG_STATUS=$?
+  [ "$QUIET" = "1" ] || printf '%s\n' "$DG_OUTPUT" | sed 's/^/  /'
+  DG_PROBLEM_COUNT=0
+  while IFS= read -r raw_line; do
+    line="${raw_line#"${raw_line%%[![:space:]]*}"}"  # strip leading whitespace
+    case "$line" in
+      REPAIRED:\ *) ACTIONS+=("delivery-proof: ${line#REPAIRED: }") ;;
+      !\ *)         PROBLEMS+=("delivery-proof: ${line#! }"); STATUS=1; DG_PROBLEM_COUNT=$((DG_PROBLEM_COUNT+1)) ;;
+    esac
+  done <<<"$DG_OUTPUT"
+  if [ "$DG_STATUS" -ne 0 ] && [ "$DG_PROBLEM_COUNT" -eq 0 ]; then
+    PROBLEMS+=("delivery-proof: factory-delivery-guard exited $DG_STATUS with no problem line captured")
+    STATUS=1
+  fi
+fi
+
 # --- report ------------------------------------------------------------------
 say ""
 if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi

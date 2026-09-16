@@ -96,5 +96,11 @@ jobs:
       - name: Merge actor holds irreversible changes
         run: bash tests/pr-autopilot-reversibility-test.sh
 
+      - name: Delivery-proof completeness rules
+        run: python tests/factory-delivery-proof-test.py
+
+      - name: Factory guard backfills or flags undocumented delivery beads
+        run: bash tests/factory-delivery-guard-test.sh
+
       - name: Every test is registered in CI
         run: bash tests/ci-registration-test.sh

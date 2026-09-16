@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# factory-delivery-guard — catches a delivery Bead closed without its six
+# ADR-0016 proof fields (gc.delivery_status, gc.work_outcome, gc.github_repo,
+# gc.pr_number, gc.pr_head, gc.merge_commit).
+#
+# bin/deliver-close is the only sanctioned door IN: it refuses to close a
+# delivery bead without first verifying, via `gh pr view`, that the named PR
+# is genuinely merged. Nothing used to check the door OUT — a raw
+# `gc bd close` bypasses deliver-close entirely, which is exactly what
+# happened to delivery bead af-7700 on 2026-09-16: closed with none of the six
+# fields set, which silently blocked mayor-campaign status / product-status
+# (both read those fields off the last delivered bead) for about half a day
+# before anyone noticed.
+#
+# This is the missing check on the way out. It lists every CLOSED bead
+# labelled product-goal (the label the rest of the Factory already uses to
+# mean "delivery/goal outcome" — see lib/factory_cockpit.py) in the city and
+# in the SayMyName rigs, and for each one missing a proof field
+# (lib/factory_delivery_proof.py holds the exact rules):
+#
+#   - if the bead already names a GitHub repo + PR number, independently
+#     verify with `gh pr view` — the same check bin/deliver-close performs —
+#     and if it is genuinely merged, backfill all six fields from that
+#     verified evidence. Never from a guess: a PR that does not verify as
+#     merged is reported, not papered over.
+#   - otherwise (no repo/PR recorded at all, or `gh` disagrees with what is
+#     recorded), flag the bead exactly once by writing
+#     gc.delivery_proof_flagged_at / gc.delivery_proof_missing on the bead
+#     itself. A bead that already carries that flag is reported again (so it
+#     never silently disappears) but the flag itself is not rewritten, so a
+#     human or the Mayor sees it once, not on every guard run.
+#
+# --check-only reports without writing anything (no repair, no flag).
+#
+# Usage: factory-delivery-guard [--check-only]
+set -uo pipefail
+
+PROGRAM_NAME="factory-delivery-guard"
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+GC_BIN="${GC_BIN:-gc}"
+GH_BIN="${GH_BIN:-gh}"
+PY_BIN="${PYTHON_BIN:-python3}"
+LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd -P)"
+CHECK_ONLY=0
+RIGS=(saymyname-backend saymyname-frontend)
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check-only) CHECK_ONLY=1 ;;
+    -h|--help)
+      sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "$PROGRAM_NAME: unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || { echo "$PROGRAM_NAME: required command unavailable: $1" >&2; exit 2; }
+}
+require_command "$GC_BIN"
+require_command "$GH_BIN"
+require_command "$PY_BIN"
+require_command jq
+[ -f "$LIB_DIR/factory_delivery_proof.py" ] || { echo "$PROGRAM_NAME: lib/factory_delivery_proof.py not found" >&2; exit 2; }
+
+PROBLEMS=(); ACTIONS=(); STATUS=0
+CHECKED=0; INCOMPLETE=0
+
+say()  { printf '%s\n' "$*"; }
+bad()  { PROBLEMS+=("$1"); STATUS=1; }
+did()  { ACTIONS+=("$1"); say "  REPAIRED: $1"; }
+
+# gc_for <rig>: prints the gc invocation prefix for the city (rig="") or a rig.
+gc_for() {
+  if [ -z "$1" ]; then printf '%s bd' "$GC_BIN"; else printf '%s bd --rig %s' "$GC_BIN" "$1"; fi
+}
+
+list_closed_delivery_beads() {  # $1 = rig name, or "" for the city root
+  local rig=$1 out
+  if [ -z "$rig" ]; then
+    out=$(cd "$ROOT" && "$GC_BIN" bd list --all --status closed --label-any product-goal --limit 0 --json 2>/dev/null)
+  else
+    out=$(cd "$ROOT" && "$GC_BIN" bd --rig "$rig" list --all --status closed --label-any product-goal --limit 0 --json 2>/dev/null)
+  fi
+  jq -e . >/dev/null 2>&1 <<<"$out" && printf '%s' "$out" || printf '[]'
+}
+
+# verify_pr_merged repo pr -> prints "<pr_head>\t<merge_commit>" and returns 0
+# only when gh independently confirms the PR is genuinely merged. Mirrors
+# bin/deliver-close's own verification exactly, on purpose: this is the same
+# proof deliver-close would have required at close time.
+verify_pr_merged() {
+  local repo=$1 pr=$2 response
+  response=$("$GH_BIN" pr view "$pr" --repo "$repo" \
+    --json number,state,mergedAt,mergeCommit,headRefOid,url 2>/dev/null) || return 1
+  jq -e . >/dev/null 2>&1 <<<"$response" || return 1
+  jq -e --argjson number "$pr" '
+    .number == $number and
+    .state == "MERGED" and
+    (.mergedAt | type == "string" and length > 0) and
+    (.headRefOid | type == "string" and test("^[0-9a-f]{40}$")) and
+    (.mergeCommit.oid | type == "string" and test("^[0-9a-f]{40}$"))
+  ' >/dev/null <<<"$response" || return 1
+  jq -r '[.headRefOid, .mergeCommit.oid] | @tsv' <<<"$response"
+}
+
+handle_unverifiable() {  # id label rig missing already_flagged why
+  local id=$1 label=$2 rig=$3 missing=$4 flagged=$5 why=$6
+  if [ "$flagged" = "1" ]; then
+    say "  · $id ($label) still missing: $missing ($why) — already flagged, awaiting a human"
+    bad "$id ($label) delivery proof incomplete and unverifiable ($why); already flagged, unresolved"
+    return
+  fi
+  bad "$id ($label) delivery proof incomplete and unverifiable ($why); missing: $missing"
+  if [ "$CHECK_ONLY" != "1" ]; then
+    if (cd "$ROOT" && $(gc_for "$rig") update "$id" \
+          --set-metadata "gc.delivery_proof_flagged_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          --set-metadata "gc.delivery_proof_missing=$missing" >/dev/null 2>&1); then
+      did "flagged $id ($label) once for human review ($why)"
+    else
+      bad "$id ($label) could not be flagged — the Beads write itself failed"
+    fi
+  fi
+}
+
+process_scope() {  # rig label
+  local rig=$1 label=$2 beads incomplete
+  beads=$(list_closed_delivery_beads "$rig")
+  incomplete=$("$PY_BIN" "$LIB_DIR/factory_delivery_proof.py" <<<"$beads")
+  if [ -z "$incomplete" ]; then
+    say "✓ delivery-proof:$label — every closed delivery bead is fully documented"
+    return
+  fi
+  local id missing repo pr flagged
+  # 0x1F (unit separator), not a tab: a tab is bash read's own IFS-whitespace
+  # character and silently collapses adjacent delimiters, dropping exactly
+  # the empty repo/pr-number fields this loop depends on distinguishing.
+  while IFS=$'\x1f' read -r id missing repo pr flagged; do
+    [ -z "$id" ] && continue
+    CHECKED=$((CHECKED + 1))
+    INCOMPLETE=$((INCOMPLETE + 1))
+    if [ -n "$repo" ] && [ -n "$pr" ]; then
+      say "  · $id ($label) missing: $missing — repo/PR recorded ($repo#$pr), verifying with gh"
+      local shas pr_head merge_commit
+      if shas=$(verify_pr_merged "$repo" "$pr"); then
+        IFS=$'\t' read -r pr_head merge_commit <<<"$shas"
+        if [ "$CHECK_ONLY" = "1" ]; then
+          bad "$id ($label) closed without full delivery proof, but $repo#$pr verifies merged — run factory-delivery-guard to backfill"
+        elif (cd "$ROOT" && $(gc_for "$rig") update "$id" \
+                --set-metadata "gc.delivery_status=merged" \
+                --set-metadata "gc.work_outcome=shipped" \
+                --set-metadata "gc.github_repo=$repo" \
+                --set-metadata "gc.pr_number=$pr" \
+                --set-metadata "gc.pr_head=$pr_head" \
+                --set-metadata "gc.merge_commit=$merge_commit" \
+                --unset-metadata "gc.delivery_proof_flagged_at" \
+                --unset-metadata "gc.delivery_proof_missing" >/dev/null 2>&1); then
+          did "$id ($label) backfilled all six proof fields from verified $repo#$pr ($merge_commit)"
+        else
+          bad "$id ($label) verified merged via $repo#$pr but the Beads write failed — re-run"
+        fi
+      else
+        handle_unverifiable "$id" "$label" "$rig" "$missing" "$flagged" "$repo#$pr is not verifiably merged"
+      fi
+    else
+      handle_unverifiable "$id" "$label" "$rig" "$missing" "$flagged" "no verifiable GitHub repo/PR recorded on the bead"
+    fi
+  done <<<"$incomplete"
+}
+
+process_scope "" "city"
+for rig in "${RIGS[@]}"; do
+  [ -d "$ROOT/rigs/$rig" ] || continue
+  process_scope "$rig" "$rig"
+done
+
+say ""
+if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
+if [ "${#PROBLEMS[@]}" -gt 0 ]; then
+  say "UNRESOLVED ${#PROBLEMS[@]}:"; printf '  ! %s\n' "${PROBLEMS[@]}"
+elif [ "$INCOMPLETE" -gt 0 ]; then
+  say "healthy — $INCOMPLETE incomplete delivery bead(s) seen this run, all repaired"
+else
+  say "healthy — no closed delivery bead is missing a proof field"
+fi
+exit "$STATUS"
