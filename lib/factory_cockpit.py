@@ -47,6 +47,7 @@ REMOTE_ACCESS_FILE = ROOT / ".gc" / "runtime" / "factory-cockpit-remote-url"
 BLOCKER_STATE_PATH = ROOT / ".gc" / "runtime" / "factory-cockpit-blockers.json"
 DECISION_DOMAINS = ("enterprise", "product", "project")
 COORDINATION_BEAD = os.environ.get("FACTORY_COCKPIT_COORDINATION_BEAD", "af-1vr4")
+PO_STATE_PATH_OVERRIDE = os.environ.get("FACTORY_COCKPIT_PO_STATE_PATH")
 GAS_CITY_URL = os.environ.get("FACTORY_COCKPIT_GAS_CITY_URL", "http://127.0.0.1:8372")
 CITY_NAME = os.environ.get("FACTORY_COCKPIT_CITY_NAME", "agent-factory")
 
@@ -2804,7 +2805,8 @@ class POBridge:
         self.config = config or load_product_config()
         self.memory = ProductMemory(config=self.config)
         self.state_path = state_path or (
-            ROOT / ".gc" / "runtime" / f"factory-cockpit-po-{self.config['slug']}.json"
+            Path(PO_STATE_PATH_OVERRIDE) if PO_STATE_PATH_OVERRIDE
+            else ROOT / ".gc" / "runtime" / f"factory-cockpit-po-{self.config['slug']}.json"
         )
         self.executor = executor or subprocess.run
         self.lock = threading.Lock()

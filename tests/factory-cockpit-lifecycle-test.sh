@@ -6,6 +6,8 @@ set -Eeuo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 PORT=18383
 export FACTORY_COCKPIT_PORT=$PORT
+PO_STATE_DIR=$(mktemp -d)
+export FACTORY_COCKPIT_PO_STATE_PATH="$PO_STATE_DIR/po-state.json"
 COCKPIT="$ROOT/bin/factory-cockpit"
 URL="http://127.0.0.1:$PORT"
 
@@ -15,7 +17,7 @@ if python3 "$ROOT/lib/factory_cockpit.py" serve --host 0.0.0.0 --port 18384 \
   exit 1
 fi
 
-cleanup() { "$COCKPIT" stop >/dev/null 2>&1 || true; }
+cleanup() { "$COCKPIT" stop >/dev/null 2>&1 || true; rm -rf -- "$PO_STATE_DIR"; }
 trap cleanup EXIT
 
 "$COCKPIT" stop >/dev/null 2>&1 || true
