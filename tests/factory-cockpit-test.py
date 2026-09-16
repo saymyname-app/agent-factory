@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import contextlib
+import io
 import re
 import sys
 import tempfile
@@ -1030,6 +1032,69 @@ class FactoryCockpitTest(unittest.TestCase):
         with cache.condition:
             self.assertTrue(cache.condition.wait_for(lambda: not cache.refreshing, timeout=1))
             self.assertEqual(2, cache.value["version"])
+
+    def test_hung_background_refresh_is_abandoned_and_cache_recovers(self):
+        # A collect() call that never returns (a wedged subprocess, a lock
+        # that never releases) must not pin the cache on its last snapshot
+        # forever: once the stuck attempt has outrun refresh_timeout, a
+        # later get() should retry instead of trusting it indefinitely.
+        class Collector:
+            calls = 0
+
+            def collect(self):
+                self.calls += 1
+                return {"version": self.calls}
+
+        collector = Collector()
+        cache = SnapshotCache(collector, ttl=1000, max_stale=0.01, refresh_timeout=0.05)
+        self.assertEqual(1, cache.get()["version"])
+        # Simulate a background refresh that started but, like a wedged
+        # subprocess, never came back to clear `refreshing`.
+        with cache.condition:
+            cache.refreshing = True
+            cache.refresh_started_at = time.monotonic() - 10
+        time.sleep(0.02)
+        self.assertEqual(2, cache.get()["version"])
+        self.assertFalse(cache.refreshing)
+
+    def test_cache_never_serves_data_older_than_max_stale(self):
+        class Collector:
+            calls = 0
+
+            def collect(self):
+                self.calls += 1
+                return {"version": self.calls}
+
+        collector = Collector()
+        cache = SnapshotCache(collector, ttl=1000, max_stale=0.05, refresh_timeout=30)
+        self.assertEqual(1, cache.get()["version"])
+        time.sleep(0.1)
+        # ttl has not elapsed, but the value is older than max_stale: get()
+        # must fetch a fresh value rather than silently returning the old one.
+        self.assertEqual(2, cache.get()["version"])
+
+    def test_background_refresh_failure_is_logged(self):
+        class Collector:
+            calls = 0
+
+            def collect(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return {"version": 1}
+                raise RuntimeError("boom")
+
+        collector = Collector()
+        cache = SnapshotCache(collector, ttl=0, max_stale=1000, refresh_timeout=30)
+        self.assertEqual(1, cache.get()["version"])
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            with cache.condition:
+                cache._start_background_refresh()
+                cache.condition.wait_for(lambda: not cache.refreshing, timeout=1)
+        self.assertIn("snapshot refresh failed", captured.getvalue())
+        self.assertIn("boom", captured.getvalue())
+        # A failed background refresh must not corrupt the still-good cache.
+        self.assertEqual(1, cache.value["version"])
 
     def test_human_projection_and_zero_token_contract(self):
         result = FactoryCollector(FakeRunner(), FakeGasCity()).collect()
