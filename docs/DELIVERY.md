@@ -262,10 +262,13 @@ Préférer la forme réversible (expand/contract) :
 | irréversible déclaré | idem, étiquette `irreversible-change`, escalade au Mayor (test 4) ; **jamais fusionnée par l'automatisation** |
 | contrôle impossible | non armée ce passage (échec fermé) |
 
-**Signalé, non tranché ici :** ce document classe toute modification Flyway en
-GUARDED, alors que les migrations additives fusionnent automatiquement (comme
-avant ADR-0019). Décider si elles doivent aussi attendre un humain revient à
-Benjamin.
+**Tranché (Benjamin, 2026-09-16) :** GUARDED ne s'applique qu'aux migrations
+Flyway **non additives** (perte de schéma, perte de données, réécriture,
+renommage — le tableau ci-dessus). Une migration **additive** (`CREATE`,
+`ADD COLUMN`, `INSERT`, index, contraintes — rien à déclarer) continue de
+fusionner automatiquement dès `-Pit verify` vert, comme avant ADR-0019 et comme
+`bin/pr-autopilot` le fait déjà aujourd'hui. Le code n'a pas changé ; c'est ce
+document qui était en retard sur le comportement réel.
 
 ### Changements de comportement — point de revue (non mécanique)
 
@@ -295,7 +298,7 @@ These classifications are deliberately separate: the three contracts are durable
 - **OBSERVED:** Java 21, Maven and Spring Boot 3.3.1; `Backend CI` executes `mvn -B -ntp -Pit verify` on pull requests to `dev`/`main`; Flyway and Testcontainers/MySQL are present. Active GitHub ruleset `22629508` requires the `Maven verify` status check.
 - **PROVEN GitHub cleanup:** PR #27 merged at `5fc753308a1522c5f4f5d0ccc98df69bc982cc7b` with the required check green.
 - **PROVEN locally:** unit test modules pass with Java 21. After the 2026-09-13 WSL/Docker remediation, `CourseKnowledgeTenantIsolationIT` passed 2/2 through Testcontainers, Ryuk, MySQL 8.0.41 and Flyway V1-V9. This scoped canary does not replace the full GitHub `Backend CI`, which remains authoritative for a STANDARD delivery.
-- **FAST:** documentation or bounded test-only maintenance with task-specific deterministic validation. **STANDARD:** ordinary bounded backend changes with `-Pit verify` green in GitHub CI. **GUARDED:** Flyway/schema changes, persistent data changes, production actions, secrets, security-sensitive changes or irreversible transitions.
+- **FAST:** documentation or bounded test-only maintenance with task-specific deterministic validation. **STANDARD:** ordinary bounded backend changes with `-Pit verify` green in GitHub CI, including additive Flyway migrations (see *Réversibilité par défaut* above). **GUARDED:** non-additive Flyway/schema changes (loss, rewrite, rename), persistent data changes, production actions, secrets, security-sensitive changes or irreversible transitions.
 - **Reversibility:** every new Flyway migration passes `bin/reversibility-check` before merge; see *Réversibilité par défaut* above (ADR-0019).
 
 ### Frontend — `saymyname-frontend` / `smf`
