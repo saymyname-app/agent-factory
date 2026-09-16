@@ -60,11 +60,11 @@
     },
     {
       "id": "administered-csv", "title": "Import administré CSV jusqu’au premier quiz utile",
-      "description": "Importer en brouillon, résoudre les erreurs, publier et inviter séparément, puis atteindre un vrai quiz.", "status": "decision_required",
+      "description": "Importer en brouillon, résoudre les erreurs, publier et inviter séparément, puis atteindre un vrai quiz.", "status": "partial",
       "evidence": [
         {"kind": "data", "ref": "Backend V1 schema import_batches, import_mappings, import_rows", "status": "partial"},
-        {"kind": "ui", "ref": "Frontend administered import journey", "status": "absent"},
-        {"kind": "bead", "ref": "af-u8id.3.1 design-ready contract", "status": "decision_required"}
+        {"kind": "ui", "ref": "Frontend administered import journey — PR saymyname-app/Say-my-name-front#49 merged; disclosed gaps: no backend batch-list endpoint (localStorage resume pointer used instead), published-field shown on import Result screen rather than person directory, single responsive row-review list instead of a separate desktop table", "status": "partial"},
+        {"kind": "bead", "ref": "af-u8id.3 CLOSED 2026-09-16 — backend PR #38 + frontend PR #49 merged, CI green; af-u8id.3.1 design-ready contract CLOSED with all seven Benjamin+PO decisions recorded in DECISIONS.md commit 0a0f5f3", "status": "proven"}
       ]
     }
   ],
@@ -91,9 +91,9 @@
     {
       "id": "admin-csv-to-first-quiz", "title": "Importer une population jusqu’au premier quiz",
       "description": "Créer l’organisation, importer et publier explicitement, inviter, sélectionner en privé et répondre à une question réelle.",
-      "status": "decision_required", "capability_refs": ["account-access", "administered-csv", "private-selection", "learning-loop"],
+      "status": "partial", "capability_refs": ["account-access", "administered-csv", "private-selection", "learning-loop"],
       "evidence": [
-        {"kind": "bead", "ref": "af-u8id.3 and af-u8id.3.1", "status": "decision_required"},
+        {"kind": "bead", "ref": "af-u8id.3 and af-u8id.3.1 both CLOSED, shipped (backend PR #38, frontend PR #49 merged)", "status": "proven"},
         {"kind": "test", "ref": "Ephemeral administered CSV end-to-end proof", "status": "absent"}
       ]
     }
@@ -141,9 +141,9 @@
     },
     {
       "id": "csv-design-approval", "title": "Décision Benjamin + PO sur le parcours CSV",
-      "description": "Sept choix d’autorisation, publication, invitation, doublon, rétention, champs et workspace restent à approuver.", "status": "decision_required",
+      "description": "Sept choix d’autorisation, publication, invitation, doublon, rétention, champs et workspace approuvés le 2026-09-15.", "status": "proven",
       "required_for": ["administered-csv", "admin-csv-to-first-quiz"],
-      "evidence": [{"kind": "bead", "ref": "af-u8id.3.1#decisions-requiring-benjamin-po-approval", "status": "decision_required"}]
+      "evidence": [{"kind": "document", "ref": "docs/products/saymyname/DECISIONS.md#2026-09-15-administered-csv-journey-approval", "status": "proven"}]
     },
     {
       "id": "release-observability", "title": "Preuve E2E et exploitation production-autonome",
@@ -162,8 +162,8 @@
     },
     {
       "id": "af-u8id.3-design", "title": "Approuver ou amender les sept recommandations du parcours CSV administré",
-      "source_ref": "af-u8id.3.1#decisions-requiring-benjamin-po-approval",
-      "status": "decision_required", "risk": "high", "revision": 1,
+      "source_ref": "docs/products/saymyname/DECISIONS.md#2026-09-15-administered-csv-journey-approval",
+      "status": "accepted", "risk": "high", "revision": 1,
       "capability_refs": ["administered-csv", "private-selection", "learning-loop"],
       "dependency_refs": ["csv-design-approval"],
       "options": [
@@ -195,8 +195,8 @@
     {
       "id": "admin-csv-first-quiz", "title": "CSV administré jusqu’au premier quiz réel",
       "description": "Import idempotent en brouillon, publication et invitation séparées, sélection privée et première réponse persistée.",
-      "status": "decision_required", "capability_refs": ["administered-csv", "private-selection", "learning-loop"], "journey_refs": ["admin-csv-to-first-quiz"],
-      "evidence": [{"kind": "bead", "ref": "af-u8id.3.1", "status": "decision_required"}]
+      "status": "partial", "capability_refs": ["administered-csv", "private-selection", "learning-loop"], "journey_refs": ["admin-csv-to-first-quiz"],
+      "evidence": [{"kind": "bead", "ref": "af-u8id.3.1 CLOSED, design-ready contract approved and shipped", "status": "proven"}]
     },
     {
       "id": "release-e2e", "title": "Preuves V1 de bout en bout",
@@ -219,17 +219,13 @@
     },
     {
       "id": "admin-csv", "work_ref": "af-u8id.3", "title": "CSV administré jusqu’au premier quiz",
-      "kind": "product", "state": "blocked", "order": 20, "dedupe_key": "admin-csv-first-quiz",
+      "kind": "product", "state": "delivered", "order": 20, "dedupe_key": "admin-csv-first-quiz",
       "criterion_refs": ["admin-csv-first-quiz", "private-learning"], "depends_on": ["v1-foundation"], "independence": "proven",
-      "blocker": {
-        "kind": "decision", "decision_id": "af-u8id.3-design",
-        "cause": "Les sept recommandations de confidentialité, autorisation et navigation attendent Benjamin + PO.",
-        "owner": "Benjamin", "action": "Choisir Accepter, Refuser, une option ou Autre dans le point d’intervention af-u8id.3."
-      }
+      "blocker": null
     },
     {
       "id": "personal-csv", "work_ref": "af-ccvr", "title": "Importer des personnes dans l’espace personnel",
-      "kind": "product", "state": "candidate", "order": 30, "dedupe_key": "personal-csv-private-targets",
+      "kind": "product", "state": "delivered", "order": 30, "dedupe_key": "personal-csv-private-targets",
       "criterion_refs": ["personal-return", "private-learning", "release-e2e"], "depends_on": ["v1-foundation"],
       "independence": "proven", "blocker": null
     },
