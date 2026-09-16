@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import re
 import sys
 import tempfile
 import threading
@@ -666,6 +667,45 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertIn('fetch("/api/delivery-evidence"', script)
         self.assertNotIn(".innerHTML", script)
         self.assertIn("@media(max-width:800px)", styles)
+
+    def test_enterprise_is_demoted_out_of_the_first_level_navigation(self):
+        """Enterprise is a later concern: reachable, never at the rank of Today."""
+        html = (ROOT / "ui" / "factory-cockpit" / "index.html").read_text(encoding="utf-8")
+        more = html.index('<details class="nav-more">')
+        self.assertLess(more, html.index('data-view="enterprise"'))
+        self.assertLess(html.index('data-view="enterprise"'), html.index("</details>"))
+        # Still first level, and still ahead of Enterprise: the daily views.
+        for view in ("today", "project", "roadmap", "decisions", "po", "work"):
+            self.assertLess(html.index('data-view="%s"' % view), more)
+        # The disclosure stays closed until asked for.
+        self.assertNotIn('<details class="nav-more" open>', html)
+
+    def test_mobile_profile_is_three_screens_read_at_zero_token(self):
+        """Nobody pilots a factory from a phone: is it running, am I awaited, I unblock."""
+        html = (ROOT / "ui" / "factory-cockpit" / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "ui" / "factory-cockpit" / "app.js").read_text(encoding="utf-8")
+        styles = (ROOT / "ui" / "factory-cockpit" / "styles.css").read_text(encoding="utf-8")
+        panels = re.findall(r'data-mobile-panel="([a-z]+)"', html)
+        tabs = re.findall(r'data-mobile-view="([a-z]+)"', html)
+        self.assertEqual(["state", "decisions", "mayor"], panels)
+        self.assertEqual(["state", "decisions", "mayor"], tabs)
+        # The desktop cockpit is replaced below the breakpoint, not squeezed.
+        self.assertIn("@media(max-width:640px)", styles)
+        self.assertIn(".app-header,.app-nav,.shell{display:none!important}", styles)
+        self.assertIn(".mobile-app{display:none}", styles)
+        # Reading is rendered from the snapshot already fetched: no extra call.
+        self.assertIn("renderMobile(data); compareVisit(data)", script)
+        self.assertIn("function renderMobile(data)", script)
+        # Enterprise decisions never reach the phone's decision screen.
+        self.assertIn('visiblePending(memory).filter((item) => item.domain !== "enterprise")', script)
+        # Exactly two writes, both explicitly triggered by a human.
+        mobile = script[script.index("/* ---- Profil mobile"):]
+        self.assertEqual(2, mobile.count('method: "POST"'))
+        self.assertIn('fetch("/api/po/message"', mobile)
+        self.assertIn('fetch("/api/mayor/message"', mobile)
+        # Both of them warn before spending, next to the button that spends.
+        mobile_html = html[html.index('<div id="mobile-app"'):]
+        self.assertEqual(2, mobile_html.count("token-warning"))
 
     def test_po_console_creates_one_on_demand_session_per_decision(self):
         with tempfile.TemporaryDirectory() as directory:

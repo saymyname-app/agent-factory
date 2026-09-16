@@ -343,3 +343,42 @@ button.reference-card{width:100%;text-align:left}
 .workflow-live{display:block;margin-top:.7rem;color:var(--blue);font-size:.63rem;font-weight:850;text-transform:uppercase}
 @media(max-width:1000px){.decision-domain-grid{grid-template-columns:1fr 1fr}.decision-domain.project{grid-column:1/-1}.reference-layout{grid-template-columns:1fr}.reference-index{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));max-height:none}}
 @media(max-width:800px){.po-layout{grid-template-columns:1fr}.po-console{min-height:32rem}.context-graph{justify-content:start}.mobile-access,.design-contract,.decision-switcher-heading,.preference-panel{align-items:flex-start;flex-direction:column}.capability-graph{grid-template-columns:repeat(2,minmax(0,1fr))}.po-compose-actions{align-items:stretch;flex-direction:column}.decision-domain-grid,.decision-domain-grid.primary-decisions,.roadmap-evidence,.campaign-block-today,.release-summary-grid{grid-template-columns:1fr}.decision-domain.project{grid-column:auto}.nav-group{padding-top:.9rem}.workflow-node{flex-basis:11rem}.decision-switch{flex-basis:78vw}.queue-add form{grid-template-columns:1fr}.reference-index{grid-template-columns:1fr}.nav-more-items{position:fixed;top:auto;right:.5rem;bottom:.5rem;left:.5rem;width:auto}.confirmation-dialog{width:calc(100vw - 1rem)}.release-heading-actions,.release-intervention .decision-actions{align-items:stretch;flex-direction:column}.release-heading-actions>*{width:100%}.release-card-grid{grid-template-columns:1fr}}
+
+/* ---- Profil mobile : trois écrans, pas le cockpit rétréci ---------------- */
+.mobile-app{display:none}
+@media(max-width:640px){
+.app-header,.app-nav,.shell{display:none!important}
+.mobile-app{display:flex;min-height:100vh;flex-direction:column;padding-bottom:5rem}
+.mobile-header{position:sticky;z-index:30;top:0;display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.7rem .9rem;border-bottom:1px solid var(--line);background:rgba(11,15,14,.95);backdrop-filter:blur(14px)}
+.mobile-header strong{display:block;font-size:.95rem}
+.mobile-header small{color:var(--muted);font-size:.72rem}
+.mobile-header-actions{display:flex;align-items:center;gap:.5rem;flex-shrink:0}
+.mobile-screens{flex:1;padding:.9rem}
+.mobile-screen{display:none}
+.mobile-screen.active{display:flex;flex-direction:column;gap:.8rem}
+.mobile-card{padding:.95rem}
+.mobile-card h2{margin:0 0 .3rem;font-size:1.05rem}
+.mobile-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:.6rem}
+.mobile-card .resume-facts{margin:.5rem 0}
+.mobile-block{padding:.9rem;border:1px solid rgba(255,124,116,.45);border-radius:1rem;background:rgba(255,124,116,.1)}
+.mobile-block strong{display:block;margin-bottom:.35rem;color:var(--red);font-size:1.1rem;letter-spacing:.08em}
+.mobile-block p{margin:.25rem 0 0;font-size:.85rem}
+.mobile-list{display:flex;flex-direction:column;gap:.6rem}
+.mobile-decision-card{display:flex;flex-direction:column;gap:.25rem;padding:.85rem;border:1px solid var(--line);border-radius:1rem;background:rgba(21,27,26,.94);text-align:left}
+.mobile-decision-card strong{font-size:.95rem}
+.mobile-decision-card small{color:var(--muted);font-size:.76rem}
+.mobile-detail{display:flex;flex-direction:column;gap:.55rem}
+.mobile-detail h2{margin:0;font-size:1.05rem}
+.mobile-messages{display:flex;max-height:24rem;flex-direction:column;gap:.5rem;overflow-y:auto}
+.mobile-messages .message,.mobile-messages .po-message{padding:.7rem;border:1px solid var(--line);border-radius:.8rem;background:var(--panel2);font-size:.85rem}
+.mobile-messages strong{display:block;margin-bottom:.2rem;color:var(--muted);font-size:.7rem;letter-spacing:.08em}
+.mobile-messages p{margin:0;overflow-wrap:anywhere}
+.mobile-actions{display:flex;flex-direction:column;gap:.5rem}
+.mobile-actions select,.mobile-actions button{width:100%}
+.mobile-app textarea,.mobile-app select{width:100%;padding:.6rem;border:1px solid var(--line);border-radius:.65rem;color:var(--ink);background:var(--panel2)}
+.mobile-tabs{position:fixed;right:0;bottom:0;left:0;z-index:40;display:grid;grid-template-columns:repeat(3,1fr);gap:.3rem;padding:.4rem;border-top:1px solid var(--line);background:rgba(11,15,14,.97);backdrop-filter:blur(14px)}
+.mobile-tab{display:flex;min-height:3.1rem;flex-direction:column;align-items:center;justify-content:center;gap:.1rem;padding:.45rem .2rem}
+.mobile-tab span{font-size:.82rem;font-weight:700}
+.mobile-tab small{max-width:100%;overflow:hidden;color:var(--muted);font-size:.68rem;text-overflow:ellipsis;white-space:nowrap}
+.mobile-tab.active{border-color:rgba(104,220,152,.45);background:rgba(104,220,152,.12)}
+}
