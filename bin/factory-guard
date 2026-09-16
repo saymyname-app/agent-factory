@@ -160,6 +160,54 @@ for rig in saymyname-backend saymyname-frontend; do
   fi
 done
 
+# --- 6. worktrees left behind by a finished session --------------------------
+# "Never checkout in the live root, use a worktree" is the right rule, but it
+# only ever had a create half. Sessions ended without removing their worktree,
+# and a worktree still pinning a merged branch makes `gh pr merge
+# --delete-branch` exit non-zero AFTER merging -- which pr-autopilot used to
+# report as "direct merge failed - left for a human" on a PR that had in fact
+# merged. Runtime worktrees under ~/.local/share are the city's own; leave them.
+if [ "$CHECK_ONLY" = "1" ]; then
+  DANGLING=$(git worktree prune --dry-run -v 2>&1 | grep -c . || true)
+  [ "${DANGLING:-0}" -gt 0 ] && bad "${DANGLING} dangling worktree registration(s); run factory-guard to prune"
+else
+  PRUNED=$(git worktree prune -v 2>&1 | grep -c . || true)
+  [ "${PRUNED:-0}" -gt 0 ] && did "pruned ${PRUNED} dangling worktree registration(s)"
+fi
+STALE=0; LIVE_WT=0
+while read -r wt; do
+  [ -z "$wt" ] && continue
+  [ "$wt" = "$ROOT" ] && continue
+  case "$wt" in "$HOME/.local/share/agent-factory-runtime-"*) continue ;; esac
+  LIVE_WT=$((LIVE_WT+1))
+  br=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+  [ "$br" = "HEAD" ] && continue
+  # Uncommitted work means someone may still be in there: never call it stale.
+  [ "$(git -C "$wt" status --porcelain 2>/dev/null | wc -l)" != "0" ] && continue
+  # A squash merge does NOT make the branch an ancestor of main, so asking git
+  # alone would miss every branch this repo actually merges. The PR state is
+  # the authoritative answer; the ancestor test only covers the fast-forward
+  # case and branches that never had a PR.
+  reason=""
+  if git merge-base --is-ancestor "$br" origin/main 2>/dev/null; then
+    reason="already in origin/main"
+  else
+    pr_state=$(gh pr list --head "$br" --state all \
+      --json state --jq '.[0].state // empty' 2>/dev/null)
+    case "$pr_state" in
+      MERGED) reason="its PR is merged" ;;
+      CLOSED) reason="its PR is closed" ;;
+    esac
+  fi
+  if [ -n "$reason" ]; then
+    STALE=$((STALE+1))
+    bad "worktree '$wt' still pins '$br' ($reason) — it will break the next --delete-branch; remove it with: git worktree remove $wt"
+  fi
+done < <(git worktree list --porcelain | awk '/^worktree /{print $2}')
+if [ "$STALE" = "0" ]; then
+  say "✓ worktrees — $LIVE_WT human worktree(s), none pinning a merged branch"
+fi
+
 # --- report ------------------------------------------------------------------
 say ""
 if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
