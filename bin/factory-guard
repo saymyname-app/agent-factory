@@ -14,6 +14,14 @@
 #   3. SILENT REGRESSION  none of the above raised anything. It was found by
 #                       accident, ~20 minutes later.
 #
+# And on 2026-09-16:
+#
+#   4. BLIND SPOT       check 2 only ever compared refs/heads/ to origin, so it
+#                       printed "nothing exists only on this machine" while 20
+#                       entries -- two Accepted ADRs among them -- existed
+#                       nowhere else. It now also watches the working tree and
+#                       snapshots it off-box without touching HEAD.
+#
 # Default run is safe and self-healing: it always backs up unpushed work, and
 # restores the pinned branch ONLY when drift has actually broken an invariant.
 # --check-only reports without touching anything.
@@ -134,7 +142,70 @@ while read -r b; do
     bad "could not back up '$b' to origin"
   fi
 done < <(git for-each-ref --format='%(refname:short)' refs/heads/)
-[ "$AT_RISK" = "0" ] && say "✓ work-backup — nothing exists only on this machine"
+
+# --- 4b. work that exists only in the WORKING TREE ---------------------------
+# The check above compares refs/heads/ to origin, which is only half the
+# question. On 2026-09-16 it printed "nothing exists only on this machine"
+# while 20 entries -- including ADR-0015 and ADR-0016, both Accepted -- existed
+# nowhere but this disk. A check that asserts the opposite of reality is worse
+# than no check, because it is believed.
+#
+# Scope: modified tracked files AND untracked files that .gitignore does not
+# cover. A file the repo declares ignored is out of scope by the repo's own
+# statement; a file it does not is, by definition, something meant to be
+# tracked -- exactly the class that was lost sight of.
+#
+# The guard must not commit on anyone's behalf, so it takes a snapshot that
+# touches nothing: a throwaway index, write-tree, commit-tree parented on HEAD,
+# pushed to refs/factory-guard/snapshots/<utc>. HEAD, the real index and the
+# working tree are never modified. The work is off-box in seconds, nobody is
+# interrupted, and a human reconciles whenever they like.
+DIRTY_LIST=$(git status --porcelain --untracked-files=all 2>/dev/null)
+DIRTY=$(printf '%s' "$DIRTY_LIST" | grep -c . || true)
+SNAP_REF=""
+if [ "${DIRTY:-0}" -gt 0 ]; then
+  say "  work-tree — ${DIRTY} entr(y|ies) exist only in this working tree:"
+  printf '%s\n' "$DIRTY_LIST" | head -12 | sed 's/^/      /'
+  [ "${DIRTY}" -gt 12 ] && say "      ... and $((DIRTY - 12)) more"
+  if [ "$CHECK_ONLY" = "1" ]; then
+    bad "${DIRTY} uncommitted/untracked entr(y|ies) exist only on this machine"
+  elif [ "${DIRTY}" -gt 1000 ]; then
+    # A jump this large means something else is wrong (a .gitignore regression,
+    # a build dumped in the root). Snapshotting it would push a huge blob, so
+    # say so instead and let a human look.
+    bad "${DIRTY} dirty entries — too many to snapshot safely; check .gitignore"
+  else
+    # -u on purpose: git refuses a zero-byte index file, and mktemp creates one.
+    SNAP_IDX=$(mktemp -u)
+    if GIT_INDEX_FILE="$SNAP_IDX" git add -A 2>/dev/null \
+       && tree=$(GIT_INDEX_FILE="$SNAP_IDX" git write-tree 2>/dev/null) \
+       && [ -n "$tree" ]; then
+      stamp=$(date -u +%Y%m%dT%H%M%SZ)
+      commit=$(git commit-tree "$tree" -p HEAD \
+        -m "factory-guard snapshot ${stamp}: ${DIRTY} entries that existed only on this machine" \
+        2>/dev/null)
+      SNAP_REF="refs/factory-guard/snapshots/${stamp}"
+      if [ -n "$commit" ] && git push -q origin "$commit:$SNAP_REF" 2>/dev/null; then
+        did "snapshotted ${DIRTY} working-tree entr(y|ies) to origin $SNAP_REF"
+        # Keep the ten most recent; older ones describe states long superseded.
+        git ls-remote --refs origin 'refs/factory-guard/snapshots/*' 2>/dev/null \
+          | awk '{print $2}' | sort | head -n -10 \
+          | while read -r old; do git push -q origin ":$old" 2>/dev/null || true; done
+      else
+        bad "could not snapshot the working tree to origin — ${DIRTY} entries at risk"
+      fi
+    else
+      bad "could not build a snapshot of the working tree — ${DIRTY} entries at risk"
+    fi
+    rm -f "$SNAP_IDX"
+  fi
+fi
+
+if [ "$AT_RISK" = "0" ] && [ "${DIRTY:-0}" = "0" ]; then
+  say "✓ work-backup — branches pushed, working tree clean; nothing exists only here"
+elif [ "$AT_RISK" = "0" ] && [ -n "$SNAP_REF" ]; then
+  say "✓ work-backup — branches pushed; working tree snapshotted to origin"
+fi
 
 # --- 5. a rig with ready work but no dispatcher ------------------------------
 for rig in saymyname-backend saymyname-frontend; do

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# ci: local-only — drives the live `gc` binary and the city's bead store
 
 set -Eeuo pipefail
 

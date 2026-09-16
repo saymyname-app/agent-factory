@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# ci: local-only — starts and probes the real cockpit process on its port
 
 set -Eeuo pipefail
 

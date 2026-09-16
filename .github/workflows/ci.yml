@@ -51,3 +51,29 @@ jobs:
 
       - name: Deliver-close proof-field guard tests
         run: bash tests/deliver-close-test.sh
+
+      # --- registered 2026-09-16 -------------------------------------------
+      # CI enumerated its tests by hand and the list had drifted to 7 of 14.
+      # These five pass on a bare runner and had simply been forgotten; a test
+      # that is never invoked cannot fail, so nothing reported the gap. The
+      # registration check below is what stops it happening again.
+      - name: Factory guard sees the working tree
+        run: bash tests/factory-guard-dirty-tree-test.sh
+
+      - name: Operator context contract
+        run: bash tests/operator-context-test.sh
+
+      - name: Product queue ordering and authority
+        run: bash tests/product-queue-test.sh
+
+      - name: SayMyName PO context contract
+        run: bash tests/saymyname-po-context-test.sh
+
+      - name: SayMyName product-status checks
+        run: bash tests/saymyname-product-status-test.sh
+
+      - name: SayMyName preview safety checks
+        run: bash tests/saymyname-preview-test.sh
+
+      - name: Every test is registered in CI
+        run: bash tests/ci-registration-test.sh
