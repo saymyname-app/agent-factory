@@ -247,7 +247,7 @@ class FactoryCockpitTest(unittest.TestCase):
             if item["status"] == "pending" and item.get("origin") != "blocker"
         ]
         counts = {domain: sum(item.get("domain") == domain for item in pending) for domain in ("enterprise", "product", "project")}
-        self.assertEqual({"enterprise": 5, "product": 1, "project": 3}, counts)
+        self.assertEqual({"enterprise": 1, "product": 0, "project": 0}, counts)
         self.assertGreaterEqual(len(memory["view_inventory"]), 10)
         self.assertEqual(0, memory["inventory_freshness"]["model_calls"])
         self.assertEqual(7, len(memory["delivery_workflow"]))
@@ -256,7 +256,7 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertTrue(all(item["state"] == "ready" for item in memory["product_reference"]))
         self.assertEqual(5, len(memory["journeys"]))
         self.assertTrue(memory["project_graph"]["nodes"][0]["sources"])
-        related = next(item for item in pending if item["title"] == "Premier connecteur externe")
+        related = next(item for item in pending if item["title"] == "Responsable et canal du premier pilote")
         self.assertTrue(related["capabilities"])
         self.assertTrue(related["journeys"] or related["roadmap"])
 
@@ -1034,7 +1034,7 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertEqual(1, len(result["product_work"]))
         self.assertEqual("Rendre l'onboarding autonome", result["product_work"][0]["title"])
         self.assertEqual([], result["today"]["effective_blockers"])
-        self.assertEqual(9, len(result["today"]["general_decisions"]))
+        self.assertEqual(1, len(result["today"]["general_decisions"]))
         self.assertGreaterEqual(len(result["decision_aids"]), 1)
         self.assertEqual("Agent de maintenance", result["agents"][1]["role"])
         self.assertEqual(

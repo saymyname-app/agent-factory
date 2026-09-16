@@ -452,6 +452,10 @@ Two things are deliberately *not* recorded here and must not be invented later:
 
 ## Intake protocol v1 — dry-run validated 2026-09-16
 
+Superseded for future intakes by **Intake protocol v2** below. Left in place,
+not deleted, because it is the historical record v2 was built from — same
+non-destructive supersession rule `DECISIONS.md` uses for its own entries.
+
 This section is the concrete interaction procedure this ADR's schema needs to
 actually run. It is versioned on its own (`v1`), separately from the contract
 schema version, so a different protocol can be tried later against the same
@@ -509,3 +513,163 @@ saying so. Cleanup recorded in `DECISIONS.md` under `## Superseded`,
   under the tests above are still decided *incrementally*, one item at a time,
   not batched into a heavier "resolve everything now" pass — the batch is what
   produced the duplicate-decision risk here.
+
+## Intake protocol v2 — checklist form, 2026-09-16
+
+Supersedes v1 above for future intakes. Protocol versions stay independently
+versioned from the contract schema (v1's own note still holds), so a v3 can be
+tried later and compared against both without reopening this ADR.
+
+### Job to be done
+
+Stated in the same shape this version now requires of a product's own
+`objectif` field (see Basic, Draft): when a project starts or resumes, and its
+target must be cadenced with the fewest possible questions without losing
+quality, this protocol produces a confirmed target contract, so execution can
+begin without guessing at the target or re-asking the human something already
+decided.
+
+### Why a checklist, and why tiered
+
+v1 stated its rules in prose — "read the whole document before drafting" —
+and the dry run broke that exact rule anyway. A checklist forces consistent
+application of what is already known; prose reminders do not (Gawande, *The
+Checklist Manifesto*: expert failure is usually inconsistent application, not
+ignorance — cited effect: 47% fewer surgical deaths with a checklist in place).
+
+The steps are tiered the way the Kano model tiers a product's own features —
+basic, performance, conditional — applied here to the protocol's steps
+instead of a product's:
+
+- **Basic** — absence breaks the protocol; always required.
+- **Performance** — rigor scales with what is at stake; full weight on
+  structuring or irreversible-adjacent fields, light elsewhere.
+- **Conditional** — only in a specific circumstance.
+- **Not included** — considered, and kept out on purpose; recorded so a later
+  reader does not re-litigate it from a blank page.
+
+### Basic — always required
+
+**Bootstrap**
+- [ ] One-line pitch obtained.
+- [ ] If resuming a project: every durable target document is located by
+      scanning section headers first (`grep '^## '` or equivalent) — never by
+      sampling the tail of a file.
+- [ ] Each located document is read **end to end**; the count of sections
+      read is checked against the header-scan count, not assumed. This is the
+      exact step that failed on the SayMyName dry run — v1 stated it in
+      prose and the rule was broken the same day it was written.
+
+**Draft** (the AI alone, no human input yet)
+- [ ] `objectif` is written as *circumstance → sought progress*, not a
+      feature list (Christensen, Jobs to Be Done). Benjamin's own
+      `OBJECTIVE.md` for SayMyName already has this shape without having been
+      asked to; this makes it the required shape for every future project.
+- [ ] All ten canvas fields are drafted.
+- [ ] Every field that will be tagged `déduit` carries an exact citation —
+      file and line, a direct quote, or a named external reference. No
+      citation, no `déduit` tag: it defaults to `à trancher`. (Citation
+      grounding measurably cuts hallucination in document-grounded LLM
+      answers.)
+
+**Tag**
+- [ ] Each field is tested against the three objective triggers already in
+      v1: widens who sees real personal data; involves money, a real third
+      party, or publication; irreversible within the current version. Any
+      trigger firing → `à trancher`. None firing and a citation exists →
+      `déduit`, decided now with its basis and its reversal.
+
+**Verify** (independent, before the human sees the draft)
+- [ ] A separate reasoning pass re-derives each `déduit` field from its cited
+      source **alone**, without access to the drafted answer, then compares
+      the two. (Dhuliawala et al., *Chain-of-Verification*, arXiv:2309.11495 —
+      the factored/independent variant, where verification does not condition
+      on the original draft, outperforms a verifier that can see it first.)
+- [ ] The verifier is explicitly instructed and permitted to overturn the
+      draft; a mismatch is corrected or downgraded to `à trancher`, never
+      smoothed over. (Multi-agent debate research: majority and anchoring
+      pressure suppress independent correction unless the setup is
+      structured against it.)
+- [ ] For a resumed project specifically: this pass reconciles every `déduit`
+      answer against the **entire** existing decision register, not a
+      section of it. This is the exact check that would have caught the
+      SayMyName dry-run duplication before it reached Benjamin.
+
+**Human pass**
+- [ ] Only `à trancher` fields are shown, each with a recommendation already
+      attached.
+- [ ] No field is ever phrased as an open or yes/no question. Requirements-
+      elicitation research names two reasons: the "why-not mentality" (people
+      default to yes when a request carries no perceived cost) and
+      social-desirability bias (answers skew toward what sounds reasonable to
+      the asker), both of which a direct ask triggers and a recommendation-
+      to-correct does not.
+
+**Gate & record**
+- [ ] Execution does not start before this pass is confirmed (`intake`
+      precedes `draft` in this ADR's lifecycle, unchanged from v1).
+- [ ] Every `déduit` decision is recorded with basis, citation and reversal,
+      exactly like any other delegated decision under ADR-0016.
+- [ ] The protocol version used is recorded alongside the contract.
+
+### Performance — rigor scales with what is at stake
+
+- [ ] Structuring `déduit` fields — the ones that condition many other
+      decisions, such as an architecture choice or a selected connector —
+      get a short pre-mortem before being finalized: imagine this choice has
+      already failed, and write down why. (Klein, *HBR* 2007, grounded in
+      Mitchell/Russo/Pennington 1989: imagining failure first finds ~30% more
+      of the real causes than asking "will this work?".) Applied to every
+      field, this would be a heavier ritual than the decision deserves; kept
+      to structuring fields only, it stays cheap.
+- [ ] The `assumptions` block already in this ADR's schema places each entry
+      on an impact × confidence map; a high-impact, low-confidence assumption
+      is resolved — by research or a cheap test, not necessarily by building
+      — before anything is built on top of it. (Riskiest Assumption Test /
+      Lean Startup assumption mapping.)
+- [ ] MVP feature candidates are tiered basic / performance / delighter
+      rather than listed flat, and re-tiered at each version — a delighter
+      decays into a baseline expectation over time. (Kano, 1984.)
+- [ ] For a field genuinely without a confident recommendation, up to **two**
+      "why" follow-ups are allowed to reach the real reason behind a stated
+      preference before recording it — never more, so the question budget
+      stays intact. (Laddering / means-end chain interviewing.)
+
+### Conditional — only when it applies
+
+- [ ] **Fresh project, no existing durable docs to deduce from**: draft a
+      short mock announcement of what the product delivers, plus an
+      anticipated-objections FAQ, before drafting `objectif`/`MVP` from it.
+      If it is hard to write clearly, the target is not defined yet — a
+      cheap diagnostic, not a document to maintain going forward. (Amazon
+      "working backwards" PR/FAQ.) Skipped entirely for a resumed project —
+      its `objectif` already exists and must be ported, not re-derived.
+
+### Not included — considered, kept out on purpose
+
+- **Reference class forecasting** (correcting an estimate by comparing it to
+  a class of already-completed similar projects, rather than reasoning from
+  inside the project being estimated; Kahneman & Tversky, endorsed by the
+  American Planning Association) is sound in principle but inapplicable
+  today: the Factory has completed one product, which is not a reference
+  class. Writing it into this protocol now would recreate the exact failure
+  this version exists to fix — a step nobody can apply and nobody notices
+  going stale. It is deliberately **not** part of this protocol. The
+  condition to reconsider it (2-3 completed projects) is tracked in session
+  memory instead of here, so it resurfaces on its own trigger rather than
+  rotting in an ADR as another unchecked box.
+
+### Sources
+
+Requirements elicitation and bias: Springer, *Elicitation Revisited for More
+Inclusive Requirements Engineering*; LinkedIn/Smponias, *Why Asking Isn't
+Enough*. Pre-mortem: Klein, *Performing a Project Premortem*, HBR 2007;
+Mitchell, Russo & Pennington (1989) on prospective hindsight. LLM
+verification: Dhuliawala et al., *Chain-of-Verification Reduces Hallucination
+in Large Language Models*, arXiv:2309.11495; multi-agent debate literature on
+majority/anchoring pressure. Checklists: Gawande, *The Checklist Manifesto*.
+Amazon PR/FAQ: *Working Backwards* (Bryar & Carr). Reference class
+forecasting: Kahneman & Tversky on the planning fallacy; Flyvbjerg on
+reference class forecasting in practice. Kano model: Kano (1984). Jobs to Be
+Done: Christensen. Riskiest Assumption Test: Lean Startup assumption-mapping
+literature. Laddering: means-end chain interviewing (Reynolds & Gutman).
