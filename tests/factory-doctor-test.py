@@ -131,6 +131,37 @@ class Classification(unittest.TestCase):
                          "nothing may be muted by name")
 
 
+class Portability(unittest.TestCase):
+    """The tool must run anywhere the repo is checked out.
+
+    The first version hardcoded ROOT = "/home/benja/agent-factory". Locally
+    every test passed, because that path exists here — a false green. On a
+    GitHub runner the directory does not exist, subprocess raised
+    FileNotFoundError for the missing cwd, and the tool blamed "gc not found on
+    PATH": the wrong cause, sending the reader hunting in the wrong place,
+    inside the very tool written against misleading diagnostics.
+    """
+
+    def test_root_is_derived_from_the_script_not_hardcoded(self):
+        self.assertEqual(str(ROOT), fd.ROOT)
+
+    def test_no_absolute_home_path_is_baked_into_the_tool(self):
+        src = (ROOT / "bin" / "factory-doctor").read_text(encoding="utf-8")
+        code = [ln for ln in src.splitlines()
+                if not ln.lstrip().startswith("#")]
+        offenders = [ln for ln in code if "/home/benja" in ln]
+        self.assertEqual([], offenders,
+                         "a hardcoded home path makes this work on one machine only")
+
+    def test_a_missing_factory_root_says_so_instead_of_blaming_PATH(self):
+        env = dict(os.environ, FACTORY_ROOT="/nonexistent/factory")
+        r = subprocess.run([sys.executable, str(ROOT / "bin" / "factory-doctor")],
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(2, r.returncode)
+        self.assertIn("does not exist", r.stderr)
+        self.assertNotIn("gc not found on PATH", r.stderr)
+
+
 class Collection(unittest.TestCase):
     def test_collect_finds_checks_at_any_nesting_depth(self):
         payload = {"results": [{"name": "a", "status": "ok"},

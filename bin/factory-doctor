@@ -36,7 +36,14 @@ import re
 import subprocess
 import sys
 
-ROOT = os.environ.get("FACTORY_ROOT", "/home/benja/agent-factory")
+# Derive the root from this script, never hardcode it: a hardcoded path
+# makes the tool work on exactly one machine and fail everywhere else
+# with a misleading error. CI caught this; the local run could not,
+# because the hardcoded path happens to exist there.
+ROOT = os.environ.get(
+    "FACTORY_ROOT",
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+)
 PACK_CACHE = re.compile(r"/\.gc/cache/repos/")
 DID_NOT_ANSWER = re.compile(r"timed out|timeout|abandoned", re.I)
 # A path starts a token. Without that anchor, the "parent/child conflicts"
@@ -110,8 +117,18 @@ def main():
             ["gc", "doctor", "--json"], cwd=ROOT,
             capture_output=True, text=True, timeout=600,
         )
+    except NotADirectoryError:
+        print("factory-doctor: %s is not a directory" % ROOT, file=sys.stderr)
+        return 2
     except FileNotFoundError:
-        print("factory-doctor: gc not found on PATH", file=sys.stderr)
+        # Two very different causes reach here, and blaming the wrong one sends
+        # the reader hunting in the wrong place — which is the failure this
+        # whole tool exists to prevent. Name the actual one.
+        if not os.path.isdir(ROOT):
+            print("factory-doctor: factory root %s does not exist "
+                  "(set FACTORY_ROOT)" % ROOT, file=sys.stderr)
+        else:
+            print("factory-doctor: gc not found on PATH", file=sys.stderr)
         return 2
     except subprocess.TimeoutExpired:
         print("factory-doctor: gc doctor did not finish in 10 minutes", file=sys.stderr)
