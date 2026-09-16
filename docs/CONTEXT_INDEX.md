@@ -17,11 +17,14 @@ Use progressive disclosure. Do not read every document by default.
 | Durable target architecture | `TARGET_ARCHITECTURE.md` |
 | Current migration state, cutover and rollback | `MIGRATION.md` |
 | Install/start/stop/doctor/backup/restore/recovery | `OPERATIONS.md` |
+| Stopping and restarting the whole factory, and proving nothing was lost | `RUNBOOK_STOP_AND_RESTART.md` |
+| What `factory-guard`, `factory-resources` and `mayor-campaign` do, and when to run them | `FACTORY_TOOLS.md` |
+| The four conditions every factory improvement must meet | `decisions/ADR-0017-four-conditions-for-factory-improvements.md` |
 | Operator dashboard, SayMyName status, and preview | `OPERATIONS.md` |
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0014-versioned-product-release-contract.md` |
+| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0017-four-conditions-for-factory-improvements.md` |
 
 ## Authority order
 
@@ -39,6 +42,7 @@ replacement for a live refresh before mutation.
 
 - Product question: run `./bin/saymyname-product-status`; load nothing else unless a field needs recovery.
 - Factory health question: read `OPERATOR_BRIDGE.md`, then run its read-only health check.
+- Host capacity, unsaved work, or "is the factory safe to touch": run `./bin/factory-guard --check-only` and `./bin/factory-resources`; see `FACTORY_TOOLS.md`.
 - One-glance Factory activity: run `./bin/factory-cockpit snapshot`; open the UI only when requested.
 - Tracked change: read the root and nearest project `AGENTS.md`, the relevant Bead, and only the linked contract needed by the change.
 - Architecture or policy change: also read the relevant ADRs and update/supersede them in the same change.

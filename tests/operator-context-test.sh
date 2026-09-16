@@ -48,7 +48,16 @@ assert_contains AGENTS.md 'Full access'
 assert_contains README.md 'docs/OPERATOR_BRIDGE.md'
 assert_contains README.md 'wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory'
 assert_contains docs/CONTEXT_INDEX.md 'OPERATOR_BRIDGE.md'
-assert_contains docs/CONTEXT_INDEX.md '`decisions/ADR-0001-foundation.md` through `decisions/ADR-0014-versioned-product-release-contract.md`'
+# The structural-decisions row must span ADR-0001 through the HIGHEST ADR that
+# actually exists. Both context tests used to hardcode ADR-0014, which meant
+# every new ADR broke two test files and needed a human edit in each -- and,
+# worse, the assertion passed for weeks while the index silently omitted
+# ADR-0015 and ADR-0016. Deriving the endpoint from docs/decisions/ makes the
+# check self-maintaining AND makes it catch the stale index it was meant to.
+latest_adr=$(ls "$REPO_ROOT/docs/decisions"/ADR-*.md 2>/dev/null \
+  | xargs -n1 basename | sort | tail -1 | sed 's/\.md$//')
+adr_range="\`decisions/ADR-0001-foundation.md\` through \`decisions/${latest_adr}.md\`"
+assert_contains docs/CONTEXT_INDEX.md "$adr_range"
 assert_contains agents/mayor/prompt.template.md 'UI/UX design gate'
 assert_contains docs/OPERATOR_BRIDGE.md './bin/saymyname-product-status'
 assert_contains docs/OPERATOR_BRIDGE.md 'C:\Dev\Projects\AgentFactory'

@@ -25,7 +25,16 @@ grep -Fq 'approval_policy = "on-request"' "$config"
 ! grep -Fq 'mcp_servers.linear' "$config"
 
 grep -Fq 'products/saymyname/PRODUCT_CONTEXT.md' "$root/docs/CONTEXT_INDEX.md"
-grep -Fq '`decisions/ADR-0001-foundation.md` through `decisions/ADR-0014-versioned-product-release-contract.md`' "$root/docs/CONTEXT_INDEX.md"
+# The structural-decisions row must span ADR-0001 through the HIGHEST ADR that
+# actually exists. Both context tests used to hardcode ADR-0014, which meant
+# every new ADR broke two test files and needed a human edit in each -- and,
+# worse, the assertion passed for weeks while the index silently omitted
+# ADR-0015 and ADR-0016. Deriving the endpoint from docs/decisions/ makes the
+# check self-maintaining AND makes it catch the stale index it was meant to.
+latest_adr=$(ls "$root/docs/decisions"/ADR-*.md 2>/dev/null \
+  | xargs -n1 basename | sort | tail -1 | sed 's/\.md$//')
+adr_range="\`decisions/ADR-0001-foundation.md\` through \`decisions/${latest_adr}.md\`"
+grep -Fq "$adr_range" "$root/docs/CONTEXT_INDEX.md"
 grep -Fq 'bin/product-queue' "$root/docs/PRODUCT_QUEUE.md"
 grep -Fq 'materialize <candidate> <execution-bead> --mayor' "$root/agents/mayor/prompt.template.md"
 grep -Fq 'C:\Dev\Projects\SayMyName' "$root/docs/OPERATOR_BRIDGE.md"

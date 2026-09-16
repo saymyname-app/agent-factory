@@ -115,3 +115,12 @@ suspended_on_start = false
 [rigs.imports.gc]
 source = "https://github.com/gastownhall/gascity-packs/tree/main/gascity/roles"
 version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
+
+# Periodic Dolt store maintenance (gc + snapshot), 2026-09-16.
+# The loop exists and runs inside the supervisor, but had never been enabled,
+# so compaction only ever happened when a human noticed the store growing.
+# A clean shutdown alone reclaimed 511 MB -> 379 MB during the maintenance
+# window, which is how much was sitting there uncollected. Enabling the loop
+# turns that from something somebody remembers into something that happens.
+[maintenance.dolt]
+enabled = true
