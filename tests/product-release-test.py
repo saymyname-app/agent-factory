@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from product_release import (  # noqa: E402
     CONTRACT,
     RELEASE_STATES,
+    RESERVED_CLASSES,
     ReleaseContractError,
     load_release_contract,
     project_operational_release,
@@ -40,6 +41,44 @@ def base_release(**overrides):
         "title": "Test release",
         "state": "approved",
         "next_version": "V2",
+        "revision": 1,
+        "objective": {
+            "statement": "Ship the test product.",
+            "set_by": "Benjamin",
+            "set_at": "2026-09-16T00:00:00Z",
+        },
+        "origin": {
+            "kind": "greenfield",
+            "statement": "Build it from scratch.",
+            "sources": [],
+            "discovery": {
+                "generated_at": "2026-09-16T00:00:00Z",
+                "method": "deterministic_scan",
+                "findings": [],
+            },
+        },
+        "autonomy": {
+            "level": "L2",
+            "label": "Delegated",
+            "granted_by": "Benjamin",
+            "granted_at": "2026-09-16T00:00:00Z",
+            "reserved_questions": sorted(RESERVED_CLASSES),
+        },
+        "intake": {
+            "state": "complete",
+            "question_budget": {
+                "max_first_pass": 5, "max_per_iteration": 2, "spent": 0, "exhausted": False,
+            },
+            "questions": [],
+            "exit_criteria": [
+                {"id": "ec1", "statement": "Every criterion has an acceptance statement.", "satisfied": True},
+            ],
+        },
+        "assumptions": [],
+        "budget": {
+            "max_consecutive_no_progress": 3,
+            "spent": {"delivery_tokens": 0, "clarification_tokens": 0, "consecutive_no_progress": 0},
+        },
         "maturity": {"level": "partial", "label": "Test", "criteria": ["c1"]},
         "capabilities": [
             {"id": "cap1", "title": "Cap 1", "description": "d", "status": "proven", "evidence": _evidence()},
@@ -58,6 +97,7 @@ def base_release(**overrides):
             {
                 "id": "c1", "title": "Criterion", "description": "d", "status": "proven",
                 "evidence": _evidence(), "capability_refs": ["cap1"], "journey_refs": ["j1"],
+                "acceptance": "A human can see it work.",
             },
         ],
         "work_graph": [
@@ -100,14 +140,14 @@ class SchemaShapeTest(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseContractError, "incomplet", msg=field):
                 validate_release_contract(mutated)
 
-    def test_production_release_contract_validates_against_python_semantics(self):
-        value = load_release_contract(PRODUCTION_RELEASE_PATH)
-        self.assertEqual(CONTRACT, value["contract"])
-        self.assertEqual("saymyname", value["product"])
-        self.assertEqual("V1", value["version"])
-        projected = project_release(value)
-        self.assertEqual(0, projected["model_calls"])
-        self.assertNotIn("$schema", projected)
+    def test_production_release_contract_awaits_the_adr_0015_migration(self):
+        # config/releases/saymyname-v1.json still has the pre-ADR-0015 shape.
+        # ADR-0015 sec.1 drops backward-compat on purpose (required fields win,
+        # not optional-everything); af-u8id.4.2 migrates this document onto the
+        # extended contract. Until then it must fail loudly rather than be
+        # silently tolerated without origin/autonomy/intake/etc.
+        with self.assertRaisesRegex(ReleaseContractError, "incomplet"):
+            load_release_contract(PRODUCTION_RELEASE_PATH)
 
 
 class ValidationTest(unittest.TestCase):
@@ -246,6 +286,144 @@ class ValidationTest(unittest.TestCase):
         value["capabilities"][0]["work_ref"] = "af-cm1l"
         with self.assertRaisesRegex(ReleaseContractError, "af-cm1l"):
             validate_release_contract(value)
+
+
+class ExtendedIntakeFieldsTest(unittest.TestCase):
+    def test_criteria_require_a_human_observable_acceptance(self):
+        value = base_release()
+        del value["criteria"][0]["acceptance"]
+        with self.assertRaises(ReleaseContractError):
+            validate_release_contract(value)
+
+    def test_autonomy_reserved_questions_must_contain_the_full_reserved_set(self):
+        value = base_release()
+        value["autonomy"]["reserved_questions"] = sorted(RESERVED_CLASSES - {"legal"})
+        with self.assertRaisesRegex(ReleaseContractError, "ensemble complet"):
+            validate_release_contract(value)
+
+    def test_autonomy_version_transition_requires_human_cannot_be_false(self):
+        value = base_release()
+        value["autonomy"]["version_transition_requires_human"] = False
+        with self.assertRaisesRegex(ReleaseContractError, "doit rester vrai"):
+            validate_release_contract(value)
+
+    def test_origin_conflict_mix_resolution_requires_a_detail(self):
+        value = base_release()
+        value["decisions"] = [{
+            "id": "d1", "title": "Decide", "source_ref": "docs/DECISIONS.md#d1",
+            "status": "decision_required", "risk": "high", "revision": 1,
+            "reserved_class": "outcome", "capability_refs": ["cap1"], "dependency_refs": [], "options": [],
+        }]
+        value["origin"]["conflicts"] = [{
+            "id": "conflict1", "summary": "Code disagrees.", "code_evidence": _evidence(),
+            "intent_ref": "criteria/c1", "decision_id": "d1", "resolution": "mix",
+        }]
+        with self.assertRaisesRegex(ReleaseContractError, "resolution_detail"):
+            validate_release_contract(value)
+
+    def test_origin_conflict_decision_id_must_reference_a_known_decision(self):
+        value = base_release()
+        value["origin"]["conflicts"] = [{
+            "id": "conflict1", "summary": "Code disagrees.", "code_evidence": _evidence(),
+            "intent_ref": "criteria/c1", "decision_id": "missing", "resolution": "pending",
+        }]
+        with self.assertRaisesRegex(ReleaseContractError, "conflicts\\[0\\].decision_id"):
+            validate_release_contract(value)
+
+    def test_leverage_admitted_question_requires_leverage_refs(self):
+        value = base_release()
+        value["intake"]["questions"] = [{
+            "id": "q1", "kind": "outcome", "prompt": "What does done mean?",
+            "admitted_by": "leverage", "status": "pending",
+        }]
+        with self.assertRaisesRegex(ReleaseContractError, "leverage_refs"):
+            validate_release_contract(value)
+
+    def test_leverage_refs_must_reference_a_known_criterion_or_work_node(self):
+        value = base_release()
+        value["intake"]["questions"] = [{
+            "id": "q1", "kind": "outcome", "prompt": "What does done mean?",
+            "admitted_by": "leverage", "status": "pending", "leverage_refs": ["missing"],
+        }]
+        with self.assertRaisesRegex(ReleaseContractError, "leverage_refs"):
+            validate_release_contract(value)
+
+    def test_assumption_scope_refs_must_reference_a_known_id(self):
+        value = base_release()
+        value["assumptions"] = [{
+            "id": "a1", "title": "Assume", "statement": "s", "rationale": "r",
+            "confidence": "low", "status": "standing", "scope_refs": ["missing"], "invalidated_by": [],
+        }]
+        with self.assertRaisesRegex(ReleaseContractError, "scope_refs"):
+            validate_release_contract(value)
+
+
+class TakeoverReviewTest(unittest.TestCase):
+    def _review(self, state, tier="static"):
+        return {
+            "state": state, "tier": tier, "reviewed_at": "2026-09-16T00:00:00Z",
+            "reviewed_by": "factory:static", "ref": _evidence(), "notes": "Looks fine.",
+        }
+
+    def _unreviewed(self):
+        return {
+            "state": "unreviewed", "tier": None, "reviewed_at": None,
+            "reviewed_by": None, "ref": [], "notes": "",
+        }
+
+    def test_takeover_derived_block_cannot_be_proven_while_unreviewed(self):
+        value = base_release()
+        value["capabilities"][0]["review"] = self._unreviewed()
+        with self.assertRaisesRegex(ReleaseContractError, "unreviewed"):
+            validate_release_contract(value)
+
+    def test_takeover_derived_block_can_be_proven_once_reviewed_ok(self):
+        value = base_release()
+        value["capabilities"][0]["review"] = self._review("reviewed_ok")
+        result = validate_release_contract(value)
+        self.assertEqual("reviewed_ok", result["capabilities"][0]["review"]["state"])
+
+    def test_takeover_derived_block_may_stay_assumed_while_unreviewed(self):
+        value = base_release()
+        value["capabilities"][0]["status"] = "assumed"
+        value["capabilities"][0]["review"] = self._unreviewed()
+        result = validate_release_contract(value)
+        self.assertEqual("unreviewed", result["capabilities"][0]["review"]["state"])
+
+    def test_review_object_rejects_an_unknown_state(self):
+        value = base_release()
+        review = self._unreviewed()
+        review["state"] = "bogus"
+        value["capabilities"][0]["review"] = review
+        with self.assertRaises(ReleaseContractError):
+            validate_release_contract(value)
+
+
+class IntakeStateTransitionTest(unittest.TestCase):
+    def test_intake_to_draft_requires_intake_state_complete(self):
+        value = base_release(state="intake", next_version="V2")
+        value["intake"]["state"] = "awaiting_human"
+        with self.assertRaisesRegex(ReleaseContractError, "intake.state doit être complete"):
+            transition_release(value, "draft")
+
+    def test_intake_to_draft_succeeds_once_intake_is_complete(self):
+        value = base_release(state="intake", next_version="V2")
+        value["intake"]["state"] = "complete"
+        result = transition_release(value, "draft")
+        self.assertEqual("draft", result["state"])
+
+    def test_intake_release_is_not_executable(self):
+        value = base_release(state="intake", next_version="V2")
+        value["intake"]["state"] = "complete"
+        result = select_campaign_work(value)
+        self.assertEqual("release_not_executable", result["reason"])
+
+    def test_enabled_campaign_cannot_execute_an_intake_release(self):
+        value = base_release(state="intake", next_version="V2")
+        value["intake"]["state"] = "complete"
+        release = project_release(value)
+        with self.assertRaisesRegex(ReleaseContractError, "intake"):
+            project_operational_release(release, {"enabled": True})
 
 
 class TransitionTest(unittest.TestCase):
