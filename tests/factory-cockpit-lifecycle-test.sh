@@ -40,7 +40,8 @@ grep -Fq 'Documentation produit validée par l’humain' <<<"$page"
 grep -Fq 'Objectifs, marché et validation' <<<"$page"
 grep -Fq 'Décisions séparées par niveau' <<<"$page"
 grep -Fq 'Du choix humain à la preuve' <<<"$page"
-curl --fail --silent "$URL/styles.css" | grep -Fq -- '--green:'
+styles=$(curl --fail --silent "$URL/styles.css")
+grep -Fq -- '--green:' <<<"$styles"
 script=$(curl --fail --silent "$URL/app.js")
 grep -Fq 'textContent' <<<"$script"
 grep -Fq 'renderOperationalState' <<<"$script"
