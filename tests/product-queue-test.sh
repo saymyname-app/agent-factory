@@ -111,6 +111,16 @@ assert_contains "$output" '"id":"af-live"'
 assert_not_contains "$output" 'af-old'
 assert_not_contains "$output" 'af-cancel'
 
+# A node the campaign sentinel quarantined after a durable failure (ADR-0016 §7)
+# must not poison the whole queue read; it is excluded like paused/materialized.
+export QUEUE_INVENTORY='[
+  {"id":"af-live","title":"Live","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}},
+  {"id":"af-quarantined","title":"Quarantined","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"blocked_durable_failure","gc.queue_rank":2000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id","gc.queue_pause_reason":"Panne durable"}}
+]'
+output=$("$QUEUE" list --json)
+assert_contains "$output" '"id":"af-live"'
+assert_not_contains "$output" 'af-quarantined'
+
 export QUEUE_INVENTORY='[
   {"id":"af-bad","title":"Bad tuple","status":"closed","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}}
 ]'

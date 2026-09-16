@@ -68,7 +68,8 @@ load_inventory() {
     map(select(.metadata["gc.queue_product"] == $product)) as $candidates |
     if all($candidates[];
       (.status == "deferred" and
-       (.metadata["gc.queue_state"] == "queued" or .metadata["gc.queue_state"] == "paused"))
+       (.metadata["gc.queue_state"] == "queued" or .metadata["gc.queue_state"] == "paused"
+        or .metadata["gc.queue_state"] == "blocked_durable_failure"))
       or
       (.status == "closed" and .metadata["gc.queue_state"] == "cancelled")
       or

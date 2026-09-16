@@ -234,6 +234,8 @@ def candidate_record_lifecycle(item: dict[str, Any]) -> tuple[str, str]:
         return "paused", "En pause"
     if queue_state == "queued" and status == "deferred":
         return "eligible", "Éligible · non programmé"
+    if queue_state == "blocked_durable_failure" and status == "deferred":
+        return "blocked_durable_failure", "Panne durable — en réparation"
     raise StateContractError(
         f"Cycle candidat incohérent: queue_state={queue_state!r}, status={status!r}."
     )
