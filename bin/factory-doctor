@@ -46,6 +46,13 @@ ROOT = os.environ.get(
 )
 PACK_CACHE = re.compile(r"/\.gc/cache/repos/")
 DID_NOT_ANSWER = re.compile(r"timed out|timeout|abandoned", re.I)
+# order-firing-current details look like:
+#   "dolt-health: last fired 1m ago, expected every 1m (overdue)"
+ORDER_LINE = re.compile(
+    r"^[\w-]+: last fired (\d+)([smh]) ago, expected every (\d+)([smh])"
+    r"( \(overdue\))?$"
+)
+_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
 # A path starts a token. Without that anchor, the "parent/child conflicts"
 # in gc doctor's own fix_hint yields "/child", which is not a path — and one
 # stray non-cache "path" is enough to misclassify an upstream-only warning as
@@ -80,6 +87,48 @@ def evidence_paths(check):
     return PATH_IN_TEXT.findall(text)
 
 
+def order_firing_is_boundary_noise(check):
+    """order-firing-current flags an order the instant elapsed >= expected.
+
+    For an order with a 1-minute cadence that budget is smaller than
+    factory-doctor's own scan: `gc doctor --json` measured 19-26s per run
+    here (once 105s under 6 concurrent `gc order check` invocations), and
+    "last fired" is minute-grained. So a perfectly healthy 1-minute order
+    trips this the moment it lands at 60-119s since its last fire, then
+    clears on the very next poll.
+
+    Measured 2026-09-16, six back-to-back `gc doctor --json` runs against
+    the live factory: 4 of 6 flagged one or two orders overdue, every flagged
+    order had a 1-minute expected interval (dolt-health, beads-health,
+    gate-sweep or order-tracking-sweep), every flagged order was "1m ago,
+    expected every 1m" (ratio 1x-2x, never more), no order with an interval
+    over 1 minute was ever flagged, and no single order was flagged twice in
+    a row — each cleared on its next cycle. That is boundary noise, not a
+    stuck order: a genuinely stuck order announces itself as a large
+    multiple of its own interval (see mol-dog-backup sitting at 273m against
+    a 360m/6h budget — nowhere near flagged), not a one-cycle graze.
+
+    So: only orders with a short (<=2m) expected interval, all within 2x of
+    their own budget, are treated as self-correcting. Anything overdue by
+    more than that, or with a longer interval, still reports ACTIONABLE —
+    this reclassifies the noise, not the check.
+    """
+    lines = [str(d).strip() for d in (check.get("details") or [])]
+    flagged = [ln for ln in lines if ln.endswith("(overdue)")]
+    if not flagged:
+        return False
+    for line in flagged:
+        m = ORDER_LINE.match(line)
+        if not m:
+            return False  # unrecognized shape: don't guess, stay ACTIONABLE
+        last_n, last_u, exp_n, exp_u, _overdue = m.groups()
+        last_s = int(last_n) * _UNIT_SECONDS[last_u]
+        exp_s = int(exp_n) * _UNIT_SECONDS[exp_u]
+        if exp_s > 120 or last_s > exp_s * 2.5:
+            return False
+    return True
+
+
 def classify(check):
     # A check that timed out did not fail — it did not answer. Reporting "no
     # answer" as "something is broken here" is the same error as a guard
@@ -92,6 +141,8 @@ def classify(check):
         return "UNKNOWN"
     if str(check.get("severity", "")).lower() == "advisory":
         return "ADVISORY"
+    if check.get("name") == "order-firing-current" and order_firing_is_boundary_noise(check):
+        return "UNKNOWN"
     paths = evidence_paths(check)
     # Upstream only when there IS evidence and ALL of it is in the pack cache.
     # A check citing one path here and one there is ours to look at.

@@ -105,6 +105,41 @@ class Classification(unittest.TestCase):
                   fix_hint="check beads/Dolt connectivity, then rerun gc doctor")
         self.assertEqual("UNKNOWN", fd.classify(c))
 
+    def test_a_1m_order_grazing_its_own_boundary_is_not_actionable(self):
+        """Measured 2026-09-16: 4 of 6 back-to-back `gc doctor` runs flagged a
+        1-minute order at exactly "1m ago, expected every 1m (overdue)", a
+        different order each time, never the same one twice in a row. That is
+        the check's own scan time and minute-grain rounding grazing a budget
+        with no slack in it, not a stuck order.
+        """
+        c = check(name="order-firing-current",
+                  message="scheduled orders are overdue",
+                  details=[
+                      "dolt-health: last fired 1m ago, expected every 1m (overdue)",
+                      "jsonl-export: last fired 14m ago, expected every 15m",
+                      "mol-dog-backup: last fired 273m ago, expected every 6h",
+                  ])
+        self.assertEqual("UNKNOWN", fd.classify(c))
+
+    def test_an_order_stuck_well_past_its_own_budget_is_actionable(self):
+        """A real miss announces itself as a large multiple, not a graze."""
+        c = check(name="order-firing-current",
+                  message="scheduled orders are overdue",
+                  details=[
+                      "dolt-health: last fired 12m ago, expected every 1m (overdue)",
+                  ])
+        self.assertEqual("ACTIONABLE", fd.classify(c))
+
+    def test_a_longer_interval_order_overdue_is_actionable(self):
+        """The 1-minute graze is specific to budgets with no slack in them;
+        a 5-minute order flagged overdue is not explained by scan jitter."""
+        c = check(name="order-firing-current",
+                  message="scheduled orders are overdue",
+                  details=[
+                      "cross-rig-deps: last fired 6m ago, expected every 5m (overdue)",
+                  ])
+        self.assertEqual("ACTIONABLE", fd.classify(c))
+
     def test_a_blocking_problem_citing_no_path_is_actionable(self):
         """Never silently drop something just because it named no file."""
         self.assertEqual("ACTIONABLE", fd.classify(check(
