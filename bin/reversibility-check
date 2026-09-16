@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""reversibility-check — is this change undoable inside the release?
+
+L0, deterministic, zero tokens. See lib/reversibility.py for the rules and
+docs/DELIVERY.md (Réversibilité par défaut) for what a writer should do.
+
+  reversibility-check --git <repo> [--base origin/dev] [--head HEAD]   before opening a PR
+  reversibility-check --pr <number> --repo <owner/name>                what pr-autopilot runs
+  reversibility-check --diff-file <file>                               any unified diff
+
+  --json       machine-readable result
+  --comment    print the French PR comment instead of the summary
+
+Exit: 0 ok · 3 a declaration is needed (or applied history was rewritten)
+      4 declared irreversible (escalation test 4) · 2 could not check
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+import reversibility as rv  # noqa: E402
+
+
+def read_diff(args: argparse.Namespace) -> str:
+    if args.diff_file:
+        return Path(args.diff_file).read_text(encoding="utf-8")
+    if args.pr:
+        if not args.repo:
+            raise ValueError("--pr needs --repo owner/name")
+        result = subprocess.run(["gh", "pr", "diff", str(args.pr), "--repo", args.repo],
+                                text=True, capture_output=True, timeout=120)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "gh pr diff failed")
+        return result.stdout
+    if args.git:
+        result = subprocess.run(["git", "-C", args.git, "diff", "--no-color", "-M",
+                                 f"{args.base}...{args.head}"],
+                                text=True, capture_output=True, timeout=120)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "git diff failed")
+        return result.stdout
+    raise ValueError("one of --git, --pr or --diff-file is required")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="reversibility-check", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--git")
+    parser.add_argument("--base", default="origin/dev")
+    parser.add_argument("--head", default="HEAD")
+    parser.add_argument("--pr")
+    parser.add_argument("--repo")
+    parser.add_argument("--diff-file")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--comment", action="store_true")
+    args = parser.parse_args()
+    try:
+        result = rv.assess(read_diff(args))
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        print(f"reversibility-check: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False))
+    elif args.comment:
+        if result["verdict"] != "ok":
+            print(rv.render_comment(result))
+    else:
+        print(f"reversibility: {result['verdict']} ({result['migrations']} migration(s))")
+        for f in result["findings"]:
+            classes = f" [{', '.join(f['classes'])}]" if f["classes"] else ""
+            print(f"  {f['verdict']:18} {f['file']}{classes} — {f['detail']}")
+    return rv.EXIT[result["verdict"]]
+
+
+if __name__ == "__main__":
+    sys.exit(main())

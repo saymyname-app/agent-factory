@@ -196,6 +196,88 @@ and `merge_result` across `publish`, `review`, `implement`, `do-work` and
 `build-basic`. No bead carried `merge_strategy` or `pr_number` metadata, which
 is why `pr-autopilot` links PR to bead by branch name instead.
 
+## Réversibilité par défaut
+
+Règle (ADR-0019, ADR-0016 §7) : un changement doit pouvoir être défait dans la
+release. C'est la forme normale d'un changement, pas l'exception — et c'est ce
+qui fait que le test d'escalade 4 (« impossible à défaire ») se déclenche
+rarement.
+
+### Migrations Flyway — ce que fait le rédacteur
+
+Avant d'ouvrir la PR, depuis le rig :
+
+```bash
+/home/benja/agent-factory/bin/reversibility-check --git . --base origin/dev
+```
+
+Chaque **nouvelle** migration est classée, instruction par instruction :
+
+| Classe | Exemples | Déclaration acceptée |
+|---|---|---|
+| perte de schéma | `DROP TABLE`, `DROP COLUMN`, `TRUNCATE` | `rollback:` ou `irreversible:` |
+| perte de données | `DELETE` | `rollback:` ou `irreversible:` |
+| réécriture | `UPDATE`, `MODIFY`, `ALTER COLUMN … TYPE` | `reversible:`, `rollback:` ou `irreversible:` |
+| renommage | `RENAME`, `CHANGE COLUMN` | `reversible:`, `rollback:` ou `irreversible:` |
+
+Additif (`CREATE`, `ADD COLUMN`, `INSERT`, index, contraintes) : rien à déclarer.
+Supprimer un index ou une contrainte n'est pas une perte.
+
+Les déclarations sont une ligne de commentaire dans la migration :
+
+```sql
+-- rollback: R12__restore_note.sql
+-- reversible: backfill d'une colonne dérivée, recalculée à chaque écriture
+-- irreversible: effacement RGPD de la table historique, aucune copie ne doit subsister
+```
+
+- `rollback:` nomme un script placé dans `src/main/resources/db/rollback/`,
+  **ajouté dans la même PR**. Flyway ne l'exécute jamais (il est hors de
+  `db/migration`) : il sert au retour arrière manuel.
+- `reversible:` n'est accepté que pour une réécriture ou un renommage. Une
+  suppression demande un chemin de retour, pas une assurance.
+- `irreversible:` est une **escalade volontaire** (test 4) : la PR ne sera
+  fusionnée que par un humain.
+- **Ne jamais modifier ni supprimer une migration existante** : Flyway a
+  enregistré sa somme de contrôle. Ajouter une nouvelle migration.
+
+Préférer la forme réversible (expand/contract) :
+
+- **supprimer une colonne** : la release N cesse de la lire et de l'écrire ; la
+  release N+1 la supprime, avec un rollback ou une copie de sauvegarde ;
+- **renommer** : ajouter la nouvelle colonne, copier, basculer la lecture ;
+  supprimer l'ancienne plus tard ;
+- **réécrire des valeurs** : copier l'ancienne valeur dans une colonne ou une
+  table de sauvegarde dans la même migration ; le rollback la restaure ;
+- **supprimer des lignes** : les copier d'abord dans une table d'archive.
+
+### Ce que fait le robot de fusion
+
+`bin/pr-autopilot` passe le contrôle sur chaque PR ouverte, une fois par commit :
+
+| Verdict | Effet |
+|---|---|
+| ok | armée comme avant |
+| déclaration requise / historique réécrit | non armée (désarmée si elle l'était), étiquette `reversibility-declaration-needed`, explication postée une fois ; libérée au commit suivant si c'est corrigé |
+| irréversible déclaré | idem, étiquette `irreversible-change`, escalade au Mayor (test 4) ; **jamais fusionnée par l'automatisation** |
+| contrôle impossible | non armée ce passage (échec fermé) |
+
+**Signalé, non tranché ici :** ce document classe toute modification Flyway en
+GUARDED, alors que les migrations additives fusionnent automatiquement (comme
+avant ADR-0019). Décider si elles doivent aussi attendre un humain revient à
+Benjamin.
+
+### Changements de comportement — point de revue (non mécanique)
+
+Aucun rig n'a de mécanisme de feature flag, et un diff ne dit pas si un
+comportement change. Le relecteur vérifie donc :
+
+- aucun comportement **destructif par défaut** (suppression, envoi, écrasement)
+  sans confirmation explicite de l'utilisateur ;
+- un changement visible par l'utilisateur est défaisable par un simple revert du
+  commit, **ou** la PR dit précisément comment revenir en arrière ;
+- sinon, la PR le déclare et c'est une escalade (test 4).
+
 ## Observed and proven baseline
 
 - **PROVEN FAST:** M2 bead `af-v7a` used one Codex/Sol writer, deterministic diff validation, commit `77f206a85ab97352aa2e6f9bd2a4f2e653db6d69`, PR #9 and merge `43614760bce9a855a6aeecbfb38090461a905e70`.
@@ -214,6 +296,7 @@ These classifications are deliberately separate: the three contracts are durable
 - **PROVEN GitHub cleanup:** PR #27 merged at `5fc753308a1522c5f4f5d0ccc98df69bc982cc7b` with the required check green.
 - **PROVEN locally:** unit test modules pass with Java 21. After the 2026-09-13 WSL/Docker remediation, `CourseKnowledgeTenantIsolationIT` passed 2/2 through Testcontainers, Ryuk, MySQL 8.0.41 and Flyway V1-V9. This scoped canary does not replace the full GitHub `Backend CI`, which remains authoritative for a STANDARD delivery.
 - **FAST:** documentation or bounded test-only maintenance with task-specific deterministic validation. **STANDARD:** ordinary bounded backend changes with `-Pit verify` green in GitHub CI. **GUARDED:** Flyway/schema changes, persistent data changes, production actions, secrets, security-sensitive changes or irreversible transitions.
+- **Reversibility:** every new Flyway migration passes `bin/reversibility-check` before merge; see *Réversibilité par défaut* above (ADR-0019).
 
 ### Frontend — `saymyname-frontend` / `smf`
 

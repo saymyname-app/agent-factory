@@ -90,5 +90,11 @@ jobs:
       - name: Factory guard regenerates the provider overlay
         run: bash tests/factory-guard-provider-overlay-test.sh
 
+      - name: Reversibility classification
+        run: python tests/reversibility-test.py
+
+      - name: Merge actor holds irreversible changes
+        run: bash tests/pr-autopilot-reversibility-test.sh
+
       - name: Every test is registered in CI
         run: bash tests/ci-registration-test.sh

@@ -9,6 +9,11 @@
 #              merged_sha) so a closed bead can be trusted to mean "on dev".
 #   3. FLAG    PRs whose required checks failed, as a P1 bead, so a red build is
 #              visible as work instead of silently sitting open.
+#   4. HOLD    PRs whose migrations are not undoable inside the release
+#              (bin/reversibility-check, ADR-0019): never armed, disarmed if
+#              already armed, labelled and explained once on the PR. A change
+#              declared irreversible is escalated to the Mayor (test 4 of
+#              ADR-0016) and only ever merged by a human.
 #
 # Production safety: PRs targeting anything other than the rig's dev branch are
 # never armed. dev -> main promotion stays a human decision by construction.
@@ -42,7 +47,67 @@ log()  { printf '%s\n' "$*"; }
 vlog() { [ "$VERBOSE" = "1" ] && printf '  %s\n' "$*"; return 0; }
 run()  { if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: $*"; return 0; fi; "$@"; }
 
-ARMED=0; RECONCILED=0; FLAGGED=0; SKIPPED=0; ERRORS=0
+ARMED=0; RECONCILED=0; FLAGGED=0; SKIPPED=0; ERRORS=0; HELD=0
+TMPDIR_AP=$(mktemp -d); trap 'rm -rf "$TMPDIR_AP"' EXIT
+
+# ---------- reversibility gate (ADR-0019) ----------
+# docs/DELIVERY.md calls Flyway changes GUARDED, yet this actor used to arm
+# every green PR to dev, migrations included -- two DROP COLUMNs among them.
+# The verdict is cached per PR head commit, so a PR is diffed once per push.
+REV_CHECK="${REVERSIBILITY_CHECK_BIN:-$FACTORY/bin/reversibility-check}"
+REV_CACHE="${REVERSIBILITY_CACHE:-$FACTORY/.gc/reversibility-cache.tsv}"
+HOLD_LABELS="reversibility-declaration-needed irreversible-change"
+
+reversibility_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
+  local repo=$1 num=$2 sha=$3 labels=" $4 " armed=$5
+  local key="$repo#$num@$sha" rc label color
+  rc=$(grep -F "${key}"$'\t' "$REV_CACHE" 2>/dev/null | tail -1 | cut -f2)
+  if [ -z "$rc" ]; then
+    "$REV_CHECK" --pr "$num" --repo "$repo" --json >/dev/null 2>&1; rc=$?
+    if [ "$rc" != "2" ]; then
+      mkdir -p "$(dirname "$REV_CACHE")"
+      printf '%s\t%s\n' "$key" "$rc" >> "$REV_CACHE"
+    fi
+  fi
+  case "$rc" in
+    0)
+      for l in $HOLD_LABELS; do
+        case "$labels" in *" $l "*)
+          log "  PR #$num: reversibility now ok -> removing '$l'"
+          run gh pr edit "$num" --repo "$repo" --remove-label "$l" >/dev/null 2>&1 ;;
+        esac
+      done
+      return 0 ;;
+    3|4)
+      if [ "$rc" = "4" ]; then label=irreversible-change; color=B60205
+      else label=reversibility-declaration-needed; color=FBCA04; fi
+      if [ "$armed" != "null" ] && [ -n "$armed" ]; then
+        log "  PR #$num: disarming auto-merge (reversibility)"
+        run gh pr merge "$num" --repo "$repo" --disable-auto >/dev/null 2>&1
+      fi
+      case "$labels" in
+        *" $label "*) vlog "PR #$num: held ($label), already explained on the PR" ;;
+        *)
+          log "  PR #$num: HELD -> $label"
+          "$REV_CHECK" --pr "$num" --repo "$repo" --comment > "$TMPDIR_AP/comment.md" 2>/dev/null
+          run gh label create "$label" --repo "$repo" --color "$color" --force \
+            --description "pr-autopilot reversibility gate (ADR-0019)" >/dev/null 2>&1
+          run gh pr comment "$num" --repo "$repo" --body-file "$TMPDIR_AP/comment.md" >/dev/null 2>&1
+          run gh pr edit "$num" --repo "$repo" --add-label "$label" >/dev/null 2>&1
+          if [ "$rc" = "4" ]; then
+            run bash -c "cd '$FACTORY' && gc mail send mayor --from mayor --notify \
+              --subject 'ESCALADE test 4 · PR #$num irréversible ($repo)' \
+              --message 'Auteur : pr-autopilot (script déterministe), pas Benjamin. La PR https://github.com/$repo/pull/$num contient une migration déclarée irréversible. Test d escalade 4 (ADR-0016) : ne la fusionne pas toi-même ; mets ce sous-graphe en attente et soumets la décision à Benjamin avec la raison déclarée dans la migration. Le reste de la campagne continue.'" >/dev/null 2>&1
+          fi ;;
+      esac
+      HELD=$((HELD+1))
+      return 1 ;;
+    *)
+      log "  PR #$num: reversibility could not be checked -> not arming this pass (fail closed)"
+      ERRORS=$((ERRORS+1))
+      return 1 ;;
+  esac
+}
 
 for entry in "${RIGS[@]}"; do
   IFS='|' read -r rig_dir repo dev <<<"$entry"
@@ -52,12 +117,12 @@ for entry in "${RIGS[@]}"; do
 
   # ---------- 1. ARM open PRs targeting dev ----------
   open_prs=$(gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
-    --json number,isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup 2>/dev/null)
+    --json number,isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid,labels 2>/dev/null)
   if [ -z "$open_prs" ]; then
     log "  (could not list open PRs)"; ERRORS=$((ERRORS+1)); open_prs='[]'
   fi
 
-  while IFS=$'\t' read -r num draft armed state checks; do
+  while IFS=$'\t' read -r num draft armed state checks sha labels; do
     [ -z "${num:-}" ] && continue
     if [ "$draft" = "true" ]; then
       vlog "PR #$num: draft, not arming"; SKIPPED=$((SKIPPED+1)); continue
@@ -80,6 +145,11 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
       fi
       continue
     fi
+
+    # Before the "already armed" shortcut: a push can add a destructive
+    # migration to a PR that was armed while it was harmless. (The labels field
+    # is never empty -- jq writes "-" -- because read would swallow it.)
+    reversibility_gate "$repo" "$num" "$sha" "${labels//,/ }" "$armed" || continue
 
     if [ "$armed" != "null" ] && [ -n "$armed" ]; then
       vlog "PR #$num: auto-merge already armed"; SKIPPED=$((SKIPPED+1)); continue
@@ -135,7 +205,9 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
       (.mergeStateStatus//"?"),
       ((.statusCheckRollup//[])|map(.conclusion//.state//"")|
         if any(.=="FAILURE" or .=="ERROR" or .=="TIMED_OUT") then "FAILURE"
-        elif length==0 then "NONE" else "OK" end)
+        elif length==0 then "NONE" else "OK" end),
+      (.headRefOid//"unknown"),
+      ((.labels//[])|map(.name)|join(",")|if .=="" then "-" else . end)
     ]|@tsv' 2>/dev/null)
 
   # ---------- 2. RECONCILE recently merged PRs onto their beads ----------
@@ -166,6 +238,6 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
 done
 
 log ""
-log "armed=$ARMED reconciled=$RECONCILED flagged=$FLAGGED skipped=$SKIPPED errors=$ERRORS"
+log "armed=$ARMED reconciled=$RECONCILED flagged=$FLAGGED held=$HELD skipped=$SKIPPED errors=$ERRORS"
 [ "$ERRORS" -gt 0 ] && exit 1
 exit 0

@@ -25,9 +25,10 @@ Use progressive disclosure. Do not read every document by default.
 | The four conditions every factory improvement must meet | `decisions/ADR-0017-four-conditions-for-factory-improvements.md` |
 | Operator dashboard, SayMyName status, and preview | `OPERATIONS.md` |
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
+| Is a schema change undoable; migration declarations; what pr-autopilot holds | `DELIVERY.md` (Réversibilité par défaut), `decisions/ADR-0019-reversibility-by-default.md`, `./bin/reversibility-check` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0018-automatic-provider-failover.md` |
+| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0019-reversibility-by-default.md` |
 
 ## Authority order
 
