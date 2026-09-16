@@ -1107,6 +1107,61 @@ class FactoryCockpitTest(unittest.TestCase):
         ))
         self.assertNotEqual("Répondre à la décision bloquante.", result["resume"]["action"])
 
+    def test_a_planned_admin_window_is_not_reported_as_a_dead_controller(self):
+        """A deliberate stop must not look like a failure.
+
+        On 2026-09-16 an `admin` blocker was recorded on purpose and the city
+        was then stopped for a maintenance window. Because the sources went
+        unavailable -- BECAUSE of that window -- the projection overwrote the
+        recorded blocker with `source_failure` and "Le controleur ou sa
+        capacite a travailler n'est pas confirme". A planned window and a dead
+        controller then read identically, which is exactly the ambiguity that
+        costs a human an investigation. The recorded window must survive.
+        """
+        base = {
+            "infrastructure": {"running": False, "usable": False, "degraded": False},
+            "sources_consistent": True, "current": None, "needs_benjamin": None,
+            "blockers": [], "queue": [],
+            "resume_policy": {"mode": "automatic_campaign", "condition": "Fenetre autorisee"},
+        }
+        cause = "Fenetre de maintenance usine, autorisee par Benjamin le 2026-09-16."
+        action = "Aucune action pendant la fenetre; le PO relance apres preuve."
+        window = project_human_state({
+            **base,
+            "campaign_metadata": {
+                "gc.campaign_mode": "automatic", "gc.campaign_state": "blocked",
+                "gc.campaign_candidate": "af-cm1l",
+                "gc.campaign_condition": "Fenetre autorisee",
+                "gc.campaign_owner": "Benjamin", "gc.campaign_action": action,
+                "gc.campaign_block_kind": "admin", "gc.campaign_cause": cause,
+                "gc.campaign_wake_state": "none", "gc.campaign_failure_count": "0",
+            },
+        })
+        self.assertEqual("unavailable", window["health"]["state"])
+        self.assertEqual("stopped", window["activity"]["state"])
+        # The recorded window is kept whole: kind, cause, owner and action.
+        self.assertEqual("admin", window["campaign"]["blocker_kind"])
+        self.assertEqual(cause, window["campaign"]["cause"])
+        self.assertEqual("Benjamin", window["campaign"]["owner"])
+        self.assertEqual(action, window["campaign"]["action"])
+        # And it never claims a source failure or demands a diagnosis.
+        self.assertNotEqual("source_failure", window["campaign"]["blocker_kind"])
+        self.assertNotEqual("fail_closed", window["resume"]["mode"])
+        self.assertFalse(window["resume"]["required"])
+        self.assertIn("maintenance", window["activity"]["label"])
+
+        # Without a recorded window, an unavailable city is STILL a fail-closed
+        # source failure. The fix must not have blunted the real alarm.
+        dead = project_human_state({
+            **base,
+            "resume_policy": {"mode": "manual"},
+        })
+        self.assertEqual(("stopped", "fail_closed", True), (
+            dead["activity"]["state"], dead["resume"]["mode"],
+            dead["resume"]["required"],
+        ))
+        self.assertIn("non fiable", dead["activity"]["label"])
+
     def test_source_failure_is_visible_and_fails_factory_health_closed(self):
         result = FactoryCollector(FakeRunner(fail_factory=True), FakeGasCity()).collect()
         self.assertEqual("down", result["factory"]["state"])

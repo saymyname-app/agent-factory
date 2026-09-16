@@ -356,9 +356,42 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
             "cause": cause,
         })
 
+    # An `admin` blocker was recorded on purpose before someone stopped the
+    # city. The sources then go unavailable BECAUSE of that window, so
+    # diagnosing a source failure would be describing the intended state as a
+    # fault. On 2026-09-16 a planned maintenance window reported
+    # "Le contrôleur ou sa capacité à travailler n'est pas confirmé" and was
+    # indistinguishable from a dead controller -- which is precisely the
+    # confusion that costs a human an investigation. A recorded window keeps
+    # its own cause, owner and action, exactly as a persisted `decision` block
+    # does in the branch below.
+    persisted_admin_window = (
+        campaign["enabled"]
+        and campaign["state"] == "blocked"
+        and campaign["blocker_kind"] == "admin"
+    )
+
     # Missing or contradictory required sources always disables action-oriented
     # conclusions, even when the City process itself still answers.
-    if health["state"] != "available":
+    if health["state"] != "available" and persisted_admin_window:
+        activity = {
+            "state": "stopped",
+            "label": "Arrêtée · fenêtre de maintenance",
+            "detail": campaign["cause"],
+        }
+        resume = {
+            "automatic": False,
+            "mode": "manual",
+            "trigger": None,
+            "condition": "Fin de la fenêtre de maintenance, puis preuve d'intégrité des stores.",
+            "owner": campaign["owner"],
+            "owner_label": campaign["owner_label"],
+            "action": campaign["action"],
+            "prompt": "La Factory est arrêtée volontairement. Ne rien diagnostiquer : attendre la fin de la fenêtre.",
+            "required": False,
+        }
+        # campaign is left exactly as recorded: kind, cause, owner and action.
+    elif health["state"] != "available":
         activity = {
             "state": "stopped",
             "label": "Arrêtée · état non fiable",
