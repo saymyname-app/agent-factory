@@ -207,8 +207,8 @@ def campaign_action(state: dict[str, Any], resolution: dict[str, Any], moment: f
     if workspace["provider"] is None and campaign_state != "blocked":
         reset = workspace.get("next_reset")
         when = f"vers {reset}" if reset else "dès qu'un fournisseur redevient disponible"
-        cause = (f"{PARK_MARKER} Tous les fournisseurs de la chaîne des ouvriers sont épuisés "
-                 f"ou désactivés; reprise automatique {when}.")
+        cause = (f"{PARK_MARKER} Tous les fournisseurs de la chaîne des ouvriers sont épuisés, "
+                 f"en erreur ou désactivés; reprise automatique {when}.")
         action = ("Aucune action requise : la campagne reprend seule à la réinitialisation "
                   "des quotas. Pour reprendre plus tôt, rétablir un fournisseur depuis le cockpit.")
         if dry_run:
@@ -255,7 +255,11 @@ def tick(args: argparse.Namespace) -> int:
             if pf.record_detection(state, policy, pool, finding, moment):
                 pf.note(state, moment, f"detected:{finding['kind']}",
                         f"{session.get('alias') or session.get('id')} ({provider}) — {finding.get('evidence', '')[:160]}")
-            if finding["kind"] == "exhausted":
+            if finding["kind"] in ("exhausted", "provider_error"):
+                # A session stuck on a provider that is now erroring (auth,
+                # network, 5xx -- af-s6fqv) needs the same restart-onto-the-
+                # resolved-provider treatment as one stuck on a quota wall;
+                # the pool is unusable either way.
                 stuck.append(session)
         resolution = pf.resolve(policy, state, moment)
         changed, switches = write_overlay(policy, state, resolution, moment, args.dry_run)

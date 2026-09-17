@@ -153,6 +153,29 @@ _HARD = re.compile(
     re.I,
 )
 _SOFT = re.compile(r"less than (\d{1,2})% of your (?:weekly|daily|session|5-hour)? ?limit left", re.I)
+# af-s6fqv (Factory audit): a provider going unavailable for a reason other
+# than quota used to be invisible -- ADR-0018 states its own known limit
+# ("a provider that fails silently ... is not detected here") and it
+# degraded into a generic liveness stall, indistinguishable from a dispatcher
+# bug. These are additive to _HARD/_SOFT, checked only when neither matches,
+# and labelled distinctly (kind="provider_error") so a human/PO reading the
+# state can tell "will resolve itself at a known reset time" (quota) apart
+# from "genuinely broken, needs investigation" (this).
+_AUTH_ERROR = re.compile(
+    r"\b40[13]\b|unauthorized|invalid api key|invalid_api_key|authentication failed"
+    r"|api key not found|permission denied.{0,30}\bapi\b",
+    re.I,
+)
+_NETWORK_ERROR = re.compile(
+    r"connection refused|econnrefused|enotfound|getaddrinfo|dns lookup failed"
+    r"|network error|could not connect|connection reset|connection timed out",
+    re.I,
+)
+_SERVER_ERROR = re.compile(
+    r"\b5(?:0[0-9]|2[0-9])\b|internal server error|bad gateway|service unavailable"
+    r"|gateway timeout|overloaded_error|\boverloaded\b",
+    re.I,
+)
 _CODEX_AT = re.compile(
     r"try again at ([A-Z][a-z]{2})[a-z]* (\d{1,2})(?:st|nd|rd|th)?,? (\d{4}),? "
     r"(\d{1,2}):(\d{2})\s*([AP]M)", re.I)
@@ -245,6 +268,14 @@ def detect(text: str, now: float, local_tz: str = "Europe/Paris") -> dict[str, A
     m = _SOFT.search(joined)
     if m:
         return {"kind": "low", "percent": int(m.group(1)), "evidence": m.group(0)}
+    for index in range(len(tail) - 1, -1, -1):
+        line = tail[index]
+        for category, pattern in (
+            ("auth", _AUTH_ERROR), ("network", _NETWORK_ERROR), ("server", _SERVER_ERROR),
+        ):
+            m = pattern.search(line)
+            if m:
+                return {"kind": "provider_error", "category": category, "evidence": line[:300]}
     return None
 
 
@@ -306,6 +337,24 @@ def record_detection(state: dict[str, Any], policy: dict[str, Any], pool: str,
             "strikes": int(current.get("strikes") or 0),
         }
         return True
+    if finding["kind"] == "provider_error":
+        # Not a quota wall with a known reset: back off the same shape as an
+        # unknown-reset exhaustion (1h, 2h, 4h... capped at 8h), but starting
+        # short (10min) since most of these (a network blip, a transient 5xx)
+        # resolve fast; a persistent one (a revoked key) climbs the same way
+        # quota's unknown-reset case does instead of hammering the provider.
+        strikes = int(current.get("strikes") or 0) + 1 if current.get("status") == "error" else 1
+        minutes = min(10 * 2 ** (strikes - 1), 8 * 60)
+        until = now + minutes * 60
+        if (current.get("status") == "error" and current.get("category") == finding.get("category")
+                and epoch(current.get("until")) is not None and abs(epoch(current.get("until")) - until) < 60):
+            return False
+        state["pools"][pool] = {
+            "status": "error", "until": iso(until), "source": "detected",
+            "evidence": finding.get("evidence", ""), "at": iso(now), "strikes": strikes,
+            "category": finding.get("category"),
+        }
+        return True
     return False
 
 
@@ -313,7 +362,7 @@ def pool_status(state: dict[str, Any], policy: dict[str, Any], pool: str, now: f
     entry = state["pools"].get(pool) or {}
     status = entry.get("status")
     until = epoch(entry.get("until"))
-    if status in {"exhausted", "low"} and (until is None or until > now):
+    if status in {"exhausted", "low", "error"} and (until is None or until > now):
         if entry.get("source") == "detected" and not state.get("auto", True):
             # Manual mode: detections are shown, never acted upon.
             return {"state": "available", "detected": status, "until": entry.get("until"),
@@ -358,7 +407,7 @@ def resolve(policy: dict[str, Any], state: dict[str, Any], now: float) -> dict[s
         low = [e for e in entries if e["state"] == "low"]
         pick = (available or low or [None])[0]
         if pick is None:
-            resets = [epoch(e.get("until")) for e in entries if e["state"] == "exhausted"]
+            resets = [epoch(e.get("until")) for e in entries if e["state"] in {"exhausted", "error"}]
             resets = [r for r in resets if r is not None]
             out[target] = {
                 "provider": None, "reason": "all_unavailable", "chain": entries,
