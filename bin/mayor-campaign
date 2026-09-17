@@ -372,18 +372,38 @@ def record_node_failure(node_id: str, exc: Exception) -> int:
     return count
 
 
+# Minimum wall-clock span of a failure streak before it counts as durable.
+FAILURE_MIN_SPAN_SECONDS = int(os.environ.get("CAMPAIGN_FAILURE_MIN_SPAN_SECONDS", "600"))
+_LAST_FAILURE_DURABLE = False
+
+
+def failure_mode() -> str:
+    return "durable failure" if _LAST_FAILURE_DURABLE else "automatic retry"
+
+
 def record_failure(metadata: dict[str, Any], exc: Exception) -> int:
+    global _LAST_FAILURE_DURABLE
     try:
         count = int(metadata.get("gc.campaign_failure_count", 0)) + 1
     except (TypeError, ValueError):
         count = 1
+    # A durable failure is one that LASTS, not three one-minute ticks in a row:
+    # on 2026-09-17 a Mayor mid-turn, then a status probe slowed by the
+    # Factory's own parallel load, each tripped the breaker in ~3 minutes and
+    # paged a false "durable failure". The streak must also span wall-clock time.
+    now = current_time()
+    since = epoch_of(metadata.get("gc.campaign_failure_since")) if count > 1 else None
+    if since is None:
+        since = now
     values = {
         "gc.campaign_failure_count": str(count),
+        "gc.campaign_failure_since": iso(since),
         "gc.campaign_last_error": failure_detail(exc),
         "gc.campaign_wake_key": "",
         "gc.campaign_wake_state": "none",
     }
-    if count >= FAILURE_THRESHOLD:
+    _LAST_FAILURE_DURABLE = count >= FAILURE_THRESHOLD and now - since >= FAILURE_MIN_SPAN_SECONDS
+    if _LAST_FAILURE_DURABLE:
         cause = (
             f"Le sentinelle de campagne a échoué {count} fois de suite : {failure_detail(exc)}"
         )
@@ -547,7 +567,7 @@ def sentinel(_: argparse.Namespace) -> None:
         campaign = project_campaign_metadata(metadata)
     except StateContractError as exc:
         count = record_failure(metadata, exc)
-        mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
+        mode = failure_mode()
         raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
     if not campaign["enabled"]:
         print("NOOP: campaign inactive")
@@ -570,7 +590,7 @@ def sentinel(_: argparse.Namespace) -> None:
             status = json_run(STATUS_BIN, "--json")
         except CampaignCommandError as exc:
             count = record_failure(metadata, exc)
-            mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
+            mode = failure_mode()
             raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
 
         try:
@@ -588,11 +608,12 @@ def sentinel(_: argparse.Namespace) -> None:
                         f"{mode} {count}/{FAILURE_THRESHOLD} on {node_id}: {failure_detail(exc)}"
                     ) from exc
             count = record_failure(metadata, exc)
-            mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
+            mode = failure_mode()
             raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
 
         if campaign["failure_count"] or campaign["last_error"]:
-            update_metadata({"gc.campaign_failure_count": "0", "gc.campaign_last_error": ""})
+            update_metadata({"gc.campaign_failure_count": "0", "gc.campaign_failure_since": "",
+                             "gc.campaign_last_error": ""})
             issue, campaign = coordination()
             metadata = issue.get("metadata", {})
             # The status we just read was projected while the failure counter
@@ -691,7 +712,7 @@ def sentinel(_: argparse.Namespace) -> None:
         latest_issue = coordination_issue()
         latest_metadata = latest_issue.get("metadata") if isinstance(latest_issue.get("metadata"), dict) else {}
         count = record_failure(latest_metadata, exc)
-        mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
+        mode = failure_mode()
         raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
     if reminder:
         print(f"REMINDED: mayor — {wake_key} ({resends + 1}/{MAX_REWAKES})")

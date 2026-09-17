@@ -78,6 +78,9 @@ class CampaignFixture:
             "CAMPAIGN_CALL_LOG": str(self.log_file),
             "CAMPAIGN_LOCK_FILE": str(self.lock_file),
             "CAMPAIGN_NODE_DIR": str(self.node_dir),
+            # The breaker tests below assert the count logic alone; the
+            # wall-clock span has its own test.
+            "CAMPAIGN_FAILURE_MIN_SPAN_SECONDS": "0",
         }
         self.write_state(metadata())
         self.write_status(status())
@@ -247,6 +250,26 @@ class MayorCampaignTest(CampaignFixture, unittest.TestCase):
         self.assertIn("mayor-campaign resume --mayor", value["gc.campaign_action"])
         noop = self.invoke("sentinel")
         self.assertIn("campaign blocked", noop.stdout)
+
+    def test_a_short_failure_burst_is_not_durable_until_it_spans_wall_clock_time(self):
+        # 2026-09-17: three 1-minute ticks failing while the Mayor was mid-turn
+        # (then under load) paged a false durable failure within ~3 minutes.
+        span = {"CAMPAIGN_STATUS_FAIL": "1", "CAMPAIGN_FAILURE_MIN_SPAN_SECONDS": "600"}
+        for offset in (0, 60, 120, 180):
+            result = self.invoke("sentinel", check=False,
+                                 extra_env={**span, "CAMPAIGN_NOW": str(NOW + offset)})
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("automatic retry", result.stderr)
+        value = self.current_metadata()
+        self.assertEqual("4", value["gc.campaign_failure_count"])
+        self.assertEqual("active", value["gc.campaign_state"])
+        result = self.invoke("sentinel", check=False,
+                             extra_env={**span, "CAMPAIGN_NOW": str(NOW + 600)})
+        self.assertIn("durable failure", result.stderr)
+        value = self.current_metadata()
+        self.assertEqual(("blocked", "durable_failure"), (
+            value["gc.campaign_state"], value["gc.campaign_block_kind"],
+        ))
 
     def test_durable_failure_tied_to_one_node_quarantines_only_that_node(self):
         self.write_status(status_with_release_mismatch())

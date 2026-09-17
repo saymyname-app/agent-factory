@@ -158,6 +158,8 @@ assert_degraded direct-ambiguous '.result.stage' 'materialized' 'smb-direct'
 assert_failure source-failure "Beads product coordination source command failed"
 assert_failure queue-failure "SayMyName product queue source command failed"
 assert_failure queue-inconsistent "canonical human candidate contract"
-assert_failure mismatch-next "Coordination NEXT disagrees"
+# A stale gc.next_outcome pointer must degrade, not kill the projection: the
+# queue is authoritative (2026-09-17: it blocked the whole campaign twice).
+assert_degraded mismatch-next '.next_candidate.state' 'eligible' 'disagrees with the first eligible product candidate'
 
 printf 'PASS: %d deterministic product-status checks\n' "$TESTS_RUN"
