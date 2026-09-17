@@ -135,6 +135,20 @@ gc start             # ré-enregistre et adopte les sessions
 ./bin/mayor-campaign resume --mayor
 ```
 
+**Après un redémarrage non planifié** (reboot Windows, coupure) : ces mêmes
+étapes sont rejouées, de façon idempotente, par `./bin/factory-boot`, que la
+tâche planifiée Windows « Good Morning Agent Factory » lance à l'ouverture de
+session. Il ne défait jamais un arrêt délibéré : une cité suspendue reste
+suspendue, une campagne bloquée pour une raison `admin` ou `decision` reste
+bloquée ; seul un blocage causé par le redémarrage lui-même
+(`durable_failure` / `source_failure`) est repris. Journal :
+`.gc/runtime/factory-boot.log`. Après une fenêtre **planifiée**, suivez la
+séquence manuelle ci-dessus.
+
+**Racine vivante en retard** : `factory-guard` avance désormais lui-même la
+racine (fast-forward seul, arbre suivi propre, branche épinglée) quand des PR
+fusionnés n'y tournent pas encore — plus besoin de `git pull` à la main.
+
 **Piège** : `gc reload` ne suffit pas pour tout. Certaines sections de
 `city.toml` — `[maintenance.dolt]` notamment — ne sont lues qu'au **démarrage du
 contrôleur**. `gc reload` répond alors « No config changes detected » et le

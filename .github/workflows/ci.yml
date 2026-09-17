@@ -66,6 +66,9 @@ jobs:
       - name: Factory guard sees the working tree
         run: bash tests/factory-guard-dirty-tree-test.sh
 
+      - name: Factory guard fast-forwards a clean live root
+        run: bash tests/factory-guard-live-root-sync-test.sh
+
       - name: Operator context contract
         run: bash tests/operator-context-test.sh
 
