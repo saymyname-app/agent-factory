@@ -30,6 +30,9 @@ CODEX_WALL = (
 CLAUDE_WALL = "Agent terminated early due to an API error: You've hit your session limit · resets 6:50pm (Europe/Paris)\n"
 CODEX_LOW = "⚠ Heads up, you have less than 5% of your weekly limit left. Run /status for a\n  breakdown.\n"
 CODEX_LOW_25 = "⚠ Heads up, you have less than 25% of your weekly limit left.\n"
+AUTH_ERROR = "Agent terminated: authentication failed (401 Unauthorized). Check your API key.\n"
+NETWORK_ERROR = "Error: connect ECONNREFUSED 127.0.0.1:443\n"
+SERVER_ERROR = "API error: 529 Overloaded — the server is temporarily overloaded, please retry.\n"
 
 
 def policy():
@@ -76,6 +79,23 @@ class Detection(unittest.TestCase):
         self.assertIsNone(pf.detect(CODEX_WALL, after_reset))
         self.assertIsNone(pf.detect("All tests pass. Rate limits look fine.\n", NOW))
 
+    def test_non_quota_provider_failures_are_labelled_distinctly(self):
+        """af-s6fqv: ADR-0018's own known limit -- a provider failing for a
+        reason other than quota used to be invisible, degrading into a
+        generic liveness stall. These must be labelled provider_error, never
+        confused with a quota wall (which has a known, self-healing reset)."""
+        auth = pf.detect(AUTH_ERROR, NOW)
+        self.assertEqual(("provider_error", "auth"), (auth["kind"], auth["category"]))
+        network = pf.detect(NETWORK_ERROR, NOW)
+        self.assertEqual(("provider_error", "network"), (network["kind"], network["category"]))
+        server = pf.detect(SERVER_ERROR, NOW)
+        self.assertEqual(("provider_error", "server"), (server["kind"], server["category"]))
+
+    def test_a_quota_wall_is_never_relabelled_as_a_generic_error(self):
+        """Quota patterns are checked first: a message that happens to also
+        contain a number must not be misclassified as a server error."""
+        self.assertEqual("exhausted", pf.detect(CODEX_WALL, NOW)["kind"])
+
 
 class Resolution(unittest.TestCase):
     def setUp(self):
@@ -86,6 +106,10 @@ class Resolution(unittest.TestCase):
         pf.record_detection(self.state, self.policy, pool,
                             {"kind": "exhausted", "until": datetime.fromisoformat(until).timestamp(),
                              "evidence": "test"}, NOW)
+
+    def error(self, pool, category="network"):
+        pf.record_detection(self.state, self.policy, pool,
+                            {"kind": "provider_error", "category": category, "evidence": "test"}, NOW)
 
     def pick(self, target="workspace"):
         return pf.resolve(self.policy, self.state, NOW)[target]
@@ -103,6 +127,23 @@ class Resolution(unittest.TestCase):
         self.assertEqual("claude-standard", self.pick("mayor")["provider"])
         # The UX reviewer keeps independence from Claude writers: Spark first.
         self.assertEqual("codex-spark", self.pick("ux-reviewer")["provider"])
+
+    def test_a_provider_error_fails_over_like_exhaustion(self):
+        """af-s6fqv: a non-quota failure (auth/network/5xx) must still move
+        the target off the broken provider -- being labelled distinctly is
+        for the human/PO reading state, not an excuse to stop failing over."""
+        self.error("openai", category="auth")
+        entries = {e["provider"]: e["state"] for e in self.pick()["chain"]}
+        self.assertEqual("error", entries["codex"])
+        self.assertEqual(("claude-standard", "fallback"), (self.pick()["provider"], self.pick()["reason"]))
+
+    def test_a_provider_error_backs_off_and_reports_a_next_reset(self):
+        self.error("openai")
+        self.error("openai-spark")
+        self.error("anthropic")
+        pick = self.pick()
+        self.assertEqual((None, "all_unavailable"), (pick["provider"], pick["reason"]))
+        self.assertIsNotNone(pick["next_reset"])  # even without a stated quota reset
 
     def test_one_claude_limit_takes_every_claude_profile_with_it(self):
         self.exhaust("anthropic")
