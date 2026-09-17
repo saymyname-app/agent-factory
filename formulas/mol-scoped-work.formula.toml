@@ -11,11 +11,14 @@ explicit DAG with:
 
 Use this as the opt-in replacement for hierarchy-first single-session formulas.
 
-Local fork (2026-09-17, Factory audit F1): every step below closes itself
-explicitly with `gc bd update --set-metadata gc.outcome=pass --status=closed`.
-The upstream version relied on agents using `gc bd close --reason`, which
-never sets `gc.outcome` and produced `missing_outcome` -> `hard_fail` ->
-`abort_scope` on 7 of 8 runs (af-ptx7).
+Local fork (2026-09-17, Factory audit F1/F2/F5): every step below closes
+itself explicitly with `gc bd update --set-metadata gc.outcome=pass
+--status=closed` (F1) — the upstream version relied on agents using `gc bd
+close --reason`, which never sets `gc.outcome` and produced `missing_outcome`
+-> `hard_fail` -> `abort_scope` on 7 of 8 runs (af-ptx7). `notify-failure`
+escalates a failed body scope instead of leaving it silent in nested metadata
+(F2). `submit` gives an explicit push + `gh pr create` instead of prose
+examples, so a PR is guaranteed rather than merely suggested (F5).
 """
 formula = "mol-scoped-work"
 
@@ -91,6 +94,40 @@ gc bd update body --set-metadata gc.outcome=pass --status=closed --notes "body s
 ```
 """
 metadata = { "gc.kind" = "scope", "gc.scope_name" = "worktree", "gc.scope_role" = "body" }
+
+[[steps]]
+id = "notify-failure"
+title = "Escalate if the body scope failed"
+needs = ["body"]
+description = """
+F2 (Factory audit): the body scope can close with a nested
+`gc.outcome=fail` (set by the scope-check machinery on an aborted scope)
+that nothing outside this formula ever reads — a silent failure. Runs
+regardless of whether body passed or failed (like cleanup-worktree), and
+escalates loudly only when it actually failed.
+
+```bash
+BODY_OUTCOME=$(gc bd show body --json | jq -r '.[0].metadata["gc.outcome"] // empty')
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+WORK_BEAD_ID=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+if [ "$BODY_OUTCOME" = "fail" ]; then
+  gc bd update "${WORK_BEAD_ID:-body}" \
+    --set-metadata "gc.needs_benjamin=mol-scoped-work body scope failed for ${WORK_BEAD_ID:-this convoy}" \
+    >/dev/null 2>&1 || true
+  gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "mol-scoped-work: body scope failed (${WORK_BEAD_ID:-unknown})" \
+    -m "ACTION: notify-failure detected the body scope closed with gc.outcome=fail
+STATE: one or more steps aborted this convoy's scope
+EVIDENCE: gc bd show body; gc convoy status {{convoy_id}}
+NEXT: diagnose the failed step, fix it, and re-run or close the work bead with the cause"
+fi
+gc bd update notify-failure --set-metadata gc.outcome=pass --status=closed --notes "checked body outcome: ${BODY_OUTCOME:-unknown}"
+```
+"""
+metadata = { "gc.scope_ref" = "body", "gc.scope_role" = "teardown" }
+
+[steps.retry]
+max_attempts = 3
+on_exhausted = "hard_fail"
 
 [[steps]]
 id = "workspace-setup"
@@ -193,19 +230,29 @@ id = "submit"
 title = "Finalize the work item"
 needs = ["self-review"]
 description = """
-Perform the city-specific finalization for this work item. Examples:
-
-- push the branch and hand off to a reviewer
-- close the original work bead
-- update metadata for downstream systems
-
-This is intentionally generic so cities can opt into the graph contract
-without inheriting Gastown's exact human workflow.
-
-When finalization is done, close this step explicitly:
+Push the branch and open a PR. F5 (Factory audit): this used to be prose
+examples only ("push the branch and hand off to a reviewer") with no
+guaranteed PR; make it concrete.
 
 ```bash
-gc bd update submit --set-metadata gc.outcome=pass --status=closed --notes "work item finalized"
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+WORK_BEAD_ID=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$BRANCH" = "HEAD" ] || [ "$BRANCH" = "{{base_branch}}" ]; then
+  BRANCH="scoped-work/$WORK_BEAD_ID"
+  git checkout -b "$BRANCH"
+fi
+if [ "{{base_branch}}" = "main" ]; then
+  echo "mol-scoped-work refuses to open a PR with base=main from a writer step; confirm this convoy actually targets a non-production branch" >&2
+fi
+git push -u origin "$BRANCH"
+PR_URL=$(gh pr create --base "{{base_branch}}" --head "$BRANCH" \
+  --title "<one-line summary of $WORK_BEAD_ID>" \
+  --body "Closes $WORK_BEAD_ID.
+
+<what changed and why>")
+gc bd update "${WORK_BEAD_ID:-submit}" --set-metadata "gc.pr_url=$PR_URL" >/dev/null 2>&1 || true
+gc bd update submit --set-metadata gc.outcome=pass --status=closed --notes "opened $PR_URL against {{base_branch}}"
 ```
 """
 metadata = { "gc.scope_ref" = "body", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope", "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
