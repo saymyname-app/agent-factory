@@ -539,8 +539,13 @@ main() {
   needs_json=$(jq -cn --arg value "$NEEDS_BENJAMIN" \
     'if ($value | ascii_downcase) == "none" then null else $value end')
 
-  # The queue is authoritative for eligibility.  The coordination prose must
-  # still identify exactly the same first active product candidate.
+  # The queue is authoritative for eligibility.  gc.next_outcome is
+  # hand-maintained prose that no queue mutation (add, move, pause, resume,
+  # cancel, materialize) keeps in step, and nothing else reads it.  A stale
+  # pointer used to die() here and take the whole projection -- hence the
+  # campaign -- down (twice on 2026-09-17: a materialize mid-turn, then an
+  # add).  It now degrades like every other section (governance invariant a):
+  # the queue wins, and the drift is logged for the Mayor to repair.
   next_candidate=$(jq -c '[.[] | select(.state == "eligible" and .goal != "none")][0] // null' \
     <<<"$queue_response")
   if [[ $next_candidate == null ]]; then
@@ -550,7 +555,7 @@ main() {
          ($pointer | contains($item.id)) or ($pointer | contains($item.title))))] | length
     ' <<<"$queue_response")
     if [[ $candidate_matches -eq 0 && ${next_pointer,,} != none ]]; then
-      die "Coordination NEXT does not identify any active product candidate."
+      log "WARNING: coordination NEXT ($next_pointer) does not identify any active product candidate; the queue is authoritative (NEXT: none). Repair gc.next_outcome on $PRODUCT_ROOT_BEAD."
     fi
   else
     candidate_matches=$(jq --arg pointer "$next_pointer" --arg id "$(jq -r '.id' <<<"$next_candidate")" \
@@ -561,7 +566,7 @@ main() {
          ($pointer | contains($id)) or ($pointer | contains($title))))] | length
     ' <<<"$queue_response")
     [[ $candidate_matches -eq 1 ]] \
-      || die "Coordination NEXT disagrees with the first eligible product candidate."
+      || log "WARNING: coordination NEXT ($next_pointer) disagrees with the first eligible product candidate $(jq -r '.id' <<<"$next_candidate"); the queue is authoritative. Repair gc.next_outcome on $PRODUCT_ROOT_BEAD."
   fi
 
   resume_mode=$(metadata_optional "$parent" "gc.resume_mode")
