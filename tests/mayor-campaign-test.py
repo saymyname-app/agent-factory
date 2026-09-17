@@ -458,6 +458,29 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         self.assertEqual("2026-09-16T10:50:00Z", self.current_metadata()["gc.campaign_progress_at"])
         self.assertEqual(1, self.mail_count())
 
+    def test_a_stale_finalize_wake_clears_once_its_target_closes_even_under_ladder_active(self):
+        # af-hnm7l: a wake sent for a product finalize/resume target used to
+        # survive that target's closure whenever the *next* tick's reason
+        # was anything outside {active_delivery, automatic_dependency} --
+        # observed live as 'ladder_active' -- leaving the cockpit reporting
+        # awaiting_mayor forever even though the named wake was long resolved.
+        self.write_state({**metadata(), "gc.campaign_wake_key": "finalize:af-target",
+                          "gc.campaign_wake_state": "sent",
+                          "gc.campaign_ladder_bead": "af-fix"})
+        (self.node_dir / "af-target.json").write_text(json.dumps({
+            "id": "af-target", "status": "closed", "metadata": {},
+        }), encoding="utf-8")
+        (self.node_dir / "af-fix.json").write_text(json.dumps({
+            "id": "af-fix", "status": "in_progress", "metadata": {},
+            "updated_at": "2026-09-16T10:40:00Z",
+        }), encoding="utf-8")
+        self.write_status(status(next_id=None))  # automatic campaign, nothing eligible
+        out = self.sentinel(NOW).stdout
+        self.assertIn("NOOP: ladder_active", out)
+        meta = self.current_metadata()
+        self.assertEqual("", meta["gc.campaign_wake_key"])
+        self.assertEqual("none", meta["gc.campaign_wake_state"])
+
     def test_product_work_in_flight_never_triggers_the_ladder(self):
         self.write_status(status(result={"id": "af-exec", "state": "active"}, mode="active_delivery"))
         self.assertIn("NOOP: active_delivery", self.sentinel(NOW).stdout)
