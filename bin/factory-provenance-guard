@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# factory-provenance-guard — Layer B of the zero-token real-PII leak guard
+# (af-6eqc). Runs in CI (GitHub Actions on saymyname-backend and
+# saymyname-frontend), no secrets, no exact-value matching against real
+# identifiers -- CI cannot hold the real-identifier list at all, because
+# putting it in a GitHub Actions secret would itself hand real PII to a
+# third party, exactly what this guards against.
+#
+# Instead this is a structural backstop: any data file that lands under a
+# fixture/seed/test-resource path must be provenance-marked as synthetic
+# (produced by the af-hq2j generator), recorded in a PROVENANCE.md manifest
+# in the same directory, with a sha256 of the file's exact content so the
+# claim is bound to what is actually there, not just a filename mention:
+#
+#   <filename>: synthetic-provenance af-hq2j sha256:<hex>
+#
+# An unmarked data file in one of those paths fails the build -- it is
+# either real data that should never have landed there, or a synthetic file
+# someone forgot to record. A marked file whose recorded sha256 no longer
+# matches its content also fails -- the manifest entry is a stale or false
+# attestation, not proof about the file as it stands now. This is
+# deliberately a structural + hash check, never a content-meaning check, so
+# it needs no access to what the data actually says.
+#
+# Usage: factory-provenance-guard [--root DIR]
+# Exit 0: no data file under a watched path, or every one found is marked
+#         and its recorded sha256 matches its current content.
+# Exit 1: at least one unmarked or stale-attestation data file found.
+# Exit 2: usage/environment error.
+set -uo pipefail
+
+ROOT="."
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --root)
+      [ $# -ge 2 ] || { echo "factory-provenance-guard: --root requires a value" >&2; exit 2; }
+      ROOT=$2; shift 2 ;;
+    -h|--help)
+      awk 'NR>=2 && /^set -uo pipefail/{exit} NR>=2{print}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "factory-provenance-guard: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+cd "$ROOT" || { echo "factory-provenance-guard: $ROOT unreachable" >&2; exit 2; }
+
+WATCHED_DIR_RE='(^|/)(fixtures?|seeds?|test-resources?|testdata|test-data)(/|$)|(^|/)test/resources(/|$)'
+DATA_EXT_RE='\.(json|csv|sql|ya?ml|xml|properties|tsv)$'
+PRUNE_NAMES=(node_modules .git target dist build worktrees)
+
+regex_escape() {
+  printf '%s' "$1" | sed 's/[.[\*^$()+?{|]/\\&/g'
+}
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo "factory-provenance-guard: no sha256sum or shasum available -- cannot verify provenance hashes" >&2
+    exit 2
+  fi
+}
+
+FIND_PRUNE=()
+for n in "${PRUNE_NAMES[@]}"; do
+  FIND_PRUNE+=(-o -type d -name "$n")
+done
+# FIND_PRUNE[0] is a leading -o; drop it for a well-formed \( ... \) group.
+unset 'FIND_PRUNE[0]'
+
+FOUND=0
+UNMARKED=0
+while IFS= read -r -d '' f; do
+  rel="${f#./}"
+  printf '%s' "$rel" | grep -qE "$WATCHED_DIR_RE" || continue
+  printf '%s' "$rel" | grep -qE "$DATA_EXT_RE" || continue
+  FOUND=$((FOUND + 1))
+  dir=$(dirname "$rel")
+  base=$(basename "$rel")
+  base_re=$(regex_escape "$base")
+  manifest="$dir/PROVENANCE.md"
+
+  entry=""
+  if [ -f "$manifest" ]; then
+    entry=$(grep -E "^${base_re}:.*synthetic-provenance.*af-hq2j" "$manifest" | head -n1 || true)
+  fi
+  if [ -z "$entry" ]; then
+    echo "! unmarked data file under a watched path: $rel (no synthetic-provenance entry for it in $manifest)" >&2
+    UNMARKED=$((UNMARKED + 1))
+    continue
+  fi
+
+  recorded_hash=$(printf '%s' "$entry" | grep -oE 'sha256:[0-9a-f]{64}' | cut -d: -f2)
+  if [ -z "$recorded_hash" ]; then
+    echo "! synthetic-provenance entry for $rel has no sha256 binding -- a filename+keyword line is not proof for the file as it stands now ($manifest)" >&2
+    UNMARKED=$((UNMARKED + 1))
+    continue
+  fi
+
+  actual_hash=$(sha256_of "$f")
+  if [ "$actual_hash" != "$recorded_hash" ]; then
+    echo "! synthetic-provenance entry for $rel does not match the file's current content -- stale or false attestation ($manifest)" >&2
+    UNMARKED=$((UNMARKED + 1))
+  fi
+done < <(find . \( -type d \( "${FIND_PRUNE[@]}" \) -prune \) -o -type f -print0 2>/dev/null)
+
+if [ "$UNMARKED" -gt 0 ]; then
+  echo "factory-provenance-guard: BLOCKED -- $UNMARKED unmarked data file(s) under fixture/seed/test-resource paths." >&2
+  echo "Any data under those paths must be synthetic (see af-hq2j) and recorded in a PROVENANCE.md manifest: '<filename>: synthetic-provenance af-hq2j'." >&2
+  exit 1
+fi
+
+echo "factory-provenance-guard: clean -- $FOUND data file(s) checked under watched paths, all marked (or none found)"
+exit 0
