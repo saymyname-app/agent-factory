@@ -1,0 +1,6 @@
+[order]
+description = "Daily, zero-token model-id staleness check (ADR-0018 part 2, af-a1t44): compare the model id configured for each provider in city.toml against config/model-catalog.json's recommended list, and file a bead + mail the Mayor on drift. Never switches a model -- that stays a human/PO call."
+trigger = "cooldown"
+interval = "24h"
+exec = "./bin/provider-failover check-models --quiet"
+timeout = "60s"
