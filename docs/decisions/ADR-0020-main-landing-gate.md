@@ -6,7 +6,7 @@
   ~2026-09-21), acting under ADR-0016 standing delegation — no Benjamin
   effect-test trigger applies (no navigation/invitation/consent/personal-data
   exposure).
-- Applies to: `benjamin-hurand/agent-factory` itself, whose default branch is
+- Applies to: `saymyname-app/agent-factory` itself, whose default branch is
   `main` (the rigs' `dev` branches already have a required-check gate covered
   by `docs/DELIVERY.md`'s closed-loop delivery section — this ADR does not
   change that).
