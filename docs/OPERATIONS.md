@@ -168,7 +168,8 @@ It serves `http://127.0.0.1:8383` from a small Python standard-library process.
 `open` starts it if necessary and opens the Windows default browser. The UI polls
 a five-second cache of local `gc`, `bd`, workflow API, and product-queue signals.
 Monitoring, search, filters, advice, tooltips, glossary, and copied summaries call
-no model. Pause freezes automatic source refresh; **Actualiser** remains manual.
+no model. There is no auto-refresh pause control today (docs drift, audit
+2026-09-17): **Actualiser** is the only refresh, and it is always manual.
 The one-glance state follows `agent-factory-human-state/v1` (schema in
 `config/factory-human-status.schema.json`). It always separates infrastructure
 health, delivery activity, result lifecycle and resume semantics. A healthy
