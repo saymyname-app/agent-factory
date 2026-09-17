@@ -30,6 +30,10 @@
       <div><p class="eyebrow">CONTINUITÉ DE LIVRAISON</p><h2>BLOQUÉ</h2><p id="campaign-block-today-cause">—</p></div>
       <dl class="resume-facts"><dt>Propriétaire de la reprise</dt><dd id="campaign-block-today-owner">—</dd><dt>Action exacte</dt><dd id="campaign-block-today-action">—</dd></dl>
     </section>
+    <section id="watchdog-alerts" class="watchdog-alerts hidden" role="alert" aria-live="polite">
+      <p class="eyebrow">SURVEILLANCE (factory-watchdog) <button class="info" data-tooltip="Règles locales déterministes, zéro token. Observe et signale seulement — ne résout jamais une porte, ne fusionne jamais une PR, n'arrête jamais la campagne (ADR-0016 §7).">?</button></p>
+      <ul id="watchdog-alerts-list" class="watchdog-alerts-list"></ul>
+    </section>
     <section id="providers-panel" class="panel providers-panel" aria-labelledby="providers-title">
       <div class="section-heading"><div><p class="eyebrow">FOURNISSEURS IA</p><h2 id="providers-title">Quel modèle fait tourner l’usine <button class="info" data-tooltip="Quand un quota GPT ou Claude est atteint, l’usine bascule seule sur le suivant et revient quand il se réinitialise. Tu peux marquer un quota, réordonner, désactiver ou imposer un fournisseur. Tout est réversible.">?</button></h2></div><div class="provider-heading-actions"><label class="provider-auto"><input id="providers-auto" type="checkbox"> Repli automatique</label><button id="providers-refresh" type="button">Relire</button></div></div>
       <p id="providers-summary" class="provider-summary">Lecture…</p>

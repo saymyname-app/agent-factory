@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# ci: local-only — drives the live `gc` binary and the city's bead store
+
+set -Eeuo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+order=$(gc order show factory-watchdog --city "$ROOT" --json)
+jq -e --arg source "$ROOT/orders/factory-watchdog.toml" '
+  .ok == true and
+  .order.type == "exec" and
+  .order.trigger == "cooldown" and
+  .order.interval == "5m" and
+  .order.timeout == "180s" and
+  .order.exec == "/home/benja/agent-factory/bin/factory-watchdog --quiet" and
+  .order.enabled == true and
+  .order.source == $source
+' >/dev/null <<<"$order"
+
+printf 'PASS: city-local factory-watchdog Order is discoverable and deterministic\n'

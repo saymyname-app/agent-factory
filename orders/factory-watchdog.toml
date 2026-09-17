@@ -1,0 +1,6 @@
+[order]
+description = "Deterministic zero-token paging: an aged 'Gate: human' issue, a Factory-repo PR that is CONFLICTING or never ran CI, a molecule/workflow bead closed with a non-pass gc.outcome, and a still-open campaign-liveness defect. Observes and pages the Mayor only -- never resolves a gate, merges a PR, or reopens a workflow (ADR-0016 section 7)."
+trigger = "cooldown"
+interval = "5m"
+exec = "/home/benja/agent-factory/bin/factory-watchdog --quiet"
+timeout = "180s"

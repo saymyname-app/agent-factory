@@ -84,6 +84,12 @@ jobs:
       - name: Factory guard checks liveness
         run: bash tests/factory-guard-liveness-test.sh
 
+      - name: Watchdog assessment rules (aged gates, stuck PRs, false-success closes)
+        run: python tests/factory-watchdog-test.py
+
+      - name: Factory watchdog pages and throttles
+        run: bash tests/factory-watchdog-test.sh
+
       - name: Provider failover
         run: python tests/provider-failover-test.py
 

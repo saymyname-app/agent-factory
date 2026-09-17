@@ -182,6 +182,17 @@ function renderTodayAttention(today) {
   action.dataset.decisionId = blocker?.decision_id || ""; action.classList.toggle("hidden", !blocker?.decision_id);
 }
 
+// factory-watchdog findings (aged human gate, stuck PR, false-success close,
+// aging liveness defect). Additive to the Aujourd'hui panel; never touches
+// campaign-block-today or human_state.campaign.blocked -- a local finding
+// here must never read as the whole campaign being stopped (ADR-0016 §7).
+function renderWatchdogAlerts(today) {
+  const alerts = Array.isArray(today?.watchdog_alerts) ? today.watchdog_alerts : [];
+  const section = $("watchdog-alerts"); section.classList.toggle("hidden", alerts.length === 0);
+  const list = $("watchdog-alerts-list"); list.replaceChildren();
+  alerts.forEach((alert) => { const item = node("li", "watchdog-alert"); item.append(node("strong", "", alert.id || ""), node("span", "", alert.message || "")); list.append(item); });
+}
+
 const boardDefinitions = [
   ["active", "En livraison", ["current", "active"]], ["materialized", "Matérialisé", ["materialized"]], ["ready", "Prêt", ["ready"]], ["eligible", "Éligible · non programmé", ["eligible", "planned"]], ["paused", "En pause", ["paused"]], ["blocked", "Bloqué", ["blocked"]], ["delivered", "Livré", ["delivered"]], ["cancelled", "Annulé", ["cancelled"]],
 ];
@@ -436,7 +447,7 @@ function compareVisit(data) {
 }
 
 function render(data) {
-  snapshot = data; applyIdentity(data.product_memory?.product, data.operator); setStatus($("factory-state"), data.factory.state, data.factory.label); renderOperationalState(data); renderCampaignState(data); $("focus-title").textContent = data.focus.title; setStatus($("focus-state"), data.focus.state, data.focus.state_label); $("focus-phase").textContent = data.focus.phase; timed($("focus-elapsed"), data.focus.started_at); $("focus-signal").dataset.signalTime = data.focus.last_signal_at || ""; $("focus-signal").textContent = signalAge(data.focus.last_signal_at); const steps = data.focus.steps; $("focus-steps").textContent = steps.total ? `${steps.completed} / ${steps.total}` : "aucune étape exposée"; $("step-fill").style.width = steps.total ? `${Math.round((steps.completed / steps.total) * 100)}%` : "0%"; renderTodayAttention(data.today); const delivered = data.last_delivery; $("last-delivery").textContent = `Dernière livraison : ${delivered.title}${delivered.pr ? ` · PR ${delivered.pr}` : ""}${delivered.ci === "success" ? " · CI verte" : ""}`;
+  snapshot = data; applyIdentity(data.product_memory?.product, data.operator); setStatus($("factory-state"), data.factory.state, data.factory.label); renderOperationalState(data); renderCampaignState(data); $("focus-title").textContent = data.focus.title; setStatus($("focus-state"), data.focus.state, data.focus.state_label); $("focus-phase").textContent = data.focus.phase; timed($("focus-elapsed"), data.focus.started_at); $("focus-signal").dataset.signalTime = data.focus.last_signal_at || ""; $("focus-signal").textContent = signalAge(data.focus.last_signal_at); const steps = data.focus.steps; $("focus-steps").textContent = steps.total ? `${steps.completed} / ${steps.total}` : "aucune étape exposée"; $("step-fill").style.width = steps.total ? `${Math.round((steps.completed / steps.total) * 100)}%` : "0%"; renderTodayAttention(data.today); renderWatchdogAlerts(data.today); const delivered = data.last_delivery; $("last-delivery").textContent = `Dernière livraison : ${delivered.title}${delivered.pr ? ` · PR ${delivered.pr}` : ""}${delivered.ci === "success" ? " · CI verte" : ""}`;
   renderDecisionAids(data.decision_aids || []); renderQueue(data.queue || []); renderMemory(data.product_memory, data.today); renderBusiness(data.product_memory); renderProject(data.product_memory, data); renderRoadmap(data); renderWorkflow(data.product_memory, data); renderBoard(data.product_work || []); renderAgents(data.agents || []);
   const factoryWork = $("factory-work"); factoryWork.replaceChildren(); (data.factory_work || []).forEach((item) => factoryWork.append(node("div", "compact-item", item.title))); if (!factoryWork.children.length) factoryWork.append(node("p", "muted", "Aucun autre travail Factory.")); const infrastructure = $("infrastructure"); infrastructure.replaceChildren(); (data.infrastructure || []).forEach((item) => infrastructure.append(node("div", "compact-item", `${item.name} · ${item.state}`)));
   const alert = $("alert"); if (data.warnings.length) { alert.textContent = `Visibilité partielle : ${data.warnings.join(" · ")}`; alert.classList.remove("hidden"); } else alert.classList.add("hidden"); renderMobile(data); compareVisit(data); updateClocks(); restoreDeepLink();

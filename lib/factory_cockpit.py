@@ -46,6 +46,7 @@ COCKPIT_CONFIG_PATH = Path(os.environ.get(
 PRODUCTS_ROOT = ROOT / "config" / "products"
 REMOTE_ACCESS_FILE = ROOT / ".gc" / "runtime" / "factory-cockpit-remote-url"
 BLOCKER_STATE_PATH = ROOT / ".gc" / "runtime" / "factory-cockpit-blockers.json"
+WATCHDOG_SIGNAL_PATH = ROOT / ".gc" / "runtime" / "factory-watchdog-signals.json"
 DECISION_DOMAINS = ("enterprise", "product", "project")
 COORDINATION_BEAD = os.environ.get("FACTORY_COCKPIT_COORDINATION_BEAD", "af-1vr4")
 PO_STATE_PATH_OVERRIDE = os.environ.get("FACTORY_COCKPIT_PO_STATE_PATH")
@@ -762,6 +763,28 @@ def _read_blockers(path: Path | None = None) -> list[dict[str, Any]]:
     return [item for item in decisions if isinstance(item, dict) and item.get("id")]
 
 
+def _read_watchdog_alerts(path: Path | None = None) -> list[dict[str, Any]]:
+    """bin/factory-watchdog's own findings (aged gate, stuck PR, false-success
+
+    close, aging liveness defect) -- surfaced additively in the Aujourd'hui
+    panel. This never touches human_state.campaign.blocked: a local watchdog
+    finding must never read as the whole campaign being stopped (ADR-0016
+    section 7). A missing or malformed file is a quiet factory, not an error.
+    """
+    try:
+        value = json.loads((path or WATCHDOG_SIGNAL_PATH).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    alerts = value.get("alerts") if isinstance(value, dict) else None
+    if not isinstance(alerts, list):
+        return []
+    return [
+        {"kind": item.get("kind"), "id": item.get("id"), "message": item.get("message")}
+        for item in alerts
+        if isinstance(item, dict) and item.get("id") and item.get("message")
+    ]
+
+
 def _decision_aids(
     human_state: dict[str, Any],
     last_delivery: dict[str, Any],
@@ -875,6 +898,7 @@ def _today_projection(
     decisions: list[dict[str, Any]],
     blocker_mappings: list[dict[str, Any]],
     blocker_decision_id: str | None = None,
+    watchdog_alerts: list[dict[str, Any]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Separate open decisions from blockers explicitly tied to coordination."""
     pending = [item for item in decisions if item.get("status") == "pending"]
@@ -917,6 +941,7 @@ def _today_projection(
             for item in general
         ],
         "effective_blockers": blockers,
+        "watchdog_alerts": list(watchdog_alerts or []),
     }
 
 
@@ -2017,6 +2042,7 @@ class FactoryCollector:
             product_memory["decisions"],
             self.product_config.get("decision_blockers", []),
             blocker_decision_id,
+            _read_watchdog_alerts(),
         )
         last_meta = _metadata(last)
         last_delivery = {
