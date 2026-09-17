@@ -140,14 +140,17 @@ class SchemaShapeTest(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseContractError, "incomplet", msg=field):
                 validate_release_contract(mutated)
 
-    def test_production_release_contract_awaits_the_adr_0015_migration(self):
-        # config/releases/saymyname-v1.json still has the pre-ADR-0015 shape.
-        # ADR-0015 sec.1 drops backward-compat on purpose (required fields win,
-        # not optional-everything); af-u8id.4.2 migrates this document onto the
-        # extended contract. Until then it must fail loudly rather than be
-        # silently tolerated without origin/autonomy/intake/etc.
-        with self.assertRaisesRegex(ReleaseContractError, "incomplet"):
-            load_release_contract(PRODUCTION_RELEASE_PATH)
+    def test_production_release_contract_matches_the_adr_0015_extended_shape(self):
+        # af-u8id.4.2 migrated config/releases/saymyname-v1.json onto the
+        # extended contract (origin/autonomy/intake/assumptions/budget +
+        # per-criterion acceptance + ADR-0021 review on takeover-derived
+        # blocks). It must load and validate cleanly through
+        # validate_release_contract, the same pure semantic check
+        # `bin/product-release validate` runs in production.
+        value = load_release_contract(PRODUCTION_RELEASE_PATH)
+        self.assertEqual(value["origin"]["kind"], "takeover")
+        self.assertEqual(value["autonomy"]["level"], "L3")
+        self.assertEqual(value["intake"]["state"], "complete")
 
 
 class ValidationTest(unittest.TestCase):
