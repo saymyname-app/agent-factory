@@ -7,6 +7,92 @@
   "title": "SayMyName V1 · boucle sociale personnelle et autonome",
   "state": "executing",
   "next_version": "V2",
+  "revision": 1,
+  "objective": {
+    "statement": "SayMyName doit faire qu'au moment où la personne est en face, son nom vienne tout seul : sans écran, parmi les gens qu'on a choisi de retenir, et sans que l'effort pour y arriver se voie.",
+    "set_by": "Benjamin",
+    "set_at": "2026-09-16T00:00:00Z"
+  },
+  "origin": {
+    "kind": "takeover",
+    "statement": "SayMyName is not limited to an organizational directory. Its durable purpose is to help a person recognize faces, recall names and retain chosen useful context for real-world social interactions across public culture, organizations and private life. The defensible promise is improvement on people and information actually trained, not broad intelligence, health or therapeutic claims.",
+    "sources": [
+      {"kind": "document", "ref": "docs/products/saymyname/OBJECTIVE.md", "access": "read"},
+      {"kind": "document", "ref": "docs/products/saymyname/DECISIONS.md", "access": "read"},
+      {"kind": "document", "ref": "docs/products/saymyname/PRODUCT_STRATEGY.md", "access": "read"},
+      {"kind": "document", "ref": "docs/products/saymyname/PRODUCT_CONTEXT.md", "access": "read"},
+      {"kind": "document", "ref": "docs/products/saymyname/PROJECT_INVENTORY.md", "access": "read"},
+      {"kind": "document", "ref": "docs/products/saymyname/DESIGN_GOVERNANCE.md", "access": "read"},
+      {"kind": "document", "ref": "docs/products/saymyname/EXPOSURE_REVIEW.md", "access": "read"},
+      {"kind": "repository", "ref": "SayMyName backend (saymyname-app org) and frontend (Say-my-name-front)", "access": "read"},
+      {"kind": "conversation", "ref": "Benjamin, live conversation 2026-09-16 — ADR-0015/ADR-0021 arbitration", "access": "none"}
+    ],
+    "conflicts": [],
+    "discovery": {
+      "generated_at": "2026-09-14T00:00:00Z",
+      "method": "deterministic_scan",
+      "findings": [
+        {
+          "id": "existing-view-catalogue",
+          "area": "routes",
+          "summary": "Frontend router/feature folders and backend HTTP controllers scanned 2026-09-14 found existing surfaces for access (sign in/up, verification, recovery), invitation/onboarding, learning (training, course, quiz, progress), people (trombinoscope, profile, search, subscriptions) and organization admin (dashboard, people, members, invitations, attributes, change requests); no complete public-challenge, personal-home or CSV-import customer journey existed yet at that date.",
+          "evidence": [
+            {"kind": "document", "ref": "docs/products/saymyname/PROJECT_INVENTORY.md#view-catalogue", "status": "proven"}
+          ]
+        },
+        {
+          "id": "existing-functional-capabilities",
+          "area": "data",
+          "summary": "The same scan lists authentication/session/recovery, invitations and scoped organization administration, person/profile data with photos/attributes/subscriptions/search primitives, and a full quiz/course lifecycle (answers, help, statistics, performance, leaderboard) as already present before any Factory-delivered SayMyName work.",
+          "evidence": [
+            {"kind": "document", "ref": "docs/products/saymyname/PROJECT_INVENTORY.md#functional-capabilities-already-present", "status": "proven"}
+          ]
+        },
+        {
+          "id": "durable-doc-set",
+          "area": "docs",
+          "summary": "Durable product documentation set located by header scan and read end to end for this migration: OBJECTIVE.md, DECISIONS.md, PRODUCT_STRATEGY.md, PRODUCT_CONTEXT.md, DESIGN_GOVERNANCE.md, EXPOSURE_REVIEW.md, PO_WORKSPACE_AGENTS.md and PROJECT_INVENTORY.md.",
+          "evidence": [
+            {"kind": "document", "ref": "docs/products/saymyname/DECISIONS.md", "status": "proven"}
+          ]
+        },
+        {
+          "id": "delivered-work-history",
+          "area": "history",
+          "summary": "Beads/GitHub history since the 2026-09-14 scan shows af-u8id.2 (personal-home/groups foundation), af-u8id.3 plus af-u8id.3.1 (administered CSV, backend PR #38 and frontend PR #49) and af-ccvr (personal CSV) as Factory-delivered work built on top of the pre-existing surfaces above, not discovered code — those capabilities are therefore not takeover-derived even though some reuse takeover-derived primitives underneath.",
+          "evidence": [
+            {"kind": "bead", "ref": "af-u8id.2, af-u8id.3, af-u8id.3.1, af-ccvr — see config/releases/saymyname-v1.json work_graph", "status": "proven"}
+          ]
+        }
+      ]
+    }
+  },
+  "autonomy": {
+    "level": "L3",
+    "label": "Autonome — la Factory possède la route, Benjamin possède la destination (ADR-0015 §4)",
+    "granted_by": "Benjamin",
+    "granted_at": "2026-09-16T00:00:00Z",
+    "reserved_questions": ["outcome", "identity_and_consent", "irreversible", "money", "authority", "legal"]
+  },
+  "intake": {
+    "state": "complete",
+    "completed_at": "2026-09-16T00:00:00Z",
+    "question_budget": {"max_first_pass": 5, "max_per_iteration": 2, "spent": 0, "exhausted": false, "on_exhausted": "proceed_on_assumptions"},
+    "questions": [],
+    "exit_criteria": [
+      {"id": "criteria-have-acceptance", "statement": "Every criteria[] item has a non-empty human-observable acceptance.", "satisfied": true},
+      {"id": "criteria-work-graph-linked", "statement": "Every criterion is referenced by at least one work_graph node and every work_graph node references at least one criterion.", "satisfied": true},
+      {"id": "reserved-questions-resolved", "statement": "No reserved-class question is open: DECISIONS.md#open is empty and every Enterprise-tier (money/authority-adjacent) question is explicitly deferred past V1, not silently decided.", "satisfied": true, "detail": "docs/products/saymyname/DECISIONS.md#open and #deferred--enterprise-until-after-v1-release"},
+      {"id": "maturity-criteria-valid", "statement": "maturity.criteria references only existing criteria ids.", "satisfied": true},
+      {"id": "existing-equals-target", "statement": "Existing SayMyName capabilities and the target release contract are reconciled into one document — existing = target — per the 2026-09-15 V1 contract decision.", "satisfied": true, "detail": "docs/products/saymyname/DECISIONS.md#2026-09-15-v1-is-a-versioned-production-autonomous-release-contract"},
+      {"id": "semantic-checks-pass", "statement": "validate_release_contract's structural checks (no dangling refs, no duplicate ids, no work_graph cycle or self-dependency, no Factory-kind work recorded as a product capability) pass.", "satisfied": true, "detail": "./bin/product-release validate"}
+    ]
+  },
+  "assumptions": [],
+  "budget": {
+    "max_consecutive_no_progress": 3,
+    "spent": {"delivery_tokens": 0, "clarification_tokens": 0, "consecutive_no_progress": 0}
+  },
   "maturity": {
     "level": "partial",
     "label": "Cible définie · preuves de release encore partielles",
@@ -15,12 +101,17 @@
   "capabilities": [
     {
       "id": "account-access", "title": "Accès et continuité de compte",
-      "description": "Créer, vérifier, retrouver et reprendre un compte avant une session d’apprentissage.", "status": "proven",
+      "description": "Créer, vérifier, retrouver et reprendre un compte avant une session d’apprentissage.", "status": "partial",
       "evidence": [
         {"kind": "ui", "ref": "Frontend routes: sign in, sign up, verification, recovery", "status": "proven"},
         {"kind": "api", "ref": "Backend authentication and invitation controllers", "status": "proven"},
-        {"kind": "document", "ref": "docs/products/saymyname/PROJECT_INVENTORY.md#view-catalogue", "status": "proven"}
-      ]
+        {"kind": "document", "ref": "docs/products/saymyname/PROJECT_INVENTORY.md#view-catalogue", "status": "proven"},
+        {"kind": "scan", "ref": "docs/products/saymyname/PROJECT_INVENTORY.md#view-catalogue — Access row: sign in, sign up, email verification, password recovery", "status": "proven"}
+      ],
+      "review": {
+        "state": "unreviewed", "tier": null, "reviewed_at": null, "reviewed_by": null, "ref": [],
+        "notes": "Pre-Factory foundation per PROJECT_INVENTORY.md (reviewed 2026-09-14): 'Existing foundation; preserve and simplify'. Downgraded from proven to partial by ADR-0021's fail-closed rule — not yet run through the three-tier review; tier 1 (static, 0 tokens) is next, owned by ADR-0021 §4's dependent review bead."
+      }
     },
     {
       "id": "public-challenge", "title": "Challenge public Présidents de la République française",
@@ -46,8 +137,13 @@
       "evidence": [
         {"kind": "ui", "ref": "Frontend course, quiz and training options", "status": "proven"},
         {"kind": "api", "ref": "Backend quiz, answer and progress APIs", "status": "proven"},
-        {"kind": "test", "ref": "Selected-only first useful quiz end-to-end proof", "status": "unverified"}
-      ]
+        {"kind": "test", "ref": "Selected-only first useful quiz end-to-end proof", "status": "unverified"},
+        {"kind": "scan", "ref": "docs/products/saymyname/PROJECT_INVENTORY.md#view-catalogue — Learning row: training options, course, course hub, quiz, progress APIs", "status": "proven"}
+      ],
+      "review": {
+        "state": "unreviewed", "tier": null, "reviewed_at": null, "reviewed_by": null, "ref": [],
+        "notes": "Pre-Factory core engine per PROJECT_INVENTORY.md: 'Existing core engine; reconnect it to the new personal home'. Unreviewed pending ADR-0021 tier assignment."
+      }
     },
     {
       "id": "private-selection", "title": "Sélections et progression privées",
@@ -55,8 +151,13 @@
       "evidence": [
         {"kind": "document", "ref": "docs/products/saymyname/PRODUCT_CONTEXT.md#product-principles", "status": "proven"},
         {"kind": "api", "ref": "Tenant-scoped person and learning APIs", "status": "partial"},
-        {"kind": "test", "ref": "Cross-role privacy and selected-field tests", "status": "unverified"}
-      ]
+        {"kind": "test", "ref": "Cross-role privacy and selected-field tests", "status": "unverified"},
+        {"kind": "scan", "ref": "docs/products/saymyname/PROJECT_INVENTORY.md#view-catalogue — People row: trombinoscope, profile, person search, subscriptions", "status": "proven"}
+      ],
+      "review": {
+        "state": "unreviewed", "tier": null, "reviewed_at": null, "reviewed_by": null, "ref": [],
+        "notes": "Pre-Factory organization-oriented person model per PROJECT_INVENTORY.md: 'Existing organization-oriented capability; adapt to explicit personal selections'. The underlying person/profile primitives are takeover-derived even though the private-selection layer above them is newly built; unreviewed pending ADR-0021 tier assignment."
+      }
     },
     {
       "id": "administered-csv", "title": "Import administré CSV jusqu’au premier quiz utile",
@@ -183,36 +284,42 @@
       "id": "personal-return", "title": "Retour personnel utile",
       "description": "Un apprenant revient, voit une révision due, pratique sa sélection et retrouve une progression persistée.",
       "status": "partial", "capability_refs": ["personal-home", "learning-loop"], "journey_refs": ["personal-return-loop"],
+      "acceptance": "Un apprenant revient dans son espace personnel, voit au moins une révision due, pratique sa sélection et retrouve une progression persistée d’une session à l’autre.",
       "evidence": [{"kind": "test", "ref": "Personal home deterministic tests", "status": "partial"}]
     },
     {
       "id": "public-first-session", "title": "Première session publique cohérente",
       "description": "Un visiteur France essaie les présidents, comprend le produit et conserve explicitement sa progression après inscription.",
       "status": "partial", "capability_refs": ["public-challenge", "account-access"], "journey_refs": ["anonymous-to-saved-learning"],
+      "acceptance": "Un visiteur anonyme complète le challenge Présidents, comprend le produit, puis crée un compte et voit sa progression conservée après inscription.",
       "evidence": [{"kind": "test", "ref": "Anonymous public challenge browser proof", "status": "unverified"}]
     },
     {
       "id": "private-learning", "title": "Choix et apprentissage privés",
       "description": "Aucune organisation ne voit les sélections, erreurs, réponses, planning ou progression individuelle.",
       "status": "unverified", "capability_refs": ["private-selection", "learning-loop"], "journey_refs": ["personal-return-loop", "admin-csv-to-first-quiz"],
+      "acceptance": "Un administrateur d’organisation connecté au même environnement ne peut observer ni les sélections, ni les erreurs, ni le planning, ni la progression individuelle d’un apprenant.",
       "evidence": [{"kind": "test", "ref": "Cross-role privacy integration proof", "status": "unverified"}]
     },
     {
       "id": "admin-csv-first-quiz", "title": "CSV administré jusqu’au premier quiz réel",
       "description": "Import idempotent en brouillon, publication et invitation séparées, sélection privée et première réponse persistée.",
       "status": "partial", "capability_refs": ["administered-csv", "private-selection", "learning-loop"], "journey_refs": ["admin-csv-to-first-quiz"],
+      "acceptance": "Un administrateur importe un CSV en brouillon, publie et invite séparément, l’apprenant sélectionne en privé et répond à une première question réelle et persistée.",
       "evidence": [{"kind": "bead", "ref": "af-u8id.3.1 CLOSED, design-ready contract approved and shipped", "status": "proven"}]
     },
     {
       "id": "release-e2e", "title": "Preuves V1 de bout en bout",
       "description": "Chaque parcours inclus possède une preuve UI/API/données/tests fraîche et reproductible.",
       "status": "unverified", "capability_refs": ["public-challenge", "personal-home", "learning-loop", "administered-csv"], "journey_refs": ["anonymous-to-saved-learning", "personal-return-loop", "admin-csv-to-first-quiz"],
+      "acceptance": "Chaque parcours inclus dispose d’une preuve fraîche et reproductible (UI, API, données ou tests) datée et consultable dans le contrat de release.",
       "evidence": [{"kind": "test", "ref": "V1 release evidence matrix", "status": "absent"}]
     },
     {
       "id": "production-autonomy", "title": "Maturité production-autonome",
       "description": "La release expose santé, incidents, reprise, rollback et action humaine exacte sans faux succès.",
       "status": "partial", "capability_refs": ["account-access", "personal-home"], "journey_refs": ["anonymous-to-saved-learning", "personal-return-loop"],
+      "acceptance": "Un opérateur observe la santé du service, un incident, une reprise et un rollback sans qu’aucun succès ne soit affiché faussement.",
       "evidence": [{"kind": "document", "ref": "docs/OPERATIONS.md", "status": "partial"}]
     }
   ],
