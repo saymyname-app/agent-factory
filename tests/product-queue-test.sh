@@ -121,6 +121,16 @@ output=$("$QUEUE" list --json)
 assert_contains "$output" '"id":"af-live"'
 assert_not_contains "$output" 'af-quarantined'
 
+# resume must still be able to reach a quarantined node directly by id even
+# though it is invisible to list/next -- that is how the Mayor lifts a
+# campaign-sentinel quarantine (ADR-0016 §7) once the underlying cause is fixed.
+: >"$QUEUE_LOG"
+"$QUEUE" resume af-quarantined >/dev/null
+grep -Fq 'update <af-quarantined> <--set-metadata> <gc.queue_state=queued>' "$QUEUE_LOG"
+if "$QUEUE" resume af-does-not-exist >/dev/null 2>&1; then
+  fail 'resuming an unknown candidate must fail closed'
+fi
+
 export QUEUE_INVENTORY='[
   {"id":"af-bad","title":"Bad tuple","status":"closed","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}}
 ]'
