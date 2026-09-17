@@ -270,3 +270,128 @@ executes.**
 10. **Human runbook** for when no PO session is open, in French.
 11. **Definition of done for autonomy**: a number — e.g. 7 days, zero
     unplanned human interventions, every stall paged inside 30 min.
+
+## 8. Execution report (2026-09-17, same day)
+
+Waves 0-3 ran the same day as this audit, by the PO/Tech-Lead session
+directly rather than through the Mayor (Benjamin's explicit go-ahead per
+wave, given live in conversation, not written back into this document until
+now). Every item landed as its own small worktree PR with CI, following the
+audit's own §6 sequencing. 16 PRs, #67 through #82, all merged by
+`pr-autopilot` on green CI.
+
+### Wave 0 — stop the bleeding
+
+| Item | PR | Note |
+|---|---|---|
+| S1 (`enableAllProjectMcpServers`) | — | live gitignored settings, not a PR: set `false` directly in the 5 files, verified by grep |
+| F1 fork `mol-scoped-work` (close lines) | #67 | verified via `gc formula show` that the fork wins `search_paths` |
+| P1-P4/P6 Mayor prompt rewrite | #68 | turn loop, escalation contract, handoff fields |
+| C3 factory lane readable (rung 2b) | #69 | idle ladder reads `saymyname-product-queue`; fixture stub added (tests were silently hitting the live store before) |
+| PR #63 (watchdog) | — | already merged before this session looked; memory calling it "awaiting undraft" was stale |
+| `DELIVERY.md` | — | already correct by the time this session checked it |
+| Live-root pull + formula verification | — | `git pull --ff-only`, `gc formula show` confirmed on the live root |
+
+C4 (bundle a factory wake into a stale product reminder) was descoped from
+Wave 0 to Wave 1 — judged too large a design change (redesigning the
+coordination bead's single wake_key/wake_state pair) for a small Wave-0 PR.
+
+### Wave 1 — close the loop
+
+| Item | PR |
+|---|---|
+| C4 | #71 |
+| C2, C9 | #72 |
+| C5, C6, C7 | #73 |
+| C8 | #74 |
+| O2, O3 | #75 |
+| O1, O4 (new event-triggered orders) | #76 |
+| C1 (phone push, ntfy.sh) | #70 — done by a parallel session before Wave 1 started |
+
+**C10 deferred**: verified live that `gc status --json`'s `agents[]` entries
+carry only `{name, qualified_name, scope, running, suspended}` — no activity
+timestamp exists to check staleness against. Needs a different data source
+(session peek output, or an events.jsonl-derived heartbeat); not started.
+
+**Live finding surfaced while building O1**: `dolt-remotes-patrol` had been
+failing every ~15 min for hours (371 `order.failed` events in 24h). Root
+cause: `hq`, `smb`, and `smf`'s Dolt databases each had a bogus `origin`
+remote pointing at their GitHub *code* repo instead of a real Dolt remote
+(almost certainly Dolt auto-picking up the directory's git remote by
+accident) — `gc dolt sync` hung/failed on the non-functional push every
+cycle. Fixed live (not a PR — live database config, not git-tracked):
+`dolt remote remove origin` in each of the three `.beads/dolt/*`
+directories, verified with `gc dolt sync` completing instantly afterward.
+Real backups (the separate `backups` section) were never at risk.
+
+### Wave 2 — deliver safely
+
+| Item | PR |
+|---|---|
+| F2-F6 | #77 |
+| af-s6fqv (part 1: failure classification) | #78 |
+| af-grln2 | #79 |
+
+**PR #77's commit message is cosmetically damaged on `main`**: an
+unescaped backtick/`$` inside a double-quoted `git commit -m` in the push
+script caused bash to partially expand/execute parts of the message before
+`pr-autopilot` merged it. The code itself was verified correct independently
+before pushing; only the merged commit's explanatory text is garbled. Not
+worth rewriting `main` history to fix. Every commit after this one was
+written to a file and committed with `git commit -F`, never inline `-m`.
+
+**af-s6fqv part 2 deferred**: the periodic check that configured model ids
+aren't stale/deprecated against each provider's current list is a separate,
+larger piece of work; not started.
+
+**Branch protection (D1)** was not done — it is a GitHub account/repo
+setting, ADMIN-only per §0-bis, not something this session's authority
+covers.
+
+### Wave 3 — never idle, fully visible
+
+| Item | PR / disposition |
+|---|---|
+| Docs drift | #80 — most named items (DELIVERY.md, ADR-0015, indexing) were already fixed by intervening work the same day; two genuine drifts fixed (a false cockpit "Pause" control claim, an unindexed proposal doc) |
+| French end-to-end doc + 4am runbook | #81 — `docs/COMMENT_FONCTIONNE_USINE.md`, `docs/RUNBOOK_4H_DU_MATIN.md` |
+| Chaos suite in CI | #82 — proves the *cockpit* (not just the mechanism) surfaces a stall, a stuck PR, an aged gate, and an exhausted provider; documents (does not silently omit) that a chronic order failure and a stranded session don't yet also reach the cockpit's passive display, only the Mayor's mailbox |
+| `af-jpx3` (never-idle axes + maintain-alive) | **left queued**, not built directly — genuine product/design work (new config schema, cockpit toggle), not a mechanical fix |
+| `af-h582` (cockpit state graph) | **left queued**, not built directly — genuine product/design work (new state machine, cockpit UI) |
+| Cockpit reorg beads (`af-ivje`, `af-thna`, `af-lnbc`, `af-a9px`, `af-2jtq`, `af-oj7c`) | **left queued** |
+
+`af-jpx3` and `af-h582` are both already `Éligible · non programmé` in the
+`goal=none` lane (`./bin/saymyname-product-queue list`); thanks to the C3
+fix (Wave 0, rung 2b) and the C4 fix (Wave 1, bundling), the Mayor now
+materializes the first eligible one automatically once the product-release
+queue is idle — no manual queueing or mailing was needed, which is itself
+the mechanism this audit asked for working as intended.
+
+**A self-inflicted mistake caught the same session**: closing `af-grln2`
+with a plain `gc bd update --status closed` broke
+`saymyname-product-queue list`'s own validation (a closed candidate needs
+`gc.queue_state=cancelled` or `materialized`, not just any closed status) —
+this would have hidden the entire queue, including `af-h582`/`af-jpx3`, from
+the Mayor. Caught immediately when the queue command started erroring,
+fixed by setting `gc.queue_state=cancelled` with an explanatory note,
+re-verified the queue listed all 14 candidates correctly afterward.
+
+**An unrelated live incident, handled mid-wave**: Benjamin's PC rebooted.
+`gascity-supervisor.service` auto-started via systemd, but the controller
+and cockpit did not — confirms D9 exactly as this audit described it (no
+Windows "at logon" task exists yet; still Benjamin's ADMIN item, §0-bis,
+untouched). Restarted per `RUNBOOK_STOP_AND_RESTART.md` §3 and verified per
+its §4 (factory-guard healthy modulo 3 pre-existing warnings, campaign
+`state=running` `failure_count=0`, cockpit HTTP 200).
+
+### What this leaves for Wave 4 and beyond
+
+Everything reserved for Benjamin+PO decision in §6's Wave 4 row is
+untouched (production path, monitoring, release-done gate, exposure ledger,
+`af-zt6n`). Also still open: §0-bis's Windows auto-start task and branch
+protection (D1, both ADMIN); C10 and af-s6fqv part 2 (both need more data or
+design than fits a small PR); wiring `on-order-failed`/`on-session-stranded`
+into the cockpit's passive display (needs a read-modify-write merge on the
+shared watchdog-signals file); and everything §7 lists that no wave above
+claims to have closed (prompt injection posture, pack-pin drift, spend
+visibility, the factory reviewing itself, a numeric definition of done for
+autonomy).
