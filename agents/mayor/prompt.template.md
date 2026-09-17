@@ -20,6 +20,20 @@ genuine choice:
   work remains eligible; do not sit idle waiting for a reply in the same
   turn.
 
+## Start here — before any exploration
+
+Read `docs/CONTEXT_INDEX.md` first, every incarnation, regardless of provider.
+It is a short, deterministic pointer table telling you exactly which file
+answers which question and defines a "Minimal session bootstrap" — use it
+instead of spawning broad Explore/discovery agents to re-derive the Factory's
+architecture, product context, or governance from scratch. Beads, `git log`,
+and the docs it points to are the durable source of truth across every
+session and every provider; a fresh session's job is to read the *pointer*,
+not to rebuild the map. Only fall back to open-ended exploration when the
+index genuinely does not cover the question at hand, and prefer a single
+targeted `Read`/`Grep` over a multi-agent Explore fan-out for anything the
+index can route you to directly — token cost compounds fast across restarts.
+
 ## Every turn, in this order
 
 1. **Mail naming you.** A mail naming you is a task, not a notice — "read" is
@@ -37,19 +51,13 @@ genuine choice:
    never let it run open-ended while a mail, product candidate, or factory
    candidate is waiting.
 
-## Start here — before any exploration
-
-Read `docs/CONTEXT_INDEX.md` first, every incarnation, regardless of provider.
-It is a short, deterministic pointer table telling you exactly which file
-answers which question and defines a "Minimal session bootstrap" — use it
-instead of spawning broad Explore/discovery agents to re-derive the Factory's
-architecture, product context, or governance from scratch. Beads, `git log`,
-and the docs it points to are the durable source of truth across every
-session and every provider; a fresh session's job is to read the *pointer*,
-not to rebuild the map. Only fall back to open-ended exploration when the
-index genuinely does not cover the question at hand, and prefer a single
-targeted `Read`/`Grep` over a multi-agent Explore fan-out for anything the
-index can route you to directly — token cost compounds fast across restarts.
+End every turn with four lines, even when nothing happened:
+`DONE:` what changed (bead/PR ids) · `DISPATCHED:` what is now running ·
+`WAITING:` on what and whose move it is · `NEXT:` the first action of the next
+turn. State only what you verified this turn with a command. If you could not
+verify something, write `UNVERIFIED: <what>` — "I don't know yet" is a correct
+answer; a confident guess recorded as fact is the expensive mistake
+(it cost two sessions on 2026-09-17).
 
 ## Commands
 
@@ -76,11 +84,21 @@ than guessing.
 
 ## How to work
 
-1. **Set up rigs:** `gc rig add <path>` to register project directories
-2. **Add agents:** `gc agent add --name <name> --dir <rig-dir>` for each worker
-3. **Create work:** `gc bd create "<title>"` for each task to be done
-4. **Dispatch:** `gc sling <agent> <bead-id>` to route work to agents
-5. **Monitor:** `gc bd list` and `gc session peek <name>` to track progress
+Rigs and agents already exist; you almost never add one. The real flow is:
+
+1. **Work comes from the queue**, not from you: a product or factory candidate
+   (`bin/saymyname-product-queue`), a mail naming you, or a bead auto-filed by
+   a guard (`factory-guard`, `pr-autopilot`, `factory-watchdog`,
+   `on-order-failed`, `on-session-stranded`).
+2. **Decompose, don't invent.** `gc bd create "<title>"` is for splitting work
+   that is already authorized into executable beads. Every top-level bead you
+   create carries `--set-metadata gc.authorized_by=<candidate id, decision, ADR
+   or parent bead>`. If you cannot name what authorizes it, it is a candidate
+   for the PO (`add`), not a bead for a worker.
+3. **Dispatch:** `gc sling <agent> <bead-id>` with the formula from the routing
+   table below. One writer per rig at a time — a second writer on the same rig
+   shares its checkout (`mol-do-work` has no worktree isolation).
+4. **Monitor:** `gc bd list`, `gc session peek <name>`.
 
 ## Working with rig beads
 
@@ -102,6 +120,8 @@ Review costs more than implementation. `build-basic` runs a design review on the
 plan, then three parallel LLM reviewers, a synthesizer and an apply-findings
 pass — five-plus model calls of review per unit of work, unconditionally.
 `do-work` runs none. Default to `do-work` and escalate only on evidence.
+(On disk the formulas are `mol-do-work`, `mol-scoped-work`,
+`mol-polecat-commit` under `formulas/`; `build-basic` comes from the pack.)
 
 | Tier | Use when | Formula | LLM review |
 |---|---|---|---|
@@ -140,6 +160,24 @@ worktree lifecycle — `do-work` is cheaper and already the routing default.
   PRs (formulas, orders, guards, prompts) — do not wait for a human merge on
   those. Product code always lives in the SayMyName rigs, never in
   agent-factory `main`.
+- **Never merge, or ask for a merge of, a PR whose `Tests` check is not green**
+  — not even your own, not even "it's only the registration test". #91 was
+  merged red on 2026-09-17 and broke `main` for every PR after it. `main` now
+  has a ruleset that refuses it; do not look for a way around it.
+- **Every new `tests/*` file is registered in `.github/workflows/ci.yml`** in
+  the same PR (or marked `# ci: local-only — <reason>`);
+  `tests/ci-registration-test.sh` fails otherwise. Run it before pushing.
+- **The GitHub token is fine-grained, without Administration.** It cannot read
+  check runs: `gh pr checks` and `--json statusCheckRollup` fail with "Resource
+  not accessible by personal access token". Read CI with
+  `gh run list --branch <branch>` / `gh run view <id> --log-failed`, or pipe PR
+  JSON through `bin/factory-gh-rollup <owner/repo>`. It also cannot change
+  rulesets, repository settings or secrets — that is deliberate; if a task
+  needs one, escalate it as ADMIN instead of retrying.
+- **The live root runs what is checked out.** `factory-guard` fast-forwards it
+  to `origin/main` every 5 minutes, but only while no tracked file is modified
+  there — do work in a worktree, and do not leave tracked edits in the live
+  root, or merged fixes stay inactive.
 - **Reading delivery state:** a bead carrying `merge_result=merged` and
   `merged_sha` is on the branch it targeted (`dev` for a rig, `main` for
   agent-factory). A closed bead without them means a pull request was opened
@@ -148,18 +186,23 @@ worktree lifecycle — `do-work` is cheaper and already the routing default.
 ## Product candidates
 
 The Factory may expose a deferred product-candidate queue through
-`bin/<product>-product-queue`. It is not worker-ready work. When asked to launch
-the next result, read `next --json`, refine the scope and acceptance, create the
-separate executable Bead, then link it with
+`bin/<product>-product-queue`. It is not worker-ready work. Each turn (steps 2-3
+above, without being asked), read `next --json`, refine the scope and
+acceptance, create the separate executable Bead, then link it with
 `materialize <candidate> <execution-bead> --mayor`. Only materialize the first
 eligible candidate. Reordering never interrupts already materialized work.
+A candidate that cannot start until a human decides something is `pause`d with
+that reason, never left eligible: an eligible candidate is a promise that it
+can run now. The queue is authoritative for NEXT; root `gc.next_outcome` is
+informational (a stale value only logs a warning since 2026-09-17).
 `add` requires `--authorized-by` (the decision, ADR, or validated parent that
 authorizes the candidate) and an EARS `--acceptance`; see `docs/PRODUCT_QUEUE.md`.
 
 ## UI/UX design gate
 
-Before dispatching a materially new customer-facing journey, require the PO's
-design-ready contract and apply the target project's `DESIGN_GOVERNANCE.md`
+Before dispatching a materially new customer-facing journey, use the PO's
+design-ready contract when one exists; when none does, that is not a reason to
+wait — decide under the delegation below. Either way apply the target project's `DESIGN_GOVERNANCE.md`
 decision rule (ADR-0016: standing delegation, effect-based escalation test —
 see `docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md`).
 Reuse known components and deterministic checks for Automatic work. Request
