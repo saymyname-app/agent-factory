@@ -284,6 +284,35 @@ def node_issue(node_id: str) -> dict[str, Any]:
     return single_issue(json_run(GC_BIN, "bd", "show", node_id, "--json"), node_id)
 
 
+# wake_key prefixes that name a bead/candidate the wake was about, e.g.
+# "finalize:af-u8id.4.1". Keys with no such reference (e.g.
+# "complete:no-candidate", a rung bucket key) have nothing to check here.
+WAKE_KEY_BEAD_PREFIXES = ("finalize:", "resume:", "materialize:", "ladder:factory:")
+
+
+def wake_target_resolved(wake_key: str) -> bool:
+    """True when the bead/candidate a wake_key names has itself closed.
+
+    A wake sent for a bead that has since closed is stale regardless of what
+    the sentinel's *next* decision reason happens to be -- on 2026-09-17 a
+    wake for finalize:af-u8id.4.1 outlived that bead's closure because the
+    next tick's reason was 'ladder_active', which the old clear condition did
+    not recognize, leaving the cockpit reporting awaiting_mayor forever.
+    """
+    for prefix in WAKE_KEY_BEAD_PREFIXES:
+        if wake_key.startswith(prefix):
+            node_id = wake_key[len(prefix):].strip()
+            if not node_id:
+                return False
+            try:
+                issue = node_issue(node_id)
+            except CampaignCommandError:
+                # Unresolvable (deleted, store hiccup): don't clear on a guess.
+                return False
+            return issue.get("status") == "closed"
+    return False
+
+
 def status_node_id(status: Any) -> str | None:
     """Best-effort extraction of the candidate/result node a decision was about."""
     if not isinstance(status, dict):
@@ -582,9 +611,10 @@ def sentinel(_: argparse.Namespace) -> None:
 
     if decision["action"] != "wake_mayor":
         updates: dict[str, str] = {}
-        if campaign["wake_state"] == "sent" and decision["reason"] in {
-            "active_delivery", "automatic_dependency",
-        }:
+        if campaign["wake_state"] == "sent" and (
+            decision["reason"] in {"active_delivery", "automatic_dependency"}
+            or wake_target_resolved(campaign["wake_key"])
+        ):
             updates.update({"gc.campaign_wake_key": "", "gc.campaign_wake_state": "none"})
         if decision["reason"] in PROGRESS_REASONS and stamp_due(metadata, "gc.campaign_progress_at", now):
             updates["gc.campaign_progress_at"] = iso(now)
