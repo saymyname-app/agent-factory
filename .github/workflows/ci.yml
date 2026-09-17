@@ -114,5 +114,11 @@ jobs:
       - name: ntfy phone-push alert rules
         run: python tests/ntfy-notify-test.py
 
+      - name: Chronic order failures page the mayor
+        run: bash tests/on-order-failed-test.sh
+
+      - name: Stranded sessions reopen orphaned work
+        run: bash tests/on-session-stranded-test.sh
+
       - name: Every test is registered in CI
         run: bash tests/ci-registration-test.sh
