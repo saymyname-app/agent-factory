@@ -319,6 +319,54 @@ class Resolution(unittest.TestCase):
         self.assertIsNone(pf.target_of({"template": "core.control-dispatcher"}, p))
 
 
+class ModelStaleness(unittest.TestCase):
+    """af-a1t44 (ADR-0018 part 2): pure logic only, no I/O."""
+
+    CATALOG = {
+        "contract": "agent-factory-model-catalog/v1",
+        "providers": {
+            "codex": {"recommended": ["gpt-5.6-sol"]},
+            "claude-cheap": {"recommended": ["haiku"]},
+        },
+    }
+
+    def test_the_repository_catalog_is_valid(self):
+        catalog = json.loads((ROOT / "config" / "model-catalog.json").read_text(encoding="utf-8"))
+        pf.validate_catalog(catalog)
+
+    def test_catalog_needs_a_non_empty_recommended_list_per_provider(self):
+        with self.assertRaises(pf.PolicyError):
+            pf.validate_catalog({"contract": pf.CATALOG_CONTRACT, "providers": {"codex": {"recommended": []}}})
+        with self.assertRaises(pf.PolicyError):
+            pf.validate_catalog({"contract": "wrong/v1", "providers": {}})
+
+    def test_configured_model_from_claude_option_defaults(self):
+        self.assertEqual("sonnet-5", pf.configured_model(
+            {"option_defaults": {"model": "sonnet-5", "effort": "high"}}))
+
+    def test_configured_model_from_codex_args_append(self):
+        self.assertEqual("gpt-5.6-sol", pf.configured_model(
+            {"args_append": ["-m", "gpt-5.6-sol"]}))
+
+    def test_configured_model_absent_is_none_not_an_error(self):
+        self.assertIsNone(pf.configured_model({"base": "builtin:codex"}))
+        self.assertIsNone(pf.configured_model({}))
+
+    def test_a_deliberately_outdated_model_id_is_flagged(self):
+        configured = {"codex": "gpt-5.6-sol", "claude-cheap": "haiku-legacy-2024"}
+        stale = pf.stale_models(configured, self.CATALOG["providers"])
+        self.assertEqual([{"provider": "claude-cheap", "configured": "haiku-legacy-2024",
+                           "recommended": ["haiku"]}], stale)
+
+    def test_a_current_model_id_is_never_flagged(self):
+        configured = {"codex": "gpt-5.6-sol", "claude-cheap": "haiku"}
+        self.assertEqual([], pf.stale_models(configured, self.CATALOG["providers"]))
+
+    def test_a_provider_the_catalog_does_not_know_is_skipped_not_guessed_at(self):
+        configured = {"codex-spark": "gpt-5.3-codex-spark"}
+        self.assertEqual([], pf.stale_models(configured, self.CATALOG["providers"]))
+
+
 STUB_GC = r'''#!/usr/bin/env python3
 import json, os, sys
 d = os.environ["PF_FIXTURE"]
@@ -332,7 +380,12 @@ if args[:2] == ["session", "peek"]:
     print(open(path).read() if os.path.exists(path) else ""); sys.exit(0)
 if args[:2] == ["bd", "show"]:
     print(open(os.path.join(d, "coord.json")).read()); sys.exit(0)
-if args[:1] in (["reload"], ["session"]):
+if args[:2] == ["bd", "create"]:
+    counter = os.path.join(d, "bead_counter")
+    n = int(open(counter).read()) + 1 if os.path.exists(counter) else 1
+    open(counter, "w").write(str(n))
+    print(json.dumps({"id": "af-stale%d" % n})); sys.exit(0)
+if args[:1] in (["reload"], ["session"], ["mail"]):
     print("ok"); sys.exit(0)
 sys.exit(0)
 '''
@@ -526,6 +579,134 @@ class EndToEnd(unittest.TestCase):
         (self.d / "city.provider.toml").unlink()
         self.assertIn("written", self.run_tool("apply", "--no-reload").stdout)
         self.assertTrue((self.d / "city.provider.toml").exists())
+
+
+FIXTURE_CITY_TOML = '''
+[providers.codex]
+base = "builtin:codex"
+args_append = ["-m", "gpt-5.6-sol"]
+
+[providers.codex-spark]
+base = "builtin:codex"
+args_append = ["-m", "gpt-5.3-codex-spark"]
+
+[providers.claude]
+base = "builtin:claude"
+[providers.claude.option_defaults]
+model = "sonnet-5"
+
+[providers.claude-standard]
+base = "builtin:claude"
+[providers.claude-standard.option_defaults]
+model = "sonnet-5"
+
+[providers.claude-cheap]
+base = "builtin:claude"
+[providers.claude-cheap.option_defaults]
+model = "haiku-legacy-2024"
+'''
+
+FIXTURE_CATALOG = json.dumps({
+    "contract": "agent-factory-model-catalog/v1",
+    "providers": {
+        "codex": {"recommended": ["gpt-5.6-sol"]},
+        "codex-spark": {"recommended": ["gpt-5.3-codex-spark"]},
+        "claude": {"recommended": ["sonnet-5"]},
+        "claude-standard": {"recommended": ["sonnet-5"]},
+        "claude-cheap": {"recommended": ["haiku"]},
+    },
+})
+
+
+class ModelStalenessCLI(unittest.TestCase):
+    """bin/provider-failover check-models -- af-a1t44 acceptance scenario.
+
+    A deliberately-outdated model id (claude-cheap: "haiku-legacy-2024" against
+    a catalog that recommends "haiku") must get flagged, not silently ignored;
+    nothing in this path may switch a model itself.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = Path(self.tmp.name)
+        gc_path = self.d / "gc"
+        gc_path.write_text(STUB_GC, encoding="utf-8")
+        gc_path.chmod(0o755)
+        (self.d / "city.toml").write_text(FIXTURE_CITY_TOML, encoding="utf-8")
+        (self.d / "model-catalog.json").write_text(FIXTURE_CATALOG, encoding="utf-8")
+        self.env = {
+            **os.environ,
+            "PF_FIXTURE": str(self.d),
+            "GC_BIN": str(gc_path),
+            "FACTORY_ROOT": str(self.d),
+            "PROVIDER_POLICY_FILE": str(ROOT / "config" / "provider-policy.json"),
+            "PROVIDER_STATE_FILE": str(self.d / "state.json"),
+            "CITY_TOML_FILE": str(self.d / "city.toml"),
+            "MODEL_CATALOG_FILE": str(self.d / "model-catalog.json"),
+            "PROVIDER_NOW": str(NOW),
+        }
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_tool(self, *args, check=True, **env):
+        return subprocess.run([sys.executable, str(ROOT / "bin" / "provider-failover"), *args],
+                              env={**self.env, **env}, text=True, capture_output=True, check=check)
+
+    def calls(self):
+        path = self.d / "calls.log"
+        return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+    def test_a_deliberately_outdated_model_id_is_flagged_not_silently_ignored(self):
+        out = self.run_tool("check-models").stdout
+        self.assertIn("stale: claude-cheap configured=haiku-legacy-2024", out)
+        self.assertIn("bead filed:", out)
+        self.assertTrue(any(c.startswith("bd create") for c in self.calls()))
+        self.assertTrue(any(c.startswith("mail send mayor") for c in self.calls()))
+        state = json.loads((self.d / "state.json").read_text(encoding="utf-8"))
+        self.assertIn("claude-cheap=haiku-legacy-2024", state["model_staleness"]["signature"])
+        self.assertTrue(state["model_staleness"]["bead"])
+
+    def test_a_current_model_id_is_not_flagged(self):
+        (self.d / "city.toml").write_text(
+            FIXTURE_CITY_TOML.replace("haiku-legacy-2024", "haiku"), encoding="utf-8")
+        out = self.run_tool("check-models").stdout
+        self.assertIn("every configured model id matches the catalog", out)
+        self.assertFalse(any(c.startswith("bd create") for c in self.calls()))
+
+    def test_the_same_drift_is_not_refiled_the_next_day(self):
+        first = self.run_tool("check-models").stdout
+        self.assertIn("bead filed:", first)
+        second = self.run_tool("check-models").stdout
+        self.assertIn("already flagged:", second)
+        self.assertEqual(1, sum(1 for c in self.calls() if c.startswith("bd create")))
+
+    def test_a_resolved_drift_is_reflagged_if_it_recurs_differently(self):
+        self.run_tool("check-models")
+        (self.d / "city.toml").write_text(
+            FIXTURE_CITY_TOML.replace("haiku-legacy-2024", "haiku-legacy-2025"), encoding="utf-8")
+        out = self.run_tool("check-models").stdout
+        self.assertIn("bead filed:", out)
+        self.assertEqual(2, sum(1 for c in self.calls() if c.startswith("bd create")))
+
+    def test_it_never_writes_city_toml_or_the_catalog(self):
+        before_city = (self.d / "city.toml").read_text(encoding="utf-8")
+        before_catalog = (self.d / "model-catalog.json").read_text(encoding="utf-8")
+        self.run_tool("check-models")
+        self.assertEqual(before_city, (self.d / "city.toml").read_text(encoding="utf-8"))
+        self.assertEqual(before_catalog, (self.d / "model-catalog.json").read_text(encoding="utf-8"))
+
+    def test_dry_run_never_files_a_bead_or_writes_state(self):
+        out = self.run_tool("check-models", "--dry-run").stdout
+        self.assertIn("dry-run: would file a bead", out)
+        self.assertFalse(any(c.startswith("bd create") for c in self.calls()))
+        self.assertFalse((self.d / "state.json").exists())
+
+    def test_runs_on_a_daily_cooldown_not_per_tick(self):
+        order = (ROOT / "orders" / "model-staleness-check.toml").read_text(encoding="utf-8")
+        self.assertIn('trigger = "cooldown"', order)
+        self.assertIn('interval = "24h"', order)
+        self.assertIn("check-models", order)
 
 
 if __name__ == "__main__":

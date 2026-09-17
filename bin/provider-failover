@@ -9,6 +9,11 @@ L0, deterministic, zero model tokens. Runs every two minutes as an order.
            and park / resume the campaign when *nothing* is left
   apply    regenerate city.provider.toml from the current state (no detection)
   status   what is chosen and why (--json for the cockpit)
+  check-models  daily (not per-tick): compare the model id configured for each
+           provider in city.toml against config/model-catalog.json's
+           recommended list. On drift, file a bead and mail the Mayor -- never
+           switches a model itself, that stays a human/PO call (af-a1t44,
+           ADR-0018).
   set      one manual control, as used by the cockpit:
              set --action mark    --args '{"pool":"openai","until":"2026-09-21T05:22:00Z"}'
              set --action clear   --args '{"pool":"openai"}'
@@ -30,6 +35,7 @@ import os
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +48,8 @@ FACTORY_ROOT = Path(os.environ.get("FACTORY_ROOT") or ROOT)
 POLICY_FILE = Path(os.environ.get("PROVIDER_POLICY_FILE") or FACTORY_ROOT / "config" / "provider-policy.json")
 STATE_FILE = Path(os.environ.get("PROVIDER_STATE_FILE") or FACTORY_ROOT / ".gc" / "provider-state.json")
 OVERLAY_FILE = Path(os.environ.get("PROVIDER_OVERLAY_FILE") or FACTORY_ROOT / "city.provider.toml")
+MODEL_CATALOG_FILE = Path(os.environ.get("MODEL_CATALOG_FILE") or FACTORY_ROOT / "config" / "model-catalog.json")
+CITY_TOML_FILE = Path(os.environ.get("CITY_TOML_FILE") or FACTORY_ROOT / "city.toml")
 GC_BIN = os.environ.get("GC_BIN", "gc")
 CAMPAIGN_BIN = os.environ.get("CAMPAIGN_BIN", str(ROOT / "bin" / "mayor-campaign"))
 COORDINATION_BEAD = os.environ.get("CAMPAIGN_COORDINATION_BEAD", "af-1vr4")
@@ -81,6 +89,22 @@ def load_policy() -> dict[str, Any]:
         return pf.validate_policy(json.loads(POLICY_FILE.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError) as exc:
         raise pf.PolicyError(f"cannot read {POLICY_FILE}: {exc}") from exc
+
+
+def load_catalog() -> dict[str, Any]:
+    try:
+        return pf.validate_catalog(json.loads(MODEL_CATALOG_FILE.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise pf.PolicyError(f"cannot read {MODEL_CATALOG_FILE}: {exc}") from exc
+
+
+def load_city_providers() -> dict[str, Any]:
+    try:
+        data = tomllib.loads(CITY_TOML_FILE.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise pf.PolicyError(f"cannot read {CITY_TOML_FILE}: {exc}") from exc
+    providers = data.get("providers")
+    return providers if isinstance(providers, dict) else {}
 
 
 def load_state(policy: dict[str, Any]) -> dict[str, Any]:
@@ -357,6 +381,80 @@ def status(args: argparse.Namespace) -> int:
     return 0
 
 
+def check_models(args: argparse.Namespace) -> int:
+    """Daily, not per-tick: flag configured model ids the catalog no longer lists.
+
+    Reads only; the only writes are the small bookkeeping in provider-state.json
+    (last checked-at, last signature flagged, the bead filed for it) needed to
+    avoid re-filing the same drift every day. Never touches city.toml,
+    city.provider.toml, or the catalog itself -- switching a model stays a
+    human/PO call (ADR-0018).
+    """
+    moment = now()
+    catalog = load_catalog()
+    policy = load_policy()
+    configured = {
+        name: model
+        for name, cfg in load_city_providers().items()
+        if (model := pf.configured_model(cfg))
+    }
+    stale = pf.stale_models(configured, catalog.get("providers", {}))
+    signature = ",".join(f"{e['provider']}={e['configured']}" for e in stale)
+    newly_filed = False
+    with Locked():
+        state = load_state(policy)
+        previous = dict(state.get("model_staleness") or {})
+        bead_id = previous.get("bead")
+        if stale and signature != previous.get("signature"):
+            def label(p: str) -> str:
+                return policy["providers"].get(p, {}).get("label", p)
+            lines = [f"- {label(e['provider'])} ({e['provider']}): configured "
+                     f"'{e['configured']}', catalog recommends {', '.join(e['recommended'])}"
+                     for e in stale]
+            title = "Configured model id(s) look stale against config/model-catalog.json"
+            body = (
+                "Daily model-staleness check (ADR-0018 part 2, af-a1t44) found configured model "
+                "id(s) not in config/model-catalog.json's recommended list for their provider.\n\n"
+                + "\n".join(lines) +
+                "\n\nThis is a surfaced decision only: nothing here switches a model. Either "
+                "update config/model-catalog.json (by commit) if the provider's current/"
+                "recommended list changed, or change the configured model via the cockpit / "
+                "./bin/provider-failover -- never by editing city.toml directly (AGENTS.md)."
+            )
+            bead_id = None
+            if not args.dry_run:
+                try:
+                    created = json.loads(gc("bd", "create", title, "-p", "3", "-t", "task",
+                                            "-d", body, "--json", timeout=30).stdout or "null")
+                    if isinstance(created, list):
+                        created = created[0] if created else None
+                    bead_id = (created or {}).get("id")
+                except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+                    bead_id = None
+                if bead_id:
+                    newly_filed = True
+                    gc("mail", "send", "mayor", "--notify", "-s", f"Model staleness: {bead_id}", "-m",
+                       "ACTION: daily provider-failover check-models found configured model id(s) "
+                       f"not in the catalog\nSTATE: {signature}\nEVIDENCE: gc bd show {bead_id}\n"
+                       "NEXT: review config/model-catalog.json and decide whether to update the "
+                       "catalog or the configured model (human/PO call, ADR-0018)", timeout=30)
+        if not args.dry_run:
+            state["model_staleness"] = {"checked_at": pf.iso(moment), "signature": signature, "bead": bead_id}
+            save_state(state)
+    if stale:
+        for e in stale:
+            print(f"  · stale: {e['provider']} configured={e['configured']} recommended={','.join(e['recommended'])}")
+        if newly_filed:
+            print(f"  · bead filed: {bead_id}")
+        elif bead_id:
+            print(f"  · already flagged: {bead_id}")
+        else:
+            print("  · dry-run: would file a bead" if args.dry_run else "  · could not file a bead")
+    elif not args.quiet:
+        print("model staleness — every configured model id matches the catalog")
+    return 0
+
+
 def set_control(args: argparse.Namespace) -> int:
     policy = load_policy()
     try:
@@ -400,6 +498,9 @@ def main() -> int:
     a.add_argument("--no-reload", action="store_true")
     s = sub.add_parser("status")
     s.add_argument("--json", action="store_true")
+    m = sub.add_parser("check-models")
+    m.add_argument("--quiet", action="store_true")
+    m.add_argument("--dry-run", action="store_true")
     c = sub.add_parser("set")
     c.add_argument("--action", required=True,
                    choices=["mark", "clear", "disable", "enable", "force", "chain", "auto"])
@@ -408,7 +509,8 @@ def main() -> int:
     c.add_argument("--no-reload", action="store_true")
     args = parser.parse_args()
     try:
-        return {"tick": tick, "apply": apply, "status": status, "set": set_control}[args.command](args)
+        return {"tick": tick, "apply": apply, "status": status, "set": set_control,
+                "check-models": check_models}[args.command](args)
     except pf.PolicyError as exc:
         print(f"provider-failover: {exc}", file=sys.stderr)
         return 2

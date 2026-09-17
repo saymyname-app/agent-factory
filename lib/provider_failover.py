@@ -98,6 +98,7 @@ def empty_state() -> dict[str, Any]:
         "parked": False,    # this tool parked the campaign and owes a resume
         "sessions": [],     # live model sessions, as seen by the last tick
         "sessions_at": None,
+        "model_staleness": {},  # {checked_at, signature, bead} -- af-a1t44, daily, not per-tick
         "history": [],
     }
 
@@ -108,7 +109,7 @@ def normalize_state(state: Any, policy: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(state, dict):
         return base
     base["auto"] = bool(state.get("auto", True))
-    for key in ("pools", "disabled", "forced", "chains", "effective"):
+    for key in ("pools", "disabled", "forced", "chains", "effective", "model_staleness"):
         if isinstance(state.get(key), dict):
             base[key] = deepcopy(state[key])
     if isinstance(state.get("history"), list):
@@ -565,3 +566,67 @@ def target_of(session: dict[str, Any], policy: dict[str, Any]) -> str | None:
     if not session.get("provider"):
         return None  # deterministic helpers (control dispatchers) run no model
     return WORKSPACE
+
+
+# --------------------------------------------------------------------------
+# model staleness (af-s6fqv part 2 / af-a1t44) -- daily, surfaces only
+# --------------------------------------------------------------------------
+#
+# Nothing here decides which model id is right; config/model-catalog.json
+# does, and only a human edits it (same "policy is human, by commit" rule as
+# provider-policy.json, ADR-0018 s1). This just compares the two and reports
+# a mismatch -- it never writes city.toml, city.provider.toml, or the catalog.
+
+CATALOG_CONTRACT = "agent-factory-model-catalog/v1"
+
+
+def validate_catalog(catalog: Any) -> dict[str, Any]:
+    if not isinstance(catalog, dict) or catalog.get("contract") != CATALOG_CONTRACT:
+        raise PolicyError(f"model catalog must declare contract {CATALOG_CONTRACT}")
+    providers = catalog.get("providers")
+    if not isinstance(providers, dict) or not providers:
+        raise PolicyError("catalog.providers must be a non-empty object")
+    for name, entry in providers.items():
+        recommended = entry.get("recommended") if isinstance(entry, dict) else None
+        if (not isinstance(recommended, list) or not recommended
+                or not all(isinstance(m, str) and m for m in recommended)):
+            raise PolicyError(f"catalog provider {name!r} needs a non-empty 'recommended' list of strings")
+    return catalog
+
+
+def configured_model(provider_config: dict[str, Any]) -> str | None:
+    """The model id one [providers.<name>] block in city.toml actually runs.
+
+    Claude profiles set it as option_defaults.model; Codex profiles pass it as
+    `-m <id>` inside args_append. Both shapes are read here so callers don't
+    need to know which family a provider belongs to.
+    """
+    if not isinstance(provider_config, dict):
+        return None
+    defaults = provider_config.get("option_defaults")
+    if isinstance(defaults, dict) and defaults.get("model"):
+        return str(defaults["model"])
+    args = provider_config.get("args_append")
+    if isinstance(args, list):
+        for index, arg in enumerate(args):
+            if arg == "-m" and index + 1 < len(args):
+                return str(args[index + 1])
+    return None
+
+
+def stale_models(configured: dict[str, str], catalog_providers: dict[str, Any]) -> list[dict[str, Any]]:
+    """Configured providers whose model id is not in the catalog's recommended list.
+
+    A provider missing from the catalog, or with no configured id, is skipped:
+    this flags known drift against what a human has catalogued, it never
+    invents an opinion about a provider nobody has catalogued yet.
+    """
+    stale = []
+    for provider, model_id in configured.items():
+        entry = catalog_providers.get(provider)
+        if not model_id or not isinstance(entry, dict):
+            continue
+        recommended = entry.get("recommended") or []
+        if model_id not in recommended:
+            stale.append({"provider": provider, "configured": model_id, "recommended": list(recommended)})
+    return sorted(stale, key=lambda e: e["provider"])
