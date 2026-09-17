@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # on-order-failed — event-triggered order: page when the SAME order fails
-# repeatedly in a row, instead of leaving order.failed events unread forever.
+# repeatedly, instead of leaving order.failed events unread forever.
 #
 # Gas City ships no retry, no backoff, and no failure notification on its own
 # (upstream contract): failed orders are "not retried, not backed off, never
@@ -50,6 +50,8 @@ SUBJECTS=$(printf '%s\n' "$EVENTS" | jq -r 'select(.subject) | .subject' | sort 
 PAGED=0
 while IFS= read -r subject; do
   [ -n "$subject" ] || continue
+  # Total failures inside LOOKBACK, not a consecutive run: successes in between
+  # are not visible in this event stream.
   count=$(printf '%s\n' "$EVENTS" | jq --arg s "$subject" -s '[.[] | select(.subject == $s)] | length')
   [ "${count:-0}" -ge "$FAILURE_STREAK" ] || continue
   last_message=$(printf '%s\n' "$EVENTS" | jq -r --arg s "$subject" 'select(.subject == $s) | .message' | tail -1)
@@ -74,7 +76,7 @@ Gas City does not retry, back off, or notify on order failure by itself (upstrea
   fi
   gc mail send mayor --notify \
     -s "$title" \
-    -m "ACTION: on-order-failed detected $count consecutive failures of '$subject' in $LOOKBACK
+    -m "ACTION: on-order-failed detected $count failures of '$subject' in the last $LOOKBACK (total, not necessarily consecutive)
 STATE: $last_message
 EVIDENCE: bead $created; gc events --type order.failed --since $LOOKBACK
 NEXT: diagnose and fix the order (or the command it runs), then close $created with the cause" \

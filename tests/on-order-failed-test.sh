@@ -82,6 +82,8 @@ out=$(run)
 grep -q "^bd create" "$CALLS" || { echo "$out" >&2; fail "did not file a bead at the streak threshold"; }
 grep -q "^mail send mayor" "$CALLS" || fail "did not page the mayor at the streak threshold"
 [ "$(grep -c '^bd create' "$CALLS")" = "1" ] || fail "filed more than one bead in a single run"
+# The count is a total inside the lookback window, so the page must not claim a run.
+grep -q "consecutive failures" "$CALLS" && fail "the page words a total count as consecutive failures"
 
 # --- a second run recognises the still-open bead: no duplicate --------------
 : > "$CALLS"

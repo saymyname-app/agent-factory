@@ -128,22 +128,36 @@ reversibility_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
 # so a bead is only filed once a PR is stuck across passes, not on the first.
 STUCK_LABEL="autopilot-stuck"
 
-stuck_pr() {  # repo rig_path num mergeStateStatus checks labels
-  local repo=$1 rig_path=$2 num=$3 state=$4 checks=$5 labels=" ${6//,/ } "
-  local reason=""
+stuck_reason() {  # mergeStateStatus checks -> prints why the PR is stuck, or nothing
+  local state=$1 checks=$2 reason=""
   case "$state" in
     DIRTY) reason="merge conflict (DIRTY)" ;;
-    BLOCKED) reason="blocked (a required check has not run or is pending)" ;;
+    # BLOCKED is the NORMAL state while a required check is still running (the
+    # repo ruleset requires "Tests"): a healthy PR whose CI outlasts two passes
+    # is waiting, not stuck. Only BLOCKED with nothing left pending is.
+    BLOCKED) [ "$checks" = "PENDING" ] || reason="blocked (no check is pending: a required check never ran or another merge rule is unmet)" ;;
     BEHIND) reason="behind base (needs a merge/rebase to pick up new required checks)" ;;
   esac
   [ "$checks" = "NONE" ] && reason="${reason:+$reason; }no status check ever reported"
+  printf '%s' "$reason"
+}
+
+stuck_beads() {  # rig_path num -> ids of the open stuck bead(s) filed for this PR
+  # By title prefix, not the full title: the reason can change between passes
+  # (DIRTY -> BEHIND) and is unknown once the PR has recovered.
+  (cd "$1" && gc bd list --status open --json 2>/dev/null) \
+    | jq -r --arg t "[autopilot] PR #$2 stuck:" '.[]|select((.title//"")|startswith($t))|.id' 2>/dev/null
+}
+
+stuck_pr() {  # repo rig_path num mergeStateStatus checks labels
+  local repo=$1 rig_path=$2 num=$3 state=$4 checks=$5 labels=" ${6//,/ } "
+  local reason
+  reason=$(stuck_reason "$state" "$checks")
   [ -n "$reason" ] || return 0
   case "$labels" in
     *" $STUCK_LABEL "*)
       title="[autopilot] PR #$num stuck: $reason"
-      existing=$(cd "$rig_path" && gc bd list --status open --json 2>/dev/null \
-        | jq -r --arg t "$title" '[.[]|select(.title==$t)]|length' 2>/dev/null)
-      if [ "${existing:-0}" = "0" ]; then
+      if [ -z "$(stuck_beads "$rig_path" "$num")" ]; then
         log "  PR #$num: stuck across passes ($reason) -> filing"
         run bash -c "cd '$rig_path' && gc bd create '$title' -p 2 -t bug \
           -d 'PR stuck across multiple pr-autopilot passes (every 3 min): $reason.
@@ -191,16 +205,19 @@ for entry in "${RIGS[@]}"; do
     fi
 
     # A PR that recovered (state healthy again) sheds the stuck label; a
-    # human/Mayor fixing it manually should not leave a stale marker behind.
+    # human/Mayor fixing it manually should not leave a stale marker behind --
+    # nor the bead filed for it, which nothing else would ever close.
     case " ${labels//,/ } " in
       *" $STUCK_LABEL "*)
-        case "$state" in
-          DIRTY|BLOCKED|BEHIND) ;;
-          *) [ "$checks" = "NONE" ] || {
-               run gh pr edit "$num" --repo "$repo" --remove-label "$STUCK_LABEL" >/dev/null 2>&1
-               vlog "PR #$num: no longer stuck -> removed $STUCK_LABEL"
-             } ;;
-        esac ;;
+        if [ -z "$(stuck_reason "$state" "$checks")" ]; then
+          run gh pr edit "$num" --repo "$repo" --remove-label "$STUCK_LABEL" >/dev/null 2>&1
+          vlog "PR #$num: no longer stuck -> removed $STUCK_LABEL"
+          for stale in $(stuck_beads "$rig_path" "$num"); do
+            log "  PR #$num: recovered -> closing stuck bead $stale"
+            run bash -c "cd '$rig_path' && gc bd update '$stale' --status closed \
+              --append-notes 'Closed by pr-autopilot: PR #$num is no longer stuck (state=$state, checks=$checks).'"
+          done
+        fi ;;
     esac
 
     # Red required check -> flag as work, do not arm.
@@ -284,9 +301,12 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
   done < <(printf '%s' "$open_prs" | jq -r '.[]|[
       .number, (.isDraft|tostring), (.autoMergeRequest|if .==null then "null" else "armed" end),
       (.mergeStateStatus//"?"),
-      ((.statusCheckRollup//[])|map(.conclusion//.state//"")|
+      ((.statusCheckRollup//[]) as $roll|$roll|map(.conclusion//.state//"")|
         if any(.=="FAILURE" or .=="ERROR" or .=="TIMED_OUT") then "FAILURE"
-        elif length==0 then "NONE" else "OK" end),
+        elif length==0 then "NONE"
+        # A check run not yet COMPLETED, or a commit status still PENDING/EXPECTED.
+        elif ($roll|any((.status//"COMPLETED")!="COMPLETED" or .state=="PENDING" or .state=="EXPECTED")) then "PENDING"
+        else "OK" end),
       (.headRefOid//"unknown"),
       ((.labels//[])|map(.name)|join(",")|if .=="" then "-" else . end)
     ]|@tsv' 2>/dev/null)
@@ -302,9 +322,13 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
   while IFS=$'\t' read -r num branch sha; do
     [ -z "${num:-}" ] && continue
     [ -z "${branch:-}" ] && continue
+    # The flag beads filed above ("[ci] ... failed", "[autopilot] ... stuck")
+    # carry pr_number too; they are about the PR, not the work it delivers, and
+    # must never be stamped merged in place of the work bead.
     bead=$(cd "$rig_path" && gc bd list --json 2>/dev/null \
       | jq -r --arg b "$branch" --arg n "$num" \
-        '[.[]|select((.metadata["gc.work_branch"]//"")==$b
+        '[.[]|select((.metadata.source//"")!="pr-autopilot")
+              |select((.metadata["gc.work_branch"]//"")==$b
                      or (.metadata.pr_number|tostring)==$n)
               |select((.metadata.merge_result//"")!="merged")][0].id // empty' 2>/dev/null)
     [ -z "$bead" ] && { vlog "PR #$num ($branch): no unreconciled bead"; continue; }
