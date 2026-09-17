@@ -24,6 +24,7 @@ from urllib.error import URLError
 from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import urlopen
 
+from factory_continuity import project_continuity_state, record_transition
 from factory_state import (
     CONTRACT as HUMAN_STATE_CONTRACT,
     StateContractError,
@@ -47,6 +48,7 @@ PRODUCTS_ROOT = ROOT / "config" / "products"
 REMOTE_ACCESS_FILE = ROOT / ".gc" / "runtime" / "factory-cockpit-remote-url"
 BLOCKER_STATE_PATH = ROOT / ".gc" / "runtime" / "factory-cockpit-blockers.json"
 WATCHDOG_SIGNAL_PATH = ROOT / ".gc" / "runtime" / "factory-watchdog-signals.json"
+CONTINUITY_HISTORY_PATH = ROOT / ".gc" / "runtime" / "factory-continuity-history.json"
 DECISION_DOMAINS = ("enterprise", "product", "project")
 COORDINATION_BEAD = os.environ.get("FACTORY_COCKPIT_COORDINATION_BEAD", "af-1vr4")
 PO_STATE_PATH_OVERRIDE = os.environ.get("FACTORY_COCKPIT_PO_STATE_PATH")
@@ -783,6 +785,39 @@ def _read_watchdog_alerts(path: Path | None = None) -> list[dict[str, Any]]:
         for item in alerts
         if isinstance(item, dict) and item.get("id") and item.get("message")
     ]
+
+
+def _read_continuity_history(path: Path | None = None) -> list[dict[str, Any]]:
+    """Last-N continuity transitions (docs/FACTORY_CONTINUITY.md sec5). A missing
+
+    or malformed file means no history yet, not an error.
+    """
+    try:
+        value = json.loads((path or CONTINUITY_HISTORY_PATH).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    history = value.get("history") if isinstance(value, dict) else None
+    if not isinstance(history, list):
+        return []
+    return [
+        {"state": item.get("state"), "since": item.get("since")}
+        for item in history
+        if isinstance(item, dict) and item.get("state") and item.get("since")
+    ]
+
+
+def _write_continuity_history(history: list[dict[str, Any]], path: Path | None = None) -> None:
+    target = path or CONTINUITY_HISTORY_PATH
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=target.parent, delete=False, suffix=".tmp"
+        )
+        with handle:
+            json.dump({"schema_version": 1, "history": history}, handle, ensure_ascii=False)
+        Path(handle.name).replace(target)
+    except OSError:
+        pass
 
 
 def _decision_aids(
@@ -2177,6 +2212,15 @@ class FactoryCollector:
             human_state, last_delivery, _operator_name(self.product_config)
         )
 
+        continuity = project_continuity_state(human_state)
+        continuity_now = datetime.now(timezone.utc).isoformat()
+        continuity_history = record_transition(
+            _read_continuity_history(), continuity["state"], continuity_now,
+        )
+        _write_continuity_history(continuity_history)
+        continuity["since"] = continuity_history[-1]["since"]
+        continuity["history"] = continuity_history
+
         infrastructure = [
             {
                 "name": session.get("alias") or session.get("name"),
@@ -2204,6 +2248,7 @@ class FactoryCollector:
             "activity": human_state["activity"],
             "resume": human_state["resume"],
             "campaign": human_state["campaign"],
+            "continuity": continuity,
             "focus": focus,
             "agents": agent_cards,
             "queue": queue,

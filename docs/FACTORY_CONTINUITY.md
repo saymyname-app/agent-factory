@@ -193,6 +193,30 @@ doing right now, and since when" is answerable from the cockpit in one
 glance, without needing to run `factory-guard` by hand the way every check
 tonight required.
 
+**Implemented, 2026-09-17 (`af-3cat8`):** `lib/factory_continuity.py`
+projects `human_state` (already-computed by `factory_state.py`) into exactly
+one state — no new source read, matching the zero-token contract exactly as
+asked. Three adjustments from this sketch, each because the signal either
+already exists elsewhere or does not exist at all yet (see the module's own
+docstring for the full reasoning):
+
+- `AWAITING_GATE` reuses `resume.mode == "blocking_decision"`
+  (`needs_benjamin`) rather than a literal `gc bd gate list` read — sec5's
+  own wording already covers this ("a 'Gate: human' *or* reserved decision*
+  is open"), and it needed zero new command calls.
+- `BLOCKED_STALLED` is added: a non-admin `campaign.blocked` or a bare
+  result-level `resume.mode == "blocked"` is a real, already-encoded "stuck,
+  needs a diagnosis" condition distinct from a gate or an external failure.
+- `AWAITING_REVIEW`/`MERGING` stay defined but unreachable today: no work
+  bead carries a live PR state (only `merge_result=merged`, once merged) —
+  wiring `pr-autopilot` to write one back is separate follow-on work.
+
+Rendered on the existing "Workflow" page (`ui/factory-cockpit/index.html`,
+`#continuity-flow`) rather than waiting on the deferred cockpit reorg
+(`af-lnbc`/`af-thna`); history persists to
+`.gc/runtime/factory-continuity-history.json`. Tests:
+`tests/factory-continuity-test.py`.
+
 ## 6. Automated remediation, not just paging
 
 The watchdog (`af-3rf3`) was originally scoped as detect-and-page. Given the
