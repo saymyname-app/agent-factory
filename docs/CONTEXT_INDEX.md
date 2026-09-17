@@ -34,6 +34,7 @@ Use progressive disclosure. Do not read every document by default.
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
 | Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0021-existing-code-review-tiers.md` |
+| Token-efficient multi-provider orchestration proposal (routing matrix, Mayor session budget) | `PROPOSAL-token-efficient-orchestration-2026-09-15.md` |
 
 ## Authority order
 
