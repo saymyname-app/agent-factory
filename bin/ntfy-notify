@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Poll factory-cockpit and push alerts to Benjamin's phone via ntfy.sh.
+
+Wave 0-bis: Benjamin subscribed to a private ntfy.sh topic in the ntfy iOS
+app. This is a zero-token (no LLM call) watcher wired as a Gas City cooldown
+order (orders/ntfy-notify.toml) so a stuck decision, a blocked campaign, or a
+guard warning reaches his phone even if nobody is reading the cockpit --
+closing the exact gap the 2026-09-17 audit found: no code path reaches a
+human (docs/FACTORY_AUDIT_2026-09-17.md, finding C1).
+
+The topic name is the only access control ntfy.sh's public server gives a
+topic, so it never lives in git: it goes in `.gc/ntfy-topic.local`, one line,
+already gitignored (`.gc/` is gitignored wholesale). One-time setup:
+
+    mkdir -p .gc && echo <your-topic> > .gc/ntfy-topic.local
+
+Usage: ntfy-notify [--quiet] [--dry-run]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+from ntfy_notify import compute_alerts, diff_alerts  # noqa: E402
+
+TOPIC_FILE = ROOT / ".gc" / "ntfy-topic.local"
+STATE_FILE = ROOT / ".gc" / "ntfy-notify-state.json"
+NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh")
+REMIND_SECONDS = int(os.environ.get("NTFY_REMIND_SECONDS", "3600"))
+PRIORITY_LEVELS = {"urgent": 5, "default": 3, "low": 2}
+
+
+def load_topic() -> str | None:
+    env = os.environ.get("NTFY_TOPIC")
+    if env:
+        return env.strip()
+    if TOPIC_FILE.exists():
+        return TOPIC_FILE.read_text(encoding="utf-8").strip() or None
+    return None
+
+
+def load_state() -> dict[str, float]:
+    if not STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_state(state: dict[str, float]) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def take_snapshot() -> dict:
+    out = subprocess.run(
+        [str(ROOT / "bin" / "factory-cockpit"), "snapshot"],
+        cwd=ROOT, capture_output=True, text=True, timeout=45,
+    )
+    if out.returncode != 0:
+        raise RuntimeError(f"factory-cockpit snapshot failed: {out.stderr.strip()[:300]}")
+    return json.loads(out.stdout)
+
+
+def push(topic: str, title: str, message: str, priority: str, dry_run: bool) -> None:
+    if dry_run:
+        print(f"[dry-run] would push ({priority}) {title}: {message}")
+        return
+    # JSON publish (not headers) so accented French text never has to survive
+    # HTTP header encoding: https://docs.ntfy.sh/publish/#publish-as-json
+    payload = json.dumps({
+        "topic": topic,
+        "title": title,
+        "message": message,
+        "priority": PRIORITY_LEVELS.get(priority, 3),
+        "tags": ["rotating_light"] if priority == "urgent" else ["gear"],
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        NTFY_SERVER, data=payload, method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        resp.read()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+
+    def say(msg: str) -> None:
+        if not args.quiet:
+            print(msg)
+
+    topic = load_topic()
+    if not topic:
+        print(
+            "ntfy-notify: no topic configured -- run "
+            f"`mkdir -p {TOPIC_FILE.parent} && echo <your-topic> > {TOPIC_FILE}` "
+            "or set NTFY_TOPIC",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        snapshot = take_snapshot()
+    except (RuntimeError, json.JSONDecodeError, subprocess.SubprocessError, OSError) as exc:
+        print(f"ntfy-notify: ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    alerts = compute_alerts(snapshot)
+    state = load_state()
+    now = time.time()
+    due, resolved = diff_alerts(alerts, state, now, REMIND_SECONDS)
+
+    for alert in due:
+        say(f"pushing: {alert['title']} -- {alert['message']}")
+        try:
+            push(topic, alert["title"], alert["message"], alert["priority"], args.dry_run)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            print(f"ntfy-notify: push failed for {alert['key']}: {exc}", file=sys.stderr)
+            continue
+        state[alert["key"]] = now
+
+    for key in resolved:
+        say(f"resolved: {key}")
+        try:
+            push(topic, "Retour a la normale", f"{key} n'est plus actif.", "low", args.dry_run)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            pass
+        state.pop(key, None)
+
+    if not args.dry_run:
+        save_state(state)
+    say("ok" if not alerts else f"{len(alerts)} alerte(s) active(s), {len(due)} poussee(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
