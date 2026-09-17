@@ -37,7 +37,8 @@
         ],
         "intent_ref": "criteria/private-learning acceptance: «Un administrateur d’organisation connecté au même environnement ne peut observer ni les sélections, ni les erreurs, ni le planning, ni la progression individuelle d’un apprenant.»",
         "decision_id": "leaderboard-exposure-outcome",
-        "resolution": "pending"
+        "resolution": "mix",
+        "resolution_detail": "Benjamin 2026-09-18: redesign entirely, competitive like Duolingo, compare only what is comparable; scope delegated to the PO. The global board is removed; boards are per collection inside one audience (public collection, or one organization), weekly, opt-in per learner, exposing display name + weekly XP + rank only, with no administrator view. See DECISIONS.md 2026-09-18."
       }
     ],
     "discovery": {
@@ -354,8 +355,8 @@
     },
     {
       "id": "leaderboard-exposure-outcome", "title": "Global leaderboard exposes learner XP/rank across organizations — keep_target, adapt_target, or mix?",
-      "source_ref": "docs/products/saymyname/DECISIONS.md#2026-09-17-leaderboard-cross-organization-exposure",
-      "status": "decision_required", "risk": "high", "revision": 1,
+      "source_ref": "docs/products/saymyname/DECISIONS.md#2026-09-18--leaderboard-scoped-opt-in-comparable-resolves-leaderboard-exposure-outcome",
+      "status": "accepted", "risk": "high", "revision": 2,
       "capability_refs": ["private-selection", "learning-loop"],
       "dependency_refs": [],
       "options": [
@@ -384,7 +385,7 @@
       "id": "private-learning", "title": "Choix et apprentissage privés",
       "description": "Aucune organisation ne voit les sélections, erreurs, réponses, planning ou progression individuelle.",
       "status": "unverified", "capability_refs": ["private-selection", "learning-loop"], "journey_refs": ["personal-return-loop", "admin-csv-to-first-quiz"],
-      "acceptance": "Un administrateur d’organisation connecté au même environnement ne peut observer ni les sélections, ni les erreurs, ni le planning, ni la progression individuelle d’un apprenant.",
+      "acceptance": "Un administrateur d’organisation connecté au même environnement ne peut observer ni les sélections, ni les erreurs, ni le planning, ni la progression individuelle d’un apprenant. Seule exception : un apprenant qui a explicitement rejoint un classement y expose son nom affiché, son XP de la semaine et son rang, sur ce seul classement (une collection dans une audience), sans vue administrateur dédiée ; un apprenant qui ne l’a pas rejoint reste invisible de tous.",
       "evidence": [{"kind": "test", "ref": "Cross-role privacy integration proof", "status": "unverified"}]
     },
     {
