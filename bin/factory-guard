@@ -129,6 +129,37 @@ else
   say "✓ branch — live root on pinned '$EXPECTED'"
 fi
 
+# --- 3a. the live root runs what is checked out, not what is merged ----------
+# pr-autopilot merges to origin, but nothing pulled the live root: on
+# 2026-09-17 a merged sentinel fix (#87) stayed inactive until a human noticed
+# the root was 4 commits behind. Fast-forward only, only on the pinned branch,
+# only with a clean tracked tree; anything else is reported, never forced.
+if [ "$CURRENT" = "$EXPECTED" ] && git remote get-url origin >/dev/null 2>&1 \
+   && timeout 30 git fetch -q origin "$EXPECTED" 2>/dev/null; then
+  BEHIND=$(git rev-list --count "HEAD..origin/$EXPECTED" 2>/dev/null || echo 0)
+  AHEAD=$(git rev-list --count "origin/$EXPECTED..HEAD" 2>/dev/null || echo 0)
+  if [ "$BEHIND" -eq 0 ]; then
+    say "✓ live-root-sync — running the merged '$EXPECTED'"
+  elif [ "$CHECK_ONLY" = "1" ]; then
+    say "· live-root-sync — $BEHIND merged commit(s) not running yet (check-only)"
+  elif [ "$AHEAD" -gt 0 ]; then
+    bad "live root has diverged from origin/$EXPECTED ($AHEAD ahead, $BEHIND behind) — $BEHIND merged commit(s) are not running; resolve by hand"
+  elif [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    say "· live-root-sync — $BEHIND merged commit(s) not running yet: tracked files are being edited here, not pulling over them"
+  else
+    OLD_HEAD=$(git rev-parse HEAD)
+    if git merge -q --ff-only "origin/$EXPECTED" >/dev/null 2>&1; then
+      did "fast-forwarded the live root by $BEHIND merged commit(s)"
+      # Some config is only read on reload; a reload with nothing new is a no-op.
+      if git diff --name-only "$OLD_HEAD" HEAD | grep -qE '^(city\.toml|pack\.toml|orders/|agents/)'; then
+        timeout 60 gc reload >/dev/null 2>&1 && did "reloaded the city config changed by that fast-forward"
+      fi
+    else
+      bad "live root is $BEHIND merged commit(s) behind origin/$EXPECTED and the fast-forward failed"
+    fi
+  fi
+fi
+
 [ -n "$MISSING" ] && bad "missing critical runtime file(s):$MISSING"
 [ -z "$MISSING" ] && say "✓ runtime-files — all present"
 [ -n "$BROKEN_CFG" ] && bad "config invariant broken: $BROKEN_CFG"
