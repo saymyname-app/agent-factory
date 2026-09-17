@@ -19,6 +19,10 @@ case "$command" in
     printf '{"id":"af-new"}\n'
     ;;
   update|close)
+    if [[ $command == update && ${1:-} == "${QUEUE_FAIL_UPDATE_ID:-}" ]]; then
+      printf 'fake bd: update refused for %s\n' "$1" >&2
+      exit 1
+    fi
     printf '%s' "$command" >>"$QUEUE_LOG"
     printf ' <%s>' "$@" >>"$QUEUE_LOG"
     printf '\n' >>"$QUEUE_LOG"

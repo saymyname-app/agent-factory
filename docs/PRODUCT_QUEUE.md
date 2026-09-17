@@ -27,13 +27,44 @@ Run from `/home/benja/agent-factory`:
 ./bin/saymyname-product-queue list
 ./bin/saymyname-product-queue add --title "Make quiz feedback easier to understand" \
   --why "Learners need to know why an answer was wrong" \
-  --acceptance "A learner can understand the correction without admin help"
+  --authorized-by "docs/products/saymyname/DECISIONS.md#2026-09-18" \
+  --acceptance "When a learner answers wrongly, the quiz shall show why the answer was wrong."
 ./bin/saymyname-product-queue move af-abc 1
 ./bin/saymyname-product-queue urgency af-abc urgent
 ./bin/saymyname-product-queue pause af-abc "Waiting for customer evidence"
 ./bin/saymyname-product-queue resume af-abc
 ./bin/saymyname-product-queue cancel af-abc "No longer aligned with V1"
 ```
+
+### Provenance and acceptance (`add`)
+
+Rule: **a top-level bead cites what authorizes it; beads auto-filed by
+factory-guard / pr-autopilot / factory-watchdog / on-order-failed /
+on-session-stranded are exempt because they react to an observed fact.**
+
+- `--authorized-by TEXT` is required: one line naming the decision record, ADR,
+  or validated parent that authorizes the candidate (for example
+  `docs/products/saymyname/DECISIONS.md#2026-09-18`, `ADR-0021`,
+  `af-j41c2 review finding`). It is stored as `gc.authorized_by`, so decomposing
+  validated intent stays distinguishable from inventing intent.
+- `--acceptance TEXT` is required and must hold at least one
+  [EARS](https://alistairmavin.com/ears/) line (an optional leading `- ` and
+  `[Tag]` are allowed). Otherwise `add` fails and prints this template:
+
+| Pattern | Shape | French form |
+|---|---|---|
+| Ubiquitous | `The <system> shall <response>.` | `Le système doit …` |
+| Event-driven | `When <trigger>, the <system> shall <response>.` | `Quand …, … doit …` |
+| State-driven | `While <state>, the <system> shall <response>.` | `Tant que …, … doit …` |
+| Optional feature | `Where <feature>, the <system> shall <response>.` | `Là où …, … doit …` |
+| Unwanted behaviour | `If <condition>, then the <system> shall <response>.` | `Si …, alors … doit …` |
+
+Good example: `When a learner answers wrongly, the quiz shall show why the
+answer was wrong.`
+
+Both requirements apply to new `add` calls only; existing candidates without
+`gc.authorized_by` remain valid and listable. The cockpit Roadmap form records
+its adds as `Human RECORD via Factory cockpit (human-queue-record)`.
 
 The generic entry point is `bin/product-queue`; set
 `PRODUCT_QUEUE_PRODUCT=<slug>` and optionally
@@ -79,7 +110,9 @@ For EXECUTE, the PO hands the desired result to the Mayor once. The Mayor:
 
 `materialize` accepts only the first eligible candidate in its lane, verifies that the
 execution Bead exists and is open or in progress, records the link, and closes
-the candidate. The `--mayor` switch is an explicit policy guard and audit cue;
+the candidate. It then writes the back-link `gc.source_candidate` (and
+`gc.authorized_by` when the candidate has one) on the execution Bead; if that
+write fails it only warns, and the materialization stands. The `--mayor` switch is an explicit policy guard and audit cue;
 the durable PO/Mayor instruction boundary remains the authority control.
 The product lane contains candidates whose goal is not `none`; the separate
 Factory campaign lane contains `goal=none`. Each lane preserves its own strict
@@ -99,6 +132,8 @@ Candidates have labels `product-queue` and `product:<slug>` plus these metadata:
 | `gc.queue_goal` | Durable product goal, or `none` |
 | `gc.queue_pause_reason` | Structured reason while paused; empty after resume |
 | `gc.materialized_bead` | Execution Bead after Mayor materialization |
+| `gc.authorized_by` | What authorizes the candidate (required by `add`; absent on older candidates); copied to the execution Bead by `materialize` |
+| `gc.source_candidate` | On the execution Bead: the candidate it was materialized from |
 
 Cancellation and materialization close the candidate but retain its Beads
 history. Dependencies are not improvised at candidate level; the Mayor records

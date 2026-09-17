@@ -153,6 +153,8 @@ the next result, read `next --json`, refine the scope and acceptance, create the
 separate executable Bead, then link it with
 `materialize <candidate> <execution-bead> --mayor`. Only materialize the first
 eligible candidate. Reordering never interrupts already materialized work.
+`add` requires `--authorized-by` (the decision, ADR, or validated parent that
+authorizes the candidate) and an EARS `--acceptance`; see `docs/PRODUCT_QUEUE.md`.
 
 ## UI/UX design gate
 
