@@ -118,6 +118,54 @@ reversibility_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
   esac
 }
 
+# af-grln2: a draft, DIRTY, BEHIND, BLOCKED, or zero-check PR used to get one
+# identical log line every pass, forever -- indistinguishable from one
+# quietly waiting its natural turn. This acts directly on data the loop
+# already fetched this tick (mergeStateStatus, statusCheckRollup, labels) --
+# no separate read, matching the audit's "act in the mechanism" ask. A label
+# is the memory of "seen before": the first stuck pass just marks it: the
+# label already being present is what proves it survived to a second pass,
+# so a bead is only filed once a PR is stuck across passes, not on the first.
+STUCK_LABEL="autopilot-stuck"
+
+stuck_pr() {  # repo rig_path num mergeStateStatus checks labels
+  local repo=$1 rig_path=$2 num=$3 state=$4 checks=$5 labels=" ${6//,/ } "
+  local reason=""
+  case "$state" in
+    DIRTY) reason="merge conflict (DIRTY)" ;;
+    BLOCKED) reason="blocked (a required check has not run or is pending)" ;;
+    BEHIND) reason="behind base (needs a merge/rebase to pick up new required checks)" ;;
+  esac
+  [ "$checks" = "NONE" ] && reason="${reason:+$reason; }no status check ever reported"
+  [ -n "$reason" ] || return 0
+  case "$labels" in
+    *" $STUCK_LABEL "*)
+      title="[autopilot] PR #$num stuck: $reason"
+      existing=$(cd "$rig_path" && gc bd list --status open --json 2>/dev/null \
+        | jq -r --arg t "$title" '[.[]|select(.title==$t)]|length' 2>/dev/null)
+      if [ "${existing:-0}" = "0" ]; then
+        log "  PR #$num: stuck across passes ($reason) -> filing"
+        run bash -c "cd '$rig_path' && gc bd create '$title' -p 2 -t bug \
+          -d 'PR stuck across multiple pr-autopilot passes (every 3 min): $reason.
+https://github.com/$repo/pull/$num
+Not armable as-is; needs a human/Mayor look (resolve conflicts, push a commit to (re)trigger the required check, or rebase onto the latest base). pr-autopilot only observes and pages -- it never resolves a conflict or forces a check to run.' \
+          --set-metadata pr_number='$num' --set-metadata source='pr-autopilot'"
+        run gh pr comment "$num" --repo "$repo" \
+          --body "pr-autopilot: this PR has been $reason across multiple passes and needs attention (filed as a bead)." >/dev/null 2>&1
+        FLAGGED=$((FLAGGED+1))
+      else
+        vlog "PR #$num: stuck ($reason), already filed"
+      fi
+      ;;
+    *)
+      run gh label create "$STUCK_LABEL" --repo "$repo" --color EDEDED --force \
+        --description "pr-autopilot: not armable across at least 2 passes" >/dev/null 2>&1
+      run gh pr edit "$num" --repo "$repo" --add-label "$STUCK_LABEL" >/dev/null 2>&1
+      vlog "PR #$num: stuck ($reason), marked -- filing next pass if still stuck"
+      ;;
+  esac
+}
+
 for entry in "${RIGS[@]}"; do
   if [ "$SECONDS" -ge "$TICK_DEADLINE_SECONDS" ]; then
     log "TICK_TIMEOUT: ${SECONDS}s elapsed (budget ${TICK_DEADLINE_SECONDS}s) -- stopping before $entry, remaining repos wait for the next run"
@@ -142,6 +190,19 @@ for entry in "${RIGS[@]}"; do
       vlog "PR #$num: draft, not arming"; SKIPPED=$((SKIPPED+1)); continue
     fi
 
+    # A PR that recovered (state healthy again) sheds the stuck label; a
+    # human/Mayor fixing it manually should not leave a stale marker behind.
+    case " ${labels//,/ } " in
+      *" $STUCK_LABEL "*)
+        case "$state" in
+          DIRTY|BLOCKED|BEHIND) ;;
+          *) [ "$checks" = "NONE" ] || {
+               run gh pr edit "$num" --repo "$repo" --remove-label "$STUCK_LABEL" >/dev/null 2>&1
+               vlog "PR #$num: no longer stuck -> removed $STUCK_LABEL"
+             } ;;
+        esac ;;
+    esac
+
     # Red required check -> flag as work, do not arm.
     if [ "$checks" = "FAILURE" ]; then
       log "  PR #$num: required checks FAILED -> flagging"
@@ -159,6 +220,12 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
       fi
       continue
     fi
+
+    # af-grln2: a DIRTY/BLOCKED/BEHIND merge state or a PR with no status
+    # check at all is not fixed by arming auto-merge -- GitHub accepts the
+    # arm request regardless and just waits, so this must be evaluated here,
+    # independent of whether arming below succeeds.
+    stuck_pr "$repo" "$rig_path" "$num" "$state" "$checks" "$labels"
 
     # Before the "already armed" shortcut: a push can add a destructive
     # migration to a PR that was armed while it was harmless. (The labels field
