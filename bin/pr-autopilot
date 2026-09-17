@@ -50,6 +50,15 @@ run()  { if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: $*"; return 0; fi; "$@"; 
 ARMED=0; RECONCILED=0; FLAGGED=0; SKIPPED=0; ERRORS=0; HELD=0
 TMPDIR_AP=$(mktemp -d); trap 'rm -rf "$TMPDIR_AP"' EXIT
 
+# O3: the order (orders/pr-autopilot.toml) hard-kills the whole run at 120s
+# with no trace at all -- the same gap as C8/mayor-campaign, seen here in
+# `context deadline exceeded` events (9 in 24h, live). A stuck `gh` call on
+# one repo used to be able to burn the whole budget silently. $SECONDS is
+# bash's own elapsed-time counter since the script started; checked once per
+# repo, leaving margin below the order's hard kill to still report and exit
+# cleanly instead of being SIGKILLed.
+TICK_DEADLINE_SECONDS="${PR_AUTOPILOT_TICK_DEADLINE_SECONDS:-100}"
+
 # ---------- reversibility gate (ADR-0019) ----------
 # docs/DELIVERY.md calls Flyway changes GUARDED, yet this actor used to arm
 # every green PR to dev, migrations included -- two DROP COLUMNs among them.
@@ -110,6 +119,11 @@ reversibility_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
 }
 
 for entry in "${RIGS[@]}"; do
+  if [ "$SECONDS" -ge "$TICK_DEADLINE_SECONDS" ]; then
+    log "TICK_TIMEOUT: ${SECONDS}s elapsed (budget ${TICK_DEADLINE_SECONDS}s) -- stopping before $entry, remaining repos wait for the next run"
+    ERRORS=$((ERRORS+1))
+    break
+  fi
   IFS='|' read -r rig_dir repo dev <<<"$entry"
   log "=== $repo (base: $dev) ==="
   rig_path="$FACTORY/$rig_dir"
