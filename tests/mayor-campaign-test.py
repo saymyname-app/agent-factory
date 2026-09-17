@@ -72,6 +72,7 @@ class CampaignFixture:
             **os.environ,
             "GC_BIN": str(self.fixture / "gc"),
             "SAYMYNAME_STATUS_BIN": str(self.fixture / "status"),
+            "SAYMYNAME_PRODUCT_QUEUE_BIN": str(self.fixture / "product-queue"),
             "CAMPAIGN_STATE_FILE": str(self.state_file),
             "CAMPAIGN_STATUS_FILE": str(self.status_file),
             "CAMPAIGN_CALL_LOG": str(self.log_file),
@@ -375,6 +376,36 @@ class IdleLadderPlanTest(unittest.TestCase):
         # Factory beads always outrank generative audits.
         self.assertEqual("ladder_factory", plan_idle_ladder([bead("af-x")], NOW)["reason"])
 
+    def test_factory_queue_candidate_is_rung_2b(self):
+        # C3: the goal=none lane in `saymyname-product-queue list --json` was
+        # read by nobody. It sits between a ready Factory bead (rung 2) and
+        # the generative rungs (3-4).
+        candidate = {"id": "af-q1", "kind": "factory_campaign", "state": "eligible",
+                     "title": "Nettoyer les beads de tracking d'ordres"}
+        plan = plan_idle_ladder([], NOW, queue_candidates=[candidate])
+        self.assertEqual(
+            ("wake_mayor", "ladder_factory_queue", "materialize:af-q1"),
+            (plan["action"], plan["reason"], plan["wake_key"]),
+        )
+        self.assertIn("af-q1", plan["message"])
+        self.assertIn("materialize af-q1", plan["message"])
+
+    def test_a_ready_factory_bead_outranks_a_queue_candidate(self):
+        candidate = {"id": "af-q1", "kind": "factory_campaign", "state": "eligible", "title": "x"}
+        plan = plan_idle_ladder([bead("af-hi")], NOW, queue_candidates=[candidate])
+        self.assertEqual("ladder_factory", plan["reason"])
+
+    def test_a_queue_candidate_outranks_generative_rungs(self):
+        candidate = {"id": "af-q1", "kind": "factory_campaign", "state": "eligible", "title": "x"}
+        plan = plan_idle_ladder([], NOW, queue_candidates=[candidate])
+        self.assertEqual("ladder_factory_queue", plan["reason"])
+
+    def test_a_paused_or_product_candidate_is_not_rung_2b(self):
+        paused = {"id": "af-q1", "kind": "factory_campaign", "state": "paused", "title": "x"}
+        product = {"id": "af-q2", "kind": "product_candidate", "state": "eligible", "title": "x"}
+        plan = plan_idle_ladder([], NOW, queue_candidates=[paused, product])
+        self.assertNotEqual("ladder_factory_queue", plan["reason"])
+
 
 class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
     """The acceptance scenario of af-gxt1, end to end through the sentinel."""
@@ -402,6 +433,18 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         # Same bead, same key: announced once.
         self.assertIn("already notified", self.sentinel(NOW + 60).stdout)
         self.assertEqual(1, self.mail_count())
+
+    def test_no_ready_bead_falls_through_to_the_factory_queue_candidate(self):
+        # C3: with no product work and no ready Factory bead, rung 2b reads
+        # `saymyname-product-queue list --json` end to end through the sentinel.
+        self.ready_file.write_text("[]", encoding="utf-8")
+        queue_file = self.root / "queue.json"
+        queue_file.write_text(json.dumps([
+            {"id": "af-q1", "kind": "factory_campaign", "state": "eligible", "title": "Purger les logs"},
+        ]), encoding="utf-8")
+        self.write_status(status(next_id=None))
+        out = self.sentinel(NOW, CAMPAIGN_QUEUE_FILE=str(queue_file)).stdout
+        self.assertIn("NOTIFIED: mayor — materialize:af-q1", out)
 
     def test_the_claimed_factory_bead_counts_as_progress(self):
         self.write_status(status(next_id=None))

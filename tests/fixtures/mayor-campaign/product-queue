@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+[[ ${1:-} == list && ${2:-} == --json ]] || exit 64
+[[ ${CAMPAIGN_QUEUE_FAIL:-0} != 1 ]] || { printf 'product queue unavailable\n' >&2; exit 42; }
+if [[ -n ${CAMPAIGN_QUEUE_FILE:-} && -f ${CAMPAIGN_QUEUE_FILE} ]]; then
+  cat "$CAMPAIGN_QUEUE_FILE"
+else
+  printf '[]\n'
+fi
