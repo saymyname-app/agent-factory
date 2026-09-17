@@ -66,3 +66,73 @@ label `adr-0016`, `incident-2026-09-16`) — see
 `./bin/saymyname-product-queue list` for its live position. Acceptance
 criteria references this document by path so the eventual implementer has
 the full timeline rather than a compressed summary.
+
+## Incident 2, same night, 2026-09-16 21:43Z → 2026-09-17 ~02:00Z (~4h20)
+
+A second, structurally different stall, found the same way (Benjamin asking
+"tourne tjrs?" from bed; PO session running `factory-guard --check-only`
+live rather than trusting the cockpit's `state: running` label).
+
+**What happened:** after Incident 1's gate was resolved, a worker (`af-sbmf`)
+successfully applied `af-u8id.4.1` (the ADR-0015/0021 schema wiring) and
+opened PR #59. Independent review correctly returned `CHANGES_REQUESTED`
+(a real bug: a takeover-derived `evidencedBlock` could read `status=proven`
+with no `review` key and still validate — the exact fail-closed rule
+ADR-0021 specifies was not actually enforced). Applying that fix then failed
+**3 times in a row** (`af-g7ts`, `af-wbn2`, `af-tkpr`), each attempt's
+`mol-scoped-work` workflow hard-failing at its `load-context` step with
+`failure_reason=missing_outcome` — despite each attempt closing with a
+correct, substantive `close_reason`. Root cause isolated by the Mayor itself
+(not yet fixed): this reproduces specifically when `base_branch` is a
+non-default feature branch (the fix-forward branch after review), not
+`main` — the one `base_branch=main` pass needed only a single retry.
+
+**The part worth its own line:** `on_fail=abort_scope` then silently skips
+every downstream step (workspace-setup/implement/review/submit) **with no
+comment explaining why** — the workflow root bead **closes as `CLOSED` with
+zero visible top-level failure signal**. Discovering the real state required
+reading nested `gc.outcome` metadata, which itself cost the Mayor "a full
+extra cycle to even notice" (its own words, `af-wisp-ajklgu`). A `CLOSED`
+bead in this Factory can currently mean "done" or "silently gave up" and
+looks identical from the outside.
+
+**What went right this time, worth keeping:** the Mayor did not keep
+retrying blindly. After the 3rd reproduction it stopped, filed `af-ptx7`
+(P1, `gc.needs_benjamin=true`) with the full evidence trail, and mailed
+`human` directly (`af-wisp-k0c2qd`, sent 23:39Z) rather than going silent —
+exactly ADR-0016 §7's intended behavior, and a real improvement over
+Incident 1's rabbit-hole.
+
+**What still didn't work:** that mail sat unread for ~4h20 until Benjamin
+happened to check from bed. Mail-to-`human` is not a push — nobody is paged.
+This is the same gap Incident 1's guardrail (`af-3rf3`) already exists to
+close, now evidenced a second time from a different failure shape (a correct
+escalation nobody saw, vs. Incident 1's absent escalation).
+
+## The three additional gaps from Incident 2
+
+5. **`mol-scoped-work`'s `load-context` step is unreliable on non-default
+   `base_branch`** — 3/3 failure rate observed, root cause not yet fixed.
+   Tracked as `af-ptx7` (P1). This blocks every fix-forward-after-review
+   workflow, which is exactly the path Incident 1's own routing decision
+   (require independent review before merge) now depends on — fixing gap 1
+   made gap 5 load-bearing.
+6. **A workflow can close `CLOSED` while having internally failed, with no
+   visible signal at the top level.** This is more severe than a slow
+   notification: it is a **false-positive success state**. Any tooling
+   (including this Factory's own liveness/guard checks, and a human glancing
+   at bead status) that trusts a bare `CLOSED` without reading nested
+   `gc.outcome` can be wrong. This deserves its own acceptance criterion
+   distinct from paging speed: a `CLOSED` molecule/workflow bead whose
+   downstream steps all show `outcome=skipped` should not look the same as
+   one that actually finished.
+7. **A correct, well-written escalation mail is not a substitute for a page.**
+   Confirms Incident 1's finding from the opposite direction — even when the
+   Mayor did exactly the right thing, Benjamin still had to think to check.
+
+## Guardrail scope, revised
+
+`af-3rf3`'s acceptance criteria now also covers gap 6 (surface a
+false-success `CLOSED` state, not just slow notification) — see the bead for
+the current text. Gap 5 stays tracked separately on `af-ptx7` since it is a
+specific, already-diagnosed dispatcher bug rather than a general guardrail.
