@@ -164,7 +164,7 @@ records what was verified about the machinery underneath.
 
 Repository settings changed to support this: `allow_auto_merge=true` and
 `delete_branch_on_merge=true` on `saymyname-app/Say-my-name-back` and
-`saymyname-app/Say-my-name-front`. `benjamin-hurand/agent-factory` has since been
+`saymyname-app/Say-my-name-front`. `saymyname-app/agent-factory` has since been
 added to the autopilot's rig table (see *Production stays gated* below).
 
 ### Reading delivery state
@@ -182,7 +182,7 @@ remains a GUARDED transition requiring Benjamin.
 The Factory's own repository is different, by Benjamin's standing
 authorization of 2026-09-16: `agent-factory` has one long-lived branch, `main`,
 and `pr-autopilot` arms its green PRs too (`bin/pr-autopilot`, rig table entry
-`.|benjamin-hurand/agent-factory|main`). `main` there is the running factory,
+`.|saymyname-app/agent-factory|main`). `main` there is the running factory,
 not a product production branch.
 
 ### Historical note — why this needed building
@@ -204,7 +204,7 @@ is why `pr-autopilot` links PR to bead by branch name instead.
 
 ## Main-landing gate — `main` cannot go red silently anymore
 
-**As of 2026-09-16, `git push` to `main` in `benjamin-hurand/agent-factory`
+**As of 2026-09-16, `git push` to `main` in `saymyname-app/agent-factory`
 runs the guarded local test suite first and refuses the push if it fails**
 (`bin/factory-main-gate`, installed as `.githooks/pre-push`, ADR-0020).
 

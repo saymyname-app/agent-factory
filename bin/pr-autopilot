@@ -40,7 +40,7 @@ RIGS=(
   # required check (Factory CI), so the same rule applies: green check merges
   # itself, red check becomes a bead. Without this, agent-factory branches pile
   # up unmerged — 28 of them by 2026-09-15.
-  ".|benjamin-hurand/agent-factory|main"
+  ".|saymyname-app/agent-factory|main"
 )
 
 log()  { printf '%s\n' "$*"; }
