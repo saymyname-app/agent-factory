@@ -69,6 +69,15 @@ For a change:
   (ADR-0018), never by editing config.
 - Stop/restart only per `docs/RUNBOOK_STOP_AND_RESTART.md`.
 - Discoveries outside scope become separate Beads work, not silent scope expansion.
+- **Close a formula step with its outcome:** `gc bd update <step-id>
+  --set-metadata gc.outcome=pass --status=closed --notes "..."` (`fail` if it
+  failed). `gc bd close --reason` leaves no `gc.outcome`: the dispatcher reads
+  `missing_outcome`, retries, hard-fails and skips the rest (af-ptx7).
+- **One escalation contract.** Only Benjamin can decide (ADR-0016 effect
+  tests): set `gc.needs_benjamin=true` AND mail `human` AND state the cause,
+  then keep working on what is eligible. Anything else: mail `mayor` BLOCKED,
+  `gc.outcome=fail`, drain. Never create a `human` gate: it notifies nobody.
+- **No direct push to `main` or `dev`:** land through a pull request.
 
 ## Cost policy
 
@@ -117,12 +126,9 @@ NEXT:   <what happens next, or "none">
   read as prose — clarity for a human decision outweighs the token saving
   there — but keep it under a couple hundred words; treat more than that as
   a signal to split into a follow-up bead rather than one long message.
+- **Read is not done.** A mail whose NEXT names you is a task: execute it this
+  turn, reply ACTION/STATE/EVIDENCE/NEXT, then mark it read.
 - **Keep the mailbox drained.** Archive or mark-read mail once acted on
   (`gc.retention_ttl` purges read mail after 7 days, but an unbounded unread
   backlog still buries the signal that actually needs a response).
 
-This mirrors current multi-agent-systems practice: unrestricted context
-sharing and verbose unstructured exchange are the documented drivers of
-multi-agent token overhead relative to a single agent doing the same task,
-while structured/compact message formats have shown large measured token
-reductions with little accuracy loss.
