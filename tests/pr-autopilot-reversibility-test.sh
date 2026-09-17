@@ -37,7 +37,9 @@ cat > "$TMP/bin/gh" <<STUB
 #!/usr/bin/env bash
 echo "\$*" >> "$TMP/gh.log"
 if [[ \$1 == pr && \$2 == list ]]; then
-  if [[ "\$*" == *"--state open"* && "\$*" == *"Say-my-name-back"* ]]; then cat "$TMP/backend-open.json"; else echo '[]'; fi
+  if [[ "\$*" == *"--state open"* && "\$*" == *"Say-my-name-back"* ]]; then cat "$TMP/backend-open.json"
+  elif [[ "\$*" == *"--state merged"* && "\$*" == *"Say-my-name-back"* && -f "$TMP/backend-merged.json" ]]; then cat "$TMP/backend-merged.json"
+  else echo '[]'; fi
   exit 0
 fi
 if [[ \$1 == pr && \$2 == view ]]; then echo '["OPEN","false"]' | jq -r '@tsv'; exit 0; fi
@@ -46,7 +48,7 @@ STUB
 cat > "$TMP/bin/gc" <<STUB
 #!/usr/bin/env bash
 echo "\$*" >> "$TMP/gc.log"
-[[ \$1 == bd && \$2 == list ]] && echo '[]'
+[[ \$1 == bd && \$2 == list ]] && { cat "$TMP/beads.json" 2>/dev/null || echo '[]'; }
 exit 0
 STUB
 cat > "$TMP/bin/check" <<STUB
@@ -123,6 +125,24 @@ out=$(pilot)
 grep -q "PR #1: reversibility could not be checked" <<<"$out" || { echo "$out" >&2; fail "checker failure not reported"; }
 grep -q "^pr merge 1 " "$TMP/gh.log" && fail "PR armed while its reversibility was unknown"
 grep -q "zzz9" "$REVERSIBILITY_CACHE" && fail "a failed check was cached as a verdict"
+
+# --- reconcile stamps the work bead, never the flag bead filed about the same PR ----------
+# "[ci] failed" / "[autopilot] stuck" beads carry pr_number too; listed first,
+# one used to win the [0] pick and get merge_result=merged instead of the work.
+cat > "$TMP/backend-merged.json" <<'JSON'
+[{"number":7,"headRefName":"polecat/af-work7","mergeCommit":{"oid":"feedbeef7"}}]
+JSON
+cat > "$TMP/beads.json" <<'JSON'
+[
+ {"id":"af-flag7","title":"[ci] PR #7 failed required checks on dev","metadata":{"pr_number":"7","source":"pr-autopilot"}},
+ {"id":"af-work7","title":"the work","metadata":{"gc.work_branch":"polecat/af-work7"}}
+]
+JSON
+: > "$TMP/gc.log"
+out=$(pilot)
+grep -q "^bd update af-work7 .*merge_result=merged" "$TMP/gc.log" || { echo "$out" >&2; fail "merged PR was not reconciled onto its work bead"; }
+grep -q "^bd update af-flag7 " "$TMP/gc.log" && fail "reconcile stamped a pr-autopilot flag bead as merged"
+rm -f "$TMP/backend-merged.json" "$TMP/beads.json"
 
 # --- O3: an exhausted tick budget stops cleanly, recorded, not SIGKILLed -----------------
 # The order (orders/pr-autopilot.toml) hard-kills the whole run at 120s with no

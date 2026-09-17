@@ -61,20 +61,33 @@ while IFS= read -r event; do
   bead_ids=$(jq -r '(.payload.work_bead_ids // [])[]' <<<"$event" 2>/dev/null)
 
   reopened_here=""
+  failed_here=0
   while IFS= read -r bead_id; do
     [ -n "$bead_id" ] || continue
-    bead_status=$(gc bd show "$bead_id" --json 2>/dev/null | jq -r '(.[0].status // empty)')
+    bead_json=$(gc bd show "$bead_id" --json 2>/dev/null) || { failed_here=1; continue; }
+    bead_status=$(jq -r '(.[0].status // empty)' <<<"$bead_json")
     [ "$bead_status" = "in_progress" ] || continue
-    if gc bd update "$bead_id" --status open \
+    # --assignee "" releases the bead: left assigned to the dead session it
+    # would be open but still pinned to a worker that no longer exists.
+    if gc bd update "$bead_id" --status open --assignee "" \
         --set-metadata "gc.session_stranded=$session_id" \
         --append-notes "Reopened by on-session-stranded: session $session_name terminated without a clean drain while this bead was in progress." \
         >/dev/null 2>&1; then
       reopened_here="$reopened_here $bead_id"
+    else
+      failed_here=1
     fi
   done <<<"$bead_ids"
   reopened_here="${reopened_here# }"
 
-  STATE=$(printf '%s' "$STATE" | jq --arg k "$session_id" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.[$k] = $now')
+  # Only a fully handled session is deduped. After a failed show/update the
+  # event is seen again next pass (while it stays inside LOOKBACK); beads
+  # already reopened are no longer in_progress, so they are not paged twice.
+  if [ "$failed_here" = "0" ]; then
+    STATE=$(printf '%s' "$STATE" | jq --arg k "$session_id" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.[$k] = $now')
+  else
+    say "on-session-stranded: $session_id not fully handled (gc bd show/update failed) -- retrying next pass"
+  fi
 
   if [ -n "$reopened_here" ]; then
     count=$(wc -w <<<"$reopened_here")

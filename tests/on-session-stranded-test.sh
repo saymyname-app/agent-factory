@@ -49,6 +49,7 @@ if [[ \${1:-} == bd && \${2:-} == show ]]; then
 fi
 if [[ \${1:-} == bd && \${2:-} == update ]]; then
   bead_id=\$3
+  [[ -f "$TMP/fail-update" ]] && exit 1
   echo "in_progress" # unused, keep for shellcheck happiness
   echo "\$bead_id updated" >> "$TMP/updated.log"
   exit 0
@@ -78,6 +79,9 @@ grep -q "af-stuck1 updated" "$TMP/updated.log" || { echo "$out" >&2; fail "the i
 grep -q "af-done1 updated" "$TMP/updated.log" 2>/dev/null && fail "an already-closed bead must not be touched"
 [ "$(grep -c 'mail send mayor' "$CALLS")" = "1" ] || fail "the mayor was not paged exactly once"
 grep -q '"af-br7i"' "$STATE_FILE" || fail "the session was not recorded as handled"
+# "$*" logging turns the empty --assignee value into a double space.
+grep -q -- "^bd update af-stuck1 --status open --assignee  --set-metadata" "$CALLS" \
+  || fail "the reopened bead was left assigned to the dead session"
 
 # --- a second run does not reprocess the same session -------------------------
 rm -f "$TMP/updated.log"; : > "$CALLS"
@@ -87,5 +91,21 @@ grep -q "mail send mayor" "$CALLS" && fail "an already-handled session paged the
 
 # --- state survives being invoked as a fresh process (dedup is on disk) ------
 [ -s "$STATE_FILE" ] || fail "dedup state was not written to disk"
+
+# --- a failed reopen is not recorded as handled: the next pass retries it -----
+cat > "$EVENTS_FILE" <<'JSON'
+{"actor":"gc","message":"pool session terminated without clean drain","payload":{"session_id":"af-zz9k","session_name":"claude-af-zz9k","template":"claude","work_bead_ids":["af-stuck2"]},"session_id":"af-zz9k","type":"session.stranded","ts":"2026-09-16T22:00:00Z","ok":true}
+JSON
+cat > "$TMP/beads/af-stuck2.json" <<'JSON'
+[{"id":"af-stuck2","status":"in_progress"}]
+JSON
+rm -f "$TMP/updated.log"; : > "$CALLS"; touch "$TMP/fail-update"
+run >/dev/null
+grep -q '"af-zz9k"' "$STATE_FILE" && fail "a session whose bead update failed was recorded as handled"
+grep -q "mail send mayor" "$CALLS" && fail "the mayor was paged although nothing was reopened"
+rm -f "$TMP/fail-update"; : > "$CALLS"
+run >/dev/null
+grep -q "af-stuck2 updated" "$TMP/updated.log" || fail "the failed reopen was not retried on the next pass"
+grep -q '"af-zz9k"' "$STATE_FILE" || fail "the retried session was not recorded as handled"
 
 echo "OK on-session-stranded reopens orphaned work, once per session"
