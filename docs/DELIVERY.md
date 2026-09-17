@@ -266,12 +266,17 @@ a GitHub Actions secret would itself hand real PII to a third party, which is
 exactly what this guards against. So CI does not attempt exact-value
 matching. Instead it requires that any data file under a
 fixture/seed/test-resource path (`fixtures?/`, `seeds?/`, `test-resources?/`,
-`testdata/`, `test-data/`, any depth) carry a provenance marker proving it
-came from the synthetic generator (af-hq2j): a `PROVENANCE.md` manifest in
-the same directory with a line `<filename>: synthetic-provenance af-hq2j`.
-An unmarked data file in one of those paths fails the build — it is either
-real data that should never have landed there, or a synthetic file someone
-forgot to record.
+`testdata/`, `test-data/`, or Maven's `.../test/resources/`, any depth) carry
+a provenance marker proving it came from the synthetic generator (af-hq2j): a
+`PROVENANCE.md` manifest in the same directory with a line
+`<filename>: synthetic-provenance af-hq2j sha256:<hex>`, where the hash is
+the file's own sha256. The hash binds the attestation to the file's exact
+current content — a filename+keyword line by itself is not proof, so a data
+file swapped in after the manifest entry was written (or an entry never
+actually backed by the generator) fails the same way an unmarked file does.
+An unmarked or stale-attestation data file in one of those paths fails the
+build — it is either real data that should never have landed there, or a
+synthetic file someone forgot to record (or re-record after editing).
 
 Emergency bypass for Layer A is the standard `git push --no-verify`. Neither
 layer is a security boundary against a determined actor; both are local/CI

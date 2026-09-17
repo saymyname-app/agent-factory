@@ -8,10 +8,15 @@ root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 pii="$root/bin/factory-pii-guard"
 if [ -x "$pii" ]; then
   "$pii" --repo-root "$root" || exit 1
+else
+  echo "pre-push: WARNING -- bin/factory-pii-guard missing or not executable; PII leak guard was skipped for this push" >&2
 fi
 
 gate="$root/bin/factory-main-gate"
-[ -x "$gate" ] || exit 0
+if [ ! -x "$gate" ]; then
+  echo "pre-push: WARNING -- bin/factory-main-gate missing or not executable; main-branch gate was skipped for this push" >&2
+  exit 0
+fi
 
 # Buffer stdin: factory-main-gate needs the ref-update lines a git pre-push
 # hook receives on stdin, and this script can only read that stream once.
