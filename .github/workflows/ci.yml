@@ -105,6 +105,9 @@ jobs:
       - name: Merge actor flags PRs stuck across passes
         run: bash tests/pr-autopilot-stuck-test.sh
 
+      - name: Chaos, as seen by the cockpit
+        run: python tests/factory-cockpit-chaos-test.py
+
       - name: Delivery-proof completeness rules
         run: python tests/factory-delivery-proof-test.py
 
