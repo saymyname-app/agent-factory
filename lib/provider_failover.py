@@ -161,14 +161,40 @@ _SOFT = re.compile(r"less than (\d{1,2})% of your (?:weekly|daily|session|5-hour
 # and labelled distinctly (kind="provider_error") so a human/PO reading the
 # state can tell "will resolve itself at a known reset time" (quota) apart
 # from "genuinely broken, needs investigation" (this).
+#
+# The pane also shows whatever the agent is RUNNING. A worker on the backend
+# auth tests prints "401 Unauthorized", "expected:<403>", "HTTP 500",
+# "Connection refused: localhost:5432" as ordinary program output, and a bare
+# match on those used to mark the whole pool `error` and reset a healthy
+# worker. So the category patterns below only count on a line the agent CLI
+# itself wrote: one that STARTS (after its bullet/box glyphs) with the CLI's
+# own error phrasing (_CLI_ERROR), or carries a phrase only the CLI/model API
+# emits (_CLI_PHRASE). Deliberately conservative: a missed provider_error is
+# still caught by the liveness watchdog, a false one costs a working session.
+#
+# Claude Code: "⎿ API Error: 401 {"type":"error","error":{"type":"authentication_error",..."
+#              "API Error (Connection error.) · Retrying in 5 seconds… (attempt 3/10)"
+#              "Invalid API key · Please run /login"
+# Codex:       "⚠ stream error: unexpected status 503 Service Unavailable; retrying 2/5"
+#              "■ stream disconnected before completion: error sending request for url"
+_CLI_ERROR = re.compile(
+    r"^\W{0,6}(?:API Error\b|Agent terminated\b|stream (?:error|disconnected)\b"
+    r"|unexpected status \d{3}\b|exceeded retry limit\b)",
+    re.I,
+)
+_CLI_PHRASE = (
+    ("auth", re.compile(r"please run /login|oauth token has expired|invalid x-api-key", re.I)),
+    ("server", re.compile(r"overloaded_error", re.I)),
+)
 _AUTH_ERROR = re.compile(
     r"\b40[13]\b|unauthorized|invalid api key|invalid_api_key|authentication failed"
-    r"|api key not found|permission denied.{0,30}\bapi\b",
+    r"|authentication_error|api key not found|permission denied.{0,30}\bapi\b",
     re.I,
 )
 _NETWORK_ERROR = re.compile(
     r"connection refused|econnrefused|enotfound|getaddrinfo|dns lookup failed"
-    r"|network error|could not connect|connection reset|connection timed out",
+    r"|network error|could not connect|connection reset|connection timed out"
+    r"|connection error|error sending request|stream disconnected",
     re.I,
 )
 _SERVER_ERROR = re.compile(
@@ -270,9 +296,13 @@ def detect(text: str, now: float, local_tz: str = "Europe/Paris") -> dict[str, A
         return {"kind": "low", "percent": int(m.group(1)), "evidence": m.group(0)}
     for index in range(len(tail) - 1, -1, -1):
         line = tail[index]
-        for category, pattern in (
-            ("auth", _AUTH_ERROR), ("network", _NETWORK_ERROR), ("server", _SERVER_ERROR),
-        ):
+        # Only lines the agent CLI wrote count; program output does not.
+        patterns = _CLI_PHRASE
+        if _CLI_ERROR.search(line):
+            patterns = (
+                ("auth", _AUTH_ERROR), ("network", _NETWORK_ERROR), ("server", _SERVER_ERROR),
+            ) + _CLI_PHRASE
+        for category, pattern in patterns:
             m = pattern.search(line)
             if m:
                 return {"kind": "provider_error", "category": category, "evidence": line[:300]}

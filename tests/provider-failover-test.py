@@ -31,8 +31,44 @@ CLAUDE_WALL = "Agent terminated early due to an API error: You've hit your sessi
 CODEX_LOW = "⚠ Heads up, you have less than 5% of your weekly limit left. Run /status for a\n  breakdown.\n"
 CODEX_LOW_25 = "⚠ Heads up, you have less than 25% of your weekly limit left.\n"
 AUTH_ERROR = "Agent terminated: authentication failed (401 Unauthorized). Check your API key.\n"
-NETWORK_ERROR = "Error: connect ECONNREFUSED 127.0.0.1:443\n"
+NETWORK_ERROR = "API Error (Connection error.) · Retrying in 5 seconds… (attempt 3/10)\n"
 SERVER_ERROR = "API error: 529 Overloaded — the server is temporarily overloaded, please retry.\n"
+# A bare runtime error with no agent-CLI phrasing: any program under test prints this.
+BARE_NODE_ERROR = "Error: connect ECONNREFUSED 127.0.0.1:443\n"
+# A healthy worker running the SayMyName backend auth tests (Maven/JUnit/Spring/Testcontainers).
+BACKEND_TEST_PANE = (
+    "● Bash(./mvnw -q test -Dtest=AuthControllerIT)\n"
+    "  ⎿  2026-09-16 12:39:51.114  WARN 4121 --- [main] o.s.s.w.a.Http403ForbiddenEntryPoint : 401 Unauthorized\n"
+    "     MockHttpServletResponse: Status = 401 Error message = Unauthorized\n"
+    "     [ERROR] AuthControllerIT.rejectsForeignPhoto:88 expected:<403> but was:<200>\n"
+    "     org.opentest4j.AssertionFailedError: Status expected:<403> but was:<500>\n"
+    "     HTTP 500 Internal Server Error for POST /api/photos\n"
+    "     org.postgresql.util.PSQLException: Connection refused: localhost:5432\n"
+    "     Caused by: java.net.ConnectException: Connection refused\n"
+    "     com.zaxxer.hikari.pool.HikariPool : Connection timed out after 30000ms\n"
+    "     503 Service Unavailable from GET http://localhost:8080/actuator/health\n"
+    "     Error: connect ECONNREFUSED 127.0.0.1:5432\n"
+    "     [ERROR] Tests run: 14, Failures: 2, Errors: 1, Skipped: 0\n"
+    "● The 403 case fails because the endpoint is unauthorized for nobody; the server is overloaded with 502/504 mocks.\n"
+)
+CLI_ERRORS = {
+    "auth": [
+        '  ⎿ API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}\n',
+        "API Error: 401 OAuth token has expired. Please obtain a new token · Please run /login\n",
+        "Invalid API key · Please run /login\n",
+        "■ unexpected status 401 Unauthorized: Incorrect API key provided\n",
+    ],
+    "network": [
+        "■ stream disconnected before completion: error sending request for url (https://chatgpt.com/backend-api/codex/responses)\n",
+        "API Error: Connection error.\n",
+    ],
+    "server": [
+        '⎿ API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n',
+        "Error: 529 overloaded_error\n",
+        "⚠ stream error: unexpected status 503 Service Unavailable; retrying 2/5 in 400ms…\n",
+        "API Error (500 Internal server error) · Retrying in 8 seconds… (attempt 4/10)\n",
+    ],
+}
 
 
 def policy():
@@ -90,6 +126,27 @@ class Detection(unittest.TestCase):
         self.assertEqual(("provider_error", "network"), (network["kind"], network["category"]))
         server = pf.detect(SERVER_ERROR, NOW)
         self.assertEqual(("provider_error", "server"), (server["kind"], server["category"]))
+
+    def test_program_output_is_not_a_provider_error(self):
+        """Status codes and 'connection refused' printed by what the agent is
+        RUNNING (backend auth tests) are not the provider failing: a false
+        positive marks the pool `error` and resets a healthy worker."""
+        self.assertIsNone(pf.detect(BACKEND_TEST_PANE, NOW))
+        self.assertIsNone(pf.detect(BARE_NODE_ERROR, NOW))
+        for line in BACKEND_TEST_PANE.splitlines():
+            self.assertIsNone(pf.detect(line, NOW), line)
+
+    def test_agent_cli_errors_are_still_provider_errors(self):
+        for category, samples in CLI_ERRORS.items():
+            for sample in samples:
+                found = pf.detect(BACKEND_TEST_PANE + sample, NOW)
+                self.assertIsNotNone(found, sample)
+                self.assertEqual(("provider_error", category), (found["kind"], found["category"]), sample)
+
+    def test_program_output_does_not_hide_or_fake_a_quota_state(self):
+        self.assertEqual("exhausted", pf.detect(BACKEND_TEST_PANE + CODEX_WALL, NOW)["kind"])
+        self.assertEqual("exhausted", pf.detect(BACKEND_TEST_PANE + CLAUDE_WALL, NOW)["kind"])
+        self.assertEqual("low", pf.detect(BACKEND_TEST_PANE + CODEX_LOW, NOW)["kind"])
 
     def test_a_quota_wall_is_never_relabelled_as_a_generic_error(self):
         """Quota patterns are checked first: a message that happens to also
