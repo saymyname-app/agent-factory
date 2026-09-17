@@ -375,6 +375,10 @@ LADDER_SKIPPED_REASONS = {"active_delivery", "automatic_dependency", "campaign_i
 # liveness watchdog files a defect instead of mailing into the void.
 REWAKE_SECONDS = 30 * 60
 MAX_REWAKES = 3
+# C4: a product wake stale enough to be reminded must not starve the Factory
+# for the same 30 minutes. Only these reasons come from plan_transition
+# (never from the ladder itself, which must not be bundled into itself).
+PRODUCT_WAKE_REASONS = {"finalize_current", "resume_current", "materialize_next", "record_complete"}
 # Generative ladder rungs are optional by nature: "nothing worth doing" is a
 # valid answer, so they are never chased with reminders.
 NO_REWAKE_PREFIXES = ("ladder:tests:", "ladder:docs:")
@@ -586,6 +590,18 @@ def sentinel(_: argparse.Namespace) -> None:
             "depuis. Si ta session a redémarré, tu ne l'as peut-être jamais vue. "
             + message
         )
+        if decision["reason"] in PRODUCT_WAKE_REASONS:
+            # A product wake stale enough to earn a reminder is not "product
+            # work under way" any more: bundle one Factory wake into the same
+            # mail rather than redesign the single wake_key/wake_state pair
+            # on the coordination bead to track two simultaneous wakes.
+            ladder = ladder_decision(metadata, now)
+            if ladder["action"] == "wake_mayor":
+                message += (
+                    "\n\nEN PARALLÈLE (échelle d'inactivité, ADR-0016 §7) : cette relance "
+                    "produit est restée sans effet depuis plus de 30 minutes, donc ce n'est "
+                    f"pas de l'inactivité factory non plus : {ladder['message']}"
+                )
     elif campaign["wake_state"] != "pending":
         update_metadata({"gc.campaign_wake_key": wake_key, "gc.campaign_wake_state": "pending"})
     try:
