@@ -170,6 +170,27 @@ derive_active_context() {
       ;;
     in_progress) ;;
     closed)
+      # C7: a result closed on purpose while waiting on a declared dependency
+      # or explicit hold is not the same thing as one closed with its proofs
+      # skipped. Honour that first (live case: af-u8id.4.1), or every such
+      # result gets nagged to finalize forever even though nothing is owed.
+      # automatic_dependency reuses the already-wired waiting_dependency state
+      # (it requires gc.resume_condition further down); a bare gc.waiting_on
+      # hold has no such contract, so it degrades to materialized instead of
+      # either nagging to finalize or crashing on a missing condition.
+      if [[ $resume_mode == automatic_dependency ]]; then
+        CURRENT_STATE="waiting_dependency"
+        CURRENT_PHASE="Fermé, en attente d'une dépendance automatique · rien à finaliser tant que ce n'est pas levé"
+        CURRENT_AGENT="none"
+        return
+      fi
+      waiting_on=$(metadata_optional "$current_issue" "gc.waiting_on")
+      if [[ -n $waiting_on ]]; then
+        CURRENT_STATE="materialized"
+        CURRENT_PHASE="Fermé, en attente délibérée ($waiting_on) · rien à finaliser tant que ce n'est pas levé"
+        CURRENT_AGENT="none"
+        return
+      fi
       # A result closed while it is still the coordination's current pointer
       # has not been finalized: its six delivery proofs and the campaign
       # pointers (gc.last_delivered, gc.current) are still owed. On

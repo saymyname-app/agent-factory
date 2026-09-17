@@ -354,10 +354,20 @@ class IdleLadderPlanTest(unittest.TestCase):
         plan = plan_idle_ladder([bead("af-next")], NOW, tracked=tracked)
         self.assertEqual(("none", "ladder_active"), (plan["action"], plan["reason"]))
 
-    def test_a_bead_in_progress_for_hours_is_not_progress(self):
+    def test_a_stalled_bead_is_unstuck_and_the_next_candidate_is_taken(self):
+        # C6: this used to return a terminal "ladder_stalled" NOOP forever,
+        # so one stuck bead (af-6eqc, live) permanently starved rung 2. It
+        # must instead mark the stalled bead for the caller to unstick and
+        # move on, in the same tick, to whatever rung is next in line.
         tracked = bead("af-hi", status="in_progress", updated_at="2026-09-16T01:00:00Z")
-        plan = plan_idle_ladder([], NOW, tracked=tracked)
-        self.assertEqual("ladder_stalled", plan["reason"])
+        no_candidate = plan_idle_ladder([], NOW, tracked=tracked)
+        self.assertEqual("af-hi", no_candidate["unstick_bead"])
+        self.assertEqual("ladder_tests", no_candidate["reason"])  # falls to the next rung
+        with_candidate = plan_idle_ladder([bead("af-next")], NOW, tracked=tracked)
+        self.assertEqual(
+            ("af-hi", "ladder_factory", "ladder:factory:af-next"),
+            (with_candidate["unstick_bead"], with_candidate["reason"], with_candidate["wake_key"]),
+        )
 
     def test_a_closed_tracked_bead_releases_the_next_one(self):
         plan = plan_idle_ladder([bead("af-next")], NOW, tracked=bead("af-hi", status="closed"))
@@ -428,7 +438,10 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         self.assertIn("NOTIFIED: mayor — ladder:factory:af-fix", out)
         meta = self.current_metadata()
         self.assertEqual("af-fix", meta["gc.campaign_ladder_bead"])
-        self.assertEqual("2026-09-16T10:40:00Z", meta["gc.campaign_progress_at"])
+        # C5: dispatching a new wake is not progress by itself -- only a real
+        # event (here, af-fix actually being claimed) is. See
+        # test_the_claimed_factory_bead_counts_as_progress below.
+        self.assertNotIn("gc.campaign_progress_at", meta)
         self.assertEqual("2026-09-16T10:40:00Z", meta["gc.campaign_sentinel_at"])
         # Same bead, same key: announced once.
         self.assertIn("already notified", self.sentinel(NOW + 60).stdout)
@@ -458,6 +471,22 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         self.assertIn("NOTIFIED: mayor — materialize:af-next", out)
         log = self.log_file.read_text(encoding="utf-8")
         self.assertNotIn("af-fix", log)
+
+    def test_a_stalled_ladder_bead_is_unstuck_end_to_end(self):
+        # C6: af-stuck has been in_progress since before LADDER_STALE_SECONDS;
+        # the sentinel must mark it, stop tracking it, and dispatch af-fix in
+        # the very same tick instead of reporting ladder_stalled forever.
+        self.write_state({**metadata(), "gc.campaign_ladder_bead": "af-stuck"})
+        (self.node_dir / "af-stuck.json").write_text(json.dumps({
+            "id": "af-stuck", "status": "in_progress", "metadata": {},
+            "updated_at": "2026-09-16T01:00:00Z",
+        }), encoding="utf-8")
+        self.write_status(status(next_id=None))
+        out = self.sentinel(NOW).stdout
+        self.assertIn("NOTIFIED: mayor — ladder:factory:af-fix", out)
+        log = self.log_file.read_text(encoding="utf-8")
+        self.assertIn("bd update af-stuck --set-metadata gc.waiting_on=stalled", log)
+        self.assertEqual("af-fix", self.current_metadata()["gc.campaign_ladder_bead"])
 
     def test_no_ready_bead_falls_through_to_the_factory_queue_candidate(self):
         # C3: with no product work and no ready Factory bead, rung 2b reads

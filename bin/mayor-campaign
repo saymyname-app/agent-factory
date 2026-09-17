@@ -455,7 +455,20 @@ def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
         # The factory-lane queue (rung 2b) is a bonus source of work, not a
         # dependency: an unavailable queue must not stop rungs 2-4 firing.
         queue_candidates = None
-    return plan_idle_ladder(ready, now, last, tracked, queue_candidates)
+    plan = plan_idle_ladder(ready, now, last, tracked, queue_candidates)
+    unstick = plan.pop("unstick_bead", None)
+    if unstick:
+        # C6: best-effort, mirroring the rest of this function -- a failure
+        # here must not stop the decision this tick already computed above.
+        try:
+            run(GC_BIN, "bd", "update", str(unstick), "--set-metadata", "gc.waiting_on=stalled")
+        except CampaignCommandError:
+            pass
+        try:
+            update_metadata({"gc.campaign_ladder_bead": ""})
+        except CampaignCommandError:
+            pass
+    return plan
 
 
 def sentinel(_: argparse.Namespace) -> None:
@@ -635,8 +648,14 @@ def sentinel(_: argparse.Namespace) -> None:
         "gc.campaign_wake_state": "sent",
         "gc.campaign_wake_sent_at": iso(now),
         "gc.campaign_wake_resends": "0",
-        "gc.campaign_progress_at": iso(now),
     }
+    # C5: telling the Mayor something new is not the Mayor doing something.
+    # Stamping progress here meant that mere wake-key churn -- the product
+    # queue's head candidate changing, a fresh Factory bead being picked --
+    # reset the 60-minute liveness clock with nothing having actually
+    # advanced. Real progress is stamped elsewhere, from real events: the
+    # PROGRESS_REASONS NOOP path (delivery in flight, a dependency pending,
+    # a claimed Factory bead) and, later, bead-closed/PR-merged events.
     rung = decision.get("rung")
     if rung == "factory":
         sent["gc.campaign_ladder_bead"] = str(decision.get("ladder_bead") or "")
