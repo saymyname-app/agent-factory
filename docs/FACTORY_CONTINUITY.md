@@ -118,16 +118,17 @@ nothing currently guarantees the ladder's rungs are populated.
 - `gc supervisor run` is a persistent process, already under the host's own
   process supervision (systemd, per `OPERATIONS.md`), so a WSL/process crash
   restarts it — this part is real and already true.
-- **Missing, verified absent 2026-09-16:** no cron, no systemd timer runs
-  `factory-guard --check-only` or `mayor-campaign sentinel` on any schedule.
-  Every liveness check performed tonight was triggered by a human (Benjamin
-  or the PO session) running a command by hand. If nobody had asked "tourne
-  tjrs?" tonight, nothing would have surfaced Incident 1 or Incident 3 at
-  all until the next time a human happened to look.
-- This is squarely a class-D/E fix (§5), not class-C — the machine wasn't
-  down, the *check* simply never ran unattended. Once the watchdog runs on
-  its own schedule (§5), class C narrows to genuine host failure, which the
-  existing supervisor/systemd layer already covers.
+- **Correction, 2026-09-17 (see §8.1 for the full re-audit):** this
+  document originally claimed no scheduled check existed at all — checked
+  only OS-level `crontab`/`systemd` and missed Gas City's own internal
+  order scheduler. `orders/factory-guard.toml` and `orders/mayor-campaign.toml`
+  run those exact commands automatically every 5 and 1 minutes, respectively,
+  all night. That was wrong twice: a prior 2026-09-16 session had already
+  corrected the same mistake once. The real gap was never "nothing checks" —
+  it is that the check's first action has no follow-up (§8.2-8.4).
+- Class C therefore narrows further than originally stated: genuine host
+  failure is already covered by the existing supervisor/systemd layer: not a
+  gap this document needs to close.
 
 ## 4. Improvement axes — bounded, human-controlled, never-idle content for the ladder
 
@@ -212,17 +213,106 @@ already made them. This only removes the gap between "a signal exists" and
 "someone with the authority to act on it actually saw and acted on it in
 bounded time."
 
-## 7. What ships now
+## 8. Deep audit: what the actual files do, and why "add an alert" is the wrong shape
 
-- `af-3rf3` (existing, urgent, factory-campaign lane): scope stays
-  detect-and-page plus the false-success-`CLOSED` detection already added;
-  now additionally covers PR-conflict paging (§6, row 4) and the
-  mail-read-but-not-acted escalation (§6, row 3), both evidenced tonight.
-- New bead: **state machine + live cockpit flow graph** (§5) — a
-  zero-token projection page, part of the cockpit reorg already queued.
-- New bead: **improvement axes + maintain-alive switch** (§4) — the
-  never-idle content for ADR-0016 §7's idle ladder, with the cockpit toggle
-  Benjamin asked for.
-- `af-ptx7` (existing, P1): the actual dispatcher bug (`mol-scoped-work`
-  `load-context` on non-default `base_branch`) — engineering work, not a
-  process gap, tracked separately and correctly already.
+Benjamin, 2026-09-17: an alert on top of the flow is not enough — the flow
+itself must act. This section reads the real files (`orders/*.toml`,
+`.beads/formulas/mol-scoped-work.formula.toml`, `bin/factory-guard`,
+`lib/factory_liveness.py`, `bin/pr-autopilot`) rather than describing them
+from memory, and reframes §6/§7 around editing the four mechanisms that
+already run on a schedule, instead of adding a fifth one beside them.
+
+### 8.1 Orders are plain files, not magic
+
+`orders/*.toml` are four small files, each wired to one of this repo's own
+`bin/` scripts on a fixed cooldown:
+
+| Order | Interval | Timeout | Runs |
+|---|---|---|---|
+| `mayor-campaign` | 1 min | 50s | `./bin/mayor-campaign sentinel` |
+| `factory-guard` | 5 min | 180s | `./bin/factory-guard --quiet` |
+| `pr-autopilot` | 3 min | 120s | `./bin/pr-autopilot` |
+| `provider-failover` | 2 min | 100s | `./bin/provider-failover tick --quiet` |
+
+Correction to §2/§3 of this document and to both incident reports: these
+were never absent. They ran, on schedule, all night. The gap was never
+"nothing checks" — it was always "checking is not the same as acting past
+the first response."
+
+### 8.2 The exact liveness bug, in the code
+
+`bin/factory-guard` §7 calls `lib/factory_liveness.py`, which correctly
+classifies a stall as `stale` after the configured window (60 min default).
+What it does with a `stale` verdict, read directly from the script:
+
+1. It checks `gc.campaign_liveness_bead` on the coordination bead. If a
+   still-open bead is already linked, it prints `"liveness defect already
+   filed: $prior"` **and stops** — no re-notification, no urgency increase,
+   no second action, no matter how much longer the stall runs.
+2. Only if no bead is linked (or the prior one is closed) does it create a
+   new one — and even then, `did "filed liveness defect $created for the
+   Mayor"` is a line the guard prints to **its own log**. It is not a mail.
+   **No `gc mail send` call exists anywhere in this path.** A liveness
+   defect bead is filed for the Mayor to find, never told to it.
+
+This is the precise mechanism behind Incident 1's four-hour silence and
+Incident 3's unread-then-ignored decision: the very tool designed to catch
+a stall (ADR-0016 §5.3, built specifically after the 2026-09-15 six-hour
+incident) itself has no escalation past its first, single action. It was
+built to stop the *previous* failure (nothing checks) and inherited a new
+one (checking doesn't reach anyone).
+
+### 8.3 The concrete fix — edit the mechanism, not a bead pointing at it
+
+Not "add a watchdog that also checks this." Edit `bin/factory-guard` §7
+directly:
+
+```
+verdict = stale, no prior bead           -> file bead (unchanged) + mail mayor --notify (NEW)
+verdict = stale, prior bead open < 30min -> nothing (unchanged; give the Mayor time to react)
+verdict = stale, prior bead open 30-90min -> re-mail mayor --notify, escalate bead priority (NEW)
+verdict = stale, prior bead open > 90min -> mail human directly + gc.needs_benjamin=true on the bead (NEW)
+```
+
+Same order, same 5-minute cooldown, same zero-token/deterministic script —
+three new branches in an `if`, not a new subsystem. This is what "modify
+the flow instead of bolting on a sensor" means concretely here.
+
+### 8.4 The same shape repeats in three other places
+
+- **Gates.** The core `gate-sweep` order re-evaluates gate *conditions*
+  every 30s (does the thing it's waiting for still hold), never gate *age*.
+  A `Gate: human` has no TTL and no re-notify field anywhere in `bd gate
+  --help`'s surface. Concrete fix: a small companion check (could ride on
+  the existing `factory-guard` tick, §8.3's shape, rather than a new order)
+  that reads open gates' `created_at`, and at the same 30/90-minute bounds
+  re-mails whoever the gate names and surfaces it in the cockpit's
+  "Aujourd'hui" attention panel — exactly the panel that already exists for
+  a different block kind (`campaign-block-today`).
+- **`mol-scoped-work`'s hard failure.** Read directly from
+  `.beads/formulas/mol-scoped-work.formula.toml`: every step's
+  `[steps.retry]` block already defines `max_attempts = 3` and
+  `on_exhausted = "hard_fail"`. `workspace-setup` and its siblings carry
+  `gc.on_fail = "abort_scope"`, which is exactly what produced Incident 2's
+  silent cascade — every downstream step closes `skipped`, and nothing in
+  the formula itself communicates that outward. Concrete fix: `hard_fail`
+  should carry its own mail step in the formula (a `[[steps]]` entry that
+  only runs `needs`-gated on the failed step's hard-fail state), not rely
+  on a future session stumbling onto nested `gc.outcome` metadata to notice.
+- **`pr-autopilot` already holds the data it would need to self-report.**
+  Its own `open_prs` query already pulls `mergeStateStatus` and
+  `statusCheckRollup` for every open PR on every tick (`bin/pr-autopilot`
+  §1). A PR sitting `mergeStateStatus=DIRTY` (conflicting) or with an empty
+  check list past a few ticks is data the script already has in hand and
+  currently does nothing with beyond attempting (and silently failing) the
+  merge call. Concrete fix: a branch in the same loop that files/mails on
+  exactly those two conditions, using data the order already fetched —
+  again, editing the existing order, not adding a new one to watch it.
+
+### 8.5 What this changes about `af-3rf3`
+
+The bead's acceptance criteria described a new detection layer. Revise it to
+instead specify **edits to the four existing files above**, each with the
+exact before/after in this section, so whoever implements it edits
+`bin/factory-guard`, the gate-age check, the formula, and `bin/pr-autopilot`
+directly — not a fifth process reading the same signals from outside.
