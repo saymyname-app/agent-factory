@@ -111,5 +111,8 @@ jobs:
       - name: Main-landing gate blocks a broken push to main
         run: bash tests/factory-main-gate-test.sh
 
+      - name: ntfy phone-push alert rules
+        run: python tests/ntfy-notify-test.py
+
       - name: Every test is registered in CI
         run: bash tests/ci-registration-test.sh

@@ -1,0 +1,6 @@
+[order]
+description = "Zero-token phone push (Wave 0-bis, ADR audit 2026-09-17 finding C1): turn a factory-cockpit snapshot into an ntfy.sh alert when Benjamin needs to decide something, a resume action is required, the campaign is blocked, or a guard warning appears -- and a one-time all-clear once it resolves."
+trigger = "cooldown"
+interval = "5m"
+exec = "/home/benja/agent-factory/bin/ntfy-notify --quiet"
+timeout = "60s"
