@@ -164,8 +164,8 @@ records what was verified about the machinery underneath.
 
 Repository settings changed to support this: `allow_auto_merge=true` and
 `delete_branch_on_merge=true` on `saymyname-app/Say-my-name-back` and
-`saymyname-app/Say-my-name-front`. `benjamin-hurand/agent-factory` was
-deliberately left with auto-merge **off** — its default branch is `main`.
+`saymyname-app/Say-my-name-front`. `benjamin-hurand/agent-factory` has since been
+added to the autopilot's rig table (see *Production stays gated* below).
 
 ### Reading delivery state
 
@@ -175,9 +175,15 @@ must never report the second as shipped.
 
 ### Production stays gated
 
-`dev -> main` is not automated and must not be. `pr-autopilot` filters on
-`--base dev` and will not arm a PR targeting any other branch. Promotion to
-production remains a GUARDED transition requiring Benjamin.
+In the SayMyName rigs, `dev -> main` is not automated and must not be:
+`pr-autopilot` arms only PRs targeting a rig's `dev`. Promotion to production
+remains a GUARDED transition requiring Benjamin.
+
+The Factory's own repository is different, by Benjamin's standing
+authorization of 2026-09-16: `agent-factory` has one long-lived branch, `main`,
+and `pr-autopilot` arms its green PRs too (`bin/pr-autopilot`, rig table entry
+`.|benjamin-hurand/agent-factory|main`). `main` there is the running factory,
+not a product production branch.
 
 ### Historical note — why this needed building
 
