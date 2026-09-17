@@ -28,6 +28,9 @@ from factory_state import StateContractError, project_campaign_metadata  # noqa:
 PROGRAM = "mayor-campaign"
 GC_BIN = os.environ.get("GC_BIN", "gc")
 STATUS_BIN = os.environ.get("SAYMYNAME_STATUS_BIN", str(ROOT / "bin" / "saymyname-product-status"))
+PRODUCT_QUEUE_BIN = os.environ.get(
+    "SAYMYNAME_PRODUCT_QUEUE_BIN", str(ROOT / "bin" / "saymyname-product-queue")
+)
 COORDINATION_BEAD = os.environ.get("CAMPAIGN_COORDINATION_BEAD", "af-1vr4")
 LOCK_PATH = Path(os.environ.get(
     "CAMPAIGN_LOCK_FILE",
@@ -442,7 +445,13 @@ def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
             tracked = None
     last = {rung: metadata.get(f"gc.campaign_ladder_{rung}_at")
             for rung, _ in LADDER_GENERATIVE_RUNGS}
-    return plan_idle_ladder(ready, now, last, tracked)
+    try:
+        queue_candidates = json_run(PRODUCT_QUEUE_BIN, "list", "--json")
+    except CampaignCommandError:
+        # The factory-lane queue (rung 2b) is a bonus source of work, not a
+        # dependency: an unavailable queue must not stop rungs 2-4 firing.
+        queue_candidates = None
+    return plan_idle_ladder(ready, now, last, tracked, queue_candidates)
 
 
 def sentinel(_: argparse.Namespace) -> None:

@@ -206,17 +206,42 @@ def _epoch(value: Any) -> float | None:
         return None
 
 
+def _first_eligible_factory_queue_candidate(
+    queue_candidates: list[dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """First eligible ``goal=none`` candidate from ``saymyname-product-queue list --json``.
+
+    That queue lane (audit finding C3) is read by nobody today: neither
+    ``plan_transition`` (product-only) nor the ladder. It sits behind rung 2
+    (an already-filed Factory bead) and ahead of the generative rungs, because
+    a queued, refined candidate is more actionable than "go find something".
+    """
+    if not isinstance(queue_candidates, list):
+        return None
+    for item in queue_candidates:
+        if (
+            isinstance(item, dict)
+            and item.get("kind") == "factory_campaign"
+            and item.get("state") == "eligible"
+            and item.get("id")
+        ):
+            return item
+    return None
+
+
 def plan_idle_ladder(
     ready: list[dict[str, Any]],
     now: float,
     last_generative: dict[str, Any] | None = None,
     tracked: dict[str, Any] | None = None,
+    queue_candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Pick the next rung when product work has nothing to do.
 
     ``ready`` is ``gc bd ready --json`` for the city store. ``last_generative``
     maps a generative rung name to the ISO time it was last sent.
     ``tracked`` is the rung-2 bead the Mayor was last pointed at, if any.
+    ``queue_candidates`` is ``saymyname-product-queue list --json`` (rung 2b).
     """
     last_generative = last_generative or {}
 
@@ -253,6 +278,27 @@ def plan_idle_ladder(
                 "avec ses preuves, puis ferme-le. S'il attend quelqu'un ou quelque chose, pose "
                 f"`gc bd update {bead_id} --set-metadata gc.waiting_on=<qui>` : l'échelle le "
                 "sautera. Un seul à la fois ; si un candidat produit redevient éligible, il passe devant."
+            ),
+        }
+
+    queue_candidate = _first_eligible_factory_queue_candidate(queue_candidates)
+    if queue_candidate is not None:
+        candidate_id = str(queue_candidate["id"])
+        title = str(queue_candidate.get("title") or "").strip()
+        return {
+            "action": "wake_mayor",
+            "reason": "ladder_factory_queue",
+            "rung": "factory_queue",
+            "ladder_bead": None,
+            "wake_key": f"materialize:{candidate_id}",
+            "subject": f"USINE · candidat file {candidate_id}",
+            "message": (
+                "Aucun bead Factory prêt, mais la file `goal=none` a un candidat éligible "
+                "(ADR-0016 §7, échelon 2b). "
+                f"Relis {candidate_id} — « {title} », crée son Bead d'exécution, puis "
+                f"`./bin/saymyname-product-queue materialize {candidate_id} <execution-bead> --mayor`, "
+                "et livre-le par le flux normal. Un seul candidat matérialisé à la fois ; si un "
+                "bead Factory ou un candidat produit redevient éligible, il passe devant."
             ),
         }
 
