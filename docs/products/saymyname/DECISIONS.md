@@ -484,9 +484,65 @@ Date and deciding role: 2026-09-16, Mayor, under the standing PO/Mayor design
 delegation. Any of the seven may be reopened at no cost while the V1 campaign
 has not frozen. This resolves the block on `af-7700`; delivery resumes.
 
-## Open
+### 2026-09-18 — Leaderboard: scoped, opt-in, comparable (resolves `leaderboard-exposure-outcome`)
 
-### 2026-09-17 — Leaderboard cross-organization exposure
+**Who decided what.** Benjamin, live conversation 2026-09-18: the existing
+leaderboard "a été bâclé et ne reflète pas la cible voulue" and must be
+redesigned entirely; its purpose is to make users challenge each other, like
+Duolingo and comparable apps, to maximise engagement and learning;
+"les leaderboards servent à comparer ce qui est comparable"; and the choice of
+scope was explicitly handed to the PO in that same message ("Choisis pour
+moi ... choisit le scope où appliquer"). Everything under "PO choice" below is
+the PO session's call under that explicit delegation, not Benjamin's own
+wording, and he may amend any of it at no cost before it ships.
+
+**ADR-0015 §5b outcome: `mix`.** The takeover-derived global leaderboard is
+removed; a new leaderboard is a wanted product capability, but scoped and
+consented.
+
+**PO choice — scope (what is comparable).**
+1. The unit of comparison is **one collection inside one audience**: learners
+   are ranked only against people practising the *same set of people*, because
+   XP earned on a 25-president deck and on a 400-person organization are not
+   the same effort.
+   - *Public challenge board*: one board per public collection (V1: the French
+     presidents), among account holders who joined it.
+   - *Organization board*: one board per organization (access space), members
+     only. Never across organizations; in a federated organization, per local
+     access space, not the federation.
+2. **No platform-wide board.** Nothing ranks all SayMyName users together.
+3. **Weekly window.** The board ranks XP earned during the current ISO week on
+   that scope's content and resets every Monday, so a newcomer can compete with
+   a veteran (the Duolingo league mechanic, without promotion tiers in V1). A
+   lifetime total may be shown to the learner alone.
+4. **Score = real recall events only** on that scope's content (consistent with
+   "never show invented progress"). No XP for opening the app.
+
+**PO choice — consent and what is exposed** (class `identity_and_consent`).
+5. Participation is **opt-in per board**, offered once at a natural moment
+   (end of the first completed session on that scope), reversible at any time
+   in settings; leaving removes the learner from the board immediately.
+6. A board shows **display name, weekly XP and rank — nothing else**: never
+   selections, errors, schedule, per-person results or `lastAnswerAt`.
+7. An organization administrator sees a board **only as a participating
+   member would**; there is no admin view of it and no export. A learner who
+   has not opted in is invisible to everyone, administrators included.
+8. `private-learning` stays in force for everything else. Its acceptance is
+   amended to carve out exactly item 6 for learners who opted in.
+
+**Delivery consequence.** Slice 1 (V1 blocker, it contradicts a V1 criterion):
+`/api/leaderboard` and `/api/leaderboard/me` stop returning any cross-scope
+data. Slice 2: the scoped, weekly, opt-in boards above, backend then frontend.
+Tracked by product-queue candidate `af-9qn1q` (acceptance rewritten in EARS
+form); decomposition is the Mayor's.
+
+Reversal: the opt-in flag and the board endpoints are additive; removing the
+capability again is a feature removal with no data migration. Re-opening the
+scope choice costs nothing until slice 2 ships.
+
+Supersedes the 2026-09-17 open entry (kept below for the finding itself).
+
+<details><summary>2026-09-17 finding as raised</summary>
 
 Raised, not decided: reserved `outcome` question (ADR-0015 §5b), produced by
 the ADR-0021 existing-code review (`af-j41c2`) of the takeover-derived
@@ -516,7 +572,11 @@ until this decision lands.
 This is the one genuinely open Product/Project question at this stage of
 delivery; the sentence below no longer holds until it is resolved.
 
-None otherwise. All Enterprise-tier questions are deferred — see `## Deferred`
+</details>
+
+## Open
+
+None. All Enterprise-tier questions are deferred — see `## Deferred`
 below — and every other Product/Project question is either decided above or
 does not exist yet at this stage of delivery.
 

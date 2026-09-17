@@ -77,7 +77,13 @@ The active/next item is never inferred from this list; Beads is authoritative.
 - Let the learner explicitly choose people and fields; never enroll every
   accessible person into learning automatically.
 - Keep learning selections, mistakes, schedules and progress private from
-  organizations, subjects and other users.
+  organizations, subjects and other users. Single exception (Benjamin,
+  2026-09-18): a learner who opts in to a leaderboard exposes their display
+  name, weekly XP and rank on that board only.
+- Leaderboards exist to make learners challenge each other and compare only
+  what is comparable: one collection inside one audience (a public collection,
+  or one organization), weekly, opt-in, never platform-wide. See `DECISIONS.md`
+  2026-09-18.
 - Preserve source authority: losing access to organization content stops its
   consultation and review; private selection is not an uncontrolled copy.
 - Treat public availability, OAuth access and permission to reuse as different
