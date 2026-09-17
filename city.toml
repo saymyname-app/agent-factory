@@ -130,3 +130,30 @@ version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
 # turns that from something somebody remembers into something that happens.
 [maintenance.dolt]
 enabled = true
+
+# Caps on the implicit worker and reviewer pools. They had no cap: on
+# 2026-09-18 four city workers plus a reviewer and the rigs' Maven/Testcontainers
+# runs left the host ~500 MB of free RAM, WSL at load 15-20 on 12 vCPU, and the
+# campaign sentinel timing out. DELIVERY.md/AGENTS.md always said "one writer
+# per rig"; this is where it is enforced rather than hoped. 2 rather than 1
+# because max_active_sessions=1 turns a pool into a canonical singleton
+# session (a semantics change for every script reading `claude-<bead>` session
+# names) -- to be tried under the load test first. Patches, not agents/<name>/,
+# because a directory there must also be a provider-policy target.
+[[patches.agent]]
+name = "claude"
+max_active_sessions = 2
+
+[[patches.agent]]
+name = "claude"
+dir = "saymyname-backend"
+max_active_sessions = 2
+
+[[patches.agent]]
+name = "claude"
+dir = "saymyname-frontend"
+max_active_sessions = 2
+
+[[patches.agent]]
+name = "claude-reviewer"
+max_active_sessions = 2
