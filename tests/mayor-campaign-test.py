@@ -434,6 +434,31 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         self.assertIn("already notified", self.sentinel(NOW + 60).stdout)
         self.assertEqual(1, self.mail_count())
 
+    def test_a_stale_product_reminder_bundles_a_factory_wake(self):
+        # C4: a product wake stale enough to be reminded (>=30 min) must not
+        # starve the Factory of the same 30 minutes; bundle a ladder wake into
+        # the same mail without changing the tracked wake_key.
+        self.write_state({**metadata(), "gc.campaign_wake_key": "resume:af-exec",
+                          "gc.campaign_wake_state": "sent",
+                          "gc.campaign_wake_sent_at": "2026-09-16T10:00:00Z"})
+        self.write_status(status(result={"id": "af-exec", "state": "materialized"},
+                                 mode="materialized_without_agent"))
+        out = self.sentinel(NOW).stdout
+        self.assertIn("REMINDED: mayor — resume:af-exec (1/3)", out)
+        log = self.log_file.read_text(encoding="utf-8")
+        self.assertIn("af-fix", log)  # the bundled Factory ladder pointer
+        # The tracked wake is still the product one, not the bundled ladder's.
+        self.assertEqual("resume:af-exec", self.current_metadata()["gc.campaign_wake_key"])
+
+    def test_a_fresh_product_wake_does_not_bundle_the_ladder(self):
+        # Only a stale (reminder) wake bundles the ladder -- the first send
+        # must not spend a second call on Factory work that is not starving.
+        self.write_status(status(next_id="af-next"))
+        out = self.sentinel(NOW).stdout
+        self.assertIn("NOTIFIED: mayor — materialize:af-next", out)
+        log = self.log_file.read_text(encoding="utf-8")
+        self.assertNotIn("af-fix", log)
+
     def test_no_ready_bead_falls_through_to_the_factory_queue_candidate(self):
         # C3: with no product work and no ready Factory bead, rung 2b reads
         # `saymyname-product-queue list --json` end to end through the sentinel.
