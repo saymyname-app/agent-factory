@@ -146,6 +146,11 @@ LADDER_GENERATIVE_RUNGS = (
     ("docs", 24 * 3600),
 )
 LADDER_STALE_SECONDS = 6 * 3600
+# Rung 5 (docs/FACTORY_CONTINUITY.md sec4): the named improvement axes, gated
+# by the maintain-alive master switch. Shorter than the tests/docs rungs
+# because a selected axis (code-review, security, ...) is concrete, scoped
+# work, not a generic "go find something" audit.
+LADDER_AXIS_PERIOD_SECONDS = 6 * 3600
 
 # Not Factory work, or not ours to take.
 _LADDER_EXCLUDED_TYPES = {
@@ -235,6 +240,9 @@ def plan_idle_ladder(
     last_generative: dict[str, Any] | None = None,
     tracked: dict[str, Any] | None = None,
     queue_candidates: list[dict[str, Any]] | None = None,
+    maintain_alive: bool = True,
+    axis: dict[str, Any] | None = None,
+    last_axis: Any = None,
 ) -> dict[str, Any]:
     """Pick the next rung when product work has nothing to do.
 
@@ -242,6 +250,14 @@ def plan_idle_ladder(
     maps a generative rung name to the ISO time it was last sent.
     ``tracked`` is the rung-2 bead the Mayor was last pointed at, if any.
     ``queue_candidates`` is ``saymyname-product-queue list --json`` (rung 2b).
+    ``maintain_alive`` is the master switch (docs/FACTORY_CONTINUITY.md sec1):
+    default True; when False, the ladder does not open a new rung beyond a
+    bead already tracked in progress -- it returns an explicit,
+    cockpit-visible idle reason instead of silently doing nothing.
+    ``axis`` is the improvement axis the caller already selected via
+    ``factory_improvement_axes.select_improvement_axis`` (rung 5, sec4);
+    ``last_axis`` is the ISO time that rung last fired, for the same
+    throttle-then-rest treatment as the generative rungs.
     """
     last_generative = last_generative or {}
 
@@ -256,11 +272,18 @@ def plan_idle_ladder(
             # reopens -- and fall through to pick the next one in this same
             # tick. Liveness still sees no real progress: this path is reached
             # only through "none"/"ladder_*" reasons, never a PROGRESS_REASON.
-            plan = plan_idle_ladder(ready, now, last_generative, None, queue_candidates)
+            plan = plan_idle_ladder(
+                ready, now, last_generative, None, queue_candidates, maintain_alive, axis, last_axis,
+            )
             plan["unstick_bead"] = tracked.get("id")
             return plan
         return {"action": "none", "reason": "ladder_active", "wake_key": None,
                 "ladder_bead": tracked.get("id")}
+
+    if not maintain_alive:
+        # sec1: off means the campaign goes idle *and says so plainly* --
+        # never indistinguishable from class D/E (stalled, defective).
+        return {"action": "none", "reason": "maintain_alive_off", "wake_key": None}
 
     candidates = sorted(
         (bead for bead in ready if is_ladder_bead(bead)),
@@ -343,4 +366,46 @@ def plan_idle_ladder(
             "message": f"{body} Prochain passage de cet échelon au plus tôt dans {hours} h.",
         }
 
+    if axis is not None:
+        last = _epoch(last_axis)
+        if last is None or now - last >= LADDER_AXIS_PERIOD_SECONDS:
+            return _axis_plan(axis)
+
     return {"action": "none", "reason": "ladder_rested", "wake_key": None}
+
+
+def _axis_plan(axis: dict[str, Any]) -> dict[str, Any]:
+    """Rung 5: the wake for the improvement axis the caller already selected."""
+    name = str(axis["name"])
+    if axis["action"] == "propose":
+        subject = f"USINE · proposition d'axe {name}"
+        message = (
+            "Ni produit, ni bead Factory, ni file, ni audit générique prêt (échelle "
+            f"d'inactivité, ADR-0016 §7, échelon 5, axe « {name} »). Cet axe touche une "
+            "décision de classe réservée (ADR-0015 §3 / ADR-0016 §8) : ne matérialise AUCUN "
+            f"travail exécutable à partir de lui. Périmètre : {axis['scope_boundary']} "
+            f"Rédige uniquement une proposition -- un bead étiqueté `factory-ladder` intitulé "
+            f"« Proposition : {name} — <sujet> », décrivant ce qui est proposé et pourquoi, en "
+            "attente d'acceptation explicite d'un humain. Si rien ne mérite une proposition, "
+            "n'en crée aucune."
+        )
+    else:
+        ref = str(axis["mechanism"].get("ref") or "")
+        subject = f"USINE · axe d'amélioration {name}"
+        message = (
+            "Ni produit, ni bead Factory, ni file, ni audit générique prêt (échelle "
+            f"d'inactivité, ADR-0016 §7, échelon 5, axe « {name} »). "
+            f"Périmètre : {axis['scope_boundary']} "
+            f"Mécanisme : {ref}. Crée un bead Factory étiqueté `factory-ladder` pour ce que tu "
+            "entreprends, livre-le par le flux normal avec ses preuves, puis ferme-le. Si rien "
+            "ne le mérite, ne crée rien."
+        )
+    return {
+        "action": "wake_mayor",
+        "reason": f"ladder_axis_{name}",
+        "rung": "axis",
+        "ladder_bead": None,
+        "wake_key": f"ladder:axis:{name}",
+        "subject": subject,
+        "message": message,
+    }

@@ -170,13 +170,25 @@ descend l'**échelle d'inactivité** :
 
 1. travail produit (inchangé) ;
 2. un bead Factory prêt dans le store de la cité, le plus prioritaire, **un à la fois** ;
+2b. un candidat éligible de la file `goal=none` (`saymyname-product-queue`) ;
 3. durcissement des tests et chasse aux tests instables — au plus toutes les 12 h ;
 4. ménage du backlog et dette documentaire — au plus toutes les 24 h ;
+5. **un axe d'amélioration nommé** (`config/factory-improvement-axes.json`,
+   `FACTORY_CONTINUITY.md` §4) — au plus toutes les 6 h, et seulement si le
+   commutateur maître **« maintenir en vie »** est actif (par défaut : oui) ;
 
 puis se repose. Ne sont jamais proposés : sessions, nudges, convois, étapes
 internes, objectifs produit, beads étiquetés `upstream`, beads tenus par
 quelqu'un d'autre, beads qui attendent Benjamin ou qui portent
 `gc.waiting_on=<qui>` (c'est ainsi qu'un agent fait sauter un bead à l'échelle).
+
+Le commutateur « maintenir en vie » (`./bin/factory-improvement-axes`, section
+suivante) coupe **tout l'échelon au-delà d'un bead déjà en cours** — pas
+seulement l'échelon 5 — et rend la sentinelle explicitement silencieuse
+(`maintain_alive_off`, visible dans le cockpit) au lieu de laisser croire à un
+blocage. Un axe marqué `draft_only` (ex. `auth-providers`) ne matérialise
+jamais de travail exécutable, seulement un bead de proposition en attente
+d'acceptation humaine.
 
 Une décision produit en attente ne met en pause **que** le travail produit :
 l'échelle continue. Une fenêtre `admin`, une limite de fournisseurs ou une panne
@@ -330,6 +342,47 @@ proche, puis **reprise automatiquement**. Cela ne demande jamais Benjamin.
 
 La tâche planifiée `provider-failover` tourne toutes les 2 min (~1 s, < 1 s de
 CPU : les écrans sont lus via tmux, pas via `gc session peek` qui coûtait 8 s).
+
+---
+
+## `./bin/factory-improvement-axes` — les axes d'amélioration et « maintenir en vie »
+
+L'échelon 5 de l'échelle d'inactivité (`mayor-campaign` ci-dessus,
+`FACTORY_CONTINUITY.md` §1/§4, ADR-0016 §7) : quand la file de release n'a
+plus rien d'éligible, l'usine avance sur un **axe nommé et borné** plutôt que
+de s'arrêter.
+
+**Depuis le cockpit** (ordinateur : « Aujourd'hui » › Axes d'amélioration) :
+
+| Réglage | Effet |
+|---|---|
+| Maintenir en vie (case) | désactivé : l'échelle s'arrête entièrement au-delà d'un bead déjà en cours, et le dit explicitement |
+| Case par axe | active/désactive cet axe seul, sans toucher aux autres |
+
+Tout est réversible et ne consomme aucun token.
+
+**En ligne de commande** :
+
+```bash
+./bin/factory-improvement-axes status --json
+./bin/factory-improvement-axes set --action maintain-alive --args '{"enabled":false}'
+./bin/factory-improvement-axes set --action enable  --args '{"axis":"security"}'
+./bin/factory-improvement-axes set --action disable --args '{"axis":"i18n"}'
+```
+
+Deux fichiers, un seul écrivain, même partition que `provider-failover` :
+
+| Fichier | Rôle | Versionné |
+|---|---|---|
+| `config/factory-improvement-axes.json` | axes nommés, périmètre, `draft_only`, défauts | oui |
+| `.gc/runtime/factory-improvement-axes-state.json` | activé/désactivé courant, historique | non |
+
+Un axe `draft_only` (ex. `auth-providers` : ajouter un fournisseur de
+connexion est une décision de classe réservée, ADR-0015 §3) ne matérialise
+**jamais** de travail exécutable — seulement un bead de proposition en
+attente d'acceptation humaine. Un axe activé dont le mécanisme n'est pas
+encore outillé (ex. `dead-code`) est sauté en silence, comme un échelon
+générique vide — ce n'est pas un blocage.
 
 ---
 

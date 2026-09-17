@@ -419,3 +419,15 @@ button.reference-card{width:100%;text-align:left}
 .feedback.error{color:var(--red)}
 .provider-fold summary{cursor:pointer;color:var(--muted);padding:.4rem 0}
 .provider-fold .provider-row{margin-top:.5rem}
+.axes-list{display:grid;gap:.6rem;margin-top:.6rem}
+.axes-row{display:flex;align-items:flex-start;gap:.6rem;padding:.65rem .75rem;border:1px solid var(--line);border-radius:.75rem;background:var(--panel2)}
+.axes-row.off{opacity:.6}
+.axes-row label{display:flex;align-items:flex-start;gap:.6rem;flex:1;cursor:pointer}
+.axes-row input{margin-top:.2rem}
+.axes-row-body{display:flex;flex-direction:column;gap:.15rem}
+.axes-row-name{font-weight:600;display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.axes-badge{font-size:.72rem;padding:.05rem .5rem;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.axes-badge.draft{color:var(--amber);border-color:rgba(243,196,94,.45)}
+.axes-badge.stub{color:var(--muted)}
+.axes-row-scope{font-size:.85rem;color:var(--muted)}
+.axes-next{margin:.5rem 0 0;color:var(--muted)}

@@ -163,6 +163,36 @@ existing ADR-0015/ADR-0016 reserved-decision machinery already provides
 this; the axes just need to declare which one applies to each so nothing
 new has to be invented.
 
+**Implemented, 2026-09-17/18 (`af-xe30d`):** the table above is
+`config/factory-improvement-axes.json` (documented by
+`config/factory-improvement-axes.schema.json`, enforced by
+`lib/factory_improvement_axes.validate_policy`); live on/off state --
+overriding the config's own defaults, cockpit- and CLI-mutable -- is
+`.gc/runtime/factory-improvement-axes-state.json` via
+`bin/factory-improvement-axes` (`status --json`, `set --action
+maintain-alive|enable|disable`), mirroring the config/provider-policy.json
+vs `.gc/provider-state.json` split ADR-0018 already proved. `factory_campaign
+.plan_idle_ladder` gained a rung 5: when `maintain_alive` is true and no
+earlier rung (product, a ready Factory bead, the factory-lane queue, tests,
+docs) has anything to do, `factory_improvement_axes.select_improvement_axis`
+picks the first enabled axis in table order -- a `draft_only` axis only ever
+produces a proposal (`action: "propose"`), never dispatched work; a
+non-draft, not-yet-wired stub (dead-code, architecture-debt, i18n, docs-debt)
+is skipped as a deliberate no-op, exactly like an empty generative rung, not
+a stall. `maintain_alive = false` gates the *entire* ladder beyond a bead
+already tracked in progress, returning the explicit `maintain_alive_off`
+reason (cockpit-visible in the new "Axes d'amélioration" panel,
+`ui/factory-cockpit/index.html#axes-panel` /
+`improvement-axes.js`) instead of silently doing nothing, per the "says so
+plainly" requirement above. `select_campaign_work`
+(`lib/product_release.py`) needed no code change for its own stop, as
+scoped: it already returns `reason: "release_target_proven"` and selects no
+further work once every release criterion is `proven` --
+`tests/product-release-test.py` already covers that path. Tests:
+`tests/factory-improvement-axes-test.py`,
+`tests/mayor-campaign-test.py::IdleLadderPlanTest` (axis rung cases),
+`tests/factory-cockpit-test.py` (`AxesBridge`, HTTP routes, panel presence).
+
 ## 5. State machine + live cockpit graph
 
 Benjamin asked to see, in the cockpit, exactly which state the Factory is

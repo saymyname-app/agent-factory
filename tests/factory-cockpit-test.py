@@ -43,6 +43,7 @@ from factory_cockpit import (  # noqa: E402
     _product_bead,
     handler_factory,
     ProviderBridge,
+    AxesBridge,
 )
 from factory_state import (  # noqa: E402
     CONTRACT as HUMAN_STATE_CONTRACT,
@@ -686,6 +687,125 @@ class FactoryCockpitTest(unittest.TestCase):
         # The phone card lives inside the État screen, not in a new view.
         state_screen = html.split('data-mobile-panel="state"', 1)[1].split('data-mobile-panel="decisions"', 1)[0]
         self.assertIn("mobile-providers", state_screen)
+
+    def test_axes_bridge_reads_and_writes_only_through_the_tool(self):
+        """ADR-0016 sec7/sec4: the cockpit asks bin/factory-improvement-axes; it never edits config."""
+        calls = []
+
+        def executor(args, **kwargs):
+            calls.append(args)
+            if args[1] == "status":
+                return subprocess.CompletedProcess(
+                    args, 0, json.dumps({"contract": "agent-factory-improvement-axes-status/v1"}), "",
+                )
+            payload = json.loads(args[args.index("--args") + 1])
+            if payload.get("axis") == "nope":
+                return subprocess.CompletedProcess(args, 2, json.dumps({"ok": False, "error": "unknown axis: 'nope'"}), "")
+            return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "summary": "fait", "status": {}}), "")
+
+        bridge = AxesBridge(executor=executor, command=["factory-improvement-axes"])
+        self.assertEqual("agent-factory-improvement-axes-status/v1", bridge.status()["contract"])
+        self.assertTrue(bridge.submit("enable", {"axis": "security"})["ok"])
+        self.assertEqual(
+            ["factory-improvement-axes", "set", "--action", "enable", "--args",
+             '{"axis": "security"}', "--by", "cockpit"],
+            calls[-1],
+        )
+        with self.assertRaisesRegex(ValueError, "inconnu"):
+            bridge.submit("rm -rf", {})
+        with self.assertRaises(ValueError):
+            bridge.submit("enable", "security")
+        with self.assertRaisesRegex(ValueError, "unknown axis"):
+            bridge.submit("enable", {"axis": "nope"})
+
+        broken = AxesBridge(
+            executor=lambda args, **kw: subprocess.CompletedProcess(args, 2, "", "policy unreadable"),
+            command=["factory-improvement-axes"],
+        )
+        with self.assertRaises(SourceError):
+            broken.status()
+
+    def test_http_axes_routes_are_guarded(self):
+        class Axes:
+            submitted = []
+
+            def status(self):
+                return {"contract": "agent-factory-improvement-axes-status/v1", "axes": []}
+
+            def submit(self, action, args):
+                if action not in AxesBridge.ACTIONS:
+                    raise ValueError("Réglage d'axe d'amélioration inconnu.")
+                self.submitted.append((action, args))
+                return {"ok": True, "summary": "fait"}
+
+        class Cache:
+            def get(self):
+                return {"ok": True}
+
+            def invalidate(self):
+                pass
+
+        class Stub:
+            def conversation(self, *args):
+                return {}
+
+            def index(self):
+                return {}
+
+            def status(self):
+                return {}
+
+            def collect(self):
+                return {}
+
+        axes = Axes()
+        cache = Cache()
+        handler = handler_factory(
+            cache, mayor_bridge=Stub(), detail_reader=Stub(), token_cache=cache,
+            po_bridge=Stub(), preview_bridge=Stub(), reference_reader=Stub(),
+            queue_bridge=Stub(), delivery_reader=Stub(), decision_store=Stub(),
+            provider_bridge=Stub(), axes_bridge=axes,
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        origin = f"http://127.0.0.1:{server.server_port}"
+        try:
+            def call(method, path, body=None, headers=None):
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+                connection.request(method, path, body, headers or {})
+                response = connection.getresponse()
+                data = response.read()
+                connection.close()
+                return response.status, data
+
+            status, body = call("GET", "/api/improvement-axes")
+            self.assertEqual(200, status)
+            self.assertEqual("agent-factory-improvement-axes-status/v1", json.loads(body)["contract"])
+            status, body = call("GET", "/improvement-axes.js")
+            self.assertEqual(200, status)
+            self.assertIn(b"human-improvement-axes-control", body)
+
+            good = {"Content-Type": "application/json", "Origin": origin,
+                    "X-Factory-Cockpit": "human-improvement-axes-control"}
+            payload = json.dumps({"action": "enable", "args": {"axis": "security"}})
+            self.assertEqual(202, call("POST", "/api/improvement-axes", payload, good)[0])
+            self.assertEqual([("enable", {"axis": "security"})], axes.submitted)
+            # Another surface's confirmation header does not open this one.
+            wrong = {**good, "X-Factory-Cockpit": "human-provider-control"}
+            self.assertEqual(403, call("POST", "/api/improvement-axes", payload, wrong)[0])
+            self.assertEqual(403, call("POST", "/api/improvement-axes", payload, {**good, "Origin": "http://evil"})[0])
+            bad = json.dumps({"action": "shutdown", "args": {}})
+            self.assertEqual(400, call("POST", "/api/improvement-axes", bad, good)[0])
+            self.assertEqual(1, len(axes.submitted))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_axes_panel_is_in_the_cockpit(self):
+        html = (ROOT / "ui" / "factory-cockpit" / "index.html").read_text(encoding="utf-8")
+        for anchor in ("axes-panel", "axes-maintain-alive", "axes-list", "axes-next",
+                       '<script src="/improvement-axes.js">'):
+            self.assertIn(anchor, html)
 
     def test_http_queue_guard_and_reference_endpoint(self):
         class Cache:

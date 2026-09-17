@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Factory improvement-axes policy",
+  "description": "docs/FACTORY_CONTINUITY.md sec4, ADR-0016 sec7: the named, bounded, human-controlled content for the idle ladder's never-idle rung. Versioned and human-edited -- live on/off state lives separately in .gc/runtime/factory-improvement-axes-state.json, mirroring config/provider-policy.json vs .gc/provider-state.json.",
+  "type": "object",
+  "required": ["contract", "maintain_alive_default", "axes"],
+  "additionalProperties": false,
+  "properties": {
+    "contract": {"const": "factory-improvement-axes/v1"},
+    "maintain_alive_default": {
+      "type": "boolean",
+      "description": "Default of the master switch: when true (the required default per ADR-0016 sec7), an empty release-target queue draws from an enabled axis instead of idling. When false, the campaign goes idle and the cockpit says so plainly."
+    },
+    "axes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/axis"}
+    }
+  },
+  "$defs": {
+    "axis": {
+      "type": "object",
+      "required": [
+        "name", "description", "scope_boundary", "default_enabled", "draft_only", "mechanism"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z0-9-]+$", "minLength": 1},
+        "description": {"type": "string", "minLength": 1},
+        "scope_boundary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What this axis may and may not touch. Enforced narratively by the wake message, not mechanically -- the mechanical guarantee is draft_only for any axis whose boundary is itself a reserved-class decision (ADR-0015 sec3 / ADR-0016 sec8)."
+        },
+        "default_enabled": {"type": "boolean"},
+        "draft_only": {
+          "type": "boolean",
+          "description": "True for an axis whose scope boundary touches a reserved-class decision. A draft_only axis must never dispatch executable work; it only ever produces a human-reviewable proposal bead."
+        },
+        "mechanism": {
+          "type": "object",
+          "required": ["status"],
+          "additionalProperties": false,
+          "properties": {
+            "status": {"enum": ["wired", "not_implemented"]},
+            "ref": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Where the mechanism lives, e.g. 'skill:code-review' or 'doc:docs/products/saymyname/DESIGN_GOVERNANCE.md'. Required when status is 'wired'."
+            }
+          },
+          "if": {"properties": {"status": {"const": "wired"}}},
+          "then": {"required": ["ref"]}
+        }
+      }
+    }
+  }
+}
