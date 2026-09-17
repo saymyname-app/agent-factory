@@ -2,5 +2,5 @@
 description = "Observe the persistent SayMyName campaign and durably notify the sole Mayor when its next authorized transition is due"
 trigger = "cooldown"
 interval = "1m"
-exec = "./bin/mayor-campaign sentinel"
+exec = "env CAMPAIGN_COMMAND_TIMEOUT=30 ./bin/mayor-campaign sentinel"
 timeout = "50s"
