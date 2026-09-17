@@ -236,6 +236,49 @@ this is a local convenience gate, not a security boundary. See ADR-0020 for
 the full decision record and `tests/factory-main-gate-test.sh` for the proof
 that it actually blocks a broken push and never blocks anything else.
 
+## Real-PII leak guard — containment while the dev DB still holds real people (af-6eqc)
+
+The dev DB currently holds real person data (the "invariant de confinement"
+in `DESIGN_GOVERNANCE.md`). Removing that is a separate, non-urgent piece of
+work (af-hq2j, a synthetic dataset with the same shape). Until it ships, this
+is a two-layer **containment** guard against a real identifier leaving the
+machine — it does not eliminate the underlying problem, it contains it.
+
+**Layer A — local, exact-match (`bin/factory-pii-guard`, installed in
+`.githooks/pre-push`).** Only this machine has dev-DB access, so only this
+machine can build the identifier list, and only this machine can run this
+check meaningfully. A local, gitignored file at
+`.gc/pii-guard/real-identifiers.local` (one exact real identifier per line,
+populated by hand or by a separate local-only script — `.gc/` is already
+excluded by the root `.gitignore`) is grepped, exact-match, against the
+outgoing diff (`origin/main...HEAD`) plus the working tree, on every
+`git push`. A match refuses the push. The guard never prints the list, which
+identifier matched, or where — the value being protected must never land in
+a bead, in mail, or in any shared log, so it does not appear even in this
+check's own output. `bin/factory-guard` also surfaces this check (pass/fail
+only, same non-disclosure) in its periodic report, so an unpushed match does
+not wait for a push to be noticed.
+
+**Layer B — both rigs' CI, structural backstop, zero secrets
+(`bin/factory-provenance-guard`, run from each rig's GitHub Actions
+workflow).** CI cannot hold the real-identifier list at all — putting it in
+a GitHub Actions secret would itself hand real PII to a third party, which is
+exactly what this guards against. So CI does not attempt exact-value
+matching. Instead it requires that any data file under a
+fixture/seed/test-resource path (`fixtures?/`, `seeds?/`, `test-resources?/`,
+`testdata/`, `test-data/`, any depth) carry a provenance marker proving it
+came from the synthetic generator (af-hq2j): a `PROVENANCE.md` manifest in
+the same directory with a line `<filename>: synthetic-provenance af-hq2j`.
+An unmarked data file in one of those paths fails the build — it is either
+real data that should never have landed there, or a synthetic file someone
+forgot to record.
+
+Emergency bypass for Layer A is the standard `git push --no-verify`. Neither
+layer is a security boundary against a determined actor; both are local/CI
+convenience gates that catch the mistake before it leaves the machine or
+merges. See `bin/factory-pii-guard` and `bin/factory-provenance-guard` for
+the exact mechanism.
+
 ## Réversibilité par défaut
 
 Règle (ADR-0019, ADR-0016 §7) : un changement doit pouvoir être défait dans la

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# factory-provenance-guard — Layer B of the zero-token real-PII leak guard
+# (af-6eqc). Runs in CI (GitHub Actions on saymyname-backend and
+# saymyname-frontend), no secrets, no exact-value matching against real
+# identifiers -- CI cannot hold the real-identifier list at all, because
+# putting it in a GitHub Actions secret would itself hand real PII to a
+# third party, exactly what this guards against.
+#
+# Instead this is a structural backstop: any data file that lands under a
+# fixture/seed/test-resource path must be provenance-marked as synthetic
+# (produced by the af-hq2j generator), recorded in a PROVENANCE.md manifest
+# in the same directory:
+#
+#   <filename>: synthetic-provenance af-hq2j
+#
+# An unmarked data file in one of those paths fails the build -- it is
+# either real data that should never have landed there, or a synthetic file
+# someone forgot to record. This is deliberately a structural check (path +
+# manifest), never a content check, so it needs no access to what the data
+# actually says.
+#
+# Usage: factory-provenance-guard [--root DIR]
+# Exit 0: no data file under a watched path, or every one found is marked.
+# Exit 1: at least one unmarked data file found.
+# Exit 2: usage/environment error.
+set -uo pipefail
+
+ROOT="."
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --root) ROOT=$2; shift 2 ;;
+    -h|--help)
+      sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "factory-provenance-guard: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+cd "$ROOT" || { echo "factory-provenance-guard: $ROOT unreachable" >&2; exit 2; }
+
+WATCHED_DIR_RE='(^|/)(fixtures?|seeds?|test-resources?|testdata|test-data)(/|$)'
+DATA_EXT_RE='\.(json|csv|sql|ya?ml|xml|properties|tsv)$'
+EXCLUDE_RE='(^|/)(node_modules|target|dist|build|\.git|\.claude/worktrees)(/|$)'
+
+FOUND=0
+UNMARKED=0
+while IFS= read -r -d '' f; do
+  rel="${f#./}"
+  printf '%s' "$rel" | grep -qE "$EXCLUDE_RE" && continue
+  printf '%s' "$rel" | grep -qE "$WATCHED_DIR_RE" || continue
+  printf '%s' "$rel" | grep -qE "$DATA_EXT_RE" || continue
+  FOUND=$((FOUND + 1))
+  dir=$(dirname "$rel")
+  base=$(basename "$rel")
+  manifest="$dir/PROVENANCE.md"
+  if [ -f "$manifest" ] && grep -qE "^${base}:.*synthetic-provenance.*af-hq2j" "$manifest"; then
+    continue
+  fi
+  echo "! unmarked data file under a watched path: $rel (no synthetic-provenance entry for it in $manifest)" >&2
+  UNMARKED=$((UNMARKED + 1))
+done < <(find . -type f -print0 2>/dev/null)
+
+if [ "$UNMARKED" -gt 0 ]; then
+  echo "factory-provenance-guard: BLOCKED -- $UNMARKED unmarked data file(s) under fixture/seed/test-resource paths." >&2
+  echo "Any data under those paths must be synthetic (see af-hq2j) and recorded in a PROVENANCE.md manifest: '<filename>: synthetic-provenance af-hq2j'." >&2
+  exit 1
+fi
+
+echo "factory-provenance-guard: clean -- $FOUND data file(s) checked under watched paths, all marked (or none found)"
+exit 0

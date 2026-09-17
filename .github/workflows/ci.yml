@@ -117,6 +117,12 @@ jobs:
       - name: Main-landing gate blocks a broken push to main
         run: bash tests/factory-main-gate-test.sh
 
+      - name: Real-PII leak guard blocks a real identifier leaving the machine
+        run: bash tests/factory-pii-guard-test.sh
+
+      - name: Provenance guard blocks unmarked fixture/seed/test-resource data
+        run: bash tests/factory-provenance-guard-test.sh
+
       - name: ntfy phone-push alert rules
         run: python tests/ntfy-notify-test.py
 
