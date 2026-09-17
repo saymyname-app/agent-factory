@@ -486,9 +486,39 @@ has not frozen. This resolves the block on `af-7700`; delivery resumes.
 
 ## Open
 
-None. All Enterprise-tier questions are deferred — see `## Deferred` below —
-and every Product/Project question is either decided above or does not exist
-yet at this stage of delivery.
+### 2026-09-17 — Leaderboard cross-organization exposure
+
+Raised, not decided: reserved `outcome` question (ADR-0015 §5b), produced by
+the ADR-0021 existing-code review (`af-j41c2`) of the takeover-derived
+`private-selection` capability.
+
+Finding: `LeaderboardDao.getTop()`/`findTop()` (backend) and
+`LeaderboardController`'s `/api/leaderboard` and `/api/leaderboard/me`
+endpoints carry no tenant/organization scoping predicate — any authenticated
+user can see every other user's display name, XP, rank and last-answer time,
+platform-wide, regardless of organization. This is pre-existing
+(takeover-derived) code, not something the Factory built for V1. It
+contradicts the `private-learning` criterion's own acceptance text: "Un
+administrateur d'organisation connecté au même environnement ne peut observer
+ni les sélections, ni les erreurs, ni le planning, ni la progression
+individuelle d'un apprenant." — XP/rank is a direct proxy for progress.
+
+Recorded in `config/releases/saymyname-v1.json` as
+`origin.conflicts.leaderboard-cross-org-exposure`, with reserved decision
+`leaderboard-exposure-outcome` offering the three fixed ADR-0015 §5b options:
+`keep_target` (tenant-scope the leaderboard — the reviewing tier's
+recommendation, not its decision), `adapt_target` (amend `private-learning`'s
+acceptance to knowingly exclude the pre-existing gamification leaderboard
+from "progression"), or `mix`. Follow-up implementation work is queued as
+product-queue candidate `af-9qn1q` under goal `af-u8id`, naturally blocked
+until this decision lands.
+
+This is the one genuinely open Product/Project question at this stage of
+delivery; the sentence below no longer holds until it is resolved.
+
+None otherwise. All Enterprise-tier questions are deferred — see `## Deferred`
+below — and every other Product/Project question is either decided above or
+does not exist yet at this stage of delivery.
 
 ## Deferred — Enterprise, until after V1 release
 

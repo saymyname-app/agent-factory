@@ -27,7 +27,19 @@
       {"kind": "repository", "ref": "SayMyName backend (saymyname-app org) and frontend (Say-my-name-front)", "access": "read"},
       {"kind": "conversation", "ref": "Benjamin, live conversation 2026-09-16 — ADR-0015/ADR-0021 arbitration", "access": "none"}
     ],
-    "conflicts": [],
+    "conflicts": [
+      {
+        "id": "leaderboard-cross-org-exposure",
+        "summary": "LeaderboardDao.getTop()/findTop() and LeaderboardController (/api/leaderboard, /api/leaderboard/me) return every user's displayName, XP, rank and lastAnswerAt with no tenant/organization scoping, to any authenticated user — contradicting the private-learning criterion's acceptance that no organization admin can observe an individual learner's progress.",
+        "code_evidence": [
+          {"kind": "scan", "ref": "rigs/saymyname-backend/persistence/src/main/java/com/saymyname/persistence/dao/leaderboard/LeaderboardDao.java — getTop()/findTop() has no tenant/user-scoping predicate; returns every user's stat row platform-wide", "status": "proven"},
+          {"kind": "scan", "ref": "rigs/saymyname-backend/webapp/src/main/java/com/saymyname/webapp/controller/LeaderboardController.java — GET /api/leaderboard and /api/leaderboard/me require only an authenticated Principal, no organization-membership check", "status": "proven"}
+        ],
+        "intent_ref": "criteria/private-learning acceptance: «Un administrateur d’organisation connecté au même environnement ne peut observer ni les sélections, ni les erreurs, ni le planning, ni la progression individuelle d’un apprenant.»",
+        "decision_id": "leaderboard-exposure-outcome",
+        "resolution": "pending"
+      }
+    ],
     "discovery": {
       "generated_at": "2026-09-14T00:00:00Z",
       "method": "deterministic_scan",
@@ -152,8 +164,14 @@
         {"kind": "scan", "ref": "docs/products/saymyname/PROJECT_INVENTORY.md#view-catalogue — Access row: sign in, sign up, email verification, password recovery", "status": "proven"}
       ],
       "review": {
-        "state": "unreviewed", "tier": null, "reviewed_at": null, "reviewed_by": null, "ref": [],
-        "notes": "Pre-Factory foundation per PROJECT_INVENTORY.md (reviewed 2026-09-14): 'Existing foundation; preserve and simplify'. Downgraded from proven to partial by ADR-0021's fail-closed rule — not yet run through the three-tier review; tier 1 (static, 0 tokens) is next, owned by ADR-0021 §4's dependent review bead."
+        "state": "reviewed_ok", "tier": "model", "reviewed_at": "2026-09-17T21:22:29Z", "reviewed_by": "factory:model",
+        "ref": [
+          {"kind": "test", "ref": "saymyname-backend: GoogleAuthServiceTest, InvitationServiceAuthorizationTest, InvitationServiceAcceptanceTest, EmailVerificationEventListenerTest, InvitationAdminAuthorizationTest, InvitationPublicControllerTest — 28 tests, all pass, run 2026-09-17", "status": "proven"},
+          {"kind": "test", "ref": "saymyname-frontend: sign-in/postAuthRedirect, sign-up/passwordPolicy (npm run test:unit, 161 pass), invitations/invitationAcceptance (npm run test:invitation, 6 pass) — run 2026-09-17", "status": "proven"},
+          {"kind": "github", "ref": "Backend CI run 35070900381 green on dev (2026-09-16); Frontend CI run 35072436009 green on dev (2026-09-16)", "status": "proven"},
+          {"kind": "scan", "ref": "/code-review low against security/google, service/invitation, service/email, webapp/controller/invitation, webapp/controller/admin: clean tree, no correctness findings in scope", "status": "proven"}
+        ],
+        "notes": "Tier 1 static: 28 backend + 167 frontend tests covering sign-in/up, email verification, password policy and invitation accept/authorize all pass; both rigs' CI is green on dev tip; /code-review at effort low surfaced no correctness findings on the cited auth/invitation paths. Reserved class (identity_and_consent) escalates to tier 2 regardless of the clean tier-1 result, per ADR-0021's escalation rule. Tier 2 (model-assisted): the account-access target — create, verify, retrieve and resume an account before a learning session — is fully covered by the discovered surfaces with no gap found against the target statement. Verdict: reviewed_ok, no origin.conflicts[] entry raised."
       }
     },
     {
@@ -184,8 +202,14 @@
         {"kind": "scan", "ref": "docs/products/saymyname/PROJECT_INVENTORY.md#view-catalogue — Learning row: training options, course, course hub, quiz, progress APIs", "status": "proven"}
       ],
       "review": {
-        "state": "unreviewed", "tier": null, "reviewed_at": null, "reviewed_by": null, "ref": [],
-        "notes": "Pre-Factory core engine per PROJECT_INVENTORY.md: 'Existing core engine; reconnect it to the new personal home'. Unreviewed pending ADR-0021 tier assignment."
+        "state": "reviewed_ok", "tier": "static", "reviewed_at": "2026-09-17T21:22:29Z", "reviewed_by": "factory:static",
+        "ref": [
+          {"kind": "test", "ref": "saymyname-backend: QuizQuestionDtoMapperOrderingTest, QuizQuestionDtoMapperAssociationTest, QuizAnswerGuardIdempotencyRegressionTest, QuizRestControllerAnswerTrainingTest, QuizSnapshotGuardsTest, IdentityQuizCompatibilityTest, DefaultAnswerKeyServiceTest, QuizEngineFormatFallbackTest, QuizOrchestrationCourseAntiRepeatTest, QuizEngineMultiTurnTest, CourseOwnershipMutationTest, CourseQuestionAttemptOwnershipTest, CourseServiceStatsTest, CourseAnswerGuardIdempotencyRegressionTest, CourseRestControllerNoMoreQuestionsTest, QuizPluginConstructionTest — 105 tests, all pass, run 2026-09-17", "status": "proven"},
+          {"kind": "test", "ref": "saymyname-frontend: scenes/quiz/quizAnswerSubmission, multiStepQuizState, scenes/courses/courseStatsPresentation (npm run test:unit, 161 pass) — run 2026-09-17", "status": "proven"},
+          {"kind": "github", "ref": "Backend CI run 35070900381 green on dev (2026-09-16); Frontend CI run 35072436009 green on dev (2026-09-16)", "status": "proven"},
+          {"kind": "scan", "ref": "/code-review low against service/quiz, service/course, webapp/controller/course, frontend scenes/quiz, scenes/courses: clean tree, no correctness findings", "status": "proven"}
+        ],
+        "notes": "Tier 1 static: 105 backend + frontend quiz/course-engine tests pass, both rigs' CI green on dev tip, /code-review at effort low surfaced no correctness findings on the quiz/course paths. Non-reserved class (practicing recall on chosen items touches none of identity_and_consent/irreversible/money/authority/legal); tier 1 clean → stop at tier 1 per ADR-0021's escalation rule. Note: the global cross-tenant leaderboard exposure found while reviewing private-selection (see that capability's review and origin.conflicts.leaderboard-cross-org-exposure) sits on quiz/answer XP events this capability's own APIs emit, but it contradicts the private-learning criterion's privacy acceptance, not learning-loop's own target of practicing recall on chosen items — recorded there, not duplicated here."
       }
     },
     {
@@ -198,8 +222,15 @@
         {"kind": "scan", "ref": "docs/products/saymyname/PROJECT_INVENTORY.md#view-catalogue — People row: trombinoscope, profile, person search, subscriptions", "status": "proven"}
       ],
       "review": {
-        "state": "unreviewed", "tier": null, "reviewed_at": null, "reviewed_by": null, "ref": [],
-        "notes": "Pre-Factory organization-oriented person model per PROJECT_INVENTORY.md: 'Existing organization-oriented capability; adapt to explicit personal selections'. The underlying person/profile primitives are takeover-derived even though the private-selection layer above them is newly built; unreviewed pending ADR-0021 tier assignment."
+        "state": "needs_rework", "tier": "model", "reviewed_at": "2026-09-17T21:22:29Z", "reviewed_by": "factory:model",
+        "ref": [
+          {"kind": "test", "ref": "saymyname-backend: PersonSearchAttributeGuardTest, ProfileSettingsControllerSrsTest, KnowledgeSelectionServiceAntiRepeatTest, SrsAlgorithmExposureTest — 16 tests, all pass, run 2026-09-17", "status": "proven"},
+          {"kind": "test", "ref": "saymyname-frontend: securityBoundaries.test.mjs, challengeBoundaries.test.mjs (npm run test:unit, 161 pass) — run 2026-09-17", "status": "proven"},
+          {"kind": "github", "ref": "Backend CI run 35070900381 green on dev (2026-09-16); Frontend CI run 35072436009 green on dev (2026-09-16)", "status": "proven"},
+          {"kind": "scan", "ref": "webapp/dto/person/AdminPersonDetailsDto.java, AdminPersonCardDto.java: no quiz/progress/error/pace fields exposed to the admin person-directory surface", "status": "proven"},
+          {"kind": "scan", "ref": "persistence/dao/leaderboard/LeaderboardDao.java getTop()/findTop() and webapp/controller/LeaderboardController.java (/api/leaderboard, /api/leaderboard/me): no tenant/organization scoping predicate — see origin.conflicts.leaderboard-cross-org-exposure", "status": "proven"}
+        ],
+        "notes": "Tier 1 static: person-directory attribute-guard and SRS/course-selection unit tests pass on both rigs, CI green on both rigs' dev tip, /code-review at effort low surfaced no findings on the cited paths. Reserved class (identity_and_consent: exposure of personal data) escalates to tier 2 regardless. Tier 2 (model-assisted): the private-learning criterion's own acceptance — no organization admin can observe an individual learner's selections, errors, schedule or progress — is contradicted by the pre-existing, takeover-derived global leaderboard: LeaderboardDao.getTop()/findTop() carries no tenant/organization predicate and LeaderboardController's /api/leaderboard and /api/leaderboard/me endpoints require only an authenticated Principal, exposing every user's XP, rank and lastAnswerAt (a direct proxy for individual progress) to any authenticated user regardless of organization. The admin-facing person-directory DTOs do not themselves leak progress, so the gap is specifically the pre-existing leaderboard, not the new private-selection layer. Verdict: needs_rework. Recorded as origin.conflicts.leaderboard-cross-org-exposure with reserved outcome decision leaderboard-exposure-outcome (keep_target/adapt_target/mix) — the choice itself is not made here, per ADR-0015 §5b; a keep_target fix (tenant-scope the leaderboard) is offered as the recommendation, not the decision. Follow-up work tracked as product-queue candidate af-9qn1q under af-u8id."
       }
     },
     {
@@ -319,6 +350,18 @@
         {"id": "approve-recommendations", "label": "Approuver les sept recommandations"},
         {"id": "amend-recommendations", "label": "Amender une ou plusieurs recommandations"},
         {"id": "keep-blocked", "label": "Maintenir ce sous-graphe en attente"}
+      ]
+    },
+    {
+      "id": "leaderboard-exposure-outcome", "title": "Global leaderboard exposes learner XP/rank across organizations — keep_target, adapt_target, or mix?",
+      "source_ref": "docs/products/saymyname/DECISIONS.md#2026-09-17-leaderboard-cross-organization-exposure",
+      "status": "decision_required", "risk": "high", "revision": 1,
+      "capability_refs": ["private-selection", "learning-loop"],
+      "dependency_refs": [],
+      "options": [
+        {"id": "keep-target", "label": "Keep target: tenant-scope /api/leaderboard and /api/leaderboard/me so no cross-organization XP/rank visibility remains"},
+        {"id": "adapt-target", "label": "Adapt target: amend private-learning's acceptance to explicitly exclude the pre-existing gamification leaderboard from 'progression'"},
+        {"id": "mix", "label": "Mix: keep a scoped/opt-in leaderboard, remove only the cross-organization default visibility"}
       ]
     }
   ],
