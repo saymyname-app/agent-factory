@@ -1,0 +1,384 @@
+description = """
+Polecat direct-commit variant — commits via a work branch + PR, never straight
+to base_branch.
+
+Extends mol-polecat-base with a simplified workspace setup (a feature branch
+off base_branch, no refinery submission) and a PR instead of a direct push.
+Designed for small installations where a lightweight PR is enough review.
+
+## Polecat Contract (Branch + PR Model)
+
+1. Receive work (molecule poured with this formula, assigned to you)
+2. Follow steps in order (read descriptions, execute, move to next)
+3. Push a work branch, open a PR against base_branch, close bead, exit
+4. You are GONE — no refinery step needed
+
+**A feature branch, always.** Work is committed to a branch named after the
+work bead and opened as a PR against base_branch; nothing is ever pushed
+directly to base_branch, main included.
+
+Local fork (2026-09-17, Factory audit F3+F4): the upstream formula pushed
+`HEAD:{{base_branch}}` directly — no PR, no review, and nothing stopped
+base_branch=main. 19 runs in 24h did exactly that (af-ptx7's sibling
+finding). This fork refuses to run against main and always ends in a PR;
+CI and pr-autopilot are the review, matching every other writer formula.
+It also escalates to `${GC_ESCALATION_RECIPIENT:-human}` instead of the
+literal `<rig>/witness` placeholder, which is not a real recipient in a
+single-operator Factory (F4).
+
+## Failure Modes
+
+| Situation | Action |
+|-----------|--------|
+| Tests fail | Fix them. Do not proceed with failures. |
+| base_branch is main | Refuse immediately. Mail the escalation recipient. Do not create a worktree. |
+| Push conflict (3 retries exhausted) | Mail the escalation recipient, mark yourself stuck |
+| Blocked on external | Mail the escalation recipient, mark yourself stuck |
+| Context filling | `gc runtime request-restart` (blocks until controller kills you) |
+| Unsure what to do | Mail the escalation recipient, don't guess |"""
+formula = "mol-polecat-commit"
+extends = ["mol-polecat-base"]
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "load-context"
+title = "Load context and verify assignment"
+description = """
+Initialize your session and understand your assignment.
+
+**1. Prime your environment:**
+```bash
+gc prime                    # Load role context
+gc bd prime                    # Load beads context
+```
+
+**2. Derive your work bead and check your hook:**
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+WORK_BEAD_ID=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+if [ -z "$WORK_BEAD_ID" ]; then
+  echo "mol-polecat-base requires an input convoy with exactly one tracked member" >&2
+  exit 1
+fi
+gc bd list --assignee=$GC_AGENT --status=in_progress
+```
+
+The work bead is your assigned issue. Read it carefully:
+```bash
+gc bd show "$WORK_BEAD_ID"           # Full issue details
+gc bd show "$WORK_BEAD_ID" --json | jq '.[0].metadata'  # Check for existing metadata
+```
+
+**3. Check for rejection (IMPORTANT):**
+
+If `metadata.rejection_reason` exists, this bead was previously attempted
+and rejected by the refinery. Read the reason carefully:
+- Rebase conflict → you'll resume the existing branch and rebase
+- Test failure → you'll resume the branch and fix the issue
+
+If `metadata.branch` exists, a branch already exists from the prior attempt.
+You will use it in workspace-setup instead of creating a new one.
+
+**4. Check inbox for additional context:**
+```bash
+gc mail inbox
+# Read any HANDOFF or assignment messages, then archive after absorbing context
+# gc mail read <id> → process → gc mail archive <id>
+```
+
+**5. Understand the requirements:**
+- What exactly needs to be done?
+- What files are likely involved?
+- Are there dependencies or blockers?
+- What does "done" look like?
+- If rejected: what specifically needs fixing?
+
+If blocked or unclear, mail the escalation recipient (F4: `<rig>/witness` is
+not a real recipient in a single-operator Factory):
+```bash
+gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "HELP: Unclear requirements" -m "Issue: $WORK_BEAD_ID
+Question: <what you need clarified>"
+```
+
+**Exit criteria:** You understand the work and can begin."""
+
+[[steps]]
+id = "preflight-tests"
+title = "Verify pre-flights pass on base branch"
+needs = ["workspace-setup"]
+description = """
+Check if the codebase is healthy BEFORE starting your work.
+
+**Config: typecheck_command = {{typecheck_command}}**
+**Config: lint_command = {{lint_command}}**
+**Config: test_command = {{test_command}}**
+
+**Skip this step if resuming a rejected branch** — pre-flights were
+already verified on the prior attempt. Close this step and proceed.
+
+**1. Run pre-flights (skip empty commands silently):**
+```bash
+{{typecheck_command}}
+{{lint_command}}
+{{test_command}}
+```
+
+**2. If pre-flights pass:** proceed.
+
+**3. If pre-flights fail on {{base_branch}}:**
+
+File a bead and proceed. Do NOT fix pre-existing failures — that's
+not your assignment.
+
+FORBIDDEN: Pushing to {{base_branch}}. FORBIDDEN: Fixing pre-existing failures.
+
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+WORK_BEAD_ID=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+gc bd create --title "Pre-existing failure: <description>" --type bug --priority 1
+gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "NOTICE: {{base_branch}} has failing pre-flights" -m "Filed: <bead-id>. Proceeding with $WORK_BEAD_ID."
+```
+
+**Exit criteria:** Pre-flights pass (or pre-existing bug filed), ready to implement."""
+
+[[steps]]
+id = "implement"
+title = "Implement the solution"
+needs = ["preflight-tests"]
+description = """
+Do the actual implementation work.
+
+**Working principles:**
+- Follow existing codebase conventions
+- Make atomic, focused commits
+- Keep changes scoped to the assigned issue
+- Don't gold-plate or scope-creep
+
+**If resuming a rejected branch:** Read `metadata.rejection_reason`
+from load-context. Focus on fixing the specific issue that caused
+rejection — don't redo everything.
+
+Derive your work bead in this shell context:
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+WORK_BEAD_ID=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+```
+
+**Commit frequently with detailed messages.** Every commit gets a
+subject AND a body. The body is what makes the repo navigable a year
+from now — the reviewer (and future-you) needs to understand *why* the
+change exists, not just *what* the diff did. The diff already shows
+the what.
+
+```bash
+git add <files>
+git commit -m "<type>: <imperative subject> ($WORK_BEAD_ID)" -m "$(cat <<'BODY'
+<1-3 paragraph explanation:>
+- The motivation: which bug, regression, design decision, or upstream
+  request drove this commit
+- What the change actually does at a higher level than the diff
+- Anything non-obvious about the approach: trade-offs taken, paths not
+  chosen, hidden constraints honored
+- Validation: which tests/benchmarks/manual checks confirmed correctness
+
+Note any follow-ups, deferred edge cases, or downstream impacts here.
+BODY
+)"
+```
+
+Commit types: feat, fix, refactor, perf, test, docs, chore
+
+**Examples of strong subjects + bodies:**
+- `fix(session): preserve lifecycle metadata during crash adoption (ga-xxxx)`
+  body: explains the stale session projection, the resume path that
+  lost metadata, the projection update, and the focused adoption test
+- `perf(events): batch typed payload registration lookups (ga-xxxx)`
+  body: cites the event fan-out profile, names the registry call site
+  that drove the regression, and notes why the cache stays read-only
+
+**Weak commits to avoid** (refinery/reviewer can't tell what's going on):
+- `fix: stuff (ga-xxxx)`
+- `perf: speed up the slow loop`
+- `refactor` with no body
+
+**Discovered work (outside scope):**
+```bash
+gc bd create --title "Found: <description>" --type bug --priority 2
+```
+Do NOT fix unrelated issues in this branch.
+
+**If stuck (>15 minutes):**
+```bash
+gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "HELP: Stuck on implementation" -m "Issue: $WORK_BEAD_ID
+Problem: <what's blocking you>
+Tried: <what you've attempted>"
+```
+
+**If context filling up:**
+```bash
+gc runtime request-restart
+```
+This blocks until the controller kills your session. The next session
+resumes from context (re-reads formula steps, checks git/bead state).
+
+**Exit criteria:** Implementation complete, all changes committed."""
+
+[[steps]]
+id = "workspace-setup"
+title = "Set up a work branch off base branch"
+needs = ["load-context"]
+description = """
+Create an isolated worktree on a NEW branch off base_branch HEAD — never a
+detached checkout of base_branch itself, and never base_branch=main.
+
+**Config: base_branch = {{base_branch}}**
+**Config: setup_command = {{setup_command}}**
+
+**1. Refuse to run against main (F3: no writer formula pushes to main):**
+```bash
+if [ "{{base_branch}}" = "main" ]; then
+  echo "mol-polecat-commit refuses base_branch=main -- main is promoted by a human, never by a writer formula" >&2
+  gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "HELP: mol-polecat-commit refused base_branch=main" \
+    -m "This convoy asked for direct work against main. Re-route it to a formula that opens a PR against dev/staging, or have a human handle it directly."
+  gc runtime drain-ack
+  exit 1
+fi
+```
+
+**2. Fetch latest and derive your work bead:**
+```bash
+git fetch --prune origin
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+WORK_BEAD_ID=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+if [ -z "$WORK_BEAD_ID" ]; then
+  echo "mol-polecat-commit requires an input convoy with exactly one tracked member" >&2
+  exit 1
+fi
+```
+
+**3. Ensure worktree exists, on its own branch.**
+
+Check if `metadata.work_dir` already records your worktree path:
+```bash
+WORKTREE=$(gc bd show "$WORK_BEAD_ID" --json | jq -r '.[0].metadata.work_dir // empty')
+BRANCH="polecat/$WORK_BEAD_ID"
+```
+
+**If worktree path exists in metadata** — reuse it:
+```bash
+cd "$WORKTREE"              # Enter existing worktree, already on $BRANCH
+git pull --rebase origin {{base_branch}}  # Catch up to latest base
+```
+If the directory is missing, fall through to create a new one.
+
+**If no worktree** — create one on a new branch:
+```bash
+WORKTREE_PATH=$(pwd)/worktrees/"$WORK_BEAD_ID"
+git worktree add "$WORKTREE_PATH" -b "$BRANCH" origin/{{base_branch}}
+cd "$WORKTREE_PATH"
+```
+Record immediately so restarts and witness recovery can find it:
+```bash
+gc bd update "$WORK_BEAD_ID" --set-metadata work_dir="$WORKTREE_PATH" --set-metadata gc.work_branch="$BRANCH"
+```
+
+**4. Ensure clean working state:**
+```bash
+git status                  # Should be clean
+```
+
+**5. Run project setup (if configured):**
+```bash
+{{setup_command}}
+```
+Empty setup_command → skip.
+
+**Exit criteria:** In your worktree, on `polecat/$WORK_BEAD_ID` off
+base_branch HEAD, deps installed, worktree and branch recorded on the bead."""
+
+[[steps]]
+id = "commit-and-push"
+title = "Push the work branch, open a PR, and exit"
+needs = ["self-review"]
+description = """
+Commit your work to the branch, push it, and open a PR against base_branch.
+You cease to exist after this step.
+
+**1. Derive your work bead and verify clean state (safeguard):**
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+WORK_BEAD_ID=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+BRANCH=$(gc bd show "$WORK_BEAD_ID" --json | jq -r '.[0].metadata.gc_work_branch // .[0].metadata["gc.work_branch"] // empty')
+git status --porcelain
+```
+If ANY output (untracked files, uncommitted changes):
+```bash
+git add -A && git commit -m "chore: capture remaining work ($WORK_BEAD_ID)"
+```
+
+**2. Push the branch, rebasing on base_branch if it has moved (up to 3 attempts):**
+
+```bash
+for attempt in 1 2 3; do
+    if git push -u origin "$BRANCH"; then
+        echo "Push succeeded on attempt $attempt"
+        break
+    fi
+    if [ "$attempt" -eq 3 ]; then
+        echo "Push failed after 3 attempts"
+        gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "HELP: Push conflict after 3 retries" \
+          -m "Issue: $WORK_BEAD_ID. Cannot push $BRANCH."
+        gc runtime drain-ack
+        exit 1
+    fi
+    echo "Push failed (attempt $attempt), rebasing onto latest base..."
+    git fetch origin {{base_branch}}
+    git rebase "origin/{{base_branch}}"
+    # If rebase conflicts: resolve them, then git rebase --continue
+done
+```
+
+**3. Open the PR against base_branch:**
+```bash
+PR_URL=$(gh pr create --base "{{base_branch}}" --head "$BRANCH" \
+  --title "<one-line summary of $WORK_BEAD_ID>" \
+  --body "Closes $WORK_BEAD_ID.
+
+<what changed and why>")
+gc bd update "$WORK_BEAD_ID" --set-metadata "gc.pr_url=$PR_URL"
+```
+The PR is the review; CI and pr-autopilot merge it on green. This step does
+not wait for the merge — that is pr-autopilot's job, running on its own
+cooldown, not this session's.
+
+**4. Clean up worktree (branch stays, the PR needs it until merged):**
+```bash
+WORKTREE_PATH=$(pwd)
+cd ..
+git worktree remove "$WORKTREE_PATH" --force
+gc bd update "$WORK_BEAD_ID" --unset-metadata work_dir
+```
+
+**5. Close the bead:**
+```bash
+gc bd update "$WORK_BEAD_ID" --notes "Opened $PR_URL against {{base_branch}}: <brief summary>"
+gc bd close "$WORK_BEAD_ID"
+```
+Closing here means "the work is done and under review," not "merged" —
+pr-autopilot reconciles `merge_result=merged` onto this same bead once GitHub
+actually merges the PR; never treat this close as shipped by itself.
+
+**6. Signal reconciler and exit.**
+```bash
+gc runtime drain-ack
+exit
+```
+
+`gc runtime drain-ack` tells the reconciler to kill this session. The
+reconciler only restarts you if the pool check command finds more work.
+You are GONE. Done means gone. There is no idle state.
+
+**Exit criteria:** Branch pushed, PR opened against {{base_branch}}, worktree
+cleaned up, bead closed with the PR URL recorded, session exited."""
