@@ -104,6 +104,16 @@ TESTS_RUN=$((TESTS_RUN + 1))
 run_fixture_json closed-current >/dev/null 2>"$STDERR_FILE" || fail_test "closed-current should succeed"
 [[ $(cat "$STDERR_FILE") != *WARNING* ]] || fail_test "closed-current went through the degrade path"
 assert_json dependency '.activity.state + ":" + .resume.condition' 'waiting_automatic:La dépendance af-proof se ferme'
+# C7: a current result closed while explicitly waiting (an automatic
+# dependency, or a bare gc.waiting_on hold) must not be nagged to finalize
+# like af-7700 was -- it has nothing owed until the wait is lifted (live case:
+# af-u8id.4.1).
+assert_json closed-dependency '.resume.mode + ":" + .resume.condition' 'automatic_dependency:La dépendance af-proof se ferme'
+TESTS_RUN=$((TESTS_RUN + 1))
+run_fixture_json closed-dependency >/dev/null 2>"$STDERR_FILE" || fail_test "closed-dependency should succeed"
+[[ $(cat "$STDERR_FILE") != *WARNING* ]] || fail_test "closed-dependency went through the degrade path"
+assert_json closed-waiting-on '.result.stage' 'materialized'
+assert_json closed-waiting-on '.result.phase' 'Fermé, en attente délibérée (po) · rien à finaliser tant que ce n'"'"'est pas levé'
 assert_json blocked '.resume.mode + ":" + .result.cause' 'blocked:La preuve externe requise manque'
 assert_json agent-missing '.resume.mode + ":" + .resume.owner' 'materialized_without_agent:Mayor'
 assert_json health-down '.health.state + ":" + .activity.state' 'unavailable:stopped'

@@ -58,6 +58,8 @@ emit_current() {
   [[ $scenario != human ]] || status="open"
   [[ $scenario != blocked ]] || status="blocked"
   [[ $scenario != closed-current ]] || status="closed"
+  [[ $scenario != closed-dependency ]] || status="closed"
+  [[ $scenario != closed-waiting-on ]] || status="closed"
   if [[ $scenario == routed ]]; then
     issue_id="smb-current"
     title="Implement backend product outcome"
@@ -71,6 +73,8 @@ emit_current() {
   local metadata='{}'
   [[ $scenario != blocked ]] || metadata='{"gc.blocked_reason":"La preuve externe requise manque"}'
   [[ $scenario != dependency ]] || metadata='{"gc.resume_mode":"automatic_dependency","gc.resume_condition":"La dépendance af-proof se ferme"}'
+  [[ $scenario != closed-dependency ]] || metadata='{"gc.resume_mode":"automatic_dependency","gc.resume_condition":"La dépendance af-proof se ferme"}'
+  [[ $scenario != closed-waiting-on ]] || metadata='{"gc.waiting_on":"po"}'
   [[ $scenario != finalizing ]] || metadata='{"gc.work_outcome":"pass"}'
   [[ $scenario != direct && $scenario != direct-ambiguous ]] || metadata='{"gc.session_id":"af-jqla","gc.session_name":"codex-af-jqla","gc.routed_to":"saymyname-backend/codex"}'
   cat <<JSON

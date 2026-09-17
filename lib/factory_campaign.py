@@ -249,9 +249,16 @@ def plan_idle_ladder(
     if isinstance(tracked, dict) and tracked.get("status") == "in_progress":
         updated = _epoch(tracked.get("updated_at"))
         if updated is not None and now - updated > LADDER_STALE_SECONDS:
-            # Not progress: the liveness watchdog must be allowed to see it.
-            return {"action": "none", "reason": "ladder_stalled", "wake_key": None,
-                    "ladder_bead": tracked.get("id")}
+            # C6: this used to return a terminal NOOP forever, so one stuck
+            # bead (af-6eqc, live) permanently starved rung 2 of ever trying a
+            # different candidate. Stop tracking it -- the caller marks it
+            # gc.waiting_on so is_ladder_bead excludes it even if it later
+            # reopens -- and fall through to pick the next one in this same
+            # tick. Liveness still sees no real progress: this path is reached
+            # only through "none"/"ladder_*" reasons, never a PROGRESS_REASON.
+            plan = plan_idle_ladder(ready, now, last_generative, None, queue_candidates)
+            plan["unstick_bead"] = tracked.get("id")
+            return plan
         return {"action": "none", "reason": "ladder_active", "wake_key": None,
                 "ladder_bead": tracked.get("id")}
 
