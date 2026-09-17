@@ -5,6 +5,7 @@ Use progressive disclosure. Do not read every document by default.
 | Need | Read |
 |---|---|
 | Factory invariants / agent bootstrap | `../AGENTS.md` |
+| Comment fonctionne l'usine, de bout en bout, en français, pour Benjamin | `COMMENT_FONCTIONNE_USINE.md` |
 | Codex desktop, CLI, remote/mobile protocol and authority | `OPERATOR_BRIDGE.md` |
 | Human Factory cockpit, product roadmap/decisions/board, state/resume contract, agent drill-down, token usage, Mayor channel | `FACTORY_WORKSPACE_AGENTS.md`, `OPERATIONS.md`, `decisions/ADR-0012-human-state-and-resume-contract.md` |
 | Integrated product PO, project/context graphs, reusable cockpit products | `PRODUCT_COCKPIT_TEMPLATE.md`, `ADD_A_PRODUCT.md`, `config/product-cockpit.schema.json`, `config/cockpit.json` |
@@ -21,6 +22,7 @@ Use progressive disclosure. Do not read every document by default.
 | Current migration state, cutover and rollback | `MIGRATION.md` |
 | Install/start/stop/doctor/backup/restore/recovery | `OPERATIONS.md` |
 | Stopping and restarting the whole factory, and proving nothing was lost | `RUNBOOK_STOP_AND_RESTART.md` |
+| A middle-of-the-night alert or a factory check with no PO session open (French) | `RUNBOOK_4H_DU_MATIN.md` |
 | What `factory-guard`, `factory-resources`, `factory-doctor`, `provider-failover` and `mayor-campaign` do, and when to run them | `FACTORY_TOOLS.md` |
 | Which model provider each target runs, quota walls, fallback chains, cockpit controls | `FACTORY_TOOLS.md`, `decisions/ADR-0018-automatic-provider-failover.md`, `config/provider-policy.json` |
 | What the campaign does when no product work is eligible (idle ladder), liveness, wake reminders | `FACTORY_TOOLS.md`, `decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` |
