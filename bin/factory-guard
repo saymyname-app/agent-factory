@@ -74,7 +74,7 @@ say "factory-guard — $ROOT"
 say ""
 
 # --- 1. critical runtime files ----------------------------------------------
-CRITICAL="bin/pr-autopilot orders/pr-autopilot.toml bin/factory-guard orders/factory-guard.toml bin/provider-failover orders/provider-failover.toml"
+CRITICAL="bin/pr-autopilot orders/pr-autopilot.toml bin/factory-guard orders/factory-guard.toml bin/provider-failover orders/provider-failover.toml bin/factory-watchdog orders/factory-watchdog.toml"
 MISSING=""
 for f in $CRITICAL; do [ -e "$f" ] || MISSING="$MISSING $f"; done
 
@@ -373,7 +373,18 @@ except Exception:
     print("")')
           if [ -n "$created" ]; then
             gc bd update "$COORD" --set-metadata "gc.campaign_liveness_bead=$created" >/dev/null 2>&1 || true
-            did "filed liveness defect $created for the Mayor"
+            # Incident 2026-09-16 gap 1: a filed defect nobody is nudged to read
+            # is equivalent to silence. Page the Mayor at filing time instead of
+            # waiting for its next natural pause; factory-watchdog re-nudges on
+            # a cooldown for as long as this stays open.
+            gc mail send mayor --notify \
+              -s "Liveness defect filed: $created" \
+              -m "ACTION: factory-guard detected the campaign is not advancing and filed a defect
+STATE: $msg
+EVIDENCE: gc bd show $created
+NEXT: diagnose why the campaign is not advancing, then close $created with the cause" \
+              >/dev/null 2>&1 || true
+            did "filed liveness defect $created for the Mayor and paged it"
           else
             bad "could not file the liveness defect"
           fi

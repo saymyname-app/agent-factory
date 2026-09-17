@@ -91,11 +91,13 @@ grep -q "liveness — no campaign progress for 90 min" <<<"$out" || { echo "$out
 grep -q "^UNRESOLVED" <<<"$out" || fail "a stalled campaign must not read as healthy"
 [ "$(creates)" = "0" ] || fail "--check-only filed a defect"
 
-# 3. the default run files it exactly once --------------------------------------
+# 3. the default run files it exactly once, and pages the Mayor -----------------
 out=$(guard)
 grep -q "filed liveness defect af-live1" <<<"$out" || { echo "$out" >&2; fail "stalled campaign not filed"; }
 [ "$(jq -r '.[0].metadata["gc.campaign_liveness_bead"]' "$COORD")" = "af-live1" ] \
   || fail "the filed defect is not remembered on the coordination bead"
+grep -q "^mail send mayor --notify" "$CALLS" \
+  || fail "filing a liveness defect must page the Mayor, not just file it (incident gap 1)"
 out=$(guard)
 grep -q "already filed: af-live1" <<<"$out" || { echo "$out" >&2; fail "second run did not recognise the open defect"; }
 [ "$(creates)" = "1" ] || fail "the defect was filed more than once"

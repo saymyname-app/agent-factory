@@ -24,6 +24,7 @@ Use progressive disclosure. Do not read every document by default.
 | What `factory-guard`, `factory-resources`, `factory-doctor`, `provider-failover` and `mayor-campaign` do, and when to run them | `FACTORY_TOOLS.md` |
 | Which model provider each target runs, quota walls, fallback chains, cockpit controls | `FACTORY_TOOLS.md`, `decisions/ADR-0018-automatic-provider-failover.md`, `config/provider-policy.json` |
 | What the campaign does when no product work is eligible (idle ladder), liveness, wake reminders | `FACTORY_TOOLS.md`, `decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` |
+| A filed liveness defect, an aged human gate, a stuck/conflicting PR, or a CLOSED workflow hiding a non-pass outcome not getting paged | `FACTORY_TOOLS.md` (`./bin/factory-watchdog`), `INCIDENT_2026-09-16-silent-campaign-stall.md` |
 | Is anything wrong that we can actually fix (vs upstream noise) | run `./bin/factory-doctor`; see `FACTORY_TOOLS.md` |
 | The four conditions every factory improvement must meet | `decisions/ADR-0017-four-conditions-for-factory-improvements.md` |
 | Operator dashboard, SayMyName status, and preview | `OPERATIONS.md` |

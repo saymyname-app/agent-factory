@@ -32,7 +32,7 @@ Ce qu'il contrôle :
 | `rig:*` | un rig suspendu bloque la livraison ; un dispatcher au repos, non |
 | `worktrees` | nomme les worktrees qui épinglent encore une branche fusionnée |
 | `provider overlay` | **régénère** `city.provider.toml` s'il a disparu (sans lui, la config de la cité ne charge plus) |
-| `liveness` | vérifie que la campagne **avance**, pas seulement que les pièces répondent ; ouvre **un** signalement pour le Mayor si elle stagne |
+| `liveness` | vérifie que la campagne **avance**, pas seulement que les pièces répondent ; ouvre **un** signalement pour le Mayor si elle stagne, et le lui envoie par mail (`--notify`) au moment du dépôt — `./bin/factory-watchdog` relance ensuite tant qu'il reste ouvert |
 
 **La sauvegarde de l'arbre de travail** mérite une explication. Un fichier que
 `.gitignore` couvre est hors périmètre par déclaration du dépôt. Tout le reste
@@ -80,6 +80,43 @@ La sentinelle de campagne laisse deux horodatages sur le bead de coordination :
 
 Une pause volontaire (fenêtre de maintenance, quotas épuisés) est affichée,
 jamais signalée comme panne. Les règles sont dans `lib/factory_liveness.py`.
+
+---
+
+## `./bin/factory-watchdog` — la surveillance qui page, pas seulement qui observe
+
+La vivacité de `factory-guard` répond à « la campagne avance-t-elle ». Trois
+autres signaux peuvent rester muets même quand elle avance
+(`INCIDENT_2026-09-16-silent-campaign-stall.md`) :
+
+```bash
+./bin/factory-watchdog                # par défaut : vérifie ET page (mail + bead)
+./bin/factory-watchdog --check-only   # ne touche à rien, sort non-zéro si problème
+```
+
+| Contrôle | Ce qu'il fait |
+|---|---|
+| `gates` | une « Gate: human » ouverte depuis plus de 30 min (réglable) est re-signalée au Mayor, pas seulement laissée dans la file |
+| `prs` | une PR du dépôt Factory en `CONFLICTING`, ou dont aucun contrôle CI n'a jamais démarré, après 30 min — distincte d'une PR qui attend simplement son tour |
+| `workflows` | un bead molécule/workflow fermé `CLOSED` avec `gc.outcome` ≠ `pass` (le cas `on_fail=abort_scope` : chaque étape en aval passe `outcome=skipped` en silence) |
+| `liveness` (relais) | re-signale un défaut de vivacité déjà déposé par `factory-guard` tant qu'il reste ouvert, au lieu de le laisser filer une seule fois |
+
+**Observe et page seulement** (ADR-0016 §7) : il ne résout jamais une porte,
+ne fusionne ni ne ferme jamais une PR, et ne rouvre jamais un workflow. Chaque
+signalement devient au plus un mail au Mayor (`gc mail send mayor --notify`,
+relancé sur un délai de repli, jamais à chaque passage) et, pour les portes et
+PR, un bead qui survit au passage suivant. Les règles pures sont dans
+`lib/factory_watchdog.py` ; les décisions déterministes sont dans
+`lib/factory_liveness.py` pour la vivacité elle-même.
+
+Les signalements sont aussi écrits dans
+`.gc/runtime/factory-watchdog-signals.json`, que le panneau « Aujourd'hui » du
+cockpit lit de façon additive (`today.watchdog_alerts`) — sans jamais
+modifier `human_state.campaign.blocked` : un signalement local ne doit
+jamais se lire comme un arrêt de toute la campagne.
+
+**Quand le lancer** : il tourne seul via son order (`orders/factory-watchdog.toml`,
+5 min, bien en-dessous de l'heure qui a coûté 4h20 le 2026-09-16-17).
 
 ---
 

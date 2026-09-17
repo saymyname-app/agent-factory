@@ -18,6 +18,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+import factory_cockpit  # noqa: E402
 from factory_cockpit import (  # noqa: E402
     FactoryCollector,
     DeliveryEvidenceReader,
@@ -33,6 +34,7 @@ from factory_cockpit import (  # noqa: E402
     _write_blockers,
     _last_matching_json,
     _operator_name,
+    _read_watchdog_alerts,
     _safe_identifier,
     _today_projection,
     load_product_config,
@@ -242,6 +244,18 @@ class FactoryCockpitTest(unittest.TestCase):
         self._blocker_state_patch.start()
         self.addCleanup(self._blocker_state_patch.stop)
         self.addCleanup(self._blocker_state_dir.cleanup)
+
+        # Same isolation for the watchdog signal file (factory-watchdog's
+        # findings): tests must never read or mutate the real repo's state,
+        # and a missing file must degrade to "no alerts", not an error.
+        self._watchdog_signal_dir = tempfile.TemporaryDirectory()
+        self._watchdog_signal_patch = patch(
+            "factory_cockpit.WATCHDOG_SIGNAL_PATH",
+            Path(self._watchdog_signal_dir.name) / "factory-watchdog-signals.json",
+        )
+        self._watchdog_signal_patch.start()
+        self.addCleanup(self._watchdog_signal_patch.stop)
+        self.addCleanup(self._watchdog_signal_dir.cleanup)
 
     def test_saymyname_governance_domains_and_inventory_are_complete(self):
         memory = ProductMemory().collect()
@@ -947,6 +961,42 @@ class FactoryCockpitTest(unittest.TestCase):
         result = _today_projection(None, decisions, [])
         self.assertEqual([], result["effective_blockers"])
         self.assertEqual(5, len(result["general_decisions"]))
+
+    def test_today_defaults_to_no_watchdog_alerts(self):
+        result = _today_projection(None, [], [])
+        self.assertEqual([], result["watchdog_alerts"])
+
+    def test_today_surfaces_watchdog_alerts_without_touching_blockers(self):
+        # A watchdog finding is additive: it must appear in the Aujourd'hui
+        # panel without being folded into effective_blockers (that list is
+        # reserved for gc.needs_benjamin, ADR-0016's global-stop signal, and a
+        # local watchdog finding must never read as one -- section 7).
+        alerts = [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate af-oihx open 50 min"}]
+        result = _today_projection(None, [], [], watchdog_alerts=alerts)
+        self.assertEqual(alerts, result["watchdog_alerts"])
+        self.assertEqual([], result["effective_blockers"])
+
+    def test_read_watchdog_alerts_degrades_quietly_when_the_file_is_absent(self):
+        self.assertEqual([], _read_watchdog_alerts())
+
+    def test_read_watchdog_alerts_degrades_quietly_on_malformed_json(self):
+        factory_cockpit.WATCHDOG_SIGNAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        factory_cockpit.WATCHDOG_SIGNAL_PATH.write_text("not json", encoding="utf-8")
+        self.assertEqual([], _read_watchdog_alerts())
+
+    def test_read_watchdog_alerts_round_trips_a_written_signal_file(self):
+        factory_cockpit.WATCHDOG_SIGNAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        factory_cockpit.WATCHDOG_SIGNAL_PATH.write_text(json.dumps({
+            "generated_at": "2026-09-17T08:00:00Z",
+            "alerts": [
+                {"kind": "pr_conflicting", "id": "57", "message": "PR #57 has a merge conflict"},
+                {"kind": "incomplete"},  # missing id/message -- dropped, not raised
+            ],
+        }), encoding="utf-8")
+        result = _read_watchdog_alerts()
+        self.assertEqual(1, len(result))
+        self.assertEqual("pr_conflicting", result[0]["kind"])
+        self.assertEqual("57", result[0]["id"])
 
     def test_today_leaves_ambiguous_blocker_target_unlinked(self):
         needs = "Benjamin must decide before af-hxji can continue."

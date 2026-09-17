@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# factory-watchdog — deterministic (L0, zero-token) paging for three gaps the
+# existing campaign-liveness check does not cover (Incident 2026-09-16,
+# docs/INCIDENT_2026-09-16-silent-campaign-stall.md):
+#
+#   1. AGED HUMAN GATE   a "Gate: human" issue can sit open for hours with no
+#                        re-notification and no visible cockpit signal. af-oihx
+#                        sat 2h7m on 2026-09-16 before a human found it by hand.
+#   2. STUCK PR          a Factory-repo PR that is CONFLICTING, or has never
+#                        triggered any CI check, looks identical from the
+#                        outside to one quietly waiting its turn. PR #57 sat
+#                        ~3h with statusCheckRollup: [] and a merge conflict;
+#                        pr-autopilot's "merge on green CI" assumption never
+#                        fires for it and nothing else reported it.
+#   3. FALSE-SUCCESS CLOSE  a molecule/workflow bead can close CLOSED while
+#                        gc.outcome=fail (on_fail=abort_scope skipped every
+#                        downstream step). status=closed alone reads as
+#                        success; only nested metadata says otherwise.
+#
+# It also re-nudges the Mayor about a campaign-liveness defect
+# (lib/factory_liveness.py, filed by factory-guard) that is still open and
+# aging, closing the gap between "filed" and "read".
+#
+# This is observe-and-page ONLY (ADR-0016 section 7: a local reason may never
+# produce a global stop). It never resolves a gate, merges/holds a PR, reopens
+# a workflow, or blocks the campaign. Every finding becomes at most one mail
+# to the Mayor (re-sent on a cooldown, never every run) and, for gates/PRs, one
+# tracked bead so the finding survives past the next run. Findings are also
+# written to a small local signal file the cockpit's "Aujourd'hui" panel reads
+# additively -- it never flips the campaign's own blocked state.
+#
+# Usage: factory-watchdog [--check-only] [--quiet]
+set -uo pipefail
+
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd)"
+CHECK_ONLY=0
+QUIET=0
+REPO="${FACTORY_WATCHDOG_REPO:-benjamin-hurand/agent-factory}"
+GATE_MINUTES="${FACTORY_WATCHDOG_GATE_MINUTES:-30}"
+PR_MINUTES="${FACTORY_WATCHDOG_PR_MINUTES:-30}"
+RENUDGE_MINUTES="${FACTORY_WATCHDOG_RENUDGE_MINUTES:-30}"
+WORKFLOW_LOOKBACK_HOURS="${FACTORY_WATCHDOG_WORKFLOW_LOOKBACK_HOURS:-24}"
+COORD="${CAMPAIGN_COORDINATION_BEAD:-af-1vr4}"
+SIGNAL_FILE="$ROOT/.gc/runtime/factory-watchdog-signals.json"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check-only) CHECK_ONLY=1 ;;
+    --quiet) QUIET=1 ;;
+    -h|--help)
+      sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+cd "$ROOT" || { echo "factory-watchdog: $ROOT unreachable"; exit 2; }
+
+PROBLEMS=(); ACTIONS=(); STATUS=0
+ALERTS_JSON="[]"
+say()  { [ "$QUIET" = "1" ] || printf '%s\n' "$*"; }
+bad()  { PROBLEMS+=("$1"); STATUS=1; }
+did()  { ACTIONS+=("$1"); say "  PAGED: $1"; }
+now_epoch() { date -u +%s; }
+now_iso()   { date -u -d "@$(now_epoch)" +%Y-%m-%dT%H:%M:%SZ; }
+epoch_of()  { date -u -d "$1" +%s 2>/dev/null || echo 0; }
+add_alert() {  # add_alert <kind> <id> <message>
+  ALERTS_JSON=$(printf '%s' "$ALERTS_JSON" | jq --arg k "$1" --arg i "$2" --arg m "$3" \
+    '. + [{"kind":$k, "id":$i, "message":$m}]')
+}
+
+if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 \
+   || [ ! -f "$LIB/factory_watchdog.py" ]; then
+  say "· watchdog — not checked (not a city root, or gc/jq unavailable)"
+  exit 0
+fi
+
+should_nudge() {  # should_nudge <bead-id> <metadata-key> -> 0 if due, 1 if throttled
+  local bead_id=$1 key=$2 last
+  last=$(gc bd show "$bead_id" --json 2>/dev/null | jq -r --arg k "$key" '(.[0].metadata[$k] // empty)')
+  [ -z "$last" ] && return 0
+  local last_epoch age_min
+  last_epoch=$(epoch_of "$last")
+  age_min=$(( (($(now_epoch) - last_epoch)) / 60 ))
+  [ "$age_min" -ge "$RENUDGE_MINUTES" ]
+}
+
+# --- 1. aged human gates ------------------------------------------------------
+gates_json=$(gc bd gate list --json 2>/dev/null || echo '[]')
+[ -n "$gates_json" ] || gates_json='[]'
+while IFS=$'\t' read -r gate_id code msg; do
+  [ -z "$gate_id" ] && continue
+  bad "aged gate — $msg"
+  add_alert "$code" "$gate_id" "$msg"
+  if [ "$CHECK_ONLY" != "1" ] && should_nudge "$gate_id" "gc.watchdog_nudged_at"; then
+    gc mail send mayor --notify \
+      -s "Gate aging: $gate_id" \
+      -m "ACTION: factory-watchdog observed an open human gate past ${GATE_MINUTES}m
+STATE: $msg
+EVIDENCE: gc bd gate show $gate_id
+NEXT: close it once resolved (gc bd gate resolve $gate_id) -- watchdog only pages, it never resolves gates" \
+      >/dev/null 2>&1 \
+      && gc bd update "$gate_id" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
+      && did "re-nudged mayor about aged gate $gate_id"
+  fi
+done < <(printf '%s' "$gates_json" | FACTORY_WATCHDOG_GATE_MINUTES="$GATE_MINUTES" \
+  python3 "$LIB/factory_watchdog.py" gates 2>/dev/null)
+
+# --- 2. stuck Factory-repo PRs (conflicting, or CI never ran) ----------------
+if command -v gh >/dev/null 2>&1; then
+  prs_json=$(gh pr list --repo "$REPO" --state open --limit 50 \
+    --json number,isDraft,mergeStateStatus,statusCheckRollup,createdAt 2>/dev/null || echo '[]')
+  [ -n "$prs_json" ] || prs_json='[]'
+  while IFS=$'\t' read -r pr_num code msg; do
+    [ -z "$pr_num" ] && continue
+    bad "stuck PR — $msg"
+    add_alert "$code" "$pr_num" "$msg"
+    if [ "$CHECK_ONLY" != "1" ]; then
+      title="[watchdog] PR #$pr_num stuck ($code)"
+      existing=$(gc bd list --status open --title-contains "$title" --json 2>/dev/null \
+        | jq 'length' 2>/dev/null)
+      if [ "${existing:-0}" = "0" ]; then
+        created=$(gc bd create "$title" -p 1 -t bug \
+          -d "$msg
+
+https://github.com/$REPO/pull/$pr_num
+
+Detected by factory-watchdog. pr-autopilot's \"merge on green CI\" assumption never resolves this on its own. Observe-and-page only (ADR-0016 section 7): this bead does not merge, close, or edit the PR." \
+          --set-metadata "gc.pr_number=$pr_num" --set-metadata "gc.source=factory-watchdog" \
+          --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
+        if [ -n "$created" ]; then
+          gc mail send mayor --notify \
+            -s "$title" \
+            -m "ACTION: factory-watchdog flagged a stuck PR
+STATE: $msg
+EVIDENCE: bead $created, https://github.com/$REPO/pull/$pr_num
+NEXT: human/mayor decision -- pr-autopilot will not advance this PR unattended" \
+            >/dev/null 2>&1
+          did "flagged stuck PR #$pr_num as $created and notified mayor"
+        else
+          bad "could not file a bead for stuck PR #$pr_num"
+        fi
+      fi
+    fi
+  done < <(printf '%s' "$prs_json" | FACTORY_WATCHDOG_PR_MINUTES="$PR_MINUTES" \
+    python3 "$LIB/factory_watchdog.py" prs 2>/dev/null)
+else
+  say "· stuck-pr — not checked (gh unavailable)"
+fi
+
+# --- 3. false-success workflow closes -----------------------------------------
+cutoff=$(date -u -d "-${WORKFLOW_LOOKBACK_HOURS} hours" +%Y-%m-%dT%H:%M:%SZ)
+workflows_json=$(gc bd list --status closed --metadata-field gc.kind=workflow \
+  --updated-after "$cutoff" --json 2>/dev/null || echo '[]')
+[ -n "$workflows_json" ] || workflows_json='[]'
+while IFS=$'\t' read -r bead_id code msg; do
+  [ -z "$bead_id" ] && continue
+  bad "false-success close — $msg"
+  add_alert "$code" "$bead_id" "$msg"
+  if [ "$CHECK_ONLY" != "1" ]; then
+    already=$(gc bd show "$bead_id" --json 2>/dev/null \
+      | jq -r '(.[0].metadata["gc.watchdog_flagged_false_success"] // empty)')
+    if [ -z "$already" ]; then
+      gc mail send mayor --notify \
+        -s "False-success close: $bead_id" \
+        -m "ACTION: factory-watchdog detected a CLOSED workflow with a non-pass outcome
+STATE: $msg
+EVIDENCE: gc bd show $bead_id
+NEXT: read gc.outcome and downstream step outcomes -- CLOSED alone does not mean the work finished" \
+        >/dev/null 2>&1 \
+        && gc bd update "$bead_id" --set-metadata "gc.watchdog_flagged_false_success=$(now_iso)" >/dev/null 2>&1 \
+        && did "flagged false-success close $bead_id and notified mayor"
+    fi
+  fi
+done < <(printf '%s' "$workflows_json" | python3 "$LIB/factory_watchdog.py" workflows 2>/dev/null)
+
+# --- 4. re-nudge on a still-open, aging campaign-liveness defect --------------
+# Extends the existing machinery (factory-guard files this bead; see its
+# "campaign liveness" check) rather than duplicating detection.
+if [ -f "$LIB/factory_liveness.py" ]; then
+  liveness_bead=$(gc bd show "$COORD" --json 2>/dev/null \
+    | jq -r '(.[0].metadata["gc.campaign_liveness_bead"] // empty)')
+  if [ -n "$liveness_bead" ]; then
+    liveness_status=$(gc bd show "$liveness_bead" --json 2>/dev/null | jq -r '(.[0].status // empty)')
+    if [ "$liveness_status" != "closed" ] && [ "$liveness_status" != "" ]; then
+      created_at=$(gc bd show "$liveness_bead" --json 2>/dev/null | jq -r '(.[0].created_at // empty)')
+      age_min=0
+      [ -n "$created_at" ] && age_min=$(( (($(now_epoch) - $(epoch_of "$created_at"))) / 60 ))
+      msg="campaign-liveness defect $liveness_bead still open after ${age_min} min"
+      bad "$msg"
+      add_alert "liveness_still_open" "$liveness_bead" "$msg"
+      if [ "$CHECK_ONLY" != "1" ] && should_nudge "$liveness_bead" "gc.watchdog_nudged_at"; then
+        gc mail send mayor --notify \
+          -s "Liveness defect still open: $liveness_bead" \
+          -m "ACTION: factory-watchdog re-checked the campaign-liveness defect factory-guard filed
+STATE: $msg
+EVIDENCE: gc bd show $liveness_bead
+NEXT: diagnose why the campaign is not advancing, then close $liveness_bead with the cause" \
+          >/dev/null 2>&1 \
+          && gc bd update "$liveness_bead" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
+          && did "re-nudged mayor about open liveness defect $liveness_bead"
+      fi
+    fi
+  fi
+fi
+
+# --- signal file for the cockpit's Aujourd'hui panel (additive; never flips
+#     the campaign's own blocked state -- ADR-0016 section 7) ----------------
+if [ "$CHECK_ONLY" != "1" ]; then
+  mkdir -p "$(dirname "$SIGNAL_FILE")"
+  jq -n --arg gen "$(now_iso)" --argjson alerts "$ALERTS_JSON" \
+    '{"generated_at":$gen, "alerts":$alerts}' > "$SIGNAL_FILE.next" 2>/dev/null \
+    && mv "$SIGNAL_FILE.next" "$SIGNAL_FILE"
+fi
+
+# --- report --------------------------------------------------------------------
+say ""
+if [ "${#ACTIONS[@]}" -gt 0 ]; then say "paged ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
+if [ "${#PROBLEMS[@]}" -gt 0 ]; then
+  say "ATTENTION ${#PROBLEMS[@]}:"; printf '  ! %s\n' "${PROBLEMS[@]}"
+else
+  say "quiet — nothing aged past its threshold"
+fi
+exit "$STATUS"
