@@ -336,7 +336,7 @@ else
       bad "liveness — $msg"
       # "Diagnose it, repair it or file it, and say so." A silent loop or a
       # stalled campaign becomes one open defect for the Mayor, never a pile.
-      if [ "$CHECK_ONLY" != "1" ] && { [ "$code" = "silent" ] || [ "$code" = "stale" ]; }; then
+      if [ "$CHECK_ONLY" != "1" ] && { [ "$code" = "silent" ] || [ "$code" = "stale" ] || [ "$code" = "durable" ]; }; then
         prior=$(printf '%s' "$coord_json" | python3 -c '
 import json, sys
 try:
@@ -385,6 +385,22 @@ EVIDENCE: gc bd show $created
 NEXT: diagnose why the campaign is not advancing, then close $created with the cause" \
               >/dev/null 2>&1 || true
             did "filed liveness defect $created for the Mayor and paged it"
+            if [ "$code" = "durable" ]; then
+              # C2: three consecutive sentinel crashes is not "the Mayor is
+              # slow", it is "the mechanism itself may be broken" -- the one
+              # escalation contract applies: gc.needs_benjamin, mail human, and
+              # a cockpit-visible cause, together, once, at filing time.
+              gc bd update "$COORD" \
+                --set-metadata "gc.needs_benjamin=Défaillance durable de la campagne: $msg" \
+                >/dev/null 2>&1 || true
+              gc mail send human --notify \
+                -s "USINE · défaillance durable de la campagne" \
+                -m "ACTION: factory-guard a détecté 3 échecs consécutifs du sentinelle et filé $created
+STATE: $msg
+EVIDENCE: gc bd show $created
+NEXT: le Mayor diagnostique et exécute ./bin/mayor-campaign resume --mayor après correction" \
+                >/dev/null 2>&1 || true
+            fi
           else
             bad "could not file the liveness defect"
           fi

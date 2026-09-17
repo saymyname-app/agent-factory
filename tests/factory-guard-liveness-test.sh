@@ -123,6 +123,21 @@ grep -q "! liveness" <<<"$out" && fail "a deliberate pause was reported as a liv
 coord 30 60 blocked durable_failure "sentinelle en échec"
 out=$(guard --check-only)
 grep -q "liveness — campaign stopped by a durable failure" <<<"$out" || fail "durable failure not flagged"
+[ "$(creates)" = "2" ] || fail "--check-only must not file a durable-failure defect either"
+
+# C2: unlike silent/stale, a durable failure was never filed nor paged to a
+# human -- only re-reported forever. The default run must file it and mail
+# both the Mayor and Benjamin (the one escalation contract).
+: > "$CALLS"
+out=$(guard)
+grep -q "filed liveness defect af-live1" <<<"$out" || { echo "$out" >&2; fail "durable failure not filed"; }
+grep -q "^mail send mayor --notify" "$CALLS" || fail "durable failure did not page the Mayor"
+grep -q "^mail send human --notify" "$CALLS" || fail "durable failure did not page Benjamin (C2)"
+[ "$(jq -r '.[0].metadata["gc.needs_benjamin"]' "$COORD")" != "null" ] \
+  || fail "durable failure did not set gc.needs_benjamin"
+out=$(guard)
+grep -q "already filed: af-live1" <<<"$out" || fail "a second durable-failure run should recognise the open defect"
+[ "$(creates)" = "1" ] || fail "the durable-failure defect was filed more than once"
 
 # 6. an unreadable store is flagged but never filed (it could not be) -------------
 before=$(creates)

@@ -602,6 +602,17 @@ def sentinel(_: argparse.Namespace) -> None:
                     "produit est restée sans effet depuis plus de 30 minutes, donc ce n'est "
                     f"pas de l'inactivité factory non plus : {ladder['message']}"
                 )
+        # C9: persist before send, not after. A kill between a successful send
+        # and the counter update (2026-09-16 incident pattern) left the sentinel
+        # thinking the reminder never went out, so it re-sent the same reminder
+        # every following tick. Persisting first means a kill can at worst waste
+        # one already-counted resend, never spin forever. A reminder is an
+        # action, not progress: liveness must still see the first wake achieved
+        # nothing, so gc.campaign_progress_at is deliberately not touched here.
+        update_metadata({
+            "gc.campaign_wake_sent_at": iso(now),
+            "gc.campaign_wake_resends": str(resends + 1),
+        })
     elif campaign["wake_state"] != "pending":
         update_metadata({"gc.campaign_wake_key": wake_key, "gc.campaign_wake_state": "pending"})
     try:
@@ -617,12 +628,6 @@ def sentinel(_: argparse.Namespace) -> None:
         mode = "automatic retry" if count < FAILURE_THRESHOLD else "durable failure"
         raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
     if reminder:
-        # A reminder is an action, not progress: liveness must still be able to
-        # see that the first wake achieved nothing.
-        update_metadata({
-            "gc.campaign_wake_sent_at": iso(now),
-            "gc.campaign_wake_resends": str(resends + 1),
-        })
         print(f"REMINDED: mayor — {wake_key} ({resends + 1}/{MAX_REWAKES})")
         return
     sent = {
