@@ -114,9 +114,12 @@ to you. When unsure between STANDARD and GUARDED, the deciding question is blast
 radius if the change is wrong — not how hard it was to write. A bead already
 flagged `review-required` routes to `build-basic` regardless of tier.
 
-**`mol-polecat-commit` is forbidden.** It pushes straight to the base branch
-with no PR and no review, `main` included. Every writer formula must end in a
-branch + `gh pr create`, never a direct push — use `do-work` or `build-basic`.
+**Every writer formula ends in a branch + `gh pr create`, never a direct
+push to base_branch — `main` included.** `mol-polecat-commit` used to push
+straight to base_branch; it is now forked (F3, 2026-09-17) to open a PR
+instead and refuse `base_branch=main` outright, so it is usable again, but
+still prefer `do-work` unless a formula explicitly needs `mol-polecat-commit`'s
+worktree lifecycle — `do-work` is cheaper and already the routing default.
 
 ## Merge and production
 
