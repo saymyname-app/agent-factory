@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Rebuild `statusCheckRollup` from GitHub Actions runs.
+
+The Factory's GitHub token is a fine-grained PAT without Administration, so an
+agent cannot lift a branch ruleset. GitHub does not let such a token read
+check runs at all: asking `gh pr list/view --json statusCheckRollup` fails with
+"Resource not accessible by personal access token" (it stopped pr-autopilot
+from listing a single PR on 2026-09-18). Workflow runs ARE readable, and every
+check on these repos is a GitHub Actions workflow.
+
+Usage: gh pr list --json number,headRefOid,... | factory-gh-rollup OWNER/REPO
+
+Reads one PR object or an array of them. Each object lacking
+`statusCheckRollup` gets one built from the latest run of every workflow on
+its `headRefOid`, in the shape callers already parse (name, status,
+conclusion, upper-cased). Objects that already carry the field pass through
+untouched. Any lookup failure exits non-zero: an empty rollup would read as
+"CI never ran", which is a different, paged condition.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+
+GH_BIN = os.environ.get("GH_BIN", "gh")
+
+
+def runs_for(repo: str, sha: str) -> list[dict]:
+    result = subprocess.run(
+        (GH_BIN, "api", f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100"),
+        text=True, capture_output=True, timeout=30, check=True,
+    )
+    rollup: dict[str, dict] = {}
+    # Newest first: keep only the latest run of each workflow (a re-run
+    # supersedes the failure before it).
+    for run in json.loads(result.stdout).get("workflow_runs", []):
+        name = str(run.get("name") or run.get("workflow_id"))
+        if name in rollup:
+            continue
+        rollup[name] = {
+            "__typename": "CheckRun",
+            "name": name,
+            "status": str(run.get("status") or "").upper(),
+            "conclusion": str(run.get("conclusion") or "").upper(),
+            "detailsUrl": run.get("html_url"),
+        }
+    return list(rollup.values())
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or "/" not in sys.argv[1]:
+        print("usage: factory-gh-rollup OWNER/REPO < pr.json", file=sys.stderr)
+        return 2
+    repo = sys.argv[1]
+    value = json.load(sys.stdin)
+    items = value if isinstance(value, list) else [value]
+    try:
+        for item in items:
+            if isinstance(item, dict) and "statusCheckRollup" not in item:
+                sha = item.get("headRefOid")
+                if not isinstance(sha, str) or not sha:
+                    raise ValueError(f"PR {item.get('number')} has no headRefOid")
+                item["statusCheckRollup"] = runs_for(repo, sha)
+    except (OSError, ValueError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        print(f"factory-gh-rollup: {exc}", file=sys.stderr)
+        return 1
+    json.dump(value, sys.stdout)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

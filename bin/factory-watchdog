@@ -109,8 +109,13 @@ done < <(printf '%s' "$gates_json" | FACTORY_WATCHDOG_GATE_MINUTES="$GATE_MINUTE
 
 # --- 2. stuck Factory-repo PRs (conflicting, or CI never ran) ----------------
 if command -v gh >/dev/null 2>&1; then
+  # A fine-grained token cannot read check runs; rebuild them from Actions runs.
   prs_json=$(gh pr list --repo "$REPO" --state open --limit 50 \
-    --json number,isDraft,mergeStateStatus,statusCheckRollup,createdAt 2>/dev/null || echo '[]')
+    --json number,isDraft,mergeStateStatus,statusCheckRollup,createdAt 2>/dev/null \
+    || gh pr list --repo "$REPO" --state open --limit 50 \
+      --json number,isDraft,mergeStateStatus,headRefOid,createdAt 2>/dev/null \
+      | "$(dirname "${BASH_SOURCE[0]}")/factory-gh-rollup" "$REPO" 2>/dev/null \
+    || echo '[]')
   [ -n "$prs_json" ] || prs_json='[]'
   while IFS=$'\t' read -r pr_num code msg; do
     [ -z "$pr_num" ] && continue

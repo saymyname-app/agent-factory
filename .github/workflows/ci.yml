@@ -111,6 +111,9 @@ jobs:
       - name: Merge actor flags PRs stuck across passes
         run: bash tests/pr-autopilot-stuck-test.sh
 
+      - name: Check rollup rebuilt from Actions runs (fine-grained token)
+        run: python tests/factory-gh-rollup-test.py
+
       - name: Chaos, as seen by the cockpit
         run: python tests/factory-cockpit-chaos-test.py
 

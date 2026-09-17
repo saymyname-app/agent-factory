@@ -43,6 +43,15 @@ gh_json() {
   "$GH_BIN" "$@"
 }
 
+# A fine-grained token cannot read check runs (statusCheckRollup); fall back to
+# rebuilding them from the Actions runs of the PR head.
+pr_view_with_rollup() {
+  local number=$1 repo=$2 fields=number,state,mergedAt,mergeCommit,headRefOid,url
+  gh_json pr view "$number" --repo "$repo" --json "$fields,statusCheckRollup" 2>/dev/null \
+    || gh_json pr view "$number" --repo "$repo" --json "$fields" \
+      | GH_BIN="$GH_BIN" "$SCRIPT_DIR/factory-gh-rollup" "$repo"
+}
+
 capture_json() {
   local destination=$1
   local source_name=$2
@@ -378,9 +387,7 @@ derive_delivery() {
   [[ $pr_head =~ ^[0-9a-f]{40}$ && $merge_commit =~ ^[0-9a-f]{40}$ ]] \
     || die "Delivered Git commit metadata is invalid."
 
-  capture_json pr_response "GitHub PR $pr_number" gh_json pr view "$pr_number" \
-    --repo "$github_repo" \
-    --json number,state,mergedAt,mergeCommit,headRefOid,statusCheckRollup,url
+  capture_json pr_response "GitHub PR $pr_number" pr_view_with_rollup "$pr_number" "$github_repo"
   jq -e --argjson number "$pr_number" --arg head "$pr_head" --arg merge "$merge_commit" '
     .number == $number and
     .state == "MERGED" and

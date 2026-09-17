@@ -194,6 +194,10 @@ for entry in "${RIGS[@]}"; do
   # ---------- 1. ARM open PRs targeting dev ----------
   open_prs=$(gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
     --json number,isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid,labels 2>/dev/null)
+  # A fine-grained token cannot read check runs; rebuild them from Actions runs.
+  [ -n "$open_prs" ] || open_prs=$(gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
+    --json number,isDraft,autoMergeRequest,mergeStateStatus,headRefOid,labels 2>/dev/null \
+    | "$(dirname "${BASH_SOURCE[0]}")/factory-gh-rollup" "$repo" 2>/dev/null)
   if [ -z "$open_prs" ]; then
     log "  (could not list open PRs)"; ERRORS=$((ERRORS+1)); open_prs='[]'
   fi
