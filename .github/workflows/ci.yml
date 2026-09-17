@@ -46,6 +46,9 @@ jobs:
       - name: Factory continuity state tests
         run: python tests/factory-continuity-test.py
 
+      - name: Idle-ladder improvement axes and maintain-alive switch
+        run: python tests/factory-improvement-axes-test.py
+
       - name: Mayor campaign tests
         run: python tests/mayor-campaign-test.py
 
