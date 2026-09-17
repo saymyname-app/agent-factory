@@ -1,0 +1,5 @@
+[order]
+description = "Page the Mayor when the same order fails repeatedly in a row (audit finding O1: order.failed events go unread by default)"
+trigger = "event"
+on = "order.failed"
+exec = "/home/benja/agent-factory/bin/on-order-failed"
