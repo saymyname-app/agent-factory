@@ -82,7 +82,7 @@ chmod +x "$TMP/bin/gh"
 
 export PATH="$TMP/bin:$PATH"
 export FACTORY_GUARD_NOW=$NOW
-export FACTORY_WATCHDOG_REPO="benjamin-hurand/agent-factory"
+export FACTORY_WATCHDOG_REPO="saymyname-app/agent-factory"
 
 watchdog() { FACTORY_ROOT="$TMP/city" "$WATCHDOG" "$@" 2>&1 || true; }
 mails()   { grep -c '^mail send' "$MAIL" || true; }

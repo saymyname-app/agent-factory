@@ -32,6 +32,7 @@ Ce qu'il contrôle :
 | `rig:*` | un rig suspendu bloque la livraison ; un dispatcher au repos, non |
 | `worktrees` | nomme les worktrees qui épinglent encore une branche fusionnée |
 | `provider overlay` | **régénère** `city.provider.toml` s'il a disparu (sans lui, la config de la cité ne charge plus) |
+| `pii-guard` | (af-6eqc) signale — sans jamais l'afficher — si un identifiant réel de `.gc/pii-guard/real-identifiers.local` apparaît dans le diff sortant ou l'arbre de travail ; le blocage réel se fait dans `.githooks/pre-push` via `./bin/factory-pii-guard` |
 | `liveness` | vérifie que la campagne **avance**, pas seulement que les pièces répondent ; ouvre **un** signalement pour le Mayor si elle stagne, et le lui envoie par mail (`--notify`) au moment du dépôt — `./bin/factory-watchdog` relance ensuite tant qu'il reste ouvert |
 
 **La sauvegarde de l'arbre de travail** mérite une explication. Un fichier que

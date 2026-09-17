@@ -470,7 +470,7 @@ For a recovery drill, keep exactly one controller and restore into a fresh clone
 ```bash
 gc stop ~/agent-factory
 git clone --branch main --single-branch \
-  https://github.com/benjamin-hurand/agent-factory.git \
+  https://github.com/saymyname-app/agent-factory.git \
   /tmp/m3-restore/agent-factory
 
 # Let Gas City create its managed .beads/dolt/hq layout. With Beads 1.2.2,

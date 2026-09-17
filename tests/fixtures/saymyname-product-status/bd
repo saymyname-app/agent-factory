@@ -86,7 +86,7 @@ emit_delivered() {
   local issue_id="af-delivered"
   local title="Deterministic local preview"
   local parent="af-1vr4"
-  local github_repo="benjamin-hurand/agent-factory"
+  local github_repo="saymyname-app/agent-factory"
   if [[ $scenario == routed ]]; then
     issue_id="smf-delivered"
     title="Deliver frontend product outcome"

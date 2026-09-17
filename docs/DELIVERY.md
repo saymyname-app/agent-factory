@@ -164,7 +164,7 @@ records what was verified about the machinery underneath.
 
 Repository settings changed to support this: `allow_auto_merge=true` and
 `delete_branch_on_merge=true` on `saymyname-app/Say-my-name-back` and
-`saymyname-app/Say-my-name-front`. `benjamin-hurand/agent-factory` has since been
+`saymyname-app/Say-my-name-front`. `saymyname-app/agent-factory` has since been
 added to the autopilot's rig table (see *Production stays gated* below).
 
 ### Reading delivery state
@@ -182,7 +182,7 @@ remains a GUARDED transition requiring Benjamin.
 The Factory's own repository is different, by Benjamin's standing
 authorization of 2026-09-16: `agent-factory` has one long-lived branch, `main`,
 and `pr-autopilot` arms its green PRs too (`bin/pr-autopilot`, rig table entry
-`.|benjamin-hurand/agent-factory|main`). `main` there is the running factory,
+`.|saymyname-app/agent-factory|main`). `main` there is the running factory,
 not a product production branch.
 
 ### Historical note — why this needed building
@@ -204,7 +204,7 @@ is why `pr-autopilot` links PR to bead by branch name instead.
 
 ## Main-landing gate — `main` cannot go red silently anymore
 
-**As of 2026-09-16, `git push` to `main` in `benjamin-hurand/agent-factory`
+**As of 2026-09-16, `git push` to `main` in `saymyname-app/agent-factory`
 runs the guarded local test suite first and refuses the push if it fails**
 (`bin/factory-main-gate`, installed as `.githooks/pre-push`, ADR-0020).
 
@@ -235,6 +235,54 @@ Emergency bypass is the standard git escape hatch, `git push --no-verify` —
 this is a local convenience gate, not a security boundary. See ADR-0020 for
 the full decision record and `tests/factory-main-gate-test.sh` for the proof
 that it actually blocks a broken push and never blocks anything else.
+
+## Real-PII leak guard — containment while the dev DB still holds real people (af-6eqc)
+
+The dev DB currently holds real person data (the "invariant de confinement"
+in `DESIGN_GOVERNANCE.md`). Removing that is a separate, non-urgent piece of
+work (af-hq2j, a synthetic dataset with the same shape). Until it ships, this
+is a two-layer **containment** guard against a real identifier leaving the
+machine — it does not eliminate the underlying problem, it contains it.
+
+**Layer A — local, exact-match (`bin/factory-pii-guard`, installed in
+`.githooks/pre-push`).** Only this machine has dev-DB access, so only this
+machine can build the identifier list, and only this machine can run this
+check meaningfully. A local, gitignored file at
+`.gc/pii-guard/real-identifiers.local` (one exact real identifier per line,
+populated by hand or by a separate local-only script — `.gc/` is already
+excluded by the root `.gitignore`) is grepped, exact-match, against the
+outgoing diff (`origin/main...HEAD`) plus the working tree, on every
+`git push`. A match refuses the push. The guard never prints the list, which
+identifier matched, or where — the value being protected must never land in
+a bead, in mail, or in any shared log, so it does not appear even in this
+check's own output. `bin/factory-guard` also surfaces this check (pass/fail
+only, same non-disclosure) in its periodic report, so an unpushed match does
+not wait for a push to be noticed.
+
+**Layer B — both rigs' CI, structural backstop, zero secrets
+(`bin/factory-provenance-guard`, run from each rig's GitHub Actions
+workflow).** CI cannot hold the real-identifier list at all — putting it in
+a GitHub Actions secret would itself hand real PII to a third party, which is
+exactly what this guards against. So CI does not attempt exact-value
+matching. Instead it requires that any data file under a
+fixture/seed/test-resource path (`fixtures?/`, `seeds?/`, `test-resources?/`,
+`testdata/`, `test-data/`, or Maven's `.../test/resources/`, any depth) carry
+a provenance marker proving it came from the synthetic generator (af-hq2j): a
+`PROVENANCE.md` manifest in the same directory with a line
+`<filename>: synthetic-provenance af-hq2j sha256:<hex>`, where the hash is
+the file's own sha256. The hash binds the attestation to the file's exact
+current content — a filename+keyword line by itself is not proof, so a data
+file swapped in after the manifest entry was written (or an entry never
+actually backed by the generator) fails the same way an unmarked file does.
+An unmarked or stale-attestation data file in one of those paths fails the
+build — it is either real data that should never have landed there, or a
+synthetic file someone forgot to record (or re-record after editing).
+
+Emergency bypass for Layer A is the standard `git push --no-verify`. Neither
+layer is a security boundary against a determined actor; both are local/CI
+convenience gates that catch the mistake before it leaves the machine or
+merges. See `bin/factory-pii-guard` and `bin/factory-provenance-guard` for
+the exact mechanism.
 
 ## Réversibilité par défaut
 
