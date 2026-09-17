@@ -40,17 +40,38 @@ DEFAULT_CONDITION = (
     "Dès qu'aucune livraison n'est en cours, le Mayor enchaîne le premier candidat produit "
     "éligible, sauf limite, décision humaine, action ADMIN ou panne durable."
 )
+# C8: the sentinel order kills the whole tick at 50s (orders/mayor-campaign.toml).
+# A single call could previously run up to 45s, so ~2 slow calls in one tick were
+# enough to be killed with zero trace -- 31 such kills in 24h, uncounted. Each
+# call now gets 10s, and the tick as a whole a 40s budget it can see coming.
+TICK_DEADLINE_SECONDS = float(os.environ.get("CAMPAIGN_TICK_DEADLINE_SECONDS", "40"))
+
+_tick_deadline: float | None = None
 
 
 class CampaignCommandError(RuntimeError):
     pass
 
 
+class TickDeadlineExceeded(RuntimeError):
+    """C8: the sentinel's tick budget elapsed before a call could even run.
+
+    Deliberately NOT a CampaignCommandError: every per-call try/except in
+    sentinel() catches that type to count an ordinary command failure toward
+    FAILURE_THRESHOLD. A killed tick is a different signal -- a duration
+    problem, not a retryable command failure -- and must reach main()
+    uncaught by any of those, to be recorded distinctly instead of silently
+    inflating the durable-failure counter.
+    """
+
+
 def run(*args: str) -> subprocess.CompletedProcess[str]:
+    if _tick_deadline is not None and time.monotonic() > _tick_deadline:
+        raise TickDeadlineExceeded(f"budget de {TICK_DEADLINE_SECONDS}s dépassé avant {args[0]}")
     try:
         return subprocess.run(
             args, cwd=ROOT, text=True, capture_output=True, check=True,
-            timeout=int(os.environ.get("CAMPAIGN_COMMAND_TIMEOUT", "45")),
+            timeout=int(os.environ.get("CAMPAIGN_COMMAND_TIMEOUT", "10")),
             env={**os.environ, "NO_COLOR": "1"},
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -459,7 +480,9 @@ def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
 
 
 def sentinel(_: argparse.Namespace) -> None:
+    global _tick_deadline
     now = current_time()
+    _tick_deadline = time.monotonic() + TICK_DEADLINE_SECONDS
     issue = coordination_issue()
     metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
     heartbeat: dict[str, str] = {}
@@ -693,6 +716,19 @@ def main() -> int:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
                 args.handler(args)
         return 0
+    except TickDeadlineExceeded as exc:
+        # C8: a killed tick used to leave no trace at all (31 in 24h, live).
+        # Record it best-effort -- lift the deadline first, or this recovery
+        # write would immediately raise the same error it is reporting.
+        global _tick_deadline
+        _tick_deadline = None
+        try:
+            run(GC_BIN, "bd", "update", COORDINATION_BEAD,
+                "--set-metadata", f"gc.campaign_last_tick_timeout={iso(current_time())}")
+        except CampaignCommandError:
+            pass
+        print(f"{PROGRAM}: TICK_TIMEOUT: {exc}", file=sys.stderr)
+        return 1
     except CampaignCommandError as exc:
         print(f"{PROGRAM}: ERROR: {exc}", file=sys.stderr)
         return 1

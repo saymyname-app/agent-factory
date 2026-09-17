@@ -222,6 +222,19 @@ class MayorCampaignTest(CampaignFixture, unittest.TestCase):
         self.assertNotIn("mayor-campaign-sentinel", calls)
         self.assertEqual("sent", self.current_metadata()["gc.campaign_wake_state"])
 
+    def test_a_killed_tick_is_recorded_distinctly_not_as_a_command_failure(self):
+        # C8: the sentinel order kills the whole tick at 50s with no trace at
+        # all (31 kills in 24h, live). A tick that runs past its own 40s
+        # internal budget must record that fact and must NOT count toward
+        # FAILURE_THRESHOLD -- it is a duration problem, not a bad command.
+        result = self.invoke("sentinel", check=False, extra_env={"CAMPAIGN_TICK_DEADLINE_SECONDS": "0"})
+        self.assertEqual(1, result.returncode)
+        self.assertIn("TICK_TIMEOUT", result.stderr)
+        meta = self.current_metadata()
+        self.assertIn("gc.campaign_last_tick_timeout", meta)
+        self.assertEqual("0", meta.get("gc.campaign_failure_count", "0"))
+        self.assertEqual(0, self.mail_count())
+
     def test_three_failures_persist_durable_block_with_exact_recovery(self):
         for expected in (1, 2, 3):
             result = self.invoke("sentinel", check=False, extra_env={"CAMPAIGN_STATUS_FAIL": "1"})
