@@ -385,6 +385,26 @@ function renderWorkflow(memory, data) {
   $("execution-context").replaceChildren(node("span", "context-chip", data.focus.title), node("span", "context-chip", data.focus.phase), node("span", "context-chip", `${data.focus.steps.completed}/${data.focus.steps.total} étapes prouvées`), node("span", "context-chip", `${data.agents.length} agents visibles`));
 }
 
+function renderContinuity(data) {
+  const continuity = data.continuity || {}; const states = continuity.states || [];
+  $("continuity-state-label").textContent = continuity.state_label || "Lecture…";
+  $("continuity-detail").textContent = continuity.detail || "—";
+  timed($("continuity-since"), continuity.since);
+  const flow = $("continuity-flow"); flow.replaceChildren();
+  states.forEach((state, index) => {
+    const active = state === continuity.state;
+    const card = node("article", `workflow-node ${active ? "active" : "upcoming"}`);
+    card.append(node("span", "workflow-index", String(index + 1)), node("strong", "", state));
+    if (active) card.append(node("span", "workflow-live", "Ici maintenant"));
+    flow.append(card);
+    if (index < states.length - 1) flow.append(node("span", "workflow-arrow", "→"));
+  });
+  const history = $("continuity-history-list"); history.replaceChildren();
+  const entries = (continuity.history || []).slice().reverse();
+  if (!entries.length) history.append(node("li", "compact-item muted", "Aucune transition enregistrée pour l’instant."));
+  entries.forEach((item) => history.append(node("li", "compact-item", `${item.state} · depuis ${durationSince(item.since)}`)));
+}
+
 function activateView(view, updateLocation = true) {
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
   document.querySelectorAll(".view").forEach((panel) => panel.classList.toggle("active", panel.dataset.viewPanel === view));
@@ -448,7 +468,7 @@ function compareVisit(data) {
 
 function render(data) {
   snapshot = data; applyIdentity(data.product_memory?.product, data.operator); setStatus($("factory-state"), data.factory.state, data.factory.label); renderOperationalState(data); renderCampaignState(data); $("focus-title").textContent = data.focus.title; setStatus($("focus-state"), data.focus.state, data.focus.state_label); $("focus-phase").textContent = data.focus.phase; timed($("focus-elapsed"), data.focus.started_at); $("focus-signal").dataset.signalTime = data.focus.last_signal_at || ""; $("focus-signal").textContent = signalAge(data.focus.last_signal_at); const steps = data.focus.steps; $("focus-steps").textContent = steps.total ? `${steps.completed} / ${steps.total}` : "aucune étape exposée"; $("step-fill").style.width = steps.total ? `${Math.round((steps.completed / steps.total) * 100)}%` : "0%"; renderTodayAttention(data.today); renderWatchdogAlerts(data.today); const delivered = data.last_delivery; $("last-delivery").textContent = `Dernière livraison : ${delivered.title}${delivered.pr ? ` · PR ${delivered.pr}` : ""}${delivered.ci === "success" ? " · CI verte" : ""}`;
-  renderDecisionAids(data.decision_aids || []); renderQueue(data.queue || []); renderMemory(data.product_memory, data.today); renderBusiness(data.product_memory); renderProject(data.product_memory, data); renderRoadmap(data); renderWorkflow(data.product_memory, data); renderBoard(data.product_work || []); renderAgents(data.agents || []);
+  renderDecisionAids(data.decision_aids || []); renderQueue(data.queue || []); renderMemory(data.product_memory, data.today); renderBusiness(data.product_memory); renderProject(data.product_memory, data); renderRoadmap(data); renderWorkflow(data.product_memory, data); renderContinuity(data); renderBoard(data.product_work || []); renderAgents(data.agents || []);
   const factoryWork = $("factory-work"); factoryWork.replaceChildren(); (data.factory_work || []).forEach((item) => factoryWork.append(node("div", "compact-item", item.title))); if (!factoryWork.children.length) factoryWork.append(node("p", "muted", "Aucun autre travail Factory.")); const infrastructure = $("infrastructure"); infrastructure.replaceChildren(); (data.infrastructure || []).forEach((item) => infrastructure.append(node("div", "compact-item", `${item.name} · ${item.state}`)));
   const alert = $("alert"); if (data.warnings.length) { alert.textContent = `Visibilité partielle : ${data.warnings.join(" · ")}`; alert.classList.remove("hidden"); } else alert.classList.add("hidden"); renderMobile(data); compareVisit(data); updateClocks(); restoreDeepLink();
 }
