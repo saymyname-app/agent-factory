@@ -454,4 +454,10 @@ if [ "${#PROBLEMS[@]}" -gt 0 ]; then
 else
   say "healthy"
 fi
-exit "$STATUS"
+# O2: this guard runs as a zero-token cooldown order (orders/factory-guard.toml).
+# It used to exit 1 whenever it FOUND something -- routine, already-repaired or
+# not -- which is indistinguishable from the order itself crashing, and floods
+# Gas City's order.failed stream with noise (see O1). "Found" is reported above
+# in stdout (UNRESOLVED ... / the exit code below); only the two explicit exit 2
+# paths above (bad CLI argument, unreachable root) mean the guard itself broke.
+exit 0

@@ -124,4 +124,14 @@ grep -q "PR #1: reversibility could not be checked" <<<"$out" || { echo "$out" >
 grep -q "^pr merge 1 " "$TMP/gh.log" && fail "PR armed while its reversibility was unknown"
 grep -q "zzz9" "$REVERSIBILITY_CACHE" && fail "a failed check was cached as a verdict"
 
+# --- O3: an exhausted tick budget stops cleanly, recorded, not SIGKILLed -----------------
+# The order (orders/pr-autopilot.toml) hard-kills the whole run at 120s with no
+# trace at all (context deadline exceeded, 9 in 24h, live). A zero budget must
+# make the very first repo iteration report and stop instead of proceeding.
+: > "$TMP/gh.log"
+out=$(PR_AUTOPILOT_TICK_DEADLINE_SECONDS=0 "$AUTOPILOT" 2>&1) && rc=0 || rc=$?
+grep -q "^TICK_TIMEOUT:" <<<"$out" || { echo "$out" >&2; fail "exhausted tick budget was not reported"; }
+[ "$rc" -ne 0 ] || { echo "$out" >&2; fail "exhausted tick budget did not exit non-zero"; }
+[ -z "$(cat "$TMP/gh.log")" ] || fail "an exhausted tick budget must stop before touching any repo"
+
 echo "OK pr-autopilot holds what cannot be undone"
