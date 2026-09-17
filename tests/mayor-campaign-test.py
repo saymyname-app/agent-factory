@@ -331,15 +331,18 @@ class MayorCampaignTest(CampaignFixture, unittest.TestCase):
         completed["campaign"]["state"] = "completed"
         self.write_status(completed)
         # A completed product campaign is not an idle factory (ADR-0016 s.7):
-        # with no Factory bead ready, it walks the generative rungs, once each...
+        # with no Factory bead ready, it walks the generative rungs, once
+        # each, then the default-enabled improvement axis (sec4)...
         first = self.invoke("sentinel", extra_env={"CAMPAIGN_NOW": str(NOW)}).stdout
         self.assertIn("ladder:tests:", first)
         second = self.invoke("sentinel", extra_env={"CAMPAIGN_NOW": str(NOW + 60)}).stdout
         self.assertIn("ladder:docs:", second)
-        # ...and only then rests, without mailing anyone.
         third = self.invoke("sentinel", extra_env={"CAMPAIGN_NOW": str(NOW + 120)}).stdout
-        self.assertIn("ladder_rested", third)
-        self.assertEqual(2, self.mail_count())
+        self.assertIn("ladder:axis:code-review", third)
+        # ...and only then rests, without mailing anyone.
+        fourth = self.invoke("sentinel", extra_env={"CAMPAIGN_NOW": str(NOW + 180)}).stdout
+        self.assertIn("ladder_rested", fourth)
+        self.assertEqual(3, self.mail_count())
 
 
 def bead(bead_id, **extra):
@@ -445,6 +448,66 @@ class IdleLadderPlanTest(unittest.TestCase):
         candidate = {"id": "af-q1", "kind": "factory_campaign", "state": "eligible", "title": "x"}
         plan = plan_idle_ladder([], NOW, queue_candidates=[candidate])
         self.assertEqual("ladder_factory_queue", plan["reason"])
+
+    def test_maintain_alive_off_gates_the_whole_ladder(self):
+        # sec1: OFF must read as an explicit, cockpit-visible idle-by-switch
+        # reason, never silence and never indistinguishable from a stall.
+        plan = plan_idle_ladder([bead("af-hi")], NOW, maintain_alive=False)
+        self.assertEqual(("none", "maintain_alive_off"), (plan["action"], plan["reason"]))
+        rested = plan_idle_ladder(
+            [], NOW, {"tests": "2026-09-16T10:30:00Z", "docs": "2026-09-16T10:30:00Z"},
+            maintain_alive=False,
+            axis={"name": "code-review", "action": "dispatch",
+                  "scope_boundary": "x", "mechanism": {"status": "wired", "ref": "skill:code-review"}},
+        )
+        self.assertEqual("maintain_alive_off", rested["reason"])
+
+    def test_maintain_alive_off_still_lets_a_tracked_bead_finish(self):
+        tracked = bead("af-hi", status="in_progress", updated_at="2026-09-16T10:00:00Z")
+        plan = plan_idle_ladder([], NOW, tracked=tracked, maintain_alive=False)
+        self.assertEqual(("none", "ladder_active"), (plan["action"], plan["reason"]))
+
+    def test_axis_rung_fires_after_generative_rungs_when_maintain_alive_is_on(self):
+        axis = {"name": "code-review", "action": "dispatch", "scope_boundary": "Périmètre x.",
+                "mechanism": {"status": "wired", "ref": "skill:code-review"}}
+        just_ran = "2026-09-16T10:30:00Z"
+        plan = plan_idle_ladder(
+            [], NOW, {"tests": just_ran, "docs": just_ran}, axis=axis,
+        )
+        self.assertEqual(
+            ("wake_mayor", "ladder_axis_code-review", "ladder:axis:code-review"),
+            (plan["action"], plan["reason"], plan["wake_key"]),
+        )
+        self.assertIn("Périmètre x.", plan["message"])
+        self.assertIn("skill:code-review", plan["message"])
+
+    def test_axis_rung_is_throttled_then_rests(self):
+        axis = {"name": "code-review", "action": "dispatch", "scope_boundary": "x",
+                "mechanism": {"status": "wired", "ref": "skill:code-review"}}
+        just_ran = "2026-09-16T10:30:00Z"
+        soon = plan_idle_ladder(
+            [], NOW, {"tests": just_ran, "docs": just_ran}, axis=axis, last_axis=just_ran,
+        )
+        self.assertEqual(("none", "ladder_rested"), (soon["action"], soon["reason"]))
+        later = plan_idle_ladder(
+            [], NOW + 7 * 3600, {"tests": just_ran, "docs": just_ran}, axis=axis, last_axis=just_ran,
+        )
+        self.assertEqual("ladder_axis_code-review", later["reason"])
+
+    def test_a_draft_only_axis_only_ever_proposes(self):
+        axis = {"name": "auth-providers", "action": "propose", "scope_boundary": "réservée",
+                "mechanism": {"status": "not_implemented"}}
+        just_ran = "2026-09-16T10:30:00Z"
+        plan = plan_idle_ladder([], NOW, {"tests": just_ran, "docs": just_ran}, axis=axis)
+        self.assertEqual("wake_mayor", plan["action"])
+        self.assertIn("proposition", plan["message"])
+        self.assertIn("AUCUN", plan["message"])
+        self.assertNotIn("Mécanisme", plan["message"])
+
+    def test_no_axis_selected_still_rests(self):
+        just_ran = "2026-09-16T10:30:00Z"
+        plan = plan_idle_ladder([], NOW, {"tests": just_ran, "docs": just_ran}, axis=None)
+        self.assertEqual(("none", "ladder_rested"), (plan["action"], plan["reason"]))
 
     def test_a_paused_or_product_candidate_is_not_rung_2b(self):
         paused = {"id": "af-q1", "kind": "factory_campaign", "state": "paused", "title": "x"}

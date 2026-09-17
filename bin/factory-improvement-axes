@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""factory-improvement-axes -- the never-idle ladder's named content (ADR-0016 sec7).
+
+L0, deterministic, zero model tokens. Policy: config/factory-improvement-axes.json
+(versioned). State: .gc/runtime/factory-improvement-axes-state.json (host-local,
+cockpit/CLI-mutable). Design: docs/FACTORY_CONTINUITY.md sec1/sec4.
+
+  status                     current maintain-alive switch and every axis (--json for the cockpit)
+  set --action maintain-alive --args '{"enabled":false}'
+  set --action enable        --args '{"axis":"security"}'
+  set --action disable       --args '{"axis":"i18n"}'
+"""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+import factory_improvement_axes as fia  # noqa: E402
+
+FACTORY_ROOT = Path(os.environ.get("FACTORY_ROOT") or ROOT)
+POLICY_FILE = Path(
+    os.environ.get("FACTORY_IMPROVEMENT_AXES_POLICY_FILE")
+    or FACTORY_ROOT / "config" / "factory-improvement-axes.json"
+)
+STATE_FILE = Path(
+    os.environ.get("FACTORY_IMPROVEMENT_AXES_STATE_FILE")
+    or FACTORY_ROOT / ".gc" / "runtime" / "factory-improvement-axes-state.json"
+)
+
+
+def now() -> float:
+    value = os.environ.get("FACTORY_IMPROVEMENT_AXES_NOW")
+    return float(value) if value else time.time()
+
+
+def iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def load_policy() -> dict[str, Any]:
+    try:
+        return fia.validate_policy(json.loads(POLICY_FILE.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise fia.AxesPolicyError(f"cannot read {POLICY_FILE}: {exc}") from exc
+
+
+def load_state(policy: dict[str, Any]) -> dict[str, Any]:
+    try:
+        raw = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw = None  # a missing or damaged state degrades to defaults, never fails
+    return fia.normalize_state(raw, policy)
+
+
+def atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def save_state(state: dict[str, Any]) -> None:
+    atomic_write(STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+
+
+class Locked:
+    """One writer at a time: the sentinel, the cockpit and a human can all call in."""
+
+    def __enter__(self) -> "Locked":
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = open(STATE_FILE.with_name(STATE_FILE.name + ".lock"), "w")
+        fcntl.flock(self.handle, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        fcntl.flock(self.handle, fcntl.LOCK_UN)
+        self.handle.close()
+
+
+def status_payload(policy: dict[str, Any], state: dict[str, Any], moment: float) -> dict[str, Any]:
+    axis = fia.select_improvement_axis(policy, state)
+    return {
+        "contract": "agent-factory-improvement-axes-status/v1",
+        "generated_at": iso(moment),
+        "maintain_alive": state["maintain_alive"],
+        "axes": [
+            {
+                "name": item["name"],
+                "description": item["description"],
+                "scope_boundary": item["scope_boundary"],
+                "default_enabled": item["default_enabled"],
+                "draft_only": item["draft_only"],
+                "mechanism": item["mechanism"],
+                "enabled": state["axes"].get(item["name"], item["default_enabled"]),
+            }
+            for item in policy["axes"]
+        ],
+        "next_selected": axis,
+        "history": list(reversed(state.get("history") or []))[:15],
+    }
+
+
+def status(args: argparse.Namespace) -> int:
+    policy = load_policy()
+    moment = now()
+    payload = status_payload(policy, load_state(policy), moment)
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+    print(f"factory-improvement-axes — maintain-alive={'on' if payload['maintain_alive'] else 'OFF'}")
+    for axis in payload["axes"]:
+        flags = []
+        if axis["draft_only"]:
+            flags.append("draft-only")
+        if axis["mechanism"]["status"] == "not_implemented":
+            flags.append("stub")
+        suffix = f" ({', '.join(flags)})" if flags else ""
+        print(f"  {axis['name']:24} {'on' if axis['enabled'] else 'off':4}{suffix}")
+    if payload["next_selected"]:
+        print(f"  next: {payload['next_selected']['name']} ({payload['next_selected']['action']})")
+    return 0
+
+
+def set_control(args: argparse.Namespace) -> int:
+    policy = load_policy()
+    try:
+        control = json.loads(args.args or "{}")
+    except json.JSONDecodeError:
+        print(json.dumps({"ok": False, "error": "invalid JSON arguments"}))
+        return 2
+    if not isinstance(control, dict):
+        print(json.dumps({"ok": False, "error": "invalid JSON arguments"}))
+        return 2
+    moment = now()
+    with Locked():
+        state = load_state(policy)
+        try:
+            summary = fia.apply_control(state, policy, args.action, control, args.by[:60], iso(moment))
+        except fia.AxesPolicyError as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 2
+        save_state(state)
+    print(json.dumps(
+        {"ok": True, "summary": summary, "status": status_payload(policy, load_state(policy), moment)},
+        ensure_ascii=False,
+    ))
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="factory-improvement-axes", description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    s = sub.add_parser("status")
+    s.add_argument("--json", action="store_true")
+    c = sub.add_parser("set")
+    c.add_argument("--action", required=True, choices=["maintain-alive", "enable", "disable"])
+    c.add_argument("--args", default="{}")
+    c.add_argument("--by", default="operator")
+    args = parser.parse_args()
+    try:
+        return {"status": status, "set": set_control}[args.command](args)
+    except fia.AxesPolicyError as exc:
+        print(f"factory-improvement-axes: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

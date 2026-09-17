@@ -3361,6 +3361,60 @@ class ProviderBridge:
         return value
 
 
+class AxesBridge:
+    """Zero-token facade over bin/factory-improvement-axes (ADR-0016 sec7, sec4).
+
+    Reads the maintain-alive master switch and every named improvement axis;
+    writes only the two reversible controls the tool itself validates. The
+    cockpit never edits config/factory-improvement-axes.json: it asks the
+    tool, which owns the lock and the state file.
+    """
+
+    ACTIONS = {"maintain-alive", "enable", "disable"}
+    ACTOR = "cockpit"
+
+    def __init__(
+        self,
+        executor: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+        command: list[str] | None = None,
+    ) -> None:
+        self.command = command or [str(ROOT / "bin" / "factory-improvement-axes")]
+        self.executor = executor or subprocess.run
+
+    def status(self) -> dict[str, Any]:
+        result = self.executor(
+            [*self.command, "status", "--json"], cwd=ROOT,
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            raise SourceError(_redact(result.stderr.strip() or "factory-improvement-axes indisponible")[:1000])
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise SourceError("factory-improvement-axes a renvoyé un JSON invalide.") from exc
+
+    def submit(self, action: Any, args: Any) -> dict[str, Any]:
+        if action not in self.ACTIONS:
+            raise ValueError("Réglage d'axe d'amélioration inconnu.")
+        if not isinstance(args, dict):
+            raise ValueError("Les paramètres du réglage doivent former un objet.")
+        payload = json.dumps(args, ensure_ascii=False)
+        if len(payload) > 500:
+            raise ValueError("Paramètres de réglage trop longs.")
+        result = self.executor(
+            [*self.command, "set", "--action", str(action), "--args", payload,
+             "--by", self.ACTOR],
+            cwd=ROOT, capture_output=True, text=True, timeout=30,
+        )
+        try:
+            value = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise SourceError(_redact(result.stderr.strip() or "Réglage non appliqué.")[:1000]) from exc
+        if not value.get("ok"):
+            raise ValueError(str(value.get("error") or "Réglage refusé."))
+        return value
+
+
 def handler_factory(
     cache: SnapshotCache,
     mayor_bridge: MayorBridge | None = None,
@@ -3373,6 +3427,7 @@ def handler_factory(
     delivery_reader: DeliveryEvidenceReader | None = None,
     decision_store: DirectDecisionStore | None = None,
     provider_bridge: ProviderBridge | None = None,
+    axes_bridge: AxesBridge | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     bridge = mayor_bridge or MayorBridge()
     details = detail_reader or DetailReader()
@@ -3384,6 +3439,7 @@ def handler_factory(
     delivery = delivery_reader or DeliveryEvidenceReader()
     direct_decisions = decision_store or DirectDecisionStore()
     providers = provider_bridge or ProviderBridge()
+    axes = axes_bridge or AxesBridge()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "FactoryCockpit/1"
@@ -3489,10 +3545,17 @@ def handler_factory(
                 except SourceError as exc:
                     self._json_response(503, {"error": str(exc), "state": "source_error"})
                 return
+            if path == "/api/improvement-axes":
+                try:
+                    self._json_response(200, axes.status())
+                except SourceError as exc:
+                    self._json_response(503, {"error": str(exc), "state": "source_error"})
+                return
             files = {
                 "/": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                 "/providers.js": ("providers.js", "text/javascript; charset=utf-8"),
+                "/improvement-axes.js": ("improvement-axes.js", "text/javascript; charset=utf-8"),
                 "/styles.css": ("styles.css", "text/css; charset=utf-8"),
             }
             if path not in files:
@@ -3508,7 +3571,7 @@ def handler_factory(
             if path not in {
                 "/api/mayor/message", "/api/po/message", "/api/po/new",
                 "/api/preview/action", "/api/product-queue",
-                "/api/direct-decision", "/api/providers",
+                "/api/direct-decision", "/api/providers", "/api/improvement-axes",
             }:
                 self._json_response(404, {"error": "Not found"})
                 return
@@ -3523,6 +3586,7 @@ def handler_factory(
                 else "human-queue-record" if path == "/api/product-queue"
                 else "human-direct-decision" if path == "/api/direct-decision"
                 else "human-provider-control" if path == "/api/providers"
+                else "human-improvement-axes-control" if path == "/api/improvement-axes"
                 else "human-po-message"
             )
             if self.headers.get("X-Factory-Cockpit") != expected_header:
@@ -3556,6 +3620,8 @@ def handler_factory(
                     result = direct_decisions.record(request)
                 elif path == "/api/providers":
                     result = providers.submit(request.get("action"), request.get("args"))
+                elif path == "/api/improvement-axes":
+                    result = axes.submit(request.get("action"), request.get("args"))
                 else:
                     result = po.new_conversation()
                 self._json_response(202, result)

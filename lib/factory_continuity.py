@@ -29,10 +29,18 @@ actually derivable" rather than invent new instrumentation:
 The one open gap this module cannot yet close: docs/FACTORY_CONTINUITY.md
 sec1 itself notes that "the release queue ran out of eligible work" (D) and
 "a human turned maintain-alive off" (B) look identical without a persisted
-maintain-alive toggle, which does not exist yet. STOPPED_HUMAN is therefore
-kept narrow here to the two concrete signals that already exist and are
-unambiguous: a persisted `admin` campaign block (a deliberate maintenance
-window, factory_state.py's own `persisted_admin_window` case) and
+maintain-alive toggle. That toggle now exists (`af-xe30d`:
+`.gc/runtime/factory-improvement-axes-state.json` via
+`bin/factory-improvement-axes status --json`, `lib/factory_improvement_axes.py`)
+but is not yet read here -- this module's own contract is a pure projection
+of the already-computed `human_state`, and the toggle lives one layer below
+that, in the ladder's own tick (`factory_campaign.plan_idle_ladder`'s
+`maintain_alive` parameter). Wiring `maintain_alive` into `human_state` (or
+into this projection directly) so STOPPED_HUMAN can widen to cover it is
+separate, follow-on work. STOPPED_HUMAN is therefore still kept narrow here
+to the two concrete signals that already exist and are unambiguous: a
+persisted `admin` campaign block (a deliberate maintenance window,
+factory_state.py's own `persisted_admin_window` case) and
 `campaign.state == "completed"` (every release criterion proven, nothing
 left to select). Anything else that looks idle falls through to IDLE_LADDER,
 matching ADR-0016 sec7's "no state in which the correct action is to do

@@ -46,6 +46,14 @@
       <details class="provider-history"><summary>Derniers changements</summary><ol id="providers-history"></ol></details>
       <p class="zero-token">Lecture et réglages · 0 token</p>
     </section>
+    <section id="axes-panel" class="panel axes-panel" aria-labelledby="axes-title">
+      <div class="section-heading"><div><p class="eyebrow">AXES D’AMÉLIORATION</p><h2 id="axes-title">Que fait l’usine quand la release n’a plus rien à livrer <button class="info" data-tooltip="Quand la file de release est vide, l'usine avance sur un axe nommé et borné plutôt que de s'arrêter (ADR-0016 §7). Chaque axe est activable séparément; un axe « proposition seulement » ne matérialise jamais de travail exécutable, seulement un bead à valider.">?</button></h2></div><div class="provider-heading-actions"><label class="provider-auto"><input id="axes-maintain-alive" type="checkbox"> Maintenir en vie</label><button id="axes-refresh" type="button">Relire</button></div></div>
+      <p id="axes-summary" class="provider-summary">Lecture…</p>
+      <p id="axes-feedback" class="feedback" aria-live="polite"></p>
+      <div id="axes-list" class="axes-list"></div>
+      <p id="axes-next" class="axes-next">—</p>
+      <p class="zero-token">Lecture et réglages · 0 token</p>
+    </section>
     <section class="hero-grid">
       <article class="panel focus-panel clickable" id="focus-card" tabindex="0"><div class="section-heading"><div><p class="eyebrow">RÉSULTAT PRODUIT ACTUEL</p><h2 id="focus-title">Lecture des signaux…</h2></div><span id="focus-state" class="status-pill waiting">—</span></div><p id="focus-phase" class="phase">—</p><div class="facts"><div><span>En cours depuis</span><strong id="focus-elapsed">—</strong></div><div><span>Dernier signal</span><strong id="focus-signal">—</strong></div><div><span>Étapes prouvées</span><strong id="focus-steps">—</strong></div></div><div class="step-track"><div id="step-fill" class="step-fill"></div></div><p class="truth-note">Clique pour voir contexte, critères, sous-travaux et preuves. Aucun pourcentage inventé.</p></article>
       <article class="panel attention-panel" id="attention-card" aria-labelledby="needs-benjamin"><p class="eyebrow">BLOCAGES EFFECTIFS</p><h2 id="needs-benjamin" aria-live="polite">Lecture de la coordination…</h2><div class="decision-actions"><button id="open-blocker-decision" class="primary hidden" type="button" aria-label="Ouvrir la décision bloquante">Ouvrir la décision bloquante</button></div><p id="last-delivery" class="muted">Dernière livraison : —</p><div class="today-attention-stats"><div class="mini-stat"><strong id="today-blockers">—</strong><span>blocage effectif</span></div><div class="mini-stat"><strong id="today-pending">—</strong><span>décisions générales ouvertes</span></div></div></article>
@@ -188,4 +196,5 @@
 </div>
 <script src="/app.js"></script>
 <script src="/providers.js"></script>
+<script src="/improvement-axes.js"></script>
 </body></html>
