@@ -22,8 +22,9 @@ Usage: PRODUCT_QUEUE_PRODUCT=<slug> product-queue <command> [arguments]
 Commands:
   list [--json]                              Show the ordered active candidate queue.
   next [--json]                              Show the first eligible candidate.
-  add --title TEXT [--goal ID] [--urgency LEVEL]
-      [--why TEXT] [--acceptance TEXT]       Append a deferred candidate.
+  add --title TEXT --authorized-by TEXT --acceptance TEXT
+      [--goal ID] [--urgency LEVEL] [--why TEXT]
+                                             Append a deferred candidate.
   move ID POSITION                           Move a candidate to an exact position.
   urgency ID normal|urgent|critical          Change urgency without changing order.
   pause ID REASON                            Skip a candidate while retaining order.
@@ -36,7 +37,39 @@ technically deferred in Beads so they are never worker-ready. Only the Mayor may
 materialize the first eligible candidate in its product or Factory-campaign lane
 into a separately created executable Bead. Order and urgency are intentionally
 independent; NEXT remains product-only.
+
+add requires --authorized-by (what authorizes this candidate: a decision record,
+an ADR, a validated parent or review finding) and an --acceptance holding at
+least one EARS line (English "shall" or French "doit"). materialize copies the
+provenance onto the execution Bead (gc.source_candidate, gc.authorized_by).
 USAGE
+}
+
+ears_template() {
+  cat >&2 <<'EARS'
+Acceptance needs at least one EARS line (French: Le/Quand/Tant que/Là où/Si ... doit):
+  Ubiquitous:        The <system> shall <response>.
+  Event-driven:      When <trigger>, the <system> shall <response>.
+  State-driven:      While <state>, the <system> shall <response>.
+  Optional feature:  Where <feature>, the <system> shall <response>.
+  Unwanted behavior: If <condition>, then the <system> shall <response>.
+EARS
+}
+
+has_ears_line() {
+  local line found=1
+  local lead='^[[:space:]]*(-[[:space:]]+)?(\[[^]]*\][[:space:]]*)?'
+  local english="${lead}(the|when|while|where|if)[[:space:]].*[^[:alnum:]]shall([^[:alnum:]]|\$)"
+  local french="${lead}((le|la|les|quand|lorsque|tant que|là où|si)[[:space:]]|l'|l’|lorsqu'|lorsqu’).*[^[:alnum:]](doit|doivent)([^[:alnum:]]|\$)"
+  shopt -s nocasematch
+  while IFS= read -r line; do
+    if [[ $line =~ $english || $line =~ $french ]]; then
+      found=0
+      break
+    fi
+  done <<<"$1"
+  shopt -u nocasematch
+  return "$found"
 }
 
 require_command() {
@@ -148,7 +181,7 @@ next_candidate() {
 }
 
 add_candidate() {
-  local title= goal=$DEFAULT_GOAL urgency=normal why= acceptance=
+  local title= goal=$DEFAULT_GOAL urgency=normal why= acceptance= authorized_by=
   local priority rank metadata response id
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -157,26 +190,33 @@ add_candidate() {
       --urgency) [[ $# -ge 2 ]] || die "--urgency needs a value."; urgency=$2; shift 2 ;;
       --why) [[ $# -ge 2 ]] || die "--why needs a value."; why=$2; shift 2 ;;
       --acceptance) [[ $# -ge 2 ]] || die "--acceptance needs a value."; acceptance=$2; shift 2 ;;
+      --authorized-by) [[ $# -ge 2 ]] || die "--authorized-by needs a value."; authorized_by=$2; shift 2 ;;
       *) die "Unsupported add argument: $1" ;;
     esac
   done
   [[ -n $title && $title != *$'\n'* && $title != *$'\r'* ]] \
     || die "A single-line --title is required."
+  [[ -n $authorized_by && $authorized_by != *$'\n'* && $authorized_by != *$'\r'* ]] \
+    || die "A single-line --authorized-by is required: cite the decision, ADR, or validated parent that authorizes this candidate."
+  [[ -n $acceptance ]] || { ears_template; die "--acceptance is required."; }
+  has_ears_line "$acceptance" \
+    || { ears_template; die "--acceptance holds no EARS-shaped line."; }
   [[ $goal =~ ^[A-Za-z0-9._-]+$ || $goal == none ]] || die "Invalid goal ID."
   priority=$(priority_for_urgency "$urgency")
   [[ -n $why ]] || why="Queued product outcome for $PRODUCT; refine scope before Mayor materialization."
-  [[ -n $acceptance ]] || acceptance="The PO and Mayor must refine measurable acceptance before execution."
 
   load_inventory
   rank=$(jq '[.[].metadata["gc.queue_rank"] | tonumber] | max // 0 | . + 1000' \
     <<<"$INVENTORY")
   metadata=$(jq -cn --arg product "$PRODUCT" --arg state queued \
-    --arg urgency "$urgency" --arg goal "$goal" --argjson rank "$rank" '{
+    --arg urgency "$urgency" --arg goal "$goal" --argjson rank "$rank" \
+    --arg authorized_by "$authorized_by" '{
       "gc.queue_product": $product,
       "gc.queue_state": $state,
       "gc.queue_rank": $rank,
       "gc.queue_urgency": $urgency,
-      "gc.queue_goal": $goal
+      "gc.queue_goal": $goal,
+      "gc.authorized_by": $authorized_by
     }')
   response=$("$BD_BIN" create "$title" --type feature --priority "$priority" \
     --defer 2125-01-01 \
@@ -289,6 +329,7 @@ cancel_candidate() {
 materialize_candidate() {
   local id=${1:-} execution_id=${2:-} authority=${3:-}
   local first response execution_status candidate_goal lane lane_filter
+  local authorized_by backlink
   [[ -n $id && -n $execution_id && $authority == --mayor ]] \
     || die "Usage: $PROGRAM_NAME materialize ID EXECUTION_BEAD --mayor"
   require_command "$GC_BIN"
@@ -319,6 +360,14 @@ materialize_candidate() {
     --set-metadata "gc.materialized_bead=$execution_id" \
     --append-notes "Mayor materialized as executable Bead $execution_id" >/dev/null
   "$BD_BIN" close "$id" --reason "Materialized by Mayor as $execution_id" >/dev/null
+  # Provenance back-link; legacy candidates carry no gc.authorized_by. Best
+  # effort: the materialization above is already durable and must stand.
+  authorized_by=$(jq -r '.metadata["gc.authorized_by"] | strings' <<<"$CANDIDATE")
+  backlink=(--set-metadata "gc.source_candidate=$id")
+  [[ -z $authorized_by ]] || backlink+=(--set-metadata "gc.authorized_by=$authorized_by")
+  "$BD_BIN" update "$execution_id" "${backlink[@]}" >/dev/null \
+    || printf '%s: WARNING: %s\n' "$PROGRAM_NAME" \
+      "Could not write the provenance back-link on $execution_id; materialization stands." >&2
   printf 'MATERIALIZED: %s -> %s\n' "$id" "$execution_id"
 }
 

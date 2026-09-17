@@ -2451,6 +2451,8 @@ class QueueBridge:
             command.extend([
                 "--title", title, "--why", why, "--acceptance", acceptance,
                 "--urgency", urgency,
+                # This path is only reachable through a confirmed human RECORD.
+                "--authorized-by", "Human RECORD via Factory cockpit (human-queue-record)",
             ])
         else:
             item_id = _safe_identifier(str(payload.get("id") or ""))

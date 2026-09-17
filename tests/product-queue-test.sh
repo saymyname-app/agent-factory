@@ -57,11 +57,54 @@ grep -Fq 'gc.queue_state=queued' "$QUEUE_LOG"
 
 : >"$QUEUE_LOG"
 output=$("$QUEUE" add --title Delta --goal af-u8id --urgency normal \
-  --why 'Useful outcome' --acceptance 'Visible result')
+  --why 'Useful outcome' --authorized-by 'ADR-0021 review finding' \
+  --acceptance 'When a learner answers wrongly, the quiz shall show the correction.')
 assert_contains "$output" 'ADDED: af-new — position 4 (normal)'
 grep -Fq 'create <Delta>' "$QUEUE_LOG"
 grep -Fq '<--defer> <2125-01-01>' "$QUEUE_LOG"
+grep -Fq '"gc.authorized_by":"ADR-0021 review finding"' "$QUEUE_LOG"
 grep -Fq 'update <af-new> <--status> <deferred>' "$QUEUE_LOG"
+
+# Provenance and EARS acceptance are required going forward (add only).
+ears='The quiz shall show the correction.'
+: >"$QUEUE_LOG"
+if output=$("$QUEUE" add --title Delta --acceptance "$ears" 2>&1); then
+  fail 'add without --authorized-by must fail'
+fi
+assert_contains "$output" '--authorized-by is required'
+if "$QUEUE" add --title Delta --authorized-by $'ADR\n0021' --acceptance "$ears" >/dev/null 2>&1; then
+  fail 'a multi-line --authorized-by must fail'
+fi
+if output=$("$QUEUE" add --title Delta --authorized-by ADR-0021 2>&1); then
+  fail 'add without --acceptance must fail'
+fi
+assert_contains "$output" '--acceptance is required'
+for bad in 'Visible result' 'The quiz is nice.' 'It shall work.' 'The Marshall plan works.'; do
+  if output=$("$QUEUE" add --title Delta --authorized-by ADR-0021 --acceptance "$bad" 2>&1); then
+    fail "non-EARS acceptance must fail: $bad"
+  fi
+  assert_contains "$output" 'no EARS-shaped line'
+  assert_contains "$output" 'When <trigger>, the <system> shall <response>.'
+  assert_contains "$output" 'If <condition>, then the <system> shall <response>.'
+done
+[[ ! -s $QUEUE_LOG ]] || fail 'a rejected add must not touch Beads'
+for good in \
+  'The quiz shall show the correction.' \
+  'when a learner answers, the quiz SHALL show the correction.' \
+  'While offline, the app shall queue answers.' \
+  'Where photos are enabled, the quiz shall show them.' \
+  'If the upload fails, then the app shall keep the draft.' \
+  $'Context line first.\n- [Event] When a learner answers, the quiz shall respond.' \
+  'Le système doit afficher la correction.' \
+  'Quand un apprenant répond, le quiz doit afficher la correction.' \
+  'Lorsqu’un apprenant répond, le quiz doit afficher la correction.' \
+  'Tant que le réseau est coupé, les réponses doivent rester en file.' \
+  'Là où les photos sont activées, le quiz doit les afficher.' \
+  'Si l'"'"'envoi échoue, alors l'"'"'application doit garder le brouillon.'
+do
+  "$QUEUE" add --title Delta --authorized-by ADR-0021 --acceptance "$good" >/dev/null \
+    || fail "EARS acceptance must be accepted: $good"
+done
 
 if "$QUEUE" materialize af-a smf-exec >/dev/null 2>&1; then
   fail 'materialize without Mayor authority should fail'
@@ -74,6 +117,28 @@ fi
 grep -Fq 'gc.queue_state=materialized' "$QUEUE_LOG"
 grep -Fq 'gc.materialized_bead=smf-exec' "$QUEUE_LOG"
 grep -Fq 'close <af-a>' "$QUEUE_LOG"
+# Legacy candidate (no gc.authorized_by): only the source back-link is written.
+grep -Fxq 'update <smf-exec> <--set-metadata> <gc.source_candidate=af-a>' "$QUEUE_LOG"
+
+# materialize copies provenance onto the execution Bead; a failed back-link
+# write only warns and never undoes the materialization.
+legacy_inventory=$QUEUE_INVENTORY
+export QUEUE_INVENTORY='[
+  {"id":"af-p","title":"Provenance","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id","gc.authorized_by":"ADR-0021"}}
+]'
+: >"$QUEUE_LOG"
+"$QUEUE" materialize af-p smf-exec --mayor >/dev/null
+grep -Fxq 'update <smf-exec> <--set-metadata> <gc.source_candidate=af-p> <--set-metadata> <gc.authorized_by=ADR-0021>' "$QUEUE_LOG"
+: >"$QUEUE_LOG"
+output=$(QUEUE_FAIL_UPDATE_ID=smf-exec "$QUEUE" materialize af-p smf-exec --mayor 2>&1) \
+  || fail 'a back-link write failure must not abort materialize'
+assert_contains "$output" 'WARNING: Could not write the provenance back-link on smf-exec'
+assert_contains "$output" 'MATERIALIZED: af-p -> smf-exec'
+grep -Fq 'gc.materialized_bead=smf-exec' "$QUEUE_LOG"
+grep -Fq 'close <af-p>' "$QUEUE_LOG"
+# Legacy candidates without the new metadata still list.
+export QUEUE_INVENTORY=$legacy_inventory
+"$QUEUE" list >/dev/null || fail 'legacy candidates without provenance must still list'
 
 # Factory campaigns have a separate lane: their first eligible candidate may be
 # materialized without bypassing or reordering the first eligible product.
