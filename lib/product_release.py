@@ -29,6 +29,7 @@ WORK_STATES = {
 }
 BLOCK_KINDS = {"decision", "admin", "limit", "durable_failure", "dependency"}
 ORIGIN_KINDS = {"greenfield", "takeover", "migration"}
+TAKEOVER_ORIGIN_KINDS = {"takeover", "migration"}
 SOURCE_KINDS = {"repository", "document", "system", "database", "conversation"}
 SOURCE_ACCESS = {"read", "read_write", "none"}
 CONFLICT_RESOLUTIONS = {"pending", "keep_target", "adapt_target", "mix"}
@@ -138,7 +139,7 @@ def _validate_review(value: Any, field: str) -> dict[str, Any]:
 
 
 def _validate_scoped_blocks(
-    value: Any, field: str, *, require_evidence: bool = True,
+    value: Any, field: str, *, require_evidence: bool = True, origin_kind: str | None = None,
 ) -> tuple[list[dict[str, Any]], set[str]]:
     items = _list(value, field, nonempty=False)
     seen: set[str] = set()
@@ -154,16 +155,30 @@ def _validate_scoped_blocks(
         _required_text(item.get("description"), f"{prefix}.description")
         if item.get("status") not in EVIDENCE_STATES:
             raise ReleaseContractError(f"{prefix}.status est inconnu.")
+        evidence: list[dict[str, Any]] = []
         if require_evidence:
-            _validate_evidence(item.get("evidence"), f"{prefix}.evidence")
+            evidence = _validate_evidence(item.get("evidence"), f"{prefix}.evidence")
         review = item.get("review")
         if review is not None:
             _validate_review(review, f"{prefix}.review")
-            if item.get("status") == "proven" and review.get("state") == "unreviewed":
-                raise ReleaseContractError(
-                    f"{prefix} ne peut pas être proven tant que review.state vaut unreviewed "
-                    "(ADR-0021: bloc issu d'une reprise, non revu par la Factory)."
-                )
+
+        # ADR-0021 fail-closed rule: a block whose evidence includes a
+        # discovery-sourced (scan) item, on a takeover/migration-origin release,
+        # was mechanically discovered rather than delivered by the Factory and
+        # must carry a review object -- a missing review key is not "no opinion
+        # yet", it is the exact gap ADR-0021 exists to close.
+        is_discovery_sourced = any(entry.get("kind") == "scan" for entry in evidence)
+        requires_review = origin_kind in TAKEOVER_ORIGIN_KINDS and is_discovery_sourced
+        if requires_review and review is None:
+            raise ReleaseContractError(
+                f"{prefix} est issu d'une reprise (origin.kind={origin_kind}) avec une preuve de "
+                "type scan: review est requis, même à l'état unreviewed (ADR-0021)."
+            )
+        if item.get("status") == "proven" and review is not None and review.get("state") == "unreviewed":
+            raise ReleaseContractError(
+                f"{prefix} ne peut pas être proven tant que review.state vaut unreviewed "
+                "(ADR-0021: bloc issu d'une reprise, non revu par la Factory)."
+            )
     return items, seen
 
 
@@ -588,19 +603,26 @@ def validate_release_contract(value: Any) -> dict[str, Any]:
     _required_text(maturity.get("label"), "maturity.label")
     maturity_criteria = _ids(maturity.get("criteria"), "maturity.criteria")
 
-    capabilities, capability_ids = _validate_scoped_blocks(value.get("capabilities"), "capabilities")
-    journeys, journey_ids = _validate_scoped_blocks(value.get("journeys"), "journeys")
+    origin_kind = origin.get("kind")
+    capabilities, capability_ids = _validate_scoped_blocks(
+        value.get("capabilities"), "capabilities", origin_kind=origin_kind,
+    )
+    journeys, journey_ids = _validate_scoped_blocks(
+        value.get("journeys"), "journeys", origin_kind=origin_kind,
+    )
     for index, journey in enumerate(journeys):
         _ids(journey.get("capability_refs"), f"journeys[{index}].capability_refs", capability_ids)
         if not journey.get("capability_refs"):
             raise ReleaseContractError("Chaque parcours doit référencer une capacité.")
 
     for field in ("included", "excluded"):
-        items, _ = _validate_scoped_blocks(value.get(field), field)
+        items, _ = _validate_scoped_blocks(value.get(field), field, origin_kind=origin_kind)
         for index, item in enumerate(items):
             if item.get("kind") not in {"product", "factory"}:
                 raise ReleaseContractError(f"{field}[{index}].kind est invalide.")
-    dependencies, dependency_ids = _validate_scoped_blocks(value.get("dependencies"), "dependencies")
+    dependencies, dependency_ids = _validate_scoped_blocks(
+        value.get("dependencies"), "dependencies", origin_kind=origin_kind,
+    )
     for index, item in enumerate(dependencies):
         if item.get("required_for") is None:
             raise ReleaseContractError(f"dependencies[{index}].required_for manque.")
@@ -643,7 +665,9 @@ def validate_release_contract(value: Any) -> dict[str, Any]:
                 raise ReleaseContractError(f"Option dupliquée dans {prefix}.")
             option_ids.add(option_id)
 
-    criteria, criterion_ids = _validate_scoped_blocks(value.get("criteria"), "criteria")
+    criteria, criterion_ids = _validate_scoped_blocks(
+        value.get("criteria"), "criteria", origin_kind=origin_kind,
+    )
     if not set(maturity_criteria).issubset(criterion_ids):
         raise ReleaseContractError("maturity.criteria contient une référence inconnue.")
     for index, item in enumerate(criteria):
@@ -657,7 +681,9 @@ def validate_release_contract(value: Any) -> dict[str, Any]:
         value.get("work_graph"), criterion_ids, decision_ids, assumption_ids,
     )
 
-    improvements, _ = _validate_scoped_blocks(value.get("factory_improvements"), "factory_improvements")
+    improvements, _ = _validate_scoped_blocks(
+        value.get("factory_improvements"), "factory_improvements", origin_kind=origin_kind,
+    )
     for index, item in enumerate(improvements):
         if item.get("kind") != "factory":
             raise ReleaseContractError(f"factory_improvements[{index}] doit porter le badge Factory.")

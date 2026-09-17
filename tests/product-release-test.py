@@ -398,6 +398,23 @@ class TakeoverReviewTest(unittest.TestCase):
         with self.assertRaises(ReleaseContractError):
             validate_release_contract(value)
 
+    def test_takeover_derived_proven_block_with_no_review_key_is_rejected(self):
+        # ADR-0021's exact fail-closed gap: a takeover-origin release with a
+        # discovery-sourced (scan) evidence item on a proven block, and no
+        # "review" key at all -- must not validate cleanly.
+        value = base_release()
+        value["origin"]["kind"] = "takeover"
+        value["capabilities"][0]["evidence"] = [{"kind": "scan", "ref": "discovery-scan", "status": "proven"}]
+        self.assertNotIn("review", value["capabilities"][0])
+        with self.assertRaisesRegex(ReleaseContractError, "review"):
+            validate_release_contract(value)
+
+    def test_takeover_derived_block_without_discovery_evidence_does_not_require_review(self):
+        value = base_release()
+        value["origin"]["kind"] = "takeover"
+        result = validate_release_contract(value)
+        self.assertNotIn("review", result["capabilities"][0])
+
 
 class IntakeStateTransitionTest(unittest.TestCase):
     def test_intake_to_draft_requires_intake_state_complete(self):

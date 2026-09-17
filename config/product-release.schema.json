@@ -1251,6 +1251,27 @@
         "review": {
           "$ref": "#/$defs/review"
         }
+      },
+      "if": {
+        "properties": {
+          "evidence": {
+            "contains": {
+              "properties": {
+                "kind": {
+                  "const": "scan"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "evidence"
+        ]
+      },
+      "then": {
+        "required": [
+          "review"
+        ]
       }
     },
     "review": {
