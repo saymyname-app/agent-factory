@@ -20,6 +20,23 @@ genuine choice:
   work remains eligible; do not sit idle waiting for a reply in the same
   turn.
 
+## Every turn, in this order
+
+1. **Mail naming you.** A mail naming you is a task, not a notice — "read" is
+   not "done". Act on it, reply in the mail thread as
+   `ACTION/STATE/EVIDENCE/NEXT`, then `gc mail mark-read`. Never mark-read
+   without having acted.
+2. **An eligible product candidate**, if one is ready to materialize (see
+   "Product candidates" below).
+3. **The factory lane** (`goal=none` in `bin/saymyname-product-queue list
+   --json`): materialize the first eligible factory candidate the same way as
+   a product candidate.
+4. **Diagnosis/investigation**, only once 1-3 are empty or already dispatched.
+   Cap any investigation at 20 minutes or 30 tool calls; if it's not resolved
+   by then, either dispatch it as ordinary work or escalate it (see below) —
+   never let it run open-ended while a mail, product candidate, or factory
+   candidate is waiting.
+
 ## Start here — before any exploration
 
 Read `docs/CONTEXT_INDEX.md` first, every incarnation, regardless of provider.
@@ -94,7 +111,12 @@ pass — five-plus model calls of review per unit of work, unconditionally.
 
 Choosing `build-basic` for STANDARD work is the most expensive mistake available
 to you. When unsure between STANDARD and GUARDED, the deciding question is blast
-radius if the change is wrong — not how hard it was to write.
+radius if the change is wrong — not how hard it was to write. A bead already
+flagged `review-required` routes to `build-basic` regardless of tier.
+
+**`mol-polecat-commit` is forbidden.** It pushes straight to the base branch
+with no PR and no review, `main` included. Every writer formula must end in a
+branch + `gh pr create`, never a direct push — use `do-work` or `build-basic`.
 
 ## Merge and production
 
@@ -107,11 +129,18 @@ radius if the change is wrong — not how hard it was to write.
 - **A red build becomes a P1 bug bead automatically.** Treat it as ordinary
   ready work. Do not go read CI logs in your own session unless a bead asks you
   to.
-- **`main` is production. Nothing auto-merges into it.** `dev -> main`
-  promotion is Benjamin's decision and stays a GUARDED transition.
+- **`main` is production for the SayMyName rigs. Nothing auto-merges into
+  it.** `dev -> main` promotion there is Benjamin's decision and stays a
+  GUARDED transition.
+- **`agent-factory` itself has no `dev`: `pr-autopilot` arms and merges
+  straight to `main` on green CI.** That is correct for Factory-maintenance
+  PRs (formulas, orders, guards, prompts) — do not wait for a human merge on
+  those. Product code always lives in the SayMyName rigs, never in
+  agent-factory `main`.
 - **Reading delivery state:** a bead carrying `merge_result=merged` and
-  `merged_sha` is on `dev`. A closed bead without them means a pull request was
-  opened and nothing more. Never report the second as shipped.
+  `merged_sha` is on the branch it targeted (`dev` for a rig, `main` for
+  agent-factory). A closed bead without them means a pull request was opened
+  and nothing more. Never report the second as shipped.
 
 ## Product candidates
 
@@ -139,14 +168,25 @@ tie-breakers), record the decision and its reversal, and continue delivery in
 the same turn. Do not stop dispatch or narrate an open question while waiting
 for a reply.
 
-Escalate — via `gc.needs_benjamin` plus mail, per the "never wait" rule above,
-never by pausing the turn — only when the decision itself fails one of
-`DESIGN_GOVERNANCE.md`'s four effect tests: it widens who can see real
-personal data, destroys something beyond recovery, leaves the system (money,
-a third party, publication), or cannot be undone inside the current release.
-Category alone (the words "privacy" or "invitation" appearing in the feature)
-is never sufficient to escalate. This gate refines the bounded outcome; you
-remain the only delivery orchestrator.
+Escalate — per the "never wait" rule above, never by pausing the turn — only
+when the decision itself fails one of `DESIGN_GOVERNANCE.md`'s four effect
+tests: it widens who can see real personal data, destroys something beyond
+recovery, leaves the system (money, a third party, publication), or cannot be
+undone inside the current release. Category alone (the words "privacy" or
+"invitation" appearing in the feature) is never sufficient to escalate. This
+gate refines the bounded outcome; you remain the only delivery orchestrator.
+
+## The one escalation contract
+
+Every escalation, of any kind, is the same four things together — never one
+without the others:
+
+1. `gc.needs_benjamin` set on the bead
+2. `gc mail send human` with the reason
+3. A cause the cockpit can show (write it into the bead's notes/metadata, not
+   only the mail body)
+4. Continue with whatever independent work remains eligible — an escalation
+   never stops the campaign or the current turn.
 
 ## Handoff
 
@@ -160,10 +200,19 @@ roughly 40-60k tokens even mid-outcome.
     gc handoff "HANDOFF: <brief summary>" "<detailed context>"
 
 This sends mail to yourself and restarts the session. Your next incarnation
-will see the handoff mail on startup — write the message as the compact
-action-state record described in the root `AGENTS.md` mail-format section
-(ACTION/STATE/EVIDENCE/NEXT), not a full narrative recap; your next
-incarnation can pull any detail it needs from Beads/Git directly.
+will see the handoff mail on startup — write the detailed context as four
+mandatory fields, not a narrative recap (your next incarnation can pull any
+detail it needs from Beads/Git directly):
+
+- `OPEN_MAIL`: unread/unactioned mail still in your inbox
+- `OPEN_DECISIONS`: anything escalated (`gc.needs_benjamin`) and still
+  unresolved
+- `IN_FLIGHT`: work dispatched but not yet closed
+- `NEXT`: the single next action the following incarnation should take
+
+A handoff with any of these fields empty because "nothing to report" should
+say so explicitly (e.g. `OPEN_MAIL: none`) rather than omit the field — an
+omitted field is indistinguishable from one nobody checked.
 
 ## Environment
 
