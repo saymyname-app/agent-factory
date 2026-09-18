@@ -514,6 +514,106 @@ NEXT: diagnose why the campaign is not advancing, then close $created with the c
   esac
 fi
 
+# --- 7b. named-session boot liveness, distinct from campaign progress -------
+# (af-jj9u7 / af-88za4) On 2026-09-18 the Mayor session could not boot for
+# hours -- provider-failover resolved it to a provider that hard-rejected
+# every attempt with an error shape the detection regexes did not recognise,
+# so the named session cycled creating -> failed-create -> creating forever.
+# Section 7 above never caught it: campaign-progress liveness only asks "is
+# the campaign advancing", a question a Mayor that cannot boot cannot even
+# begin to answer, so the idle ladder kept nagging a session that could not
+# physically receive the nag. This reads the same identity's session-boot
+# events straight from `gc events` (no coordination bead involved) and
+# lib/factory_session_boot.py holds the streak-detection rules.
+SESSION_BOOT_MINUTES="${FACTORY_SESSION_BOOT_MINUTES:-15}"
+SESSION_BOOT_WINDOW_MINUTES="${FACTORY_SESSION_BOOT_WINDOW_MINUTES:-60}"
+if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 \
+   || [ ! -f "$GUARD_LIB/factory_session_boot.py" ]; then
+  say "· session-boot — not checked (not a city root, or gc unavailable)"
+else
+  # `--city` is required here, not cosmetic: without it, `gc events` falls
+  # back to SUPERVISOR-scoped events (every city on the host, not just this
+  # one) whenever city discovery from cwd fails -- a throwaway/test city
+  # trips that fallback and silently queries live production event data
+  # instead of erroring. Pinning `--city "$ROOT"` makes an unscopeable city
+  # fail fast instead.
+  boot_events=$(gc events --city "$ROOT" --since "${SESSION_BOOT_WINDOW_MINUTES}m" \
+    --payload-match "bead.metadata.configured_named_mode=always" 2>/dev/null || true)
+  boot_verdicts=$(printf '%s' "$boot_events" \
+    | FACTORY_SESSION_BOOT_MINUTES="$SESSION_BOOT_MINUTES" python3 "$GUARD_LIB/factory_session_boot.py" 2>/dev/null || true)
+  if [ -z "$boot_verdicts" ]; then
+    say "· session-boot — no named always-on sessions observed in the last ${SESSION_BOOT_WINDOW_MINUTES}m"
+  else
+    while IFS=$'\t' read -r identity level code message; do
+      [ -z "$identity" ] && continue
+      case "$level" in
+        ok)   say "✓ session-boot — $message" ;;
+        info) say "· session-boot — $message" ;;
+        *)
+          bad "session-boot — $message"
+          if [ "$CHECK_ONLY" != "1" ] && [ "$code" = "session-boot-stuck" ]; then
+            ptr_key="gc.session_boot_stuck_bead.$identity"
+            prior=""
+            if [ -n "${coord_json:-}" ]; then
+              prior=$(printf '%s' "$coord_json" | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    print((v.get("metadata") or {}).get("'"$ptr_key"'", ""))
+except Exception:
+    print("")')
+            fi
+            still_open=0
+            if [ -n "$prior" ]; then
+              prior_status=$(gc bd show "$prior" --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    print(v.get("status", ""))
+except Exception:
+    print("")')
+              [ -n "$prior_status" ] && [ "$prior_status" != "closed" ] && still_open=1
+            fi
+            if [ "$still_open" = "1" ]; then
+              say "  session-boot-stuck defect already filed: $prior"
+            else
+              created=$(gc bd create "Session bloquée au démarrage — $identity" \
+                -p 1 -t bug \
+                -d "Détecté par factory-guard (démarrage de session, af-jj9u7) : $message. La session nommée toujours-active « $identity » n'arrive pas à démarrer -- ce n'est pas un problème de progression de campagne (section 7), c'est que l'orchestrateur lui-même ne peut pas s'initialiser. Diagnostiquer la cause (config fournisseur, ressources hôte, autre) via gc events et provider-state.json, puis réparer ou documenter, et fermer ce bead avec la cause." \
+                --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    print(v.get("id", ""))
+except Exception:
+    print("")')
+              if [ -n "$created" ]; then
+                [ -n "$COORD" ] && gc bd update "$COORD" --set-metadata "$ptr_key=$created" >/dev/null 2>&1 || true
+                # The stuck identity may itself be the Mayor and unreachable,
+                # so this pages the human directly rather than routing
+                # through the orchestrator that cannot boot to read it.
+                gc mail send "${GC_ESCALATION_RECIPIENT:-human}" --notify \
+                  -s "Session boot stuck: $identity ($created)" \
+                  -m "ACTION: factory-guard detected a named always-on session cannot boot and filed a defect
+STATE: $message
+EVIDENCE: gc bd show $created
+NEXT: diagnose why $identity cannot boot (provider config, host resources, other), then fix and close $created with the cause" \
+                  >/dev/null 2>&1 || true
+                did "filed session-boot-stuck defect $created for $identity and paged ${GC_ESCALATION_RECIPIENT:-human}"
+              else
+                bad "could not file the session-boot-stuck defect for $identity"
+              fi
+            fi
+          fi
+          ;;
+      esac
+    done <<< "$boot_verdicts"
+  fi
+fi
+
 # --- 8. delivery-bead proof-field completeness (ADR-0016 s5.3 invariant 2) --
 # bin/deliver-close is the only sanctioned door for CLOSING a delivery bead,
 # and it already refuses to write without independently verifying a merged
