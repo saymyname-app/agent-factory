@@ -80,6 +80,14 @@ chmod +x "$TMP/bin/gh"
 
 : > "$TMP/bin/jq_marker"  # ensure jq itself comes from the real PATH
 export PATH="$TMP/bin:$PATH"
+# factory-delivery-guard resolves GC_BIN="${GC_BIN:-gc}" itself. Every Gas
+# City agent session (this one included) has GC_BIN pre-exported to the real
+# `gc` binary, which silently outranks a PATH-only stub and defeats the
+# ${VAR:-default} fallback the guard relies on -- the same class of gap
+# af-ylndd audited for, and the same belt-and-braces pattern
+# tests/campaign-pointer-test.sh and tests/factory-queue-guard-test.sh
+# already use. Override it explicitly.
+export GC_BIN="$TMP/bin/gc"
 touch "$TMP/city.toml"
 
 guard() { FACTORY_ROOT="$TMP" GUARD_TEST_SCENARIO="${GUARD_TEST_SCENARIO:-merged}" "$GUARD" "$@" 2>&1 || true; }
