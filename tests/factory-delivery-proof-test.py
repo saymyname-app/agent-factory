@@ -20,7 +20,10 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from factory_delivery_proof import (  # noqa: E402
     assess_bead,
+    assess_claimed_shipped_bead,
+    find_claimed_shipped,
     find_incomplete,
+    is_claimed_shipped_bead,
     missing_proof_fields,
 )
 
@@ -146,6 +149,97 @@ class FindIncomplete(unittest.TestCase):
         self.assertEqual({"zz-fixture-incomplete"}, found)
 
 
+class ClaimedShippedBead(unittest.TestCase):
+    """The adjacent gap (af-1xz1g): af-x45xw was closed gc.outcome=pass with
+    its own gc.pr_url on 2026-09-18 while that PR was still OPEN -- and it
+    carried no `product-goal` label, so assess_bead above never saw it."""
+
+    def af_x45xw_shape(self, **overrides):
+        value = {
+            "id": "zz-fixture-af-x45xw",
+            "title": "Closed pass while its own PR was still open",
+            "status": "closed",
+            "labels": [],
+            "metadata": {
+                "gc.outcome": "pass",
+                "gc.pr_url": "https://github.com/example-org/example-repo/pull/114",
+            },
+        }
+        value.update(overrides)
+        return value
+
+    def test_af_x45xw_shape_is_in_scope_with_no_label_at_all(self):
+        self.assertTrue(is_claimed_shipped_bead(self.af_x45xw_shape()))
+
+    def test_work_outcome_shipped_is_also_in_scope(self):
+        bead = self.af_x45xw_shape(metadata={
+            "gc.work_outcome": "shipped",
+            "gc.pr_url": "https://github.com/example-org/example-repo/pull/114",
+        })
+        self.assertTrue(is_claimed_shipped_bead(bead))
+
+    def test_an_open_bead_is_out_of_scope(self):
+        self.assertFalse(is_claimed_shipped_bead(self.af_x45xw_shape(status="open")))
+
+    def test_no_pr_url_is_out_of_scope(self):
+        self.assertFalse(is_claimed_shipped_bead(self.af_x45xw_shape(metadata={"gc.outcome": "pass"})))
+
+    def test_a_non_shipped_outcome_is_out_of_scope(self):
+        bead = self.af_x45xw_shape(metadata={
+            "gc.outcome": "fail",
+            "gc.pr_url": "https://github.com/example-org/example-repo/pull/114",
+        })
+        self.assertFalse(is_claimed_shipped_bead(bead))
+
+    def test_a_malformed_pr_url_is_out_of_scope(self):
+        bead = self.af_x45xw_shape(metadata={
+            "gc.outcome": "pass",
+            "gc.pr_url": "not-a-github-pr-url",
+        })
+        self.assertFalse(is_claimed_shipped_bead(bead))
+
+    def test_an_already_fully_proven_bead_has_nothing_new_to_verify(self):
+        """If the six ADR-0016 fields are already present and valid, either
+        deliver-close wrote them or assess_bead's own backfill already did --
+        there is nothing left for this sibling check to verify."""
+        bead = self.af_x45xw_shape(metadata={
+            **full_proof(),
+            "gc.outcome": "pass",
+            "gc.pr_url": "https://github.com/example-org/example-repo/pull/114",
+        })
+        self.assertFalse(is_claimed_shipped_bead(bead))
+
+    def test_assess_parses_repo_and_pr_number_from_the_url(self):
+        report = assess_claimed_shipped_bead(self.af_x45xw_shape())
+        self.assertIsNotNone(report)
+        self.assertEqual("zz-fixture-af-x45xw", report["id"])
+        self.assertEqual("example-org/example-repo", report["github_repo"])
+        self.assertEqual("114", report["pr_number"])
+        self.assertFalse(report["already_flagged"])
+
+    def test_assess_returns_none_out_of_scope(self):
+        self.assertIsNone(assess_claimed_shipped_bead(self.af_x45xw_shape(status="open")))
+
+    def test_already_flagged_is_reported(self):
+        bead = self.af_x45xw_shape(metadata={
+            "gc.outcome": "pass",
+            "gc.pr_url": "https://github.com/example-org/example-repo/pull/114",
+            "gc.delivery_proof_flagged_at": "2026-09-18T12:00:00Z",
+        })
+        report = assess_claimed_shipped_bead(bead)
+        self.assertIsNotNone(report)
+        self.assertTrue(report["already_flagged"])
+
+    def test_find_claimed_shipped_filters_a_mixed_list(self):
+        beads = [
+            self.af_x45xw_shape(id="zz-fixture-in-scope"),
+            self.af_x45xw_shape(id="zz-fixture-open", status="open"),
+            bead(id="zz-fixture-product-goal-complete"),  # unrelated, has its own label+proof
+        ]
+        found = {report["id"] for report in find_claimed_shipped(beads)}
+        self.assertEqual({"zz-fixture-in-scope"}, found)
+
+
 class Cli(unittest.TestCase):
     def run_cli(self, payload):
         result = subprocess.run(
@@ -177,6 +271,38 @@ class Cli(unittest.TestCase):
         result = self.run_cli("not json")
         self.assertNotEqual(0, result.returncode)
         self.assertIn("unreadable", result.stderr)
+
+    def run_cli_mode(self, mode, payload):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "lib" / "factory_delivery_proof.py"), "--mode", mode],
+            input=payload, capture_output=True, text=True,
+        )
+        return result
+
+    def test_claimed_shipped_mode_prints_one_line_per_bead_in_scope(self):
+        payload = json.dumps([
+            {
+                "id": "zz-fixture-af-x45xw", "status": "closed",
+                "metadata": {
+                    "gc.outcome": "pass",
+                    "gc.pr_url": "https://github.com/example-org/example-repo/pull/114",
+                },
+            },
+            bead(id="zz-fixture-unrelated"),  # product-goal, fully proven, no gc.pr_url
+        ])
+        result = self.run_cli_mode("claimed-shipped", payload)
+        self.assertEqual(0, result.returncode)
+        lines = [line for line in result.stdout.splitlines() if line]
+        self.assertEqual(1, len(lines))
+        fields = lines[0].split("\x1f")
+        self.assertEqual(
+            ["zz-fixture-af-x45xw", "example-org/example-repo", "114", "0"], fields
+        )
+
+    def test_unknown_mode_fails_loudly(self):
+        result = self.run_cli_mode("bogus", "[]")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("unknown", result.stderr)
 
 
 if __name__ == "__main__":
