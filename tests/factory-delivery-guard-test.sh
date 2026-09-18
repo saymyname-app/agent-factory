@@ -23,9 +23,11 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
 export BEADS_FILE="$TMP/city_beads.json"
 export UPDATE_LOG="$TMP/updates.log"; : > "$UPDATE_LOG"
+export MAIL_LOG="$TMP/mail.log"; : > "$MAIL_LOG"
 mkdir -p "$TMP/bin"
 
-# --- stub gc: serves `bd list` from BEADS_FILE, records every `bd update` ----
+# --- stub gc: serves `bd list` from BEADS_FILE, records every `bd update`
+# and `mail send` -------------------------------------------------------
 cat > "$TMP/bin/gc" <<'STUB'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -42,6 +44,10 @@ if [[ ${1:-} == bd && ${2:-} == update ]]; then
   id=$3
   shift 3
   printf '%s %s\n' "$id" "$*" >> "$UPDATE_LOG"
+  exit 0
+fi
+if [[ ${1:-} == mail && ${2:-} == send ]]; then
+  printf 'mail-to=%s\n' "$3" >> "$MAIL_LOG"
   exit 0
 fi
 exit 64
@@ -80,10 +86,19 @@ chmod +x "$TMP/bin/gh"
 
 : > "$TMP/bin/jq_marker"  # ensure jq itself comes from the real PATH
 export PATH="$TMP/bin:$PATH"
+# Every Gas City agent session (this one included) has GC_BIN pre-exported
+# to the real `gc` binary, which silently outranks a PATH-only stub -- a
+# real 2026-09-18 incident (af-txnw2) where this exact gap let a test write
+# reach the live store instead of its fixture. Override it explicitly, the
+# same belt-and-braces pattern tests/factory-queue-guard-test.sh and
+# tests/campaign-pointer-test.sh already use.
+export GC_BIN="$TMP/bin/gc"
+export GH_BIN="$TMP/bin/gh"
 touch "$TMP/city.toml"
 
 guard() { FACTORY_ROOT="$TMP" GUARD_TEST_SCENARIO="${GUARD_TEST_SCENARIO:-merged}" "$GUARD" "$@" 2>&1 || true; }
 update_count() { grep -c "^$1 " "$UPDATE_LOG" 2>/dev/null || true; }
+mail_count() { grep -c "^mail-to=$1$" "$MAIL_LOG" 2>/dev/null || true; }
 
 complete_bead='{
   "id": "zz-fixture-complete", "status": "closed", "title": "Complete",
@@ -143,9 +158,10 @@ do
   [[ $call == *"$field"* ]] || fail "backfill call missing $field: $call"
 done
 
-# 4. named repo+PR that does NOT verify as merged is flagged, never guessed --
+# 4. named repo+PR that does NOT verify as merged is flagged, never guessed,
+#    and the Mayor is paged exactly once ------------------------------------
 jq -n --argjson v "$verifiable_bead" '[$v]' > "$BEADS_FILE"
-: > "$UPDATE_LOG"
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
 out=$(GUARD_TEST_SCENARIO=not-merged guard)
 grep -q "not verifiably merged" <<<"$out" || { echo "$out" >&2; fail "unmerged PR was not reported"; }
 grep -q "flagged zz-fixture-verifiable" <<<"$out" || fail "unverified bead was not flagged"
@@ -153,14 +169,20 @@ grep -q "flagged zz-fixture-verifiable" <<<"$out" || fail "unverified bead was n
   || fail "flag metadata was not written"
 [[ $(grep "^zz-fixture-verifiable " "$UPDATE_LOG" || true) != *"gc.delivery_status=merged"* ]] \
   || fail "an unmerged PR must never be backfilled as if it were verified"
+[ "$(mail_count mayor)" = "1" ] || fail "expected exactly one page to the Mayor for the newly-flagged bead"
 
-# 5. no repo/PR at all (the actual af-7700 shape): flagged once, not spammed -
+# 5. no repo/PR at all (the actual af-7700 shape): flagged once, not spammed,
+#    and the label is never stripped (it may be a genuine delivery bead
+#    closed the wrong way, not a mislabel -- see the guard's header comment) -
 jq -n --argjson u "$unverifiable_bead" '[$u]' > "$BEADS_FILE"
-: > "$UPDATE_LOG"
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
 out=$(guard)
 grep -q "no verifiable GitHub repo/PR recorded" <<<"$out" || { echo "$out" >&2; fail "af-7700-shaped bead not reported"; }
 grep -q "flagged zz-fixture-af7700-shape" <<<"$out" || fail "af-7700-shaped bead was not flagged"
 [ "$(update_count zz-fixture-af7700-shape)" = "1" ] || fail "expected exactly one write (the flag)"
+[[ $(grep "^zz-fixture-af7700-shape " "$UPDATE_LOG" || true) != *"--remove-label"* ]] \
+  || fail "an unverifiable product-goal bead must never have its label stripped automatically"
+[ "$(mail_count mayor)" = "1" ] || fail "expected exactly one page to the Mayor for the af-7700-shaped bead"
 
 # Simulate the flag having landed on the bead (as the real store would show
 # on the next guard run) and prove the second run does not re-flag it.
@@ -168,11 +190,12 @@ jq '.[0].metadata["gc.delivery_proof_flagged_at"] = "2026-09-16T12:00:00Z"
     | .[0].metadata["gc.delivery_proof_missing"] = "gc.delivery_status,gc.work_outcome,gc.github_repo,gc.pr_number,gc.pr_head,gc.merge_commit"' \
   "$BEADS_FILE" > "$BEADS_FILE.next"
 mv "$BEADS_FILE.next" "$BEADS_FILE"
-: > "$UPDATE_LOG"
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
 out=$(guard)
 grep -q "already flagged, awaiting a human" <<<"$out" \
   || { echo "$out" >&2; fail "already-flagged bead did not say so on the second run"; }
 [ "$(update_count zz-fixture-af7700-shape)" = "0" ] || fail "re-flagged an already-flagged bead — spammed a duplicate write"
+[ "$(mail_count mayor)" = "0" ] || fail "paged the Mayor a second time for the same flagged bead"
 grep -q "^UNRESOLVED" <<<"$out" || fail "an unresolved unverifiable bead must not read as healthy"
 
 # --- claimed-shipped sibling check (af-1xz1g): a closed bead of ANY label
@@ -217,9 +240,10 @@ grep -q "example-org/example-repo#7 verifies merged" <<<"$out" \
 [ "$(update_count zz-fixture-claimed-merged)" = "0" ] || fail "a verified claimed-shipped bead should not be written to"
 
 # 7. the af-x45xw shape itself: closed gc.outcome=pass, own gc.pr_url set,
-#    no product-goal label, PR still OPEN -- must be flagged, never trusted -
+#    no product-goal label, PR still OPEN -- must be flagged, never trusted,
+#    and the Mayor paged exactly once ---------------------------------------
 jq -n --argjson v "$af_x45xw_shape" '[$v]' > "$BEADS_FILE"
-: > "$UPDATE_LOG"
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
 out=$(GUARD_TEST_SCENARIO=not-merged guard)
 grep -q "not verifiably merged" <<<"$out" \
   || { echo "$out" >&2; fail "af-x45xw-shaped bead was not reported as unverified"; }
@@ -228,6 +252,7 @@ grep -q "flagged zz-fixture-af-x45xw-shape" <<<"$out" \
 [[ $(grep "^zz-fixture-af-x45xw-shape " "$UPDATE_LOG" || true) == *"gc.delivery_proof_flagged_at="* ]] \
   || fail "af-x45xw-shaped bead flag metadata was not written"
 grep -q "^UNRESOLVED" <<<"$out" || fail "the af-x45xw shape must not read as healthy"
+[ "$(mail_count mayor)" = "1" ] || fail "expected exactly one page to the Mayor for the af-x45xw-shaped bead"
 
 # 8. no label, but already carries all six verified proof fields: the
 #    claimed-shipped check has nothing new to verify and leaves it alone ----
