@@ -99,6 +99,9 @@ jobs:
       - name: Factory guard checks liveness
         run: bash tests/factory-guard-liveness-test.sh
 
+      - name: Factory guard repairs campaign coordination pointers (ADR-0023, af-hihkg)
+        run: bash tests/factory-guard-campaign-repair-test.sh
+
       - name: Session-boot rules (identity assessment, streak tracking) (af-jj9u7)
         run: python tests/factory-session-boot-test.py
 
