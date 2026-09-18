@@ -287,6 +287,17 @@ derive_active_context() {
     (.metadata["gc.input_convoy_id"] | type == "string" and length > 0))' \
     <<<"$workflows_response")
 
+  # current_id can be a workflow root itself rather than someone else's leaf.
+  # Its own convoy tracks its implementation children, never itself, so the
+  # tracks-matching loop above never finds it that way -- it always reports
+  # materialized/no-agent even while its current step has a genuinely live
+  # session. When nothing else claims to track it and it is itself an
+  # in-progress workflow, it IS the active result by definition.
+  if [[ ${#matching_workflows[@]} -eq 0 ]] \
+    && [[ $(metadata_optional "$current_issue" "gc.kind") == workflow ]]; then
+    matching_workflows+=("$current_issue")
+  fi
+
   if [[ ${#matching_workflows[@]} -eq 0 ]]; then
     CURRENT_STATE="materialized"
     CURRENT_PHASE="Résultat matérialisé, aucun agent produit actif"
