@@ -2,6 +2,15 @@
 
 set -Eeuo pipefail
 
+if [[ ${1:-} == quarantine ]]; then
+  [[ $# -eq 3 ]] || exit 64
+  "$GC_BIN" bd update "$2" \
+    --set-metadata "gc.queue_state=blocked_durable_failure" \
+    --set-metadata "gc.queue_pause_reason=$3" >/dev/null
+  printf 'QUARANTINED: %s\n' "$2"
+  exit 0
+fi
+
 [[ ${1:-} == list && ${2:-} == --json ]] || exit 64
 [[ ${CAMPAIGN_QUEUE_FAIL:-0} != 1 ]] || { printf 'product queue unavailable\n' >&2; exit 42; }
 if [[ -n ${CAMPAIGN_QUEUE_FILE:-} && -f ${CAMPAIGN_QUEUE_FILE} ]]; then

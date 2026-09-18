@@ -469,7 +469,7 @@ derive_delivery_or_degrade() {
 
 main() {
   local parent_response parent current_id current_issue last_id delivered_issue format=text
-  local queue_response next_pointer candidate_matches next_candidate resume_mode resume_condition
+  local queue_response next_candidate resume_mode resume_condition
   local current_json observed state_json needs_json degraded campaign_metadata release_json
 
   case "${1:-}" in
@@ -541,40 +541,18 @@ main() {
   show_issue delivered_issue "$last_id" "Last delivered outcome $last_id"
   derive_delivery_or_degrade "$delivered_issue" "$last_id"
 
-  next_pointer=$(metadata_string "$parent" "gc.next_outcome" "Next approved outcome")
   NEEDS_BENJAMIN=$(metadata_string "$parent" "gc.needs_benjamin" "Human decision")
   needs_json=$(jq -cn --arg value "$NEEDS_BENJAMIN" \
     'if ($value | ascii_downcase) == "none" then null else $value end')
 
-  # The queue is authoritative for eligibility.  gc.next_outcome is
-  # hand-maintained prose that no queue mutation (add, move, pause, resume,
-  # cancel, materialize) keeps in step, and nothing else reads it.  A stale
-  # pointer used to die() here and take the whole projection -- hence the
-  # campaign -- down (twice on 2026-09-17: a materialize mid-turn, then an
-  # add).  It now degrades like every other section (governance invariant a):
-  # the queue wins, and the drift is logged for the Mayor to repair.
+  # ADR-0023: gc.next_outcome is retired. The queue was always authoritative
+  # for eligibility -- gc.next_outcome was hand-maintained prose that no
+  # queue mutation (add, move, pause, resume, cancel, materialize) kept in
+  # step, and nothing but this comparison ever read it. One release
+  # (2026-09-17) degraded a mismatch to a WARNING instead of dying; this
+  # release stops reading the field at all.
   next_candidate=$(jq -c '[.[] | select(.state == "eligible" and .goal != "none")][0] // null' \
     <<<"$queue_response")
-  if [[ $next_candidate == null ]]; then
-    candidate_matches=$(jq --arg pointer "$next_pointer" '
-      [.[] as $item | select($item.goal != "none" and
-        ($pointer == $item.id or $pointer == $item.title or
-         ($pointer | contains($item.id)) or ($pointer | contains($item.title))))] | length
-    ' <<<"$queue_response")
-    if [[ $candidate_matches -eq 0 && ${next_pointer,,} != none ]]; then
-      log "WARNING: coordination NEXT ($next_pointer) does not identify any active product candidate; the queue is authoritative (NEXT: none). Repair gc.next_outcome on $PRODUCT_ROOT_BEAD."
-    fi
-  else
-    candidate_matches=$(jq --arg pointer "$next_pointer" --arg id "$(jq -r '.id' <<<"$next_candidate")" \
-      --arg title "$(jq -r '.title' <<<"$next_candidate")" '
-      [.[] | select(.goal != "none" and
-        (.id == $id or .title == $title) and
-        ($pointer == .id or $pointer == .title or
-         ($pointer | contains($id)) or ($pointer | contains($title))))] | length
-    ' <<<"$queue_response")
-    [[ $candidate_matches -eq 1 ]] \
-      || log "WARNING: coordination NEXT ($next_pointer) disagrees with the first eligible product candidate $(jq -r '.id' <<<"$next_candidate"); the queue is authoritative. Repair gc.next_outcome on $PRODUCT_ROOT_BEAD."
-  fi
 
   resume_mode=$(metadata_optional "$parent" "gc.resume_mode")
   resume_condition=$(metadata_optional "$parent" "gc.resume_condition")

@@ -115,15 +115,11 @@ escalates loudly only when it actually failed.
 BODY_OUTCOME=$(gc bd show body --json | jq -r '.[0].metadata["gc.outcome"] // empty')
 CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
 WORK_BEAD_ID=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 if [ "$BODY_OUTCOME" = "fail" ]; then
-  gc bd update "${WORK_BEAD_ID:-body}" \
-    --set-metadata "gc.needs_benjamin=mol-scoped-work body scope failed for ${WORK_BEAD_ID:-this convoy}" \
+  "$FACTORY_ROOT/bin/campaign-pointer" escalate "${WORK_BEAD_ID:-body}" \
+    "mol-scoped-work body scope failed for ${WORK_BEAD_ID:-this convoy}" \
     >/dev/null 2>&1 || true
-  gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "mol-scoped-work: body scope failed (${WORK_BEAD_ID:-unknown})" \
-    -m "ACTION: notify-failure detected the body scope closed with gc.outcome=fail
-STATE: one or more steps aborted this convoy's scope
-EVIDENCE: gc bd show body; gc convoy status {{convoy_id}}
-NEXT: diagnose the failed step, fix it, and re-run or close the work bead with the cause"
 fi
 gc bd update notify-failure --set-metadata gc.outcome=pass --status=closed --notes "checked body outcome: ${BODY_OUTCOME:-unknown}"
 ```

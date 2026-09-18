@@ -335,10 +335,11 @@ def quarantine_node(node_id: str, exc: Exception) -> None:
         f"Panne durable de campagne sur {node_id} après {FAILURE_THRESHOLD} échecs "
         f"consécutifs du sentinelle : {failure_detail(exc)}"
     )
+    # ADR-0023: product-queue is the door for gc.queue_state; this used to
+    # write it directly (a bypass the audit found on 2026-09-18).
+    run(PRODUCT_QUEUE_BIN, "quarantine", node_id, safe_value(cause))
     run(
         GC_BIN, "bd", "update", node_id,
-        "--set-metadata", "gc.queue_state=blocked_durable_failure",
-        "--set-metadata", f"gc.queue_pause_reason={safe_value(cause)}",
         "--set-metadata", "gc.campaign_node_failure_count=0",
         "--set-metadata", "gc.campaign_node_last_error=",
     )

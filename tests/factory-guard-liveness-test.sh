@@ -63,6 +63,14 @@ exit 0
 STUB
 chmod +x "$TMP/bin/gc"
 export PATH="$TMP/bin:$PATH"
+# ADR-0023: the durable-failure path shells out to bin/campaign-pointer,
+# a separate process. Relying on PATH alone to shadow `gc` for that nested
+# exec is not reliable everywhere `gc` is a real command already on PATH;
+# GC_BIN is an explicit environment variable campaign-pointer reads itself,
+# so export it too -- the same belt-and-braces pattern
+# tests/campaign-pointer-test.sh already uses.
+export GC_BIN="$TMP/bin/gc"
+export CAMPAIGN_LOCK_FILE="$TMP/campaign-pointer.lock"
 export FACTORY_GUARD_NOW=$NOW
 
 coord() {  # coord <sentinel-age-s> <progress-age-s|-> [state] [kind] [cause]

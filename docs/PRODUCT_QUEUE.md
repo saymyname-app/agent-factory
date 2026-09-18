@@ -101,7 +101,7 @@ not execution authority. A DISCUSS request never mutates the queue.
 
 **A candidate's `status` (and `gc.queue_state`) is never edited directly — only
 `product-queue`'s own commands (`add`, `move`, `urgency`, `pause`, `resume`,
-`cancel`, `materialize`) mutate them.** A raw `gc bd update <id> --status ...`
+`quarantine`, `cancel`, `materialize`) mutate them.** A raw `gc bd update <id> --status ...`
 or `--set-metadata gc.queue_state=...` bypasses the lock, the lifecycle
 contract, and the audit trail, and produced two real incidents: 2026-09-18
 23:53Z-02:12Z, a candidate set to `in_progress`/`open` directly cascaded into

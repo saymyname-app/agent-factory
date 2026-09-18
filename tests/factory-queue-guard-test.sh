@@ -60,6 +60,14 @@ STUB
 chmod +x "$TMP/bin/bd"
 
 export PATH="$TMP/bin:$PATH"
+# Every Gas City agent session (this one included) has GC_BIN pre-exported
+# to the real `gc` binary, which silently outranks a PATH-only stub -- a
+# real 2026-09-18 incident (af-txnw2) during af-x45xw verification, where
+# this exact gap in a sibling test let a write reach the live store instead
+# of this fixture. Override it explicitly, the same belt-and-braces pattern
+# tests/campaign-pointer-test.sh already uses.
+export GC_BIN="$TMP/bin/gc"
+export BD_BIN="$TMP/bin/bd"
 touch "$TMP/city.toml"
 
 guard() { FACTORY_ROOT="$TMP" "$GUARD" "$@" 2>&1 || true; }

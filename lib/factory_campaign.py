@@ -44,7 +44,8 @@ def plan_transition(status: dict[str, Any]) -> dict[str, Any]:
                 "Vérifie la revue exacte, la CI, la fusion et la clôture, puis poursuis un seul résultat à la fois. "
                 f"Finaliser veut dire : clore {result_id} avec `./bin/deliver-close {result_id} --repo <owner/repo> "
                 "--pr <n>` (jamais `gc bd close`, même s'il est déjà fermé : ses six preuves manquent sinon), puis "
-                f"pointer `gc.last_delivered` sur {result_id} et avancer `gc.current` sur la coordination. "
+                f"`./bin/campaign-pointer finish {result_id}` (ADR-0023 : pointe `gc.last_delivered` sur "
+                f"{result_id} et avance `gc.current`/`gc.current_jit` ensemble, jamais `--set-metadata` à la main). "
                 "Tant que ce n'est pas fait, la campagne ne peut pas lancer le candidat suivant."
             ),
         }

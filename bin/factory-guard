@@ -497,16 +497,13 @@ NEXT: diagnose why the campaign is not advancing, then close $created with the c
               # slow", it is "the mechanism itself may be broken" -- the one
               # escalation contract applies: gc.needs_benjamin, mail human, and
               # a cockpit-visible cause, together, once, at filing time.
-              gc bd update "$COORD" \
-                --set-metadata "gc.needs_benjamin=Défaillance durable de la campagne: $msg" \
-                >/dev/null 2>&1 || true
-              gc mail send human --notify \
-                -s "USINE · défaillance durable de la campagne" \
-                -m "ACTION: factory-guard a détecté 3 échecs consécutifs du sentinelle et filé $created
-STATE: $msg
-EVIDENCE: gc bd show $created
-NEXT: le Mayor diagnostique et exécute ./bin/mayor-campaign resume --mayor après correction" \
-                >/dev/null 2>&1 || true
+              # ADR-0023: campaign-pointer is the door for gc.needs_benjamin;
+              # this used to write it directly, which is exactly the kind of
+              # hand-write the coordination-root pointers had no door for.
+              CAMPAIGN_POINTER="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/campaign-pointer"
+              [ -x "$CAMPAIGN_POINTER" ] && \
+                "$CAMPAIGN_POINTER" escalate "$COORD" "Défaillance durable de la campagne: $msg" \
+                  >/dev/null 2>&1 || true
             fi
           else
             bad "could not file the liveness defect"

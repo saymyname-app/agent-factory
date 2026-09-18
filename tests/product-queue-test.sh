@@ -254,4 +254,20 @@ do
   fi
 done
 
+# ADR-0023: quarantine is the door mayor-campaign's sentinel uses instead of
+# writing gc.queue_state=blocked_durable_failure directly.
+export QUEUE_INVENTORY='[
+  {"id":"af-a","title":"Alpha","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}}
+]'
+: >"$QUEUE_LOG"
+"$QUEUE" quarantine af-a 'Panne durable' >/dev/null
+grep -Fq 'gc.queue_state=blocked_durable_failure' "$QUEUE_LOG"
+grep -Fq 'gc.queue_pause_reason=Panne durable' "$QUEUE_LOG"
+if "$QUEUE" quarantine af-does-not-exist 'Panne' >/dev/null 2>&1; then
+  fail 'quarantining an unknown candidate must fail closed'
+fi
+if "$QUEUE" quarantine af-a >/dev/null 2>&1; then
+  fail 'quarantine without a reason must fail closed'
+fi
+
 printf 'PASS: product queue ordering, lifecycle, and authority contract\n'
