@@ -29,6 +29,7 @@ Commands:
   urgency ID normal|urgent|critical          Change urgency without changing order.
   pause ID REASON                            Skip a candidate while retaining order.
   resume ID                                  Make a paused candidate eligible again.
+  quarantine ID REASON                       Durably block a candidate after a campaign failure.
   cancel ID [REASON]                         Close a candidate without executing it.
   materialize ID EXECUTION_BEAD --mayor      Link and close the first candidate in its lane.
 
@@ -352,6 +353,17 @@ resume_candidate() {
   printf 'QUEUED: %s\n' "$id"
 }
 
+quarantine_candidate() {
+  local id=${1:-} reason=${2:-}
+  [[ -n $id && -n $reason ]] || die "Usage: $PROGRAM_NAME quarantine ID REASON"
+  load_inventory
+  require_candidate "$id"
+  "$BD_BIN" update "$id" --set-metadata "gc.queue_state=blocked_durable_failure" \
+    --set-metadata "gc.queue_pause_reason=$reason" \
+    --append-notes "Product queue quarantined: $reason" >/dev/null
+  printf 'QUARANTINED: %s\n' "$id"
+}
+
 set_urgency() {
   local id=${1:-} urgency=${2:-} priority
   [[ -n $id && -n $urgency ]] || die "Usage: $PROGRAM_NAME urgency ID LEVEL"
@@ -432,6 +444,7 @@ main() {
     urgency) [[ $# -eq 2 ]] || die "Usage: $PROGRAM_NAME urgency ID LEVEL"; set_urgency "$@" ;;
     pause) [[ $# -eq 2 ]] || die "Usage: $PROGRAM_NAME pause ID REASON"; set_state "$1" paused "$2" ;;
     resume) [[ $# -eq 1 ]] || die "Usage: $PROGRAM_NAME resume ID"; resume_candidate "$1" ;;
+    quarantine) [[ $# -eq 2 ]] || die "Usage: $PROGRAM_NAME quarantine ID REASON"; quarantine_candidate "$@" ;;
     cancel) [[ $# -le 2 ]] || die "Usage: $PROGRAM_NAME cancel ID [REASON]"; cancel_candidate "$@" ;;
     materialize) [[ $# -eq 3 ]] || die "Usage: $PROGRAM_NAME materialize ID EXECUTION_BEAD --mayor"; materialize_candidate "$@" ;;
     *) usage >&2; return 2 ;;

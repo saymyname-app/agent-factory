@@ -1,16 +1,26 @@
 #!/usr/bin/env bash
 #
 # Close a Factory delivery-outcome Bead only after independently verifying,
-# via `gh pr view`, that the named GitHub pull request is actually merged.
+# via `gh pr view`, that the named GitHub pull request is actually merged --
+# or, for the lighter ADR-0009 work-record outcome (no PR yet, or none ever
+# expected), write gc.work_outcome and close the bead through the same door.
 #
 # ADR-0016 invariant 2: closing a delivery bead without its six proof fields
 # (gc.delivery_status, gc.work_outcome, gc.github_repo, gc.pr_number,
-# gc.pr_head, gc.merge_commit) must be refused, never silent. This script is
-# the only path that is allowed to set gc.delivery_status=merged: it derives
-# all six fields from a verified GitHub PR and writes them in the same `gc bd
-# update` call that closes the bead, so a delivery bead can never end up
-# closed-but-undocumented. On any verification failure it exits non-zero and
-# makes no metadata change at all.
+# gc.pr_head, gc.merge_commit) must be refused, never silent. The --repo/--pr
+# form is the only path that is allowed to set gc.delivery_status=merged: it
+# derives all six fields from a verified GitHub PR and writes them in the
+# same `gc bd update` call that closes the bead, so a delivery bead can never
+# end up closed-but-undocumented. On any verification failure it exits
+# non-zero and makes no metadata change at all.
+#
+# ADR-0023: mol-do-work used to write gc.work_outcome itself with a raw
+# `gc bd update` at the point a worker closes its own work bead -- long
+# before any PR exists to verify, since push-and-pr runs as a later step.
+# The --outcome form is that door: it writes gc.outcome / gc.work_outcome
+# (and, for shipped, gc.work_commit / gc.work_branch) and closes the bead,
+# without requiring the GitHub verification the --repo/--pr form performs
+# (there is nothing to verify yet at that point in the workflow).
 
 set -Eeuo pipefail
 
@@ -30,14 +40,18 @@ die() {
 usage() {
   cat <<'USAGE'
 Usage: deliver-close <bead-id> --repo <owner/repository> --pr <number> [--reason <text>]
+   or: deliver-close <bead-id> --outcome shipped --commit <sha> --branch <branch> [--verification <text>] [--reason <text>]
+   or: deliver-close <bead-id> --outcome no-op|blocked|abandoned [--reason <text>]
 
-Verifies with `gh pr view` that the pull request is merged, then closes
-<bead-id> with all six ADR-0016 delivery-proof fields set from that verified
-evidence: gc.delivery_status=merged, gc.work_outcome=shipped,
-gc.github_repo, gc.pr_number, gc.pr_head, gc.merge_commit.
+--repo/--pr form: verifies with `gh pr view` that the pull request is
+merged, then closes <bead-id> with all six ADR-0016 delivery-proof fields set
+from that verified evidence: gc.delivery_status=merged, gc.work_outcome=shipped,
+gc.github_repo, gc.pr_number, gc.pr_head, gc.merge_commit. Refuses to close
+the bead (no metadata change at all) when the PR cannot be verified as merged.
 
-Refuses to close the bead (no metadata change at all) when the PR cannot be
-verified as merged.
+--outcome form: writes the ADR-0009 work-record outcome (gc.outcome=pass,
+gc.work_outcome=<outcome>, and for shipped gc.work_commit/gc.work_branch) and
+closes the bead. No GitHub verification is performed.
 USAGE
 }
 
@@ -58,8 +72,27 @@ capture_json() {
   printf -v "$destination" '%s' "$output"
 }
 
+close_by_outcome() {
+  local bead_id=$1 outcome=$2 commit=$3 branch=$4 verification=$5 reason=$6
+  local -a args=("$GC_BIN" bd update "$bead_id" --set-metadata "gc.outcome=pass" \
+    --set-metadata "gc.work_outcome=$outcome")
+  if [[ $outcome == shipped ]]; then
+    [[ -n $commit && -n $branch ]] \
+      || die "--outcome shipped requires --commit <sha> and --branch <branch>."
+    args+=(--set-metadata "gc.work_commit=$commit" --set-metadata "gc.work_branch=$branch")
+  else
+    [[ -z $commit && -z $branch ]] \
+      || die "--commit/--branch only apply to --outcome shipped."
+  fi
+  [[ -z $verification ]] || args+=(--set-metadata "gc.work_verification=$verification")
+  args+=(--status=closed --notes "$reason")
+  "${args[@]}" || die "Beads update failed for $bead_id."
+  log "Closed $bead_id with gc.work_outcome=$outcome."
+}
+
 main() {
-  local bead_id="" repo="" pr_number="" reason="Delivery verified and closed"
+  local bead_id="" repo="" pr_number="" outcome="" commit="" branch="" verification="" \
+    reason="Delivery verified and closed"
 
   bead_id=${1:-}
   [[ -n $bead_id && $bead_id != -* ]] || { usage >&2; return 2; }
@@ -75,6 +108,26 @@ main() {
       --pr)
         [[ $# -ge 2 ]] || { usage >&2; return 2; }
         pr_number=$2
+        shift 2
+        ;;
+      --outcome)
+        [[ $# -ge 2 ]] || { usage >&2; return 2; }
+        outcome=$2
+        shift 2
+        ;;
+      --commit)
+        [[ $# -ge 2 ]] || { usage >&2; return 2; }
+        commit=$2
+        shift 2
+        ;;
+      --branch)
+        [[ $# -ge 2 ]] || { usage >&2; return 2; }
+        branch=$2
+        shift 2
+        ;;
+      --verification)
+        [[ $# -ge 2 ]] || { usage >&2; return 2; }
+        verification=$2
         shift 2
         ;;
       --reason)
@@ -93,8 +146,20 @@ main() {
     esac
   done
 
-  require_command jq
   require_command "$GC_BIN"
+
+  if [[ -n $outcome ]]; then
+    [[ -z $repo && -z $pr_number ]] || die "--outcome cannot be combined with --repo/--pr."
+    case "$outcome" in
+      shipped|no-op|blocked|abandoned) ;;
+      *) die "--outcome must be one of shipped, no-op, blocked, abandoned." ;;
+    esac
+    [[ $reason == "Delivery verified and closed" ]] && reason="Closed with gc.work_outcome=$outcome"
+    close_by_outcome "$bead_id" "$outcome" "$commit" "$branch" "$verification" "$reason"
+    return 0
+  fi
+
+  require_command jq
   require_command "$GH_BIN"
 
   [[ -n $repo ]] || die "--repo owner/repository is required; refusing to close $bead_id without it."

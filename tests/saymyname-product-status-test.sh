@@ -158,9 +158,17 @@ assert_degraded direct-ambiguous '.result.stage' 'materialized' 'smb-direct'
 assert_failure source-failure "Beads product coordination source command failed"
 assert_failure queue-failure "SayMyName product queue source command failed"
 assert_failure queue-inconsistent "canonical human candidate contract"
-# A stale gc.next_outcome pointer must degrade, not kill the projection: the
-# queue is authoritative (2026-09-17: it blocked the whole campaign twice).
-assert_degraded mismatch-next '.next_candidate.state' 'eligible' 'disagrees with the first eligible product candidate'
+# ADR-0023: gc.next_outcome is retired. A bead that still carries a stale
+# value in that field (leftover from before the retirement) must have no
+# effect at all -- the queue alone decides NEXT, and nothing warns about the
+# stale field, because nothing reads it any more.
+TESTS_RUN=$((TESTS_RUN + 1))
+output=$(run_fixture_json mismatch-next 2>"$STDERR_FILE") \
+  || fail_test "mismatch-next should succeed"
+[[ $(jq -er '.next_candidate.state' <<<"$output") == eligible ]] \
+  || fail_test "mismatch-next: queue-derived NEXT was not eligible"
+[[ $(cat "$STDERR_FILE") != *"next_outcome"* ]] \
+  || fail_test "mismatch-next logged a warning about a field that is no longer read: $(cat "$STDERR_FILE")"
 
 # af-tbkcc regression (2026-09-18 23:53Z-02:12Z incident): product-queue now
 # excludes one invalid candidate with a WARNING instead of dying on the whole

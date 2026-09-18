@@ -84,4 +84,33 @@ if run merged af-outcome --repo owner/repo >/dev/null 2>&1; then
   fail_test "missing --pr should be rejected"
 fi
 
+# ADR-0023: the --outcome form is the door mol-do-work uses instead of a raw
+# `gc bd update --set-metadata gc.work_outcome=...`. No GitHub verification.
+TESTS_RUN=$((TESTS_RUN + 1))
+run merged af-work --outcome shipped --commit cafef00d --branch do-work/af-work >/dev/null \
+  || fail_test "--outcome shipped should close successfully"
+call=$(<"$CALL_LOG")
+for field in "gc.outcome=pass" "gc.work_outcome=shipped" "gc.work_commit=cafef00d" \
+  "gc.work_branch=do-work/af-work" "--status=closed"; do
+  [[ $call == *"$field"* ]] || fail_test "--outcome shipped missing field in Beads write: $field"
+done
+
+TESTS_RUN=$((TESTS_RUN + 1))
+run merged af-work --outcome no-op >/dev/null || fail_test "--outcome no-op should close successfully"
+call=$(<"$CALL_LOG")
+[[ $call == *"gc.work_outcome=no-op"* ]] || fail_test "--outcome no-op missing gc.work_outcome"
+[[ $call != *"gc.work_commit"* ]] || fail_test "--outcome no-op must not write gc.work_commit"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+run merged af-work --outcome blocked --reason "Blocked: waiting on X" >/dev/null \
+  || fail_test "--outcome blocked should close successfully"
+call=$(<"$CALL_LOG")
+[[ $call == *"gc.work_outcome=blocked"* ]] || fail_test "--outcome blocked missing gc.work_outcome"
+[[ $call == *"Blocked: waiting on X"* ]] || fail_test "--outcome blocked did not carry --reason through"
+
+assert_refused merged "--outcome shipped requires --commit" af-work --outcome shipped
+assert_refused merged "--outcome must be one of" af-work --outcome bogus
+assert_refused merged "--outcome cannot be combined with --repo/--pr" \
+  af-work --outcome shipped --commit c --branch b --repo owner/repo --pr 1
+
 printf 'PASS: %d deterministic deliver-close checks\n' "$TESTS_RUN"

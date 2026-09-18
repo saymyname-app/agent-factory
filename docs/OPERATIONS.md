@@ -546,9 +546,9 @@ The command is a read-only L0 projection. `--json` emits the canonical
 `agent-factory-human-state/v1` contract; the default French text is only its
 human rendering plus exact delivery evidence. It reads coordination pointers
 from parent Bead `af-1vr4` (`gc.current_jit`, `gc.last_delivered`,
-`gc.next_outcome`, `gc.needs_benjamin`, and any explicit resume policy). It
-also reads the live product-queue projection and fails closed unless
-`gc.next_outcome` identifies the same first eligible product candidate. A
+`gc.needs_benjamin`, and any explicit resume policy). `gc.next_outcome` is
+retired (ADR-0023): the live product-queue projection alone is authoritative
+for `NEXT`, and the field is no longer read. A
 `goal=none` Factory campaign never counts as `NEXT`. It resolves the referenced current
 and delivered Beads through prefix-aware `gc bd` routing, so an outcome may be
 attached to a durable product goal or stored in an application rig rather than
@@ -610,9 +610,11 @@ the merged/not-merged/mismatched-evidence/GitHub-failure paths against
 If a delivered result is closed by hand anyway while it is still the
 coordination's `gc.current`, the projection reports it as **finalizing**
 (`mayor_finalization`), not as an agentless materialized result, and the
-campaign wakes the Mayor with `finalize:<id>` spelling out the three steps:
-`deliver-close`, then `gc.last_delivered`, then `gc.current`. Until they are
-done the next eligible candidate cannot start (af-7700, 2026-09-16).
+campaign wakes the Mayor with `finalize:<id>` spelling out the two doors:
+`deliver-close`, then `bin/campaign-pointer finish <id>` (ADR-0023 — sets
+`gc.last_delivered` and clears `gc.current`/`gc.current_jit` together, after
+checking `deliver-close`'s proof is present). Until they are done the next
+eligible candidate cannot start (af-7700, 2026-09-16).
 
 #### 2026-09-15 product-status and human-state evidence
 

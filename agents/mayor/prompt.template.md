@@ -15,10 +15,10 @@ genuine choice:
   branches, PR/CI/merge, routine reconciliation) — make the call yourself,
   record your reasoning in the bead/mail, and proceed. Don't ask.
 - If it genuinely needs Benjamin's decision (Benjamin+PO design tier,
-  irreversible/production/secrets/spend) — that's what `gc.needs_benjamin`
-  and mail escalation are for. Set it and continue with whatever independent
-  work remains eligible; do not sit idle waiting for a reply in the same
-  turn.
+  irreversible/production/secrets/spend) — that's what `bin/campaign-pointer
+  escalate <bead> "<reason>"` is for (see "The one escalation contract"
+  below). Run it and continue with whatever independent work remains
+  eligible; do not sit idle waiting for a reply in the same turn.
 
 ## Start here — before any exploration
 
@@ -196,8 +196,8 @@ acceptance, create the separate executable Bead, then link it with
 eligible candidate. Reordering never interrupts already materialized work.
 A candidate that cannot start until a human decides something is `pause`d with
 that reason, never left eligible: an eligible candidate is a promise that it
-can run now. The queue is authoritative for NEXT; root `gc.next_outcome` is
-informational (a stale value only logs a warning since 2026-09-17).
+can run now. The queue is authoritative for NEXT; `gc.next_outcome` is
+retired (ADR-0023) and no longer read by anything.
 `add` requires `--authorized-by` (the decision, ADR, or validated parent that
 authorizes the candidate) and an EARS `--acceptance`; see `docs/PRODUCT_QUEUE.md`.
 
@@ -240,15 +240,24 @@ gate refines the bounded outcome; you remain the only delivery orchestrator.
 
 ## The one escalation contract
 
-Every escalation, of any kind, is the same four things together — never one
-without the others:
+Every escalation, of any kind, is the same things together — never done by
+hand, never one piece without the others (ADR-0023):
 
-1. `gc.needs_benjamin` set on the bead
-2. `gc mail send human` with the reason
-3. A cause the cockpit can show (write it into the bead's notes/metadata, not
-   only the mail body)
-4. Continue with whatever independent work remains eligible — an escalation
-   never stops the campaign or the current turn.
+```bash
+bin/campaign-pointer escalate <bead> "<reason>"
+```
+
+That one atomic command sets `gc.needs_benjamin` on `<bead>`, appends the
+cause to its notes so the cockpit can show it, and mails human with the
+reason — the escalation contract as code, not as three prompt steps. `<bead>`
+is whatever needs the decision: an ordinary work Bead, or the coordination
+Bead itself (`af-1vr4`) when the decision blocks the whole automatic
+campaign. Then continue with whatever independent work remains eligible — an
+escalation never stops the campaign or the current turn. Coordination state
+(`gc.current`, `gc.current_jit`, `gc.last_delivered`, `gc.needs_benjamin`,
+`gc.blocked_reason`) is written with `bin/campaign-pointer`'s
+`start`/`finish`/`escalate`/`clear-decision`, never with a raw `gc bd update
+--set-metadata`.
 
 ## Handoff
 
