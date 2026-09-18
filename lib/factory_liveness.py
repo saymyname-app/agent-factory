@@ -22,6 +22,15 @@ Thresholds are deliberately loose. Progress is stamped on every tick while
 delivery is in flight, so a legitimately long delivery step never goes stale;
 the 60-minute window only has to cover the Mayor's reaction time.
 
+gc.campaign_progress_at is only refreshed for the transition reasons
+bin/mayor-campaign's planner recognizes (active_delivery, automatic_dependency,
+ladder_active) -- a phase of the current result outside that set (af-ooob8: a
+review sub-session after delivery) can advance for hours without ever
+touching it. Before calling that a stall, `assess` also takes the in-flight
+result bead itself (`current_result`) and checks its own gc.last_heartbeat_at
+/ updated_at: recent activity there is ground truth the campaign is not
+stuck, independent of whether the sentinel's bookkeeping caught it.
+
 CLI: reads the coordination bead JSON (a list or an object) on stdin and prints
 one line, "<level>\\t<code>\\t<message>": level is ok, info or bad; code is
 stable and tells the guard whether the finding is worth filing as a defect
@@ -130,6 +139,33 @@ def identify_cause(
     )
 
 
+def _current_result_activity(current_result: dict[str, Any] | None) -> float | None:
+    """Most recent activity timestamp on the in-flight result itself (af-ooob8).
+
+    gc.campaign_progress_at is only stamped for the three PROGRESS_REASONS
+    the sentinel's transition planner recognizes (bin/mayor-campaign);
+    a long-running phase outside that set -- a review sub-session, for
+    instance -- can advance for hours without ever refreshing it. Before
+    calling that silence a stall, check the result bead's own signals: its
+    heartbeat and its last update. Either one moving inside the liveness
+    window is real, ground-truth evidence that the current result is not
+    stuck, independent of whether the sentinel's own bookkeeping caught it.
+    """
+    if not isinstance(current_result, dict):
+        return None
+    metadata = current_result.get("metadata") if isinstance(current_result.get("metadata"), dict) else {}
+    return max(
+        (
+            ts for ts in (
+                _epoch(metadata.get("gc.last_heartbeat_at")),
+                _epoch(current_result.get("updated_at")),
+            )
+            if ts is not None
+        ),
+        default=None,
+    )
+
+
 def mayor_page_since(
     mayor_session: dict[str, Any] | None,
     now: float,
@@ -161,6 +197,7 @@ def assess(
     sentinel_minutes: int = SENTINEL_MINUTES,
     provider_status: dict[str, Any] | None = None,
     mayor_session: dict[str, Any] | None = None,
+    current_result: dict[str, Any] | None = None,
 ) -> tuple[str, str, str]:
     if not isinstance(metadata, dict):
         return "bad", "unreadable", "coordination metadata unreadable"
@@ -200,6 +237,19 @@ def assess(
         last_error = str(metadata.get("gc.campaign_last_error") or "").strip()
         failure_note = f" ({failures}/{FAILURE_THRESHOLD} consecutive sentinel failures: {last_error})"
 
+    result_activity = _current_result_activity(current_result)
+
+    def _result_active_note(age_min: float) -> tuple[str, str, str] | None:
+        if result_activity is None:
+            return None
+        result_idle = (now - result_activity) / 60
+        if result_idle > liveness_minutes:
+            return None
+        return "ok", "active_result", (
+            f"campaign progress stamp is {age_min:.0f} min old, but the current result "
+            f"was active {result_idle:.0f} min ago{failure_note}"
+        )
+
     progress = _epoch(metadata.get("gc.campaign_progress_at"))
     watching = _epoch(metadata.get("gc.campaign_watch_since"))
     if progress is None:
@@ -210,6 +260,9 @@ def assess(
         # Never progressed since watching began: that is measurable too.
         idle = (now - watching) / 60
         if idle > liveness_minutes:
+            active = _result_active_note(idle)
+            if active is not None:
+                return active
             cause = identify_cause(provider_status, mayor_session, now)
             return "bad", "stale", (
                 f"no campaign progress observed in {idle:.0f} min of watching "
@@ -220,6 +273,9 @@ def assess(
         )
     idle = (now - progress) / 60
     if idle > liveness_minutes:
+        active = _result_active_note(idle)
+        if active is not None:
+            return active
         cause = identify_cause(provider_status, mayor_session, now)
         return "bad", "stale", (
             f"no campaign progress for {idle:.0f} min (last {_hhmm(progress)}) while the "
@@ -273,6 +329,7 @@ def main() -> int:
         int(os.environ.get("FACTORY_LIVENESS_MINUTES") or LIVENESS_MINUTES),
         provider_status=_env_json("FACTORY_LIVENESS_PROVIDER_STATUS_JSON"),
         mayor_session=_env_json("FACTORY_LIVENESS_MAYOR_SESSION_JSON"),
+        current_result=_env_json("FACTORY_LIVENESS_CURRENT_RESULT_JSON"),
     )
     print(f"{level}\t{code}\t{message}")
     return 0

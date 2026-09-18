@@ -454,9 +454,36 @@ try:
 except Exception:
     print("{}")
 ' 2>/dev/null || true)
+  # af-ooob8: gc.campaign_progress_at is only refreshed for the three
+  # transition reasons the sentinel's planner recognizes -- a phase of the
+  # current result outside that set (a review sub-session after delivery,
+  # say) can run for hours without ever touching it, which reads as a stall
+  # that isn't one. Give factory_liveness.py the in-flight result bead
+  # itself so it can check its own heartbeat/update activity as ground truth.
+  current_result_json="{}"
+  current_id=$(printf '%s' "$coord_json" | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    meta = (v.get("metadata") or {})
+    print(meta.get("gc.current_jit") or meta.get("gc.current") or "")
+except Exception:
+    print("")' 2>/dev/null || true)
+  if [ -n "$current_id" ]; then
+    current_result_json=$(gc bd show "$current_id" --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    print(json.dumps(v if isinstance(v, dict) else {}))
+except Exception:
+    print("{}")' 2>/dev/null || echo "{}")
+  fi
   verdict=$(printf '%s' "$coord_json" \
     | FACTORY_LIVENESS_PROVIDER_STATUS_JSON="$provider_status_json" \
       FACTORY_LIVENESS_MAYOR_SESSION_JSON="$mayor_session_json" \
+      FACTORY_LIVENESS_CURRENT_RESULT_JSON="$current_result_json" \
       python3 "$GUARD_LIB/factory_liveness.py")
   level=$(printf '%s' "$verdict" | cut -f1)
   code=$(printf '%s' "$verdict" | cut -f2)
