@@ -1,0 +1,143 @@
+{
+  "$schema": "../product-release.schema.json",
+  "contract": "agent-factory-product-release/v1",
+  "schema_version": 1,
+  "product": "dryrun-fixture",
+  "version": "V1",
+  "title": "Dry-run fixture product V1",
+  "state": "intake",
+  "revision": 1,
+  "objective": {
+    "statement": "A throwaway greenfield fixture to prove mol-intake produces a valid contract without a human writing JSON.",
+    "set_by": "mol-intake-dry-run",
+    "set_at": "2026-09-18T14:49:36Z"
+  },
+  "origin": {
+    "kind": "greenfield",
+    "statement": "A throwaway greenfield fixture to prove mol-intake produces a valid contract without a human writing JSON.",
+    "sources": [],
+    "discovery": {
+      "generated_at": "2026-09-18T14:49:36Z",
+      "method": "deterministic_scan",
+      "findings": []
+    }
+  },
+  "autonomy": {
+    "level": "L1",
+    "label": "Assisted · pending explicit grant (reserved authority question unanswered)",
+    "granted_by": "factory:intake-default",
+    "granted_at": "2026-09-18T14:49:36Z",
+    "reserved_questions": [
+      "authority",
+      "identity_and_consent",
+      "irreversible",
+      "legal",
+      "money",
+      "outcome"
+    ]
+  },
+  "intake": {
+    "state": "awaiting_human",
+    "question_budget": {
+      "max_first_pass": 5,
+      "max_per_iteration": 2,
+      "spent": 2,
+      "exhausted": false,
+      "on_exhausted": "proceed_on_assumptions"
+    },
+    "questions": [
+      {
+        "id": "q-outcome",
+        "kind": "outcome",
+        "prompt": "What does \"done\" mean for this version -- the release's own definition of success?",
+        "admitted_by": "reserved",
+        "status": "pending"
+      },
+      {
+        "id": "q-authority",
+        "kind": "authority",
+        "prompt": "Who may approve work on your behalf, and what autonomy level (L0-L3) do you grant?",
+        "admitted_by": "reserved",
+        "status": "pending"
+      }
+    ],
+    "exit_criteria": [
+      {
+        "id": "intake-questions-answered",
+        "statement": "Every reserved intake question has status=answered with an answer_ref.",
+        "satisfied": false
+      }
+    ]
+  },
+  "assumptions": [],
+  "budget": {
+    "max_consecutive_no_progress": 3,
+    "spent": {
+      "delivery_tokens": 0,
+      "clarification_tokens": 0,
+      "consecutive_no_progress": 0
+    }
+  },
+  "maturity": {
+    "level": "intake",
+    "label": "Intake in progress · no target drafted yet",
+    "criteria": []
+  },
+  "capabilities": [
+    {
+      "id": "intake-in-progress",
+      "title": "Intake in progress",
+      "description": "Placeholder capability for the intake phase itself -- Pass 2 replaces this with the drafted product capabilities.",
+      "status": "unverified",
+      "evidence": [
+        {
+          "kind": "document",
+          "ref": "intake:objective.statement",
+          "status": "unverified"
+        }
+      ]
+    }
+  ],
+  "journeys": [],
+  "included": [],
+  "excluded": [],
+  "dependencies": [],
+  "decisions": [],
+  "criteria": [
+    {
+      "id": "intake-target-defined",
+      "title": "Intake target defined",
+      "description": "The release's target -- capabilities, journeys, and success criteria -- is drafted and confirmed.",
+      "status": "unverified",
+      "evidence": [
+        {
+          "kind": "document",
+          "ref": "intake:objective.statement",
+          "status": "unverified"
+        }
+      ],
+      "capability_refs": [
+        "intake-in-progress"
+      ],
+      "journey_refs": [],
+      "acceptance": "Every reserved intake question has status=answered with an answer_ref, and Pass 2 drafting has produced a confirmed capabilities/journeys/criteria/work_graph set."
+    }
+  ],
+  "work_graph": [
+    {
+      "id": "intake-resolve",
+      "dedupe_key": "intake-resolve",
+      "title": "Resolve intake: answer reserved questions and draft the V1 target",
+      "kind": "factory",
+      "state": "candidate",
+      "independence": "unknown",
+      "order": 1,
+      "criterion_refs": [
+        "intake-target-defined"
+      ],
+      "depends_on": []
+    }
+  ],
+  "factory_improvements": [],
+  "next_version": null
+}
