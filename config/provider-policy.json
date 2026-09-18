@@ -48,20 +48,20 @@
   "targets": {
     "workspace": {
       "label": "Ouvriers des rigs (par défaut)",
-      "why": "Codex est le rédacteur principal éprouvé. Claude Sonnet garde la qualité produit quand Codex est épuisé ; Spark puis Haiku servent en dernier recours, pour que le travail continue plutôt que de s’arrêter.",
+      "why": "Provisoire (2026-09-18, Benjamin) : Claude par défaut partout, Codex en secondaire, tant que le quota Codex standard n’est pas revenu (reset 2026-09-21) et que le compte ChatGPT de cet hôte ne peut de toute façon pas utiliser gpt-5.3-codex-spark (af-88za4). Revenir à Codex en tête une fois les deux confirmés sains.",
       "chain": [
-        "codex",
         "claude-standard",
+        "codex",
         "codex-spark",
         "claude-cheap"
       ]
     },
     "mayor": {
       "label": "Mayor (orchestration)",
-      "why": "Codex pilote normalement le Mayor ; Claude Sonnet est le remplaçant éprouvé.",
+      "why": "Provisoire (2026-09-18, Benjamin) : Claude par défaut, Codex en secondaire, même raison que workspace. Codex reviendra en tête une fois son quota revenu et confirmé fiable pour l’orchestration.",
       "chain": [
-        "codex",
         "claude-standard",
+        "codex",
         "codex-spark"
       ]
     },
@@ -76,11 +76,11 @@
     },
     "ux-reviewer": {
       "label": "Relecteur UX",
-      "why": "Reste sur OpenAI tant que les rédacteurs sont sur Claude, pour la même raison d’indépendance ; Claude en dernier.",
+      "why": "Provisoire (2026-09-18, Benjamin) : Claude en tête comme les autres cibles tant que Codex est indisponible. ATTENTION compromis : l’auteur (workspace/mayor) est aussi sur Claude en ce moment, donc ce relecteur perd temporairement son indépendance de modèle vis-à-vis de l’auteur -- à rebasculer sur Codex en premier dès qu’il refonctionne, pour retrouver l’indépendance voulue à l’origine.",
       "chain": [
+        "claude",
         "codex",
-        "codex-spark",
-        "claude"
+        "codex-spark"
       ]
     }
   }
