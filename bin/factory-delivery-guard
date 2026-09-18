@@ -30,6 +30,17 @@
 #     never silently disappears) but the flag itself is not rewritten, so a
 #     human or the Mayor sees it once, not on every guard run.
 #
+# It also scans the adjacent gap (af-1xz1g): a CLOSED bead of any label
+# carrying gc.outcome=pass or gc.work_outcome=shipped plus its own
+# gc.pr_url, that does not already carry the six verified proof fields --
+# this is the af-x45xw shape, closed gc.outcome=pass on 2026-09-18 while its
+# own PR #114 was still OPEN and CI was red, a raw close that bypassed
+# bin/deliver-close entirely and carried no `product-goal` label so the
+# check above never saw it. Each such bead's named PR is independently
+# verified with `gh pr view`; one that does not verify as merged is flagged
+# exactly once, the same way. Reopening stays a human/Mayor call, never
+# automatic.
+#
 # --check-only reports without writing anything (no repair, no flag).
 #
 # Usage: factory-delivery-guard [--check-only]
@@ -123,6 +134,45 @@ handle_unverifiable() {  # id label rig missing already_flagged why
   fi
 }
 
+list_closed_claimed_shipped_beads() {  # $1 = rig name, or "" for the city root
+  local rig=$1 out
+  if [ -z "$rig" ]; then
+    out=$(cd "$ROOT" && "$GC_BIN" bd list --all --status closed --has-metadata-key gc.pr_url --limit 0 --json 2>/dev/null)
+  else
+    out=$(cd "$ROOT" && "$GC_BIN" bd --rig "$rig" list --all --status closed --has-metadata-key gc.pr_url --limit 0 --json 2>/dev/null)
+  fi
+  jq -e . >/dev/null 2>&1 <<<"$out" && printf '%s' "$out" || printf '[]'
+}
+
+# process_claimed_shipped_scope: the af-x45xw-shaped sibling check (af-1xz1g).
+# Any closed bead (no label required) claiming gc.outcome=pass or
+# gc.work_outcome=shipped with its own gc.pr_url, that lacks the six verified
+# proof fields, gets its named PR independently checked. A bead that verifies
+# merged needs nothing further; one that does not is flagged exactly once via
+# the same handle_unverifiable path as the label-scoped check above.
+process_claimed_shipped_scope() {  # rig label
+  local rig=$1 label=$2 beads reports
+  beads=$(list_closed_claimed_shipped_beads "$rig")
+  reports=$("$PY_BIN" "$LIB_DIR/factory_delivery_proof.py" --mode claimed-shipped <<<"$beads")
+  if [ -z "$reports" ]; then
+    say "✓ claimed-shipped:$label — every closed bead claiming shipped verifies against its own PR"
+    return
+  fi
+  local id repo pr flagged
+  while IFS=$'\x1f' read -r id repo pr flagged; do
+    [ -z "$id" ] && continue
+    CHECKED=$((CHECKED + 1))
+    say "  · $id ($label) claims shipped (gc.outcome=pass/gc.work_outcome=shipped) via $repo#$pr — verifying with gh"
+    if verify_pr_merged "$repo" "$pr" >/dev/null; then
+      say "    ✓ $repo#$pr verifies merged"
+    else
+      INCOMPLETE=$((INCOMPLETE + 1))
+      handle_unverifiable "$id" "$label" "$rig" "gc.pr_url ($repo#$pr not verifiably merged)" "$flagged" \
+        "closed claiming shipped but $repo#$pr is not verifiably merged"
+    fi
+  done <<<"$reports"
+}
+
 process_scope() {  # rig label
   local rig=$1 label=$2 beads incomplete
   beads=$(list_closed_delivery_beads "$rig")
@@ -169,9 +219,11 @@ process_scope() {  # rig label
 }
 
 process_scope "" "city"
+process_claimed_shipped_scope "" "city"
 for rig in "${RIGS[@]}"; do
   [ -d "$ROOT/rigs/$rig" ] || continue
   process_scope "$rig" "$rig"
+  process_claimed_shipped_scope "$rig" "$rig"
 done
 
 say ""

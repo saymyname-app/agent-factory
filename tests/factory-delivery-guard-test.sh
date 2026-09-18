@@ -175,4 +175,66 @@ grep -q "already flagged, awaiting a human" <<<"$out" \
 [ "$(update_count zz-fixture-af7700-shape)" = "0" ] || fail "re-flagged an already-flagged bead — spammed a duplicate write"
 grep -q "^UNRESOLVED" <<<"$out" || fail "an unresolved unverifiable bead must not read as healthy"
 
+# --- claimed-shipped sibling check (af-1xz1g): a closed bead of ANY label
+# claiming gc.outcome=pass / gc.work_outcome=shipped with its own gc.pr_url
+# gets that PR independently verified, even without the product-goal label
+# the checks above require. -------------------------------------------------
+
+claimed_shipped_merged='{
+  "id": "zz-fixture-claimed-merged", "status": "closed", "title": "No label, claims pass, PR genuinely merged",
+  "labels": [],
+  "metadata": {"gc.outcome": "pass", "gc.pr_url": "https://github.com/example-org/example-repo/pull/7"}
+}'
+# The exact af-x45xw shape: closed gc.outcome=pass, own gc.pr_url recorded,
+# no product-goal label -- and the PR is still OPEN (GUARD_TEST_SCENARIO
+# not-merged below drives gh to report that).
+af_x45xw_shape='{
+  "id": "zz-fixture-af-x45xw-shape", "status": "closed", "title": "Closed pass while its own PR was still open",
+  "labels": [],
+  "metadata": {"gc.outcome": "pass", "gc.pr_url": "https://github.com/example-org/example-repo/pull/114"}
+}'
+claimed_shipped_already_proven='{
+  "id": "zz-fixture-claimed-proven", "status": "closed", "title": "No label but already fully proven, nothing new to verify",
+  "labels": [],
+  "metadata": {
+    "gc.outcome": "pass", "gc.pr_url": "https://github.com/example-org/example-repo/pull/9",
+    "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
+    "gc.github_repo": "example-org/example-repo", "gc.pr_number": 9,
+    "gc.pr_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "gc.merge_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}'
+
+# 6. no label at all, but the PR genuinely verifies merged: reported healthy,
+#    nothing written (no six-field backfill for a non-product-goal bead) ----
+jq -n --argjson v "$claimed_shipped_merged" '[$v]' > "$BEADS_FILE"
+: > "$UPDATE_LOG"
+out=$(GUARD_TEST_SCENARIO=merged guard)
+grep -q "zz-fixture-claimed-merged (city) claims shipped" <<<"$out" \
+  || { echo "$out" >&2; fail "claimed-shipped bead was not checked"; }
+grep -q "example-org/example-repo#7 verifies merged" <<<"$out" \
+  || { echo "$out" >&2; fail "claimed-shipped bead with a merged PR was not reported healthy"; }
+[ "$(update_count zz-fixture-claimed-merged)" = "0" ] || fail "a verified claimed-shipped bead should not be written to"
+
+# 7. the af-x45xw shape itself: closed gc.outcome=pass, own gc.pr_url set,
+#    no product-goal label, PR still OPEN -- must be flagged, never trusted -
+jq -n --argjson v "$af_x45xw_shape" '[$v]' > "$BEADS_FILE"
+: > "$UPDATE_LOG"
+out=$(GUARD_TEST_SCENARIO=not-merged guard)
+grep -q "not verifiably merged" <<<"$out" \
+  || { echo "$out" >&2; fail "af-x45xw-shaped bead was not reported as unverified"; }
+grep -q "flagged zz-fixture-af-x45xw-shape" <<<"$out" \
+  || { echo "$out" >&2; fail "af-x45xw-shaped bead was not flagged"; }
+[[ $(grep "^zz-fixture-af-x45xw-shape " "$UPDATE_LOG" || true) == *"gc.delivery_proof_flagged_at="* ]] \
+  || fail "af-x45xw-shaped bead flag metadata was not written"
+grep -q "^UNRESOLVED" <<<"$out" || fail "the af-x45xw shape must not read as healthy"
+
+# 8. no label, but already carries all six verified proof fields: the
+#    claimed-shipped check has nothing new to verify and leaves it alone ----
+jq -n --argjson v "$claimed_shipped_already_proven" '[$v]' > "$BEADS_FILE"
+: > "$UPDATE_LOG"
+out=$(guard --check-only)
+[[ $out != *"zz-fixture-claimed-proven"* ]] \
+  || { echo "$out" >&2; fail "an already-fully-proven bead should not be re-processed by the claimed-shipped check"; }
+
 echo "PASS: factory-delivery-guard backfills verified proof and flags the rest exactly once"
