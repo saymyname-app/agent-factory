@@ -1294,6 +1294,42 @@ class FactoryCockpitTest(unittest.TestCase):
             self.assertEqual("exact", result["factory"]["sessions"][0]["confidence"])
             self.assertEqual(0, result["monitoring"]["tokens"])
 
+    def test_token_breakdown_groups_provider_variants_by_engine(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex_dir = root / ".codex" / "sessions" / "2026" / "09" / "14"
+            codex_dir.mkdir(parents=True)
+            (codex_dir / "rollout-session-key.jsonl").write_text(
+                json.dumps({"type": "token_usage_record", "payload": {"thread_token_usage": {"total_tokens": 11}}}) + "\n",
+                encoding="utf-8",
+            )
+            claude_project_dir = root / ".claude" / "projects" / "-work-af-x"
+            claude_project_dir.mkdir(parents=True)
+            (claude_project_dir / "session.jsonl").write_text(
+                json.dumps({"message": {"usage": {"input_tokens": 20, "output_tokens": 5}}}) + "\n",
+                encoding="utf-8",
+            )
+
+            class TokenRunner:
+                def json(self, *args):
+                    return {"sessions": [
+                        {"id": "af-c", "alias": "codex-worker", "provider": "codex", "session_key": "session-key"},
+                        {
+                            "id": "af-s", "alias": "claude-standard-worker", "provider": "claude-standard",
+                            "work_dir": "/work/af-x", "created_at": "2026-09-14T00:00:00Z",
+                        },
+                    ]}
+
+            result = TokenReader(TokenRunner(), root).collect()
+            by_provider = {entry["provider"]: entry for entry in result["by_provider"]}
+            self.assertEqual({"Codex", "Claude"}, set(by_provider))
+            self.assertEqual(11, by_provider["Codex"]["known_total_tokens"])
+            self.assertEqual(25, by_provider["Claude"]["known_total_tokens"])
+            self.assertEqual(1, by_provider["Claude"]["exact_sessions"])
+            # claude-standard sessions must not be dropped from the flat session list either.
+            providers_in_sessions = {entry["provider"] for entry in result["factory"]["sessions"]}
+            self.assertIn("Claude", providers_in_sessions)
+
     def test_stale_snapshot_returns_immediately_while_refreshing(self):
         refresh_started = threading.Event()
         refresh_release = threading.Event()
