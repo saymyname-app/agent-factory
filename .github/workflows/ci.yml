@@ -58,6 +58,12 @@ jobs:
       - name: Deliver-close proof-field guard tests
         run: bash tests/deliver-close-test.sh
 
+      - name: ADR-0023 campaign-pointer write door
+        run: bash tests/campaign-pointer-test.sh
+
+      - name: ADR-0023 coordination pointers are written only through a door
+        run: bash tests/coordination-pointer-doors-test.sh
+
       # --- registered 2026-09-16 -------------------------------------------
       # CI enumerated its tests by hand and the list had drifted to 7 of 14.
       # These five pass on a bare runner and had simply been forgotten; a test
