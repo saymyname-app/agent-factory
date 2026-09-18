@@ -353,6 +353,26 @@ def wake_target_resolved(wake_key: str) -> bool:
     return False
 
 
+def factory_candidate_id(decision: dict[str, Any]) -> str | None:
+    """The specific bead a factory-lane decision points at, if any.
+
+    Rungs 2/2b (plan_factory_lane) pick a candidate from a `ready`/queue
+    snapshot that can go stale in the seconds between that read and this
+    mail actually being sent. An order-dispatch tracking bead (labels
+    order-tracking/order-run:*) observed opening and closing ~30s later was
+    picked up as the priority-lane candidate and notified after it had
+    already closed (af-mqphq, 2026-09-18).
+    """
+    if decision.get("rung") == "factory":
+        bead_id = str(decision.get("ladder_bead") or "").strip()
+        return bead_id or None
+    if decision.get("rung") == "factory_queue":
+        wake_key = str(decision.get("wake_key") or "")
+        if wake_key.startswith("materialize:"):
+            return wake_key[len("materialize:"):].strip() or None
+    return None
+
+
 def status_node_id(status: Any) -> str | None:
     """Best-effort extraction of the candidate/result node a decision was about."""
     if not isinstance(status, dict):
@@ -722,6 +742,20 @@ def sentinel(_: argparse.Namespace) -> None:
         if decision["action"] != "wake_mayor" and decision["reason"] not in LADDER_SKIPPED_REASONS:
             # No product work to do is not inactivity: walk the ladder.
             decision = ladder_decision(metadata, now)
+
+    if decision["action"] == "wake_mayor":
+        candidate_id = factory_candidate_id(decision)
+        if candidate_id:
+            try:
+                fresh = node_issue(candidate_id)
+            except CampaignCommandError:
+                fresh = None
+            if isinstance(fresh, dict) and fresh.get("status") == "closed":
+                # Stale by the time we're about to notify: don't page the
+                # Mayor about a candidate that no longer exists to claim.
+                # The next tick re-derives from a fresh read and picks
+                # whatever real candidate remains.
+                decision = {"action": "none", "reason": "factory_candidate_closed", "wake_key": None}
 
     if decision["action"] != "wake_mayor":
         updates: dict[str, str] = {}
