@@ -106,6 +106,14 @@ Rigs and agents already exist; you almost never add one. The real flow is:
 3. **Dispatch:** `gc sling <agent> <bead-id>` with the formula from the routing
    table below. One writer per rig at a time — a second writer on the same rig
    shares its checkout (`mol-do-work` has no worktree isolation).
+   **Never `gc sling` a raw provider name** (`codex`, `claude`,
+   `claude-standard`, `claude-cheap`, ...) — those are scaled agent groups
+   whose provider is hardcoded by their own `agent.toml`/pack definition, so
+   provider-failover's overlay cannot patch them and a quota wall on that
+   provider becomes an unmanaged restart-thrash loop instead of a failover
+   (af-qugqd, 2026-09-18). Always address one of provider-failover's four
+   managed logical targets — `workspace`, `mayor`, `claude-reviewer`,
+   `ux-reviewer` — or a named agent that is not itself a provider id.
 4. **Monitor:** `gc bd list`, `gc session peek <name>`.
 
 ## Working with rig beads
