@@ -55,6 +55,16 @@ fi
 gc bd show "$WORK_BEAD_ID"
 ```
 
+**Claim it now (af-pl39t):** dispatching this convoy is the only signal that a
+workflow is active against `$WORK_BEAD_ID`. Nothing else flips it off
+`open`, so the idle ladder (`plan_idle_ladder`, ADR-0016 §7) cannot tell it
+apart from an unclaimed candidate and re-picks it every tick -- `gc.
+campaign_progress_at` freezes and factory-guard files a false "vivante mais
+immobile" defect every ~5-6 min for as long as the bead stays open:
+```bash
+gc bd update "$WORK_BEAD_ID" --claim
+```
+
 Read the bead's title and description carefully. This is your task.
 
 **Signal liveness:** run `gc bd heartbeat "$WORK_BEAD_ID"` now, and again before any

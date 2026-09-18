@@ -66,6 +66,11 @@ if [ -z "$WORK_BEAD_ID" ]; then
   echo "mol-scoped-work requires an input convoy with exactly one tracked member" >&2
   exit 1
 fi
+# af-pl39t: claim it now -- dispatch is the only signal that a workflow is
+# active against $WORK_BEAD_ID. Nothing else flips it off `open`, so the
+# idle ladder (ADR-0016 §7) re-picks it every tick and gc.campaign_progress_at
+# freezes while factory-guard files false liveness defects.
+gc bd update "$WORK_BEAD_ID" --claim
 gc bd show "$WORK_BEAD_ID"
 gc bd show "$WORK_BEAD_ID" --json | jq '.[0].metadata'
 gc mail inbox
