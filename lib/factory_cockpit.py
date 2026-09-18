@@ -3438,6 +3438,51 @@ class AxesBridge:
         return value
 
 
+class LanePriorityBridge:
+    """Zero-token facade over ``bin/mayor-campaign priority`` (ADR-0023
+    amendment 2): the cockpit switch for which lane (Factory or product) is
+    currently priority. One field, reversible at will by the operator; the
+    cockpit never writes gc.campaign_priority_lane directly -- it asks the
+    door, same as every other control on this page.
+    """
+
+    LANES = {"factory", "product"}
+
+    def __init__(
+        self,
+        executor: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+        command: list[str] | None = None,
+    ) -> None:
+        self.command = command or [str(ROOT / "bin" / "mayor-campaign")]
+        self.executor = executor or subprocess.run
+
+    def status(self) -> dict[str, Any]:
+        result = self.executor(
+            [*self.command, "priority"], cwd=ROOT,
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            raise SourceError(_redact(result.stderr.strip() or "mayor-campaign priority indisponible")[:1000])
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise SourceError("mayor-campaign priority a renvoyé un JSON invalide.") from exc
+
+    def submit(self, lane: Any) -> dict[str, Any]:
+        if lane not in self.LANES:
+            raise ValueError("Ligne prioritaire inconnue.")
+        result = self.executor(
+            [*self.command, "priority", str(lane)], cwd=ROOT,
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            raise ValueError(_redact(result.stderr.strip() or "Réglage refusé.")[:1000])
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise SourceError("mayor-campaign priority a renvoyé un JSON invalide.") from exc
+
+
 def handler_factory(
     cache: SnapshotCache,
     mayor_bridge: MayorBridge | None = None,
@@ -3451,6 +3496,7 @@ def handler_factory(
     decision_store: DirectDecisionStore | None = None,
     provider_bridge: ProviderBridge | None = None,
     axes_bridge: AxesBridge | None = None,
+    lane_priority_bridge: LanePriorityBridge | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     bridge = mayor_bridge or MayorBridge()
     details = detail_reader or DetailReader()
@@ -3463,6 +3509,7 @@ def handler_factory(
     direct_decisions = decision_store or DirectDecisionStore()
     providers = provider_bridge or ProviderBridge()
     axes = axes_bridge or AxesBridge()
+    lane_priority = lane_priority_bridge or LanePriorityBridge()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "FactoryCockpit/1"
@@ -3568,6 +3615,12 @@ def handler_factory(
                 except SourceError as exc:
                     self._json_response(503, {"error": str(exc), "state": "source_error"})
                 return
+            if path == "/api/lane-priority":
+                try:
+                    self._json_response(200, lane_priority.status())
+                except SourceError as exc:
+                    self._json_response(503, {"error": str(exc), "state": "source_error"})
+                return
             if path == "/api/improvement-axes":
                 try:
                     self._json_response(200, axes.status())
@@ -3579,6 +3632,7 @@ def handler_factory(
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                 "/providers.js": ("providers.js", "text/javascript; charset=utf-8"),
                 "/improvement-axes.js": ("improvement-axes.js", "text/javascript; charset=utf-8"),
+                "/lane-priority.js": ("lane-priority.js", "text/javascript; charset=utf-8"),
                 "/styles.css": ("styles.css", "text/css; charset=utf-8"),
             }
             if path not in files:
@@ -3595,6 +3649,7 @@ def handler_factory(
                 "/api/mayor/message", "/api/po/message", "/api/po/new",
                 "/api/preview/action", "/api/product-queue",
                 "/api/direct-decision", "/api/providers", "/api/improvement-axes",
+                "/api/lane-priority",
             }:
                 self._json_response(404, {"error": "Not found"})
                 return
@@ -3610,6 +3665,7 @@ def handler_factory(
                 else "human-direct-decision" if path == "/api/direct-decision"
                 else "human-provider-control" if path == "/api/providers"
                 else "human-improvement-axes-control" if path == "/api/improvement-axes"
+                else "human-lane-priority" if path == "/api/lane-priority"
                 else "human-po-message"
             )
             if self.headers.get("X-Factory-Cockpit") != expected_header:
@@ -3645,6 +3701,8 @@ def handler_factory(
                     result = providers.submit(request.get("action"), request.get("args"))
                 elif path == "/api/improvement-axes":
                     result = axes.submit(request.get("action"), request.get("args"))
+                elif path == "/api/lane-priority":
+                    result = lane_priority.submit(request.get("lane"))
                 else:
                     result = po.new_conversation()
                 self._json_response(202, result)

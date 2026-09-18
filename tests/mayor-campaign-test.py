@@ -531,6 +531,33 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
     def sentinel(self, at, **env):
         return self.invoke("sentinel", extra_env={"CAMPAIGN_NOW": str(at), **env})
 
+    def test_factory_lane_wins_over_an_eligible_product_candidate_by_default(self):
+        # ADR-0023 amendment 2: factory-first is a priority order with
+        # automatic fallthrough, not an exclusive product pause. Default
+        # priority (no gc.campaign_priority_lane set) is factory, so af-fix
+        # (ready Factory bead) must win over af-next (eligible product
+        # candidate) even though the product lane is not empty.
+        self.write_status(status(next_id="af-next"))
+        out = self.sentinel(NOW).stdout
+        self.assertIn("NOTIFIED: mayor — ladder:factory:af-fix", out)
+
+    def test_product_priority_lane_still_wins_when_set(self):
+        self.write_state({**metadata(), "gc.campaign_priority_lane": "product"})
+        self.write_status(status(next_id="af-next"))
+        out = self.sentinel(NOW).stdout
+        self.assertIn("NOTIFIED: mayor — materialize:af-next", out)
+
+    def test_factory_priority_falls_through_automatically_when_factory_lane_is_empty(self):
+        # WHEN the priority lane has no eligible candidate, THE mayor-campaign
+        # SHALL materialize the next eligible candidate from the other lane
+        # automatically -- no manual resume/unpause step required.
+        self.ready_file.write_text(json.dumps([
+            bead("af-sess", issue_type="session", priority=0),
+        ]), encoding="utf-8")
+        self.write_status(status(next_id="af-next"))
+        out = self.sentinel(NOW).stdout
+        self.assertIn("NOTIFIED: mayor — materialize:af-next", out)
+
     def test_empty_product_queue_dispatches_a_factory_bead(self):
         self.write_status(status(next_id=None))  # automatic campaign, nothing eligible
         out = self.sentinel(NOW).stdout
@@ -565,6 +592,11 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
     def test_a_fresh_product_wake_does_not_bundle_the_ladder(self):
         # Only a stale (reminder) wake bundles the ladder -- the first send
         # must not spend a second call on Factory work that is not starving.
+        # Priority is pinned to product: af-fix (ready Factory bead) is
+        # present in this fixture and would otherwise win under the default
+        # factory-priority lane (ADR-0023 amendment 2) -- unrelated to what
+        # this test actually verifies.
+        self.write_state({**metadata(), "gc.campaign_priority_lane": "product"})
         self.write_status(status(next_id="af-next"))
         out = self.sentinel(NOW).stdout
         self.assertIn("NOTIFIED: mayor — materialize:af-next", out)
@@ -733,8 +765,11 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         self.assertEqual(0, self.mail_count())
 
     def test_a_new_wake_resets_the_reminder_count(self):
+        # Priority pinned to product for the same reason as
+        # test_a_fresh_product_wake_does_not_bundle_the_ladder above.
         self.stalled_resume(**{"gc.campaign_wake_resends": "3",
-                               "gc.campaign_wake_sent_at": "2026-09-16T08:00:00Z"})
+                               "gc.campaign_wake_sent_at": "2026-09-16T08:00:00Z",
+                               "gc.campaign_priority_lane": "product"})
         self.write_status(status())  # a different transition is now due
         self.assertIn("NOTIFIED: mayor — materialize:af-next", self.sentinel(NOW).stdout)
         meta = self.current_metadata()
