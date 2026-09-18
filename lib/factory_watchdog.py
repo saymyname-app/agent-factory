@@ -217,6 +217,16 @@ def merge_signals(
     OTHER writer contributed is left untouched. An `flock` on a sibling
     `<path>.lock` file serialises concurrent writers so a read-modify-write
     race can never interleave and drop an update.
+
+    An entry with no "source" at all (written before this tag existed) is
+    dropped rather than kept forever: every current writer always tags its
+    own alerts, so an untagged entry can never be matched and replaced by
+    anyone again -- it would otherwise persist in the cockpit's signal file
+    indefinitely even after the finding it described was independently
+    fixed (2026-09-18, the C1 observability-audit finding: 7 pre-tagging
+    false_success_close alerts kept re-surfacing after the bead they named
+    had already been explained/closed for over a day, because they had no
+    "source" for any writer's replace-my-own-slice pass to match against).
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -237,7 +247,7 @@ def merge_signals(
                 prior = []
             kept = [
                 item for item in prior
-                if isinstance(item, dict) and item.get("source") != source
+                if isinstance(item, dict) and item.get("source") and item.get("source") != source
             ]
             fresh = []
             for item in alerts:

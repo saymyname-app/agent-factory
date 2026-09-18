@@ -189,6 +189,20 @@ class MergeSignals(unittest.TestCase):
         self.assertEqual("on-session-stranded", alerts[0]["source"])
         self.assertEqual("af-br7i", alerts[0]["id"])
 
+    def test_untagged_legacy_entries_are_dropped_not_kept_forever(self):
+        # Pre-dates the "source" tag (2026-09-18, C1): an entry with no
+        # source can never be matched by any writer's replace-my-own-slice
+        # pass, so it must be swept on the next merge instead of persisting
+        # in the cockpit's signal file forever.
+        Path(self.path).write_text(json.dumps({
+            "generated_at": "2026-09-17T09:38:59Z",
+            "alerts": [{"kind": "false_success_close", "id": "af-x4p4", "message": "legacy, no source"}],
+        }), encoding="utf-8")
+        merge_signals(self.path, "on-order-failed", [{"kind": "order_failed", "id": "af-new1", "message": "m1"}])
+        alerts = self._alerts()
+        self.assertEqual(1, len(alerts))
+        self.assertEqual("af-new1", alerts[0]["id"])
+
     def test_a_writer_updates_its_own_stale_entry_in_place(self):
         merge_signals(self.path, "factory-watchdog", [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate aged 30m"}])
         merge_signals(self.path, "factory-watchdog", [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate aged 60m"}])
