@@ -99,6 +99,12 @@ jobs:
       - name: Factory guard checks liveness
         run: bash tests/factory-guard-liveness-test.sh
 
+      - name: Session-boot rules (identity assessment, streak tracking) (af-jj9u7)
+        run: python tests/factory-session-boot-test.py
+
+      - name: Factory guard detects a stuck-at-creation named session (af-jj9u7)
+        run: bash tests/factory-guard-session-boot-test.sh
+
       - name: Watchdog assessment rules (aged gates, stuck PRs, false-success closes)
         run: python tests/factory-watchdog-test.py
 
