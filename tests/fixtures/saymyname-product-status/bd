@@ -79,6 +79,12 @@ emit_current() {
   [[ $scenario != direct && $scenario != direct-ambiguous ]] || metadata='{"gc.session_id":"af-jqla","gc.session_name":"codex-af-jqla","gc.routed_to":"saymyname-backend/codex"}'
   [[ $scenario != workflow-root ]] || metadata='{"gc.kind":"workflow","gc.session_id":"af-stale-session","gc.session_name":"codex-af-stale"}'
   [[ $scenario != self-workflow ]] || metadata='{"gc.kind":"workflow","gc.input_convoy_id":"af-self-convoy","gc.session_name":"codex-af-self"}'
+  # af-6k6sn: gc.session_name is stamped once from the workflow's first step
+  # and never updated as later steps hand off to new sessions. This scenario
+  # simulates a workflow long past that handoff -- codex-af-handoff-stale
+  # has no more steps assigned to it (emit_handoff_steps below returns [])
+  # even though the convoy (af-self-convoy) still has a genuinely open child.
+  [[ $scenario != self-workflow-handoff ]] || metadata='{"gc.kind":"workflow","gc.input_convoy_id":"af-self-convoy","gc.session_name":"codex-af-handoff-stale"}'
   cat <<JSON
 [{"id":"$issue_id","title":"$title","status":"$status","parent":"$parent","metadata":$metadata}]
 JSON
@@ -108,7 +114,7 @@ JSON
 }
 
 emit_workflows() {
-  if [[ $scenario == self-workflow ]]; then
+  if [[ $scenario == self-workflow || $scenario == self-workflow-handoff ]]; then
     # af-current IS the only in-progress workflow (its own root); the
     # inventory here holds no *other* workflow, and its own convoy (below)
     # tracks its implementation children, never af-current itself.
@@ -124,7 +130,17 @@ emit_convoy() {
   local current="af-current"
   [[ $scenario != routed ]] || current="smb-current"
   cat <<JSON
-[{"id":"af-convoy","status":"open","dependencies":[{"id":"$current","dependency_type":"tracks"}],"metadata":{}}]
+[{"id":"af-convoy","status":"open","dependencies":[{"id":"$current","status":"in_progress","dependency_type":"tracks"}],"metadata":{}}]
+JSON
+}
+
+emit_self_convoy() {
+  # af-illx1/self-workflow: the workflow's own convoy tracks its
+  # implementation children, never itself, so this must not reuse
+  # af-current -- a distinct still-open child proves the convoy is
+  # genuinely active independent of the workflow-root bead's own status.
+  cat <<'JSON'
+[{"id":"af-self-convoy","status":"open","dependencies":[{"id":"af-self-child","status":"in_progress","dependency_type":"tracks"}],"metadata":{}}]
 JSON
 }
 
@@ -163,6 +179,7 @@ case "$command_name" in
         af-current|smb-current|smb-direct) emitted=$(emit_current) ;;
         af-delivered|smf-delivered) emitted=$(emit_delivered) ;;
         af-convoy) emitted=$(emit_convoy) ;;
+        af-self-convoy) emitted=$(emit_self_convoy) ;;
         *) printf 'unknown fixture issue: %s\n' "$issue_id" >&2; exit 64 ;;
       esac
       parts+=("$(jq -c '.[0]' <<<"$emitted")")
@@ -174,6 +191,7 @@ case "$command_name" in
       --status=in_progress) emit_workflows ;;
       --assignee=codex-af-test) emit_steps ;;
       --assignee=codex-af-self) emit_self_steps ;;
+      --assignee=codex-af-handoff-stale) printf '[]\n' ;;
       *) printf 'unsupported fixture list: %s\n' "$*" >&2; exit 64 ;;
     esac
     ;;
