@@ -132,6 +132,13 @@ assert_json no-candidate '.activity.state + ":" + .resume.owner' 'stopped:none'
 assert_json green '.last_delivery.evidence' 'PR 24 — merged as bbbbbbbbbbbb; CI green (2 checks)'
 assert_json routed '.result.title + ":" + .last_delivery.title' 'Implement backend product outcome:Deliver frontend product outcome'
 assert_json direct '.activity.state + ":" + .result.agent' 'working:codex-af-jqla'
+# af-9z472: a v2 workflow root's gc.session_name is stamped once from its
+# first step and never updated. The current-outcome bead here carries
+# gc.kind=workflow plus that stale session data; the direct-session branch
+# must not trust it (it would report materialized/no-agent) -- the fix
+# skips straight to convoy/workflow matching, which finds the live current
+# step's session instead.
+assert_json workflow-root '.activity.state + ":" + .result.agent' 'working:codex-af-test'
 
 idle_output=$(run_fixture idle)
 [[ $idle_output == *'SANTÉ: Infrastructure disponible'* ]] || fail_test 'idle health missing'
