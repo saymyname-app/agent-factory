@@ -54,6 +54,7 @@ done
 
 command -v gc >/dev/null 2>&1 || { echo "factory-load-test: gc not found on PATH" >&2; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "factory-load-test: jq not found on PATH" >&2; exit 2; }
+command -v setsid >/dev/null 2>&1 || { echo "factory-load-test: setsid not found on PATH" >&2; exit 2; }
 
 if [ -z "$OUT_DIR" ]; then
   OUT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/factory-load-test.XXXXXX")
@@ -66,7 +67,7 @@ SENTINEL_CMD=("$ROOT/bin/mayor-campaign" "sentinel")
 # and orders/mayor-campaign.toml): the order-level timeout for the sentinel is
 # 50s; saymyname-product-status is called from inside it with a 20s budget.
 STATUS_TIMEOUT="${CAMPAIGN_STATUS_COMMAND_TIMEOUT:-20}"
-SENTINEL_TIMEOUT=50
+SENTINEL_TIMEOUT="${CAMPAIGN_SENTINEL_COMMAND_TIMEOUT:-50}"
 
 echo "factory-load-test: N=$N window=${WINDOW}s out_dir=$OUT_DIR" >&2
 echo "factory-load-test: host before test:" >&2
@@ -75,8 +76,11 @@ free -h >&2 || true
 
 PIDS=()
 cleanup() {
+  # setsid below makes each loop the leader of its own process group (pgid ==
+  # its own pid), so killing the negated pid reaches every process it forked
+  # (e.g. the `gc bd list` children), not just the loop shell itself.
   for pid in "${PIDS[@]:-}"; do
-    kill "$pid" >/dev/null 2>&1 || true
+    kill -TERM -- "-$pid" >/dev/null 2>&1 || true
   done
   wait >/dev/null 2>&1 || true
 }
@@ -88,14 +92,14 @@ trap cleanup EXIT
 # nothing useful, same shape as the rigs' Maven/Testcontainers runs that
 # co-occurred with the incident.
 for i in $(seq 1 "$N"); do
-  ( while :; do :; done ) &
+  setsid bash -c 'while :; do :; done' &
   PIDS+=($!)
 done
 
 # N parallel `gc bd` readers, same shape as concurrent pool-worker sessions
 # each polling for work.
 for i in $(seq 1 "$N"); do
-  ( while :; do gc bd list --status open --limit 5 --json >/dev/null 2>&1; done ) &
+  setsid bash -c 'while :; do gc bd list --status open --limit 5 --json >/dev/null 2>&1; done' &
   PIDS+=($!)
 done
 
@@ -139,8 +143,9 @@ done
 # --- order.failed events during the window ----------------------------------
 
 ELAPSED_SINCE="$((($(date +%s) - START_EPOCH) + 5))s"
-gc events --type order.failed --since "$ELAPSED_SINCE" 2>/dev/null \
-  >"$FAILED_LOG" || true
+EVENTS_STATUS=0
+gc events --type order.failed --since "$ELAPSED_SINCE" \
+  >"$FAILED_LOG" 2>"$OUT_DIR/order-failed-events.err" || EVENTS_STATUS=$?
 
 FAILED_COUNT=$(wc -l <"$FAILED_LOG" | tr -d ' ')
 
@@ -167,7 +172,11 @@ echo "factory-load-test: results (N=$N, window=${WINDOW}s)" >&2
 printf '%-28s %10s %10s %10s %10s\n' "command" "min(s)" "median(s)" "max(s)" "timeout(s)"
 printf '%-28s %10s %10s %10s %10s\n' "saymyname-product-status" "$STATUS_MIN" "$STATUS_MED" "$STATUS_MAX" "$STATUS_TIMEOUT"
 printf '%-28s %10s %10s %10s %10s\n' "mayor-campaign sentinel" "$SENTINEL_MIN" "$SENTINEL_MED" "$SENTINEL_MAX" "$SENTINEL_TIMEOUT"
-echo "order.failed events observed: $FAILED_COUNT" >&2
+if [ "$EVENTS_STATUS" -eq 0 ]; then
+  echo "order.failed events observed: $FAILED_COUNT" >&2
+else
+  echo "order.failed events observed: unknown (gc events exited $EVENTS_STATUS, see $OUT_DIR/order-failed-events.err)" >&2
+fi
 
 FAIL=0
 
@@ -187,7 +196,10 @@ if [ "$SENTINEL_MED" != "n/a" ]; then
   fi
 fi
 
-if [ "$FAILED_COUNT" -gt 0 ]; then
+if [ "$EVENTS_STATUS" -ne 0 ]; then
+  echo "FAIL: could not check for order.failed events (gc events exited $EVENTS_STATUS)" >&2
+  FAIL=1
+elif [ "$FAILED_COUNT" -gt 0 ]; then
   echo "FAIL: $FAILED_COUNT order.failed event(s) observed during the window" >&2
   FAIL=1
 fi
