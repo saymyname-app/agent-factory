@@ -11,7 +11,7 @@ jq -e --arg source "$ROOT/orders/mayor-campaign.toml" '
   .order.trigger == "cooldown" and
   .order.interval == "1m" and
   .order.timeout == "50s" and
-  .order.exec == "./bin/mayor-campaign sentinel" and
+  .order.exec == "env CAMPAIGN_COMMAND_TIMEOUT=30 ./bin/mayor-campaign sentinel" and
   .order.enabled == true and
   .order.source == $source
 ' >/dev/null <<<"$order"
