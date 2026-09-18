@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 #
 # bin/factory-queue-guard: detects a product-queue candidate whose status
-# changed by any path other than product-queue's own commands (af-tbkcc).
-# Regression for the 2026-09-18 23:53Z-02:12Z incident: af-ogg8z and
-# af-gp8fd were set to in_progress/open directly by a PO session, bypassing
-# product-queue, which cascaded into 8 sentinel failures and a 2h10 blocked
-# campaign. This drives the guard against stub gc/bd binaries and proves: a
-# candidate whose status matches its queue_state is left alone; a drifted
-# candidate with no execution Bead linked is restored to deferred and the
-# Mayor is paged exactly once; a drifted candidate that DOES link an
-# execution Bead is never auto-restored, only flagged and paged once; and
-# --check-only writes and pages nothing.
+# changed by any path other than product-queue's own commands (af-tbkcc),
+# and an orphan product-queue label with no gc.queue_state at all
+# (ADR-0023 bullet 5). Regression for the 2026-09-18 23:53Z-02:12Z incident:
+# af-ogg8z and af-gp8fd were set to in_progress/open directly by a PO
+# session, bypassing product-queue, which cascaded into 8 sentinel failures
+# and a 2h10 blocked campaign. This drives the guard against stub gc/bd
+# binaries and proves: a candidate whose status matches its queue_state is
+# left alone; a drifted candidate with no execution Bead linked is restored
+# to deferred and the Mayor is paged exactly once; a drifted candidate that
+# DOES link an execution Bead is never auto-restored, only flagged and
+# paged once; a bead carrying the product-queue label with no
+# gc.queue_state (the af-3cat8/af-j41c2 shape: an ordinary Mayor task
+# mislabeled product-queue) has that label removed with a note and the
+# Mayor paged once; and --check-only writes and pages nothing.
 #
 # All bead ids here are synthetic fixtures (zz-fixture*), never a real af-*
 # id from the live store.
@@ -84,7 +88,7 @@ closed_materialized='{
   "labels": ["product-queue"],
   "metadata": {"gc.queue_product": "saymyname", "gc.queue_state": "materialized", "gc.materialized_bead": "zz-exec"}
 }'
-not_a_candidate='{
+orphan_label='{
   "id": "zz-fixture-mayor-task", "status": "closed", "title": "Ordinary Mayor task",
   "labels": ["product-queue"], "metadata": {"gc.outcome": "pass"}
 }'
@@ -99,20 +103,41 @@ drifted_with_link='{
   "metadata": {"gc.queue_product": "saymyname", "gc.queue_state": "queued", "gc.queue_rank": 3000, "gc.materialized_bead": "zz-exec-2"}
 }'
 
-# 1. nothing to do: healthy, correctly-closed, and non-candidate (no
-#    gc.queue_state) beads are all left alone -------------------------------
-jq -n --argjson a "$healthy_bead" --argjson b "$closed_materialized" --argjson c "$not_a_candidate" \
-  '[$a, $b, $c]' > "$BEADS_FILE"
+# 1. nothing to do: healthy and correctly-closed beads are left alone -------
+jq -n --argjson a "$healthy_bead" --argjson b "$closed_materialized" \
+  '[$a, $b]' > "$BEADS_FILE"
 out=$(guard --check-only)
 grep -q "healthy — 2 product-queue candidate(s) checked, no status drift" <<<"$out" \
   || { echo "$out" >&2; fail "a clean queue was not reported healthy"; }
 [ "$(update_count zz-fixture-healthy)" = "0" ] || fail "touched a healthy candidate"
 [ "$(update_count zz-fixture-materialized)" = "0" ] || fail "touched a correctly-closed candidate"
-[ "$(update_count zz-fixture-mayor-task)" = "0" ] || fail "touched a Bead with no gc.queue_state at all"
 [ "$(mail_count mayor)" = "0" ] || fail "paged the Mayor with nothing wrong"
+
+# 1b. orphan label: a bead carrying product-queue with no gc.queue_state at
+#     all (the af-3cat8/af-j41c2 shape) is not a "nothing wrong" case --
+#     --check-only reports it without writing or paging -------------------
+jq -n --argjson o "$orphan_label" '[$o]' > "$BEADS_FILE"
+out=$(guard --check-only)
+grep -q "zz-fixture-mayor-task carries the product-queue label with no gc.queue_state" <<<"$out" \
+  || { echo "$out" >&2; fail "orphan label was not reported under --check-only"; }
+[ "$(update_count zz-fixture-mayor-task)" = "0" ] || fail "--check-only wrote to Beads"
+[ "$(mail_count mayor)" = "0" ] || fail "--check-only paged the Mayor"
+grep -q "^UNRESOLVED" <<<"$out" || fail "an orphan label under --check-only must not read as healthy"
+
+# 1c. orphan label: default run removes the label, leaves a note, and pages
+#     the Mayor exactly once ------------------------------------------------
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+out=$(guard)
+grep -q "removed orphan product-queue label (no gc.queue_state)" <<<"$out" \
+  || { echo "$out" >&2; fail "orphan label was not repaired and reported"; }
+call=$(grep "^zz-fixture-mayor-task " "$UPDATE_LOG" || true)
+[[ $call == *"--remove-label product-queue"* ]] || fail "repair call did not remove the product-queue label: $call"
+[[ $call == *"--append-notes"* ]] || fail "repair call left no note: $call"
+[ "$(mail_count mayor)" = "1" ] || fail "expected exactly one page to the Mayor for the orphan label"
 
 # 2. drifted with no execution Bead linked: --check-only reports, writes and
 #    pages nothing -----------------------------------------------------------
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
 jq -n --argjson d "$drifted_no_link" '[$d]' > "$BEADS_FILE"
 out=$(guard --check-only)
 grep -q "zz-fixture-drifted product-queue status (in_progress) drifted" <<<"$out" \
