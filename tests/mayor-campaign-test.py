@@ -573,6 +573,39 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         self.assertIn("already notified", self.sentinel(NOW + 60).stdout)
         self.assertEqual(1, self.mail_count())
 
+    def test_a_factory_candidate_closed_between_read_and_notify_is_not_announced(self):
+        # af-mqphq (2026-09-18): an order-dispatch tracking bead was open in
+        # the `ready` snapshot plan_factory_lane picked it from, but had
+        # already closed (order dispatch completed) by the time the sentinel
+        # was about to notify the Mayor about it. Replay that exact race:
+        # af-fix is "open" in the ready snapshot, but a live re-check right
+        # before sending finds it closed.
+        (self.node_dir / "af-fix.json").write_text(json.dumps({
+            "id": "af-fix", "status": "closed", "metadata": {},
+        }), encoding="utf-8")
+        self.write_status(status(next_id=None))  # automatic campaign, nothing eligible
+        out = self.sentinel(NOW).stdout
+        self.assertNotIn("NOTIFIED", out)
+        self.assertIn("NOOP: factory_candidate_closed", out)
+        self.assertEqual(0, self.mail_count())
+
+    def test_a_factory_queue_candidate_closed_between_read_and_notify_is_not_announced(self):
+        # Same race, rung 2b (a materialized queue candidate) instead of a
+        # ready Factory bead.
+        self.ready_file.write_text("[]", encoding="utf-8")
+        queue_file = self.root / "queue.json"
+        queue_file.write_text(json.dumps([
+            {"id": "af-q1", "kind": "factory_campaign", "state": "eligible", "title": "x"},
+        ]), encoding="utf-8")
+        (self.node_dir / "af-q1.json").write_text(json.dumps({
+            "id": "af-q1", "status": "closed", "metadata": {},
+        }), encoding="utf-8")
+        self.write_status(status(next_id=None))
+        out = self.sentinel(NOW, CAMPAIGN_QUEUE_FILE=str(queue_file)).stdout
+        self.assertNotIn("NOTIFIED", out)
+        self.assertIn("NOOP: factory_candidate_closed", out)
+        self.assertEqual(0, self.mail_count())
+
     def test_a_stale_product_reminder_bundles_a_factory_wake(self):
         # C4: a product wake stale enough to be reminded (>=30 min) must not
         # starve the Factory of the same 30 minutes; bundle a ladder wake into
