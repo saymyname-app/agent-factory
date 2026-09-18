@@ -31,12 +31,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from ntfy_notify import compute_alerts, diff_alerts  # noqa: E402
+from ntfy_notify import compute_alerts, compute_digest, diff_alerts, digest_due  # noqa: E402
 
 TOPIC_FILE = ROOT / ".gc" / "ntfy-topic.local"
 STATE_FILE = ROOT / ".gc" / "ntfy-notify-state.json"
 NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh")
 REMIND_SECONDS = int(os.environ.get("NTFY_REMIND_SECONDS", "3600"))
+# Twice a day, local time, Benjamin gets the real state and what to do even
+# when nothing is wrong (2026-09-18: "dis-moi régulièrement l'état réel").
+DIGEST_HOURS = tuple(int(h) for h in os.environ.get("NTFY_DIGEST_HOURS", "8,20").split(",") if h.strip())
 PRIORITY_LEVELS = {"urgent": 5, "default": 3, "low": 2}
 
 
@@ -84,7 +87,7 @@ def push(topic: str, title: str, message: str, priority: str, dry_run: bool) -> 
         "title": title,
         "message": message,
         "priority": PRIORITY_LEVELS.get(priority, 3),
-        "tags": ["rotating_light"] if priority == "urgent" else ["gear"],
+        "tags": {"urgent": ["rotating_light"], "low": ["white_check_mark"]}.get(priority, ["gear"]),
     }).encode("utf-8")
     req = urllib.request.Request(
         NTFY_SERVER, data=payload, method="POST",
@@ -120,13 +123,16 @@ def main() -> int:
         print(f"ntfy-notify: ERROR: {exc}", file=sys.stderr)
         return 1
 
-    alerts = compute_alerts(snapshot)
     state = load_state()
     now = time.time()
+    first_seen = {k[len("first:"):]: v for k, v in state.items() if k.startswith("first:")}
+    alerts = compute_alerts(snapshot, first_seen, now)
+    for alert in alerts:
+        state.setdefault(f"first:{alert['key']}", now)
     due, resolved = diff_alerts(alerts, state, now, REMIND_SECONDS)
 
     for alert in due:
-        say(f"pushing: {alert['title']} -- {alert['message']}")
+        say(f"pushing: {alert['title']} -- {alert['message'].splitlines()[0]}")
         try:
             push(topic, alert["title"], alert["message"], alert["priority"], args.dry_run)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -137,10 +143,26 @@ def main() -> int:
     for key in resolved:
         say(f"resolved: {key}")
         try:
-            push(topic, "Retour a la normale", f"{key} n'est plus actif.", "low", args.dry_run)
+            push(topic, "Usine : retour à la normale",
+                 "ÉTAT : ce qui bloquait est résolu.\nÀ FAIRE : rien. Suis l'avancée sur le cockpit.",
+                 "low", args.dry_run)
         except (urllib.error.URLError, TimeoutError, OSError):
             pass
         state.pop(key, None)
+        state.pop(f"first:{key}", None)
+
+    slot = digest_due(state, now, DIGEST_HOURS)
+    if slot:
+        digest = compute_digest(snapshot, alerts)
+        say(f"digest: {slot}")
+        try:
+            push(topic, digest["title"], digest["message"], digest["priority"], args.dry_run)
+            state[slot] = now
+            # keep only the last few slots so the state file does not grow forever
+            for old in sorted(k for k in state if k.startswith("digest:"))[:-6]:
+                state.pop(old, None)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            print(f"ntfy-notify: digest push failed: {exc}", file=sys.stderr)
 
     if not args.dry_run:
         save_state(state)
