@@ -78,6 +78,7 @@ emit_current() {
   [[ $scenario != finalizing ]] || metadata='{"gc.work_outcome":"pass"}'
   [[ $scenario != direct && $scenario != direct-ambiguous ]] || metadata='{"gc.session_id":"af-jqla","gc.session_name":"codex-af-jqla","gc.routed_to":"saymyname-backend/codex"}'
   [[ $scenario != workflow-root ]] || metadata='{"gc.kind":"workflow","gc.session_id":"af-stale-session","gc.session_name":"codex-af-stale"}'
+  [[ $scenario != self-workflow ]] || metadata='{"gc.kind":"workflow","gc.input_convoy_id":"af-self-convoy","gc.session_name":"codex-af-self"}'
   cat <<JSON
 [{"id":"$issue_id","title":"$title","status":"$status","parent":"$parent","metadata":$metadata}]
 JSON
@@ -107,6 +108,13 @@ JSON
 }
 
 emit_workflows() {
+  if [[ $scenario == self-workflow ]]; then
+    # af-current IS the only in-progress workflow (its own root); the
+    # inventory here holds no *other* workflow, and its own convoy (below)
+    # tracks its implementation children, never af-current itself.
+    printf '[]\n'
+    return
+  fi
   cat <<'JSON'
 [{"id":"af-workflow","status":"in_progress","metadata":{"gc.kind":"workflow","gc.input_convoy_id":"af-convoy","gc.session_name":"codex-af-test"}}]
 JSON
@@ -123,6 +131,12 @@ JSON
 emit_steps() {
   cat <<'JSON'
 [{"id":"af-step","status":"open","assignee":"codex-af-test","metadata":{"gc.root_bead_id":"af-workflow","gc.session_name":"codex-af-test","gc.step_ref":"mol-polecat-commit.implement"}}]
+JSON
+}
+
+emit_self_steps() {
+  cat <<'JSON'
+[{"id":"af-self-step","status":"open","assignee":"codex-af-self","metadata":{"gc.root_bead_id":"af-current","gc.session_name":"codex-af-self","gc.step_ref":"mol-do-work.implement"}}]
 JSON
 }
 
@@ -146,6 +160,7 @@ case "$command_name" in
     case "${2:-}" in
       --status=in_progress) emit_workflows ;;
       --assignee=codex-af-test) emit_steps ;;
+      --assignee=codex-af-self) emit_self_steps ;;
       *) printf 'unsupported fixture list: %s\n' "$*" >&2; exit 64 ;;
     esac
     ;;

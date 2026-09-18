@@ -139,6 +139,13 @@ assert_json direct '.activity.state + ":" + .result.agent' 'working:codex-af-jql
 # skips straight to convoy/workflow matching, which finds the live current
 # step's session instead.
 assert_json workflow-root '.activity.state + ":" + .result.agent' 'working:codex-af-test'
+# af-illx1: when current_id IS the workflow root itself (not someone else's
+# leaf), its own convoy tracks its implementation children, never itself --
+# the tracks-matching loop above never finds it that way. Nothing else
+# tracks it here (emit_workflows returns an empty inventory), so the fix
+# must fall back to treating the in-progress workflow current_issue itself
+# as the active result and resolve its own live current step's session.
+assert_json self-workflow '.activity.state + ":" + .result.agent' 'working:codex-af-self'
 
 idle_output=$(run_fixture idle)
 [[ $idle_output == *'SANTÉ: Infrastructure disponible'* ]] || fail_test 'idle health missing'
