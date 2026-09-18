@@ -16,6 +16,9 @@ failure behind a CLOSED status":
              (downstream steps skipped by on_fail=abort_scope) and look
              identical to a real success unless something reads the nested
              metadata (incident gap 6).
+  gh-auth    `gh auth status` failing (expired/invalid token) is invisible to
+             every one of the ten gh-dependent scripts, each of which just
+             fails its own way with no shared signal (Incident 2026-09-18).
 
 Each assessor is a pure function over already-fetched JSON, so it is
 unit-testable without gc/gh. bin/factory-watchdog does the fetching, paging,
@@ -169,6 +172,18 @@ def assess_workflow(bead: dict[str, Any]) -> tuple[str, str, str] | None:
     )
 
 
+def assess_gh_auth(returncode: int, output: str) -> tuple[str, str] | None:
+    """`gh auth status` exiting nonzero -> every gh-dependent script fails the
+    same silent way (Incident 2026-09-18: WSL's gh token expired; pr-autopilot
+    ticked every 3 min with errors=3 forever on all 3 repos with zero visible
+    signal until Benjamin noticed a PR never got auto-armed). Only a human can
+    re-authenticate -- this only detects the gap, it never fixes it.
+    """
+    if returncode == 0:
+        return None
+    return "gh_auth_unreachable", f"gh auth status failed (exit {returncode}): {_truncate(output)}"
+
+
 def assess_workflows(beads: Iterable[dict[str, Any]]) -> list[tuple[str, str, str]]:
     out = []
     for bead in beads:
@@ -241,6 +256,27 @@ def merge_signals(
             fcntl.flock(lockf, fcntl.LOCK_UN)
 
 
+def _cli_gh_auth(argv: list[str]) -> int:
+    if len(argv) != 2:
+        print(
+            "usage: factory_watchdog.py gh-auth <returncode>  "
+            "(reads `gh auth status` combined output on stdin)",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        returncode = int(argv[1])
+    except ValueError:
+        print("gh-auth: <returncode> must be an integer", file=sys.stderr)
+        return 2
+    output = sys.stdin.read()
+    verdict = assess_gh_auth(returncode, output)
+    if verdict is not None:
+        code, message = verdict
+        print(f"{code}\t{message}")
+    return 0
+
+
 def _cli_merge_signals(argv: list[str]) -> int:
     if len(argv) != 3:
         print(
@@ -265,9 +301,12 @@ def _cli_merge_signals(argv: list[str]) -> int:
 def main() -> int:
     if len(sys.argv) >= 2 and sys.argv[1] == "merge-signals":
         return _cli_merge_signals(sys.argv[1:])
+    if len(sys.argv) >= 2 and sys.argv[1] == "gh-auth":
+        return _cli_gh_auth(sys.argv[1:])
     if len(sys.argv) != 2 or sys.argv[1] not in ("gates", "prs", "workflows"):
         print(
             "usage: factory_watchdog.py <gates|prs|workflows>  (reads JSON array on stdin)\n"
+            "       factory_watchdog.py gh-auth <returncode>  (reads `gh auth status` output on stdin)\n"
             "       factory_watchdog.py merge-signals <path> <source>  (reads JSON array on stdin)",
             file=sys.stderr,
         )

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# factory-watchdog must page three gaps the campaign-liveness check does not
-# cover (Incident 2026-09-16): an aged "Gate: human" issue, a Factory-repo PR
-# that is CONFLICTING or never ran CI, and a molecule/workflow bead that
-# closed CLOSED with a non-pass gc.outcome. It must also re-nudge about a
+# factory-watchdog must page gaps the campaign-liveness check does not cover
+# (Incident 2026-09-16): an aged "Gate: human" issue, a Factory-repo PR that
+# is CONFLICTING or never ran CI, and a molecule/workflow bead that closed
+# CLOSED with a non-pass gc.outcome. It must also flag a broken `gh auth`
+# (Incident 2026-09-18, af-539b0) as one shared bead, and re-nudge about a
 # still-open liveness defect. Every page is throttled (never every run) and
 # --check-only must mutate nothing. gc and gh are stubs on PATH here; the
 # watchdog must never reach a live store or GitHub from a test.
@@ -26,6 +27,8 @@ GATES="$TMP/gates.json";         printf '[]' > "$GATES"
 PRS="$TMP/prs.json";             printf '[]' > "$PRS"
 WORKFLOWS="$TMP/workflows.json"; printf '[]' > "$WORKFLOWS"
 COORD="$TMP/coord.json";         printf '[{"id":"af-1vr4","metadata":{}}]' > "$COORD"
+GH_AUTH_RC="$TMP/gh-auth-rc";   printf '0' > "$GH_AUTH_RC"
+GH_AUTH_OUT="$TMP/gh-auth-out"; printf 'Logged in to github.com account benjamin-hurand' > "$GH_AUTH_OUT"
 BEADS_DIR="$TMP/beads"; mkdir -p "$BEADS_DIR"
 CALLS="$TMP/calls.log"; : > "$CALLS"
 MAIL="$TMP/mail.log"; : > "$MAIL"
@@ -40,7 +43,17 @@ case "\$1 \$2" in
   "bd list")
     if [[ "\$*" == *"gc.kind=workflow"* ]]; then cat "$WORKFLOWS"; exit 0; fi
     if [[ "\$*" == *"--title-contains"* ]]; then
-      for f in "$BEADS_DIR"/pr-open-*.json; do [[ -f "\$f" ]] && cat "\$f"; done | jq -s 'add // []'
+      needle=""
+      argv=("\$@")
+      for ((i=0; i<\${#argv[@]}; i++)); do
+        [[ "\${argv[i]}" == "--title-contains" ]] && needle="\${argv[i+1]}"
+      done
+      for f in "$BEADS_DIR"/open-*.json; do
+        [[ -f "\$f" ]] || continue
+        if [[ -z "\$needle" ]] || jq -e --arg n "\$needle" '(.[0].title // "") | contains(\$n)' "\$f" >/dev/null 2>&1; then
+          cat "\$f"
+        fi
+      done | jq -s 'add // []'
       exit 0
     fi
     echo '[]'; exit 0 ;;
@@ -52,7 +65,8 @@ case "\$1 \$2" in
     exit 0 ;;
   "bd create")
     id="af-new-\$RANDOM"
-    printf '[{"id":"%s","status":"open","title":"unused"}]' "\$id" > "$BEADS_DIR/pr-open-\$id.json"
+    title="\$3"
+    printf '%s' "\$title" | jq -R --arg id "\$id" '[{"id":\$id,"status":"open","title":.}]' > "$BEADS_DIR/open-\$id.json"
     printf '{"id":"%s"}' "\$id"
     exit 0 ;;
   "bd update")
@@ -84,6 +98,10 @@ cat > "$TMP/bin/gh" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CALLS"
 if [[ "\$1 \$2" == "pr list" ]]; then cat "$PRS"; exit 0; fi
+if [[ "\$1 \$2" == "auth status" ]]; then
+  cat "$GH_AUTH_OUT"
+  exit "\$(cat "$GH_AUTH_RC")"
+fi
 exit 0
 STUB
 chmod +x "$TMP/bin/gh"
@@ -190,7 +208,38 @@ grep -q "false-success close — af-x4p4" <<<"$out" || fail "the legacy-flagged 
 grep -q "gc.watchdog_false_success_fp=closed:fail" "$CALLS" || fail "the fingerprint was not backfilled for the legacy-flagged bead"
 printf '[]' > "$WORKFLOWS"
 
-# 7. a still-open campaign-liveness defect is re-nudged on a cooldown --------
+# 7. a failing gh auth is filed as one shared bead and paged once ------------
+printf '1' > "$GH_AUTH_RC"
+printf 'You are not logged into any GitHub hosts' > "$GH_AUTH_OUT"
+reset_logs
+out=$(watchdog)
+grep -q "gh auth — gh auth status failed (exit 1)" <<<"$out" || { echo "$out" >&2; fail "gh auth failure not reported"; }
+[ "$(creates)" = "1" ] || fail "gh auth failure should file exactly one shared bead"
+[ "$(mails)" = "1" ] || fail "gh auth failure should be paged exactly once"
+
+# ...re-run while still failing must not duplicate the bead, and must be throttled.
+reset_logs
+out=$(watchdog)
+grep -q "gh auth — gh auth status failed" <<<"$out" || fail "gh auth failure should still be reported while unresolved"
+[ "$(creates)" = "0" ] || fail "gh auth bead must not be filed twice"
+[ "$(mails)" = "0" ] || fail "an immediate gh auth re-run must be throttled, not re-mailed"
+
+# ...--check-only reports but mutates nothing.
+reset_logs
+out=$(watchdog --check-only)
+grep -q "gh auth — gh auth status failed" <<<"$out" || fail "--check-only should still report the gh auth failure"
+[ "$(mails)" = "0" ] || fail "--check-only must never send mail for gh auth"
+grep -q '^bd create' "$CALLS" && fail "--check-only must never file a bead for gh auth"
+
+# ...recovery auto-resolves the shared bead without a human closing it by hand.
+printf '0' > "$GH_AUTH_RC"
+printf 'Logged in to github.com account benjamin-hurand' > "$GH_AUTH_OUT"
+reset_logs
+out=$(watchdog)
+grep -q "gh auth —" <<<"$out" && fail "a recovered gh auth must not still be reported as a problem"
+grep -q -- '--status=closed' "$CALLS" || fail "gh auth recovery should auto-resolve the shared bead"
+
+# 8. a still-open campaign-liveness defect is re-nudged on a cooldown --------
 printf '[{"id":"af-1vr4","metadata":{"gc.campaign_liveness_bead":"af-live1"}}]' > "$COORD"
 echo '[{"id":"af-live1","status":"open","created_at":"'"$(iso $((NOW - 3000)))"'"}]' > "$BEADS_DIR/af-live1.json"
 reset_logs
@@ -208,7 +257,7 @@ reset_logs
 out=$(watchdog)
 grep -q "campaign-liveness defect" <<<"$out" && fail "a closed liveness defect must not still be reported"
 
-# 8. exit-code contract (af-u61xq, same contract as factory-guard since PR
+# 9. exit-code contract (af-u61xq, same contract as factory-guard since PR
 #    #75): finding something is NOT a failure. Only the watchdog itself
 #    failing to run (unreachable root) is a nonzero exit. This was previously
 #    exit 1 on every ATTENTION finding, which fed recurring order.failed noise
@@ -228,4 +277,4 @@ rc=$?
 set -e
 [ "$rc" != "0" ] || fail "exit code must be nonzero when the watchdog itself could not run (unreachable root)"
 
-printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, and re-nudges an open liveness defect, all throttled and silent under --check-only\n'
+printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, and a broken gh auth, and re-nudges an open liveness defect, all throttled and silent under --check-only\n'

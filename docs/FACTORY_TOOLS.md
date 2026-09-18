@@ -88,9 +88,9 @@ jamais signalée comme panne. Les règles sont dans `lib/factory_liveness.py`.
 
 ## `./bin/factory-watchdog` — la surveillance qui page, pas seulement qui observe
 
-La vivacité de `factory-guard` répond à « la campagne avance-t-elle ». Trois
+La vivacité de `factory-guard` répond à « la campagne avance-t-elle ». Plusieurs
 autres signaux peuvent rester muets même quand elle avance
-(`INCIDENT_2026-09-16-silent-campaign-stall.md`) :
+(`INCIDENT_2026-09-16-silent-campaign-stall.md`, af-539b0) :
 
 ```bash
 ./bin/factory-watchdog                # par défaut : vérifie ET page (mail + bead)
@@ -102,6 +102,7 @@ autres signaux peuvent rester muets même quand elle avance
 | `gates` | une « Gate: human » ouverte depuis plus de 30 min (réglable) est re-signalée au Mayor, pas seulement laissée dans la file |
 | `prs` | une PR du dépôt Factory en `CONFLICTING`, ou dont aucun contrôle CI n'a jamais démarré, après 30 min — distincte d'une PR qui attend simplement son tour |
 | `workflows` | un bead molécule/workflow fermé `CLOSED` avec `gc.outcome` ≠ `pass` (le cas `on_fail=abort_scope` : chaque étape en aval passe `outcome=skipped` en silence) |
+| `gh-auth` | `gh auth status` échoue (token WSL périmé/invalide) — dix scripts en dépendent (`reversibility-check`, `factory-guard`, `pr-autopilot`, `factory-do-work-workspace`, `factory-gh-rollup`, `factory-delivery-guard`, `deliver-close`, `factory-queue-guard`, `factory-watchdog`, `factory-main-gate`) et échouaient chacun silencieusement de son côté (af-539b0, 2026-09-18) ; **un seul** bead partagé nommant les dix scripts, **un seul** mail au Mayor par cooldown, et auto-résolu dès que `gh auth` revient — jamais un bead par script, jamais un par passage |
 | `liveness` (relais) | re-signale un défaut de vivacité déjà déposé par `factory-guard` tant qu'il reste ouvert, au lieu de le laisser filer une seule fois |
 
 **Observe et page seulement** (ADR-0016 §7) : il ne résout jamais une porte,

@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from factory_watchdog import assess_gate, assess_pr, assess_workflow, merge_signals  # noqa: E402
+from factory_watchdog import assess_gate, assess_gh_auth, assess_pr, assess_workflow, merge_signals  # noqa: E402
 
 NOW = 1789555200.0  # 2026-09-16T10:40:00Z
 
@@ -140,6 +140,21 @@ class WorkflowRules(unittest.TestCase):
         self.assertIsNone(assess_workflow(bead))
 
 
+class GhAuthRules(unittest.TestCase):
+    def test_a_healthy_gh_auth_is_not_flagged(self):
+        self.assertIsNone(assess_gh_auth(0, "Logged in to github.com account benjamin-hurand"))
+
+    def test_a_failing_gh_auth_is_flagged(self):
+        code, message = assess_gh_auth(1, "You are not logged into any GitHub hosts")
+        self.assertEqual("gh_auth_unreachable", code)
+        self.assertIn("exit 1", message)
+        self.assertIn("not logged into any GitHub hosts", message)
+
+    def test_a_long_gh_auth_message_is_truncated(self):
+        _, message = assess_gh_auth(1, "x" * 500)
+        self.assertLessEqual(len(message), 200)
+
+
 class MergeSignals(unittest.TestCase):
     """factory-watchdog-signals.json has three independently-scheduled writers
     (factory-watchdog, on-order-failed, on-session-stranded -- af-u61xq,
@@ -224,6 +239,22 @@ class Cli(unittest.TestCase):
         self.assertEqual([], self._run("gates", "[]"))
         self.assertEqual([], self._run("prs", "[]"))
         self.assertEqual([], self._run("workflows", "[]"))
+
+    def test_gh_auth_cli_is_silent_when_healthy(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "lib" / "factory_watchdog.py"), "gh-auth", "0"],
+            input="Logged in to github.com", capture_output=True, text=True,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("", result.stdout.strip())
+
+    def test_gh_auth_cli_prints_one_line_when_failing(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "lib" / "factory_watchdog.py"), "gh-auth", "1"],
+            input="You are not logged into any GitHub hosts", capture_output=True, text=True,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertTrue(result.stdout.strip().startswith("gh_auth_unreachable\t"))
 
     def test_merge_signals_subcommand_round_trips_through_the_real_cli(self):
         with tempfile.TemporaryDirectory() as tmp:

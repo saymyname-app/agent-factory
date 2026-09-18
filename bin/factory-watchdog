@@ -16,6 +16,15 @@
 #                        gc.outcome=fail (on_fail=abort_scope skipped every
 #                        downstream step). status=closed alone reads as
 #                        success; only nested metadata says otherwise.
+#   4. GH AUTH UNREACHABLE  ten scripts depend on the gh CLI (reversibility-
+#                        check, factory-guard, pr-autopilot, factory-do-work-
+#                        workspace, factory-gh-rollup, factory-delivery-guard,
+#                        deliver-close, factory-queue-guard, factory-watchdog,
+#                        factory-main-gate). A stale/invalid gh token fails
+#                        every one of them silently and separately -- af-539b0
+#                        (2026-09-18): pr-autopilot ticked every 3 min with
+#                        errors=3 forever on all 3 repos with zero visible
+#                        signal until a human noticed an unarmed PR.
 #
 # It also re-nudges the Mayor about a campaign-liveness defect
 # (lib/factory_liveness.py, filed by factory-guard) that is still open and
@@ -198,7 +207,70 @@ NEXT: read gc.outcome and downstream step outcomes -- CLOSED alone does not mean
   fi
 done < <(printf '%s' "$workflows_json" | python3 "$LIB/factory_watchdog.py" workflows 2>/dev/null)
 
-# --- 4. re-nudge on a still-open, aging campaign-liveness defect --------------
+# --- 4. gh CLI authentication reachability ------------------------------------
+# af-539b0 (2026-09-18): a stale/invalid gh token fails ten gh-dependent
+# scripts silently and separately. One shared bead + one throttled mail here,
+# never one per script and never one per tick; auto-resolved on recovery.
+GH_AUTH_SCRIPTS="reversibility-check, factory-guard, pr-autopilot, factory-do-work-workspace, factory-gh-rollup, factory-delivery-guard, deliver-close, factory-queue-guard, factory-watchdog, factory-main-gate"
+GH_AUTH_BEAD_TITLE="[watchdog] gh auth unreachable"
+if command -v gh >/dev/null 2>&1; then
+  gh_auth_out=$(gh auth status 2>&1); gh_auth_rc=$?
+  gh_auth_verdict=$(printf '%s' "$gh_auth_out" | python3 "$LIB/factory_watchdog.py" gh-auth "$gh_auth_rc" 2>/dev/null)
+  if [ -n "$gh_auth_verdict" ]; then
+    gh_code=${gh_auth_verdict%%$'\t'*}
+    gh_msg=${gh_auth_verdict#*$'\t'}
+    bad "gh auth — $gh_msg"
+    add_alert "$gh_code" "gh-auth" "$gh_msg"
+    if [ "$CHECK_ONLY" != "1" ]; then
+      existing=$(gc bd list --status open --title-contains "$GH_AUTH_BEAD_TITLE" --json 2>/dev/null \
+        | jq -r '(.[0].id // empty)')
+      if [ -z "$existing" ]; then
+        created=$(gc bd create "$GH_AUTH_BEAD_TITLE" -p 1 -t bug \
+          -d "$gh_msg
+
+Affected gh-dependent scripts: $GH_AUTH_SCRIPTS
+
+Detected by factory-watchdog. Only a human can re-authenticate (gh auth login -h github.com) -- this bead is visibility only; watchdog auto-resolves it once auth recovers." \
+          --set-metadata "gc.source=factory-watchdog" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
+        if [ -n "$created" ]; then
+          gc mail send mayor --notify \
+            -s "$GH_AUTH_BEAD_TITLE" \
+            -m "ACTION: factory-watchdog's gh auth probe failed
+STATE: $gh_msg
+EVIDENCE: bead $created
+NEXT: re-authenticate (gh auth login -h github.com) -- affects $GH_AUTH_SCRIPTS; watchdog auto-resolves $created once auth recovers" \
+            >/dev/null 2>&1 \
+            && gc bd update "$created" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
+            && did "flagged gh auth unreachable as $created and notified mayor"
+        else
+          bad "could not file a bead for gh auth unreachable"
+        fi
+      elif should_nudge "$existing" "gc.watchdog_nudged_at"; then
+        gc mail send mayor --notify \
+          -s "$GH_AUTH_BEAD_TITLE (still failing)" \
+          -m "ACTION: factory-watchdog's gh auth probe is still failing
+STATE: $gh_msg
+EVIDENCE: bead $existing
+NEXT: re-authenticate (gh auth login -h github.com) -- affects $GH_AUTH_SCRIPTS" \
+          >/dev/null 2>&1 \
+          && gc bd update "$existing" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
+          && did "re-nudged mayor about gh auth still unreachable ($existing)"
+      fi
+    fi
+  elif [ "$CHECK_ONLY" != "1" ]; then
+    existing=$(gc bd list --status open --title-contains "$GH_AUTH_BEAD_TITLE" --json 2>/dev/null \
+      | jq -r '(.[0].id // empty)')
+    if [ -n "$existing" ]; then
+      gc bd update "$existing" --set-metadata gc.outcome=pass --status=closed \
+        --notes "gh auth recovered; auto-resolved by factory-watchdog" >/dev/null 2>&1 \
+        && did "auto-resolved recovered gh auth bead $existing"
+    fi
+  fi
+else
+  say "· gh-auth — not checked (gh unavailable)"
+fi
+
+# --- 5. re-nudge on a still-open, aging campaign-liveness defect --------------
 # Extends the existing machinery (factory-guard files this bead; see its
 # "campaign liveness" check) rather than duplicating detection.
 if [ -f "$LIB/factory_liveness.py" ]; then
