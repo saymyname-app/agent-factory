@@ -1683,29 +1683,75 @@ class TokenReader:
         usage["total_tokens"] = usage["input_tokens"] + usage["cached_input_tokens"] + usage["output_tokens"]
         return usage
 
+    @staticmethod
+    def _provider_family(provider: str) -> str:
+        """Group a specific provider name (e.g. claude-standard) under its engine."""
+        if provider == "codex" or provider.startswith("codex"):
+            return "Codex"
+        if provider == "claude" or provider.startswith("claude"):
+            return "Claude"
+        return provider.strip().title() if provider else "Inconnu"
+
+    def _configured_provider_families(self) -> set[str]:
+        """Provider families named in city.toml / agents/*/agent.toml (zero-token, local read)."""
+        families: set[str] = set()
+        city_toml = ROOT / "city.toml"
+        if city_toml.is_file():
+            workspace_match = re.search(r'(?m)^provider\s*=\s*"([^"]+)"', city_toml.read_text(encoding="utf-8"))
+            if workspace_match:
+                families.add(self._provider_family(workspace_match.group(1)))
+        for toml_path in (ROOT / "agents").glob("*/agent.toml"):
+            try:
+                text = toml_path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            match = re.search(r'(?m)^provider\s*=\s*"([^"]+)"', text)
+            if match:
+                families.add(self._provider_family(match.group(1)))
+        return families
+
     def collect(self) -> dict[str, Any]:
         sessions_payload = self.runner.json("gc", "session", "list", "--json")
         sessions = sessions_payload.get("sessions", []) if isinstance(sessions_payload, dict) else []
         details, known_total = [], 0
+        by_provider: dict[str, dict[str, Any]] = {}
+
+        def record(family: str, tokens: int, confidence: str) -> None:
+            slot = by_provider.setdefault(family, {
+                "provider": family, "known_total_tokens": 0, "sessions_measured": 0,
+                "exact_sessions": 0, "estimated_sessions": 0,
+            })
+            slot["known_total_tokens"] += tokens
+            slot["sessions_measured"] += 1
+            if confidence.startswith("exact"):
+                slot["exact_sessions"] += 1
+            else:
+                slot["estimated_sessions"] += 1
+
         for session in sessions:
             provider = session.get("provider")
-            if provider == "codex" and session.get("session_key"):
+            if not isinstance(provider, str) or not provider:
+                continue
+            family = self._provider_family(provider)
+            if family == "Codex" and session.get("session_key"):
                 usage = self._codex_usage(str(session["session_key"]))
                 if usage:
                     known_total += usage["total_tokens"]
                     details.append({
-                        "session_id": session.get("id"), "name": session.get("alias"), "provider": "Codex",
+                        "session_id": session.get("id"), "name": session.get("alias"), "provider": family,
                         "scope": "session Factory", "confidence": "exact", "usage": usage,
                     })
-            elif provider == "claude" and session.get("id"):
+                    record(family, usage["total_tokens"], "exact")
+            elif family == "Claude" and session.get("id"):
                 usage = self._claude_usage(str(session.get("work_dir") or ""), session.get("created_at"))
                 if usage:
                     known_total += usage["total_tokens"]
                     details.append({
-                        "session_id": session.get("id"), "name": session.get("alias"), "provider": "Claude",
+                        "session_id": session.get("id"), "name": session.get("alias"), "provider": family,
                         "scope": "session Factory", "confidence": "exact (journal local fournisseur)",
                         "usage": usage,
                     })
+                    record(family, usage["total_tokens"], "exact")
                     continue
                 try:
                     peek = self.runner.text("gc", "session", "peek", str(session["id"]), "--lines", "8")
@@ -1717,10 +1763,26 @@ class TokenReader:
                     total = int(float(match.group(1)) * factor)
                     known_total += total
                     details.append({
-                        "session_id": session.get("id"), "name": session.get("alias"), "provider": "Claude",
+                        "session_id": session.get("id"), "name": session.get("alias"), "provider": family,
                         "scope": "session Factory", "confidence": "estimation affichée par le fournisseur",
                         "usage": {"total_tokens": total},
                     })
+                    record(family, total, "estimation affichée par le fournisseur")
+            else:
+                details.append({
+                    "session_id": session.get("id"), "name": session.get("alias"), "provider": family,
+                    "scope": "session Factory", "confidence": "non mesuré localement", "usage": {"total_tokens": 0},
+                })
+                by_provider.setdefault(family, {
+                    "provider": family, "known_total_tokens": 0, "sessions_measured": 0,
+                    "exact_sessions": 0, "estimated_sessions": 0,
+                })
+
+        for family in self._configured_provider_families():
+            by_provider.setdefault(family, {
+                "provider": family, "known_total_tokens": 0, "sessions_measured": 0,
+                "exact_sessions": 0, "estimated_sessions": 0,
+            })
 
         cutoff = time.time() - 86400
         host_sessions, host_total = 0, 0
@@ -1731,20 +1793,23 @@ class TokenReader:
                     continue
             except OSError:
                 continue
-            record = _last_matching_json(path, "token_usage_record")
-            usage = ((record or {}).get("payload") or {}).get("thread_token_usage")
+            record_json = _last_matching_json(path, "token_usage_record")
+            usage = ((record_json or {}).get("payload") or {}).get("thread_token_usage")
             if isinstance(usage, dict):
                 host_sessions += 1
                 host_total += _compact_tokens(usage.get("total_tokens"))
+        providers = sorted(by_provider.values(), key=lambda item: (-item["known_total_tokens"], item["provider"]))
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "factory": {"known_total_tokens": known_total, "sessions": details, "coverage": f"{len(details)} session(s) mesurée(s)"},
+            "by_provider": providers,
             "host_codex_24h": {"total_tokens": host_total, "sessions": host_sessions, "scope": "fichiers Codex modifiés dans les dernières 24 h"},
             "monitoring": {"model_calls": 0, "tokens": 0},
             "notes": [
                 "Les compteurs Codex viennent des journaux locaux exacts du fournisseur.",
                 "Claude est exact quand son journal local est corrélé; sinon le cockpit utilise l'estimation live affichée par Claude Code.",
                 "Les tokens de cache sont inclus dans les totaux fournisseur; ce tableau ne prétend pas calculer un coût en euros.",
+                "La répartition par fournisseur regroupe les variantes (ex. claude-standard) sous leur moteur (Claude, Codex).",
             ],
         }
 
