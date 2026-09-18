@@ -397,8 +397,21 @@ while read -r wt; do
     esac
   fi
   if [ -n "$reason" ]; then
-    STALE=$((STALE+1))
-    bad "worktree '$wt' still pins '$br' ($reason) — it will break the next --delete-branch; remove it with: git worktree remove $wt"
+    # Removing it was a human chore on every merge (three of them on
+    # 2026-09-18 alone), so the guard does it: clean tree, merged/closed
+    # branch, not locked, no live session working in it. Anything else is
+    # still only reported.
+    in_use=$(gc session list 2>/dev/null | grep -c -F "$wt" || true)
+    locked=$(git worktree list --porcelain | awk -v w="$wt" '$1=="worktree" && $2==w {f=1; next} f && /^locked/ {print "yes"; exit} /^$/ {f=0}')
+    if [ "$CHECK_ONLY" = "1" ]; then
+      STALE=$((STALE+1))
+      bad "worktree '$wt' still pins '$br' ($reason) — it will break the next --delete-branch; remove it with: git worktree remove $wt"
+    elif [ "${in_use:-0}" = "0" ] && [ -z "$locked" ] && git worktree remove "$wt" >/dev/null 2>&1; then
+      did "removed stale worktree '$wt' ($br: $reason)"
+    else
+      STALE=$((STALE+1))
+      bad "worktree '$wt' still pins '$br' ($reason) — in use or locked, not removed; remove it with: git worktree remove $wt"
+    fi
   fi
 done < <(git worktree list --porcelain | awk '/^worktree /{print $2}')
 if [ "$STALE" = "0" ]; then
