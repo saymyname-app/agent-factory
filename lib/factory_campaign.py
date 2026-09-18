@@ -161,6 +161,11 @@ _LADDER_EXCLUDED_LABELS = {
     "product-goal", "roadmap", "saymyname", "gc:session", "gc:nudge",
     # Upstream problems are not ours to work (Benjamin, 2026-09-16).
     "upstream",
+    # Controller-managed order-dispatch tracking beads self-close within
+    # seconds to a couple of minutes and are never Mayor-executable work,
+    # regardless of open/closed state at selection time (af-f8r9g,
+    # 2026-09-18: sentinel surfaced 3x as false-positive priority candidates).
+    "order-tracking",
 }
 # Present on internal workflow steps and on work explicitly waiting on someone.
 _LADDER_EXCLUDED_METADATA = ("gc.step_ref", "gc.root_bead_id", "gc.synthetic", "gc.waiting_on")

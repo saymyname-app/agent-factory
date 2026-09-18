@@ -448,6 +448,7 @@ class IdleLadderPlanTest(unittest.TestCase):
             "nudge": bead("af-n", issue_type="chore", labels=["gc:nudge"]),
             "product": bead("af-p", issue_type="feature", labels=["product-goal", "saymyname"]),
             "upstream": bead("af-u", issue_type="bug", labels=["upstream"]),
+            "order-tracking": bead("af-ot", labels=["order-tracking"]),
             "workflow step": bead("af-w", metadata={"gc.step_ref": "x", "gc.root_bead_id": "af-r"}),
             "waiting": bead("af-wait", metadata={"gc.waiting_on": "po"}),
             "needs benjamin": bead("af-nb", metadata={"gc.needs_benjamin": "choix de périmètre"}),
