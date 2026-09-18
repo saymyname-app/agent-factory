@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""ADR-0015 intake Pass 1: deterministic discovery. 0 model calls, by construction.
+
+Prints `origin.discovery` as JSON to stdout. Used by `formulas/mol-intake.formula.toml`'s
+`discover` step; reuses `lib/intake_contract.py` unchanged.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+from intake_contract import deterministic_scan  # noqa: E402
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="intake-scan")
+    parser.add_argument("repo_path", type=Path)
+    parser.add_argument("--origin-kind", choices=("greenfield", "takeover"), required=True)
+    args = parser.parse_args()
+    discovery = deterministic_scan(args.repo_path, origin_kind=args.origin_kind)
+    print(json.dumps(discovery, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

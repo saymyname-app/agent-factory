@@ -1,0 +1,279 @@
+description = """
+Run the ADR-0015 project intake as a formula, instead of a human writing
+`config/releases/<product>-v1.json` by hand.
+
+Given a repository path and `origin.kind` (`takeover` or `greenfield`), this
+formula produces a contract that passes `validate_release_contract` without
+manual editing: deterministic discovery (Pass 1, 0 model calls), agent-drafted
+capabilities/journeys/criteria/work_graph (Pass 2, judgment, one bounded model
+budget), reserved-question filing through the PO path (Pass 3 -- this formula
+never answers a reserved question itself), and a deterministic exit check
+(Pass 4). Existing-code review for `origin.kind=takeover` follows
+`agents/intake/review-tiers.md` (ADR-0021).
+
+Scope discipline (af-4gu62): reuses `lib/product_release.py`'s schema and
+validator unchanged -- this formula only assembles and checks values, it does
+not extend the contract shape. It is not a second orchestrator: the Mayor
+still owns campaign execution; this formula produces an `intake`-state
+contract, never transitions it past `draft` on its own, and every reserved
+question becomes a normal `product-queue` candidate the PO answers through
+the existing RECORD path, per `AGENTS.md`.
+"""
+formula = "mol-intake"
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[vars]
+[vars.repo_path]
+description = "Path to the repository intake runs against (a throwaway path for a dry run)"
+default = "."
+
+[vars.origin_kind]
+description = "greenfield or takeover"
+default = "greenfield"
+
+[vars.product]
+description = "Product slug (config/releases/<product>-v1.json), lowercase-hyphenated"
+default = ""
+
+[vars.title]
+description = "Human-readable release title"
+default = ""
+
+[vars.pitch]
+description = "The human's one-line pitch, recorded verbatim into objective.statement (ADR-0015: the Factory may not invent this)"
+default = ""
+
+[vars.pitch_author]
+description = "Who gave the pitch -- becomes objective.set_by"
+default = ""
+
+[vars.dry_run]
+description = "If true, never writes config/releases/*.json -- only tests/fixtures output"
+default = "false"
+
+[[steps]]
+id = "load-context"
+title = "Load context and inspect the assignment"
+description = """
+```bash
+gc prime
+gc bd prime
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+WORK_BEAD_ID=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+if [ -z "$WORK_BEAD_ID" ]; then
+  echo "mol-intake requires an input convoy with exactly one tracked member" >&2
+  exit 1
+fi
+gc bd update "$WORK_BEAD_ID" --claim
+gc bd show "$WORK_BEAD_ID"
+if [ -z "{{product}}" ] || [ -z "{{pitch}}" ] || [ -z "{{pitch_author}}" ]; then
+  echo "mol-intake requires product, pitch and pitch_author vars -- these cannot be invented (ADR-0015: objective is the human's verbatim statement)" >&2
+  exit 1
+fi
+gc bd update load-context --set-metadata gc.outcome=pass --status=closed --notes "context loaded for product={{product}} origin_kind={{origin_kind}}"
+```
+"""
+metadata = { "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
+
+[steps.retry]
+max_attempts = 3
+on_exhausted = "hard_fail"
+
+[[steps]]
+id = "discover"
+title = "Pass 1 -- deterministic discovery, 0 model calls"
+needs = ["load-context"]
+description = """
+Run the deterministic scan. For `origin.kind=takeover` this reads the real
+repository (stack, routes, data, tests, ci, docs, issues, history,
+deployment -- `DISCOVERY_AREAS`). For `origin.kind=greenfield` this produces
+the empty-but-explicit finding set ADR-0015 §2 Pass 1 requires.
+
+```bash
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+"$FACTORY_ROOT/bin/intake-scan" "{{repo_path}}" --origin-kind "{{origin_kind}}" > /tmp/mol-intake-discovery.json
+jq -c '{method, finding_count: (.findings | length)}' /tmp/mol-intake-discovery.json
+gc bd update discover --set-metadata gc.outcome=pass --status=closed --notes "discovery: $(jq -c '{method, finding_count: (.findings | length)}' /tmp/mol-intake-discovery.json)"
+```
+"""
+metadata = { "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
+
+[steps.retry]
+max_attempts = 3
+on_exhausted = "hard_fail"
+
+[[steps]]
+id = "draft-skeleton"
+title = "Assemble the minimal valid intake-state skeleton"
+needs = ["discover"]
+description = """
+Build the schema-valid skeleton: placeholder capability/criterion/work_graph
+node plus the mandatory reserved questions (`outcome`, `authority` -- always
+asked of a new project; ADR-0015 §3). This step is mechanical, no judgment.
+
+```bash
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+"$FACTORY_ROOT/bin/intake-draft" \
+  --product "{{product}}" --title "{{title}}" --pitch "{{pitch}}" \
+  --pitch-author "{{pitch_author}}" --origin-kind "{{origin_kind}}" \
+  < /tmp/mol-intake-discovery.json > /tmp/mol-intake-contract.json
+gc bd update draft-skeleton --set-metadata gc.outcome=pass --status=closed --notes "skeleton validated by lib/product_release.py"
+```
+"""
+metadata = { "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
+
+[steps.retry]
+max_attempts = 3
+on_exhausted = "hard_fail"
+
+[[steps]]
+id = "draft-target"
+title = "Pass 2 -- draft the target (agent judgment, one bounded model budget)"
+needs = ["draft-skeleton"]
+description = """
+Read `/tmp/mol-intake-contract.json`. This is the one place in the formula
+that needs judgment, not a script. Follow Intake protocol v2's checklist
+(`docs/decisions/ADR-0015-project-intake-and-target-contract.md`, "Basic --
+Draft" and "Tag" sections) exactly:
+
+1. If `origin.kind == takeover`: read every durable target document in the
+   target repo end to end (never sample the tail), and read every
+   `origin.discovery.finding` already populated by the `discover` step.
+   For each discovered capability, run `agents/intake/review-tiers.md`'s
+   tiered review and set its `review` object before it can read `proven`.
+2. Draft `capabilities`, `journeys`, `included`, `excluded`, `dependencies`,
+   `criteria` (each with a human-observable `acceptance`), and a real
+   `work_graph` whose first three nodes are ordered by real dependency, not
+   convenience -- this is what the leverage test in the next step measures.
+   Replace the `intake-in-progress` / `intake-target-defined` /
+   `intake-resolve` placeholders `draft-skeleton` emitted; do not leave them
+   alongside the real draft.
+3. For `origin.kind=takeover`, record every contradiction between the
+   drafted target and discovered code as an `origin.conflicts[]` entry
+   (ADR-0015 §5b) -- neither the code nor the pitch wins by default.
+4. Tag every field per the three objective triggers (widens who sees real
+   personal data; involves money/a third party/publication; irreversible
+   this version) -- any trigger firing raises a question in the next step;
+   none firing and a citation exists means it is recorded as a standing
+   `assumption` (ADR-0015 §5), not silently defaulted.
+5. Write the updated contract back to `/tmp/mol-intake-contract.json`, valid
+   JSON, same file.
+
+```bash
+python3 -c "
+import sys
+sys.path.insert(0, '{{repo_path}}/lib' if '{{repo_path}}' != '.' else 'lib')
+sys.path.insert(0, 'lib')
+from product_release import validate_release_contract
+import json
+validate_release_contract(json.load(open('/tmp/mol-intake-contract.json')))
+print('draft-target: schema-valid after Pass 2 edits')
+"
+gc bd update draft-target --set-metadata gc.outcome=pass --status=closed --notes "Pass 2 draft complete and schema-valid"
+```
+"""
+metadata = { "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
+
+[steps.retry]
+max_attempts = 2
+on_exhausted = "hard_fail"
+
+[[steps]]
+id = "file-questions"
+title = "Pass 3 -- file every reserved/leverage question through the PO path"
+needs = ["draft-target"]
+description = """
+Every question in `/tmp/mol-intake-contract.json`'s `intake.questions` with
+`status: "pending"` is a leverage- or reserved-admitted question that
+survived Pass 2. This formula never answers one itself -- it stops here and
+files exactly one product-queue candidate per unanswered question, through
+the existing PO/RECORD path, per `AGENTS.md`. The PO answers through the
+console; a later run of this formula (or the Mayor, directly) picks the
+answer up from `answer`/`answer_ref` and re-checks exit criteria.
+
+```bash
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+PENDING=$(jq -c '[.intake.questions[] | select(.status == "pending")]' /tmp/mol-intake-contract.json)
+COUNT=$(printf '%s' "$PENDING" | jq 'length')
+echo "$COUNT reserved/leverage question(s) pending"
+printf '%s' "$PENDING" | jq -c '.[]' | while IFS= read -r question; do
+  PROMPT=$(printf '%s' "$question" | jq -r '.prompt')
+  QID=$(printf '%s' "$question" | jq -r '.id')
+  PRODUCT_QUEUE_PRODUCT="{{product}}" "$FACTORY_ROOT/bin/product-queue" add \
+    --title "Intake question ($QID): $PROMPT" \
+    --authorized-by "ADR-0015 §2/§3 intake protocol, mol-intake formula" \
+    --acceptance "Quand la question $QID de l'intake {{product}} est répondue, le contrat doit porter answer_ref vers cette réponse."
+done
+gc bd update file-questions --set-metadata gc.outcome=pass --status=closed --notes "$COUNT question(s) filed to product-queue for {{product}}; formula stops here pending PO answers"
+```
+
+**Exit criteria for this step, not the whole formula:** every pending
+question has a product-queue candidate. If `$COUNT` is 0 (all reserved
+questions were already answered from a prior run or a resumed project's
+existing decision register), continue directly to `exit-check`.
+"""
+metadata = { "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
+
+[steps.retry]
+max_attempts = 3
+on_exhausted = "hard_fail"
+
+[[steps]]
+id = "exit-check"
+title = "Pass 4 -- deterministic exit check"
+needs = ["file-questions"]
+description = """
+Compute the six ADR-0015 §2 Pass 4 conditions. Does not stall on an
+incomplete intake -- that is a normal, valid `awaiting_human` output, not a
+formula failure.
+
+```bash
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+python3 -c "
+import json, sys
+sys.path.insert(0, '$FACTORY_ROOT/lib')
+from intake_contract import check_intake_exit
+from product_release import validate_release_contract
+contract = json.load(open('/tmp/mol-intake-contract.json'))
+validate_release_contract(contract)
+complete, reasons = check_intake_exit(contract)
+contract['intake']['state'] = 'complete' if complete else 'awaiting_human'
+if complete:
+    contract['intake']['completed_at'] = __import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+json.dump(contract, open('/tmp/mol-intake-contract.json', 'w'), indent=2, ensure_ascii=False)
+print(json.dumps({'complete': complete, 'reasons': reasons}))
+"
+gc bd update exit-check --set-metadata gc.outcome=pass --status=closed --notes "exit check computed; see notes on write-contract for the verdict"
+```
+"""
+metadata = { "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
+
+[steps.retry]
+max_attempts = 3
+on_exhausted = "hard_fail"
+
+[[steps]]
+id = "write-contract"
+title = "Persist the contract (or, for a dry run, the fixture evidence only)"
+needs = ["exit-check"]
+description = """
+```bash
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+if [ "{{dry_run}}" = "true" ]; then
+  OUT="tests/fixtures/intake-dryrun-{{origin_kind}}/contract-v1.json"
+else
+  OUT="config/releases/{{product}}-v1.json"
+fi
+mkdir -p "$(dirname "$OUT")"
+cp /tmp/mol-intake-contract.json "$OUT"
+python3 "$FACTORY_ROOT/bin/product-release" validate "$OUT"
+gc bd update write-contract --set-metadata gc.outcome=pass --status=closed --notes "wrote $OUT"
+```
+"""
+metadata = { "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
+
+[steps.retry]
+max_attempts = 3
+on_exhausted = "hard_fail"

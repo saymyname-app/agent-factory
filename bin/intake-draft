@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""ADR-0015 intake: assemble the minimal schema-valid `intake`-state contract skeleton.
+
+Reads `origin.discovery` JSON from stdin (as produced by `bin/intake-scan`),
+prints the full release-contract skeleton as JSON to stdout. Pass 2 drafting
+(real capabilities/journeys/criteria beyond the placeholder this emits) is
+the calling agent's job, per ADR-0015 -- this only builds the parts that do
+not need judgment, and validates against `lib/product_release.py` unchanged.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+from intake_contract import build_intake_skeleton  # noqa: E402
+from product_release import ReleaseContractError, validate_release_contract  # noqa: E402
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="intake-draft")
+    parser.add_argument("--product", required=True)
+    parser.add_argument("--title", required=True)
+    parser.add_argument("--pitch", required=True)
+    parser.add_argument("--pitch-author", required=True)
+    parser.add_argument("--origin-kind", choices=("greenfield", "takeover"), required=True)
+    parser.add_argument("--extra-reserved-class", action="append", default=[])
+    args = parser.parse_args()
+
+    discovery = json.load(sys.stdin)
+    contract = build_intake_skeleton(
+        product=args.product,
+        title=args.title,
+        pitch=args.pitch,
+        pitch_author=args.pitch_author,
+        origin_kind=args.origin_kind,
+        discovery=discovery,
+        extra_reserved_classes=args.extra_reserved_class,
+    )
+    try:
+        validate_release_contract(contract)
+    except ReleaseContractError as exc:
+        print(f"intake-draft: ERROR: skeleton failed validate_release_contract: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(contract, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
