@@ -66,6 +66,49 @@ capture_json() {
   printf -v "$destination" '%s' "$output"
 }
 
+# Independent `gc`/`gh`/queue-tool invocations each carry several seconds of
+# fixed process/DB-connect overhead (af-rt1t2, af-7rd5r). Where two or more
+# of those calls don't depend on each other's output, fire them concurrently
+# with bg_start and join with capture_json_bg/bg_wait instead of paying that
+# fixed cost once per call in sequence. bg_wait polls a sentinel file rather
+# than using bash job-control `wait <pid>`, because it must also be callable
+# from inside a `$(...)` subshell (derive_active_context_or_degrade,
+# derive_delivery's prepare/finish split) -- those subshells are siblings of,
+# not parents of, a background job started in the calling function, so a
+# plain `wait <pid>` there would fail with "not a child of this shell".
+bg_start() {
+  local outfile=$1
+  shift
+  # `set +e` inside the subshell: the script runs under `set -e`, which the
+  # subshell inherits, so a failing "$@" would abort the subshell before the
+  # printf below ever writes the .rc sentinel -- bg_wait would then poll for
+  # a file that is never coming and hang forever (caught by the fixture
+  # suite's source-failure/queue-failure scenarios).
+  ( set +e; "$@" >"$outfile" 2>&2; printf '%s' "$?" >"$outfile.rc" ) &
+}
+
+bg_wait() {
+  local outfile=$1
+  while [[ ! -e "$outfile.rc" ]]; do sleep 0.02; done
+  local rc
+  rc=$(<"$outfile.rc")
+  return "$rc"
+}
+
+capture_json_bg() {
+  local destination=$1
+  local source_name=$2
+  local outfile=$3
+  local output
+
+  bg_wait "$outfile" \
+    || die "$source_name source command failed. Restore that source, then retry."
+  output=$(cat "$outfile")
+  jq -e . >/dev/null 2>&1 <<<"$output" \
+    || die "$source_name returned invalid JSON. Restore that source, then retry."
+  printf -v "$destination" '%s' "$output"
+}
+
 single_issue() {
   local json=$1
   local label=$2
@@ -124,6 +167,16 @@ show_issue() {
   printf -v "$destination" '%s' "$(single_issue "$response" "$label")"
 }
 
+show_issue_bg() {
+  local destination=$1
+  local label=$2
+  local outfile=$3
+  local response
+
+  capture_json_bg response "Beads ($label)" "$outfile"
+  printf -v "$destination" '%s' "$(single_issue "$response" "$label")"
+}
+
 phase_for_step() {
   case "$1" in
     *.load-context|*.workspace-setup) printf 'Préparation\n' ;;
@@ -149,6 +202,7 @@ convoy_tracks_issue() {
 derive_active_context() {
   local current_issue=$1
   local current_id=$2
+  local workflows_outfile=$3
   local current_status
   local workflows_response workflow convoy_id convoy_response convoy cause resume_mode work_outcome
   local -a matching_workflows=()
@@ -268,8 +322,7 @@ derive_active_context() {
     fi
   fi
 
-  capture_json workflows_response "Beads workflow inventory" \
-    gc_json bd list --status=in_progress --json
+  capture_json_bg workflows_response "Beads workflow inventory" "$workflows_outfile"
   jq -e 'type == "array"' >/dev/null <<<"$workflows_response" \
     || die "Beads workflow inventory is not an array."
 
@@ -405,13 +458,22 @@ check_summary() {
   fi
 }
 
-derive_delivery() {
+# Split from the original single-shot derive_delivery so main() can fire the
+# slow GitHub PR fetch (derive_delivery_finish's job) in the background and
+# let it run concurrently with the active-context derivation chain, instead
+# of paying its ~3s sequentially after everything else. derive_delivery_prepare
+# does all the fast, gc-call-free validation and extracts what the PR fetch
+# needs; derive_delivery_finish validates the (by-then-ready) PR response and
+# computes the evidence line. Each is still individually run inside its own
+# `$(...)` subshell by the caller so a die() in either degrades gracefully
+# (governance invariant a, af-wisp-c3zmg6) exactly as the single combined
+# subshell used to.
+derive_delivery_prepare() {
   local delivered_issue=$1
   local delivered_id=$2
-  local delivery_status work_outcome github_repo pr_number pr_head merge_commit
-  local pr_response check_rollup ci_evidence short_merge
+  local outcome delivery_status work_outcome github_repo pr_number pr_head merge_commit
 
-  LAST_OUTCOME=$(required_string "$delivered_issue" '.title' "Last delivered outcome title")
+  outcome=$(required_string "$delivered_issue" '.title' "Last delivered outcome title")
   [[ $(required_string "$delivered_issue" '.status' "Last delivered outcome status") == closed ]] \
     || die "Last delivered Bead $delivered_id is not closed."
   delivery_status=$(metadata_string "$delivered_issue" "gc.delivery_status" "Delivery status")
@@ -429,7 +491,21 @@ derive_delivery() {
   [[ $pr_head =~ ^[0-9a-f]{40}$ && $merge_commit =~ ^[0-9a-f]{40}$ ]] \
     || die "Delivered Git commit metadata is invalid."
 
-  capture_json pr_response "GitHub PR $pr_number" pr_view_with_rollup "$pr_number" "$github_repo"
+  jq -cn \
+    --arg outcome "$outcome" --arg repo "$github_repo" --arg number "$pr_number" \
+    --arg head "$pr_head" --arg merge "$merge_commit" \
+    '{outcome:$outcome, github_repo:$repo, pr_number:$number, pr_head:$head, merge_commit:$merge}'
+}
+
+derive_delivery_finish() {
+  local prepared=$1
+  local pr_response=$2
+  local pr_number pr_head merge_commit check_rollup ci_evidence short_merge
+
+  pr_number=$(jq -r '.pr_number' <<<"$prepared")
+  pr_head=$(jq -r '.pr_head' <<<"$prepared")
+  merge_commit=$(jq -r '.merge_commit' <<<"$prepared")
+
   jq -e --argjson number "$pr_number" --arg head "$pr_head" --arg merge "$merge_commit" '
     .number == $number and
     .state == "MERGED" and
@@ -442,7 +518,7 @@ derive_delivery() {
   check_rollup=$(jq -c '.statusCheckRollup' <<<"$pr_response")
   ci_evidence=$(check_summary "$check_rollup")
   short_merge=${merge_commit:0:12}
-  LAST_DELIVERY="PR $pr_number — merged as $short_merge; $ci_evidence"
+  jq -cn --arg evidence "PR $pr_number — merged as $short_merge; $ci_evidence" '{evidence:$evidence}'
 }
 
 degrade_active_context() {
@@ -462,10 +538,11 @@ degrade_active_context() {
 derive_active_context_or_degrade() {
   local current_issue=$1
   local current_id=$2
+  local workflows_outfile=$3
   local context_json
 
   if context_json=$(
-    derive_active_context "$current_issue" "$current_id"
+    derive_active_context "$current_issue" "$current_id" "$workflows_outfile"
     jq -cn \
       --arg outcome "$CURRENT_OUTCOME" --arg state "$CURRENT_STATE" \
       --arg phase "$CURRENT_PHASE" --arg agent "$CURRENT_AGENT" \
@@ -483,30 +560,6 @@ derive_active_context_or_degrade() {
   CURRENT_OUTCOME=$(jq -r '.title // empty' <<<"$current_issue")
   [[ -n $CURRENT_OUTCOME ]] || CURRENT_OUTCOME="$current_id (titre indisponible)"
   degrade_active_context "$current_id"
-}
-
-# Runs derive_delivery inside a subshell so a die() triggered by a malformed
-# last-delivered Bead (e.g. missing proof fields, the af-u8id.3 incident)
-# only aborts that isolated computation instead of the whole projection.
-derive_delivery_or_degrade() {
-  local delivered_issue=$1
-  local delivered_id=$2
-  local delivery_json
-
-  if delivery_json=$(
-    derive_delivery "$delivered_issue" "$delivered_id"
-    jq -cn --arg outcome "$LAST_OUTCOME" --arg evidence "$LAST_DELIVERY" \
-      '{outcome:$outcome, evidence:$evidence}'
-  ); then
-    LAST_OUTCOME=$(jq -r '.outcome' <<<"$delivery_json")
-    LAST_DELIVERY=$(jq -r '.evidence' <<<"$delivery_json")
-    return
-  fi
-
-  log "WARNING: last delivered outcome $delivered_id has missing or invalid delivery proof (see the ERROR above); reporting it as degraded instead of aborting the projection."
-  LAST_OUTCOME=$(jq -r '.title // empty' <<<"$delivered_issue")
-  [[ -n $LAST_OUTCOME ]] || LAST_OUTCOME="$delivered_id (titre indisponible)"
-  LAST_DELIVERY="Preuve de livraison manquante ou invalide pour $delivered_id ; voir le journal du contrôleur."
 }
 
 main() {
@@ -535,7 +588,21 @@ main() {
   [[ -x $HUMAN_STATE_BIN ]] || die "Human state projector is unavailable: $HUMAN_STATE_BIN"
   [[ -x $RELEASE_BIN ]] || die "Product release projector is unavailable: $RELEASE_BIN"
 
-  capture_json CITY_RESPONSE "Gas City status" gc_json status --json
+  # Not `local`: the EXIT trap below still needs to read this after main()
+  # has returned and its local scope is gone (set -u turns that into an
+  # "unbound variable" failure at exit instead of a clean run).
+  tmp_dir=$(mktemp -d) || die "Could not create a scratch directory for parallel source fetches."
+  trap 'rm -rf "$tmp_dir"' EXIT
+
+  # Gas City status, the product queue, and the coordination root don't
+  # depend on each other's output -- fire all three at once instead of
+  # paying each call's several seconds of fixed overhead in sequence
+  # (af-7rd5r; builds on af-rt1t2's convoy-show batching).
+  bg_start "$tmp_dir/city.json" gc_json status --json
+  bg_start "$tmp_dir/queue.json" "$QUEUE_BIN" list --json
+  bg_start "$tmp_dir/parent.json" gc_json bd show "$PRODUCT_ROOT_BEAD" --json
+
+  capture_json_bg CITY_RESPONSE "Gas City status" "$tmp_dir/city.json"
   jq -e '
     (.ok | type == "boolean") and (.running | type == "boolean") and
     (.health.usable | type == "boolean") and
@@ -544,15 +611,14 @@ main() {
   ' >/dev/null <<<"$CITY_RESPONSE" \
     || die "Gas City health contract is incomplete."
 
-  capture_json queue_response "SayMyName product queue" "$QUEUE_BIN" list --json
+  capture_json_bg queue_response "SayMyName product queue" "$tmp_dir/queue.json"
   jq -e 'type == "array" and all(.[];
     .contract == "agent-factory-human-state/v1" and
     (.state == "eligible" or .state == "paused") and
     .technical_status == "deferred")' >/dev/null <<<"$queue_response" \
     || die "Product queue did not return the canonical human candidate contract."
 
-  capture_json parent_response "Beads product coordination" \
-    gc_json bd show "$PRODUCT_ROOT_BEAD" --json
+  capture_json_bg parent_response "Beads product coordination" "$tmp_dir/parent.json"
   parent=$(single_issue "$parent_response" "Product coordination root $PRODUCT_ROOT_BEAD")
   [[ $(required_string "$parent" '.id' "Product coordination root ID") == "$PRODUCT_ROOT_BEAD" ]] \
     || die "Product coordination root ID is inconsistent."
@@ -560,22 +626,55 @@ main() {
   current_id=$(jq -er '.metadata["gc.current_jit"] // "none" |
     select(type == "string")' <<<"$parent") || die "Current outcome pointer is invalid."
   CURRENT_CAUSE=""
+  last_id=$(metadata_string "$parent" "gc.last_delivered" "Last delivered pointer")
+
   # gc.current_jit and gc.last_delivered can each name a Bead in a different
   # rig's store (e.g. a rig-scoped smb-* current outcome alongside a root-scoped
   # af-* last delivery). `gc bd show` resolves which store to query from the
   # FIRST id it is given, so batching these two ids into one call silently
   # fails to resolve whichever one belongs to the other store (confirmed live
   # 2026-09-18, af-rt1t2: `gc bd show smb-44tt af-smmwz --json` only returned
-  # af-smmwz). They must stay two separate calls.
-  if [[ -z $current_id || $current_id == none ]]; then
+  # af-smmwz). They must stay two separate calls -- but nothing stops the two
+  # separate calls, and the workflow-inventory lookup derive_active_context
+  # will need if current_id resolves to something, from running concurrently
+  # with each other and with the delivered-outcome fetch below.
+  local workflows_outfile="$tmp_dir/workflows.json"
+  local have_current=0
+  if [[ -n $current_id && $current_id != none ]]; then
+    have_current=1
+    bg_start "$tmp_dir/current.json" gc_json bd show "$current_id" --json
+    bg_start "$workflows_outfile" gc_json bd list --status=in_progress --json
+  fi
+  bg_start "$tmp_dir/delivered.json" gc_json bd show "$last_id" --json
+
+  # Collect the delivered outcome and kick off its (slow) GitHub PR fetch in
+  # the background immediately, so that fetch's wall time is hidden behind
+  # the active-context derivation below instead of adding to the end of the
+  # pipeline as it did before.
+  show_issue_bg delivered_issue "Last delivered outcome $last_id" "$tmp_dir/delivered.json"
+  local delivery_prepared_json="" delivery_ready=0 pr_number="" pr_repo=""
+  if delivery_prepared_json=$(derive_delivery_prepare "$delivered_issue" "$last_id"); then
+    LAST_OUTCOME=$(jq -r '.outcome' <<<"$delivery_prepared_json")
+    pr_number=$(jq -r '.pr_number' <<<"$delivery_prepared_json")
+    pr_repo=$(jq -r '.github_repo' <<<"$delivery_prepared_json")
+    bg_start "$tmp_dir/pr.json" pr_view_with_rollup "$pr_number" "$pr_repo"
+    delivery_ready=1
+  else
+    log "WARNING: last delivered outcome $last_id has missing or invalid delivery proof (see the ERROR above); reporting it as degraded instead of aborting the projection."
+    LAST_OUTCOME=$(jq -r '.title // empty' <<<"$delivered_issue")
+    [[ -n $LAST_OUTCOME ]] || LAST_OUTCOME="$last_id (titre indisponible)"
+    LAST_DELIVERY="Preuve de livraison manquante ou invalide pour $last_id ; voir le journal du contrôleur."
+  fi
+
+  if [[ $have_current -eq 0 ]]; then
     CURRENT_OUTCOME="none"
     CURRENT_STATE="none"
     CURRENT_PHASE="Aucune livraison produit n'est active"
     CURRENT_AGENT="none"
     current_json=null
   else
-    show_issue current_issue "$current_id" "Current outcome $current_id"
-    derive_active_context_or_degrade "$current_issue" "$current_id"
+    show_issue_bg current_issue "Current outcome $current_id" "$tmp_dir/current.json"
+    derive_active_context_or_degrade "$current_issue" "$current_id" "$workflows_outfile"
     current_json=$(jq -cn \
       --arg id "$current_id" --arg title "$CURRENT_OUTCOME" \
       --arg state "$CURRENT_STATE" --arg phase "$CURRENT_PHASE" \
@@ -586,9 +685,23 @@ main() {
       }')
   fi
 
-  last_id=$(metadata_string "$parent" "gc.last_delivered" "Last delivered pointer")
-  show_issue delivered_issue "$last_id" "Last delivered outcome $last_id"
-  derive_delivery_or_degrade "$delivered_issue" "$last_id"
+  if [[ $delivery_ready -eq 1 ]]; then
+    local finish_json
+    if finish_json=$(
+      if ! bg_wait "$tmp_dir/pr.json"; then
+        die "GitHub PR $pr_number source command failed. Restore that source, then retry."
+      fi
+      pr_response=$(cat "$tmp_dir/pr.json")
+      jq -e . >/dev/null 2>&1 <<<"$pr_response" \
+        || die "GitHub PR $pr_number returned invalid JSON. Restore that source, then retry."
+      derive_delivery_finish "$delivery_prepared_json" "$pr_response"
+    ); then
+      LAST_DELIVERY=$(jq -r '.evidence' <<<"$finish_json")
+    else
+      log "WARNING: last delivered outcome $last_id has missing or invalid delivery proof (see the ERROR above); reporting it as degraded instead of aborting the projection."
+      LAST_DELIVERY="Preuve de livraison manquante ou invalide pour $last_id ; voir le journal du contrôleur."
+    fi
+  fi
 
   NEEDS_BENJAMIN=$(metadata_string "$parent" "gc.needs_benjamin" "Human decision")
   needs_json=$(jq -cn --arg value "$NEEDS_BENJAMIN" \
