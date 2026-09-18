@@ -75,8 +75,25 @@ fi
 grep -q "its PR is merged" <<<"$out" || fail "guard did not name why the worktree is stale"
 grep -q "git worktree remove $TMP/wt" <<<"$out" || fail "guard did not print the exact fix"
 
+# --- a normal run removes it itself (2026-09-18: no more human chore) --------
+cat > "$TMP/bin/gc" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in *"session list"*) exit 0 ;; *) exit 1 ;; esac
+STUB
+chmod +x "$TMP/bin/gc"
+out=$(FACTORY_ROOT="$TMP/repo" "$GUARD" 2>&1 || true)
+grep -q "FIXED: removed stale worktree '$TMP/wt'" <<<"$out" || {
+  printf '%s\n' "$out" >&2; fail "guard did not remove the stale worktree itself"; }
+[ -d "$TMP/wt" ] && fail "stale worktree directory still exists after the guard run"
+
+# --- but never one with uncommitted work in it ------------------------------
+git worktree add -q "$TMP/wt2" -b feat/wip origin/main 2>/dev/null || git worktree add -q "$TMP/wt2" -b feat/wip main
+echo wip > "$TMP/wt2/draft"
+out=$(FACTORY_ROOT="$TMP/repo" "$GUARD" 2>&1 || true)
+[ -d "$TMP/wt2" ] || fail "guard removed a worktree that had uncommitted work"
+git worktree remove --force "$TMP/wt2"
+
 # --- and it must go quiet once the worktree is gone --------------------------
-git worktree remove --force "$TMP/wt"
 out=$(FACTORY_ROOT="$TMP/repo" "$GUARD" --check-only 2>&1 || true)
 grep -q "still pins" <<<"$out" && fail "guard still complains after the worktree was removed"
 grep -q "worktrees — 0 human worktree" <<<"$out" || {
