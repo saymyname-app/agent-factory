@@ -424,7 +424,8 @@ def pool_status(state: dict[str, Any], policy: dict[str, Any], pool: str, now: f
                     "source": "detected", "evidence": entry.get("evidence")}
         return {"state": status, "until": entry.get("until"),
                 "source": entry.get("source", "detected"),
-                "evidence": entry.get("evidence"), "by": entry.get("by")}
+                "evidence": entry.get("evidence"), "by": entry.get("by"),
+                "at": entry.get("at"), "reset_known": entry.get("reset_known")}
     return {"state": "available"}
 
 

@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from factory_liveness import assess  # noqa: E402
+from factory_liveness import assess, identify_cause, mayor_page_since  # noqa: E402
 
 NOW = 1789555200.0  # 2026-09-16T10:40:00Z
 
@@ -84,6 +84,68 @@ class LivenessRules(unittest.TestCase):
         forty_min = meta(**{"gc.campaign_progress_at": "2026-09-16T10:00:00Z"})
         self.assertEqual("ok", assess(forty_min, NOW)[1])
         self.assertEqual("stale", assess(forty_min, NOW, liveness_minutes=30)[1])
+
+    def test_stale_names_no_provider_available_as_the_cause(self):
+        """af-9ur0s / af-umyad: replay of 2026-09-18 03:21Z-08:30Z, where the
+        anthropic pool was wrongly marked exhausted by DETECTION with no
+        stated reset and the mark had stood unrefreshed for hours -- the
+        liveness message must say 'aucun fournisseur disponible', and flag
+        the mark itself as suspect, not just 'up but not advancing'."""
+        stalled = meta(**{"gc.campaign_progress_at": "2026-09-16T05:00:00Z"})  # >5h stale
+        provider_status = {
+            "targets": {
+                "mayor": {
+                    "reason": "all_unavailable",
+                    "next_reset": None,
+                    "chain": [{
+                        "provider": "claude-standard", "state": "exhausted",
+                        "source": "detected", "reset_known": False,
+                        "at": "2026-09-16T00:00:00Z",  # 10h30 before NOW
+                        "evidence": "You've hit your session limit",
+                    }],
+                },
+            },
+        }
+        level, code, message = assess(stalled, NOW, provider_status=provider_status)
+        self.assertEqual(("bad", "stale"), (level, code))
+        self.assertIn("aucun fournisseur disponible", message)
+        self.assertIn("marque suspecte", message)
+        self.assertIn("You've hit your session limit", message)
+
+    def test_stale_names_the_mayor_session_as_the_cause_when_a_provider_is_available(self):
+        """Second replay leg (af-umyad): pool cleared, Mayor quarantined."""
+        stalled = meta(**{"gc.campaign_progress_at": "2026-09-16T05:00:00Z"})
+        provider_status = {"targets": {"mayor": {"reason": "preferred"}}}
+        mayor_session = {"state": "quarantined", "state_reason": "provider config rejected"}
+        level, code, message = assess(
+            stalled, NOW, provider_status=provider_status, mayor_session=mayor_session,
+        )
+        self.assertEqual(("bad", "stale"), (level, code))
+        self.assertIn("le Mayor ne démarre pas", message)
+        self.assertIn("provider config rejected", message)
+
+    def test_stale_admits_cause_unknown_when_neither_is_proven(self):
+        stalled = meta(**{"gc.campaign_progress_at": "2026-09-16T05:00:00Z"})
+        level, code, message = assess(stalled, NOW)
+        self.assertEqual(("bad", "stale"), (level, code))
+        self.assertIn("cause inconnue", message)
+
+    def test_identify_cause_prefers_provider_over_session(self):
+        provider_status = {"targets": {"mayor": {"reason": "all_unavailable", "next_reset": None, "chain": []}}}
+        mayor_session = {"state": "quarantined"}
+        self.assertIn("aucun fournisseur disponible", identify_cause(provider_status, mayor_session, NOW))
+
+    def test_mayor_page_since_only_fires_for_asleep_or_quarantine_past_the_grace_window(self):
+        recent = {"state": "quarantined", "last_active": "2026-09-16T10:35:00Z"}  # 5 min ago
+        self.assertIsNone(mayor_page_since(recent, NOW))
+        overdue = {"state": "quarantined", "last_active": "2026-09-16T10:00:00Z"}  # 40 min ago
+        self.assertEqual("2026-09-16T10:00:00Z", mayor_page_since(overdue, NOW))
+        active = {"state": "active", "last_active": "2026-09-16T10:00:00Z"}
+        self.assertIsNone(mayor_page_since(active, NOW))
+        # creating/failed-create already has its own alert (af-jj9u7) -- must
+        # not also fire here, or the same event pages twice via two doors.
+        booting = {"state": "creating", "last_active": "2026-09-16T10:00:00Z"}
+        self.assertIsNone(mayor_page_since(booting, NOW))
 
     def test_cli_rejects_a_missing_bead_rather_than_calling_it_inactive(self):
         run = lambda payload: subprocess.run(

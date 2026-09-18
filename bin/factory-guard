@@ -432,7 +432,32 @@ if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 \
   say "· liveness — not checked (not a city root, or gc unavailable)"
 else
   coord_json=$(gc bd show "$COORD" --json 2>/dev/null || true)
-  verdict=$(printf '%s' "$coord_json" | python3 "$GUARD_LIB/factory_liveness.py")
+  # af-9ur0s: give factory_liveness.py what it needs to name the cause of a
+  # stall instead of only "up but not advancing" -- provider-failover's view
+  # of the mayor target, and the named mayor session's own state. Both reads
+  # are best-effort: a scratch/test city has neither config/provider-policy.json
+  # nor a real `gc session list`, so this degrades to "cause unknown" there,
+  # exactly like a real city where neither source proves anything yet.
+  PF_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/provider-failover"
+  provider_status_json=""
+  if [ -f "$ROOT/config/provider-policy.json" ] && [ -x "$PF_BIN" ]; then
+    provider_status_json=$(FACTORY_ROOT="$ROOT" PROVIDER_NOW="${FACTORY_GUARD_NOW:-}" "$PF_BIN" status --json 2>/dev/null || true)
+  fi
+  mayor_session_json=$(gc session list --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    sessions = v.get("sessions") if isinstance(v, dict) else None
+    sessions = sessions if isinstance(sessions, list) else []
+    mayor = next((s for s in sessions if isinstance(s, dict) and s.get("alias") == "mayor"), None)
+    print(json.dumps(mayor or {}))
+except Exception:
+    print("{}")
+' 2>/dev/null || true)
+  verdict=$(printf '%s' "$coord_json" \
+    | FACTORY_LIVENESS_PROVIDER_STATUS_JSON="$provider_status_json" \
+      FACTORY_LIVENESS_MAYOR_SESSION_JSON="$mayor_session_json" \
+      python3 "$GUARD_LIB/factory_liveness.py")
   level=$(printf '%s' "$verdict" | cut -f1)
   code=$(printf '%s' "$verdict" | cut -f2)
   msg=$(printf '%s' "$verdict" | cut -f3-)
@@ -512,6 +537,46 @@ NEXT: diagnose why the campaign is not advancing, then close $created with the c
       fi
       ;;
   esac
+
+  # --- 7a. mayor session down (asleep/quarantined), page once per streak ----
+  # af-9ur0s: naming the cause in the message above is not the same as acting
+  # on it. A Mayor sitting asleep/quarantined for a while cannot receive the
+  # "mail send mayor" page above either, so this pages
+  # GC_ESCALATION_RECIPIENT (human by default) directly instead, the same
+  # door section 7b uses for a session stuck at creating/failed-create.
+  # Dedup key is the session's own last_active: it changes exactly when the
+  # session moves (a fresh down streak, or recovery then a new one), so this
+  # pages once per streak without a separate cooldown timer to maintain.
+  if [ "$CHECK_ONLY" != "1" ]; then
+    page_since=$(FACTORY_LIVENESS_MAYOR_SESSION_JSON="$mayor_session_json" \
+      python3 "$GUARD_LIB/factory_liveness.py" --mayor-page-check 2>/dev/null || true)
+    if [ -n "$page_since" ]; then
+      prior_paged=$(printf '%s' "$coord_json" | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    print((v.get("metadata") or {}).get("gc.mayor_session_down_paged_since", ""))
+except Exception:
+    print("")')
+      if [ "$prior_paged" != "$page_since" ]; then
+        mayor_state=$(printf '%s' "$mayor_session_json" | python3 -c 'import json,sys
+try:
+    print((json.load(sys.stdin) or {}).get("state") or "")
+except Exception:
+    print("")')
+        gc mail send "${GC_ESCALATION_RECIPIENT:-human}" --notify \
+          -s "Mayor session down: $mayor_state" \
+          -m "ACTION: factory-guard detected the named mayor session is $mayor_state and has been for over 10 minutes
+STATE: $mayor_state since $page_since
+EVIDENCE: gc session list --json; gc bd show $COORD
+NEXT: diagnose why the Mayor session cannot stay active (provider, quota, host), then restart or repair it" \
+          >/dev/null 2>&1 || true
+        gc bd update "$COORD" --set-metadata "gc.mayor_session_down_paged_since=$page_since" >/dev/null 2>&1 || true
+        did "paged ${GC_ESCALATION_RECIPIENT:-human}: mayor session $mayor_state since $page_since"
+      fi
+    fi
+  fi
 fi
 
 # --- 7b. named-session boot liveness, distinct from campaign progress -------

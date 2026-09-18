@@ -40,6 +40,22 @@ SENTINEL_MINUTES = 10
 LIVENESS_MINUTES = 60
 FAILURE_THRESHOLD = 3
 
+# af-umyad / af-9ur0s: "the factory is up but not advancing" is true but
+# useless -- on 2026-09-18 03:21Z-08:30Z it hid that no provider was
+# available for the Mayor target, then that the Mayor session itself could
+# not start. Both causes are readable for free from state already gathered
+# elsewhere (provider-failover status, gc session list); state the first one
+# that is provable before falling back to "cause unknown".
+MAYOR_TARGET = "mayor"
+SUSPECT_DETECTION_HOURS = 2
+# creating/failed-create is already its own alert (af-jj9u7, section 7b) at a
+# 15-min threshold; naming it here too would start a second, uncoordinated
+# escalation timer for the same underlying event. asleep/quarantine(d) have
+# no such mechanism yet, so only those page from here.
+MAYOR_DOWN_STATES = frozenset({"asleep", "quarantine", "quarantined", "creating", "failed-create"})
+MAYOR_PAGE_STATES = frozenset({"asleep", "quarantine", "quarantined"})
+MAYOR_PAGE_MINUTES = 10
+
 
 def _epoch(value: Any) -> float | None:
     text = str(value or "").strip()
@@ -55,11 +71,96 @@ def _hhmm(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%MZ")
 
 
+def _provider_cause(provider_status: dict[str, Any] | None, now: float) -> str | None:
+    """None unless provider-failover proves no provider is available for the
+    Mayor target. Also flags a DETECTED (not manual) exhaustion mark as
+    suspect once it has stood, with no stated reset, for over two hours --
+    the exact shape of the 2026-09-18 incident, where a stale mark was
+    mistaken for a real quota wall."""
+    if not isinstance(provider_status, dict):
+        return None
+    targets = provider_status.get("targets")
+    target = targets.get(MAYOR_TARGET) if isinstance(targets, dict) else None
+    if not isinstance(target, dict) or target.get("reason") != "all_unavailable":
+        return None
+    reset = _epoch(target.get("next_reset"))
+    reset_txt = _hhmm(reset) if reset is not None else "reprise inconnue"
+    cause = f"aucun fournisseur disponible jusqu'à {reset_txt}"
+    for entry in target.get("chain") or []:
+        if not (entry.get("source") == "detected" and entry.get("state") in {"exhausted", "error"}
+                and entry.get("reset_known") is False):
+            continue
+        at = _epoch(entry.get("at"))
+        if at is None or (now - at) / 3600 <= SUSPECT_DETECTION_HOURS:
+            continue
+        age_h = (now - at) / 3600
+        evidence = str(entry.get("evidence") or "").strip() or "aucune preuve textuelle"
+        cause += (
+            f" — marque suspecte : {entry.get('provider')} détecté épuisé il y a {age_h:.1f} h "
+            f"sans reprise connue (preuve : {evidence})"
+        )
+        break
+    return cause
+
+
+def _mayor_session_cause(mayor_session: dict[str, Any] | None) -> str | None:
+    """None unless the named mayor session is provably not active."""
+    if not isinstance(mayor_session, dict):
+        return None
+    state = str(mayor_session.get("state") or "").strip()
+    if state not in MAYOR_DOWN_STATES:
+        return None
+    reason = str(mayor_session.get("state_reason") or "").strip()
+    detail = f" ({reason})" if reason else ""
+    return f"le Mayor ne démarre pas — session « {state} »{detail}"
+
+
+def identify_cause(
+    provider_status: dict[str, Any] | None,
+    mayor_session: dict[str, Any] | None,
+    now: float,
+) -> str:
+    """The first cause factory-guard can prove, in order (af-9ur0s): no
+    provider available for the Mayor target, then the Mayor session itself
+    not active, else 'cause unknown'."""
+    return (
+        _provider_cause(provider_status, now)
+        or _mayor_session_cause(mayor_session)
+        or "cause inconnue"
+    )
+
+
+def mayor_page_since(
+    mayor_session: dict[str, Any] | None,
+    now: float,
+    threshold_minutes: int = MAYOR_PAGE_MINUTES,
+) -> str | None:
+    """The mayor session's `last_active` timestamp, iff it has been sitting in
+    asleep/quarantine(d) for longer than the grace window -- factory-guard
+    dedupes paging on this value, so a session that flaps back to active and
+    down again pages again, but a still-down session does not repeat. Never
+    fires for creating/failed-create: that streak already has its own alert
+    (af-jj9u7, section 7b), and starting a second one here would race it
+    (see MAYOR_DOWN_STATES vs. MAYOR_PAGE_STATES above)."""
+    if not isinstance(mayor_session, dict):
+        return None
+    state = str(mayor_session.get("state") or "").strip()
+    if state not in MAYOR_PAGE_STATES:
+        return None
+    since = str(mayor_session.get("last_active") or "").strip()
+    at = _epoch(since)
+    if at is None or (now - at) / 60 <= threshold_minutes:
+        return None
+    return since
+
+
 def assess(
     metadata: dict[str, Any],
     now: float,
     liveness_minutes: int = LIVENESS_MINUTES,
     sentinel_minutes: int = SENTINEL_MINUTES,
+    provider_status: dict[str, Any] | None = None,
+    mayor_session: dict[str, Any] | None = None,
 ) -> tuple[str, str, str]:
     if not isinstance(metadata, dict):
         return "bad", "unreadable", "coordination metadata unreadable"
@@ -109,23 +210,38 @@ def assess(
         # Never progressed since watching began: that is measurable too.
         idle = (now - watching) / 60
         if idle > liveness_minutes:
+            cause = identify_cause(provider_status, mayor_session, now)
             return "bad", "stale", (
                 f"no campaign progress observed in {idle:.0f} min of watching "
-                f"(since {_hhmm(watching)}) — the factory is up but not advancing{failure_note}"
+                f"(since {_hhmm(watching)}) — {cause}{failure_note}"
             )
         return "info", "no_progress_stamp", (
             f"no progress observed yet, watching for {idle:.0f} min{failure_note}"
         )
     idle = (now - progress) / 60
     if idle > liveness_minutes:
+        cause = identify_cause(provider_status, mayor_session, now)
         return "bad", "stale", (
             f"no campaign progress for {idle:.0f} min (last {_hhmm(progress)}) while the "
-            f"loop itself is alive — the factory is up but not advancing{failure_note}"
+            f"loop itself is alive — {cause}{failure_note}"
         )
     return "ok", "ok", f"last progress {idle:.0f} min ago{failure_note}"
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--mayor-page-check":
+        # Separate from the coordination-bead verdict below: factory-guard
+        # needs a bare "since" value or nothing here, not a tab-separated
+        # verdict line, so it can dedupe paging without parsing prose.
+        now = float(os.environ.get("FACTORY_GUARD_NOW") or time.time())
+        try:
+            mayor_session = json.loads(os.environ.get("FACTORY_LIVENESS_MAYOR_SESSION_JSON") or "null")
+        except json.JSONDecodeError:
+            mayor_session = None
+        since = mayor_page_since(mayor_session if isinstance(mayor_session, dict) else None, now)
+        if since:
+            print(since)
+        return 0
     raw = sys.stdin.read()
     try:
         value = json.loads(raw)
@@ -140,10 +256,23 @@ def main() -> int:
         print("bad\tunreadable\tcoordination bead not found or has no metadata")
         return 0
     now = float(os.environ.get("FACTORY_GUARD_NOW") or time.time())
+
+    def _env_json(name: str) -> dict[str, Any] | None:
+        raw_value = os.environ.get(name) or ""
+        if not raw_value.strip():
+            return None
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
     level, code, message = assess(
         metadata,
         now,
         int(os.environ.get("FACTORY_LIVENESS_MINUTES") or LIVENESS_MINUTES),
+        provider_status=_env_json("FACTORY_LIVENESS_PROVIDER_STATUS_JSON"),
+        mayor_session=_env_json("FACTORY_LIVENESS_MAYOR_SESSION_JSON"),
     )
     print(f"{level}\t{code}\t{message}")
     return 0
