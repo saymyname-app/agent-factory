@@ -19,6 +19,17 @@ JSON
   queue-inconsistent)
     printf '[{"id":"af-next","title":"Broken","state":"queued"}]\n'
     ;;
+  queue-candidate-excluded)
+    # af-tbkcc regression: product-queue's own list --json now excludes an
+    # invalid candidate with one WARNING naming it (on stderr) instead of
+    # dying on the whole read. saymyname-product-status must see only the
+    # clean canonical candidates below and report the queue as an ordinary,
+    # working source -- never a hard source failure.
+    printf 'product-queue: WARNING: excluding invalid candidate af-bad from the queue projection (bad status/state or metadata); repair it before it can rejoin the queue.\n' >&2
+    cat <<'JSON'
+[{"position":1,"id":"af-next","title":"Evaluate supported ChatGPT plugin/MCP bridge","state":"eligible","state_label":"Éligible · non programmé","eligible":true,"reason":"Attend une autorisation EXECUTE et sa matérialisation par le Mayor.","pause_reason":null,"urgency":"normal","urgency_label":"Normale","goal":"af-u8id","kind":"product_candidate","queue_state":"queued","technical_status":"deferred","technical_explanation":"Conservé techniquement différé dans Beads.","contract":"agent-factory-human-state/v1"}]
+JSON
+    ;;
   *)
     cat <<'JSON'
 [{"position":1,"id":"af-next","title":"Evaluate supported ChatGPT plugin/MCP bridge","state":"eligible","state_label":"Éligible · non programmé","eligible":true,"reason":"Attend une autorisation EXECUTE et sa matérialisation par le Mayor.","pause_reason":null,"urgency":"normal","urgency_label":"Normale","goal":"af-u8id","kind":"product_candidate","queue_state":"queued","technical_status":"deferred","technical_explanation":"Conservé techniquement différé dans Beads.","contract":"agent-factory-human-state/v1"}]

@@ -26,6 +26,20 @@ class StateContractError(ValueError):
     """An observed input cannot support a safe human projection."""
 
 
+class CandidateMislabeledError(StateContractError):
+    """A Bead carries the ``product-queue`` label but never had a queue lifecycle.
+
+    This is not a contradictory queue state — it is a Bead that never went
+    through ``product-queue``'s own commands (``add``/``materialize``/
+    ``cancel``) and therefore never had ``gc.queue_state`` set at all.  Root
+    cause seen twice in 48h (af-3cat8, af-j41c2): a normal Mayor task closed
+    with standard ``gc.outcome``/``gc.work_*`` delivery metadata that also
+    happened to carry the ``product-queue`` label.  Callers should treat this
+    as one isolated, recoverable data-quality issue (exclude the Bead from
+    the queue projection, warn once) rather than a page-wide inconsistency.
+    """
+
+
 def _text(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -224,6 +238,12 @@ def candidate_record_lifecycle(item: dict[str, Any]) -> tuple[str, str]:
     metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
     queue_state = _text(metadata.get("gc.queue_state"))
     status = _text(item.get("status"))
+    if not queue_state:
+        raise CandidateMislabeledError(
+            f"Le Bead {item.get('id') or '?'!r} porte l'étiquette 'product-queue' mais n'a "
+            "jamais eu d'état de file (gc.queue_state absent) : ce n'est pas un candidat "
+            "produit, probablement une tâche normale mal étiquetée."
+        )
     if queue_state == "materialized" and status == "closed":
         if not _text(metadata.get("gc.materialized_bead")):
             raise StateContractError("Un candidat matérialisé doit référencer son Bead d'exécution.")

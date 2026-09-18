@@ -90,41 +90,89 @@ priority_for_urgency() {
   esac
 }
 
+# The queue-candidate tuple predicate, factored out so both the strict
+# (mutation) and lenient (read) paths agree on what "valid" means.
+JQ_CANDIDATE_PREDICATES='
+  def valid_tuple:
+    (.status == "deferred" and
+     (.metadata["gc.queue_state"] == "queued" or .metadata["gc.queue_state"] == "paused"
+      or .metadata["gc.queue_state"] == "blocked_durable_failure"))
+    or
+    (.status == "closed" and .metadata["gc.queue_state"] == "cancelled")
+    or
+    (.status == "closed" and .metadata["gc.queue_state"] == "materialized" and
+     (.metadata["gc.materialized_bead"] | type == "string" and
+      test("^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(?:\\.[A-Za-z0-9]+)*$")));
+  def is_active:
+    .status == "deferred" and
+    (.metadata["gc.queue_state"] == "queued" or .metadata["gc.queue_state"] == "paused");
+  def valid_rank: (.metadata["gc.queue_rank"] | tostring) | test("^[1-9][0-9]*$");
+  def valid_urgency:
+    .metadata["gc.queue_urgency"] == "normal" or .metadata["gc.queue_urgency"] == "urgent"
+    or .metadata["gc.queue_urgency"] == "critical";
+'
+
+# load_inventory [strict|lenient]
+#
+# strict (default; used by every mutation command): refuse the whole line on
+# one bad candidate, as before -- write-side safety is not weakened.
+#
+# lenient (used by list/next only): a single invalid candidate is excluded
+# with one WARNING naming it on stderr; the read still returns the valid
+# candidates instead of failing closed. Regression for the 2026-09-18
+# 23:53Z-02:12Z incident (af-tbkcc): a candidate's status/state was edited
+# outside product-queue's own commands, and the read-only `list`/`next`
+# paths died on that one bad tuple, cascading into saymyname-product-status
+# and 8 consecutive campaign-sentinel failures over a real candidate issue
+# that a warning would have surfaced without taking the queue down.
 load_inventory() {
+  local mode=${1:-strict}
   local raw
   raw=$("$BD_BIN" list --all --label product-queue \
     --label "product:$PRODUCT" --limit 0 --json) \
     || die "Beads queue inventory is unavailable."
 
-  INVENTORY=$(jq -ce --arg product "$PRODUCT" '
-    if type != "array" then error("inventory must be an array") else . end |
-    map(select(.metadata["gc.queue_product"] == $product)) as $candidates |
-    if all($candidates[];
-      (.status == "deferred" and
-       (.metadata["gc.queue_state"] == "queued" or .metadata["gc.queue_state"] == "paused"
-        or .metadata["gc.queue_state"] == "blocked_durable_failure"))
-      or
-      (.status == "closed" and .metadata["gc.queue_state"] == "cancelled")
-      or
-      (.status == "closed" and .metadata["gc.queue_state"] == "materialized" and
-       (.metadata["gc.materialized_bead"] | type == "string" and
-        test("^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(?:\\.[A-Za-z0-9]+)*$"))))
-    then $candidates else error("invalid candidate status/state tuple") end |
-    map(select(
-      .status == "deferred" and
-      (.metadata["gc.queue_state"] == "queued" or
-       .metadata["gc.queue_state"] == "paused"))) |
-    if all(.[].metadata["gc.queue_rank"];
-      (tostring | test("^[1-9][0-9]*$"))) then .
-    else error("invalid rank") end |
-    if all(.[].metadata["gc.queue_urgency"];
-      . == "normal" or . == "urgent" or . == "critical") then .
-    else error("invalid urgency") end |
-    sort_by((.metadata["gc.queue_rank"] | tonumber), .id) |
-    . as $items |
-    if ([$items[].metadata["gc.queue_rank"] | tonumber] | unique | length) == ($items | length)
-    then $items else error("duplicate rank") end
-  ' <<<"$raw") || die "Product queue metadata is inconsistent; repair it before mutation."
+  if [[ $mode == lenient ]]; then
+    local report bad_id
+    report=$(jq -ce --arg product "$PRODUCT" "
+      $JQ_CANDIDATE_PREDICATES
+      (if type != \"array\" then error(\"inventory must be an array\") else . end) |
+      map(select(.metadata[\"gc.queue_product\"] == \$product)) as \$candidates |
+      (\$candidates | map(select(valid_tuple))) as \$tuple_ok |
+      (\$candidates | map(select(valid_tuple | not) | .id)) as \$bad_tuple |
+      (\$tuple_ok | map(select(is_active))) as \$active |
+      (\$active | map(select(valid_rank and valid_urgency))) as \$active_ok |
+      (\$active | map(select((valid_rank and valid_urgency) | not) | .id)) as \$bad_meta |
+      {
+        valid: (\$active_ok | sort_by((.metadata[\"gc.queue_rank\"] | tonumber), .id)),
+        invalid: (\$bad_tuple + \$bad_meta)
+      }
+    " <<<"$raw") || die "Beads queue inventory could not be parsed."
+    while IFS= read -r bad_id; do
+      [[ -n $bad_id ]] || continue
+      printf '%s: WARNING: excluding invalid candidate %s from the queue projection (bad status/state or metadata); repair it before it can rejoin the queue.\n' \
+        "$PROGRAM_NAME" "$bad_id" >&2
+    done < <(jq -r '.invalid[]' <<<"$report")
+    INVENTORY=$(jq -ce '.valid' <<<"$report")
+    return
+  fi
+
+  INVENTORY=$(jq -ce --arg product "$PRODUCT" "
+    $JQ_CANDIDATE_PREDICATES
+    if type != \"array\" then error(\"inventory must be an array\") else . end |
+    map(select(.metadata[\"gc.queue_product\"] == \$product)) as \$candidates |
+    if all(\$candidates[]; valid_tuple)
+    then \$candidates else error(\"invalid candidate status/state tuple\") end |
+    map(select(is_active)) |
+    if all(.[]; valid_rank) then .
+    else error(\"invalid rank\") end |
+    if all(.[]; valid_urgency) then .
+    else error(\"invalid urgency\") end |
+    sort_by((.metadata[\"gc.queue_rank\"] | tonumber), .id) |
+    . as \$items |
+    if ([\$items[].metadata[\"gc.queue_rank\"] | tonumber] | unique | length) == (\$items | length)
+    then \$items else error(\"duplicate rank\") end
+  " <<<"$raw") || die "Product queue metadata is inconsistent; repair it before mutation."
 }
 
 project_inventory() {
@@ -141,7 +189,7 @@ require_candidate() {
 
 list_queue() {
   local format=${1:-}
-  load_inventory
+  load_inventory lenient
   project_inventory
   if [[ $format == --json ]]; then
     printf '%s\n' "$PROJECTED_INVENTORY"
@@ -164,7 +212,7 @@ list_queue() {
 next_candidate() {
   local format=${1:-}
   local next
-  load_inventory
+  load_inventory lenient
   project_inventory
   next=$(jq -c '[.[] | select(.state == "eligible" and .kind == "product_candidate")][0] // null' \
     <<<"$PROJECTED_INVENTORY")

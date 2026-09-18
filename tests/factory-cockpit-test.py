@@ -28,6 +28,7 @@ from factory_cockpit import (  # noqa: E402
     PreviewBridge,
     QueueBridge,
     MayorBridge,
+    MislabeledCandidateError,
     SnapshotCache,
     SourceError,
     TokenReader,
@@ -47,6 +48,7 @@ from factory_cockpit import (  # noqa: E402
 )
 from factory_state import (  # noqa: E402
     CONTRACT as HUMAN_STATE_CONTRACT,
+    CandidateMislabeledError,
     StateContractError,
     candidate_record_lifecycle,
     project_candidate,
@@ -1812,6 +1814,46 @@ class FactoryCockpitTest(unittest.TestCase):
                 "labels": ["product-queue"],
                 "metadata": {"gc.queue_state": "queued"},
             }, "city", None, "Produit Test", "produit-test")
+
+    def test_mislabeled_non_candidate_is_isolated_not_page_wide_degraded(self):
+        # Regression for af-tbkcc (af-3cat8, af-j41c2): a normal Mayor task,
+        # closed with standard gc.outcome/gc.work_* delivery metadata, was
+        # mistakenly also labeled "product-queue" without ever having a
+        # gc.queue_state. candidate_record_lifecycle() must classify this as
+        # a mislabeled non-candidate (not a contradictory queue cycle), and
+        # the collector must isolate it as one warning without flipping
+        # sources_consistent / human_state.health to degraded for the whole
+        # "Aujourd'hui" page.
+        mislabeled = {
+            "id": "af-3cat8",
+            "title": "wave0: zero-token cockpit continuity state machine",
+            "status": "closed",
+            "labels": ["product-queue"],
+            "metadata": {"gc.outcome": "pass", "gc.work_outcome": "shipped"},
+        }
+        with self.assertRaises(CandidateMislabeledError):
+            candidate_record_lifecycle(mislabeled)
+        with self.assertRaises(MislabeledCandidateError):
+            _product_bead(mislabeled, "city", None, "Produit Test", "produit-test")
+
+        runner = FakeRunner()
+        runner.responses[(
+            "bd", "list", "--all", "--label-any",
+            "product-goal,roadmap,product-queue,jit", "--limit", "0", "--json",
+        )].append(mislabeled)
+        result = FactoryCollector(runner, FakeGasCity()).collect()
+
+        self.assertEqual("available", result["health"]["state"])
+        self.assertEqual({}, {k: v for k, v in result["sources"].items() if v is False})
+        self.assertNotIn("af-3cat8", [item.get("id") for item in result["product_work"]])
+        self.assertTrue(
+            any("af-3cat8" in warning for warning in result["warnings"]),
+            result["warnings"],
+        )
+        for warning in result["warnings"]:
+            self.assertNotIn("StateContractError", warning)
+            self.assertNotIn("SourceError", warning)
+            self.assertNotIn("queue_state=None", warning)
 
     def test_unknown_formula_is_humanized_without_model(self):
         self.assertEqual("Review stale branches", _human_objective("mol-review-stale-branches"))

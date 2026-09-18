@@ -126,6 +126,9 @@ jobs:
       - name: Factory guard backfills or flags undocumented delivery beads
         run: bash tests/factory-delivery-guard-test.sh
 
+      - name: Factory guard restores or flags product-queue status drift
+        run: bash tests/factory-queue-guard-test.sh
+
       - name: Main-landing gate blocks a broken push to main
         run: bash tests/factory-main-gate-test.sh
 

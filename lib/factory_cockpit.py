@@ -27,6 +27,7 @@ from urllib.request import urlopen
 from factory_continuity import project_continuity_state, record_transition
 from factory_state import (
     CONTRACT as HUMAN_STATE_CONTRACT,
+    CandidateMislabeledError,
     StateContractError,
     candidate_record_lifecycle,
     project_human_state,
@@ -58,6 +59,17 @@ CITY_NAME = os.environ.get("FACTORY_COCKPIT_CITY_NAME", "agent-factory")
 
 class SourceError(RuntimeError):
     pass
+
+
+class MislabeledCandidateError(SourceError):
+    """One Bead carries the ``product-queue`` label without ever being a candidate.
+
+    Raised instead of a plain ``SourceError`` so the collector can isolate
+    this specific, recoverable per-Bead data-quality issue (warn once,
+    exclude that one Bead) without letting it flip the whole
+    ``product_work`` source — and therefore ``sources_consistent`` and
+    ``human_state.health`` for the entire "Aujourd'hui" page — to degraded.
+    """
 
 
 class ConflictError(SourceError):
@@ -608,6 +620,8 @@ def _product_bead(
     elif "product-queue" in labels:
         try:
             state, state_label = candidate_record_lifecycle(bead)
+        except CandidateMislabeledError as exc:
+            raise MislabeledCandidateError(str(exc)) from exc
         except StateContractError as exc:
             raise SourceError(f"Candidat {bead.get('id') or '?'} incohérent: {exc}") from exc
     elif status == "closed":
@@ -1876,6 +1890,13 @@ class FactoryCollector:
                         bead, store, current_product_ids,
                         self.product_config["name"], self.product_config["slug"],
                     )
+                except MislabeledCandidateError as exc:
+                    # One malformed/mislabeled Bead is isolated and reported as a
+                    # single warning; it must never flip `product_work:{store}`
+                    # (and therefore sources_consistent / human_state.health) to
+                    # degraded for the whole page (af-tbkcc — af-3cat8/af-j41c2).
+                    warnings.append(str(exc))
+                    continue
                 except SourceError as exc:
                     sources[f"product_work:{store}"] = False
                     warnings.append(str(exc))
