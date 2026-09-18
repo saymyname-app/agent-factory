@@ -269,6 +269,8 @@
     const state = summary();
     const desktop = $("providers-summary");
     if (desktop) { desktop.textContent = state.text; desktop.className = `provider-summary ${state.level}`; }
+    const navState = $("nav-providers-state");
+    if (navState) navState.textContent = { working: "OK", attention: "Attention", down: "Panne" }[state.level] || "—";
     const mobile = $("mobile-providers-summary");
     if (mobile) mobile.textContent = state.text;
     const auto = $("providers-auto");
