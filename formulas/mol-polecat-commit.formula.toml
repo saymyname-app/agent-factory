@@ -65,6 +65,14 @@ fi
 gc bd list --assignee=$GC_AGENT --status=in_progress
 ```
 
+**Claim it now (af-pl39t):** dispatch is the only signal that a workflow is
+active against `$WORK_BEAD_ID`; nothing else flips it off `open`, so the
+idle ladder (ADR-0016 §7) re-picks it every tick and `gc.campaign_progress_at`
+freezes while factory-guard files false liveness defects:
+```bash
+gc bd update "$WORK_BEAD_ID" --claim
+```
+
 The work bead is your assigned issue. Read it carefully:
 ```bash
 gc bd show "$WORK_BEAD_ID"           # Full issue details
