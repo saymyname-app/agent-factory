@@ -17,6 +17,7 @@ from product_release import (  # noqa: E402
     load_release_contract,
     project_operational_release,
     project_release,
+    project_target_doc,
     select_campaign_work,
     start_next_version,
     transition_release,
@@ -628,6 +629,80 @@ class ProjectionTest(unittest.TestCase):
     def test_project_release_embeds_the_campaign_selection(self):
         projected = project_release(base_release())
         self.assertEqual("release_target_proven", projected["campaign"]["reason"])
+
+
+class TargetDocProjectionTest(unittest.TestCase):
+    def test_chain_projects_journey_to_capability_to_criterion_to_work(self):
+        doc = project_target_doc(base_release())
+        self.assertIn(
+            {"kind": "journey_to_capability", "from": "j1", "to": "cap1"}, doc["chain"]["edges"],
+        )
+        self.assertIn(
+            {"kind": "capability_to_criterion", "from": "cap1", "to": "c1"}, doc["chain"]["edges"],
+        )
+        self.assertIn(
+            {"kind": "criterion_to_work", "from": "c1", "to": "w1"}, doc["chain"]["edges"],
+        )
+
+    def test_work_graph_carries_dependency_edges(self):
+        value = base_release()
+        value["work_graph"] = [
+            work_node("w1", state="delivered"),
+            work_node("w2", depends_on=["w1"]),
+        ]
+        doc = project_target_doc(value)
+        self.assertIn({"from": "w1", "to": "w2"}, doc["work_graph"]["edges"])
+        self.assertEqual(2, len(doc["work_graph"]["nodes"]))
+
+    def test_assumption_overlay_lists_scope_and_confidence_not_a_separate_graph(self):
+        value = base_release()
+        value["assumptions"] = [
+            {
+                "id": "a1", "title": "Assumed", "statement": "s", "rationale": "r",
+                "confidence": "medium", "status": "standing", "scope_refs": ["w1"],
+                "invalidated_by": [],
+            },
+        ]
+        doc = project_target_doc(value)
+        self.assertEqual(1, len(doc["assumption_overlay"]))
+        self.assertEqual(["w1"], doc["assumption_overlay"][0]["scope_refs"])
+        self.assertEqual("medium", doc["assumption_overlay"][0]["confidence"])
+
+    def test_blocker_subgraph_is_filtered_from_the_same_work_graph(self):
+        value = base_release()
+        value["work_graph"] = [
+            work_node("w1", state="delivered"),
+            work_node(
+                "w2", depends_on=["w1"], state="blocked",
+                blocker={
+                    "kind": "decision", "decision_id": "d1", "cause": "needs a call",
+                    "owner": "Benjamin", "action": "decide",
+                },
+            ),
+        ]
+        value["decisions"] = [
+            {
+                "id": "d1", "title": "Decide", "source_ref": "docs/DECISIONS.md#d1",
+                "status": "decision_required", "risk": "high", "revision": 1,
+                "capability_refs": [], "dependency_refs": [], "options": [],
+            },
+        ]
+        doc = project_target_doc(value)
+        self.assertEqual(["w2"], [node["id"] for node in doc["blocker_subgraph"]["nodes"]])
+        self.assertIn({"from": "w1", "to": "w2"}, doc["blocker_subgraph"]["edges"])
+
+    def test_work_ref_index_joins_work_graph_nodes_to_their_ticket(self):
+        value = base_release()
+        value["work_graph"] = [work_node("w1", work_ref="af-abcde", state="delivered")]
+        doc = project_target_doc(value)
+        self.assertEqual({"w1": "af-abcde"}, doc["work_ref_index"])
+
+    def test_is_zero_token_and_leaves_the_source_value_unmutated(self):
+        value = base_release()
+        before = copy.deepcopy(value)
+        doc = project_target_doc(value)
+        self.assertEqual(0, doc["model_calls"])
+        self.assertEqual(before, value)
 
 
 class OperationalProjectionTest(unittest.TestCase):

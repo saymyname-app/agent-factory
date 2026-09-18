@@ -889,6 +889,97 @@ def project_release(value: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def project_target_doc(value: dict[str, Any]) -> dict[str, Any]:
+    """Project ADR-0015 §6 derived interactive documentation.
+
+    Pure and deterministic: reads only the already-validated release
+    contract, never live state and never a model. One work_graph carries
+    every view below by filtering/overlaying, rather than a new graph type
+    per concern.
+    """
+    validate_release_contract(value)
+
+    chain_edges: list[dict[str, str]] = []
+    for journey in value["journeys"]:
+        for capability_id in journey["capability_refs"]:
+            chain_edges.append({"kind": "journey_to_capability", "from": journey["id"], "to": capability_id})
+    for criterion in value["criteria"]:
+        for capability_id in criterion.get("capability_refs", []):
+            chain_edges.append({"kind": "capability_to_criterion", "from": capability_id, "to": criterion["id"]})
+        for journey_id in criterion.get("journey_refs", []):
+            chain_edges.append({"kind": "journey_to_criterion", "from": journey_id, "to": criterion["id"]})
+    for node in value["work_graph"]:
+        for criterion_id in node["criterion_refs"]:
+            chain_edges.append({"kind": "criterion_to_work", "from": criterion_id, "to": node["id"]})
+
+    work_graph_edges = [
+        {"from": dependency, "to": node["id"]}
+        for node in value["work_graph"]
+        for dependency in node.get("depends_on", [])
+    ]
+
+    blocked_nodes = [node for node in value["work_graph"] if node["state"] == "blocked" and node.get("blocker")]
+    blocked_ids = {node["id"] for node in blocked_nodes}
+    blocker_subgraph = {
+        "nodes": [
+            {
+                "id": node["id"],
+                "title": node["title"],
+                "criterion_refs": list(node["criterion_refs"]),
+                "blocker": node["blocker"],
+            }
+            for node in blocked_nodes
+        ],
+        "edges": [
+            edge for edge in work_graph_edges
+            if edge["from"] in blocked_ids or edge["to"] in blocked_ids
+        ],
+    }
+
+    return {
+        "product": value["product"],
+        "version": value["version"],
+        "chain": {
+            "journeys": [{"id": item["id"], "title": item["title"]} for item in value["journeys"]],
+            "capabilities": [{"id": item["id"], "title": item["title"]} for item in value["capabilities"]],
+            "criteria": [
+                {"id": item["id"], "title": item["title"], "acceptance": item["acceptance"]}
+                for item in value["criteria"]
+            ],
+            "edges": chain_edges,
+        },
+        "work_graph": {
+            "nodes": [
+                {
+                    "id": node["id"],
+                    "title": node["title"],
+                    "kind": node["kind"],
+                    "state": node["state"],
+                    "order": node["order"],
+                    "work_ref": node.get("work_ref"),
+                    "criterion_refs": list(node["criterion_refs"]),
+                    "assumption_refs": list(node.get("assumption_refs") or []),
+                }
+                for node in value["work_graph"]
+            ],
+            "edges": work_graph_edges,
+        },
+        "assumption_overlay": [
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "status": item["status"],
+                "confidence": item["confidence"],
+                "scope_refs": list(item["scope_refs"]),
+            }
+            for item in value["assumptions"]
+        ],
+        "blocker_subgraph": blocker_subgraph,
+        "work_ref_index": {node["id"]: node.get("work_ref") for node in value["work_graph"]},
+        "model_calls": 0,
+    }
+
+
 def project_operational_release(
     release: dict[str, Any], campaign: dict[str, Any],
 ) -> dict[str, Any]:
