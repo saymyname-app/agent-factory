@@ -196,16 +196,24 @@ out=$(watchdog)
 printf '[]' > "$WORKFLOWS"
 
 # ...a bead already flagged under the pre-af-u61xq idiom (timestamp only, no
-# fingerprint) must not be re-mailed on the first run after upgrade -- it
-# backfills the fingerprint silently instead (the 7 known af-x4p4-class
-# historical offenders this fix targets).
+# fingerprint) MUST be mailed on the first run after upgrade, exactly like
+# any other fingerprint-empty bead -- af-nf8en: an earlier version special-
+# cased this to backfill the fingerprint silently, which meant the alert
+# flashed in the cockpit signal file for exactly one tick (add_alert still
+# fired) and then vanished forever with no mail ever sent, for any legacy
+# bead whose state had actually moved since the old idiom flagged it. There
+# is no way to tell "unchanged since the old flag" apart from "moved since
+# the old flag" from a timestamp alone, so the safe default is to report it.
 jq -n '[{"id":"af-x4p4","status":"closed","title":"mol-scoped-work","metadata":{"gc.kind":"workflow","gc.outcome":"fail"}}]' > "$WORKFLOWS"
 printf '[{"id":"af-x4p4","status":"closed","metadata":{"gc.kind":"workflow","gc.outcome":"fail","gc.watchdog_flagged_false_success":"2026-09-01T00:00:00Z"}}]' > "$BEADS_DIR/af-x4p4.json"
 reset_logs
 out=$(watchdog)
 grep -q "false-success close — af-x4p4" <<<"$out" || fail "the legacy-flagged close should still be reported in stdout"
-[ "$(mails)" = "0" ] || fail "a legacy-flagged bead (timestamp only, unchanged state) must not be re-mailed on upgrade"
+[ "$(mails)" = "1" ] || fail "a legacy-flagged bead with an empty fingerprint must be mailed once on upgrade, not silently backfilled"
 grep -q "gc.watchdog_false_success_fp=closed:fail" "$CALLS" || fail "the fingerprint was not backfilled for the legacy-flagged bead"
+reset_logs
+out=$(watchdog)
+[ "$(mails)" = "0" ] || fail "the legacy-flagged bead's now-known state must be throttled on the next run"
 printf '[]' > "$WORKFLOWS"
 
 # 7. a failing gh auth is filed as one shared bead and paged once ------------
