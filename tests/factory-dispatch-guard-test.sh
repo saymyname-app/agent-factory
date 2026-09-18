@@ -14,6 +14,14 @@
 # paged exactly once by a default run; and a bead with no assignee at all
 # is never flagged.
 #
+# Also regression for the same-day af-7qxzh incident: the guard cleared the
+# assignee on later `gc.session_affinity=require` formula steps whose owning
+# session was still 17m50s into an earlier step of the same workflow, not
+# stale at all. Proves: a session_affinity=require bead whose named session
+# is still alive is left alone no matter how stale it looks; the same bead
+# is treated as ordinary drift (cleared, Mayor paged) once that session is
+# gone.
+#
 # All bead ids here are synthetic fixtures (zz-fixture*), never a real af-*
 # id from the live store.
 
@@ -26,12 +34,13 @@ trap 'rm -rf "$TMP"' EXIT
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
 export BEADS_FILE="$TMP/routed_beads.json"
+export SESSIONS_FILE="$TMP/sessions.json"; echo '{"sessions":[]}' > "$SESSIONS_FILE"
 export UPDATE_LOG="$TMP/updates.log"; : > "$UPDATE_LOG"
 export MAIL_LOG="$TMP/mail.log"; : > "$MAIL_LOG"
 mkdir -p "$TMP/bin"
 
-# --- stub gc: serves `bd list` from BEADS_FILE, records `bd update` and
-# `mail send` calls ------------------------------------------------------
+# --- stub gc: serves `bd list` and `session list` from BEADS_FILE /
+# SESSIONS_FILE, records `bd update` and `mail send` calls --------------
 cat > "$TMP/bin/gc" <<'STUB'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -41,6 +50,10 @@ set -Eeuo pipefail
 if [[ ${1:-} == --city ]]; then shift 2; fi
 if [[ ${1:-} == bd && ${2:-} == list ]]; then
   cat "$BEADS_FILE"
+  exit 0
+fi
+if [[ ${1:-} == session && ${2:-} == list ]]; then
+  cat "$SESSIONS_FILE"
   exit 0
 fi
 if [[ ${1:-} == bd && ${2:-} == update ]]; then
@@ -136,4 +149,31 @@ call=$(grep "^zz-fixture-stale " "$UPDATE_LOG" || true)
 [[ $call == *"--append-notes"* ]] || fail "repair call left no note: $call"
 [ "$(mail_count mayor)" = "1" ] || fail "expected exactly one page to the Mayor"
 
-echo "PASS: factory-dispatch-guard clears stale dispatch-drift assignees and leaves matched/fresh/unclaimed beads alone"
+# 4. session_affinity=require, assignee is a still-alive session: left alone
+#    however stale it looks (af-7qxzh) -------------------------------------
+affinity_alive='{
+  "id": "zz-fixture-affinity-alive", "status": "in_progress", "title": "Later step, owning session mid-workflow",
+  "assignee": "claude-af-c9a25", "updated_at": "'"$STALE"'",
+  "metadata": {"gc.routed_to": "claude", "gc.session_affinity": "require"}
+}'
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+echo '{"sessions":[{"session_name":"claude-af-c9a25","closed":false}]}' > "$SESSIONS_FILE"
+jq -n --argjson e "$affinity_alive" '[$e]' > "$BEADS_FILE"
+out=$(guard --check-only)
+grep -q "healthy — 1 routed bead(s) checked, no stale dispatch drift" <<<"$out" \
+  || { echo "$out" >&2; fail "session_affinity=require bead with a live session was not left alone"; }
+[ "$(update_count zz-fixture-affinity-alive)" = "0" ] || fail "touched a session_affinity=require bead whose session is still alive"
+[ "$(mail_count mayor)" = "0" ] || fail "paged the Mayor over a live session-affinity step"
+
+# 5. session_affinity=require, assignee's session is gone: ordinary drift
+#    handling applies (cleared, Mayor paged) -------------------------------
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+echo '{"sessions":[]}' > "$SESSIONS_FILE"
+out=$(guard)
+grep -q "cleared stale assignee 'claude-af-c9a25' (routed to 'claude', stale 30m) and paged the Mayor" <<<"$out" \
+  || { echo "$out" >&2; fail "session_affinity=require bead with a gone session was not repaired"; }
+call=$(grep "^zz-fixture-affinity-alive " "$UPDATE_LOG" || true)
+[[ $call == *'--assignee '* ]] || fail "repair call did not clear the assignee: $call"
+[ "$(mail_count mayor)" = "1" ] || fail "expected exactly one page to the Mayor once the owning session is gone"
+
+echo "PASS: factory-dispatch-guard clears stale dispatch-drift assignees, leaves matched/fresh/unclaimed beads alone, and respects session-affinity liveness"
