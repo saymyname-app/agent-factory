@@ -127,6 +127,10 @@ def main() -> int:
         snapshot["provider_state"] = json.loads((ROOT / ".gc" / "provider-state.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         pass
+    try:
+        snapshot["provider_policy"] = json.loads((ROOT / "config" / "provider-policy.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
     state = load_state()
     now = time.time()
     first_seen = {k[len("first:"):]: v for k, v in state.items() if k.startswith("first:")}

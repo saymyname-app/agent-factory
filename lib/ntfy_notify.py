@@ -71,13 +71,38 @@ def _alert(key: str, title: str, state: str, kind: str, todo: str, priority: str
     }
 
 
-def providers_exhausted_until(provider_state: Any, now: float) -> str | None:
-    """Local HH:MM of the earliest quota return if EVERY pool is exhausted, else None."""
-    pools = (provider_state or {}).get("pools") or {}
-    if not pools:
+def providers_exhausted_until(provider_state: Any, provider_policy: Any, now: float) -> str | None:
+    """Local HH:MM of the earliest quota return if every provider actually in
+    use right now is exhausted, else None.
+
+    af-d1jfc (2026-09-18): this used to loop over provider_state['pools'] and
+    conclude "all exhausted" the moment every entry present there was
+    exhausted. But 'pools' only ever gets an entry for a pool that has hit a
+    RECORDED exhaustion event -- it is not a registry of every configured
+    provider. With only openai recorded, the old code decided 100% of the
+    (one) pool it knew about was down and told Benjamin's phone "tous les
+    fournisseurs" while claude-standard was healthy and the Mayor was
+    running. Compare against the providers actually resolved for each target
+    right now (provider_state['effective'], target -> provider) mapped to
+    their pool via provider_policy['providers'][provider]['pool'] instead: a
+    provider with no exhaustion entry for its pool is healthy.
+    """
+    provider_state = provider_state or {}
+    pools = provider_state.get("pools") or {}
+    effective = provider_state.get("effective") or {}
+    if not effective:
         return None
+    provider_defs = (provider_policy or {}).get("providers") or {}
+    in_use_pools = set()
+    for provider in effective.values():
+        pool_name = (provider_defs.get(provider) or {}).get("pool")
+        if not pool_name:
+            # Unknown provider (stale/missing policy): can't prove it's down.
+            return None
+        in_use_pools.add(pool_name)
     returns = []
-    for pool in pools.values():
+    for pool_name in in_use_pools:
+        pool = pools.get(pool_name)
         if (pool or {}).get("status") != "exhausted":
             return None
         try:
@@ -113,7 +138,7 @@ def compute_alerts(snapshot: dict[str, Any], first_seen: dict[str, float] | None
     # 0. Every provider pool exhausted: nothing can run, whatever the campaign
     # says. On 2026-09-18 the Factory sat idle 05:20-13:00 on quota while the
     # phone said "l'usine avance" (all_paused) -- the state was a lie.
-    quota_until = providers_exhausted_until(snapshot.get("provider_state"), now)
+    quota_until = providers_exhausted_until(snapshot.get("provider_state"), snapshot.get("provider_policy"), now)
     if quota_until:
         alerts.append(_alert("quota_exhausted", "Usine : à l'arrêt, quota épuisé",
                              f"tous les fournisseurs IA sont à court de quota ; rien ne tourne jusqu'à {quota_until}.",

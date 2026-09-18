@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from ntfy_notify import (  # noqa: E402
     DELEGATE, EASY, NOTHING, PROMPTS, compute_alerts, compute_digest, diff_alerts, digest_due,
+    providers_exhausted_until,
 )
 
 NOW = 1_800_000_000.0
@@ -39,6 +40,14 @@ CLEAR_SNAPSHOT = {
     ],
 }
 BEAD = re.compile(r"\b(?:af|smb|smf)-[a-z0-9]{3,}", re.I)
+# Minimal stand-in for config/provider-policy.json's providers -> pool map.
+PROVIDER_POLICY = {"providers": {
+    "codex": {"pool": "openai"},
+    "codex-spark": {"pool": "openai-spark"},
+    "claude": {"pool": "anthropic"},
+    "claude-standard": {"pool": "anthropic"},
+    "claude-cheap": {"pool": "anthropic"},
+}}
 
 
 def snap(**human):
@@ -100,10 +109,14 @@ class Shape(unittest.TestCase):
 
     def test_every_pool_exhausted_overrides_everything_with_nothing_to_do(self):
         snapshot = snap(campaign={"blocked": True, "blocker_kind": "all_paused", "cause": "x"})
-        snapshot["provider_state"] = {"pools": {
-            "openai": {"status": "exhausted", "until": "2033-01-15T10:00:00Z"},
-            "anthropic": {"status": "exhausted", "until": "2033-01-15T08:00:00Z"},
-        }}
+        snapshot["provider_policy"] = PROVIDER_POLICY
+        snapshot["provider_state"] = {
+            "effective": {"workspace": "codex", "mayor": "claude"},
+            "pools": {
+                "openai": {"status": "exhausted", "until": "2033-01-15T10:00:00Z"},
+                "anthropic": {"status": "exhausted", "until": "2033-01-15T08:00:00Z"},
+            },
+        }
         alerts = compute_alerts(snapshot, {}, NOW)
         self.assertEqual(["quota_exhausted"], [a["key"] for a in alerts])
         self.assert_shape(alerts[0], NOTHING)
@@ -113,10 +126,34 @@ class Shape(unittest.TestCase):
 
     def test_one_pool_available_is_not_a_quota_stop(self):
         snapshot = snap()
-        snapshot["provider_state"] = {"pools": {
-            "openai": {"status": "exhausted", "until": "2033-01-15T10:00:00Z"},
-            "anthropic": {"status": "available"},
-        }}
+        snapshot["provider_policy"] = PROVIDER_POLICY
+        snapshot["provider_state"] = {
+            "effective": {"workspace": "codex", "mayor": "claude"},
+            "pools": {
+                "openai": {"status": "exhausted", "until": "2033-01-15T10:00:00Z"},
+                "anthropic": {"status": "available"},
+            },
+        }
+        self.assertEqual([], compute_alerts(snapshot, {}, NOW))
+
+    def test_a_provider_with_no_pool_entry_at_all_is_not_a_quota_stop(self):
+        # af-d1jfc, 2026-09-18: replay of the exact live state that made the
+        # phone say "tous les fournisseurs" -- openai has a recorded
+        # exhaustion, claude-standard (what the Mayor actually runs on) has
+        # never had one, so it has no entry in 'pools' at all.
+        snapshot = snap()
+        snapshot["provider_policy"] = PROVIDER_POLICY
+        snapshot["provider_state"] = {
+            "effective": {
+                "workspace": "claude-standard", "mayor": "claude-standard",
+                "claude-reviewer": "claude", "ux-reviewer": "claude",
+            },
+            "pools": {
+                "openai": {"status": "exhausted", "until": "2026-09-21T05:22:00Z"},
+            },
+        }
+        self.assertIsNone(providers_exhausted_until(
+            snapshot["provider_state"], snapshot["provider_policy"], NOW))
         self.assertEqual([], compute_alerts(snapshot, {}, NOW))
 
     def test_a_decision_block_is_one_delegation_not_two(self):
