@@ -18,9 +18,19 @@
 # `gc bd update` at the point a worker closes its own work bead -- long
 # before any PR exists to verify, since push-and-pr runs as a later step.
 # The --outcome form is that door: it writes gc.outcome / gc.work_outcome
-# (and, for shipped, gc.work_commit / gc.work_branch) and closes the bead,
-# without requiring the GitHub verification the --repo/--pr form performs
-# (there is nothing to verify yet at that point in the workflow).
+# (and, for shipped, gc.work_commit / gc.work_branch) and closes the bead.
+# There is usually nothing to verify yet at that point in the workflow --
+# but af-fzlp2 (2026-09-18, twice in about an hour: af-jj9u7/PR #120 still
+# open with red CI, af-cwitl/PR #123 with unresolved conflicts) showed a
+# bead can already carry its own gc.pr_url from an earlier attempt when this
+# door runs again. Since close_by_outcome always sets gc.outcome=pass, that
+# is exactly the af-x45xw shape factory-delivery-guard otherwise only catches
+# after the close already happened. So the --outcome form checks first: if
+# the bead already names a gc.pr_url, it is independently verified with
+# `gh pr view` the same way the --repo/--pr form does, and the close is
+# refused (no metadata change) unless that PR is genuinely merged. A bead
+# with no gc.pr_url yet -- the ordinary case -- has nothing to verify and
+# closes exactly as before.
 
 set -Eeuo pipefail
 
@@ -51,7 +61,10 @@ the bead (no metadata change at all) when the PR cannot be verified as merged.
 
 --outcome form: writes the ADR-0009 work-record outcome (gc.outcome=pass,
 gc.work_outcome=<outcome>, and for shipped gc.work_commit/gc.work_branch) and
-closes the bead. No GitHub verification is performed.
+closes the bead. If <bead-id> already carries its own gc.pr_url (a previous
+attempt's PR), that PR is independently verified with `gh pr view` first and
+the close is refused unless it is genuinely merged; a bead with no gc.pr_url
+yet has nothing to verify.
 USAGE
 }
 
@@ -70,6 +83,49 @@ capture_json() {
   fi
   jq -e . >/dev/null 2>&1 <<<"$output" || die "$source_name returned invalid JSON."
   printf -v "$destination" '%s' "$output"
+}
+
+# linked_pr_url <bead_id>: the bead's own gc.pr_url metadata, or empty if it
+# does not carry one. Dies (via capture_json) if the bead cannot be read at
+# all -- a lookup failure must never be silently treated as "no PR linked".
+linked_pr_url() {
+  local bead_id=$1 bead_json
+  capture_json bead_json "Bead lookup for $bead_id" "$GC_BIN" bd show "$bead_id" --json
+  jq -r '(if type == "array" then .[0] else . end).metadata["gc.pr_url"] // empty' <<<"$bead_json"
+}
+
+# refuse_unless_linked_pr_merged <bead_id>: af-fzlp2. If <bead_id> already
+# names a gc.pr_url (a previous attempt's PR, still linked), verify with
+# `gh pr view` that it is genuinely merged before the --outcome door is
+# allowed to proceed -- mirroring the --repo/--pr form's own check. Dies
+# (no metadata change) when the URL is unparseable or the PR does not
+# verify as merged. A bead with no gc.pr_url yet returns immediately: there
+# is nothing to verify at that point in the workflow.
+refuse_unless_linked_pr_merged() {
+  local bead_id=$1 pr_url repo pr_number pr_response
+
+  pr_url=$(linked_pr_url "$bead_id")
+  [[ -n $pr_url ]] || return 0
+
+  if [[ $pr_url =~ ^https?://github\.com/([A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100})/pull/([1-9][0-9]*)/?$ ]]; then
+    repo=${BASH_REMATCH[1]}
+    pr_number=${BASH_REMATCH[3]}
+  else
+    die "$bead_id carries gc.pr_url=$pr_url that is not a recognizable GitHub PR URL; refusing to close without verifiable proof."
+  fi
+
+  require_command "$GH_BIN"
+  capture_json pr_response "GitHub PR $pr_number" "$GH_BIN" pr view "$pr_number" \
+    --repo "$repo" --json number,state,mergedAt,mergeCommit,headRefOid,url
+
+  jq -e --argjson number "$pr_number" '
+    .number == $number and
+    .state == "MERGED" and
+    (.mergedAt | type == "string" and length > 0) and
+    (.headRefOid | type == "string" and test("^[0-9a-f]{40}$")) and
+    (.mergeCommit.oid | type == "string" and test("^[0-9a-f]{40}$"))
+  ' >/dev/null <<<"$pr_response" \
+    || die "$bead_id names $repo#$pr_number via its own gc.pr_url but it is not verifiably merged; refusing to close without proof."
 }
 
 close_by_outcome() {
@@ -147,6 +203,7 @@ main() {
   done
 
   require_command "$GC_BIN"
+  require_command jq
 
   if [[ -n $outcome ]]; then
     [[ -z $repo && -z $pr_number ]] || die "--outcome cannot be combined with --repo/--pr."
@@ -154,12 +211,12 @@ main() {
       shipped|no-op|blocked|abandoned) ;;
       *) die "--outcome must be one of shipped, no-op, blocked, abandoned." ;;
     esac
+    refuse_unless_linked_pr_merged "$bead_id"
     [[ $reason == "Delivery verified and closed" ]] && reason="Closed with gc.work_outcome=$outcome"
     close_by_outcome "$bead_id" "$outcome" "$commit" "$branch" "$verification" "$reason"
     return 0
   fi
 
-  require_command jq
   require_command "$GH_BIN"
 
   [[ -n $repo ]] || die "--repo owner/repository is required; refusing to close $bead_id without it."

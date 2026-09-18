@@ -113,4 +113,41 @@ assert_refused merged "--outcome must be one of" af-work --outcome bogus
 assert_refused merged "--outcome cannot be combined with --repo/--pr" \
   af-work --outcome shipped --commit c --branch b --repo owner/repo --pr 1
 
+# af-fzlp2: the --outcome door must not accept a close (shipped or otherwise
+# -- close_by_outcome always sets gc.outcome=pass) when the target bead
+# already names its own gc.pr_url and that PR does not verify as merged.
+TESTS_RUN=$((TESTS_RUN + 1))
+if output=$(DELIVER_CLOSE_PR_URL="https://github.com/owner/repo/pull/42" \
+  run not-merged af-work --outcome shipped --commit cafef00d --branch do-work/af-work 2>&1); then
+  fail_test "--outcome shipped with an unmerged linked PR should refuse to close"
+fi
+[[ $output == *"not verifiably merged"* ]] \
+  || fail_test "linked-PR refusal did not report the expected reason: $output"
+call=$(<"$CALL_LOG")
+[[ -z $call ]] \
+  || fail_test "--outcome shipped with an unmerged linked PR made a Beads write despite refusing: $call"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if output=$(DELIVER_CLOSE_PR_URL="https://github.com/owner/repo/pull/42" run not-merged af-work --outcome no-op 2>&1); then
+  fail_test "--outcome no-op with an unmerged linked PR should refuse to close"
+fi
+[[ $output == *"not verifiably merged"* ]] \
+  || fail_test "no-op linked-PR refusal did not report the expected reason: $output"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if output=$(DELIVER_CLOSE_PR_URL="not-a-github-url" run merged af-work --outcome no-op 2>&1); then
+  fail_test "--outcome no-op with an unparseable linked gc.pr_url should refuse to close"
+fi
+[[ $output == *"not a recognizable GitHub PR URL"* ]] \
+  || fail_test "unparseable linked-PR refusal did not report the expected reason: $output"
+
+# A bead whose own linked PR verifies merged closes exactly as before.
+TESTS_RUN=$((TESTS_RUN + 1))
+DELIVER_CLOSE_PR_URL="https://github.com/owner/repo/pull/42" \
+  run merged af-work --outcome shipped --commit cafef00d --branch do-work/af-work >/dev/null \
+  || fail_test "--outcome shipped with a verified merged linked PR should close successfully"
+call=$(<"$CALL_LOG")
+[[ $call == *"gc.work_outcome=shipped"* ]] \
+  || fail_test "--outcome shipped with a verified linked PR missing gc.work_outcome in Beads write"
+
 printf 'PASS: %d deterministic deliver-close checks\n' "$TESTS_RUN"

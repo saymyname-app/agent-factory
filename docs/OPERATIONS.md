@@ -607,6 +607,24 @@ closed but is silently missing its proof. `tests/deliver-close-test.sh` covers
 the merged/not-merged/mismatched-evidence/GitHub-failure paths against
 `GC_BIN`/`GH_BIN` fixtures.
 
+mol-do-work's own work bead uses the lighter door instead, before any PR
+exists to verify:
+
+```bash
+./bin/deliver-close <bead-id> --outcome shipped --commit <sha> --branch <branch>
+./bin/deliver-close <bead-id> --outcome no-op|blocked|abandoned
+```
+
+This form writes the ADR-0009 work-record outcome (`gc.outcome=pass`,
+`gc.work_outcome=<outcome>`) without requiring a merged PR — there usually
+is not one yet. But if `<bead-id>` already names its own `gc.pr_url` (a
+previous attempt's PR, still linked when the door is called again), it
+independently verifies that PR with `gh pr view` first and refuses the close
+(no metadata change) unless it is genuinely merged (af-fzlp2, 2026-09-18:
+af-jj9u7/PR #120 was closed shipped while still open with red CI, af-cwitl/PR
+#123 while it had unresolved merge conflicts — both caught only afterward by
+`factory-delivery-guard`, never blocked at close time before this check).
+
 If a delivered result is closed by hand anyway while it is still the
 coordination's `gc.current`, the projection reports it as **finalizing**
 (`mayor_finalization`), not as an agentless materialized result, and the
