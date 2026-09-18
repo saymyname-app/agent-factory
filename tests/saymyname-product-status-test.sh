@@ -162,4 +162,20 @@ assert_failure queue-inconsistent "canonical human candidate contract"
 # queue is authoritative (2026-09-17: it blocked the whole campaign twice).
 assert_degraded mismatch-next '.next_candidate.state' 'eligible' 'disagrees with the first eligible product candidate'
 
+# af-tbkcc regression (2026-09-18 23:53Z-02:12Z incident): product-queue now
+# excludes one invalid candidate with a WARNING instead of dying on the whole
+# read (bin/product-queue's own list --json fix). saymyname-product-status
+# must see this as an ordinary working queue source -- not a hard source
+# failure that takes down the whole projection -- while the exclusion
+# WARNING it logged remains visible to the operator.
+TESTS_RUN=$((TESTS_RUN + 1))
+output=$(run_fixture_json queue-candidate-excluded 2>"$STDERR_FILE") \
+  || fail_test "queue-candidate-excluded should degrade, not fail closed"
+[[ $(jq -r '.next_candidate.id' <<<"$output") == af-next ]] \
+  || fail_test "queue-candidate-excluded lost the valid candidate"
+[[ $(jq -r '.contract' <<<"$output") == agent-factory-human-state/v1 ]] \
+  || fail_test "queue-candidate-excluded contract differs"
+[[ $(cat "$STDERR_FILE") == *"WARNING"*"af-bad"* ]] \
+  || fail_test "queue-candidate-excluded did not surface the excluded candidate's warning"
+
 printf 'PASS: %d deterministic product-status checks\n' "$TESTS_RUN"

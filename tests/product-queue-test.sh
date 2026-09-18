@@ -196,12 +196,44 @@ if "$QUEUE" resume af-does-not-exist >/dev/null 2>&1; then
   fail 'resuming an unknown candidate must fail closed'
 fi
 
+# af-tbkcc regression (2026-09-18 23:53Z-02:12Z incident): a candidate's
+# status/state was edited outside product-queue's own commands, and the
+# read-only `list`/`next` paths died on that one bad tuple -- cascading into
+# saymyname-product-status and 8 consecutive campaign-sentinel failures over
+# an issue a warning would have surfaced without taking the whole queue
+# down. list/next must now exclude the invalid candidate with one WARNING
+# naming it and still return the valid ones -- never fail the whole read.
 export QUEUE_INVENTORY='[
   {"id":"af-bad","title":"Bad tuple","status":"closed","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}}
 ]'
-if "$QUEUE" list --json >/dev/null 2>&1; then
-  fail 'an inconsistent status/state tuple must fail closed'
+output=$("$QUEUE" list --json 2>"$TEST_TMP/stderr") \
+  || fail "list --json must not fail closed on one bad candidate: $(cat "$TEST_TMP/stderr")"
+[[ $output == '[]' ]] || fail "invalid-only queue must project empty, not: $output"
+assert_contains "$(cat "$TEST_TMP/stderr")" 'WARNING'
+assert_contains "$(cat "$TEST_TMP/stderr")" 'af-bad'
+
+export QUEUE_INVENTORY='[
+  {"id":"af-good","title":"Good","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}},
+  {"id":"af-bad","title":"Bad tuple","status":"closed","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":2000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}}
+]'
+output=$("$QUEUE" list --json 2>"$TEST_TMP/stderr") \
+  || fail "list --json must still return the valid candidates: $(cat "$TEST_TMP/stderr")"
+assert_contains "$output" '"id":"af-good"'
+assert_not_contains "$output" 'af-bad'
+assert_contains "$(cat "$TEST_TMP/stderr")" 'af-bad'
+output=$("$QUEUE" next --json 2>/dev/null)
+assert_contains "$output" '"id":"af-good"'
+
+# Unwanted-behavior EARS: mutation commands must still refuse, as today, when
+# the line holds any invalid candidate -- read-side leniency never weakens
+# write-side safety.
+if "$QUEUE" move af-good 1 >/dev/null 2>&1; then
+  fail 'a mutation command must still refuse when the line holds an invalid candidate'
 fi
+if "$QUEUE" pause af-good 'Some reason' >/dev/null 2>&1; then
+  fail 'a mutation command must still refuse when the line holds an invalid candidate'
+fi
+
 for invalid_metadata in \
   '"gc.queue_state":"materialized","gc.materialized_bead":"af-exec"' \
   '"gc.queue_state":"cancelled"' \
@@ -213,8 +245,12 @@ do
     \"metadata\":{\"gc.queue_product\":\"saymyname\",$invalid_metadata,
       \"gc.queue_rank\":1000,\"gc.queue_urgency\":\"normal\",\"gc.queue_goal\":\"af-u8id\"}
   }]"
-  if "$QUEUE" list --json >/dev/null 2>&1; then
-    fail "invalid deferred tuple must fail closed: $invalid_metadata"
+  output=$("$QUEUE" list --json 2>"$TEST_TMP/stderr") \
+    || fail "invalid deferred tuple must be excluded, not failed closed: $invalid_metadata"
+  [[ $output == '[]' ]] || fail "invalid deferred tuple must project empty: $invalid_metadata -> $output"
+  assert_contains "$(cat "$TEST_TMP/stderr")" 'af-bad'
+  if "$QUEUE" move af-bad 1 >/dev/null 2>&1; then
+    fail "mutation must still fail closed on an invalid tuple: $invalid_metadata"
   fi
 done
 

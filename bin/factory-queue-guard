@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# factory-queue-guard — detects a product-queue candidate whose status
+# changed by any path other than product-queue's own commands
+# (add/pause/resume/cancel/materialize), and reacts to it (af-tbkcc, EARS
+# Event-driven acceptance).
+#
+# Root cause (2026-09-18 23:53Z-02:12Z): a PO/Mayor session set two
+# candidates (af-ogg8z, af-gp8fd) to in_progress/open directly, bypassing
+# product-queue entirely. Every queue candidate's status is otherwise fully
+# determined by its gc.queue_state (queued/paused/blocked_durable_failure ->
+# status must be deferred; cancelled/materialized -> status must be closed —
+# see lib/factory_state.py:candidate_record_lifecycle()). A status that
+# disagrees with that invariant can only mean something wrote to the Bead
+# directly, and it is exactly the shape that made bin/product-queue's own
+# read-side validation die on the whole queue before this bead's other fix.
+#
+# For a candidate with no execution Bead linked (gc.materialized_bead unset),
+# the drift is safe to self-heal: restore status=deferred (the only status a
+# queued/paused/durably-blocked candidate may ever hold) and page the Mayor
+# once about it. For a candidate that DOES link an execution Bead, the guard
+# never guesses — it flags the Bead once (gc.queue_guard_flagged_at) and
+# pages the Mayor once; a human or the Mayor resolves it by hand. A Bead
+# already carrying that flag is reported again every run (so it never
+# silently disappears) but the flag itself is not rewritten and the Mayor is
+# not paged again — "page once, not repeatedly".
+#
+# --check-only reports without writing or paging anything.
+#
+# Usage: factory-queue-guard [--check-only]
+set -uo pipefail
+
+PROGRAM_NAME="factory-queue-guard"
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+GC_BIN="${GC_BIN:-gc}"
+BD_BIN="${BD_BIN:-bd}"
+CHECK_ONLY=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check-only) CHECK_ONLY=1 ;;
+    -h|--help)
+      sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "$PROGRAM_NAME: unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || { echo "$PROGRAM_NAME: required command unavailable: $1" >&2; exit 2; }
+}
+require_command "$GC_BIN"
+require_command "$BD_BIN"
+require_command jq
+
+PROBLEMS=(); ACTIONS=(); STATUS=0
+CHECKED=0; DRIFTED=0
+say()  { printf '%s\n' "$*"; }
+bad()  { PROBLEMS+=("$1"); STATUS=1; }
+did()  { ACTIONS+=("$1"); say "  REPAIRED: $1"; }
+now()  { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+page_mayor_once() {  # id summary
+  local id=$1 summary=$2
+  (cd "$ROOT" && "$GC_BIN" mail send mayor --notify \
+    -s "Queue candidate status drift: $id" \
+    -m "ACTION: factory-queue-guard detected $id's status changed outside product-queue's own commands
+STATE: $summary
+EVIDENCE: gc bd show $id
+NEXT: verify the candidate's real state and, if needed, use product-queue's own commands (cancel/materialize/resume) to make it match" \
+    >/dev/null 2>&1)
+}
+
+expected_status_for_state() {
+  case "$1" in
+    queued|paused|blocked_durable_failure) printf 'deferred\n' ;;
+    cancelled|materialized) printf 'closed\n' ;;
+    *) printf '\n' ;;  # not a recognized queue state; out of this guard's scope
+  esac
+}
+
+candidates=$(cd "$ROOT" && "$GC_BIN" bd list --all --label product-queue --limit 0 --json 2>/dev/null)
+jq -e . >/dev/null 2>&1 <<<"$candidates" || candidates='[]'
+
+rows=$(jq -r '
+  .[] | select((.metadata["gc.queue_state"] // "") != "") |
+  [
+    .id, .status, .metadata["gc.queue_state"],
+    (.metadata["gc.materialized_bead"] // ""),
+    (.metadata["gc.queue_guard_flagged_at"] // "")
+  ] | @tsv
+' <<<"$candidates")
+
+while IFS=$'\t' read -r id status state materialized_bead flagged_at; do
+  [ -z "$id" ] && continue
+  CHECKED=$((CHECKED + 1))
+  expected=$(expected_status_for_state "$state")
+  [ -n "$expected" ] || continue
+  [ "$status" = "$expected" ] && continue
+  DRIFTED=$((DRIFTED + 1))
+
+  if [ -n "$materialized_bead" ]; then
+    # An execution Bead is already linked: never guess by auto-restoring —
+    # the Mayor must look. Flag once, page once, then stay quiet.
+    if [ -n "$flagged_at" ]; then
+      say "  · $id still drifted (status=$status, queue_state=$state), linked to $materialized_bead — already flagged, awaiting the Mayor"
+      bad "$id product-queue status ($status) contradicts queue_state ($state) and links execution Bead $materialized_bead; already flagged, unresolved"
+      continue
+    fi
+    bad "$id product-queue status ($status) contradicts its queue_state ($state) and links execution Bead $materialized_bead — needs the Mayor, not an automatic restore"
+    if [ "$CHECK_ONLY" != "1" ]; then
+      if (cd "$ROOT" && "$GC_BIN" bd update "$id" \
+            --set-metadata "gc.queue_guard_flagged_at=$(now)" \
+            --set-metadata "gc.queue_guard_flagged_status=$status" \
+            >/dev/null 2>&1); then
+        page_mayor_once "$id" "status=$status contradicts queue_state=$state; execution Bead $materialized_bead is linked, so this was not auto-restored"
+        did "flagged $id once for the Mayor (status/queue_state drift, execution Bead linked) and paged it"
+      else
+        bad "$id could not be flagged — the Beads write failed"
+      fi
+    fi
+    continue
+  fi
+
+  # No execution Bead linked: the only status a candidate in this queue_state
+  # may ever hold is $expected, so restoring it is safe and self-converging
+  # (the next run will no longer see a drift here, so no repeat-paging state
+  # is needed).
+  bad "$id product-queue status ($status) drifted outside product-queue's own commands (queue_state=$state expects status=$expected)"
+  if [ "$CHECK_ONLY" != "1" ]; then
+    if (cd "$ROOT" && "$GC_BIN" bd update "$id" --status "$expected" \
+          --append-notes "factory-queue-guard: status restored to $expected (was $status; queue_state=$state; no execution Bead linked). A candidate's status is never edited directly -- only product-queue's own commands (add/pause/resume/cancel/materialize) may change it; see docs/PRODUCT_QUEUE.md." \
+          >/dev/null 2>&1); then
+      page_mayor_once "$id" "status was $status (queue_state=$state, no execution Bead linked); restored to $expected"
+      did "$id restored to $expected (was $status; queue_state=$state) and paged the Mayor"
+    else
+      bad "$id could not be restored to $expected — the Beads write failed"
+    fi
+  fi
+done <<<"$rows"
+
+say ""
+if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
+if [ "${#PROBLEMS[@]}" -gt 0 ]; then
+  say "UNRESOLVED ${#PROBLEMS[@]}:"; printf '  ! %s\n' "${PROBLEMS[@]}"
+elif [ "$DRIFTED" -gt 0 ]; then
+  say "healthy — $DRIFTED drifted candidate(s) seen this run, all repaired"
+else
+  say "healthy — $CHECKED product-queue candidate(s) checked, no status drift"
+fi
+exit 0

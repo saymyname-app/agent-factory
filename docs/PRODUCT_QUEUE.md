@@ -99,6 +99,22 @@ The PO may add, clarify, reorder, mark urgency, pause, resume, or cancel product
 candidates when Benjamin asks to record that state. This is RECORD authority,
 not execution authority. A DISCUSS request never mutates the queue.
 
+**A candidate's `status` (and `gc.queue_state`) is never edited directly — only
+`product-queue`'s own commands (`add`, `move`, `urgency`, `pause`, `resume`,
+`cancel`, `materialize`) mutate them.** A raw `gc bd update <id> --status ...`
+or `--set-metadata gc.queue_state=...` bypasses the lock, the lifecycle
+contract, and the audit trail, and produced two real incidents: 2026-09-18
+23:53Z-02:12Z, a candidate set to `in_progress`/`open` directly cascaded into
+`saymyname-product-status` failures and 8 consecutive campaign-sentinel
+failures that blocked the campaign for 2h10; separately, a normal Mayor task
+was mistakenly left carrying the `product-queue` label without ever having a
+`gc.queue_state`, which degraded the whole cockpit health projection to
+"unavailable/degraded" (af-3cat8, af-j41c2; see af-tbkcc). `bin/factory-guard`
+(via `bin/factory-queue-guard`) detects a candidate whose status contradicts
+its `gc.queue_state`, restores `status=deferred` when no execution Bead is
+linked, and pages the Mayor once — but that is a safety net, not a substitute
+for using the commands above.
+
 For EXECUTE, the PO hands the desired result to the Mayor once. The Mayor:
 
 1. reads `./bin/saymyname-product-queue next --json`;
@@ -142,6 +158,14 @@ them on the executable work after scope is understood.
 Before presenting or mutating the active queue, the CLI reads the complete
 candidate inventory and validates the only accepted lifecycle tuples:
 `deferred+(queued|paused)`, `closed+materialized` with a valid execution Bead,
-or `closed+cancelled`. It fails closed on every other tuple, then removes the two
-closed historical states from the active queue. A `goal=none` Factory campaign
-remains visible separately but never becomes `NEXT` for the product.
+or `closed+cancelled`. **Mutation commands** (`move`, `urgency`, `pause`,
+`resume`, `cancel`, `materialize`) still fail closed on any other tuple,
+exactly as before — one malformed candidate must never let a mutation act on
+a queue it cannot fully trust. **`list` and `next`** (read-only) instead
+exclude an invalid candidate with one `WARNING` on stderr naming it, and
+still return every valid candidate — a single bad tuple must never take the
+whole read down (regression: 2026-09-18 23:53Z, a directly-edited candidate
+made `list --json` die, which cascaded into `saymyname-product-status` and 8
+campaign-sentinel failures; see af-tbkcc). Either way, the two closed
+historical states are removed from the active queue. A `goal=none` Factory
+campaign remains visible separately but never becomes `NEXT` for the product.

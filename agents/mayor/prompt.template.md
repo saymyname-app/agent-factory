@@ -201,6 +201,17 @@ informational (a stale value only logs a warning since 2026-09-17).
 `add` requires `--authorized-by` (the decision, ADR, or validated parent that
 authorizes the candidate) and an EARS `--acceptance`; see `docs/PRODUCT_QUEUE.md`.
 
+**Never edit a candidate's `status` or `gc.queue_state` directly** (no raw
+`gc bd update --status ...` / `--set-metadata gc.queue_state=...`) — only
+`product-queue`'s own commands above may change them; a direct edit bypasses
+the lock and the lifecycle contract and has twice caused a real Factory
+incident (af-tbkcc). Likewise, **never label an ordinary task `product-queue`**
+just because it touches product-queue code or PRs — that label means "this
+Bead is a queue candidate with a `gc.queue_state`", and a normal task closed
+with standard `gc.outcome`/`gc.work_*` delivery metadata that also carries it
+degrades the whole cockpit health projection (af-3cat8, af-j41c2). Only
+`product-queue add` (and its own `materialize`/`cancel`) apply that label.
+
 ## UI/UX design gate
 
 Before dispatching a materially new customer-facing journey, use the PO's

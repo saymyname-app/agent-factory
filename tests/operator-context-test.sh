@@ -59,6 +59,12 @@ latest_adr=$(ls "$REPO_ROOT/docs/decisions"/ADR-*.md 2>/dev/null \
 adr_range="\`decisions/ADR-0001-foundation.md\` through \`decisions/${latest_adr}.md\`"
 assert_contains docs/CONTEXT_INDEX.md "$adr_range"
 assert_contains agents/mayor/prompt.template.md 'UI/UX design gate'
+# af-tbkcc: a candidate's status must only ever change through product-queue's
+# own commands, and the product-queue label must only ever mark a real
+# candidate — both regressions caused a real Factory incident.
+assert_contains agents/mayor/prompt.template.md "Never edit a candidate's \`status\` or \`gc.queue_state\` directly"
+assert_contains agents/mayor/prompt.template.md 'never label an ordinary task `product-queue`'
+assert_contains docs/PRODUCT_QUEUE.md "candidate's \`status\` (and \`gc.queue_state\`) is never edited directly"
 assert_contains docs/OPERATOR_BRIDGE.md './bin/saymyname-product-status'
 assert_contains docs/OPERATOR_BRIDGE.md 'C:\Dev\Projects\AgentFactory'
 assert_contains docs/OPERATOR_BRIDGE.md './bin/factory-cockpit open'
