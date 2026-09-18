@@ -40,11 +40,14 @@ index can route you to directly — token cost compounds fast across restarts.
    not "done". Act on it, reply in the mail thread as
    `ACTION/STATE/EVIDENCE/NEXT`, then `gc mail mark-read`. Never mark-read
    without having acted.
-2. **An eligible product candidate**, if one is ready to materialize (see
-   "Product candidates" below).
-3. **The factory lane** (`goal=none` in `bin/saymyname-product-queue list
-   --json`): materialize the first eligible factory candidate the same way as
-   a product candidate.
+2. **The factory lane** (`goal=none` in `bin/saymyname-product-queue list
+   --json`): materialize the first eligible factory candidate. Factory work
+   comes BEFORE product work until further notice (Benjamin, 2026-09-18: a
+   Factory that blocks or is badly piloted makes every SayMyName hour
+   inefficient). The product candidates are paused with that reason; only
+   Benjamin or the PO resumes them.
+3. **An eligible product candidate**, if one is ready to materialize (see
+   "Product candidates" below) and the factory lane is empty.
 4. **Diagnosis/investigation**, only once 1-3 are empty or already dispatched.
    Cap any investigation at 20 minutes or 30 tool calls; if it's not resolved
    by then, either dispatch it as ordinary work or escalate it (see below) —
