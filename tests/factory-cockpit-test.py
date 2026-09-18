@@ -45,6 +45,7 @@ from factory_cockpit import (  # noqa: E402
     handler_factory,
     ProviderBridge,
     AxesBridge,
+    LanePriorityBridge,
 )
 from factory_state import (  # noqa: E402
     CONTRACT as HUMAN_STATE_CONTRACT,
@@ -680,6 +681,118 @@ class FactoryCockpitTest(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_lane_priority_bridge_asks_the_door_not_the_bead(self):
+        """ADR-0023 amendment 2: the cockpit asks bin/mayor-campaign priority; it never
+        writes gc.campaign_priority_lane directly."""
+        calls = []
+
+        def executor(args, **kwargs):
+            calls.append(args)
+            if len(args) == 2:  # ["mayor-campaign", "priority"]
+                return subprocess.CompletedProcess(args, 0, json.dumps({"lane": "factory"}), "")
+            lane = args[-1]
+            if lane not in LanePriorityBridge.LANES:
+                return subprocess.CompletedProcess(args, 2, "", "invalid choice")
+            return subprocess.CompletedProcess(args, 0, json.dumps({"lane": lane}), "")
+
+        bridge = LanePriorityBridge(executor=executor, command=["mayor-campaign"])
+        self.assertEqual("factory", bridge.status()["lane"])
+        self.assertEqual("product", bridge.submit("product")["lane"])
+        self.assertEqual(["mayor-campaign", "priority", "product"], calls[-1])
+        with self.assertRaises(ValueError):
+            bridge.submit("nope")
+        # Refused before the tool was even called.
+        self.assertEqual(2, len(calls))
+
+        broken = LanePriorityBridge(
+            executor=lambda args, **kw: subprocess.CompletedProcess(args, 2, "", "lock unavailable"),
+            command=["mayor-campaign"],
+        )
+        with self.assertRaises(SourceError):
+            broken.status()
+
+    def test_http_lane_priority_route_is_guarded(self):
+        class LanePriority:
+            submitted = []
+
+            def status(self):
+                return {"lane": "factory"}
+
+            def submit(self, lane):
+                if lane not in LanePriorityBridge.LANES:
+                    raise ValueError("Ligne prioritaire inconnue.")
+                self.submitted.append(lane)
+                return {"lane": lane}
+
+        class Cache:
+            def get(self):
+                return {"ok": True}
+
+            def invalidate(self):
+                pass
+
+        class Stub:
+            def conversation(self, *args):
+                return {}
+
+            def index(self):
+                return {}
+
+            def status(self):
+                return {}
+
+            def collect(self):
+                return {}
+
+        lane_priority = LanePriority()
+        cache = Cache()
+        handler = handler_factory(
+            cache, mayor_bridge=Stub(), detail_reader=Stub(), token_cache=cache,
+            po_bridge=Stub(), preview_bridge=Stub(), reference_reader=Stub(),
+            queue_bridge=Stub(), delivery_reader=Stub(), decision_store=Stub(),
+            lane_priority_bridge=lane_priority,
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        origin = f"http://127.0.0.1:{server.server_port}"
+        try:
+            def call(method, path, body=None, headers=None):
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+                connection.request(method, path, body, headers or {})
+                response = connection.getresponse()
+                data = response.read()
+                connection.close()
+                return response.status, data
+
+            status, body = call("GET", "/api/lane-priority")
+            self.assertEqual(200, status)
+            self.assertEqual("factory", json.loads(body)["lane"])
+            status, body = call("GET", "/lane-priority.js")
+            self.assertEqual(200, status)
+            self.assertIn(b"human-lane-priority", body)
+
+            good = {"Content-Type": "application/json", "Origin": origin,
+                    "X-Factory-Cockpit": "human-lane-priority"}
+            payload = json.dumps({"lane": "product"})
+            self.assertEqual(202, call("POST", "/api/lane-priority", payload, good)[0])
+            self.assertEqual(["product"], lane_priority.submitted)
+            # Another surface's confirmation header does not open this one.
+            wrong = {**good, "X-Factory-Cockpit": "human-provider-control"}
+            self.assertEqual(403, call("POST", "/api/lane-priority", payload, wrong)[0])
+            self.assertEqual(403, call("POST", "/api/lane-priority", payload, {**good, "Origin": "http://evil"})[0])
+            bad = json.dumps({"lane": "nope"})
+            self.assertEqual(400, call("POST", "/api/lane-priority", bad, good)[0])
+            self.assertEqual(1, len(lane_priority.submitted))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_lane_priority_switch_is_on_the_desktop(self):
+        html = (ROOT / "ui" / "factory-cockpit" / "index.html").read_text(encoding="utf-8")
+        for anchor in ("lane-priority", "lane-priority-factory", "lane-priority-product",
+                       '<script src="/lane-priority.js">'):
+            self.assertIn(anchor, html)
 
     def test_provider_panel_is_on_the_desktop_and_the_phone(self):
         html = (ROOT / "ui" / "factory-cockpit" / "index.html").read_text(encoding="utf-8")

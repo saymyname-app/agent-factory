@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from factory_campaign import (  # noqa: E402
     FAILURE_THRESHOLD, LADDER_GENERATIVE_RUNGS, CampaignDecisionError,
-    plan_idle_ladder, plan_transition,
+    plan_factory_lane, plan_idle_ladder, plan_transition,
 )
 from factory_state import StateContractError, project_campaign_metadata  # noqa: E402
 
@@ -279,6 +279,35 @@ def complete(args: argparse.Namespace) -> None:
     print("COMPLETED: no active or eligible product result")
 
 
+PRIORITY_LANES = ("factory", "product")
+# ADR-0023 amendment 2 (2026-09-18): factory-first / product-first is a
+# priority order with automatic fallthrough, not an exclusive pause. Factory
+# is the default until Benjamin flips it -- matches the standing instruction
+# "Factory work comes before product work" (agents/mayor/prompt.template.md).
+DEFAULT_PRIORITY_LANE = "factory"
+
+
+def priority_lane_of(metadata: dict[str, Any]) -> str:
+    value = str(metadata.get("gc.campaign_priority_lane") or "").strip().lower()
+    return value if value in PRIORITY_LANES else DEFAULT_PRIORITY_LANE
+
+
+def priority(args: argparse.Namespace) -> None:
+    """The one door for the lane-priority switch (ADR-0023 amendment 2).
+
+    No candidate, campaign, or Mayor state depends on --mayor here: this is
+    Benjamin's call, reversible at will, made through this command or the
+    cockpit button that calls it -- never by hand-editing gc.* metadata.
+    """
+    issue = coordination_issue()
+    metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+    if args.lane is None:
+        print(json.dumps({"lane": priority_lane_of(metadata)}, ensure_ascii=False))
+        return
+    update_metadata({"gc.campaign_priority_lane": args.lane})
+    print(json.dumps({"lane": args.lane}, ensure_ascii=False))
+
+
 def failure_detail(exc: Exception) -> str:
     return re.sub(r"\s+", " ", str(exc)).strip()[:400] or "échec sans détail"
 
@@ -505,6 +534,27 @@ def stamp_due(metadata: dict[str, Any], key: str, now: float) -> bool:
     return now - last >= HEARTBEAT_SECONDS
 
 
+def factory_lane_peek() -> dict[str, Any]:
+    """Rungs 2/2b only -- a quick look at the Factory lane on its own.
+
+    Used to give the Factory lane priority over a product materialize
+    decision (ADR-0023 amendment 2) without walking the rest of the idle
+    ladder (generative rungs, axis): those only fire once BOTH lanes are
+    empty, via ladder_decision below.
+    """
+    try:
+        ready = json_run(GC_BIN, "bd", "ready", "--json")
+    except CampaignCommandError:
+        return {"action": "none", "reason": "factory_lane_empty", "wake_key": None}
+    if not isinstance(ready, list):
+        ready = []
+    try:
+        queue_candidates = json_run(PRODUCT_QUEUE_BIN, "list", "--json")
+    except CampaignCommandError:
+        queue_candidates = None
+    return plan_factory_lane(ready, queue_candidates)
+
+
 def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
     """Rungs 2-4 of the idle ladder; never raises for an unavailable store."""
     try:
@@ -647,6 +697,19 @@ def sentinel(_: argparse.Namespace) -> None:
             if (status.get("campaign") or {}).get("blocker_kind") == "transient_failure":
                 print("NOOP: recovered from a transient failure; re-reading next tick")
                 return
+
+        if (
+            decision["action"] == "wake_mayor"
+            and decision["reason"] == "materialize_next"
+            and priority_lane_of(metadata) == "factory"
+        ):
+            # ADR-0023 amendment 2: while the Factory lane is priority, it is
+            # checked before a product materialize decision, not only after
+            # one -- WHILE the priority lane has an eligible candidate, THE
+            # mayor-campaign SHALL process it before any other lane.
+            factory_plan = factory_lane_peek()
+            if factory_plan["action"] == "wake_mayor":
+                decision = factory_plan
 
         if decision["action"] != "wake_mayor" and decision["reason"] not in LADDER_SKIPPED_REASONS:
             # No product work to do is not inactivity: walk the ladder.
@@ -794,6 +857,12 @@ def parser() -> argparse.ArgumentParser:
     complete_parser = commands.add_parser("complete", help="record an empty eligible queue")
     complete_parser.add_argument("--mayor", dest="authority", action="store_true")
     complete_parser.set_defaults(handler=complete)
+
+    priority_parser = commands.add_parser(
+        "priority", help="get or set which lane (factory|product) is priority (ADR-0023)"
+    )
+    priority_parser.add_argument("lane", nargs="?", choices=PRIORITY_LANES)
+    priority_parser.set_defaults(handler=priority)
     return value
 
 

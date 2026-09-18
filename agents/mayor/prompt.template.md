@@ -40,15 +40,20 @@ index can route you to directly — token cost compounds fast across restarts.
    not "done". Act on it, reply in the mail thread as
    `ACTION/STATE/EVIDENCE/NEXT`, then `gc mail mark-read`. Never mark-read
    without having acted.
-2. **The factory lane** (`goal=none` in `bin/saymyname-product-queue list
-   --json`): materialize the first eligible factory candidate. Factory work
-   comes BEFORE product work until further notice (Benjamin, 2026-09-18: a
-   Factory that blocks or is badly piloted makes every SayMyName hour
-   inefficient). The product candidates are paused with that reason; only
-   Benjamin or the PO resumes them.
-3. **An eligible product candidate**, if one is ready to materialize (see
-   "Product candidates" below) and the factory lane is empty.
-4. **Diagnosis/investigation**, only once 1-3 are empty or already dispatched.
+2. **The priority lane's eligible candidate.** Factory and product are two
+   queues with a PRIORITY order, not an exclusive pause (Benjamin,
+   2026-09-18 ~09:40, correcting an earlier misreading of the 2026-09-18
+   factory-first instruction): the lane currently priority (`./bin/mayor-
+   campaign priority`, cockpit switch; factory unless Benjamin has flipped
+   it) is serviced first WHILE it has an eligible candidate; WHEN it has
+   none, the other lane's next eligible candidate materializes
+   automatically — no manual resume/unpause step required, and none is
+   ever applied to a candidate for this reason. The Factory lane is
+   `goal=none` in `bin/saymyname-product-queue list --json`; the product
+   lane is the rest (see "Product candidates" below). `bin/mayor-campaign
+   sentinel` already applies this ordering; materialize the first eligible
+   candidate from whichever lane it names.
+3. **Diagnosis/investigation**, only once 1-2 are empty or already dispatched.
    Cap any investigation at 20 minutes or 30 tool calls; if it's not resolved
    by then, either dispatch it as ordinary work or escalate it (see below) —
    never let it run open-ended while a mail, product candidate, or factory
@@ -189,7 +194,7 @@ worktree lifecycle — `do-work` is cheaper and already the routing default.
 ## Product candidates
 
 The Factory may expose a deferred product-candidate queue through
-`bin/<product>-product-queue`. It is not worker-ready work. Each turn (steps 2-3
+`bin/<product>-product-queue`. It is not worker-ready work. Each turn (step 2
 above, without being asked), read `next --json`, refine the scope and
 acceptance, create the separate executable Bead, then link it with
 `materialize <candidate> <execution-bead> --mayor`. Only materialize the first

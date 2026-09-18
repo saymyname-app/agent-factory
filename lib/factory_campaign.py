@@ -235,6 +235,72 @@ def _first_eligible_factory_queue_candidate(
     return None
 
 
+def plan_factory_lane(
+    ready: list[dict[str, Any]],
+    queue_candidates: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Rungs 2/2b only: a ready Factory bead, or an eligible ``goal=none``
+    queue candidate. Returns ``{"action": "none", "reason": "factory_lane_empty", ...}``
+    when neither exists.
+
+    Used two ways: by ``plan_idle_ladder`` below, once product has nothing to
+    do (the original use), and directly by the sentinel's lane-priority check
+    (ADR-0023 amendment 2) -- when the Factory lane is priority, this is
+    consulted *before* a product materialize decision, not only after one, so
+    the Factory lane can win even while a product candidate is eligible.
+    """
+    candidates = sorted(
+        (bead for bead in ready if is_ladder_bead(bead)),
+        key=lambda bead: (_priority(bead), str(bead.get("created_at") or ""), str(bead["id"])),
+    )
+    if candidates:
+        bead = candidates[0]
+        bead_id = str(bead["id"])
+        title = str(bead.get("title") or "").strip()
+        return {
+            "action": "wake_mayor",
+            "reason": "ladder_factory",
+            "rung": "factory",
+            "ladder_bead": bead_id,
+            "wake_key": f"ladder:factory:{bead_id}",
+            "subject": f"USINE · amélioration {bead_id}",
+            "message": (
+                "Ligne Factory prioritaire, ou aucun résultat produit n'est éligible "
+                "(ADR-0016 §7, échelle d'inactivité, échelon 2). "
+                f"Prends le bead Factory {bead_id} — « {title} » (P{_priority(bead)}). "
+                f"Réclame-le (`gc bd update {bead_id} --claim`), livre-le par le flux normal "
+                "avec ses preuves, puis ferme-le. S'il attend quelqu'un ou quelque chose, pose "
+                f"`gc bd update {bead_id} --set-metadata gc.waiting_on=<qui>` : l'échelle le "
+                "sautera. Un seul à la fois ; l'autre ligne passe devant seulement quand "
+                "celle-ci est vide, selon la priorité réglée par `./bin/mayor-campaign priority`."
+            ),
+        }
+
+    queue_candidate = _first_eligible_factory_queue_candidate(queue_candidates)
+    if queue_candidate is not None:
+        candidate_id = str(queue_candidate["id"])
+        title = str(queue_candidate.get("title") or "").strip()
+        return {
+            "action": "wake_mayor",
+            "reason": "ladder_factory_queue",
+            "rung": "factory_queue",
+            "ladder_bead": None,
+            "wake_key": f"materialize:{candidate_id}",
+            "subject": f"USINE · candidat file {candidate_id}",
+            "message": (
+                "Ligne Factory prioritaire, ou aucun bead Factory prêt, mais la file "
+                "`goal=none` a un candidat éligible (ADR-0016 §7, échelon 2b). "
+                f"Relis {candidate_id} — « {title} », crée son Bead d'exécution, puis "
+                f"`./bin/saymyname-product-queue materialize {candidate_id} <execution-bead> --mayor`, "
+                "et livre-le par le flux normal. Un seul candidat matérialisé à la fois ; l'autre "
+                "ligne passe devant seulement quand celle-ci est vide, selon la priorité réglée "
+                "par `./bin/mayor-campaign priority`."
+            ),
+        }
+
+    return {"action": "none", "reason": "factory_lane_empty", "wake_key": None}
+
+
 def plan_idle_ladder(
     ready: list[dict[str, Any]],
     now: float,
@@ -286,52 +352,9 @@ def plan_idle_ladder(
         # never indistinguishable from class D/E (stalled, defective).
         return {"action": "none", "reason": "maintain_alive_off", "wake_key": None}
 
-    candidates = sorted(
-        (bead for bead in ready if is_ladder_bead(bead)),
-        key=lambda bead: (_priority(bead), str(bead.get("created_at") or ""), str(bead["id"])),
-    )
-    if candidates:
-        bead = candidates[0]
-        bead_id = str(bead["id"])
-        title = str(bead.get("title") or "").strip()
-        return {
-            "action": "wake_mayor",
-            "reason": "ladder_factory",
-            "rung": "factory",
-            "ladder_bead": bead_id,
-            "wake_key": f"ladder:factory:{bead_id}",
-            "subject": f"USINE · amélioration {bead_id}",
-            "message": (
-                "Aucun résultat produit n'est éligible : ce n'est pas de l'inactivité "
-                "(ADR-0016 §7, échelle d'inactivité, échelon 2). "
-                f"Prends le bead Factory {bead_id} — « {title} » (P{_priority(bead)}). "
-                f"Réclame-le (`gc bd update {bead_id} --claim`), livre-le par le flux normal "
-                "avec ses preuves, puis ferme-le. S'il attend quelqu'un ou quelque chose, pose "
-                f"`gc bd update {bead_id} --set-metadata gc.waiting_on=<qui>` : l'échelle le "
-                "sautera. Un seul à la fois ; si un candidat produit redevient éligible, il passe devant."
-            ),
-        }
-
-    queue_candidate = _first_eligible_factory_queue_candidate(queue_candidates)
-    if queue_candidate is not None:
-        candidate_id = str(queue_candidate["id"])
-        title = str(queue_candidate.get("title") or "").strip()
-        return {
-            "action": "wake_mayor",
-            "reason": "ladder_factory_queue",
-            "rung": "factory_queue",
-            "ladder_bead": None,
-            "wake_key": f"materialize:{candidate_id}",
-            "subject": f"USINE · candidat file {candidate_id}",
-            "message": (
-                "Aucun bead Factory prêt, mais la file `goal=none` a un candidat éligible "
-                "(ADR-0016 §7, échelon 2b). "
-                f"Relis {candidate_id} — « {title} », crée son Bead d'exécution, puis "
-                f"`./bin/saymyname-product-queue materialize {candidate_id} <execution-bead> --mayor`, "
-                "et livre-le par le flux normal. Un seul candidat matérialisé à la fois ; si un "
-                "bead Factory ou un candidat produit redevient éligible, il passe devant."
-            ),
-        }
+    factory_plan = plan_factory_lane(ready, queue_candidates)
+    if factory_plan["action"] == "wake_mayor":
+        return factory_plan
 
     for rung, period in LADDER_GENERATIVE_RUNGS:
         last = _epoch(last_generative.get(rung))
