@@ -6,6 +6,7 @@ one sentence, then exactly one of: nothing to do (and what to follow), an
 easy action, or a delegation with a sentence he can type word for word. Never
 a bead id.
 """
+import calendar
 import re
 import sys
 import time
@@ -96,6 +97,27 @@ class Shape(unittest.TestCase):
         blocked = compute_alerts(snap(campaign={"blocked": True, "blocker_kind": "result_blocker", "cause": "preuve manquante"}))
         self.assert_shape(blocked[0], DELEGATE)
         self.assertIn(PROMPTS["result"], blocked[0]["message"])
+
+    def test_every_pool_exhausted_overrides_everything_with_nothing_to_do(self):
+        snapshot = snap(campaign={"blocked": True, "blocker_kind": "all_paused", "cause": "x"})
+        snapshot["provider_state"] = {"pools": {
+            "openai": {"status": "exhausted", "until": "2033-01-15T10:00:00Z"},
+            "anthropic": {"status": "exhausted", "until": "2033-01-15T08:00:00Z"},
+        }}
+        alerts = compute_alerts(snapshot, {}, NOW)
+        self.assertEqual(["quota_exhausted"], [a["key"] for a in alerts])
+        self.assert_shape(alerts[0], NOTHING)
+        self.assertIn("quota", alerts[0]["message"])
+        expected = time.localtime(calendar.timegm((2033, 1, 15, 8, 0, 0, 0, 0, 0)))
+        self.assertIn(f"{expected.tm_hour:02d}h00", alerts[0]["message"])
+
+    def test_one_pool_available_is_not_a_quota_stop(self):
+        snapshot = snap()
+        snapshot["provider_state"] = {"pools": {
+            "openai": {"status": "exhausted", "until": "2033-01-15T10:00:00Z"},
+            "anthropic": {"status": "available"},
+        }}
+        self.assertEqual([], compute_alerts(snapshot, {}, NOW))
 
     def test_a_decision_block_is_one_delegation_not_two(self):
         alerts = compute_alerts(snap(

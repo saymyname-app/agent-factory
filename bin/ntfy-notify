@@ -123,6 +123,10 @@ def main() -> int:
         print(f"ntfy-notify: ERROR: {exc}", file=sys.stderr)
         return 1
 
+    try:
+        snapshot["provider_state"] = json.loads((ROOT / ".gc" / "provider-state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
     state = load_state()
     now = time.time()
     first_seen = {k[len("first:"):]: v for k, v in state.items() if k.startswith("first:")}

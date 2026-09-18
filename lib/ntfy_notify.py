@@ -19,6 +19,7 @@ priority. It never talks to the network -- see `bin/ntfy-notify`.
 """
 from __future__ import annotations
 
+import calendar
 import re
 import time
 from typing import Any
@@ -70,6 +71,27 @@ def _alert(key: str, title: str, state: str, kind: str, todo: str, priority: str
     }
 
 
+def providers_exhausted_until(provider_state: Any, now: float) -> str | None:
+    """Local HH:MM of the earliest quota return if EVERY pool is exhausted, else None."""
+    pools = (provider_state or {}).get("pools") or {}
+    if not pools:
+        return None
+    returns = []
+    for pool in pools.values():
+        if (pool or {}).get("status") != "exhausted":
+            return None
+        try:
+            until = calendar.timegm(time.strptime(str(pool.get("until"))[:19], "%Y-%m-%dT%H:%M:%S"))
+        except (TypeError, ValueError):
+            continue
+        if until > now:
+            returns.append(until)
+    if not returns:
+        return None
+    lt = time.localtime(min(returns))
+    return f"{lt.tm_hour:02d}h{lt.tm_min:02d}"
+
+
 def compute_alerts(snapshot: dict[str, Any], first_seen: dict[str, float] | None = None,
                    now: float | None = None) -> list[dict[str, str]]:
     """Return the alert-worthy findings, each already phrased for the phone.
@@ -87,6 +109,16 @@ def compute_alerts(snapshot: dict[str, Any], first_seen: dict[str, float] | None
 
     def age(key: str) -> float:
         return now - first_seen.get(key, now)
+
+    # 0. Every provider pool exhausted: nothing can run, whatever the campaign
+    # says. On 2026-09-18 the Factory sat idle 05:20-13:00 on quota while the
+    # phone said "l'usine avance" (all_paused) -- the state was a lie.
+    quota_until = providers_exhausted_until(snapshot.get("provider_state"), now)
+    if quota_until:
+        alerts.append(_alert("quota_exhausted", "Usine : à l'arrêt, quota épuisé",
+                             f"tous les fournisseurs IA sont à court de quota ; rien ne tourne jusqu'à {quota_until}.",
+                             NOTHING, "Elle repart seule au retour du quota.", "default"))
+        return alerts
 
     # 1. A blocked campaign is the state that matters most; say why in one line.
     if campaign.get("blocked"):

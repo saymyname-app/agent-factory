@@ -103,6 +103,30 @@ another hand-write.
 - Reversal: delete `bin/campaign-pointer` and restore the prose
   instructions — nothing else depends on it.
 
+## Amendment — 2026-09-18, after the first implementation attempt
+
+The decision stands. Two corrections to how it is delivered and scoped:
+
+1. **Deliver it in slices, not in one PR.** The first implementation (PR
+   #114) changed 21 files and every dispatch script at once (+710/-119), went
+   red in CI, and the provider quota ran out before anyone could fix it — the
+   riskiest possible shape for a change to the dispatch loop. Slices, each
+   mergeable and useful alone: (a) `bin/campaign-pointer` + its tests, called
+   by nobody yet; (b) the Mayor prompt and `docs/OPERATIONS.md` switch to it;
+   (c) one bypass at a time (`mayor-campaign` → `product-queue quarantine`,
+   `mol-do-work` → `deliver-close`, `factory-guard` → `escalate`); (d) the
+   guard invariants; (e) the "no `--set-metadata` on coordination keys" grep
+   test last, once nothing legitimate trips it. Reader-degrade work already
+   landed separately (#90, #109).
+2. **Lane priority is coordination state and is born with a door.** Benjamin
+   (2026-09-18 ~09:40): factory-first / product-first is a PRIORITY order
+   with automatic fallthrough and a cockpit switch, not an exclusive pause.
+   The switch is one field on the coordination root, written only by
+   `mayor-campaign priority factory|product` (and the cockpit button that
+   calls it), read by the sentinel's planner. Pausing the other lane by hand
+   — what the PO session did on 2026-09-18 02:30 — is exactly the kind of
+   hand-written state this ADR exists to end.
+
 ## Evidence
 
 - Audit 2026-09-18 (PO session, read-only): inventory of every `gc.*` key
