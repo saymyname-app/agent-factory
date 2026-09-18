@@ -226,38 +226,46 @@ derive_active_context() {
   # A deliberately direct `gc sling --no-formula` assignment has no workflow
   # root. Prefer its stable Gas City session ID; accept an exact unique session
   # name only when no ID was recorded. Never infer work from an unrelated session.
-  direct_session_id=$(metadata_optional "$current_issue" "gc.session_id")
-  direct_session_name=$(metadata_optional "$current_issue" "gc.session_name")
-  if [[ -n $direct_session_id || -n $direct_session_name ]]; then
-    if [[ -n $direct_session_id ]]; then
-      direct_matches=$(jq --arg id "$direct_session_id" \
-        '[.agents[]? | select((.id // "") == $id)]' <<<"$CITY_RESPONSE")
-      if [[ $(jq 'length' <<<"$direct_matches") -eq 0 && -n $direct_session_name ]]; then
+  # A v2 workflow root (gc.kind=workflow) stamps gc.session_name once from its
+  # first step and never updates it as later steps hand off to new sessions, so
+  # this branch must not run for one -- it would look up a long-dead session and
+  # report materialized/no-agent even while the workflow is genuinely active via
+  # its current step's session. Skip straight to the convoy/workflow-matching
+  # logic below, which always resolves the live current step.
+  if [[ $(metadata_optional "$current_issue" "gc.kind") != workflow ]]; then
+    direct_session_id=$(metadata_optional "$current_issue" "gc.session_id")
+    direct_session_name=$(metadata_optional "$current_issue" "gc.session_name")
+    if [[ -n $direct_session_id || -n $direct_session_name ]]; then
+      if [[ -n $direct_session_id ]]; then
+        direct_matches=$(jq --arg id "$direct_session_id" \
+          '[.agents[]? | select((.id // "") == $id)]' <<<"$CITY_RESPONSE")
+        if [[ $(jq 'length' <<<"$direct_matches") -eq 0 && -n $direct_session_name ]]; then
+          direct_matches=$(jq --arg name "$direct_session_name" \
+            '[.agents[]? | select(((.id // "") == "") and ((.qualified_name // "") == $name or (.name // "") == $name or (.alias // "") == $name))]' \
+            <<<"$CITY_RESPONSE")
+        fi
+      else
         direct_matches=$(jq --arg name "$direct_session_name" \
-          '[.agents[]? | select(((.id // "") == "") and ((.qualified_name // "") == $name or (.name // "") == $name or (.alias // "") == $name))]' \
+          '[.agents[]? | select((.qualified_name // "") == $name or (.name // "") == $name or (.alias // "") == $name)]' \
           <<<"$CITY_RESPONSE")
       fi
-    else
-      direct_matches=$(jq --arg name "$direct_session_name" \
-        '[.agents[]? | select((.qualified_name // "") == $name or (.name // "") == $name or (.alias // "") == $name)]' \
-        <<<"$CITY_RESPONSE")
+      [[ $(jq 'length' <<<"$direct_matches") -le 1 ]] \
+        || die "Direct assignment session for $current_id is ambiguous in Gas City."
+      if [[ $(jq 'length' <<<"$direct_matches") -eq 1 ]] && jq -e \
+        '.[0] | ((.running // false) == true or (.state // "") == "active")' \
+        >/dev/null <<<"$direct_matches"; then
+        direct_agent=$(jq -er '.[0] | .qualified_name // .name // .alias // .id' <<<"$direct_matches") \
+          || die "Direct assignment session has no stable display identity."
+        CURRENT_STATE="active"
+        CURRENT_PHASE="Réalisation"
+        CURRENT_AGENT=$direct_agent
+      else
+        CURRENT_STATE="materialized"
+        CURRENT_PHASE="Résultat affecté directement, aucun agent produit actif"
+        CURRENT_AGENT="none"
+      fi
+      return
     fi
-    [[ $(jq 'length' <<<"$direct_matches") -le 1 ]] \
-      || die "Direct assignment session for $current_id is ambiguous in Gas City."
-    if [[ $(jq 'length' <<<"$direct_matches") -eq 1 ]] && jq -e \
-      '.[0] | ((.running // false) == true or (.state // "") == "active")' \
-      >/dev/null <<<"$direct_matches"; then
-      direct_agent=$(jq -er '.[0] | .qualified_name // .name // .alias // .id' <<<"$direct_matches") \
-        || die "Direct assignment session has no stable display identity."
-      CURRENT_STATE="active"
-      CURRENT_PHASE="Réalisation"
-      CURRENT_AGENT=$direct_agent
-    else
-      CURRENT_STATE="materialized"
-      CURRENT_PHASE="Résultat affecté directement, aucun agent produit actif"
-      CURRENT_AGENT="none"
-    fi
-    return
   fi
 
   capture_json workflows_response "Beads workflow inventory" \

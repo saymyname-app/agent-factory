@@ -77,6 +77,7 @@ emit_current() {
   [[ $scenario != closed-waiting-on ]] || metadata='{"gc.waiting_on":"po"}'
   [[ $scenario != finalizing ]] || metadata='{"gc.work_outcome":"pass"}'
   [[ $scenario != direct && $scenario != direct-ambiguous ]] || metadata='{"gc.session_id":"af-jqla","gc.session_name":"codex-af-jqla","gc.routed_to":"saymyname-backend/codex"}'
+  [[ $scenario != workflow-root ]] || metadata='{"gc.kind":"workflow","gc.session_id":"af-stale-session","gc.session_name":"codex-af-stale"}'
   cat <<JSON
 [{"id":"$issue_id","title":"$title","status":"$status","parent":"$parent","metadata":$metadata}]
 JSON
