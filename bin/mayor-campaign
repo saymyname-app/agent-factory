@@ -22,7 +22,7 @@ from factory_campaign import (  # noqa: E402
     FAILURE_THRESHOLD, LADDER_GENERATIVE_RUNGS, CampaignDecisionError,
     plan_factory_lane, plan_idle_ladder, plan_transition,
 )
-from factory_state import StateContractError, project_campaign_metadata  # noqa: E402
+from factory_state import _text, StateContractError, project_campaign_metadata  # noqa: E402
 
 
 PROGRAM = "mayor-campaign"
@@ -205,6 +205,11 @@ def activate(args: argparse.Namespace) -> None:
         "gc.campaign_state": "active",
         "gc.campaign_candidate": args.candidate,
         "gc.campaign_condition": args.condition,
+        # ADR-0023 / af-hihkg: the last valid pair, kept so `repair --mayor`
+        # can restore gc.campaign_candidate/condition if either is ever found
+        # missing on the coordination bead without needing to guess.
+        "gc.campaign_candidate_last": args.candidate,
+        "gc.campaign_condition_last": args.condition,
         "gc.campaign_owner": "Mayor",
         "gc.campaign_action": "Aucune action de Benjamin; le sentinelle réveille le Mayor quand une transition est due.",
         "gc.campaign_block_kind": "",
@@ -249,7 +254,16 @@ def resume(args: argparse.Namespace) -> None:
     needs = str(issue.get("metadata", {}).get("gc.needs_benjamin", "")).strip()
     if campaign["blocker_kind"] == "decision" and needs and not needs.lower().startswith("none"):
         raise CampaignCommandError("La décision NEEDS BENJAMIN est encore effective.")
-    update_metadata({
+    if not campaign["candidate_id"] or not campaign["condition"]:
+        # af-hihkg: repair --mayor may have left the campaign blocked (kind
+        # admin) with no candidate/condition because it had no last valid
+        # value to restore. Resuming into "active" without one would just
+        # move the same StateContractError to the very next read.
+        raise CampaignCommandError(
+            "Candidat/condition de campagne manquants; fournir des valeurs valides "
+            "(voir gc.campaign_cause) avant toute reprise."
+        )
+    updates = {
         "gc.campaign_state": "active",
         "gc.campaign_owner": "Mayor",
         "gc.campaign_action": "Aucune action de Benjamin; le sentinelle réveille le Mayor quand une transition est due.",
@@ -258,8 +272,13 @@ def resume(args: argparse.Namespace) -> None:
         "gc.campaign_wake_key": "",
         "gc.campaign_wake_state": "none",
         "gc.campaign_failure_count": "0",
+        # ADR-0023 / af-hihkg: refresh the last-valid pair on every successful
+        # resume too, mirroring activate.
+        "gc.campaign_candidate_last": campaign["candidate_id"],
+        "gc.campaign_condition_last": campaign["condition"],
         "gc.campaign_last_error": "",
-    })
+    }
+    update_metadata(updates)
     print("RESUMED: campaign active")
 
 
@@ -285,6 +304,86 @@ def complete(args: argparse.Namespace) -> None:
         "gc.campaign_last_error": "",
     })
     print("COMPLETED: no active or eligible product result")
+
+
+# ADR-0023 / af-hihkg: coordination-root pointer fields must hold a Bead id
+# or the literal "none" -- never an empty string, which a reader cannot tell
+# apart from "still being written". gc.next_outcome is retired (ADR-0023
+# bullet 1) and is deliberately not repaired here.
+COORDINATION_POINTER_FIELDS = (
+    "gc.current", "gc.current_jit", "gc.last_delivered",
+    "gc.needs_benjamin", "gc.blocked_reason",
+    "gc.campaign_candidate", "gc.campaign_condition", "gc.resume_condition",
+)
+
+
+def repair(args: argparse.Namespace) -> None:
+    """The repair door for the 2026-09-18 08:43Z incident shape (af-hihkg).
+
+    gc.campaign_candidate went missing on the coordination Bead by a hand-write
+    while the automatic campaign was still active; the sentinel then dies on
+    StateContractError and `activate` refuses to touch an already-active
+    campaign, so nothing could repair it short of another hand-write -- exactly
+    what ADR-0023 exists to end. This reads raw metadata (never `coordination()`,
+    which would itself raise on the corruption being repaired), restores
+    gc.campaign_candidate/condition from the last valid pair recorded at every
+    successful activate/resume, and normalises any empty-string coordination
+    pointer to "none". When automatic mode is on but no last valid pair is on
+    record either, it blocks the campaign (kind admin) with a plain cause
+    instead of guessing a candidate.
+    """
+    require_mayor(args.authority)
+    issue = coordination_issue()
+    metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+    if _text(metadata.get("gc.campaign_mode")) != "automatic":
+        print("NOOP: aucune campagne automatique à réparer")
+        return
+
+    changes: dict[str, str] = {}
+    for field in COORDINATION_POINTER_FIELDS:
+        raw = metadata.get(field)
+        if isinstance(raw, str) and raw.strip() == "":
+            changes[field] = "none"
+
+    working = {**metadata, **changes}
+    if not _text(working.get("gc.campaign_candidate")) or not _text(working.get("gc.campaign_condition")):
+        last_candidate = _text(working.get("gc.campaign_candidate_last"))
+        last_condition = _text(working.get("gc.campaign_condition_last"))
+        if last_candidate and last_condition:
+            changes["gc.campaign_candidate"] = last_candidate
+            changes["gc.campaign_condition"] = last_condition
+        else:
+            changes.update({
+                "gc.campaign_candidate": "none",
+                "gc.campaign_condition": "none",
+                "gc.campaign_state": "blocked",
+                "gc.campaign_owner": "Mayor",
+                "gc.campaign_action": (
+                    "Diagnostiquer la cause, puis fournir un candidat et une condition "
+                    "valides avant toute reprise."
+                ),
+                "gc.campaign_block_kind": "admin",
+                "gc.campaign_cause": (
+                    "gc.campaign_candidate/gc.campaign_condition manquants et aucune "
+                    "dernière valeur valide disponible (gc.campaign_candidate_last / "
+                    "gc.campaign_condition_last)."
+                ),
+                "gc.campaign_wake_key": "",
+                "gc.campaign_wake_state": "none",
+            })
+
+    if not changes:
+        print("NOOP: rien à réparer")
+        return
+
+    try:
+        project_campaign_metadata({**metadata, **changes})
+    except StateContractError as exc:
+        raise CampaignCommandError(f"La réparation calculée resterait invalide: {exc}") from exc
+
+    update_metadata(changes)
+    for key in sorted(changes):
+        print(f"FIXED: {key} -> {changes[key]}")
 
 
 PRIORITY_LANES = ("factory", "product")
@@ -899,6 +998,12 @@ def parser() -> argparse.ArgumentParser:
     complete_parser = commands.add_parser("complete", help="record an empty eligible queue")
     complete_parser.add_argument("--mayor", dest="authority", action="store_true")
     complete_parser.set_defaults(handler=complete)
+
+    repair_parser = commands.add_parser(
+        "repair", help="restore a missing campaign candidate/condition, or block if unrecoverable (ADR-0023)"
+    )
+    repair_parser.add_argument("--mayor", dest="authority", action="store_true")
+    repair_parser.set_defaults(handler=repair)
 
     priority_parser = commands.add_parser(
         "priority", help="get or set which lane (factory|product) is priority (ADR-0023)"

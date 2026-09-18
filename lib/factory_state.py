@@ -106,7 +106,14 @@ def project_campaign_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         raise StateContractError("Le compteur d'échec de campagne est négatif.")
     if state not in CAMPAIGN_STATES - {"inactive"}:
         raise StateContractError("État de campagne automatique manquant ou inconnu.")
-    if not condition or not candidate_id:
+    # Required whenever the campaign is actually operating (active/awaiting_mayor/
+    # running) or completed, matching this check's own message. A blocked campaign
+    # is the one state repair (bin/mayor-campaign repair --mayor, ADR-0023,
+    # af-hihkg) may need to reach with neither field known: when no last valid
+    # value exists to restore, repair blocks with kind admin rather than
+    # guessing a candidate/condition, and the contract must not itself force
+    # a guess just to stay parseable.
+    if state != "blocked" and (not condition or not candidate_id):
         raise StateContractError("Une campagne active doit exposer sa condition et son candidat d'autorisation.")
     if owner not in {"system", "Mayor", "Benjamin", "none"}:
         raise StateContractError("Responsable de campagne inconnu.")
