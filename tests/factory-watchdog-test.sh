@@ -57,12 +57,20 @@ case "\$1 \$2" in
     exit 0 ;;
   "bd update")
     id="\$3"
-    pair="\$5"; key="\${pair%%=*}"; value="\${pair#*=}"
     f="$BEADS_DIR/\$id.json"
     [[ "\$id" == af-1vr4 ]] && f="$COORD"
     if [[ ! -f "\$f" ]]; then echo '[{"id":"'"\$id"'","status":"open","metadata":{}}]' > "\$f"; fi
-    jq --arg k "\$key" --arg v "\$value" '(.[0].metadata // {}) as \$m | .[0].metadata = (\$m + {(\$k):\$v})' "\$f" > "\$f.next"
-    mv "\$f.next" "\$f"
+    shift 3
+    while [[ \$# -gt 0 ]]; do
+      if [[ "\$1" == "--set-metadata" ]]; then
+        pair="\$2"; key="\${pair%%=*}"; value="\${pair#*=}"
+        jq --arg k "\$key" --arg v "\$value" '(.[0].metadata // {}) as \$m | .[0].metadata = (\$m + {(\$k):\$v})' "\$f" > "\$f.next"
+        mv "\$f.next" "\$f"
+        shift 2
+      else
+        shift
+      fi
+    done
     exit 0 ;;
   "mail send")
     printf '%s\n' "\$*" >> "$MAIL"
@@ -142,6 +150,9 @@ printf '[]' > "$PRS"
 
 # 6. a false-success workflow close is paged once, then throttled forever ----
 jq -n '[{"id":"af-g7ts","status":"closed","title":"mol-scoped-work","metadata":{"gc.kind":"workflow","gc.outcome":"fail"}}]' > "$WORKFLOWS"
+# `gc bd show` must agree with the `gc bd list` view above -- the watchdog now
+# reads status/outcome off it to fingerprint what was reported.
+cp "$WORKFLOWS" "$BEADS_DIR/af-g7ts.json"
 reset_logs
 out=$(watchdog)
 grep -q "false-success close — af-g7ts closed CLOSED but gc.outcome=fail" <<<"$out" || { echo "$out" >&2; fail "false-success close not reported"; }
@@ -151,6 +162,32 @@ reset_logs
 out=$(watchdog)
 grep -q "false-success close — af-g7ts" <<<"$out" || fail "the false-success close should still be reported"
 [ "$(mails)" = "0" ] || fail "a false-success close must only ever be paged once (permanently throttled)"
+
+# ...but if the bead's own state later changes (outcome corrected, or flipped
+# back to something worth reporting again), af-u61xq's fingerprint re-fires --
+# "already flagged" alone must not throttle forever once the state moves.
+jq '.[0].metadata["gc.outcome"] = "abort"' "$BEADS_DIR/af-g7ts.json" > "$BEADS_DIR/af-g7ts.json.next"
+mv "$BEADS_DIR/af-g7ts.json.next" "$BEADS_DIR/af-g7ts.json"
+reset_logs
+out=$(watchdog)
+[ "$(mails)" = "1" ] || fail "a changed outcome on an already-flagged bead must be re-reported, not throttled forever"
+
+reset_logs
+out=$(watchdog)
+[ "$(mails)" = "0" ] || fail "the changed state must itself now be throttled once reported"
+printf '[]' > "$WORKFLOWS"
+
+# ...a bead already flagged under the pre-af-u61xq idiom (timestamp only, no
+# fingerprint) must not be re-mailed on the first run after upgrade -- it
+# backfills the fingerprint silently instead (the 7 known af-x4p4-class
+# historical offenders this fix targets).
+jq -n '[{"id":"af-x4p4","status":"closed","title":"mol-scoped-work","metadata":{"gc.kind":"workflow","gc.outcome":"fail"}}]' > "$WORKFLOWS"
+printf '[{"id":"af-x4p4","status":"closed","metadata":{"gc.kind":"workflow","gc.outcome":"fail","gc.watchdog_flagged_false_success":"2026-09-01T00:00:00Z"}}]' > "$BEADS_DIR/af-x4p4.json"
+reset_logs
+out=$(watchdog)
+grep -q "false-success close — af-x4p4" <<<"$out" || fail "the legacy-flagged close should still be reported in stdout"
+[ "$(mails)" = "0" ] || fail "a legacy-flagged bead (timestamp only, unchanged state) must not be re-mailed on upgrade"
+grep -q "gc.watchdog_false_success_fp=closed:fail" "$CALLS" || fail "the fingerprint was not backfilled for the legacy-flagged bead"
 printf '[]' > "$WORKFLOWS"
 
 # 7. a still-open campaign-liveness defect is re-nudged on a cooldown --------
@@ -170,5 +207,25 @@ echo '[{"id":"af-live1","status":"closed"}]' > "$BEADS_DIR/af-live1.json"
 reset_logs
 out=$(watchdog)
 grep -q "campaign-liveness defect" <<<"$out" && fail "a closed liveness defect must not still be reported"
+
+# 8. exit-code contract (af-u61xq, same contract as factory-guard since PR
+#    #75): finding something is NOT a failure. Only the watchdog itself
+#    failing to run (unreachable root) is a nonzero exit. This was previously
+#    exit 1 on every ATTENTION finding, which fed recurring order.failed noise
+#    into on-order-failed every 5-minute tick.
+jq -n --arg c "$(iso $((NOW - 3000)))" '[{"id":"af-oihx3","status":"open","await_type":"human","created_at":$c}]' > "$GATES"
+reset_logs
+set +e
+FACTORY_ROOT="$TMP/city" "$WATCHDOG" >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" = "0" ] || fail "exit code must be 0 when the watchdog ran and merely found something (was $rc)"
+printf '[]' > "$GATES"
+
+set +e
+FACTORY_ROOT="$TMP/does-not-exist" "$WATCHDOG" >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" != "0" ] || fail "exit code must be nonzero when the watchdog itself could not run (unreachable root)"
 
 printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, and re-nudges an open liveness defect, all throttled and silent under --check-only\n'

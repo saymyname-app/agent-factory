@@ -4,13 +4,14 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from factory_watchdog import assess_gate, assess_pr, assess_workflow  # noqa: E402
+from factory_watchdog import assess_gate, assess_pr, assess_workflow, merge_signals  # noqa: E402
 
 NOW = 1789555200.0  # 2026-09-16T10:40:00Z
 
@@ -139,6 +140,61 @@ class WorkflowRules(unittest.TestCase):
         self.assertIsNone(assess_workflow(bead))
 
 
+class MergeSignals(unittest.TestCase):
+    """factory-watchdog-signals.json has three independently-scheduled writers
+    (factory-watchdog, on-order-failed, on-session-stranded -- af-u61xq,
+    tests/factory-cockpit-chaos-test.py's header comment, PR #82). A wholesale
+    overwrite from one used to erase whatever another just wrote; merge_signals
+    must instead read-modify-write, replacing only its own writer's slice.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = str(Path(self._tmp.name) / "factory-watchdog-signals.json")
+
+    def _alerts(self):
+        return json.loads(Path(self.path).read_text(encoding="utf-8"))["alerts"]
+
+    def test_two_writers_do_not_clobber_each_other(self):
+        merge_signals(self.path, "factory-watchdog", [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate aged"}])
+        merge_signals(self.path, "on-order-failed", [{"kind": "order_failed", "id": "af-new1", "message": "dolt-remotes-patrol failing"}])
+        alerts = self._alerts()
+        self.assertEqual(2, len(alerts))
+        sources = {a["source"] for a in alerts}
+        self.assertEqual({"factory-watchdog", "on-order-failed"}, sources)
+
+    def test_a_writer_re_running_replaces_only_its_own_slice(self):
+        merge_signals(self.path, "factory-watchdog", [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate aged 30m"}])
+        merge_signals(self.path, "on-session-stranded", [{"kind": "session_stranded", "id": "af-br7i", "message": "reopened af-stuck1"}])
+        # factory-watchdog runs again with an updated view (gate resolved, nothing to report)
+        merge_signals(self.path, "factory-watchdog", [])
+        alerts = self._alerts()
+        self.assertEqual(1, len(alerts))
+        self.assertEqual("on-session-stranded", alerts[0]["source"])
+        self.assertEqual("af-br7i", alerts[0]["id"])
+
+    def test_a_writer_updates_its_own_stale_entry_in_place(self):
+        merge_signals(self.path, "factory-watchdog", [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate aged 30m"}])
+        merge_signals(self.path, "factory-watchdog", [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate aged 60m"}])
+        alerts = self._alerts()
+        self.assertEqual(1, len(alerts))
+        self.assertEqual("gate aged 60m", alerts[0]["message"])
+
+    def test_three_writers_all_survive_in_any_order(self):
+        merge_signals(self.path, "on-session-stranded", [{"kind": "session_stranded", "id": "af-br7i", "message": "m1"}])
+        merge_signals(self.path, "factory-watchdog", [{"kind": "pr_conflicting", "id": "57", "message": "m2"}])
+        merge_signals(self.path, "on-order-failed", [{"kind": "order_failed", "id": "af-new1", "message": "m3"}])
+        alerts = self._alerts()
+        ids = {a["id"] for a in alerts}
+        self.assertEqual({"af-br7i", "57", "af-new1"}, ids)
+
+    def test_a_missing_or_malformed_file_starts_clean(self):
+        Path(self.path).write_text("not json", encoding="utf-8")
+        merge_signals(self.path, "factory-watchdog", [{"kind": "aged_human_gate", "id": "af-oihx", "message": "m"}])
+        self.assertEqual(1, len(self._alerts()))
+
+
 class Cli(unittest.TestCase):
     def _run(self, subcommand: str, payload: str) -> list[str]:
         result = subprocess.run(
@@ -168,6 +224,22 @@ class Cli(unittest.TestCase):
         self.assertEqual([], self._run("gates", "[]"))
         self.assertEqual([], self._run("prs", "[]"))
         self.assertEqual([], self._run("workflows", "[]"))
+
+    def test_merge_signals_subcommand_round_trips_through_the_real_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "signals.json")
+            for source, alert in (
+                ("factory-watchdog", {"kind": "aged_human_gate", "id": "af-oihx", "message": "m1"}),
+                ("on-order-failed", {"kind": "order_failed", "id": "af-new1", "message": "m2"}),
+            ):
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "lib" / "factory_watchdog.py"), "merge-signals", path, source],
+                    input=json.dumps([alert]), capture_output=True, text=True,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            self.assertEqual(2, len(data["alerts"]))
+            self.assertEqual({"factory-watchdog", "on-order-failed"}, {a["source"] for a in data["alerts"]})
 
 
 if __name__ == "__main__":
