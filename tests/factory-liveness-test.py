@@ -64,6 +64,26 @@ class LivenessRules(unittest.TestCase):
         self.assertEqual(("bad", "stale"), assess(stale, NOW, current_result=cold_result)[:2])
         self.assertEqual(("bad", "stale"), assess(stale, NOW, current_result=None)[:2])
 
+    def test_stale_heartbeat_is_not_masked_by_an_unrelated_metadata_write(self):
+        """af-i64cb: once a result has ever sent a heartbeat, a later bare
+        `updated_at` bump (a nudge, an unrelated bookkeeping write) must not
+        be trusted as evidence of real progress -- only the heartbeat can
+        revive it."""
+        stale = meta(**{"gc.campaign_progress_at": "2026-09-16T09:10:00Z"})
+        result = {
+            "updated_at": "2026-09-16T10:39:00Z",  # 1 min ago: unrelated write
+            "metadata": {"gc.last_heartbeat_at": "2026-09-16T08:00:00Z"},  # 2h40m ago: stale
+        }
+        self.assertEqual(("bad", "stale"), assess(stale, NOW, current_result=result)[:2])
+
+    def test_updated_at_still_covers_a_result_that_never_heartbeat(self):
+        """A result whose code never stamps gc.last_heartbeat_at at all still
+        needs the updated_at fallback, or af-ooob8's original gap reopens."""
+        stale = meta(**{"gc.campaign_progress_at": "2026-09-16T09:10:00Z"})
+        result = {"updated_at": "2026-09-16T10:35:00Z", "metadata": {}}
+        level, code, _ = assess(stale, NOW, current_result=result)
+        self.assertEqual(("ok", "active_result"), (level, code))
+
     def test_a_pending_product_decision_still_expects_factory_progress(self):
         """ADR-0016 s.4: a decision parks product work, never the factory."""
         stalled = meta(**{

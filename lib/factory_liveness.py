@@ -146,24 +146,26 @@ def _current_result_activity(current_result: dict[str, Any] | None) -> float | N
     the sentinel's transition planner recognizes (bin/mayor-campaign);
     a long-running phase outside that set -- a review sub-session, for
     instance -- can advance for hours without ever refreshing it. Before
-    calling that silence a stall, check the result bead's own signals: its
-    heartbeat and its last update. Either one moving inside the liveness
-    window is real, ground-truth evidence that the current result is not
-    stuck, independent of whether the sentinel's own bookkeeping caught it.
+    calling that silence a stall, check the result bead's own heartbeat.
+
+    Prefer gc.last_heartbeat_at whenever it has ever been stamped for this
+    result: it is a deliberate signal, written only by the code that knows
+    real work happened. Only fall back to the bead's generic `updated_at`
+    when no heartbeat has ever been recorded at all -- af-i64cb: `updated_at`
+    moves on ANY write to the bead (a nudge, an unrelated metadata backfill,
+    a label change from another script), so once heartbeats are wired for a
+    result, trusting a bare `updated_at` bump on top of them can mask a
+    genuine stall behind bookkeeping noise that has nothing to do with
+    progress. A result that has literally never sent a heartbeat still needs
+    the `updated_at` fallback, or af-ooob8's original gap reopens.
     """
     if not isinstance(current_result, dict):
         return None
     metadata = current_result.get("metadata") if isinstance(current_result.get("metadata"), dict) else {}
-    return max(
-        (
-            ts for ts in (
-                _epoch(metadata.get("gc.last_heartbeat_at")),
-                _epoch(current_result.get("updated_at")),
-            )
-            if ts is not None
-        ),
-        default=None,
-    )
+    heartbeat = _epoch(metadata.get("gc.last_heartbeat_at"))
+    if heartbeat is not None:
+        return heartbeat
+    return _epoch(current_result.get("updated_at"))
 
 
 def mayor_page_since(
