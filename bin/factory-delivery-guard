@@ -26,9 +26,21 @@
 #   - otherwise (no repo/PR recorded at all, or `gh` disagrees with what is
 #     recorded), flag the bead exactly once by writing
 #     gc.delivery_proof_flagged_at / gc.delivery_proof_missing on the bead
-#     itself. A bead that already carries that flag is reported again (so it
-#     never silently disappears) but the flag itself is not rewritten, so a
-#     human or the Mayor sees it once, not on every guard run.
+#     itself, and page the Mayor once. A bead that already carries that flag
+#     is reported again (so it never silently disappears) but the flag
+#     itself is not rewritten and the Mayor is not paged again, so a human
+#     or the Mayor sees it once, not on every guard run.
+#
+# ADR-0023 bullet 5 asks for an orphan-label repair here too (a product-goal
+# label with no door-written state gets the label stripped mechanically).
+# That is deliberately NOT done: nothing writes the product-goal label
+# through a door yet (bullet 3 is aspirational), so "missing proof" cannot
+# mechanically distinguish a genuine mislabel from a real delivery bead
+# closed the wrong way (the actual af-7700 shape above) -- stripping the
+# label on that signal alone would erase real incidents, not just orphans.
+# Until a door writes the label, this guard stays in the safe half of
+# bullet 5: it pages the Mayor once for a human/Mayor call instead of
+# guessing.
 #
 # It also scans the adjacent gap (af-1xz1g): a CLOSED bead of any label
 # carrying gc.outcome=pass or gc.work_outcome=shipped plus its own
@@ -81,6 +93,17 @@ say()  { printf '%s\n' "$*"; }
 bad()  { PROBLEMS+=("$1"); STATUS=1; }
 did()  { ACTIONS+=("$1"); say "  REPAIRED: $1"; }
 
+page_mayor_once() {  # id label why
+  local id=$1 label=$2 why=$3
+  (cd "$ROOT" && "$GC_BIN" mail send mayor --notify \
+    -s "Delivery proof incomplete: $id" \
+    -m "ACTION: factory-delivery-guard flagged $id ($label) — delivery proof incomplete and unverifiable
+STATE: $why
+EVIDENCE: gc bd show $id
+NEXT: decide whether $id is a genuine delivery bead closed the wrong way (repair via bin/deliver-close's evidence) or a mislabel (remove the product-goal label by hand)" \
+    >/dev/null 2>&1)
+}
+
 # gc_for <rig>: prints the gc invocation prefix for the city (rig="") or a rig.
 gc_for() {
   if [ -z "$1" ]; then printf '%s bd' "$GC_BIN"; else printf '%s bd --rig %s' "$GC_BIN" "$1"; fi
@@ -128,6 +151,7 @@ handle_unverifiable() {  # id label rig missing already_flagged why
           --set-metadata "gc.delivery_proof_flagged_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
           --set-metadata "gc.delivery_proof_missing=$missing" >/dev/null 2>&1); then
       did "flagged $id ($label) once for human review ($why)"
+      page_mayor_once "$id" "$label" "$why (missing: $missing)"
     else
       bad "$id ($label) could not be flagged — the Beads write itself failed"
     fi
