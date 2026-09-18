@@ -76,13 +76,29 @@ fi
 grep -q "REFUSED" out3.txt || { cat out3.txt >&2; fail "reset refusal did not explain why"; }
 
 # ---------------------------------------------------------------------------
-# 4. git checkout to an EXISTING branch is auto-reverted (the exact incident)
+# 4. git checkout to an EXISTING branch is refused, one way or another
+#
+# Which hook actually stops it is git-version-dependent: on git 2.43 a plain
+# checkout to an existing branch only repoints the HEAD symbolic ref and
+# reference-transaction never fires, so post-checkout does the soft
+# switch-then-revert (REFUSED + "Reverted automatically"). On newer git
+# (observed on GitHub's ubuntu-latest runner) reference-transaction DOES
+# fire for this case and hard-aborts the checkout before it ever happens
+# ("aborted by the reference-transaction hook", non-zero exit, HEAD never
+# moves). Both are a correct refusal -- the live root ends on 'main' either
+# way -- so accept either path instead of assuming one.
 # ---------------------------------------------------------------------------
-git checkout other >out4.txt 2>&1 || true
-grep -q "REFUSED" out4.txt || { cat out4.txt >&2; fail "switching to an existing branch was not refused"; }
-grep -q "Reverted automatically" out4.txt || { cat out4.txt >&2; fail "the live root was not reverted after the switch"; }
+rc=0
+git checkout other >out4.txt 2>&1 || rc=$?
 now=$(git rev-parse --abbrev-ref HEAD)
-[ "$now" = "main" ] || fail "the live root was left on '$now' instead of being reverted to 'main'"
+[ "$now" = "main" ] || fail "the live root was left on '$now' instead of staying/reverting to 'main'"
+if [ "$rc" -ne 0 ]; then
+  grep -q "reference-transaction hook" out4.txt \
+    || { cat out4.txt >&2; fail "checkout failed but not via the reference-transaction hook"; }
+else
+  grep -q "REFUSED" out4.txt || { cat out4.txt >&2; fail "switching to an existing branch was not refused"; }
+  grep -q "Reverted automatically" out4.txt || { cat out4.txt >&2; fail "the live root was not reverted after the switch"; }
+fi
 
 # ---------------------------------------------------------------------------
 # 5. factory-guard's own operations are exempt (FACTORY_GUARD_INTERNAL=1)

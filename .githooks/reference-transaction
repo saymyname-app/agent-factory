@@ -17,13 +17,18 @@
 # transaction (exit non-zero while state="prepared") -- covering commit,
 # reset, merge (fast-forward or not), and `checkout -b`/`switch -c` (which
 # create a real refs/heads/* entry). But `man githooks` documents it "does
-# not cover symbolic references", and a plain `git checkout <existing-
-# branch>`/`git switch <existing-branch>` only repoints the HEAD *symbolic*
-# ref -- verified empirically against git 2.43: no invocation at all. That
-# gap is covered instead by `.githooks/post-checkout`, which reverts the
-# live root back to its pinned branch immediately after such a switch
-# completes (see that file for why a true pre-checkout veto does not exist
-# in stock git).
+# not cover symbolic references", and in some git versions (empirically:
+# 2.43) a plain `git checkout <existing-branch>`/`git switch <existing-
+# branch>` only repoints the HEAD *symbolic* ref, with no reference-
+# transaction invocation at all -- but this is not guaranteed across git
+# versions (observed firing on GitHub's ubuntu-latest runner, likely a
+# newer git). When it fires, the case below still matches "checkout" and
+# aborts the transaction outright, which is a fine outcome by itself. The
+# gap on versions where it does NOT fire is covered by
+# `.githooks/post-checkout`, which reverts the live root back to its pinned
+# branch immediately after such a switch completes (see that file for why a
+# true pre-checkout veto does not exist in stock git). Both hooks are
+# written to make either behavior a correct refusal.
 #
 # The transaction payload alone (old/new sha + refname) cannot tell a
 # dangerous `git checkout -b x` apart from a harmless `git worktree add
