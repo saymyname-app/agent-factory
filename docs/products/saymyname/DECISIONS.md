@@ -589,6 +589,18 @@ in the product lane after the leaderboard redesign. Boundaries unchanged: no
 pricing decision (Enterprise tier stays deferred), public challenges remain
 the acquisition loop, no real personal data on the site.
 
+### 2026-09-18 — Factory work before product work, until further notice
+
+**Benjamin, live conversation 2026-09-18.** "Jusqu'à preuve du contraire on
+priorise les tâches usine avant celles SayMyName : l'usine buguée ou mal
+pilotée rend le travail SayMyName inefficace." Applied mechanically: the
+eligible product candidates (`af-hc2mx` leaderboard redesign, `af-guoqq`
+showcase site, `af-k8we` editorial challenges) are paused with that reason;
+the Mayor's turn order puts the factory lane before the product lane. The
+product lane resumes when the factory lane is empty or when Benjamin says so.
+Reversal: `saymyname-product-queue resume <id>` per candidate; the prompt
+order is one line.
+
 ## Open
 
 None. All Enterprise-tier questions are deferred — see `## Deferred`
