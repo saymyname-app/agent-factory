@@ -2,6 +2,14 @@
 
 set -Eeuo pipefail
 
+if [[ ${1:-} == bd && ${2:-} == show ]]; then
+  bead_id=${3:-}
+  pr_url=${DELIVER_CLOSE_PR_URL:-}
+  printf '[{"id":%s,"metadata":{"gc.pr_url":%s}}]\n' \
+    "$(jq -Rn --arg v "$bead_id" '$v')" "$(jq -Rn --arg v "$pr_url" '$v')"
+  exit 0
+fi
+
 [[ ${1:-} == bd && ${2:-} == update ]] || exit 64
 shift 2
 
