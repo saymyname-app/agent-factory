@@ -7,7 +7,11 @@
 // cockpit confirmation header. Zero-token, same as the other switches.
 (() => {
   const HEADER = "human-lane-priority";
+  const LANE_LABEL = { factory: "Factory", product: "Produit" };
+  const EXPLANATION = "Le travail en cours n’est pas interrompu ; seuls les prochains choix suivront cet ordre.";
+  const CLEAR_AFTER_MS = 6000;
   let busy = false;
+  let clearTimer = null;
 
   const $ = (id) => document.getElementById(id);
 
@@ -18,6 +22,23 @@
     });
   }
 
+  function setStatus(kind, text) {
+    const el = $("lane-priority-status");
+    if (!el) return;
+    if (clearTimer) {
+      clearTimeout(clearTimer);
+      clearTimer = null;
+    }
+    el.className = `lane-priority-status visible ${kind}`;
+    el.textContent = text;
+    if (kind === "success") {
+      clearTimer = setTimeout(() => {
+        el.className = "lane-priority-status";
+        el.textContent = "";
+      }, CLEAR_AFTER_MS);
+    }
+  }
+
   async function load() {
     try {
       const response = await fetch("/api/lane-priority", { cache: "no-store" });
@@ -25,8 +46,7 @@
       if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`);
       render(value.lane);
     } catch (error) {
-      const box = $("lane-priority");
-      if (box) box.title = `Lecture impossible : ${error.message}`;
+      setStatus("error", `Lecture impossible : ${error.message}`);
     }
   }
 
@@ -34,6 +54,7 @@
     if (busy) return;
     busy = true;
     render(lane);
+    setStatus("loading", `Changement vers ${LANE_LABEL[lane] || lane}…`);
     try {
       const response = await fetch("/api/lane-priority", {
         method: "POST",
@@ -44,10 +65,12 @@
       if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`);
       busy = false;
       render(value.lane);
+      const activeLabel = LANE_LABEL[value.lane] || value.lane;
+      setStatus("success", `Priorité confirmée : ${activeLabel}. ${EXPLANATION}`);
     } catch (error) {
       busy = false;
-      const box = $("lane-priority");
-      if (box) box.title = `Réglage refusé : ${error.message}`;
+      render(lane);
+      setStatus("error", `Réglage refusé : ${error.message}`);
       load();
     }
   }
