@@ -103,6 +103,22 @@ grep -q "liveness — no campaign progress for 90 min" <<<"$out" || { echo "$out
 grep -q "^UNRESOLVED" <<<"$out" || fail "a stalled campaign must not read as healthy"
 [ "$(creates)" = "0" ] || fail "--check-only filed a defect"
 
+# 2b. af-ooob8: progress stamp is stale, but the current result bead itself
+# has a recent heartbeat -- e.g. a review sub-session running after delivery,
+# outside the transition reasons that refresh gc.campaign_progress_at. That
+# is real activity, not a stall, and must not be flagged or filed.
+coord 30 5400
+jq --arg id af-cur1 '.[0].metadata["gc.current_jit"] = $id' "$COORD" > "$COORD.next" && mv "$COORD.next" "$COORD"
+jq -n --arg hb "$(iso $((NOW - 5 * 60)))" '{id:"af-cur1", metadata:{"gc.last_heartbeat_at":$hb}}' > "$TMP/beads/af-cur1.json"
+before=$(creates)
+out=$(guard --check-only)
+grep -q "✓ liveness — campaign progress stamp is 90 min old, but the current result was active 5 min ago" <<<"$out" \
+  || { echo "$out" >&2; fail "recent result activity did not override a stale progress stamp"; }
+grep -q "! liveness" <<<"$out" && fail "a result with recent activity was reported as a liveness defect"
+[ "$(creates)" = "$before" ] || fail "recent result activity still filed a liveness defect"
+rm -f "$TMP/beads/af-cur1.json"
+jq '.[0].metadata |= del(.["gc.current_jit"])' "$COORD" > "$COORD.next" && mv "$COORD.next" "$COORD"
+
 # 3. the default run files it exactly once, and pages the Mayor -----------------
 out=$(guard)
 grep -q "filed liveness defect af-live1" <<<"$out" || { echo "$out" >&2; fail "stalled campaign not filed"; }

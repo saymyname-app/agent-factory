@@ -47,6 +47,23 @@ class LivenessRules(unittest.TestCase):
                          "gc.campaign_watch_since": "2026-09-16T10:20:00Z"})
         self.assertEqual(("info", "no_progress_stamp"), assess(recent, NOW)[:2])
 
+    def test_recent_result_activity_overrides_a_stale_progress_stamp(self):
+        """af-ooob8: gc.campaign_progress_at only refreshes for the three
+        transition reasons bin/mayor-campaign's planner recognizes, so a
+        phase outside that set (a review sub-session after delivery, say)
+        can run for hours without it. The in-flight result bead's own
+        heartbeat/update is ground truth that the campaign is not stuck."""
+        stale = meta(**{"gc.campaign_progress_at": "2026-09-16T09:10:00Z"})
+        current_result = {"metadata": {"gc.last_heartbeat_at": "2026-09-16T10:35:00Z"}}
+        level, code, message = assess(stale, NOW, current_result=current_result)
+        self.assertEqual(("ok", "active_result"), (level, code))
+        self.assertIn("active 5 min ago", message)
+
+        # No recent activity on the result either: still stale.
+        cold_result = {"metadata": {"gc.last_heartbeat_at": "2026-09-16T08:00:00Z"}}
+        self.assertEqual(("bad", "stale"), assess(stale, NOW, current_result=cold_result)[:2])
+        self.assertEqual(("bad", "stale"), assess(stale, NOW, current_result=None)[:2])
+
     def test_a_pending_product_decision_still_expects_factory_progress(self):
         """ADR-0016 s.4: a decision parks product work, never the factory."""
         stalled = meta(**{
