@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# factory-dispatch-guard — detects a bead `gc sling`d to a target while its
+# assignee still holds a stale, different value, which makes the bead
+# invisible to the target's own claim query even though dispatch reported
+# success (af-33a4e).
+#
+# Root cause (2026-09-18, root-caused live by the PO): the Mayor ran
+# `gc sling bd.dog af-c6tdz`. The command reported success and set
+# `gc.routed_to=bd.dog`, but af-c6tdz's assignee stayed `mayor` (its
+# pre-existing value) — `gc sling` does not clear/change an existing
+# assignee unless `--reassign` is passed. bd.dog's own claim query keys off
+# assignee (or at least does not treat `gc.routed_to` alone as "mine to
+# claim"), so bd.dog kept reporting "no assigned work" while af-c6tdz sat
+# IN_PROGRESS with assignee=mayor, no heartbeat, for about 2 hours — until a
+# human noticed.
+#
+# `gc sling` itself lives outside this repo (a separately built, statically
+# linked binary from the gascity pack chain — see packs.lock); it cannot be
+# patched here. This guard is the repo-side mitigation the bug asked for:
+# make the mismatch impossible to miss, and self-heal it deterministically
+# instead of waiting for a human to notice a stalled dispatch. The other half
+# of the fix — the Mayor always passing `--reassign` when it dispatches to a
+# pool/infrastructure target — lives in agents/mayor/prompt.template.md.
+#
+# Detection: a bead carrying `gc.routed_to` (dispatch happened), still open
+# or in_progress, whose assignee is non-empty AND differs from routed_to AND
+# has shown no progress (no Beads update, no heartbeat) for at least
+# FACTORY_DISPATCH_STALE_MINUTES (default 15 — a few ticks of the idle
+# ladder's cadence, so a formula that legitimately self-claims within
+# seconds of dispatch, per af-pl39t, is never a false positive).
+#
+# Repair: clear the stale assignee (`gc bd update <id> --assignee ""`) so the
+# bead becomes visible to the target's own claim query again — the same
+# effect `--reassign` would have had at sling time — leave a note, and page
+# the Mayor once. This is self-converging: on the next run the bead either
+# has a real assignee again (something claimed it) or an empty one, and
+# either way no longer matches this guard's condition, so it is never
+# re-flagged for the same drift.
+#
+# --check-only reports without writing or paging anything.
+#
+# Usage: factory-dispatch-guard [--check-only]
+set -uo pipefail
+
+PROGRAM_NAME="factory-dispatch-guard"
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+GC_BIN="${GC_BIN:-gc}"
+BD_BIN="${BD_BIN:-bd}"
+STALE_MINUTES="${FACTORY_DISPATCH_STALE_MINUTES:-15}"
+CHECK_ONLY=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check-only) CHECK_ONLY=1 ;;
+    -h|--help)
+      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "$PROGRAM_NAME: unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || { echo "$PROGRAM_NAME: required command unavailable: $1" >&2; exit 2; }
+}
+require_command "$GC_BIN"
+require_command "$BD_BIN"
+require_command jq
+
+PROBLEMS=(); ACTIONS=(); STATUS=0
+CHECKED=0; DRIFTED=0
+say()  { printf '%s\n' "$*"; }
+bad()  { PROBLEMS+=("$1"); STATUS=1; }
+did()  { ACTIONS+=("$1"); say "  REPAIRED: $1"; }
+epoch_of() { date -u -d "$1" +%s 2>/dev/null || echo 0; }
+now_epoch() { date -u +%s; }
+
+page_mayor_once() {  # id summary
+  local id=$1 summary=$2
+  (cd "$ROOT" && "$GC_BIN" --city "$ROOT" mail send mayor --notify \
+    -s "Dispatch drift repaired: $id" \
+    -m "ACTION: factory-dispatch-guard cleared a stale assignee that was blocking dispatch visibility
+STATE: $summary
+EVIDENCE: gc bd show $id
+NEXT: confirm $id's routed target ($id's gc.routed_to) picks the work up; if it does not within a few minutes, dispatch by hand" \
+    >/dev/null 2>&1)
+}
+
+# --city "$ROOT" is not cosmetic: without it, an unscopeable/scratch root
+# (no rig config bd can resolve from) has been observed to fall back to the
+# live production store instead of erroring -- the exact class of gap
+# section 7b above pins `--city` against for `gc events`. Pinning it here
+# makes a throwaway test city fail closed instead of silently reading real
+# beads.
+rows_json=$(cd "$ROOT" && "$GC_BIN" --city "$ROOT" bd list --all --has-metadata-key gc.routed_to \
+  --status open,in_progress --limit 0 --json 2>/dev/null)
+jq -e . >/dev/null 2>&1 <<<"$rows_json" || rows_json='[]'
+
+# A field can legitimately be empty (assignee, heartbeat) and sit ahead of a
+# non-empty one -- @tsv's tab delimiter is bash IFS *whitespace*, so
+# `IFS=$'\t' read` silently collapses that empty field into its neighbour
+# instead of preserving it. \x1f (unit separator) is not IFS whitespace, so
+# empty fields round-trip correctly.
+rows=$(jq -r '
+  .[] | [
+    .id, .status,
+    (.assignee // ""),
+    (.metadata["gc.routed_to"] // ""),
+    (.updated_at // ""),
+    (.metadata["gc.last_heartbeat_at"] // "")
+  ] | join("")
+' <<<"$rows_json")
+
+NOW=$(now_epoch)
+STALE_SECONDS=$((STALE_MINUTES * 60))
+
+while IFS=$'\x1f' read -r id status assignee routed_to updated_at heartbeat_at; do
+  [ -z "$id" ] && continue
+  CHECKED=$((CHECKED + 1))
+  [ -n "$assignee" ] || continue
+  [ "$assignee" != "$routed_to" ] || continue
+
+  updated_epoch=$(epoch_of "$updated_at")
+  heartbeat_epoch=$(epoch_of "$heartbeat_at")
+  last_progress=$updated_epoch
+  [ "$heartbeat_epoch" -gt "$last_progress" ] && last_progress=$heartbeat_epoch
+  age=$((NOW - last_progress))
+  [ "$age" -ge "$STALE_SECONDS" ] || continue
+
+  DRIFTED=$((DRIFTED + 1))
+  age_minutes=$((age / 60))
+  bad "$id routed to '$routed_to' but assignee is still '$assignee' (stale ${age_minutes}m, threshold ${STALE_MINUTES}m) — invisible to '$routed_to''s own claim query"
+  if [ "$CHECK_ONLY" != "1" ]; then
+    if (cd "$ROOT" && "$GC_BIN" --city "$ROOT" bd update "$id" --assignee "" \
+          --append-notes "factory-dispatch-guard: cleared stale assignee '$assignee' (routed to '$routed_to' but not visible to its claim query for ${age_minutes}m; see af-33a4e). Dispatching to a pool/infrastructure target must pass --reassign to clear a pre-existing human assignee." \
+          >/dev/null 2>&1); then
+      page_mayor_once "$id" "assignee was '$assignee' (routed to '$routed_to', stale ${age_minutes}m); cleared so '$routed_to' can claim it"
+      did "$id: cleared stale assignee '$assignee' (routed to '$routed_to', stale ${age_minutes}m) and paged the Mayor"
+    else
+      bad "$id could not be repaired — the Beads write failed"
+    fi
+  fi
+done <<<"$rows"
+
+say ""
+if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
+if [ "${#PROBLEMS[@]}" -gt 0 ]; then
+  say "UNRESOLVED ${#PROBLEMS[@]}:"; printf '  ! %s\n' "${PROBLEMS[@]}"
+elif [ "$DRIFTED" -gt 0 ]; then
+  say "healthy — $DRIFTED dispatch drift(s) seen this run, all repaired"
+else
+  say "healthy — $CHECKED routed bead(s) checked, no stale dispatch drift"
+fi
+exit 0
