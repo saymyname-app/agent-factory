@@ -53,7 +53,27 @@ TICK_DEADLINE_SECONDS = float(os.environ.get("CAMPAIGN_TICK_DEADLINE_SECONDS", "
 # above transiently killed a meaningful fraction of sentinel ticks calling it.
 # Give this one slow, known call its own headroom instead of raising the
 # timeout for every call.
-STATUS_COMMAND_TIMEOUT = float(os.environ.get("CAMPAIGN_STATUS_COMMAND_TIMEOUT", "20"))
+#
+# af-rt1t2 (2026-09-18): the script's own cost grew to ~23-25s, past this 20s
+# budget, on every sentinel tick regardless of whether the campaign was
+# actually stalled -- a recurring false-positive source (af-416h8, af-03c41
+# and predecessors). Profiling found `gc status --json` alone now costs
+# ~14s (that binary is external to this repo, its cost scales with live
+# agent count, and it is already called exactly once) and every `gc bd
+# show`/`gc bd list` invocation carries several more seconds of fixed
+# process/DB-connect overhead that batching multiple ids into one call can
+# remove -- done here for the N-per-concurrent-workflow convoy lookup inside
+# saymyname-product-status's active-context resolution. The other two
+# sequential `gc bd show` calls (current outcome, last delivered outcome)
+# could NOT be batched together: `gc bd show` resolves which rig's store to
+# query from the first id argument, so the two ids -- which can each name a
+# Bead in a different rig -- silently lose whichever one isn't in that first
+# id's store when combined into one call (confirmed live: `gc bd show
+# smb-44tt af-smmwz --json` returned only af-smmwz). With that reduction
+# applied, the script still costs ~23-24s end to end because of the
+# unbatchable gc status floor, so the budget below is raised to match the
+# now-confirmed inherent cost rather than the batching removing it.
+STATUS_COMMAND_TIMEOUT = float(os.environ.get("CAMPAIGN_STATUS_COMMAND_TIMEOUT", "30"))
 
 _tick_deadline: float | None = None
 

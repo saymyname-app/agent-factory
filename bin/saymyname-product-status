@@ -273,19 +273,42 @@ derive_active_context() {
   jq -e 'type == "array"' >/dev/null <<<"$workflows_response" \
     || die "Beads workflow inventory is not an array."
 
+  local candidate_workflows
+  candidate_workflows=$(jq -c '[.[] | select(
+    .status == "in_progress" and
+    .metadata["gc.kind"] == "workflow" and
+    (.metadata["gc.input_convoy_id"] | type == "string" and length > 0))]' \
+    <<<"$workflows_response")
+
+  local -a candidate_convoy_ids=()
+  while IFS= read -r convoy_id; do
+    candidate_convoy_ids+=("$convoy_id")
+  done < <(jq -r '.[].metadata["gc.input_convoy_id"]' <<<"$candidate_workflows")
+
+  # One batched `gc bd show` for every candidate workflow's convoy instead of
+  # one `gc bd show` per workflow: profiling on 2026-09-18 (af-rt1t2) found
+  # each separate invocation of the external `gc` binary carries several
+  # seconds of fixed process/DB-connect overhead that a batched multi-ID call
+  # does not repeat, so N concurrent workflows used to cost N x that overhead
+  # here instead of one.
+  local convoys_response=null
+  if [[ ${#candidate_convoy_ids[@]} -gt 0 ]]; then
+    capture_json convoys_response "Beads workflow convoys" \
+      gc_json bd show "${candidate_convoy_ids[@]}" --json
+    jq -e 'type == "array"' >/dev/null <<<"$convoys_response" \
+      || die "Beads workflow convoys batch is not an array."
+  fi
+
   while IFS= read -r workflow; do
     convoy_id=$(metadata_string "$workflow" "gc.input_convoy_id" "Workflow input convoy")
-    capture_json convoy_response "Beads workflow convoy $convoy_id" \
-      gc_json bd show "$convoy_id" --json
-    convoy=$(single_issue "$convoy_response" "Workflow convoy $convoy_id")
+    convoy=$(jq -ce --arg id "$convoy_id" \
+      '[.[] | select(.id == $id)] | if length >= 1 then .[0] else error("missing") end' \
+      <<<"$convoys_response") \
+      || die "Workflow convoy $convoy_id missing from batch result."
     if convoy_tracks_issue "$convoy" "$current_id"; then
       matching_workflows+=("$workflow")
     fi
-  done < <(jq -c '.[] | select(
-    .status == "in_progress" and
-    .metadata["gc.kind"] == "workflow" and
-    (.metadata["gc.input_convoy_id"] | type == "string" and length > 0))' \
-    <<<"$workflows_response")
+  done < <(jq -c '.[]' <<<"$candidate_workflows")
 
   # current_id can be a workflow root itself rather than someone else's leaf.
   # Its own convoy tracks its implementation children, never itself, so the
@@ -537,6 +560,13 @@ main() {
   current_id=$(jq -er '.metadata["gc.current_jit"] // "none" |
     select(type == "string")' <<<"$parent") || die "Current outcome pointer is invalid."
   CURRENT_CAUSE=""
+  # gc.current_jit and gc.last_delivered can each name a Bead in a different
+  # rig's store (e.g. a rig-scoped smb-* current outcome alongside a root-scoped
+  # af-* last delivery). `gc bd show` resolves which store to query from the
+  # FIRST id it is given, so batching these two ids into one call silently
+  # fails to resolve whichever one belongs to the other store (confirmed live
+  # 2026-09-18, af-rt1t2: `gc bd show smb-44tt af-smmwz --json` only returned
+  # af-smmwz). They must stay two separate calls.
   if [[ -z $current_id || $current_id == none ]]; then
     CURRENT_OUTCOME="none"
     CURRENT_STATE="none"

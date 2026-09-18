@@ -142,19 +142,32 @@ JSON
 
 case "$command_name" in
   show)
-    issue_id=${2:-}
-    [[ ${3:-} == --json ]] || exit 64
-    if [[ $scenario == source-failure && $issue_id == af-1vr4 ]]; then
-      printf 'fixture Beads outage\n' >&2
-      exit 42
-    fi
-    case "$issue_id" in
-      af-1vr4) emit_parent ;;
-      af-current|smb-current|smb-direct) emit_current ;;
-      af-delivered|smf-delivered) emit_delivered ;;
-      af-convoy) emit_convoy ;;
-      *) printf 'unknown fixture issue: %s\n' "$issue_id" >&2; exit 64 ;;
-    esac
+    args=("$@")
+    idx=1
+    ids=()
+    while [[ $idx -lt ${#args[@]} && "${args[$idx]}" != --json ]]; do
+      ids+=("${args[$idx]}")
+      idx=$((idx + 1))
+    done
+    [[ $idx -lt ${#args[@]} && "${args[$idx]}" == --json ]] || exit 64
+    for issue_id in "${ids[@]}"; do
+      if [[ $scenario == source-failure && $issue_id == af-1vr4 ]]; then
+        printf 'fixture Beads outage\n' >&2
+        exit 42
+      fi
+    done
+    parts=()
+    for issue_id in "${ids[@]}"; do
+      case "$issue_id" in
+        af-1vr4) emitted=$(emit_parent) ;;
+        af-current|smb-current|smb-direct) emitted=$(emit_current) ;;
+        af-delivered|smf-delivered) emitted=$(emit_delivered) ;;
+        af-convoy) emitted=$(emit_convoy) ;;
+        *) printf 'unknown fixture issue: %s\n' "$issue_id" >&2; exit 64 ;;
+      esac
+      parts+=("$(jq -c '.[0]' <<<"$emitted")")
+    done
+    (IFS=,; printf '[%s]\n' "${parts[*]}")
     ;;
   list)
     case "${2:-}" in
