@@ -156,6 +156,16 @@ assert_json self-workflow '.activity.state + ":" + .result.agent' 'working:codex
 # even though no specific current step/agent can be named from the stale
 # session.
 assert_json self-workflow-handoff '.result.stage + ":" + (.result.agent == null | tostring)' 'active:true'
+# af-knbxq: the implementation convoy closing (active_count == 0) is not the
+# same as the whole v2 workflow finishing -- starter review, publish, and
+# finalize-workflow are the workflow root's own open "blocks" dependency
+# (its completion gate), not convoy members, and must hold off finalizing
+# until that gate itself closes (live case smb-44tt/smb-3akx 2026-09-18).
+assert_json workflow-pending-finalize '.result.stage + ":" + (.result.agent == null | tostring)' 'active:true'
+# Once the completion gate itself closes, active_count == 0 must still
+# resolve to finalizing as before -- the fix narrows the check, it does not
+# remove it.
+assert_json workflow-truly-finalizing '.result.stage' 'finalizing'
 
 idle_output=$(run_fixture idle)
 [[ $idle_output == *'SANTÉ: Infrastructure disponible'* ]] || fail_test 'idle health missing'

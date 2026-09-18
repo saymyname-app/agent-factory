@@ -415,8 +415,28 @@ derive_active_context() {
       ((.status // "") == "open" or (.status // "") == "in_progress"))] | length
   ' <<<"$workflow_convoy")
   if [[ $active_count -eq 0 ]]; then
-    CURRENT_STATE="finalizing"
-    CURRENT_PHASE="Réalisation terminée · revue, fusion ou clôture par le Mayor"
+    # The implementation convoy closing is not the same as the workflow
+    # finishing: for a full build-basic v2 graph, starter review, publish,
+    # and finalize-workflow all live downstream of the implementation convoy
+    # as the workflow root's own "blocks"-type dependency (its completion
+    # gate), never as convoy members. Reporting finalizing off active_count
+    # alone is systematically premature for any such graph (af-knbxq, live
+    # case smb-44tt/smb-3akx 2026-09-18): check the workflow root's own open
+    # blocks dependencies before declaring the run finished.
+    local open_blockers
+    open_blockers=$(jq '
+      [.dependencies[]? | select(
+        ((.dependency_type // .type // "") == "blocks") and
+        ((.status // "") == "open" or (.status // "") == "in_progress"))] | length
+    ' <<<"$workflow")
+    if [[ $open_blockers -eq 0 ]]; then
+      CURRENT_STATE="finalizing"
+      CURRENT_PHASE="Réalisation terminée · revue, fusion ou clôture par le Mayor"
+      CURRENT_AGENT="none"
+      return
+    fi
+    CURRENT_STATE="active"
+    CURRENT_PHASE="Revue, publication ou finalisation du workflow en cours"
     CURRENT_AGENT="none"
     return
   fi

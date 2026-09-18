@@ -121,6 +121,21 @@ emit_workflows() {
     printf '[]\n'
     return
   fi
+  # af-knbxq: the implementation convoy closing (active_count == 0) is not
+  # the same as the workflow finishing -- a full build-basic v2 graph has
+  # starter review / publish / finalize-workflow phases downstream of it as
+  # the workflow root's own "blocks"-type dependency, never as convoy
+  # members. workflow-pending-finalize simulates that open completion gate;
+  # workflow-truly-finalizing closes it to prove the finalizing path still
+  # fires once nothing is left open.
+  if [[ $scenario == workflow-pending-finalize || $scenario == workflow-truly-finalizing ]]; then
+    local gate_status=open
+    [[ $scenario != workflow-truly-finalizing ]] || gate_status=closed
+    cat <<JSON
+[{"id":"af-workflow","status":"in_progress","metadata":{"gc.kind":"workflow","gc.input_convoy_id":"af-convoy","gc.session_name":"codex-af-test"},"dependencies":[{"id":"af-finalize-gate","status":"$gate_status","dependency_type":"blocks"}]}]
+JSON
+    return
+  fi
   cat <<'JSON'
 [{"id":"af-workflow","status":"in_progress","metadata":{"gc.kind":"workflow","gc.input_convoy_id":"af-convoy","gc.session_name":"codex-af-test"}}]
 JSON
@@ -129,8 +144,11 @@ JSON
 emit_convoy() {
   local current="af-current"
   [[ $scenario != routed ]] || current="smb-current"
+  local tracked_status=in_progress
+  [[ $scenario != workflow-pending-finalize && $scenario != workflow-truly-finalizing ]] \
+    || tracked_status=closed
   cat <<JSON
-[{"id":"af-convoy","status":"open","dependencies":[{"id":"$current","status":"in_progress","dependency_type":"tracks"}],"metadata":{}}]
+[{"id":"af-convoy","status":"open","dependencies":[{"id":"$current","status":"$tracked_status","dependency_type":"tracks"}],"metadata":{}}]
 JSON
 }
 
