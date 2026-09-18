@@ -37,6 +37,7 @@ git add -A; git commit -qm city; git branch -M main; git push -q origin main; gi
 COORD="$TMP/coord.json"
 CALLS="$TMP/calls.log"; : > "$CALLS"
 mkdir -p "$TMP/beads" "$TMP/bin"
+SESSIONS="$TMP/sessions.json"; echo '{"sessions":[]}' > "$SESSIONS"
 
 cat > "$TMP/bin/gc" <<STUB
 #!/usr/bin/env bash
@@ -58,6 +59,9 @@ if [[ \$1 == bd && \$2 == update && \$3 == af-1vr4 ]]; then
   pair=\$5; key=\${pair%%=*}; value=\${pair#*=}
   jq --arg k "\$key" --arg v "\$value" '.[0].metadata[\$k] = \$v' "$COORD" > "$COORD.next"
   mv "$COORD.next" "$COORD"; exit 0
+fi
+if [[ \$1 == session && \$2 == list ]]; then
+  cat "$SESSIONS"; exit 0
 fi
 exit 0
 STUB
@@ -152,6 +156,62 @@ before=$(creates)
 out=$(LIVENESS_STORE_DOWN=1 guard)
 grep -q "liveness — coordination bead unreadable" <<<"$out" || { echo "$out" >&2; fail "store outage not flagged"; }
 [ "$(creates)" = "$before" ] || fail "tried to file a defect into an unreachable store"
+
+# 6b. replay of 2026-09-18 03:21Z-08:30Z (af-9ur0s/af-umyad): a stale
+# campaign must name WHY nothing advances instead of only "up but not
+# advancing" -- first the provider cause, then the mayor-session cause, then
+# an honest "cause unknown" when neither is provable.
+mkdir -p "$TMP/city/config" "$TMP/city/.gc"
+cat > "$TMP/city/config/provider-policy.json" <<POLICY
+{
+  "contract": "agent-factory-provider-policy/v1",
+  "unknown_reset_minutes": 60, "low_percent": 20, "low_hold_minutes": 30,
+  "pools": {"p1": {"label": "Pool 1"}},
+  "providers": {"prov1": {"pool": "p1", "label": "Prov 1"}},
+  "targets": {
+    "workspace": {"label": "Workspace", "chain": ["prov1"]},
+    "mayor": {"label": "Mayor", "chain": ["prov1"]}
+  }
+}
+POLICY
+
+# 6b-i. no provider available: a DETECTED exhaustion with no known reset,
+# marked hours ago -- the exact shape that misled a PO session live.
+jq -n --arg until "$(iso $((NOW + 3600)))" --arg at "$(iso $((NOW - 3 * 3600)))" '
+  {contract:"agent-factory-provider-state/v1", auto:true,
+   pools:{p1:{status:"exhausted", until:$until, source:"detected",
+              evidence:"You have hit your session limit", at:$at,
+              reset_known:false, strikes:3}},
+   disabled:{}, forced:{}, chains:{}, effective:{}, parked:false,
+   sessions:[], sessions_at:null, model_staleness:{}, history:[]}' \
+  > "$TMP/city/.gc/provider-state.json"
+coord 30 5400
+out=$(guard --check-only)
+grep -q "aucun fournisseur disponible" <<<"$out" || { echo "$out" >&2; fail "provider-unavailable cause not stated"; }
+grep -q "marque suspecte" <<<"$out" || { echo "$out" >&2; fail "a stale DETECTED mark was not flagged suspect"; }
+
+# 6b-ii. pool cleared, Mayor session quarantined -----------------------------
+rm -f "$TMP/city/.gc/provider-state.json"
+echo '{"sessions":[{"id":"af-m1","alias":"mayor","state":"quarantined","state_reason":"provider config rejected","last_active":"'"$(iso $((NOW - 40 * 60)))"'"}]}' > "$SESSIONS"
+out=$(guard --check-only)
+grep -q "le Mayor ne démarre pas" <<<"$out" || { echo "$out" >&2; fail "mayor-session-down cause not stated"; }
+
+# 6b-iii. neither is provable -------------------------------------------------
+echo '{"sessions":[]}' > "$SESSIONS"
+out=$(guard --check-only)
+grep -q "cause inconnue" <<<"$out" || { echo "$out" >&2; fail "an unprovable cause did not fall back to 'cause inconnue'"; }
+
+# 6c. the Mayor session itself, quarantined past the grace window, is paged
+# once per streak -- it cannot receive the 'mail send mayor' page above.
+: > "$CALLS"
+echo '{"sessions":[{"id":"af-m1","alias":"mayor","state":"quarantined","state_reason":"provider config rejected","last_active":"'"$(iso $((NOW - 40 * 60)))"'"}]}' > "$SESSIONS"
+guard >/dev/null
+grep -q "^mail send human --notify" "$CALLS" || { cat "$CALLS" >&2; fail "a quarantined Mayor session was not paged"; }
+[ "$(grep -c '^mail send human --notify' "$CALLS")" = "1" ] || fail "the mayor-session-down page fired more than once"
+: > "$CALLS"
+guard >/dev/null
+grep -q "^mail send human --notify" "$CALLS" && fail "the same down streak paged a second time"
+echo '{"sessions":[]}' > "$SESSIONS"
 
 # 7. outside a city root the check stands down ------------------------------------
 mkdir -p "$TMP/plain" && git -C "$TMP/plain" init -q
