@@ -980,6 +980,46 @@ def project_target_doc(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def project_vision(value: dict[str, Any]) -> dict[str, Any]:
+    """Project the "Vision & besoin" block from the intake canvas already in the contract.
+
+    Pure, deterministic, zero token: every field is either read straight from
+    the release contract (labelled ``deduit`` with its source) or explicitly
+    marked ``a_trancher`` when the contract carries no dedicated field for it,
+    per the deduit/a_trancher/deferred labelling protocol (ADR-0015 v2).
+    """
+    validate_release_contract(value)
+    objective = value["objective"]
+    non_goals = [
+        {
+            "id": item["id"],
+            "title": item["title"],
+            "description": item.get("description", ""),
+            "source": [ev.get("ref") for ev in item.get("evidence", []) if ev.get("ref")],
+        }
+        for item in value.get("excluded", [])
+        if item.get("status") == "out_of_version"
+    ]
+    return {
+        "jtbd": {
+            "label": "deduit",
+            "text": objective["statement"],
+            "source": f"objective.set_by={objective['set_by']}, objective.set_at={objective['set_at']}",
+        },
+        "primary_user": {
+            "label": "a_trancher",
+            "text": None,
+            "source": "Le contrat ADR-0015 ne porte pas de champ utilisateur primaire dedie.",
+        },
+        "non_goals": {
+            "label": "deduit",
+            "items": non_goals,
+            "source": "excluded[].status == out_of_version",
+        },
+        "model_calls": 0,
+    }
+
+
 def project_operational_release(
     release: dict[str, Any], campaign: dict[str, Any],
 ) -> dict[str, Any]:

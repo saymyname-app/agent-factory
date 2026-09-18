@@ -41,6 +41,7 @@ from factory_cockpit import (  # noqa: E402
     load_product_config,
     _human_objective,
     _human_phase,
+    _join_target_doc_progress,
     _product_bead,
     handler_factory,
     ProviderBridge,
@@ -1160,6 +1161,47 @@ class FactoryCockpitTest(unittest.TestCase):
             self.assertEqual(2, len(result["decisions"]))
             self.assertEqual("pending", result["decisions"][0]["status"])
             self.assertEqual("product", result["decisions"][0]["domain"])
+
+    def test_join_target_doc_progress_attaches_beads_evidence_by_work_ref(self):
+        target_doc = {
+            "work_graph": {
+                "nodes": [
+                    {"id": "w1", "work_ref": "af-abcde", "criterion_refs": ["c1"]},
+                    {"id": "w2", "work_ref": None, "criterion_refs": ["c1"]},
+                ],
+                "edges": [],
+            },
+        }
+        product_work = [
+            {"id": "af-abcde", "state": "delivered", "state_label": "Livré", "pr": 42, "ci": "success"},
+        ]
+        result = _join_target_doc_progress(target_doc, product_work)
+        nodes_by_id = {node["id"]: node for node in result["work_graph"]["nodes"]}
+        self.assertEqual("delivered", nodes_by_id["w1"]["evidence"]["state"])
+        self.assertEqual(42, nodes_by_id["w1"]["evidence"]["pr"])
+        self.assertIsNone(nodes_by_id["w2"]["evidence"])
+        self.assertEqual(0, result["model_calls"])
+
+    def test_join_target_doc_progress_marks_criterion_proven_only_when_every_node_is(self):
+        target_doc = {
+            "work_graph": {
+                "nodes": [
+                    {"id": "w1", "work_ref": "af-1", "criterion_refs": ["c1"]},
+                    {"id": "w2", "work_ref": "af-2", "criterion_refs": ["c1"]},
+                ],
+                "edges": [],
+            },
+        }
+        product_work = [
+            {"id": "af-1", "state": "delivered"},
+            {"id": "af-2", "state": "active"},
+        ]
+        result = _join_target_doc_progress(target_doc, product_work)
+        self.assertEqual("pending", result["criterion_progress"]["c1"])
+
+        product_work[1]["state"] = "delivered"
+        result = _join_target_doc_progress(target_doc, product_work)
+        self.assertEqual("proven", result["criterion_progress"]["c1"])
 
     def test_today_separates_general_decisions_from_one_effective_blocker(self):
         needs = "Approve or refine the af-hxji contract without changing this exact text."

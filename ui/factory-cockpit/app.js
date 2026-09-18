@@ -275,8 +275,83 @@ function renderReferenceIndex(references) {
   applyReferenceSearch();
 }
 
+function clarifyButton(kind, id, title, detail) {
+  const button = node("button", "", "Clarifier");
+  button.addEventListener("click", () => {
+    activateView("decisions");
+    openDecisionWorkspace({ id: `clarify-${kind}-${id}`, domain: "product", title: `Clarifier · ${title}`, detail });
+  });
+  return button;
+}
+
+function renderVision(vision) {
+  if (!vision) return;
+  $("vision-jtbd").textContent = vision.jtbd.text;
+  $("vision-jtbd-source").textContent = vision.jtbd.source;
+  $("vision-jtbd-label").textContent = vision.jtbd.label === "deduit" ? "Déduit" : vision.jtbd.label;
+  $("vision-user").textContent = vision.primary_user.text || vision.primary_user.source;
+  $("vision-user-label").textContent = vision.primary_user.label === "a_trancher" ? "À trancher" : vision.primary_user.label;
+  $("vision-user-clarify").onclick = () => { activateView("decisions"); openDecisionWorkspace({ id: "clarify-vision-primary_user", domain: "product", title: "Clarifier · Utilisateur primaire", detail: vision.primary_user.source }); };
+  $("vision-nongoals-label").textContent = vision.non_goals.label === "deduit" ? "Déduit" : vision.non_goals.label;
+  const nonGoals = $("vision-nongoals"); nonGoals.replaceChildren();
+  (vision.non_goals.items || []).forEach((item) => {
+    const card = node("article", "release-card status-out_of_version");
+    card.append(node("h4", "", item.title), node("p", "", item.description));
+    if (item.source.length) card.append(node("small", "", item.source.join(" · ")));
+    nonGoals.append(card);
+  });
+  if (!nonGoals.children.length) nonGoals.append(node("p", "muted", "Aucun non-but déduit du contrat."));
+}
+
+function renderTargetDoc(targetDoc) {
+  if (!targetDoc) return;
+  const criteriaById = Object.fromEntries(targetDoc.chain.criteria.map((item) => [item.id, item]));
+  const criteriaList = $("target-doc-criteria"); criteriaList.replaceChildren();
+  targetDoc.chain.criteria.forEach((item) => {
+    const progress = targetDoc.criterion_progress[item.id] || "pending";
+    const row = node("div", "release-list-item");
+    row.append(node("strong", "", `${progress === "proven" ? "Prouvé" : "En attente"} · ${item.title}`), node("small", "", item.acceptance));
+    row.append(clarifyButton("criterion", item.id, item.title, `Critère « ${item.title} » : ${item.acceptance}`));
+    criteriaList.append(row);
+  });
+  const grid = $("target-doc-work-graph"); grid.replaceChildren();
+  targetDoc.work_graph.nodes.forEach((item) => {
+    const evidence = item.evidence;
+    const status = evidence ? (evidence.state === "delivered" ? "proven" : "partial") : "unverified";
+    const card = node("article", `release-card status-${status}`);
+    card.append(node("h4", "", item.title));
+    const criteriaText = item.criterion_refs.map((ref) => criteriaById[ref]?.title || ref).join(" · ");
+    card.append(node("small", "", `Critères : ${criteriaText || "aucun"}`));
+    if (item.work_ref) {
+      const ticketLine = evidence
+        ? `${item.work_ref} · ${evidence.state_label || evidence.state}${evidence.pr ? ` · PR #${evidence.pr}` : ""}${evidence.ci ? ` · CI ${evidence.ci}` : ""}`
+        : `${item.work_ref} · pas encore de preuve`;
+      card.append(node("small", "", ticketLine));
+    } else {
+      card.append(node("small", "", "Aucun ticket lié"));
+    }
+    card.append(clarifyButton("work", item.id, item.title, `Nœud du work_graph ADR-0015 §6 : ${item.title}. Critères : ${criteriaText || "aucun"}.`));
+    grid.append(card);
+  });
+  const blockers = $("target-doc-blockers"); blockers.replaceChildren();
+  (targetDoc.blocker_subgraph.nodes || []).forEach((item) => {
+    const row = node("article", "panel compact-item");
+    row.append(node("strong", "", `Bloqué · ${item.title}`), node("p", "muted", item.blocker?.cause || "Cause non précisée."));
+    row.append(clarifyButton("blocker", item.id, item.title, `Blocage sur ${item.title} : ${item.blocker?.cause || "cause non précisée."}`));
+    blockers.append(row);
+  });
+  (targetDoc.assumption_overlay || []).forEach((item) => {
+    const row = node("article", "panel compact-item");
+    row.append(node("strong", "", `Hypothèse · ${item.title}`), node("small", "", `${item.status} · confiance ${item.confidence}`));
+    row.append(clarifyButton("assumption", item.id, item.title, `Hypothèse ${item.title} (confiance ${item.confidence}).`));
+    blockers.append(row);
+  });
+}
+
 function renderProject(memory, data) {
   renderRelease(data.release);
+  renderVision(data.vision);
+  renderTargetDoc(data.target_doc);
   const legend = $("capability-legend"); legend.replaceChildren(); [["now", "En construction"], ["next", "Ensuite"], ["later", "Planifié"], ["evidence", "Après preuve"]].forEach(([status, label]) => legend.append(node("span", `legend-${status}`, label)));
   const graph = $("capability-graph"); graph.replaceChildren();
   const statusLabels = { now: "En construction", next: "Ensuite", later: "Planifié", evidence: "Après preuve" };

@@ -18,6 +18,7 @@ from product_release import (  # noqa: E402
     project_operational_release,
     project_release,
     project_target_doc,
+    project_vision,
     select_campaign_work,
     start_next_version,
     transition_release,
@@ -702,6 +703,44 @@ class TargetDocProjectionTest(unittest.TestCase):
         before = copy.deepcopy(value)
         doc = project_target_doc(value)
         self.assertEqual(0, doc["model_calls"])
+        self.assertEqual(before, value)
+
+
+class VisionProjectionTest(unittest.TestCase):
+    def test_jtbd_is_deduced_from_the_objective_statement(self):
+        vision = project_vision(base_release())
+        self.assertEqual("deduit", vision["jtbd"]["label"])
+        self.assertEqual("Ship the test product.", vision["jtbd"]["text"])
+        self.assertIn("Benjamin", vision["jtbd"]["source"])
+
+    def test_primary_user_is_marked_a_trancher_when_no_field_carries_it(self):
+        vision = project_vision(base_release())
+        self.assertEqual("a_trancher", vision["primary_user"]["label"])
+        self.assertIsNone(vision["primary_user"]["text"])
+
+    def test_non_goals_are_deduced_from_out_of_version_excluded_items(self):
+        value = base_release()
+        value["excluded"] = [
+            {
+                "id": "payment", "title": "Payment", "description": "Later.",
+                "kind": "product", "status": "out_of_version",
+                "evidence": [{"kind": "document", "ref": "docs/DECISIONS.md#payment", "status": "out_of_version"}],
+            },
+            {
+                "id": "in-scope", "title": "In scope after all", "description": "d",
+                "kind": "product", "status": "proven", "evidence": _evidence(),
+            },
+        ]
+        vision = project_vision(value)
+        self.assertEqual("deduit", vision["non_goals"]["label"])
+        self.assertEqual(["payment"], [item["id"] for item in vision["non_goals"]["items"]])
+        self.assertEqual(["docs/DECISIONS.md#payment"], vision["non_goals"]["items"][0]["source"])
+
+    def test_is_zero_token_and_leaves_the_source_value_unmutated(self):
+        value = base_release()
+        before = copy.deepcopy(value)
+        vision = project_vision(value)
+        self.assertEqual(0, vision["model_calls"])
         self.assertEqual(before, value)
 
 

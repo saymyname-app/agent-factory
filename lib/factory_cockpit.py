@@ -37,6 +37,8 @@ from product_release import (
     load_release_contract,
     project_operational_release,
     project_release,
+    project_target_doc,
+    project_vision,
 )
 
 
@@ -699,6 +701,52 @@ def _sort_product_work(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             time_key(item),
         ),
     )
+
+
+def _join_target_doc_progress(
+    target_doc: dict[str, Any], product_work: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Attach Beads/GitHub evidence to ADR-0015 §6 work_graph nodes.
+
+    Reads state the cockpit collector already fetched (``product_work``) and
+    joins it to ``work_graph[].work_ref`` by bead id. No new source, no model
+    call: the projection stays at ``model_calls: 0``.
+    """
+    by_id = {str(item.get("id")): item for item in product_work if isinstance(item, dict)}
+    evidence_by_node: dict[str, dict[str, Any] | None] = {}
+    for node in target_doc["work_graph"]["nodes"]:
+        work_ref = node.get("work_ref")
+        item = by_id.get(str(work_ref)) if work_ref else None
+        evidence_by_node[node["id"]] = None if item is None else {
+            "work_ref": work_ref,
+            "state": item.get("state"),
+            "state_label": item.get("state_label"),
+            "pr": item.get("pr"),
+            "ci": item.get("ci"),
+            "updated_at": item.get("updated_at"),
+        }
+    proven_states = {"delivered"}
+    criterion_states: dict[str, str] = {}
+    for node in target_doc["work_graph"]["nodes"]:
+        evidence = evidence_by_node.get(node["id"])
+        node_state = "proven" if evidence and evidence.get("state") in proven_states else "pending"
+        for criterion_id in node["criterion_refs"]:
+            if node_state == "pending":
+                criterion_states[criterion_id] = "pending"
+            else:
+                criterion_states.setdefault(criterion_id, "proven")
+    return {
+        **target_doc,
+        "work_graph": {
+            **target_doc["work_graph"],
+            "nodes": [
+                {**node, "evidence": evidence_by_node.get(node["id"])}
+                for node in target_doc["work_graph"]["nodes"]
+            ],
+        },
+        "criterion_progress": criterion_states,
+        "model_calls": 0,
+    }
 
 
 def _normalized_title(value: Any) -> str:
@@ -2278,6 +2326,10 @@ class FactoryCollector:
             "release": project_operational_release(
                 project_release(self.release_contract), human_state["campaign"]
             ),
+            "target_doc": _join_target_doc_progress(
+                project_target_doc(self.release_contract), product_work
+            ),
+            "vision": project_vision(self.release_contract),
             "today": today,
             "decision_aids": decision_aids,
             "last_delivery": last_delivery,
