@@ -41,6 +41,9 @@ from factory_cockpit import (  # noqa: E402
     load_product_config,
     _human_objective,
     _human_phase,
+    _formula_step_order,
+    _workflow_task_lane_and_title,
+    _workflow_task_progress,
     _product_bead,
     handler_factory,
     ProviderBridge,
@@ -119,6 +122,10 @@ class FakeRunner:
                 "status": "in_progress",
                 "created_at": "2026-09-14T09:00:00Z",
             }],
+            (
+                "bd", "list", "--status", "in_progress",
+                "--metadata-field", "gc.kind=workflow", "--limit", "0", "--json",
+            ): [],
             (
                 "bd",
                 "list",
@@ -2010,6 +2017,135 @@ class FactoryCockpitTest(unittest.TestCase):
             "L’agent réalise, vérifie et prépare la livraison",
             _human_phase("Read assignment, implement, verify, commit, and close"),
         )
+
+    def test_active_task_title_prefers_the_resolved_work_beads_own_title(self):
+        # af-by4uo: never map one formula name to one hardcoded label -- the
+        # general rule is to surface the underlying work bead's own
+        # human-written title, whatever formula happens to carry it.
+        runner = FakeRunner()
+        runner.responses[("gc", "convoy", "status", "cv-1", "--json")] = {
+            "children": [{"id": "wk-1"}]
+        }
+        runner.responses[("gc", "bd", "show", "wk-1", "--json")] = [{
+            "id": "wk-1", "title": "Ship the thing Benjamin actually asked for",
+        }]
+        lane, title = _workflow_task_lane_and_title(
+            "some-formula-nobody-has-seen-before", "cv-1", runner, set(),
+        )
+        self.assertEqual("factory", lane)
+        self.assertEqual("Ship the thing Benjamin actually asked for", title)
+
+        lane, title = _workflow_task_lane_and_title(
+            "some-formula-nobody-has-seen-before", "cv-1", runner, {"wk-1"},
+        )
+        self.assertEqual("product", lane)
+
+    def test_active_task_title_falls_back_generically_for_any_unmapped_formula(self):
+        # No convoy to resolve a work bead from: falls back to the same
+        # generic table+dash-formatting rule _human_objective already applies
+        # to every unmapped formula name, proven here for two arbitrary,
+        # never-special-cased names -- not a single if/else for one example.
+        runner = FakeRunner()
+        for formula, expected in (
+            ("build-basic", "Build basic"),
+            ("mol-review-stale-branches", "Review stale branches"),
+        ):
+            lane, title = _workflow_task_lane_and_title(formula, None, runner, set())
+            self.assertEqual("factory", lane)
+            self.assertEqual(expected, title)
+
+    def test_formula_step_order_follows_the_declared_needs_graph(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as handle:
+            handle.write(
+                "[[steps]]\nid = \"drain\"\nneeds = [\"push-and-pr\"]\n\n"
+                "[[steps]]\nid = \"workspace-setup\"\n\n"
+                "[[steps]]\nid = \"push-and-pr\"\nneeds = [\"do-work\"]\n\n"
+                "[[steps]]\nid = \"do-work\"\nneeds = [\"workspace-setup\"]\n"
+            )
+            path = handle.name
+        try:
+            self.assertEqual(
+                ["workspace-setup", "do-work", "push-and-pr", "drain"],
+                _formula_step_order(path),
+            )
+        finally:
+            Path(path).unlink()
+        self.assertIsNone(_formula_step_order(None))
+        self.assertIsNone(_formula_step_order("/no/such/formula.toml"))
+
+    def test_active_task_current_step_uses_formula_order_not_api_declaration_order(self):
+        # The workflow API returns every not-yet-completed step as "pending"
+        # with no ordering signal of its own (graph.v2 materializes all steps
+        # upfront) -- the formula's own declared step order must resolve
+        # which pending step is actually current.
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as handle:
+            handle.write(
+                "[[steps]]\nid = \"workspace-setup\"\n\n"
+                "[[steps]]\nid = \"do-work\"\nneeds = [\"workspace-setup\"]\n"
+            )
+            path = handle.name
+        try:
+            workflow = {
+                "beads": [
+                    {
+                        "id": "step-2", "kind": "task", "status": "pending",
+                        "step_ref": "mol-x.do-work", "title": "Implement, verify, commit, and close",
+                    },
+                    {
+                        "id": "step-1", "kind": "task", "status": "completed",
+                        "step_ref": "mol-x.workspace-setup", "title": "Isolate work in a worktree",
+                    },
+                ]
+            }
+            runner = FakeRunner()
+            runner.responses[("bd", "list", "--id", "step-1", "--all", "--json")] = [
+                {"id": "step-1", "closed_at": "2026-09-18T21:01:00Z"}
+            ]
+            current_label, trail = _workflow_task_progress(workflow, path, runner)
+            self.assertEqual("Implement, verify, commit, and close", current_label)
+            self.assertEqual(1, len(trail))
+            self.assertEqual("2026-09-18T21:01:00Z", trail[0]["at"])
+        finally:
+            Path(path).unlink()
+
+    def test_collect_surfaces_every_active_parallel_task_with_a_trail(self):
+        runner = FakeRunner()
+        runner.responses[
+            (
+                "bd", "list", "--status", "in_progress",
+                "--metadata-field", "gc.kind=workflow", "--limit", "0", "--json",
+            )
+        ] = [{
+            "id": "wf-root",
+            "title": "mol-do-work",
+            "status": "in_progress",
+            "started_at": "2026-09-14T09:00:00Z",
+            "metadata": {"gc.formula_name": "mol-do-work"},
+        }]
+
+        class GasCityWithActiveTask(FakeGasCity):
+            def json(self, path):
+                if path == "/v0/city/agent-factory/workflow/wf-root":
+                    return {
+                        "beads": [
+                            {
+                                "id": "step-1", "kind": "task", "status": "pending",
+                                "step_ref": "mol-do-work.do-work", "title": "Do the work",
+                            },
+                        ]
+                    }
+                return super().json(path)
+
+        result = FactoryCollector(runner, GasCityWithActiveTask()).collect()
+        self.assertEqual(1, len(result["active_tasks"]))
+        task = result["active_tasks"][0]
+        self.assertEqual("wf-root", task["id"])
+        self.assertEqual("factory", task["lane"])
+        # No convoy on this workflow root -> falls back to the formula name,
+        # humanized by the same generic rule as any other unmapped formula.
+        self.assertEqual(_human_objective("mol-do-work"), task["title"])
+        self.assertEqual("Do the work", task["current_step"])
+        self.assertEqual([], task["trail"])
 
     def test_closed_focus_does_not_reuse_stale_workflow_progress(self):
         runner = FakeRunner()
