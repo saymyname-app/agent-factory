@@ -178,6 +178,12 @@
       <p id="mobile-decision-feedback" class="feedback" aria-live="polite"></p>
     </section>
   </section>
+  <section class="mobile-screen" data-mobile-panel="queue" aria-label="File des candidats produit">
+    <p class="zero-token">Lecture live · 0 token</p>
+    <div id="mobile-queue-list" class="mobile-list"></div>
+    <p id="mobile-queue-empty" class="muted hidden">Aucun candidat produit éligible ou en pause.</p>
+    <p class="muted">Lecture seule ici. Ajouter, déplacer, mettre en pause ou annuler un candidat reste réservé à l’ordinateur.</p>
+  </section>
   <section class="mobile-screen" data-mobile-panel="mayor" aria-label="Répondre au Mayor">
     <article class="panel mobile-card"><div class="mobile-card-head"><p class="eyebrow">CANAL MAYOR</p><span id="mobile-mayor-state" class="status-pill idle">Disponible</span></div><div id="mobile-mayor-conversation" class="mobile-messages"></div></article>
     <p class="truth-note">Réservé aux questions de jugement. Les statuts sont déjà gratuits dans « État ». Pas d’interruption garantie.</p>
@@ -191,6 +197,7 @@
 <nav class="mobile-tabs" aria-label="Écrans mobiles">
   <button class="mobile-tab active" data-mobile-view="state" type="button"><span>État</span><small id="mobile-tab-state-count">—</small></button>
   <button class="mobile-tab" data-mobile-view="decisions" type="button"><span>Décisions</span><small id="mobile-tab-decisions-count">—</small></button>
+  <button class="mobile-tab" data-mobile-view="queue" type="button"><span>File</span><small id="mobile-tab-queue-count">—</small></button>
   <button class="mobile-tab" data-mobile-view="mayor" type="button"><span>Mayor</span><small id="mobile-tab-mayor-count">canal</small></button>
 </nav>
 </div>

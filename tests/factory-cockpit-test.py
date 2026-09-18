@@ -1052,15 +1052,28 @@ class FactoryCockpitTest(unittest.TestCase):
         # The disclosure stays closed until asked for.
         self.assertNotIn('<details class="nav-more" open>', html)
 
-    def test_mobile_profile_is_three_screens_read_at_zero_token(self):
-        """Nobody pilots a factory from a phone: is it running, am I awaited, I unblock."""
+    def test_mobile_profile_is_four_screens_read_at_zero_token(self):
+        """Nobody pilots a factory from a phone: is it running, am I awaited, what's queued, I unblock.
+
+        Was three screens (PR 51, 2026-09-16: "don't make other views
+        responsive except on a real incident"). Benjamin confirmed on
+        2026-09-18 (af-3r1sh) that not being able to see the product-candidate
+        queue from his phone is that real incident -- this revises that one
+        specific point of PR 51, not a general reopening of mobile scope. The
+        queue screen is read-only (position/title/urgency/state only); every
+        mutation (add/move/pause/cancel) stays desktop-only.
+        """
         html = (ROOT / "ui" / "factory-cockpit" / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "ui" / "factory-cockpit" / "app.js").read_text(encoding="utf-8")
         styles = (ROOT / "ui" / "factory-cockpit" / "styles.css").read_text(encoding="utf-8")
         panels = re.findall(r'data-mobile-panel="([a-z]+)"', html)
         tabs = re.findall(r'data-mobile-view="([a-z]+)"', html)
-        self.assertEqual(["state", "decisions", "mayor"], panels)
-        self.assertEqual(["state", "decisions", "mayor"], tabs)
+        self.assertEqual(["state", "decisions", "queue", "mayor"], panels)
+        self.assertEqual(["state", "decisions", "queue", "mayor"], tabs)
+        # The queue screen is read-only: no mutation controls reach the phone.
+        mobile_queue_html = html[html.index('data-mobile-panel="queue"'):html.index('data-mobile-panel="mayor"')]
+        for forbidden in ("queue-action", "queue-add-form", "<select", "<input"):
+            self.assertNotIn(forbidden, mobile_queue_html)
         # The desktop cockpit is replaced below the breakpoint, not squeezed.
         self.assertIn("@media(max-width:640px)", styles)
         self.assertIn(".app-header,.app-nav,.shell{display:none!important}", styles)

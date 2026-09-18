@@ -8,6 +8,7 @@ Use progressive disclosure. Do not read every document by default.
 | Comment fonctionne l'usine, de bout en bout, en français, pour Benjamin | `COMMENT_FONCTIONNE_USINE.md` |
 | Codex desktop, CLI, remote/mobile protocol and authority | `OPERATOR_BRIDGE.md` |
 | Human Factory cockpit, product roadmap/decisions/board, state/resume contract, agent drill-down, token usage, Mayor channel | `FACTORY_WORKSPACE_AGENTS.md`, `OPERATIONS.md`, `decisions/ADR-0012-human-state-and-resume-contract.md` |
+| Mobile cockpit screen set and why it stays deliberately minimal (revised 2026-09-18, af-3r1sh: added a read-only product-candidate queue screen to the 3 from PR 51/2026-09-16, on confirmed real need — not a general reopening of mobile scope) | `ui/factory-cockpit/app.js` (`/* ---- Profil mobile` comment) |
 | Integrated product PO, project/context graphs, reusable cockpit products | `PRODUCT_COCKPIT_TEMPLATE.md`, `ADD_A_PRODUCT.md`, `config/product-cockpit.schema.json`, `config/cockpit.json` |
 | SayMyName product vision, priorities, unknowns | `products/saymyname/PRODUCT_CONTEXT.md` |
 | SayMyName durable product decisions | `products/saymyname/DECISIONS.md` |

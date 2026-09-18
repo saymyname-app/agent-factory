@@ -507,10 +507,15 @@ $("mayor-conversation").replaceChildren(node("div", "empty", "Clique sur « Reli
 
 
 /* ---- Profil mobile -------------------------------------------------------
-   Trois écrans seulement : État · Décisions à prendre · Répondre au Mayor.
-   Le cockpit complet reste le poste de travail; personne ne pilote une usine
-   au téléphone. Tout est rendu depuis le snapshot déjà chargé, donc lire
-   reste à 0 token; seuls les deux envois explicites en consomment. */
+   Quatre écrans : État · Décisions à prendre · File produit (lecture seule)
+   · Répondre au Mayor. La file a rejoint la liste le 2026-09-18 (af-3r1sh) :
+   l'opérateur a confirmé vouloir voir la file de candidats produit depuis
+   son téléphone, ce qui révise ce point précis de la décision PR 51
+   (mobile = 3 écrans) -- pas une réouverture générale du scope mobile. Le
+   cockpit complet reste le poste de travail pour toute mutation
+   (ajouter/déplacer/pause/annuler); personne ne pilote une usine au
+   téléphone. Tout est rendu depuis le snapshot déjà chargé, donc lire reste
+   à 0 token; seuls les deux envois explicites (PO, Mayor) en consomment. */
 let mobileDecision = null;
 let mobileMayorLoaded = false;
 function mobilePendingDecisions() { const memory = snapshot?.product_memory; if (!memory) return []; return visiblePending(memory).filter((item) => item.domain !== "enterprise"); }
@@ -537,6 +542,14 @@ function renderMobile(data) {
   if (blocked) { $("mobile-block-cause").textContent = campaign.cause || resume.condition || state.activity.detail || "La livraison ne peut pas poursuivre."; $("mobile-block-action").textContent = `Reprise : ${campaign.blocked ? campaign.owner_label : resume.owner_label} \u00b7 ${campaign.blocked ? campaign.action : resume.action}`; }
   const delivered = data.last_delivery; $("mobile-last-delivery").textContent = `Derni\u00e8re livraison : ${delivered.title}${delivered.pr ? ` \u00b7 PR ${delivered.pr}` : ""}${delivered.ci === "success" ? " \u00b7 CI verte" : ""}`;
   renderMobileDecisionList();
+  renderMobileQueue(data);
+}
+function renderMobileQueue(data) {
+  const candidates = (data.queue || []).filter((item) => item.kind === "product_candidate");
+  const list = $("mobile-queue-list"); list.replaceChildren();
+  $("mobile-tab-queue-count").textContent = candidates.length ? `${candidates.length} candidat${candidates.length > 1 ? "s" : ""}` : "vide";
+  candidates.forEach((item) => { const card = node("article", "mobile-queue-card"); card.append(node("span", "eyebrow", `POSITION ${item.position} \u00b7 ${item.urgency_label}`), node("strong", "", item.title), node("small", "muted", item.state_label)); list.append(card); });
+  $("mobile-queue-empty").classList.toggle("hidden", Boolean(candidates.length));
 }
 function renderMobileDecisionList() {
   const items = mobilePendingDecisions(); const list = $("mobile-decision-list"); list.replaceChildren();

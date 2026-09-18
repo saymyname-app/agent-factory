@@ -375,6 +375,9 @@ button.reference-card{width:100%;text-align:left}
 .mobile-decision-card{display:flex;flex-direction:column;gap:.25rem;padding:.85rem;border:1px solid var(--line);border-radius:1rem;background:rgba(21,27,26,.94);text-align:left}
 .mobile-decision-card strong{font-size:.95rem}
 .mobile-decision-card small{color:var(--muted);font-size:.76rem}
+.mobile-queue-card{display:flex;flex-direction:column;gap:.25rem;padding:.85rem;border:1px solid var(--line);border-radius:1rem;background:rgba(21,27,26,.94)}
+.mobile-queue-card strong{font-size:.95rem}
+.mobile-queue-card small{color:var(--muted);font-size:.76rem}
 .mobile-detail{display:flex;flex-direction:column;gap:.55rem}
 .mobile-detail h2{margin:0;font-size:1.05rem}
 .mobile-messages{display:flex;max-height:24rem;flex-direction:column;gap:.5rem;overflow-y:auto}
@@ -384,7 +387,7 @@ button.reference-card{width:100%;text-align:left}
 .mobile-actions{display:flex;flex-direction:column;gap:.5rem}
 .mobile-actions select,.mobile-actions button{width:100%}
 .mobile-app textarea,.mobile-app select{width:100%;padding:.6rem;border:1px solid var(--line);border-radius:.65rem;color:var(--ink);background:var(--panel2)}
-.mobile-tabs{position:fixed;right:0;bottom:0;left:0;z-index:40;display:grid;grid-template-columns:repeat(3,1fr);gap:.3rem;padding:.4rem;border-top:1px solid var(--line);background:rgba(11,15,14,.97);backdrop-filter:blur(14px)}
+.mobile-tabs{position:fixed;right:0;bottom:0;left:0;z-index:40;display:grid;grid-template-columns:repeat(4,1fr);gap:.3rem;padding:.4rem;border-top:1px solid var(--line);background:rgba(11,15,14,.97);backdrop-filter:blur(14px)}
 .mobile-tab{display:flex;min-height:3.1rem;flex-direction:column;align-items:center;justify-content:center;gap:.1rem;padding:.45rem .2rem}
 .mobile-tab span{font-size:.82rem;font-weight:700}
 .mobile-tab small{max-width:100%;overflow:hidden;color:var(--muted);font-size:.68rem;text-overflow:ellipsis;white-space:nowrap}
