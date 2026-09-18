@@ -48,6 +48,12 @@ DEFAULT_CONDITION = (
 # enough to be killed with zero trace -- 31 such kills in 24h, uncounted. Each
 # call now gets 10s, and the tick as a whole a 40s budget it can see coming.
 TICK_DEADLINE_SECONDS = float(os.environ.get("CAMPAIGN_TICK_DEADLINE_SECONDS", "40"))
+# af-tbgs4: saymyname-product-status --json measured at ~10-12s (mostly `gc
+# status --json` inside it, ~8s), so the blanket 10s CAMPAIGN_COMMAND_TIMEOUT
+# above transiently killed a meaningful fraction of sentinel ticks calling it.
+# Give this one slow, known call its own headroom instead of raising the
+# timeout for every call.
+STATUS_COMMAND_TIMEOUT = float(os.environ.get("CAMPAIGN_STATUS_COMMAND_TIMEOUT", "20"))
 
 _tick_deadline: float | None = None
 
@@ -68,13 +74,15 @@ class TickDeadlineExceeded(RuntimeError):
     """
 
 
-def run(*args: str) -> subprocess.CompletedProcess[str]:
+def run(*args: str, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     if _tick_deadline is not None and time.monotonic() > _tick_deadline:
         raise TickDeadlineExceeded(f"budget de {TICK_DEADLINE_SECONDS}s dépassé avant {args[0]}")
+    if timeout is None:
+        timeout = float(os.environ.get("CAMPAIGN_COMMAND_TIMEOUT", "10"))
     try:
         return subprocess.run(
             args, cwd=ROOT, text=True, capture_output=True, check=True,
-            timeout=int(os.environ.get("CAMPAIGN_COMMAND_TIMEOUT", "10")),
+            timeout=timeout,
             env={**os.environ, "NO_COLOR": "1"},
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -85,8 +93,8 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
         raise CampaignCommandError(detail or f"Commande indisponible: {args[0]}") from exc
 
 
-def json_run(*args: str) -> Any:
-    result = run(*args)
+def json_run(*args: str, timeout: float | None = None) -> Any:
+    result = run(*args, timeout=timeout)
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -262,7 +270,7 @@ def complete(args: argparse.Namespace) -> None:
         raise CampaignCommandError("Aucune campagne automatique n'est active.")
     if campaign["state"] == "blocked":
         raise CampaignCommandError("Une campagne bloquée doit être reprise, pas marquée terminée.")
-    status = json_run(STATUS_BIN, "--json")
+    status = json_run(STATUS_BIN, "--json", timeout=STATUS_COMMAND_TIMEOUT)
     if status.get("result", {}).get("id") is not None or status.get("next_candidate") is not None:
         raise CampaignCommandError("La campagne ne peut être marquée terminée tant qu'un résultat est actif ou éligible.")
     update_metadata({
@@ -659,7 +667,7 @@ def sentinel(_: argparse.Namespace) -> None:
         decision = ladder_decision(metadata, now)
     else:
         try:
-            status = json_run(STATUS_BIN, "--json")
+            status = json_run(STATUS_BIN, "--json", timeout=STATUS_COMMAND_TIMEOUT)
         except CampaignCommandError as exc:
             count = record_failure(metadata, exc)
             mode = failure_mode()
@@ -825,7 +833,7 @@ def sentinel(_: argparse.Namespace) -> None:
 
 
 def status(_: argparse.Namespace) -> None:
-    value = json_run(STATUS_BIN, "--json")
+    value = json_run(STATUS_BIN, "--json", timeout=STATUS_COMMAND_TIMEOUT)
     print(json.dumps(value["campaign"], ensure_ascii=False, separators=(",", ":")))
 
 
