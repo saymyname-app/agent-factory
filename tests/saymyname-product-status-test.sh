@@ -146,6 +146,16 @@ assert_json workflow-root '.activity.state + ":" + .result.agent' 'working:codex
 # must fall back to treating the in-progress workflow current_issue itself
 # as the active result and resolve its own live current step's session.
 assert_json self-workflow '.activity.state + ":" + .result.agent' 'working:codex-af-self'
+# af-6k6sn: a v2 workflow root's gc.session_name is stamped once and never
+# updated as later formula steps hand off to new sessions. Once handed off
+# past the first step, a session_name-filtered step lookup always finds
+# zero -- the old active_count reused that same lookup and misreported a
+# genuinely running workflow (its convoy still has an open tracked child)
+# as "finalizing". The fix checks the workflow's own convoy membership
+# instead: result.stage must stay "active", not roll over to "finalizing",
+# even though no specific current step/agent can be named from the stale
+# session.
+assert_json self-workflow-handoff '.result.stage + ":" + (.result.agent == null | tostring)' 'active:true'
 
 idle_output=$(run_fixture idle)
 [[ $idle_output == *'SANTÉ: Infrastructure disponible'* ]] || fail_test 'idle health missing'

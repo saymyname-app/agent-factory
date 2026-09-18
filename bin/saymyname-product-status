@@ -153,6 +153,7 @@ derive_active_context() {
   local workflows_response workflow convoy_id convoy_response convoy cause resume_mode work_outcome
   local -a matching_workflows=()
   local workflow_id session_name steps_response current_step step_ref live_count active_count
+  local workflow_convoy_id workflow_convoy workflow_convoy_response
   local direct_session_id direct_session_name direct_matches direct_agent
 
   CURRENT_OUTCOME=$(required_string "$current_issue" '.title' "Current outcome title")
@@ -333,31 +334,60 @@ derive_active_context() {
   workflow=${matching_workflows[0]}
   workflow_id=$(required_string "$workflow" '.id' "Active workflow ID")
   session_name=$(metadata_string "$workflow" "gc.session_name" "Active workflow session")
+  workflow_convoy_id=$(metadata_string "$workflow" "gc.input_convoy_id" "Active workflow convoy")
 
-  capture_json steps_response "Beads workflow steps" \
-    gc_json bd list --assignee="$session_name" --json
-  jq -e 'type == "array"' >/dev/null <<<"$steps_response" \
-    || die "Beads workflow step inventory is not an array."
-  active_count=$(jq --arg root "$workflow_id" --arg session "$session_name" '
-    [.[] | select(
-      (.status == "open" or .status == "in_progress") and
-      .metadata["gc.root_bead_id"] == $root and
-      .metadata["gc.session_name"] == $session)] | length
-  ' <<<"$steps_response")
+  # active_count must reflect the workflow's own convoy membership, not a
+  # gc.session_name comparison: that field is stamped once from the
+  # workflow's first step and never updated as later steps hand off to new
+  # sessions (see the direct-assignment comment above), so filtering steps
+  # by it always finds zero once the workflow has handed off past its first
+  # step -- even while the convoy it drives is genuinely still running
+  # (af-6k6sn, live case smb-44tt/smb-u0qg 2026-09-18). The convoy may
+  # already be in convoys_response from the matching_workflows loop above;
+  # fall back to a fresh lookup for the self-tracking case, whose own
+  # convoy was never a candidate there.
+  workflow_convoy=$(jq -ce --arg id "$workflow_convoy_id" '
+    (if type == "array" then . else [] end)
+    | [.[] | select(.id == $id)]
+    | if length >= 1 then .[0] else null end
+  ' <<<"$convoys_response")
+  if [[ $workflow_convoy == null ]]; then
+    capture_json workflow_convoy_response "Active workflow convoy" \
+      gc_json bd show "$workflow_convoy_id" --json
+    workflow_convoy=$(single_issue "$workflow_convoy_response" "Active workflow convoy $workflow_convoy_id")
+  fi
+  active_count=$(jq '
+    [.dependencies[]? | select(
+      ((.dependency_type // .type // "") == "tracks") and
+      ((.status // "") == "open" or (.status // "") == "in_progress"))] | length
+  ' <<<"$workflow_convoy")
   if [[ $active_count -eq 0 ]]; then
     CURRENT_STATE="finalizing"
     CURRENT_PHASE="Réalisation terminée · revue, fusion ou clôture par le Mayor"
     CURRENT_AGENT="none"
     return
   fi
-  [[ $active_count -eq 1 ]] \
-    || die "Active workflow does not expose exactly one current step."
+
+  capture_json steps_response "Beads workflow steps" \
+    gc_json bd list --assignee="$session_name" --json
+  jq -e 'type == "array"' >/dev/null <<<"$steps_response" \
+    || die "Beads workflow step inventory is not an array."
   current_step=$(jq -ce --arg root "$workflow_id" --arg session "$session_name" '
     [.[] | select(
       (.status == "open" or .status == "in_progress") and
       .metadata["gc.root_bead_id"] == $root and
-      .metadata["gc.session_name"] == $session)][0]
+      .metadata["gc.session_name"] == $session)][0] // null
   ' <<<"$steps_response")
+  # The convoy already proved the workflow is genuinely active; a stale
+  # session_name simply failing to name today's current step is not grounds
+  # to die() -- report active with no specific step/agent identified rather
+  # than mislabel it finalizing.
+  if [[ $current_step == null ]]; then
+    CURRENT_STATE="active"
+    CURRENT_PHASE="Réalisation"
+    CURRENT_AGENT="none"
+    return
+  fi
   step_ref=$(metadata_string "$current_step" "gc.step_ref" "Active workflow step")
 
   CURRENT_PHASE=$(phase_for_step "$step_ref")
