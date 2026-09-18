@@ -171,19 +171,31 @@ workflows_json=$(gc bd list --status closed --metadata-field gc.kind=workflow \
 while IFS=$'\t' read -r bead_id code msg; do
   [ -z "$bead_id" ] && continue
   bad "false-success close — $msg"
-  add_alert "$code" "$bead_id" "$msg"
+  # Fingerprint (status:outcome) is read up front so the cockpit-facing
+  # signal file can apply the same "already reported this exact state, stay
+  # silent" rule the mail throttle below already applies -- af-d1jfc-class
+  # fix (2026-09-18). Before this, add_alert ran unconditionally, so
+  # .gc/runtime/factory-watchdog-signals.json (what the cockpit reads)
+  # re-listed a bead every single run even after it was mailed once and its
+  # own notes explained the fix -- while the mail itself correctly never
+  # repeated. `bad` above stays unconditional: the raw watchdog log is meant
+  # to keep showing the current state on every run, only the *signal file*
+  # must stop re-surfacing state nothing has changed on.
+  bead_json=$(gc bd show "$bead_id" --json 2>/dev/null)
+  current_status=$(printf '%s' "$bead_json" | jq -r '(.[0].status // "")')
+  current_outcome=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.outcome"] // "")')
+  current_fp="${current_status}:${current_outcome}"
+  stored_fp=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.watchdog_false_success_fp"] // empty)')
+  legacy_flagged=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.watchdog_flagged_false_success"] // empty)')
+  if [ "$stored_fp" != "$current_fp" ]; then
+    add_alert "$code" "$bead_id" "$msg"
+  fi
   if [ "$CHECK_ONLY" != "1" ]; then
     # Report-once, keyed on a fingerprint of what was reported (status:outcome),
     # not just "has this bead ever been flagged" -- af-u61xq. A bare "already
     # flagged" flag can never re-fire if the bead's outcome or status later
     # changes, which is exactly the case the EARS spec calls out. This never
     # writes gc.outcome itself; only its own two bookkeeping keys.
-    bead_json=$(gc bd show "$bead_id" --json 2>/dev/null)
-    current_status=$(printf '%s' "$bead_json" | jq -r '(.[0].status // "")')
-    current_outcome=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.outcome"] // "")')
-    current_fp="${current_status}:${current_outcome}"
-    stored_fp=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.watchdog_false_success_fp"] // empty)')
-    legacy_flagged=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.watchdog_flagged_false_success"] // empty)')
     if [ "$stored_fp" = "$current_fp" ]; then
       : # already reported this exact state -- stay silent
     elif [ -z "$stored_fp" ] && [ -n "$legacy_flagged" ]; then
