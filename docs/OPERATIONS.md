@@ -745,10 +745,23 @@ Bead:
 gc order run mayor-campaign
 ```
 
-All five mutation paths (`activate`, `block`, `resume`, `complete`, `sentinel`)
-share one host-local flock. Repeating the exact active activation is a no-op;
-activation refuses to overwrite a blocked/completed campaign or to bypass
-`NEEDS BENJAMIN`, a blocked result, or an existing automatic resume condition.
+All six mutation paths (`activate`, `block`, `resume`, `complete`, `repair`,
+`sentinel`) share one host-local flock. Repeating the exact active activation
+is a no-op; activation refuses to overwrite a blocked/completed campaign or
+to bypass `NEEDS BENJAMIN`, a blocked result, or an existing automatic resume
+condition.
+
+If `gc.campaign_candidate` or `gc.campaign_condition` ever goes missing on the
+coordination Bead while the campaign is still marked active — a hand-write
+outside every door, exactly what ADR-0023 exists to end — `activate` refuses
+to touch an already-active campaign, so nothing else can repair it. `./bin/
+mayor-campaign repair --mayor` is that door: it restores both fields from the
+last valid pair recorded at every successful `activate`/`resume`
+(`gc.campaign_candidate_last` / `gc.campaign_condition_last`), normalises any
+empty-string coordination pointer to `none`, and blocks the campaign (`kind
+admin`) instead of guessing when no last valid pair is on record. `factory-
+guard` calls it every run (it is a no-op when nothing needs fixing) and pages
+the Mayor once per run that actually repaired something.
 
 The Order runs `./bin/mayor-campaign sentinel` every minute. It performs one
 canonical status read, no model call, and sends durable mail only when the Mayor

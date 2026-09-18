@@ -155,11 +155,19 @@ humaine (ADR-0013, ADR-0016).
 ./bin/mayor-campaign sentinel      # la sentinelle de réveil, zéro token
 ./bin/mayor-campaign block --mayor --kind <k> --owner <o> --cause ... --action ...
 ./bin/mayor-campaign resume --mayor
+./bin/mayor-campaign repair --mayor  # restaure candidat/condition manquants (ADR-0023)
 ```
 
 **À lire en premier dans toute nouvelle session.** Un `ERROR` sur `status`
 signifie que la boucle de réveil est **morte**, pas qu'elle se repose — la
 distinction est exactement ce qui a coûté une nuit le 2026-09-15.
+
+`repair --mayor` est la porte qui restaure `gc.campaign_candidate`/`condition`
+depuis la dernière paire valide (`_last`, tenue par `activate`/`resume`) et
+normalise les pointeurs de coordination vides en `none`, sans jamais deviner
+un candidat ; à défaut de dernière valeur valide, elle bloque la campagne
+(`kind admin`) au lieu de deviner. `factory-guard` l'appelle à chaque passage
+(af-hihkg).
 
 Les transitions exigent le garde `--mayor`. C'est un garde « transition
 délibérée », **pas** une revendication d'identité : déclarez l'auteur réel dans

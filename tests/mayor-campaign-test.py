@@ -344,6 +344,88 @@ class MayorCampaignTest(CampaignFixture, unittest.TestCase):
         self.assertIn("ladder_rested", fourth)
         self.assertEqual(3, self.mail_count())
 
+    def test_activate_and_resume_record_the_last_valid_candidate_and_condition(self):
+        # ADR-0023 / af-hihkg: repair --mayor can only restore what activate
+        # and resume have been recording all along.
+        self.write_state({"gc.current_jit": "none", "gc.needs_benjamin": "none"})
+        self.invoke("activate", "af-cm1l", "af-hho5", "--mayor")
+        value = self.current_metadata()
+        self.assertEqual("af-cm1l", value["gc.campaign_candidate_last"])
+        self.assertEqual(value["gc.campaign_condition"], value["gc.campaign_condition_last"])
+
+        self.invoke(
+            "block", "--kind", "admin", "--cause", "Rotation ADMIN requise",
+            "--owner", "Benjamin", "--action", "Autoriser précisément la rotation", "--mayor",
+        )
+        self.invoke("resume", "--mayor")
+        value = self.current_metadata()
+        self.assertEqual(value["gc.campaign_candidate"], value["gc.campaign_candidate_last"])
+        self.assertEqual(value["gc.campaign_condition"], value["gc.campaign_condition_last"])
+
+    def test_repair_restores_missing_candidate_and_normalises_empty_pointers(self):
+        # Replays the 2026-09-18 08:43Z incident: gc.campaign_candidate went
+        # missing by a hand-write while the campaign stayed marked active, and
+        # gc.current held an empty string instead of "none". No door could
+        # repair it before this one -- activate refuses an already-active
+        # campaign.
+        broken = metadata()
+        broken["gc.campaign_candidate_last"] = broken["gc.campaign_candidate"]
+        broken["gc.campaign_condition_last"] = broken["gc.campaign_condition"]
+        del broken["gc.campaign_candidate"]
+        broken["gc.current"] = ""
+        self.write_state(broken)
+
+        result = self.invoke("repair", "--mayor")
+        self.assertIn("FIXED: gc.campaign_candidate -> af-cm1l", result.stdout)
+        self.assertIn("FIXED: gc.current -> none", result.stdout)
+        value = self.current_metadata()
+        self.assertEqual("af-cm1l", value["gc.campaign_candidate"])
+        self.assertEqual("none", value["gc.current"])
+
+        # Healthy again with no further hand-write: one guard run (repair,
+        # then the ordinary sentinel tick) and the campaign is back to normal.
+        healthy = self.invoke("sentinel")
+        self.assertEqual(0, healthy.returncode)
+
+    def test_repair_requires_the_mayor_guard(self):
+        broken = metadata()
+        del broken["gc.campaign_candidate"]
+        self.write_state(broken)
+        denied = self.invoke("repair", check=False)
+        self.assertNotEqual(0, denied.returncode)
+        self.assertNotIn("gc.campaign_candidate", self.current_metadata())
+
+    def test_repair_is_a_noop_on_a_healthy_campaign(self):
+        result = self.invoke("repair", "--mayor")
+        self.assertIn("NOOP", result.stdout)
+
+    def test_repair_blocks_with_admin_cause_when_no_last_valid_pair_exists(self):
+        # The genuinely unrecoverable shape: no candidate/condition, and no
+        # history to restore from either (repair predates this campaign, or
+        # both were wiped together). Repair must not guess a candidate.
+        broken = metadata()
+        del broken["gc.campaign_candidate"]
+        del broken["gc.campaign_condition"]
+        self.write_state(broken)
+
+        result = self.invoke("repair", "--mayor")
+        self.assertIn("FIXED: gc.campaign_state -> blocked", result.stdout)
+        value = self.current_metadata()
+        self.assertEqual("blocked", value["gc.campaign_state"])
+        self.assertEqual("admin", value["gc.campaign_block_kind"])
+        self.assertEqual("none", value["gc.campaign_candidate"])
+        self.assertEqual("none", value["gc.campaign_condition"])
+
+        # The sentinel reads it as a plain, coherent block -- never a crash.
+        healthy = self.invoke("sentinel")
+        self.assertEqual(0, healthy.returncode)
+        self.assertIn("campaign blocked", healthy.stdout)
+
+        # And resume refuses rather than reactivating with nothing to run.
+        denied = self.invoke("resume", "--mayor", check=False)
+        self.assertNotEqual(0, denied.returncode)
+        self.assertEqual("blocked", self.current_metadata()["gc.campaign_state"])
+
 
 def bead(bead_id, **extra):
     value = {"id": bead_id, "title": f"Titre {bead_id}", "status": "open",

@@ -614,6 +614,51 @@ NEXT: diagnose why $identity cannot boot (provider config, host resources, other
   fi
 fi
 
+# --- 7c. campaign coordination repair (ADR-0023, af-hihkg) ------------------
+# 2026-09-18 08:43Z: gc.campaign_candidate was found missing on the
+# coordination Bead while the automatic campaign was still marked active (a
+# hand-write after ADR-0023's own write-door landed -- PR #114); gc.current*
+# held empty strings instead of "none". The sentinel then dies with "Une
+# campagne active doit exposer sa condition et son candidat d'autorisation"
+# and `mayor-campaign activate` refuses to touch an already-active campaign,
+# so no door could repair it -- the PO restored the field by hand at 08:58Z,
+# exactly the write ADR-0023 exists to end. `mayor-campaign repair --mayor`
+# is that door: it restores gc.campaign_candidate/condition from the last
+# valid pair recorded at every successful activate/resume, normalises
+# empty-string coordination pointers to "none", and blocks the campaign
+# (kind admin) instead of guessing when no last valid pair is on record. It
+# is a no-op when nothing needs fixing, so this check calls it every run and
+# only reports/pages when it actually changed something.
+MAYOR_CAMPAIGN="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/mayor-campaign"
+if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$MAYOR_CAMPAIGN" ]; then
+  say "· campaign-repair — not checked (not a city root, or gc unavailable)"
+elif [ "$CHECK_ONLY" = "1" ]; then
+  say "· campaign-repair — not checked (--check-only never invokes a --mayor door)"
+else
+  CR_OUTPUT=$("$MAYOR_CAMPAIGN" repair --mayor 2>&1)
+  CR_STATUS=$?
+  CR_FIXED=$(printf '%s\n' "$CR_OUTPUT" | grep '^FIXED: ' || true)
+  if [ "$CR_STATUS" -ne 0 ]; then
+    bad "campaign-repair: mayor-campaign repair failed: $(printf '%s' "$CR_OUTPUT" | tr '\n' ' ')"
+  elif [ -n "$CR_FIXED" ]; then
+    while IFS= read -r cr_line; do
+      [ -z "$cr_line" ] && continue
+      cr_detail="${cr_line#FIXED: }"
+      bad "campaign-repair: coordination bead needed repair: $cr_detail"
+      did "campaign-repair: $cr_detail"
+    done <<<"$CR_FIXED"
+    gc mail send mayor --notify \
+      -s "Campaign coordination repaired" \
+      -m "ACTION: factory-guard ran mayor-campaign repair --mayor
+STATE: $(printf '%s' "$CR_FIXED" | tr '\n' '; ')
+EVIDENCE: gc bd show ${CAMPAIGN_COORDINATION_BEAD:-af-1vr4}
+NEXT: confirm the repaired candidate/condition are correct; investigate why they went missing if this repeats" \
+      >/dev/null 2>&1
+  else
+    say "✓ campaign-repair — coordination candidate/condition intact"
+  fi
+fi
+
 # --- 8. delivery-bead proof-field completeness (ADR-0016 s5.3 invariant 2) --
 # bin/deliver-close is the only sanctioned door for CLOSING a delivery bead,
 # and it already refuses to write without independently verifying a merged
