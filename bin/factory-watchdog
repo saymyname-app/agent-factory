@@ -186,7 +186,6 @@ while IFS=$'\t' read -r bead_id code msg; do
   current_outcome=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.outcome"] // "")')
   current_fp="${current_status}:${current_outcome}"
   stored_fp=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.watchdog_false_success_fp"] // empty)')
-  legacy_flagged=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.watchdog_flagged_false_success"] // empty)')
   if [ "$stored_fp" != "$current_fp" ]; then
     add_alert "$code" "$bead_id" "$msg"
   fi
@@ -196,14 +195,21 @@ while IFS=$'\t' read -r bead_id code msg; do
     # flagged" flag can never re-fire if the bead's outcome or status later
     # changes, which is exactly the case the EARS spec calls out. This never
     # writes gc.outcome itself; only its own two bookkeeping keys.
+    #
+    # No silent no-mail path for a bead whose fingerprint is still empty
+    # (af-nf8en, 2026-09-18): an earlier version special-cased the 7
+    # pre-fingerprint ("legacy_flagged") beads to backfill the fingerprint
+    # without mailing, on the theory they were already reported once under
+    # the old idiom. That backfill made add_alert stop re-firing for them
+    # from the very next tick on -- so if the state it backfilled against
+    # was in fact new (never mailed under the old idiom either), the alert
+    # flashed in the cockpit signal file for exactly one tick, then vanished
+    # forever with no mail ever sent. Every fingerprint-empty bead now goes
+    # through the same mail-then-backfill path as a brand-new one; the only
+    # cost is a one-time mail for the known legacy offenders on first tick
+    # post-deploy, which is strictly safer than a silently-lost alert.
     if [ "$stored_fp" = "$current_fp" ]; then
       : # already reported this exact state -- stay silent
-    elif [ -z "$stored_fp" ] && [ -n "$legacy_flagged" ]; then
-      # A bead flagged by the pre-fingerprint mechanism (the 7 known
-      # af-u61xq offenders): it was already reported exactly once under the
-      # old idiom. Backfill the fingerprint silently so future state changes
-      # are detected, without re-mailing for state that was already reported.
-      gc bd update "$bead_id" --set-metadata "gc.watchdog_false_success_fp=$current_fp" >/dev/null 2>&1
     else
       gc mail send mayor --notify \
         -s "False-success close: $bead_id" \
