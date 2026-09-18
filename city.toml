@@ -135,11 +135,12 @@ enabled = true
 # 2026-09-18 four city workers plus a reviewer and the rigs' Maven/Testcontainers
 # runs left the host ~500 MB of free RAM, WSL at load 15-20 on 12 vCPU, and the
 # campaign sentinel timing out. DELIVERY.md/AGENTS.md always said "one writer
-# per rig"; this is where it is enforced rather than hoped. 2 rather than 1
-# because max_active_sessions=1 turns a pool into a canonical singleton
-# session (a semantics change for every script reading `claude-<bead>` session
-# names) -- to be tried under the load test first. Patches, not agents/<name>/,
-# because a directory there must also be a provider-policy target.
+# per rig"; this is where it is enforced rather than hoped. Benjamin
+# (2026-09-18): restrict the Factory to what the machine has until RAM is
+# added. Sessions are slot-named (claude-1, claude-2) as soon as a cap exists,
+# so 1 changes nothing further in naming; the load test (af-48sx3) measures it.
+# Patches, not agents/<name>/, because a directory there must also be a
+# provider-policy target.
 [[patches.agent]]
 name = "claude"
 max_active_sessions = 2
@@ -147,13 +148,13 @@ max_active_sessions = 2
 [[patches.agent]]
 name = "claude"
 dir = "saymyname-backend"
-max_active_sessions = 2
+max_active_sessions = 1
 
 [[patches.agent]]
 name = "claude"
 dir = "saymyname-frontend"
-max_active_sessions = 2
+max_active_sessions = 1
 
 [[patches.agent]]
 name = "claude-reviewer"
-max_active_sessions = 2
+max_active_sessions = 1

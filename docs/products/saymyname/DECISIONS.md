@@ -574,6 +574,21 @@ delivery; the sentence below no longer holds until it is resolved.
 
 </details>
 
+### 2026-09-18 — A public showcase site is the entry door
+
+**Benjamin, live conversation 2026-09-18 (his decision, navigation tier).**
+SayMyName needs a showcase site: it presents the product and is the entry
+door for the public demo, organization creation and user sign-in/sign-up;
+the index (`/`, localhost and production) leads to it. Content may be
+fictitious until go-public (prices, contacts, testimonials, legal), but every
+gap is recorded (`SHOWCASE_GAPS.md`) so nothing fictitious ships unnoticed.
+Design takes inspiration from equivalent SaaS showcase sites (benchmark note
+first). Verified before filing: nothing of the kind exists — `/` falls
+straight into the app. Tracked as product-queue candidate `af-guoqq`, second
+in the product lane after the leaderboard redesign. Boundaries unchanged: no
+pricing decision (Enterprise tier stays deferred), public challenges remain
+the acquisition loop, no real personal data on the site.
+
 ## Open
 
 None. All Enterprise-tier questions are deferred — see `## Deferred`

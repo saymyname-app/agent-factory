@@ -2,7 +2,7 @@
 
 ## Status and authority
 
-GitHub is authoritative for branches, commits, pull requests, checks and merges. Beads is authoritative for executable work, dependencies and gates. Gas City provides dispatch through existing formulas and provider configuration. V1 has one writer per rig (since 2026-09-18 the worker pools are capped — `[[patches.agent]]` in `city.toml` — at 2 sessions each, 1 being a semantics change still to be proven under load); concurrent worktrees and multiple writers remain TARGET, not PROVEN.
+GitHub is authoritative for branches, commits, pull requests, checks and merges. Beads is authoritative for executable work, dependencies and gates. Gas City provides dispatch through existing formulas and provider configuration. V1 has one writer per rig (since 2026-09-18 the worker pools are capped — `[[patches.agent]]` in `city.toml` — at 1 session per rig and for the reviewer, 2 for the city pool; the load test af-48sx3 measures it); concurrent worktrees and multiple writers remain TARGET, not PROVEN.
 
 The configured writer provider inherits `builtin:codex` and appends `-m gpt-5.6-sol`. M2 observed and proved that effective model on a real writer session. Mechanical decisions such as exit codes, diffs, SHAs, PR state and check conclusions are L0 deterministic work.
 
