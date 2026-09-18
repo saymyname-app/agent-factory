@@ -89,29 +89,41 @@ permission_mode = "unrestricted"
 model = "haiku"
 effort = "low"
 
-# Higher-judgment tier for orchestration/strategic-decision roles, on the
-# same account/subscription billing as the other claude-* tiers. Not the
-# default for any agent yet — point an agent at this deliberately (e.g. to
-# trial the Mayor on it) and compare with `gc costs` before/after.
-[providers.claude-opus]
-base = "builtin:claude"
-command = "/home/benja/.local/bin/claude"
-accept_startup_dialogs = true
-args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode"]
-
-[providers.claude-opus.env]
-CLAUDE_CONFIG_DIR = "/home/benja/.claude"
-DISABLE_AUTOUPDATER = "1"
-
-[providers.claude-opus.option_defaults]
-permission_mode = "unrestricted"
-model = "claude-opus-5"
-effort = "high"
+# DISABLED 2026-09-19: the installed `gc` binary's own model validator (not
+# the `claude` CLI's) does not recognize any Opus 5 identifier yet — its
+# highest known opus ids are claude-opus-4-7 / claude-opus-4-8 (confirmed via
+# `strings /usr/local/bin/gc`, no "opus-5"/"claude-opus-5" anywhere). The
+# PR #151 value "claude-opus-5" failed `gc bd`'s "provider cache build" at
+# startup ("not a valid choice"), which put the whole coordination store in
+# fail-closed and broke the cockpit ("Failed to fetch") after a PC-crash
+# restart surfaced it. Re-enable only once `gc` itself is upgraded to know
+# about Opus 5 (or a confirmed-valid identifier is found) — do NOT
+# reintroduce "claude-opus-5" or "opus-5" without re-verifying against the
+# installed `gc` binary's own validator, not just the `claude --help` text
+# (that check is what missed this the first time).
+# [providers.claude-opus]
+# base = "builtin:claude"
+# command = "/home/benja/.local/bin/claude"
+# accept_startup_dialogs = true
+# args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode"]
+#
+# [providers.claude-opus.env]
+# CLAUDE_CONFIG_DIR = "/home/benja/.claude"
+# DISABLE_AUTOUPDATER = "1"
+#
+# [providers.claude-opus.option_defaults]
+# permission_mode = "unrestricted"
+# model = "claude-opus-5"
+# effort = "high"
 
 # Premium tier for long-running, high-difficulty unattended work (Fable 5.1 is
 # built for multi-hour, many-tool jobs). Most expensive of the claude-* tiers
 # — gate its use behind an explicit reason (a specific hard ticket), not a
 # default for any routine role.
+# Model id corrected 2026-09-19: "claude-fable-5-1" is not recognized by the
+# installed `gc` binary's own model validator (same failure as claude-opus
+# above); "fable-5" is, confirmed via `strings /usr/local/bin/gc` and matches
+# the short-form convention already used by the other tiers (sonnet-5, haiku).
 [providers.claude-fable]
 base = "builtin:claude"
 command = "/home/benja/.local/bin/claude"
@@ -124,7 +136,7 @@ DISABLE_AUTOUPDATER = "1"
 
 [providers.claude-fable.option_defaults]
 permission_mode = "unrestricted"
-model = "claude-fable-5-1"
+model = "fable-5"
 effort = "high"
 
 [defaults]
