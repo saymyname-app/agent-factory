@@ -679,6 +679,36 @@ else
   fi
 fi
 
+# --- 10. dispatch drift: a slung bead invisible to its target (af-33a4e) ----
+# `gc sling <target> <bead>` does not clear a pre-existing assignee unless
+# --reassign is passed, and a pool target's own claim query keys off
+# assignee -- so a bead can report "routed" while sitting invisible to the
+# target for hours. bin/factory-dispatch-guard detects a routed bead whose
+# assignee is stale and mismatched, clears it, and pages the Mayor once per
+# drift. See that script for detail.
+DISPATCH_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-dispatch-guard"
+if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$DISPATCH_GUARD" ]; then
+  say "· dispatch-drift — not checked (not a city root, or gc unavailable)"
+else
+  DPG_ARGS=()
+  [ "$CHECK_ONLY" = "1" ] && DPG_ARGS+=(--check-only)
+  DPG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$DISPATCH_GUARD" "${DPG_ARGS[@]}" 2>&1)
+  DPG_STATUS=$?
+  [ "$QUIET" = "1" ] || printf '%s\n' "$DPG_OUTPUT" | sed 's/^/  /'
+  DPG_PROBLEM_COUNT=0
+  while IFS= read -r raw_line; do
+    line="${raw_line#"${raw_line%%[![:space:]]*}"}"  # strip leading whitespace
+    case "$line" in
+      REPAIRED:\ *) ACTIONS+=("dispatch-drift: ${line#REPAIRED: }") ;;
+      !\ *)         PROBLEMS+=("dispatch-drift: ${line#! }"); STATUS=1; DPG_PROBLEM_COUNT=$((DPG_PROBLEM_COUNT+1)) ;;
+    esac
+  done <<<"$DPG_OUTPUT"
+  if [ "$DPG_STATUS" -ne 0 ] && [ "$DPG_PROBLEM_COUNT" -eq 0 ]; then
+    PROBLEMS+=("dispatch-drift: factory-dispatch-guard exited $DPG_STATUS with no problem line captured")
+    STATUS=1
+  fi
+fi
+
 # --- report ------------------------------------------------------------------
 say ""
 if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi

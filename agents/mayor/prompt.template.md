@@ -114,6 +114,17 @@ Rigs and agents already exist; you almost never add one. The real flow is:
    (af-qugqd, 2026-09-18). Always address one of provider-failover's four
    managed logical targets — `workspace`, `mayor`, `claude-reviewer`,
    `ux-reviewer` — or a named agent that is not itself a provider id.
+   **Always pass `--reassign` when dispatching to a pool/infrastructure
+   agent** (`bd.dog` and any other agent that is never a human-owned
+   handoff) — `gc sling` does NOT clear a bead's existing assignee unless
+   `--reassign` is passed, and a pool target's own claim query keys off
+   assignee, not `gc.routed_to`. Without it, a bead that already has an
+   assignee (e.g. still `mayor` from before) reports "routed" successfully
+   but stays invisible to the target, which then reports "no assigned work"
+   indefinitely (af-33a4e, 2026-09-18: `gc sling bd.dog af-c6tdz` sat
+   unclaimed for ~2h this way). `factory-dispatch-guard` self-heals this
+   after the fact, but do not rely on it — pass `--reassign` at dispatch
+   time.
 4. **Monitor:** `gc bd list`, `gc session peek <name>`.
 
 ## Working with rig beads
