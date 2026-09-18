@@ -158,3 +158,17 @@ max_active_sessions = 1
 [[patches.agent]]
 name = "claude-reviewer"
 max_active_sessions = 1
+
+# bd.dog (builtin bd pack) ships with idle_timeout set but no sleep_after_idle,
+# so effective_sleep_after_idle resolves to legacy "off": the session never
+# actually sleeps between checks. Live-observed 2026-09-18 (af-7fmj9): the
+# idle-claim nudge mechanism then wakes it roughly every ~2 min for a full LLM
+# turn even with nothing to do, and on 2026-09-18 02:00-06:00Z two dog
+# instances did this at 40-90s intervals for ~4 hours straight. 300s matches
+# the sleep_after_idle already used for refinery in the same imported pack
+# family and cuts the wake cadence materially without touching idle_timeout
+# (2h), which still reaps a truly-abandoned session -- the Dolt watchdog
+# function is unchanged, only how often it burns a turn to find nothing.
+[[patches.agent]]
+name = "dog"
+sleep_after_idle = "300s"
