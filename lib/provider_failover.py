@@ -153,6 +153,7 @@ _HARD = re.compile(
     r"|credit balance is too low|insufficient_quota",
     re.I,
 )
+_TRANSIENT = re.compile(r"continuing shortly|retrying in \\d+|will retry", re.I)
 _SOFT = re.compile(r"less than (\d{1,2})% of your (?:weekly|daily|session|5-hour)? ?limit left", re.I)
 # af-s6fqv (Factory audit): a provider going unavailable for a reason other
 # than quota used to be invisible -- ADR-0018 states its own known limit
@@ -186,6 +187,14 @@ _CLI_ERROR = re.compile(
 _CLI_PHRASE = (
     ("auth", re.compile(r"please run /login|oauth token has expired|invalid x-api-key", re.I)),
     ("server", re.compile(r"overloaded_error", re.I)),
+    # af-88za4 (2026-09-18): a model id configured for a provider that the
+    # signed-in account cannot actually use returns this hard 400 instead of
+    # a quota wall -- e.g. gpt-5.3-codex-spark under a ChatGPT Plus/Pro
+    # account, not an API-key org account. Previously invisible to detection,
+    # so the chain kept "choosing" a provider that fails every single time,
+    # looping a named session through creation forever instead of falling
+    # through to the next chain entry.
+    ("config", re.compile(r"invalid_request_error|model .{0,60}not supported .{0,40}account", re.I)),
 )
 _AUTH_ERROR = re.compile(
     r"\b40[13]\b|unauthorized|invalid api key|invalid_api_key|authentication failed"
@@ -288,6 +297,12 @@ def detect(text: str, now: float, local_tz: str = "Europe/Paris") -> dict[str, A
         if _HARD.search(line):
             # The reset clause is sometimes wrapped onto the next line.
             window = " ".join(tail[index:index + 3])
+            # "Usage limit reached · continuing shortly" is Claude Code's own
+            # auto-retry notice, not a quota wall: it clears by itself within
+            # minutes. On 2026-09-18 it was read as a wall and locked the whole
+            # anthropic pool for 8 hours while the quota was fine.
+            if _TRANSIENT.search(window):
+                continue
             until = parse_reset(window, now, local_tz)
             if until is not None and until <= now:
                 return None
@@ -342,18 +357,27 @@ def record_detection(state: dict[str, Any], policy: dict[str, Any], pool: str,
         until = finding.get("until")
         strikes = int(current.get("strikes") or 0)
         if until is None:
-            # No stated reset: probe again later, backing off 1h, 2h, 4h, 8h.
+            # No stated reset: probe again later, backing off 1h, 2h, 4h, 8h --
+            # one step per EXPIRED window that finds the wall still there, never
+            # one step per tick. The same banner staying on screen for four
+            # 2-minute ticks used to climb straight to the 8h cap (2026-09-18).
+            if (current.get("status") == "exhausted" and current.get("source") == "detected"
+                    and current.get("reset_known") is False
+                    and (epoch(current.get("until")) or 0) > now):
+                return False
             strikes += 1
             minutes = min(policy["unknown_reset_minutes"] * 2 ** (strikes - 1), 8 * 60)
             until = now + minutes * 60
         else:
             strikes = 0
+        reset_known = finding.get("until") is not None
         if (current.get("status") == "exhausted" and epoch(current.get("until")) is not None
                 and abs(epoch(current.get("until")) - until) < 60):
             return False
         state["pools"][pool] = {
             "status": "exhausted", "until": iso(until), "source": "detected",
             "evidence": finding.get("evidence", ""), "at": iso(now), "strikes": strikes,
+            "reset_known": reset_known,
         }
         return True
     if finding["kind"] == "low":
