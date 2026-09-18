@@ -62,6 +62,10 @@ class FakeRunner:
             (str(ROOT / "bin" / "saymyname-product-queue"), "list", "--json"): [],
             ("bd", "list", "--status", "in_progress", "--limit", "0", "--json"): [],
             (
+                "bd", "list", "--status", "in_progress",
+                "--metadata-field", "gc.kind=workflow", "--limit", "0", "--json",
+            ): [],
+            (
                 "bd", "list", "--all", "--label-any",
                 "product-goal,roadmap,product-queue,jit", "--limit", "0", "--json",
             ): [{

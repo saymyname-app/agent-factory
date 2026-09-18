@@ -157,6 +157,14 @@ select{padding:.58rem}
 .agent-name{font-weight:800}
 .agent-role,.agent-meta{color:var(--muted);font-size:.7rem}
 .agent-objective{margin:.9rem 0 .5rem;font-size:.86rem;line-height:1.42}
+.active-tasks-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));gap:.7rem;margin-top:.65rem}
+.active-task-card{padding:.9rem;border:1px solid var(--line);border-radius:.8rem;background:var(--panel)}
+.active-task-top{display:flex;align-items:center;gap:.6rem}
+.active-task-top h3{margin:0;font-size:.92rem}
+.active-task-step{margin:.6rem 0 0;font-size:.8rem;color:var(--muted)}
+.active-task-trail{margin:.7rem 0 0;padding:0;list-style:none}
+.active-task-trail li{display:flex;justify-content:space-between;gap:.6rem;padding:.4rem 0;border-top:1px solid var(--line);font-size:.72rem}
+.active-task-trail li small{color:var(--muted);white-space:nowrap}
 .metric-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.8rem;margin-bottom:1rem}
 .metric{padding:1rem;border:1px solid var(--line);border-radius:.9rem;background:var(--panel)}
 .metric span,.metric strong,.metric small{display:block}

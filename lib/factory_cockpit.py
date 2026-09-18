@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -553,6 +554,133 @@ def _human_phase(value: Any) -> str | None:
         "Verify exact-head CI and merge": "Le Mayor vérifie la CI puis fusionne",
     }
     return known.get(raw, _human_objective(raw) if raw and raw != "none" else None)
+
+
+def _workflow_task_lane_and_title(
+    formula_name: str,
+    input_convoy_id: str | None,
+    runner: Any,
+    product_ids: set[str],
+) -> tuple[str, str]:
+    """Derive (lane, human title) for an active workflow root bead.
+
+    The general rule (af-by4uo correction): never map one internal formula
+    name to one hardcoded string. Prefer the human-written title of the real
+    work bead the workflow is carrying out -- generalizes to any task -- and
+    fall back to `_human_objective`'s existing table+fallback translation of
+    the formula name itself only when no work bead can be resolved.
+    """
+    if input_convoy_id:
+        try:
+            convoy = runner.json("gc", "convoy", "status", input_convoy_id, "--json")
+        except SourceError:
+            convoy = None
+        children = (convoy or {}).get("children") if isinstance(convoy, dict) else None
+        if isinstance(children, list) and len(children) == 1 and isinstance(children[0], dict):
+            work_id = _meaningful(children[0].get("id"))
+            if work_id:
+                try:
+                    work_bead = _single(runner.json("gc", "bd", "show", work_id, "--json"))
+                except SourceError:
+                    work_bead = None
+                title = _meaningful((work_bead or {}).get("title"))
+                if title:
+                    return ("product" if work_id in product_ids else "factory"), title
+    return "factory", _human_objective(formula_name)
+
+
+def _formula_step_order(formula_source: str | None) -> list[str] | None:
+    """Topological step-id order declared by a formula's own [[steps]] `needs`
+    graph -- read once from the static .toml already referenced by the
+    workflow root bead's own metadata (gc.formula_source). Zero model tokens,
+    no new instrumentation: this is the formula's own declared pipeline.
+    """
+    if not formula_source:
+        return None
+    try:
+        with open(formula_source, "rb") as handle:
+            doc = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    steps = doc.get("steps")
+    if not isinstance(steps, list):
+        return None
+    graph: dict[str, list[str]] = {}
+    ids: list[str] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        step_id = step.get("id")
+        if not isinstance(step_id, str):
+            continue
+        ids.append(step_id)
+        needs = step.get("needs")
+        graph[step_id] = [dep for dep in needs if isinstance(dep, str)] if isinstance(needs, list) else []
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def visit(node: str) -> None:
+        if node in seen or node not in graph:
+            return
+        seen.add(node)
+        for dep in graph[node]:
+            visit(dep)
+        ordered.append(node)
+
+    for step_id in ids:
+        visit(step_id)
+    return ordered or None
+
+
+def _workflow_task_progress(
+    workflow: dict[str, Any] | None, formula_source: str | None, runner: Any,
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """(current step in plain language, chronological trail of prior steps).
+
+    The workflow API's own step status vocabulary (pending/completed) does not
+    distinguish "current" from "not yet started" -- every not-yet-completed
+    step reads as pending upfront in graph.v2. The formula's declared step
+    order (via `needs`) resolves that: the current step is the first one in
+    pipeline order that is not yet completed.
+    """
+    beads = workflow.get("beads", []) if isinstance(workflow, dict) else []
+    steps = [item for item in beads if item.get("kind") not in {"workflow", "workflow-finalize"}]
+    order = _formula_step_order(formula_source)
+    if order:
+        rank = {step_id: index for index, step_id in enumerate(order)}
+
+        def sort_key(item: dict[str, Any]) -> int:
+            suffix = str(item.get("step_ref") or "").rsplit(".", 1)[-1]
+            return rank.get(suffix, len(order))
+
+        steps.sort(key=sort_key)
+    completed_states = {"completed", "closed", "skipped"}
+    completed_steps = [item for item in steps if item.get("status") in completed_states]
+    remaining_steps = [item for item in steps if item.get("status") not in completed_states]
+    step_ids = [item.get("id") for item in completed_steps if item.get("id")]
+    timestamps: dict[str, dict[str, Any]] = {}
+    if step_ids:
+        try:
+            detail = runner.json("bd", "list", "--id", ",".join(step_ids), "--all", "--json")
+        except SourceError:
+            detail = []
+        for item in detail if isinstance(detail, list) else []:
+            if isinstance(item, dict) and item.get("id"):
+                timestamps[item["id"]] = item
+    trail = []
+    for step in completed_steps:
+        ts = timestamps.get(step.get("id"), {})
+        trail.append({
+            "label": _human_phase(step.get("title")) or step.get("title") or "Étape",
+            "at": ts.get("closed_at") or ts.get("updated_at"),
+        })
+    trail.sort(key=lambda item: item["at"] or "")
+    current_step = remaining_steps[0] if remaining_steps else None
+    current_label = (
+        _human_phase(current_step.get("title")) or current_step.get("title")
+        if current_step else None
+    )
+    return current_label, trail
 
 
 def _human_product_title(value: Any) -> str:
@@ -1829,6 +1957,61 @@ class FactoryCollector:
         self.product_memory = ProductMemory(config=self.product_config)
         self.release_contract = load_release_contract(self.product_config["release_contract_path"])
 
+    def _collect_active_tasks(
+        self, product_ids: set[str], warnings: list[str],
+    ) -> list[dict[str, Any]]:
+        """Every active parallel task (factory or product), with a human
+        title, current step, and a chronological state trail -- sourced
+        entirely from Beads workflow step data that already exists (af-by4uo).
+        No new backend instrumentation, no per-formula hardcoded mapping.
+        """
+        try:
+            workflow_roots = self.runner.json(
+                "bd", "list", "--status", "in_progress",
+                "--metadata-field", "gc.kind=workflow", "--limit", "0", "--json",
+            )
+        except SourceError as exc:
+            warnings.append(str(exc))
+            return []
+        if not isinstance(workflow_roots, list):
+            return []
+        tasks = []
+        for root in workflow_roots:
+            if not isinstance(root, dict) or not root.get("id"):
+                continue
+            root_id = str(root["id"])
+            meta = _metadata(root)
+            formula_name = _meaningful(meta.get("gc.formula_name")) or root.get("title") or "workflow"
+            try:
+                workflow = self.gas_city.json(
+                    f"/v0/city/{quote(CITY_NAME, safe='')}/workflow/{quote(root_id, safe='')}"
+                )
+            except SourceError as exc:
+                warnings.append(str(exc))
+                continue
+            summary = _workflow_summary(workflow)
+            lane, title = _workflow_task_lane_and_title(
+                formula_name, _meaningful(meta.get("gc.input_convoy_id")), self.runner, product_ids,
+            )
+            current_label, trail = _workflow_task_progress(
+                workflow, _meaningful(meta.get("gc.formula_source")), self.runner,
+            )
+            current_step = current_label or (
+                "Finalisation en cours" if summary["complete"] else "Démarrage"
+            )
+            tasks.append({
+                "id": root_id,
+                "lane": lane,
+                "title": title,
+                "current_step": current_step,
+                "steps_completed": summary["completed"],
+                "steps_total": summary["total"],
+                "trail": trail,
+                "started_at": root.get("started_at") or root.get("created_at"),
+            })
+        tasks.sort(key=lambda item: (item["lane"] != "product", item["started_at"] or ""))
+        return tasks
+
     def collect(self) -> dict[str, Any]:
         warnings: list[str] = []
         sources: dict[str, bool] = {}
@@ -1969,6 +2152,7 @@ class FactoryCollector:
                 if item and item.get("id"):
                     product_by_id[str(item["id"])] = item
         product_work = _sort_product_work(list(product_by_id.values()))
+        active_tasks = self._collect_active_tasks(set(product_by_id), warnings)
 
         workflow_id = (
             _meaningful(
@@ -2336,6 +2520,7 @@ class FactoryCollector:
             "campaign": human_state["campaign"],
             "continuity": continuity,
             "focus": focus,
+            "active_tasks": active_tasks,
             "agents": agent_cards,
             "queue": queue,
             "product_work": product_work,

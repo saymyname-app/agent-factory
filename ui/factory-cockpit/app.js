@@ -138,6 +138,29 @@ function renderAgents(agents) {
   agents.forEach((agent) => { const card = node("article", "agent-card clickable"); const top = node("div", "agent-top"); const identity = node("div"); identity.append(node("div", "agent-name", agent.name), node("div", "agent-role", `${agent.role}${agent.provider ? ` · ${agent.provider}` : ""}`)); top.append(identity, node("span", `status-pill ${statusClass(agent.state)}`, agent.state_label)); card.append(top, node("p", "agent-objective", agent.objective), node("div", "agent-meta", agent.phase)); const timing = node("div", "agent-meta"); const signal = node("span", "", `Signal ${signalAge(agent.last_signal_at)}`); signal.dataset.signalTime = agent.last_signal_at || ""; signal.dataset.signalPrefix = "Signal "; const elapsed = node("span"); timed(elapsed, agent.started_at, " · depuis "); timing.append(signal, elapsed); card.append(timing); makeActivatable(card, () => openAgent(agent)); container.append(card); });
 }
 
+function renderActiveTasks(tasks) {
+  const list = $("active-tasks-list"); list.replaceChildren(); $("active-tasks-count").textContent = tasks.length;
+  tasks.forEach((task) => {
+    const card = node("article", "active-task-card");
+    const top = node("div", "active-task-top");
+    top.append(node("span", `status-pill ${task.lane === "product" ? "working" : "idle"}`, task.lane === "product" ? "Produit" : "Factory"), node("h3", "", task.title));
+    card.append(top);
+    card.append(node("p", "active-task-step", task.current_step || "Étape non identifiée"));
+    if (task.steps_total) card.append(node("p", "muted", `${task.steps_completed} / ${task.steps_total} étapes accomplies`));
+    if (task.trail && task.trail.length) {
+      const trail = node("ol", "active-task-trail");
+      task.trail.forEach((step) => {
+        const item = node("li");
+        item.append(node("span", "", step.label), node("small", "", step.at ? new Date(step.at).toLocaleString("fr-FR") : "horodatage indisponible"));
+        trail.append(item);
+      });
+      card.append(trail);
+    }
+    list.append(card);
+  });
+  if (!list.children.length) list.append(node("div", "empty", "Aucun travail actif en ce moment."));
+}
+
 function renderQueue(queue) {
   const candidates = queue.filter((item) => item.kind === "product_candidate"); const container = $("queue"); container.replaceChildren(); $("queue-count").textContent = candidates.length;
   candidates.slice(0, 6).forEach((item) => { const row = node("li", "queue-item"); const copy = node("div"); copy.append(node("div", "queue-title", item.title), node("div", "queue-meta", `${item.state_label} · ${item.reason}`)); row.append(copy, node("span", `status-pill ${item.state === "paused" ? "waiting" : "idle"}`, item.urgency_label)); if (item.id) { row.classList.add("clickable"); row.addEventListener("click", () => openItem({ ...item, store: "city", product: productName() })); } container.append(row); });
@@ -483,7 +506,7 @@ function compareVisit(data) {
 }
 
 function render(data) {
-  snapshot = data; applyIdentity(data.product_memory?.product, data.operator); setStatus($("factory-state"), data.factory.state, data.factory.label); renderOperationalState(data); renderCampaignState(data); $("focus-title").textContent = data.focus.title; setStatus($("focus-state"), data.focus.state, data.focus.state_label); $("focus-phase").textContent = data.focus.phase; timed($("focus-elapsed"), data.focus.started_at); $("focus-signal").dataset.signalTime = data.focus.last_signal_at || ""; $("focus-signal").textContent = signalAge(data.focus.last_signal_at); const steps = data.focus.steps; $("focus-steps").textContent = steps.total ? `${steps.completed} / ${steps.total}` : "aucune étape exposée"; $("step-fill").style.width = steps.total ? `${Math.round((steps.completed / steps.total) * 100)}%` : "0%"; renderTodayAttention(data.today); renderWatchdogAlerts(data.today); const delivered = data.last_delivery; $("last-delivery").textContent = `Dernière livraison : ${delivered.title}${delivered.pr ? ` · PR ${delivered.pr}` : ""}${delivered.ci === "success" ? " · CI verte" : ""}`;
+  snapshot = data; applyIdentity(data.product_memory?.product, data.operator); setStatus($("factory-state"), data.factory.state, data.factory.label); renderOperationalState(data); renderCampaignState(data); $("focus-title").textContent = data.focus.title; setStatus($("focus-state"), data.focus.state, data.focus.state_label); $("focus-phase").textContent = data.focus.phase; timed($("focus-elapsed"), data.focus.started_at); $("focus-signal").dataset.signalTime = data.focus.last_signal_at || ""; $("focus-signal").textContent = signalAge(data.focus.last_signal_at); const steps = data.focus.steps; $("focus-steps-fact").classList.toggle("hidden", !steps.total); if (steps.total) $("focus-steps").textContent = `${steps.completed} / ${steps.total}`; $("step-fill").style.width = steps.total ? `${Math.round((steps.completed / steps.total) * 100)}%` : "0%"; renderActiveTasks(data.active_tasks || []); renderTodayAttention(data.today); renderWatchdogAlerts(data.today); const delivered = data.last_delivery; $("last-delivery").textContent = `Dernière livraison : ${delivered.title}${delivered.pr ? ` · PR ${delivered.pr}` : ""}${delivered.ci === "success" ? " · CI verte" : ""}`;
   renderDecisionAids(data.decision_aids || []); renderQueue(data.queue || []); renderMemory(data.product_memory, data.today); renderBusiness(data.product_memory); renderProject(data.product_memory, data); renderRoadmap(data); renderWorkflow(data.product_memory, data); renderContinuity(data); renderBoard(data.product_work || []); renderAgents(data.agents || []);
   const factoryWork = $("factory-work"); factoryWork.replaceChildren(); (data.factory_work || []).forEach((item) => factoryWork.append(node("div", "compact-item", item.title))); if (!factoryWork.children.length) factoryWork.append(node("p", "muted", "Aucun autre travail Factory.")); const infrastructure = $("infrastructure"); infrastructure.replaceChildren(); (data.infrastructure || []).forEach((item) => infrastructure.append(node("div", "compact-item", `${item.name} · ${item.state}`)));
   const alert = $("alert"); if (data.warnings.length) { alert.textContent = `Visibilité partielle : ${data.warnings.join(" · ")}`; alert.classList.remove("hidden"); } else alert.classList.add("hidden"); renderMobile(data); compareVisit(data); updateClocks(); restoreDeepLink();
@@ -507,6 +530,7 @@ $("open-blocker-decision").addEventListener("click", () => { const id = $("open-
 $("campaign-block-global").addEventListener("click", () => activateView("today"));
 $("resume-action").addEventListener("click", () => { const prompt = $("resume-action").dataset.prompt; if (!prompt) return; activateView("mayor"); $("mayor-message").value = prompt; $("mayor-message").focus(); $("mayor-message").scrollIntoView({ behavior: "smooth", block: "center" }); });
 $("copy-summary").addEventListener("click", async () => { if (snapshot) { await navigator.clipboard.writeText(humanSummary(snapshot)); toast("Point de situation copié"); } }); $("copy-po-prompt").addEventListener("click", () => { activateView("po"); $("po-message").value = `Aide-moi à relire la roadmap et à choisir le prochain sujet produit utile, sans lancer de travail.`; $("po-message").focus(); });
+$("active-tasks-agents-link").addEventListener("click", (event) => { event.preventDefault(); activateView("agents"); });
 document.querySelectorAll("[data-prompt]").forEach((button) => button.addEventListener("click", () => { $("mayor-message").value = button.dataset.prompt; $("mayor-message").focus(); })); $("send-mayor").addEventListener("click", sendMayor); $("refresh-conversation").addEventListener("click", loadConversation); $("mayor-link-po").addEventListener("click", (event) => { event.preventDefault(); activateView("po"); });
 $("send-po").addEventListener("click", sendPO); $("new-po-conversation").addEventListener("click", newPOConversation); $("copy-po-thread").addEventListener("click", async () => { const id = $("copy-po-thread").dataset.threadId; if (id) { await navigator.clipboard.writeText(id); toast("Identifiant de discussion copié"); } });
 $("open-design-decision").addEventListener("click", () => { const decision = snapshot?.product_memory?.decisions.find((item) => item.domain === "project" && item.title === "Socle du workflow design"); if (decision) { activateView("decisions"); openDecisionWorkspace(decision); } }); $("close-decision-workspace").addEventListener("click", closeDecisionWorkspace); $("send-decision-po").addEventListener("click", sendDecisionPO); $("copy-decision-thread").addEventListener("click", async () => { const id = $("copy-decision-thread").dataset.threadId; if (id) { await navigator.clipboard.writeText(id); toast("Identifiant de discussion copié"); } });
