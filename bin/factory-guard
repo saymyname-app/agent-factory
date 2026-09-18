@@ -26,6 +26,19 @@
 #                       liveness from the sentinel's heartbeats, and files
 #                       one defect for the Mayor when the factory stalls.
 #
+# And on 2026-09-17 (af-ogg8z):
+#
+#   6. EXEC-BIT LOSS    the Mayor ran `git commit`/`checkout`/`reset --hard`
+#                       directly in the live root (23:05-23:08). One side
+#                       effect: bin/provider-failover's executable bit was
+#                       lost. This guard's runtime-files check only ever
+#                       tested `-e` (existence), never `-x` (executable), so
+#                       provider-failover silently failed exit 126 every tick
+#                       for ~2 hours with no alert, until an unrelated pull
+#                       happened to rewrite the file. It now also verifies
+#                       every file git tracks as mode 100755 under bin/ is
+#                       executable on disk, and restores the bit itself.
+#
 # Default run is safe and self-healing: it always backs up unpushed work, and
 # restores the pinned branch ONLY when drift has actually broken an invariant.
 # --check-only reports without touching anything.
@@ -78,6 +91,29 @@ CRITICAL="bin/pr-autopilot orders/pr-autopilot.toml bin/factory-guard orders/fac
 MISSING=""
 for f in $CRITICAL; do [ -e "$f" ] || MISSING="$MISSING $f"; done
 
+# --- 1a. tracked bin/ executables must stay executable (af-ogg8z) -----------
+# `-e` above only proves the file exists, not that it runs. 2026-09-17: a
+# `git reset --hard`/`checkout` sequence in the live root cleared
+# bin/provider-failover's executable bit; it exists (check 1 stayed green)
+# but every invocation failed exit 126 for ~2 hours, silently. Compare disk
+# mode to what git actually tracks (100755) for every file under bin/, and
+# restore it when it drifts -- this is the self-heal `did()` records as FIXED.
+NONEXEC=""
+while read -r mode _obj _stage f; do
+  [ "$mode" = "100755" ] || continue
+  [ -f "$f" ] || continue    # missing entirely is check 1's problem, not this one
+  [ -x "$f" ] && continue
+  if [ "$CHECK_ONLY" = "1" ]; then
+    NONEXEC="$NONEXEC $f"
+  elif chmod +x "$f" 2>/dev/null; then
+    did "restored the executable bit on $f (git tracks it as mode 100755)"
+  else
+    NONEXEC="$NONEXEC $f"
+  fi
+done < <(git ls-files -s -- bin/ 2>/dev/null)
+[ -n "$NONEXEC" ] && bad "tracked executable(s) under bin/ lost their +x bit and could not be repaired:$NONEXEC"
+[ -z "$NONEXEC" ] && say "✓ exec-bits — every bin/ file git tracks as 100755 is executable on disk"
+
 # --- 1b. the generated provider overlay (ADR-0018) --------------------------
 # city.toml includes city.provider.toml. The file is generated and gitignored,
 # so git cannot bring it back -- and without it the whole city config fails to
@@ -113,7 +149,10 @@ if [ "$CURRENT" != "$EXPECTED" ]; then
       bad "branch drift to '$CURRENT' broke live config; run factory-guard to restore"
     elif [ -n "$(git status --porcelain --untracked-files=no)" ]; then
       bad "branch drift to '$CURRENT' broke live config, but the tree has uncommitted changes — refusing to checkout; resolve by hand"
-    elif git checkout "$EXPECTED" >/dev/null 2>&1; then
+    # FACTORY_GUARD_INTERNAL: see the matching comment at the fast-forward
+    # below -- this lets the live-root-guard hook tell this restore apart
+    # from an ordinary interactive/agent checkout.
+    elif FACTORY_GUARD_INTERNAL=1 git checkout "$EXPECTED" >/dev/null 2>&1; then
       did "restored live root to '$EXPECTED' (was '$CURRENT')"
       CURRENT="$EXPECTED"; MISSING=""; BROKEN_CFG=""
       for f in $CRITICAL; do [ -e "$f" ] || MISSING="$MISSING $f"; done
@@ -148,7 +187,11 @@ if [ "$CURRENT" = "$EXPECTED" ] && git remote get-url origin >/dev/null 2>&1 \
     say "· live-root-sync — $BEHIND merged commit(s) not running yet: tracked files are being edited here, not pulling over them"
   else
     OLD_HEAD=$(git rev-parse HEAD)
-    if git merge -q --ff-only "origin/$EXPECTED" >/dev/null 2>&1; then
+    # FACTORY_GUARD_INTERNAL marks this as factory-guard's own fast-forward so
+    # the live-root-guard reference-transaction hook (.githooks/reference-
+    # transaction, af-ogg8z) lets it through -- it refuses every other ref
+    # update to refs/heads/* in the live root.
+    if FACTORY_GUARD_INTERNAL=1 git merge -q --ff-only "origin/$EXPECTED" >/dev/null 2>&1; then
       did "fast-forwarded the live root by $BEHIND merged commit(s)"
       # Some config is only read on reload; a reload with nothing new is a no-op.
       if git diff --name-only "$OLD_HEAD" HEAD | grep -qE '^(city\.toml|pack\.toml|orders/|agents/)'; then
