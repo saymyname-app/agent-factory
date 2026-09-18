@@ -417,6 +417,22 @@ function activateView(view, updateLocation = true) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+document.querySelectorAll("details.nav-more").forEach((details) => {
+  const summary = details.querySelector("summary");
+  const items = details.querySelector(".nav-more-items");
+  const position = () => {
+    if (!details.open || window.matchMedia("(max-width: 800px)").matches) { items.style.top = ""; items.style.left = ""; items.style.right = ""; return; }
+    const rect = summary.getBoundingClientRect();
+    const width = items.offsetWidth || items.getBoundingClientRect().width;
+    const left = Math.min(Math.max(8, rect.right - width), window.innerWidth - width - 8);
+    items.style.top = `${rect.bottom + 8}px`;
+    items.style.left = `${left}px`;
+    items.style.right = "auto";
+  };
+  details.addEventListener("toggle", position);
+  window.addEventListener("resize", () => details.open && position());
+});
+
 function restoreDeepLink(force = false) {
   if (deepLinkRestored && !force) return; deepLinkRestored = true; const params = new URLSearchParams(location.hash.replace(/^#/, "")); const view = params.get("view") || "today"; const allowed = new Set([...document.querySelectorAll(".nav-item")].map((item) => item.dataset.view)); activateView(allowed.has(view) ? view : "today", false);
   const reference = params.get("reference"); if (reference && snapshot?.product_memory?.product_reference.some((item) => item.id === reference)) loadReference(reference, params.get("section"));
