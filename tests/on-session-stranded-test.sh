@@ -73,6 +73,16 @@ out=$(run --check-only)
 grep -q "would process af-br7i" <<<"$out" || { echo "$out" >&2; fail "--check-only did not report the pending session"; }
 [ ! -s "$STATE_FILE" ] || fail "--check-only must not persist dedup state"
 
+SIGNAL_FILE="$TMP/.gc/runtime/factory-watchdog-signals.json"
+mkdir -p "$(dirname "$SIGNAL_FILE")"
+python3 -c '
+import json
+json.dump(
+    {"generated_at": "2026-09-17T00:00:00Z",
+     "alerts": [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate aged", "source": "factory-watchdog"}]},
+    open("'"$SIGNAL_FILE"'", "w"))
+'
+
 # --- the real pass: only the in_progress bead is reopened, mayor paged once --
 out=$(run)
 grep -q "af-stuck1 updated" "$TMP/updated.log" || { echo "$out" >&2; fail "the in_progress bead was not reopened"; }
@@ -82,6 +92,15 @@ grep -q '"af-br7i"' "$STATE_FILE" || fail "the session was not recorded as handl
 # "$*" logging turns the empty --assignee value into a double space.
 grep -q -- "^bd update af-stuck1 --status open --assignee  --set-metadata" "$CALLS" \
   || fail "the reopened bead was left assigned to the dead session"
+
+# --- reopening also writes to factory-watchdog-signals.json, without
+#     clobbering an alert another writer (factory-watchdog) already left
+#     there (af-u61xq, tests/factory-cockpit-chaos-test.py's header comment,
+#     PR #82 gap) ----------------------------------------------------------
+SIGNAL_FILE="$TMP/.gc/runtime/factory-watchdog-signals.json"
+sources=$(python3 -c "import json; print(sorted(a['source'] for a in json.load(open('$SIGNAL_FILE'))['alerts']))" 2>/dev/null)
+[[ "$sources" == "['factory-watchdog', 'on-session-stranded']" ]] \
+  || { echo "signal sources: $sources" >&2; fail "on-session-stranded must add its own alert without clobbering factory-watchdog's"; }
 
 # --- a second run does not reprocess the same session -------------------------
 rm -f "$TMP/updated.log"; : > "$CALLS"

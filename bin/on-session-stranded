@@ -16,11 +16,13 @@
 set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd)"
 CHECK_ONLY=0
 QUIET=0
 LOOKBACK="${ON_SESSION_STRANDED_LOOKBACK:-30m}"
 RETENTION_SECONDS="${ON_SESSION_STRANDED_RETENTION_SECONDS:-86400}"
 STATE_FILE="${ON_SESSION_STRANDED_STATE_FILE:-$ROOT/.gc/runtime/on-session-stranded-state.json}"
+SIGNAL_FILE="${ON_SESSION_STRANDED_SIGNAL_FILE:-$ROOT/.gc/runtime/factory-watchdog-signals.json}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -48,6 +50,12 @@ STATE=$(cat "$STATE_FILE" 2>/dev/null || true)
 printf '%s' "$STATE" | jq -e 'type == "object"' >/dev/null 2>&1 || STATE='{}'
 
 REOPENED=0
+# Seeded with this writer's own alerts already on file -- see on-order-failed
+# for why: merge-signals replaces this writer's whole slice, so a run that
+# pages only ONE new stranded session must not drop an older still-relevant one.
+SIGNAL_ALERTS=$(jq -c '[(.alerts // [])[] | select(.source == "on-session-stranded") | {kind,id,message}]' \
+  "$SIGNAL_FILE" 2>/dev/null || echo '[]')
+[ -n "$SIGNAL_ALERTS" ] || SIGNAL_ALERTS='[]'
 while IFS= read -r event; do
   [ -n "$event" ] || continue
   session_id=$(jq -r '.payload.session_id // .session_id // empty' <<<"$event")
@@ -99,6 +107,9 @@ EVIDENCE: gc events --type session.stranded --since $LOOKBACK
 NEXT: pick each one back up through the normal flow; if one is not actually resumable, mark it gc.waiting_on and say why" \
       >/dev/null 2>&1
     say "on-session-stranded: reopened $count bead(s) from $session_id ($reopened_here)"
+    SIGNAL_ALERTS=$(printf '%s' "$SIGNAL_ALERTS" | jq --arg i "$session_id" \
+      --arg m "session $session_name stranded — reopened: $reopened_here" \
+      '. + [{"kind":"session_stranded", "id":$i, "message":$m}]')
     REOPENED=$((REOPENED + count))
   else
     say "on-session-stranded: $session_id had no in_progress bead left to reopen"
@@ -114,6 +125,13 @@ if [ "$CHECK_ONLY" != "1" ]; then
   TMP=$(mktemp "$(dirname "$STATE_FILE")/.on-session-stranded-state.XXXXXX")
   printf '%s\n' "$STATE" > "$TMP"
   mv -f "$TMP" "$STATE_FILE"
+fi
+
+# Read-modify-write factory-watchdog-signals.json (af-u61xq, PR #82 gap): only
+# when this run actually reopened bead(s) / paged the Mayor, and only ever
+# add -- never clobber what factory-watchdog or on-order-failed already wrote.
+if [ "$CHECK_ONLY" != "1" ] && [ "$REOPENED" -gt 0 ] && [ -n "$LIB" ]; then
+  printf '%s' "$SIGNAL_ALERTS" | python3 "$LIB/factory_watchdog.py" merge-signals "$SIGNAL_FILE" "on-session-stranded" 2>/dev/null
 fi
 
 [ "$REOPENED" -gt 0 ] && say "on-session-stranded: reopened $REOPENED bead(s) total"
