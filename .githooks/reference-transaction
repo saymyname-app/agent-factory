@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Refuses git commit / checkout / switch / reset / merge while the current
+# working tree IS the live agent-factory root, never a worktree. The one
+# exemption is factory-guard's own pinned-branch restore and fast-forward-
+# only sync (bin/factory-guard sets FACTORY_GUARD_INTERNAL=1 around exactly
+# those two git calls, nothing else).
+#
+# af-ogg8z, EARS [Unwanted]: on 2026-09-17, 23:05-23:08, the Mayor ran
+# `git commit`, `git checkout` and `git reset --hard` directly in the live
+# root instead of a worktree. One side effect: bin/provider-failover lost
+# its executable bit and silently failed exit 126 every tick for ~2 hours --
+# no alert, because nothing enforced "never edit the live root" beyond prose
+# in AGENTS.md. This hook is the mechanical enforcement.
+#
+# WHY reference-transaction, AND HOW IT IDENTIFIES THE COMMAND:
+# `reference-transaction` fires for any real ref update and can abort the
+# transaction (exit non-zero while state="prepared") -- covering commit,
+# reset, merge (fast-forward or not), and `checkout -b`/`switch -c` (which
+# create a real refs/heads/* entry). But `man githooks` documents it "does
+# not cover symbolic references", and a plain `git checkout <existing-
+# branch>`/`git switch <existing-branch>` only repoints the HEAD *symbolic*
+# ref -- verified empirically against git 2.43: no invocation at all. That
+# gap is covered instead by `.githooks/post-checkout`, which reverts the
+# live root back to its pinned branch immediately after such a switch
+# completes (see that file for why a true pre-checkout veto does not exist
+# in stock git).
+#
+# The transaction payload alone (old/new sha + refname) cannot tell a
+# dangerous `git checkout -b x` apart from a harmless `git worktree add
+# <path> -b x` or a plain `git branch x` -- both create refs/heads/x from
+# 0000...0 with an identical-looking single-ref transaction, because
+# `worktree add -b` creates the branch via an internal `git branch` child
+# process that never touches the live root's HEAD. So this hook reads its
+# own parent process's argv (/proc/$PPID/cmdline, Linux-only, matching this
+# host) to find the actual subcommand and only blocks the five named ones --
+# `git worktree add -b` and plain `git branch` are left alone on purpose,
+# matching the EARS wording exactly. If /proc is unavailable this hook fails
+# OPEN (does not block) -- like every other hook in .githooks it is a local
+# convenience gate (ADR-0020), not a security boundary, and refusing to run
+# at all would be worse than one unguarded path.
+[ "$1" = "prepared" ] || exit 0
+[ "${FACTORY_GUARD_INTERNAL:-}" = "1" ] && exit 0
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+LIVE_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+[ "$root" = "$LIVE_ROOT" ] || exit 0   # worktrees (and any other checkout) are fine
+
+# Drain stdin regardless of outcome -- git expects the hook to consume it.
+cat >/dev/null
+
+[ -r "/proc/$PPID/cmdline" ] || exit 0   # fail open, see header
+subcmd=$(tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null \
+  | awk 'NR==1 { next } /^-/ { next } { print; exit }')
+
+case "$subcmd" in
+  commit|checkout|switch|reset|merge) : ;;
+  *) exit 0 ;;
+esac
+
+cat >&2 <<REFUSED
+
+  ┌──────────────────────────────────────────────────────────────────┐
+  │  REFUSED -- 'git $subcmd' was blocked in the LIVE Factory root
+  │  ($LIVE_ROOT).
+  │
+  │  city.toml, agents/, bin/ and orders/ ARE the running city's live
+  │  configuration. Committing, resetting or merging here in place
+  │  risks a repeat of af-ogg8z: a lost bin/ executable bit went
+  │  unnoticed for 2 hours with no alert.
+  │
+  │  Do this work in a worktree instead:
+  │    git worktree add <path> <branch>
+  │
+  │  Only factory-guard's own pinned-branch restore and fast-forward
+  │  sync are exempt from this refusal.
+  └──────────────────────────────────────────────────────────────────┘
+
+REFUSED
+exit 1

@@ -144,5 +144,14 @@ jobs:
       - name: Stranded sessions reopen orphaned work
         run: bash tests/on-session-stranded-test.sh
 
+      - name: Factory guard repairs a lost bin/ executable bit (af-ogg8z)
+        run: bash tests/factory-guard-exec-bit-test.sh
+
+      - name: Live-root guard refuses commit/checkout/reset in the live root (af-ogg8z)
+        run: bash tests/factory-live-root-guard-test.sh
+
+      - name: mol-do-work isolates HQ dispatches in a worktree (af-ogg8z)
+        run: bash tests/factory-do-work-workspace-test.sh
+
       - name: Every test is registered in CI
         run: bash tests/ci-registration-test.sh

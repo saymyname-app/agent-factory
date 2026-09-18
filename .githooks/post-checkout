@@ -1,30 +1,53 @@
 #!/usr/bin/env bash
-# Warn when someone switches branches in the LIVE Factory root. This directory
-# is not just a repo: city.toml, agents/, bin/ and orders/ ARE the running
-# city's configuration. Switching branches reconfigures it instantly.
+# Refuse a branch switch in the LIVE Factory root by reverting it. This
+# directory is not just a repo: city.toml, agents/, bin/ and orders/ ARE the
+# running city's configuration. Switching branches reconfigures it instantly.
+#
+# af-ogg8z, EARS [Unwanted]: "if a git commit/checkout/switch/reset/merge is
+# attempted in the live root ... a repository hook shall refuse it." `git
+# checkout <existing-branch>` and `git switch <existing-branch>` only repoint
+# HEAD's *symbolic* ref -- `man githooks` documents that `reference-
+# transaction` (see .githooks/reference-transaction, which covers commit,
+# reset, merge and checkout -b/switch -c) explicitly excludes symbolic refs,
+# and stock git has no pre-checkout hook to veto this before it happens
+# (verified empirically: no hook fires at all until after the fact). This is
+# the only point left to act, so "refuse" here means "immediately revert" --
+# the live root never actually stays on the wrong branch, which is the
+# invariant that matters (2026-09-17: it stayed there for hours).
 [ "$3" = "1" ] || exit 0            # only on branch checkouts
+[ "${FACTORY_GUARD_POST_CHECKOUT_REVERTING:-}" = "1" ] && exit 0   # avoid recursion
 root=$(git rev-parse --show-toplevel 2>/dev/null)
-[ "$root" = "/home/benja/agent-factory" ] || exit 0   # worktrees are fine
+[ "$root" = "${FACTORY_ROOT:-/home/benja/agent-factory}" ] || exit 0   # worktrees are fine
+[ "${FACTORY_GUARD_INTERNAL:-}" = "1" ] && exit 0   # factory-guard's own restore
 pinned_file="$root/.gc/factory-guard.branch"
 [ -f "$pinned_file" ] || exit 0
 pinned=$(cat "$pinned_file")
 now=$(git rev-parse --abbrev-ref HEAD)
 [ "$now" = "$pinned" ] && exit 0
-cat >&2 <<WARN
+
+reverted=0
+if [ -z "$(git status --porcelain --untracked-files=no)" ] \
+   && FACTORY_GUARD_POST_CHECKOUT_REVERTING=1 git checkout -q "$pinned" >/dev/null 2>&1; then
+  reverted=1
+fi
+
+cat >&2 <<REFUSED
 
   ┌──────────────────────────────────────────────────────────────────┐
-  │  WARNING — you switched the LIVE Factory root to '$now'
+  │  REFUSED — the LIVE Factory root was switched to '$now'.
   │  Pinned branch is '$pinned'.
   │
-  │  city.toml, agents/, bin/ and orders/ have just been replaced.
-  │  The running city is now using THIS branch's configuration.
-  │  bin/pr-autopilot and the merge actor may no longer exist.
+  │  city.toml, agents/, bin/ and orders/ ARE the running city's live
+  │  configuration; switching branches here reconfigures it instantly
+  │  (bin/pr-autopilot and the merge actor can vanish from disk).
+  │
+$( [ "$reverted" = "1" ] \
+     && echo "  │  Reverted automatically: the live root is back on '$pinned'." \
+     || echo "  │  Could NOT revert automatically (uncommitted changes, or the
+  │  checkout back to '$pinned' failed) — resolve by hand: git checkout $pinned" )
   │
   │  To work on another branch, use a worktree instead:
-  │    git worktree add /home/benja/<name>-worktree <branch>
-  │
-  │  To restore now:  git checkout $pinned
-  │  factory-guard will also self-heal within 5 minutes.
+  │    git worktree add <path> <branch>
   └──────────────────────────────────────────────────────────────────┘
 
-WARN
+REFUSED

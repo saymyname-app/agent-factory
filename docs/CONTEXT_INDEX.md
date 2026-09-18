@@ -34,10 +34,11 @@ Use progressive disclosure. Do not read every document by default.
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
 | Is a schema change undoable; migration declarations; what pr-autopilot holds | `DELIVERY.md` (Réversibilité par défaut), `decisions/ADR-0019-reversibility-by-default.md`, `./bin/reversibility-check` |
 | Why a `git push` to `main` can be refused, and why `pr-autopilot` is unaffected | `DELIVERY.md` (Main-landing gate), `decisions/ADR-0020-main-landing-gate.md`, `./bin/factory-main-gate` |
+| Why a commit/checkout/reset/merge in the live root is refused or reverted, why `bin/` executable bits self-heal, and how `mol-do-work` isolates HQ dispatches in a worktree | `decisions/ADR-0022-live-root-worktree-enforcement.md`, `.githooks/reference-transaction`, `.githooks/post-checkout`, `./bin/factory-do-work-workspace` |
 | Why a real identifier can block a push, or a CI build fail on an unmarked fixture (dev-DB PII containment) | `DELIVERY.md` (Real-PII leak guard), `./bin/factory-pii-guard`, `./bin/factory-provenance-guard` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0021-existing-code-review-tiers.md` |
+| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0022-live-root-worktree-enforcement.md` |
 | Token-efficient multi-provider orchestration proposal (routing matrix, Mayor session budget) | `PROPOSAL-token-efficient-orchestration-2026-09-15.md` |
 
 ## Authority order

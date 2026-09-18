@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# factory-do-work-workspace — git-worktree lifecycle for mol-do-work, but
+# ONLY when the caller's cwd is the live agent-factory (HQ) root (af-ogg8z).
+#
+# 2026-09-17 incident: a worker running mol-do-work committed af-lb3q
+# directly in the live root (no branch, no worktree, no PR) -- the same
+# class of mistake the Mayor made minutes earlier in the same session. The
+# HQ rig gave dispatched workers the live root as their cwd with no
+# isolation. This script is what mol-do-work's workspace-setup and
+# push-and-pr steps call to fix that: elsewhere (a rig checkout, or a
+# worktree that already exists) it is a documented no-op, so it is safe to
+# call unconditionally from the formula regardless of which rig dispatched
+# the work.
+#
+# Usage:
+#   factory-do-work-workspace enter  <bead-id>
+#       Prints "." and does nothing if cwd is not the live root. Otherwise
+#       creates (or reuses) an isolated worktree at
+#       $HOME/.local/share/agent-factory-runtime-worktrees/<bead-id> on
+#       branch do-work/<bead-id>, off whatever branch the live root is
+#       currently on, and prints the worktree path.
+#
+#   factory-do-work-workspace finish <bead-id> <worktree-path> <branch> <base-branch>
+#       No-op if <worktree-path> is "." (enter's no-op marker) or does not
+#       exist. Otherwise: commits any remaining changes, pushes <branch>
+#       (rebasing onto <base-branch> up to twice on conflict), opens a PR
+#       with `gh` if available (prints the PR URL on its own stdout line if
+#       one was opened), then removes the worktree.
+#
+# $HOME/.local/share/agent-factory-runtime-worktrees/ shares the
+# `agent-factory-runtime-*` prefix bin/factory-guard's stale-worktree check
+# (section 6) already treats as "the city's own; leave them" -- these
+# worktrees are this script's responsibility to remove, not factory-guard's
+# to flag.
+set -uo pipefail
+
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+CMD="${1:-}"
+[ $# -gt 0 ] && shift
+
+usage() {
+  echo "usage: factory-do-work-workspace enter <bead-id>" >&2
+  echo "       factory-do-work-workspace finish <bead-id> <worktree-path> <branch> <base-branch>" >&2
+  exit 2
+}
+
+case "$CMD" in
+  enter)
+    BEAD_ID="${1:-}"
+    [ -n "$BEAD_ID" ] || usage
+    HERE=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    if [ "$HERE" != "$ROOT" ]; then
+      echo "."
+      exit 0
+    fi
+
+    BRANCH="do-work/$BEAD_ID"
+    WT="$HOME/.local/share/agent-factory-runtime-worktrees/$BEAD_ID"
+
+    if [ -d "$WT" ]; then
+      echo "$WT"
+      exit 0
+    fi
+
+    BASE_BRANCH=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)
+    [ -n "$BASE_BRANCH" ] && [ "$BASE_BRANCH" != "HEAD" ] || {
+      echo "factory-do-work-workspace: live root is in a detached HEAD state; refusing to guess a base branch" >&2
+      exit 1
+    }
+    git -C "$ROOT" fetch --prune origin >/dev/null 2>&1 || true
+
+    mkdir -p "$(dirname "$WT")"
+    if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+      git -C "$ROOT" worktree add "$WT" "$BRANCH" >/dev/null 2>&1 || {
+        echo "factory-do-work-workspace: could not add a worktree for existing branch $BRANCH" >&2
+        exit 1
+      }
+    else
+      git -C "$ROOT" worktree add "$WT" -b "$BRANCH" "$BASE_BRANCH" >/dev/null 2>&1 || {
+        echo "factory-do-work-workspace: could not create worktree/branch $BRANCH off $BASE_BRANCH" >&2
+        exit 1
+      }
+    fi
+    echo "$WT"
+    ;;
+
+  finish)
+    BEAD_ID="${1:-}"; WT="${2:-}"; BRANCH="${3:-}"; BASE_BRANCH="${4:-}"
+    [ -n "$BEAD_ID" ] && [ -n "$WT" ] && [ -n "$BRANCH" ] && [ -n "$BASE_BRANCH" ] || usage
+
+    if [ "$WT" = "." ]; then
+      exit 0   # enter was a no-op (not the live root) -- nothing to finish
+    fi
+    [ -d "$WT" ] || {
+      echo "factory-do-work-workspace: worktree $WT does not exist, nothing to finish" >&2
+      exit 0
+    }
+
+    (
+      cd "$WT" || exit 1
+      if [ -n "$(git status --porcelain)" ]; then
+        git add -A && git commit -qm "chore: capture remaining work ($BEAD_ID)"
+      fi
+      ok=0
+      for attempt in 1 2 3; do
+        if git push -u origin "$BRANCH" >/dev/null 2>&1; then
+          ok=1
+          break
+        fi
+        [ "$attempt" -eq 3 ] && break
+        git fetch origin "$BASE_BRANCH" >/dev/null 2>&1
+        git rebase "origin/$BASE_BRANCH" >/dev/null 2>&1
+      done
+      [ "$ok" = "1" ]
+    ) || {
+      echo "factory-do-work-workspace: could not push $BRANCH after 3 attempts" >&2
+      exit 1
+    }
+
+    PR_URL=""
+    if command -v gh >/dev/null 2>&1; then
+      PR_URL=$(cd "$WT" && gh pr create --base "$BASE_BRANCH" --head "$BRANCH" \
+        --title "do-work: $BEAD_ID" --body "Closes $BEAD_ID." 2>/dev/null || true)
+    fi
+
+    git -C "$ROOT" worktree remove "$WT" --force 2>/dev/null || rm -rf "$WT"
+
+    [ -n "$PR_URL" ] && echo "$PR_URL"
+    exit 0
+    ;;
+
+  *)
+    usage
+    ;;
+esac
