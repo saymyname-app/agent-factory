@@ -37,6 +37,23 @@
 # either way no longer matches this guard's condition, so it is never
 # re-flagged for the same drift.
 #
+# Session-affinity exception (2026-09-18, af-7qxzh): a bead carrying
+# `gc.session_affinity=require` is a later step of a multi-step formula that
+# belongs to whichever session is working its earlier steps, not to whichever
+# pool worker claims it next -- its assignee is that session's name, and
+# `gc.routed_to` stays the generic pool/template it will eventually be
+# claimed through (e.g. assignee=claude-af-c9a25, routed_to=claude). That
+# looks identical to sling drift, but clearing it is wrong while the named
+# session is still running: a live incident cleared two such steps out from
+# under a session 17m50s into the same workflow's earlier step, risking a
+# different pool worker claiming a mid-workflow step out of order. Before
+# treating one of these as drift, this guard checks whether a session named
+# `assignee` is still alive (present in `gc session list --state all --json`
+# and not closed) and leaves it alone if so -- staleness here is expected
+# (the session hasn't reached this step yet), not evidence of a stuck
+# dispatch. Once that session is gone (closed, or never existed), the bead
+# reverts to ordinary drift handling below.
+#
 # --check-only reports without writing or paging anything.
 #
 # Usage: factory-dispatch-guard [--check-only]
@@ -95,6 +112,20 @@ rows_json=$(cd "$ROOT" && "$GC_BIN" --city "$ROOT" bd list --all --has-metadata-
   --status open,in_progress --limit 0 --json 2>/dev/null)
 jq -e . >/dev/null 2>&1 <<<"$rows_json" || rows_json='[]'
 
+# Sessions still alive (active or suspended, not closed) by session_name --
+# looked up once per run so the session-affinity exception below never
+# treats "not yet visible to claim query" as drift for a step whose owning
+# session simply hasn't gotten there yet (af-7qxzh).
+sessions_json=$(cd "$ROOT" && "$GC_BIN" --city "$ROOT" session list --state all --json 2>/dev/null)
+jq -e . >/dev/null 2>&1 <<<"$sessions_json" || sessions_json='{"sessions":[]}'
+ALIVE_SESSION_NAMES=$(jq -r '.sessions[]? | select(.closed != true) | .session_name // empty' <<<"$sessions_json")
+
+is_session_alive() {  # session_name
+  local name=$1
+  [ -n "$name" ] || return 1
+  grep -qxF "$name" <<<"$ALIVE_SESSION_NAMES"
+}
+
 # A field can legitimately be empty (assignee, heartbeat) and sit ahead of a
 # non-empty one -- @tsv's tab delimiter is bash IFS *whitespace*, so
 # `IFS=$'\t' read` silently collapses that empty field into its neighbour
@@ -106,18 +137,24 @@ rows=$(jq -r '
     (.assignee // ""),
     (.metadata["gc.routed_to"] // ""),
     (.updated_at // ""),
-    (.metadata["gc.last_heartbeat_at"] // "")
+    (.metadata["gc.last_heartbeat_at"] // ""),
+    (.metadata["gc.session_affinity"] // "")
   ] | join("")
 ' <<<"$rows_json")
 
 NOW=$(now_epoch)
 STALE_SECONDS=$((STALE_MINUTES * 60))
 
-while IFS=$'\x1f' read -r id status assignee routed_to updated_at heartbeat_at; do
+while IFS=$'\x1f' read -r id status assignee routed_to updated_at heartbeat_at session_affinity; do
   [ -z "$id" ] && continue
   CHECKED=$((CHECKED + 1))
   [ -n "$assignee" ] || continue
   [ "$assignee" != "$routed_to" ] || continue
+
+  # session_affinity=require: assignee names the session owning this
+  # formula step, not stale dispatch drift -- leave it alone as long as
+  # that session is still alive, however stale it looks (af-7qxzh).
+  [ "$session_affinity" = "require" ] && is_session_alive "$assignee" && continue
 
   updated_epoch=$(epoch_of "$updated_at")
   heartbeat_epoch=$(epoch_of "$heartbeat_at")
