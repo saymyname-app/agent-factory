@@ -7,7 +7,7 @@
   "title": "SayMyName V1 · boucle sociale personnelle et autonome",
   "state": "executing",
   "next_version": "V2",
-  "revision": 1,
+  "revision": 2,
   "objective": {
     "statement": "SayMyName doit faire qu'au moment où la personne est en face, son nom vienne tout seul : sans écran, parmi les gens qu'on a choisi de retenir, et sans que l'effort pour y arriver se voie.",
     "set_by": "Benjamin",
@@ -242,6 +242,14 @@
         {"kind": "ui", "ref": "Frontend administered import journey — PR saymyname-app/Say-my-name-front#49 merged; disclosed gaps: no backend batch-list endpoint (localStorage resume pointer used instead), published-field shown on import Result screen rather than person directory, single responsive row-review list instead of a separate desktop table", "status": "partial"},
         {"kind": "bead", "ref": "af-u8id.3 CLOSED 2026-09-16 — backend PR #38 + frontend PR #49 merged, CI green; af-u8id.3.1 design-ready contract CLOSED with all seven Benjamin+PO decisions recorded in DECISIONS.md commit 0a0f5f3", "status": "proven"}
       ]
+    },
+    {
+      "id": "participative-groups", "title": "Groupes participatifs : créer, rejoindre, apprendre en privé",
+      "description": "Créer un groupe, l’ouvrir par lien ou QR révocable, laisser chaque membre créer son profil volontairement, sélectionner en privé et répondre à une première question.", "status": "partial",
+      "evidence": [
+        {"kind": "bead", "ref": "af-u8id.2 CLOSED — backend PR #35 and #36, frontend PR #47 and #48 merged", "status": "proven"},
+        {"kind": "test", "ref": "Participative group end-to-end proof (candidate af-1f035)", "status": "absent"}
+      ]
     }
   ],
   "journeys": [
@@ -271,6 +279,15 @@
       "evidence": [
         {"kind": "bead", "ref": "af-u8id.3 and af-u8id.3.1 both CLOSED, shipped (backend PR #38, frontend PR #49 merged)", "status": "proven"},
         {"kind": "test", "ref": "Ephemeral administered CSV end-to-end proof", "status": "absent"}
+      ]
+    },
+    {
+      "id": "group-join-to-first-quiz", "title": "Rejoindre un groupe jusqu’à une première réponse privée",
+      "description": "Un organisateur crée un groupe, un visiteur le rejoint par lien ou QR, crée son profil volontairement, sélectionne en privé et répond à une question réelle ; l’organisateur ne voit que des chiffres agrégés.",
+      "status": "partial", "capability_refs": ["account-access", "participative-groups", "private-selection", "learning-loop"],
+      "evidence": [
+        {"kind": "bead", "ref": "af-u8id.2 CLOSED, shipped (backend PR #35 and #36, frontend PR #47 and #48 merged)", "status": "proven"},
+        {"kind": "test", "ref": "Participative group end-to-end proof (candidate af-1f035)", "status": "absent"}
       ]
     }
   ],
@@ -364,6 +381,20 @@
         {"id": "adapt-target", "label": "Adapt target: amend private-learning's acceptance to explicitly exclude the pre-existing gamification leaderboard from 'progression'"},
         {"id": "mix", "label": "Mix: keep a scoped/opt-in leaderboard, remove only the cross-organization default visibility"}
       ]
+    },
+    {
+      "id": "v1-production-meaning", "title": "V1 production readiness is a production-like local stack; hosting and deployment are decided at the V1 release",
+      "source_ref": "docs/products/saymyname/DECISIONS.md#2026-09-19-v1-production-readiness-is-a-production-like-local-stack-hosting-and-deployment-are-decided-at-the-v1-release",
+      "status": "accepted", "risk": "high", "revision": 2,
+      "capability_refs": [],
+      "dependency_refs": ["release-observability"], "options": []
+    },
+    {
+      "id": "groups-journey-in-v1", "title": "The participative-group journey is a V1 journey and needs an end-to-end proof",
+      "source_ref": "docs/products/saymyname/DECISIONS.md#2026-09-19-the-participative-group-journey-is-a-v1-journey-and-needs-an-end-to-end-proof",
+      "status": "accepted", "risk": "low", "revision": 2,
+      "capability_refs": ["participative-groups"],
+      "dependency_refs": [], "options": []
     }
   ],
   "criteria": [
@@ -384,7 +415,7 @@
     {
       "id": "private-learning", "title": "Choix et apprentissage privés",
       "description": "Aucune organisation ne voit les sélections, erreurs, réponses, planning ou progression individuelle.",
-      "status": "unverified", "capability_refs": ["private-selection", "learning-loop"], "journey_refs": ["personal-return-loop", "admin-csv-to-first-quiz"],
+      "status": "unverified", "capability_refs": ["private-selection", "learning-loop", "participative-groups"], "journey_refs": ["personal-return-loop", "admin-csv-to-first-quiz", "group-join-to-first-quiz"],
       "acceptance": "Un administrateur d’organisation connecté au même environnement ne peut observer ni les sélections, ni les erreurs, ni le planning, ni la progression individuelle d’un apprenant. Seule exception : un apprenant qui a explicitement rejoint un classement y expose son nom affiché, son XP de la semaine et son rang, sur ce seul classement (une collection dans une audience), sans vue administrateur dédiée ; un apprenant qui ne l’a pas rejoint reste invisible de tous.",
       "evidence": [{"kind": "test", "ref": "Cross-role privacy integration proof", "status": "unverified"}]
     },
@@ -398,15 +429,15 @@
     {
       "id": "release-e2e", "title": "Preuves V1 de bout en bout",
       "description": "Chaque parcours inclus possède une preuve UI/API/données/tests fraîche et reproductible.",
-      "status": "unverified", "capability_refs": ["public-challenge", "personal-home", "learning-loop", "administered-csv"], "journey_refs": ["anonymous-to-saved-learning", "personal-return-loop", "admin-csv-to-first-quiz"],
+      "status": "unverified", "capability_refs": ["public-challenge", "personal-home", "learning-loop", "administered-csv", "participative-groups"], "journey_refs": ["anonymous-to-saved-learning", "personal-return-loop", "admin-csv-to-first-quiz", "group-join-to-first-quiz"],
       "acceptance": "Chaque parcours inclus dispose d’une preuve fraîche et reproductible (UI, API, données ou tests) datée et consultable dans le contrat de release.",
       "evidence": [{"kind": "test", "ref": "V1 release evidence matrix", "status": "absent"}]
     },
     {
       "id": "production-autonomy", "title": "Maturité production-autonome",
-      "description": "La release expose santé, incidents, reprise, rollback et action humaine exacte sans faux succès.",
+      "description": "La release expose santé, incidents, reprise, rollback et action humaine exacte sans faux succès, prouvés sur une pile de type production locale non déployée ; l’hébergeur et le déploiement sont décidés par Benjamin à la release.",
       "status": "partial", "capability_refs": ["account-access", "personal-home"], "journey_refs": ["anonymous-to-saved-learning", "personal-return-loop"],
-      "acceptance": "Un opérateur observe la santé du service, un incident, une reprise et un rollback sans qu’aucun succès ne soit affiché faussement.",
+      "acceptance": "Un opérateur observe, sur une pile de type production locale non déployée, la santé du service, un incident, une reprise et un rollback sans qu’aucun succès ne soit affiché faussement. Le choix de l’hébergeur et le premier déploiement sont décidés par Benjamin au moment de la release et ne font pas partie de ce critère.",
       "evidence": [{"kind": "document", "ref": "docs/OPERATIONS.md", "status": "partial"}]
     }
   ],
