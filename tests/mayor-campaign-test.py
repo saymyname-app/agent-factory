@@ -271,29 +271,72 @@ class MayorCampaignTest(CampaignFixture, unittest.TestCase):
             value["gc.campaign_state"], value["gc.campaign_block_kind"],
         ))
 
-    def test_durable_failure_tied_to_one_node_quarantines_only_that_node(self):
+    def test_queue_release_mismatch_pages_once_and_does_not_retry(self):
+        # af-amt6d: a queue/release disagreement used to raise
+        # CampaignDecisionError, which the sentinel counted as a retryable
+        # failure -- three silent "automatic retry" ticks before quarantining
+        # the node, with the exact disagreement never named anywhere a human
+        # could read it. It is not transient: retrying the same read cannot
+        # fix it. It must page once, name the exact mismatch, and then hold
+        # -- not spin the failure counter -- until the mismatch changes.
         self.write_status(status_with_release_mismatch())
-        for expected in (1, 2, 3):
-            result = self.invoke("sentinel", check=False)
-            self.assertNotEqual(0, result.returncode)
-            self.assertIn("af-node9", result.stderr)
-
-        # The failing node alone is quarantined, with a repair item opened for it.
-        node = self.node_metadata("af-node9")
-        self.assertEqual("blocked_durable_failure", node["gc.queue_state"])
+        result = self.invoke("sentinel")
+        self.assertEqual(1, self.mail_count())
+        self.assertIn("af-node9", result.stdout)
         calls = self.log_file.read_text(encoding="utf-8")
-        self.assertIn("bd create", calls)
-        self.assertIn("af-node9", calls)
+        message = [line for line in calls.splitlines() if "mail send mayor" in line][0]
+        self.assertIn("af-node9", message)
+        self.assertIn("af-other", message)
 
-        # The campaign itself was never blocked -- only the local node was.
+        # The campaign itself was never blocked, and no failure was counted:
+        # this is a normal page, not a fault.
         coordination = self.current_metadata()
         self.assertEqual("active", coordination["gc.campaign_state"])
         self.assertEqual("0", coordination.get("gc.campaign_failure_count", "0"))
+        self.assertEqual(("mismatch:af-node9:af-other", "sent"), (
+            coordination["gc.campaign_wake_key"], coordination["gc.campaign_wake_state"],
+        ))
+
+        # Stop retrying that decision until it changes: the same status on the
+        # next tick is a NOOP, not a second page.
+        again = self.invoke("sentinel")
+        self.assertIn("already notified", again.stdout)
+        self.assertEqual(1, self.mail_count())
 
         # The rest of the campaign keeps going: a different candidate wakes the Mayor normally.
         self.write_status(status(next_id="af-next2"))
         resumed = self.invoke("sentinel")
         self.assertIn("materialize:af-next2", resumed.stdout)
+
+    def test_queue_candidate_untraceable_pages_once_instead_of_a_silent_none(self):
+        # af-amt6d: an eligible queue candidate excluded before it ever became
+        # a work_graph node (untraceable criterion_refs, duplicate dedupe
+        # key, ...) used to leave select_campaign_work with nothing to select
+        # and no way to say why -- action:none, reason:no_proven_independent_work,
+        # wake_key:None, and nobody ever told twice. It must page once with the
+        # exact skip reason instead.
+        untraceable = status(next_id=None)
+        untraceable["release"] = {
+            "contract": "agent-factory-product-release/v1",
+            "state": "approved",
+            "campaign": {
+                "selected": None,
+                "reason": "no_proven_independent_work",
+                "skipped": [{"id": "af-untraced", "reason": "candidat non traçable vers un critère connu"}],
+            },
+        }
+        self.write_status(untraceable)
+        result = self.invoke("sentinel")
+        self.assertEqual(1, self.mail_count())
+        self.assertIn("af-untraced", result.stdout)
+        calls = self.log_file.read_text(encoding="utf-8")
+        message = [line for line in calls.splitlines() if "mail send mayor" in line][0]
+        self.assertIn("af-untraced", message)
+        self.assertIn("critère", message)
+
+        again = self.invoke("sentinel")
+        self.assertIn("already notified", again.stdout)
+        self.assertEqual(1, self.mail_count())
 
     def test_malformed_coordination_is_counted_and_store_outage_is_explicit(self):
         malformed = metadata()

@@ -76,9 +76,41 @@ def plan_transition(status: dict[str, Any]) -> dict[str, Any]:
                 )
             release_selection = release["campaign"].get("selected")
             if release_selection is None:
+                reason = str(release["campaign"].get("reason") or "release_not_actionable")
+                skipped = release["campaign"].get("skipped") or []
+                # af-amt6d: a queue candidate the campaign considers eligible
+                # can still be excluded before it ever becomes a work_graph
+                # node (untraceable criterion_refs, duplicate dedupe key,
+                # ...). select_campaign_work then has nothing left to select
+                # and reports the generic "no_proven_independent_work" --
+                # true on its own terms, but it drops the fact that a real
+                # candidate exists and was skipped, and *why*. That used to
+                # surface as a bare action:none nobody read twice. Page once
+                # with the exact skip reason instead of staying silent.
+                if reason == "no_proven_independent_work" and skipped:
+                    first = skipped[0] if isinstance(skipped[0], dict) else {}
+                    first_id = str(first.get("id") or "candidate")
+                    detail = "; ".join(
+                        f"{item.get('id')}: {item.get('reason')}"
+                        for item in skipped if isinstance(item, dict)
+                    )
+                    return {
+                        "action": "wake_mayor",
+                        "reason": "queue_candidate_untraceable",
+                        "wake_key": f"untraceable:{first_id}",
+                        "subject": f"CAMPAGNE · candidat de file non traçable {first_id}",
+                        "message": (
+                            "La file produit a un candidat éligible qu'aucun nœud de la release "
+                            f"ne peut sélectionner : {detail}. Corrige les criterion_refs du candidat "
+                            "ou le graphe de release pour qu'il redevienne traçable, puis relance ; "
+                            "ne matérialise rien tant que ce n'est pas fait."
+                        ),
+                        "owner": release["campaign"].get("owner"),
+                        "recovery_action": release["campaign"].get("action"),
+                    }
                 return {
                     "action": "none",
-                    "reason": str(release["campaign"].get("reason") or "release_not_actionable"),
+                    "reason": reason,
                     "wake_key": None,
                     "owner": release["campaign"].get("owner"),
                     "recovery_action": release["campaign"].get("action"),
@@ -88,9 +120,29 @@ def plan_transition(status: dict[str, Any]) -> dict[str, Any]:
         if isinstance(candidate, dict) and candidate.get("id"):
             candidate_id = str(candidate["id"])
             if release_selection and release_selection["work_ref"] != candidate_id:
-                raise CampaignDecisionError(
-                    "Le premier candidat de file ne correspond pas au premier nœud release sûr; arrêt fail-closed."
-                )
+                # af-amt6d: this used to raise CampaignDecisionError here, which
+                # the sentinel counted as a retryable failure -- three silent
+                # "automatic retry" ticks before quarantining the node, never
+                # naming the actual disagreement anywhere a human could read
+                # it. The mismatch is not transient: retrying the same read
+                # cannot fix it, only editing the queue or the release graph
+                # can. Page once with the exact mismatch instead, reusing the
+                # same wake_key dedup every other reason in this function
+                # already relies on -- the next tick reports "already
+                # notified" instead of re-raising, until the mismatch itself
+                # changes.
+                return {
+                    "action": "wake_mayor",
+                    "reason": "queue_release_mismatch",
+                    "wake_key": f"mismatch:{candidate_id}:{release_selection['work_ref']}",
+                    "subject": f"CAMPAGNE · file/release en désaccord sur {candidate_id}",
+                    "message": (
+                        f"Le premier candidat éligible de la file est {candidate_id}, mais le premier "
+                        f"nœud sûr du graphe de release est {release_selection['work_ref']}. Corrige la "
+                        "file ou le graphe de release pour qu'ils désignent le même travail avant toute "
+                        "matérialisation ; ne matérialise ni l'un ni l'autre tant que ce n'est pas fait."
+                    ),
+                }
             criteria = (
                 ", ".join(release_selection.get("criterion_refs", []))
                 if release_selection else "contrat historique de file"
