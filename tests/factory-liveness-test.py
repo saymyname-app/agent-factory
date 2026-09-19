@@ -64,6 +64,42 @@ class LivenessRules(unittest.TestCase):
         self.assertEqual(("bad", "stale"), assess(stale, NOW, current_result=cold_result)[:2])
         self.assertEqual(("bad", "stale"), assess(stale, NOW, current_result=None)[:2])
 
+    def test_a_delegated_workflows_activity_also_overrides_a_stale_progress_stamp(self):
+        """af-py8n1: gc.current can point at a static result bead that
+        delegates its real work to a workflow tracked only by a shared
+        convoy 'tracks' link (no --parent edge) -- e.g. smf-cgp delegating
+        to workflow smf-uzv and its many decomposed/review children. Neither
+        the result bead nor the workflow root ever get a heartbeat, but a
+        currently open/in_progress step under the workflow does."""
+        stale = meta(**{"gc.campaign_progress_at": "2026-09-16T09:10:00Z"})
+        cold_result = {"updated_at": "2026-09-16T07:00:00Z", "metadata": {}}
+        cold_workflow_root = {"id": "wf1", "updated_at": "2026-09-16T07:05:00Z", "metadata": {}}
+        active_step = {"id": "step1", "metadata": {"gc.last_heartbeat_at": "2026-09-16T10:32:00Z"}}
+
+        level, code, message = assess(
+            stale, NOW, current_result=cold_result,
+            current_workflow=[cold_workflow_root, active_step],
+        )
+        self.assertEqual(("ok", "active_result"), (level, code))
+        self.assertIn("active 8 min ago", message)
+
+        # No recent activity anywhere in the delegated workflow either: still stale.
+        cold_step = {"id": "step1", "metadata": {"gc.last_heartbeat_at": "2026-09-16T07:10:00Z"}}
+        self.assertEqual(
+            ("bad", "stale"),
+            assess(stale, NOW, current_result=cold_result,
+                   current_workflow=[cold_workflow_root, cold_step])[:2],
+        )
+        # None found at all (best-effort discovery came up empty): still stale.
+        self.assertEqual(
+            ("bad", "stale"),
+            assess(stale, NOW, current_result=cold_result, current_workflow=[])[:2],
+        )
+        self.assertEqual(
+            ("bad", "stale"),
+            assess(stale, NOW, current_result=cold_result, current_workflow=None)[:2],
+        )
+
     def test_stale_heartbeat_is_not_masked_by_an_unrelated_metadata_write(self):
         """af-i64cb: once a result has ever sent a heartbeat, a later bare
         `updated_at` bump (a nudge, an unrelated bookkeeping write) must not

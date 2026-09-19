@@ -31,6 +31,16 @@ result bead itself (`current_result`) and checks its own gc.last_heartbeat_at
 / updated_at: recent activity there is ground truth the campaign is not
 stuck, independent of whether the sentinel's bookkeeping caught it.
 
+af-py8n1: `current_result` can itself be a static top-level bead that
+delegates its real work to a workflow (e.g. build-basic) tracked only by a
+shared convoy "tracks" link, never a --parent edge -- neither the workflow
+root nor its many decomposed/review children ever touch the result bead's
+own heartbeat/updated_at, so a full multi-hour run underneath it can also
+read as a stall. `assess` additionally takes `current_workflow`, whatever
+beads bin/factory-guard found for that delegated workflow (its root plus
+any currently open/in_progress step tracking it back via gc.root_bead_id),
+and folds the freshest activity across all of them in with current_result's.
+
 CLI: reads the coordination bead JSON (a list or an object) on stdin and prints
 one line, "<level>\\t<code>\\t<message>": level is ok, info or bad; code is
 stable and tells the guard whether the finding is worth filing as a defect
@@ -139,33 +149,52 @@ def identify_cause(
     )
 
 
-def _current_result_activity(current_result: dict[str, Any] | None) -> float | None:
-    """Most recent activity timestamp on the in-flight result itself (af-ooob8).
-
-    gc.campaign_progress_at is only stamped for the three PROGRESS_REASONS
-    the sentinel's transition planner recognizes (bin/mayor-campaign);
-    a long-running phase outside that set -- a review sub-session, for
-    instance -- can advance for hours without ever refreshing it. Before
-    calling that silence a stall, check the result bead's own heartbeat.
+def _bead_activity(bead: dict[str, Any]) -> float | None:
+    """Most recent activity timestamp recorded on a single bead.
 
     Prefer gc.last_heartbeat_at whenever it has ever been stamped for this
-    result: it is a deliberate signal, written only by the code that knows
+    bead: it is a deliberate signal, written only by the code that knows
     real work happened. Only fall back to the bead's generic `updated_at`
     when no heartbeat has ever been recorded at all -- af-i64cb: `updated_at`
     moves on ANY write to the bead (a nudge, an unrelated metadata backfill,
     a label change from another script), so once heartbeats are wired for a
-    result, trusting a bare `updated_at` bump on top of them can mask a
+    bead, trusting a bare `updated_at` bump on top of them can mask a
     genuine stall behind bookkeeping noise that has nothing to do with
-    progress. A result that has literally never sent a heartbeat still needs
+    progress. A bead that has literally never sent a heartbeat still needs
     the `updated_at` fallback, or af-ooob8's original gap reopens.
     """
-    if not isinstance(current_result, dict):
-        return None
-    metadata = current_result.get("metadata") if isinstance(current_result.get("metadata"), dict) else {}
+    metadata = bead.get("metadata") if isinstance(bead.get("metadata"), dict) else {}
     heartbeat = _epoch(metadata.get("gc.last_heartbeat_at"))
     if heartbeat is not None:
         return heartbeat
-    return _epoch(current_result.get("updated_at"))
+    return _epoch(bead.get("updated_at"))
+
+
+def _current_result_activity(
+    current_result: dict[str, Any] | None,
+    current_workflow: list[dict[str, Any]] | None = None,
+) -> float | None:
+    """Most recent activity timestamp across the in-flight result (af-ooob8)
+    and, when it delegates to one, its tracked workflow (af-py8n1).
+
+    gc.campaign_progress_at is only stamped for the three PROGRESS_REASONS
+    the sentinel's transition planner recognizes (bin/mayor-campaign);
+    a long-running phase outside that set -- a review sub-session, or an
+    entire workflow tracked only via a shared convoy link with no --parent
+    edge to the result bead -- can advance for hours without ever
+    refreshing it. Before calling that silence a stall, check every bead
+    bin/factory-guard could find ground truth on: the result bead itself,
+    the workflow root it delegates to (if any), and that workflow's
+    currently open/in_progress steps -- and take the freshest of all of
+    them.
+    """
+    beads: list[dict[str, Any]] = []
+    if isinstance(current_result, dict):
+        beads.append(current_result)
+    if isinstance(current_workflow, list):
+        beads.extend(bead for bead in current_workflow if isinstance(bead, dict))
+    activities = [a for a in (_bead_activity(bead) for bead in beads) if a is not None]
+    return max(activities) if activities else None
 
 
 def mayor_page_since(
@@ -200,6 +229,7 @@ def assess(
     provider_status: dict[str, Any] | None = None,
     mayor_session: dict[str, Any] | None = None,
     current_result: dict[str, Any] | None = None,
+    current_workflow: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str, str]:
     if not isinstance(metadata, dict):
         return "bad", "unreadable", "coordination metadata unreadable"
@@ -239,7 +269,7 @@ def assess(
         last_error = str(metadata.get("gc.campaign_last_error") or "").strip()
         failure_note = f" ({failures}/{FAILURE_THRESHOLD} consecutive sentinel failures: {last_error})"
 
-    result_activity = _current_result_activity(current_result)
+    result_activity = _current_result_activity(current_result, current_workflow)
 
     def _result_active_note(age_min: float) -> tuple[str, str, str] | None:
         if result_activity is None:
@@ -325,6 +355,16 @@ def main() -> int:
             return None
         return parsed if isinstance(parsed, dict) else None
 
+    def _env_json_list(name: str) -> list[dict[str, Any]] | None:
+        raw_value = os.environ.get(name) or ""
+        if not raw_value.strip():
+            return None
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, list) else None
+
     level, code, message = assess(
         metadata,
         now,
@@ -332,6 +372,7 @@ def main() -> int:
         provider_status=_env_json("FACTORY_LIVENESS_PROVIDER_STATUS_JSON"),
         mayor_session=_env_json("FACTORY_LIVENESS_MAYOR_SESSION_JSON"),
         current_result=_env_json("FACTORY_LIVENESS_CURRENT_RESULT_JSON"),
+        current_workflow=_env_json_list("FACTORY_LIVENESS_CURRENT_WORKFLOW_JSON"),
     )
     print(f"{level}\t{code}\t{message}")
     return 0
