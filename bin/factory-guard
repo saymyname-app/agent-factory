@@ -480,10 +480,99 @@ try:
 except Exception:
     print("{}")' 2>/dev/null || echo "{}")
   fi
+  # af-py8n1: gc.current can also point at a top-level result bead that
+  # delegates its real work to a workflow (e.g. build-basic) rather than
+  # doing it under its own id -- there is no --parent edge from the result
+  # to that workflow, only a shared convoy "tracks" link (the workflow's
+  # gc.input_convoy_id convoy tracks the result bead), exactly what
+  # bin/saymyname-product-status already walks to find the live workflow for
+  # a "current" outcome. Neither the workflow root nor its many decomposed/
+  # review children ever touch the result bead's own heartbeat/updated_at,
+  # so the check above sees nothing and a full multi-hour run reads as a
+  # stall (replay: smf-cgp delegating to workflow smf-uzv, 2026-09-19).
+  # Best-effort, same posture as the provider/mayor-session reads above.
+  current_workflow_json="[]"
+  if [ -n "$current_id" ]; then
+    workflows_response=$(gc bd list --status=in_progress --json 2>/dev/null || echo '[]')
+    candidate_convoys=$(printf '%s' "$workflows_response" | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v if isinstance(v, list) else []
+except Exception:
+    v = []
+for w in v:
+    if not isinstance(w, dict):
+        continue
+    meta = w.get("metadata") if isinstance(w.get("metadata"), dict) else {}
+    if meta.get("gc.kind") != "workflow":
+        continue
+    convoy_id = meta.get("gc.input_convoy_id")
+    wf_id = w.get("id")
+    if isinstance(convoy_id, str) and convoy_id and isinstance(wf_id, str) and wf_id:
+        print(f"{wf_id}\t{convoy_id}")
+' 2>/dev/null || true)
+    workflow_id=""
+    while IFS=$'\t' read -r wf_id convoy_id; do
+      [ -n "$wf_id" ] && [ -n "$convoy_id" ] || continue
+      convoy_json=$(gc bd show "$convoy_id" --json 2>/dev/null || echo '{}')
+      tracks_current=$(printf '%s' "$convoy_json" | TARGET_ID="$current_id" python3 -c '
+import json, os, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    deps = v.get("dependencies") if isinstance(v.get("dependencies"), list) else []
+except Exception:
+    deps = []
+target = os.environ.get("TARGET_ID", "")
+for d in deps:
+    if not isinstance(d, dict):
+        continue
+    dep_id = d.get("id") or d.get("depends_on_id") or ""
+    dep_type = d.get("dependency_type") or d.get("type") or ""
+    if dep_id == target and dep_type == "tracks":
+        print("yes")
+        break
+' 2>/dev/null || true)
+      if [ "$tracks_current" = "yes" ]; then
+        workflow_id="$wf_id"
+        break
+      fi
+    done <<EOF
+$candidate_convoys
+EOF
+    if [ -n "$workflow_id" ]; then
+      workflow_bead_json=$(gc bd show "$workflow_id" --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    print(json.dumps(v if isinstance(v, dict) else {}))
+except Exception:
+    print("{}")' 2>/dev/null || echo "{}")
+      # Every decomposed/review step under the workflow stamps
+      # gc.root_bead_id back to it (the same convention mol-do-work's own
+      # steps use); an open or in_progress one with a recent heartbeat is
+      # exactly the "the workflow is genuinely busy" signal missing above.
+      workflow_children_json=$(gc bd list --status=open,in_progress --metadata-field "gc.root_bead_id=$workflow_id" --json 2>/dev/null || echo '[]')
+      current_workflow_json=$(python3 -c '
+import json, sys
+root = json.loads(sys.argv[1]) if sys.argv[1] else {}
+try:
+    children = json.loads(sys.argv[2])
+    children = children if isinstance(children, list) else []
+except Exception:
+    children = []
+beads = ([root] if isinstance(root, dict) and root else []) + [c for c in children if isinstance(c, dict)]
+print(json.dumps(beads))
+' "$workflow_bead_json" "$workflow_children_json" 2>/dev/null || echo "[]")
+    fi
+  fi
   verdict=$(printf '%s' "$coord_json" \
     | FACTORY_LIVENESS_PROVIDER_STATUS_JSON="$provider_status_json" \
       FACTORY_LIVENESS_MAYOR_SESSION_JSON="$mayor_session_json" \
       FACTORY_LIVENESS_CURRENT_RESULT_JSON="$current_result_json" \
+      FACTORY_LIVENESS_CURRENT_WORKFLOW_JSON="$current_workflow_json" \
       python3 "$GUARD_LIB/factory_liveness.py")
   level=$(printf '%s' "$verdict" | cut -f1)
   code=$(printf '%s' "$verdict" | cut -f2)

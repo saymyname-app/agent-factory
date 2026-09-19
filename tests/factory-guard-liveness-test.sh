@@ -51,6 +51,21 @@ if [[ \$1 == bd && \$2 == show ]]; then
   if [[ -f \$f ]]; then cat "\$f"; else echo '[]'; fi
   exit 0
 fi
+if [[ \$1 == bd && \$2 == list ]]; then
+  metadata_field=""
+  prev=""
+  for arg in "\$@"; do
+    [[ \$prev == --metadata-field ]] && metadata_field="\$arg"
+    prev="\$arg"
+  done
+  if [[ -n \$metadata_field ]]; then
+    f="$TMP/children-\${metadata_field#gc.root_bead_id=}.json"
+  else
+    f="$TMP/workflows.json"
+  fi
+  if [[ -f \$f ]]; then cat "\$f"; else echo '[]'; fi
+  exit 0
+fi
 if [[ \$1 == bd && \$2 == create ]]; then
   echo '{"id":"af-live1","status":"open"}' > "$TMP/beads/af-live1.json"
   echo '{"id":"af-live1"}'; exit 0
@@ -117,6 +132,34 @@ grep -q "✓ liveness — campaign progress stamp is 90 min old, but the current
 grep -q "! liveness" <<<"$out" && fail "a result with recent activity was reported as a liveness defect"
 [ "$(creates)" = "$before" ] || fail "recent result activity still filed a liveness defect"
 rm -f "$TMP/beads/af-cur1.json"
+jq '.[0].metadata |= del(.["gc.current_jit"])' "$COORD" > "$COORD.next" && mv "$COORD.next" "$COORD"
+
+# 2c. af-py8n1: the current result delegates to a workflow tracked only by a
+# convoy "tracks" link (no --parent edge) -- both the result bead and the
+# workflow root are stale, but one of the workflow's decomposed/review steps
+# (linked back only via gc.root_bead_id) has a recent heartbeat. That is
+# real activity too, and must not be flagged or filed, exactly like 2b.
+coord 30 5400
+jq --arg id af-cur2 '.[0].metadata["gc.current_jit"] = $id' "$COORD" > "$COORD.next" && mv "$COORD.next" "$COORD"
+jq -n --arg old "$(iso $((NOW - 200 * 60)))" '{id:"af-cur2", updated_at:$old}' > "$TMP/beads/af-cur2.json"
+jq -n --arg old "$(iso $((NOW - 200 * 60)))" \
+  '[{id:"af-wf1", status:"in_progress", updated_at:$old,
+     metadata:{"gc.kind":"workflow", "gc.input_convoy_id":"af-conv1"}}]' \
+  > "$TMP/workflows.json"
+jq -n '{id:"af-conv1", dependencies:[{id:"af-cur2", dependency_type:"tracks", status:"in_progress"}]}' \
+  > "$TMP/beads/af-conv1.json"
+jq -n --arg old "$(iso $((NOW - 200 * 60)))" '{id:"af-wf1", updated_at:$old}' > "$TMP/beads/af-wf1.json"
+jq -n --arg hb "$(iso $((NOW - 8 * 60)))" \
+  '[{id:"af-step1", status:"in_progress", metadata:{"gc.root_bead_id":"af-wf1", "gc.last_heartbeat_at":$hb}}]' \
+  > "$TMP/children-af-wf1.json"
+before=$(creates)
+out=$(guard --check-only)
+grep -q "✓ liveness — campaign progress stamp is 90 min old, but the current result was active 8 min ago" <<<"$out" \
+  || { echo "$out" >&2; fail "recent activity on a workflow tracked only via convoy link did not override a stale progress stamp"; }
+grep -q "! liveness" <<<"$out" && fail "a delegated workflow with recent step activity was reported as a liveness defect"
+[ "$(creates)" = "$before" ] || fail "recent delegated-workflow activity still filed a liveness defect"
+rm -f "$TMP/beads/af-cur2.json" "$TMP/beads/af-conv1.json" "$TMP/beads/af-wf1.json" \
+      "$TMP/workflows.json" "$TMP/children-af-wf1.json"
 jq '.[0].metadata |= del(.["gc.current_jit"])' "$COORD" > "$COORD.next" && mv "$COORD.next" "$COORD"
 
 # 3. the default run files it exactly once, and pages the Mayor -----------------
