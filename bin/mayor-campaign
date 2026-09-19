@@ -337,6 +337,43 @@ COORDINATION_POINTER_FIELDS = (
 )
 
 
+def _candidate_fully_closed(candidate_id: str) -> bool:
+    """True when a campaign candidate and the execution it was materialized
+    into are BOTH closed -- af-ho5qi's third stale-pointer shape, distinct
+    from the routine state a candidate is in for the rest of its campaign's
+    life.
+
+    `activate` requires its candidate to already be closed (materialized)
+    before it will authorize a campaign (see `activate` above), so a closed
+    candidate alone is normal for as long as the campaign runs -- it is not
+    a signal anything needs fixing. What actually went stale in the
+    2026-09-19 shape (af-ho5qi) is that the candidate's own linked
+    execution Bead (`gc.materialized_bead`) has ALSO closed: the whole
+    authorized unit of work finished and nothing advanced the coordination
+    Bead past it. Fails safe like `wake_target_resolved`: an unresolvable
+    id (deleted, store hiccup) or a candidate with no recorded execution
+    link must never be treated as a positive "stale" signal, since that
+    would make `repair` act on a guess instead of an observed fact.
+    """
+    try:
+        candidate_issue = node_issue(candidate_id)
+    except CampaignCommandError:
+        return False
+    if candidate_issue.get("status") != "closed":
+        return False
+    candidate_metadata = candidate_issue.get("metadata")
+    if not isinstance(candidate_metadata, dict):
+        return False
+    execution_id = _text(candidate_metadata.get("gc.materialized_bead"))
+    if not execution_id:
+        return False
+    try:
+        execution_issue = node_issue(execution_id)
+    except CampaignCommandError:
+        return False
+    return execution_issue.get("status") == "closed"
+
+
 def repair(args: argparse.Namespace) -> None:
     """The repair door for the 2026-09-18 08:43Z incident shape (af-hihkg).
 
@@ -351,6 +388,19 @@ def repair(args: argparse.Namespace) -> None:
     pointer to "none". When automatic mode is on but no last valid pair is on
     record either, it blocks the campaign (kind admin) with a plain cause
     instead of guessing a candidate.
+
+    af-ho5qi: a candidate whose own execution Bead has ALSO closed
+    (`gc.materialized_bead`, fully done and nothing advanced past it) is a
+    third stale-pointer shape alongside "missing" and "empty string" -- it
+    gets the same treatment (restore from the last valid pair, or block when
+    there is none) *only* when that last valid pair actually differs from
+    what is on the coordination Bead now. A closed candidate alone is not
+    that signal: `activate` requires its candidate already closed
+    (materialized) before it will authorize a campaign, so every running
+    campaign's candidate stays closed for its entire life -- that is the
+    routine, healthy shape, not corruption, and must stay a no-op or every
+    running campaign would be "repaired" back to its own unchanged value on
+    every factory-guard tick.
     """
     require_mayor(args.authority)
     issue = coordination_issue()
@@ -366,13 +416,18 @@ def repair(args: argparse.Namespace) -> None:
             changes[field] = "none"
 
     working = {**metadata, **changes}
-    if not _text(working.get("gc.campaign_candidate")) or not _text(working.get("gc.campaign_condition")):
+    candidate = _text(working.get("gc.campaign_candidate"))
+    condition = _text(working.get("gc.campaign_condition"))
+    candidate_closed = candidate is not None and _candidate_fully_closed(candidate)
+    if not candidate or not condition or candidate_closed:
         last_candidate = _text(working.get("gc.campaign_candidate_last"))
         last_condition = _text(working.get("gc.campaign_condition_last"))
-        if last_candidate and last_condition:
+        has_recorded_successor = bool(last_candidate) and bool(last_condition)
+        differs_from_current = last_candidate != candidate or last_condition != condition
+        if has_recorded_successor and differs_from_current:
             changes["gc.campaign_candidate"] = last_candidate
             changes["gc.campaign_condition"] = last_condition
-        else:
+        elif not has_recorded_successor:
             changes.update({
                 "gc.campaign_candidate": "none",
                 "gc.campaign_condition": "none",
@@ -384,13 +439,15 @@ def repair(args: argparse.Namespace) -> None:
                 ),
                 "gc.campaign_block_kind": "admin",
                 "gc.campaign_cause": (
-                    "gc.campaign_candidate/gc.campaign_condition manquants et aucune "
-                    "dernière valeur valide disponible (gc.campaign_candidate_last / "
+                    "gc.campaign_candidate/gc.campaign_condition manquants ou déjà clos, "
+                    "et aucune dernière valeur valide disponible (gc.campaign_candidate_last / "
                     "gc.campaign_condition_last)."
                 ),
                 "gc.campaign_wake_key": "",
                 "gc.campaign_wake_state": "none",
             })
+        # else: candidate_closed is the only trigger and the last valid pair
+        # already matches it -- nothing to restore and nothing to block on.
 
     if not changes:
         print("NOOP: rien à réparer")
