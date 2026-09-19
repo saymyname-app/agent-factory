@@ -25,6 +25,15 @@
 #                        (2026-09-18): pr-autopilot ticked every 3 min with
 #                        errors=3 forever on all 3 repos with zero visible
 #                        signal until a human noticed an unarmed PR.
+#   5. STALL FREQUENCY  a single BLOCKED_STALLED transition
+#                        (lib/factory_continuity.py) gets a diagnosis, but a
+#                        *recurring* pattern of stalls has no aggregate
+#                        signal of its own -- observability audit finding C3
+#                        (2026-09-18): "audite tout ce qui ralentit notre
+#                        usine". A rolling-24h count of BLOCKED_STALLED
+#                        transitions read from factory-continuity-history.json
+#                        pages the Mayor once it reaches 5, naming each
+#                        stall's preceding state where recoverable.
 #
 # It also re-nudges the Mayor about a campaign-liveness defect
 # (lib/factory_liveness.py, filed by factory-guard) that is still open and
@@ -50,6 +59,8 @@ GATE_MINUTES="${FACTORY_WATCHDOG_GATE_MINUTES:-30}"
 PR_MINUTES="${FACTORY_WATCHDOG_PR_MINUTES:-30}"
 RENUDGE_MINUTES="${FACTORY_WATCHDOG_RENUDGE_MINUTES:-30}"
 WORKFLOW_LOOKBACK_HOURS="${FACTORY_WATCHDOG_WORKFLOW_LOOKBACK_HOURS:-24}"
+STALL_WINDOW_HOURS="${FACTORY_WATCHDOG_STALL_WINDOW_HOURS:-24}"
+STALL_THRESHOLD="${FACTORY_WATCHDOG_STALL_THRESHOLD:-5}"
 COORD="${CAMPAIGN_COORDINATION_BEAD:-af-1vr4}"
 SIGNAL_FILE="$ROOT/.gc/runtime/factory-watchdog-signals.json"
 
@@ -288,7 +299,69 @@ else
   say "· gh-auth — not checked (gh unavailable)"
 fi
 
-# --- 5. re-nudge on a still-open, aging campaign-liveness defect --------------
+# --- 5. campaign-stall frequency (rolling window BLOCKED_STALLED count) ------
+# af-hyls9 (observability audit finding C3, 2026-09-18): a single stall gets
+# diagnosed, but nothing aggregates how *often* the campaign is stalling.
+STALL_HISTORY_FILE="$ROOT/.gc/runtime/factory-continuity-history.json"
+STALL_BEAD_TITLE="[watchdog] stall frequency high"
+if [ -f "$STALL_HISTORY_FILE" ]; then
+  stall_verdict=$(jq -c '.history // []' "$STALL_HISTORY_FILE" 2>/dev/null \
+    | FACTORY_WATCHDOG_STALL_WINDOW_HOURS="$STALL_WINDOW_HOURS" \
+      FACTORY_WATCHDOG_STALL_THRESHOLD="$STALL_THRESHOLD" \
+      python3 "$LIB/factory_watchdog.py" stall-frequency 2>/dev/null)
+  if [ -n "$stall_verdict" ]; then
+    stall_code=${stall_verdict%%$'\t'*}
+    stall_msg=${stall_verdict#*$'\t'}
+    bad "stall frequency — $stall_msg"
+    add_alert "$stall_code" "stall-frequency" "$stall_msg"
+    if [ "$CHECK_ONLY" != "1" ]; then
+      existing=$(gc bd list --status open --title-contains "$STALL_BEAD_TITLE" --json 2>/dev/null \
+        | jq -r '(.[0].id // empty)')
+      if [ -z "$existing" ]; then
+        created=$(gc bd create "$STALL_BEAD_TITLE" -p 1 -t bug \
+          -d "$stall_msg
+
+Detected by factory-watchdog from .gc/runtime/factory-continuity-history.json. Observe-and-page only (ADR-0016 section 7): this bead does not diagnose or resolve the underlying stalls, or touch the campaign. Watchdog auto-resolves it once the rolling count drops back below $STALL_THRESHOLD." \
+          --set-metadata "gc.source=factory-watchdog" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
+        if [ -n "$created" ]; then
+          gc mail send mayor --notify \
+            -s "$STALL_BEAD_TITLE" \
+            -m "ACTION: factory-watchdog counted BLOCKED_STALLED transitions over a rolling ${STALL_WINDOW_HOURS}h window
+STATE: $stall_msg
+EVIDENCE: bead $created, .gc/runtime/factory-continuity-history.json
+NEXT: diagnose the recurring stall pattern -- watchdog auto-resolves $created once the count drops back below $STALL_THRESHOLD" \
+            >/dev/null 2>&1 \
+            && gc bd update "$created" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
+            && did "flagged stall frequency as $created and notified mayor"
+        else
+          bad "could not file a bead for stall frequency"
+        fi
+      elif should_nudge "$existing" "gc.watchdog_nudged_at"; then
+        gc mail send mayor --notify \
+          -s "$STALL_BEAD_TITLE (still high)" \
+          -m "ACTION: factory-watchdog re-checked stall frequency
+STATE: $stall_msg
+EVIDENCE: bead $existing, .gc/runtime/factory-continuity-history.json
+NEXT: diagnose the recurring stall pattern" \
+          >/dev/null 2>&1 \
+          && gc bd update "$existing" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
+          && did "re-nudged mayor about stall frequency still high ($existing)"
+      fi
+    fi
+  elif [ "$CHECK_ONLY" != "1" ]; then
+    existing=$(gc bd list --status open --title-contains "$STALL_BEAD_TITLE" --json 2>/dev/null \
+      | jq -r '(.[0].id // empty)')
+    if [ -n "$existing" ]; then
+      gc bd update "$existing" --set-metadata gc.outcome=pass --status=closed \
+        --notes "stall frequency dropped back below threshold; auto-resolved by factory-watchdog" >/dev/null 2>&1 \
+        && did "auto-resolved recovered stall-frequency bead $existing"
+    fi
+  fi
+else
+  say "· stall-frequency — not checked (no continuity history yet)"
+fi
+
+# --- 6. re-nudge on a still-open, aging campaign-liveness defect --------------
 # Extends the existing machinery (factory-guard files this bead; see its
 # "campaign liveness" check) rather than duplicating detection.
 if [ -f "$LIB/factory_liveness.py" ]; then

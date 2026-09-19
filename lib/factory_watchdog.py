@@ -19,6 +19,11 @@ failure behind a CLOSED status":
   gh-auth    `gh auth status` failing (expired/invalid token) is invisible to
              every one of the ten gh-dependent scripts, each of which just
              fails its own way with no shared signal (Incident 2026-09-18).
+  stall-frequency  a single BLOCKED_STALLED transition (lib/factory_continuity.py,
+             docs/FACTORY_CONTINUITY.md sec5) gets a diagnosis, but a recurring
+             pattern of stalls -- the campaign stalling over and over, even if
+             each one is individually resolved -- has no aggregate signal of
+             its own (observability audit finding C3, 2026-09-18).
 
 Each assessor is a pure function over already-fetched JSON, so it is
 unit-testable without gc/gh. bin/factory-watchdog does the fetching, paging,
@@ -45,6 +50,8 @@ from typing import Any, Iterable
 
 GATE_AGE_MINUTES_DEFAULT = 30
 PR_STUCK_MINUTES_DEFAULT = 30
+STALL_WINDOW_HOURS_DEFAULT = 24
+STALL_THRESHOLD_DEFAULT = 5
 
 
 def _epoch(value: Any) -> float | None:
@@ -184,6 +191,60 @@ def assess_gh_auth(returncode: int, output: str) -> tuple[str, str] | None:
     return "gh_auth_unreachable", f"gh auth status failed (exit {returncode}): {_truncate(output)}"
 
 
+def stall_frequency(
+    history: Iterable[dict[str, Any]],
+    now: float,
+    window_hours: int = STALL_WINDOW_HOURS_DEFAULT,
+) -> dict[str, Any]:
+    """Rolling-window count of BLOCKED_STALLED entries in continuity history.
+
+    `history` is lib/factory_continuity.py's own `record_transition` list --
+    one entry per *change* of continuity state (not one per tick), each
+    `{"state": ..., "since": <iso>}`. For every BLOCKED_STALLED entry inside
+    the window, the preceding entry's state (the state the campaign stalled
+    *from*) is looked up positionally; the first entry in the whole recorded
+    history has no predecessor, so its `preceding_state` is None -- callers
+    must render that as "cause unknown" per the bead's acceptance criteria
+    rather than guess.
+    """
+    history = list(history)
+    cutoff = now - window_hours * 3600
+    stalls: list[dict[str, Any]] = []
+    for index, entry in enumerate(history):
+        if not isinstance(entry, dict) or str(entry.get("state") or "") != "BLOCKED_STALLED":
+            continue
+        since = _epoch(entry.get("since"))
+        if since is None or since < cutoff:
+            continue
+        preceding_state = None
+        if index > 0 and isinstance(history[index - 1], dict):
+            preceding_state = str(history[index - 1].get("state") or "") or None
+        stalls.append({"since": entry.get("since"), "preceding_state": preceding_state})
+    return {"count": len(stalls), "window_hours": window_hours, "stalls": stalls}
+
+
+def assess_stall_frequency(
+    history: Iterable[dict[str, Any]],
+    now: float,
+    window_hours: int = STALL_WINDOW_HOURS_DEFAULT,
+    threshold_count: int = STALL_THRESHOLD_DEFAULT,
+) -> tuple[str, str] | None:
+    """count of BLOCKED_STALLED entries in the window >= threshold -> (code, message); else None."""
+    freq = stall_frequency(history, now, window_hours)
+    if freq["count"] < threshold_count:
+        return None
+    causes = "; ".join(
+        f"{stall['since']} (from {stall['preceding_state']})"
+        if stall["preceding_state"]
+        else f"{stall['since']} (cause unknown)"
+        for stall in freq["stalls"]
+    )
+    return "stall_frequency_high", (
+        f"{freq['count']} BLOCKED_STALLED transitions in the last {window_hours}h "
+        f"(threshold {threshold_count}): {causes}"
+    )
+
+
 def assess_workflows(beads: Iterable[dict[str, Any]]) -> list[tuple[str, str, str]]:
     out = []
     for bead in beads:
@@ -287,6 +348,32 @@ def _cli_gh_auth(argv: list[str]) -> int:
     return 0
 
 
+def _cli_stall_frequency(argv: list[str]) -> int:
+    if len(argv) != 1:
+        print(
+            "usage: factory_watchdog.py stall-frequency  "
+            "(reads factory-continuity-history.json's \"history\" array on stdin)",
+            file=sys.stderr,
+        )
+        return 2
+    raw = sys.stdin.read()
+    try:
+        history = json.loads(raw) if raw.strip() else []
+    except json.JSONDecodeError:
+        print("stall-frequency: stdin is not valid JSON", file=sys.stderr)
+        return 2
+    if not isinstance(history, list):
+        history = []
+    now = float(os.environ.get("FACTORY_GUARD_NOW") or time.time())
+    window_hours = int(os.environ.get("FACTORY_WATCHDOG_STALL_WINDOW_HOURS") or STALL_WINDOW_HOURS_DEFAULT)
+    threshold = int(os.environ.get("FACTORY_WATCHDOG_STALL_THRESHOLD") or STALL_THRESHOLD_DEFAULT)
+    verdict = assess_stall_frequency(history, now, window_hours, threshold)
+    if verdict is not None:
+        code, message = verdict
+        print(f"{code}\t{message}")
+    return 0
+
+
 def _cli_merge_signals(argv: list[str]) -> int:
     if len(argv) != 3:
         print(
@@ -313,10 +400,13 @@ def main() -> int:
         return _cli_merge_signals(sys.argv[1:])
     if len(sys.argv) >= 2 and sys.argv[1] == "gh-auth":
         return _cli_gh_auth(sys.argv[1:])
+    if len(sys.argv) >= 2 and sys.argv[1] == "stall-frequency":
+        return _cli_stall_frequency(sys.argv[1:])
     if len(sys.argv) != 2 or sys.argv[1] not in ("gates", "prs", "workflows"):
         print(
             "usage: factory_watchdog.py <gates|prs|workflows>  (reads JSON array on stdin)\n"
             "       factory_watchdog.py gh-auth <returncode>  (reads `gh auth status` output on stdin)\n"
+            "       factory_watchdog.py stall-frequency  (reads continuity history \"history\" array on stdin)\n"
             "       factory_watchdog.py merge-signals <path> <source>  (reads JSON array on stdin)",
             file=sys.stderr,
         )

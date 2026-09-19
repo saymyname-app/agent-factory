@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import urlopen
 
 from factory_continuity import project_continuity_state, record_transition
+from factory_watchdog import STALL_THRESHOLD_DEFAULT, STALL_WINDOW_HOURS_DEFAULT, stall_frequency
 from factory_state import (
     CONTRACT as HUMAN_STATE_CONTRACT,
     CandidateMislabeledError,
@@ -2490,6 +2491,14 @@ class FactoryCollector:
         _write_continuity_history(continuity_history)
         continuity["since"] = continuity_history[-1]["since"]
         continuity["history"] = continuity_history
+
+        stall = stall_frequency(continuity_history, time.time(), STALL_WINDOW_HOURS_DEFAULT)
+        today["stall_frequency"] = {
+            "count": stall["count"],
+            "window_hours": stall["window_hours"],
+            "threshold": STALL_THRESHOLD_DEFAULT,
+            "stalls": stall["stalls"],
+        }
 
         infrastructure = [
             {
