@@ -690,7 +690,10 @@ MAX_REWAKES = 3
 # C4: a product wake stale enough to be reminded must not starve the Factory
 # for the same 30 minutes. Only these reasons come from plan_transition
 # (never from the ladder itself, which must not be bundled into itself).
-PRODUCT_WAKE_REASONS = {"finalize_current", "resume_current", "materialize_next", "record_complete"}
+PRODUCT_WAKE_REASONS = {
+    "finalize_current", "resume_current", "materialize_next", "record_complete",
+    "queue_release_mismatch", "queue_candidate_untraceable",
+}
 # Generative ladder rungs are optional by nature: "nothing worth doing" is a
 # valid answer, so they are never chased with reminders.
 NO_REWAKE_PREFIXES = ("ladder:tests:", "ladder:docs:")
