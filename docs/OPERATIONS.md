@@ -709,14 +709,34 @@ malformed candidate is excluded, never selected, and reported back under
 pass. `project_release` (and `bin/product-release project`, via
 `--queue-state`/`--queue-candidates` JSON file flags) forwards both overlays
 into the campaign projection it embeds; called with neither, behavior is
-identical to before. **Not yet wired live**: no caller passes queue state or
-candidates yet — `bin/saymyname-product-status` still calls
-`project_release` with neither overlay, and `product-queue` candidates carry
-no `criterion_refs`/`independence` metadata to project. That data-plumbing
-(candidate schema plus the status pipeline) is separate, scoped follow-up
-work; `tests/product-release-test.py::QueueProjectionTest` covers the pure
-mechanism, and `bin/product-release project --queue-candidates <file>`
-against `config/releases/saymyname-v1.json` is how to dry-run it by hand.
+identical to before.
+
+**Wired live (af-3uefc):** `bin/product-queue add` takes repeatable
+`--criterion-ref` plus `--independence proven|unknown` (default `unknown`),
+stored as `gc.queue_criterion_refs`/`gc.queue_independence` on the candidate
+Bead; `lib/factory_state.py::project_candidate` projects them back out (`[]`/
+`unknown` for a candidate predating this schema, never a hard failure — this
+is enrichment, not a lifecycle field). `bin/saymyname-product-status` builds
+`queue_candidates` straight from the product-queue's already-fetched `list
+--json` (no extra Beads round-trip: same fire-and-forget batch as the Gas
+City/queue/coordination-root calls), keeping only `state == "eligible"`
+entries — `project_campaign_work` itself has no notion of paused/queued, so
+the caller is what must keep a paused candidate from being selected — and
+passes the file via `--queue-candidates`.
+
+**Still deferred (af-8ijhu):** the `queue_state_by_work_ref` overlay (a materialized or
+cancelled candidate's live state following its already-committed
+`work_graph` node without a hand-edited release contract). `product-queue
+list`/`next` deliberately exclude materialized/cancelled candidates by
+design (they're no longer "active"), so deriving this overlay needs a
+different, still-cheap read — a new read-only `product-queue` subcommand
+over the full per-product tuple set, fetched in the same parallel batch as
+the other sentinel-tick sources — rather than the `list --json` reuse that
+covers `queue_candidates`. Scoped as separate follow-up work; the pure
+mechanism is proven by `tests/product-release-test.py::QueueProjectionTest`'s
+`queue_state_by_work_ref` cases and by `bin/product-release project
+--queue-state <file>` against `config/releases/saymyname-v1.json` for a
+manual dry-run in the meantime.
 
 `project_operational_release` overlays only the runtime `truth_state` versus
 `operational_state` distinction — an `approved`/`executing` release with the
@@ -742,10 +762,14 @@ campaign state.
   queue-only candidate getting selected without a `work_graph` edit, an
   untraceable/duplicate candidate being skipped not selected, and unproven
   independence still blocking auto-selection). It also loads and projects the
-  real `config/releases/saymyname-v1.json` contract. Live verification
-  through the Product view must be repeated from the merged head; the queue
-  overlays specifically are proven only by the dry-run CLI flags above until
-  the status pipeline is wired to pass them (see note above).
+  real `config/releases/saymyname-v1.json` contract. `tests/product-queue-
+  test.sh` covers the `--criterion-ref`/`--independence` schema, and
+  `tests/saymyname-product-status-test.sh`'s `traceable-candidate` scenario
+  proves the `queue_candidates` wiring selects a live candidate through the
+  real `bin/product-release`/`config/releases/saymyname-v1.json`. Live
+  verification through the Product view must still be repeated from the
+  merged head; the `queue_state_by_work_ref` overlay remains dry-run-only
+  (see note above).
 
 ### Ordered product candidates
 

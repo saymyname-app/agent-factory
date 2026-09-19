@@ -24,6 +24,7 @@ Commands:
   next [--json]                              Show the first eligible candidate.
   add --title TEXT --authorized-by TEXT --acceptance TEXT
       [--goal ID] [--urgency LEVEL] [--why TEXT]
+      [--criterion-ref ID ...] [--independence proven|unknown]
                                              Append a deferred candidate.
   move ID POSITION                           Move a candidate to an exact position.
   urgency ID normal|urgent|critical          Change urgency without changing order.
@@ -43,6 +44,14 @@ add requires --authorized-by (what authorizes this candidate: a decision record,
 an ADR, a validated parent or review finding) and an --acceptance holding at
 least one EARS line (English "shall" or French "doit"). materialize copies the
 provenance onto the execution Bead (gc.source_candidate, gc.authorized_by).
+
+--criterion-ref (repeatable) and --independence make a candidate traceable to
+a versioned release's criteria (lib/product_release.py::project_campaign_work)
+before it is a work_graph node at all: without at least one --criterion-ref,
+the candidate can be queued and materialized as before but the campaign
+projection will never select it on its own. --independence defaults to
+unknown, same as a work_graph node -- pass --independence proven only once
+the sub-graph rooted at this candidate is actually proven independent.
 USAGE
 }
 
@@ -231,7 +240,9 @@ next_candidate() {
 
 add_candidate() {
   local title= goal=$DEFAULT_GOAL urgency=normal why= acceptance= authorized_by=
-  local priority rank metadata response id
+  local independence=unknown
+  local -a criterion_refs=()
+  local priority rank metadata response id criterion_refs_csv ref
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --title) [[ $# -ge 2 ]] || die "--title needs a value."; title=$2; shift 2 ;;
@@ -240,6 +251,8 @@ add_candidate() {
       --why) [[ $# -ge 2 ]] || die "--why needs a value."; why=$2; shift 2 ;;
       --acceptance) [[ $# -ge 2 ]] || die "--acceptance needs a value."; acceptance=$2; shift 2 ;;
       --authorized-by) [[ $# -ge 2 ]] || die "--authorized-by needs a value."; authorized_by=$2; shift 2 ;;
+      --criterion-ref) [[ $# -ge 2 ]] || die "--criterion-ref needs a value."; criterion_refs+=("$2"); shift 2 ;;
+      --independence) [[ $# -ge 2 ]] || die "--independence needs a value."; independence=$2; shift 2 ;;
       *) die "Unsupported add argument: $1" ;;
     esac
   done
@@ -251,21 +264,31 @@ add_candidate() {
   has_ears_line "$acceptance" \
     || { ears_template; die "--acceptance holds no EARS-shaped line."; }
   [[ $goal =~ ^[A-Za-z0-9._-]+$ || $goal == none ]] || die "Invalid goal ID."
+  [[ $independence == proven || $independence == unknown ]] \
+    || die "--independence must be proven or unknown."
+  for ref in "${criterion_refs[@]}"; do
+    [[ $ref =~ ^[a-z0-9][a-z0-9.-]{0,95}$ ]] \
+      || die "Invalid --criterion-ref: $ref (must match a release criterion ID)."
+  done
   priority=$(priority_for_urgency "$urgency")
   [[ -n $why ]] || why="Queued product outcome for $PRODUCT; refine scope before Mayor materialization."
+  criterion_refs_csv=$(IFS=,; echo "${criterion_refs[*]}")
 
   load_inventory
   rank=$(jq '[.[].metadata["gc.queue_rank"] | tonumber] | max // 0 | . + 1000' \
     <<<"$INVENTORY")
   metadata=$(jq -cn --arg product "$PRODUCT" --arg state queued \
     --arg urgency "$urgency" --arg goal "$goal" --argjson rank "$rank" \
-    --arg authorized_by "$authorized_by" '{
+    --arg authorized_by "$authorized_by" \
+    --arg criterion_refs "$criterion_refs_csv" --arg independence "$independence" '{
       "gc.queue_product": $product,
       "gc.queue_state": $state,
       "gc.queue_rank": $rank,
       "gc.queue_urgency": $urgency,
       "gc.queue_goal": $goal,
-      "gc.authorized_by": $authorized_by
+      "gc.authorized_by": $authorized_by,
+      "gc.queue_criterion_refs": $criterion_refs,
+      "gc.queue_independence": $independence
     }')
   response=$("$BD_BIN" create "$title" --type feature --priority "$priority" \
     --defer 2125-01-01 \
