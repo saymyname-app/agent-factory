@@ -601,6 +601,126 @@ product lane resumes when the factory lane is empty or when Benjamin says so.
 Reversal: `saymyname-product-queue resume <id>` per candidate; the prompt
 order is one line.
 
+### 2026-09-19 — Photo approval policy; photo reporting stays out of V1
+
+**Intent (Benjamin, 2026-09-19, live conversation, his words).** "Q1 : ok pour
+tes recommandations" and, on reporting, "Signaler devrait il vraiment rester
+hors V1 ? Je te laisse choisir."
+
+**Mechanism (PO interpretation of what he accepted).** Who approves a photo a
+person uploads depends on the source: (a) an administered organization reuses
+the existing change-request queue and the organization admin approves or
+rejects; (b) a personal source is approved automatically because nobody else
+can see it; (c) a participative group is approved by its organizer through the
+same interface as (a). Withdrawal stays the person's direct, immediate and
+unrefusable right (2026-09-15).
+
+**PO choice, delegated by Benjamin: photo reporting stays out of V1.** Every
+photo shown to another person is either approved beforehand ((a), (c)) or
+private ((b)), and the person shown can withdraw it directly. Revisit if any
+source ever shows photos without prior approval.
+
+**PO defaults, NOT decided by Benjamin — provisional until he confirms:** the
+uploader sees the REJECTED status on their own profile edit screen and gets no
+email; a rejected photo's stored file and thumbnail are deleted 30 days after
+rejection, keeping only an audit record without image (same 30 days as the
+2026-09-15 staging retention).
+
+**Does NOT mean:** no reporting flow, no automatic face analysis, no change to
+the consent model or to withdrawal. Reversal: additive routes and UI; disable
+them, no data migration. Tracked by product-queue candidate `af-1ycdr`.
+
+### 2026-09-19 — V1 production readiness is a production-like local stack; hosting and deployment are decided at the V1 release
+
+**Intent (Benjamin, 2026-09-19, his words).** "Q2: ok pour la recommandation.
+Les questions de production et deploiement seront pour la release de la V1."
+
+**Mechanism (PO interpretation).** The `production-autonomy` criterion is proven
+on a production-like local stack: health, structured logs, backup and restore,
+recovery from a bad migration, and configuration that refuses to start unsafely.
+No hosting provider is chosen and nothing is deployed before the V1 release.
+The choice of host and the first deployment are decisions Benjamin takes at the
+release itself, as separate, human-gated acts.
+
+**Does NOT mean:** production and deployment are out of V1; they are decided at
+its release. No cloud work, cost or secret provisioning is authorized before
+then. The criterion's acceptance is reworded accordingly in the release
+contract (revision 2). Reversal: reword the criterion back; nothing was built
+that depends on a host.
+
+### 2026-09-19 — Translation and keyboard access are in V1
+
+**Intent (Benjamin, 2026-09-19, his words).** "Oui l'accessibilité, et la
+traduction sont en V1 en suivant ta recommandation."
+
+**Mechanism (PO interpretation — provisional).** The recommendation he refers to
+kept full French and English on the V1 screens and keyboard access in V1, and
+deferred the extended automated accessibility audit to V2. Pinch-zoom is
+restored by the quiz viewport candidate. If Benjamin meant the automated audit
+too, it is one acceptance line to add back to `af-u632e`.
+
+**Does NOT mean:** a WCAG certification. Tracked by `af-dz3fp` and `af-u632e`.
+
+### 2026-09-19 — The participative-group journey is a V1 journey and needs an end-to-end proof
+
+**Intent (Benjamin, 2026-09-19, his words).** "Oui il faut que ca soit prouve de
+bout en bout, ces groupes font parti du V1 et donc le flow end to end est
+prevu."
+
+**Mechanism (PO interpretation).** One browser journey following the pilot path
+of `PRODUCT_STRATEGY.md` and the 2026-09-14 group decisions (create, join by
+revocable link or QR, voluntary profile, private selection, first answer,
+aggregate-only organizer view, revocation and leaving). The release contract
+gains the capability `participative-groups` and the journey
+`group-join-to-first-quiz` (revision 2); the intake answer already listed the
+participative journey as V1 scope. Tracked by product-queue candidate `af-1f035`.
+
+**Does NOT mean:** any change to presets, defaults or visibility rules.
+Reversal: remove the journey from the contract and cancel the candidate.
+
+### 2026-09-19 — Editorial roles and navigation
+
+**Intent (Benjamin, 2026-09-19, his words).** "Q6: oui ta recommandation est
+bonne", "Q7: oui ta recommandation est bonne".
+
+**Mechanism (PO interpretation).** Benjamin alone holds the writer and the
+publisher role, as two distinct roles, granted through a documented operator
+procedure; there is no role-management screen in V1. A person without either
+role sees no editorial entry in any navigation and a neutral "not authorized"
+page if they type the address directly; the API answers 403 regardless.
+
+**Does NOT mean:** a global super-admin, or any privilege for organization admins
+or support over the public catalogue. Tracked by `af-h11ln` and `af-i6r3y`.
+
+### 2026-09-19 — Oxyl development data: real people, development only, never published
+
+**Intent (Benjamin, 2026-09-19, his words).** "Ces photos sont celles des membres
+de l'entreprise oxyl dans laquelle j'ai fait mon stage et pendant lequel j'ai
+cree saymyname en side project. J'ai eu l'accord oral de la CEO pour recuperer
+les donnees du trombinoscope qui m'ont permis de developper. Ces photos et
+donnees sont a but de test en developpement uniquement. Elles ne doivent pas
+etre publiees." On what to do: "Q9: je valide la recommandation"; on the guard:
+"Q10: oui".
+
+**Record.** The photos and trombinoscope data in the development database and in
+the two private repositories are real people's, from Benjamin's former employer,
+kept for development and test only, on the strength of the CEO's oral accord.
+No written confirmation and no individual consent is on record (PO note, not a
+decision). They must never be published, shipped in a build, or used in any
+proof, screenshot, fixture or log of the product.
+
+**Mechanism (PO interpretation of the recommendation he validated).** Level A
+now: stop tracking the photos in git in both repositories, keep the developer's
+local copies working, keep every automated test on synthetic data, and add a
+deterministic check that refuses new person photos (candidates `af-ldvic` and
+`af-5o2l1`). Level B — rewriting git history and pull-request references — is NOT
+decided: it is irreversible and is reserved to Benjamin as a pre-release gate
+before any release, deployment or additional repository access.
+
+**Does NOT mean:** deleting the local files, changing the development database,
+or treating this data as usable for the public challenge. Reversal of level A:
+re-add the files, which remain in history and locally.
+
 ## Open
 
 None. All Enterprise-tier questions are deferred — see `## Deferred`
