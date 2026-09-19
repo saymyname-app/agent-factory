@@ -46,6 +46,18 @@ if [[ ${1:-} == bd && ${2:-} == update ]]; then
   printf '%s %s\n' "$id" "$*" >> "$UPDATE_LOG"
   exit 0
 fi
+if [[ ${1:-} == bd && ${2:-} == show ]]; then
+  id=$3
+  status=$(jq -r --arg id "$id" '.[$id] // empty' "$EXEC_STATUS_FILE" 2>/dev/null)
+  if [ -n "$status" ]; then printf '[{"id":"%s","status":"%s"}]' "$id" "$status"; else echo '[]'; fi
+  exit 0
+fi
+if [[ ${1:-} == convoy && ${2:-} == status ]]; then
+  id=$3
+  child=$(jq -r --arg id "$id" '.[$id] // empty' "$CONVOY_CHILDREN_FILE" 2>/dev/null)
+  if [ -n "$child" ]; then printf '{"children":[{"id":"%s"}]}' "$child"; else echo '{"children":[]}'; fi
+  exit 0
+fi
 if [[ ${1:-} == mail && ${2:-} == send ]]; then
   printf 'mail-to=%s\n' "$3" >> "$MAIL_LOG"
   exit 0
@@ -53,6 +65,8 @@ fi
 exit 64
 STUB
 chmod +x "$TMP/bin/gc"
+export EXEC_STATUS_FILE="$TMP/exec_status.json"; echo '{}' > "$EXEC_STATUS_FILE"
+export CONVOY_CHILDREN_FILE="$TMP/convoy_children.json"; echo '{}' > "$CONVOY_CHILDREN_FILE"
 
 # --- stub gh: `pr view <n> --repo <repo>` reports per-scenario -------------
 cat > "$TMP/bin/gh" <<'STUB'
@@ -264,5 +278,122 @@ jq -n --argjson v "$claimed_shipped_already_proven" '[$v]' > "$BEADS_FILE"
 out=$(guard --check-only)
 [[ $out != *"zz-fixture-claimed-proven"* ]] \
   || { echo "$out" >&2; fail "an already-fully-proven bead should not be re-processed by the claimed-shipped check"; }
+
+# --- convoy-delivery reconciliation (af-gpq0y): a workflow bead can close
+# with full verified delivery proof while the execution bead a convoy tracks
+# never receives it and stays open. -----------------------------------------
+
+buildbasic_root='{
+  "id": "zz-fixture-buildbasic-root", "status": "closed", "title": "build-basic",
+  "labels": [],
+  "metadata": {
+    "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
+    "gc.github_repo": "example-org/example-repo", "gc.pr_number": 45,
+    "gc.pr_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "gc.merge_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "gc.var.convoy_id": "zz-fixture-convoy"
+  }
+}'
+authorized_by_root='{
+  "id": "zz-fixture-consolidate-root", "status": "closed", "title": "Consolidate worktrees into one branch + PR",
+  "labels": [],
+  "metadata": {
+    "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
+    "gc.github_repo": "example-org/example-repo", "gc.pr_number": 47,
+    "gc.pr_head": "cccccccccccccccccccccccccccccccccccccccc",
+    "gc.merge_commit": "dddddddddddddddddddddddddddddddddddddddd",
+    "gc.authorized_by": "zzfixture-direct"
+  }
+}'
+adr_authorized_root='{
+  "id": "zz-fixture-adr-authorized-root", "status": "closed", "title": "Unrelated delivered workflow",
+  "labels": [],
+  "metadata": {
+    "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
+    "gc.github_repo": "example-org/example-repo", "gc.pr_number": 50,
+    "gc.pr_head": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "gc.merge_commit": "ffffffffffffffffffffffffffffffffffffffff",
+    "gc.authorized_by": "ADR-0017 (Factory improvements need root cause); observed live 2026-09-19"
+  }
+}'
+already_closed_exec_root='{
+  "id": "zz-fixture-noop-root", "status": "closed", "title": "Already reconciled",
+  "labels": [],
+  "metadata": {
+    "gc.delivery_status": "merged", "gc.work_outcome": "shipped",
+    "gc.github_repo": "example-org/example-repo", "gc.pr_number": 60,
+    "gc.pr_head": "1111111111111111111111111111111111111a",
+    "gc.merge_commit": "2222222222222222222222222222222222222b",
+    "gc.var.convoy_id": "zz-fixture-noop-convoy"
+  }
+}'
+
+# 9. build-basic shape: gc.var.convoy_id -> convoy -> open execution bead.
+#    Reconciled: exec bead gets all six proof fields + gc.delivered_via and
+#    closes; its convoy closes alongside it.
+jq -n --argjson r "$buildbasic_root" '[$r]' > "$BEADS_FILE"
+jq -n '{"zz-fixture-exec-buildbasic":"open","zz-fixture-convoy":"open"}' > "$EXEC_STATUS_FILE"
+jq -n '{"zz-fixture-convoy":"zz-fixture-exec-buildbasic"}' > "$CONVOY_CHILDREN_FILE"
+: > "$UPDATE_LOG"
+out=$(guard)
+grep -q "zz-fixture-buildbasic-root (city) delivered (merged example-org/example-repo#45) but its execution bead zz-fixture-exec-buildbasic is still open" <<<"$out" \
+  || { echo "$out" >&2; fail "build-basic-shaped delivery gap was not detected"; }
+call=$(grep "^zz-fixture-exec-buildbasic " "$UPDATE_LOG" || true)
+for field in \
+  "gc.delivery_status=merged" "gc.work_outcome=shipped" \
+  "gc.github_repo=example-org/example-repo" "gc.pr_number=45" \
+  "gc.pr_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+  "gc.merge_commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+  "gc.delivered_via=zz-fixture-buildbasic-root" "--status=closed"
+do
+  [[ $call == *"$field"* ]] || fail "reconcile call missing $field: $call"
+done
+grep -q "^zz-fixture-convoy --status=closed" "$UPDATE_LOG" \
+  || { echo "$UPDATE_LOG contents:"; cat "$UPDATE_LOG" >&2; fail "the input convoy was not closed alongside its execution bead"; }
+
+# 10. direct gc.authorized_by shape (smb-jz34 -> smb-fpbj): no convoy_id, so
+#     no convoy is touched -- only the execution bead closes.
+jq -n --argjson r "$authorized_by_root" '[$r]' > "$BEADS_FILE"
+jq -n '{"zzfixture-direct":"open"}' > "$EXEC_STATUS_FILE"
+jq -n '{}' > "$CONVOY_CHILDREN_FILE"
+: > "$UPDATE_LOG"
+out=$(guard)
+grep -q "^zzfixture-direct .*--status=closed" "$UPDATE_LOG" \
+  || { echo "$out" >&2; fail "gc.authorized_by-linked execution bead was not closed"; }
+[ "$(grep -c '^zzfixture-direct ' "$UPDATE_LOG")" = "1" ] || fail "expected exactly one write to the directly-linked execution bead"
+
+# 11. gc.authorized_by names a non-bead reference (an ADR citation, the real
+#     af-gpq0y shape on af-hc2mx-authored beads) -- never guessed at as a
+#     bead id, nothing written.
+jq -n --argjson r "$adr_authorized_root" '[$r]' > "$BEADS_FILE"
+jq -n '{}' > "$EXEC_STATUS_FILE"
+jq -n '{}' > "$CONVOY_CHILDREN_FILE"
+: > "$UPDATE_LOG"
+out=$(guard)
+[ -z "$(cat "$UPDATE_LOG")" ] || { echo "$out" >&2; fail "an ADR-citation gc.authorized_by value must never be treated as a bead id"; }
+grep -q "convoy-delivery:city — no delivered workflow bead has an open execution bead behind it" <<<"$out" \
+  || { echo "$out" >&2; fail "the ADR-citation case should read as healthy, not reconciled"; }
+
+# 12. execution bead already closed: nothing to do, reported healthy.
+jq -n --argjson r "$already_closed_exec_root" '[$r]' > "$BEADS_FILE"
+jq -n '{"zz-fixture-exec-noop":"closed"}' > "$EXEC_STATUS_FILE"
+jq -n '{"zz-fixture-noop-convoy":"zz-fixture-exec-noop"}' > "$CONVOY_CHILDREN_FILE"
+: > "$UPDATE_LOG"
+out=$(guard)
+[ -z "$(cat "$UPDATE_LOG")" ] || { echo "$out" >&2; fail "an already-closed execution bead should not be touched"; }
+
+# 13. --check-only reports the gap but writes nothing.
+jq -n --argjson r "$buildbasic_root" '[$r]' > "$BEADS_FILE"
+jq -n '{"zz-fixture-exec-buildbasic":"open","zz-fixture-convoy":"open"}' > "$EXEC_STATUS_FILE"
+jq -n '{"zz-fixture-convoy":"zz-fixture-exec-buildbasic"}' > "$CONVOY_CHILDREN_FILE"
+: > "$UPDATE_LOG"
+out=$(guard --check-only)
+grep -q "execution bead zz-fixture-exec-buildbasic was never closed" <<<"$out" \
+  || { echo "$out" >&2; fail "--check-only did not report the convoy-delivery gap"; }
+[ -z "$(cat "$UPDATE_LOG")" ] || fail "--check-only wrote to Beads for the convoy-delivery check"
+grep -q "^UNRESOLVED" <<<"$out" || fail "an unreconciled convoy-delivery gap must not read as healthy under --check-only"
+
+# reset the fixture files so they don't leak into any test appended after this one
+jq -n '{}' > "$EXEC_STATUS_FILE"; jq -n '{}' > "$CONVOY_CHILDREN_FILE"
 
 echo "PASS: factory-delivery-guard backfills verified proof and flags the rest exactly once"
