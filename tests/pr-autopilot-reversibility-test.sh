@@ -141,7 +141,11 @@ JSON
 : > "$TMP/gc.log"
 out=$(pilot)
 grep -q "^bd update af-work7 .*merge_result=merged" "$TMP/gc.log" || { echo "$out" >&2; fail "merged PR was not reconciled onto its work bead"; }
-grep -q "^bd update af-flag7 " "$TMP/gc.log" && fail "reconcile stamped a pr-autopilot flag bead as merged"
+grep -q "^bd update af-flag7 .*merge_result=merged" "$TMP/gc.log" && fail "reconcile stamped a pr-autopilot flag bead as merged"
+# af-gpq0y: the flag bead itself IS closed now (a different, deliberate path
+# -- close_ci_failure_beads -- not the reconcile stamp above), since its own
+# PR merged and the failure it reported no longer applies.
+grep -q "^bd update af-flag7 --status closed" "$TMP/gc.log" || { echo "$out" >&2; fail "PR #7's CI-failure bead was not closed on merge"; }
 rm -f "$TMP/backend-merged.json" "$TMP/beads.json"
 
 # --- O3: an exhausted tick budget stops cleanly, recorded, not SIGKILLed -----------------

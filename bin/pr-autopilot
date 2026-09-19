@@ -149,6 +149,26 @@ stuck_beads() {  # rig_path num -> ids of the open stuck bead(s) filed for this 
     | jq -r --arg t "[autopilot] PR #$2 stuck:" '.[]|select((.title//"")|startswith($t))|.id' 2>/dev/null
 }
 
+ci_failure_beads() {  # rig_path num -> ids of the open "[ci] PR #num failed" bead(s) filed for this PR
+  # af-gpq0y: smb-au8d ("[ci] PR #47 failed required checks", P1) stayed open
+  # after PR #47's checks went green and it merged -- nothing ever closed the
+  # flag once the failure it reported was resolved. By title prefix, same
+  # reasoning as stuck_beads: the base branch name is fixed per rig here so
+  # the full title is stable, but matching the prefix keeps this resilient if
+  # that ever changes.
+  (cd "$1" && gc bd list --status open --json 2>/dev/null) \
+    | jq -r --arg t "[ci] PR #$2 failed" '.[]|select((.title//"")|startswith($t))|.id' 2>/dev/null
+}
+
+close_ci_failure_beads() {  # repo rig_path num reason
+  local repo=$1 rig_path=$2 num=$3 reason=$4 b
+  for b in $(ci_failure_beads "$rig_path" "$num"); do
+    log "  PR #$num: $reason -> closing CI-failure bead $b"
+    run bash -c "cd '$rig_path' && gc bd update '$b' --status closed \
+      --append-notes 'Closed by pr-autopilot: PR #$num $reason.'"
+  done
+}
+
 stuck_pr() {  # repo rig_path num mergeStateStatus checks labels
   local repo=$1 rig_path=$2 num=$3 state=$4 checks=$5 labels=" ${6//,/ } "
   local reason
@@ -223,6 +243,12 @@ for entry in "${RIGS[@]}"; do
           done
         fi ;;
     esac
+
+    # af-gpq0y: checks recovered to green (or reset to pending/none, e.g. a
+    # new commit re-ran them) without the PR merging yet -- close any
+    # previously filed CI-failure bead now, the same way the stuck-label
+    # recovery above does, instead of waiting for the merge pass below.
+    [ "$checks" = "FAILURE" ] || close_ci_failure_beads "$repo" "$rig_path" "$num" "checks are now '$checks' (no longer FAILURE)"
 
     # Red required check -> flag as work, do not arm.
     if [ "$checks" = "FAILURE" ]; then
@@ -326,6 +352,12 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
   while IFS=$'\t' read -r num branch sha; do
     [ -z "${num:-}" ] && continue
     [ -z "${branch:-}" ] && continue
+
+    # af-gpq0y: a PR that merges without ever showing up green in the open-PR
+    # loop above (e.g. this pass's first look at it is already post-merge)
+    # still needs its CI-failure bead, if any, closed -- not left open forever.
+    close_ci_failure_beads "$repo" "$rig_path" "$num" "merged at ${sha:0:8}"
+
     # The flag beads filed above ("[ci] ... failed", "[autopilot] ... stuck")
     # carry pr_number too; they are about the PR, not the work it delivers, and
     # must never be stamped merged in place of the work bead.

@@ -53,6 +53,20 @@
 # exactly once, the same way. Reopening stays a human/Mayor call, never
 # automatic.
 #
+# It also reconciles a third, distinct gap (af-gpq0y): a workflow bead (e.g.
+# a build-basic root) can close with full verified delivery proof while the
+# *originating* execution bead a convoy tracks -- the one the Mayor actually
+# created -- never receives it and stays open forever, because build-basic's
+# graph.v2 contract closes its own workflow-root bead instead of the
+# convoy's tracked child (unlike mol-do-work/mol-polecat-commit, which close
+# that child directly). Any closed bead carrying gc.delivery_status=merged is
+# followed back to its execution bead via `gc.var.convoy_id` (through the
+# convoy) or a direct `gc.authorized_by` bead id; if that execution bead is
+# still open, its six proof fields are copied over, it is closed, and its
+# convoy (when found via gc.var.convoy_id) is closed alongside it. No new
+# GitHub verification happens here -- the workflow bead's own proof fields
+# already are that verification.
+#
 # --check-only reports without writing anything (no repair, no flag).
 #
 # Usage: factory-delivery-guard [--check-only]
@@ -197,6 +211,109 @@ process_claimed_shipped_scope() {  # rig label
   done <<<"$reports"
 }
 
+# convoy_target rig convoy_id -> id of the single child the convoy tracks, or
+# empty if it has zero or more than one (never guess which one is "the" work).
+convoy_target() {
+  local rig=$1 convoy_id=$2 out
+  if [ -z "$rig" ]; then
+    out=$(cd "$ROOT" && "$GC_BIN" convoy status "$convoy_id" --json 2>/dev/null)
+  else
+    out=$(cd "$ROOT" && "$GC_BIN" convoy status "$convoy_id" --rig "$rig" --json 2>/dev/null)
+  fi
+  jq -r 'if (.children|length)==1 then .children[0].id else empty end' <<<"$out" 2>/dev/null
+}
+
+# bead_status rig id -> the bead's stored status, or empty if it cannot be read.
+bead_status() {
+  local rig=$1 id=$2
+  (cd "$ROOT" && $(gc_for "$rig") show "$id" --json 2>/dev/null) \
+    | jq -r 'if type=="array" then .[0].status else .status end // empty' 2>/dev/null
+}
+
+# process_convoy_delivery_scope: af-gpq0y. A closed workflow bead (e.g. a
+# build-basic root such as smb-44tt) can carry full verified delivery proof
+# (gc.delivery_status=merged, gc.pr_number, gc.merge_commit, ...) while the
+# *originating* execution bead -- the one the Mayor created and a convoy
+# tracks (smb-a6bm) -- never receives any of it and stays open indefinitely.
+# Root cause: build-basic's graph.v2 contract creates its own workflow-root
+# bead as the unit it closes with delivery proof, instead of closing the
+# convoy's tracked child directly the way mol-do-work/mol-polecat-commit do
+# on every other rig. The link back to the execution bead is either
+# `gc.var.convoy_id` (build-basic: the input convoy id, whose single tracked
+# child is the execution bead) or a direct `gc.authorized_by` execution-bead
+# id (other workflow shapes, e.g. smb-jz34 -> smb-fpbj). This never
+# re-verifies against GitHub: the workflow bead's own six proof fields
+# already are that verification (deliver-close or the graph.v2 dispatcher
+# wrote them), so this only copies them onto the still-open execution bead
+# (and closes its convoy alongside it, when resolved via gc.var.convoy_id).
+process_convoy_delivery_scope() {  # rig label
+  local rig=$1 label=$2 delivered row found=0
+  delivered=$(cd "$ROOT" && $(gc_for "$rig") list --all --status closed \
+    --has-metadata-key gc.delivery_status --metadata-field gc.delivery_status=merged \
+    --limit 0 --json 2>/dev/null)
+  jq -e . >/dev/null 2>&1 <<<"$delivered" || delivered='[]'
+
+  while IFS= read -r row; do
+    [ -z "$row" ] && continue
+    local id convoy_id authorized_by exec_id exec_status
+    id=$(jq -r '.id' <<<"$row")
+    convoy_id=$(jq -r '.metadata["gc.var.convoy_id"] // empty' <<<"$row")
+    authorized_by=$(jq -r '.metadata["gc.authorized_by"] // empty' <<<"$row")
+    exec_id=""
+    if [ -n "$convoy_id" ]; then
+      exec_id=$(convoy_target "$rig" "$convoy_id")
+    elif [[ $authorized_by =~ ^[a-zA-Z][a-zA-Z0-9]*-[a-zA-Z0-9]+$ ]]; then
+      [ -n "$(bead_status "$rig" "$authorized_by")" ] && exec_id=$authorized_by
+    fi
+    [ -n "$exec_id" ] || continue
+    [ "$exec_id" != "$id" ] || continue
+
+    exec_status=$(bead_status "$rig" "$exec_id")
+    [ -n "$exec_status" ] || continue          # lookup failed -- nothing safe to do
+    [ "$exec_status" != "closed" ] || continue # already fine
+
+    found=1
+    CHECKED=$((CHECKED + 1))
+    local ghr prn prh mc wo
+    ghr=$(jq -r '.metadata["gc.github_repo"] // empty' <<<"$row")
+    prn=$(jq -r '.metadata["gc.pr_number"] // empty' <<<"$row")
+    prh=$(jq -r '.metadata["gc.pr_head"] // empty' <<<"$row")
+    mc=$(jq -r '.metadata["gc.merge_commit"] // empty' <<<"$row")
+    wo=$(jq -r '.metadata["gc.work_outcome"] // "shipped"' <<<"$row")
+    say "  · $id ($label) delivered (merged $ghr#$prn) but its execution bead $exec_id is still $exec_status -- reconciling"
+    if [ "$CHECK_ONLY" = "1" ]; then
+      bad "$id ($label) delivered but execution bead $exec_id was never closed -- run factory-delivery-guard to reconcile"
+      continue
+    fi
+    if (cd "$ROOT" && $(gc_for "$rig") update "$exec_id" \
+          --set-metadata "gc.delivery_status=merged" \
+          --set-metadata "gc.work_outcome=$wo" \
+          --set-metadata "gc.github_repo=$ghr" \
+          --set-metadata "gc.pr_number=$prn" \
+          --set-metadata "gc.pr_head=$prh" \
+          --set-metadata "gc.merge_commit=$mc" \
+          --set-metadata "gc.delivered_via=$id" \
+          --status=closed \
+          --notes "Closed by factory-delivery-guard: delivered via $id ($ghr#$prn, $mc)." >/dev/null 2>&1); then
+      did "$exec_id ($label) closed -- delivery proof copied from workflow bead $id ($ghr#$prn)"
+      INCOMPLETE=$((INCOMPLETE + 1))
+      if [ -n "$convoy_id" ]; then
+        local convoy_stat
+        convoy_stat=$(bead_status "$rig" "$convoy_id")
+        if [ -n "$convoy_stat" ] && [ "$convoy_stat" != "closed" ]; then
+          if (cd "$ROOT" && $(gc_for "$rig") update "$convoy_id" --status=closed \
+                --notes "Closed by factory-delivery-guard: tracked bead $exec_id delivered via $id." >/dev/null 2>&1); then
+            did "$convoy_id ($label) input convoy closed alongside $exec_id"
+          fi
+        fi
+      fi
+    else
+      bad "$id ($label) delivered but closing its execution bead $exec_id failed -- the Beads write itself failed"
+    fi
+  done < <(jq -c '.[]' <<<"$delivered")
+  [ "$found" = "1" ] || say "✓ convoy-delivery:$label — no delivered workflow bead has an open execution bead behind it"
+}
+
 process_scope() {  # rig label
   local rig=$1 label=$2 beads incomplete
   beads=$(list_closed_delivery_beads "$rig")
@@ -244,10 +361,12 @@ process_scope() {  # rig label
 
 process_scope "" "city"
 process_claimed_shipped_scope "" "city"
+process_convoy_delivery_scope "" "city"
 for rig in "${RIGS[@]}"; do
   [ -d "$ROOT/rigs/$rig" ] || continue
   process_scope "$rig" "$rig"
   process_claimed_shipped_scope "$rig" "$rig"
+  process_convoy_delivery_scope "$rig" "$rig"
 done
 
 say ""
