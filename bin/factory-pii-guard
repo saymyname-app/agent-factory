@@ -19,9 +19,14 @@
 # Usage:
 #   factory-pii-guard [--repo-root DIR] [--range REV..REV]
 #
-# Exit 0: list absent/empty, or no match found.
+# Exit 0: list present and non-empty, checked, no match found -- ACTIVE, clean.
 # Exit 1: a real identifier from the list was found in the outgoing diff.
 # Exit 2: usage/environment error.
+# Exit 3: INACTIVE -- list absent or empty, so nothing was actually checked.
+#         This is expected on any machine other than the one with dev-DB
+#         access (af-ox44d): do not mistake it for exit 0 -- a caller that
+#         collapses 3 into "pass" is exactly the silent-inactive bug this
+#         guard used to have.
 set -uo pipefail
 
 REPO_ROOT="${FACTORY_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)}"
@@ -46,15 +51,15 @@ cd "$REPO_ROOT" || { echo "factory-pii-guard: $REPO_ROOT unreachable" >&2; exit 
 LIST="$REPO_ROOT/.gc/pii-guard/real-identifiers.local"
 
 if [ ! -f "$LIST" ]; then
-  echo "factory-pii-guard: no local identifier list at .gc/pii-guard/real-identifiers.local -- nothing to check (only a machine with dev-DB access populates this)"
-  exit 0
+  echo "factory-pii-guard: INACTIVE -- no local identifier list at .gc/pii-guard/real-identifiers.local, nothing was checked (only a machine with dev-DB access populates this)"
+  exit 3
 fi
 
 # One exact identifier per line; blank lines and #-comments ignored.
 mapfile -t IDENTIFIERS < <(grep -vE '^[[:space:]]*(#|$)' "$LIST" 2>/dev/null || true)
 if [ "${#IDENTIFIERS[@]}" -eq 0 ]; then
-  echo "factory-pii-guard: identifier list is empty -- nothing to check"
-  exit 0
+  echo "factory-pii-guard: INACTIVE -- identifier list is empty, nothing was checked"
+  exit 3
 fi
 
 [ -n "$RANGE" ] || RANGE="origin/main...HEAD"
@@ -91,5 +96,5 @@ MSG
   exit 1
 fi
 
-echo "factory-pii-guard: clean -- no listed real identifier found in the outgoing diff"
+echo "factory-pii-guard: ACTIVE, clean -- no listed real identifier found in the outgoing diff"
 exit 0

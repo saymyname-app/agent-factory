@@ -41,13 +41,23 @@ git branch -M main
 git push -q origin main
 
 # ---------------------------------------------------------------------------
-# 1. no identifier list at all -- never blocks
+# 1. no identifier list at all -- never blocks, but must say INACTIVE and
+#    exit 3, not exit 0 -- a bare "exit 0, nothing to check" reads as "pass"
+#    to any caller that only checks for zero, which is exactly how this
+#    containment layer went uncaught-inactive for a year (af-ox44d).
 # ---------------------------------------------------------------------------
 echo two >> file
 git add -A
 git commit -qm "ordinary change, no list present"
 git push -q origin main \
   || fail "push was blocked with no identifier list present"
+
+inactive_status=0
+inactive_out=$("$PWD/bin/factory-pii-guard" --repo-root "$PWD" 2>&1) || inactive_status=$?
+[ "$inactive_status" -eq 3 ] \
+  || fail "guard exited $inactive_status with no identifier list present, want 3 (INACTIVE)"
+printf '%s' "$inactive_out" | grep -q "INACTIVE" \
+  || fail "guard did not report INACTIVE with no identifier list present: $inactive_out"
 
 # ---------------------------------------------------------------------------
 # 2. a listed identifier reaching the outgoing diff is blocked
