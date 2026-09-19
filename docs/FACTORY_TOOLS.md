@@ -107,6 +107,7 @@ autres signaux peuvent rester muets même quand elle avance
 | `prs` | une PR du dépôt Factory en `CONFLICTING`, ou dont aucun contrôle CI n'a jamais démarré, après 30 min — distincte d'une PR qui attend simplement son tour |
 | `workflows` | un bead molécule/workflow fermé `CLOSED` avec `gc.outcome` ≠ `pass` (le cas `on_fail=abort_scope` : chaque étape en aval passe `outcome=skipped` en silence) |
 | `gh-auth` | `gh auth status` échoue (token WSL périmé/invalide) — dix scripts en dépendent (`reversibility-check`, `factory-guard`, `pr-autopilot`, `factory-do-work-workspace`, `factory-gh-rollup`, `factory-delivery-guard`, `deliver-close`, `factory-queue-guard`, `factory-watchdog`, `factory-main-gate`) et échouaient chacun silencieusement de son côté (af-539b0, 2026-09-18) ; **un seul** bead partagé nommant les dix scripts, **un seul** mail au Mayor par cooldown, et auto-résolu dès que `gh auth` revient — jamais un bead par script, jamais un par passage |
+| `stall-frequency` | compte glissant sur 24h des transitions `BLOCKED_STALLED` dans `.gc/runtime/factory-continuity-history.json` (`lib/factory_continuity.py`) ; à partir de 5, **un seul** bead + mail au Mayor par cooldown, nommant l'état qui précédait chaque arrêt (« cause inconnue » si l'arrêt est le tout premier événement de l'historique) — un arrêt isolé se diagnostique déjà ; ce contrôle détecte le motif récurrent (audit d'observabilité, constat C3, 2026-09-18) |
 | `liveness` (relais) | re-signale un défaut de vivacité déjà déposé par `factory-guard` tant qu'il reste ouvert, au lieu de le laisser filer une seule fois |
 
 **Observe et page seulement** (ADR-0016 §7) : il ne résout jamais une porte,
@@ -121,7 +122,11 @@ Les signalements sont aussi écrits dans
 `.gc/runtime/factory-watchdog-signals.json`, que le panneau « Aujourd'hui » du
 cockpit lit de façon additive (`today.watchdog_alerts`) — sans jamais
 modifier `human_state.campaign.blocked` : un signalement local ne doit
-jamais se lire comme un arrêt de toute la campagne.
+jamais se lire comme un arrêt de toute la campagne. Le compte glissant
+`stall-frequency` est en plus recalculé directement par `lib/factory_cockpit.py`
+(même fonction pure `stall_frequency`, `lib/factory_watchdog.py`) et exposé
+sous `today.stall_frequency` — visible dans le panneau même sous le seuil de
+page, pas seulement une fois l'alerte déclenchée.
 
 **Quand le lancer** : il tourne seul via son order (`orders/factory-watchdog.toml`,
 5 min, bien en-dessous de l'heure qui a coûté 4h20 le 2026-09-16-17).

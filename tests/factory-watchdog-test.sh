@@ -4,8 +4,10 @@
 # (Incident 2026-09-16): an aged "Gate: human" issue, a Factory-repo PR that
 # is CONFLICTING or never ran CI, and a molecule/workflow bead that closed
 # CLOSED with a non-pass gc.outcome. It must also flag a broken `gh auth`
-# (Incident 2026-09-18, af-539b0) as one shared bead, and re-nudge about a
-# still-open liveness defect. Every page is throttled (never every run) and
+# (Incident 2026-09-18, af-539b0) as one shared bead, a high rolling-24h
+# BLOCKED_STALLED count (observability audit finding C3, 2026-09-18), and
+# re-nudge about a still-open liveness defect. Every page is throttled
+# (never every run) and
 # --check-only must mutate nothing. gc and gh are stubs on PATH here; the
 # watchdog must never reach a live store or GitHub from a test.
 
@@ -29,6 +31,8 @@ WORKFLOWS="$TMP/workflows.json"; printf '[]' > "$WORKFLOWS"
 COORD="$TMP/coord.json";         printf '[{"id":"af-1vr4","metadata":{}}]' > "$COORD"
 GH_AUTH_RC="$TMP/gh-auth-rc";   printf '0' > "$GH_AUTH_RC"
 GH_AUTH_OUT="$TMP/gh-auth-out"; printf 'Logged in to github.com account benjamin-hurand' > "$GH_AUTH_OUT"
+mkdir -p "$TMP/city/.gc/runtime"
+STALL_HISTORY="$TMP/city/.gc/runtime/factory-continuity-history.json"; printf '{"schema_version":1,"history":[]}' > "$STALL_HISTORY"
 BEADS_DIR="$TMP/beads"; mkdir -p "$BEADS_DIR"
 CALLS="$TMP/calls.log"; : > "$CALLS"
 MAIL="$TMP/mail.log"; : > "$MAIL"
@@ -265,7 +269,42 @@ reset_logs
 out=$(watchdog)
 grep -q "campaign-liveness defect" <<<"$out" && fail "a closed liveness defect must not still be reported"
 
-# 9. exit-code contract (af-u61xq, same contract as factory-guard since PR
+# 9. a high rolling-24h BLOCKED_STALLED count is filed as a bead and paged
+#    once, naming each stall's preceding state -------------------------------
+python3 - "$STALL_HISTORY" "$NOW" <<'PYEOF'
+import json, sys
+path, now = sys.argv[1], int(sys.argv[2])
+from datetime import datetime, timezone
+def iso(offset_min):
+    return datetime.fromtimestamp(now - offset_min * 60, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+history = []
+for i in range(5):
+    history.append({"state": "DISPATCHING", "since": iso(600 - i * 100)})
+    history.append({"state": "BLOCKED_STALLED", "since": iso(590 - i * 100)})
+json.dump({"schema_version": 1, "history": history}, open(path, "w"))
+PYEOF
+reset_logs
+out=$(watchdog)
+grep -q "stall frequency — 5 BLOCKED_STALLED transitions" <<<"$out" || { echo "$out" >&2; fail "high stall frequency not reported"; }
+grep -q "from DISPATCHING" <<<"$out" || fail "stall frequency message should name the preceding state"
+[ "$(creates)" = "1" ] || fail "a high stall frequency should be filed exactly once"
+[ "$(mails)" = "1" ] || fail "a high stall frequency should be paged exactly once"
+
+# ...re-run while still high must not duplicate the bead, and must be throttled.
+reset_logs
+out=$(watchdog)
+grep -q "stall frequency —" <<<"$out" || fail "stall frequency should still be reported while unresolved"
+[ "$(creates)" = "0" ] || fail "stall-frequency bead must not be filed twice"
+[ "$(mails)" = "0" ] || fail "an immediate stall-frequency re-run must be throttled, not re-mailed"
+
+# ...recovery (count drops back below threshold) auto-resolves the bead.
+printf '{"schema_version":1,"history":[]}' > "$STALL_HISTORY"
+reset_logs
+out=$(watchdog)
+grep -q "stall frequency —" <<<"$out" && fail "a recovered stall frequency must not still be reported as a problem"
+grep -q -- '--status=closed' "$CALLS" || fail "stall frequency recovery should auto-resolve the bead"
+
+# 10. exit-code contract (af-u61xq, same contract as factory-guard since PR
 #    #75): finding something is NOT a failure. Only the watchdog itself
 #    failing to run (unreachable root) is a nonzero exit. This was previously
 #    exit 1 on every ATTENTION finding, which fed recurring order.failed noise
@@ -285,4 +324,4 @@ rc=$?
 set -e
 [ "$rc" != "0" ] || fail "exit code must be nonzero when the watchdog itself could not run (unreachable root)"
 
-printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, and a broken gh auth, and re-nudges an open liveness defect, all throttled and silent under --check-only\n'
+printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, a broken gh auth, and a high stall frequency, and re-nudges an open liveness defect, all throttled and silent under --check-only\n'

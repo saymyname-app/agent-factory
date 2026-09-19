@@ -203,6 +203,9 @@ function renderTodayAttention(today) {
   const blocker = blockers[0]; const action = $("open-blocker-decision");
   $("needs-benjamin").textContent = blocker?.text || "Aucun blocage effectif."; $("today-blockers").textContent = blockers.length;
   action.dataset.decisionId = blocker?.decision_id || ""; action.classList.toggle("hidden", !blocker?.decision_id);
+  const stall = today?.stall_frequency || {}; const stallCount = Number.isFinite(stall.count) ? stall.count : 0;
+  $("today-stalls").textContent = stallCount;
+  $("today-stalls-stat").classList.toggle("attention", stallCount >= (stall.threshold ?? Infinity));
 }
 
 // factory-watchdog findings (aged human gate, stuck PR, false-success close,

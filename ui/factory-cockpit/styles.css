@@ -71,12 +71,13 @@ h1,h2,h3,p{overflow-wrap:anywhere}
 .truth-note,.feedback{margin:.6rem 0 0;color:#7f8c86;font-size:.72rem}
 .attention-panel{display:flex;flex-direction:column}
 .attention-panel h2{margin:.4rem 0 1rem;line-height:1.4}
-.today-attention-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.8rem;margin-top:auto}
+.today-attention-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.8rem;margin-top:auto}
 .today-attention-stats .mini-stat{margin-top:0}
 .muted{color:var(--muted)}
 .mini-stat{display:flex;align-items:baseline;gap:.5rem;margin-top:auto;padding-top:1rem}
 .mini-stat strong{font-size:1.8rem}
 .mini-stat span{color:var(--muted);font-size:.78rem}
+.mini-stat.attention strong{color:var(--amber)}
 .status-pill,.count{display:inline-flex;align-items:center;white-space:nowrap;padding:.36rem .58rem;border:1px solid var(--line);border-radius:99px;font-size:.7rem;font-weight:800}
 .status-pill.working{color:var(--green);background:rgba(104,220,152,.09)}
 .status-pill.waiting,.status-pill.queued,.status-pill.attention{color:var(--amber);background:rgba(243,196,94,.09)}
