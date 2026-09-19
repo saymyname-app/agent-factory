@@ -150,6 +150,9 @@ jobs:
       - name: Factory guard clears stale dispatch-drift assignees
         run: bash tests/factory-dispatch-guard-test.sh
 
+      - name: Factory guard clears or flags stale gc.waiting_on
+        run: bash tests/factory-waiting-guard-test.sh
+
       - name: Main-landing gate blocks a broken push to main
         run: bash tests/factory-main-gate-test.sh
 

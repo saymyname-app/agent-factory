@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# factory-waiting-guard — resolves `gc.waiting_on` against the bead it names
+# (af-atyry).
+#
+# `gc.waiting_on` keeps a bead out of the idle ladder (lib/factory_campaign.py
+# _LADDER_EXCLUDED_METADATA / is_ladder_bead): any non-empty value excludes
+# it, unconditionally, forever. That is correct for a free-text wait
+# ("stalled", a person) but wrong once the value names a bead ID and that
+# bead closes -- "waiting on something" means "not yet", not "never", and
+# nothing clears the field when the wait is over. Live cases (2026-09-19):
+# af-p4v9v (Benjamin's own cockpit feedback) has gc.waiting_on=af-r3j5r,
+# closed since PR #141 merged, and sat excluded from the ladder for 14+
+# hours with no mechanism to notice.
+#
+# Detection, per open bead carrying a non-empty gc.waiting_on:
+#   - the value does not look like a bead ID (no `prefix-suffix` shape) --
+#     free text. Left untouched: rule 3 (ubiquitous) keeps excluding it
+#     exactly as before, no report, no write.
+#   - the value looks like a bead ID and `gc bd show` resolves it (any rig
+#     gc bd can reach, per-prefix -- no --city pinning on that lookup):
+#       - target is closed -- the wait is over. Clear gc.waiting_on (and any
+#         prior missing-target marker) so the bead is ladder-eligible again
+#         next tick, and page the Mayor once. Self-converging like the
+#         dispatch/queue guards: once cleared, this guard never matches the
+#         same bead for the same drift again.
+#       - target is still open -- legitimate wait, left alone.
+#   - the value looks like a bead ID but nothing resolves it (typo, deleted,
+#     or a store this `gc` cannot reach) -- report it once via
+#     gc.waiting_on_missing_reported, which also gates against re-reporting
+#     the same value every guard cycle; a different value later re-reports.
+#     The bead stays excluded from the ladder (rule 2, unwanted): an
+#     unresolvable target is not evidence the wait is over.
+#
+# --check-only reports without writing or paging anything.
+#
+# Usage: factory-waiting-guard [--check-only]
+set -uo pipefail
+
+PROGRAM_NAME="factory-waiting-guard"
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+GC_BIN="${GC_BIN:-gc}"
+CHECK_ONLY=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check-only) CHECK_ONLY=1 ;;
+    -h|--help)
+      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "$PROGRAM_NAME: unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || { echo "$PROGRAM_NAME: required command unavailable: $1" >&2; exit 2; }
+}
+require_command "$GC_BIN"
+require_command jq
+
+PROBLEMS=(); ACTIONS=(); STATUS=0
+CHECKED=0; CLOSED_TARGETS=0; MISSING_TARGETS=0
+say()  { printf '%s\n' "$*"; }
+bad()  { PROBLEMS+=("$1"); STATUS=1; }
+did()  { ACTIONS+=("$1"); say "  REPAIRED: $1"; }
+
+page_mayor_once() {  # id subject state next
+  local id=$1 subject=$2 state=$3 next=$4
+  (cd "$ROOT" && "$GC_BIN" --city "$ROOT" mail send mayor --notify \
+    -s "$subject: $id" \
+    -m "ACTION: factory-waiting-guard resolved a stale gc.waiting_on
+STATE: $state
+EVIDENCE: gc bd show $id
+NEXT: $next" \
+    >/dev/null 2>&1)
+}
+
+# gc.waiting_on shape a bead ID can take, e.g. af-p4v9v, smf-5bj, smb-a6bm --
+# a short lowercase prefix, a hyphen, an alphanumeric suffix. A free-text
+# wait ("stalled", a person's name, a sentence mentioning an ID in passing
+# like af-smmwz's "smb-99wi (execution in progress ...)") does not match the
+# *whole* trimmed value, so it is left alone -- only an exact bead-ID-shaped
+# value is treated as a reference in scope for this guard (af-atyry NOTE).
+ID_SHAPE='^[a-z][a-z0-9]{1,7}-[a-z0-9]{2,24}$'
+
+# --city "$ROOT" pins the listing query against a throwaway/unscopeable root
+# failing closed instead of silently reading the live store (see
+# factory-dispatch-guard for the same reasoning). The per-target `gc bd show`
+# below deliberately omits --city: gc.waiting_on can name a bead in another
+# rig (smb/smf), and `gc bd show` already resolves those by ID prefix.
+rows_json=$(cd "$ROOT" && "$GC_BIN" --city "$ROOT" bd list --all --has-metadata-key gc.waiting_on \
+  --status open --limit 0 --json 2>/dev/null)
+jq -e . >/dev/null 2>&1 <<<"$rows_json" || rows_json='[]'
+
+rows=$(jq -r '
+  .[] | [
+    .id,
+    (.metadata["gc.waiting_on"] // ""),
+    (.metadata["gc.waiting_on_missing_reported"] // "")
+  ] | join("")
+' <<<"$rows_json")
+
+while IFS=$'\x1f' read -r id waiting_on prior_reported; do
+  [ -z "$id" ] && continue
+  waiting_on="$(printf '%s' "$waiting_on" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  [ -n "$waiting_on" ] || continue
+  CHECKED=$((CHECKED + 1))
+
+  if ! [[ "$waiting_on" =~ $ID_SHAPE ]]; then
+    continue  # free text -- excluded from the ladder as today, untouched
+  fi
+
+  target_json=$(cd "$ROOT" && "$GC_BIN" bd show "$waiting_on" --json 2>/dev/null)
+  target_id=$(jq -r 'if type=="array" then (.[0].id // "") else "" end' <<<"$target_json" 2>/dev/null)
+
+  if [ -z "$target_id" ]; then
+    MISSING_TARGETS=$((MISSING_TARGETS + 1))
+    if [ "$prior_reported" = "$waiting_on" ]; then
+      continue  # same missing value already reported once; do not re-page every cycle
+    fi
+    bad "$id: gc.waiting_on='$waiting_on' names a bead ID that does not exist"
+    if [ "$CHECK_ONLY" != "1" ]; then
+      if (cd "$ROOT" && "$GC_BIN" --city "$ROOT" bd update "$id" \
+            --set-metadata "gc.waiting_on_missing_reported=$waiting_on" \
+            --append-notes "factory-waiting-guard: gc.waiting_on='$waiting_on' does not resolve to any issue gc bd can find. Reported once and left in place -- fix the reference or clear gc.waiting_on by hand (af-atyry)." \
+            >/dev/null 2>&1); then
+        page_mayor_once "$id" "USINE · gc.waiting_on introuvable" \
+          "$id waits on '$waiting_on', which does not resolve to any bead" \
+          "fix the gc.waiting_on reference on $id, or clear it, if the wait no longer applies"
+        did "$id: reported missing gc.waiting_on target '$waiting_on' (left in place; kept out of the ladder)"
+      else
+        bad "$id could not record the missing-target report — the Beads write failed"
+      fi
+    fi
+    continue
+  fi
+
+  target_status=$(jq -r 'if type=="array" then (.[0].status // "") else "" end' <<<"$target_json" 2>/dev/null)
+  [ "$target_status" = "closed" ] || continue  # target still open -- legitimate wait
+
+  CLOSED_TARGETS=$((CLOSED_TARGETS + 1))
+  bad "$id: gc.waiting_on='$waiting_on' but that bead is already closed -- stuck out of the idle ladder"
+  if [ "$CHECK_ONLY" != "1" ]; then
+    if (cd "$ROOT" && "$GC_BIN" --city "$ROOT" bd update "$id" \
+          --unset-metadata gc.waiting_on --unset-metadata gc.waiting_on_missing_reported \
+          --append-notes "factory-waiting-guard: cleared gc.waiting_on='$waiting_on' -- that bead is closed, so the wait is over. Eligible for the idle ladder again (af-atyry)." \
+          >/dev/null 2>&1); then
+      page_mayor_once "$id" "USINE · attente résolue" \
+        "$id waited on '$waiting_on', which closed; gc.waiting_on cleared" \
+        "none -- $id is ladder-eligible again next tick"
+      did "$id: cleared gc.waiting_on='$waiting_on' (closed) — eligible for the idle ladder again"
+    else
+      bad "$id could not be repaired — the Beads write failed"
+    fi
+  fi
+done <<<"$rows"
+
+say ""
+if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
+if [ "${#PROBLEMS[@]}" -gt 0 ]; then
+  say "UNRESOLVED ${#PROBLEMS[@]}:"; printf '  ! %s\n' "${PROBLEMS[@]}"
+else
+  say "healthy — $CHECKED open bead(s) with gc.waiting_on checked, $CLOSED_TARGETS closed-target wait(s) and $MISSING_TARGETS missing-target wait(s) seen this run"
+fi
+exit 0
