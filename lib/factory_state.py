@@ -641,6 +641,47 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
         }
         if campaign["enabled"]:
             campaign.update({"state": "running", "state_label": "Campagne active · livraison en cours"})
+    elif current.get("state") == "materialized" and current.get("cause"):
+        # af-yrp4g: a materialized result whose cause is set is not a fresh
+        # candidate waiting for a first agent -- it is one whose delegated
+        # workflow already ran to completion and closed with gc.outcome=fail
+        # (bin/saymyname-product-status's derive_active_context is the only
+        # source that ever sets this cause on a non-blocked result). Folding
+        # it into the generic "materialized_without_agent" wake below used to
+        # read as an ordinary reassignment prompt with no hint anything had
+        # failed; a Mayor skimming a stream of "reprendre X" wakes had no way
+        # to tell this one apart from a candidate nobody had touched yet, and
+        # gc.current sat pinned for ~60 min until a human filed a liveness
+        # defect (af-e341o). Name the failure explicitly instead.
+        failure_cause = current["cause"]
+        activity = {
+            "state": "waiting_automatic" if campaign["enabled"] else "waiting_action",
+            "label": (
+                "Attend automatiquement le Mayor · run précédent en échec"
+                if campaign["enabled"] else "Attend une action du Mayor · run précédent en échec"
+            ),
+            "detail": failure_cause,
+        }
+        resume = {
+            "automatic": campaign["enabled"],
+            "mode": "materialized_after_failure",
+            "trigger": None,
+            "condition": failure_cause,
+            "owner": "Mayor",
+            "owner_label": "Mayor",
+            "action": (
+                "Aucune action de Benjamin; le sentinelle réveille le Mayor immédiatement pour "
+                "diagnostiquer l'échec et dispatcher un suivi."
+                if campaign["enabled"] else "Le Mayor diagnostique l'échec et dispatche un suivi."
+            ),
+            "prompt": (
+                f"Diagnostique l'échec déjà survenu sur « {current['title']} » ({failure_cause}) et "
+                "dispatche un bead de suivi maintenant, sans élargir son périmètre."
+            ),
+            "required": not campaign["enabled"],
+        }
+        if campaign["enabled"]:
+            campaign.update({"state": "running", "state_label": "Campagne active · échec à trier"})
     elif current.get("state") == "materialized":
         activity = {
             "state": "waiting_automatic" if campaign["enabled"] else "waiting_action",

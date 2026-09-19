@@ -203,12 +203,15 @@ derive_active_context() {
   local current_issue=$1
   local current_id=$2
   local workflows_outfile=$3
+  local closed_workflows_outfile=$4
   local current_status
   local workflows_response workflow convoy_id convoy_response convoy cause resume_mode work_outcome
   local -a matching_workflows=()
   local workflow_id session_name steps_response current_step step_ref live_count active_count
   local workflow_convoy_id workflow_convoy workflow_convoy_response
   local direct_session_id direct_session_name direct_matches direct_agent
+  local closed_workflows_response
+  local -a closed_matching_workflows=()
 
   CURRENT_OUTCOME=$(required_string "$current_issue" '.title' "Current outcome title")
   current_status=$(required_string "$current_issue" '.status' "Current outcome status")
@@ -326,18 +329,34 @@ derive_active_context() {
   capture_json_bg workflows_response "Beads workflow inventory" "$workflows_outfile"
   jq -e 'type == "array"' >/dev/null <<<"$workflows_response" \
     || die "Beads workflow inventory is not an array."
+  capture_json_bg closed_workflows_response "Beads recently-closed workflow inventory" \
+    "$closed_workflows_outfile"
+  jq -e 'type == "array"' >/dev/null <<<"$closed_workflows_response" \
+    || die "Beads recently-closed workflow inventory is not an array."
 
-  local candidate_workflows
+  local candidate_workflows closed_candidate_workflows
   candidate_workflows=$(jq -c '[.[] | select(
     .status == "in_progress" and
     .metadata["gc.kind"] == "workflow" and
     (.metadata["gc.input_convoy_id"] | type == "string" and length > 0))]' \
     <<<"$workflows_response")
+  # af-yrp4g: a workflow that ran to completion and closed with gc.outcome=fail
+  # still has to be checked against current_id's convoy -- it is the one case
+  # `derive_active_context` used to have no evidence for at all once its convoy
+  # dropped off the in-progress fetch above, silently degrading to the same
+  # "materialized, no agent" report a genuinely fresh candidate gets.
+  closed_candidate_workflows=$(jq -c '[.[] | select(
+    .metadata["gc.kind"] == "workflow" and
+    (.metadata["gc.input_convoy_id"] | type == "string" and length > 0))]' \
+    <<<"$closed_workflows_response")
 
   local -a candidate_convoy_ids=()
   while IFS= read -r convoy_id; do
     candidate_convoy_ids+=("$convoy_id")
   done < <(jq -r '.[].metadata["gc.input_convoy_id"]' <<<"$candidate_workflows")
+  while IFS= read -r convoy_id; do
+    candidate_convoy_ids+=("$convoy_id")
+  done < <(jq -r '.[].metadata["gc.input_convoy_id"]' <<<"$closed_candidate_workflows")
 
   # One batched `gc bd show` for every candidate workflow's convoy instead of
   # one `gc bd show` per workflow: profiling on 2026-09-18 (af-rt1t2) found
@@ -364,6 +383,17 @@ derive_active_context() {
     fi
   done < <(jq -c '.[]' <<<"$candidate_workflows")
 
+  while IFS= read -r workflow; do
+    convoy_id=$(metadata_string "$workflow" "gc.input_convoy_id" "Workflow input convoy")
+    convoy=$(jq -ce --arg id "$convoy_id" \
+      '[.[] | select(.id == $id)] | if length >= 1 then .[0] else error("missing") end' \
+      <<<"$convoys_response") \
+      || die "Workflow convoy $convoy_id missing from batch result."
+    if convoy_tracks_issue "$convoy" "$current_id"; then
+      closed_matching_workflows+=("$workflow")
+    fi
+  done < <(jq -c '.[]' <<<"$closed_candidate_workflows")
+
   # current_id can be a workflow root itself rather than someone else's leaf.
   # Its own convoy tracks its implementation children, never itself, so the
   # tracks-matching loop above never finds it that way -- it always reports
@@ -376,6 +406,36 @@ derive_active_context() {
   fi
 
   if [[ ${#matching_workflows[@]} -eq 0 ]]; then
+    [[ ${#closed_matching_workflows[@]} -le 1 ]] \
+      || die "Multiple recently-closed workflows track current outcome $current_id."
+    if [[ ${#closed_matching_workflows[@]} -eq 1 ]]; then
+      local closed_workflow closed_workflow_outcome
+      closed_workflow=${closed_matching_workflows[0]}
+      closed_workflow_outcome=$(metadata_optional "$closed_workflow" "gc.outcome")
+      if [[ $closed_workflow_outcome == fail ]]; then
+        local closed_workflow_id closed_workflow_title closed_report_path
+        closed_workflow_id=$(required_string "$closed_workflow" '.id' "Closed workflow ID")
+        closed_workflow_title=$(required_string "$closed_workflow" '.title' "Closed workflow title")
+        closed_report_path=$(metadata_optional "$closed_workflow" "gc.build.final_report_path")
+        CURRENT_STATE="materialized"
+        CURRENT_PHASE="Run précédent en échec ($closed_workflow_id), aucun agent produit actif"
+        CURRENT_AGENT="none"
+        # Deliberately CURRENT_FAILURE_CAUSE, not CURRENT_CAUSE: the latter also
+        # feeds the top-level `blockers` array (see the final JSON assembly
+        # below), which factory_state.py's project_human_state reads as "this
+        # result cannot proceed without a human unblocking it" -- the
+        # materialized_after_failure branch it is meant to reach for is
+        # Mayor-actionable, not blocked, and would never be reached if this
+        # used CURRENT_CAUSE (the "blocked" branch's `or blocker_cause` check
+        # would win first).
+        CURRENT_FAILURE_CAUSE="Le workflow $closed_workflow_id (« $closed_workflow_title ») s'est terminé avec gc.outcome=fail."
+        if [[ -n $closed_report_path ]]; then
+          CURRENT_FAILURE_CAUSE+=" Rapport final : $closed_report_path (section « next human action »)."
+        fi
+        CURRENT_FAILURE_CAUSE+=" Diagnostique la cause et dispatche un bead de suivi maintenant ; n'attends pas une reprise générique."
+        return
+      fi
+    fi
     CURRENT_STATE="materialized"
     CURRENT_PHASE="Résultat matérialisé, aucun agent produit actif"
     CURRENT_AGENT="none"
@@ -578,6 +638,7 @@ degrade_active_context() {
   CURRENT_PHASE="Projection dégradée : bead malformé pour le résultat courant, voir le journal du contrôleur."
   CURRENT_AGENT="none"
   CURRENT_CAUSE=""
+  CURRENT_FAILURE_CAUSE=""
 }
 
 # Runs derive_active_context inside a subshell so a die() triggered by a
@@ -589,21 +650,23 @@ derive_active_context_or_degrade() {
   local current_issue=$1
   local current_id=$2
   local workflows_outfile=$3
+  local closed_workflows_outfile=$4
   local context_json
 
   if context_json=$(
-    derive_active_context "$current_issue" "$current_id" "$workflows_outfile"
+    derive_active_context "$current_issue" "$current_id" "$workflows_outfile" "$closed_workflows_outfile"
     jq -cn \
       --arg outcome "$CURRENT_OUTCOME" --arg state "$CURRENT_STATE" \
       --arg phase "$CURRENT_PHASE" --arg agent "$CURRENT_AGENT" \
-      --arg cause "${CURRENT_CAUSE:-}" \
-      '{outcome:$outcome, state:$state, phase:$phase, agent:$agent, cause:$cause}'
+      --arg cause "${CURRENT_CAUSE:-}" --arg failure_cause "${CURRENT_FAILURE_CAUSE:-}" \
+      '{outcome:$outcome, state:$state, phase:$phase, agent:$agent, cause:$cause, failure_cause:$failure_cause}'
   ); then
     CURRENT_OUTCOME=$(jq -r '.outcome' <<<"$context_json")
     CURRENT_STATE=$(jq -r '.state' <<<"$context_json")
     CURRENT_PHASE=$(jq -r '.phase' <<<"$context_json")
     CURRENT_AGENT=$(jq -r '.agent' <<<"$context_json")
     CURRENT_CAUSE=$(jq -r '.cause' <<<"$context_json")
+    CURRENT_FAILURE_CAUSE=$(jq -r '.failure_cause' <<<"$context_json")
     return
   fi
 
@@ -676,6 +739,7 @@ main() {
   current_id=$(jq -er '.metadata["gc.current_jit"] // "none" |
     select(type == "string")' <<<"$parent") || die "Current outcome pointer is invalid."
   CURRENT_CAUSE=""
+  CURRENT_FAILURE_CAUSE=""
   last_id=$(metadata_string "$parent" "gc.last_delivered" "Last delivered pointer")
 
   # gc.current_jit and gc.last_delivered can each name a Bead in a different
@@ -689,11 +753,25 @@ main() {
   # will need if current_id resolves to something, from running concurrently
   # with each other and with the delivered-outcome fetch below.
   local workflows_outfile="$tmp_dir/workflows.json"
+  local closed_workflows_outfile="$tmp_dir/closed-workflows.json"
   local have_current=0
   if [[ -n $current_id && $current_id != none ]]; then
     have_current=1
     bg_start "$tmp_dir/current.json" gc_json bd show "$current_id" --json
     bg_start "$workflows_outfile" gc_json bd list --status=in_progress --json
+    # af-yrp4g: a build-basic run tracked only via a "tracks" convoy link
+    # (never --parent) drops out of the in-progress fetch above the instant
+    # it closes, even when it closed with gc.outcome=fail -- derive_active_
+    # context then had nothing left to inspect and silently degraded to the
+    # generic "materialized, no agent" case, indistinguishable from a fresh
+    # candidate nobody has picked up yet. --closed-after is a hard AND with
+    # status (proven live: it drops in_progress rows outright), so recently
+    # closed workflows need their own bounded fetch, not a wider status list
+    # on the same call. The lookback only needs to outlast mayor-campaign's
+    # own reminder window (REWAKE_SECONDS * MAX_REWAKES = 90 min) so a
+    # failed run is never missed between sentinel ticks.
+    bg_start "$closed_workflows_outfile" gc_json bd list --status=closed \
+      --closed-after "$(date -u -d '-2 hours' +%Y-%m-%dT%H:%M:%SZ)" --json
   fi
   bg_start "$tmp_dir/delivered.json" gc_json bd show "$last_id" --json
 
@@ -724,14 +802,15 @@ main() {
     current_json=null
   else
     show_issue_bg current_issue "Current outcome $current_id" "$tmp_dir/current.json"
-    derive_active_context_or_degrade "$current_issue" "$current_id" "$workflows_outfile"
+    derive_active_context_or_degrade "$current_issue" "$current_id" "$workflows_outfile" "$closed_workflows_outfile"
     current_json=$(jq -cn \
       --arg id "$current_id" --arg title "$CURRENT_OUTCOME" \
       --arg state "$CURRENT_STATE" --arg phase "$CURRENT_PHASE" \
-      --arg agent "$CURRENT_AGENT" --arg cause "$CURRENT_CAUSE" '{
+      --arg agent "$CURRENT_AGENT" --arg cause "$CURRENT_CAUSE" \
+      --arg failure_cause "$CURRENT_FAILURE_CAUSE" '{
         id: $id, title: $title, state: $state, phase: $phase,
         agent: (if $agent == "none" then null else $agent end),
-        cause: (if $cause == "" then null else $cause end)
+        cause: (if $cause != "" then $cause elif $failure_cause != "" then $failure_cause else null end)
       }')
   fi
 

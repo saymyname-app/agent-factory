@@ -60,6 +60,28 @@ def plan_transition(status: dict[str, Any]) -> dict[str, Any]:
                 "Reprends uniquement ce résultat déjà autorisé; ne matérialise aucun autre candidat."
             ),
         }
+    if resume_mode == "materialized_after_failure" and result_id:
+        # af-yrp4g: distinct from "materialized_without_agent" above on
+        # purpose. A run that already completed and closed with
+        # gc.outcome=fail is not waiting for a first/next agent to simply
+        # continue it -- reusing the generic "reprends ce résultat" wording
+        # reads exactly like an ordinary reassignment and gave no signal that
+        # anything had failed, which is how this sat unactioned for ~60 min
+        # until a human filed a liveness defect (af-e341o). Name the failure
+        # and ask for a follow-up decision, not a resume.
+        cause = str(resume.get("condition") or "").strip()
+        return {
+            "action": "wake_mayor",
+            "reason": "resume_after_failure",
+            "wake_key": f"resume-failed:{result_id}",
+            "subject": f"CAMPAGNE · échec à trier {result_id}",
+            "message": (
+                f"Le résultat {result_id} a déjà un run terminé en échec : {cause} "
+                "Ce n'est pas une reprise ordinaire : diagnostique la cause maintenant, dispatche un "
+                "bead de suivi (mol-do-work ou build-basic selon le besoin), et n'avance gc.current "
+                "que lorsque ce suivi est lancé. Ne matérialise aucun autre candidat entre-temps."
+            ),
+        }
     if resume_mode == "automatic_campaign":
         candidate = status.get("next_candidate")
         release = status.get("release")
