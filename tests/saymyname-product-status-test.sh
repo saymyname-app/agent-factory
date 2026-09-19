@@ -116,6 +116,13 @@ assert_json closed-waiting-on '.result.stage' 'materialized'
 assert_json closed-waiting-on '.result.phase' 'Fermé, en attente délibérée (po) · rien à finaliser tant que ce n'"'"'est pas levé'
 assert_json blocked '.resume.mode + ":" + .result.cause' 'blocked:La preuve externe requise manque'
 assert_json agent-missing '.resume.mode + ":" + .resume.owner' 'materialized_without_agent:Mayor'
+# af-yrp4g: a build-basic run that already closed with gc.outcome=fail before
+# af-current was finalized must be told apart from a plain "no agent yet"
+# materialization -- the generic resume_current wake this used to fall back
+# to gave no hint anything had failed, and gc.current sat pinned for ~60 min
+# until a human filed a liveness defect (af-e341o).
+assert_json workflow-failed '.resume.mode + ":" + .resume.owner' 'materialized_after_failure:Mayor'
+assert_json workflow-failed '.result.cause | contains("af-workflow-failed") and contains("/tmp/factory-run.md")' 'true'
 assert_json health-down '.health.state + ":" + .activity.state' 'unavailable:stopped'
 assert_json health-partial '.health.state + ":" + .activity.state' 'degraded:stopped'
 assert_json idle-campaign '.resume.mode + ":" + (.resume.automatic | tostring)' 'automatic_campaign:true'

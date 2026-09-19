@@ -508,7 +508,7 @@ def node_issue(node_id: str) -> dict[str, Any]:
 # wake_key prefixes that name a bead/candidate the wake was about, e.g.
 # "finalize:af-u8id.4.1". Keys with no such reference (e.g.
 # "complete:no-candidate", a rung bucket key) have nothing to check here.
-WAKE_KEY_BEAD_PREFIXES = ("finalize:", "resume:", "materialize:", "ladder:factory:")
+WAKE_KEY_BEAD_PREFIXES = ("finalize:", "resume:", "resume-failed:", "materialize:", "ladder:factory:")
 
 
 def wake_target_resolved(wake_key: str) -> bool:
@@ -691,8 +691,8 @@ MAX_REWAKES = 3
 # for the same 30 minutes. Only these reasons come from plan_transition
 # (never from the ladder itself, which must not be bundled into itself).
 PRODUCT_WAKE_REASONS = {
-    "finalize_current", "resume_current", "materialize_next", "record_complete",
-    "queue_release_mismatch", "queue_candidate_untraceable",
+    "finalize_current", "resume_current", "resume_after_failure", "materialize_next",
+    "record_complete", "queue_release_mismatch", "queue_candidate_untraceable",
 }
 # Generative ladder rungs are optional by nature: "nothing worth doing" is a
 # valid answer, so they are never chased with reminders.

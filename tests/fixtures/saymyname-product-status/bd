@@ -114,10 +114,13 @@ JSON
 }
 
 emit_workflows() {
-  if [[ $scenario == self-workflow || $scenario == self-workflow-handoff ]]; then
+  if [[ $scenario == self-workflow || $scenario == self-workflow-handoff || $scenario == workflow-failed ]]; then
     # af-current IS the only in-progress workflow (its own root); the
     # inventory here holds no *other* workflow, and its own convoy (below)
     # tracks its implementation children, never af-current itself.
+    # workflow-failed (af-yrp4g): the workflow that used to track af-current
+    # already ran to completion and closed -- it no longer shows up in the
+    # in-progress inventory at all, only in emit_closed_workflows below.
     printf '[]\n'
     return
   fi
@@ -139,6 +142,21 @@ JSON
   cat <<'JSON'
 [{"id":"af-workflow","status":"in_progress","metadata":{"gc.kind":"workflow","gc.input_convoy_id":"af-convoy","gc.session_name":"codex-af-test"}}]
 JSON
+}
+
+emit_closed_workflows() {
+  # af-yrp4g: workflow-failed simulates a build-basic run that ran to
+  # completion and closed with gc.outcome=fail before af-current itself was
+  # ever finalized -- derive_active_context must find it via af-current's
+  # convoy (af-convoy, shared with emit_workflows/emit_convoy above) even
+  # though it dropped out of the in-progress inventory.
+  if [[ $scenario == workflow-failed ]]; then
+    cat <<'JSON'
+[{"id":"af-workflow-failed","title":"build-basic run for af-current","status":"closed","metadata":{"gc.kind":"workflow","gc.input_convoy_id":"af-convoy","gc.outcome":"fail","gc.build.final_report_path":"/tmp/factory-run.md"}}]
+JSON
+    return
+  fi
+  printf '[]\n'
 }
 
 emit_convoy() {
@@ -207,6 +225,7 @@ case "$command_name" in
   list)
     case "${2:-}" in
       --status=in_progress) emit_workflows ;;
+      --status=closed) emit_closed_workflows ;;
       --assignee=codex-af-test) emit_steps ;;
       --assignee=codex-af-self) emit_self_steps ;;
       --assignee=codex-af-handoff-stale) printf '[]\n' ;;

@@ -1029,6 +1029,17 @@ def _decision_aids(
             "action": resume["action"],
             "prompt": resume["prompt"],
         })
+    elif resume["mode"] == "materialized_after_failure":
+        # af-yrp4g: a run that already closed with gc.outcome=fail is a
+        # distinct, more urgent case than "no agent yet" above -- surface it
+        # as its own tile instead of letting it fall through unlabeled.
+        advice.append({
+            "severity": "critical",
+            "title": "Un run précédent a échoué et attend un suivi",
+            "explanation": activity["detail"],
+            "action": resume["action"],
+            "prompt": resume["prompt"],
+        })
     elif resume["mode"] == "manual" and next_candidate:
         advice.append({
             "severity": "info",
