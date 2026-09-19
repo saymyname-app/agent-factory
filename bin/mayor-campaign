@@ -35,6 +35,11 @@ AXES_BIN = os.environ.get(
     "FACTORY_IMPROVEMENT_AXES_BIN", str(ROOT / "bin" / "factory-improvement-axes")
 )
 COORDINATION_BEAD = os.environ.get("CAMPAIGN_COORDINATION_BEAD", "af-1vr4")
+# af-ck3xg: `gc bd ready --json` defaults to --limit 100 and only warns about
+# truncation on stderr, which json_run never sees -- a store with >100 ready
+# wisps (mail, nudges, tracking) ahead of a real Factory bead silently hides
+# it from the idle ladder, reporting factory_lane_empty when it is not.
+READY_LIST_PAGE_SIZE = 100
 LOCK_PATH = Path(os.environ.get(
     "CAMPAIGN_LOCK_FILE",
     f"{os.environ.get('XDG_RUNTIME_DIR') or '/tmp'}/agent-factory-mayor-campaign.lock",
@@ -738,6 +743,22 @@ def stamp_due(metadata: dict[str, Any], key: str, now: float) -> bool:
     return now - last >= HEARTBEAT_SECONDS
 
 
+def ready_list() -> list[dict[str, Any]]:
+    """Read every ready bead, defending against ``gc bd ready``'s silent
+    page-size truncation (af-ck3xg): a page that comes back at exactly the
+    default page size is not trustworthy as "the whole list" -- re-read
+    unbounded (--limit 0) rather than risk hiding real work behind wisps.
+    """
+    ready = json_run(GC_BIN, "bd", "ready", "--json")
+    if not isinstance(ready, list):
+        return []
+    if len(ready) >= READY_LIST_PAGE_SIZE:
+        full = json_run(GC_BIN, "bd", "ready", "--json", "--limit", "0")
+        if isinstance(full, list):
+            return full
+    return ready
+
+
 def factory_lane_peek() -> dict[str, Any]:
     """Rungs 2/2b only -- a quick look at the Factory lane on its own.
 
@@ -747,11 +768,9 @@ def factory_lane_peek() -> dict[str, Any]:
     empty, via ladder_decision below.
     """
     try:
-        ready = json_run(GC_BIN, "bd", "ready", "--json")
+        ready = ready_list()
     except CampaignCommandError:
         return {"action": "none", "reason": "factory_lane_empty", "wake_key": None}
-    if not isinstance(ready, list):
-        ready = []
     try:
         queue_candidates = json_run(PRODUCT_QUEUE_BIN, "list", "--json")
     except CampaignCommandError:
@@ -762,12 +781,10 @@ def factory_lane_peek() -> dict[str, Any]:
 def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
     """Rungs 2-4 of the idle ladder; never raises for an unavailable store."""
     try:
-        ready = json_run(GC_BIN, "bd", "ready", "--json")
+        ready = ready_list()
     except CampaignCommandError as exc:
         return {"action": "none", "reason": f"ladder_unavailable: {failure_detail(exc)}",
                 "wake_key": None}
-    if not isinstance(ready, list):
-        ready = []
     tracked = None
     tracked_id = str(metadata.get("gc.campaign_ladder_bead") or "").strip()
     if tracked_id:

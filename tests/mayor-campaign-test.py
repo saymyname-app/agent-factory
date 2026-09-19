@@ -705,6 +705,20 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         self.assertIn("already notified", self.sentinel(NOW + 60).stdout)
         self.assertEqual(1, self.mail_count())
 
+    def test_a_ready_factory_bead_behind_more_than_100_wisps_is_still_found(self):
+        # af-ck3xg: `gc bd ready --json` truncates to 100 rows by default and
+        # only warns about it on stderr, which json_run never sees. With
+        # more than 100 excluded-type wisps (mail, nudges, tracking) ahead of
+        # the one real, ready Factory bead, a naive read never sees af-fix
+        # and the ladder wrongly reports the Factory lane empty.
+        wisps = [bead(f"af-wisp-{i}", issue_type="session", priority=0) for i in range(150)]
+        self.ready_file.write_text(json.dumps(wisps + [
+            bead("af-fix", issue_type="bug", priority=1, title="Réparer le test"),
+        ]), encoding="utf-8")
+        self.write_status(status(next_id=None))  # automatic campaign, nothing eligible
+        out = self.sentinel(NOW).stdout
+        self.assertIn("NOTIFIED: mayor — ladder:factory:af-fix", out)
+
     def test_a_factory_candidate_closed_between_read_and_notify_is_not_announced(self):
         # af-mqphq (2026-09-18): an order-dispatch tracking bead was open in
         # the `ready` snapshot plan_factory_lane picked it from, but had

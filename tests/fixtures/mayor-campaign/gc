@@ -75,8 +75,24 @@ fi
 
 if [[ ${1:-} == bd && ${2:-} == ready && ${3:-} == --json ]]; then
   [[ ${CAMPAIGN_READY_FAIL:-0} != 1 ]] || { printf 'ready query failed\n' >&2; exit 42; }
+  # af-ck3xg: mirror the real bd ready's default --limit 100 (0 = unlimited)
+  # so a fixture list of >100 rows can exercise the truncation defense.
+  limit=100
+  shift 3
+  while [[ $# -gt 0 ]]; do
+    if [[ $1 == --limit && $# -ge 2 ]]; then
+      limit=$2
+      shift 2
+    else
+      shift
+    fi
+  done
   if [[ -n ${CAMPAIGN_READY_FILE:-} && -f ${CAMPAIGN_READY_FILE} ]]; then
-    cat "$CAMPAIGN_READY_FILE"
+    if [[ $limit -eq 0 ]]; then
+      cat "$CAMPAIGN_READY_FILE"
+    else
+      jq -c ".[0:$limit]" "$CAMPAIGN_READY_FILE"
+    fi
   else
     printf '[]\n'
   fi
