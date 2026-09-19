@@ -77,6 +77,13 @@ For a change:
   tests): set `gc.needs_benjamin=true` AND mail `human` AND state the cause,
   then keep working on what is eligible. Anything else: mail `mayor` BLOCKED,
   `gc.outcome=fail`, drain. Never create a `human` gate: it notifies nobody.
+- **Standing ADMIN allowlist (ADR-0016 §7 row 4).** These five routine,
+  reversible operations never count as ADMIN and never trigger the
+  escalation contract above: restarting a dispatcher or a preview, pruning
+  merged branches, cleaning worktrees, rotating logs, reloading city
+  config. Nothing else is on the list — do not extend it. Anything outside
+  it (production, secrets, host access, recovery, GitHub repository/ruleset
+  settings) is still ADMIN and still escalates.
 - **No direct push to `main` or `dev`:** land through a pull request.
 
 ## Cost policy
