@@ -625,6 +625,17 @@ af-jj9u7/PR #120 was closed shipped while still open with red CI, af-cwitl/PR
 #123 while it had unresolved merge conflicts — both caught only afterward by
 `factory-delivery-guard`, never blocked at close time before this check).
 
+The `--outcome shipped` door only ever runs when a commit really is the end
+of the work: a non-HQ-rig dispatch, or a no-op/blocked/abandoned outcome.
+When `workspace-setup` isolated the dispatch into an HQ worktree, a PR is
+still to come — `do-work` defers the close instead of calling this door
+(af-6scsz, 2026-09-19: af-hyls9 had closed shipped via this path while PR
+#159 was still open with CI in_progress). `push-and-pr` closes the bead once
+the PR actually exists, with a plain `gc bd close` — "opened, under review,"
+never "shipped" — the same contract `mol-polecat-commit`'s commit-and-push
+step already uses; `pr-autopilot` reconciles `merge_result=merged` onto the
+bead once GitHub actually merges it.
+
 If a delivered result is closed by hand anyway while it is still the
 coordination's `gc.current`, the projection reports it as **finalizing**
 (`mayor_finalization`), not as an agentless materialized result, and the

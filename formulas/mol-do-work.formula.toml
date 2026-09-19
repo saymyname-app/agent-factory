@@ -27,6 +27,21 @@ and `push-and-pr` now isolate work on the HQ rig in a worktree via
 `bin/factory-do-work-workspace`, which is a documented no-op everywhere
 else -- other rigs keep the exact behavior this formula always had.
 
+Local fork (2026-09-19, af-6scsz): once `workspace-setup` started isolating
+HQ-rig dispatches into a worktree, `do-work` kept closing the work bead
+`gc.work_outcome=shipped` right after the local commit -- before
+`push-and-pr` (which runs next) had even pushed the branch, let alone
+opened a PR. Live incident: af-hyls9 closed shipped while PR #159 was still
+open with CI in_progress, caught only afterward by factory-delivery-guard.
+`do-work` now defers the shipped close when it detects an HQ worktree
+(`metadata.work_dir` still set); `push-and-pr` closes the bead once the PR
+actually exists, as "opened, under review" -- never "shipped" -- the same
+contract mol-polecat-commit's commit-and-push step already uses. pr-autopilot
+reconciles `merge_result=merged` onto the bead once GitHub actually merges
+it. Non-HQ dispatches (no worktree, commit == done) and no-op/blocked/
+abandoned outcomes are unaffected -- they never claimed shipped before a PR
+existed.
+
 ## Variables
 
 | Variable | Source | Description |
@@ -161,10 +176,21 @@ gc.work_outcome=...`. Choose the outcome from what actually happened:
 COMMIT=$(git rev-parse HEAD 2>/dev/null || true)
 WORK_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 [ "$WORK_BRANCH" = "HEAD" ] && WORK_BRANCH=""   # detached HEAD — no stable branch
-"$FACTORY_ROOT/bin/deliver-close" "$WORK_BEAD_ID" \
-  --outcome shipped --commit "$COMMIT" --branch "$WORK_BRANCH" \
-  --verification "<commands you ran>" \
-  --reason "Done: <brief summary of what you did>. Verification: <commands run>. Commit: ${COMMIT:-none}."
+WORKTREE=$(gc bd show "$WORK_BEAD_ID" --json | jq -r '.[0].metadata.work_dir // "."')
+if [ "$WORKTREE" != "." ]; then
+  # af-6scsz: workspace-setup isolated this into an HQ worktree, so the
+  # branch is committed but not yet pushed and no PR exists -- push-and-pr
+  # opens it next. Closing "shipped" here would claim delivery before there
+  # is anything to verify it against (live incident: af-hyls9 closed shipped
+  # while PR #159 was still open with CI in_progress). Leave the work bead
+  # open; push-and-pr closes it once the PR actually exists.
+  echo "do-work: HQ worktree — deferring close of $WORK_BEAD_ID to push-and-pr"
+else
+  "$FACTORY_ROOT/bin/deliver-close" "$WORK_BEAD_ID" \
+    --outcome shipped --commit "$COMMIT" --branch "$WORK_BRANCH" \
+    --verification "<commands you ran>" \
+    --reason "Done: <brief summary of what you did>. Verification: <commands run>. Commit: ${COMMIT:-none}."
+fi
 ```
 
 **No-op** (the bead needed no change — already satisfied / duplicate):
@@ -231,6 +257,17 @@ else
       --set-metadata "gc.pr_url=$PR_URL" \
       --unset-metadata work_dir \
       --notes "PR opened: $PR_URL"
+    # af-6scsz: do-work defers its shipped close to here when it isolated
+    # into this worktree, since no PR existed yet at that point. Close now
+    # that the PR exists -- as "opened, under review", never "shipped":
+    # pr-autopilot reconciles merge_result=merged onto this same bead once
+    # GitHub actually merges it (same contract as mol-polecat-commit's
+    # commit-and-push step). A bead do-work already closed itself (no-op /
+    # blocked / abandoned / non-HQ shipped) is left alone.
+    STATUS=$(gc bd show "$WORK_BEAD_ID" --json | jq -r '.[0].status // empty')
+    if [ "$STATUS" != "closed" ]; then
+      gc bd close "$WORK_BEAD_ID" --reason "Opened $PR_URL: work committed and under review, not yet merged."
+    fi
   else
     gc bd update "$WORK_BEAD_ID" --unset-metadata work_dir
     echo "push-and-pr: branch pushed but no PR was opened (gh unavailable or failed) — open one by hand: $BRANCH -> $BASE_BRANCH" >&2
@@ -248,7 +285,9 @@ gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "HELP: could not push $BRANC
 
 **Exit criteria:** if this was an HQ dispatch, the worktree no longer exists
 on disk and the branch is pushed with (when `gh` succeeded) an open PR
-against the base branch; otherwise this step is a documented no-op."""
+against the base branch; a work bead that `do-work` deferred is now closed
+as "opened, under review" (never claiming shipped); otherwise this step is
+a documented no-op."""
 
 [[steps]]
 id = "drain"
