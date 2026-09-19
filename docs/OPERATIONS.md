@@ -691,8 +691,33 @@ stop reason (`release_not_executable`, `independence_unknown`,
 `blocked_<decision|admin|limit|durable_failure|dependency>`,
 `release_target_proven`, or `no_proven_independent_work`) with an owner and an
 exact recovery action. It never reorders the product queue and never
-materializes work itself. `project_release` adds human-facing status labels
-and the campaign/intervention projection for the Product view;
+materializes work itself, and it only ever sees `work_graph` nodes already
+committed to the release contract in Git.
+
+`project_campaign_work` wraps it with two read-time overlays that never write
+to Git (af-pohgu — nothing kept a node's state following its product-queue
+candidate, and a candidate that was not yet a `work_graph` node could never be
+selected, so the campaign got stuck reporting `no_proven_independent_work`
+forever once the graph was fully delivered): `queue_state_by_work_ref` maps a
+node's `work_ref` to the `WORK_STATES` value the queue says it is right now
+(materialized, delivered, cancelled, ...); `queue_candidates` lists
+product-queue candidates that have no `work_graph` node yet, each of which is
+only selectable if it carries its own `criterion_refs` — a subset of the
+release's known criteria — and `independence`. An untraceable, duplicate, or
+malformed candidate is excluded, never selected, and reported back under
+`skipped`; it never bypasses the fail-closed checks a real node would have to
+pass. `project_release` (and `bin/product-release project`, via
+`--queue-state`/`--queue-candidates` JSON file flags) forwards both overlays
+into the campaign projection it embeds; called with neither, behavior is
+identical to before. **Not yet wired live**: no caller passes queue state or
+candidates yet — `bin/saymyname-product-status` still calls
+`project_release` with neither overlay, and `product-queue` candidates carry
+no `criterion_refs`/`independence` metadata to project. That data-plumbing
+(candidate schema plus the status pipeline) is separate, scoped follow-up
+work; `tests/product-release-test.py::QueueProjectionTest` covers the pure
+mechanism, and `bin/product-release project --queue-candidates <file>`
+against `config/releases/saymyname-v1.json` is how to dry-run it by hand.
+
 `project_operational_release` overlays only the runtime `truth_state` versus
 `operational_state` distinction — an `approved`/`executing` release with the
 campaign enabled shows as executing, a `draft` release can never be reported
@@ -712,9 +737,15 @@ campaign state.
   guard), the full transition state machine including frozen immutability and
   V2 freeze, and campaign graph selection (order tie-break, an
   unknown-independence node not blocking a later proven candidate, dependency
-  gating, and blocker tie-break by kind then cause). It also loads and
-  projects the real `config/releases/saymyname-v1.json` contract. Live
-  verification through the Product view must be repeated from the merged head.
+  gating, and blocker tie-break by kind then cause), plus `project_campaign_work`
+  (queue-state overlay without mutating the input release, a traceable
+  queue-only candidate getting selected without a `work_graph` edit, an
+  untraceable/duplicate candidate being skipped not selected, and unproven
+  independence still blocking auto-selection). It also loads and projects the
+  real `config/releases/saymyname-v1.json` contract. Live verification
+  through the Product view must be repeated from the merged head; the queue
+  overlays specifically are proven only by the dry-run CLI flags above until
+  the status pipeline is wired to pass them (see note above).
 
 ### Ordered product candidates
 

@@ -15,6 +15,7 @@ from product_release import (  # noqa: E402
     RESERVED_CLASSES,
     ReleaseContractError,
     load_release_contract,
+    project_campaign_work,
     project_operational_release,
     project_release,
     select_campaign_work,
@@ -597,6 +598,100 @@ class CampaignSelectionTest(unittest.TestCase):
         result = select_campaign_work(value)
         self.assertEqual("blocked_admin", result["reason"])
         self.assertIsNone(result["decision_id"])
+
+
+class QueueProjectionTest(unittest.TestCase):
+    """af-pohgu: candidates that are not yet work_graph nodes never woke the
+    Mayor, and node state never followed the queue without a hand-edited Git
+    change. Reproduces the live simulation, then proves the fix."""
+
+    def test_reproduces_the_stuck_campaign_simulation(self):
+        # Live shape: work_graph fully delivered, criteria not all proven yet
+        # -- select_campaign_work alone is stuck at no_proven_independent_work
+        # forever, exactly as the sentinel observed.
+        value = base_release()
+        value["criteria"][0]["status"] = "partial"
+        stuck = select_campaign_work(value)
+        self.assertEqual("no_proven_independent_work", stuck["reason"])
+
+        result = project_campaign_work(value)
+        self.assertEqual("no_proven_independent_work", result["reason"])
+        self.assertEqual([], result["skipped"])
+
+    def test_a_traceable_new_queue_candidate_is_selected_without_a_graph_edit(self):
+        value = base_release()
+        value["criteria"][0]["status"] = "partial"
+        result = project_campaign_work(
+            value,
+            queue_candidates=[
+                {"id": "af-newcand", "title": "New outcome", "criterion_refs": ["c1"], "independence": "proven"},
+            ],
+        )
+        self.assertEqual("proven_independent_work", result["reason"])
+        self.assertEqual("af-newcand", result["selected"]["work_ref"])
+        self.assertEqual([], result["skipped"])
+        # The Git-committed release itself is untouched.
+        self.assertEqual(1, len(value["work_graph"]))
+
+    def test_an_untraceable_candidate_is_skipped_not_selected(self):
+        value = base_release()
+        value["criteria"][0]["status"] = "partial"
+        result = project_campaign_work(
+            value,
+            queue_candidates=[{"id": "af-notrace", "title": "No criterion", "independence": "proven"}],
+        )
+        self.assertIsNone(result["selected"])
+        self.assertEqual(1, len(result["skipped"]))
+        self.assertEqual("af-notrace", result["skipped"][0]["id"])
+
+    def test_a_traceable_candidate_with_unproven_independence_does_not_bypass_the_check(self):
+        value = base_release()
+        value["criteria"][0]["status"] = "partial"
+        result = project_campaign_work(
+            value,
+            queue_candidates=[{"id": "af-unknown-ind", "criterion_refs": ["c1"]}],
+        )
+        self.assertIsNone(result["selected"])
+        self.assertEqual("independence_unknown", result["reason"])
+        self.assertEqual([], result["skipped"])
+
+    def test_a_candidate_already_a_node_is_not_duplicated(self):
+        value = base_release()
+        value["work_graph"] = [work_node("w1", work_ref="af-existing", state="delivered")]
+        result = project_campaign_work(
+            value, queue_candidates=[{"id": "af-existing", "criterion_refs": ["c1"]}],
+        )
+        self.assertEqual([], result["skipped"])
+        self.assertEqual("release_target_proven", result["reason"])
+
+    def test_queue_state_overlay_follows_the_node_without_mutating_git_truth(self):
+        value = base_release()
+        value["work_graph"] = [
+            work_node("dep", order=1, work_ref="af-dep", state="active"),
+            work_node("w1", order=2, depends_on=["dep"]),
+        ]
+        blocked = project_campaign_work(value)
+        self.assertIsNone(blocked["selected"])
+
+        unblocked = project_campaign_work(value, queue_state_by_work_ref={"af-dep": "delivered"})
+        self.assertEqual("w1", unblocked["selected"]["id"])
+        # Original release dict is never mutated by the overlay.
+        self.assertEqual("active", value["work_graph"][0]["state"])
+
+    def test_an_unknown_queue_state_value_raises(self):
+        value = base_release()
+        value["work_graph"] = [work_node("w1", work_ref="af-w1")]
+        with self.assertRaisesRegex(ReleaseContractError, "État de file inconnu"):
+            project_campaign_work(value, queue_state_by_work_ref={"af-w1": "not-a-real-state"})
+
+    def test_project_release_embeds_the_queue_aware_selection(self):
+        value = base_release()
+        value["criteria"][0]["status"] = "partial"
+        projected = project_release(
+            value,
+            queue_candidates=[{"id": "af-newcand", "criterion_refs": ["c1"], "independence": "proven"}],
+        )
+        self.assertEqual("proven_independent_work", projected["campaign"]["reason"])
 
 
 class ProjectionTest(unittest.TestCase):
