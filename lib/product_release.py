@@ -850,7 +850,106 @@ def select_campaign_work(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def project_release(value: dict[str, Any]) -> dict[str, Any]:
+def project_campaign_work(
+    release: dict[str, Any],
+    queue_state_by_work_ref: dict[str, str] | None = None,
+    queue_candidates: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Select campaign work against live queue truth without writing to Git.
+
+    ``select_campaign_work`` alone only ever sees the work_graph nodes
+    already committed to the release contract, and nothing keeps a node's
+    ``state`` following the product-queue candidate it came from (af-pohgu).
+    This wraps it with two read-time overlays -- like ``project_operational_release``,
+    Git truth itself is never mutated:
+
+    ``queue_state_by_work_ref`` maps a node's ``work_ref`` to the WORK_STATES
+    value it should be treated as right now (e.g. once the queue candidate is
+    materialized, cancelled, or its execution Bead is delivered/closed). A
+    value outside WORK_STATES is a caller bug and raises, fail-closed.
+
+    ``queue_candidates`` lists product-queue candidates that are not yet a
+    work_graph node at all. A candidate is only ever eligible for selection
+    if it is traceable: it must carry its own non-empty ``criterion_refs``
+    subset of the release's known criteria (mechanism: traceability carried
+    by the candidate itself). Traceable candidates become synthetic
+    "candidate"-state nodes, appended after the existing nodes in the given
+    order, still subject to every fail-closed rule select_campaign_work and
+    validate_release_contract already enforce (independence, dependencies,
+    dedupe, cycles). An untraceable, duplicate, or malformed candidate is
+    excluded rather than selected -- it never bypasses traceability -- and
+    reported back under "skipped" so the caller can log why.
+    """
+    validate_release_contract(release)
+    queue_state_by_work_ref = queue_state_by_work_ref or {}
+    queue_candidates = queue_candidates or []
+
+    working = copy.deepcopy(release)
+    nodes = working["work_graph"]
+    known_work_refs = {node["work_ref"] for node in nodes if node.get("work_ref")}
+    known_ids = {node["id"] for node in nodes}
+    known_dedupe = {node["dedupe_key"] for node in nodes}
+    criterion_ids = {item["id"] for item in working["criteria"]}
+
+    for node in nodes:
+        work_ref = node.get("work_ref")
+        if not work_ref or work_ref not in queue_state_by_work_ref:
+            continue
+        mapped_state = queue_state_by_work_ref[work_ref]
+        if mapped_state not in WORK_STATES:
+            raise ReleaseContractError(
+                f"État de file inconnu pour work_ref {work_ref}: {mapped_state}."
+            )
+        node["state"] = mapped_state
+
+    skipped: list[dict[str, str]] = []
+    max_order = max((node["order"] for node in nodes), default=0)
+    for offset, candidate in enumerate(queue_candidates, start=1):
+        candidate_id = candidate.get("id") if isinstance(candidate, dict) else None
+        if not isinstance(candidate_id, str) or not candidate_id:
+            skipped.append({"id": str(candidate_id), "reason": "identifiant de candidat invalide."})
+            continue
+        if candidate_id in known_work_refs:
+            continue  # Already a node; the state overlay above already covers it.
+        try:
+            node_id = f"queue-{candidate_id}"
+            if node_id in known_ids:
+                raise ReleaseContractError(f"Le nœud synthétique {node_id} entre en collision avec un nœud existant.")
+            criterion_refs = candidate.get("criterion_refs") or []
+            if not criterion_refs or not set(criterion_refs).issubset(criterion_ids):
+                raise ReleaseContractError(
+                    f"Le candidat de file {candidate_id} n'est pas traçable vers un critère connu de la release."
+                )
+            dedupe_key = candidate.get("dedupe_key") or candidate_id
+            if dedupe_key in known_dedupe:
+                raise ReleaseContractError(f"La clé de déduplication {dedupe_key} est déjà utilisée.")
+            depends_on = [dep for dep in (candidate.get("depends_on") or []) if dep in known_ids]
+            synthetic = {
+                "id": node_id, "work_ref": candidate_id,
+                "title": str(candidate.get("title") or candidate_id),
+                "kind": "product", "state": "candidate",
+                "order": max_order + offset, "dedupe_key": dedupe_key,
+                "criterion_refs": list(criterion_refs), "depends_on": depends_on,
+                "independence": candidate.get("independence") or "unknown",
+                "blocker": None,
+            }
+            nodes.append(synthetic)
+            known_ids.add(node_id)
+            known_dedupe.add(dedupe_key)
+        except ReleaseContractError as exc:
+            skipped.append({"id": candidate_id, "reason": str(exc)})
+
+    validate_release_contract(working)
+    result = select_campaign_work(working)
+    result["skipped"] = skipped
+    return result
+
+
+def project_release(
+    value: dict[str, Any],
+    queue_state_by_work_ref: dict[str, str] | None = None,
+    queue_candidates: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Project the selected version for deterministic human surfaces."""
     validate_release_contract(value)
     status_labels = {
@@ -874,7 +973,7 @@ def project_release(value: dict[str, Any]) -> dict[str, Any]:
     ):
         for item in result[field]:
             item["status_label"] = status_labels[item["status"]]
-    result["campaign"] = select_campaign_work(value)
+    result["campaign"] = project_campaign_work(value, queue_state_by_work_ref, queue_candidates)
     decisions = [item for item in value["decisions"] if item["status"] == "decision_required"]
     result["intervention"] = (
         {
