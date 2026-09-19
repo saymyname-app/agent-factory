@@ -399,6 +399,55 @@ class MayorCampaignTest(CampaignFixture, unittest.TestCase):
         result = self.invoke("repair", "--mayor")
         self.assertIn("NOOP", result.stdout)
 
+    def test_repair_is_a_noop_when_a_closed_candidates_execution_has_also_closed(self):
+        # af-ho5qi, 2026-09-19: replays the real incident shape -- candidate
+        # af-cm1l closed (materialized as af-hho5, itself closed) while the
+        # coordination Bead still names it as the campaign's authorizing
+        # candidate. `activate` only ever runs once per continuous campaign,
+        # so a closed candidate/execution is the routine end-of-life shape,
+        # not corruption: repair must leave it alone when the coordination
+        # Bead's own last valid pair already matches it.
+        (self.node_dir / "af-donecand.json").write_text(json.dumps({
+            "id": "af-donecand", "status": "closed",
+            "metadata": {"gc.materialized_bead": "af-doneexec"},
+        }), encoding="utf-8")
+        (self.node_dir / "af-doneexec.json").write_text(json.dumps({
+            "id": "af-doneexec", "status": "closed", "metadata": {},
+        }), encoding="utf-8")
+        state = metadata()
+        state["gc.campaign_candidate"] = "af-donecand"
+        state["gc.campaign_candidate_last"] = "af-donecand"
+        state["gc.campaign_condition_last"] = state["gc.campaign_condition"]
+        self.write_state(state)
+
+        result = self.invoke("repair", "--mayor")
+        self.assertIn("NOOP", result.stdout)
+        self.assertEqual("af-donecand", self.current_metadata()["gc.campaign_candidate"])
+
+    def test_repair_restores_a_closed_candidate_that_diverges_from_the_last_valid_pair(self):
+        # Unlike the routine shape above, a closed candidate that does NOT
+        # match the coordination Bead's own last recorded pair has a genuine
+        # successor to restore -- the same "third stale-pointer shape"
+        # detection feeding the existing restore action (af-ho5qi).
+        (self.node_dir / "af-donecand.json").write_text(json.dumps({
+            "id": "af-donecand", "status": "closed",
+            "metadata": {"gc.materialized_bead": "af-doneexec"},
+        }), encoding="utf-8")
+        (self.node_dir / "af-doneexec.json").write_text(json.dumps({
+            "id": "af-doneexec", "status": "closed", "metadata": {},
+        }), encoding="utf-8")
+        state = metadata()
+        state["gc.campaign_candidate"] = "af-donecand"
+        state["gc.campaign_candidate_last"] = "af-cm1l"
+        state["gc.campaign_condition_last"] = "Condition précédente valide"
+        self.write_state(state)
+
+        result = self.invoke("repair", "--mayor")
+        self.assertIn("FIXED: gc.campaign_candidate -> af-cm1l", result.stdout)
+        value = self.current_metadata()
+        self.assertEqual("af-cm1l", value["gc.campaign_candidate"])
+        self.assertEqual("Condition précédente valide", value["gc.campaign_condition"])
+
     def test_repair_blocks_with_admin_cause_when_no_last_valid_pair_exists(self):
         # The genuinely unrecoverable shape: no candidate/condition, and no
         # history to restore from either (repair predates this campaign, or
