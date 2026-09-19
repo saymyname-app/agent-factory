@@ -60,6 +60,25 @@ def _structured_pause_reason(notes: Any) -> str | None:
     return reasons[-1] if reasons else None
 
 
+def _criterion_refs(metadata: dict[str, Any]) -> list[str]:
+    """Parse the comma-joined ``gc.queue_criterion_refs`` candidate metadata.
+
+    Enrichment, not lifecycle: a candidate written before this field existed,
+    or one carrying a malformed value, still projects -- it just traces to no
+    criterion, same as any other untraceable candidate to
+    ``select_campaign_work``'s traceability check.
+    """
+    raw = metadata.get("gc.queue_criterion_refs")
+    if not isinstance(raw, str):
+        return []
+    return [ref.strip() for ref in raw.split(",") if ref.strip()]
+
+
+def _independence(metadata: dict[str, Any]) -> str:
+    value = _text(metadata.get("gc.queue_independence"))
+    return value if value in {"proven", "unknown"} else "unknown"
+
+
 def project_campaign_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     """Validate persistent campaign metadata stored on the coordination Bead."""
     if not isinstance(metadata, dict):
@@ -228,6 +247,8 @@ def project_candidate(item: dict[str, Any], position: int | None = None) -> dict
         "technical_status": "deferred",
         "technical_explanation": TECHNICAL_DEFERRED_EXPLANATION,
         "contract": CONTRACT,
+        "criterion_refs": _criterion_refs(metadata),
+        "independence": _independence(metadata),
     }
     return result
 

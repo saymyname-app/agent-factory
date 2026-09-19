@@ -797,7 +797,18 @@ main() {
   if ! state_json=$("$HUMAN_STATE_BIN" state <<<"$observed"); then
     die "Canonical human state projection failed closed."
   fi
-  capture_json release_json "SayMyName release contract" "$RELEASE_BIN" project "$RELEASE_FILE"
+  # af-3uefc: project_campaign_work only ever sees a queue candidate that is
+  # traceable (own criterion_refs subset of the release's known criteria) and
+  # proven independent -- a paused candidate must still never be picked up by
+  # the campaign, so this is the one place that state gets filtered before
+  # the candidate is handed to project_release; project_campaign_work itself
+  # does not know about queue state at all (lib/product_release.py).
+  local queue_candidates_file="$tmp_dir/queue-candidates.json"
+  jq -c '[.[] | select(.state == "eligible") |
+    {id: .id, title: .title, criterion_refs: .criterion_refs, independence: .independence}]' \
+    <<<"$queue_response" >"$queue_candidates_file"
+  capture_json release_json "SayMyName release contract" \
+    "$RELEASE_BIN" project "$RELEASE_FILE" --queue-candidates "$queue_candidates_file"
   state_json=$(jq -c \
     --arg product SAYMYNAME --arg last_title "$LAST_OUTCOME" \
     --arg last_evidence "$LAST_DELIVERY" --argjson release "$release_json" \

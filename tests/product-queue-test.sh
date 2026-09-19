@@ -32,10 +32,24 @@ output=$("$QUEUE" list --json)
 assert_contains "$output" '"position":1,"id":"af-a"'
 assert_contains "$output" '"state":"eligible","state_label":"Éligible · non programmé"'
 assert_contains "$output" '"technical_status":"deferred"'
+# A candidate predating af-3uefc's schema carries no criterion_refs/independence
+# metadata at all -- it must still list, just untraceable to any release.
+assert_contains "$output" '"criterion_refs":[],"independence":"unknown"'
 assert_contains "$output" '"contract":"agent-factory-human-state/v1"'
 
 output=$("$QUEUE" next)
 [[ $output == 'NEXT: Alpha (af-a) — Éligible · non programmé; lancement non automatique' ]] || fail "wrong next candidate: $output"
+
+# af-3uefc: a candidate authored with criterion_refs/independence metadata
+# projects them through list --json so a caller can build project_campaign_
+# work's queue_candidates without a second Beads round-trip.
+traceable_inventory=$QUEUE_INVENTORY
+export QUEUE_INVENTORY='[
+  {"id":"af-traceable","title":"Traceable","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id","gc.queue_criterion_refs":"release-e2e,personal-return","gc.queue_independence":"proven"}}
+]'
+output=$("$QUEUE" list --json)
+assert_contains "$output" '"criterion_refs":["release-e2e","personal-return"],"independence":"proven"'
+export QUEUE_INVENTORY=$traceable_inventory
 
 : >"$QUEUE_LOG"
 "$QUEUE" move af-c 1 >/dev/null
@@ -64,6 +78,31 @@ grep -Fq 'create <Delta>' "$QUEUE_LOG"
 grep -Fq '<--defer> <2125-01-01>' "$QUEUE_LOG"
 grep -Fq '"gc.authorized_by":"ADR-0021 review finding"' "$QUEUE_LOG"
 grep -Fq 'update <af-new> <--status> <deferred>' "$QUEUE_LOG"
+# Legacy add path (no --criterion-ref/--independence): still traces to nothing.
+grep -Fq '"gc.queue_criterion_refs":""' "$QUEUE_LOG"
+grep -Fq '"gc.queue_independence":"unknown"' "$QUEUE_LOG"
+
+# af-3uefc: --criterion-ref/--independence make a candidate traceable to a
+# versioned release's criteria (lib/product_release.py::project_campaign_work)
+# before it is ever a work_graph node.
+: >"$QUEUE_LOG"
+"$QUEUE" add --title Epsilon --authorized-by 'ADR-0021 review finding' \
+  --acceptance 'The quiz shall show the correction.' \
+  --criterion-ref release-e2e --criterion-ref personal-return --independence proven \
+  >/dev/null
+grep -Fq '"gc.queue_criterion_refs":"release-e2e,personal-return"' "$QUEUE_LOG"
+grep -Fq '"gc.queue_independence":"proven"' "$QUEUE_LOG"
+
+if "$QUEUE" add --title Zeta --authorized-by ADR-0021 \
+  --acceptance 'The quiz shall show the correction.' --independence not-a-real-value \
+  >/dev/null 2>&1; then
+  fail '--independence must reject an unknown value'
+fi
+if "$QUEUE" add --title Zeta --authorized-by ADR-0021 \
+  --acceptance 'The quiz shall show the correction.' --criterion-ref 'Not Valid' \
+  >/dev/null 2>&1; then
+  fail '--criterion-ref must reject a value outside the release id pattern'
+fi
 
 # Provenance and EARS acceptance are required going forward (add only).
 ears='The quiz shall show the correction.'

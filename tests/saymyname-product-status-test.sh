@@ -228,4 +228,15 @@ output=$(run_fixture_json queue-candidate-excluded 2>"$STDERR_FILE") \
 [[ $(cat "$STDERR_FILE") == *"WARNING"*"af-bad"* ]] \
   || fail_test "queue-candidate-excluded did not surface the excluded candidate's warning"
 
+# af-3uefc: project_campaign_work's queue_candidates overlay is now actually
+# wired -- a live product-queue candidate carrying real criterion_refs must
+# get selected by the campaign projection with no hand-edited release
+# contract and no manual EXECUTE nudge.
+TESTS_RUN=$((TESTS_RUN + 1))
+output=$(run_fixture_json traceable-candidate) || fail_test "traceable-candidate should succeed"
+[[ $(jq -r '.release.campaign.selected.work_ref' <<<"$output") == af-dryrun-demo ]] \
+  || fail_test "traceable-candidate was not selected by the campaign projection: $(jq -c '.release.campaign' <<<"$output")"
+[[ $(jq -r '.release.campaign.reason' <<<"$output") == proven_independent_work ]] \
+  || fail_test "traceable-candidate: unexpected campaign selection reason"
+
 printf 'PASS: %d deterministic product-status checks\n' "$TESTS_RUN"
