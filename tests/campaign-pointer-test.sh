@@ -45,6 +45,8 @@ TESTS_RUN=$((TESTS_RUN + 1))
 run start af-candidate >/dev/null || fail "start on an open bead should succeed"
 [[ $(jq -r '.metadata["gc.current"]' <<<"$(coordination)")  == af-candidate ]] || fail "start did not set gc.current"
 [[ $(jq -r '.metadata["gc.current_jit"]' <<<"$(coordination)") == af-candidate ]] || fail "start did not set gc.current_jit"
+[[ -n $(jq -r '.metadata["gc.campaign_progress_at"] // empty' <<<"$(coordination)") ]] \
+  || fail "start did not stamp gc.campaign_progress_at (af-20xom: liveness has no ground truth otherwise)"
 
 TESTS_RUN=$((TESTS_RUN + 1))
 seed af-closed '{"id":"af-closed","status":"closed","metadata":{}}'
@@ -70,6 +72,8 @@ run finish af-delivered >/dev/null || fail "finish with full delivery proof shou
   || fail "finish did not clear gc.current"
 [[ $(jq -r '.metadata["gc.current_jit"]' <<<"$(coordination)") == none ]] \
   || fail "finish did not clear gc.current_jit"
+[[ -n $(jq -r '.metadata["gc.campaign_progress_at"] // empty' <<<"$(coordination)") ]] \
+  || fail "finish did not stamp gc.campaign_progress_at (af-20xom: liveness has no ground truth otherwise)"
 
 # af-16-style incident: a delivery bead closed without its six proof fields.
 TESTS_RUN=$((TESTS_RUN + 1))

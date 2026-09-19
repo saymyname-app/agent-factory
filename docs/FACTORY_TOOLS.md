@@ -75,7 +75,11 @@ six heures d'immobilité.
 La sentinelle de campagne laisse deux horodatages sur le bead de coordination :
 `gc.campaign_sentinel_at` (la boucle a tourné) et `gc.campaign_progress_at`
 (quelque chose a avancé : livraison en cours, bead Factory en cours, ou
-**nouveau** réveil envoyé au Mayor). Le garde-fou alerte si :
+**nouveau** réveil envoyé au Mayor). `bin/campaign-pointer start`/`finish` —
+la voie directe du Mayor pour poser `gc.current`/`gc.last_delivered` en
+dehors de la boucle de la sentinelle — horodate aussi ce champ, pour que
+cette livraison prouvée reste une preuve de vivacité même quand la boucle ne
+l'a pas vue passer (af-20xom). Le garde-fou alerte si :
 
 - la boucle est muette depuis **10 min** ;
 - la campagne vit mais n'avance plus depuis **60 min** (réglable :
