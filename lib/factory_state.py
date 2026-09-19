@@ -588,7 +588,20 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
             "prompt": None,
             "required": False,
         }
-    elif current.get("state") == "active" and current.get("agent"):
+    elif current.get("state") == "active":
+        # af-lwgmt: "active" is only ever produced by an observer that has
+        # already proven genuine activity (a live session, or -- for a
+        # multi-stage delegated workflow like build-basic -- its convoy/open
+        # blockers), even when the specific hand-off session couldn't be
+        # pinned down (current["agent"] is then None; see
+        # bin/saymyname-product-status's derive_active_context, af-6k6sn).
+        # Requiring current["agent"] here used to fall that unresolved-agent
+        # case through to "materialized_without_agent" below, which is not a
+        # PROGRESS_REASON (bin/mayor-campaign) -- gc.campaign_progress_at
+        # froze and the sentinel re-sent a "reprendre" wake every tick for as
+        # long as the workflow's session hand-off stayed unresolved, even
+        # though implementation-worker sub-agent sessions were genuinely
+        # active underneath it the whole time.
         activity = {
             "state": "working",
             "label": "Travaille",
@@ -607,7 +620,7 @@ def project_human_state(observed: dict[str, Any]) -> dict[str, Any]:
         }
         if campaign["enabled"]:
             campaign.update({"state": "running", "state_label": "Campagne active · livraison en cours"})
-    elif current.get("state") == "materialized" or current.get("state") == "active":
+    elif current.get("state") == "materialized":
         activity = {
             "state": "waiting_automatic" if campaign["enabled"] else "waiting_action",
             "label": "Attend automatiquement le Mayor" if campaign["enabled"] else "Attend une action du Mayor",

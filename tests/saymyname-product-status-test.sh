@@ -156,6 +156,14 @@ assert_json self-workflow '.activity.state + ":" + .result.agent' 'working:codex
 # even though no specific current step/agent can be named from the stale
 # session.
 assert_json self-workflow-handoff '.result.stage + ":" + (.result.agent == null | tostring)' 'active:true'
+# af-lwgmt: an "active" result whose specific hand-off session can't be
+# resolved must still resolve to resume.mode active_delivery, not
+# materialized_without_agent -- the latter is not a PROGRESS_REASON
+# (bin/mayor-campaign), so gc.campaign_progress_at would freeze and the
+# sentinel would re-send a "reprendre" wake every tick even while the
+# workflow's convoy proves sub-agent sessions are genuinely active.
+assert_json self-workflow-handoff '.resume.mode' 'active_delivery'
+assert_json workflow-pending-finalize '.resume.mode' 'active_delivery'
 # af-knbxq: the implementation convoy closing (active_count == 0) is not the
 # same as the whole v2 workflow finishing -- starter review, publish, and
 # finalize-workflow are the workflow root's own open "blocks" dependency
