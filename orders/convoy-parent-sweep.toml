@@ -1,0 +1,6 @@
+[order]
+description = "Deterministic zero-token cleanup (af-mu8j4): auto-close open convoy/drain-unit beads whose tracked child issues are all closed, via the existing `gc convoy check`. Prevents closed-parent convoys from lingering in the ready list -- it does not touch wisps (wisp-compact already TTL-sweeps those) or order-tracking beads (order-tracking-sweep already owns that retention)."
+trigger = "cooldown"
+interval = "15m"
+exec = "gc convoy check --json"
+timeout = "60s"
