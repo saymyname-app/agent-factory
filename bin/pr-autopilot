@@ -163,7 +163,7 @@ stuck_pr() {  # repo rig_path num mergeStateStatus checks labels
           -d 'PR stuck across multiple pr-autopilot passes (every 3 min): $reason.
 https://github.com/$repo/pull/$num
 Not armable as-is; needs a human/Mayor look (resolve conflicts, push a commit to (re)trigger the required check, or rebase onto the latest base). pr-autopilot only observes and pages -- it never resolves a conflict or forces a check to run.' \
-          --set-metadata pr_number='$num' --set-metadata source='pr-autopilot'"
+          --metadata '{\"pr_number\":\"$num\",\"source\":\"pr-autopilot\"}'"
         run gh pr comment "$num" --repo "$repo" \
           --body "pr-autopilot: this PR has been $reason across multiple passes and needs attention (filed as a bead)." >/dev/null 2>&1
         FLAGGED=$((FLAGGED+1))
@@ -234,7 +234,7 @@ for entry in "${RIGS[@]}"; do
         run bash -c "cd '$rig_path' && gc bd create '$title' -p 1 -t bug \
           -d 'Required status check failed. PR: https://github.com/$repo/pull/$num
 Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the next pass.' \
-          --set-metadata pr_number='$num' --set-metadata source='pr-autopilot'"
+          --metadata '{\"pr_number\":\"$num\",\"source\":\"pr-autopilot\"}'"
         FLAGGED=$((FLAGGED+1))
       else
         vlog "PR #$num: failure already tracked"
