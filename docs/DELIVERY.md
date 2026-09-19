@@ -255,9 +255,29 @@ outgoing diff (`origin/main...HEAD`) plus the working tree, on every
 `git push`. A match refuses the push. The guard never prints the list, which
 identifier matched, or where — the value being protected must never land in
 a bead, in mail, or in any shared log, so it does not appear even in this
-check's own output. `bin/factory-guard` also surfaces this check (pass/fail
-only, same non-disclosure) in its periodic report, so an unpushed match does
-not wait for a push to be noticed.
+check's own output. `bin/factory-guard` also surfaces this check (same
+non-disclosure) in its periodic report, so an unpushed match does not wait
+for a push to be noticed.
+
+Layer A only checks what is in that diff and working tree, as literal text
+against the list — it is not a general PII scanner. It has three distinct
+outcomes, not two, and the difference matters: **ACTIVE, clean** (exit 0,
+list present and non-empty, no match — the check actually ran and found
+nothing), **BLOCKED** (exit 1, a listed identifier was found), and
+**INACTIVE** (exit 3, no list or an empty list on this machine — nothing was
+checked at all). Any machine other than the one with dev-DB access is
+expected to be INACTIVE; that is normal, not a fault. What is not
+acceptable is treating INACTIVE like a pass: `bin/factory-pii-guard` used to
+`exit 0` for both "checked, clean" and "nothing to check", so both
+`.githooks/pre-push` and `bin/factory-guard`'s report read the inactive case
+as a plain pass — a repo could go a long time with an empty or missing list
+and every push and every periodic report would still say things were fine
+(observed 2026-09-19: real-person photos in the dev DB, out of scope for
+either layer below, went a year with no signal at all). INACTIVE now has its
+own exit code and its own visible line in `bin/factory-guard`'s report
+(`· pii-guard — INACTIVE …`, not `✓`), and `.githooks/pre-push` still lets
+the push through on INACTIVE — only a real match (exit 1) or a check that
+could not run at all (exit 2, e.g. `git diff` itself failed) blocks it.
 
 **Layer B — both rigs' CI, structural backstop, zero secrets
 (`bin/factory-provenance-guard`, run from each rig's GitHub Actions
@@ -277,6 +297,24 @@ actually backed by the generator) fails the same way an unmarked file does.
 An unmarked or stale-attestation data file in one of those paths fails the
 build — it is either real data that should never have landed there, or a
 synthetic file someone forgot to record (or re-record after editing).
+
+Layer B's coverage is narrower than "any real data" and the two boundaries
+that matter are both hard-coded in `bin/factory-provenance-guard`. **Path:**
+only the fixture/seed/test-resource directory names above, at any depth —
+a data file anywhere else in the tree (application code paths, docs,
+top-level data directories that aren't named one of those) is not looked at
+by this guard at all. **File type:** only these extensions —
+`.json .csv .sql .yaml .yml .xml .properties .tsv`. Anything else under a
+watched directory, including images and other binary formats
+(`.jpg .jpeg .png .heic .pdf`, …), is invisible to Layer B's regex and is
+never asked for a `PROVENANCE.md` entry. This is why real-person photos
+(Oxyl dev data) produced no signal from either layer for a year: they are
+binary files, so Layer B's extension filter never selects them even when
+they sit under a watched path, and Layer A only ever looks at `git diff`
+text, which does not usefully match inside binary blobs either.
+Distinguishing real photo data from synthetic photo data is separate,
+future work (see the guard candidate referenced from af-ox44d); today,
+binary files of any kind are outside what either guard claims to contain.
 
 Emergency bypass for Layer A is the standard `git push --no-verify`. Neither
 layer is a security boundary against a determined actor; both are local/CI

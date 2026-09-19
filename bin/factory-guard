@@ -231,10 +231,21 @@ done
 PII_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-pii-guard"
 if [ -x "$PII_GUARD" ]; then
   PII_OUTPUT=$(FACTORY_ROOT="$ROOT" "$PII_GUARD" --repo-root "$ROOT" 2>&1)
-  if [ $? -ne 0 ]; then
+  PII_STATUS=$?
+  if [ "$PII_STATUS" -eq 1 ]; then
     bad "pii-guard — real identifier found in outgoing diff or working tree (run bin/factory-pii-guard locally for detail; never paste the diff into a bead/mail)"
-  else
+  elif [ "$PII_STATUS" -eq 3 ]; then
+    # INACTIVE: no identifier list on this machine, nothing was actually
+    # checked. Reported with the same "not checked" marker as a missing
+    # binary below, never "✓" -- af-ox44d: this line used to read "✓
+    # pii-guard — nothing to check", which every reader (including a
+    # year of Oxyl real-person photos going untracked) reasonably took
+    # for "checked, clean" rather than "not checked at all".
+    say "· pii-guard — ${PII_OUTPUT#factory-pii-guard: }"
+  elif [ "$PII_STATUS" -eq 0 ]; then
     say "✓ pii-guard — ${PII_OUTPUT#factory-pii-guard: }"
+  else
+    bad "pii-guard — factory-pii-guard exited $PII_STATUS (usage/environment error); containment could not be verified"
   fi
 else
   say "· pii-guard — not checked (bin/factory-pii-guard missing)"

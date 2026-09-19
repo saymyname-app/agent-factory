@@ -7,7 +7,15 @@ root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 
 pii="$root/bin/factory-pii-guard"
 if [ -x "$pii" ]; then
-  "$pii" --repo-root "$root" || exit 1
+  "$pii" --repo-root "$root"
+  pii_status=$?
+  # Exit 3 is INACTIVE (no identifier list on this machine) -- expected on
+  # every machine except the one with dev-DB access, so it must not block
+  # the push. Any other non-zero exit (1: match found, 2: usage/env error)
+  # does block, same as before.
+  if [ "$pii_status" -ne 0 ] && [ "$pii_status" -ne 3 ]; then
+    exit 1
+  fi
 else
   echo "pre-push: WARNING -- bin/factory-pii-guard missing or not executable; PII leak guard was skipped for this push" >&2
 fi
