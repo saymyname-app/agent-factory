@@ -173,10 +173,52 @@ out=$(guard)
 grep -q "already filed: af-live1" <<<"$out" || { echo "$out" >&2; fail "second run did not recognise the open defect"; }
 [ "$(creates)" = "1" ] || fail "the defect was filed more than once"
 
-# ...and once it is closed, a new stall files a new one.
+# ...and once it is closed with the SAME known cause (the underlying progress
+# anchor has not moved), af-ii0mj: it must not immediately refile -- a
+# cooldown defers the next check instead of re-diagnosing an already-known,
+# still-true cause every ~5-10 min.
 echo '{"id":"af-live1","status":"closed"}' > "$TMP/beads/af-live1.json"
-guard >/dev/null
-[ "$(creates)" = "2" ] || fail "a closed defect must not suppress a new stall"
+before=$(creates)
+out=$(guard)
+grep -q "known cause already diagnosed (af-live1) — deferring next check" <<<"$out" \
+  || { echo "$out" >&2; fail "a same-cause closed defect was not recognised as a known cause"; }
+[ "$(creates)" = "$before" ] || fail "a known-cause diagnosis was re-filed immediately"
+cooldown_until=$(jq -r '.[0].metadata["gc.campaign_liveness_cooldown_until"]' "$COORD")
+[ -n "$cooldown_until" ] && [ "$cooldown_until" != "null" ] || fail "no cooldown was armed for the known cause"
+
+# ...and while that cooldown holds, repeat ticks stay quiet too.
+out=$(guard)
+grep -q "cooldown active until $cooldown_until" <<<"$out" \
+  || { echo "$out" >&2; fail "an active cooldown was not recognised on a repeat tick"; }
+[ "$(creates)" = "$before" ] || fail "a repeat tick inside the cooldown window re-filed"
+
+# ...but a genuinely new stall -- the progress anchor moved, meaning real
+# progress happened and then it stalled again -- files immediately, a
+# cooldown armed for the OLD anchor notwithstanding.
+jq --arg p "$(iso $((NOW - 4000)))" '.[0].metadata["gc.campaign_progress_at"] = $p' "$COORD" > "$COORD.next" \
+  && mv "$COORD.next" "$COORD"
+out=$(guard)
+grep -q "filed liveness defect af-live1" <<<"$out" \
+  || { echo "$out" >&2; fail "a new stall (moved anchor) was suppressed by a cooldown armed for the old anchor"; }
+[ "$(creates)" = "$((before + 1))" ] || fail "the new stall was not filed exactly once"
+
+# ...and once ITS cooldown expires while the same (new) anchor is still
+# stale, it pings again instead of staying quiet forever.
+echo '{"id":"af-live1","status":"closed"}' > "$TMP/beads/af-live1.json"
+before=$(creates)
+out=$(guard)
+grep -q "known cause already diagnosed (af-live1) — deferring next check" <<<"$out" \
+  || { echo "$out" >&2; fail "the new anchor's closure did not arm a fresh cooldown"; }
+[ "$(creates)" = "$before" ] || fail "arming a fresh cooldown must not itself file"
+LATER=$((NOW + 3601))
+jq --arg s "$(iso $((LATER - 30)))" '.[0].metadata["gc.campaign_sentinel_at"] = $s' "$COORD" > "$COORD.next" \
+  && mv "$COORD.next" "$COORD"
+FACTORY_GUARD_NOW=$LATER
+out=$(guard)
+FACTORY_GUARD_NOW=$NOW
+grep -q "filed liveness defect af-live1" <<<"$out" \
+  || { echo "$out" >&2; fail "an expired cooldown on a still-stale campaign never re-pinged"; }
+[ "$(creates)" = "$((before + 1))" ] || fail "the expired-cooldown ping was not filed exactly once"
 
 # 4. the wake loop itself is silent ----------------------------------------------
 coord 1800 60
@@ -194,7 +236,7 @@ grep -q "! liveness" <<<"$out" && fail "a deliberate pause was reported as a liv
 coord 30 60 blocked durable_failure "sentinelle en échec"
 out=$(guard --check-only)
 grep -q "liveness — campaign stopped by a durable failure" <<<"$out" || fail "durable failure not flagged"
-[ "$(creates)" = "2" ] || fail "--check-only must not file a durable-failure defect either"
+[ "$(creates)" = "3" ] || fail "--check-only must not file a durable-failure defect either"
 
 # C2: unlike silent/stale, a durable failure was never filed nor paged to a
 # human -- only re-reported forever. The default run must file it and mail

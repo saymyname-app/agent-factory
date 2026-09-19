@@ -438,6 +438,12 @@ fi
 # and a guard test must never file a defect into the live store.
 GUARD_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd)"
 COORD="${CAMPAIGN_COORDINATION_BEAD:-af-1vr4}"
+# af-ii0mj: a "stale" liveness verdict diagnosed and closed with a known,
+# still-true cause (e.g. product lane paused + factory ladder empty) must not
+# re-file every ~5-10 min for as long as that idle window legitimately lasts
+# -- see the cooldown gate below, keyed on the underlying progress/watch
+# anchor so a genuinely new stall still files immediately.
+LIVENESS_COOLDOWN_MINUTES="${FACTORY_GUARD_LIVENESS_COOLDOWN_MINUTES:-60}"
 if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 \
    || [ ! -f "$GUARD_LIB/factory_liveness.py" ]; then
   say "· liveness — not checked (not a city root, or gc unavailable)"
@@ -616,9 +622,83 @@ except Exception:
     print("")')
           [ -n "$prior_status" ] && [ "$prior_status" != "closed" ] && still_open=1
         fi
+        file_now=1
+        current_anchor=""
         if [ "$still_open" = "1" ]; then
           say "  liveness defect already filed: $prior"
-        else
+          file_now=0
+        elif [ "$code" = "stale" ]; then
+          # Same idea as the mayor-session dedup above: compare against the
+          # anchor recorded when the prior defect was filed, not merely
+          # whether it is closed -- a stall diagnosed and closed with the
+          # cause still true must cool down, but a genuinely new stall (the
+          # anchor moved: real progress happened, then it stalled again)
+          # still files immediately.
+          current_anchor=$(printf '%s' "$coord_json" | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    meta = v.get("metadata") or {}
+    print(meta.get("gc.campaign_progress_at") or meta.get("gc.campaign_watch_since") or "")
+except Exception:
+    print("")')
+          prior_anchor=$(printf '%s' "$coord_json" | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    print((v.get("metadata") or {}).get("gc.campaign_liveness_anchor", ""))
+except Exception:
+    print("")')
+          if [ -n "$prior" ] && [ -n "$current_anchor" ] && [ "$current_anchor" = "$prior_anchor" ]; then
+            cooldown_until_raw=$(printf '%s' "$coord_json" | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin)
+    v = v[0] if isinstance(v, list) else v
+    print((v.get("metadata") or {}).get("gc.campaign_liveness_cooldown_until", ""))
+except Exception:
+    print("")')
+            decision=$(COOLDOWN_UNTIL="$cooldown_until_raw" COOLDOWN_MINUTES="$LIVENESS_COOLDOWN_MINUTES" \
+              FACTORY_GUARD_NOW="${FACTORY_GUARD_NOW:-}" python3 -c '
+import os, time
+from datetime import datetime, timezone, timedelta
+
+def epoch(text):
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+cooldown_until = epoch(os.environ.get("COOLDOWN_UNTIL"))
+minutes = int(os.environ.get("COOLDOWN_MINUTES") or 60)
+now = float(os.environ.get("FACTORY_GUARD_NOW") or time.time())
+
+if cooldown_until is None:
+    new_until = datetime.fromtimestamp(now, timezone.utc) + timedelta(minutes=minutes)
+    print("defer_arm\t" + new_until.strftime("%Y-%m-%dT%H:%M:%SZ"))
+elif now < cooldown_until:
+    print("cooldown_active")
+else:
+    print("file")
+')
+            decision_action=$(printf '%s' "$decision" | cut -f1)
+            if [ "$decision_action" = "cooldown_active" ]; then
+              file_now=0
+              say "  liveness known cause already diagnosed ($prior) — cooldown active until $cooldown_until_raw"
+            elif [ "$decision_action" = "defer_arm" ]; then
+              file_now=0
+              new_until=$(printf '%s' "$decision" | cut -f2-)
+              gc bd update "$COORD" --set-metadata "gc.campaign_liveness_cooldown_until=$new_until" >/dev/null 2>&1 || true
+              say "  liveness known cause already diagnosed ($prior) — deferring next check until $new_until"
+            fi
+          fi
+        fi
+        if [ "$file_now" = "1" ]; then
           created=$(gc bd create "Campagne vivante mais immobile — diagnostiquer" \
             -p 1 -t bug \
             -d "Détecté par factory-guard (vivacité, ADR-0016 §5.3) : $msg. Diagnostiquer pourquoi la campagne n'avance plus — sentinelle, file produit, échelle d'inactivité, Mayor qui ne réagit pas — puis réparer ou documenter, et fermer ce bead avec la cause." \
@@ -632,6 +712,13 @@ except Exception:
     print("")')
           if [ -n "$created" ]; then
             gc bd update "$COORD" --set-metadata "gc.campaign_liveness_bead=$created" >/dev/null 2>&1 || true
+            if [ "$code" = "stale" ]; then
+              # Record what this filing was diagnosing, and clear any expired
+              # cooldown, so the dedup above has a clean anchor/cooldown pair
+              # to compare the next tick against.
+              gc bd update "$COORD" --set-metadata "gc.campaign_liveness_anchor=$current_anchor" >/dev/null 2>&1 || true
+              gc bd update "$COORD" --set-metadata "gc.campaign_liveness_cooldown_until=" >/dev/null 2>&1 || true
+            fi
             # Incident 2026-09-16 gap 1: a filed defect nobody is nudged to read
             # is equivalent to silence. Page the Mayor at filing time instead of
             # waiting for its next natural pause; factory-watchdog re-nudges on
