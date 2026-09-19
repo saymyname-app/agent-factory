@@ -946,6 +946,38 @@ else
   fi
 fi
 
+# --- 11. stale gc.waiting_on (af-atyry) --------------------------------------
+# gc.waiting_on keeps a bead out of the idle ladder (lib/factory_campaign.py
+# is_ladder_bead) unconditionally -- nothing used to clear it when the bead
+# it names closed, so "waiting on something" silently became "waiting
+# forever" (af-p4v9v sat excluded 14+ hours after the bead it waited on
+# merged). bin/factory-waiting-guard clears gc.waiting_on once its target
+# closes, reports once (never repeatedly) when the target doesn't resolve to
+# any bead, and leaves free-text waits (a person, "stalled") untouched. See
+# that script for detail.
+WAITING_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-waiting-guard"
+if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$WAITING_GUARD" ]; then
+  say "· waiting-drift — not checked (not a city root, or gc unavailable)"
+else
+  WG_ARGS=()
+  [ "$CHECK_ONLY" = "1" ] && WG_ARGS+=(--check-only)
+  WG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$WAITING_GUARD" "${WG_ARGS[@]}" 2>&1)
+  WG_STATUS=$?
+  [ "$QUIET" = "1" ] || printf '%s\n' "$WG_OUTPUT" | sed 's/^/  /'
+  WG_PROBLEM_COUNT=0
+  while IFS= read -r raw_line; do
+    line="${raw_line#"${raw_line%%[![:space:]]*}"}"  # strip leading whitespace
+    case "$line" in
+      REPAIRED:\ *) ACTIONS+=("waiting-drift: ${line#REPAIRED: }") ;;
+      !\ *)         PROBLEMS+=("waiting-drift: ${line#! }"); STATUS=1; WG_PROBLEM_COUNT=$((WG_PROBLEM_COUNT+1)) ;;
+    esac
+  done <<<"$WG_OUTPUT"
+  if [ "$WG_STATUS" -ne 0 ] && [ "$WG_PROBLEM_COUNT" -eq 0 ]; then
+    PROBLEMS+=("waiting-drift: factory-waiting-guard exited $WG_STATUS with no problem line captured")
+    STATUS=1
+  fi
+fi
+
 # --- report ------------------------------------------------------------------
 say ""
 if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
