@@ -101,6 +101,19 @@ function showDrawer(title, eyebrow, tabs) {
   activate(Object.keys(tabs)[0]); $("detail-drawer").showModal();
 }
 
+// Raw technical text (subprocess/API error strings) must never reach the
+// operator as-is (af-p4v9v point 9, concrete case: "gc bd show ... returned
+// non-zero exit status 1" surfacing verbatim in a drawer). Plain lead line
+// first; the raw string stays available, but collapsed and opt-in.
+function technicalErrorNode(rawMessage) {
+  const container = node("div", "prose");
+  container.append(node("p", "", "Information indisponible pour le moment. Réessaie dans un instant ; ouvre le détail technique seulement si tu veux le signaler."));
+  const details = node("details", "technical-detail");
+  details.append(node("summary", "", "Détail technique"), node("pre", "activity-log", rawMessage));
+  container.append(details);
+  return container;
+}
+
 function definitionList(entries) {
   const list = node("dl", "definition-list");
   entries.filter(([, value]) => value !== undefined && value !== null && value !== "").forEach(([label, value]) => { list.append(node("dt", "", label), node("dd", "", Array.isArray(value) ? value.join(", ") : value)); });
@@ -117,7 +130,7 @@ async function openItem(item) {
     const relations = node("div", "stack"); (data.relations || []).forEach((relation) => relations.append(node("article", "memory-card", `${relation.direction} · ${relation.id || "?"} · ${relation.title || relation.type || "relation"}`))); if (!relations.children.length) relations.append(node("p", "muted", "Aucune relation exposée par Beads."));
     const evidence = node("div", "prose"); evidence.append(definitionList(Object.entries(data.metadata || {}))); if (data.notes) evidence.append(node("pre", "activity-log", data.notes));
     showDrawer(data.title, `${data.id} · ${data.store}`, { Résumé: summary, Progression: progress, "Sous-travaux": relations, "Preuves & notes": evidence });
-  } catch (error) { showDrawer(item.title, "DÉTAIL INDISPONIBLE", { Erreur: error.message }); }
+  } catch (error) { showDrawer(item.title, "DÉTAIL INDISPONIBLE", { Erreur: technicalErrorNode(error.message) }); }
 }
 
 async function openAgent(agent) {
@@ -130,7 +143,7 @@ async function openAgent(agent) {
     const messages = node("div", "conversation"); (data.messages || []).forEach((message) => { const card = node("article", `message ${message.role === "user" ? "from-human" : "from-mayor"}`); card.append(node("strong", "", message.role === "user" ? "Instruction" : agent.name), node("p", "", message.text)); messages.append(card); }); if (!messages.children.length) messages.append(node("p", "muted", "Aucun message conversationnel utile exposé."));
     const activity = node("pre", "activity-log", data.activity);
     showDrawer(agent.name, `${data.session.provider || "agent"} · ${data.session.id}`, { Résumé: summary, Messages: messages, "Journal d’activité": activity });
-  } catch (error) { showDrawer(agent.name, "AGENT INDISPONIBLE", { Erreur: error.message }); }
+  } catch (error) { showDrawer(agent.name, "AGENT INDISPONIBLE", { Erreur: technicalErrorNode(error.message) }); }
 }
 
 function renderAgents(agents) {
@@ -167,30 +180,60 @@ function renderQueue(queue) {
   if (!candidates.length) container.append(node("li", "empty", "Aucun candidat produit éligible ou en pause."));
 }
 
+// Reprise (point 12, af-p4v9v): a section that always says the same thing in
+// an automatic campaign carries no piloting value (ADR-0016 standing
+// delegation makes "automatique" the default, permanent state). Shown only
+// when there is a genuine operator-tier decision pending; the rest of the
+// time this whole card stays out of the page, not just visually muted.
 function renderOperationalState(data) {
-  const health = data.human_state.health; const activity = data.human_state.activity; const resume = data.human_state.resume;
-  $("health-label").textContent = health.label; $("health-detail").textContent = health.detail;
-  $("activity-label").textContent = activity.label; $("activity-detail").textContent = activity.detail;
+  const resume = data.human_state.resume;
   $("resume-label").textContent = resume.automatic ? "Automatique" : resume.required ? "Action requise" : "Non automatique · action facultative";
   $("resume-condition").textContent = resume.condition || "Aucune"; $("resume-owner").textContent = resume.owner_label; $("resume-action-copy").textContent = resume.action;
   const action = $("resume-action"); action.dataset.prompt = resume.prompt || ""; action.classList.toggle("hidden", !resume.prompt);
+  $("resume-alert").classList.toggle("hidden", resume.automatic && !resume.required);
 }
 
-function renderCampaignState(data) {
-  const state = data.human_state; const campaign = state.campaign;
+// Single compact traffic light (point 1, af-p4v9v) replacing the loud
+// "BLOQUÉ" banner. Severity is derived from the same fields the old
+// Santé/Activité/Reprise/Continuité cards read (health, campaign.blocked,
+// effective blockers, watchdog alerts, resume) so this can never disagree
+// with "Blocages effectifs" the way the pre-fix duplicate signals could
+// (point 3). Always visible; click opens the merged diagnostic drawer —
+// the detail those cards used to show inline, all the time, three times.
+function statusLightSeverity(data) {
+  const state = data.human_state; const campaign = state.campaign || {};
   const blockedModes = new Set(["fail_closed", "blocking_decision", "blocked", "campaign_blocked"]);
-  const blocked = Boolean(campaign?.blocked || blockedModes.has(state.resume.mode));
-  const global = $("campaign-block-global"); const today = $("campaign-block-today");
-  global.classList.toggle("hidden", !blocked); today.classList.toggle("hidden", !blocked);
-  if (!blocked) return;
-  const cause = campaign.cause || state.resume.condition || state.activity.detail || "La livraison ne peut pas poursuivre.";
-  const owner = campaign.blocked ? campaign.owner_label : state.resume.owner_label;
-  const action = campaign.blocked ? campaign.action : state.resume.action;
-  $("campaign-block-global-cause").textContent = cause;
-  $("campaign-block-global-action").textContent = `Reprise : ${owner} · ${action}`;
-  $("campaign-block-today-cause").textContent = cause;
-  $("campaign-block-today-owner").textContent = owner;
-  $("campaign-block-today-action").textContent = action;
+  const blockers = Array.isArray(data.today?.effective_blockers) ? data.today.effective_blockers : [];
+  const alerts = Array.isArray(data.today?.watchdog_alerts) ? data.today.watchdog_alerts : [];
+  if (state.health.state === "unavailable" || campaign.blocked || blockedModes.has(state.resume.mode) || blockers.length > 0) {
+    return { level: "red", label: "Bloqué" };
+  }
+  if (state.health.state === "degraded" || alerts.length > 0 || state.resume.required) {
+    return { level: "amber", label: "À surveiller" };
+  }
+  return { level: "green", label: "Tout va bien" };
+}
+
+function renderGlobalStatusLight(data) {
+  const severity = statusLightSeverity(data);
+  const button = $("campaign-block-global");
+  button.classList.remove("light-green", "light-amber", "light-red");
+  button.classList.add(`light-${severity.level}`);
+  $("campaign-block-global-label").textContent = severity.label;
+}
+
+function diagnosticDrawerContent(data) {
+  const state = data.human_state; const campaign = state.campaign || {};
+  const blockers = Array.isArray(data.today?.effective_blockers) ? data.today.effective_blockers : [];
+  const summary = definitionList([
+    ["Santé de l’infrastructure", `${state.health.label} — ${state.health.detail}`],
+    ["Activité de livraison", `${state.activity.label} — ${state.activity.detail}`],
+    ["Reprise", `${state.resume.automatic ? "Automatique" : state.resume.required ? "Action requise" : "Non automatique · facultative"} — ${state.resume.action}`],
+    ["Campagne", `${campaign.state_label || "—"}${campaign.blocked ? ` — ${campaign.cause || "bloquée"}` : ""}`],
+    ["Blocages effectifs", blockers.length ? `${blockers.length} · ${blockers[0].text}` : "Aucun"],
+  ]);
+  const container = node("div", "prose"); container.append(summary);
+  return container;
 }
 
 function renderDecisionAids(items) {
@@ -210,13 +253,25 @@ function renderTodayAttention(today) {
 
 // factory-watchdog findings (aged human gate, stuck PR, false-success close,
 // aging liveness defect). Additive to the Aujourd'hui panel; never touches
-// campaign-block-today or human_state.campaign.blocked -- a local finding
-// here must never read as the whole campaign being stopped (ADR-0016 §7).
+// human_state.campaign.blocked -- a local finding here must never read as
+// the whole campaign being stopped (ADR-0016 §7). The raw per-alert feed is
+// not usable by a non-dev (af-p4v9v point 2/9): default view is one
+// plain-language line + a "copy diagnostic" button; the raw list stays
+// available but collapsed behind a <details>, not shown as-is by default.
+let latestWatchdogAlerts = [];
 function renderWatchdogAlerts(today) {
   const alerts = Array.isArray(today?.watchdog_alerts) ? today.watchdog_alerts : [];
+  latestWatchdogAlerts = alerts;
   const section = $("watchdog-alerts"); section.classList.toggle("hidden", alerts.length === 0);
+  $("watchdog-alerts-summary").textContent = alerts.length
+    ? `${alerts.length} observation${alerts.length > 1 ? "s" : ""} technique${alerts.length > 1 ? "s" : ""} suivie${alerts.length > 1 ? "s" : ""} par le garde-fou. Aucune action de ta part n’est requise sauf indication contraire ci-dessous ; copie le diagnostic si tu veux de l’aide.`
+    : "Aucune observation.";
   const list = $("watchdog-alerts-list"); list.replaceChildren();
   alerts.forEach((alert) => { const item = node("li", "watchdog-alert"); item.append(node("strong", "", alert.id || ""), node("span", "", alert.message || "")); list.append(item); });
+}
+function watchdogDiagnosticText() {
+  if (!latestWatchdogAlerts.length) return "Aucune observation factory-watchdog en cours.";
+  return ["Diagnostic factory-watchdog :", ...latestWatchdogAlerts.map((alert) => `- ${alert.id} : ${alert.message}`), "", "Peux-tu m’expliquer ce que ça veut dire et ce que je dois faire ?"].join("\n");
 }
 
 const boardDefinitions = [
@@ -508,9 +563,41 @@ function compareVisit(data) {
   if (changes.length) { $("since-visit").textContent = `Depuis ta dernière visite : ${changes.join(" · ")}.`; $("since-visit").classList.remove("hidden"); } localStorage.setItem(key, JSON.stringify(current));
 }
 
+// Résultat produit actuel (point 5, af-p4v9v): when idle, say what the
+// factory IS doing (pending campaign, next eligible candidate) instead of
+// only a negative "no delivery in progress" -- and make the click-through
+// point at that real candidate, not a null focus.id that silently no-ops.
+function renderFocusCard(data) {
+  const focus = data.focus || {}; const next = data.human_state?.next_candidate; const idle = !focus.id;
+  $("focus-title").textContent = idle && next ? `En file : ${next.title}` : (focus.title || "Aucune livraison en cours");
+  setStatus($("focus-state"), focus.state, focus.state_label);
+  $("focus-phase").textContent = idle
+    ? (next ? `${next.state_label} · urgence ${next.urgency_label || "normale"} — ${next.reason || "attend une matérialisation du Mayor."}` : (focus.phase || "Aucune livraison produit n’est active."))
+    : focus.phase;
+  timed($("focus-elapsed"), focus.started_at);
+  $("focus-signal").dataset.signalTime = focus.last_signal_at || ""; $("focus-signal").textContent = signalAge(focus.last_signal_at);
+  const steps = focus.steps || {}; $("focus-steps-fact").classList.toggle("hidden", !steps.total);
+  if (steps.total) $("focus-steps").textContent = `${steps.completed} / ${steps.total}`;
+  $("step-fill").style.width = steps.total ? `${Math.round((steps.completed / steps.total) * 100)}%` : "0%";
+}
+
+// File Factory (point 7, af-p4v9v): the non-product factory queue shown
+// alongside product candidates so both real queues and their order are
+// visible in one place, not just documented in text elsewhere.
+function renderFactoryQueue(items) {
+  const container = $("factory-queue"); container.replaceChildren(); $("factory-queue-count").textContent = items.length;
+  items.slice(0, 6).forEach((item) => {
+    const row = node("li", "queue-item clickable"); const copy = node("div");
+    copy.append(node("div", "queue-title", item.title), node("div", "queue-meta", item.state));
+    row.append(copy); row.addEventListener("click", () => openItem({ id: item.id, title: item.title, store: "city" }));
+    container.append(row);
+  });
+  if (!items.length) container.append(node("li", "empty", "Aucun autre travail Factory en file."));
+}
+
 function render(data) {
-  snapshot = data; applyIdentity(data.product_memory?.product, data.operator); setStatus($("factory-state"), data.factory.state, data.factory.label); renderOperationalState(data); renderCampaignState(data); $("focus-title").textContent = data.focus.title; setStatus($("focus-state"), data.focus.state, data.focus.state_label); $("focus-phase").textContent = data.focus.phase; timed($("focus-elapsed"), data.focus.started_at); $("focus-signal").dataset.signalTime = data.focus.last_signal_at || ""; $("focus-signal").textContent = signalAge(data.focus.last_signal_at); const steps = data.focus.steps; $("focus-steps-fact").classList.toggle("hidden", !steps.total); if (steps.total) $("focus-steps").textContent = `${steps.completed} / ${steps.total}`; $("step-fill").style.width = steps.total ? `${Math.round((steps.completed / steps.total) * 100)}%` : "0%"; renderActiveTasks(data.active_tasks || []); renderTodayAttention(data.today); renderWatchdogAlerts(data.today); const delivered = data.last_delivery; $("last-delivery").textContent = `Dernière livraison : ${delivered.title}${delivered.pr ? ` · PR ${delivered.pr}` : ""}${delivered.ci === "success" ? " · CI verte" : ""}`;
-  renderDecisionAids(data.decision_aids || []); renderQueue(data.queue || []); renderMemory(data.product_memory, data.today); renderBusiness(data.product_memory); renderProject(data.product_memory, data); renderRoadmap(data); renderWorkflow(data.product_memory, data); renderContinuity(data); renderBoard(data.product_work || []); renderAgents(data.agents || []);
+  snapshot = data; applyIdentity(data.product_memory?.product, data.operator); setStatus($("factory-state"), data.factory.state, data.factory.label); renderOperationalState(data); renderGlobalStatusLight(data); renderFocusCard(data); renderActiveTasks(data.active_tasks || []); renderTodayAttention(data.today); renderWatchdogAlerts(data.today); const delivered = data.last_delivery; $("last-delivery").textContent = `Dernière livraison : ${delivered.title}${delivered.pr ? ` · PR ${delivered.pr}` : ""}${delivered.ci === "success" ? " · CI verte" : ""}`;
+  renderDecisionAids(data.decision_aids || []); renderQueue(data.queue || []); renderFactoryQueue(data.factory_work || []); renderMemory(data.product_memory, data.today); renderBusiness(data.product_memory); renderProject(data.product_memory, data); renderRoadmap(data); renderWorkflow(data.product_memory, data); renderContinuity(data); renderBoard(data.product_work || []); renderAgents(data.agents || []);
   const factoryWork = $("factory-work"); factoryWork.replaceChildren(); (data.factory_work || []).forEach((item) => factoryWork.append(node("div", "compact-item", item.title))); if (!factoryWork.children.length) factoryWork.append(node("p", "muted", "Aucun autre travail Factory.")); const infrastructure = $("infrastructure"); infrastructure.replaceChildren(); (data.infrastructure || []).forEach((item) => infrastructure.append(node("div", "compact-item", `${item.name} · ${item.state}`)));
   const alert = $("alert"); if (data.warnings.length) { alert.textContent = `Visibilité partielle : ${data.warnings.join(" · ")}`; alert.classList.remove("hidden"); } else alert.classList.add("hidden"); renderMobile(data); compareVisit(data); updateClocks(); restoreDeepLink();
 }
@@ -528,10 +615,12 @@ async function sendMayor() { const message = $("mayor-message").value.trim(); if
 function humanSummary(data) { const state = data.human_state; return [`Agent Factory`, `Santé : ${state.health.label}`, `Activité : ${state.activity.label} — ${state.activity.detail}`, `Résultat : ${state.result.title} — ${state.result.state_label}`, `Campagne : ${state.campaign.state_label}${state.campaign.blocked ? ` — ${state.campaign.cause}` : ""}`, `Reprise automatique : ${state.resume.automatic ? "oui" : "non"}`, `Condition : ${state.resume.condition || "aucune"}`, `Responsable : ${state.resume.owner_label}`, `Action utile : ${state.resume.action}`, `Décision bloquante ${operatorName() || "opérateur"} : ${state.needs_benjamin || "aucune"}`, `Blocages effectifs : ${(data.today?.effective_blockers || []).length}`, `Décisions générales ouvertes : ${(data.today?.general_decisions || []).length}`, `Prochain candidat : ${state.next_candidate ? `${state.next_candidate.id} · ${state.next_candidate.title} · ${state.next_candidate.state_label}` : "aucun"}`].join("\n"); }
 
 document.querySelectorAll(".nav-item").forEach((button) => button.addEventListener("click", () => activateView(button.dataset.view)));
-$("refresh").addEventListener("click", refresh); $("refresh-tokens").addEventListener("click", loadTokens); $("work-search").addEventListener("input", () => snapshot && renderBoard(snapshot.product_work || [])); $("reference-search").addEventListener("input", applyReferenceSearch); $("focus-card").addEventListener("click", () => snapshot?.focus?.id && openItem({ ...snapshot.focus, store: "city" })); $("focus-card").addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); $("focus-card").click(); } }); $("close-drawer").addEventListener("click", () => $("detail-drawer").close()); $("detail-drawer").addEventListener("click", (event) => { if (event.target === $("detail-drawer")) $("detail-drawer").close(); });
+$("refresh").addEventListener("click", refresh); $("refresh-tokens").addEventListener("click", loadTokens); $("work-search").addEventListener("input", () => snapshot && renderBoard(snapshot.product_work || [])); $("reference-search").addEventListener("input", applyReferenceSearch); $("focus-card").addEventListener("click", () => { if (!snapshot) return; if (snapshot.focus?.id) openItem({ ...snapshot.focus, store: "city" }); else if (snapshot.human_state?.next_candidate?.id) { const next = snapshot.human_state.next_candidate; openItem({ id: next.id, title: next.title, store: "city" }); } }); $("focus-card").addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); $("focus-card").click(); } }); $("close-drawer").addEventListener("click", () => $("detail-drawer").close()); $("detail-drawer").addEventListener("click", (event) => { if (event.target === $("detail-drawer")) $("detail-drawer").close(); });
 $("open-blocker-decision").addEventListener("click", () => { const id = $("open-blocker-decision").dataset.decisionId; if (id) openDecisionById(id); });
-$("campaign-block-global").addEventListener("click", () => activateView("today"));
+$("campaign-block-global").addEventListener("click", () => { if (!snapshot) return; activateView("today"); showDrawer("Diagnostic", "ÉTAT OPÉRATIONNEL", { Diagnostic: diagnosticDrawerContent(snapshot) }); });
 $("resume-action").addEventListener("click", () => { const prompt = $("resume-action").dataset.prompt; if (!prompt) return; activateView("mayor"); $("mayor-message").value = prompt; $("mayor-message").focus(); $("mayor-message").scrollIntoView({ behavior: "smooth", block: "center" }); });
+$("resume-alert-diagnostic-link").addEventListener("click", (event) => { event.preventDefault(); if (snapshot) showDrawer("Diagnostic", "ÉTAT OPÉRATIONNEL", { Diagnostic: diagnosticDrawerContent(snapshot) }); });
+$("watchdog-copy-diagnostic").addEventListener("click", async () => { await navigator.clipboard.writeText(watchdogDiagnosticText()); toast("Diagnostic copié"); });
 $("copy-summary").addEventListener("click", async () => { if (snapshot) { await navigator.clipboard.writeText(humanSummary(snapshot)); toast("Point de situation copié"); } }); $("copy-po-prompt").addEventListener("click", () => { activateView("po"); $("po-message").value = `Aide-moi à relire la roadmap et à choisir le prochain sujet produit utile, sans lancer de travail.`; $("po-message").focus(); });
 $("active-tasks-agents-link").addEventListener("click", (event) => { event.preventDefault(); activateView("agents"); });
 document.querySelectorAll("[data-prompt]").forEach((button) => button.addEventListener("click", () => { $("mayor-message").value = button.dataset.prompt; $("mayor-message").focus(); })); $("send-mayor").addEventListener("click", sendMayor); $("refresh-conversation").addEventListener("click", loadConversation); $("mayor-link-po").addEventListener("click", (event) => { event.preventDefault(); activateView("po"); });

@@ -1036,10 +1036,18 @@ class FactoryCockpitTest(unittest.TestCase):
         self.assertIn('$("open-blocker-decision").addEventListener("click"', script)
         self.assertIn('if (id) openDecisionById(id)', script)
         self.assertIn('blocker?.text || "Aucun blocage effectif."', script)
-        self.assertIn('id="health-label"', html)
-        self.assertIn('id="activity-label"', html)
+        # af-p4v9v: Sante/Activite no longer sit as their own always-on cards
+        # on Aujourd'hui -- they duplicated the header's factory-state pill
+        # and each other (points 10/11). Detail lives in the single traffic
+        # light's diagnostic drawer instead; Reprise stays but only surfaces
+        # when there is something to act on (point 12).
+        self.assertNotIn("state-contract-grid", html)
+        self.assertIn('id="campaign-block-global-label"', html)
+        self.assertIn('id="resume-alert"', html)
         self.assertIn('id="resume-condition"', html)
         self.assertIn("function renderOperationalState(data)", script)
+        self.assertIn("function renderGlobalStatusLight(data)", script)
+        self.assertIn("function diagnosticDrawerContent(data)", script)
         self.assertNotIn("si cet état persiste", script)
         self.assertNotIn('makeActivatable($("attention-card")', script)
         self.assertIn('[tabindex]:focus-visible', styles)

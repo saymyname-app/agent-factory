@@ -26,13 +26,18 @@ output=$("$COCKPIT" start)
 curl --fail --silent "$URL/health" | jq -e '.ok == true and .model_calls == 0' >/dev/null
 page=$(curl --fail --silent "$URL/")
 grep -Fq 'Comprendre l’usine en un coup d’œil' <<<"$page"
-grep -Fq 'SANTÉ DE L’INFRASTRUCTURE' <<<"$page"
-grep -Fq 'ACTIVITÉ DE LIVRAISON' <<<"$page"
+# af-p4v9v: Santé/Activité no longer sit as their own always-on cards on
+# Aujourd'hui (they duplicated the header pill and each other) -- their
+# detail moved into the single traffic light's diagnostic drawer, checked
+# against app.js below instead of the static page.
 grep -Fq 'REPRISE' <<<"$page"
 grep -Fq 'id="campaign-block-global"' <<<"$page"
-grep -Fq 'id="campaign-block-global" class="campaign-block-global hidden" data-view="today" type="button" role="alert" aria-live="assertive"' <<<"$page"
-grep -Fq 'id="campaign-block-today"' <<<"$page"
-grep -Fq 'Propriétaire de la reprise' <<<"$page"
+grep -Fq 'id="campaign-block-global" class="status-light" type="button" aria-haspopup="dialog"' <<<"$page"
+if grep -Fq 'id="campaign-block-today"' <<<"$page"; then
+  printf 'cockpit still contains the removed campaign-block-today duplicate\n' >&2
+  exit 1
+fi
+grep -Fq 'id="resume-alert"' <<<"$page"
 grep -Fq 'Candidats produit' <<<"$page"
 grep -Fq 'AIDE À LA DÉCISION' <<<"$page"
 grep -Fq 'Parler au Mayor' <<<"$page"
@@ -48,9 +53,10 @@ grep -Fq -- '--green:' <<<"$styles"
 script=$(curl --fail --silent "$URL/app.js")
 grep -Fq 'textContent' <<<"$script"
 grep -Fq 'renderOperationalState' <<<"$script"
-grep -Fq 'renderCampaignState' <<<"$script"
-grep -Fq 'campaign-block-global-cause' <<<"$script"
-grep -Fq 'campaign-block-today-action' <<<"$script"
+grep -Fq 'renderGlobalStatusLight' <<<"$script"
+grep -Fq 'diagnosticDrawerContent' <<<"$script"
+grep -Fq 'Santé de l’infrastructure' <<<"$script"
+grep -Fq 'Activité de livraison' <<<"$script"
 if grep -Fq 'si cet état persiste' <<<"$script"; then
   printf 'cockpit still contains the misleading persistence advice\n' >&2
   exit 1
