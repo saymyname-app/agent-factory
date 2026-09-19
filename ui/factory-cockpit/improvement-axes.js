@@ -23,16 +23,26 @@
     box.classList.toggle("error", Boolean(isError));
   }
 
+  // af-p4v9v point 6: a loading state that never resolves is a bug, not a
+  // design opinion. Bound every read to LOAD_TIMEOUT_MS so "Lecture…" always
+  // either turns into real content or a clear, retryable failure.
+  const LOAD_TIMEOUT_MS = 8000;
   async function load() {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), LOAD_TIMEOUT_MS);
     try {
-      const response = await fetch("/api/improvement-axes", { cache: "no-store" });
+      const response = await fetch("/api/improvement-axes", { cache: "no-store", signal: controller.signal });
       const value = await response.json();
       if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`);
       data = value;
       render();
     } catch (error) {
       const summary = $("axes-summary");
-      if (summary) summary.textContent = `Lecture impossible : ${error.message}`;
+      if (summary) summary.textContent = error.name === "AbortError"
+        ? "Lecture trop longue : le service n'a pas répondu à temps. Relis pour réessayer."
+        : `Lecture impossible : ${error.message}. Relis pour réessayer.`;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
