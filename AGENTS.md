@@ -77,13 +77,10 @@ For a change:
   tests): set `gc.needs_benjamin=true` AND mail `human` AND state the cause,
   then keep working on what is eligible. Anything else: mail `mayor` BLOCKED,
   `gc.outcome=fail`, drain. Never create a `human` gate: it notifies nobody.
-- **Standing ADMIN allowlist (ADR-0016 §7 row 4).** These five routine,
-  reversible operations never count as ADMIN and never trigger the
-  escalation contract above: restarting a dispatcher or a preview, pruning
-  merged branches, cleaning worktrees, rotating logs, reloading city
-  config. Nothing else is on the list — do not extend it. Anything outside
-  it (production, secrets, host access, recovery, GitHub repository/ruleset
-  settings) is still ADMIN and still escalates.
+- **Standing ADMIN allowlist:** routine reversible ops (dispatcher/preview
+  restart, pruning merged branches, cleaning worktrees, log rotation, city
+  config reload) don't trigger the escalation contract above — full list in
+  `docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` §7.
 - **No direct push to `main` or `dev`:** land through a pull request.
 
 ## Cost policy
@@ -94,15 +91,13 @@ meaningful risk; L4 multi-agent only when decomposition has measured value. Neve
 load whole backlogs or histories by default.
 
 Context engineering discipline (write / select / compress / isolate):
-measured practice shows agent output quality degrades once a session's
-context passes roughly half of its window, well before the hard limit —
-treat that as the trigger for compaction/handoff, not the window's actual
-ceiling (see the Mayor's session-budget guidance in its prompt template).
-Assemble prompts and durable docs so the load-bearing instruction is at the
-start or end, not buried mid-document — models attend to context edges more
-reliably than the middle. Give each agent role the smallest tool/skill
-surface that covers its job; a tool an agent never needs is still a standing
-tax on every turn's context.
+quality degrades past roughly half a session's context window, well
+before the hard limit — treat that as the compaction/handoff trigger
+(see the Mayor's session-budget guidance). Put load-bearing instructions
+at the start or end of prompts and docs, not buried mid-document —
+models attend to edges more reliably than the middle. Give each agent
+role only the tool/skill surface its job needs; an unused tool still
+taxes every turn's context.
 
 ## Inter-agent mail format
 
@@ -110,10 +105,10 @@ tax on every turn's context.
 coordination layer, not a second copy of durable state — Beads, Git, and PR
 evidence remain authoritative, so a message should point at that evidence
 rather than restate it. Prefer a compact **action-state record** over free
-narrative for routine coordination mail — research on inter-agent
-communication (PACT, 2026) shows this halves input tokens downstream with no
-loss of task performance, because the recipient needs the resulting state
-and what to do with it, not the story of how the sender got there:
+narrative for routine coordination mail — the recipient needs the
+resulting state and what to do with it, not the story of how the sender
+got there (research on inter-agent communication, PACT 2026, shows this
+halves downstream input tokens with no loss of task performance):
 
 ```
 ACTION: <what the sender did, one line>
@@ -122,12 +117,11 @@ EVIDENCE: <bead id(s), commit SHA(s), PR number(s) — references, not restateme
 NEXT:   <what happens next, or "none">
 ```
 
-- **Reference, don't restate.** Cite a bead ID, commit SHA, or PR number and
-  let the recipient pull detail on demand (`gc bd show <id>`) instead of
-  re-describing full context they can already reach.
-- **No exported reasoning.** Deliberation, dead ends, and internal scratch
-  work stay in the sender's own session — mail carries only what the
-  recipient needs to decide or act.
+- **Reference, don't restate.** Cite a bead ID, commit SHA, or PR number;
+  let the recipient pull detail on demand (`gc bd show <id>`).
+- **No exported reasoning.** Deliberation and dead ends stay in the
+  sender's own session — mail carries only what the recipient needs to
+  decide or act.
 - Use the ACTION/STATE/EVIDENCE/NEXT shape above for routine status/verdict
   mail. A genuinely ambiguous escalation that needs human judgment may still
   read as prose — clarity for a human decision outweighs the token saving
