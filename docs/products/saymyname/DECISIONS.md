@@ -721,6 +721,61 @@ before any release, deployment or additional repository access.
 or treating this data as usable for the public challenge. Reversal of level A:
 re-add the files, which remain in history and locally.
 
+**Update 2026-09-20 (superseded in part):** level B (the history purge) was decided by
+Benjamin and executed, and level A was done by hand rather than by `af-ldvic`. See the
+2026-09-20 entry below.
+
+### 2026-09-20 — Oxyl development data: everything real is removed and the git history is purged
+
+**Intent (Benjamin, 2026-09-20, his words).** On the data: "On peut certainement
+enlever toutes nos photos et toutes nos personnes. On peut même supprimer
+l'organisation de test si besoin :') Comme ca on restart fresh les tests
+utilisateurs avec la création d'une organisation. Bref on a rien besoin de garder
+là. Sauf les concepts." On the git history (the level B question left open on
+2026-09-19): "purgeons l'historique git." Constraints he stated the same day:
+never generate avatars or faces with an LLM ("je paie en tokens"), and any
+populated fictional organisation must come from a legal source with a per-image
+licence register.
+
+**Record.** Executed by Benjamin himself with the Factory frozen (2026-09-19 23:32
+to 2026-09-20 ~12:37). Three encrypted offline backups (gpg AES-256, on the
+workstation and on an external drive) with a restore test of the database dump.
+Photos untracked (`Say-my-name-back` PR #49, `Say-my-name-front` PR #57) and the
+photo storage moved out of the repositories (`PHOTOS_STORAGE_ROOT`). Development
+database emptied except `concepts`, `flyway_schema_history` and the five
+`public_challenge*` tables. Git history of both repositories rewritten with
+git-filter-repo and force-pushed on all branches: back 219 commits rewritten,
+first changed commit `ec69d4126dab0d23eff35c1b618b7845434d0e07`, new `dev`
+`9906d0d`; front 136 commits, first changed commit
+`fec807431d271b0e12a69ca2c73c845ea7dfe770`, new `dev` `b4a7826`; the `dev` tree is
+identical to before. Both rigs sanitized in place (worktrees and local branches
+deleted, `.beads` kept). Every plaintext copy on the workstation removed. MySQL
+binary logs purged. Old-to-new SHA maps:
+`docs/products/saymyname/history-purge-2026-09-20/`. A GitHub Support ticket for
+`refs/pull/*` and cached views was sent on 2026-09-20; its outcome is not known yet.
+
+**Mechanism (PO interpretation).** "Sauf les concepts" is read as: keep what the
+migrations seed and what the product needs to start (`concepts`, the Flyway
+history, the published public challenges) and remove every other row. This
+supersedes level A's "keep the developer's local copies working" and the
+synthetic-conversion path of `af-hq2j`, whose replacement script was not used.
+Level A was done by hand, so `af-ldvic` is cancelled as replaced; `af-5o2l1` (a
+deterministic check against new person photos) stays wanted.
+
+**Does NOT mean:** that the encrypted backups are to be deleted now (destroying
+them after the V1 release is a PO recommendation, not a decision); that a
+fictional organisation is decided (it is not, nothing was started); that GitHub's
+server-side references are already gone (they are not until Support acts); or that
+names can no longer appear in agent transcripts and bead history (they can, see
+`EXPOSURE_REVIEW.md`).
+
+**How a misreading would show.** Registration or the public challenge failing on
+the empty database (a seeded table wiped by mistake), or delivery evidence citing
+an old SHA that no longer resolves (translate it with the commit maps).
+
+**Reversal.** None for the history (irreversible by design). The database can be
+restored from the encrypted backup; Benjamin holds the passphrase.
+
 ## Open
 
 None. All Enterprise-tier questions are deferred — see `## Deferred`
