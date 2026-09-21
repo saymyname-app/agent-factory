@@ -240,6 +240,8 @@ bound to the same session and therefore win the next continuation claim.
 
 ## Evidence
 
+- `af-a0aku` — traceability payload for the corrected `factory-worker`
+  continuation handoff.
 - `tests/provider-failover-test.py` — detection on the real messages, pools,
   chains, backoff, manual controls, overlay, and the end-to-end acceptance
   scenario of af-ogyq: a Codex wall switches workers and restarts the stuck
