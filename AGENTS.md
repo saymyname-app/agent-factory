@@ -53,10 +53,8 @@ For a change:
 - GitHub is authoritative for code, branch, SHA, PR, CI, and merge state.
 - Beads is authoritative for executable work and dependencies.
 - One active Gas City controller per City.
-- Ordinary HQ Factory implementation is dispatched only through
-  `bin/factory-work-dispatch <af-bead-id>`. Its fixed `factory-worker` role
-  inherits provider-failover's `workspace` provider; `workspace` itself is
-  not a sling agent, and `bd.dog` remains Dolt maintenance only.
+- HQ Factory work uses `bin/factory-work-dispatch <af-bead-id>`: its fixed
+  `factory-worker` inherits `workspace`; never sling `workspace` or `bd.dog`.
 - V1 allows one writer per rig until worktree isolation is proven by canary.
 - Branch work happens in a `git worktree`, never by checking out in the live
   root (the root is the running city). Remove the worktree when its PR merges
@@ -105,14 +103,8 @@ taxes every turn's context.
 
 ## Inter-agent mail format
 
-`gc mail` (agent-to-agent and agent-to-human messages) is a notification and
-coordination layer, not a second copy of durable state — Beads, Git, and PR
-evidence remain authoritative, so a message should point at that evidence
-rather than restate it. Prefer a compact **action-state record** over free
-narrative for routine coordination mail — the recipient needs the
-resulting state and what to do with it, not the story of how the sender
-got there (research on inter-agent communication, PACT 2026, shows this
-halves downstream input tokens with no loss of task performance):
+`gc mail` is notification, not durable state: Beads, Git, and PR evidence
+remain authoritative. Routine coordination uses compact action-state records:
 
 ```
 ACTION: <what the sender did, one line>
