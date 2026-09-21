@@ -89,7 +89,10 @@ bg_start() {
 
 bg_wait() {
   local outfile=$1
-  while [[ ! -e "$outfile.rc" ]]; do sleep 0.02; done
+  # Redirection creates the sentinel before bg_start's printf writes the exit
+  # status. Wait for content, not existence, or a fast poll can read an empty
+  # rc and make `return` fail nondeterministically under CI load.
+  while [[ ! -s "$outfile.rc" ]]; do sleep 0.02; done
   local rc
   rc=$(<"$outfile.rc")
   return "$rc"
