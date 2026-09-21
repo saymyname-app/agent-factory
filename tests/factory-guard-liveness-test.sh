@@ -58,11 +58,12 @@ if [[ \$1 == bd && \$2 == list ]]; then
     [[ \$prev == --metadata-field ]] && metadata_field="\$arg"
     prev="\$arg"
   done
-  if [[ -n \$metadata_field ]]; then
-    f="$TMP/children-\${metadata_field#gc.root_bead_id=}.json"
-  else
-    f="$TMP/workflows.json"
-  fi
+  case "\$metadata_field" in
+    gc.root_bead_id=*) f="$TMP/children-\${metadata_field#gc.root_bead_id=}.json" ;;
+    gc.drain_control_id=*) f="$TMP/drain-\${metadata_field#gc.drain_control_id=}.json" ;;
+    "") f="$TMP/workflows.json" ;;
+    *) f="$TMP/no-such-list.json" ;;
+  esac
   if [[ -f \$f ]]; then cat "\$f"; else echo '[]'; fi
   exit 0
 fi
@@ -77,6 +78,10 @@ if [[ \$1 == bd && \$2 == update && \$3 == af-1vr4 ]]; then
 fi
 if [[ \$1 == session && \$2 == list ]]; then
   cat "$SESSIONS"; exit 0
+fi
+if [[ \$1 == rig && \$2 == list ]]; then
+  echo '{"rigs":[{"name":"saymyname-backend","path":"$TMP/city"}]}'
+  exit 0
 fi
 exit 0
 STUB
@@ -100,11 +105,13 @@ coord() {  # coord <sentinel-age-s> <progress-age-s|-> [state] [kind] [cause]
     [{id:"af-1vr4", metadata:({
       "gc.campaign_mode":"automatic", "gc.campaign_state":$st,
       "gc.campaign_block_kind":$k, "gc.campaign_cause":$c,
-      "gc.campaign_sentinel_at":$s, "gc.campaign_failure_count":"0"}
+      "gc.campaign_sentinel_at":$s, "gc.campaign_failure_count":"0",
+      "gc.campaign_candidate":"af-candidate", "gc.campaign_condition":"test-condition"}
       + (if $p == "" then {} else {"gc.campaign_progress_at":$p} end))}]' > "$COORD"
 }
 guard() { FACTORY_ROOT="$TMP/city" "$GUARD" "$@" 2>&1 || true; }
 creates() { grep -c '^bd create' "$CALLS" || true; }
+mails() { grep -c '^mail send mayor --notify -s Liveness defect filed: af-live1' "$CALLS" || true; }
 
 # 1. alive and advancing ---------------------------------------------------------
 coord 30 600
@@ -127,7 +134,7 @@ jq --arg id af-cur1 '.[0].metadata["gc.current_jit"] = $id' "$COORD" > "$COORD.n
 jq -n --arg hb "$(iso $((NOW - 5 * 60)))" '{id:"af-cur1", metadata:{"gc.last_heartbeat_at":$hb}}' > "$TMP/beads/af-cur1.json"
 before=$(creates)
 out=$(guard --check-only)
-grep -q "✓ liveness — campaign progress stamp is 90 min old, but the current result was active 5 min ago" <<<"$out" \
+grep -q "✓ liveness — campaign progress stamp is 90 min old, but the current result/workflow was active 5 min ago" <<<"$out" \
   || { echo "$out" >&2; fail "recent result activity did not override a stale progress stamp"; }
 grep -q "! liveness" <<<"$out" && fail "a result with recent activity was reported as a liveness defect"
 [ "$(creates)" = "$before" ] || fail "recent result activity still filed a liveness defect"
@@ -154,13 +161,111 @@ jq -n --arg hb "$(iso $((NOW - 8 * 60)))" \
   > "$TMP/children-af-wf1.json"
 before=$(creates)
 out=$(guard --check-only)
-grep -q "✓ liveness — campaign progress stamp is 90 min old, but the current result was active 8 min ago" <<<"$out" \
+grep -q "✓ liveness — campaign progress stamp is 90 min old, but the current result/workflow was active 8 min ago" <<<"$out" \
   || { echo "$out" >&2; fail "recent activity on a workflow tracked only via convoy link did not override a stale progress stamp"; }
 grep -q "! liveness" <<<"$out" && fail "a delegated workflow with recent step activity was reported as a liveness defect"
 [ "$(creates)" = "$before" ] || fail "recent delegated-workflow activity still filed a liveness defect"
 rm -f "$TMP/beads/af-cur2.json" "$TMP/beads/af-conv1.json" "$TMP/beads/af-wf1.json" \
       "$TMP/workflows.json" "$TMP/children-af-wf1.json"
 jq '.[0].metadata |= del(.["gc.current_jit"])' "$COORD" > "$COORD.next" && mv "$COORD.next" "$COORD"
+
+# 2d. af-f1jhi: a current outcome can name a cross-rig workflow directly.
+# Its own recent update joins the progress clock even though the result and
+# gc.campaign_progress_at are both old.
+coord 30 5400
+jq --arg id af-cur3 '.[0].metadata["gc.current_jit"] = $id' "$COORD" > "$COORD.next" && mv "$COORD.next" "$COORD"
+jq -n --arg old "$(iso $((NOW - 200 * 60)))" \
+  '{id:"af-cur3", updated_at:$old, metadata:{"gc.backend_workflow":"smb-wf2"}}' \
+  > "$TMP/beads/af-cur3.json"
+jq -n --arg recent "$(iso $((NOW - 6 * 60)))" \
+  '{id:"smb-wf2", status:"in_progress", updated_at:$recent,
+    metadata:{"gc.kind":"workflow", "gc.root_store_ref":"rig:saymyname-backend"}}' \
+  > "$TMP/beads/smb-wf2.json"
+printf '[]\n' > "$TMP/children-smb-wf2.json"
+printf '{"sessions":[]}\n' > "$SESSIONS"
+out=$(guard --check-only)
+grep -q "current result/workflow was active 6 min ago" <<<"$out" \
+  || { echo "$out" >&2; fail "recent explicitly linked workflow update did not suppress a false stall"; }
+
+# An old linked workflow is still stalled. Merely finding a live session is
+# insufficient when it has no recent last_active heartbeat.
+jq --arg old "$(iso $((NOW - 200 * 60)))" '.updated_at = $old' \
+  "$TMP/beads/smb-wf2.json" > "$TMP/beads/smb-wf2.json.next"
+mv "$TMP/beads/smb-wf2.json.next" "$TMP/beads/smb-wf2.json"
+jq -n --arg old "$(iso $((NOW - 200 * 60)))" \
+  '[{id:"smb-drain2", status:"open", updated_at:$old,
+     metadata:{"gc.root_bead_id":"smb-wf2", "gc.kind":"drain"}}]' \
+  > "$TMP/children-smb-wf2.json"
+jq -n --arg old "$(iso $((NOW - 200 * 60)))" \
+  '[{id:"smb-nested2", status:"open", updated_at:$old,
+     metadata:{"gc.kind":"workflow", "gc.drain_control_id":"smb-drain2"}}]' \
+  > "$TMP/drain-smb-drain2.json"
+jq -n --arg old "$(iso $((NOW - 200 * 60)))" \
+  '[{id:"smb-step2", status:"in_progress", updated_at:$old,
+     metadata:{"gc.root_bead_id":"smb-nested2", "gc.session_id":"af-worker1"}}]' \
+  > "$TMP/children-smb-nested2.json"
+printf '{"sessions":[{"id":"af-worker1","state":"active"}]}\n' > "$SESSIONS"
+out=$(guard --check-only)
+grep -q "liveness — no campaign progress for 90 min" <<<"$out" \
+  || { echo "$out" >&2; fail "session existence without a recent heartbeat masked a linked-workflow stall"; }
+
+# The same explicitly linked session with a recent heartbeat is verified
+# activity and suppresses the false liveness defect.
+jq -n --arg active "$(iso $((NOW - 4 * 60)))" \
+  '{sessions:[{id:"af-worker1", state:"active", last_active:$active}]}' > "$SESSIONS"
+out=$(guard --check-only)
+grep -q "current result/workflow was active 4 min ago" <<<"$out" \
+  || { echo "$out" >&2; fail "recent heartbeat from the linked workflow agent was ignored"; }
+
+# Malformed links degrade to the previous result-only behavior and are never
+# handed to gc as an identifier.
+jq '.metadata["gc.backend_workflow"] = "not an id"' "$TMP/beads/af-cur3.json" \
+  > "$TMP/beads/af-cur3.json.next"
+mv "$TMP/beads/af-cur3.json.next" "$TMP/beads/af-cur3.json"
+out=$(guard --check-only)
+grep -q "liveness — no campaign progress for 90 min" <<<"$out" \
+  || { echo "$out" >&2; fail "malformed workflow link changed prior liveness behavior"; }
+grep -q 'bd show not an id' "$CALLS" && fail "malformed workflow link was sent to gc bd show"
+
+# A closed non-pass linked workflow is a defect even when its close/update is
+# recent. The guard files and mails once; the existing liveness-bead pointer
+# and watchdog cooldown keep subsequent ticks deduplicated.
+jq '.metadata["gc.backend_workflow"] = "smb-wf2"' "$TMP/beads/af-cur3.json" \
+  > "$TMP/beads/af-cur3.json.next"
+mv "$TMP/beads/af-cur3.json.next" "$TMP/beads/af-cur3.json"
+jq --arg recent "$(iso $((NOW - 2 * 60)))" \
+  '.status = "closed" | .updated_at = $recent | .metadata["gc.outcome"] = "fail"' \
+  "$TMP/beads/smb-wf2.json" > "$TMP/beads/smb-wf2.json.next"
+mv "$TMP/beads/smb-wf2.json.next" "$TMP/beads/smb-wf2.json"
+printf '{"sessions":[]}\n' > "$SESSIONS"
+out=$(guard --check-only)
+grep -q "linked workflow smb-wf2 closed with gc.outcome=fail" <<<"$out" \
+  || { echo "$out" >&2; fail "closed-fail linked workflow was mistaken for recent progress"; }
+: > "$CALLS"
+out=$(guard)
+grep -q "filed liveness defect af-live1" <<<"$out" \
+  || { echo "$out" >&2; fail "closed-fail linked workflow did not file a recovery-visible defect"; }
+[ "$(mails)" = "1" ] || fail "closed-fail linked workflow should mail the Mayor exactly once"
+out=$(guard)
+grep -q "already filed: af-live1" <<<"$out" \
+  || { echo "$out" >&2; fail "closed-fail linked workflow did not reuse its open liveness defect"; }
+[ "$(creates)" = "1" ] || fail "closed-fail linked workflow filed duplicate defects"
+[ "$(mails)" = "1" ] || fail "closed-fail linked workflow sent duplicate immediate mail"
+printf '{"id":"af-live1","status":"closed"}\n' > "$TMP/beads/af-live1.json"
+out=$(guard)
+grep -q "known cause already diagnosed (af-live1) — deferring next check" <<<"$out" \
+  || { echo "$out" >&2; fail "unchanged closed-fail workflow did not enter the liveness cooldown"; }
+[ "$(creates)" = "1" ] || fail "unchanged closed-fail workflow refiled immediately after diagnosis"
+[ "$(mails)" = "1" ] || fail "unchanged closed-fail workflow remailed immediately after diagnosis"
+
+rm -f "$TMP/beads/af-cur3.json" "$TMP/beads/smb-wf2.json" \
+  "$TMP/children-smb-wf2.json" "$TMP/drain-smb-drain2.json" \
+  "$TMP/children-smb-nested2.json" "$TMP/beads/af-live1.json"
+printf '{"sessions":[]}\n' > "$SESSIONS"
+jq '.[0].metadata |= (del(.["gc.current_jit"]) | del(.["gc.campaign_liveness_bead"]) |
+    del(.["gc.campaign_liveness_anchor"]) | del(.["gc.campaign_liveness_cooldown_until"]))' \
+  "$COORD" > "$COORD.next" && mv "$COORD.next" "$COORD"
+: > "$CALLS"
 
 # 3. the default run files it exactly once, and pages the Mayor -----------------
 out=$(guard)

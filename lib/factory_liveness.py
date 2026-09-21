@@ -31,15 +31,17 @@ result bead itself (`current_result`) and checks its own gc.last_heartbeat_at
 / updated_at: recent activity there is ground truth the campaign is not
 stuck, independent of whether the sentinel's bookkeeping caught it.
 
-af-py8n1: `current_result` can itself be a static top-level bead that
-delegates its real work to a workflow (e.g. build-basic) tracked only by a
-shared convoy "tracks" link, never a --parent edge -- neither the workflow
-root nor its many decomposed/review children ever touch the result bead's
-own heartbeat/updated_at, so a full multi-hour run underneath it can also
-read as a stall. `assess` additionally takes `current_workflow`, whatever
-beads bin/factory-guard found for that delegated workflow (its root plus
-any currently open/in_progress step tracking it back via gc.root_bead_id),
-and folds the freshest activity across all of them in with current_result's.
+af-py8n1 / af-f1jhi: `current_result` can itself be a static top-level bead
+that delegates its real work to a workflow (e.g. build-basic). The workflow
+may be tracked through a shared convoy or, across rigs, named explicitly by
+`gc.backend_workflow`. Neither the workflow root nor its nested steps
+necessarily touch the result bead's own heartbeat/updated_at. `assess`
+therefore also takes `current_workflow`: the linked root, the live workflow
+beads bin/factory-guard can prove belong below it, and synthetic heartbeat
+records for active sessions explicitly named by those beads. The freshest
+verified timestamp joins the composite progress clock. Session existence by
+itself is never an activity timestamp, and a linked workflow closed with a
+non-pass outcome is a failure, never progress.
 
 CLI: reads the coordination bead JSON (a list or an object) on stdin and prints
 one line, "<level>\\t<code>\\t<message>": level is ok, info or bad; code is
@@ -197,6 +199,29 @@ def _current_result_activity(
     return max(activities) if activities else None
 
 
+def _linked_workflow_failure(
+    current_workflow: list[dict[str, Any]] | None,
+) -> tuple[str, str] | None:
+    """Return (workflow id, outcome) for a linked root closed non-pass.
+
+    factory-guard always places the explicitly discovered workflow root first
+    in ``current_workflow``. Descendant steps can legitimately close ``fail``
+    while a retry remains eligible, so only the root decides this verdict.
+    Missing outcome retains the previous liveness behavior; the deterministic
+    false-success watchdog owns that separate malformed-close contract.
+    """
+    if not isinstance(current_workflow, list) or not current_workflow:
+        return None
+    root = current_workflow[0]
+    if not isinstance(root, dict) or str(root.get("status") or "").lower() != "closed":
+        return None
+    metadata = root.get("metadata") if isinstance(root.get("metadata"), dict) else {}
+    outcome = str(metadata.get("gc.outcome") or "").strip().lower()
+    if not outcome or outcome in {"pass", "no-op", "noop"}:
+        return None
+    return str(root.get("id") or "unknown"), outcome
+
+
 def mayor_page_since(
     mayor_session: dict[str, Any] | None,
     now: float,
@@ -269,6 +294,14 @@ def assess(
         last_error = str(metadata.get("gc.campaign_last_error") or "").strip()
         failure_note = f" ({failures}/{FAILURE_THRESHOLD} consecutive sentinel failures: {last_error})"
 
+    workflow_failure = _linked_workflow_failure(current_workflow)
+    if workflow_failure is not None:
+        workflow_id, outcome = workflow_failure
+        return "bad", "workflow_failed", (
+            f"linked workflow {workflow_id} closed with gc.outcome={outcome} — "
+            "the current result needs recovery"
+        )
+
     result_activity = _current_result_activity(current_result, current_workflow)
 
     def _result_active_note(age_min: float) -> tuple[str, str, str] | None:
@@ -278,7 +311,7 @@ def assess(
         if result_idle > liveness_minutes:
             return None
         return "ok", "active_result", (
-            f"campaign progress stamp is {age_min:.0f} min old, but the current result "
+            f"campaign progress stamp is {age_min:.0f} min old, but the current result/workflow "
             f"was active {result_idle:.0f} min ago{failure_note}"
         )
 
