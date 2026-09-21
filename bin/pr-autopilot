@@ -142,27 +142,30 @@ stuck_reason() {  # mergeStateStatus checks -> prints why the PR is stuck, or no
   printf '%s' "$reason"
 }
 
-stuck_beads() {  # rig_path num -> ids of the open stuck bead(s) filed for this PR
+stuck_beads() {  # num -> ids of the open stuck bead(s) filed for this PR
   # By title prefix, not the full title: the reason can change between passes
   # (DIRTY -> BEHIND) and is unknown once the PR has recovered.
-  (cd "$1" && gc bd list --status open --json 2>/dev/null) \
-    | jq -r --arg t "[autopilot] PR #$2 stuck:" '.[]|select((.title//"")|startswith($t))|.id' 2>/dev/null
+  # af-k1f97: reads the per-rig $RIG_OPEN_BEADS_JSON cache (fetched once per
+  # rig) instead of shelling out to `gc bd list` per PR -- see that variable's
+  # definition below for why.
+  printf '%s' "$RIG_OPEN_BEADS_JSON" \
+    | jq -r --arg t "[autopilot] PR #$1 stuck:" '.[]|select((.title//"")|startswith($t))|.id' 2>/dev/null
 }
 
-ci_failure_beads() {  # rig_path num -> ids of the open "[ci] PR #num failed" bead(s) filed for this PR
+ci_failure_beads() {  # num -> ids of the open "[ci] PR #num failed" bead(s) filed for this PR
   # af-gpq0y: smb-au8d ("[ci] PR #47 failed required checks", P1) stayed open
   # after PR #47's checks went green and it merged -- nothing ever closed the
   # flag once the failure it reported was resolved. By title prefix, same
   # reasoning as stuck_beads: the base branch name is fixed per rig here so
   # the full title is stable, but matching the prefix keeps this resilient if
   # that ever changes.
-  (cd "$1" && gc bd list --status open --json 2>/dev/null) \
-    | jq -r --arg t "[ci] PR #$2 failed" '.[]|select((.title//"")|startswith($t))|.id' 2>/dev/null
+  printf '%s' "$RIG_OPEN_BEADS_JSON" \
+    | jq -r --arg t "[ci] PR #$1 failed" '.[]|select((.title//"")|startswith($t))|.id' 2>/dev/null
 }
 
 close_ci_failure_beads() {  # repo rig_path num reason
   local repo=$1 rig_path=$2 num=$3 reason=$4 b
-  for b in $(ci_failure_beads "$rig_path" "$num"); do
+  for b in $(ci_failure_beads "$num"); do
     log "  PR #$num: $reason -> closing CI-failure bead $b"
     run bash -c "cd '$rig_path' && gc bd update '$b' --status closed \
       --append-notes 'Closed by pr-autopilot: PR #$num $reason.'"
@@ -177,7 +180,7 @@ stuck_pr() {  # repo rig_path num mergeStateStatus checks labels
   case "$labels" in
     *" $STUCK_LABEL "*)
       title="[autopilot] PR #$num stuck: $reason"
-      if [ -z "$(stuck_beads "$rig_path" "$num")" ]; then
+      if [ -z "$(stuck_beads "$num")" ]; then
         log "  PR #$num: stuck across passes ($reason) -> filing"
         run bash -c "cd '$rig_path' && gc bd create '$title' -p 2 -t bug \
           -d 'PR stuck across multiple pr-autopilot passes (every 3 min): $reason.
@@ -211,6 +214,18 @@ for entry in "${RIGS[@]}"; do
   rig_path="$FACTORY/$rig_dir"
   [ -d "$rig_path" ] || { log "  SKIP: $rig_path missing"; ERRORS=$((ERRORS+1)); continue; }
 
+  # af-k1f97: fetch this rig's bead lists ONCE per tick and reuse them for
+  # every PR below, instead of re-running `gc bd list` per PR. The RECONCILE
+  # loop used to run close_ci_failure_beads() (one `gc bd list --status open`)
+  # plus a second unfiltered `gc bd list` per merged PR -- up to 60 calls for
+  # ~30 merged PRs on one rig, each measured at ~4.6s, which alone blew the
+  # whole tick's 100s budget before agent-factory (rig 3) was ever reached.
+  # Stale-within-a-tick is fine: a bead this script itself closes/creates for
+  # PR N is never looked up again for that same N within the same pass, and a
+  # PR cannot be both "open" and "merged" in the same `gh pr list` snapshot.
+  RIG_OPEN_BEADS_JSON=$(cd "$rig_path" && gc bd list --status open --json 2>/dev/null)
+  [ -n "$RIG_OPEN_BEADS_JSON" ] || RIG_OPEN_BEADS_JSON='[]'
+
   # ---------- 1. ARM open PRs targeting dev ----------
   open_prs=$(gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
     --json number,isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid,labels 2>/dev/null)
@@ -236,7 +251,7 @@ for entry in "${RIGS[@]}"; do
         if [ -z "$(stuck_reason "$state" "$checks")" ]; then
           run gh pr edit "$num" --repo "$repo" --remove-label "$STUCK_LABEL" >/dev/null 2>&1
           vlog "PR #$num: no longer stuck -> removed $STUCK_LABEL"
-          for stale in $(stuck_beads "$rig_path" "$num"); do
+          for stale in $(stuck_beads "$num"); do
             log "  PR #$num: recovered -> closing stuck bead $stale"
             run bash -c "cd '$rig_path' && gc bd update '$stale' --status closed \
               --append-notes 'Closed by pr-autopilot: PR #$num is no longer stuck (state=$state, checks=$checks).'"
@@ -254,7 +269,7 @@ for entry in "${RIGS[@]}"; do
     if [ "$checks" = "FAILURE" ]; then
       log "  PR #$num: required checks FAILED -> flagging"
       title="[ci] PR #$num failed required checks on $dev"
-      existing=$(cd "$rig_path" && gc bd list --status open --json 2>/dev/null \
+      existing=$(printf '%s' "$RIG_OPEN_BEADS_JSON" \
         | jq -r --arg t "$title" '[.[]|select(.title==$t)]|length' 2>/dev/null)
       if [ "${existing:-0}" = "0" ]; then
         run bash -c "cd '$rig_path' && gc bd create '$title' -p 1 -t bug \
@@ -349,6 +364,18 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     --json number,headRefName,mergeCommit 2>/dev/null \
     | jq -r '.[]|[.number,.headRefName,(.mergeCommit.oid//"")]|@tsv' 2>/dev/null)
 
+  # af-k1f97: the work bead a merged PR reconciles onto is usually already
+  # closed by the time the PR merges (deliver-close runs before push-and-pr),
+  # so this lookup needs the full, unfiltered bead history -- not just open
+  # beads. Fetched once per rig, not once per merged PR, for the same reason
+  # as $RIG_OPEN_BEADS_JSON above. Only fetched when there is at least one
+  # merged PR to reconcile, since it's the more expensive of the two lists.
+  RIG_ALL_BEADS_JSON='[]'
+  if [ -n "$merged" ]; then
+    RIG_ALL_BEADS_JSON=$(cd "$rig_path" && gc bd list --json 2>/dev/null)
+    [ -n "$RIG_ALL_BEADS_JSON" ] || RIG_ALL_BEADS_JSON='[]'
+  fi
+
   while IFS=$'\t' read -r num branch sha; do
     [ -z "${num:-}" ] && continue
     [ -z "${branch:-}" ] && continue
@@ -361,7 +388,7 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     # The flag beads filed above ("[ci] ... failed", "[autopilot] ... stuck")
     # carry pr_number too; they are about the PR, not the work it delivers, and
     # must never be stamped merged in place of the work bead.
-    bead=$(cd "$rig_path" && gc bd list --json 2>/dev/null \
+    bead=$(printf '%s' "$RIG_ALL_BEADS_JSON" \
       | jq -r --arg b "$branch" --arg n "$num" \
         '[.[]|select((.metadata.source//"")!="pr-autopilot")
               |select((.metadata["gc.work_branch"]//"")==$b
