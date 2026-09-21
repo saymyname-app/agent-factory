@@ -22,6 +22,14 @@ that needs another item's completed output before creating the convoy --
 offered to a worker until its prerequisites close. Genuinely independent
 items are unaffected and keep draining in parallel under
 `drain_policy=separate`.
+
+Local fail-fast envelope (2026-09-21, af-jz8kc): graph dependencies become
+ready when their blocker closes, regardless of whether it closed pass or fail.
+The top-level build stages therefore run inside the `build-pipeline` scope and
+opt into `gc.on_fail=abort_scope`. A hard gate/control failure now closes the
+scope fail and marks every later build stage skipped before a worker can claim
+it; the workflow finalizer then closes the root fail from the scope outcome.
+This uses Gas City's existing scope contract and does not fork controller code.
 """
 formula = "build-basic"
 version = 1
@@ -40,10 +48,16 @@ interaction_modes = ["interactive", "autonomous", "headless"]
 review_modes = ["report", "agent", "interactive"]
 
 [[steps]]
+id = "prepare"
+title = "Prepare build context"
+metadata = { "gc.run_target" = "gc.run-operator", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+description_file = "../assets/workflows/build-basic/prepare.md"
+
+[[steps]]
 id = "requirements"
 title = "Generate requirements"
 needs = ["prepare"]
-metadata = { "gc.run_target" = "gc.requirements-planner", "gc.build.artifact_schema" = "gc.build.requirements.v1", "gc.build.artifact_path_keys" = "gc.build.requirements_path,gc.var.requirements_path" }
+metadata = { "gc.run_target" = "gc.requirements-planner", "gc.build.artifact_schema" = "gc.build.requirements.v1", "gc.build.artifact_path_keys" = "gc.build.requirements_path,gc.var.requirements_path", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
 description_file = "../assets/workflows/build-basic/requirements.md"
 
 [steps.check]
@@ -58,7 +72,7 @@ timeout = "5m"
 id = "plan"
 title = "Write implementation plan"
 needs = ["requirements"]
-metadata = { "gc.run_target" = "gc.design-author", "gc.build.artifact_schema" = "gc.build.plan.v1", "gc.build.artifact_path_keys" = "gc.build.plan_path,gc.var.plan_path" }
+metadata = { "gc.run_target" = "gc.design-author", "gc.build.artifact_schema" = "gc.build.plan.v1", "gc.build.artifact_path_keys" = "gc.build.plan_path,gc.var.plan_path", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
 description_file = "../assets/workflows/build-basic/plan.md"
 
 [steps.check]
@@ -73,14 +87,14 @@ timeout = "5m"
 id = "plan-review"
 title = "Run design review"
 needs = ["plan"]
-metadata = { "gc.run_target" = "gc.review-synthesizer" }
+metadata = { "gc.run_target" = "gc.review-synthesizer", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
 description_file = "../assets/workflows/build-basic/plan-review.md"
 
 [[steps]]
 id = "decompose"
 title = "Create task beads"
 needs = ["plan-review"]
-metadata = { "gc.run_target" = "gc.task-decomposer", "gc.build.artifact_schema" = "gc.build.decomposition.v1", "gc.build.artifact_path_keys" = "gc.build.decomposition_path,gc.var.decomposition_path" }
+metadata = { "gc.run_target" = "gc.task-decomposer", "gc.build.artifact_schema" = "gc.build.decomposition.v1", "gc.build.artifact_path_keys" = "gc.build.decomposition_path,gc.var.decomposition_path", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
 description_file = "../assets/workflows/build-basic/decompose.md"
 
 [steps.check]
@@ -96,7 +110,7 @@ id = "implement"
 title = "Drain build implementation"
 needs = ["decompose"]
 condition = "{{drain_policy}} == separate"
-metadata = { "gc.run_target" = "{{implementation_target}}" }
+metadata = { "gc.run_target" = "{{implementation_target}}", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
 description_file = "../assets/workflows/build-basic/implement.md"
 
 [steps.drain]
@@ -109,7 +123,7 @@ id = "implement-same-session"
 title = "Drain build implementation in one shared session"
 needs = ["decompose"]
 condition = "{{drain_policy}} == same-session"
-metadata = { "gc.run_target" = "{{implementation_target}}" }
+metadata = { "gc.run_target" = "{{implementation_target}}", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
 description_file = "../assets/workflows/build-basic/implement-same-session.md"
 
 [steps.drain]
@@ -122,11 +136,26 @@ member_access = "exclusive"
 single_lane = true
 
 [[steps]]
+id = "summarize-implementation"
+title = "Write canonical implementation summary"
+needs = ["implement", "implement-same-session"]
+metadata = { "gc.run_target" = "gc.run-operator", "gc.build.artifact_schema" = "gc.build.implementation-summary.v1", "gc.build.artifact_path_keys" = "gc.build.implementation_summary_path", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+description_file = "../assets/workflows/build-basic/summarize-implementation.md"
+
+[steps.check]
+max_attempts = 3
+
+[steps.check.check]
+mode = "exec"
+path = ".gc/scripts/checks/build-artifact-valid.sh"
+timeout = "5m"
+
+[[steps]]
 id = "review"
 title = "Run starter implementation review"
 needs = ["summarize-implementation"]
-metadata = { "gc.run_target" = "gc.implementation-reviewer", "gc.build.artifact_schema" = "gc.build.review.v1", "gc.build.artifact_path_keys" = "gc.build.review_report_path" }
-expand = "build-basic-review"
+metadata = { "gc.run_target" = "gc.implementation-reviewer", "gc.build.artifact_schema" = "gc.build.review.v1", "gc.build.artifact_path_keys" = "gc.build.review_report_path", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+expand = "build-basic-review-scoped"
 expand_vars = { implementation_target = "{{implementation_target}}" }
 description_file = "../assets/workflows/build-basic/review.md"
 
@@ -134,7 +163,7 @@ description_file = "../assets/workflows/build-basic/review.md"
 id = "finalize"
 title = "Finalize build-basic"
 needs = ["review"]
-metadata = { "gc.run_target" = "gc.run-operator", "gc.build.artifact_schema" = "gc.build.final-report.v1", "gc.build.artifact_path_keys" = "gc.build.final_report_path" }
+metadata = { "gc.run_target" = "gc.run-operator", "gc.build.artifact_schema" = "gc.build.final-report.v1", "gc.build.artifact_path_keys" = "gc.build.final_report_path", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
 description_file = "../assets/workflows/build-basic/finalize.md"
 
 [steps.check]
@@ -149,5 +178,12 @@ timeout = "5m"
 id = "publish"
 title = "Optionally publish build-basic"
 needs = ["finalize"]
-metadata = { "gc.run_target" = "gc.publisher" }
+metadata = { "gc.run_target" = "gc.publisher", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
 description_file = "../assets/workflows/build-basic/publish.md"
+
+[[steps]]
+id = "build-pipeline"
+title = "Finalize build pipeline scope"
+needs = ["prepare", "requirements", "plan", "plan-review", "decompose", "implement", "implement-same-session", "summarize-implementation", "review", "finalize", "publish"]
+description = "Terminal fail-fast scope for the complete build-basic pipeline. Gas City control beads close this scope with gc.outcome=fail when any member marked gc.on_fail=abort_scope fails; later members are closed skipped and must never be claimed."
+metadata = { "gc.kind" = "scope", "gc.scope_name" = "build-pipeline", "gc.scope_role" = "body" }

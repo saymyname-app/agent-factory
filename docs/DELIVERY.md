@@ -485,6 +485,30 @@ artefact volontairement invalide est refusé avec les erreurs structurées du
 validateur. Vérifier seulement que le chemin existe ne prouve pas que le
 contrôle s'exécute.
 
+`build-basic` place en plus toute sa chaîne — préparation, exigences, plan,
+décomposition, implémentation, synthèse, revue, finalisation et publication —
+dans une portée Gas City `build-pipeline`. Chaque étape porte
+`gc.on_fail=abort_scope`. Une fermeture dure d'un contrôle (`gc.outcome=fail`,
+par exemple `gc.failure_reason=control_dispatch_error`) ferme donc la portée en
+échec et ferme les étapes suivantes avec `gc.outcome=skipped` avant qu'un agent
+puisse les réclamer ; le finaliseur ferme ensuite la racine en échec. Une
+dépendance graph.v2 attend seulement la fermeture de son prédécesseur, pas son
+succès : retirer cette portée réintroduirait l'exécution coûteuse des producteurs
+et des boucles de revue après un gate en échec. Le test
+`tests/build-basic-fail-fast-test.py` verrouille l'enveloppe complète, y compris
+les deux variantes de drain et les étapes héritées recopiées localement pour ne
+pas perdre leur prompt. Le test local
+`tests/build-basic-fail-fast-runtime-test.sh` instancie en plus un graphe dans
+une ville isolée, injecte `control_dispatch_error`, exécute les contrôles réels
+et prouve que les descendants de revue sont fermés `skipped`, qu'aucune seconde
+itération n'apparaît et que la racine se ferme `fail` en deux passes bornées.
+La métadonnée portée par l'hôte d'une expansion n'est
+pas transmise aux étapes générées : le fork local
+`build-basic-review-scoped.formula.toml` place donc aussi la préparation, le
+contrôle de boucle et la cible finale de la revue dans `build-pipeline`. Sans
+cette seconde protection, une boucle de revue imbriquée déjà matérialisée
+pourrait rester exécutable malgré l'échec d'un gate antérieur.
+
 ## SayMyName rig contracts
 
 ### Backend — `saymyname-backend` / `smb`
