@@ -183,6 +183,26 @@ Condition to re-add: a passing live test of the exact launch command against
 this host's ChatGPT-account login, documented here, before Spark is reintroduced
 anywhere in policy or chains.
 
+### 11. Codex restored to first choice (af-wpjgu, 2026-09-21)
+
+Intent (Benjamin, 2026-09-18): the 2026-09-18 provisional switch to
+Claude-first for `workspace`, `mayor`, and `ux-reviewer` was explicit and
+temporary — « codex vient en secondaire... pour l'instant », not a
+permanent architecture change. It was to be revisited once Codex's standard
+quota was confirmed reset and `codex-spark` was either confirmed usable
+again or removed from the chain.
+
+Mechanism: both conditions in the original bead are now met — Codex's
+standard quota reset at 2026-09-21T05:22Z and `provider-failover status`
+confirms the `openai` pool `available` as of 08:15Z; `codex-spark` was
+removed outright rather than restored (§10, af-i6018). `config/provider-
+policy.json`'s three affected chains (`workspace`, `mayor`, `ux-reviewer`)
+are restored to Codex-first, Claude as fallback, per each target's original
+design intent — `ux-reviewer` in particular regains its intended
+reviewer/author model independence now that `workspace`/`mayor` are back on
+Codex. `claude-reviewer`'s chain was never part of this provisional change
+and is untouched.
+
 ## Evidence
 
 - `tests/provider-failover-test.py` — detection on the real messages, pools,

@@ -183,16 +183,16 @@ class Resolution(unittest.TestCase):
         self.assertEqual(agents | {"workspace"}, set(self.policy["targets"]))
 
     def test_preferred_when_nothing_is_wrong(self):
-        # 2026-09-18 (Benjamin, af-88za4): Claude preferred everywhere while
-        # Codex's standard quota is down and gpt-5.3-codex-spark is unusable
-        # under this ChatGPT account -- see config/provider-policy.json "why".
-        self.assertEqual(("claude-standard", "preferred"), (self.pick()["provider"], self.pick()["reason"]))
+        # Codex restored to first choice (af-wpjgu, 2026-09-21): its standard
+        # quota reset and gpt-5.3-codex-spark was removed outright (af-i6018)
+        # -- see config/provider-policy.json "why".
+        self.assertEqual(("codex", "preferred"), (self.pick()["provider"], self.pick()["reason"]))
 
-    def test_codex_out_does_not_disturb_claude_first_targets(self):
-        """Every target chain now prefers a Claude profile, so an isolated
-        Codex outage on its own moves nothing -- it was already on Claude."""
+    def test_codex_out_moves_every_target_to_its_claude_fallback(self):
+        """Every target chain prefers Codex again (af-wpjgu, 2026-09-21), so
+        an isolated Codex outage now visibly moves every target to Claude."""
         self.exhaust("openai")
-        self.assertEqual(("claude-standard", "preferred"), (self.pick()["provider"], self.pick()["reason"]))
+        self.assertEqual(("claude-standard", "fallback"), (self.pick()["provider"], self.pick()["reason"]))
         self.assertEqual("claude-standard", self.pick("mayor")["provider"])
         self.assertEqual("claude", self.pick("ux-reviewer")["provider"])
 
@@ -203,7 +203,7 @@ class Resolution(unittest.TestCase):
         self.error("openai", category="auth")
         entries = {e["provider"]: e["state"] for e in self.pick()["chain"]}
         self.assertEqual("error", entries["codex"])
-        self.assertEqual(("claude-standard", "preferred"), (self.pick()["provider"], self.pick()["reason"]))
+        self.assertEqual(("claude-standard", "fallback"), (self.pick()["provider"], self.pick()["reason"]))
 
     def test_an_auth_error_hold_never_grows_with_strikes(self):
         """af-zdiln (2026-09-20 incident): the 2026-09-16 exponential shape
@@ -249,12 +249,12 @@ class Resolution(unittest.TestCase):
                          (pick["provider"], pick["reason"], pick["next_reset"]))
 
     def test_it_comes_back_by_itself_at_reset(self):
-        # Claude is now the preferred pool itself (af-88za4): exhaust it to
-        # show the target falls to Codex meanwhile and recovers on its own.
-        self.exhaust("anthropic", "2026-09-16T11:00:00+00:00")
-        self.assertEqual("codex", self.pick()["provider"])
+        # Codex is the preferred pool again (af-wpjgu, 2026-09-21): exhaust it
+        # to show the target falls to Claude meanwhile and recovers on its own.
+        self.exhaust("openai", "2026-09-16T11:00:00+00:00")
+        self.assertEqual("claude-standard", self.pick()["provider"])
         after = datetime(2026, 9, 16, 11, 1, tzinfo=timezone.utc).timestamp()
-        self.assertEqual("claude-standard", pf.resolve(self.policy, self.state, after)["workspace"]["provider"])
+        self.assertEqual("codex", pf.resolve(self.policy, self.state, after)["workspace"]["provider"])
 
     def test_unknown_reset_backs_off(self):
         wall = {"kind": "exhausted", "until": None, "evidence": "x"}
@@ -294,17 +294,17 @@ class Resolution(unittest.TestCase):
                                              {"kind": "low", "percent": 25, "evidence": "x"}, NOW))
 
     def test_manual_controls_outrank_detection(self):
-        # Mark/clear the now-preferred pool (anthropic) so the effect is
-        # actually visible on the default pick (af-88za4 reorder).
+        # Mark/clear the now-preferred pool (openai, af-wpjgu restore
+        # 2026-09-21) so the effect is actually visible on the default pick.
         pf.apply_control(self.state, self.policy, "mark",
-                         {"pool": "anthropic", "until": "2026-09-21T05:22:00Z", "reason": "vu à l'écran"}, NOW, "Benjamin")
+                         {"pool": "openai", "until": "2026-09-21T05:22:00Z", "reason": "vu à l'écran"}, NOW, "Benjamin")
         # A later detection with another reset does not overwrite a human mark.
-        self.assertFalse(pf.record_detection(self.state, self.policy, "anthropic",
+        self.assertFalse(pf.record_detection(self.state, self.policy, "openai",
                                              {"kind": "exhausted", "until": NOW + 60, "evidence": "x"}, NOW))
-        self.assertEqual("Benjamin", self.state["pools"]["anthropic"]["by"])
-        self.assertEqual("codex", self.pick()["provider"])
-        pf.apply_control(self.state, self.policy, "clear", {"pool": "anthropic"}, NOW, "Benjamin")
+        self.assertEqual("Benjamin", self.state["pools"]["openai"]["by"])
         self.assertEqual("claude-standard", self.pick()["provider"])
+        pf.apply_control(self.state, self.policy, "clear", {"pool": "openai"}, NOW, "Benjamin")
+        self.assertEqual("codex", self.pick()["provider"])
 
     def test_disable_force_and_reorder(self):
         pf.apply_control(self.state, self.policy, "disable", {"provider": "codex"}, NOW, "B")
@@ -319,18 +319,19 @@ class Resolution(unittest.TestCase):
         pf.apply_control(self.state, self.policy, "force", {"target": "workspace", "provider": "auto"}, NOW, "B")
         pf.apply_control(self.state, self.policy, "chain", {"target": "workspace", "chain": "default"}, NOW, "B")
         pf.apply_control(self.state, self.policy, "enable", {"provider": "codex"}, NOW, "B")
-        self.assertEqual("claude-standard", self.pick()["provider"])
+        self.assertEqual("codex", self.pick()["provider"])
         self.assertEqual(6, len(self.state["history"]))
 
     def test_manual_mode_shows_detections_but_does_not_act(self):
-        # anthropic is the preferred pool now (af-88za4): exhaust that one so
-        # manual mode's non-action is actually visible on the default pick.
-        self.exhaust("anthropic")
+        # openai is the preferred pool now (af-wpjgu restore, 2026-09-21):
+        # exhaust that one so manual mode's non-action is actually visible on
+        # the default pick.
+        self.exhaust("openai")
         pf.apply_control(self.state, self.policy, "auto", {"enabled": False}, NOW, "B")
-        self.assertEqual("claude-standard", self.pick()["provider"])
-        # ...while a human mark still applies in manual mode.
-        pf.apply_control(self.state, self.policy, "mark", {"pool": "anthropic", "minutes": 30}, NOW, "B")
         self.assertEqual("codex", self.pick()["provider"])
+        # ...while a human mark still applies in manual mode.
+        pf.apply_control(self.state, self.policy, "mark", {"pool": "openai", "minutes": 30}, NOW, "B")
+        self.assertEqual("claude-standard", self.pick()["provider"])
 
     def test_invalid_controls_are_refused(self):
         for action, args in [
@@ -374,7 +375,7 @@ class Resolution(unittest.TestCase):
         self.assertEqual({}, state["chains"])
         pick = pf.resolve(self.policy, state, NOW)["workspace"]
         self.assertNotEqual("codex-spark", pick["provider"])
-        self.assertEqual("claude-standard", pick["provider"])
+        self.assertEqual("codex", pick["provider"])
         # A detection naming the removed pool is a silent no-op, never an error.
         self.assertFalse(pf.record_detection(state, self.policy, "openai-spark",
                                              {"kind": "exhausted", "until": NOW + 3600, "evidence": "x"}, NOW))
@@ -599,7 +600,7 @@ class EndToEnd(unittest.TestCase):
         out = self.run_tool("tick", PROVIDER_NOW=str(t)).stdout
         state = json.loads((self.d / "state.json").read_text(encoding="utf-8"))
         self.assertNotIn("anthropic", state["pools"])  # cleared, not just held shorter
-        self.assertIn('name = "mayor"\nprovider = "claude-standard"', self.overlay())
+        self.assertIn('name = "mayor"\nprovider = "codex"', self.overlay())
         self.assertIn("credential file changed since the error was marked -- cleared", out)
         self.assertIn("reload", self.calls()[before:])  # Gas City's own config-drift restart
         # takes it from here (ADR-0018 s4): the overlay flipping back to the
@@ -699,7 +700,7 @@ class EndToEnd(unittest.TestCase):
     def test_a_missing_or_corrupt_state_never_breaks_the_overlay(self):
         (self.d / "state.json").write_text("{not json", encoding="utf-8")
         self.run_tool("apply", "--no-reload")
-        self.assertIn('[workspace]\nprovider = "claude-standard"', self.overlay())
+        self.assertIn('[workspace]\nprovider = "codex"', self.overlay())
 
     def test_apply_regenerates_a_deleted_overlay(self):
         self.run_tool("apply", "--no-reload")
