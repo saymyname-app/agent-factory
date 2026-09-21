@@ -244,6 +244,8 @@ state remain unchanged.
   keeps one active session, carries the continuation protocol, and pins no
   provider; `tests/provider-failover-test.py` proves that live sessions of
   this role map back to `workspace`.
+- `af-3l8hn` — live `factory-worker` dispatch canary; the Mayor records its
+  runtime session/provider evidence in Beads.
 - `tests/factory-guard-provider-overlay-test.sh` — the guard regenerates a
   missing overlay, and reports a failure to do so.
 - `tests/factory-cockpit-test.py` — the bridge only calls the tool, and the
