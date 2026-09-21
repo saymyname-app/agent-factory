@@ -30,6 +30,15 @@ opt into `gc.on_fail=abort_scope`. A hard gate/control failure now closes the
 scope fail and marks every later build stage skipped before a worker can claim
 it; the workflow finalizer then closes the root fail from the scope outcome.
 This uses Gas City's existing scope contract and does not fork controller code.
+
+Local shared-worktree adapter (2026-09-21, af-5z6p7): Gas City's shared drain
+serializes `do-work-item` children but intentionally does not create the
+repository worktree those children require. `prepare-shared-worktree` now
+creates one branch/worktree for the implementation convoy and records the same
+authoritative `work_dir` on every source anchor before the first child can run.
+The existing review and publish stages consume that shared branch; a teardown
+step removes the clean worktree after the pipeline reaches terminal state.
+`drain_policy=separate` still uses the upstream `do-work` lifecycle unchanged.
 """
 formula = "build-basic"
 version = 1
@@ -121,7 +130,7 @@ member_access = "exclusive"
 [[steps]]
 id = "implement-same-session"
 title = "Drain build implementation in one shared session"
-needs = ["decompose"]
+needs = ["prepare-shared-worktree"]
 condition = "{{drain_policy}} == same-session"
 metadata = { "gc.run_target" = "{{implementation_target}}", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
 description_file = "../assets/workflows/build-basic/implement-same-session.md"
@@ -134,6 +143,14 @@ member_access = "exclusive"
 
 [steps.drain.item]
 single_lane = true
+
+[[steps]]
+id = "prepare-shared-worktree"
+title = "Prepare one authoritative shared implementation worktree"
+needs = ["decompose"]
+condition = "{{drain_policy}} == same-session"
+metadata = { "gc.run_target" = "gc.run-operator", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+description_file = "../assets/workflows/build-basic/prepare-shared-worktree.md"
 
 [[steps]]
 id = "summarize-implementation"
@@ -184,6 +201,14 @@ description_file = "../assets/workflows/build-basic/publish.md"
 [[steps]]
 id = "build-pipeline"
 title = "Finalize build pipeline scope"
-needs = ["prepare", "requirements", "plan", "plan-review", "decompose", "implement", "implement-same-session", "summarize-implementation", "review", "finalize", "publish"]
+needs = ["prepare", "requirements", "plan", "plan-review", "decompose", "implement", "prepare-shared-worktree", "implement-same-session", "summarize-implementation", "review", "finalize", "publish"]
 description = "Terminal fail-fast scope for the complete build-basic pipeline. Gas City control beads close this scope with gc.outcome=fail when any member marked gc.on_fail=abort_scope fails; later members are closed skipped and must never be claimed."
 metadata = { "gc.kind" = "scope", "gc.scope_name" = "build-pipeline", "gc.scope_role" = "body" }
+
+[[steps]]
+id = "cleanup-shared-worktree"
+title = "Release the shared implementation worktree"
+needs = ["build-pipeline"]
+condition = "{{drain_policy}} == same-session"
+metadata = { "gc.run_target" = "gc.run-operator", "gc.kind" = "cleanup", "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "teardown" }
+description_file = "../assets/workflows/build-basic/cleanup-shared-worktree.md"

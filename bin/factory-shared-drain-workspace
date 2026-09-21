@@ -1,0 +1,321 @@
+#!/usr/bin/env bash
+# factory-shared-drain-workspace — one authoritative git worktree for every
+# source anchor in a build-basic same-session drain.
+#
+# The Gas City core deliberately treats a shared drain as scheduling policy:
+# it serializes do-work-item child workflows, but does not create a repository
+# worktree for them.  This Factory adapter owns that missing repository
+# lifecycle without changing the core drain or weakening do-work-item's
+# fail-closed source check.
+#
+# Usage:
+#   factory-shared-drain-workspace prepare <workflow-root-id> <convoy-id>
+#   factory-shared-drain-workspace publish <workflow-root-id> <convoy-id> <push> <open-pr>
+#   factory-shared-drain-workspace cleanup <workflow-root-id> <convoy-id>
+#
+# `prepare` creates/reuses one branch and worktree, then records the same
+# absolute work_dir on every convoy member. `publish` performs at most one
+# push/PR operation for that shared branch. `cleanup` removes only a clean,
+# registered worktree and clears member work_dir metadata; dirty recovery work
+# is preserved and reported instead of being deleted.
+set -Eeuo pipefail
+
+GC_BIN="${GC_BIN:-gc}"
+GH_BIN="${GH_BIN:-gh}"
+
+die() {
+  printf 'factory-shared-drain-workspace: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat >&2 <<'EOF'
+usage: factory-shared-drain-workspace prepare <workflow-root-id> <convoy-id>
+       factory-shared-drain-workspace publish <workflow-root-id> <convoy-id> <push> <open-pr>
+       factory-shared-drain-workspace cleanup <workflow-root-id> <convoy-id>
+EOF
+  exit 2
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command is unavailable: $1"
+}
+
+show_bead() {
+  "$GC_BIN" bd show "$1" --json
+}
+
+metadata_value() {
+  local key=$1
+  jq -r --arg key "$key" 'if type == "array" then .[0] // {} else . end | .metadata[$key] // empty'
+}
+
+safe_id() {
+  [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+}
+
+load_context() {
+  ROOT_ID=$1
+  CONVOY_ID=$2
+  safe_id "$ROOT_ID" || die "unsafe workflow root id: $ROOT_ID"
+  safe_id "$CONVOY_ID" || die "unsafe convoy id: $CONVOY_ID"
+
+  ROOT_JSON=$(show_bead "$ROOT_ID")
+  RIG_ROOT=$(printf '%s' "$ROOT_JSON" | metadata_value 'gc.work_dir')
+  [[ $RIG_ROOT = /* ]] || die "workflow root $ROOT_ID has no absolute gc.work_dir"
+  [ -d "$RIG_ROOT" ] || die "launcher rig root does not exist: $RIG_ROOT"
+  RIG_ROOT=$(cd "$RIG_ROOT" && pwd -P)
+
+  local git_root
+  git_root=$(git -C "$RIG_ROOT" rev-parse --show-toplevel 2>/dev/null) \
+    || die "launcher root is not a git checkout: $RIG_ROOT"
+  git_root=$(cd "$git_root" && pwd -P)
+  [ "$git_root" = "$RIG_ROOT" ] \
+    || die "gc.work_dir must name the launcher checkout root, got $RIG_ROOT"
+
+  CONVOY_JSON=$("$GC_BIN" convoy status "$CONVOY_ID" --json)
+  mapfile -t MEMBERS < <(printf '%s' "$CONVOY_JSON" | jq -r '.children[]?.id')
+  [ "${#MEMBERS[@]}" -gt 0 ] || die "convoy $CONVOY_ID has no source anchors"
+  local member
+  for member in "${MEMBERS[@]}"; do
+    safe_id "$member" || die "unsafe source anchor id: $member"
+  done
+}
+
+registered_worktree() {
+  git -C "$RIG_ROOT" worktree list --porcelain \
+    | awk -v wanted="$WORKTREE" '$1 == "worktree" && $2 == wanted { found=1 } END { exit(found ? 0 : 1) }'
+}
+
+load_shared_metadata() {
+  WORKTREE=$(printf '%s' "$ROOT_JSON" | metadata_value 'gc.shared_worktree')
+  BRANCH=$(printf '%s' "$ROOT_JSON" | metadata_value 'gc.work_branch')
+  BASE_BRANCH=$(printf '%s' "$ROOT_JSON" | metadata_value 'gc.work_base_branch')
+  [ -n "$WORKTREE" ] || die "workflow root $ROOT_ID has no gc.shared_worktree"
+  [ -n "$BRANCH" ] || die "workflow root $ROOT_ID has no gc.work_branch"
+  [ -n "$BASE_BRANCH" ] || die "workflow root $ROOT_ID has no gc.work_base_branch"
+  [ "$WORKTREE" = "$RIG_ROOT/.gc/worktrees/build-basic-$ROOT_ID" ] \
+    || die "shared worktree is outside its deterministic lifecycle path: $WORKTREE"
+}
+
+verify_member_worktree() {
+  local member=$1 member_json member_worktree
+  member_json=$(show_bead "$member")
+  member_worktree=$(printf '%s' "$member_json" | metadata_value 'work_dir')
+  [ "$member_worktree" = "$WORKTREE" ] \
+    || die "source anchor $member did not retain authoritative work_dir $WORKTREE"
+}
+
+prepare() {
+  load_context "$1" "$2"
+
+  BRANCH="build-basic/$ROOT_ID"
+  WORKTREE="$RIG_ROOT/.gc/worktrees/build-basic-$ROOT_ID"
+  BASE_BRANCH=$(printf '%s' "$ROOT_JSON" | metadata_value 'gc.work_base_branch')
+  if [ -z "$BASE_BRANCH" ]; then
+    BASE_BRANCH=$(git -C "$RIG_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null) \
+      || die "launcher checkout is detached; cannot select a shared-drain base branch"
+  fi
+
+  local member current_json current_worktree
+  for member in "${MEMBERS[@]}"; do
+    current_json=$(show_bead "$member")
+    current_worktree=$(printf '%s' "$current_json" | metadata_value 'work_dir')
+    if [ -n "$current_worktree" ] && [ "$current_worktree" != "$WORKTREE" ]; then
+      die "source anchor $member already owns a different work_dir: $current_worktree"
+    fi
+  done
+
+  mkdir -p "$(dirname "$WORKTREE")"
+  git -C "$RIG_ROOT" fetch --prune origin "$BASE_BRANCH" >/dev/null 2>&1 || true
+
+  if registered_worktree; then
+    [ -d "$WORKTREE" ] || die "registered shared worktree is missing: $WORKTREE"
+    local observed_branch
+    observed_branch=$(git -C "$WORKTREE" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    [ "$observed_branch" = "$BRANCH" ] \
+      || die "shared worktree uses branch ${observed_branch:-DETACHED}, expected $BRANCH"
+  else
+    [ ! -e "$WORKTREE" ] \
+      || die "shared worktree path exists but is not registered: $WORKTREE"
+    local start_ref=$BASE_BRANCH
+    if git -C "$RIG_ROOT" show-ref --verify --quiet "refs/remotes/origin/$BASE_BRANCH"; then
+      start_ref="origin/$BASE_BRANCH"
+    fi
+    if git -C "$RIG_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+      git -C "$RIG_ROOT" worktree add "$WORKTREE" "$BRANCH" >/dev/null
+    else
+      git -C "$RIG_ROOT" worktree add -b "$BRANCH" "$WORKTREE" "$start_ref" >/dev/null
+    fi
+  fi
+
+  "$GC_BIN" bd update "$ROOT_ID" \
+    --set-metadata "gc.shared_worktree=$WORKTREE" \
+    --set-metadata "gc.shared_worktree_owner=$ROOT_ID" \
+    --set-metadata "gc.shared_worktree_convoy=$CONVOY_ID" \
+    --set-metadata "gc.shared_worktree_member_count=${#MEMBERS[@]}" \
+    --set-metadata "gc.work_branch=$BRANCH" \
+    --set-metadata "gc.work_base_branch=$BASE_BRANCH" >/dev/null
+
+  local index=0
+  for member in "${MEMBERS[@]}"; do
+    index=$((index + 1))
+    "$GC_BIN" bd update "$member" \
+      --set-metadata "work_dir=$WORKTREE" \
+      --set-metadata "gc.shared_worktree_owner=$ROOT_ID" \
+      --set-metadata "gc.shared_worktree_sequence=$index" \
+      --set-metadata "gc.work_branch=$BRANCH" \
+      --set-metadata "gc.work_base_branch=$BASE_BRANCH" >/dev/null
+    verify_member_worktree "$member"
+  done
+
+  jq -n \
+    --arg status prepared \
+    --arg workflow_root "$ROOT_ID" \
+    --arg convoy "$CONVOY_ID" \
+    --arg worktree "$WORKTREE" \
+    --arg branch "$BRANCH" \
+    --arg base_branch "$BASE_BRANCH" \
+    --argjson member_count "${#MEMBERS[@]}" \
+    '{status:$status,workflow_root:$workflow_root,convoy:$convoy,worktree:$worktree,branch:$branch,base_branch:$base_branch,member_count:$member_count}'
+}
+
+publish() {
+  local root_id=$1 convoy_id=$2 push=$3 open_pr=$4
+  case "$push" in true|false) ;; *) die "push must be true or false" ;; esac
+  case "$open_pr" in true|false) ;; *) die "open-pr must be true or false" ;; esac
+  load_context "$root_id" "$convoy_id"
+  load_shared_metadata
+  registered_worktree || die "shared worktree is not registered: $WORKTREE"
+  [ -d "$WORKTREE" ] || die "shared worktree is missing: $WORKTREE"
+
+  local observed_branch dirty commit status pr_url existing_json
+  observed_branch=$(git -C "$WORKTREE" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  [ "$observed_branch" = "$BRANCH" ] \
+    || die "shared worktree uses branch ${observed_branch:-DETACHED}, expected $BRANCH"
+  dirty=$(git -C "$WORKTREE" status --porcelain)
+  [ -z "$dirty" ] || die "shared worktree has uncommitted changes; refusing to publish"
+  commit=$(git -C "$WORKTREE" rev-parse HEAD)
+  pr_url=$(printf '%s' "$ROOT_JSON" | metadata_value 'gc.pr_url')
+
+  if [ "$push" = true ] || [ "$open_pr" = true ]; then
+    git -C "$WORKTREE" push -u origin "$BRANCH" >/dev/null
+    status=pushed
+  else
+    status=noop
+  fi
+
+  if [ "$open_pr" = true ]; then
+    if [ -z "$pr_url" ]; then
+      command -v "$GH_BIN" >/dev/null 2>&1 \
+        || die "open-pr=true but gh is unavailable"
+      existing_json=$(cd "$WORKTREE" && "$GH_BIN" pr list \
+        --head "$BRANCH" --base "$BASE_BRANCH" --state open --limit 1 --json url)
+      pr_url=$(printf '%s' "$existing_json" | jq -r '.[0].url // empty')
+    fi
+    if [ -z "$pr_url" ]; then
+      pr_url=$(cd "$WORKTREE" && "$GH_BIN" pr create \
+        --base "$BASE_BRANCH" \
+        --head "$BRANCH" \
+        --title "build-basic: $ROOT_ID" \
+        --body "Build workflow $ROOT_ID. Implementation convoy $CONVOY_ID.")
+    fi
+    [ -n "$pr_url" ] || die "gh did not return a pull request URL"
+    status=published
+  fi
+
+  local -a root_args=(
+    --set-metadata "gc.shared_worktree_publish_status=$status"
+    --set-metadata "gc.shared_worktree_commit=$commit"
+  )
+  if [ -n "$pr_url" ]; then
+    root_args+=(--set-metadata "gc.pr_url=$pr_url")
+  fi
+  "$GC_BIN" bd update "$ROOT_ID" "${root_args[@]}" >/dev/null
+
+  local member
+  for member in "${MEMBERS[@]}"; do
+    local -a member_args=(--set-metadata "gc.shared_worktree_commit=$commit")
+    if [ -n "$pr_url" ]; then
+      member_args+=(--set-metadata "gc.pr_url=$pr_url")
+    fi
+    "$GC_BIN" bd update "$member" "${member_args[@]}" >/dev/null
+  done
+
+  jq -n \
+    --arg status "$status" \
+    --arg workflow_root "$ROOT_ID" \
+    --arg worktree "$WORKTREE" \
+    --arg branch "$BRANCH" \
+    --arg base_branch "$BASE_BRANCH" \
+    --arg commit "$commit" \
+    --arg pr_url "$pr_url" \
+    '{status:$status,workflow_root:$workflow_root,worktree:$worktree,branch:$branch,base_branch:$base_branch,commit:$commit,pr_url:(if $pr_url == "" then null else $pr_url end)}'
+}
+
+cleanup() {
+  load_context "$1" "$2"
+  WORKTREE=$(printf '%s' "$ROOT_JSON" | metadata_value 'gc.shared_worktree')
+  if [ -z "$WORKTREE" ]; then
+    jq -n --arg status already-clean '{status:$status}'
+    return 0
+  fi
+  load_shared_metadata
+
+  local dirty=""
+  if [ -d "$WORKTREE" ]; then
+    dirty=$(git -C "$WORKTREE" status --porcelain)
+  fi
+  if [ -n "$dirty" ]; then
+    "$GC_BIN" bd update "$ROOT_ID" \
+      --set-metadata 'gc.shared_worktree_cleanup=preserved_dirty' >/dev/null
+    jq -n --arg status preserved --arg reason dirty_worktree --arg worktree "$WORKTREE" \
+      '{status:$status,reason:$reason,worktree:$worktree}'
+    return 0
+  fi
+
+  if registered_worktree; then
+    [ -d "$WORKTREE" ] \
+      || die "registered shared worktree is missing and requires manual recovery: $WORKTREE"
+    git -C "$RIG_ROOT" worktree remove "$WORKTREE" >/dev/null
+  fi
+  git -C "$RIG_ROOT" worktree prune >/dev/null
+
+  local member member_json member_worktree
+  for member in "${MEMBERS[@]}"; do
+    member_json=$(show_bead "$member")
+    member_worktree=$(printf '%s' "$member_json" | metadata_value 'work_dir')
+    if [ "$member_worktree" = "$WORKTREE" ]; then
+      "$GC_BIN" bd update "$member" --unset-metadata work_dir >/dev/null
+    fi
+  done
+  "$GC_BIN" bd update "$ROOT_ID" \
+    --unset-metadata gc.shared_worktree \
+    --set-metadata 'gc.shared_worktree_cleanup=removed' \
+    --set-metadata "gc.shared_worktree_cleaned_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null
+
+  jq -n --arg status removed --arg worktree "$WORKTREE" \
+    '{status:$status,worktree:$worktree}'
+}
+
+require_command jq
+require_command git
+
+COMMAND=${1:-}
+case "$COMMAND" in
+  prepare)
+    [ "$#" -eq 3 ] || usage
+    prepare "$2" "$3"
+    ;;
+  publish)
+    [ "$#" -eq 5 ] || usage
+    publish "$2" "$3" "$4" "$5"
+    ;;
+  cleanup)
+    [ "$#" -eq 3 ] || usage
+    cleanup "$2" "$3"
+    ;;
+  *)
+    usage
+    ;;
+esac
