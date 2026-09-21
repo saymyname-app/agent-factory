@@ -21,22 +21,30 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from ntfy_notify import compute_alerts, compute_digest, diff_alerts, digest_due  # noqa: E402
+from ntfy_notify import (  # noqa: E402
+    apply_provider_budget, cold_start_alert, compute_alerts, compute_digest, diff_alerts,
+    diff_provider_alerts, digest_due, provider_problem_alerts, provider_trouble_keys,
+)
 
 TOPIC_FILE = ROOT / ".gc" / "ntfy-topic.local"
 STATE_FILE = ROOT / ".gc" / "ntfy-notify-state.json"
 NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh")
 REMIND_SECONDS = int(os.environ.get("NTFY_REMIND_SECONDS", "3600"))
+GC_BIN = os.environ.get("GC_BIN", "gc")
+COLD_START_WINDOW_MINUTES = int(os.environ.get("NTFY_COLD_START_WINDOW_MINUTES", "15"))
+_SESSION_BEAD_LINE = re.compile(r"^\W{0,3}\S+-\S+\s+\[P\d\]\s+\[session\]", re.M)
 # Twice a day, local time, Benjamin gets the real state and what to do even
 # when nothing is wrong (2026-09-18: "dis-moi régulièrement l'état réel").
 DIGEST_HOURS = tuple(int(h) for h in os.environ.get("NTFY_DIGEST_HOURS", "8,20").split(",") if h.strip())
@@ -64,6 +72,28 @@ def load_state() -> dict[str, float]:
 def save_state(state: dict[str, float]) -> None:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def cold_start_failures(window_minutes: int) -> int | None:
+    """R6 symptom backstop: how many session-boot attempts CLOSED as
+    failed-create (`lib/factory_session_boot.py`'s STUCK_STATES contract --
+    a failed boot closes its bead before a fresh attempt opens a new one) in
+    the last `window_minutes`, across every session, not just always-on
+    identities. None on any failure to ask -- this stays silent rather than
+    ever guessing a count.
+    """
+    since = datetime.fromtimestamp(time.time() - window_minutes * 60, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        out = subprocess.run(
+            [GC_BIN, "bd", "list", "--metadata-field", "state=failed-create", "--all",
+             "--limit", "0", "--flat", "--skip-labels", "--closed-after", since],
+            cwd=ROOT, capture_output=True, text=True, timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return len(_SESSION_BEAD_LINE.findall(out.stdout))
 
 
 def take_snapshot() -> dict:
@@ -159,9 +189,60 @@ def main() -> int:
         state.pop(key, None)
         state.pop(f"first:{key}", None)
 
+    # af-tr2da: provider problems (auth/network/server/unknown-quota errors,
+    # and the "sessions won't boot" symptom backstop) get their own
+    # throttle (6h/max-2 reminders, not the 1h-forever above) and a hard
+    # 24h push cap -- both kept in their own state sub-object so they never
+    # collide with the generic alert bookkeeping just above.
+    provider = state.setdefault("provider", {"first_seen": {}, "sent": {}, "history": []})
+    trouble_keys = provider_trouble_keys(snapshot.get("provider_state"), snapshot.get("provider_policy"), now)
+    provider_first_seen = provider.setdefault("first_seen", {})
+    for key in trouble_keys:
+        provider_first_seen.setdefault(key, now)
+    for key in list(provider_first_seen):
+        if key not in trouble_keys:
+            provider_first_seen.pop(key, None)
+    provider_alerts = provider_problem_alerts(
+        snapshot.get("provider_state"), snapshot.get("provider_policy"), now, provider_first_seen)
+    cold_start = cold_start_alert(cold_start_failures(COLD_START_WINDOW_MINUTES))
+    if cold_start:
+        provider_alerts.append(cold_start)
+    provider_sent = provider.setdefault("sent", {})
+    provider_due, provider_resolved = diff_provider_alerts(provider_alerts, provider_sent, now)
+    provider_history = provider.setdefault("history", [])
+    provider_due, provider_history, cap_alert = apply_provider_budget(provider_due, provider_history, now)
+    if cap_alert and cap_alert["key"] not in {a["key"] for a in provider_due}:
+        cap_due, _ = diff_provider_alerts([cap_alert], provider_sent, now)
+        provider_due += cap_due
+    provider["history"] = provider_history
+
+    cap_key = cap_alert["key"] if cap_alert else None
+    for alert in provider_due:
+        say(f"pushing: {alert['title']} -- {alert['message'].splitlines()[0]}")
+        try:
+            push(topic, alert["title"], alert["message"], alert["priority"], args.dry_run)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            print(f"ntfy-notify: push failed for {alert['key']}: {exc}", file=sys.stderr)
+            continue
+        record = provider_sent.setdefault(alert["key"], {"at": now, "reminders": -1})
+        record["reminders"] = record.get("reminders", -1) + 1
+        record["at"] = now
+        if alert["key"] != cap_key:
+            provider_history.append(now)
+
+    for key in provider_resolved:
+        say(f"resolved: {key}")
+        try:
+            push(topic, "Fournisseur : retour à la normale",
+                 "ÉTAT : le problème fournisseur est résolu.\nÀ FAIRE : rien. Suis l'avancée sur le cockpit.",
+                 "low", args.dry_run)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            pass
+        provider_sent.pop(key, None)
+
     slot = digest_due(state, now, DIGEST_HOURS)
     if slot:
-        digest = compute_digest(snapshot, alerts)
+        digest = compute_digest(snapshot, alerts + provider_alerts)
         say(f"digest: {slot}")
         try:
             push(topic, digest["title"], digest["message"], digest["priority"], args.dry_run)
@@ -174,7 +255,8 @@ def main() -> int:
 
     if not args.dry_run:
         save_state(state)
-    say("ok" if not alerts else f"{len(alerts)} alerte(s) active(s), {len(due)} poussee(s)")
+    total_alerts, total_due = len(alerts) + len(provider_alerts), len(due) + len(provider_due)
+    say("ok" if not total_alerts else f"{total_alerts} alerte(s) active(s), {total_due} poussee(s)")
     return 0
 
 

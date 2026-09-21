@@ -24,6 +24,8 @@ import re
 import time
 from typing import Any
 
+import provider_failover as pf
+
 # Bead ids (af-1vr4, smb-v8p, af-u8id.4.1 ...) never reach the phone.
 _BEAD_ID = re.compile(r"\b(?:af|smb|smf|hq)-[a-z0-9]{3,}(?:\.[a-z0-9]+)*\b", re.I)
 # Escalation windows for "nothing to do, follow it" situations that persist.
@@ -43,6 +45,8 @@ PROMPTS = {
     "warnings": "Regarde les avertissements de l'usine et dis-moi s'il faut agir.",
     "result": "Le résultat en cours est bloqué : trouve ce qui manque et débloque-le ou dis-moi quoi faire.",
     "unknown": "Regarde l'état de l'usine et dis-moi ce qu'il faut faire.",
+    "provider_error": "Un fournisseur IA reste en erreur : vérifie la cause (cockpit > Fournisseurs IA) et répare si besoin.",
+    "cold_start": "Des sessions n'arrivent pas à démarrer : regarde la cause et débloque.",
 }
 
 
@@ -297,3 +301,264 @@ def diff_alerts(
         if key not in active_keys and not key.startswith(("first:", "digest:"))
     ]
     return due, resolved
+
+
+# --------------------------------------------------------------------------
+# Provider-problem alerts (af-tr2da, 2026-09-21)
+# --------------------------------------------------------------------------
+#
+# Incident (2026-09-20): Claude login expired in WSL. provider-failover
+# recorded pool anthropic = error/auth and fell to a broken fallback.
+# Nothing started for ~5.5h and Benjamin was told nothing -- the only
+# existing provider alert (providers_exhausted_until, above) fires only when
+# EVERY provider in use is quota-exhausted, and a single pool in a *error*
+# state (not quota) never trips it.
+#
+# Relevance rules (Benjamin, 2026-09-20):
+#   R1 alert on IMPACT (a target with no usable provider, a target on a
+#      fallback because of an error, or a pool in error that will not heal
+#      alone) -- not on every error line.
+#   R2 classify by who must act: category=auth never heals alone, alert
+#      immediately; a quota wall with a known reset is normal life, silent;
+#      network/server/unknown-duration errors are silent while young and
+#      alert only once they persist.
+#   R3 one alert per incident (pool + category + affected targets), not per
+#      tick; re-alert on worsening (a fresh fingerprint) or a single 6h
+#      reminder (max 2), never more often.
+#   R4 every alert states what stopped in plain French (policy labels, never
+#      raw provider/pool ids), since when, what is affected, whether it
+#      self-heals, and the one action to take.
+#   R5 an all-clear when it resolves.
+#   R6 a symptom backstop independent of the log classifier: many sessions
+#      failing to boot alerts even with no recognised error text.
+#   R7 a hard cap on provider alerts per 24h; overflow collapses into one
+#      "many provider problems" alert instead of paging once per incident.
+#
+# This module never re-decides failover: provider_failover.resolve() is the
+# single source of truth for who is actually affected and why; this only
+# reports what it already decided, reusing it rather than re-implementing
+# chain resolution (and risking drifting from what bin/provider-failover
+# itself acts on).
+
+PERSIST_ALERT_SECONDS = 30 * 60   # network/server/config/unknown-reset quota: alert once this old
+STRIKES_ALERT_THRESHOLD = 3       # ...or once this many strikes, whichever comes first
+PROVIDER_REMIND_SECONDS = 6 * 60 * 60
+PROVIDER_MAX_REMINDERS = 2
+PROVIDER_ALERT_CAP = 6
+PROVIDER_CAP_WINDOW_SECONDS = 24 * 60 * 60
+COLD_START_THRESHOLD = 10
+COLD_START_WINDOW_MINUTES = 15
+
+# The one concrete action for a fixed credential, per pool. Falls back to a
+# generic instruction for a pool this map does not know about, rather than
+# staying silent on the fix (R4).
+_REAUTH_HINT = {
+    "anthropic": "Reconnecte Claude Code sur cet hôte : ouvre la session, lance `/login`.",
+    "openai": "Reconnecte Codex sur cet hôte : `codex login`.",
+    "openai-spark": "Reconnecte Codex sur cet hôte : `codex login`.",
+}
+
+
+def _since_text(age_seconds: float) -> str:
+    minutes = max(1, int(age_seconds // 60))
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, rem = divmod(minutes, 60)
+    return f"{hours}h{rem:02d}" if rem else f"{hours}h"
+
+
+def _resolvable_state(provider_state: Any) -> dict[str, Any]:
+    """provider_failover.resolve() indexes state["pools"/"disabled"/...]
+    directly (KeyError on a missing key) -- the real .gc/provider-state.json
+    always has the full shape (normalize_state gives it one before it is
+    ever saved), but defend here anyway rather than trust every caller."""
+    state = dict(provider_state or {})
+    state.setdefault("pools", {})
+    state.setdefault("disabled", {})
+    state.setdefault("forced", {})
+    state.setdefault("chains", {})
+    state.setdefault("effective", {})
+    state.setdefault("auto", True)
+    return state
+
+
+def _pool_targets(policy: dict[str, Any], state: dict[str, Any]) -> dict[str, set[str]]:
+    """pool -> targets whose chain includes a provider on that pool."""
+    out: dict[str, set[str]] = {}
+    providers = policy.get("providers") or {}
+    for target in policy.get("targets") or {}:
+        for provider in pf.chain_for(state, policy, target):
+            pool = (providers.get(provider) or {}).get("pool")
+            if pool:
+                out.setdefault(pool, set()).add(target)
+    return out
+
+
+def _troubled_pools(provider_state: Any, provider_policy: Any, now: float) -> list[dict[str, Any]]:
+    """Every pool genuinely in trouble right now, with its fingerprint key,
+    independent of whether it is old/frequent enough to alert on yet.
+
+    A pool is "trouble" only when provider_failover recorded it as `error`
+    (a provider_error detection: auth/network/server/config) or as
+    `exhausted` with no known reset -- an unknown-duration quota wall
+    behaves the same way as an unresolved error: nobody knows when it
+    clears. A known-reset quota wall is the failover's ordinary, absorbed
+    case (R1 "normal life") and a manual mark/disable is a decision
+    Benjamin already made himself -- neither counts as trouble here.
+    """
+    policy = provider_policy or {}
+    if not policy.get("providers") or not policy.get("targets") or not policy.get("pools"):
+        return []
+    state = _resolvable_state(provider_state)
+    pools = state["pools"]
+    if not pools:
+        return []
+    resolution = pf.resolve(policy, state, now)
+    pool_targets = _pool_targets(policy, state)
+    out = []
+    for pool_name, entry in pools.items():
+        if pool_name not in policy["pools"] or entry.get("source") == "manual":
+            continue
+        status = entry.get("status")
+        until = pf.epoch(entry.get("until"))
+        if status not in ("error", "exhausted") or (until is not None and until <= now):
+            continue
+        if status == "exhausted" and entry.get("reset_known"):
+            continue
+        category = entry.get("category") if status == "error" else "quota"
+        affected = sorted(
+            target for target in pool_targets.get(pool_name, ())
+            if (resolution.get(target, {}).get("provider") is None
+                or (resolution[target]["reason"] == "fallback"
+                    and resolution[target]["chain"][0]["pool"] == pool_name
+                    and resolution[target]["chain"][0]["state"] in ("error", "exhausted")))
+        )
+        out.append({
+            "key": f"provider:{pool_name}:{category}:{','.join(affected)}",
+            "pool": pool_name, "category": category, "affected": affected,
+            "strikes": int(entry.get("strikes") or 0),
+        })
+    return out
+
+
+def provider_trouble_keys(provider_state: Any, provider_policy: Any, now: float) -> set[str]:
+    """Fingerprint keys of every pool currently in trouble, alert-worthy or
+    not. The caller stamps `first_seen[key]` the first tick each key
+    appears here (mirroring how `compute_alerts`' own bookkeeping tracks
+    age) so `provider_problem_alerts` can tell young from persistent, and
+    drops a key once it stops appearing so a resolved incident's age does
+    not linger and taint a later, unrelated one that happens to reuse the
+    same pool/category/targets fingerprint.
+    """
+    return {t["key"] for t in _troubled_pools(provider_state, provider_policy, now)}
+
+
+def provider_problem_alerts(provider_state: Any, provider_policy: Any, now: float,
+                            first_seen: dict[str, float] | None = None) -> list[dict[str, str]]:
+    """R1/R2/R4: one alert per pool in trouble long/serious enough to matter,
+    phrased for the phone. `first_seen` must be kept by the caller across
+    every key `provider_trouble_keys` returns, not just the ones that end up
+    alert-worthy -- see that function's docstring."""
+    first_seen = first_seen or {}
+    policy = provider_policy or {}
+    alerts: list[dict[str, str]] = []
+    for trouble in _troubled_pools(provider_state, provider_policy, now):
+        key, pool_name, category = trouble["key"], trouble["pool"], trouble["category"]
+        age = now - first_seen.get(key, now)
+        if category != "auth" and age < PERSIST_ALERT_SECONDS and trouble["strikes"] < STRIKES_ALERT_THRESHOLD:
+            continue  # young and possibly self-healing (R1/R2) -- stay silent
+        pool_label = policy["pools"].get(pool_name, {}).get("label", pool_name)
+        target_labels = [policy["targets"].get(t, {}).get("label", t) for t in trouble["affected"]]
+        touched = f" ({', '.join(target_labels)})" if target_labels else ""
+        since = _since_text(age)
+        if category == "auth":
+            state_text = f"{pool_label} est en erreur d'authentification depuis {since}{touched}."
+            alerts.append(_alert(key, f"Fournisseur en panne : {pool_label}", state_text, EASY,
+                                 _REAUTH_HINT.get(pool_name, "Reconnecte le compte du fournisseur concerné."),
+                                 "urgent"))
+        elif category == "quota":
+            state_text = f"{pool_label} est à court de quota depuis {since}, date de retour inconnue{touched}."
+            alerts.append(_alert(key, f"Fournisseur en quota : {pool_label}", state_text, NOTHING,
+                                 "Elle repart seule au retour du quota ; je te préviens si ça dure vraiment longtemps.",
+                                 "default"))
+        else:
+            state_text = f"{pool_label} reste en erreur ({category}) depuis {since}{touched}."
+            alerts.append(_alert(key, f"Fournisseur en erreur : {pool_label}", state_text, DELEGATE,
+                                 PROMPTS["provider_error"], "default"))
+    return alerts
+
+
+def cold_start_alert(count: int | None, threshold: int = COLD_START_THRESHOLD,
+                     window_minutes: int = COLD_START_WINDOW_MINUTES) -> dict[str, str] | None:
+    """R6: a symptom backstop independent of `provider_failover.detect()`'s
+    text classifier -- sessions repeatedly failing to boot alert even when
+    no error text was recognised (the 2026-09-20 incident would have tripped
+    this even if the auth regex had not matched)."""
+    if count is None or count < threshold:
+        return None
+    return _alert("provider:cold_start_backstop", "Usine : démarrages en échec",
+                  f"{count} session(s) n'ont pas réussi à démarrer en {window_minutes} min, sans cause reconnue.",
+                  DELEGATE, PROMPTS["cold_start"], "urgent")
+
+
+def diff_provider_alerts(
+    alerts: list[dict[str, str]],
+    sent: dict[str, dict[str, Any]],
+    now: float,
+    remind_seconds: int = PROVIDER_REMIND_SECONDS,
+    max_reminders: int = PROVIDER_MAX_REMINDERS,
+) -> tuple[list[dict[str, str]], list[str]]:
+    """R3: one push per incident, then at most `max_reminders` more every
+    `remind_seconds` while it stays active, then silence -- without ever
+    going fully quiet forever the way a single stuck situation could under
+    R3's "never more often" if reminders had no cap. `sent` maps alert key
+    -> {"at": epoch of the last push, "reminders": reminders sent so far}
+    (separate from the general `diff_alerts` state so the two throttles,
+    1h-forever for ordinary alerts and 6h/max-2 here, never collide on the
+    same keys). A fingerprint change (pool/category/affected-targets, baked
+    into the key by `provider_problem_alerts`) is a new key, so a worsening
+    incident is due immediately regardless of any cap on the old one.
+    """
+    active_keys = {a["key"] for a in alerts}
+    due = []
+    for alert in alerts:
+        record = sent.get(alert["key"])
+        if record is None:
+            due.append(alert)
+            continue
+        if record.get("reminders", 0) >= max_reminders:
+            continue
+        if now - record.get("at", 0) >= remind_seconds:
+            due.append(alert)
+    resolved = [key for key in sent if key not in active_keys]
+    return due, resolved
+
+
+def apply_provider_budget(
+    due: list[dict[str, str]],
+    history: list[float],
+    now: float,
+    cap: int = PROVIDER_ALERT_CAP,
+    window_seconds: int = PROVIDER_CAP_WINDOW_SECONDS,
+) -> tuple[list[dict[str, str]], list[float], dict[str, str] | None]:
+    """R7: cap provider pushes to `cap` per `window_seconds`; anything this
+    tick would push past the cap collapses into one "many provider
+    problems" alert instead of paging once per incident. Returns
+    (alerts to actually push this tick, the trimmed history to keep,
+    a collapse alert or None). The collapse alert is not itself counted
+    against the cap -- it replaces the pushes it collapsed, it does not add
+    to them -- and goes through the same `diff_provider_alerts` throttle as
+    any other provider alert (key "provider:cap"), so it reminds at most
+    twice every 6h rather than every tick while the flood continues.
+    """
+    recent = [t for t in history if now - t < window_seconds]
+    room = max(0, cap - len(recent))
+    allowed, overflow = due[:room], due[room:]
+    cap_alert = None
+    if overflow:
+        cap_alert = _alert(
+            "provider:cap", "Fournisseurs : nombreux problèmes",
+            f"{len(overflow)} problème(s) fournisseur de plus que la limite de {cap} alertes / 24h.",
+            NOTHING, "Regarde `./bin/provider-failover status` pour le détail complet.", "default",
+        )
+    return allowed, recent, cap_alert
