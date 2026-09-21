@@ -38,11 +38,12 @@ Use progressive disclosure. Do not read every document by default.
 | Is a schema change undoable; migration declarations; what pr-autopilot holds | `DELIVERY.md` (Réversibilité par défaut), `decisions/ADR-0019-reversibility-by-default.md`, `./bin/reversibility-check` |
 | Why a `git push` to `main` can be refused, and why `pr-autopilot` is unaffected | `DELIVERY.md` (Main-landing gate), `decisions/ADR-0020-main-landing-gate.md`, `./bin/factory-main-gate` |
 | Why a commit/checkout/reset/merge in the live root is refused or reverted, why `bin/` executable bits self-heal, and how `mol-do-work` isolates HQ dispatches in a worktree | `decisions/ADR-0022-live-root-worktree-enforcement.md`, `.githooks/reference-transaction`, `.githooks/post-checkout`, `./bin/factory-do-work-workspace` |
+| Why a `build-basic` same-session drain has one shared branch/worktree, how every source anchor receives it, and who publishes/cleans it | `decisions/ADR-0024-shared-drain-worktree-lifecycle.md`, `DELIVERY.md` (Drain partagé), `./bin/factory-shared-drain-workspace` |
 | Why a real identifier can block a push, or a CI build fail on an unmarked fixture (dev-DB PII containment) | `DELIVERY.md` (Real-PII leak guard), `./bin/factory-pii-guard`, `./bin/factory-provenance-guard` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | A goal ships as more than one PR across rigs; the goal bead's own six proof fields aren't the whole picture | `DELIVERY.md` (Multi-repo / cross-rig delivery proof), `./bin/goal-delivery-pairs` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0023-coordination-state-write-door.md` |
+| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0024-shared-drain-worktree-lifecycle.md` |
 | Why coordination state (root pointers, semantic labels, proof fields) is written only through a door script (`product-queue`, `mayor-campaign`, `deliver-close`, `campaign-pointer`), never with `--set-metadata`, and why readers degrade instead of dying | `decisions/ADR-0023-coordination-state-write-door.md` |
 | Token-efficient multi-provider orchestration proposal (routing matrix, Mayor session budget) | `PROPOSAL-token-efficient-orchestration-2026-09-15.md` |
 

@@ -517,6 +517,40 @@ contrôle de boucle et la cible finale de la revue dans `build-pipeline`. Sans
 cette seconde protection, une boucle de revue imbriquée déjà matérialisée
 pourrait rester exécutable malgré l'échec d'un gate antérieur.
 
+### Drain partagé : un worktree, une branche, une PR
+
+Pour `build-basic --var drain_policy=same-session`, Gas City garantit l'ordre
+du drain (`single_lane=true`) et ferme les éléments suivants en `skipped` dès
+qu'un élément échoue (`on_item_failure=skip_remaining`). Le contrôleur ne crée
+cependant pas le dépôt de travail : `do-work-item` exige à juste titre un
+`work_dir` déjà publié sur son source anchor et refuse toute lecture de source
+sans lui.
+
+La couche Factory comble uniquement ce raccord. Avant le premier item,
+`prepare-shared-worktree` appelle `bin/factory-shared-drain-workspace prepare` :
+une branche `build-basic/<workflow-root-id>` et un seul worktree sous
+`<rig>/.gc/worktrees/` sont créés, puis leur chemin absolu est écrit sur tous
+les source anchors du convoy. Chaque item travaille et commit séquentiellement
+sur cette même histoire ; le second voit donc les commits du premier. La revue
+lit ce worktree comme source de vérité. L'étape de publication pousse la branche
+une fois et crée ou réutilise une seule PR, jamais une PR par item.
+
+Après succès ou échec de la portée, `cleanup-shared-worktree` est un teardown :
+il retire le worktree enregistré et efface les `work_dir` correspondants. Il ne
+supprime jamais un worktree sale ; dans ce cas il conserve les éléments de
+récupération et enregistre `preserved_dirty`. Une branche locale propre reste
+récupérable même si `push=false`, mais aucun worktree ne reste pour épingler une
+branche fusionnée. Le mode `drain_policy=separate` demeure inchangé : chaque
+item continue d'utiliser le cycle Gas City `do-work`.
+
+Preuve déterministe : `tests/factory-shared-drain-workspace-test.sh` construit
+un dépôt et un convoy jetables de deux items dépendants, vérifie le chemin
+partagé, l'ascendance des deux commits, le contrat de saut sur échec, l'unique
+PR, le retrait du worktree et l'absence de changement du drain séparé. Ce
+raccord supprime les reprises manuelles après l'erreur « source anchor has no
+work_dir metadata » et remplace jusqu'à N worktrees/PR par un seul pour N items,
+sans coût modèle supplémentaire pour le cycle Git.
+
 ## SayMyName rig contracts
 
 ### Backend — `saymyname-backend` / `smb`

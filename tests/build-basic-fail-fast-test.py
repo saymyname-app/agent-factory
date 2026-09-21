@@ -16,6 +16,7 @@ PIPELINE = [
     "plan-review",
     "decompose",
     "implement",
+    "prepare-shared-worktree",
     "implement-same-session",
     "summarize-implementation",
     "review",
@@ -54,6 +55,14 @@ def main() -> None:
         assert metadata.get("gc.scope_ref") == "build-pipeline", step_id
         assert metadata.get("gc.scope_role") == "member", step_id
         assert metadata.get("gc.on_fail") == "abort_scope", step_id
+
+    teardown = steps.get("cleanup-shared-worktree")
+    assert teardown is not None, "shared worktree lost its terminal cleanup"
+    assert teardown.get("needs") == ["build-pipeline"]
+    assert teardown.get("condition") == "{{drain_policy}} == same-session"
+    assert teardown.get("metadata", {}).get("gc.kind") == "cleanup"
+    assert teardown.get("metadata", {}).get("gc.scope_ref") == "build-pipeline"
+    assert teardown.get("metadata", {}).get("gc.scope_role") == "teardown"
 
     # The incident failed at the requirements control. Every artifact producer
     # and review stage after it must be in the same aborted scope, so Gas City's

@@ -126,6 +126,9 @@ jobs:
       - name: Build-basic hard gates fail fast (af-jz8kc)
         run: python tests/build-basic-fail-fast-test.py
 
+      - name: Build-basic same-session shared worktree lifecycle (af-5z6p7)
+        run: bash tests/factory-shared-drain-workspace-test.sh
+
       - name: Reversibility classification
         run: python tests/reversibility-test.py
 
