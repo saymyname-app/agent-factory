@@ -180,7 +180,17 @@ class Resolution(unittest.TestCase):
 
     def test_the_repository_policy_is_valid_and_complete(self):
         agents = {p.name for p in (ROOT / "agents").iterdir() if (p / "agent.toml").exists()}
-        self.assertEqual(agents | {"workspace"}, set(self.policy["targets"]))
+        # factory-worker is deliberately governed by the workspace target:
+        # it has no pinned provider and must follow workspace failover rather
+        # than grow a second chain that can drift from the writer policy.
+        workspace_inheritors = {"factory-worker"}
+        self.assertLessEqual(workspace_inheritors, agents)
+        self.assertEqual((agents - workspace_inheritors) | {"workspace"}, set(self.policy["targets"]))
+        for name in workspace_inheritors:
+            text = (ROOT / "agents" / name / "agent.toml").read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"(?m)^provider\s*=")
+            self.assertEqual("workspace", pf.target_of(
+                {"template": name, "provider": "codex"}, self.policy))
 
     def test_preferred_when_nothing_is_wrong(self):
         # Codex restored to first choice (af-wpjgu, 2026-09-21): its standard

@@ -203,8 +203,45 @@ reviewer/author model independence now that `workspace`/`mayor` are back on
 Codex. `claude-reviewer`'s chain was never part of this provisional change
 and is untouched.
 
+### 12. The HQ writer inherits `workspace`; it is not named `workspace` (af-41ahv, 2026-09-21)
+
+`workspace` is a provider-policy target, not a configured Gas City agent.
+Treating it as an agent failed at dispatch; routing the same work to `bd.dog`
+because that pool happened to inherit the resolved Codex provider then split
+one `mol-do-work` graph across three fresh Dolt-maintenance sessions. The
+first session created a worktree, a later one refused implementation, and the
+workflow root nevertheless finalized pass. Provider resolution was healthy;
+provider class and execution role had been conflated.
+
+HQ implementation now has one named role, `factory-worker`. Its local agent
+configuration deliberately contains no `provider`, so both effective config
+and `target_of()` classify it under `workspace`; it follows cockpit changes,
+quota failover, and automatic restoration without a second chain to drift.
+`max_active_sessions = 1` plus the upstream implementation-worker claim and
+continuation protocol keep a graph on one resumable session. The only
+supported ordinary-HQ dispatch command is `bin/factory-work-dispatch`, whose
+target and formula are fixed before it invokes `gc sling`; it cannot offer an
+implementation graph to `bd.dog` or to a raw provider name.
+
+This removes manual relaunch and worktree rescue, and avoids the extra model
+turns consumed when several fresh pool sessions re-read the same graph. The
+reversal is local: revert the role and dispatch door; provider policy and its
+state remain unchanged.
+
+The first live canary (`af-3l8hn`) found one more handoff bug before product
+work resumed: `mol-do-work.workspace-setup` marked the target in progress with
+`--claim`, leaving that target assigned to the session. The conventional
+worker query prioritizes its assigned in-progress beads, so the continuation
+hook selected the target itself ahead of `mol-do-work.do-work` and recorded a
+premature shipped outcome before any PR. The local formula now immediately
+clears only the target's assignee after the claim while preserving its
+`in_progress` state and explicit session evidence. Routed formula steps remain
+bound to the same session and therefore win the next continuation claim.
+
 ## Evidence
 
+- `af-a0aku` — traceability payload for the corrected `factory-worker`
+  continuation handoff.
 - `tests/provider-failover-test.py` — detection on the real messages, pools,
   chains, backoff, manual controls, overlay, and the end-to-end acceptance
   scenario of af-ogyq: a Codex wall switches workers and restarts the stuck
@@ -214,6 +251,12 @@ and is untouched.
   replays the 2026-09-20 incident: 7 error detections never push the hold past
   `auth_hold_minutes`, and a credential-file refresh clears the marking and
   regenerates the overlay within the very next tick.
+- `tests/factory-work-dispatch-test.sh` — the HQ door has one fixed
+  implementation target, refuses infrastructure/formula substitutions,
+  keeps one active session, carries the continuation protocol, and pins no
+  provider. It also locks the target-assignee release after workspace setup;
+  `tests/provider-failover-test.py` proves that live sessions of this role map
+  back to `workspace`.
 - `tests/factory-guard-provider-overlay-test.sh` — the guard regenerates a
   missing overlay, and reports a failure to do so.
 - `tests/factory-cockpit-test.py` — the bridge only calls the tool, and the

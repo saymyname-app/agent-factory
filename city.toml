@@ -178,8 +178,10 @@ enabled = true
 # (2026-09-18): restrict the Factory to what the machine has until RAM is
 # added. Sessions are slot-named (claude-1, claude-2) as soon as a cap exists,
 # so 1 changes nothing further in naming; the load test (af-48sx3) measures it.
-# Patches, not agents/<name>/, because a directory there must also be a
-# provider-policy target.
+# Patches, not agents/<name>/, because a directory there normally needs its
+# own provider-policy target. agents/factory-worker is the deliberate
+# exception: it has no provider pin and is tested as a workspace inheritor,
+# so cockpit/failover changes to workspace move the HQ writer too.
 [[patches.agent]]
 name = "claude"
 max_active_sessions = 2
