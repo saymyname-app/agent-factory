@@ -84,10 +84,17 @@ def validate_policy(policy: Any) -> dict[str, Any]:
             raise PolicyError(f"target {name!r} chain names unknown providers {unknown}")
         if len(set(chain)) != len(chain):
             raise PolicyError(f"target {name!r} chain repeats a provider")
-    for key in ("unknown_reset_minutes", "low_percent", "low_hold_minutes", "auth_hold_minutes"):
+    for key in ("unknown_reset_minutes", "low_percent", "low_hold_minutes"):
         value = policy.get(key)
         if not isinstance(value, int) or value <= 0:
             raise PolicyError(f"policy.{key} must be a positive integer")
+    # af-zdiln: optional, not required -- record_detection falls back to
+    # AUTH_HOLD_MINUTES when absent, so older or minimal policy fixtures
+    # (e.g. tests/factory-guard-liveness-test.sh's stand-in policy) stay valid.
+    if "auth_hold_minutes" in policy:
+        value = policy["auth_hold_minutes"]
+        if not isinstance(value, int) or value <= 0:
+            raise PolicyError("policy.auth_hold_minutes must be a positive integer")
     return policy
 
 
