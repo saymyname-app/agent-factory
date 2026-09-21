@@ -372,7 +372,7 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
   # merged PR to reconcile, since it's the more expensive of the two lists.
   RIG_ALL_BEADS_JSON='[]'
   if [ -n "$merged" ]; then
-    RIG_ALL_BEADS_JSON=$(cd "$rig_path" && gc bd list --json 2>/dev/null)
+    RIG_ALL_BEADS_JSON=$(cd "$rig_path" && gc bd list --all --limit 0 --json 2>/dev/null)
     [ -n "$RIG_ALL_BEADS_JSON" ] || RIG_ALL_BEADS_JSON='[]'
   fi
 
@@ -396,12 +396,30 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
               |select((.metadata.merge_result//"")!="merged")][0].id // empty' 2>/dev/null)
     [ -z "$bead" ] && { vlog "PR #$num ($branch): no unreconciled bead"; continue; }
     log "  PR #$num merged at ${sha:0:8} -> reconciling bead $bead"
-    run bash -c "cd '$rig_path' && gc bd update '$bead' \
+    if run bash -c "cd '$rig_path' && gc bd update '$bead' \
       --set-metadata merge_result=merged \
       --set-metadata merged_sha='$sha' \
       --set-metadata pr_number='$num' \
-      --set-metadata merged_target='$dev'"
-    RECONCILED=$((RECONCILED+1))
+      --set-metadata merged_target='$dev'"; then
+      # The merge_result guard above makes this a completion edge, not a
+      # periodic reminder: the first successful write wakes the Mayor, and
+      # later ticks no longer select this bead. Keep the mail compact and
+      # actionable so a waiting campaign can advance without the 60-minute
+      # liveness guard having to rediscover the completed delivery.
+      if ! run bash -c "cd '$rig_path' && gc mail send mayor --notify \
+        --subject 'SHIPPED: $bead via PR #$num' \
+        --message 'ACTION: pr-autopilot reconciled $bead from merged PR #$num
+STATE: SHIPPED
+EVIDENCE: $bead; PR #$num; merge SHA $sha
+NEXT: Mayor advances or finalizes work waiting on $bead.' >/dev/null 2>&1"; then
+        log "    reconciliation wake failed for bead $bead"
+        ERRORS=$((ERRORS+1))
+      fi
+      RECONCILED=$((RECONCILED+1))
+    else
+      log "    reconciliation write failed for bead $bead"
+      ERRORS=$((ERRORS+1))
+    fi
   done <<<"$merged"
 done
 

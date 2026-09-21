@@ -155,9 +155,13 @@ records what was verified about the machinery underneath.
 3. GitHub merges the PR itself the moment the required check goes green —
    `Maven verify` (ruleset `22629508`) or `Tests and build` (ruleset
    `22629678`). Nothing polls; no session waits on CI.
-4. On its next pass, `pr-autopilot` reconciles the merged PR back onto its work
-   bead — `merge_result=merged`, `merged_sha`, `pr_number`, `merged_target` —
-   matching bead `gc.work_branch` to the PR `headRefName`.
+4. On its next pass, `pr-autopilot` loads the complete Beads history explicitly
+   (`gc bd list --all --limit 0`), then reconciles the merged PR back onto its
+   work bead — `merge_result=merged`, `merged_sha`, `pr_number`,
+   `merged_target` — matching bead `gc.work_branch` to the PR `headRefName`.
+   The first successful reconciliation sends one compact
+   `ACTION/STATE/EVIDENCE/NEXT` wake to the Mayor so waiting dependencies can
+   advance immediately; the `merge_result` stamp makes later passes silent.
 5. A PR whose required check **failed** is never armed. It is raised as a P1
    bug bead in the rig instead, so a red build becomes ready work rather than a
    silently open PR.

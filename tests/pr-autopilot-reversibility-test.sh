@@ -8,8 +8,9 @@
 # PR is armed as before; an undeclared destructive one is held, labelled and
 # explained once; a declared-irreversible one that was already armed is
 # DISARMED and escalated to the Mayor; verdicts are cached per head commit; a
-# fixed PR is released; a checker that cannot run fails closed; --dry-run
-# changes nothing.
+# fixed PR is released; a checker that cannot run fails closed; reconciliation
+# sees closed work beyond the CLI's default 50-row window and wakes the Mayor
+# exactly once; --dry-run changes nothing.
 
 set -Eeuo pipefail
 
@@ -48,7 +49,22 @@ STUB
 cat > "$TMP/bin/gc" <<STUB
 #!/usr/bin/env bash
 echo "\$*" >> "$TMP/gc.log"
-[[ \$1 == bd && \$2 == list ]] && { cat "$TMP/beads.json" 2>/dev/null || echo '[]'; }
+if [[ \$1 == bd && \$2 == list ]]; then
+  rows=\$(cat "$TMP/beads.json" 2>/dev/null || printf '[]\n')
+  if [[ "\$*" == *"--status open"* ]]; then
+    rows=\$(jq '[.[]|select(.status=="open")]' <<<"\$rows")
+  elif [[ "\$*" != *"--all"* ]]; then
+    # Model the real Beads default: closed rows are absent unless --all is
+    # explicit. This is the production behavior the regression must exercise.
+    rows=\$(jq '[.[]|select(.status!="closed")]' <<<"\$rows")
+  fi
+  if [[ "\$*" != *"--limit 0"* ]]; then
+    # The real CLI also defaults to at most 50 rows.
+    rows=\$(jq '.[0:50]' <<<"\$rows")
+  fi
+  printf '%s\n' "\$rows"
+  exit 0
+fi
 exit 0
 STUB
 cat > "$TMP/bin/check" <<STUB
@@ -132,20 +148,44 @@ grep -q "zzz9" "$REVERSIBILITY_CACHE" && fail "a failed check was cached as a ve
 cat > "$TMP/backend-merged.json" <<'JSON'
 [{"number":7,"headRefName":"polecat/af-work7","mergeCommit":{"oid":"feedbeef7"}}]
 JSON
-cat > "$TMP/beads.json" <<'JSON'
-[
- {"id":"af-flag7","title":"[ci] PR #7 failed required checks on dev","metadata":{"pr_number":"7","source":"pr-autopilot"}},
- {"id":"af-work7","title":"the work","metadata":{"gc.work_branch":"polecat/af-work7"}}
-]
-JSON
+jq -n '
+  [{"id":"af-flag7","status":"open","title":"[ci] PR #7 failed required checks on dev","metadata":{"pr_number":"7","source":"pr-autopilot"}}]
+  + [range(0;49) | {id:("af-noise" + tostring), status:"open", title:"unrelated", metadata:{}}]
+  + [{"id":"af-work7","status":"closed","title":"the work","metadata":{"gc.work_branch":"polecat/af-work7"}}]
+' > "$TMP/beads.json"
+
+# A dry run may read both snapshots but must neither stamp the work bead nor
+# send the completion wake.
+: > "$TMP/gc.log"
+out=$(pilot --dry-run)
+grep -q "^bd list --all --limit 0 --json$" "$TMP/gc.log" || { echo "$out" >&2; fail "reconcile did not request unlimited closed history"; }
+grep -q "^bd update af-work7 " "$TMP/gc.log" && fail "--dry-run wrote reconciliation metadata"
+grep -q "^mail send mayor" "$TMP/gc.log" && fail "--dry-run sent the completion wake"
+
 : > "$TMP/gc.log"
 out=$(pilot)
+grep -q "^bd list --all --limit 0 --json$" "$TMP/gc.log" || { echo "$out" >&2; fail "reconcile did not request unlimited closed history"; }
 grep -q "^bd update af-work7 .*merge_result=merged" "$TMP/gc.log" || { echo "$out" >&2; fail "merged PR was not reconciled onto its work bead"; }
 grep -q "^bd update af-flag7 .*merge_result=merged" "$TMP/gc.log" && fail "reconcile stamped a pr-autopilot flag bead as merged"
 # af-gpq0y: the flag bead itself IS closed now (a different, deliberate path
 # -- close_ci_failure_beads -- not the reconcile stamp above), since its own
 # PR merged and the failure it reported no longer applies.
 grep -q "^bd update af-flag7 --status closed" "$TMP/gc.log" || { echo "$out" >&2; fail "PR #7's CI-failure bead was not closed on merge"; }
+test "$(grep -c '^mail send mayor --notify' "$TMP/gc.log" || true)" = "1" || fail "first reconciliation did not wake the Mayor exactly once"
+grep -q "SHIPPED: af-work7 via PR #7" "$TMP/gc.log" || fail "completion wake did not name the bead and PR"
+grep -q "ACTION: pr-autopilot reconciled af-work7 from merged PR #7" "$TMP/gc.log" || fail "completion wake lacks its ACTION"
+grep -q "^STATE: SHIPPED$" "$TMP/gc.log" || fail "completion wake lacks its STATE"
+grep -q "^EVIDENCE: af-work7; PR #7; merge SHA feedbeef7$" "$TMP/gc.log" || fail "completion wake lacks exact evidence"
+grep -q "^NEXT: Mayor advances or finalizes work waiting on af-work7\.$" "$TMP/gc.log" || fail "completion wake lacks its next action"
+
+# Model the state left by the successful write. The merge_result guard must
+# make the next tick silent for this delivery: no repeat write and no mail.
+jq 'map(if .id=="af-work7" then .metadata.merge_result="merged" else . end)' \
+  "$TMP/beads.json" > "$TMP/next.json" && mv "$TMP/next.json" "$TMP/beads.json"
+: > "$TMP/gc.log"
+pilot >/dev/null
+grep -q "^bd update af-work7 " "$TMP/gc.log" && fail "reconciled the same work bead twice"
+grep -q "^mail send mayor" "$TMP/gc.log" && fail "sent the completion wake twice"
 rm -f "$TMP/backend-merged.json" "$TMP/beads.json"
 
 # --- O3: an exhausted tick budget stops cleanly, recorded, not SIGKILLed -----------------
