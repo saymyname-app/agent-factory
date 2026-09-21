@@ -1,0 +1,45 @@
+description = "Deterministic runtime fixture for build-basic fail-fast scope behavior."
+formula = "build-basic-fail-fast-runtime"
+version = 1
+contract = "graph.v2"
+
+[[steps]]
+id = "hard-gate"
+title = "Hard gate"
+description = "The test closes this stage with control_dispatch_error."
+metadata = { "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+
+[steps.check]
+max_attempts = 3
+
+[steps.check.check]
+mode = "exec"
+path = ".gc/scripts/checks/never-run.sh"
+timeout = "1m"
+
+[[steps]]
+id = "review-loop"
+title = "Review until approved"
+description = "This loop and its descendants must be swept before they run."
+needs = ["hard-gate"]
+metadata = { "gc.scope_ref" = "build-pipeline", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+
+[steps.check]
+max_attempts = 3
+
+[steps.check.check]
+mode = "exec"
+path = ".gc/scripts/checks/never-run.sh"
+timeout = "1m"
+
+[[steps.children]]
+id = "review-lane"
+title = "Review lane"
+description = "This lane must close skipped without being claimed."
+
+[[steps]]
+id = "build-pipeline"
+title = "Finalize build pipeline scope"
+description = "Fail-fast scope body."
+needs = ["hard-gate", "review-loop"]
+metadata = { "gc.kind" = "scope", "gc.scope_name" = "build-pipeline", "gc.scope_role" = "body" }
