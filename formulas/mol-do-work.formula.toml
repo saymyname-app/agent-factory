@@ -78,7 +78,17 @@ campaign_progress_at` freezes and factory-guard files a false "vivante mais
 immobile" defect every ~5-6 min for as long as the bead stays open:
 ```bash
 gc bd update "$WORK_BEAD_ID" --claim
+gc bd update "$WORK_BEAD_ID" --assignee "" \
+  --set-metadata "gc.session_name=${GC_SESSION_NAME:-${GC_AGENT:-}}" \
+  --set-metadata "gc.session_id=${GC_SESSION_ID:-}"
 ```
+
+The second update is part of the claim contract, not an unclaim. It leaves the
+work bead `in_progress` with its session evidence, but releases its assignee so
+the conventional worker's next `gc hook --claim --json` selects the routed
+`do-work` formula step. Without that handoff, the default work query sees the
+in-progress target before the next graph step and executes it outside the
+formula (live canary af-3l8hn, af-kg6j6).
 
 Read the bead's title and description carefully. This is your task.
 

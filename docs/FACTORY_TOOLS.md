@@ -407,7 +407,9 @@ Une seule session `factory-worker` peut être active. Son protocole réclame
 chaque étape avec `gc hook --claim --json`, puis réclame immédiatement la
 suite du même groupe avant de se drainer. Ainsi le worktree, l'implémentation
 et l'ouverture de PR restent dans la même session logique; une cible de
-maintenance ne peut plus être sélectionnée par cette porte. Pour annuler ce
+maintenance ne peut plus être sélectionnée par cette porte. Le bead de travail
+reste `in_progress` mais sans assignee entre les étapes : sinon le hook le
+reprendrait avant l'étape suivante du graphe. Pour annuler ce
 choix, revenir sur le rôle, la porte et leur documentation : la politique de
 fournisseurs reste indépendante.
 

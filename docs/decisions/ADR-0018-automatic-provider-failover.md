@@ -228,6 +228,16 @@ turns consumed when several fresh pool sessions re-read the same graph. The
 reversal is local: revert the role and dispatch door; provider policy and its
 state remain unchanged.
 
+The first live canary (`af-3l8hn`) found one more handoff bug before product
+work resumed: `mol-do-work.workspace-setup` marked the target in progress with
+`--claim`, leaving that target assigned to the session. The conventional
+worker query prioritizes its assigned in-progress beads, so the continuation
+hook selected the target itself ahead of `mol-do-work.do-work` and recorded a
+premature shipped outcome before any PR. The local formula now immediately
+clears only the target's assignee after the claim while preserving its
+`in_progress` state and explicit session evidence. Routed formula steps remain
+bound to the same session and therefore win the next continuation claim.
+
 ## Evidence
 
 - `tests/provider-failover-test.py` — detection on the real messages, pools,
@@ -242,8 +252,9 @@ state remain unchanged.
 - `tests/factory-work-dispatch-test.sh` — the HQ door has one fixed
   implementation target, refuses infrastructure/formula substitutions,
   keeps one active session, carries the continuation protocol, and pins no
-  provider; `tests/provider-failover-test.py` proves that live sessions of
-  this role map back to `workspace`.
+  provider. It also locks the target-assignee release after workspace setup;
+  `tests/provider-failover-test.py` proves that live sessions of this role map
+  back to `workspace`.
 - `tests/factory-guard-provider-overlay-test.sh` — the guard regenerates a
   missing overlay, and reports a failure to do so.
 - `tests/factory-cockpit-test.py` — the bridge only calls the tool, and the
