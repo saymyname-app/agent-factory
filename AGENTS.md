@@ -63,6 +63,11 @@ For a change:
   `factory-guard` names any that are left; it does not remove them for you.
 - Do not extend the retired SayMyName Linear/PowerShell runner except for transition or safety work.
 - Check Gas City, Beads, GitHub, the provider/runtime, and standards before inventing a proprietary primitive.
+- Campaign liveness uses a composite progress clock: the campaign pointer,
+  current result, and any explicitly linked `gc.backend_workflow` plus its
+  verified descendants. A recent session heartbeat counts only when a linked
+  workflow bead records that session; session existence alone never counts,
+  and a closed non-pass linked workflow is a recovery signal, not progress.
 - Never put secrets in Git, Beads, logs, prompts, or responses.
 - Architecture changes update durable documentation in the same change.
 - **Every factory improvement is verified, adds autonomy, optimises something,

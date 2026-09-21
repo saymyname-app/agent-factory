@@ -100,6 +100,66 @@ class LivenessRules(unittest.TestCase):
             assess(stale, NOW, current_result=cold_result, current_workflow=None)[:2],
         )
 
+    def test_explicitly_linked_workflow_and_agent_heartbeat_join_the_progress_clock(self):
+        """af-f1jhi: gc.backend_workflow discovery happens in factory-guard;
+        the pure rule receives its verified root/descendants/session heartbeat.
+        A recent workflow write or a recent linked-session heartbeat is real
+        progress, while an old heartbeat (or session existence with no
+        timestamp) cannot mask a stall."""
+        stale = meta(**{"gc.campaign_progress_at": "2026-09-16T09:10:00Z"})
+        cold_result = {"updated_at": "2026-09-16T07:00:00Z", "metadata": {}}
+        recent_root = {
+            "id": "smb-flow", "status": "in_progress",
+            "updated_at": "2026-09-16T10:34:00Z",
+            "metadata": {"gc.kind": "workflow"},
+        }
+        self.assertEqual(
+            ("ok", "active_result"),
+            assess(stale, NOW, current_result=cold_result, current_workflow=[recent_root])[:2],
+        )
+
+        cold_root = {**recent_root, "updated_at": "2026-09-16T07:00:00Z"}
+        session_heartbeat = {
+            "id": "session:af-worker", "status": "in_progress",
+            "metadata": {"gc.last_heartbeat_at": "2026-09-16T10:36:00Z"},
+        }
+        level, code, message = assess(
+            stale, NOW, current_result=cold_result,
+            current_workflow=[cold_root, session_heartbeat],
+        )
+        self.assertEqual(("ok", "active_result"), (level, code))
+        self.assertIn("active 4 min ago", message)
+
+        session_without_heartbeat = {"id": "session:af-worker", "status": "in_progress"}
+        self.assertEqual(
+            ("bad", "stale"),
+            assess(stale, NOW, current_result=cold_result,
+                   current_workflow=[cold_root, session_without_heartbeat])[:2],
+        )
+        old_heartbeat = {
+            "id": "session:af-worker", "status": "in_progress",
+            "metadata": {"gc.last_heartbeat_at": "2026-09-16T07:10:00Z"},
+        }
+        self.assertEqual(
+            ("bad", "stale"),
+            assess(stale, NOW, current_result=cold_result,
+                   current_workflow=[cold_root, old_heartbeat])[:2],
+        )
+
+    def test_closed_failed_linked_workflow_is_a_defect_not_recent_activity(self):
+        linked_failure = {
+            "id": "smb-flow", "status": "closed",
+            "updated_at": "2026-09-16T10:39:00Z",
+            "metadata": {"gc.kind": "workflow", "gc.outcome": "fail"},
+        }
+        level, code, message = assess(meta(), NOW, current_workflow=[linked_failure])
+        self.assertEqual(("bad", "workflow_failed"), (level, code))
+        self.assertIn("smb-flow closed with gc.outcome=fail", message)
+
+        # A malformed/absent discovery result is exactly the prior behavior.
+        self.assertEqual(("ok", "ok"), assess(meta(), NOW, current_workflow=[])[:2])
+        self.assertEqual(("ok", "ok"), assess(meta(), NOW, current_workflow=None)[:2])
+
     def test_stale_heartbeat_is_not_masked_by_an_unrelated_metadata_write(self):
         """af-i64cb: once a result has ever sent a heartbeat, a later bare
         `updated_at` bump (a nudge, an unrelated bookkeeping write) must not
