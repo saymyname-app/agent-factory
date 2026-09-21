@@ -3,7 +3,6 @@
   "description": "Human-maintained, by commit: the model id(s) each provider profile in city.toml is currently allowed to run. bin/provider-failover check-models compares this daily against the id actually configured in city.toml and surfaces drift (a bead plus mail to the Mayor) -- it never edits a model id itself, per ADR-0018's 'switch models only via cockpit or provider-failover set' invariant. Update this file by commit when a provider ships a new recommended model or deprecates one.",
   "providers": {
     "codex": { "recommended": ["gpt-5.6-sol"] },
-    "codex-spark": { "recommended": ["gpt-5.3-codex-spark"] },
     "claude": { "recommended": ["sonnet-5"] },
     "claude-standard": { "recommended": ["sonnet-5"] },
     "claude-cheap": { "recommended": ["haiku"] }

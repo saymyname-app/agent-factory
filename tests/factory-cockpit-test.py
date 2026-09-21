@@ -353,11 +353,11 @@ class FactoryCockpitTest(unittest.TestCase):
                 directory,
                 operator_name="Alice",
                 north_star="Prouver la valeur puis la répétabilité.",
-                po_model="gpt-5.3-codex-spark",
+                po_model="gpt-5.6-po-test",
                 po_sandbox="read-only",
             ))
             self.assertEqual("Alice", _operator_name(config))
-            self.assertEqual("gpt-5.3-codex-spark", config["po_model"])
+            self.assertEqual("gpt-5.6-po-test", config["po_model"])
             self.assertEqual("read-only", config["po_sandbox"])
             self.assertEqual(
                 (ROOT / "bin" / "saymyname-preview").resolve(),
@@ -411,7 +411,7 @@ class FactoryCockpitTest(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
             config = load_product_config(self._portable_config(
-                directory, po_model="gpt-5.3-codex-spark", po_sandbox="read-only",
+                directory, po_model="gpt-5.6-po-test", po_sandbox="read-only",
             ))
             bridge = POBridge(config, Path(directory) / "po.json", execute)
             bridge.submit("Discutons", "discuss", None)
@@ -423,7 +423,7 @@ class FactoryCockpitTest(unittest.TestCase):
             command = calls[0]
             self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
             self.assertIn('sandbox_mode="read-only"', command)
-            self.assertEqual(["-m", "gpt-5.3-codex-spark"], command[2:4])
+            self.assertEqual(["-m", "gpt-5.6-po-test"], command[2:4])
             self.assertFalse(bridge.conversation()["full_access"])
 
     def test_po_console_keeps_full_access_and_the_default_model_without_overrides(self):

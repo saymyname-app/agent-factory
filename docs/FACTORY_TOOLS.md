@@ -354,8 +354,8 @@ Trois fichiers, un seul écrivain :
 régénère, mais autant ne pas lui en donner l'occasion.
 
 Un quota s'applique à un **pool** : les trois profils Claude partagent le même
-compte, donc une limite Claude les épuise tous. Codex standard et Codex Spark
-sont deux pools distincts.
+compte, donc une limite Claude les épuise tous. Codex standard est son propre
+pool.
 
 Si **aucun** fournisseur ne reste pour les ouvriers, la campagne est mise en
 pause (`limit`, cause `[provider-failover]`) avec l'heure de reprise la plus

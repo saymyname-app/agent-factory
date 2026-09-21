@@ -230,7 +230,6 @@ class Resolution(unittest.TestCase):
 
     def test_a_provider_error_backs_off_and_reports_a_next_reset(self):
         self.error("openai")
-        self.error("openai-spark")
         self.error("anthropic")
         pick = self.pick()
         self.assertEqual((None, "all_unavailable"), (pick["provider"], pick["reason"]))
@@ -244,7 +243,6 @@ class Resolution(unittest.TestCase):
 
     def test_total_exhaustion_names_the_earliest_reset(self):
         self.exhaust("openai", "2026-09-21T05:22:00+00:00")
-        self.exhaust("openai-spark", "2026-09-17T00:00:00+00:00")
         self.exhaust("anthropic", "2026-09-16T16:50:00+00:00")
         pick = self.pick()
         self.assertEqual((None, "all_unavailable", "2026-09-16T16:50:00Z"),
@@ -289,8 +287,6 @@ class Resolution(unittest.TestCase):
         pf.record_detection(self.state, self.policy, "openai", {"kind": "low", "percent": 5, "evidence": "x"}, NOW)
         self.assertEqual("claude-standard", self.pick()["provider"])
         self.exhaust("anthropic")
-        pf.record_detection(self.state, self.policy, "openai-spark",
-                            {"kind": "exhausted", "until": NOW + 3600, "evidence": "x"}, NOW)
         self.assertEqual("codex", self.pick()["provider"])  # low beats nothing
         # 25% left is not low under the default 5% threshold.
         fresh = pf.empty_state()
@@ -314,8 +310,8 @@ class Resolution(unittest.TestCase):
         pf.apply_control(self.state, self.policy, "disable", {"provider": "codex"}, NOW, "B")
         self.assertEqual("claude-standard", self.pick()["provider"])
         pf.apply_control(self.state, self.policy, "chain",
-                         {"target": "workspace", "chain": ["codex-spark", "claude"]}, NOW, "B")
-        self.assertEqual("codex-spark", self.pick()["provider"])
+                         {"target": "workspace", "chain": ["claude-cheap", "claude"]}, NOW, "B")
+        self.assertEqual("claude-cheap", self.pick()["provider"])
         pf.apply_control(self.state, self.policy, "force", {"target": "workspace", "provider": "codex"}, NOW, "B")
         forced = self.pick()
         self.assertEqual(("codex", "forced"), (forced["provider"], forced["reason"]))
@@ -357,6 +353,31 @@ class Resolution(unittest.TestCase):
                                    self.policy)
         self.assertEqual(({}, {}, {}, {}), (state["disabled"], state["forced"], state["chains"], state["pools"]))
         self.assertEqual(pf.empty_state()["contract"], pf.normalize_state("garbage", self.policy)["contract"])
+
+    def test_a_stale_state_naming_codex_spark_cannot_resolve_to_it(self):
+        """af-i6018: codex-spark and its openai-spark pool were removed from
+        the policy entirely (server rejects the model for a ChatGPT account).
+        A leftover .gc/provider-state.json from before the removal -- marked,
+        disabled, forced or chain-reordered onto it -- must be ignored, not
+        error, and must never let an agent resolve to the removed provider."""
+        stale = {
+            "auto": True,
+            "pools": {"openai-spark": {"status": "exhausted", "until": pf.iso(NOW + 3600), "source": "detected"}},
+            "disabled": {"codex-spark": {"reason": "server rejects it", "by": "Benjamin"}},
+            "forced": {"workspace": "codex-spark"},
+            "chains": {"workspace": ["codex-spark", "claude-standard"]},
+        }
+        state = pf.normalize_state(stale, self.policy)
+        self.assertEqual({}, state["pools"])
+        self.assertEqual({}, state["disabled"])
+        self.assertEqual({}, state["forced"])
+        self.assertEqual({}, state["chains"])
+        pick = pf.resolve(self.policy, state, NOW)["workspace"]
+        self.assertNotEqual("codex-spark", pick["provider"])
+        self.assertEqual("claude-standard", pick["provider"])
+        # A detection naming the removed pool is a silent no-op, never an error.
+        self.assertFalse(pf.record_detection(state, self.policy, "openai-spark",
+                                             {"kind": "exhausted", "until": NOW + 3600, "evidence": "x"}, NOW))
 
     def test_overlay(self):
         self.exhaust("openai")
@@ -422,7 +443,7 @@ class ModelStaleness(unittest.TestCase):
         self.assertEqual([], pf.stale_models(configured, self.CATALOG["providers"]))
 
     def test_a_provider_the_catalog_does_not_know_is_skipped_not_guessed_at(self):
-        configured = {"codex-spark": "gpt-5.3-codex-spark"}
+        configured = {"some-future-provider": "gpt-9"}
         self.assertEqual([], pf.stale_models(configured, self.CATALOG["providers"]))
 
 
@@ -593,27 +614,25 @@ class EndToEnd(unittest.TestCase):
         self.sessions([
             {"id": "af-w1", "template": "saymyname-backend/codex", "state": "active", "provider": "codex"},
             {"id": "af-m", "template": "mayor", "state": "active", "provider": "claude-standard"},
-            {"id": "af-s", "template": "saymyname-frontend/spark", "state": "active", "provider": "codex-spark"},
         ])
-        self.pane("af-s", "You've hit your usage limit. try again in 3 hours\n")
         self.run_tool("tick")
         parked = self.calls("campaign.log")
         self.assertEqual(1, len(parked))
         self.assertIn("block --mayor --kind limit --owner Mayor", parked[0])
         self.assertIn("[provider-failover]", parked[0])
-        self.assertIn("reprise automatique vers 2026-09-16T13:40:00Z", parked[0])  # earliest: spark, 3h
+        self.assertIn("reprise automatique vers 2026-09-16T16:50:00Z", parked[0])  # earliest: claude
         # Never a human decision: no needs_benjamin, owner is the Mayor.
         self.assertNotIn("Benjamin", parked[0].split("--action")[0])
         # Ticking again while still exhausted does not park twice.
         self.run_tool("tick")
         self.assertEqual(1, len(self.calls("campaign.log")))
-        # Three hours later Spark is back: the campaign resumes by itself.
-        for sid in ("af-w1", "af-m", "af-s"):
+        # A minute past Claude's reset both pools are usable again: the campaign resumes by itself.
+        for sid in ("af-w1", "af-m"):
             self.pane(sid, "")
-        later = datetime(2026, 9, 16, 13, 41, tzinfo=timezone.utc).timestamp()
+        later = datetime(2026, 9, 16, 16, 51, tzinfo=timezone.utc).timestamp()
         self.run_tool("tick", PROVIDER_NOW=str(later))
         self.assertEqual("resume --mayor", self.calls("campaign.log")[-1])
-        self.assertIn('provider = "codex-spark"', self.overlay())
+        self.assertIn('provider = "claude-standard"', self.overlay())
 
     def test_panes_are_read_from_tmux_without_calling_gc(self):
         """gc session peek cost 8 s a call; tmux answers in milliseconds."""
@@ -694,10 +713,6 @@ FIXTURE_CITY_TOML = '''
 base = "builtin:codex"
 args_append = ["-m", "gpt-5.6-sol"]
 
-[providers.codex-spark]
-base = "builtin:codex"
-args_append = ["-m", "gpt-5.3-codex-spark"]
-
 [providers.claude]
 base = "builtin:claude"
 [providers.claude.option_defaults]
@@ -718,7 +733,6 @@ FIXTURE_CATALOG = json.dumps({
     "contract": "agent-factory-model-catalog/v1",
     "providers": {
         "codex": {"recommended": ["gpt-5.6-sol"]},
-        "codex-spark": {"recommended": ["gpt-5.3-codex-spark"]},
         "claude": {"recommended": ["sonnet-5"]},
         "claude-standard": {"recommended": ["sonnet-5"]},
         "claude-cheap": {"recommended": ["haiku"]},

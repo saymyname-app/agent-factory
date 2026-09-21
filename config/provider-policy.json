@@ -10,10 +10,6 @@
       "label": "OpenAI · Codex (quota standard)",
       "note": "Quota Codex standard de l’abonnement ChatGPT Pro."
     },
-    "openai-spark": {
-      "label": "OpenAI · Codex Spark (allocation séparée)",
-      "note": "Allocation Spark, distincte du quota Codex standard."
-    },
     "anthropic": {
       "label": "Anthropic · Claude (compte partagé)",
       "note": "Un seul compte : une limite de session ou hebdomadaire épuise tous les profils Claude d’un coup."
@@ -24,11 +20,6 @@
       "label": "GPT-5.6 Sol (Codex)",
       "pool": "openai",
       "tier": "premium"
-    },
-    "codex-spark": {
-      "label": "GPT-5.3 Codex Spark",
-      "pool": "openai-spark",
-      "tier": "fast"
     },
     "claude": {
       "label": "Claude Sonnet 5 · effort élevé",
@@ -53,7 +44,6 @@
       "chain": [
         "claude-standard",
         "codex",
-        "codex-spark",
         "claude-cheap"
       ]
     },
@@ -62,8 +52,7 @@
       "why": "Provisoire (2026-09-18, Benjamin) : Claude par défaut, Codex en secondaire, même raison que workspace. Codex reviendra en tête une fois son quota revenu et confirmé fiable pour l’orchestration.",
       "chain": [
         "claude-standard",
-        "codex",
-        "codex-spark"
+        "codex"
       ]
     },
     "claude-reviewer": {
@@ -80,8 +69,7 @@
       "why": "Provisoire (2026-09-18, Benjamin) : Claude en tête comme les autres cibles tant que Codex est indisponible. ATTENTION compromis : l’auteur (workspace/mayor) est aussi sur Claude en ce moment, donc ce relecteur perd temporairement son indépendance de modèle vis-à-vis de l’auteur -- à rebasculer sur Codex en premier dès qu’il refonctionne, pour retrouver l’indépendance voulue à l’origine.",
       "chain": [
         "claude",
-        "codex",
-        "codex-spark"
+        "codex"
       ]
     }
   }
