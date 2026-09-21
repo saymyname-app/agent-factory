@@ -4,6 +4,7 @@
   "unknown_reset_minutes": 60,
   "low_percent": 5,
   "low_hold_minutes": 360,
+  "auth_hold_minutes": 10,
   "pools": {
     "openai": {
       "label": "OpenAI · Codex (quota standard)",

@@ -127,6 +127,36 @@ page (see the PO mail attribution trap).
   silently — no message, no exit — is not detected here; the liveness watchdog
   (ADR-0016 §5.3) is what notices a factory that stops advancing.
 
+### 9. A credential problem self-heals fast, not slowly (af-zdiln, 2026-09-20)
+
+The provider_error backoff added for af-s6fqv (§4) climbs 10min → 20 → 40 …
+capped at 8h, on the assumption that a non-quota failure is closer to a rate
+limit than a quota wall. On 2026-09-20 Claude's login expired at ~12:10Z; the
+pool was marked `error`/`auth`, and because every tick that still found the
+banner counted as another strike, the hold reached its 8h cap. Benjamin fixed
+the login at ~17:34Z, but nothing re-tested the provider before the hold
+expired, so the factory sat idle until a human ran `set --action clear` by
+hand at ~17:45Z.
+
+An expired credential is a fixed fault, not a rate limit: waiting longer does
+not make it less broken, and a fix does not need to wait out a stale hold to
+take effect. So `category=auth` now:
+
+- never grows past `policy.auth_hold_minutes` (10 by default), however many
+  strikes accumulate -- every other category keeps the existing exponential
+  backoff unchanged;
+- is probed for free every tick: the first detection of an episode records a
+  cheap fingerprint (mtime + size, never content) of the provider's local
+  credential file (`~/.claude/.credentials.json` for `anthropic`,
+  `~/.codex/auth.json` for the Codex pools). The next tick that finds the
+  fingerprint changed clears the marking immediately -- no API call, so a
+  genuinely broken or rate-limited provider is never hammered. If the file
+  has not changed, the marking stays and the hold (still capped at 10min) is
+  the only path back until it does.
+
+This is additive: quota exhaustion and every other `provider_error` category
+are untouched, and a human can still `set --action clear` at any time.
+
 ## Evidence
 
 - `tests/provider-failover-test.py` — detection on the real messages, pools,
@@ -134,7 +164,10 @@ page (see the PO mail attribution trap).
   scenario of af-ogyq: a Codex wall switches workers and restarts the stuck
   one without touching the campaign; total exhaustion parks with the earliest
   reset and resumes by itself three hours later; a block this tool did not set
-  is never lifted.
+  is never lifted. `test_af_zdiln_auth_hold_is_capped_and_a_credential_refresh_self_heals_within_two_ticks`
+  replays the 2026-09-20 incident: 7 error detections never push the hold past
+  `auth_hold_minutes`, and a credential-file refresh clears the marking and
+  regenerates the overlay within the very next tick.
 - `tests/factory-guard-provider-overlay-test.sh` — the guard regenerates a
   missing overlay, and reports a failure to do so.
 - `tests/factory-cockpit-test.py` — the bridge only calls the tool, and the

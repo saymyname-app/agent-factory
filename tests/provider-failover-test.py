@@ -205,6 +205,29 @@ class Resolution(unittest.TestCase):
         self.assertEqual("error", entries["codex"])
         self.assertEqual(("claude-standard", "preferred"), (self.pick()["provider"], self.pick()["reason"]))
 
+    def test_an_auth_error_hold_never_grows_with_strikes(self):
+        """af-zdiln (2026-09-20 incident): the 2026-09-16 exponential shape
+        (10 * 2**(strikes-1), capped at 8h) is right for a rate limit but
+        pointless for a fixed credential -- it must stay at the small
+        constant (policy.auth_hold_minutes, default 10) however many
+        detections accumulate, while every OTHER category keeps climbing
+        (test_a_provider_error_backs_off_and_reports_a_next_reset, below,
+        proves that untouched)."""
+        finding = {"kind": "provider_error", "category": "auth", "evidence": "401",
+                  "auth_fingerprint": "before"}
+        t = NOW
+        for i in range(7):  # the incident's 7 strikes
+            pf.record_detection(self.state, self.policy, "anthropic", dict(finding), t)
+            if i < 6:
+                t += 130  # a bit over one 2-minute tick: never deduped as "unchanged"
+        entry = self.state["pools"]["anthropic"]
+        self.assertEqual(7, entry["strikes"])
+        self.assertEqual(self.policy["auth_hold_minutes"], (pf.epoch(entry["until"]) - t) / 60)
+        # The baseline fingerprint captured at the FIRST detection survives
+        # every later re-detection of the same still-broken credential --
+        # otherwise the probe (bin/provider-failover) could never see it change.
+        self.assertEqual("before", entry["auth_fingerprint"])
+
     def test_a_provider_error_backs_off_and_reports_a_next_reset(self):
         self.error("openai")
         self.error("openai-spark")
@@ -474,6 +497,10 @@ class EndToEnd(unittest.TestCase):
             "PROVIDER_LOCAL_TZ": "Europe/Paris",
             "FACTORY_ROOT": str(self.d),
             "PROVIDER_POLICY_FILE": str(ROOT / "config" / "provider-policy.json"),
+            # Absent by default: credential_fingerprint() returns None and the
+            # auth-recovery probe never fires, so every other test is unaffected.
+            "CLAUDE_CREDENTIALS_FILE": str(self.d / "claude-credentials.json"),
+            "CODEX_AUTH_FILE": str(self.d / "codex-auth.json"),
         }
 
     def tearDown(self):
@@ -514,6 +541,51 @@ class EndToEnd(unittest.TestCase):
         self.assertNotIn("reload", self.calls()[before:])
         # The deterministic dispatcher is never peeked.
         self.assertFalse(any(c == "session peek af-d" for c in self.calls()))
+
+    def test_af_zdiln_auth_hold_is_capped_and_a_credential_refresh_self_heals_within_two_ticks(self):
+        """Regression, 2026-09-20: Claude login expired ~12:10Z; provider-failover
+        marked pool anthropic error/auth; 7 error detections (one per tick
+        while the login stayed broken) climbed the old exponential backoff
+        (10 * 2**(strikes-1), capped 8h) to an 8h hold. Benjamin fixed the
+        login at ~17:34Z but the factory only came back at ~17:45Z, after a
+        human ran `set --action clear` by hand. This replays it end to end:
+        the hold must never grow past auth_hold_minutes, and a credential
+        refresh must self-heal within two ticks (~4 min) with no manual
+        command -- the overlay regenerates on its own."""
+        self.sessions([
+            {"id": "af-m", "alias": "mayor", "template": "mayor", "state": "active", "provider": "claude-standard"},
+        ])
+        creds = Path(self.env["CLAUDE_CREDENTIALS_FILE"])
+        creds.write_text('{"token": "expired"}', encoding="utf-8")
+        self.pane("af-m", AUTH_ERROR)
+        t = NOW
+        for i in range(7):  # the incident's 7 error detections
+            self.run_tool("tick", PROVIDER_NOW=str(t))
+            if i < 6:
+                t += 130  # a bit over one 2-minute tick
+        state = json.loads((self.d / "state.json").read_text(encoding="utf-8"))
+        entry = state["pools"]["anthropic"]
+        self.assertEqual(7, entry["strikes"])
+        self.assertEqual(10, (pf.epoch(entry["until"]) - t) / 60)  # capped, never 8h
+        self.assertIn('name = "mayor"\nprovider = "codex"', self.overlay())  # anthropic unusable meanwhile
+        self.assertIn("session reset af-m", self.calls())  # stuck session moved off it
+
+        # Benjamin fixes the login: the credentials file is rewritten.
+        creds.write_text('{"token": "fresh"}', encoding="utf-8")
+        os.utime(creds, (t + 600, t + 600))  # force a distinct mtime, whatever the fs clock resolution
+        before = len(self.calls())
+        t += 130  # one tick later: well inside the 2-tick / ~4-minute bound
+        out = self.run_tool("tick", PROVIDER_NOW=str(t)).stdout
+        state = json.loads((self.d / "state.json").read_text(encoding="utf-8"))
+        self.assertNotIn("anthropic", state["pools"])  # cleared, not just held shorter
+        self.assertIn('name = "mayor"\nprovider = "claude-standard"', self.overlay())
+        self.assertIn("credential file changed since the error was marked -- cleared", out)
+        self.assertIn("reload", self.calls()[before:])  # Gas City's own config-drift restart
+        # takes it from here (ADR-0018 s4): the overlay flipping back to the
+        # preferred provider and reloading is exactly the mechanism verified
+        # live 2026-09-16, moving a running session within 15s each way.
+        self.assertIn("auth-recovered", [h["event"] for h in
+                       json.loads(self.run_tool("status", "--json", PROVIDER_NOW=str(t)).stdout)["history"]])
 
     def test_total_exhaustion_parks_then_resumes_on_its_own(self):
         self.pane("af-w1", CODEX_WALL)

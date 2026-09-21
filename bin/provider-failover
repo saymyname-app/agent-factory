@@ -4,9 +4,12 @@
 L0, deterministic, zero model tokens. Runs every two minutes as an order.
 
   tick     look at every live model session, record any quota wall it shows,
-           choose a provider per target, write city.provider.toml, reload the
-           city if that changed, restart sessions stuck on an exhausted pool,
-           and park / resume the campaign when *nothing* is left
+           probe any pool held for a credential error (category=auth) against
+           its credential file and clear it the moment that file changes
+           (af-zdiln -- never wait out the hold for a fixed login), choose a
+           provider per target, write city.provider.toml, reload the city if
+           that changed, restart sessions stuck on an exhausted pool, and
+           park / resume the campaign when *nothing* is left
   apply    regenerate city.provider.toml from the current state (no detection)
   status   what is chosen and why (--json for the cockpit)
   check-models  daily (not per-tick): compare the model id configured for each
@@ -60,6 +63,22 @@ PARK_MARKER = "[provider-failover]"
 # the fallback for any runtime that is not tmux.
 TMUX_BIN = os.environ.get("PROVIDER_TMUX_BIN", "tmux")
 TMUX_SOCKET = os.environ.get("PROVIDER_TMUX_SOCKET") or FACTORY_ROOT.name
+# af-zdiln: the cheap, zero-token, local probe for "is the credential problem
+# fixed yet". Each pool's error marking (category=auth) carries a fingerprint
+# of the file below, taken when the error was first seen; a tick that finds
+# the file has changed since clears the marking immediately instead of
+# waiting out the hold. Never an API call -- a genuinely broken/rate-limited
+# provider must not be hammered.
+CLAUDE_CREDENTIALS_FILE = Path(os.environ.get("CLAUDE_CREDENTIALS_FILE") or
+                               Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+                               / ".credentials.json")
+CODEX_AUTH_FILE = Path(os.environ.get("CODEX_AUTH_FILE") or
+                       Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json")
+CREDENTIAL_FILES = {
+    "anthropic": CLAUDE_CREDENTIALS_FILE,
+    "openai": CODEX_AUTH_FILE,
+    "openai-spark": CODEX_AUTH_FILE,
+}
 
 
 def local_tz() -> str:
@@ -192,6 +211,45 @@ def write_overlay(policy: dict[str, Any], state: dict[str, Any], resolution: dic
     return changed, switches
 
 
+def credential_fingerprint(pool: str) -> str | None:
+    """A cheap, local, zero-token stand-in for "did the credential change".
+
+    mtime + size, never the content: good enough to notice a re-login
+    rewrote the file, without ever reading a secret.
+    """
+    path = CREDENTIAL_FILES.get(pool)
+    if path is None:
+        return None
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return f"{st.st_mtime_ns}:{st.st_size}"
+
+
+def probe_auth_recovery(state: dict[str, Any], moment: float) -> list[str]:
+    """Clear a pool's error/auth marking as soon as its credential file changes.
+
+    Only category=auth is probed this way (af-zdiln): a fixed credential
+    problem should recover fast, and the fingerprint is a reliable, cheap
+    signal for it. No blind clear -- absent or unchanged evidence leaves the
+    marking exactly where record_detection put it.
+    """
+    messages = []
+    for pool, entry in list(state.get("pools", {}).items()):
+        if entry.get("status") != "error" or entry.get("category") != "auth":
+            continue
+        baseline = entry.get("auth_fingerprint")
+        current = credential_fingerprint(pool)
+        if current is None or current == baseline:
+            continue
+        state["pools"].pop(pool, None)
+        line = f"{pool}: credential file changed since the error was marked -- cleared"
+        pf.note(state, moment, "auth-recovered", line)
+        messages.append(line)
+    return messages
+
+
 def reload_city() -> str:
     try:
         result = gc("reload", timeout=90)
@@ -276,6 +334,8 @@ def tick(args: argparse.Namespace) -> int:
             if not finding:
                 continue
             pool = policy["providers"][provider]["pool"]
+            if finding["kind"] == "provider_error" and finding.get("category") == "auth":
+                finding = {**finding, "auth_fingerprint": credential_fingerprint(pool)}
             if pf.record_detection(state, policy, pool, finding, moment):
                 pf.note(state, moment, f"detected:{finding['kind']}",
                         f"{session.get('alias') or session.get('id')} ({provider}) — {finding.get('evidence', '')[:160]}")
@@ -285,9 +345,10 @@ def tick(args: argparse.Namespace) -> int:
                 # resolved-provider treatment as one stuck on a quota wall;
                 # the pool is unusable either way.
                 stuck.append(session)
+        probed = probe_auth_recovery(state, moment)
         resolution = pf.resolve(policy, state, moment)
         changed, switches = write_overlay(policy, state, resolution, moment, args.dry_run)
-        messages = list(switches)
+        messages = list(probed) + list(switches)
         if changed and not args.dry_run:
             messages.append(f"overlay rewritten; {reload_city()}")
         for session in stuck:

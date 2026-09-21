@@ -33,6 +33,11 @@ POLICY_CONTRACT = "agent-factory-provider-policy/v1"
 STATE_CONTRACT = "agent-factory-provider-state/v1"
 WORKSPACE = "workspace"
 HISTORY_LIMIT = 30
+# af-zdiln (2026-09-20 incident): a credential problem (category="auth") is a
+# fixed fault, not a rate limit -- growing its hold with accumulated strikes
+# only delays recovery once the login is fixed. Every OTHER provider_error
+# category keeps the exponential backoff below unchanged.
+AUTH_HOLD_MINUTES = 10
 
 
 class PolicyError(ValueError):
@@ -79,7 +84,7 @@ def validate_policy(policy: Any) -> dict[str, Any]:
             raise PolicyError(f"target {name!r} chain names unknown providers {unknown}")
         if len(set(chain)) != len(chain):
             raise PolicyError(f"target {name!r} chain repeats a provider")
-    for key in ("unknown_reset_minutes", "low_percent", "low_hold_minutes"):
+    for key in ("unknown_reset_minutes", "low_percent", "low_hold_minutes", "auth_hold_minutes"):
         value = policy.get(key)
         if not isinstance(value, int) or value <= 0:
             raise PolicyError(f"policy.{key} must be a positive integer")
@@ -393,22 +398,43 @@ def record_detection(state: dict[str, Any], policy: dict[str, Any], pool: str,
         }
         return True
     if finding["kind"] == "provider_error":
-        # Not a quota wall with a known reset: back off the same shape as an
-        # unknown-reset exhaustion (1h, 2h, 4h... capped at 8h), but starting
-        # short (10min) since most of these (a network blip, a transient 5xx)
-        # resolve fast; a persistent one (a revoked key) climbs the same way
-        # quota's unknown-reset case does instead of hammering the provider.
+        category = finding.get("category")
+        already_error = current.get("status") == "error" and current.get("category") == category
         strikes = int(current.get("strikes") or 0) + 1 if current.get("status") == "error" else 1
-        minutes = min(10 * 2 ** (strikes - 1), 8 * 60)
+        if category == "auth":
+            # af-zdiln: a credential problem is a fixed fault, not a rate
+            # limit -- strikes are still counted (for the human/PO reading
+            # state), but the hold never grows past a small constant. Every
+            # tick that still sees the error keeps the hold rolling forward
+            # by that same constant; bin/provider-failover's cheap probe
+            # (credential-file fingerprint) is what clears it early once the
+            # login is actually fixed, rather than this backoff shrinking.
+            minutes = policy.get("auth_hold_minutes", AUTH_HOLD_MINUTES)
+        else:
+            # Not a quota wall with a known reset: back off the same shape as
+            # an unknown-reset exhaustion (1h, 2h, 4h... capped at 8h), but
+            # starting short (10min) since most of these (a network blip, a
+            # transient 5xx) resolve fast; a persistent one climbs the same
+            # way quota's unknown-reset case does instead of hammering the
+            # provider.
+            minutes = min(10 * 2 ** (strikes - 1), 8 * 60)
         until = now + minutes * 60
-        if (current.get("status") == "error" and current.get("category") == finding.get("category")
-                and epoch(current.get("until")) is not None and abs(epoch(current.get("until")) - until) < 60):
+        if (already_error and epoch(current.get("until")) is not None
+                and abs(epoch(current.get("until")) - until) < 60):
             return False
-        state["pools"][pool] = {
+        entry = {
             "status": "error", "until": iso(until), "source": "detected",
             "evidence": finding.get("evidence", ""), "at": iso(now), "strikes": strikes,
-            "category": finding.get("category"),
+            "category": category,
         }
+        if category == "auth":
+            # The fingerprint is captured once, at the FIRST detection of this
+            # error episode, and kept as the baseline for the whole episode --
+            # never refreshed on later re-detections of the same still-broken
+            # credential, or the probe would never see it change.
+            entry["auth_fingerprint"] = (current.get("auth_fingerprint") if already_error
+                                         else finding.get("auth_fingerprint"))
+        state["pools"][pool] = entry
         return True
     return False
 
