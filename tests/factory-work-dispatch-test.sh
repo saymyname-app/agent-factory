@@ -37,6 +37,7 @@ fi
 
 AGENT_TOML="$REPO_ROOT/agents/factory-worker/agent.toml"
 PROMPT="$REPO_ROOT/agents/factory-worker/prompt.template.md"
+FORMULA="$REPO_ROOT/formulas/mol-do-work.formula.toml"
 grep -q '^scope = "city"$' "$AGENT_TOML" || fail "factory-worker is not city-scoped"
 grep -q '^max_active_sessions = 1$' "$AGENT_TOML" || fail "factory-worker is not a singleton"
 if grep -q '^wake_mode[[:space:]]*=[[:space:]]*"fresh"' "$AGENT_TOML"; then
@@ -49,5 +50,12 @@ grep -q 'gc hook --claim --json' "$PROMPT" || fail "startup claim protocol missi
 grep -q '^## Continuation Group Protocol$' "$PROMPT" || fail "continuation protocol missing"
 grep -qF './bin/factory-work-dispatch' "$REPO_ROOT/agents/mayor/prompt.template.md" \
   || fail "Mayor does not use the guarded HQ dispatch door"
+
+claim_line=$(grep -nF 'gc bd update "$WORK_BEAD_ID" --claim' "$FORMULA" | head -1 | cut -d: -f1)
+release_line=$(grep -nF 'gc bd update "$WORK_BEAD_ID" --assignee ""' "$FORMULA" | head -1 | cut -d: -f1)
+[ -n "$claim_line" ] && [ -n "$release_line" ] && [ "$release_line" -gt "$claim_line" ] \
+  || fail "mol-do-work does not release the target assignee after marking it in progress"
+grep -qF 'gc.session_name=${GC_SESSION_NAME:-${GC_AGENT:-}}' "$FORMULA" \
+  || fail "mol-do-work loses target session evidence during continuation handoff"
 
 echo "PASS: HQ work dispatch is role-fixed, workspace-inherited, and single-session"
