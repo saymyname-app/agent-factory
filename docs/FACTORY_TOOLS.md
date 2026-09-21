@@ -387,6 +387,30 @@ proche, puis **reprise automatiquement**. Cela ne demande jamais Benjamin.
 La tâche planifiée `provider-failover` tourne toutes les 2 min (~1 s, < 1 s de
 CPU : les écrans sont lus via tmux, pas via `gc session peek` qui coûtait 8 s).
 
+### L'ouvrier du dépôt Factory
+
+Pour une modification ordinaire du dépôt `agent-factory`, le Mayor lance :
+
+```bash
+./bin/factory-work-dispatch af-xxxxx
+```
+
+Cette porte choisit elle-même `factory-worker`, `mol-do-work` et
+`--reassign`. Elle ne propose volontairement aucun choix de cible :
+`workspace` est la **classe de fournisseur** pilotée par le repli automatique,
+pas un agent Gas City, et `bd.dog` ne fait que la maintenance Dolt. L'ouvrier
+Factory ne fixe aucun fournisseur dans son `agent.toml`; il prend donc celui
+que `provider-failover` a résolu pour `workspace` (Codex aujourd'hui, puis le
+repli configuré si nécessaire).
+
+Une seule session `factory-worker` peut être active. Son protocole réclame
+chaque étape avec `gc hook --claim --json`, puis réclame immédiatement la
+suite du même groupe avant de se drainer. Ainsi le worktree, l'implémentation
+et l'ouverture de PR restent dans la même session logique; une cible de
+maintenance ne peut plus être sélectionnée par cette porte. Pour annuler ce
+choix, revenir sur le rôle, la porte et leur documentation : la politique de
+fournisseurs reste indépendante.
+
 ---
 
 ## `./bin/factory-improvement-axes` — les axes d'amélioration et « maintenir en vie »

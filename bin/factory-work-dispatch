@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# The single supported door for ordinary HQ Factory implementation work.
+# It deliberately exposes no target option: factory-worker is the implementation
+# role, while workspace is its provider-failover class and bd.dog is Dolt-only.
+set -Eeuo pipefail
+
+PROGRAM_NAME="factory-work-dispatch"
+ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+GC_BIN="${GC_BIN:-gc}"
+FORMULA="mol-do-work"
+DRY_RUN=0
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: factory-work-dispatch <af-bead-id> [--on mol-do-work] [--dry-run]
+
+Routes one ordinary HQ Factory work bead to the named factory-worker role.
+The target and --reassign behavior are fixed so a provider class, raw provider,
+or infrastructure role cannot be selected accidentally.
+USAGE
+}
+
+fail() {
+  printf '%s: %s\n' "$PROGRAM_NAME" "$1" >&2
+  exit 2
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+[ $# -ge 1 ] || { usage; exit 2; }
+BEAD_ID=$1
+shift
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --on)
+      [ $# -ge 2 ] || fail "--on requires a formula"
+      FORMULA=$2
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    *) fail "unsupported argument '$1'; the HQ target is fixed to factory-worker" ;;
+  esac
+done
+
+case "$BEAD_ID" in
+  af-*) ;;
+  *) fail "'$BEAD_ID' is not an HQ Factory bead id (expected af-*)" ;;
+esac
+[ "$FORMULA" = "mol-do-work" ] || \
+  fail "formula '$FORMULA' is not an ordinary HQ implementation formula; use the tier-specific workflow instead"
+
+CMD=("$GC_BIN" --city "$ROOT" sling factory-worker "$BEAD_ID" --on "$FORMULA" --reassign)
+if [ "$DRY_RUN" = "1" ]; then
+  printf '%q ' "${CMD[@]}"
+  printf '\n'
+  exit 0
+fi
+exec "${CMD[@]}"

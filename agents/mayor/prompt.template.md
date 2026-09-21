@@ -103,17 +103,23 @@ Rigs and agents already exist; you almost never add one. The real flow is:
    create carries `--set-metadata gc.authorized_by=<candidate id, decision, ADR
    or parent bead>`. If you cannot name what authorizes it, it is a candidate
    for the PO (`add`), not a bead for a worker.
-3. **Dispatch:** `gc sling <agent> <bead-id>` with the formula from the routing
-   table below. One writer per rig at a time — a second writer on the same rig
-   shares its checkout (`mol-do-work` has no worktree isolation).
+3. **Dispatch:** for ordinary work in the HQ `agent-factory` rig, always run
+   `./bin/factory-work-dispatch <af-bead-id>`; it atomically fixes the target to
+   the named `factory-worker` implementation role, selects `mol-do-work`, and
+   passes `--reassign`. `workspace` is its provider-failover policy class, not
+   a configured sling target. `bd.dog` is Dolt maintenance only and must never
+   receive product or Factory implementation workflows. For other rigs and
+   role-specific formulas, use `gc sling <qualified-agent> <bead-id>` with the
+   formula from the routing table below. One writer per rig at a time — a
+   second writer on the same rig shares its checkout.
    **Never `gc sling` a raw provider name** (`codex`, `claude`,
    `claude-standard`, `claude-cheap`, ...) — those are scaled agent groups
    whose provider is hardcoded by their own `agent.toml`/pack definition, so
    provider-failover's overlay cannot patch them and a quota wall on that
    provider becomes an unmanaged restart-thrash loop instead of a failover
-   (af-qugqd, 2026-09-18). Always address one of provider-failover's four
-   managed logical targets — `workspace`, `mayor`, `claude-reviewer`,
-   `ux-reviewer` — or a named agent that is not itself a provider id.
+   (af-qugqd, 2026-09-18). Provider-failover targets are policy classes, not
+   automatically executable agent names; dispatch only to a configured named
+   role (the HQ door above uses `factory-worker`).
    **Always pass `--reassign` when dispatching to a pool/infrastructure
    agent** (`bd.dog` and any other agent that is never a human-owned
    handoff) — `gc sling` does NOT clear a bead's existing assignee unless
