@@ -20,7 +20,8 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from factory_campaign import (  # noqa: E402
     FAILURE_THRESHOLD, LADDER_GENERATIVE_RUNGS, CampaignDecisionError,
-    plan_factory_lane, plan_idle_ladder, plan_transition,
+    inspect_ladder_workflows, ladder_execution_targets, plan_factory_lane,
+    plan_idle_ladder, plan_transition,
 )
 from factory_state import _text, StateContractError, project_campaign_metadata  # noqa: E402
 
@@ -781,6 +782,49 @@ def factory_lane_peek() -> dict[str, Any]:
     return plan_factory_lane(ready, queue_candidates)
 
 
+def ladder_workflow_state(tracked: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Best-effort latest graph.v2 workflow state for a tracked ladder bead.
+
+    Fetch each involved rig once. Besides keeping the sentinel comfortably
+    inside its hard tick budget, this makes root/child status a single-store
+    snapshot instead of dozens of individually timed reads.
+    """
+    if not isinstance(tracked, dict) or tracked.get("status") != "in_progress":
+        return None
+    targets = ladder_execution_targets(tracked)
+    if not targets:
+        return None
+    try:
+        rigs_payload = json_run(GC_BIN, "rig", "list", "--json")
+    except CampaignCommandError:
+        return None
+    rigs = rigs_payload.get("rigs") if isinstance(rigs_payload, dict) else None
+    if not isinstance(rigs, list):
+        return None
+    rig_by_prefix = {
+        str(item.get("prefix")): str(item.get("name"))
+        for item in rigs
+        if isinstance(item, dict) and item.get("prefix") and item.get("name")
+    }
+    prefixes = {target.split("-", 1)[0] for target in targets}
+    beads_by_prefix: dict[str, list[dict[str, Any]]] = {}
+    for prefix in sorted(prefixes):
+        rig = rig_by_prefix.get(prefix)
+        if not rig:
+            return None
+        try:
+            beads = json_run(
+                GC_BIN, "bd", "list", "--rig", rig, "--all", "--limit", "0",
+                "--include-gates", "--include-infra", "--include-templates", "--json",
+            )
+        except CampaignCommandError:
+            return None
+        if not isinstance(beads, list):
+            return None
+        beads_by_prefix[prefix] = beads
+    return inspect_ladder_workflows(tracked, beads_by_prefix)
+
+
 def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
     """Rungs 2-4 of the idle ladder; never raises for an unavailable store."""
     try:
@@ -819,8 +863,10 @@ def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
         if isinstance(axes_status.get("next_selected"), dict):
             axis = axes_status["next_selected"]
     last_axis = metadata.get("gc.campaign_ladder_axis_at")
+    workflow_state = ladder_workflow_state(tracked)
     plan = plan_idle_ladder(
         ready, now, last, tracked, queue_candidates, maintain_alive, axis, last_axis,
+        workflow_state,
     )
     unstick = plan.pop("unstick_bead", None)
     if unstick:
@@ -958,6 +1004,10 @@ def sentinel(_: argparse.Namespace) -> None:
         if campaign["wake_state"] == "sent" and (
             decision["reason"] in {"active_delivery", "automatic_dependency"}
             or wake_target_resolved(campaign["wake_key"])
+            or (
+                decision.get("workflow_pending")
+                and campaign["wake_key"] == f"finalize:{decision.get('ladder_bead')}"
+            )
         ):
             updates.update({"gc.campaign_wake_key": "", "gc.campaign_wake_state": "none"})
         if decision["reason"] in PROGRESS_REASONS and stamp_due(metadata, "gc.campaign_progress_at", now):

@@ -203,6 +203,16 @@ internes, objectifs produit, beads étiquetés `upstream`, beads tenus par
 quelqu'un d'autre, beads qui attendent Benjamin ou qui portent
 `gc.waiting_on=<qui>` (c'est ainsi qu'un agent fait sauter un bead à l'échelle).
 
+Un bead déjà pris à l'échelon 2 n'attend pas aveuglément le délai de sécurité :
+à chaque passage, la sentinelle relie le bead (ou ses références `gc.child_*`)
+à son dernier workflow graph.v2. Dès que la racine et toutes ses étapes sont
+fermées, elle réveille le Mayor pour finaliser, une seule fois. Le message dit
+explicitement si un `gc.outcome` n'est pas `pass`; tant qu'une étape reste
+ouverte, aucun réveil de finalisation n'est envoyé. Le délai de six heures reste
+le filet de sécurité d'un travail réellement bloqué ou sans workflow canonique.
+Cette vérification ramène donc l'attente de finalisation de 0–6 h au prochain
+passage de sentinelle (contrat : moins de 5 min), sans appel de modèle.
+
 Le commutateur « maintenir en vie » (`./bin/factory-improvement-axes`, section
 suivante) coupe **tout l'échelon au-delà d'un bead déjà en cours** — pas
 seulement l'échelon 5 — et rend la sentinelle explicitement silencieuse

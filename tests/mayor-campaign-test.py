@@ -12,7 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 NOW = 1789555200.0  # 2026-09-16T10:40:00Z, fixed so throttling is deterministic
 sys.path.insert(0, str(ROOT / "lib"))
 
-from factory_campaign import is_ladder_bead, plan_idle_ladder, plan_transition  # noqa: E402
+from factory_campaign import (  # noqa: E402
+    inspect_ladder_workflows, is_ladder_bead, plan_idle_ladder, plan_transition,
+)
 
 
 def metadata(state="active"):
@@ -568,6 +570,68 @@ class IdleLadderPlanTest(unittest.TestCase):
         plan = plan_idle_ladder([bead("af-next")], NOW, tracked=tracked)
         self.assertEqual(("none", "ladder_active"), (plan["action"], plan["reason"]))
 
+    def test_latest_child_workflows_must_all_close_before_finalize(self):
+        tracked = bead("af-parent", status="in_progress", metadata={
+            "gc.child_backend": "smb-work", "gc.child_frontend": "smf-work",
+        })
+        backend = [
+            bead("smb-old-convoy", issue_type="convoy", dependencies=[
+                {"depends_on_id": "smb-work", "type": "tracks"},
+            ]),
+            bead("smb-old-root", status="closed", created_at="2026-09-16T08:00:00Z",
+                 metadata={"gc.kind": "workflow", "gc.var.convoy_id": "smb-old-convoy",
+                           "gc.outcome": "fail"}),
+            bead("smb-convoy", issue_type="convoy", dependencies=[
+                {"depends_on_id": "smb-work", "type": "tracks"},
+            ]),
+            bead("smb-root", status="closed", created_at="2026-09-16T09:00:00Z",
+                 metadata={"gc.kind": "workflow", "gc.var.convoy_id": "smb-convoy",
+                           "gc.outcome": "pass"}, dependencies=[
+                    {"depends_on_id": "smb-step", "type": "blocks"},
+                 ]),
+            bead("smb-step", status="closed", metadata={"gc.outcome": "pass"}),
+        ]
+        frontend = [
+            bead("smf-convoy", issue_type="convoy", dependencies=[
+                {"depends_on_id": "smf-work", "type": "tracks"},
+            ]),
+            bead("smf-root", status="in_progress", created_at="2026-09-16T09:00:00Z",
+                 metadata={"gc.kind": "workflow", "gc.var.convoy_id": "smf-convoy"}),
+        ]
+        running = inspect_ladder_workflows(tracked, {"smb": backend, "smf": frontend})
+        self.assertFalse(running["all_closed"])
+        self.assertEqual(["smf-root"], running["open_nodes"])
+        plan = plan_idle_ladder([], NOW, tracked=tracked, workflow_state=running)
+        self.assertEqual(("none", "ladder_active"), (plan["action"], plan["reason"]))
+
+        frontend[1].update(status="closed", metadata={
+            "gc.kind": "workflow", "gc.var.convoy_id": "smf-convoy", "gc.outcome": "pass",
+        })
+        complete = inspect_ladder_workflows(tracked, {"smb": backend, "smf": frontend})
+        self.assertEqual([], complete["failed_nodes"])  # the older failed retry is not current
+        plan = plan_idle_ladder([], NOW, tracked=tracked, workflow_state=complete)
+        self.assertEqual(
+            ("wake_mayor", "ladder_workflow_complete", "finalize:af-parent"),
+            (plan["action"], plan["reason"], plan["wake_key"]),
+        )
+
+    def test_closed_failed_workflow_wakes_with_failure_not_done(self):
+        tracked = bead("af-parent", status="in_progress")
+        beads = [
+            bead("af-convoy", issue_type="convoy", dependencies=[
+                {"depends_on_id": "af-parent", "type": "tracks"},
+            ]),
+            bead("af-root", status="closed", metadata={
+                "gc.kind": "workflow", "gc.var.convoy_id": "af-convoy", "gc.outcome": "fail",
+            }, dependencies=[{"depends_on_id": "af-step", "type": "blocks"}]),
+            bead("af-step", status="closed", metadata={"gc.outcome": "fail"}),
+        ]
+        workflow = inspect_ladder_workflows(tracked, {"af": beads})
+        plan = plan_idle_ladder([], NOW, tracked=tracked, workflow_state=workflow)
+        self.assertEqual("ladder_workflow_failed", plan["reason"])
+        self.assertIn("af-step=gc.outcome:fail", plan["message"])
+        self.assertIn("Ne traite pas le travail comme terminé", plan["message"])
+
     def test_a_stalled_bead_is_unstuck_and_the_next_candidate_is_taken(self):
         # C6: this used to return a terminal "ladder_stalled" NOOP forever,
         # so one stuck bead (af-6eqc, live) permanently starved rung 2. It
@@ -840,6 +904,61 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         log = self.log_file.read_text(encoding="utf-8")
         self.assertIn("bd update af-stuck --set-metadata gc.waiting_on=stalled", log)
         self.assertEqual("af-fix", self.current_metadata()["gc.campaign_ladder_bead"])
+
+    def test_closed_ladder_workflow_wakes_once_without_marking_the_bead_stalled(self):
+        # af-8g95x: reproduce the 01:34Z -> 07:35Z shape. Even though the
+        # tracked bead itself looks stale, its latest workflow and every step
+        # are already closed/pass, so finalization wins over the 6h backstop.
+        self.write_state({**metadata(), "gc.campaign_ladder_bead": "af-stuck"})
+        (self.node_dir / "af-stuck.json").write_text(json.dumps({
+            "id": "af-stuck", "status": "in_progress", "metadata": {},
+            "updated_at": "2026-09-16T01:00:00Z",
+        }), encoding="utf-8")
+        rig_beads = self.root / "rig-beads.json"
+        rig_beads.write_text(json.dumps([
+            bead("af-convoy", issue_type="convoy", dependencies=[
+                {"depends_on_id": "af-stuck", "type": "tracks"},
+            ]),
+            bead("af-root", status="closed", metadata={
+                "gc.kind": "workflow", "gc.var.convoy_id": "af-convoy", "gc.outcome": "pass",
+            }, dependencies=[{"depends_on_id": "af-step", "type": "blocks"}]),
+            bead("af-step", status="closed", metadata={"gc.outcome": "pass"}),
+        ]), encoding="utf-8")
+        self.write_status(status(next_id=None))
+        first = self.sentinel(NOW, CAMPAIGN_RIG_BEADS_FILE=str(rig_beads)).stdout
+        self.assertIn("NOTIFIED: mayor — finalize:af-stuck", first)
+        log = self.log_file.read_text(encoding="utf-8")
+        self.assertNotIn("gc.waiting_on=stalled", log)
+        second = self.sentinel(NOW + 60, CAMPAIGN_RIG_BEADS_FILE=str(rig_beads)).stdout
+        self.assertIn("NOOP: already notified finalize:af-stuck", second)
+        self.assertEqual(1, self.mail_count())
+
+    def test_a_new_running_workflow_clears_the_old_finalize_wake(self):
+        # A failed completed run can be retried. Once the newer workflow is
+        # active, clear the old dedupe key so its eventual completion can wake
+        # the Mayor again instead of being mistaken for the already-sent run.
+        self.write_state({**metadata(), "gc.campaign_ladder_bead": "af-stuck",
+                          "gc.campaign_wake_key": "finalize:af-stuck",
+                          "gc.campaign_wake_state": "sent"})
+        (self.node_dir / "af-stuck.json").write_text(json.dumps({
+            "id": "af-stuck", "status": "in_progress", "metadata": {},
+            "updated_at": "2026-09-16T10:39:00Z",
+        }), encoding="utf-8")
+        rig_beads = self.root / "rig-beads.json"
+        rig_beads.write_text(json.dumps([
+            bead("af-convoy", issue_type="convoy", dependencies=[
+                {"depends_on_id": "af-stuck", "type": "tracks"},
+            ]),
+            bead("af-root", status="in_progress", metadata={
+                "gc.kind": "workflow", "gc.var.convoy_id": "af-convoy",
+            }),
+        ]), encoding="utf-8")
+        self.write_status(status(next_id=None))
+        out = self.sentinel(NOW, CAMPAIGN_RIG_BEADS_FILE=str(rig_beads)).stdout
+        self.assertIn("NOOP: ladder_active", out)
+        meta = self.current_metadata()
+        self.assertEqual(("", "none"),
+                         (meta["gc.campaign_wake_key"], meta["gc.campaign_wake_state"]))
 
     def test_no_ready_bead_falls_through_to_the_factory_queue_candidate(self):
         # C3: with no product work and no ready Factory bead, rung 2b reads
