@@ -53,6 +53,10 @@ For a change:
 - GitHub is authoritative for code, branch, SHA, PR, CI, and merge state.
 - Beads is authoritative for executable work and dependencies.
 - One active Gas City controller per City.
+- Ordinary HQ Factory implementation is dispatched only through
+  `bin/factory-work-dispatch <af-bead-id>`. Its fixed `factory-worker` role
+  inherits provider-failover's `workspace` provider; `workspace` itself is
+  not a sling agent, and `bd.dog` remains Dolt maintenance only.
 - V1 allows one writer per rig until worktree isolation is proven by canary.
 - Branch work happens in a `git worktree`, never by checking out in the live
   root (the root is the running city). Remove the worktree when its PR merges
@@ -132,4 +136,3 @@ NEXT:   <what happens next, or "none">
 - **Keep the mailbox drained.** Archive or mark-read mail once acted on
   (`gc.retention_ttl` purges read mail after 7 days, but an unbounded unread
   backlog still buries the signal that actually needs a response).
-

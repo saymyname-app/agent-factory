@@ -24,6 +24,7 @@ Use progressive disclosure. Do not read every document by default.
 | Stopping and restarting the whole factory, and proving nothing was lost | `RUNBOOK_STOP_AND_RESTART.md` |
 | A middle-of-the-night alert or a factory check with no PO session open (French) | `RUNBOOK_4H_DU_MATIN.md` |
 | What `factory-guard`, `factory-resources`, `factory-doctor`, `provider-failover` and `mayor-campaign` do, and when to run them | `FACTORY_TOOLS.md` |
+| How ordinary HQ Factory implementation is dispatched without confusing an agent role with the `workspace` provider class | `FACTORY_TOOLS.md` (L'ouvrier du dépôt Factory), `decisions/ADR-0018-automatic-provider-failover.md` (§12), `./bin/factory-work-dispatch` |
 | Which model provider each target runs, quota walls, fallback chains, cockpit controls | `FACTORY_TOOLS.md`, `decisions/ADR-0018-automatic-provider-failover.md`, `config/provider-policy.json` |
 | What the campaign does when no product work is eligible (idle ladder), liveness, wake reminders | `FACTORY_TOOLS.md`, `decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` |
 | The exact standing allowlist of routine ops that no longer count as ADMIN (restart dispatcher/preview, prune merged branches, clean worktrees, rotate logs, reload city config) | `../AGENTS.md` (Standing ADMIN allowlist), `decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` (§7 row 4) |
