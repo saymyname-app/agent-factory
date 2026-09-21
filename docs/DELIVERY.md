@@ -159,9 +159,13 @@ records what was verified about the machinery underneath.
    (`gc bd list --all --limit 0`), then reconciles the merged PR back onto its
    work bead — `merge_result=merged`, `merged_sha`, `pr_number`,
    `merged_target` — matching bead `gc.work_branch` to the PR `headRefName`.
-   The first successful reconciliation sends one compact
-   `ACTION/STATE/EVIDENCE/NEXT` wake to the Mayor so waiting dependencies can
-   advance immediately; the `merge_result` stamp makes later passes silent.
+   A first successful reconciliation sends one compact
+   `ACTION/STATE/EVIDENCE/NEXT` wake to the Mayor only when GitHub's `mergedAt`
+   is at most one hour old, or an `open`/`in_progress` bead actively waits on
+   the delivered bead through a `blocks` dependency or `gc.waiting_on`.
+   Historical backfills still receive delivery metadata but remain silent when
+   nobody is waiting. The sender is explicitly `pr-autopilot`, never `human`,
+   and the `merge_result` stamp makes later passes silent.
 5. A PR whose required check **failed** is never armed. It is raised as a P1
    bug bead in the rig instead, so a red build becomes ready work rather than a
    silently open PR.

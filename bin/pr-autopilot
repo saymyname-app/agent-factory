@@ -59,6 +59,42 @@ TMPDIR_AP=$(mktemp -d); trap 'rm -rf "$TMPDIR_AP"' EXIT
 # cleanly instead of being SIGKILLed.
 TICK_DEADLINE_SECONDS="${PR_AUTOPILOT_TICK_DEADLINE_SECONDS:-100}"
 
+# A first reconciliation is not automatically a useful wake. When closed
+# history became visible (af-6s0xy), old merges were backfilled correctly but
+# each one also mailed the Mayor. Keep the durable backfill, and wake only for
+# a merge fresh enough to belong to the current delivery loop or when live work
+# explicitly waits on the reconciled bead. The clock override keeps the policy
+# deterministic under test.
+RECONCILE_WAKE_WINDOW_SECONDS="${PR_AUTOPILOT_RECONCILE_WAKE_WINDOW_SECONDS:-3600}"
+RECONCILE_NOW_EPOCH="${PR_AUTOPILOT_NOW_EPOCH:-$(date -u +%s)}"
+case "$RECONCILE_WAKE_WINDOW_SECONDS" in *[!0-9]*|'') log "invalid reconciliation wake window"; exit 2 ;; esac
+case "$RECONCILE_NOW_EPOCH" in *[!0-9]*|'') log "invalid reconciliation clock"; exit 2 ;; esac
+
+merge_is_recent() {  # mergedAt -> 0 when within the bounded wake window
+  local merged_at=$1 merged_epoch age
+  [ -n "$merged_at" ] || return 1
+  merged_epoch=$(jq -nr --arg timestamp "$merged_at" '$timestamp|fromdateiso8601' 2>/dev/null) || return 1
+  case "$merged_epoch" in *[!0-9]*|'') return 1 ;; esac
+  age=$((RECONCILE_NOW_EPOCH - merged_epoch))
+  [ "$age" -ge 0 ] && [ "$age" -le "$RECONCILE_WAKE_WINDOW_SECONDS" ]
+}
+
+active_waiters_for() {  # bead -> comma-separated open/in_progress waiter ids
+  local bead=$1
+  printf '%s' "$RIG_ALL_BEADS_JSON" | jq -r --arg bead "$bead" '
+    [.[]
+      | select(.id != $bead)
+      | select(.status == "open" or .status == "in_progress")
+      | select(
+          (.metadata["gc.waiting_on"] // "") == $bead
+          or any(.dependencies[]?;
+            ((.depends_on_id // .id // "") == $bead)
+            and ((.type // .dependency_type // "") == "blocks")))
+      | .id]
+    | unique | join(",")
+  ' 2>/dev/null
+}
+
 # ---------- reversibility gate (ADR-0019) ----------
 # docs/DELIVERY.md calls Flyway changes GUARDED, yet this actor used to arm
 # every green PR to dev, migrations included -- two DROP COLUMNs among them.
@@ -356,13 +392,13 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
       ((.labels//[])|map(.name)|join(",")|if .=="" then "-" else . end)
     ]|@tsv' 2>/dev/null)
 
-  # ---------- 2. RECONCILE recently merged PRs onto their beads ----------
+  # ---------- 2. RECONCILE merged PRs onto their beads ----------
   # This pack's publisher does NOT write pr_number metadata (that was the
   # un-imported refinery's convention). The reliable link here is the branch:
   # bead metadata `gc.work_branch` == PR headRefName.
   merged=$(gh pr list --repo "$repo" --state merged --base "$dev" --limit 30 \
-    --json number,headRefName,mergeCommit 2>/dev/null \
-    | jq -r '.[]|[.number,.headRefName,(.mergeCommit.oid//"")]|@tsv' 2>/dev/null)
+    --json number,headRefName,mergeCommit,mergedAt 2>/dev/null \
+    | jq -r '.[]|[.number,.headRefName,(.mergeCommit.oid//""),(.mergedAt//"")]|@tsv' 2>/dev/null)
 
   # af-k1f97: the work bead a merged PR reconciles onto is usually already
   # closed by the time the PR merges (deliver-close runs before push-and-pr),
@@ -376,7 +412,7 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     [ -n "$RIG_ALL_BEADS_JSON" ] || RIG_ALL_BEADS_JSON='[]'
   fi
 
-  while IFS=$'\t' read -r num branch sha; do
+  while IFS=$'\t' read -r num branch sha merged_at; do
     [ -z "${num:-}" ] && continue
     [ -z "${branch:-}" ] && continue
 
@@ -396,17 +432,23 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
               |select((.metadata.merge_result//"")!="merged")][0].id // empty' 2>/dev/null)
     [ -z "$bead" ] && { vlog "PR #$num ($branch): no unreconciled bead"; continue; }
     log "  PR #$num merged at ${sha:0:8} -> reconciling bead $bead"
+    waiters=$(active_waiters_for "$bead")
+    wake_reason=""
+    if merge_is_recent "$merged_at"; then
+      wake_reason="merge $merged_at is within ${RECONCILE_WAKE_WINDOW_SECONDS}s"
+    elif [ -n "$waiters" ]; then
+      wake_reason="active waiter(s): $waiters"
+    fi
     if run bash -c "cd '$rig_path' && gc bd update '$bead' \
       --set-metadata merge_result=merged \
       --set-metadata merged_sha='$sha' \
       --set-metadata pr_number='$num' \
       --set-metadata merged_target='$dev'"; then
-      # The merge_result guard above makes this a completion edge, not a
-      # periodic reminder: the first successful write wakes the Mayor, and
-      # later ticks no longer select this bead. Keep the mail compact and
-      # actionable so a waiting campaign can advance without the 60-minute
-      # liveness guard having to rediscover the completed delivery.
-      if ! run bash -c "cd '$rig_path' && gc mail send mayor --notify \
+      # The merge_result guard above makes this an exactly-once completion
+      # edge. Historical backfills remain metadata-only unless live work is
+      # waiting; recent delivery wakes use an explicit automation identity so
+      # replies can never be mistaken for a conversation with Benjamin.
+      if [ -n "$wake_reason" ] && ! run bash -c "cd '$rig_path' && gc mail send mayor --from pr-autopilot --notify \
         --subject 'SHIPPED: $bead via PR #$num' \
         --message 'ACTION: pr-autopilot reconciled $bead from merged PR #$num
 STATE: SHIPPED
@@ -414,6 +456,8 @@ EVIDENCE: $bead; PR #$num; merge SHA $sha
 NEXT: Mayor advances or finalizes work waiting on $bead.' >/dev/null 2>&1"; then
         log "    reconciliation wake failed for bead $bead"
         ERRORS=$((ERRORS+1))
+      elif [ -z "$wake_reason" ]; then
+        vlog "PR #$num: historical reconciliation has no active waiter -> metadata only"
       fi
       RECONCILED=$((RECONCILED+1))
     else
