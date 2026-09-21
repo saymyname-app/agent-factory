@@ -31,6 +31,24 @@ if [[ ${1:-} == bd && ${2:-} == show && ${4:-} == --json ]]; then
   exit 0
 fi
 
+if [[ ${1:-} == rig && ${2:-} == list && ${3:-} == --json ]]; then
+  if [[ -n ${CAMPAIGN_RIGS_FILE:-} && -f ${CAMPAIGN_RIGS_FILE} ]]; then
+    cat "$CAMPAIGN_RIGS_FILE"
+  else
+    printf '{"rigs":[{"name":"agent-factory","prefix":"af"}]}\n'
+  fi
+  exit 0
+fi
+
+if [[ ${1:-} == bd && ${2:-} == list ]]; then
+  if [[ -n ${CAMPAIGN_RIG_BEADS_FILE:-} && -f ${CAMPAIGN_RIG_BEADS_FILE} ]]; then
+    cat "$CAMPAIGN_RIG_BEADS_FILE"
+  else
+    printf '[]\n'
+  fi
+  exit 0
+fi
+
 if [[ ${1:-} == bd && ${2:-} == update && ${3:-} == af-1vr4 ]]; then
   [[ ${CAMPAIGN_COORDINATION_FAIL:-0} != 1 ]] || { printf 'coordination store unavailable\n' >&2; exit 42; }
   [[ -z ${CAMPAIGN_UPDATE_DELAY:-} ]] || sleep "$CAMPAIGN_UPDATE_DELAY"

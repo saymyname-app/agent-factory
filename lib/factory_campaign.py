@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import re
+
 from typing import Any
 
 
@@ -291,6 +293,144 @@ def _epoch(value: Any) -> float | None:
         return None
 
 
+_BEAD_ID = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9][A-Za-z0-9.-]*$")
+
+
+def ladder_execution_targets(tracked: dict[str, Any]) -> list[str]:
+    """Return the beads whose latest workflows implement a tracked ladder item.
+
+    A simple Factory bead is its own execution target. A cross-rig parent records
+    the concrete target beads under ``gc.child_*`` (for example
+    ``gc.child_backend`` and ``gc.child_frontend``); when those are present the
+    parent is only complete once every child's latest workflow is complete.
+    """
+    metadata = tracked.get("metadata") if isinstance(tracked.get("metadata"), dict) else {}
+    children = {
+        str(value).strip()
+        for key, value in metadata.items()
+        if str(key).startswith("gc.child_")
+        and _BEAD_ID.fullmatch(str(value).strip())
+    }
+    if children:
+        return sorted(children)
+    tracked_id = str(tracked.get("id") or "").strip()
+    return [tracked_id] if _BEAD_ID.fullmatch(tracked_id) else []
+
+
+def inspect_ladder_workflows(
+    tracked: dict[str, Any],
+    beads_by_prefix: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    """Summarize the latest execution workflow for every ladder target.
+
+    The graph.v2 runtime does not write the workflow root onto the work bead.
+    Its durable join is work bead <- ``tracks`` convoy <- ``gc.var.convoy_id``
+    workflow root. ``beads_by_prefix`` is a complete snapshot for each target
+    rig, allowing this pure helper to resolve and walk each root's ``blocks``
+    graph without an N-per-step command loop.
+
+    ``None`` means there is not yet enough canonical evidence to identify a
+    workflow for every target. A result with ``all_closed=False`` means the
+    workflow exists but at least one root/step is still running (or a referenced
+    blocker was absent from the snapshot). Closed nodes without ``gc.outcome``
+    are failures: the dispatcher applies the same fail-closed contract.
+    """
+    targets = ladder_execution_targets(tracked)
+    if not targets:
+        return None
+
+    roots: list[dict[str, Any]] = []
+    snapshots: dict[str, dict[str, dict[str, Any]]] = {}
+    for target_id in targets:
+        prefix = target_id.split("-", 1)[0]
+        beads = beads_by_prefix.get(prefix)
+        if not isinstance(beads, list):
+            return None
+        by_id = {
+            str(item.get("id")): item
+            for item in beads
+            if isinstance(item, dict) and item.get("id")
+        }
+        snapshots[prefix] = by_id
+        convoy_ids = {
+            str(item.get("id"))
+            for item in beads
+            if isinstance(item, dict)
+            and str(item.get("issue_type") or item.get("type") or "") == "convoy"
+            and any(
+                isinstance(dep, dict)
+                and dep.get("type") == "tracks"
+                and str(dep.get("depends_on_id") or "") == target_id
+                for dep in (item.get("dependencies") or [])
+            )
+        }
+        candidates = []
+        for item in beads:
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            if (
+                metadata.get("gc.kind") == "workflow"
+                and str(metadata.get("gc.var.convoy_id") or "") in convoy_ids
+            ):
+                candidates.append(item)
+        if not candidates:
+            return None
+        roots.append(max(
+            candidates,
+            key=lambda item: (
+                str(item.get("created_at") or ""),
+                str(item.get("updated_at") or ""),
+                str(item.get("id") or ""),
+            ),
+        ))
+
+    nodes: dict[str, dict[str, Any]] = {}
+    missing: set[str] = set()
+    for root in roots:
+        root_id = str(root["id"])
+        prefix = root_id.split("-", 1)[0]
+        by_id = snapshots[prefix]
+        pending = [root_id]
+        seen: set[str] = set()
+        while pending:
+            node_id = pending.pop()
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            node = by_id.get(node_id)
+            if node is None:
+                missing.add(node_id)
+                continue
+            nodes[node_id] = node
+            for dep in node.get("dependencies") or []:
+                if not isinstance(dep, dict) or dep.get("type") != "blocks":
+                    continue
+                blocker_id = str(dep.get("depends_on_id") or "").strip()
+                if blocker_id:
+                    pending.append(blocker_id)
+
+    open_nodes = sorted(
+        node_id for node_id, node in nodes.items() if str(node.get("status") or "") != "closed"
+    )
+    failed_nodes = []
+    for node_id, node in nodes.items():
+        if str(node.get("status") or "") != "closed":
+            continue
+        metadata = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+        outcome = str(metadata.get("gc.outcome") or "missing").strip().lower()
+        if outcome != "pass":
+            failed_nodes.append({"id": node_id, "outcome": outcome})
+    failed_nodes.sort(key=lambda item: item["id"])
+    return {
+        "all_closed": not open_nodes and not missing,
+        "workflow_ids": sorted(str(root["id"]) for root in roots),
+        "open_nodes": open_nodes,
+        "missing_nodes": sorted(missing),
+        "failed_nodes": failed_nodes,
+    }
+
+
 def _first_eligible_factory_queue_candidate(
     queue_candidates: list[dict[str, Any]] | None,
 ) -> dict[str, Any] | None:
@@ -389,6 +529,7 @@ def plan_idle_ladder(
     maintain_alive: bool = True,
     axis: dict[str, Any] | None = None,
     last_axis: Any = None,
+    workflow_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pick the next rung when product work has nothing to do.
 
@@ -404,11 +545,49 @@ def plan_idle_ladder(
     ``factory_improvement_axes.select_improvement_axis`` (rung 5, sec4);
     ``last_axis`` is the ISO time that rung last fired, for the same
     throttle-then-rest treatment as the generative rungs.
+    ``workflow_state`` is the caller's best-effort summary of the latest
+    graph.v2 execution workflow(s) for ``tracked``.
     """
     last_generative = last_generative or {}
 
     # One Factory bead at a time, exactly like product results.
     if isinstance(tracked, dict) and tracked.get("status") == "in_progress":
+        tracked_id = str(tracked.get("id") or "")
+        if isinstance(workflow_state, dict) and workflow_state.get("all_closed"):
+            failed = workflow_state.get("failed_nodes") or []
+            workflows = ", ".join(workflow_state.get("workflow_ids") or []) or "inconnu"
+            if failed:
+                failure_detail = ", ".join(
+                    f"{item.get('id')}=gc.outcome:{item.get('outcome')}"
+                    for item in failed[:8] if isinstance(item, dict)
+                )
+                if len(failed) > 8:
+                    failure_detail += f", +{len(failed) - 8} autre(s)"
+                return {
+                    "action": "wake_mayor",
+                    "reason": "ladder_workflow_failed",
+                    "wake_key": f"finalize:{tracked_id}",
+                    "subject": f"USINE · échec de workflow {tracked_id}",
+                    "message": (
+                        f"Le ou les workflows d'exécution de {tracked_id} sont entièrement fermés "
+                        f"({workflows}), mais au moins un résultat n'est pas pass : {failure_detail}. "
+                        "Ne traite pas le travail comme terminé : diagnostique les échecs, relance ce "
+                        "qui doit l'être, puis finalise le bead quand ses preuves sont réellement vertes."
+                    ),
+                    "ladder_bead": tracked_id,
+                }
+            return {
+                "action": "wake_mayor",
+                "reason": "ladder_workflow_complete",
+                "wake_key": f"finalize:{tracked_id}",
+                "subject": f"USINE · finaliser {tracked_id}",
+                "message": (
+                    f"Le ou les workflows d'exécution de {tracked_id} et toutes leurs étapes sont "
+                    f"fermés avec succès ({workflows}). Reprends {tracked_id} maintenant : vérifie les "
+                    "preuves et PR, finalise-le, puis poursuis l'échelle d'inactivité."
+                ),
+                "ladder_bead": tracked_id,
+            }
         updated = _epoch(tracked.get("updated_at"))
         if updated is not None and now - updated > LADDER_STALE_SECONDS:
             # C6: this used to return a terminal NOOP forever, so one stuck
@@ -424,7 +603,8 @@ def plan_idle_ladder(
             plan["unstick_bead"] = tracked.get("id")
             return plan
         return {"action": "none", "reason": "ladder_active", "wake_key": None,
-                "ladder_bead": tracked.get("id")}
+                "ladder_bead": tracked.get("id"),
+                "workflow_pending": isinstance(workflow_state, dict)}
 
     if not maintain_alive:
         # sec1: off means the campaign goes idle *and says so plainly* --
