@@ -87,7 +87,7 @@ say "factory-guard — $ROOT"
 say ""
 
 # --- 1. critical runtime files ----------------------------------------------
-CRITICAL="bin/pr-autopilot orders/pr-autopilot.toml bin/factory-guard orders/factory-guard.toml bin/provider-failover orders/provider-failover.toml bin/factory-watchdog orders/factory-watchdog.toml"
+CRITICAL="bin/pr-autopilot orders/pr-autopilot.toml bin/factory-guard orders/factory-guard.toml bin/factory-build-gates bin/provider-failover orders/provider-failover.toml bin/factory-watchdog orders/factory-watchdog.toml"
 MISSING=""
 for f in $CRITICAL; do [ -e "$f" ] || MISSING="$MISSING $f"; done
 
@@ -367,6 +367,38 @@ for rig in saymyname-backend saymyname-frontend; do
     say "· rig:$rig — dispatcher idle (scale-to-zero), $ready ready, not suspended"
   fi
 done
+
+# --- 5b. resolved formula exec checks exist inside every rig (af-uxz57) -----
+# Gas City resolves an exec-check path relative to its target rig, but pack
+# assets are not copied there automatically. That made every build-basic gate
+# fail before the validator even started. External symlinks do not solve it:
+# Gas City's containment check rejects them before execution. The helper reads
+# each rig's live resolved formula catalog, deduplicates check paths, and writes
+# manifest-tracked regular-file gates plus the pack-linked validator dependency
+# whose schemas resolve from its real pack path. Default mode repairs missing or
+# stale managed artifacts; --check-only reports each rig/path once without writing.
+BUILD_GATES="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-build-gates"
+if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$BUILD_GATES" ]; then
+  say "· build-gates — not checked (not a city root, or gc/helper unavailable)"
+else
+  BG_ARGS=()
+  [ "$CHECK_ONLY" = "1" ] && BG_ARGS+=(--check-only)
+  BG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$BUILD_GATES" "${BG_ARGS[@]}" 2>&1)
+  BG_STATUS=$?
+  [ "$QUIET" = "1" ] || printf '%s\n' "$BG_OUTPUT" | sed 's/^/  /'
+  BG_PROBLEM_COUNT=0
+  while IFS= read -r raw_line; do
+    line="${raw_line#"${raw_line%%[![:space:]]*}"}"
+    case "$line" in
+      FIXED:\ *) ACTIONS+=("build-gates: ${line#FIXED: }") ;;
+      !\ *)      PROBLEMS+=("${line#! }"); STATUS=1; BG_PROBLEM_COUNT=$((BG_PROBLEM_COUNT+1)) ;;
+    esac
+  done <<<"$BG_OUTPUT"
+  if [ "$BG_STATUS" -ne 0 ] && [ "$BG_PROBLEM_COUNT" -eq 0 ]; then
+    PROBLEMS+=("build-gates: factory-build-gates exited $BG_STATUS with no problem line captured")
+    STATUS=1
+  fi
+fi
 
 # --- 6. worktrees left behind by a finished session --------------------------
 # "Never checkout in the live root, use a worktree" is the right rule, but it

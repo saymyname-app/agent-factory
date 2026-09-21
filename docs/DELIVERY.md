@@ -455,6 +455,36 @@ comportement change. Le relecteur vérifie donc :
 
 These classifications are deliberately separate: the three contracts are durable and usable, FAST and gate isolation are proven, while target-repository CI remains to be observed during rig onboarding.
 
+## Contrôles `exec` des builds GUARDED
+
+Les contrôles `exec` déclarés par les formules sont résolus par Gas City depuis
+la racine du rig cible. Les scripts restent pourtant la propriété du pack
+épinglé : les recopier à la main les désynchroniserait au prochain re-pin, et
+un script factice qui retourne toujours vrai ferait passer un build sans le
+valider.
+
+`bin/factory-build-gates` lit `gc formula list --rig <rig> --json` pour chaque
+rig, déduplique les chemins réellement actifs, et matérialise les scripts du
+pack résolu pour ce rig. Gas City refuse un lien symbolique présenté comme
+contrôle si sa cible sort du confinement du rig : chaque chemin `exec` est donc
+une copie locale régulière. Le validateur Python appelé par le contrôle reste,
+lui, un lien suivi vers le pack afin de résoudre les schémas voisins ; il n'est
+pas lui-même soumis au résolveur `exec`. Copies et dépendance sont suivies par
+`.gc/scripts/.factory-build-gates.json`. Cette résolution par rig évite de
+réutiliser silencieusement le pack par défaut si un rig a sa propre version.
+`factory-boot` le fait avant le démarrage du
+contrôleur ; `factory-guard` vérifie et répare ensuite une disparition après un
+re-clone ou un artefact géré périmé après un re-pin. `--check-only` ne modifie rien et
+sort non-zéro en nommant chaque couple rig/chemin une seule fois. Un fichier
+réel déjà présent, ou un artefact géré modifié hors de l'outil, n'est jamais
+écrasé silencieusement.
+
+Preuve attendue avant de considérer une réparation comme livrée : un build
+trivial complet se termine avec `gc.outcome=pass` dans chaque rig, et un
+artefact volontairement invalide est refusé avec les erreurs structurées du
+validateur. Vérifier seulement que le chemin existe ne prouve pas que le
+contrôle s'exécute.
+
 ## SayMyName rig contracts
 
 ### Backend — `saymyname-backend` / `smb`
