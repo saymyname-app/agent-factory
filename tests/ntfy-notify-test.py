@@ -47,7 +47,6 @@ BEAD = re.compile(r"\b(?:af|smb|smf)-[a-z0-9]{3,}", re.I)
 # Minimal stand-in for config/provider-policy.json's providers -> pool map.
 PROVIDER_POLICY = {"providers": {
     "codex": {"pool": "openai"},
-    "codex-spark": {"pool": "openai-spark"},
     "claude": {"pool": "anthropic"},
     "claude-standard": {"pool": "anthropic"},
     "claude-cheap": {"pool": "anthropic"},

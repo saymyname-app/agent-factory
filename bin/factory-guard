@@ -135,7 +135,7 @@ BROKEN_CFG=""
 if grep -qE '^\s*permission_mode\s*=\s*"plan"' city.toml 2>/dev/null; then
   BROKEN_CFG="permission_mode=plan (strands unattended agents)"
 fi
-for p in codex codex-spark claude claude-standard claude-cheap; do
+for p in codex claude claude-standard claude-cheap; do
   gc config explain --provider "$p" >/dev/null 2>&1 || \
     BROKEN_CFG="${BROKEN_CFG:+$BROKEN_CFG; }provider '$p' does not resolve"
 done

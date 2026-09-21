@@ -157,6 +157,32 @@ take effect. So `category=auth` now:
 This is additive: quota exhaustion and every other `provider_error` category
 are untouched, and a human can still `set --action clear` at any time.
 
+### 10. codex-spark removed (af-i6018, 2026-09-21)
+
+Intent (Benjamin, 2026-09-20): « Il faut proprement enlever Spark. » — remove
+the `codex-spark` provider and its `openai-spark` pool everywhere, leaving no
+dead config and no fallback path that can reach it.
+
+Mechanism: with a ChatGPT-account login the server rejects the model
+(`"gpt-5.3-codex-spark is not supported when using Codex with a ChatGPT
+account"`, HTTP 400) even under Pro x20, although the quota was displayed
+(af-88za4; openai/codex#45590, closed not planned; #45972 open, no OpenAI
+answer). It is not in the public API either. Its generated launch command was
+also invalid — two conflicting model flags — which put every session that
+tried it into a start-fail loop on 2026-09-20. `codex-spark` and
+`openai-spark` are removed from `config/provider-policy.json`, `city.toml`,
+`config/model-catalog.json`, `bin/factory-guard`'s config-sanity list, and the
+`_REAUTH_HINT` map in `lib/ntfy_notify.py`; §2 and §3 above describe the pool
+design as it stood at ADR authoring time and are left as written. A stale
+`.gc/provider-state.json` still naming `codex-spark` is silently ignored by
+`normalize_state` (§1/§4), never an error — `test_a_stale_state_naming_codex_spark_cannot_resolve_to_it`
+(`tests/provider-failover-test.py`) asserts it can never make an agent
+resolve to the removed provider.
+
+Condition to re-add: a passing live test of the exact launch command against
+this host's ChatGPT-account login, documented here, before Spark is reintroduced
+anywhere in policy or chains.
+
 ## Evidence
 
 - `tests/provider-failover-test.py` — detection on the real messages, pools,

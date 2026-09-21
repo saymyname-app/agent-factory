@@ -114,7 +114,6 @@ class ExhaustedProviderReachesTheCockpit(unittest.TestCase):
             "auto": True, "overlay_present": True,
             "pools": {
                 "codex": {"state": "exhausted", "until": "2026-09-21T05:22:00Z", "evidence": "usage limit"},
-                "codex-spark": {"state": "exhausted", "until": "2026-09-17T00:00:00Z", "evidence": "usage limit"},
                 "anthropic": {"state": "exhausted", "until": "2026-09-16T16:50:00Z", "evidence": "session limit"},
             },
             "targets": {
@@ -136,7 +135,7 @@ class ExhaustedProviderReachesTheCockpit(unittest.TestCase):
         payload = bridge.status()
         self.assertEqual("all_unavailable", payload["targets"]["workspace"]["reason"])
         self.assertIsNone(payload["targets"]["workspace"]["provider"])
-        self.assertEqual({"codex", "codex-spark", "anthropic"}, set(payload["pools"]))
+        self.assertEqual({"codex", "anthropic"}, set(payload["pools"]))
         self.assertTrue(all(p["state"] == "exhausted" for p in payload["pools"].values()))
 
     def test_a_provider_failover_crash_is_a_source_error_not_a_silent_gap(self):

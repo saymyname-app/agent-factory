@@ -355,7 +355,6 @@ COLD_START_WINDOW_MINUTES = 15
 _REAUTH_HINT = {
     "anthropic": "Reconnecte Claude Code sur cet hôte : ouvre la session, lance `/login`.",
     "openai": "Reconnecte Codex sur cet hôte : `codex login`.",
-    "openai-spark": "Reconnecte Codex sur cet hôte : `codex login`.",
 }
 
 
