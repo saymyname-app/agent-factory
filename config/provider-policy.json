@@ -40,19 +40,19 @@
   "targets": {
     "workspace": {
       "label": "Ouvriers des rigs (par défaut)",
-      "why": "Provisoire (2026-09-18, Benjamin) : Claude par défaut partout, Codex en secondaire, tant que le quota Codex standard n’est pas revenu (reset 2026-09-21) et que le compte ChatGPT de cet hôte ne peut de toute façon pas utiliser gpt-5.3-codex-spark (af-88za4). Revenir à Codex en tête une fois les deux confirmés sains.",
+      "why": "Codex en tête restauré (af-wpjgu, 2026-09-21) : le quota Codex standard est revenu (reset 2026-09-21T05:22Z, pool openai confirmé 'available') et gpt-5.3-codex-spark est retiré de toute chaîne (af-i6018) plutôt que rendu sain -- les deux conditions de l'ADR sont réunies. Claude reste juste derrière comme repli.",
       "chain": [
-        "claude-standard",
         "codex",
+        "claude-standard",
         "claude-cheap"
       ]
     },
     "mayor": {
       "label": "Mayor (orchestration)",
-      "why": "Provisoire (2026-09-18, Benjamin) : Claude par défaut, Codex en secondaire, même raison que workspace. Codex reviendra en tête une fois son quota revenu et confirmé fiable pour l’orchestration.",
+      "why": "Codex en tête restauré (af-wpjgu, 2026-09-21), même raison que workspace.",
       "chain": [
-        "claude-standard",
-        "codex"
+        "codex",
+        "claude-standard"
       ]
     },
     "claude-reviewer": {
@@ -66,10 +66,10 @@
     },
     "ux-reviewer": {
       "label": "Relecteur UX",
-      "why": "Provisoire (2026-09-18, Benjamin) : Claude en tête comme les autres cibles tant que Codex est indisponible. ATTENTION compromis : l’auteur (workspace/mayor) est aussi sur Claude en ce moment, donc ce relecteur perd temporairement son indépendance de modèle vis-à-vis de l’auteur -- à rebasculer sur Codex en premier dès qu’il refonctionne, pour retrouver l’indépendance voulue à l’origine.",
+      "why": "Codex en tête restauré (af-wpjgu, 2026-09-21) : l'auteur (workspace/mayor) est repassé sur Codex, donc ce relecteur retrouve son indépendance de modèle voulue à l'origine en gardant Codex en tête, Claude en repli.",
       "chain": [
-        "claude",
-        "codex"
+        "codex",
+        "claude"
       ]
     }
   }
