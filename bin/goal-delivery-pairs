@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# goal-delivery-pairs — the deterministic list of every (repo, PR) delivery
+# pair that shipped for a goal Bead, across every rig.
+#
+# af-kidv: ADR-0016's six proof fields (gc.delivery_status, gc.work_outcome,
+# gc.github_repo, gc.pr_number, gc.pr_head, gc.merge_commit) fit only one
+# (repo, PR) pair per bead. A goal that ships as more than one pull request
+# across rigs -- af-7700's personal CSV import shipped as backend PR #39
+# (smb-esa3) and frontend PR #50 (smf-2q6) -- has always had to mirror one
+# pair onto the goal bead's own six fields and let every other rig's pair
+# live only on its own child bead, linked back via `gc.goal=<goal-id>` and
+# independently closed through bin/deliver-close. A reader who trusts the
+# goal bead's own fields alone sees exactly one pair and has to know, by
+# manual judgment, to also go look for `gc.goal`-linked children.
+#
+# This is the query that removes that judgment call: the goal's own six
+# fields (when it is itself closed and delivered) plus every CLOSED bead --
+# in the city and in every registered rig -- carrying `gc.goal=<goal-id>` and
+# `gc.delivery_status=merged`, deduped by (repo, pr number). See
+# docs/DELIVERY.md "Multi-repo / cross-rig delivery proof" for the
+# convention this codifies. Read-only: this queries Beads, it never writes.
+#
+# Usage: goal-delivery-pairs <goal-bead-id> [--json]
+set -Eeuo pipefail
+
+PROGRAM_NAME="goal-delivery-pairs"
+GC_BIN="${GC_BIN:-gc}"
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+
+log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2; }
+die() { log "ERROR: $1"; exit 1; }
+
+usage() {
+  cat <<'USAGE'
+Usage: goal-delivery-pairs <goal-bead-id> [--json]
+
+Prints every (repo, PR) delivery pair recorded for <goal-bead-id>: its own
+six ADR-0016 proof fields (if it is itself closed and delivered) plus every
+closed bead, in the city and in every registered rig, that carries
+gc.goal=<goal-bead-id> and gc.delivery_status=merged. Pairs are deduped by
+(repo, pr number). Exits 0 with an empty result if none are found yet.
+USAGE
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command is unavailable: $1"
+}
+
+json_or_die() {
+  local label=$1 input=$2
+  jq -e . >/dev/null 2>&1 <<<"$input" || die "$label returned invalid JSON."
+}
+
+# rig_gc rig -> the gc invocation prefix for the city (rig="") or a named rig.
+rig_gc() {
+  if [ -z "$1" ]; then printf '%s bd' "$GC_BIN"; else printf '%s bd --rig %s' "$GC_BIN" "$1"; fi
+}
+
+# non_hq_rigs -> newline-separated rig names, discovered dynamically so a
+# newly-registered rig is covered without editing this script.
+non_hq_rigs() {
+  local rigs_json
+  rigs_json=$(cd "$ROOT" && "$GC_BIN" rig list --json 2>/dev/null) || return 0
+  jq -e . >/dev/null 2>&1 <<<"$rigs_json" || return 0
+  jq -r '.rigs[]? | select(.hq | not) | .name' <<<"$rigs_json"
+}
+
+# one_pair_row bead_json -> one 0x1F-separated row, or empty if the bead
+# isn't a delivered pair (missing/invalid proof fields).
+one_pair_row() {
+  local bead=$1 id repo pr head merge
+  id=$(jq -r '.id // empty' <<<"$bead")
+  repo=$(jq -r '.metadata["gc.github_repo"] // empty' <<<"$bead")
+  pr=$(jq -r '.metadata["gc.pr_number"] // empty' <<<"$bead" | sed -E 's/\.0$//')
+  head=$(jq -r '.metadata["gc.pr_head"] // empty' <<<"$bead")
+  merge=$(jq -r '.metadata["gc.merge_commit"] // empty' <<<"$bead")
+  [ -n "$id" ] && [ -n "$repo" ] && [[ $pr =~ ^[1-9][0-9]*$ ]] || return 0
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$id" "$repo" "$pr" "$head" "$merge"
+}
+
+main() {
+  local goal_id="" format=text
+  goal_id=${1:-}
+  [ -n "$goal_id" ] && [[ $goal_id != -* ]] || { usage >&2; return 2; }
+  shift || true
+  case "${1:-}" in
+    "") ;;
+    --json) format=json ;;
+    -h|--help) usage; return 0 ;;
+    *) usage >&2; return 2 ;;
+  esac
+
+  require_command "$GC_BIN"
+  require_command jq
+
+  local rows=() goal_json goal_bead goal_status goal_delivered
+  goal_json=$(cd "$ROOT" && "$GC_BIN" bd show "$goal_id" --json 2>/dev/null) \
+    || die "Goal bead lookup failed for $goal_id."
+  json_or_die "Goal bead $goal_id" "$goal_json"
+  goal_bead=$(jq -c 'if type == "array" then .[0] else . end' <<<"$goal_json")
+  [ "$goal_bead" != "null" ] || die "Goal bead $goal_id was not found."
+  goal_status=$(jq -r '.status // empty' <<<"$goal_bead")
+  goal_delivered=$(jq -r '.metadata["gc.delivery_status"] // empty' <<<"$goal_bead")
+  if [ "$goal_status" = closed ] && [ "$goal_delivered" = merged ]; then
+    local row
+    row=$(one_pair_row "$goal_bead")
+    [ -n "$row" ] && rows+=("$row")
+  fi
+
+  local scope beads
+  for scope in "" $(non_hq_rigs); do
+    beads=$(cd "$ROOT" && $(rig_gc "$scope") list --all --status closed \
+      --metadata-field "gc.goal=$goal_id" --has-metadata-key gc.delivery_status \
+      --limit 0 --json 2>/dev/null) || beads='[]'
+    jq -e . >/dev/null 2>&1 <<<"$beads" || beads='[]'
+    while IFS= read -r bead; do
+      [ -z "$bead" ] && continue
+      [ "$(jq -r '.metadata["gc.delivery_status"] // empty' <<<"$bead")" = merged ] || continue
+      local row
+      row=$(one_pair_row "$bead")
+      [ -n "$row" ] && rows+=("$row")
+    done < <(jq -c '.[]?' <<<"$beads")
+  done
+
+  # Dedup by (repo, pr) -- the goal's own fields legitimately mirror one of
+  # its children's, and must count once, not as a second delivery.
+  local -A seen=()
+  local -a unique=()
+  local r bead_id repo pr rest
+  for r in "${rows[@]+"${rows[@]}"}"; do
+    IFS=$'\x1f' read -r bead_id repo pr rest <<<"$r"
+    local key="$repo#$pr"
+    [ -n "${seen[$key]:-}" ] && continue
+    seen[$key]=1
+    unique+=("$r")
+  done
+
+  if [ "$format" = json ]; then
+    if [ "${#unique[@]}" -eq 0 ]; then
+      printf '[]\n'
+      return 0
+    fi
+    printf '%s\n' "${unique[@]}" | jq -R -s --arg sep "$(printf '\x1f')" '
+      split("\n") | map(select(length > 0)) | map(split($sep)) |
+      map({bead_id: .[0], github_repo: .[1], pr_number: (.[2] | tonumber),
+           pr_head: .[3], merge_commit: .[4]})'
+    return 0
+  fi
+
+  if [ "${#unique[@]}" -eq 0 ]; then
+    log "no delivered (repo, PR) pair found for $goal_id yet"
+    return 0
+  fi
+  for r in "${unique[@]}"; do
+    IFS=$'\x1f' read -r bead_id repo pr head merge <<<"$r"
+    printf '%s#%s — merged %s (via %s)\n' "$repo" "$pr" "${merge:0:12}" "$bead_id"
+  done
+}
+
+main "$@"

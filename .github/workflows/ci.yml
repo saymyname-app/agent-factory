@@ -144,6 +144,9 @@ jobs:
       - name: Factory guard backfills or flags undocumented delivery beads
         run: bash tests/factory-delivery-guard-test.sh
 
+      - name: Goal delivery pairs across rigs
+        run: bash tests/goal-delivery-pairs-test.sh
+
       - name: Factory guard restores or flags product-queue status drift
         run: bash tests/factory-queue-guard-test.sh
 
