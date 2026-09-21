@@ -225,6 +225,37 @@ class MayorCampaignTest(CampaignFixture, unittest.TestCase):
         self.assertNotIn("mayor-campaign-sentinel", calls)
         self.assertEqual("sent", self.current_metadata()["gc.campaign_wake_state"])
 
+    def test_a_kill_after_mail_delivery_cannot_resend_the_first_wake(self):
+        # af-v0w20: every 00:10-00:36Z tick hit the order's 50s kill limit
+        # after the mail had been delivered but before wake_state moved from
+        # pending to sent. The next tick therefore delivered the same first
+        # wake again. Persisting the receipt before delivery makes the
+        # ambiguous hard-kill window at-most-once instead of spam-at-least-once.
+        killed = self.invoke(
+            "sentinel", check=False,
+            extra_env={"CAMPAIGN_MAIL_KILL_PARENT_AFTER_SEND": "1"},
+        )
+        self.assertLess(killed.returncode, 0)
+        self.assertEqual(1, self.mail_count())
+        value = self.current_metadata()
+        self.assertEqual(("materialize:af-next", "sent"), (
+            value["gc.campaign_wake_key"], value["gc.campaign_wake_state"],
+        ))
+
+        self.assertIn("already notified materialize:af-next", self.invoke("sentinel").stdout)
+        self.assertEqual(1, self.mail_count())
+
+    def test_a_mail_error_rolls_back_the_precommitted_first_wake(self):
+        result = self.invoke(
+            "sentinel", check=False, extra_env={"CAMPAIGN_MAIL_FAIL": "1"},
+        )
+        self.assertEqual(1, result.returncode)
+        value = self.current_metadata()
+        self.assertEqual(("", "none", "1"), (
+            value["gc.campaign_wake_key"], value["gc.campaign_wake_state"],
+            value["gc.campaign_failure_count"],
+        ))
+
     def test_a_killed_tick_is_recorded_distinctly_not_as_a_command_failure(self):
         # C8: the sentinel order kills the whole tick at 50s with no trace at
         # all (31 kills in 24h, live). A tick that runs past its own 40s
@@ -715,6 +746,19 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         self.write_status(status(next_id="af-next"))
         out = self.sentinel(NOW).stdout
         self.assertIn("NOTIFIED: mayor — ladder:factory:af-fix", out)
+
+    def test_a_mail_error_rolls_back_precommitted_ladder_tracking(self):
+        self.write_status(status(next_id=None))
+        result = self.invoke(
+            "sentinel", check=False,
+            extra_env={"CAMPAIGN_NOW": str(NOW), "CAMPAIGN_MAIL_FAIL": "1"},
+        )
+        self.assertEqual(1, result.returncode)
+        meta = self.current_metadata()
+        self.assertEqual(("", "none", ""), (
+            meta["gc.campaign_wake_key"], meta["gc.campaign_wake_state"],
+            meta.get("gc.campaign_ladder_bead", ""),
+        ))
 
     def test_product_priority_lane_still_wins_when_set(self):
         self.write_state({**metadata(), "gc.campaign_priority_lane": "product"})

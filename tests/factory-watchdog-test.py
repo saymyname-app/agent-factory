@@ -15,6 +15,7 @@ from factory_watchdog import (  # noqa: E402
     assess_gate,
     assess_gh_auth,
     assess_pr,
+    assess_sentinel_tick_streak,
     assess_stall_frequency,
     assess_workflow,
     merge_signals,
@@ -161,6 +162,60 @@ class GhAuthRules(unittest.TestCase):
     def test_a_long_gh_auth_message_is_truncated(self):
         _, message = assess_gh_auth(1, "x" * 500)
         self.assertLessEqual(len(message), 200)
+
+
+class SentinelTickRules(unittest.TestCase):
+    @staticmethod
+    def event(kind, at, subject="mayor-campaign", message=None):
+        item = {"type": kind, "subject": subject, "ts": at}
+        if message is not None:
+            item["message"] = message
+        return item
+
+    def test_three_consecutive_near_timeout_ticks_are_flagged(self):
+        events = []
+        for minute in (0, 2, 4):
+            events.extend([
+                self.event("order.fired", f"2026-09-16T10:0{minute}:00Z"),
+                self.event("order.failed", f"2026-09-16T10:0{minute}:50Z",
+                           message="context deadline exceeded"),
+            ])
+        code, message = assess_sentinel_tick_streak(events, NOW)
+        self.assertEqual("sentinel_tick_slow", code)
+        self.assertIn("3 consecutive", message)
+        self.assertIn(">=45s", message)
+        self.assertIn("kill limit", message)
+
+    def test_two_slow_ticks_are_below_the_streak_threshold(self):
+        events = [
+            self.event("order.fired", "2026-09-16T10:30:00Z"),
+            self.event("order.failed", "2026-09-16T10:30:50Z"),
+            self.event("order.fired", "2026-09-16T10:32:00Z"),
+            self.event("order.failed", "2026-09-16T10:32:50Z"),
+        ]
+        self.assertIsNone(assess_sentinel_tick_streak(events, NOW))
+
+    def test_a_fast_completed_tick_breaks_the_slow_streak(self):
+        events = []
+        for minute in (0, 2, 4):
+            events.extend([
+                self.event("order.fired", f"2026-09-16T10:0{minute}:00Z"),
+                self.event("order.failed", f"2026-09-16T10:0{minute}:50Z"),
+            ])
+        events.extend([
+            self.event("order.fired", "2026-09-16T10:38:00Z"),
+            self.event("order.completed", "2026-09-16T10:38:12Z"),
+        ])
+        self.assertIsNone(assess_sentinel_tick_streak(events, NOW))
+
+    def test_other_orders_do_not_count_toward_the_streak(self):
+        events = []
+        for minute in (0, 2, 4):
+            events.extend([
+                self.event("order.fired", f"2026-09-16T10:0{minute}:00Z", "pr-autopilot"),
+                self.event("order.failed", f"2026-09-16T10:0{minute}:50Z", "pr-autopilot"),
+            ])
+        self.assertIsNone(assess_sentinel_tick_streak(events, NOW))
 
 
 class StallFrequencyRules(unittest.TestCase):
@@ -346,6 +401,21 @@ class Cli(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertTrue(result.stdout.strip().startswith("stall_frequency_high\t"))
+
+    def test_sentinel_ticks_cli_accepts_json_lines(self):
+        events = []
+        for minute in (0, 2, 4):
+            events.extend([
+                {"type": "order.fired", "subject": "mayor-campaign",
+                 "ts": f"2026-09-16T10:0{minute}:00Z"},
+                {"type": "order.failed", "subject": "mayor-campaign",
+                 "ts": f"2026-09-16T10:0{minute}:50Z",
+                 "message": "context deadline exceeded"},
+            ])
+        payload = "\n".join(json.dumps(item) for item in events)
+        lines = self._run("sentinel-ticks", payload)
+        self.assertEqual(1, len(lines))
+        self.assertTrue(lines[0].startswith("sentinel_tick_slow\t"))
 
     def test_merge_signals_subcommand_round_trips_through_the_real_cli(self):
         with tempfile.TemporaryDirectory() as tmp:

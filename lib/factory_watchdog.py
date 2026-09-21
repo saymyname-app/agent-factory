@@ -24,6 +24,9 @@ failure behind a CLOSED status":
              pattern of stalls -- the campaign stalling over and over, even if
              each one is individually resolved -- has no aggregate signal of
              its own (observability audit finding C3, 2026-09-18).
+  sentinel-ticks  three consecutive mayor-campaign order runs at or near the
+             hard timeout mean the wake loop is being killed under load, even
+             when each dispatch wrapper later looks routine (af-v0w20).
 
 Each assessor is a pure function over already-fetched JSON, so it is
 unit-testable without gc/gh. bin/factory-watchdog does the fetching, paging,
@@ -52,6 +55,9 @@ GATE_AGE_MINUTES_DEFAULT = 30
 PR_STUCK_MINUTES_DEFAULT = 30
 STALL_WINDOW_HOURS_DEFAULT = 24
 STALL_THRESHOLD_DEFAULT = 5
+SENTINEL_SLOW_SECONDS_DEFAULT = 45
+SENTINEL_SLOW_STREAK_DEFAULT = 3
+SENTINEL_ORDER_NAME = "mayor-campaign"
 
 
 def _epoch(value: Any) -> float | None:
@@ -189,6 +195,89 @@ def assess_gh_auth(returncode: int, output: str) -> tuple[str, str] | None:
     if returncode == 0:
         return None
     return "gh_auth_unreachable", f"gh auth status failed (exit {returncode}): {_truncate(output)}"
+
+
+def sentinel_tick_durations(
+    events: Iterable[dict[str, Any]],
+    now: float,
+    order_name: str = SENTINEL_ORDER_NAME,
+) -> list[dict[str, Any]]:
+    """Pair one order.fired event with its completed/failed terminal event.
+
+    Gas City emits no run id on these API events. Order executions are
+    serialized, so the next fired event also closes the observation window
+    for a prior fire that never emitted a terminal event. The current run is
+    returned with terminal="running"; the assessor ignores it until it has
+    crossed the slow threshold.
+    """
+    runs: list[dict[str, Any]] = []
+    started: float | None = None
+    started_at: Any = None
+    for event in events:
+        if not isinstance(event, dict) or str(event.get("subject") or "") != order_name:
+            continue
+        event_type = str(event.get("type") or "")
+        if event_type not in {"order.fired", "order.completed", "order.failed"}:
+            continue
+        at = _epoch(event.get("ts"))
+        if at is None:
+            continue
+        if event_type == "order.fired":
+            if started is not None and at >= started:
+                runs.append({
+                    "started_at": started_at,
+                    "duration_seconds": at - started,
+                    "terminal": "missing",
+                })
+            started = at
+            started_at = event.get("ts")
+            continue
+        if started is None or at < started:
+            continue
+        runs.append({
+            "started_at": started_at,
+            "duration_seconds": at - started,
+            "terminal": event_type,
+        })
+        started = None
+        started_at = None
+    if started is not None and now >= started:
+        runs.append({
+            "started_at": started_at,
+            "duration_seconds": now - started,
+            "terminal": "running",
+        })
+    return runs
+
+
+def assess_sentinel_tick_streak(
+    events: Iterable[dict[str, Any]],
+    now: float,
+    slow_seconds: int = SENTINEL_SLOW_SECONDS_DEFAULT,
+    threshold_count: int = SENTINEL_SLOW_STREAK_DEFAULT,
+) -> tuple[str, str] | None:
+    """Latest known run streak >= threshold and every run >= slow seconds."""
+    runs = sentinel_tick_durations(events, now)
+    # A fresh in-flight tick has no verdict yet and must not make a proven
+    # slow streak disappear. Once it crosses the threshold it joins the streak.
+    if runs and runs[-1]["terminal"] == "running" \
+            and runs[-1]["duration_seconds"] < slow_seconds:
+        runs.pop()
+    streak: list[dict[str, Any]] = []
+    for run in reversed(runs):
+        if run["duration_seconds"] < slow_seconds:
+            break
+        streak.append(run)
+    if len(streak) < threshold_count:
+        return None
+    streak.reverse()
+    durations = [round(run["duration_seconds"]) for run in streak]
+    timeouts = sum(run["terminal"] in {"order.failed", "missing", "running"} for run in streak)
+    return "sentinel_tick_slow", (
+        f"{len(streak)} consecutive {SENTINEL_ORDER_NAME} ticks lasted >={slow_seconds}s "
+        f"(observed {min(durations)}-{max(durations)}s; {timeouts} failed/missing); "
+        "the sentinel is hitting its order kill limit"
+    )
 
 
 def stall_frequency(
@@ -374,6 +463,43 @@ def _cli_stall_frequency(argv: list[str]) -> int:
     return 0
 
 
+def _cli_sentinel_ticks(argv: list[str]) -> int:
+    if len(argv) != 1:
+        print(
+            "usage: factory_watchdog.py sentinel-ticks  "
+            "(reads gc events JSON Lines or a JSON array on stdin)",
+            file=sys.stderr,
+        )
+        return 2
+    raw = sys.stdin.read()
+    try:
+        parsed = json.loads(raw) if raw.strip() else []
+        events = parsed if isinstance(parsed, list) else [parsed]
+    except json.JSONDecodeError:
+        events = []
+        try:
+            for line in raw.splitlines():
+                if line.strip():
+                    events.append(json.loads(line))
+        except json.JSONDecodeError:
+            print("sentinel-ticks: stdin is not valid JSON Lines", file=sys.stderr)
+            return 2
+    now = float(os.environ.get("FACTORY_GUARD_NOW") or time.time())
+    slow_seconds = int(
+        os.environ.get("FACTORY_WATCHDOG_SENTINEL_SLOW_SECONDS")
+        or SENTINEL_SLOW_SECONDS_DEFAULT
+    )
+    threshold = int(
+        os.environ.get("FACTORY_WATCHDOG_SENTINEL_SLOW_STREAK")
+        or SENTINEL_SLOW_STREAK_DEFAULT
+    )
+    verdict = assess_sentinel_tick_streak(events, now, slow_seconds, threshold)
+    if verdict is not None:
+        code, message = verdict
+        print(f"{code}\t{message}")
+    return 0
+
+
 def _cli_merge_signals(argv: list[str]) -> int:
     if len(argv) != 3:
         print(
@@ -402,11 +528,14 @@ def main() -> int:
         return _cli_gh_auth(sys.argv[1:])
     if len(sys.argv) >= 2 and sys.argv[1] == "stall-frequency":
         return _cli_stall_frequency(sys.argv[1:])
+    if len(sys.argv) >= 2 and sys.argv[1] == "sentinel-ticks":
+        return _cli_sentinel_ticks(sys.argv[1:])
     if len(sys.argv) != 2 or sys.argv[1] not in ("gates", "prs", "workflows"):
         print(
             "usage: factory_watchdog.py <gates|prs|workflows>  (reads JSON array on stdin)\n"
             "       factory_watchdog.py gh-auth <returncode>  (reads `gh auth status` output on stdin)\n"
             "       factory_watchdog.py stall-frequency  (reads continuity history \"history\" array on stdin)\n"
+            "       factory_watchdog.py sentinel-ticks  (reads gc events JSON Lines on stdin)\n"
             "       factory_watchdog.py merge-signals <path> <source>  (reads JSON array on stdin)",
             file=sys.stderr,
         )

@@ -108,6 +108,7 @@ autres signaux peuvent rester muets même quand elle avance
 | `workflows` | un bead molécule/workflow fermé `CLOSED` avec `gc.outcome` ≠ `pass` (le cas `on_fail=abort_scope` : chaque étape en aval passe `outcome=skipped` en silence) |
 | `gh-auth` | `gh auth status` échoue (token WSL périmé/invalide) — dix scripts en dépendent (`reversibility-check`, `factory-guard`, `pr-autopilot`, `factory-do-work-workspace`, `factory-gh-rollup`, `factory-delivery-guard`, `deliver-close`, `factory-queue-guard`, `factory-watchdog`, `factory-main-gate`) et échouaient chacun silencieusement de son côté (af-539b0, 2026-09-18) ; **un seul** bead partagé nommant les dix scripts, **un seul** mail au Mayor par cooldown, et auto-résolu dès que `gh auth` revient — jamais un bead par script, jamais un par passage |
 | `stall-frequency` | compte glissant sur 24h des transitions `BLOCKED_STALLED` dans `.gc/runtime/factory-continuity-history.json` (`lib/factory_continuity.py`) ; à partir de 5, **un seul** bead + mail au Mayor par cooldown, nommant l'état qui précédait chaque arrêt (« cause inconnue » si l'arrêt est le tout premier événement de l'historique) — un arrêt isolé se diagnostique déjà ; ce contrôle détecte le motif récurrent (audit d'observabilité, constat C3, 2026-09-18) |
+| `sentinel-ticks` | rapproche les événements Gas City `order.fired` et `order.completed`/`order.failed` de `mayor-campaign` ; trois passages consécutifs d'au moins **45 s** signalent que la sentinelle touche sa limite dure de 50 s. Un seul bead + mail est créé, les relances respectent le cooldown, et un passage rapide ferme automatiquement le signalement (af-v0w20, 2026-09-21) |
 | `liveness` (relais) | re-signale un défaut de vivacité déjà déposé par `factory-guard` tant qu'il reste ouvert, au lieu de le laisser filer une seule fois |
 
 **Observe et page seulement** (ADR-0016 §7) : il ne résout jamais une porte,
@@ -223,6 +224,18 @@ sentinelle ne le lui redisait jamais. Désormais, un réveil sans progrès est
 renvoyé au bout de **30 min**, marqué `RAPPEL n/3`, **trois fois au plus**.
 Ensuite, c'est la vivacité qui ouvre un signalement. Les échelons 3 et 4,
 facultatifs par nature, ne sont jamais relancés.
+
+L'acquittement durable du **premier** réveil (`wake_state=sent`, heure d'envoi,
+compteur à zéro) est écrit avant l'appel mail. Si la commande mail rend une
+erreur, la sentinelle remet la clé et l'état à zéro ; si le contrôleur la tue
+brutalement pendant l'appel, le passage suivant respecte l'acquittement et ne
+renvoie pas le même premier réveil. Le rappel à 30 min reste le filet de
+sécurité si la mort est arrivée juste avant la livraison. C'est le choix
+at-most-once qui corrige af-v0w20 : entre 00:10Z et 00:36Z le 2026-09-21, le
+mail partait puis chaque passage mourait à 50 s avant l'ancien acquittement
+post-envoi, produisant 14 copies en 24 min. `factory-watchdog` signale désormais
+ce motif dès trois passages consécutifs d'au moins 45 s et auto-résout le
+signalement au premier passage rapide.
 
 Au passage qui suit un échec transitoire, la sentinelle ne fait rien : l'état qu'elle vient de lire était masqué par cet échec. Elle agit au passage suivant.
 
