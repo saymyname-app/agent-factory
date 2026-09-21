@@ -173,6 +173,45 @@ A bead carrying `merge_result=merged` and `merged_sha` is on `dev`. A closed
 bead **without** them means a pull request was opened and nothing more. Agents
 must never report the second as shipped.
 
+### Multi-repo / cross-rig delivery proof (af-kidv)
+
+ADR-0016's six delivery-proof fields (`gc.delivery_status`, `gc.work_outcome`,
+`gc.github_repo`, `gc.pr_number`, `gc.pr_head`, `gc.merge_commit`) fit exactly
+one (repo, PR) pair per bead. A goal that ships as more than one pull request
+across rigs cannot record all of them on itself. `af-7700` (personal CSV
+import) is the worked example: it shipped as backend PR #39
+(`saymyname-backend`) and frontend PR #50 (`saymyname-frontend`), both merged.
+
+The convention, made explicit rather than left as a per-goal judgment call:
+
+- The goal bead's own six fields record exactly one pair — call it the
+  *primary* delivery. `af-7700` mirrors its backend child's pair (PR #39).
+  Which pair is primary is not load-bearing; it is whichever pair the goal
+  bead's own work session produced directly.
+- Every rig's contribution, primary included, ships through its own
+  `gc.goal=<goal-id>`-linked child execution bead (`smb-esa3`, `smf-2q6` for
+  `af-7700`), each closed independently through `bin/deliver-close` with its
+  own complete, GitHub-verified six-field proof. This was already required
+  practice before this was written down — mol-do-work/mol-polecat-commit
+  always close the execution bead they were dispatched with, never the goal
+  bead directly — it just was not named as *the* rule for the cross-rig case,
+  and nothing enumerated the full set back for a reader.
+- The goal bead's own fields are **not** the complete delivery footprint for
+  a cross-rig goal — they are one pair among possibly several. Never infer
+  "this goal shipped exactly one PR" from the goal bead alone.
+- To get the complete, deterministic list instead of manually tracking down
+  each rig's child bead: `bin/goal-delivery-pairs <goal-id>` (or
+  `--json`). It unions the goal bead's own six fields (when closed and
+  delivered) with every closed, `gc.delivery_status=merged` bead carrying
+  `gc.goal=<goal-id>` across the city and every registered rig, deduped by
+  (repo, PR number) — the goal's own fields legitimately mirror one child's
+  and must count once, not as an extra delivery.
+- `bin/saymyname-product-status`'s single-line "LAST DELIVERED" status keeps
+  reading only the goal bead's own six fields — that stays correct and
+  sufficient for a one-glance status line. Reach for
+  `bin/goal-delivery-pairs` when the question is "what shipped, across every
+  repo, for this goal" rather than "what's the one-line status."
+
 ### Production stays gated
 
 In the SayMyName rigs, `dev -> main` is not automated and must not be:
