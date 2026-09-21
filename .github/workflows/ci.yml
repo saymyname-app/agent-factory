@@ -120,6 +120,9 @@ jobs:
       - name: Factory guard regenerates the provider overlay
         run: bash tests/factory-guard-provider-overlay-test.sh
 
+      - name: Formula build gates are wired into every rig (af-uxz57)
+        run: python tests/factory-build-gates-test.py
+
       - name: Reversibility classification
         run: python tests/reversibility-test.py
 

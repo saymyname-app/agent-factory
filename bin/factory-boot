@@ -56,6 +56,11 @@ else
   step "supervisor start" "$GC_BIN" supervisor start
 fi
 
+# Pack formula exec checks are resolved relative to each rig. Re-materialise
+# containment-safe managed artifacts before the controller can dispatch a
+# workflow after a reboot, rig re-clone, or pack re-pin.
+step "build gate materialisation" ./bin/factory-build-gates
+
 # 3. Controller. A suspended city is an operator's decision: leave it alone.
 city_json() { timeout 30 "$GC_BIN" status --json 2>/dev/null; }
 STATUS_JSON=$(city_json || true)
