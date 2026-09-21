@@ -28,6 +28,7 @@ printf '[workspace]\nprovider = "claude"\n' > "$TMP/city/city.toml"
 GATES="$TMP/gates.json";         printf '[]' > "$GATES"
 PRS="$TMP/prs.json";             printf '[]' > "$PRS"
 WORKFLOWS="$TMP/workflows.json"; printf '[]' > "$WORKFLOWS"
+EVENTS="$TMP/events.jsonl";       : > "$EVENTS"
 COORD="$TMP/coord.json";         printf '[{"id":"af-1vr4","metadata":{}}]' > "$COORD"
 GH_AUTH_RC="$TMP/gh-auth-rc";   printf '0' > "$GH_AUTH_RC"
 GH_AUTH_OUT="$TMP/gh-auth-out"; printf 'Logged in to github.com account benjamin-hurand' > "$GH_AUTH_OUT"
@@ -41,6 +42,7 @@ cat > "$TMP/bin/gc" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CALLS"
 case "\$1 \$2" in
+  "events --since") cat "$EVENTS"; exit 0 ;;
   "bd gate")
     [[ "\$3" == list ]] && { cat "$GATES"; exit 0; }
     ;;
@@ -324,4 +326,34 @@ rc=$?
 set -e
 [ "$rc" != "0" ] || fail "exit code must be nonzero when the watchdog itself could not run (unreachable root)"
 
-printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, a broken gh auth, and a high stall frequency, and re-nudges an open liveness defect, all throttled and silent under --check-only\n'
+# 11. three consecutive mayor-campaign ticks at the kill limit produce one
+#     durable alert, are throttled on re-run, and auto-resolve after recovery.
+cat > "$EVENTS" <<'JSONL'
+{"type":"order.fired","subject":"mayor-campaign","ts":"2026-09-16T10:00:00Z"}
+{"type":"order.failed","subject":"mayor-campaign","ts":"2026-09-16T10:00:50Z","message":"context deadline exceeded"}
+{"type":"order.fired","subject":"mayor-campaign","ts":"2026-09-16T10:02:00Z"}
+{"type":"order.failed","subject":"mayor-campaign","ts":"2026-09-16T10:02:50Z","message":"context deadline exceeded"}
+{"type":"order.fired","subject":"mayor-campaign","ts":"2026-09-16T10:04:00Z"}
+{"type":"order.failed","subject":"mayor-campaign","ts":"2026-09-16T10:04:50Z","message":"context deadline exceeded"}
+JSONL
+reset_logs
+out=$(watchdog)
+grep -q "sentinel ticks — 3 consecutive" <<<"$out" || { echo "$out" >&2; fail "slow sentinel streak not reported"; }
+[ "$(creates)" = "1" ] || fail "a slow sentinel streak should file exactly one shared bead"
+[ "$(mails)" = "1" ] || fail "a slow sentinel streak should be paged exactly once"
+
+reset_logs
+out=$(watchdog)
+[ "$(creates)" = "0" ] || fail "a slow sentinel streak bead must not be duplicated"
+[ "$(mails)" = "0" ] || fail "an immediate slow-streak re-run must be throttled"
+
+cat > "$EVENTS" <<'JSONL'
+{"type":"order.fired","subject":"mayor-campaign","ts":"2026-09-16T10:38:00Z"}
+{"type":"order.completed","subject":"mayor-campaign","ts":"2026-09-16T10:38:12Z"}
+JSONL
+reset_logs
+out=$(watchdog)
+grep -q "sentinel ticks —" <<<"$out" && fail "a recovered sentinel must not remain reported"
+grep -q -- '--status=closed' "$CALLS" || fail "sentinel recovery should auto-resolve the slow-streak bead"
+
+printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, broken gh auth, high stall frequency, slow sentinel streaks, and open liveness defects, all throttled and silent under --check-only\n'

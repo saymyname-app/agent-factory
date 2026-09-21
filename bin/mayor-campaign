@@ -624,7 +624,11 @@ def failure_mode() -> str:
     return "durable failure" if _LAST_FAILURE_DURABLE else "automatic retry"
 
 
-def record_failure(metadata: dict[str, Any], exc: Exception) -> int:
+def record_failure(
+    metadata: dict[str, Any],
+    exc: Exception,
+    rollback: dict[str, str] | None = None,
+) -> int:
     global _LAST_FAILURE_DURABLE
     try:
         count = int(metadata.get("gc.campaign_failure_count", 0)) + 1
@@ -645,6 +649,8 @@ def record_failure(metadata: dict[str, Any], exc: Exception) -> int:
         "gc.campaign_wake_key": "",
         "gc.campaign_wake_state": "none",
     }
+    if rollback:
+        values.update(rollback)
     _LAST_FAILURE_DURABLE = count >= FAILURE_THRESHOLD and now - since >= FAILURE_MIN_SPAN_SECONDS
     if _LAST_FAILURE_DURABLE:
         cause = (
@@ -1043,6 +1049,7 @@ def sentinel(_: argparse.Namespace) -> None:
         resends = int(metadata.get("gc.campaign_wake_resends") or 0)
     except (TypeError, ValueError):
         resends = 0
+    rung_rollback: dict[str, str] = {}
     if reminder:
         subject = f"RAPPEL {resends + 1}/{MAX_REWAKES} · {subject}"
         message = (
@@ -1073,8 +1080,34 @@ def sentinel(_: argparse.Namespace) -> None:
             "gc.campaign_wake_sent_at": iso(now),
             "gc.campaign_wake_resends": str(resends + 1),
         })
-    elif campaign["wake_state"] != "pending":
-        update_metadata({"gc.campaign_wake_key": wake_key, "gc.campaign_wake_state": "pending"})
+    else:
+        # af-v0w20: persist the first-wake receipt before delivery, just as
+        # the reminder path above persists its counter first. Between
+        # 00:10Z and 00:36Z on 2026-09-21, every sentinel order hit its 50s
+        # hard timeout after gc mail had delivered the wake but before the
+        # old post-send update changed pending -> sent. Each next tick saw
+        # pending and delivered the same "first" wake again (14 mails in
+        # 24 minutes). A command failure still reaches record_failure below,
+        # which rolls key/state back to none; an uncatchable hard kill now
+        # leaves the durable at-most-once receipt instead of a resend loop.
+        # C5: telling the Mayor something new is not the Mayor doing
+        # something. This receipt deliberately does not stamp progress.
+        sent = {
+            "gc.campaign_wake_key": wake_key,
+            "gc.campaign_wake_state": "sent",
+            "gc.campaign_wake_sent_at": iso(now),
+            "gc.campaign_wake_resends": "0",
+        }
+        rung = decision.get("rung")
+        if rung == "factory":
+            rung_key = "gc.campaign_ladder_bead"
+            rung_rollback[rung_key] = str(metadata.get(rung_key) or "")
+            sent[rung_key] = str(decision.get("ladder_bead") or "")
+        elif rung:
+            rung_key = f"gc.campaign_ladder_{rung}_at"
+            rung_rollback[rung_key] = str(metadata.get(rung_key) or "")
+            sent[rung_key] = iso(now)
+        update_metadata(sent)
     try:
         run(
             GC_BIN, "mail", "send", "mayor", "--from", "mayor",
@@ -1084,31 +1117,12 @@ def sentinel(_: argparse.Namespace) -> None:
     except CampaignCommandError as exc:
         latest_issue = coordination_issue()
         latest_metadata = latest_issue.get("metadata") if isinstance(latest_issue.get("metadata"), dict) else {}
-        count = record_failure(latest_metadata, exc)
+        count = record_failure(latest_metadata, exc, rung_rollback)
         mode = failure_mode()
         raise CampaignCommandError(f"{mode} {count}/{FAILURE_THRESHOLD}: {failure_detail(exc)}") from exc
     if reminder:
         print(f"REMINDED: mayor — {wake_key} ({resends + 1}/{MAX_REWAKES})")
         return
-    sent = {
-        "gc.campaign_wake_key": wake_key,
-        "gc.campaign_wake_state": "sent",
-        "gc.campaign_wake_sent_at": iso(now),
-        "gc.campaign_wake_resends": "0",
-    }
-    # C5: telling the Mayor something new is not the Mayor doing something.
-    # Stamping progress here meant that mere wake-key churn -- the product
-    # queue's head candidate changing, a fresh Factory bead being picked --
-    # reset the 60-minute liveness clock with nothing having actually
-    # advanced. Real progress is stamped elsewhere, from real events: the
-    # PROGRESS_REASONS NOOP path (delivery in flight, a dependency pending,
-    # a claimed Factory bead) and, later, bead-closed/PR-merged events.
-    rung = decision.get("rung")
-    if rung == "factory":
-        sent["gc.campaign_ladder_bead"] = str(decision.get("ladder_bead") or "")
-    elif rung:
-        sent[f"gc.campaign_ladder_{rung}_at"] = iso(now)
-    update_metadata(sent)
     print(f"NOTIFIED: mayor — {wake_key}")
 
 
