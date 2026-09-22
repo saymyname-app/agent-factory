@@ -26,13 +26,18 @@ The confirmed human-agent agreement about intent, outcomes, constraints, decisio
 _French conversational alias_: compréhension partagée
 _Avoid_: spec, PRD, Release Contract
 
-**Release Contract**:
-The canonical approved artifact that records the intended outcome, boundaries, acceptance evidence, material decisions, and authorized delivery envelope.
-_French conversational alias_: contrat de livraison
-_Avoid_: PRD, spec, brief
+**Spec**:
+The canonical artifact synthesized from confirmed Shared Understanding for one bounded outcome, including its intended behavior, boundaries, material decisions, and acceptance evidence.
+_French conversational alias_: spécification
+_Avoid_: PRD, brief, Release Contract
+
+**Approved Spec**:
+A Spec whose Shared Understanding has been confirmed and which therefore authorizes delivery; approval is a state of the same artifact, not a second document or a prose-review ceremony.
+_French conversational alias_: spécification approuvée
+_Avoid_: Release Contract, approved summary
 
 **Delivery Workflow**:
-The workflow that turns an approved Release Contract into a verified software outcome.
+The workflow that turns an Approved Spec into a verified software outcome.
 _French conversational alias_: flux de livraison
 _Avoid_: Factory, City, implementation
 

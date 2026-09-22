@@ -148,6 +148,16 @@ Elle sera réexaminée si la promotion arrive régulièrement trop tard, perd du
 
 **Source primaire :** [Wayfinder — sortie sans map lorsque la voie tient dans une session](https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/skills/engineering/wayfinder/SKILL.md#L273-L284) ; [Ask Matt — `grill-with-docs` comme entrée normale et Wayfinder réservé aux efforts trop grands](https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/skills/engineering/ask-matt/SKILL.md#L205-L231).
 
+## Décision de session : une Spec approuvée, sans Release Contract distinct
+
+Le résultat adapté de `to-spec` devient l'artefact canonique d'un outcome borné. La confirmation du Shared Understanding pendant le grilling autorise la même Spec à passer à l'état approuvé; Benjamin n'a pas à relire une synthèse générale qui n'introduit aucune information nouvelle. Une intervention humaine supplémentaire n'est requise que si la synthèse révèle une décision nouvelle, une perte de traçabilité, une contradiction ou un test seam non encore décidé.
+
+Il n'existe donc pas de Release Contract distinct qui reformule la Spec. `to-tickets` part de l'Approved Spec, puis le Mayor matérialise les Beads. Si une release doit regrouper plusieurs Specs, son éventuel manifeste reste un index minimal de références et d'état, sans recopier leurs décisions, critères ou Work Graphs.
+
+Cette décision cible la refonte et remet en cause ADR-0014; elle ne modifie pas encore le contrat JSON ni le runtime existants. Leur remplacement devra être matérialisé ultérieurement par une décision structurelle qui explicite la migration et la compatibilité.
+
+**Source primaire :** [`to-spec` synthétise sans nouvel entretien et ne demande qu'une confirmation ciblée des test seams](https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/skills/engineering/to-spec/SKILL.md#L197-L209).
+
 ## Disclosure check
 
 - [x] Les requêtes et extraits ne contiennent ni secret, ni credential, ni code privé, ni donnée client.
