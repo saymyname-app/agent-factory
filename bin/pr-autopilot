@@ -5,8 +5,12 @@
 #   1. ARM     every open non-draft PR targeting a rig's dev branch with GitHub
 #              auto-merge (squash). GitHub then merges it itself the moment the
 #              required status check goes green. Nothing polls, nothing watches.
-#   2. RECONCILE merged PRs back onto their work bead (merge_result=merged,
-#              merged_sha) so a closed bead can be trusted to mean "on dev".
+#   2. RECONCILE merged PRs back onto their source work bead through
+#              bin/deliver-close, then stamp the publishing anchor with the
+#              legacy merge_result/merged_sha projection. A build workflow
+#              root resolves its source only through gc.var.convoy_id and an
+#              exactly-one-member convoy; a direct do-work bead is its own
+#              source.
 #   3. FLAG    PRs whose required checks failed, as a P1 bead, so a red build is
 #              visible as work instead of silently sitting open.
 #   4. HOLD    PRs whose migrations are not undoable inside the release
@@ -22,6 +26,8 @@
 set -uo pipefail
 
 FACTORY="${FACTORY_ROOT:-/home/benja/agent-factory}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+DELIVER_CLOSE="${DELIVER_CLOSE_BIN:-$SCRIPT_DIR/deliver-close}"
 DRY_RUN=0
 VERBOSE=0
 for arg in "$@"; do
@@ -93,6 +99,106 @@ active_waiters_for() {  # bead -> comma-separated open/in_progress waiter ids
       | .id]
     | unique | join(",")
   ' 2>/dev/null
+}
+
+valid_bead_id() {
+  [[ $1 =~ ^[a-zA-Z][a-zA-Z0-9]*-[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]
+}
+
+# A build-basic publisher records the PR branch on both its workflow root and
+# its source anchor. Branch matching alone therefore cannot decide which bead
+# is the durable work result. The workflow root owns the explicit join back to
+# that result: gc.var.convoy_id -> exactly one tracked child. Direct do-work
+# publishers have no workflow root and are their own delivery target.
+#
+# Sets DELIVERY_TARGET and DELIVERY_RESOLUTION. Return values:
+#   0 ready; 1 workflow still running; 2 workflow closed non-pass; 3 unsafe.
+resolve_delivery_target() {  # anchor_json
+  local anchor=$1 anchor_id kind status outcome convoy_id target
+  DELIVERY_TARGET=""
+  DELIVERY_RESOLUTION="unsafe"
+  anchor_id=$(jq -r '.id // empty' <<<"$anchor")
+  kind=$(jq -r '.metadata["gc.kind"] // empty' <<<"$anchor")
+  valid_bead_id "$anchor_id" || return 3
+
+  if [ "$kind" != "workflow" ]; then
+    DELIVERY_TARGET=$anchor_id
+    DELIVERY_RESOLUTION="direct"
+    return 0
+  fi
+
+  status=$(jq -r '.status // empty' <<<"$anchor")
+  outcome=$(jq -r '.metadata["gc.outcome"] // empty' <<<"$anchor")
+  if [ "$status" != "closed" ]; then
+    DELIVERY_RESOLUTION="workflow_running"
+    return 1
+  fi
+  if [ "$outcome" != "pass" ]; then
+    DELIVERY_RESOLUTION="workflow_${outcome:-missing_outcome}"
+    return 2
+  fi
+
+  convoy_id=$(jq -r '.metadata["gc.var.convoy_id"] // empty' <<<"$anchor")
+  valid_bead_id "$convoy_id" || {
+    DELIVERY_RESOLUTION="workflow_missing_source_convoy"
+    return 3
+  }
+  # Resolve from the complete per-rig snapshot already loaded for this tick.
+  # This is the same explicit convoy edge as `gc convoy status`, without
+  # reintroducing an N-per-merged-PR command loop (af-k1f97).
+  target=$(printf '%s' "$RIG_ALL_BEADS_JSON" | jq -r --arg convoy "$convoy_id" '
+    [.[]
+      | select(.id == $convoy)
+      | select((.issue_type // .type // "") == "convoy")] as $convoys
+    | if ($convoys | length) == 1 then
+        [$convoys[0].dependencies[]?
+          | select((.type // .dependency_type // "") == "tracks")
+          | (.depends_on_id // .id // empty)]
+        | unique
+        | if length == 1 then .[0] else empty end
+      else empty end
+  ' 2>/dev/null)
+  valid_bead_id "$target" || {
+    DELIVERY_RESOLUTION="source_convoy_not_exactly_one"
+    return 3
+  }
+  [ "$target" != "$anchor_id" ] || {
+    DELIVERY_RESOLUTION="source_convoy_points_to_workflow"
+    return 3
+  }
+  printf '%s' "$RIG_ALL_BEADS_JSON" | jq -e --arg target "$target" \
+    'any(.[]; .id == $target)' >/dev/null 2>&1 || {
+    DELIVERY_RESOLUTION="source_missing_from_rig_snapshot"
+    return 3
+  }
+  DELIVERY_TARGET=$target
+  DELIVERY_RESOLUTION="workflow_convoy"
+  return 0
+}
+
+delivery_proven_for() {  # bead repo pr-number
+  local bead=$1 repo=$2 num=$3
+  printf '%s' "$RIG_ALL_BEADS_JSON" | jq -e \
+    --arg bead "$bead" --arg repo "$repo" --arg num "$num" '
+      any(.[];
+        .id == $bead
+        and .status == "closed"
+        and (.metadata["gc.delivery_status"] // "") == "merged"
+        and (.metadata["gc.work_outcome"] // "") == "shipped"
+        and (.metadata["gc.github_repo"] // "") == $repo
+        and ((.metadata["gc.pr_number"] // "") | tostring) == $num
+        and ((.metadata["gc.pr_head"] // "") | test("^[0-9a-f]{40}$"))
+        and ((.metadata["gc.merge_commit"] // "") | test("^[0-9a-f]{40}$")))
+    ' >/dev/null 2>&1
+}
+
+stamp_merge_projection() {  # rig_path anchor-id num sha dev
+  local rig_path=$1 anchor_id=$2 num=$3 sha=$4 dev=$5
+  run bash -c "cd '$rig_path' && gc bd update '$anchor_id' \
+    --set-metadata merge_result=merged \
+    --set-metadata merged_sha='$sha' \
+    --set-metadata pr_number='$num' \
+    --set-metadata merged_target='$dev'"
 }
 
 # ---------- reversibility gate (ADR-0019) ----------
@@ -423,47 +529,110 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
 
     # The flag beads filed above ("[ci] ... failed", "[autopilot] ... stuck")
     # carry pr_number too; they are about the PR, not the work it delivers, and
-    # must never be stamped merged in place of the work bead.
-    bead=$(printf '%s' "$RIG_ALL_BEADS_JSON" \
-      | jq -r --arg b "$branch" --arg n "$num" \
-        '[.[]|select((.metadata.source//"")!="pr-autopilot")
-              |select((.metadata["gc.work_branch"]//"")==$b
-                     or (.metadata.pr_number|tostring)==$n)
-              |select((.metadata.merge_result//"")!="merged")][0].id // empty' 2>/dev/null)
-    [ -z "$bead" ] && { vlog "PR #$num ($branch): no unreconciled bead"; continue; }
-    log "  PR #$num merged at ${sha:0:8} -> reconciling bead $bead"
-    waiters=$(active_waiters_for "$bead")
+    # must never be selected. A shared build branch appears on both the source
+    # anchor and workflow root, so prefer one explicit workflow root; otherwise
+    # require one unreconciled direct bead. Never use an arbitrary [0] match.
+    anchor=$(printf '%s' "$RIG_ALL_BEADS_JSON" \
+      | jq -c --arg b "$branch" '
+        [.[]
+          | select((.metadata.source // "") != "pr-autopilot")
+          | select((.metadata["gc.work_branch"] // "") == $b)] as $matches
+        | [$matches[] | select((.metadata["gc.kind"] // "") == "workflow")] as $workflows
+        | [$matches[]
+            | select((.metadata["gc.kind"] // "") != "workflow")
+            | select((.metadata.merge_result // "") != "merged")] as $direct
+        | if ($workflows | length) == 1 then $workflows[0]
+          elif ($workflows | length) > 1 then empty
+          elif ($direct | length) == 1 then $direct[0]
+          else empty end
+      ' 2>/dev/null)
+    [ -z "$anchor" ] && { vlog "PR #$num ($branch): no unambiguous delivery anchor"; continue; }
+    bead=$(jq -r '.id' <<<"$anchor")
+
+    resolve_delivery_target "$anchor"
+    resolution_rc=$?
+    anchor_merge_result=$(jq -r '.metadata.merge_result // empty' <<<"$anchor")
+    case "$resolution_rc" in
+      1)
+        vlog "PR #$num ($branch): workflow $bead still running -> delivery deferred"
+        continue
+        ;;
+      2)
+        log "  PR #$num merged at ${sha:0:8}, but workflow $bead closed ${DELIVERY_RESOLUTION#workflow_} -> source not delivered"
+        if [ "$anchor_merge_result" != "merged" ]; then
+          if stamp_merge_projection "$rig_path" "$bead" "$num" "$sha" "$dev"; then
+            RECONCILED=$((RECONCILED+1))
+          else
+            log "    reconciliation write failed for workflow $bead"
+            ERRORS=$((ERRORS+1))
+          fi
+        fi
+        continue
+        ;;
+      3)
+        log "  PR #$num merged at ${sha:0:8}, but source resolution for $bead is unsafe ($DELIVERY_RESOLUTION)"
+        ERRORS=$((ERRORS+1))
+        continue
+        ;;
+    esac
+
+    delivery_already_proven=0
+    if delivery_proven_for "$DELIVERY_TARGET" "$repo" "$num"; then
+      delivery_already_proven=1
+    fi
+    if [ "$delivery_already_proven" = "1" ] && [ "$anchor_merge_result" = "merged" ]; then
+      vlog "PR #$num ($branch): source $DELIVERY_TARGET already deliver-closed"
+      continue
+    fi
+
+    log "  PR #$num merged at ${sha:0:8} -> delivery anchor $bead, source $DELIVERY_TARGET"
+    waiters=$(active_waiters_for "$DELIVERY_TARGET")
     wake_reason=""
     if merge_is_recent "$merged_at"; then
       wake_reason="merge $merged_at is within ${RECONCILE_WAKE_WINDOW_SECONDS}s"
     elif [ -n "$waiters" ]; then
       wake_reason="active waiter(s): $waiters"
     fi
-    if run bash -c "cd '$rig_path' && gc bd update '$bead' \
-      --set-metadata merge_result=merged \
-      --set-metadata merged_sha='$sha' \
-      --set-metadata pr_number='$num' \
-      --set-metadata merged_target='$dev'"; then
-      # The merge_result guard above makes this an exactly-once completion
-      # edge. Historical backfills remain metadata-only unless live work is
-      # waiting; recent delivery wakes use an explicit automation identity so
-      # replies can never be mistaken for a conversation with Benjamin.
-      if [ -n "$wake_reason" ] && ! run bash -c "cd '$rig_path' && gc mail send mayor --from pr-autopilot --notify \
-        --subject 'SHIPPED: $bead via PR #$num' \
-        --message 'ACTION: pr-autopilot reconciled $bead from merged PR #$num
-STATE: SHIPPED
-EVIDENCE: $bead; PR #$num; merge SHA $sha
-NEXT: Mayor advances or finalizes work waiting on $bead.' >/dev/null 2>&1"; then
-        log "    reconciliation wake failed for bead $bead"
+    if [ "$delivery_already_proven" != "1" ]; then
+      if [ ! -x "$DELIVER_CLOSE" ]; then
+        log "    source delivery failed: $DELIVER_CLOSE is unavailable"
         ERRORS=$((ERRORS+1))
-      elif [ -z "$wake_reason" ]; then
-        vlog "PR #$num: historical reconciliation has no active waiter -> metadata only"
+        continue
       fi
-      RECONCILED=$((RECONCILED+1))
-    else
-      log "    reconciliation write failed for bead $bead"
-      ERRORS=$((ERRORS+1))
+      if ! run bash -c "cd '$rig_path' && GC_BIN=gc GH_BIN=gh '$DELIVER_CLOSE' '$DELIVERY_TARGET' \
+        --repo '$repo' --pr '$num' \
+        --reason 'Merged PR #$num delivered source $DELIVERY_TARGET via publishing anchor $bead.'"; then
+        log "    source delivery failed for $DELIVERY_TARGET; merge projection left retryable"
+        ERRORS=$((ERRORS+1))
+        continue
+      fi
     fi
+
+    if [ "$anchor_merge_result" != "merged" ] \
+      && ! stamp_merge_projection "$rig_path" "$bead" "$num" "$sha" "$dev"; then
+      log "    reconciliation write failed for delivery anchor $bead"
+      ERRORS=$((ERRORS+1))
+      continue
+    fi
+
+    # The source's six proof fields (or, for an interrupted prior pass, the
+    # anchor merge_result stamp) make later passes silent. Historical
+    # backfills remain metadata-only unless live work waits on the source;
+    # recent delivery wakes use an explicit automation identity.
+    evidence_anchor=""
+    [ "$bead" = "$DELIVERY_TARGET" ] || evidence_anchor="; delivery anchor $bead"
+    if [ -n "$wake_reason" ] && ! run bash -c "cd '$rig_path' && gc mail send mayor --from pr-autopilot --notify \
+        --subject 'SHIPPED: $DELIVERY_TARGET via PR #$num' \
+        --message 'ACTION: pr-autopilot reconciled $DELIVERY_TARGET from merged PR #$num
+STATE: SHIPPED
+EVIDENCE: $DELIVERY_TARGET$evidence_anchor; PR #$num; merge SHA $sha
+NEXT: Mayor advances or finalizes work waiting on $DELIVERY_TARGET.' >/dev/null 2>&1"; then
+      log "    reconciliation wake failed for source bead $DELIVERY_TARGET"
+      ERRORS=$((ERRORS+1))
+    elif [ -z "$wake_reason" ]; then
+      vlog "PR #$num: historical reconciliation has no active waiter -> metadata only"
+    fi
+    RECONCILED=$((RECONCILED+1))
   done <<<"$merged"
 done
 

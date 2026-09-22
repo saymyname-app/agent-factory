@@ -135,6 +135,9 @@ jobs:
       - name: Merge actor holds irreversible changes
         run: bash tests/pr-autopilot-reversibility-test.sh
 
+      - name: Merge actor deliver-closes explicit workflow sources (af-aviw4)
+        run: bash tests/pr-autopilot-workflow-delivery-test.sh
+
       - name: Merge actor flags PRs stuck across passes
         run: bash tests/pr-autopilot-stuck-test.sh
 

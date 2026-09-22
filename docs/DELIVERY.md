@@ -156,16 +156,25 @@ records what was verified about the machinery underneath.
    `Maven verify` (ruleset `22629508`) or `Tests and build` (ruleset
    `22629678`). Nothing polls; no session waits on CI.
 4. On its next pass, `pr-autopilot` loads the complete Beads history explicitly
-   (`gc bd list --all --limit 0`), then reconciles the merged PR back onto its
-   work bead — `merge_result=merged`, `merged_sha`, `pr_number`,
-   `merged_target` — matching bead `gc.work_branch` to the PR `headRefName`.
+   (`gc bd list --all --limit 0`), resolves the PR's **source work bead**, and
+   closes that source through `bin/deliver-close`. The door independently
+   re-reads the merged PR and atomically records ADR-0016's six proof fields.
+   For direct `do-work`, the unique branch-matched bead is the source. For a
+   `build-basic` workflow, the branch-matched workflow root is only the
+   publishing anchor: the source is resolved explicitly through
+   `gc.var.convoy_id` and an input convoy with exactly one tracked child. A
+   running/failed workflow, an ambiguous convoy, or a PR that does not verify
+   `MERGED` never closes a source. After source delivery, the publishing anchor
+   receives the legacy `merge_result=merged`, `merged_sha`, `pr_number`, and
+   `merged_target` projection.
    A first successful reconciliation sends one compact
    `ACTION/STATE/EVIDENCE/NEXT` wake to the Mayor only when GitHub's `mergedAt`
    is at most one hour old, or an `open`/`in_progress` bead actively waits on
-   the delivered bead through a `blocks` dependency or `gc.waiting_on`.
+   the delivered source through a `blocks` dependency or `gc.waiting_on`.
    Historical backfills still receive delivery metadata but remain silent when
    nobody is waiting. The sender is explicitly `pr-autopilot`, never `human`,
-   and the `merge_result` stamp makes later passes silent.
+   and the source proof plus anchor `merge_result` stamp make later passes
+   silent.
 5. A PR whose required check **failed** is never armed. It is raised as a P1
    bug bead in the rig instead, so a red build becomes ready work rather than a
    silently open PR.
@@ -177,9 +186,13 @@ added to the autopilot's rig table (see *Production stays gated* below).
 
 ### Reading delivery state
 
-A bead carrying `merge_result=merged` and `merged_sha` is on `dev`. A closed
-bead **without** them means a pull request was opened and nothing more. Agents
-must never report the second as shipped.
+The workflow root and source answer different questions. A publishing anchor
+carrying `merge_result=merged` and `merged_sha` proves that its branch reached
+`dev`; it does not by itself complete the requested work. The original source
+bead is delivered only when it is closed with all six ADR-0016 fields
+(`gc.delivery_status=merged`, `gc.work_outcome=shipped`, repository, PR, head,
+and merge commit). A closed bead without that proof means at most that a pull
+request was opened. Agents must never report it as shipped.
 
 ### Multi-repo / cross-rig delivery proof (af-kidv)
 

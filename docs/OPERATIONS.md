@@ -633,8 +633,10 @@ still to come — `do-work` defers the close instead of calling this door
 #159 was still open with CI in_progress). `push-and-pr` closes the bead once
 the PR actually exists, with a plain `gc bd close` — "opened, under review,"
 never "shipped" — the same contract `mol-polecat-commit`'s commit-and-push
-step already uses; `pr-autopilot` reconciles `merge_result=merged` onto the
-bead once GitHub actually merges it.
+step already uses. Once GitHub actually merges, `pr-autopilot` independently
+verifies the PR, closes the source through `bin/deliver-close` with all six
+ADR-0016 proof fields, then records the legacy `merge_result=merged`
+projection on the publishing anchor.
 
 If a delivered result is closed by hand anyway while it is still the
 coordination's `gc.current`, the projection reports it as **finalizing**

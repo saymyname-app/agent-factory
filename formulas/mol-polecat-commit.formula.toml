@@ -374,9 +374,10 @@ gc bd update "$WORK_BEAD_ID" --unset-metadata work_dir
 gc bd update "$WORK_BEAD_ID" --notes "Opened $PR_URL against {{base_branch}}: <brief summary>"
 gc bd close "$WORK_BEAD_ID"
 ```
-Closing here means "the work is done and under review," not "merged" —
-pr-autopilot reconciles `merge_result=merged` onto this same bead once GitHub
-actually merges the PR; never treat this close as shipped by itself.
+Closing here means "the work is done and under review," not "merged". Once
+GitHub actually merges, pr-autopilot independently verifies the PR,
+deliver-closes this source with all six ADR-0016 proof fields, and records
+`merge_result=merged`; never treat the earlier close as shipped by itself.
 
 **6. Signal reconciler and exit.**
 ```bash

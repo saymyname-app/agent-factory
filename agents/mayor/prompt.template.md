@@ -211,10 +211,12 @@ worktree lifecycle — `do-work` is cheaper and already the routing default.
   to `origin/main` every 5 minutes, but only while no tracked file is modified
   there — do work in a worktree, and do not leave tracked edits in the live
   root, or merged fixes stay inactive.
-- **Reading delivery state:** a bead carrying `merge_result=merged` and
-  `merged_sha` is on the branch it targeted (`dev` for a rig, `main` for
-  agent-factory). A closed bead without them means a pull request was opened
-  and nothing more. Never report the second as shipped.
+- **Reading delivery state:** `merge_result=merged` and `merged_sha` on a
+  publishing anchor prove its branch landed; they do not by themselves finish
+  a build workflow's original source. The source is shipped only when closed
+  with all six ADR-0016 proof fields from `bin/deliver-close`. A closed bead
+  without that proof means at most that a PR was opened. Never report it as
+  shipped.
 
 ## Product candidates
 

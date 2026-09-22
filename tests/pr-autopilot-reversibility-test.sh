@@ -44,7 +44,17 @@ if [[ \$1 == pr && \$2 == list ]]; then
   else echo '[]'; fi
   exit 0
 fi
-if [[ \$1 == pr && \$2 == view ]]; then echo '["OPEN","false"]' | jq -r '@tsv'; exit 0; fi
+if [[ \$1 == pr && \$2 == view ]]; then
+  if [[ "\$*" == *"number,state,mergedAt,mergeCommit,headRefOid,url"* ]]; then
+    num=\$3
+    cat <<JSON
+{"number":\$num,"state":"MERGED","mergedAt":"2026-09-21T15:30:00Z","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mergeCommit":{"oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"url":"https://github.com/saymyname-app/Say-my-name-back/pull/\$num"}
+JSON
+  else
+    echo '["OPEN","false"]' | jq -r '@tsv'
+  fi
+  exit 0
+fi
 exit 0
 STUB
 cat > "$TMP/bin/gc" <<STUB

@@ -36,9 +36,10 @@ open with CI in_progress, caught only afterward by factory-delivery-guard.
 `do-work` now defers the shipped close when it detects an HQ worktree
 (`metadata.work_dir` still set); `push-and-pr` closes the bead once the PR
 actually exists, as "opened, under review" -- never "shipped" -- the same
-contract mol-polecat-commit's commit-and-push step already uses. pr-autopilot
-reconciles `merge_result=merged` onto the bead once GitHub actually merges
-it. Non-HQ dispatches (no worktree, commit == done) and no-op/blocked/
+contract mol-polecat-commit's commit-and-push step already uses. Once GitHub
+actually merges, pr-autopilot verifies the PR again, deliver-closes this source
+with all six ADR-0016 proof fields, and records `merge_result=merged`. Non-HQ
+dispatches (no worktree, commit == done) and no-op/blocked/
 abandoned outcomes are unaffected -- they never claimed shipped before a PR
 existed.
 
@@ -270,9 +271,10 @@ else
     # af-6scsz: do-work defers its shipped close to here when it isolated
     # into this worktree, since no PR existed yet at that point. Close now
     # that the PR exists -- as "opened, under review", never "shipped":
-    # pr-autopilot reconciles merge_result=merged onto this same bead once
-    # GitHub actually merges it (same contract as mol-polecat-commit's
-    # commit-and-push step). A bead do-work already closed itself (no-op /
+    # pr-autopilot verifies the merged PR, deliver-closes this source with all
+    # six ADR-0016 proof fields, and records merge_result=merged (same contract
+    # as mol-polecat-commit's commit-and-push step). A bead do-work already
+    # closed itself (no-op /
     # blocked / abandoned / non-HQ shipped) is left alone.
     STATUS=$(gc bd show "$WORK_BEAD_ID" --json | jq -r '.[0].status // empty')
     if [ "$STATUS" != "closed" ]; then
