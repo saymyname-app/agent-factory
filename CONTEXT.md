@@ -36,6 +36,11 @@ A Spec whose Shared Understanding has been confirmed and which therefore authori
 _French conversational alias_: spécification approuvée
 _Avoid_: Release Contract, approved summary
 
+**Planning Run**:
+A bounded, independently resumable instance of the Intent & Design Workflow, with its own conversation context and planning artifacts. Multiple Planning Runs may coexist without creating multiple orchestration authorities.
+_French conversational alias_: session de cadrage, parcours de planification
+_Avoid_: Mayor, campaign, delivery run, chat when durability is implied
+
 **Delivery Workflow**:
 The workflow that turns an Approved Spec into a verified software outcome.
 _French conversational alias_: flux de livraison

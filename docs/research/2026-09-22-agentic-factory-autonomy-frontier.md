@@ -162,3 +162,13 @@ Cette décision cible la refonte et remet en cause ADR-0014; elle ne modifie pas
 
 - [x] Les requêtes et extraits ne contiennent ni secret, ni credential, ni code privé, ni donnée client.
 - [x] Les faits propres à SayMyName cités ici proviennent uniquement de sa documentation durable locale; aucune donnée de la base n'a été consultée.
+
+## Décision de session : planification intégrée à la topologie Gas City
+
+La planification ne sera plus modélisée comme une seconde Factory située au-dessus de Gas City. Gas City fournit déjà les primitives nécessaires : agents configurables, sessions nommées ou ad hoc, pools, formulas, orders et contrats méthodologiques. La configuration locale importe en outre les rôles officiels `requirements-planner`, `design-author`, `task-decomposer`, `review-synthesizer` et `run-operator`.
+
+Le Mayor reste l'autorité unique qui matérialise et fait avancer le Delivery Workflow, mais il n'est ni l'unique contexte de planification ni obligatoirement l'unique interlocuteur. Des Planning Runs indépendants pourront utiliser des sessions interactives à la demande et des spécialistes pilotés par formulas. Codex, Claude, les interfaces mobiles et le Cockpit sont des surfaces d'accès à ces runs; ils ne possèdent pas un second graphe de travail et ne deviennent pas un autre orchestrateur.
+
+La configuration exacte reste ouverte : templates provider-specific, modèles, prompts, sessions, caps, rétention, ownership des artefacts, formulas et intégration du Cockpit devront être décidés par prototypes et canaries. Les pools sont adaptés aux agents fongibles de débit, pas à des conversations humaines stables.
+
+**Sources primaires :** [Gas City définit le Mayor comme un agent configuré et une fenêtre sur la City](https://github.com/gastownhall/gascity/blob/849cb1a3978baf3eac0cfce5258c5598b2d0eecd/docs/getting-started/coming-from-gastown.md#L20) ; [`gc session new` crée des conversations persistantes distinctes](https://github.com/gastownhall/gascity/blob/849cb1a3978baf3eac0cfce5258c5598b2d0eecd/docs/reference/cli.md#L4210-L4244) ; [le pack officiel expose le parcours requirements → plan → review → decomposition](https://github.com/gastownhall/gascity-packs/blob/05031f2c66e080865c379ff799c7369430560a8f/gascity/README.md#L56-L64).
