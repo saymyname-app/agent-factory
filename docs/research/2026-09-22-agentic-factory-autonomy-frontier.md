@@ -131,6 +131,23 @@ Elle se déplace vers **plus de revue humaine** lorsque :
 
 Cette position suit davantage le consensus applicable à un solo brownfield que le modèle OpenAI le plus autonome, tout en laissant une voie explicite pour atteindre ce niveau plus tard si le harness de SayMyName produit les mêmes conditions de preuve.
 
+## Hypothèse de routage de la planification à vérifier
+
+Le point d'entrée recommandé est provisoirement `grill-with-docs`, avec promotion vers Wayfinder lorsque le design tree ne tient plus confortablement dans une session saine. Wayfinder n'est pas le point d'entrée universel : son propre routeur le réserve aux efforts vastes et brumeux, même si son étape de charting possède une sortie rapide lorsque la voie est déjà claire.
+
+Benjamin reste dubitatif sur ce choix : commencer systématiquement par Wayfinder pourrait peut-être mieux détecter une complexité initialement invisible. Ce doute est conservé comme une hypothèse à tester, pas comme une seconde règle concurrente.
+
+La recommandation sera considérée comme confirmée si, sur des demandes réelles simples et complexes :
+
+- `grill-with-docs` termine directement les demandes simples sans cérémonial inutile ;
+- les demandes complexes sont promues vers Wayfinder avant compaction, perte de décisions ou dégradation visible du raisonnement ;
+- la promotion conserve la destination, les décisions déjà prises et les termes du domaine sans réinterrogation substantielle ;
+- aucun travail nécessitant plusieurs sessions n'est lancé prématurément vers `to-spec` ou l'implémentation.
+
+Elle sera réexaminée si la promotion arrive régulièrement trop tard, perd du contexte, ou demande à Benjamin de diagnostiquer lui-même qu'un effort dépasse une session. Le candidat alternatif sera alors un point d'entrée Wayfinder systématique, mesuré sur les mêmes cas pour quantifier son surcoût sur les demandes simples.
+
+**Source primaire :** [Wayfinder — sortie sans map lorsque la voie tient dans une session](https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/skills/engineering/wayfinder/SKILL.md#L273-L284) ; [Ask Matt — `grill-with-docs` comme entrée normale et Wayfinder réservé aux efforts trop grands](https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d895095d1b7/skills/engineering/ask-matt/SKILL.md#L205-L231).
+
 ## Disclosure check
 
 - [x] Les requêtes et extraits ne contiennent ni secret, ni credential, ni code privé, ni donnée client.
