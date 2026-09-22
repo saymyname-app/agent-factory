@@ -88,14 +88,17 @@ l'a pas vue passer (af-20xom). Le garde-fou alerte si :
 
 L'horloge de progrès est composite. Au-delà de `gc.campaign_progress_at`, le
 garde prend le plus récent des horodatages vérifiables du résultat courant et
-du workflow que ce résultat nomme explicitement par `gc.backend_workflow`, y
-compris ses workflows imbriqués et étapes actives, même si ce workflow vit
-dans un autre rig. Le `last_active` d'une session ne compte que si un bead de
-ce sous-graphe enregistre explicitement son `gc.session_id` ou
-`gc.session_name`; voir une session exister ou être `active` sans heartbeat
-récent ne prouve rien. Un workflow lié fermé avec `gc.outcome` non-pass est au
-contraire un signal de reprise : `factory-guard` ouvre un seul défaut de
-vivacité, puis `factory-watchdog` le relance selon son cooldown existant.
+des workflows que ce résultat nomme par les deux pointeurs de phase supportés,
+`gc.backend_workflow` et `gc.frontend_workflow`, y compris leurs workflows
+imbriqués et étapes actives, même dans un autre rig. Aucun autre champ ressemblant
+à un pointeur n'est suivi. Quand les deux champs coexistent, un workflow
+`in_progress` gagne sur un workflow `open`, et tout workflow actif gagne sur un
+workflow fermé. Le `last_active` d'une session ne compte que si un bead de ce
+sous-graphe enregistre explicitement son `gc.session_id` ou `gc.session_name` ;
+voir une session exister ou être `active` sans heartbeat récent ne prouve rien.
+Un workflow fermé ne prolonge jamais l'horloge ; avec `gc.outcome` non-pass, il
+devient au contraire un signal de reprise : `factory-guard` ouvre un seul défaut
+de vivacité, puis `factory-watchdog` le relance selon son cooldown existant.
 
 Une pause volontaire (fenêtre de maintenance, quotas épuisés) est affichée,
 jamais signalée comme panne. Les règles sont dans `lib/factory_liveness.py`.
