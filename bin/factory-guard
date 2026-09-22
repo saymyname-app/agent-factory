@@ -530,30 +530,47 @@ try:
 except Exception:
     print("{}")' 2>/dev/null || echo "{}")
   fi
-  # af-py8n1 / af-f1jhi: a current result can delegate to a workflow without
-  # touching its own timestamps. Prefer the explicit cross-rig
-  # gc.backend_workflow pointer; retain the older shared-convoy discovery as
-  # a compatibility fallback. Then collect open/in_progress descendants,
-  # including drain-launched nested workflows. An active session contributes
-  # last_active only when one of those beads explicitly records its session
-  # id/name: session existence alone is never progress.
+  # af-py8n1 / af-f1jhi / af-kozkj: a current result can delegate to phase
+  # workflows without touching its own timestamps. Prefer the explicitly
+  # supported cross-rig gc.backend_workflow and gc.frontend_workflow pointers;
+  # when both exist, an open/in_progress workflow wins over a closed one.
+  # Retain the older shared-convoy discovery as a compatibility fallback. Then
+  # collect open/in_progress descendants, including drain-launched nested
+  # workflows. An active session contributes last_active only when one of
+  # those beads explicitly records its session id/name: session existence
+  # alone is never progress.
   current_workflow_json="[]"
   workflow_id=""
   workflow_bead_json="{}"
   if [ -n "$current_id" ]; then
-    linked_workflow_id=$(printf '%s' "$current_result_json" | python3 -c '
+    linked_workflow_ids=$(printf '%s' "$current_result_json" | python3 -c '
 import json, re, sys
 try:
     v = json.load(sys.stdin)
     meta = v.get("metadata") if isinstance(v, dict) else {}
-    candidate = meta.get("gc.backend_workflow") if isinstance(meta, dict) else ""
-    if isinstance(candidate, str) and re.fullmatch(r"[a-z0-9]+-[a-z0-9]+", candidate):
-        print(candidate)
+    if not isinstance(meta, dict):
+        meta = {}
+    for key in ("gc.backend_workflow", "gc.frontend_workflow"):
+        candidate = meta.get(key, "")
+        if isinstance(candidate, str) and re.fullmatch(r"[a-z0-9]+-[a-z0-9]+", candidate):
+            print(candidate)
 except Exception:
     pass
 ' 2>/dev/null || true)
-    if [ -n "$linked_workflow_id" ]; then
-      workflow_bead_json=$(gc bd show "$linked_workflow_id" --json 2>/dev/null | python3 -c '
+    fallback_workflow_id=""
+    fallback_workflow_json="{}"
+    open_workflow_id=""
+    open_workflow_json="{}"
+    failed_workflow_id=""
+    failed_workflow_json="{}"
+    linked_workflow_seen="|"
+    while IFS= read -r linked_workflow_id; do
+      [ -n "$linked_workflow_id" ] || continue
+      case "$linked_workflow_seen" in
+        *"|$linked_workflow_id|"*) continue ;;
+        *) linked_workflow_seen="${linked_workflow_seen}${linked_workflow_id}|" ;;
+      esac
+      linked_workflow_json=$(gc bd show "$linked_workflow_id" --json 2>/dev/null | python3 -c '
 import json, sys
 try:
     v = json.load(sys.stdin)
@@ -562,7 +579,7 @@ try:
 except Exception:
     print("{}")
 ' 2>/dev/null || echo '{}')
-      verified_link=$(printf '%s' "$workflow_bead_json" | LINKED_ID="$linked_workflow_id" python3 -c '
+      verified_link=$(printf '%s' "$linked_workflow_json" | LINKED_ID="$linked_workflow_id" python3 -c '
 import json, os, sys
 try:
     v = json.load(sys.stdin)
@@ -572,7 +589,49 @@ try:
 except Exception:
     pass
 ' 2>/dev/null || true)
-      [ "$verified_link" = "$linked_workflow_id" ] && workflow_id="$linked_workflow_id"
+      [ "$verified_link" = "$linked_workflow_id" ] || continue
+      linked_workflow_status=$(printf '%s' "$linked_workflow_json" | jq -r '.status // ""' 2>/dev/null || true)
+      linked_workflow_outcome=$(printf '%s' "$linked_workflow_json" | jq -r '.metadata["gc.outcome"] // ""' 2>/dev/null || true)
+      case "$linked_workflow_status" in
+        in_progress)
+          workflow_id="$linked_workflow_id"
+          workflow_bead_json="$linked_workflow_json"
+          break
+          ;;
+        open)
+          if [ -z "$open_workflow_id" ]; then
+            open_workflow_id="$linked_workflow_id"
+            open_workflow_json="$linked_workflow_json"
+          fi
+          ;;
+        closed)
+          case "$linked_workflow_outcome" in
+            ""|pass|no-op|noop) ;;
+            *)
+              if [ -z "$failed_workflow_id" ]; then
+                failed_workflow_id="$linked_workflow_id"
+                failed_workflow_json="$linked_workflow_json"
+              fi
+              ;;
+          esac
+          ;;
+      esac
+      if [ -z "$fallback_workflow_id" ]; then
+        fallback_workflow_id="$linked_workflow_id"
+        fallback_workflow_json="$linked_workflow_json"
+      fi
+    done <<EOF
+$linked_workflow_ids
+EOF
+    if [ -z "$workflow_id" ] && [ -n "$open_workflow_id" ]; then
+      workflow_id="$open_workflow_id"
+      workflow_bead_json="$open_workflow_json"
+    elif [ -z "$workflow_id" ] && [ -n "$failed_workflow_id" ]; then
+      workflow_id="$failed_workflow_id"
+      workflow_bead_json="$failed_workflow_json"
+    elif [ -z "$workflow_id" ] && [ -n "$fallback_workflow_id" ]; then
+      workflow_id="$fallback_workflow_id"
+      workflow_bead_json="$fallback_workflow_json"
     fi
 
     # Compatibility for results created before explicit workflow pointers:
@@ -648,7 +707,11 @@ except Exception:
     print("[]")
 ' 2>/dev/null || echo '[]')
 
-      workflow_store_ref=$(printf '%s' "$workflow_bead_json" | python3 -c '
+      workflow_root_status=$(printf '%s' "$workflow_bead_json" | jq -r '.status // ""' 2>/dev/null || true)
+      # A missing legacy status keeps the pre-pointer best-effort behavior;
+      # only a positively closed root cuts off descendants and sessions.
+      if [ "$workflow_root_status" != "closed" ]; then
+        workflow_store_ref=$(printf '%s' "$workflow_bead_json" | python3 -c '
 import json, sys
 try:
     v = json.load(sys.stdin)
@@ -759,6 +822,7 @@ EOF
       current_workflow_json=$(jq -cn --argjson current "$current_workflow_json" \
         --argjson sessions "$linked_session_activity" '$current + $sessions' \
         2>/dev/null || printf '%s' "$current_workflow_json")
+      fi
     fi
   fi
   verdict=$(printf '%s' "$coord_json" \

@@ -80,7 +80,7 @@ if [[ \$1 == session && \$2 == list ]]; then
   cat "$SESSIONS"; exit 0
 fi
 if [[ \$1 == rig && \$2 == list ]]; then
-  echo '{"rigs":[{"name":"saymyname-backend","path":"$TMP/city"}]}'
+  echo '{"rigs":[{"name":"saymyname-backend","path":"$TMP/city"},{"name":"saymyname-frontend","path":"$TMP/city"}]}'
   exit 0
 fi
 exit 0
@@ -187,9 +187,39 @@ out=$(guard --check-only)
 grep -q "current result/workflow was active 6 min ago" <<<"$out" \
   || { echo "$out" >&2; fail "recent explicitly linked workflow update did not suppress a false stall"; }
 
+# The frontend phase pointer has the same contract as the backend pointer.
+jq '.metadata |= (del(.["gc.backend_workflow"]) + {"gc.frontend_workflow":"smf-wf3"})' \
+  "$TMP/beads/af-cur3.json" > "$TMP/beads/af-cur3.json.next"
+mv "$TMP/beads/af-cur3.json.next" "$TMP/beads/af-cur3.json"
+jq -n --arg recent "$(iso $((NOW - 7 * 60)))" \
+  '{id:"smf-wf3", status:"in_progress", updated_at:$recent,
+    metadata:{"gc.kind":"workflow", "gc.root_store_ref":"rig:saymyname-frontend"}}' \
+  > "$TMP/beads/smf-wf3.json"
+printf '[]\n' > "$TMP/children-smf-wf3.json"
+out=$(guard --check-only)
+grep -q "current result/workflow was active 7 min ago" <<<"$out" \
+  || { echo "$out" >&2; fail "recent frontend workflow update did not suppress a false stall"; }
+
+# Phase pointers may coexist while the campaign advances. An open backend
+# workflow must not hide the in-progress frontend workflow that superseded it.
+jq '.metadata["gc.backend_workflow"] = "smb-wf2"' "$TMP/beads/af-cur3.json" \
+  > "$TMP/beads/af-cur3.json.next"
+mv "$TMP/beads/af-cur3.json.next" "$TMP/beads/af-cur3.json"
+jq --arg recent "$(iso $((NOW - 2 * 60)))" \
+  '.status = "open" | .updated_at = $recent | del(.metadata["gc.outcome"])' \
+  "$TMP/beads/smb-wf2.json" > "$TMP/beads/smb-wf2.json.next"
+mv "$TMP/beads/smb-wf2.json.next" "$TMP/beads/smb-wf2.json"
+out=$(guard --check-only)
+grep -q "current result/workflow was active 7 min ago" <<<"$out" \
+  || { echo "$out" >&2; fail "open backend workflow won over the in-progress frontend workflow"; }
+
 # An old linked workflow is still stalled. Merely finding a live session is
 # insufficient when it has no recent last_active heartbeat.
-jq --arg old "$(iso $((NOW - 200 * 60)))" '.updated_at = $old' \
+jq '.metadata |= (del(.["gc.frontend_workflow"]) + {"gc.backend_workflow":"smb-wf2"})' \
+  "$TMP/beads/af-cur3.json" > "$TMP/beads/af-cur3.json.next"
+mv "$TMP/beads/af-cur3.json.next" "$TMP/beads/af-cur3.json"
+jq --arg old "$(iso $((NOW - 200 * 60)))" \
+  '.status = "in_progress" | .updated_at = $old | del(.metadata["gc.outcome"])' \
   "$TMP/beads/smb-wf2.json" > "$TMP/beads/smb-wf2.json.next"
 mv "$TMP/beads/smb-wf2.json.next" "$TMP/beads/smb-wf2.json"
 jq -n --arg old "$(iso $((NOW - 200 * 60)))" \
@@ -218,14 +248,31 @@ grep -q "current result/workflow was active 4 min ago" <<<"$out" \
   || { echo "$out" >&2; fail "recent heartbeat from the linked workflow agent was ignored"; }
 
 # Malformed links degrade to the previous result-only behavior and are never
-# handed to gc as an identifier.
-jq '.metadata["gc.backend_workflow"] = "not an id"' "$TMP/beads/af-cur3.json" \
+# handed to gc as an identifier. A plausible id in an unrelated metadata key
+# is not a workflow pointer either.
+jq '.metadata["gc.backend_workflow"] = "not an id" |
+    .metadata["gc.unrelated_workflow"] = "smf-wf3"' "$TMP/beads/af-cur3.json" \
   > "$TMP/beads/af-cur3.json.next"
 mv "$TMP/beads/af-cur3.json.next" "$TMP/beads/af-cur3.json"
+: > "$CALLS"
 out=$(guard --check-only)
 grep -q "liveness — no campaign progress for 90 min" <<<"$out" \
   || { echo "$out" >&2; fail "malformed workflow link changed prior liveness behavior"; }
 grep -q 'bd show not an id' "$CALLS" && fail "malformed workflow link was sent to gc bd show"
+grep -q 'bd show smf-wf3' "$CALLS" && fail "unrelated metadata selected a workflow"
+
+# A recently closed successful workflow is historical evidence, not current
+# progress, so it must not suppress the underlying stale campaign verdict.
+jq '.metadata["gc.backend_workflow"] = "smb-wf2"' "$TMP/beads/af-cur3.json" \
+  > "$TMP/beads/af-cur3.json.next"
+mv "$TMP/beads/af-cur3.json.next" "$TMP/beads/af-cur3.json"
+jq --arg recent "$(iso $((NOW - 2 * 60)))" \
+  '.status = "closed" | .updated_at = $recent | .metadata["gc.outcome"] = "pass"' \
+  "$TMP/beads/smb-wf2.json" > "$TMP/beads/smb-wf2.json.next"
+mv "$TMP/beads/smb-wf2.json.next" "$TMP/beads/smb-wf2.json"
+out=$(guard --check-only)
+grep -q "liveness — no campaign progress for 90 min" <<<"$out" \
+  || { echo "$out" >&2; fail "closed-pass linked workflow suppressed a genuine stall"; }
 
 # A closed non-pass linked workflow is a defect even when its close/update is
 # recent. The guard files and mails once; the existing liveness-bead pointer
@@ -258,7 +305,38 @@ grep -q "known cause already diagnosed (af-live1) — deferring next check" <<<"
 [ "$(creates)" = "1" ] || fail "unchanged closed-fail workflow refiled immediately after diagnosis"
 [ "$(mails)" = "1" ] || fail "unchanged closed-fail workflow remailed immediately after diagnosis"
 
-rm -f "$TMP/beads/af-cur3.json" "$TMP/beads/smb-wf2.json" \
+# Cross-rig drain traversal remains hard-bounded even if malformed nesting
+# keeps producing another workflow forever. The first 32 roots are inspected;
+# the 33rd is queued but never expanded.
+jq '.metadata |= (del(.["gc.backend_workflow"]) + {"gc.frontend_workflow":"smf-cap0"})' \
+  "$TMP/beads/af-cur3.json" > "$TMP/beads/af-cur3.json.next"
+mv "$TMP/beads/af-cur3.json.next" "$TMP/beads/af-cur3.json"
+jq -n --arg old "$(iso $((NOW - 200 * 60)))" \
+  '{id:"smf-cap0", status:"in_progress", updated_at:$old,
+    metadata:{"gc.kind":"workflow", "gc.root_store_ref":"rig:saymyname-frontend"}}' \
+  > "$TMP/beads/smf-cap0.json"
+for i in $(seq 0 39); do
+  next=$((i + 1))
+  jq -n --arg old "$(iso $((NOW - 200 * 60)))" --arg root "smf-cap$i" --arg drain "smf-drain$i" \
+    '[{id:$drain, status:"open", updated_at:$old,
+       metadata:{"gc.kind":"drain", "gc.root_bead_id":$root}}]' \
+    > "$TMP/children-smf-cap$i.json"
+  jq -n --arg old "$(iso $((NOW - 200 * 60)))" --arg next "smf-cap$next" --arg drain "smf-drain$i" \
+    '[{id:$next, status:"open", updated_at:$old,
+       metadata:{"gc.kind":"workflow", "gc.drain_control_id":$drain}}]' \
+    > "$TMP/drain-smf-drain$i.json"
+done
+: > "$CALLS"
+out=$(guard --check-only)
+grep -q "liveness — no campaign progress for 90 min" <<<"$out" \
+  || { echo "$out" >&2; fail "bounded nested workflow fixture changed the stale verdict"; }
+root_traversals=$(grep -c -- '--metadata-field gc.root_bead_id=smf-cap' "$CALLS" || true)
+drain_traversals=$(grep -c -- '--metadata-field gc.drain_control_id=smf-drain' "$CALLS" || true)
+[ "$root_traversals" = "32" ] || fail "cross-rig workflow traversal expanded $root_traversals roots instead of 32"
+[ "$drain_traversals" = "32" ] || fail "cross-rig drain traversal expanded $drain_traversals drains instead of 32"
+
+rm -f "$TMP/beads/af-cur3.json" "$TMP/beads/smb-wf2.json" "$TMP/beads/smf-wf3.json" \
+  "$TMP/beads/smf-cap0.json" "$TMP/children-smf-wf3.json" \
   "$TMP/children-smb-wf2.json" "$TMP/drain-smb-drain2.json" \
   "$TMP/children-smb-nested2.json" "$TMP/beads/af-live1.json"
 printf '{"sessions":[]}\n' > "$SESSIONS"

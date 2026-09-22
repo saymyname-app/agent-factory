@@ -101,11 +101,11 @@ class LivenessRules(unittest.TestCase):
         )
 
     def test_explicitly_linked_workflow_and_agent_heartbeat_join_the_progress_clock(self):
-        """af-f1jhi: gc.backend_workflow discovery happens in factory-guard;
-        the pure rule receives its verified root/descendants/session heartbeat.
-        A recent workflow write or a recent linked-session heartbeat is real
-        progress, while an old heartbeat (or session existence with no
-        timestamp) cannot mask a stall."""
+        """af-f1jhi / af-kozkj: supported phase-pointer discovery happens in
+        factory-guard; the pure rule receives its verified root, descendants,
+        and session heartbeat. A recent workflow write or linked-session
+        heartbeat is real progress, while an old heartbeat (or session
+        existence with no timestamp) cannot mask a stall."""
         stale = meta(**{"gc.campaign_progress_at": "2026-09-16T09:10:00Z"})
         cold_result = {"updated_at": "2026-09-16T07:00:00Z", "metadata": {}}
         recent_root = {
@@ -159,6 +159,22 @@ class LivenessRules(unittest.TestCase):
         # A malformed/absent discovery result is exactly the prior behavior.
         self.assertEqual(("ok", "ok"), assess(meta(), NOW, current_workflow=[])[:2])
         self.assertEqual(("ok", "ok"), assess(meta(), NOW, current_workflow=None)[:2])
+
+    def test_closed_successful_workflow_and_lingering_children_are_not_activity(self):
+        stale = meta(**{"gc.campaign_progress_at": "2026-09-16T09:10:00Z"})
+        closed_root = {
+            "id": "smf-flow", "status": "closed",
+            "updated_at": "2026-09-16T10:39:00Z",
+            "metadata": {"gc.kind": "workflow", "gc.outcome": "pass"},
+        }
+        lingering_child = {
+            "id": "smf-step", "status": "in_progress",
+            "metadata": {"gc.last_heartbeat_at": "2026-09-16T10:38:00Z"},
+        }
+        self.assertEqual(
+            ("bad", "stale"),
+            assess(stale, NOW, current_workflow=[closed_root, lingering_child])[:2],
+        )
 
     def test_stale_heartbeat_is_not_masked_by_an_unrelated_metadata_write(self):
         """af-i64cb: once a result has ever sent a heartbeat, a later bare
