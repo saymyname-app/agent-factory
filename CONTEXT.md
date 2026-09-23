@@ -27,24 +27,89 @@ _French conversational alias_: compréhension partagée
 _Avoid_: spec, PRD, Release Contract
 
 **Spec**:
-The canonical artifact synthesized from confirmed Shared Understanding for one bounded outcome, including its intended behavior, boundaries, material decisions, and acceptance evidence.
+The temporary canonical coordination artifact synthesized from resolved planning decisions for one bounded multi-session outcome, including its intended behavior, boundaries, material decisions, and acceptance evidence. It is stored as a readable Planning Artifact with stable identity and content digest, frozen during delivery, and may expire after the convoy closes; durable domain and architecture knowledge belongs in the glossary and ADRs, while delivered behavior belongs in code and tests.
 _French conversational alias_: spécification
-_Avoid_: PRD, brief, Release Contract
+_Avoid_: permanent system documentation, SDD source of truth, Release Contract
 
 **Approved Spec**:
-A Spec whose Shared Understanding has been confirmed and which therefore authorizes delivery; approval is a state of the same artifact, not a second document or a prose-review ceremony.
+A Spec whose Shared Understanding has been confirmed and which therefore authorizes decomposition and delivery for that outcome; approval is a state of the same temporary artifact, not a second document or a prose-review ceremony.
 _French conversational alias_: spécification approuvée
 _Avoid_: Release Contract, approved summary
 
 **Planning Run**:
-A bounded, independently resumable instance of the Intent & Design Workflow, with its own conversation context and planning artifacts. Multiple Planning Runs may coexist without creating multiple orchestration authorities.
+A bounded, independently resumable instance of the Intent & Design Workflow. A simple run may use one conversation; a Wayfinding Run spans disposable decision sessions whose continuity is anchored by a Planning Graph.
 _French conversational alias_: session de cadrage, parcours de planification
 _Avoid_: Mayor, campaign, delivery run, chat when durability is implied
+
+**Planning Session**:
+One agent conversation used within a Planning Run, either for a simple run or to resolve a particular Wayfinding decision. Its end does not end the Planning Run.
+_French conversational alias_: conversation de planification
+_Avoid_: Planning Run, Planning Graph
+
+**Planning Graph**:
+The non-executable graph of a Planning Map Bead, its Planning Decision Beads, and their dependency edges that anchors a multi-session Wayfinding Run.
+_French conversational alias_: graphe de planification
+_Avoid_: Delivery Work Graph, implementation convoy, session tree
+
+**Planning Map Bead**:
+The root and low-resolution index of a Wayfinding Run; it points to decisions and unresolved fog without restating their detail.
+_French conversational alias_: Bead carte Wayfinder
+_Avoid_: Spec, implementation epic, conversation transcript
+
+**Planning Decision Bead**:
+A non-executable child of a Planning Map Bead that resolves one research, grilling, prototype, or prerequisite-task question and records its resolution plus linked evidence.
+_French conversational alias_: Bead de décision de planification
+_Avoid_: implementation ticket, Vertical Slice, agent session
+
+**Ticket Graph Draft**:
+The temporary, non-executable, structured Planning Artifact containing proposed Vertical Slices, acceptance criteria, target rigs, and blocking edges that `to-tickets` presents for approval before atomic publication. It is frozen with the Spec during delivery and may expire after the convoy closes.
+_French conversational alias_: brouillon du graphe de tickets
+_Avoid_: Bead, convoy, Delivery Work Graph, second decomposition
+
+**Planning Artifact**:
+A temporary file artifact owned by a Planning Run, identified by a stable ID and content digest and referenced from Beads without turning its full contents into a Bead. Planning Artifacts coordinate multi-session work but are not permanent system documentation.
+_French conversational alias_: artefact de planification
+_Avoid_: Planning Bead, durable product documentation, source of truth after delivery
+
+**Method Baseline**:
+The faithful reference workflow and observable contracts reproduced before deliberate adaptation, used as the comparison point for prototypes, canaries, and measurements.
+_French conversational alias_: méthode de référence, baseline méthodologique
+_Avoid_: implementation topology, copied infrastructure, best-effort inspiration
+
+**Adaptation Register**:
+The single durable record of differences from the Method Baseline and added workflow controls, including why each exists, its test evidence, and its retain, replace, or remove decision.
+_French conversational alias_: registre des adaptations
+_Avoid_: separate deviation and experiment registers, changelog
+
+**Factory Knowledge**:
+The reusable method, safety principles, and operating rules of the Software Factory that apply across projects.
+_French conversational alias_: connaissances de l'usine
+_Avoid_: project domain context, legacy archive
+
+**Project Knowledge**:
+The domain language, product and architecture decisions, and repository-specific rules for one project using the Software Factory.
+_French conversational alias_: connaissances du projet
+_Avoid_: Factory Knowledge, City-wide defaults
+
+**Project Planning Profile**:
+The project-scoped configuration that binds a planning methodology to its authoritative domain sources, Work Graph, participating rigs, and genuine rig-local extensions.
+_French conversational alias_: profil de planification du projet
+_Avoid_: repository-wide duplicate, City-wide global defaults, product specification
 
 **Delivery Workflow**:
 The workflow that turns an Approved Spec into a verified software outcome.
 _French conversational alias_: flux de livraison
 _Avoid_: Factory, City, implementation
+
+**Delivered Outcome**:
+An outcome whose implementation and required technical verification are complete, awaiting the project owner's behavior acceptance unless its work class has predefined sufficient evidence.
+_French conversational alias_: résultat livré
+_Avoid_: Accepted Outcome, closed Bead alone
+
+**Accepted Outcome**:
+A Delivered Outcome whose behavior the project owner has confirmed or whose proven work class has met predefined acceptance evidence.
+_French conversational alias_: résultat accepté
+_Avoid_: merely merged code, Delivered Outcome
 
 **Vertical Slice**:
 A bounded increment that crosses the layers necessary to produce independently demonstrable or verifiable behavior.
@@ -57,6 +122,16 @@ _Avoid_: layer task, frontend ticket, backend ticket
 The durable graph of work items and their dependency relationships.
 _French conversational alias_: graphe de travail
 _Avoid_: queue, backlog, memory, ticket graph
+
+**Delivery Work Graph**:
+The approved executable Work Graph published once by `to-tickets` as Vertical Slice Beads and dependency edges, then executed without semantic redesign by the Mayor.
+_French conversational alias_: graphe de livraison
+_Avoid_: Planning Graph, Ticket Graph Draft, queue
+
+**Work Plane**:
+The mandatory routing classification of a Bead. Planning-plane Beads are durable but non-routable; delivery-plane Beads are routable only after validation and convoy attachment.
+_French conversational alias_: plan de travail
+_Avoid_: priority, Bead type, workflow phase inferred from status
 
 **Ready Frontier**:
 The Work Graph items whose blockers are resolved and which are eligible to be claimed.
@@ -72,6 +147,11 @@ _Avoid_: ticket, task, issue when referring to a persisted Bead
 A Bead whose resolution is a durable decision needed by other planning work; ordinary questions inside one grilling session are not Decision Beads.
 _French conversational alias_: Bead de décision
 _Avoid_: implementation ticket, every question
+
+**Planning Exception**:
+A structured signal that delivery has encountered a question about approved intent, behavior, or work topology requiring the affected work to return to its Planning Run.
+_French conversational alias_: exception de planification
+_Avoid_: operational retry, worker-owned redesign
 
 ## Orchestration and execution
 
