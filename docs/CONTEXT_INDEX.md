@@ -47,6 +47,7 @@ Use progressive disclosure. Do not read every document by default.
 | Why coordination state (root pointers, semantic labels, proof fields) is written only through a door script (`product-queue`, `mayor-campaign`, `deliver-close`, `campaign-pointer`), never with `--set-metadata`, and why readers degrade instead of dying | `decisions/ADR-0023-coordination-state-write-door.md` |
 | How an approved Ticket Graph Draft is published atomically and how the Mayor is restricted to that exact graph without falling through to legacy Factory or product work | `decisions/ADR-0025-approved-graph-bootstrap-scope.md`, `./bin/ticket-graph-publish`, `./bin/mayor-campaign scope` |
 | How to exercise a candidate planning path from synthetic intent through publication, exact-revision integration, Delivered and Accepted without asserting Gas City wiring | `FIXTURE_CITY_ORACLE.md`, `./bin/fixture-city-oracle`, `tests/fixture-city-oracle-test.py` |
+| Which minimum Gas City planning allocation P02 selected, where each responsibility runs, how it fails closed, and how to reverse it before canonical writing | `PLANNING_ALLOCATION_PROTOTYPE.md`, `ADAPTATION_REGISTER.md` (AR-001), `./bin/planning-allocation-prototype` |
 | Token-efficient multi-provider orchestration proposal (routing matrix, Mayor session budget) | `PROPOSAL-token-efficient-orchestration-2026-09-15.md` |
 
 ## Authority order

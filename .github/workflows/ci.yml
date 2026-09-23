@@ -77,6 +77,9 @@ jobs:
       - name: Fixture City public-behavior oracle
         run: python tests/fixture-city-oracle-test.py
 
+      - name: Planning allocation comparison and bounded reversal
+        run: python tests/planning-allocation-prototype-test.py
+
       - name: Factory guard worktree hygiene
         run: bash tests/factory-guard-worktree-test.sh
 
