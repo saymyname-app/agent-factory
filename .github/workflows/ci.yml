@@ -83,6 +83,9 @@ jobs:
       - name: Planning Run resume across provider and surface
         run: python tests/planning-run-resume-oracle-test.py
 
+      - name: Role, concurrency and retention qualification
+        run: python tests/role-qualification-oracle-test.py
+
       - name: Factory guard worktree hygiene
         run: bash tests/factory-guard-worktree-test.sh
 

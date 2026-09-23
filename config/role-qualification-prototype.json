@@ -1,0 +1,83 @@
+{
+  "contract": "agent-factory-role-qualification-prototype/v1",
+  "acceptance_standard": {
+    "min_quality": 0.9,
+    "max_lost_decisions": 0
+  },
+  "work_classes": [
+    {
+      "id": "simple",
+      "roles": [
+        {"id": "codex-planner-simple", "provider": "codex", "model": "gpt-5.6-sol", "effort": "medium"},
+        {"id": "claude-planner-simple", "provider": "claude", "model": "sonnet-5", "effort": "medium"}
+      ],
+      "load_evidence": [
+        {
+          "role_id": "codex-planner-simple",
+          "quality": 0.94,
+          "lost_decisions": 0,
+          "rework_count": 0,
+          "elapsed_seconds": 420,
+          "tokens": 18000,
+          "machine_pressure": "low"
+        },
+        {
+          "role_id": "claude-planner-simple",
+          "quality": 0.95,
+          "lost_decisions": 0,
+          "rework_count": 0,
+          "elapsed_seconds": 400,
+          "tokens": 17000,
+          "machine_pressure": "low"
+        }
+      ]
+    },
+    {
+      "id": "wayfinding",
+      "roles": [
+        {"id": "codex-planner-wayfinding", "provider": "codex", "model": "gpt-5.6-sol", "effort": "medium"},
+        {"id": "claude-planner-wayfinding", "provider": "claude", "model": "sonnet-5", "effort": "medium"}
+      ],
+      "load_evidence": [
+        {
+          "role_id": "codex-planner-wayfinding",
+          "quality": 0.92,
+          "lost_decisions": 0,
+          "rework_count": 1,
+          "elapsed_seconds": 900,
+          "tokens": 42000,
+          "machine_pressure": "medium"
+        },
+        {
+          "role_id": "claude-planner-wayfinding",
+          "quality": 0.93,
+          "lost_decisions": 0,
+          "rework_count": 1,
+          "elapsed_seconds": 860,
+          "tokens": 40000,
+          "machine_pressure": "medium"
+        }
+      ]
+    }
+  ],
+  "concurrency": {
+    "initial_ceiling": 12,
+    "minimum_ceiling": 4,
+    "observed_host_pressure": false,
+    "observed_completion_quality_ok": true
+  },
+  "retention_candidates": [
+    {
+      "id": "zero",
+      "retained_turns": 0,
+      "planning_graph_evidence_sufficient": true,
+      "diagnostic_need_evidenced": false
+    },
+    {
+      "id": "brief",
+      "retained_turns": 3,
+      "planning_graph_evidence_sufficient": false,
+      "diagnostic_need_evidenced": true
+    }
+  ]
+}
