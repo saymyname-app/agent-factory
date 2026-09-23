@@ -49,6 +49,7 @@ Use progressive disclosure. Do not read every document by default.
 | Why opening a PR cannot close a delivery bead or release its dependents, and which exact merge/CI fields prove completion | `decisions/ADR-0026-structural-delivery-completion-gate.md`, `./bin/deliver-close`, `./bin/pr-autopilot`, `lib/factory_delivery_proof.py` |
 | How to exercise a candidate planning path from synthetic intent through publication, exact-revision integration, Delivered and Accepted without asserting Gas City wiring | `FIXTURE_CITY_ORACLE.md`, `./bin/fixture-city-oracle`, `tests/fixture-city-oracle-test.py` |
 | Which minimum Gas City planning allocation P02 selected, where each responsibility runs, how it fails closed, and how to reverse it before canonical writing | `PLANNING_ALLOCATION_PROTOTYPE.md`, `ADAPTATION_REGISTER.md` (AR-001), `./bin/planning-allocation-prototype` |
+| How P04 shows one Planning Run decision surviving a provider/surface change through evidence rather than a transcript, and how it bounds any retained cross-surface conversation view | `PLANNING_RUN_RESUME_PROTOTYPE.md`, `./bin/planning-run-resume-oracle`, `tests/planning-run-resume-oracle-test.py` |
 | Token-efficient multi-provider orchestration proposal (routing matrix, Mayor session budget) | `PROPOSAL-token-efficient-orchestration-2026-09-15.md` |
 
 ## Authority order

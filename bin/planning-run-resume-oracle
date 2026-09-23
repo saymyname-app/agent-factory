@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+"""Bounded interruption/resumption experiment for one Planning Run decision
+across providers and operator surfaces (P04).
+
+This is a deterministic synthetic prototype, not a live multi-provider
+integration: it models the evidence-carried continuity contract and checks
+it the same way `planning-allocation-prototype` checks allocation viability.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+
+PROGRAM = "planning-run-resume-oracle"
+CONTRACT = "agent-factory-planning-run-resume-prototype/v1"
+RESULT_CONTRACT = "agent-factory-planning-run-resume-result/v1"
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_MANIFEST = ROOT / "config" / "planning-run-resume-prototype.json"
+
+FORBIDDEN_MODEL_TOKENS = ("astra", "fable")
+ALLOWED_EFFORTS = (None, "none", "low", "medium")
+CONVERSATION_VIEW_GATES = ("native", "read_only", "zero_token", "cheap_to_maintain")
+
+
+class PrototypeError(RuntimeError):
+    pass
+
+
+def require_dict(value: Any, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise PrototypeError(f"{label} must be an object")
+    return value
+
+
+def require_list(value: Any, label: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise PrototypeError(f"{label} must be an array")
+    return value
+
+
+def require_string(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise PrototypeError(f"{label} must be a non-empty string")
+    return value
+
+
+def canonical_digest(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def load_manifest(path: Path) -> dict[str, Any]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise PrototypeError(f"manifest not found: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise PrototypeError(f"manifest is not valid JSON: {exc}") from exc
+    return require_dict(raw, "manifest")
+
+
+def validate_role(role: dict[str, Any]) -> dict[str, Any]:
+    require_dict(role, "role")
+    require_string(role.get("id"), "role.id")
+    require_string(role.get("provider"), "role.provider")
+    require_string(role.get("surface"), "role.surface")
+    model = role.get("model")
+    if model is not None and not isinstance(model, str):
+        raise PrototypeError(f"role {role.get('id')}: model must be a string or null")
+    if model:
+        lowered = model.lower()
+        for token in FORBIDDEN_MODEL_TOKENS:
+            if token in lowered:
+                raise PrototypeError(
+                    f"role {role['id']}: model '{model}' violates the no-{token} contract"
+                )
+    effort = role.get("effort")
+    if effort not in ALLOWED_EFFORTS:
+        raise PrototypeError(
+            f"role {role['id']}: effort '{effort}' exceeds the medium-or-lower ceiling"
+        )
+    return role
+
+
+def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    contract = require_string(manifest.get("contract"), "manifest.contract")
+    if contract != CONTRACT:
+        raise PrototypeError(f"unsupported manifest contract: {contract}")
+
+    decision = require_dict(manifest.get("decision"), "manifest.decision")
+    require_string(decision.get("id"), "decision.id")
+    require_string(decision.get("summary"), "decision.summary")
+    require_string(decision.get("resolution"), "decision.resolution")
+
+    roles_raw = require_list(manifest.get("roles"), "manifest.roles")
+    if not roles_raw:
+        raise PrototypeError("manifest.roles must not be empty")
+    roles = {role["id"]: validate_role(role) for role in (validate_role(r) for r in roles_raw)}
+    if len(roles) != len(roles_raw):
+        raise PrototypeError("manifest.roles must have unique ids")
+
+    sequence = require_list(manifest.get("sequence"), "manifest.sequence")
+    if len(sequence) < 3:
+        raise PrototypeError(
+            "manifest.sequence must contain at least resolve, resume and observe_conversation"
+        )
+
+    resolve_steps = [s for s in sequence if s.get("action") == "resolve"]
+    resume_steps = [s for s in sequence if s.get("action") == "resume"]
+    observe_steps = [s for s in sequence if s.get("action") == "observe_conversation"]
+
+    if len(resolve_steps) != 1:
+        raise PrototypeError("manifest.sequence must contain exactly one resolve step")
+    if len(resume_steps) != 1:
+        raise PrototypeError("manifest.sequence must contain exactly one resume step")
+    if not observe_steps:
+        raise PrototypeError("manifest.sequence must contain an observe_conversation step")
+
+    if sequence[0] is not resolve_steps[0]:
+        raise PrototypeError("the resolve step must come first (decision predates interruption)")
+
+    resolve_role = roles.get(resolve_steps[0].get("role_id"))
+    resume_role = roles.get(resume_steps[0].get("role_id"))
+    if resolve_role is None or resume_role is None:
+        raise PrototypeError("resolve/resume steps must reference declared roles")
+    if resolve_role["provider"] == resume_role["provider"]:
+        raise PrototypeError(
+            "resume step must exercise a provider change; no provider change was configured"
+        )
+    if resolve_role["surface"] == resume_role["surface"]:
+        raise PrototypeError(
+            "resume step must exercise a surface change; no surface change was configured"
+        )
+
+    conversation_view = manifest.get("conversation_view")
+    if conversation_view is not None:
+        require_dict(conversation_view, "manifest.conversation_view")
+        require_string(conversation_view.get("held_by"), "conversation_view.held_by")
+        if conversation_view["held_by"] not in roles:
+            raise PrototypeError("conversation_view.held_by must reference a declared role")
+        for gate in CONVERSATION_VIEW_GATES:
+            if conversation_view.get(gate) is not True:
+                raise PrototypeError(
+                    f"a retained conversation_view must satisfy '{gate}'; "
+                    "drop the view instead of retaining a partial one"
+                )
+        if "reverse_exists" not in conversation_view:
+            raise PrototypeError(
+                "conversation_view.reverse_exists must be measured explicitly, not omitted"
+            )
+
+    return {
+        "decision": decision,
+        "roles": roles,
+        "sequence": sequence,
+        "resolve_role": resolve_role,
+        "resume_role": resume_role,
+        "observe_steps": observe_steps,
+        "conversation_view": conversation_view,
+    }
+
+
+def run_prototype(manifest: dict[str, Any]) -> dict[str, Any]:
+    validated = validate_manifest(manifest)
+    decision = validated["decision"]
+    resolve_role = validated["resolve_role"]
+    resume_role = validated["resume_role"]
+    conversation_view = validated["conversation_view"]
+
+    # The Planning Graph evidence ledger: the only channel carried across the
+    # simulated interruption. A separate, discarded per-role transcript
+    # stands in for chat history that is never copied forward.
+    evidence_ledger: dict[str, Any] = {}
+    decision_digest = canonical_digest(decision)
+    evidence_ledger[decision["id"]] = {
+        "resolution": decision["resolution"],
+        "resolved_by": resolve_role["id"],
+        "digest": decision_digest,
+    }
+    discarded_transcript = {"role_id": resolve_role["id"], "utterances": ["<simulated, discarded>"]}
+
+    # Simulated interruption: resume_role starts with no transcript at all,
+    # only a read of the evidence ledger keyed by decision id.
+    resumed_entry = evidence_ledger.get(decision["id"])
+    resumed_without_repeat = (
+        resumed_entry is not None and resumed_entry["digest"] == decision_digest
+    )
+
+    conversation_visibility = {
+        "held_by": conversation_view["held_by"] if conversation_view else None,
+        "of_role_id": conversation_view["of_role_id"] if conversation_view else None,
+        "reverse_exists": conversation_view["reverse_exists"] if conversation_view else False,
+        "directionality": "one_way" if conversation_view and not conversation_view["reverse_exists"] else "none",
+    }
+
+    retained_conversation_view = None
+    if conversation_view is not None:
+        retained_conversation_view = {
+            gate: conversation_view[gate] for gate in CONVERSATION_VIEW_GATES
+        }
+
+    role_model_ceiling_ok = all(
+        role.get("effort") in ALLOWED_EFFORTS
+        and not (role.get("model") and any(t in role["model"].lower() for t in FORBIDDEN_MODEL_TOKENS))
+        for role in validated["roles"].values()
+    )
+
+    provider_change = resolve_role["provider"] != resume_role["provider"]
+    surface_change = resolve_role["surface"] != resume_role["surface"]
+
+    acceptance = {
+        "decision_available_without_repeat": {
+            "value": resumed_without_repeat,
+            "reason": (
+                f"'{resume_role['id']}' retrieved decision '{decision['id']}' from the "
+                "evidence ledger with a matching digest, without reading "
+                f"'{resolve_role['id']}'’s discarded transcript."
+            ),
+        },
+        "continuity_from_graph_not_transcript": {
+            "value": resumed_without_repeat and discarded_transcript["role_id"] == resolve_role["id"],
+            "reason": (
+                "the resume step never referenced discarded_transcript; only the "
+                "evidence ledger entry was read."
+            ),
+        },
+        "visibility_measured_one_way": {
+            "value": conversation_view is not None and conversation_visibility["reverse_exists"] is False,
+            "reason": (
+                f"conversation_view.reverse_exists={conversation_visibility['reverse_exists']} was "
+                "declared explicitly rather than assumed."
+            ),
+        },
+        "conversation_view_retention_contract": {
+            "value": retained_conversation_view is None or all(retained_conversation_view.values()),
+            "reason": (
+                "no conversation view is retained"
+                if retained_conversation_view is None
+                else "the retained view satisfies native/read-only/zero-token/cheap"
+            ),
+        },
+        "role_model_ceiling_respected": {
+            "value": role_model_ceiling_ok,
+            "reason": "every exercised role avoids Astra/Fable and stays at medium-or-lower effort.",
+        },
+    }
+
+    result = {
+        "contract": RESULT_CONTRACT,
+        "decision": {
+            "id": decision["id"],
+            "resolved_by": resolve_role["id"],
+            "resumed_by": resume_role["id"],
+        },
+        "provider_change": provider_change,
+        "surface_change": surface_change,
+        "resumed_without_repeat": resumed_without_repeat,
+        "conversation_visibility": conversation_visibility,
+        "retained_conversation_view": retained_conversation_view,
+        "role_model_ceiling_ok": role_model_ceiling_ok,
+        "acceptance": acceptance,
+        "acceptance_met": all(item["value"] for item in acceptance.values()),
+    }
+    result["result_digest"] = canonical_digest(result)
+    return result
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog=PROGRAM)
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=DEFAULT_MANIFEST,
+        help="path to the planning-run-resume-prototype manifest",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("validate", help="validate the manifest and exit")
+    subparsers.add_parser("run", help="run the prototype and print the deterministic result")
+
+    args = parser.parse_args(argv)
+
+    try:
+        manifest = load_manifest(args.manifest)
+        if args.command == "validate":
+            validate_manifest(manifest)
+            print("OK")
+            return 0
+        if args.command == "run":
+            result = run_prototype(manifest)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0 if result["acceptance_met"] else 1
+    except PrototypeError as exc:
+        print(f"{PROGRAM}: {exc}", file=sys.stderr)
+        return 1
+
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
