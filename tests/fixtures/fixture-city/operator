@@ -1,0 +1,447 @@
+#!/usr/bin/env python3
+"""Deterministic public-surface fixture used by fixture-city-oracle tests."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import socket
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+
+OBSERVATION_CONTRACT = "agent-factory-fixture-observation/v1"
+
+
+def canonical_digest(value: Any) -> str:
+    data = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def content_digest(value: str) -> str:
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def state_path(workspace: Path) -> Path:
+    return workspace / "fixture-city-state.json"
+
+
+def load_state(workspace: Path) -> dict[str, Any]:
+    return json.loads(state_path(workspace).read_text(encoding="utf-8"))
+
+
+def save_state(workspace: Path, state: dict[str, Any]) -> None:
+    path = state_path(workspace)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(state, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+    os.replace(temporary, path)
+
+
+def public_snapshot(state: dict[str, Any]) -> dict[str, Any]:
+    artifact = state.get("artifact")
+    artifact_summary = None
+    if artifact is not None:
+        artifact_summary = {
+            "id": artifact["id"],
+            "digest": artifact["digest"],
+            "state": artifact["state"],
+        }
+    return {
+        "contract": OBSERVATION_CONTRACT,
+        "planning_run": state["planning_run"],
+        "work_items": state["work_items"],
+        "artifact": artifact_summary,
+        "approval": state["approval"],
+        "publication": state["publication"],
+        "delivery_graph": state["delivery_graph"],
+        "integrations": state["integrations"],
+        "assembly_check": state["assembly_check"],
+        "outcome": state["outcome"],
+        "effects": state["effects"],
+    }
+
+
+def print_json(value: Any) -> None:
+    print(json.dumps(value, ensure_ascii=False, sort_keys=True))
+
+
+def spec_content(request: dict[str, Any]) -> str:
+    rigs = "\n".join(f"- {rig['name']}" for rig in request["rigs"])
+    slices = "\n".join(
+        f"- {item['key']}: {item['title']}" for item in request["slices"]
+    )
+    return (
+        "# Fixture Spec\n\n"
+        f"Project: {request['project_id']}\n\n"
+        f"Intent: {request['intent']}\n\n"
+        f"Participating rigs:\n{rigs}\n\n"
+        f"Vertical slices:\n{slices}\n"
+    )
+
+
+def graph_projection(nodes: list[dict[str, Any]], edges: list[dict[str, str]]) -> dict[str, Any]:
+    return {
+        "nodes": [
+            {
+                "key": node["key"],
+                "title": node["title"],
+                "rigs": node["rigs"],
+                "plane": node["plane"],
+                "routable": node["routable"],
+                "publication_validated": node["publication_validated"],
+            }
+            for node in nodes
+        ],
+        "edges": edges,
+    }
+
+
+def build_graph(request: dict[str, Any]) -> dict[str, Any]:
+    nodes = [
+        {
+            "id": f"delivery-{item['key'].lower()}",
+            "key": item["key"],
+            "title": item["title"],
+            "rigs": item["rigs"],
+            "plane": "delivery",
+            "routable": True,
+            "publication_validated": True,
+        }
+        for item in request["slices"]
+    ]
+    edges = [
+        {"from": item["key"], "blocked_by": blocker}
+        for item in request["slices"]
+        for blocker in item["blocked_by"]
+    ]
+    digest = canonical_digest(graph_projection(nodes, edges))
+    convoy_id = "convoy-" + digest.split(":", 1)[1][:12]
+    for node in nodes:
+        node["convoy_id"] = convoy_id
+    return {
+        "digest": digest,
+        "convoy": {"id": convoy_id},
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
+def command_start(args: argparse.Namespace) -> int:
+    request = json.loads(args.request.read_text(encoding="utf-8"))
+    if request.get("fixture_fault") == "probe-containment":
+        if Path("/etc/passwd").exists():
+            print("fixture sandbox exposed host identity files", file=sys.stderr)
+            return 2
+        try:
+            Path("/usr/fixture-city-forbidden-write").write_text("unsafe", encoding="utf-8")
+        except OSError:
+            pass
+        else:
+            print("fixture sandbox allowed a host-system write", file=sys.stderr)
+            return 2
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        except OSError:
+            pass
+        else:
+            probe.close()
+            print("fixture sandbox allowed network socket creation", file=sys.stderr)
+            return 2
+    request_digest = canonical_digest(request).split(":", 1)[1]
+    run_id = "planning-" + request_digest[:12]
+    state = {
+        "request": request,
+        "planning_run": {"id": run_id, "state": "REQUESTED"},
+        "work_items": [
+            {
+                "id": "planning-map-" + request_digest[:12],
+                "plane": "planning",
+                "routable": False,
+                "publication_validated": False,
+                "convoy_id": None,
+            }
+        ],
+        "artifact": None,
+        "approval": None,
+        "publication": {
+            "state": "not_started",
+            "graph_digest": None,
+            "convoy_id": None,
+        },
+        "delivery_graph": None,
+        "integrations": [],
+        "assembly_paths": {},
+        "assembly_check": None,
+        "outcome": {"state": "none", "accepted": False},
+        "effects": [],
+    }
+    save_state(args.workspace, state)
+    print_json({"ok": True})
+    return 0
+
+
+def command_synthesize(args: argparse.Namespace) -> int:
+    state = load_state(args.workspace)
+    content = spec_content(state["request"])
+    suffix = state["planning_run"]["id"].split("-", 1)[1]
+    state["artifact"] = {
+        "id": "spec-" + suffix,
+        "digest": content_digest(content),
+        "content": content,
+        "state": "SPEC",
+    }
+    state["planning_run"]["state"] = "SPEC_AWAITING_APPROVAL"
+    save_state(args.workspace, state)
+    print_json({"ok": True})
+    return 0
+
+
+def command_observe(args: argparse.Namespace) -> int:
+    print_json(public_snapshot(load_state(args.workspace)))
+    return 0
+
+
+def command_artifact(args: argparse.Namespace) -> int:
+    artifact = load_state(args.workspace).get("artifact")
+    if artifact is None or artifact["id"] != args.id:
+        print("unknown artifact", file=sys.stderr)
+        return 2
+    print_json(artifact)
+    return 0
+
+
+def command_approve(args: argparse.Namespace) -> int:
+    state = load_state(args.workspace)
+    artifact = state.get("artifact")
+    if artifact is None or (artifact["id"], artifact["digest"]) != (
+        args.artifact_id,
+        args.digest,
+    ):
+        print("approval does not match artifact identity and digest", file=sys.stderr)
+        return 2
+    artifact["state"] = "APPROVED_SPEC"
+    state["approval"] = {"artifact_id": args.artifact_id, "digest": args.digest}
+    state["planning_run"]["state"] = "APPROVED_SPEC"
+    save_state(args.workspace, state)
+    print_json({"ok": True})
+    return 0
+
+
+def command_publish(args: argparse.Namespace) -> int:
+    state = load_state(args.workspace)
+    if state.get("approval") is None:
+        print("publication requires exact Spec approval", file=sys.stderr)
+        return 2
+    graph = build_graph(state["request"])
+    if state["request"].get("fixture_fault") == "duplicate-graph-node":
+        duplicate = dict(graph["nodes"][-1])
+        duplicate["id"] += "-duplicate"
+        graph["nodes"].append(duplicate)
+        graph["digest"] = canonical_digest(graph_projection(graph["nodes"], graph["edges"]))
+        graph["convoy"]["id"] = "convoy-" + graph["digest"].split(":", 1)[1][:12]
+        for node in graph["nodes"]:
+            node["convoy_id"] = graph["convoy"]["id"]
+    if args.inject_failure == "after-stage":
+        state["publication"] = {
+            "state": "failed",
+            "graph_digest": None,
+            "convoy_id": None,
+        }
+        if state["request"].get("fixture_fault") == "partial-publication":
+            leaked = dict(graph)
+            leaked["nodes"] = graph["nodes"][:1]
+            state["delivery_graph"] = leaked
+            state["work_items"].extend(leaked["nodes"])
+        save_state(args.workspace, state)
+        print("injected publication failure after staging", file=sys.stderr)
+        return 23
+    state["delivery_graph"] = graph
+    state["work_items"].extend(graph["nodes"])
+    state["publication"] = {
+        "state": "published",
+        "graph_digest": graph["digest"],
+        "convoy_id": graph["convoy"]["id"],
+    }
+    state["planning_run"]["state"] = "DELIVERY_GRAPH_PUBLISHED"
+    save_state(args.workspace, state)
+    print_json({"ok": True})
+    return 0
+
+
+def command_integrate(args: argparse.Namespace) -> int:
+    state = load_state(args.workspace)
+    expected = {
+        rig["name"]: rig["revision"] for rig in state["request"]["rigs"]
+    }
+    if expected.get(args.rig) != args.revision:
+        print("integration revision does not match the fixture profile", file=sys.stderr)
+        return 2
+    checkout = args.checkout.resolve()
+    try:
+        checkout.relative_to(args.workspace.resolve())
+    except ValueError:
+        print("integration checkout escapes the fixture workspace", file=sys.stderr)
+        return 2
+    revision_result = subprocess.run(
+        ("git", "-C", str(checkout), "rev-parse", "HEAD"),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    tree_result = subprocess.run(
+        ("git", "-C", str(checkout), "rev-parse", "HEAD^{tree}"),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if revision_result.returncode != 0 or tree_result.returncode != 0:
+        print("integration checkout is not a readable Git revision", file=sys.stderr)
+        return 2
+    observed_revision = revision_result.stdout.strip()
+    tree = tree_result.stdout.strip()
+    if observed_revision != args.revision:
+        print("integration checkout is not at the requested exact revision", file=sys.stderr)
+        return 2
+    evidence = {item["rig"]: item for item in state["integrations"]}
+    evidence[args.rig] = {
+        "rig": args.rig,
+        "revision": observed_revision,
+        "tree": tree,
+        "verified": True,
+    }
+    state["assembly_paths"][args.rig] = str(checkout)
+    state["integrations"] = [evidence[rig["name"]] for rig in state["request"]["rigs"] if rig["name"] in evidence]
+    state["planning_run"]["state"] = "DELIVERING"
+    save_state(args.workspace, state)
+    print_json({"ok": True})
+    return 0
+
+
+def command_deliver(args: argparse.Namespace) -> int:
+    state = load_state(args.workspace)
+    expected = [(rig["name"], rig["revision"]) for rig in state["request"]["rigs"]]
+    observed = [(item["rig"], item["revision"]) for item in state["integrations"]]
+    if observed != expected:
+        print("exact participating revisions have not all been integrated", file=sys.stderr)
+        return 2
+    if not isinstance(state.get("assembly_check"), dict) or state["assembly_check"].get("passed") is not True:
+        print("delivery requires a passing assembled public-behavior check", file=sys.stderr)
+        return 2
+    state["outcome"] = {"state": "delivered", "accepted": False}
+    state["planning_run"]["state"] = "DELIVERED_OUTCOME"
+    save_state(args.workspace, state)
+    print_json({"ok": True})
+    return 0
+
+
+def command_verify_assembly(args: argparse.Namespace) -> int:
+    state = load_state(args.workspace)
+    rigs = state["request"]["rigs"]
+    if len(state["integrations"]) != len(rigs):
+        print("assembly verification requires every exact revision", file=sys.stderr)
+        return 2
+    checkouts = [Path(state["assembly_paths"][rig["name"]]) for rig in rigs]
+    if state["request"].get("fixture_fault") == "mutate-assembly":
+        try:
+            (checkouts[0] / "fixture-service").write_text("mutated", encoding="utf-8")
+        except OSError:
+            print("assembly checkout is read-only", file=sys.stderr)
+            return 77
+        print("assembly checkout mutation unexpectedly succeeded", file=sys.stderr)
+        return 78
+    if len(checkouts) == 1:
+        command = (str(checkouts[0] / "fixture-e2e"),)
+        working_directory = checkouts[0]
+    else:
+        command = (
+            str(checkouts[-1] / "fixture-e2e"),
+            str(checkouts[0] / "fixture-service"),
+        )
+        working_directory = checkouts[-1]
+    try:
+        check = subprocess.run(
+            command,
+            cwd=working_directory,
+            text=True,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"assembled public behavior failed to run: {exc}", file=sys.stderr)
+        return 2
+    if check.returncode != 0:
+        detail = check.stderr.strip() or check.stdout.strip() or f"exit {check.returncode}"
+        print(f"assembled public behavior failed: {detail}", file=sys.stderr)
+        return 2
+    state["assembly_check"] = {
+        "check": "fixture-end-to-end",
+        "passed": True,
+        "participants": [
+            {
+                "rig": evidence["rig"],
+                "revision": evidence["revision"],
+                "tree": evidence["tree"],
+            }
+            for evidence in state["integrations"]
+        ],
+    }
+    save_state(args.workspace, state)
+    print_json({"ok": True})
+    return 0
+
+
+def command_accept(args: argparse.Namespace) -> int:
+    state = load_state(args.workspace)
+    if state["outcome"].get("state") != "delivered":
+        print("acceptance requires a Delivered Outcome", file=sys.stderr)
+        return 2
+    state["outcome"] = {"state": "accepted", "accepted": True}
+    state["planning_run"]["state"] = "ACCEPTED_OUTCOME"
+    save_state(args.workspace, state)
+    print_json({"ok": True})
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    value = argparse.ArgumentParser()
+    value.add_argument("--workspace", type=Path, required=True)
+    commands = value.add_subparsers(dest="command", required=True)
+    start = commands.add_parser("start")
+    start.add_argument("--request", type=Path, required=True)
+    commands.add_parser("synthesize")
+    commands.add_parser("observe")
+    artifact = commands.add_parser("artifact")
+    artifact.add_argument("--id", required=True)
+    approve = commands.add_parser("approve")
+    approve.add_argument("--artifact-id", required=True)
+    approve.add_argument("--digest", required=True)
+    publish = commands.add_parser("publish")
+    publish.add_argument("--inject-failure", choices=("none", "after-stage"), required=True)
+    integrate = commands.add_parser("integrate")
+    integrate.add_argument("--rig", required=True)
+    integrate.add_argument("--revision", required=True)
+    integrate.add_argument("--checkout", type=Path, required=True)
+    commands.add_parser("verify-assembly")
+    commands.add_parser("deliver")
+    commands.add_parser("accept")
+    return value
+
+
+def main() -> int:
+    if os.environ.get("FIXTURE_CITY_EFFECT_MODE") != "deny":
+        print("fixture operator requires deny effect mode", file=sys.stderr)
+        return 2
+    args = parser().parse_args()
+    args.workspace.mkdir(parents=True, exist_ok=True)
+    return globals()[f"command_{args.command.replace('-', '_')}"](args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

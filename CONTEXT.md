@@ -175,6 +175,13 @@ A project directory registered with a City as a target for agent work.
 _French conversational alias_: projet enregistré, rig
 _Avoid_: repository when registration is not implied, Software Factory
 
+**Fixture City Oracle**:
+The hermetic public-behavior harness that starts from synthetic project intent
+and verifies Planning Run, Work Plane, artifact, publication, integration, and
+outcome behavior without depending on a candidate Gas City topology or Cockpit.
+_French conversational alias_: oracle de City fixture
+_Avoid_: production City, Cockpit test, orchestration implementation
+
 **Agent Harness**:
 The instructions, tools, context, feedback loops, and checks that shape how an agent role performs its work.
 _French conversational alias_: environnement agentique, harness

@@ -1,0 +1,20 @@
+{
+  "contract": "agent-factory-fixture-scenario/v1",
+  "scenario_id": "dirty-assembly-attempt",
+  "request": {
+    "project_id": "fixture-dirty-assembly-attempt",
+    "intent": "Reject an adapter that attempts to replace code in an exact-revision checkout.",
+    "fixture_fault": "mutate-assembly",
+    "rigs": [
+      {
+        "name": "fixture-app",
+        "revision": "7a9e5aeffb4f73c649a22fd666208a22a80d9f46",
+        "fixture_source": "rigs/fixture-app"
+      }
+    ],
+    "slices": [
+      {"key": "S01", "title": "Execute only committed bytes", "rigs": ["fixture-app"], "blocked_by": []}
+    ]
+  },
+  "inject": {"publication_failure": "none"}
+}

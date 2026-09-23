@@ -1,0 +1,25 @@
+{
+  "contract": "agent-factory-fixture-scenario/v1",
+  "scenario_id": "incompatible-assembly",
+  "request": {
+    "project_id": "fixture-incompatible-assembly",
+    "intent": "Reject exact revisions whose assembled public interfaces are incompatible.",
+    "rigs": [
+      {
+        "name": "fixture-api",
+        "revision": "73ac3a0db24ecb1d522b83a454526b75c4a83668",
+        "fixture_source": "rigs/fixture-api"
+      },
+      {
+        "name": "fixture-web-incompatible",
+        "revision": "5c73a881b90192e1e164eb497c3da69bdfa4eddb",
+        "fixture_source": "rigs/fixture-web-incompatible"
+      }
+    ],
+    "slices": [
+      {"key": "S01", "title": "Provide v1 status", "rigs": ["fixture-api"], "blocked_by": []},
+      {"key": "S02", "title": "Require unsupported v2 status", "rigs": ["fixture-web-incompatible"], "blocked_by": ["S01"]}
+    ]
+  },
+  "inject": {"publication_failure": "none"}
+}
