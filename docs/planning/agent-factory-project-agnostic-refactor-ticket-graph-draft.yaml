@@ -1,0 +1,428 @@
+artifact:
+  id: ticket-graph-draft-agent-factory-project-agnostic-refactor
+  state: APPROVED_TICKET_GRAPH_DRAFT
+  approved_by: Benjamin
+  approved_at: 2026-09-23
+  content_digest: sha256:53a663ab5841e8e43dd05f5a4c470496ce50613b3b9690b5102df881c83be417
+  digest_scope: UTF-8 bytes from the legacy_boundary key through end of file, with LF line endings
+  source_spec:
+    id: spec-agent-factory-project-agnostic-refactor
+    state: APPROVED_SPEC
+    digest: sha256:9ce47e19172505d26fd7d0ba8696bad29896e7614b0dc5c15a2f19061064b9fa
+  method_baseline:
+    skill: Matt Pocock /to-tickets
+    commit: c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  publication_authorized: true
+  publication_authorized_by: Benjamin
+  publication_authorized_at: 2026-09-23
+  note: >-
+    Temporary non-executable Planning Artifact. It proposes vertical slices and
+    blocking edges only. Approval of its granularity and blockers is required
+    before the deterministic publication door may create any Delivery Bead or
+    convoy. The Mayor may validate this shape but may not reinterpret or re-slice it.
+
+legacy_boundary:
+  quarantine_read_only_evidence:
+    - The legacy planning path, its duplicated Release Contract and its intake projections.
+    - Existing agent contexts, memories, role prompts, provider policy and planning formulas.
+    - Cockpit V1 information architecture, screens, routes and implementation choices.
+    - Legacy Factory documentation and ADRs except when a concrete recurring problem or recoverable solution is being investigated.
+  temporarily_retained_substrate_subject_to_prototype_evidence:
+    - Gas City runtime primitives and one Mayor authority, only if P02 confirms the method contracts survive the selected allocation.
+    - One Beads/Dolt Work Graph, only with positive Work Plane routing and the concurrency guarantees proven by P03.
+    - Git, GitHub and isolated worktrees as code and integration evidence.
+    - The current Delivery Workflow only from the convoy continuation boundary onward, with any retained door or guard freshly justified.
+    - Existing deterministic CLI, Python, shell and fixture-test styles when they express the new public contracts without importing legacy policy.
+  reconstruct_from_approved_needs:
+    - Project Planning Profile and common safety boundary.
+    - Planning Run, Planning Graph, Planning Map and Planning Decision lifecycle.
+    - Canonical Spec and Ticket Graph Draft identity, digest, approval, freeze, revision and expiry behavior.
+    - Adapted to-tickets decomposition authority and atomic publication door.
+    - Positive planning and delivery planes, Ready Frontier eligibility and Planning Exception path.
+    - Provider-independent operator adapters and zero-token monitoring.
+    - Cockpit V2, planned after cutover from operator needs rather than from Cockpit V1.
+
+target_rigs:
+  factory_workspace:
+    purpose: Versioned implementation of the reusable Factory method, doors, adapters, tests and concise operator documentation.
+    status: existing workspace repository; not a SayMyName product repository
+  fixture_city:
+    purpose: Hermetic City with disposable projects and repositories used as the independent public-behavior oracle.
+    status: test-only; no production or personal data
+  fixture_project_rigs:
+    purpose: At least two isolated project rigs plus an explicit multi-project case for access and exact-revision assembly tests.
+    status: test-only and created by the fixture City
+  cockpit_v2_canary:
+    purpose: First non-critical live Planning Run after cutover.
+    status: Its participating rig or rigs are selected by its new Project Planning Profile; the legacy Cockpit path is not assumed.
+
+global_execution_contract:
+  context: Each published implementation slice receives a fresh implementation context and the exact Approved Spec trace it needs.
+  test_method: One implementer performs small red then green cycles at an agreed public-behavior seam; deterministic checks run on every slice.
+  review: One independent reviewer initially checks both Spec fidelity and non-automated design quality for every slice.
+  readiness: A blocker clears only after its required checks and review pass and its code is integrated into the configured working branch.
+  repair: Technical repair stays bounded inside the slice with failure evidence; semantic or topology change raises a Planning Exception.
+  models: Astra and Fable are forbidden and reasoning effort must not exceed medium.
+  safety: Production, real sending, external publication, spend, unrecoverable destruction and wider personal-data access require explicit human authority.
+
+bootstrap_path:
+  - stage: 1-independent-oracle-and-fences
+    nodes: [P01, B01]
+    exit: The target can be tested without consulting Cockpit V1 or prompt internals, and new code cannot silently call the legacy planner.
+  - stage: 2-bounded-q11-prototypes
+    nodes: [P02, P03, P04, P05, P06]
+    exit: Each open wiring question has observed evidence, a selected smallest mechanism and an explicit reversal; no production architecture is guessed.
+  - stage: 3-project-and-planning-kernel
+    nodes: [B02, B03, B04, B05]
+    exit: Simple and Wayfinding Planning Runs can produce and approve one canonical Spec while preserving decisions and isolation.
+  - stage: 4-decomposition-and-delivery-seam
+    nodes: [B06, B07, B08, B09]
+    exit: One approved draft can publish atomically into a positively routed convoy and survive monitoring and semantic exceptions.
+  - stage: 5-direct-cutover
+    nodes: [B12]
+    exit: Every new Planning Run uses the new path and outages repair forward without legacy fallback.
+  - stage: 6-complete-the-canary-delivery-envelope
+    nodes: [B10]
+    exit: The already-published refactor graph can verify and accept the coming canary without opening another new Planning Run.
+  - stage: 7-first-live-canary
+    nodes: [C01]
+    exit: Cockpit V2 is planned and delivered as the first real non-critical canary through the new path; the fixture City remains the oracle.
+  - stage: 8-portability-and-outcome-closure
+    nodes: [B11, V01]
+    exit: A fresh operator installation works and the exact assembled outcome has passed its required evidence and acceptance boundary.
+
+tickets:
+  - id: P01
+    kind: prototype
+    title: Exercise one intent through an independent fixture City oracle
+    blocked_by: []
+    target_rigs: [factory_workspace, fixture_city, fixture_project_rigs]
+    what_it_delivers: >-
+      A hermetic public-behavior harness that starts from project intent and can
+      observe Planning Run and Work Plane states, artifact identity and digest,
+      approvals, graph publication, convoy identity, integration evidence and
+      Delivered versus Accepted without asserting prompts or candidate Gas City wiring.
+    acceptance_criteria:
+      - A fixture run creates no production, personal-data, external-publication or spend effect.
+      - The harness observes only public operator and deterministic write-door interfaces.
+      - The harness can inject a failed publication step and prove that no partial delivery graph survives.
+      - The harness can run both single-rig and exact-revision multi-rig scenarios.
+      - Its result is deterministic and independent of Cockpit V1.
+
+  - id: B01
+    kind: prefactor
+    title: Fence legacy planning and Cockpit V1 as read-only evidence
+    blocked_by: [P01]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      A verifiable boundary under which new planning cannot invoke the legacy
+      planner, duplicated Release Contract or Cockpit V1 architecture, while
+      already-started legacy delivery may continue at the documented convoy boundary.
+    acceptance_criteria:
+      - A new Planning Run attempting to select the legacy path fails closed with an operator-readable reason.
+      - Existing delivery already attached to a convoy can continue without depending on the new planner.
+      - The Matt path neither creates nor consumes a duplicated Release Contract.
+      - Cockpit V1 remains consultable as evidence but exports no target routes, screens or state model.
+      - The quarantine can be verified through the fixture City rather than by documentation alone.
+
+  - id: P02
+    kind: prototype
+    title: Select the smallest Gas City allocation through the convoy boundary
+    blocked_by: [P01]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      Observed comparison of at least two viable allocations of skills,
+      sessions, agents, formulas, orders and deterministic code for one simple
+      Planning Run and one Wayfinding Run, ending at the existing convoy continuation boundary.
+    acceptance_criteria:
+      - Both candidates preserve one Planning Run identity, one canonical artifact writer and one Mayor delivery authority.
+      - The prototype demonstrates where human conversation, specialist work, phase sequencing, eligibility triggers and validation actually run.
+      - Neither candidate depends on planning-base projections or a second orchestrator.
+      - The selected arrangement is justified by observable method fidelity, failure behavior and maintenance cost.
+      - The result records a bounded reversal and updates the single Adaptation Register entry; it does not silently canonize the leading candidate.
+
+  - id: P03
+    kind: prototype
+    title: Prevent lost Planning Map updates and duplicate decision resolution
+    blocked_by: [P01]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      A stress-tested smallest concurrency mechanism for independent Planning
+      Decision claims, child resolution and shared Planning Map updates.
+    acceptance_criteria:
+      - Two independent decision children can progress concurrently.
+      - A child can be claimed and resolved exactly once.
+      - Conflicting shared-map updates preserve both valid resolutions or reject one for safe retry; no update is silently lost.
+      - Spec and Ticket Graph Draft writers remain singular.
+      - Evidence distinguishes target, configured, observed and proven behavior and records the mechanism's reversal.
+
+  - id: P04
+    kind: prototype
+    title: Resume one Planning Run across providers and operator surfaces
+    blocked_by: [P01]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      A bounded interruption and resumption experiment spanning Codex, Claude
+      and a minimal synthetic Cockpit adapter without requiring transcript copying.
+    acceptance_criteria:
+      - A resolved decision remains available after provider and surface change without Benjamin repeating it.
+      - The Planning Graph and linked evidence, not a retained chat transcript, carry continuity.
+      - The observed one-way conversation visibility is measured rather than assumed to be bidirectional.
+      - Any cross-surface conversation view is retained only if native, read-only, zero-token and cheap to maintain.
+      - All exercised roles obey the no-Astra, no-Fable and medium-or-lower ceiling.
+
+  - id: P05
+    kind: prototype
+    title: Enforce default project isolation and explicit multi-project grants
+    blocked_by: [P01]
+    target_rigs: [factory_workspace, fixture_city, fixture_project_rigs]
+    what_it_delivers: >-
+      A proven filesystem and context-access boundary for an agent scoped to one
+      project, plus an exact named-participant grant for a cross-project outcome.
+    acceptance_criteria:
+      - An agent scoped to fixture project A cannot read fixture project B by default.
+      - Merely registering both rigs in one City grants no cross-project access.
+      - A declared multi-project outcome exposes only its named participant rigs.
+      - Revoking the grant removes the additional access without changing unrelated projects.
+      - The selected enforcement mechanism and unsupported host claims are explicit.
+
+  - id: P06
+    kind: prototype
+    title: Qualify role models, concurrency and decision-session retention
+    blocked_by: [P02, P04]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      Comparable simple and Wayfinding load evidence for provider-independent
+      roles, a deliberately high initial concurrency ceiling, and brief-versus-zero
+      decision-session retention.
+    acceptance_criteria:
+      - Quality, lost decisions, rework, elapsed time, tokens and machine pressure are reported separately by work class.
+      - The chosen role mapping meets the same acceptance standard across supported providers.
+      - The initial ceiling is reduced only when observed host pressure or completion quality requires it.
+      - Zero retention is preferred when Planning Graph evidence is sufficient; otherwise the shortest evidenced diagnostic retention is selected.
+      - No candidate uses Astra, Fable or reasoning above medium.
+
+  - id: B02
+    kind: vertical_slice
+    title: Register a project through one Project Planning Profile
+    blocked_by: [B01, P05]
+    target_rigs: [factory_workspace, fixture_city, fixture_project_rigs]
+    what_it_delivers: >-
+      A new operator can register a project whose single profile points to its
+      authoritative Project Knowledge, Work Graph, participating rigs, checks,
+      risk thresholds, autonomy policy and genuine rig-local extensions.
+    acceptance_criteria:
+      - Registration succeeds without any SayMyName-specific field or copied Factory-wide configuration.
+      - Missing or contradictory authoritative sources fail with an actionable diagnostic.
+      - Project policy can tighten but cannot silently disable common people and data safety principles.
+      - The profile applies the isolation and explicit-grant behavior selected by P05.
+      - The fixture City can load two different project profiles without treating either as a global default.
+
+  - id: B03
+    kind: vertical_slice
+    title: Complete a simple Planning Run to one canonical Spec
+    blocked_by: [B02, P02]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      A simple request can remain in one healthy interactive Planning Session,
+      establish Shared Understanding and synthesize one readable Spec without
+      mandatory Wayfinder ceremony or another interview.
+    acceptance_criteria:
+      - The run loads only the Project Planning Profile's declared authoritative context.
+      - The Spec contains behavior, boundaries, decisions, acceptance evidence, provenance, experiments and non-objectives.
+      - The Spec has a stable identity and reproducible content digest.
+      - A real contradiction, missing trace, undecided behavior or new test seam returns to planning instead of being invented.
+      - No Release Contract or second prose artifact repeats the Spec.
+
+  - id: B04
+    kind: vertical_slice
+    title: Promote and resume a durable Wayfinding Run
+    blocked_by: [B02, P02, P03, P04]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      Work exceeding one healthy session promotes before material decision loss
+      into a Planning Map with non-executable decision children that can progress,
+      pause, resume and abandon without transcript dependence.
+    acceptance_criteria:
+      - Planning Map and Planning Decision Beads carry positive plane=planning metadata and are never delivery-routable.
+      - One disposable session resolves one claimed decision, records evidence, updates the map and closes.
+      - Independent children progress concurrently under the protection proven by P03.
+      - Pause releases sessions but retains map, resolutions and evidence; resume refreshes only time-sensitive facts; abandon publishes nothing.
+      - When normal map rules declare the route clear and no child remains open, to-spec starts without a second fog audit.
+
+  - id: B05
+    kind: vertical_slice
+    title: Approve, freeze and revise Planning Artifacts by exact digest
+    blocked_by: [B03, B04]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      An owner can approve the exact canonical Spec, close its Planning Map and
+      rely on immutable artifact identity during delivery, while genuine semantic
+      change creates an explicit new revision.
+    acceptance_criteria:
+      - Approval names the Spec artifact identity and exact digest and changes the same artifact to Approved Spec.
+      - Approval closes the Planning Map and does not create a duplicate approved document.
+      - Mutation of a frozen artifact is rejected; an approved semantic change creates a new digest with provenance.
+      - Artifacts remain recoverable during their convoy and may expire only after closure while durable truth remains in code, tests, glossary and qualifying ADRs.
+      - Any optional integrity check reports distinct value and never becomes another fog audit.
+
+  - id: B06
+    kind: vertical_slice
+    title: Publish one approved Ticket Graph Draft atomically
+    blocked_by: [B05, P02, P03]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      The sole adapted to-tickets authority turns an Approved Spec into a
+      structured draft of self-contained vertical slices and blockers, then a
+      deterministic Mayor-owned door either publishes the exact graph and convoy or none of it.
+    acceptance_criteria:
+      - Decomposition runs exactly once for an approved draft revision and each slice is independently verifiable within one fresh context.
+      - The applicable human gate can approve granularity and blockers before publication.
+      - The door validates structure, Spec trace, execution contracts, positive plane=delivery metadata, exact dependency edges and convoy attachment without interpreting or re-slicing.
+      - Any validation or write failure leaves no partial Delivery Beads, edges or convoy.
+      - Published Beads reference the Spec and draft while copying only their own autonomous execution contract.
+
+  - id: B07
+    kind: vertical_slice
+    title: Advance only the verified delivery Ready Frontier
+    blocked_by: [B06]
+    target_rigs: [factory_workspace, fixture_city, fixture_project_rigs]
+    what_it_delivers: >-
+      The Mayor can dispatch unrelated eligible slices in parallel while a
+      dependent slice waits for its prerequisite's tests, independent review and
+      integration into the configured working branch.
+    acceptance_criteria:
+      - Selectors positively require plane=delivery, validated publication and convoy attachment.
+      - Planning-plane work can never enter the Ready Frontier even when otherwise open and unblocked.
+      - Each implementation slice starts with a fresh context, exact contract and agreed public test seam.
+      - The implementer demonstrates repeated red then green cycles, deterministic checks and an independent review before integration evidence clears blockers.
+      - Bounded technical retries retain failure evidence and do not stall unrelated eligible slices.
+
+  - id: B08
+    kind: vertical_slice
+    title: Route a semantic surprise through one Planning Exception
+    blocked_by: [B04, B06, B07]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      A delivery worker can signal a semantic or topology surprise, park only
+      the affected subgraph and return the decision to the originating Planning
+      Run without letting delivery workers become decomposition authorities.
+    acceptance_criteria:
+      - Technical repair that fits the approved slice remains inside that slice.
+      - A semantic or topology signal creates one planning-plane decision and parks only descendants that depend on it.
+      - Unrelated Ready Frontier work continues.
+      - Tactical clarification resumes the existing slice; behavioral or topology change creates immutable revised artifacts and a validated patch to unfinished work through the sole to-tickets authority.
+      - Classification and duplicate-escalation evidence is recorded in the Adaptation Register.
+
+  - id: B09
+    kind: vertical_slice
+    title: Observe planning and delivery changes without idle model calls
+    blocked_by: [B03, B04, B07, P06]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      An operator can monitor Planning Runs, delivery progress and adaptation
+      measures through deterministic observations that wake judgment only when a
+      new actionable fact appears.
+    acceptance_criteria:
+      - Repeated observation of unchanged state makes zero model calls.
+      - A newly actionable fact wakes the smallest qualified role once and preserves its evidence.
+      - Measures separate lost decisions, escaped defects, human rework, maintainability, elapsed time and tokens by comparable work class.
+      - Every material adaptation or gate records baseline, reason, signal, cost, review point and retain, replace or remove outcome in one register.
+      - Review exemptions or automatic handoffs can activate only under predefined evidence and restore on regression.
+
+  - id: B10
+    kind: vertical_slice
+    title: Verify Delivered and Accepted outcomes independently
+    blocked_by: [B07, B08, B09]
+    target_rigs: [factory_workspace, fixture_city, fixture_project_rigs]
+    what_it_delivers: >-
+      The Factory distinguishes technical delivery from behavior acceptance,
+      verifies exact multi-repository revisions in isolation and applies one
+      unique assembled-diff review to multi-slice outcomes.
+    acceptance_criteria:
+      - A multi-slice outcome receives one independent assembled-diff review focused on interaction risks and Spec drift; a single-slice outcome receives no duplicate final review.
+      - Exact participating revisions of a multi-rig fixture are assembled and pass end-to-end behavior before Delivered.
+      - Accepted follows owner confirmation or predefined evidence for a proven class and remains visibly distinct from Delivered.
+      - Rejection routes a Spec mismatch to targeted repair, changed desired behavior to planning, and active danger to safe neutralization without default whole-outcome rollback.
+      - Sensitive effects remain blocked on explicit human authority regardless of integration state.
+
+  - id: B11
+    kind: vertical_slice
+    title: Install, register and start an independent Factory from Git
+    blocked_by: [B02, B06, B09]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      A new operator on the supported Windows plus Ubuntu WSL host can clone the
+      Factory, register a generic project, start its City and reach the first
+      Planning Run using a concise README.
+    acceptance_criteria:
+      - The tutorial is executed from a fresh test location rather than copied from legacy instructions.
+      - Setup contains no SayMyName-specific path, product rule or credential.
+      - The operator can diagnose a missing prerequisite and retry without editing internal state.
+      - Distribution is Git-only and makes no managed-update, shared-service or unverified cross-platform claim.
+      - The first unchanged observation after start consumes zero model tokens.
+
+  - id: B12
+    kind: vertical_slice
+    title: Cut all new planning over to the minimum kernel and repair forward
+    blocked_by: [B01, B03, B04, B05, B06, B07, B09]
+    target_rigs: [factory_workspace, fixture_city]
+    what_it_delivers: >-
+      Once the minimum planning kernel is operable, every new Planning Run uses
+      it directly; an outage suspends only affected runs and is repaired forward
+      while independent previously published delivery continues.
+    acceptance_criteria:
+      - The fixture City proves simple and Wayfinding paths through approved Spec, approved graph publication and convoy continuation before activation.
+      - After activation, no new request can select the legacy planning path.
+      - A forced new-path defect suspends only affected Planning Runs and does not reactivate legacy planning.
+      - Already-started delivery remains eligible according to its existing verified graph.
+      - The next real non-critical Planning Run is reserved for C01, Cockpit V2.
+
+verification_nodes:
+  - id: V01
+    kind: outcome_verification
+    title: Review and verify the exact assembled Factory refactor
+    blocked_by: [B08, B10, B11, B12, C01]
+    target_rigs: [factory_workspace, fixture_city, fixture_project_rigs]
+    what_it_delivers: >-
+      Final evidence that the exact integrated refactor satisfies the Approved
+      Spec without cross-slice architecture drift and without importing the
+      quarantined planning or Cockpit designs.
+    acceptance_criteria:
+      - Every observable Spec criterion is traced to deterministic or independent review evidence.
+      - The exact assembled diff receives one independent medium-or-lower review focused only on emergent coupling and Spec drift.
+      - The complete fixture City battery remains the independent oracle after Cockpit V2 is live.
+      - The single Adaptation Register contains outcomes or future review points for every required entry.
+      - The result can be reported Delivered only after this evidence; Accepted remains subject to the approved acceptance rule.
+
+post_cutover_canary:
+  id: C01
+  kind: separate_planning_run_not_published_by_this_draft
+  title: Plan and deliver Cockpit V2 as the first real canary
+  blocked_by: [B10, B12]
+  target_rigs: [cockpit_v2_canary, fixture_city]
+  why_not_a_pre_sliced_delivery_ticket: >-
+    Pre-slicing the replacement from Cockpit V1 would preserve the legacy
+    interface architecture. After cutover, the new planning kernel must create
+    C01's own Shared Understanding, Approved Spec and Ticket Graph Draft from
+    operator needs. This node is an activation and completion gate, not a Bead
+    for the B06 publication transaction.
+  operator_needs_to_start_from:
+    - Start, pause, resume or abandon the relevant Planning Run without operating Factory internals.
+    - See current intent, resolved decisions, remaining decision frontier and exact artifact approval state.
+    - Approve the exact Spec digest and Ticket Graph Draft granularity or blockers when a human gate applies.
+    - See delivery progress, Planning Exceptions, Delivered versus Accepted and only the next action that genuinely needs the operator.
+    - Keep all orchestration and graph mutation behind authoritative Factory doors; the Cockpit remains an adapter.
+  acceptance_criteria:
+    - It is the first real non-critical Planning Run created after B12 activates the new path.
+    - Its design begins from the listed operator needs and fresh design decisions, not Cockpit V1 routes, components or state model.
+    - Its own Approved Spec and Ticket Graph Draft pass the same digest and approval contracts as any project.
+    - Its implementation is delivered through the new convoy path and accepted under the initial human behavior gate.
+    - Cockpit tests supplement but never replace the deterministic fixture City oracle.
+
+approval_questions:
+  - Does this granularity fit one fresh implementation context per published slice, especially B04, B06 and B10?
+  - Are any prototype nodes too broad, or should P02 remain one comparison so it cannot select wiring from isolated local optima?
+  - Are the blocker edges minimal and correct, especially B12 not waiting for portability or advanced exception and acceptance behavior?
+  - Do you approve C01 as a separate post-cutover Planning Run and completion gate rather than a pre-sliced ticket in this publication graph?
+  - Should any ticket be merged or split before this draft receives an approved digest and can be handed to the publication door?

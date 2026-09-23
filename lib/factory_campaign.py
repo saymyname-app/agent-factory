@@ -275,6 +275,25 @@ def is_ladder_bead(bead: Any) -> bool:
     return True
 
 
+def is_scoped_delivery_bead(bead: Any, graph_digest: str | None) -> bool:
+    """True when ``bead`` belongs to the active approved delivery graph.
+
+    An empty scope preserves the legacy Factory-lane behavior.  A non-empty
+    scope is deliberately positive: both the exact graph digest and the
+    delivery plane must match.  This keeps old Factory beads, planning beads,
+    product candidates, and unvalidated lookalikes out of a bootstrap convoy.
+    """
+    if not graph_digest:
+        return True
+    if not isinstance(bead, dict):
+        return False
+    metadata = bead.get("metadata") if isinstance(bead.get("metadata"), dict) else {}
+    return (
+        str(metadata.get("gc.graph_digest") or "").strip() == graph_digest
+        and str(metadata.get("gc.plane") or "").strip() == "delivery"
+    )
+
+
 def _priority(bead: dict[str, Any]) -> int:
     try:
         return int(bead.get("priority"))
@@ -457,6 +476,7 @@ def _first_eligible_factory_queue_candidate(
 def plan_factory_lane(
     ready: list[dict[str, Any]],
     queue_candidates: list[dict[str, Any]] | None = None,
+    graph_digest: str | None = None,
 ) -> dict[str, Any]:
     """Rungs 2/2b only: a ready Factory bead, or an eligible ``goal=none``
     queue candidate. Returns ``{"action": "none", "reason": "factory_lane_empty", ...}``
@@ -469,7 +489,10 @@ def plan_factory_lane(
     the Factory lane can win even while a product candidate is eligible.
     """
     candidates = sorted(
-        (bead for bead in ready if is_ladder_bead(bead)),
+        (
+            bead for bead in ready
+            if is_ladder_bead(bead) and is_scoped_delivery_bead(bead, graph_digest)
+        ),
         key=lambda bead: (_priority(bead), str(bead.get("created_at") or ""), str(bead["id"])),
     )
     if candidates:
@@ -495,7 +518,9 @@ def plan_factory_lane(
             ),
         }
 
-    queue_candidate = _first_eligible_factory_queue_candidate(queue_candidates)
+    # An approved-graph scope is exclusive. Queue candidates have no graph
+    # digest and therefore cannot be a safe fallback while it is active.
+    queue_candidate = None if graph_digest else _first_eligible_factory_queue_candidate(queue_candidates)
     if queue_candidate is not None:
         candidate_id = str(queue_candidate["id"])
         title = str(queue_candidate.get("title") or "").strip()
@@ -517,7 +542,8 @@ def plan_factory_lane(
             ),
         }
 
-    return {"action": "none", "reason": "factory_lane_empty", "wake_key": None}
+    reason = "scoped_graph_waiting" if graph_digest else "factory_lane_empty"
+    return {"action": "none", "reason": reason, "wake_key": None}
 
 
 def plan_idle_ladder(
@@ -530,6 +556,7 @@ def plan_idle_ladder(
     axis: dict[str, Any] | None = None,
     last_axis: Any = None,
     workflow_state: dict[str, Any] | None = None,
+    graph_digest: str | None = None,
 ) -> dict[str, Any]:
     """Pick the next rung when product work has nothing to do.
 
@@ -551,7 +578,11 @@ def plan_idle_ladder(
     last_generative = last_generative or {}
 
     # One Factory bead at a time, exactly like product results.
-    if isinstance(tracked, dict) and tracked.get("status") == "in_progress":
+    if (
+        isinstance(tracked, dict)
+        and tracked.get("status") == "in_progress"
+        and is_scoped_delivery_bead(tracked, graph_digest)
+    ):
         tracked_id = str(tracked.get("id") or "")
         if isinstance(workflow_state, dict) and workflow_state.get("all_closed"):
             failed = workflow_state.get("failed_nodes") or []
@@ -599,6 +630,7 @@ def plan_idle_ladder(
             # only through "none"/"ladder_*" reasons, never a PROGRESS_REASON.
             plan = plan_idle_ladder(
                 ready, now, last_generative, None, queue_candidates, maintain_alive, axis, last_axis,
+                None, graph_digest,
             )
             plan["unstick_bead"] = tracked.get("id")
             return plan
@@ -611,9 +643,16 @@ def plan_idle_ladder(
         # never indistinguishable from class D/E (stalled, defective).
         return {"action": "none", "reason": "maintain_alive_off", "wake_key": None}
 
-    factory_plan = plan_factory_lane(ready, queue_candidates)
+    factory_plan = plan_factory_lane(ready, queue_candidates, graph_digest)
     if factory_plan["action"] == "wake_mayor":
         return factory_plan
+
+    # Exclusive approved-graph mode has no product, queue, generative, or
+    # improvement-axis fallthrough. Waiting for blockers is a healthy idle
+    # state; the Mayor is woken only when another bead in this exact graph is
+    # positively eligible.
+    if graph_digest:
+        return {"action": "none", "reason": "scoped_graph_waiting", "wake_key": None}
 
     for rung, period in LADDER_GENERATIVE_RUNGS:
         last = _epoch(last_generative.get(rung))

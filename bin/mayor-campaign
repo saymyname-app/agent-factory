@@ -475,6 +475,7 @@ PRIORITY_LANES = ("factory", "product")
 # is the default until Benjamin flips it -- matches the standing instruction
 # "Factory work comes before product work" (agents/mayor/prompt.template.md).
 DEFAULT_PRIORITY_LANE = "factory"
+GRAPH_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def priority_lane_of(metadata: dict[str, Any]) -> str:
@@ -496,6 +497,46 @@ def priority(args: argparse.Namespace) -> None:
         return
     update_metadata({"gc.campaign_priority_lane": args.lane})
     print(json.dumps({"lane": args.lane}, ensure_ascii=False))
+
+
+def graph_scope_of(metadata: dict[str, Any]) -> str | None:
+    if str(metadata.get("gc.campaign_scope_mode") or "").strip() != "exclusive_graph":
+        return None
+    digest = str(metadata.get("gc.campaign_scope_graph_digest") or "").strip()
+    if not GRAPH_DIGEST_RE.fullmatch(digest):
+        raise CampaignCommandError("exclusive_graph requires an exact sha256 graph digest")
+    return digest
+
+
+def scope(args: argparse.Namespace) -> None:
+    """Set or clear the exclusive approved-graph campaign scope."""
+    issue = coordination_issue()
+    metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+    if args.graph is None:
+        print(json.dumps({"graph_digest": graph_scope_of(metadata)}, ensure_ascii=False))
+        return
+    require_mayor(args)
+    if args.graph == "clear":
+        update_metadata({
+            "gc.campaign_scope_mode": "",
+            "gc.campaign_scope_graph_digest": "",
+            "gc.campaign_ladder_bead": "",
+            "gc.campaign_wake_key": "",
+            "gc.campaign_wake_state": "none",
+        })
+        print(json.dumps({"graph_digest": None}, ensure_ascii=False))
+        return
+    if not GRAPH_DIGEST_RE.fullmatch(args.graph):
+        raise CampaignCommandError("scope must be clear or sha256:<64 lowercase hex characters>")
+    update_metadata({
+        "gc.campaign_scope_mode": "exclusive_graph",
+        "gc.campaign_scope_graph_digest": args.graph,
+        "gc.campaign_priority_lane": "factory",
+        "gc.campaign_ladder_bead": "",
+        "gc.campaign_wake_key": "",
+        "gc.campaign_wake_state": "none",
+    })
+    print(json.dumps({"graph_digest": args.graph}, ensure_ascii=False))
 
 
 def failure_detail(exc: Exception) -> str:
@@ -769,7 +810,7 @@ def ready_list() -> list[dict[str, Any]]:
     return ready
 
 
-def factory_lane_peek() -> dict[str, Any]:
+def factory_lane_peek(graph_digest: str | None = None) -> dict[str, Any]:
     """Rungs 2/2b only -- a quick look at the Factory lane on its own.
 
     Used to give the Factory lane priority over a product materialize
@@ -785,7 +826,7 @@ def factory_lane_peek() -> dict[str, Any]:
         queue_candidates = json_run(PRODUCT_QUEUE_BIN, "list", "--json")
     except CampaignCommandError:
         queue_candidates = None
-    return plan_factory_lane(ready, queue_candidates)
+    return plan_factory_lane(ready, queue_candidates, graph_digest)
 
 
 def ladder_workflow_state(tracked: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -872,7 +913,7 @@ def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
     workflow_state = ladder_workflow_state(tracked)
     plan = plan_idle_ladder(
         ready, now, last, tracked, queue_candidates, maintain_alive, axis, last_axis,
-        workflow_state,
+        workflow_state, graph_scope_of(metadata),
     )
     unstick = plan.pop("unstick_bead", None)
     if unstick:
@@ -931,7 +972,9 @@ def sentinel(_: argparse.Namespace) -> None:
             return
         ladder_only = True
 
-    if ladder_only:
+    graph_scope = graph_scope_of(metadata)
+
+    if ladder_only or graph_scope:
         decision = ladder_decision(metadata, now)
     else:
         try:
@@ -983,7 +1026,7 @@ def sentinel(_: argparse.Namespace) -> None:
             # checked before a product materialize decision, not only after
             # one -- WHILE the priority lane has an eligible candidate, THE
             # mayor-campaign SHALL process it before any other lane.
-            factory_plan = factory_lane_peek()
+            factory_plan = factory_lane_peek(graph_scope)
             if factory_plan["action"] == "wake_mayor":
                 decision = factory_plan
 
@@ -1171,6 +1214,13 @@ def parser() -> argparse.ArgumentParser:
     )
     priority_parser.add_argument("lane", nargs="?", choices=PRIORITY_LANES)
     priority_parser.set_defaults(handler=priority)
+
+    scope_parser = commands.add_parser(
+        "scope", help="get, set, or clear an exclusive approved-graph campaign scope"
+    )
+    scope_parser.add_argument("graph", nargs="?", help="sha256:<digest>, clear, or omit to inspect")
+    scope_parser.add_argument("--mayor", dest="authority", action="store_true")
+    scope_parser.set_defaults(handler=scope)
     return value
 
 
