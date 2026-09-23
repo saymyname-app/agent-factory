@@ -420,6 +420,23 @@ class MayorCampaignTest(CampaignFixture, unittest.TestCase):
         self.assertIn("ladder_rested", fourth)
         self.assertEqual(3, self.mail_count())
 
+    def test_exclusive_graph_scope_is_set_and_cleared_only_through_the_door(self):
+        digest = "sha256:" + "a" * 64
+        result = self.invoke("scope", digest, "--mayor")
+        self.assertEqual({"graph_digest": digest}, json.loads(result.stdout))
+        current = self.current_metadata()
+        self.assertEqual("exclusive_graph", current["gc.campaign_scope_mode"])
+        self.assertEqual(digest, current["gc.campaign_scope_graph_digest"])
+        self.assertEqual("factory", current["gc.campaign_priority_lane"])
+        self.assertEqual({"graph_digest": digest}, json.loads(self.invoke("scope").stdout))
+        self.assertEqual({"graph_digest": None}, json.loads(self.invoke("scope", "clear", "--mayor").stdout))
+        self.assertEqual("", self.current_metadata()["gc.campaign_scope_graph_digest"])
+
+    def test_exclusive_graph_scope_rejects_a_non_digest(self):
+        result = self.invoke("scope", "not-a-digest", "--mayor", check=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn("gc.campaign_scope_mode", self.current_metadata())
+
     def test_activate_and_resume_record_the_last_valid_candidate_and_condition(self):
         # ADR-0023 / af-hihkg: repair --mayor can only restore what activate
         # and resume have been recording all along.
@@ -595,6 +612,34 @@ class IdleLadderPlanTest(unittest.TestCase):
         self.assertEqual(("wake_mayor", "ladder:factory:af-hi", "af-hi"),
                          (plan["action"], plan["wake_key"], plan["ladder_bead"]))
         self.assertIn("gc.waiting_on", plan["message"])
+
+    def test_exclusive_graph_scope_selects_only_positive_delivery_members(self):
+        digest = "sha256:" + "b" * 64
+        scoped = bead("af-scoped", priority=3, metadata={
+            "gc.graph_digest": digest, "gc.plane": "delivery",
+        })
+        wrong_plane = bead("af-planning", priority=0, metadata={
+            "gc.graph_digest": digest, "gc.plane": "planning",
+        })
+        wrong_graph = bead("af-old", priority=0, metadata={
+            "gc.graph_digest": "sha256:" + "c" * 64, "gc.plane": "delivery",
+        })
+        plan = plan_idle_ladder(
+            [wrong_plane, wrong_graph, scoped], NOW,
+            queue_candidates=[{"id": "af-q", "kind": "factory_campaign",
+                               "state": "eligible", "title": "old queue"}],
+            graph_digest=digest,
+        )
+        self.assertEqual("ladder:factory:af-scoped", plan["wake_key"])
+
+        waiting = plan_idle_ladder(
+            [wrong_plane, wrong_graph], NOW,
+            queue_candidates=[{"id": "af-q", "kind": "factory_campaign",
+                               "state": "eligible", "title": "old queue"}],
+            graph_digest=digest,
+        )
+        self.assertEqual(("none", "scoped_graph_waiting"),
+                         (waiting["action"], waiting["reason"]))
 
     def test_one_factory_bead_at_a_time(self):
         tracked = bead("af-hi", status="in_progress", updated_at="2026-09-16T10:00:00Z")
@@ -810,6 +855,34 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         self.write_status(status(next_id="af-next"))
         out = self.sentinel(NOW).stdout
         self.assertIn("NOTIFIED: mayor — ladder:factory:af-fix", out)
+
+    def test_exclusive_graph_scope_never_falls_through_to_old_factory_or_product_work(self):
+        digest = "sha256:" + "d" * 64
+        self.write_state({
+            **metadata(),
+            "gc.campaign_scope_mode": "exclusive_graph",
+            "gc.campaign_scope_graph_digest": digest,
+        })
+        self.ready_file.write_text(json.dumps([
+            bead("af-old", priority=0),
+            bead("af-scoped", priority=3, metadata={
+                "gc.graph_digest": digest, "gc.plane": "delivery",
+            }),
+        ]), encoding="utf-8")
+        self.write_status(status(next_id="af-product"))
+        out = self.sentinel(NOW).stdout
+        self.assertIn("NOTIFIED: mayor — ladder:factory:af-scoped", out)
+        self.assertNotIn("af-old", out)
+        self.assertNotIn("af-product", out)
+
+        self.write_state({
+            **metadata(),
+            "gc.campaign_scope_mode": "exclusive_graph",
+            "gc.campaign_scope_graph_digest": digest,
+        })
+        self.ready_file.write_text(json.dumps([bead("af-old", priority=0)]), encoding="utf-8")
+        out = self.sentinel(NOW + 60).stdout
+        self.assertIn("NOOP: scoped_graph_waiting", out)
 
     def test_a_mail_error_rolls_back_precommitted_ladder_tracking(self):
         self.write_status(status(next_id=None))

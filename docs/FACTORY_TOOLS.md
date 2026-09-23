@@ -182,6 +182,8 @@ humaine (ADR-0013, ADR-0016).
 ./bin/mayor-campaign block --mayor --kind <k> --owner <o> --cause ... --action ...
 ./bin/mayor-campaign resume --mayor
 ./bin/mayor-campaign repair --mayor  # restaure candidat/condition manquants (ADR-0023)
+./bin/mayor-campaign scope <sha256:digest> --mayor  # voie exclusive d'un graphe approuvé
+./bin/mayor-campaign scope clear --mayor            # lève explicitement ce scope
 ```
 
 **À lire en premier dans toute nouvelle session.** Un `ERROR` sur `status`
@@ -199,6 +201,15 @@ Les transitions exigent le garde `--mayor`. C'est un garde « transition
 délibérée », **pas** une revendication d'identité : déclarez l'auteur réel dans
 `--cause`. Le Mayor lit ce champ et peut prendre une recommandation du PO pour
 une décision de Benjamin.
+
+Le scope `exclusive_graph` (ADR-0025) est plus fort qu'une priorité. Tant qu'il
+est actif, la sentinelle ne peut choisir que les beads portant le digest exact
+et `gc.plane=delivery`; elle ne retombe ni sur le produit, ni sur un ancien bead
+Factory, ni sur l'échelle générative. Une frontière vide ou bloquée rend
+`scoped_graph_waiting` à zéro appel modèle. Utiliser
+`./bin/ticket-graph-publish validate|publish <draft>` pour la publication
+atomique du draft approuvé, puis lever le scope seulement à la transition
+explicitement autorisée.
 
 ### Ce que fait la sentinelle quand il n'y a pas de travail produit
 

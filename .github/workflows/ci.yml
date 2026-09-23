@@ -52,6 +52,9 @@ jobs:
       - name: Mayor campaign tests
         run: python tests/mayor-campaign-test.py
 
+      - name: Approved Ticket Graph atomic publication
+        run: python tests/ticket-graph-publish-test.py
+
       - name: Factory guard worktree hygiene
         run: bash tests/factory-guard-worktree-test.sh
 

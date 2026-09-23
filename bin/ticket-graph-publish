@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+"""Validate and atomically publish one approved Ticket Graph Draft to Beads."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+PROGRAM = "ticket-graph-publish"
+ROOT = Path(__file__).resolve().parents[1]
+BD_BIN = os.environ.get("BD_BIN", "bd")
+BD_WORKSPACE = Path(os.environ.get("TICKET_GRAPH_BD_WORKSPACE", str(ROOT)))
+CONTENT_BOUNDARY = b"legacy_boundary:"
+
+
+class PublishError(RuntimeError):
+    pass
+
+
+def run(*args: str) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            [BD_BIN, "-C", str(BD_WORKSPACE), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise PublishError(detail) from exc
+
+
+def scoped_digest(raw: bytes) -> str:
+    raw = raw.replace(b"\r\n", b"\n")
+    marker = b"\n" + CONTENT_BOUNDARY
+    try:
+        start = raw.index(marker) + 1
+    except ValueError as exc:
+        raise PublishError("draft has no legacy_boundary digest marker") from exc
+    return "sha256:" + hashlib.sha256(raw[start:]).hexdigest()
+
+
+def as_dict(value: Any, where: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise PublishError(f"{where} must be an object")
+    return value
+
+
+def as_list(value: Any, where: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise PublishError(f"{where} must be a list")
+    return value
+
+
+def validate_draft(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    raw = path.read_bytes()
+    try:
+        value = yaml.safe_load(raw.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise PublishError(f"invalid UTF-8 YAML: {exc}") from exc
+    draft = as_dict(value, "draft")
+    artifact = as_dict(draft.get("artifact"), "artifact")
+    if artifact.get("state") != "APPROVED_TICKET_GRAPH_DRAFT":
+        raise PublishError("draft is not APPROVED_TICKET_GRAPH_DRAFT")
+    if artifact.get("publication_authorized") is not True:
+        raise PublishError("draft publication_authorized is not true")
+    actual_digest = scoped_digest(raw)
+    if artifact.get("content_digest") != actual_digest:
+        raise PublishError(
+            f"draft digest mismatch: declared {artifact.get('content_digest')!r}, actual {actual_digest}"
+        )
+    source_spec = as_dict(artifact.get("source_spec"), "artifact.source_spec")
+    if source_spec.get("state") != "APPROVED_SPEC":
+        raise PublishError("source Spec is not APPROVED_SPEC")
+    spec_digest = str(source_spec.get("digest") or "")
+    if not spec_digest.startswith("sha256:") or len(spec_digest) != 71:
+        raise PublishError("source Spec digest is invalid")
+
+    raw_tickets = as_list(draft.get("tickets"), "tickets")
+    tickets = [as_dict(item, f"tickets[{index}]") for index, item in enumerate(raw_tickets)]
+    if not tickets:
+        raise PublishError("draft has no publishable tickets")
+    ids = [str(ticket.get("id") or "").strip() for ticket in tickets]
+    if any(not ticket_id for ticket_id in ids) or len(set(ids)) != len(ids):
+        raise PublishError("ticket IDs must be non-empty and unique")
+    known = set(ids)
+    for ticket in tickets:
+        ticket_id = str(ticket["id"])
+        blockers = as_list(ticket.get("blocked_by"), f"{ticket_id}.blocked_by")
+        unknown = sorted(str(item) for item in blockers if str(item) not in known)
+        if unknown:
+            raise PublishError(f"{ticket_id} has unknown blockers: {', '.join(unknown)}")
+        if ticket_id in {str(item) for item in blockers}:
+            raise PublishError(f"{ticket_id} blocks itself")
+        if not str(ticket.get("title") or "").strip():
+            raise PublishError(f"{ticket_id} has no title")
+        if not str(ticket.get("what_it_delivers") or "").strip():
+            raise PublishError(f"{ticket_id} has no autonomous outcome")
+        if not as_list(ticket.get("acceptance_criteria"), f"{ticket_id}.acceptance_criteria"):
+            raise PublishError(f"{ticket_id} has no acceptance criteria")
+        if not as_list(ticket.get("target_rigs"), f"{ticket_id}.target_rigs"):
+            raise PublishError(f"{ticket_id} has no target rigs")
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+    by_id = {str(ticket["id"]): ticket for ticket in tickets}
+
+    def visit(ticket_id: str) -> None:
+        if ticket_id in visiting:
+            raise PublishError(f"dependency cycle at {ticket_id}")
+        if ticket_id in visited:
+            return
+        visiting.add(ticket_id)
+        for blocker in by_id[ticket_id]["blocked_by"]:
+            visit(str(blocker))
+        visiting.remove(ticket_id)
+        visited.add(ticket_id)
+
+    for ticket_id in ids:
+        visit(ticket_id)
+    return draft, tickets
+
+
+def ticket_description(ticket: dict[str, Any], execution: dict[str, Any]) -> str:
+    criteria = "\n".join(f"- [ ] {item}" for item in ticket["acceptance_criteria"])
+    rigs = ", ".join(str(item) for item in ticket["target_rigs"])
+    contract = "\n".join(f"- {key}: {value}" for key, value in execution.items())
+    return (
+        f"## What to build\n\n{ticket['what_it_delivers']}\n\n"
+        f"## Acceptance criteria\n\n{criteria}\n\n"
+        f"## Target rigs\n\n{rigs}\n\n"
+        f"## Autonomous execution contract\n\n{contract}"
+    )
+
+
+def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str, Any]:
+    artifact = draft["artifact"]
+    spec = artifact["source_spec"]
+    digest = artifact["content_digest"]
+    execution = as_dict(draft.get("global_execution_contract"), "global_execution_contract")
+    nodes: list[dict[str, Any]] = [
+        {
+            "key": "_convoy",
+            "type": "convoy",
+            "title": "Project-agnostic Agent Factory refactor",
+            "description": (
+                "Approved delivery graph for the project-agnostic Agent Factory refactor. "
+                "The Mayor advances only positively eligible delivery-plane children."
+            ),
+            "labels": ["approved-ticket-graph", "factory-refactor"],
+            "metadata": {
+                "gc.graph_digest": digest,
+                "gc.plane": "delivery",
+                "gc.artifact_id": artifact["id"],
+                "gc.spec_id": spec["id"],
+                "gc.spec_digest": spec["digest"],
+                "gc.publication_validated": "true",
+            },
+        }
+    ]
+    edges: list[dict[str, str]] = []
+    for ticket in tickets:
+        ticket_id = str(ticket["id"])
+        nodes.append({
+            "key": ticket_id,
+            "type": "task",
+            "priority": 1,
+            "title": f"{ticket_id} — {ticket['title']}",
+            "description": ticket_description(ticket, execution),
+            "labels": ["approved-ticket-graph", "delivery-plane", "factory-refactor"],
+            "metadata": {
+                "gc.graph_digest": digest,
+                "gc.plane": "delivery",
+                "gc.ticket_id": ticket_id,
+                "gc.ticket_kind": str(ticket.get("kind") or "vertical_slice"),
+                "gc.artifact_id": artifact["id"],
+                "gc.spec_id": spec["id"],
+                "gc.spec_digest": spec["digest"],
+                "gc.publication_validated": "true",
+            },
+        })
+        edges.append({"from_key": "_convoy", "to_key": ticket_id, "type": "tracks"})
+        for blocker in ticket["blocked_by"]:
+            edges.append({"from_key": ticket_id, "to_key": str(blocker), "type": "blocks"})
+    return {"nodes": nodes, "edges": edges}
+
+
+def existing_graph(digest: str, ticket_count: int) -> dict[str, str] | None:
+    payload = json.loads(run("list", "--all", "--limit", "0", "--json").stdout or "[]")
+    matches = []
+    for issue in payload if isinstance(payload, list) else []:
+        metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+        if metadata.get("gc.graph_digest") == digest:
+            matches.append(issue)
+    if not matches:
+        return None
+    expected = ticket_count + 1
+    if len(matches) != expected:
+        raise PublishError(
+            f"existing graph {digest} is partial: expected {expected} nodes, found {len(matches)}"
+        )
+    mapping: dict[str, str] = {}
+    for issue in matches:
+        metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+        key = str(metadata.get("gc.ticket_id") or "_convoy")
+        if key in mapping:
+            raise PublishError(f"existing graph {digest} has duplicate key {key}")
+        mapping[key] = str(issue["id"])
+    return mapping
+
+
+def publish(plan: dict[str, Any], digest: str, ticket_count: int) -> dict[str, str]:
+    already = existing_graph(digest, ticket_count)
+    if already is not None:
+        return already
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json") as handle:
+        json.dump(plan, handle, ensure_ascii=False)
+        handle.flush()
+        result = json.loads(run("create", "--graph", handle.name, "--json").stdout)
+    mapping = result.get("ids") if isinstance(result, dict) else None
+    if not isinstance(mapping, dict) or len(mapping) != ticket_count + 1:
+        raise PublishError("Beads graph transaction returned an incomplete ID mapping")
+    return {str(key): str(value) for key, value in mapping.items()}
+
+
+def parser() -> argparse.ArgumentParser:
+    value = argparse.ArgumentParser(prog=PROGRAM)
+    value.add_argument("command", choices=("validate", "publish"))
+    value.add_argument("draft", type=Path)
+    return value
+
+
+def main() -> int:
+    try:
+        args = parser().parse_args()
+        draft, tickets = validate_draft(args.draft)
+        plan = graph_plan(draft, tickets)
+        if args.command == "validate":
+            print(json.dumps({
+                "ok": True,
+                "graph_digest": draft["artifact"]["content_digest"],
+                "ticket_count": len(tickets),
+                "node_count": len(plan["nodes"]),
+                "edge_count": len(plan["edges"]),
+            }, ensure_ascii=False, sort_keys=True))
+            return 0
+        mapping = publish(plan, draft["artifact"]["content_digest"], len(tickets))
+        print(json.dumps({
+            "ok": True,
+            "graph_digest": draft["artifact"]["content_digest"],
+            "ids": mapping,
+        }, ensure_ascii=False, sort_keys=True))
+        return 0
+    except (OSError, PublishError, json.JSONDecodeError) as exc:
+        print(f"{PROGRAM}: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
