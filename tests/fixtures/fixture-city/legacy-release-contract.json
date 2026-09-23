@@ -1,0 +1,20 @@
+{
+  "contract": "agent-factory-fixture-scenario/v1",
+  "scenario_id": "legacy-release-contract",
+  "request": {
+    "project_id": "fixture-legacy-release-contract",
+    "intent": "Prove the Matt path cannot create or consume a duplicated Release Contract.",
+    "legacy_path": "release-contract",
+    "rigs": [
+      {
+        "name": "fixture-app",
+        "revision": "7a9e5aeffb4f73c649a22fd666208a22a80d9f46",
+        "fixture_source": "rigs/fixture-app"
+      }
+    ],
+    "slices": [
+      {"key": "S01", "title": "Attempt Release Contract projection", "rigs": ["fixture-app"], "blocked_by": []}
+    ]
+  },
+  "inject": {"publication_failure": "none"}
+}

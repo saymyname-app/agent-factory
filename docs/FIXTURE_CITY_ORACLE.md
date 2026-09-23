@@ -38,11 +38,34 @@ Scenarios use `agent-factory-fixture-scenario/v1` and contain:
 - a synthetic `project_id` and product-language `intent`;
 - one or two fixture rigs, each backed by checked-in synthetic source and
   pinned to the exact deterministic Git commit produced from that source;
-- independently observable vertical slices and their blocker keys; and
-- `inject.publication_failure`, either `none` or `after-stage`.
+- independently observable vertical slices and their blocker keys;
+- `inject.publication_failure`, either `none` or `after-stage`; and
+- `request.legacy_path`, either `none` (default) or one of `planning-base`,
+  `release-contract`, `cockpit-v1-export` (see "Legacy path quarantine" below).
 
 The oracle rejects duplicate IDs, undeclared rigs, non-exact revisions, missing
 blockers, self-dependencies, and cyclic graphs before invoking an adapter.
+
+## Legacy path quarantine
+
+ADR-0027 fences the legacy planning-base methodology, the duplicated Release
+Contract, and Cockpit V1's routes/screens/state model so that a new Planning
+Run cannot select or reuse them. A scenario proves this by setting
+`request.legacy_path` to `planning-base`, `release-contract`, or
+`cockpit-v1-export` instead of the default `none`.
+
+When `legacy_path` is set, the oracle calls only the operator's `start`
+command (with `check=False`) and requires it to exit non-zero with a
+non-empty, operator-readable reason on stderr. No Planning Run identity,
+artifact, publication, or write door is ever invoked — the run result carries
+`planning_run_id: null`, `planning_states: []`, and a
+`legacy_path_rejection: {selection, reason}` object instead of the full
+lifecycle trace. A request that omits `legacy_path` is completely unaffected
+and completes the full lifecycle exactly as before, which is how
+already-attached delivery convoys keep working without depending on the new
+planner.
+See `tests/fixtures/fixture-city/legacy-planning-base.json`,
+`legacy-release-contract.json`, and `legacy-cockpit-v1-export.json`.
 
 ## Public adapter boundary
 
