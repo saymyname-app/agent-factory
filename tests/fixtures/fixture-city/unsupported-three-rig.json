@@ -1,0 +1,17 @@
+{
+  "contract": "agent-factory-fixture-scenario/v1",
+  "scenario_id": "unsupported-three-rig",
+  "request": {
+    "project_id": "fixture-unsupported-three-rig",
+    "intent": "Do not claim runnable coverage for a topology the reference fixture does not exercise.",
+    "rigs": [
+      {"name": "fixture-api", "revision": "73ac3a0db24ecb1d522b83a454526b75c4a83668", "fixture_source": "rigs/fixture-api"},
+      {"name": "fixture-web", "revision": "97e20dbabc2ae1c7874c5ae9be50fee49d3ac654", "fixture_source": "rigs/fixture-web"},
+      {"name": "fixture-app", "revision": "7a9e5aeffb4f73c649a22fd666208a22a80d9f46", "fixture_source": "rigs/fixture-app"}
+    ],
+    "slices": [
+      {"key": "S01", "title": "Unsupported three-rig path", "rigs": ["fixture-api", "fixture-web", "fixture-app"], "blocked_by": []}
+    ]
+  },
+  "inject": {"publication_failure": "none"}
+}

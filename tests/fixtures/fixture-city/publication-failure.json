@@ -1,0 +1,20 @@
+{
+  "contract": "agent-factory-fixture-scenario/v1",
+  "scenario_id": "publication-failure",
+  "request": {
+    "project_id": "fixture-publication-failure",
+    "intent": "Attempt graph publication and preserve no partial delivery work on failure.",
+    "rigs": [
+      {
+        "name": "fixture-app",
+        "revision": "7a9e5aeffb4f73c649a22fd666208a22a80d9f46",
+        "fixture_source": "rigs/fixture-app"
+      }
+    ],
+    "slices": [
+      {"key": "S01", "title": "First atomic slice", "rigs": ["fixture-app"], "blocked_by": []},
+      {"key": "S02", "title": "Second atomic slice", "rigs": ["fixture-app"], "blocked_by": ["S01"]}
+    ]
+  },
+  "inject": {"publication_failure": "after-stage"}
+}

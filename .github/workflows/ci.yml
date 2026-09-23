@@ -58,6 +58,16 @@ jobs:
       - name: Approved Ticket Graph atomic publication
         run: python tests/ticket-graph-publish-test.py
 
+      - name: Ensure fixture sandbox runtime
+        run: |
+          if ! command -v bwrap >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y bubblewrap
+          fi
+
+      - name: Fixture City public-behavior oracle
+        run: python tests/fixture-city-oracle-test.py
+
       - name: Factory guard worktree hygiene
         run: bash tests/factory-guard-worktree-test.sh
 

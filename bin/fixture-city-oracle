@@ -1,0 +1,781 @@
+#!/usr/bin/env python3
+"""Black-box public-behavior oracle for an isolated fixture City."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+
+PROGRAM = "fixture-city-oracle"
+SCENARIO_CONTRACT = "agent-factory-fixture-scenario/v1"
+OBSERVATION_CONTRACT = "agent-factory-fixture-observation/v1"
+RESULT_CONTRACT = "agent-factory-fixture-oracle-result/v1"
+SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+REVISION = re.compile(r"^[0-9a-f]{40}$")
+
+
+class OracleError(RuntimeError):
+    pass
+
+
+def as_dict(value: Any, name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise OracleError(f"{name} must be an object")
+    return value
+
+
+def as_list(value: Any, name: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise OracleError(f"{name} must be an array")
+    return value
+
+
+def required_string(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise OracleError(f"{name} must be a non-empty string")
+    return value
+
+
+def digest_bytes(value: bytes) -> str:
+    return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def canonical_digest(value: Any) -> str:
+    return digest_bytes(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+
+
+def validate_scenario(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    try:
+        scenario = as_dict(json.loads(path.read_text(encoding="utf-8")), "scenario")
+    except (OSError, json.JSONDecodeError) as exc:
+        raise OracleError(f"cannot read scenario {path}: {exc}") from exc
+    if scenario.get("contract") != SCENARIO_CONTRACT:
+        raise OracleError(f"scenario contract must be {SCENARIO_CONTRACT}")
+    scenario_id = required_string(scenario.get("scenario_id"), "scenario_id")
+    if not SAFE_ID.fullmatch(scenario_id):
+        raise OracleError("scenario_id contains unsupported characters")
+
+    request = as_dict(scenario.get("request"), "request")
+    project_id = required_string(request.get("project_id"), "request.project_id")
+    if not SAFE_ID.fullmatch(project_id):
+        raise OracleError("request.project_id contains unsupported characters")
+    required_string(request.get("intent"), "request.intent")
+
+    rigs = as_list(request.get("rigs"), "request.rigs")
+    if not rigs:
+        raise OracleError("request.rigs must name at least one fixture rig")
+    if len(rigs) > 2:
+        raise OracleError("fixture scenarios support one or two exact-revision rigs")
+    rig_names: set[str] = set()
+    for index, raw_rig in enumerate(rigs):
+        rig = as_dict(raw_rig, f"request.rigs[{index}]")
+        name = required_string(rig.get("name"), f"request.rigs[{index}].name")
+        revision = required_string(rig.get("revision"), f"request.rigs[{index}].revision")
+        fixture_source = required_string(
+            rig.get("fixture_source"), f"request.rigs[{index}].fixture_source"
+        )
+        if not SAFE_ID.fullmatch(name) or name in rig_names:
+            raise OracleError(f"fixture rig name is invalid or duplicated: {name}")
+        if not REVISION.fullmatch(revision):
+            raise OracleError(f"fixture rig {name} must use an exact 40-character revision")
+        source_path = Path(fixture_source)
+        if source_path.is_absolute() or ".." in source_path.parts:
+            raise OracleError(f"fixture rig {name} source must stay beneath the scenario directory")
+        rig_names.add(name)
+
+    slices = as_list(request.get("slices"), "request.slices")
+    if not slices:
+        raise OracleError("request.slices must name at least one vertical slice")
+    keys: set[str] = set()
+    normalized: list[dict[str, Any]] = []
+    for index, raw_slice in enumerate(slices):
+        item = as_dict(raw_slice, f"request.slices[{index}]")
+        key = required_string(item.get("key"), f"request.slices[{index}].key")
+        title = required_string(item.get("title"), f"request.slices[{index}].title")
+        if not SAFE_ID.fullmatch(key) or key in keys:
+            raise OracleError(f"vertical slice key is invalid or duplicated: {key}")
+        target_rigs = as_list(item.get("rigs"), f"request.slices[{index}].rigs")
+        blockers = as_list(item.get("blocked_by"), f"request.slices[{index}].blocked_by")
+        if (
+            not target_rigs
+            or any(rig not in rig_names for rig in target_rigs)
+            or len(set(target_rigs)) != len(target_rigs)
+        ):
+            raise OracleError(f"vertical slice {key} names an undeclared or empty rig set")
+        if (
+            any(not isinstance(blocker, str) for blocker in blockers)
+            or len(set(blockers)) != len(blockers)
+        ):
+            raise OracleError(f"vertical slice {key} has a non-string blocker")
+        normalized.append({"key": key, "title": title, "rigs": target_rigs, "blocked_by": blockers})
+        keys.add(key)
+    for item in normalized:
+        if item["key"] in item["blocked_by"] or any(key not in keys for key in item["blocked_by"]):
+            raise OracleError(f"vertical slice {item['key']} has an invalid blocker")
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+    blockers_by_key = {item["key"]: item["blocked_by"] for item in normalized}
+
+    def visit(key: str) -> None:
+        if key in visiting:
+            raise OracleError("fixture delivery graph must be acyclic")
+        if key in visited:
+            return
+        visiting.add(key)
+        for blocker in blockers_by_key[key]:
+            visit(blocker)
+        visiting.remove(key)
+        visited.add(key)
+
+    for key in keys:
+        visit(key)
+
+    inject = as_dict(scenario.get("inject", {}), "inject")
+    failure = inject.get("publication_failure", "none")
+    if failure not in {"none", "after-stage"}:
+        raise OracleError("inject.publication_failure must be none or after-stage")
+    return scenario, request
+
+
+def hermetic_env(workspace: Path) -> dict[str, str]:
+    home = workspace / "home"
+    tmp = workspace / "tmp"
+    cache = workspace / "cache"
+    for directory in (home, tmp, cache):
+        directory.mkdir(parents=True, exist_ok=True)
+    return {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "HOME": str(home),
+        "TMPDIR": str(tmp),
+        "XDG_CACHE_HOME": str(cache),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "FIXTURE_CITY_EFFECT_MODE": "deny",
+    }
+
+
+def git_env() -> dict[str, str]:
+    return {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_AUTHOR_NAME": "Fixture City",
+        "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+        "GIT_COMMITTER_NAME": "Fixture City",
+        "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+        "GIT_AUTHOR_DATE": "2000-01-01T00:00:00Z",
+        "GIT_COMMITTER_DATE": "2000-01-01T00:00:00Z",
+        "TZ": "UTC",
+    }
+
+
+def run_git(*arguments: str) -> str:
+    try:
+        result = subprocess.run(
+            ("git", *arguments),
+            env=git_env(),
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise OracleError(f"fixture Git command failed to run: {exc}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise OracleError(f"fixture Git command failed: {detail}")
+    return result.stdout.strip()
+
+
+def prepare_assemblies(
+    scenario_directory: Path, request: dict[str, Any], workspace: Path
+) -> dict[str, dict[str, Any]]:
+    scenario_directory = scenario_directory.resolve()
+    repositories = workspace / "repositories"
+    checkouts = workspace / "assembly"
+    repositories.mkdir()
+    checkouts.mkdir()
+    assemblies: dict[str, dict[str, Any]] = {}
+    for rig in request["rigs"]:
+        source = (scenario_directory / rig["fixture_source"]).resolve()
+        try:
+            source.relative_to(scenario_directory)
+        except ValueError as exc:
+            raise OracleError(f"fixture rig {rig['name']} source escapes the scenario directory") from exc
+        if not source.is_dir() or any(path.name == ".git" for path in source.rglob(".git")):
+            raise OracleError(f"fixture rig {rig['name']} source is missing or contains repository state")
+        repository = repositories / rig["name"]
+        checkout = checkouts / rig["name"]
+        shutil.copytree(source, repository)
+        run_git("-C", str(repository), "init", "-q", "--initial-branch=main", "--object-format=sha1")
+        run_git("-C", str(repository), "-c", "core.autocrlf=false", "add", "-A")
+        run_git(
+            "-C",
+            str(repository),
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            f"fixture revision for {rig['name']}",
+        )
+        observed_revision = run_git("-C", str(repository), "rev-parse", "HEAD")
+        if observed_revision != rig["revision"]:
+            raise OracleError(
+                f"fixture rig {rig['name']} source resolves to {observed_revision}, "
+                f"not pinned revision {rig['revision']}"
+            )
+        run_git("clone", "-q", "--no-checkout", str(repository), str(checkout))
+        run_git("-C", str(checkout), "checkout", "-q", "--detach", rig["revision"])
+        checked_out_revision = run_git("-C", str(checkout), "rev-parse", "HEAD")
+        tree = run_git("-C", str(checkout), "rev-parse", "HEAD^{tree}")
+        if checked_out_revision != rig["revision"]:
+            raise OracleError(f"fixture rig {rig['name']} did not assemble at its exact revision")
+        assemblies[rig["name"]] = {
+            "checkout": checkout,
+            "revision": checked_out_revision,
+            "tree": tree,
+        }
+    return assemblies
+
+
+def validate_clean_assemblies(assemblies: dict[str, dict[str, Any]]) -> None:
+    for rig_name, assembly in assemblies.items():
+        dirty = run_git(
+            "-C",
+            str(assembly["checkout"]),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
+        if dirty:
+            raise OracleError(f"assembled checkout for {rig_name} differs from its exact revision")
+
+
+def validate_assembly_evidence(
+    snapshot: dict[str, Any],
+    request: dict[str, Any],
+    assemblies: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    observed = as_dict(snapshot.get("assembly_check"), "assembly_check")
+    expected_participants = [
+        {
+            "rig": rig["name"],
+            "revision": assemblies[rig["name"]]["revision"],
+            "tree": assemblies[rig["name"]]["tree"],
+        }
+        for rig in request["rigs"]
+    ]
+    if (
+        observed.get("check") != "fixture-end-to-end"
+        or observed.get("passed") is not True
+        or observed.get("participants") != expected_participants
+    ):
+        raise OracleError("public assembly check does not cover the exact participating revisions")
+    return observed
+
+
+def sandbox_copy(executable: Path, workspace: Path) -> Path:
+    interfaces = workspace / "interfaces"
+    interfaces.mkdir(exist_ok=True)
+    suffix = hashlib.sha256(str(executable).encode("utf-8")).hexdigest()[:12]
+    target = interfaces / f"{suffix}-{executable.name}"
+    if not target.exists():
+        shutil.copy2(executable, target)
+        target.chmod(0o755)
+    return target
+
+
+def run_interface(
+    executable: Path,
+    workspace: Path,
+    command: str,
+    *arguments: str,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    if not executable.is_absolute() or not executable.is_file() or not os.access(executable, os.X_OK):
+        raise OracleError(f"interface executable must be an absolute executable file: {executable}")
+    bubblewrap = shutil.which("bwrap", path="/usr/local/bin:/usr/bin:/bin")
+    if bubblewrap is None:
+        raise OracleError("bubblewrap is required to contain fixture adapters")
+    contained_executable = sandbox_copy(executable, workspace)
+    environment = hermetic_env(workspace)
+    sandbox = [
+        bubblewrap,
+        "--unshare-all",
+        "--die-with-parent",
+        "--new-session",
+    ]
+    for system_path in ("/usr", "/bin", "/lib", "/lib64"):
+        if Path(system_path).exists():
+            sandbox.extend(("--ro-bind", system_path, system_path))
+    if Path("/etc/ld.so.cache").exists():
+        sandbox.extend(("--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache"))
+    sandbox.extend((
+        "--dev", "/dev",
+        "--proc", "/proc",
+        "--bind", str(workspace), str(workspace),
+    ))
+    assembly_directory = workspace / "assembly"
+    if assembly_directory.is_dir():
+        sandbox.extend(("--ro-bind", str(assembly_directory), str(assembly_directory)))
+    sandbox.extend((
+        "--chdir", str(workspace),
+        "--clearenv",
+    ))
+    for key, value in environment.items():
+        sandbox.extend(("--setenv", key, value))
+    sandbox.extend((
+        str(contained_executable),
+        "--workspace", str(workspace),
+        command,
+        *arguments,
+    ))
+    try:
+        result = subprocess.run(
+            sandbox,
+            cwd=workspace,
+            env=environment,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise OracleError(f"{command} interface failed to run: {exc}") from exc
+    if check and result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise OracleError(f"{command} interface failed: {detail}")
+    return result
+
+
+def json_output(result: subprocess.CompletedProcess[str], command: str) -> dict[str, Any]:
+    try:
+        return as_dict(json.loads(result.stdout), f"{command} output")
+    except json.JSONDecodeError as exc:
+        raise OracleError(f"{command} interface did not return one JSON object") from exc
+
+
+def observe(operator: Path, workspace: Path) -> dict[str, Any]:
+    return json_output(run_interface(operator, workspace, "observe"), "observe")
+
+
+def validate_snapshot(
+    snapshot: dict[str, Any], expected_state: str, planning_run_id: str | None = None
+) -> str:
+    if snapshot.get("contract") != OBSERVATION_CONTRACT:
+        raise OracleError(f"observation contract must be {OBSERVATION_CONTRACT}")
+    planning_run = as_dict(snapshot.get("planning_run"), "observation.planning_run")
+    observed_run_id = required_string(planning_run.get("id"), "observation.planning_run.id")
+    if planning_run_id is not None and observed_run_id != planning_run_id:
+        raise OracleError("Planning Run identity changed during one fixture scenario")
+    if planning_run.get("state") != expected_state:
+        raise OracleError(
+            f"expected Planning Run state {expected_state}, observed {planning_run.get('state')}"
+        )
+    if snapshot.get("effects") != []:
+        raise OracleError("fixture observation reported a forbidden real-world effect")
+    graph = snapshot.get("delivery_graph")
+    planning_items = 0
+    for raw_item in as_list(snapshot.get("work_items"), "observation.work_items"):
+        item = as_dict(raw_item, "observation.work_item")
+        plane = item.get("plane")
+        if plane == "planning":
+            planning_items += 1
+            if item.get("routable") is not False:
+                raise OracleError("planning-plane work became routable")
+        elif plane == "delivery":
+            if graph is None:
+                raise OracleError("delivery-plane work exists without a published graph")
+            if item.get("routable") is not True or item.get("publication_validated") is not True:
+                raise OracleError("published delivery-plane work is not positively validated and routable")
+            convoy = as_dict(as_dict(graph, "delivery_graph").get("convoy"), "delivery_graph.convoy")
+            if item.get("convoy_id") != convoy.get("id"):
+                raise OracleError("delivery-plane work is not attached to the published convoy")
+        else:
+            raise OracleError(f"work item has no recognized positive Work Plane: {plane}")
+    if planning_items == 0:
+        raise OracleError("observation contains no planning-plane work")
+    return observed_run_id
+
+
+def validate_artifact_summary(
+    snapshot: dict[str, Any], artifact_id: str, artifact_digest: str, state: str
+) -> None:
+    artifact = as_dict(snapshot.get("artifact"), "artifact")
+    if (artifact.get("id"), artifact.get("digest"), artifact.get("state")) != (
+        artifact_id,
+        artifact_digest,
+        state,
+    ):
+        raise OracleError("Planning Artifact identity, digest, or approval state changed unexpectedly")
+
+
+def graph_projection(nodes: list[Any], edges: list[Any]) -> dict[str, Any]:
+    projected_nodes = []
+    for raw in nodes:
+        node = as_dict(raw, "delivery_graph.node")
+        projected_nodes.append({
+            "key": node.get("key"),
+            "title": node.get("title"),
+            "rigs": node.get("rigs"),
+            "plane": node.get("plane"),
+            "routable": node.get("routable"),
+            "publication_validated": node.get("publication_validated"),
+        })
+    projected_edges = []
+    for raw in edges:
+        edge = as_dict(raw, "delivery_graph.edge")
+        projected_edges.append({"from": edge.get("from"), "blocked_by": edge.get("blocked_by")})
+    return {"nodes": projected_nodes, "edges": projected_edges}
+
+
+def validate_graph(snapshot: dict[str, Any], request: dict[str, Any]) -> tuple[str, str]:
+    graph = as_dict(snapshot.get("delivery_graph"), "delivery_graph")
+    convoy = as_dict(graph.get("convoy"), "delivery_graph.convoy")
+    convoy_id = required_string(convoy.get("id"), "delivery_graph.convoy.id")
+    nodes = as_list(graph.get("nodes"), "delivery_graph.nodes")
+    edges = as_list(graph.get("edges"), "delivery_graph.edges")
+    slices = request["slices"]
+    expected_by_key = {item["key"]: item for item in slices}
+    node_keys = [
+        required_string(as_dict(node, "delivery_graph.node").get("key"), "delivery_graph.node.key")
+        for node in nodes
+    ]
+    if (
+        set(node_keys) != set(expected_by_key)
+        or len(node_keys) != len(expected_by_key)
+        or len(set(node_keys)) != len(node_keys)
+    ):
+        raise OracleError("published graph does not preserve the exact approved slice keys")
+    node_ids = [
+        required_string(as_dict(node, "delivery_graph.node").get("id"), "delivery_graph.node.id")
+        for node in nodes
+    ]
+    if len(set(node_ids)) != len(node_ids):
+        raise OracleError("published graph contains duplicate delivery node identities")
+    for raw_node in nodes:
+        node = as_dict(raw_node, "delivery_graph.node")
+        expected = expected_by_key[node["key"]]
+        if (node.get("title"), node.get("rigs")) != (expected["title"], expected["rigs"]):
+            raise OracleError(f"published slice {node['key']} was semantically changed")
+        if (
+            node.get("plane") != "delivery"
+            or node.get("routable") is not True
+            or node.get("publication_validated") is not True
+            or node.get("convoy_id") != convoy_id
+        ):
+            raise OracleError(f"published slice {node['key']} lacks positive delivery routing")
+    expected_edges = {
+        (item["key"], blocker) for item in slices for blocker in item["blocked_by"]
+    }
+    observed_edges = {
+        (edge.get("from"), edge.get("blocked_by"))
+        for edge in edges
+        if isinstance(edge, dict)
+    }
+    if observed_edges != expected_edges or len(edges) != len(expected_edges):
+        raise OracleError("published graph does not preserve the exact blocker edges")
+    delivery_items = [
+        item for item in snapshot["work_items"]
+        if isinstance(item, dict) and item.get("plane") == "delivery"
+    ]
+    if (
+        {item.get("id") for item in delivery_items} != {node.get("id") for node in nodes}
+        or len(delivery_items) != len(nodes)
+    ):
+        raise OracleError("published graph and observable delivery-plane work disagree")
+    graph_digest = canonical_digest(graph_projection(nodes, edges))
+    if graph.get("digest") != graph_digest:
+        raise OracleError("published graph digest is not reproducible from public graph content")
+    publication = as_dict(snapshot.get("publication"), "publication")
+    if (
+        publication.get("state") != "published"
+        or publication.get("graph_digest") != graph_digest
+        or publication.get("convoy_id") != convoy_id
+    ):
+        raise OracleError("publication observation disagrees with the public delivery graph")
+    return graph_digest, convoy_id
+
+
+def validate_integrations(
+    snapshot: dict[str, Any],
+    request: dict[str, Any],
+    assemblies: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    observed = as_list(snapshot.get("integrations"), "integrations")
+    expected = [
+        {
+            "rig": rig["name"],
+            "revision": assemblies[rig["name"]]["revision"],
+            "tree": assemblies[rig["name"]]["tree"],
+            "verified": True,
+        }
+        for rig in request["rigs"]
+    ]
+    if observed != expected:
+        raise OracleError("integration evidence does not name the exact participating revisions")
+    return expected
+
+
+def append_state(trace: list[str], snapshot: dict[str, Any]) -> None:
+    state = str(as_dict(snapshot.get("planning_run"), "planning_run").get("state"))
+    if not trace or trace[-1] != state:
+        trace.append(state)
+
+
+def unique_commands(calls: list[str]) -> list[str]:
+    return list(dict.fromkeys(calls))
+
+
+def execute(scenario_path: Path, operator: Path, publication_door: Path) -> dict[str, Any]:
+    scenario, request = validate_scenario(scenario_path)
+    operator = operator.resolve()
+    publication_door = publication_door.resolve()
+    operator_calls: list[str] = []
+    states: list[str] = []
+    failure = scenario.get("inject", {}).get("publication_failure", "none")
+
+    with tempfile.TemporaryDirectory(prefix="fixture-city-oracle-") as directory:
+        workspace = Path(directory)
+        assemblies = prepare_assemblies(scenario_path.parent, request, workspace)
+        request_path = workspace / "request.json"
+        request_path.write_text(
+            json.dumps(request, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+        )
+
+        run_interface(operator, workspace, "start", "--request", str(request_path))
+        operator_calls.append("start")
+        snapshot = observe(operator, workspace)
+        operator_calls.append("observe")
+        planning_run_id = validate_snapshot(snapshot, "REQUESTED")
+        append_state(states, snapshot)
+
+        run_interface(operator, workspace, "synthesize")
+        operator_calls.append("synthesize")
+        snapshot = observe(operator, workspace)
+        operator_calls.append("observe")
+        validate_snapshot(snapshot, "SPEC_AWAITING_APPROVAL", planning_run_id)
+        append_state(states, snapshot)
+        artifact_summary = as_dict(snapshot.get("artifact"), "artifact")
+        artifact_id = required_string(artifact_summary.get("id"), "artifact.id")
+        artifact_digest = required_string(artifact_summary.get("digest"), "artifact.digest")
+        validate_artifact_summary(snapshot, artifact_id, artifact_digest, "SPEC")
+        artifact = json_output(
+            run_interface(operator, workspace, "artifact", "--id", artifact_id), "artifact"
+        )
+        operator_calls.append("artifact")
+        content = required_string(artifact.get("content"), "artifact.content")
+        if (
+            artifact.get("id") != artifact_id
+            or artifact.get("digest") != artifact_digest
+            or digest_bytes(content.encode("utf-8")) != artifact_digest
+        ):
+            raise OracleError("artifact identity or digest is not reproducible from public content")
+
+        run_interface(
+            operator,
+            workspace,
+            "approve",
+            "--artifact-id",
+            artifact_id,
+            "--digest",
+            artifact_digest,
+        )
+        operator_calls.append("approve")
+        snapshot = observe(operator, workspace)
+        operator_calls.append("observe")
+        validate_snapshot(snapshot, "APPROVED_SPEC", planning_run_id)
+        append_state(states, snapshot)
+        validate_artifact_summary(snapshot, artifact_id, artifact_digest, "APPROVED_SPEC")
+        approval = as_dict(snapshot.get("approval"), "approval")
+        if (approval.get("artifact_id"), approval.get("digest")) != (
+            artifact_id,
+            artifact_digest,
+        ):
+            raise OracleError("approval did not name the exact artifact identity and digest")
+
+        publish_result = run_interface(
+            publication_door,
+            workspace,
+            "publish",
+            "--inject-failure",
+            failure,
+            check=False,
+        )
+        snapshot = observe(operator, workspace)
+        operator_calls.append("observe")
+        if failure == "after-stage":
+            if publish_result.returncode == 0:
+                raise OracleError("injected publication failure unexpectedly succeeded")
+            validate_snapshot(snapshot, "APPROVED_SPEC", planning_run_id)
+            validate_artifact_summary(snapshot, artifact_id, artifact_digest, "APPROVED_SPEC")
+            publication = as_dict(snapshot.get("publication"), "publication")
+            delivery_items = [
+                item for item in snapshot["work_items"]
+                if isinstance(item, dict) and item.get("plane") == "delivery"
+            ]
+            if (
+                snapshot.get("delivery_graph") is not None
+                or delivery_items
+                or publication.get("graph_digest") is not None
+                or publication.get("convoy_id") is not None
+            ):
+                raise OracleError("failed publication left a partial delivery graph or convoy")
+            if publication.get("state") != "failed":
+                raise OracleError("failed publication was not visible through the operator surface")
+            result: dict[str, Any] = {
+                "contract": RESULT_CONTRACT,
+                "ok": True,
+                "scenario_id": scenario["scenario_id"],
+                "planning_run_id": planning_run_id,
+                "planning_states": states,
+                "artifact": {"id": artifact_id, "digest": artifact_digest},
+                "publication": {
+                    "state": "failed_atomically",
+                    "graph_digest": None,
+                    "convoy_id": None,
+                },
+                "integration": {
+                    "mode": "single-rig" if len(request["rigs"]) == 1 else "exact-revision-multi-rig",
+                    "evidence": [],
+                    "assembly_check": None,
+                },
+                "outcome": {"delivered": False, "accepted": False},
+                "effects": [],
+                "interfaces": {
+                    "operator": unique_commands(operator_calls),
+                    "write_doors": ["publish"],
+                },
+            }
+        else:
+            if publish_result.returncode != 0:
+                detail = publish_result.stderr.strip() or f"exit {publish_result.returncode}"
+                raise OracleError(f"publish interface failed: {detail}")
+            validate_snapshot(snapshot, "DELIVERY_GRAPH_PUBLISHED", planning_run_id)
+            append_state(states, snapshot)
+            validate_artifact_summary(snapshot, artifact_id, artifact_digest, "APPROVED_SPEC")
+            graph_digest, convoy_id = validate_graph(snapshot, request)
+
+            for rig in request["rigs"]:
+                run_interface(
+                    operator,
+                    workspace,
+                    "integrate",
+                    "--rig",
+                    rig["name"],
+                    "--revision",
+                    rig["revision"],
+                    "--checkout",
+                    str(assemblies[rig["name"]]["checkout"]),
+                )
+                operator_calls.append("integrate")
+            validate_clean_assemblies(assemblies)
+            snapshot = observe(operator, workspace)
+            operator_calls.append("observe")
+            validate_snapshot(snapshot, "DELIVERING", planning_run_id)
+            append_state(states, snapshot)
+            validate_artifact_summary(snapshot, artifact_id, artifact_digest, "APPROVED_SPEC")
+            integration_evidence = validate_integrations(snapshot, request, assemblies)
+
+            run_interface(operator, workspace, "verify-assembly")
+            operator_calls.append("verify-assembly")
+            validate_clean_assemblies(assemblies)
+            snapshot = observe(operator, workspace)
+            operator_calls.append("observe")
+            validate_snapshot(snapshot, "DELIVERING", planning_run_id)
+            validate_artifact_summary(snapshot, artifact_id, artifact_digest, "APPROVED_SPEC")
+            validate_integrations(snapshot, request, assemblies)
+            assembly_check = validate_assembly_evidence(snapshot, request, assemblies)
+
+            run_interface(operator, workspace, "deliver")
+            operator_calls.append("deliver")
+            snapshot = observe(operator, workspace)
+            operator_calls.append("observe")
+            validate_snapshot(snapshot, "DELIVERED_OUTCOME", planning_run_id)
+            append_state(states, snapshot)
+            validate_artifact_summary(snapshot, artifact_id, artifact_digest, "APPROVED_SPEC")
+            outcome = as_dict(snapshot.get("outcome"), "outcome")
+            if outcome.get("state") != "delivered" or outcome.get("accepted") is not False:
+                raise OracleError("Delivered Outcome was not observable before acceptance")
+            validate_integrations(snapshot, request, assemblies)
+
+            run_interface(operator, workspace, "accept")
+            operator_calls.append("accept")
+            snapshot = observe(operator, workspace)
+            operator_calls.append("observe")
+            validate_snapshot(snapshot, "ACCEPTED_OUTCOME", planning_run_id)
+            append_state(states, snapshot)
+            validate_artifact_summary(snapshot, artifact_id, artifact_digest, "APPROVED_SPEC")
+            outcome = as_dict(snapshot.get("outcome"), "outcome")
+            if outcome.get("state") != "accepted" or outcome.get("accepted") is not True:
+                raise OracleError("Accepted Outcome was not distinct from Delivered Outcome")
+            validate_integrations(snapshot, request, assemblies)
+            result = {
+                "contract": RESULT_CONTRACT,
+                "ok": True,
+                "scenario_id": scenario["scenario_id"],
+                "planning_run_id": planning_run_id,
+                "planning_states": states,
+                "artifact": {"id": artifact_id, "digest": artifact_digest},
+                "publication": {
+                    "state": "published",
+                    "graph_digest": graph_digest,
+                    "convoy_id": convoy_id,
+                },
+                "integration": {
+                    "mode": "single-rig" if len(request["rigs"]) == 1 else "exact-revision-multi-rig",
+                    "evidence": integration_evidence,
+                    "assembly_check": assembly_check,
+                },
+                "outcome": {"delivered": True, "accepted": True},
+                "effects": [],
+                "interfaces": {
+                    "operator": unique_commands(operator_calls),
+                    "write_doors": ["publish"],
+                },
+            }
+
+    result["oracle_digest"] = canonical_digest(result)
+    return result
+
+
+def parser() -> argparse.ArgumentParser:
+    value = argparse.ArgumentParser(prog=PROGRAM)
+    subparsers = value.add_subparsers(dest="command", required=True)
+    run = subparsers.add_parser("run")
+    run.add_argument("scenario", type=Path)
+    run.add_argument("--operator", type=Path, required=True)
+    run.add_argument("--publication-door", type=Path, required=True)
+    return value
+
+
+def main() -> int:
+    try:
+        args = parser().parse_args()
+        result = execute(args.scenario.resolve(), args.operator, args.publication_door)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0
+    except OracleError as exc:
+        print(f"{PROGRAM}: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

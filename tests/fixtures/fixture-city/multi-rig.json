@@ -1,0 +1,26 @@
+{
+  "contract": "agent-factory-fixture-scenario/v1",
+  "scenario_id": "multi-rig",
+  "request": {
+    "project_id": "fixture-multi",
+    "intent": "Assemble an API and web client at exact revisions and verify the outcome.",
+    "rigs": [
+      {
+        "name": "fixture-api",
+        "revision": "73ac3a0db24ecb1d522b83a454526b75c4a83668",
+        "fixture_source": "rigs/fixture-api"
+      },
+      {
+        "name": "fixture-web",
+        "revision": "97e20dbabc2ae1c7874c5ae9be50fee49d3ac654",
+        "fixture_source": "rigs/fixture-web"
+      }
+    ],
+    "slices": [
+      {"key": "S01", "title": "Expose fixture API", "rigs": ["fixture-api"], "blocked_by": []},
+      {"key": "S02", "title": "Consume fixture API", "rigs": ["fixture-web"], "blocked_by": ["S01"]},
+      {"key": "S03", "title": "Assemble exact revisions", "rigs": ["fixture-api", "fixture-web"], "blocked_by": ["S01", "S02"]}
+    ]
+  },
+  "inject": {"publication_failure": "none"}
+}

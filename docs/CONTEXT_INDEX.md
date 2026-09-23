@@ -46,6 +46,7 @@ Use progressive disclosure. Do not read every document by default.
 | Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0025-approved-graph-bootstrap-scope.md` |
 | Why coordination state (root pointers, semantic labels, proof fields) is written only through a door script (`product-queue`, `mayor-campaign`, `deliver-close`, `campaign-pointer`), never with `--set-metadata`, and why readers degrade instead of dying | `decisions/ADR-0023-coordination-state-write-door.md` |
 | How an approved Ticket Graph Draft is published atomically and how the Mayor is restricted to that exact graph without falling through to legacy Factory or product work | `decisions/ADR-0025-approved-graph-bootstrap-scope.md`, `./bin/ticket-graph-publish`, `./bin/mayor-campaign scope` |
+| How to exercise a candidate planning path from synthetic intent through publication, exact-revision integration, Delivered and Accepted without asserting Gas City wiring | `FIXTURE_CITY_ORACLE.md`, `./bin/fixture-city-oracle`, `tests/fixture-city-oracle-test.py` |
 | Token-efficient multi-provider orchestration proposal (routing matrix, Mayor session budget) | `PROPOSAL-token-efficient-orchestration-2026-09-15.md` |
 
 ## Authority order

@@ -1,0 +1,20 @@
+{
+  "contract": "agent-factory-fixture-scenario/v1",
+  "scenario_id": "single-rig",
+  "request": {
+    "project_id": "fixture-single",
+    "intent": "Expose a deterministic project status and verify its acceptance.",
+    "rigs": [
+      {
+        "name": "fixture-app",
+        "revision": "7a9e5aeffb4f73c649a22fd666208a22a80d9f46",
+        "fixture_source": "rigs/fixture-app"
+      }
+    ],
+    "slices": [
+      {"key": "S01", "title": "Expose project status", "rigs": ["fixture-app"], "blocked_by": []},
+      {"key": "S02", "title": "Verify accepted behavior", "rigs": ["fixture-app"], "blocked_by": ["S01"]}
+    ]
+  },
+  "inject": {"publication_failure": "none"}
+}

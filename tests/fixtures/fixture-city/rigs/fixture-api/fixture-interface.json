@@ -1,0 +1,4 @@
+{
+  "provides": {"fixture-status/v1": "ready"},
+  "requires": {}
+}
