@@ -252,7 +252,12 @@ PR_URL=$(gh pr create --base "{{base_branch}}" --head "$BRANCH" \
   --body "Closes $WORK_BEAD_ID.
 
 <what changed and why>")
-gc bd update "${WORK_BEAD_ID:-submit}" --set-metadata "gc.pr_url=$PR_URL" >/dev/null 2>&1 || true
+gc bd update "${WORK_BEAD_ID:-submit}" \
+  --set-metadata "gc.pr_url=$PR_URL" \
+  --set-metadata "gc.delivery_contract=pr-ci-merged-v1" \
+  --set-metadata "gc.delivery_status=waiting" \
+  --set-metadata "gc.work_branch=$BRANCH" \
+  --set-metadata "gc.work_base_branch={{base_branch}}" >/dev/null 2>&1 || true
 gc bd update submit --set-metadata gc.outcome=pass --status=closed --notes "opened $PR_URL against {{base_branch}}"
 ```
 """

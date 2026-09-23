@@ -34,13 +34,11 @@ HQ-rig dispatches into a worktree, `do-work` kept closing the work bead
 opened a PR. Live incident: af-hyls9 closed shipped while PR #159 was still
 open with CI in_progress, caught only afterward by factory-delivery-guard.
 `do-work` now defers the shipped close when it detects an HQ worktree
-(`metadata.work_dir` still set); `push-and-pr` closes the bead once the PR
-actually exists, as "opened, under review" -- never "shipped" -- the same
-contract mol-polecat-commit's commit-and-push step already uses. pr-autopilot
-reconciles `merge_result=merged` onto the bead once GitHub actually merges
-it. Non-HQ dispatches (no worktree, commit == done) and no-op/blocked/
-abandoned outcomes are unaffected -- they never claimed shipped before a PR
-existed.
+(`metadata.work_dir` still set); `push-and-pr` records the PR and leaves the
+work bead `in_progress`. `pr-autopilot` closes it only through `deliver-close`
+after both the merge and a successful required CI run on the exact PR head are
+proven. Non-HQ dispatches (no worktree, commit == done) and no-op/blocked/
+abandoned outcomes are unaffected.
 
 ## Variables
 
@@ -193,7 +191,7 @@ if [ "$WORKTREE" != "." ]; then
   # opens it next. Closing "shipped" here would claim delivery before there
   # is anything to verify it against (live incident: af-hyls9 closed shipped
   # while PR #159 was still open with CI in_progress). Leave the work bead
-  # open; push-and-pr closes it once the PR actually exists.
+  # open; push-and-pr records the PR and pr-autopilot finalizes after merge.
   echo "do-work: HQ worktree — deferring close of $WORK_BEAD_ID to push-and-pr"
 else
   "$FACTORY_ROOT/bin/deliver-close" "$WORK_BEAD_ID" \
@@ -236,9 +234,10 @@ If you get stuck or need clarification, check your inbox:
 gc mail inbox
 ```
 
-**Exit criteria:** The work described in the bead is complete, relevant changes
-are committed, the target bead is closed, and the claimed formula step is
-closed when `GC_BEAD_ID` is available."""
+**Exit criteria:** The work described in the bead is complete and committed;
+non-PR terminal outcomes are closed, while HQ PR-backed work remains
+`in_progress` for the merge+CI finalizer. The claimed formula step is closed
+when `GC_BEAD_ID` is available."""
 
 [[steps]]
 id = "push-and-pr"
@@ -265,19 +264,10 @@ else
   if [ -n "$PR_URL" ]; then
     gc bd update "$WORK_BEAD_ID" \
       --set-metadata "gc.pr_url=$PR_URL" \
+      --set-metadata "gc.delivery_contract=pr-ci-merged-v1" \
+      --set-metadata "gc.delivery_status=waiting" \
       --unset-metadata work_dir \
-      --notes "PR opened: $PR_URL"
-    # af-6scsz: do-work defers its shipped close to here when it isolated
-    # into this worktree, since no PR existed yet at that point. Close now
-    # that the PR exists -- as "opened, under review", never "shipped":
-    # pr-autopilot reconciles merge_result=merged onto this same bead once
-    # GitHub actually merges it (same contract as mol-polecat-commit's
-    # commit-and-push step). A bead do-work already closed itself (no-op /
-    # blocked / abandoned / non-HQ shipped) is left alone.
-    STATUS=$(gc bd show "$WORK_BEAD_ID" --json | jq -r '.[0].status // empty')
-    if [ "$STATUS" != "closed" ]; then
-      gc bd close "$WORK_BEAD_ID" --reason "Opened $PR_URL: work committed and under review, not yet merged."
-    fi
+      --notes "PR opened: $PR_URL. Work remains in_progress until merge and exact-head required CI are proven."
   else
     gc bd update "$WORK_BEAD_ID" --unset-metadata work_dir
     echo "push-and-pr: branch pushed but no PR was opened (gh unavailable or failed) — open one by hand: $BRANCH -> $BASE_BRANCH" >&2
@@ -295,9 +285,9 @@ gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "HELP: could not push $BRANC
 
 **Exit criteria:** if this was an HQ dispatch, the worktree no longer exists
 on disk and the branch is pushed with (when `gh` succeeded) an open PR
-against the base branch; a work bead that `do-work` deferred is now closed
-as "opened, under review" (never claiming shipped); otherwise this step is
-a documented no-op."""
+against the base branch; a work bead that `do-work` deferred remains
+`in_progress` with `gc.delivery_status=waiting` until `deliver-close` records
+merge+exact-head-CI proof; otherwise this step is a documented no-op."""
 
 [[steps]]
 id = "drain"

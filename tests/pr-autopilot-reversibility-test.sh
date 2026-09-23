@@ -23,7 +23,7 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
 mkdir -p "$TMP/factory/rigs/saymyname-backend" "$TMP/factory/rigs/saymyname-frontend" \
          "$TMP/bin" "$TMP/verdicts"
-: > "$TMP/gh.log"; : > "$TMP/gc.log"; : > "$TMP/check.log"
+: > "$TMP/gh.log"; : > "$TMP/gc.log"; : > "$TMP/check.log"; : > "$TMP/deliver.log"
 
 # Backend open PRs: 1 reversible, 2 undeclared destructive, 3 declared irreversible (already armed)
 cat > "$TMP/backend-open.json" <<'JSON'
@@ -78,10 +78,42 @@ rc=\$(cat "$TMP/verdicts/\$sha" 2>/dev/null || echo 2)
 [ "\$mode" = comment ] && echo "### Réversibilité : PR \$num"
 exit "\$rc"
 STUB
+cat > "$TMP/bin/deliver-close" <<STUB
+#!/usr/bin/env bash
+set -Eeuo pipefail
+echo "\$*" >> "$TMP/deliver.log"
+bead=\$1; shift
+repo=""; pr=""; workflow=""
+while [ \$# -gt 0 ]; do
+  case \$1 in
+    --repo) repo=\$2; shift 2 ;;
+    --pr) pr=\$2; shift 2 ;;
+    --required-workflow) workflow=\$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+gc bd update "\$bead" \
+  --set-metadata gc.work_outcome=shipped \
+  --set-metadata gc.delivery_status=merged \
+  --set-metadata gc.github_repo="\$repo" \
+  --set-metadata gc.pr_number="\$pr" \
+  --set-metadata gc.pr_url="https://github.com/\$repo/pull/\$pr" \
+  --set-metadata gc.pr_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --set-metadata gc.merge_commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  --set-metadata merge_result=merged \
+  --set-metadata merged_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  --set-metadata merged_target=dev \
+  --set-metadata gc.required_ci_workflow="\$workflow" \
+  --set-metadata gc.ci_run_id=123 \
+  --set-metadata gc.ci_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --set-metadata gc.ci_conclusion=success \
+  --status=closed
+STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/check"
+export DELIVER_CLOSE_BIN="$TMP/bin/deliver-close"
 export REVERSIBILITY_CACHE="$TMP/factory/.gc/rev-cache.tsv"
 export PR_AUTOPILOT_NOW_EPOCH
 PR_AUTOPILOT_NOW_EPOCH=$(date -u -d '2026-09-21T16:00:00Z' +%s)
@@ -160,7 +192,7 @@ jq -n '
   + [range(0;49) | {id:("af-noise" + tostring), status:"open", title:"unrelated", metadata:{}}]
   + [
       {"id":"af-work7","status":"closed","title":"old work 7","metadata":{"gc.work_branch":"polecat/af-work7"}},
-      {"id":"af-work8","status":"closed","title":"old work 8","metadata":{"gc.work_branch":"polecat/af-work8"}}
+      {"id":"af-work8","status":"closed","title":"old partial work 8","metadata":{"gc.work_branch":"polecat/af-work8","merge_result":"merged"}}
     ]
 ' > "$TMP/beads.json"
 
@@ -170,14 +202,34 @@ grep -q "^bd list --all --limit 0 --json$" "$TMP/gc.log" || { echo "$out" >&2; f
 grep -q "^bd update af-work7 .*merge_result=merged" "$TMP/gc.log" || { echo "$out" >&2; fail "merged PR was not reconciled onto its work bead"; }
 grep -q "^bd update af-work8 .*merge_result=merged" "$TMP/gc.log" || { echo "$out" >&2; fail "second historical PR was not backfilled"; }
 grep -q "^bd update af-flag7 .*merge_result=merged" "$TMP/gc.log" && fail "reconcile stamped a pr-autopilot flag bead as merged"
+grep -q "^af-work7 --repo saymyname-app/Say-my-name-back --pr 7 --required-workflow Backend CI" "$TMP/deliver.log" \
+  || fail "reconciliation did not go through the exact-CI deliver-close door"
+grep -q "^bd update af-work7 .*gc.ci_conclusion=success .*--status=closed" "$TMP/gc.log" \
+  || fail "delivery door did not atomically close with CI proof"
 # af-gpq0y: the flag bead itself IS closed now (a different, deliberate path
 # -- close_ci_failure_beads -- not the reconcile stamp above), since its own
 # PR merged and the failure it reported no longer applies.
 grep -q "^bd update af-flag7 --status closed" "$TMP/gc.log" || { echo "$out" >&2; fail "PR #7's CI-failure bead was not closed on merge"; }
 grep -q "^mail send mayor" "$TMP/gc.log" && fail "old bulk backfill with no active waiter sent mail"
 
-# Model the state left by the historical backfill before later cases.
-jq 'map(if (.id=="af-work7" or .id=="af-work8") then .metadata.merge_result="merged" else . end)' \
+# Model the full proof left by the historical backfill before later cases.
+jq 'map(if .id=="af-work7" then
+      .status="closed"
+      | .metadata += {"gc.work_outcome":"shipped","gc.delivery_status":"merged",
+          "gc.github_repo":"saymyname-app/Say-my-name-back","gc.pr_number":"7",
+          "gc.pr_url":"https://github.com/saymyname-app/Say-my-name-back/pull/7",
+          "gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merge_result":"merged",
+          "merged_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merged_target":"dev","gc.required_ci_workflow":"Backend CI",
+          "gc.ci_run_id":"123","gc.ci_head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.ci_conclusion":"success"}
+     elif .id=="af-work8" then
+      .status="closed"
+      | .metadata += {"gc.work_outcome":"shipped","gc.delivery_status":"merged",
+          "gc.github_repo":"saymyname-app/Say-my-name-back","gc.pr_number":"8",
+          "gc.pr_url":"https://github.com/saymyname-app/Say-my-name-back/pull/8",
+          "gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merge_result":"merged",
+          "merged_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merged_target":"dev","gc.required_ci_workflow":"Backend CI",
+          "gc.ci_run_id":"123","gc.ci_head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.ci_conclusion":"success"}
+     else . end)' \
   "$TMP/beads.json" > "$TMP/next.json" && mv "$TMP/next.json" "$TMP/beads.json"
 
 # --- a recent first reconciliation wakes exactly once and never as human -----------------
@@ -207,9 +259,17 @@ grep -q "^STATE: SHIPPED$" "$TMP/gc.log" || fail "completion wake lacks its STAT
 grep -q "^EVIDENCE: af-work9; PR #9; merge SHA feedbeef9$" "$TMP/gc.log" || fail "completion wake lacks exact evidence"
 grep -q "^NEXT: Mayor advances or finalizes work waiting on af-work9\.$" "$TMP/gc.log" || fail "completion wake lacks its next action"
 
-# Model the state left by the successful write. The merge_result guard must
-# make the next tick silent for this delivery: no repeat write and no mail.
-jq 'map(if .id=="af-work9" then .metadata.merge_result="merged" else . end)' \
+# Model the full proof left by the successful write. The structural proof gate
+# must make the next tick silent for this delivery: no repeat write or mail.
+jq 'map(if .id=="af-work9" then
+      .status="closed"
+      | .metadata += {"gc.work_outcome":"shipped","gc.delivery_status":"merged",
+          "gc.github_repo":"saymyname-app/Say-my-name-back","gc.pr_number":"9",
+          "gc.pr_url":"https://github.com/saymyname-app/Say-my-name-back/pull/9",
+          "gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merge_result":"merged",
+          "merged_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merged_target":"dev","gc.required_ci_workflow":"Backend CI",
+          "gc.ci_run_id":"123","gc.ci_head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.ci_conclusion":"success"}
+     else . end)' \
   "$TMP/beads.json" > "$TMP/next.json" && mv "$TMP/next.json" "$TMP/beads.json"
 : > "$TMP/gc.log"
 pilot >/dev/null

@@ -810,6 +810,30 @@ def ready_list() -> list[dict[str, Any]]:
     return ready
 
 
+def scoped_graph_snapshot(graph_digest: str | None) -> list[dict[str, Any]] | None:
+    """Return the complete active graph needed to re-check delivery blockers.
+
+    Gas City's ready projection uses closed status as its dependency edge.  A
+    PR-backed ticket needs the stronger merge+exact-CI contract, so an active
+    exclusive graph is selected only against this second, complete snapshot.
+    ``None`` is a read failure and therefore fails closed in plan_factory_lane.
+    """
+    if not graph_digest:
+        return None
+    try:
+        rows = json_run(GC_BIN, "bd", "list", "--all", "--limit", "0", "--json")
+    except CampaignCommandError:
+        return None
+    if not isinstance(rows, list):
+        return None
+    return [
+        item for item in rows
+        if isinstance(item, dict)
+        and isinstance(item.get("metadata"), dict)
+        and str(item["metadata"].get("gc.graph_digest") or "").strip() == graph_digest
+    ]
+
+
 def factory_lane_peek(graph_digest: str | None = None) -> dict[str, Any]:
     """Rungs 2/2b only -- a quick look at the Factory lane on its own.
 
@@ -826,7 +850,9 @@ def factory_lane_peek(graph_digest: str | None = None) -> dict[str, Any]:
         queue_candidates = json_run(PRODUCT_QUEUE_BIN, "list", "--json")
     except CampaignCommandError:
         queue_candidates = None
-    return plan_factory_lane(ready, queue_candidates, graph_digest)
+    return plan_factory_lane(
+        ready, queue_candidates, graph_digest, scoped_graph_snapshot(graph_digest)
+    )
 
 
 def ladder_workflow_state(tracked: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -911,9 +937,10 @@ def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
             axis = axes_status["next_selected"]
     last_axis = metadata.get("gc.campaign_ladder_axis_at")
     workflow_state = ladder_workflow_state(tracked)
+    graph_scope = graph_scope_of(metadata)
     plan = plan_idle_ladder(
         ready, now, last, tracked, queue_candidates, maintain_alive, axis, last_axis,
-        workflow_state, graph_scope_of(metadata),
+        workflow_state, graph_scope, scoped_graph_snapshot(graph_scope),
     )
     unstick = plan.pop("unstick_bead", None)
     if unstick:

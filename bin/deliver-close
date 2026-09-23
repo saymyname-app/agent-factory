@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Close a Factory delivery-outcome Bead only after independently verifying,
-# via `gh pr view`, that the named GitHub pull request is actually merged --
+# Close a Factory delivery-outcome Bead only after independently verifying
+# that the named GitHub pull request is merged and its required workflow
+# succeeded on the exact PR head --
 # or, for the lighter ADR-0009 work-record outcome (no PR yet, or none ever
 # expected), write gc.work_outcome and close the bead through the same door.
 #
@@ -9,9 +10,9 @@
 # (gc.delivery_status, gc.work_outcome, gc.github_repo, gc.pr_number,
 # gc.pr_head, gc.merge_commit) must be refused, never silent. The --repo/--pr
 # form is the only path that is allowed to set gc.delivery_status=merged: it
-# derives all six fields from a verified GitHub PR and writes them in the
-# same `gc bd update` call that closes the bead, so a delivery bead can never
-# end up closed-but-undocumented. On any verification failure it exits
+# derives all six fields plus merge/CI evidence from GitHub and writes them in
+# the same `gc bd update` call that closes the bead, so a delivery bead can
+# never end up closed-but-undocumented. On any verification failure it exits
 # non-zero and makes no metadata change at all.
 #
 # ADR-0023: mol-do-work used to write gc.work_outcome itself with a raw
@@ -27,8 +28,8 @@
 # is exactly the af-x45xw shape factory-delivery-guard otherwise only catches
 # after the close already happened. So the --outcome form checks first: if
 # the bead already names a gc.pr_url, it is independently verified with
-# `gh pr view` the same way the --repo/--pr form does, and the close is
-# refused (no metadata change) unless that PR is genuinely merged. A bead
+# the same way the --repo/--pr form does, and the close is refused (no metadata
+# change) unless that PR is merged with exact-head CI success. A bead
 # with no gc.pr_url yet -- the ordinary case -- has nothing to verify and
 # closes exactly as before.
 
@@ -49,22 +50,24 @@ die() {
 
 usage() {
   cat <<'USAGE'
-Usage: deliver-close <bead-id> --repo <owner/repository> --pr <number> [--reason <text>]
+Usage: deliver-close <bead-id> --repo <owner/repository> --pr <number> [--required-workflow <name>] [--reason <text>]
    or: deliver-close <bead-id> --outcome shipped --commit <sha> --branch <branch> [--verification <text>] [--reason <text>]
    or: deliver-close <bead-id> --outcome no-op|blocked|abandoned [--reason <text>]
 
---repo/--pr form: verifies with `gh pr view` that the pull request is
-merged, then closes <bead-id> with all six ADR-0016 delivery-proof fields set
-from that verified evidence: gc.delivery_status=merged, gc.work_outcome=shipped,
-gc.github_repo, gc.pr_number, gc.pr_head, gc.merge_commit. Refuses to close
-the bead (no metadata change at all) when the PR cannot be verified as merged.
+--repo/--pr form: verifies with GitHub that the pull request is merged and that
+the required workflow succeeded on the exact PR head, then atomically records
+the ADR-0016 fields plus merge_result/merged_sha/merged_target and gc.ci_* proof
+before closing <bead-id>. Known Factory repositories infer their required
+workflow; other repositories must pass --required-workflow.
 
 --outcome form: writes the ADR-0009 work-record outcome (gc.outcome=pass,
 gc.work_outcome=<outcome>, and for shipped gc.work_commit/gc.work_branch) and
 closes the bead. If <bead-id> already carries its own gc.pr_url (a previous
 attempt's PR), that PR is independently verified with `gh pr view` first and
 the close is refused unless it is genuinely merged; a bead with no gc.pr_url
-yet has nothing to verify.
+yet has nothing to verify. A bead explicitly governed by
+gc.delivery_contract=pr-ci-merged-v1 (or an approved delivery graph) cannot use
+--outcome shipped without a linked PR.
 USAGE
 }
 
@@ -85,47 +88,138 @@ capture_json() {
   printf -v "$destination" '%s' "$output"
 }
 
-# linked_pr_url <bead_id>: the bead's own gc.pr_url metadata, or empty if it
-# does not carry one. Dies (via capture_json) if the bead cannot be read at
-# all -- a lookup failure must never be silently treated as "no PR linked".
-linked_pr_url() {
-  local bead_id=$1 bead_json
-  capture_json bead_json "Bead lookup for $bead_id" "$GC_BIN" bd show "$bead_id" --json
-  jq -r '(if type == "array" then .[0] else . end).metadata["gc.pr_url"] // empty' <<<"$bead_json"
+bead_object() {
+  jq -c 'if type == "array" then .[0] else . end' <<<"$1"
 }
 
-# refuse_unless_linked_pr_merged <bead_id>: af-fzlp2. If <bead_id> already
-# names a gc.pr_url (a previous attempt's PR, still linked), verify with
-# `gh pr view` that it is genuinely merged before the --outcome door is
-# allowed to proceed -- mirroring the --repo/--pr form's own check. Dies
-# (no metadata change) when the URL is unparseable or the PR does not
-# verify as merged. A bead with no gc.pr_url yet returns immediately: there
-# is nothing to verify at that point in the workflow.
-refuse_unless_linked_pr_merged() {
-  local bead_id=$1 pr_url repo pr_number pr_response
+metadata_value() {
+  local bead_json=$1 key=$2
+  bead_object "$bead_json" | jq -r --arg key "$key" '.metadata[$key] // empty'
+}
 
-  pr_url=$(linked_pr_url "$bead_id")
-  [[ -n $pr_url ]] || return 0
-
-  if [[ $pr_url =~ ^https?://github\.com/([A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100})/pull/([1-9][0-9]*)/?$ ]]; then
-    repo=${BASH_REMATCH[1]}
-    pr_number=${BASH_REMATCH[3]}
-  else
-    die "$bead_id carries gc.pr_url=$pr_url that is not a recognizable GitHub PR URL; refusing to close without verifiable proof."
+required_workflow_for() {  # repo explicit-name
+  local repo=$1 explicit=${2:-}
+  if [[ -n $explicit ]]; then
+    printf '%s\n' "$explicit"
+    return
   fi
+  case "$repo" in
+    saymyname-app/Say-my-name-back) printf '%s\n' "Backend CI" ;;
+    saymyname-app/Say-my-name-front) printf '%s\n' "Frontend CI" ;;
+    saymyname-app/agent-factory) printf '%s\n' "Factory CI" ;;
+    *) die "--required-workflow is required for $repo; refusing to guess which CI run gates delivery." ;;
+  esac
+}
+
+parse_pr_url() {  # url -> owner/repo<TAB>number
+  local pr_url=$1
+  if [[ $pr_url =~ ^https?://github\.com/([A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100})/pull/([1-9][0-9]*)/?$ ]]; then
+    printf '%s\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}"
+  else
+    return 1
+  fi
+}
+
+requires_pr_contract() {
+  bead_object "$1" | jq -e '
+    (.metadata["gc.delivery_contract"] // "") == "pr-ci-merged-v1"
+    or (((.metadata["gc.plane"] // "") == "delivery")
+        and ((.metadata["gc.graph_digest"] // "") | startswith("sha256:")))
+    or any([
+      .metadata["gc.github_repo"], .metadata["gc.pr_number"], .metadata.pr_number,
+      .metadata.merge_result, .metadata.merged_sha, .metadata["gc.ci_run_id"]
+    ][]; (. // "") | tostring | length > 0)
+  ' >/dev/null
+}
+
+# Populates the PR_* and CI_* globals only after all authoritative evidence is
+# coherent.  No Beads write occurs in this function.
+verify_pr_delivery() {  # bead-id bead-json repo pr-number required-workflow
+  local bead_id=$1 bead_json=$2 repo=$3 pr_number=$4 required_workflow=$5
+  local actions_response ci_run linked_url linked_branch linked_base parsed
 
   require_command "$GH_BIN"
-  capture_json pr_response "GitHub PR $pr_number" "$GH_BIN" pr view "$pr_number" \
-    --repo "$repo" --json number,state,mergedAt,mergeCommit,headRefOid,url
+  capture_json PR_RESPONSE "GitHub PR $pr_number" "$GH_BIN" pr view "$pr_number" \
+    --repo "$repo" --json number,state,mergedAt,mergeCommit,headRefOid,headRefName,baseRefName,url
 
   jq -e --argjson number "$pr_number" '
     .number == $number and
     .state == "MERGED" and
     (.mergedAt | type == "string" and length > 0) and
     (.headRefOid | type == "string" and test("^[0-9a-f]{40}$")) and
-    (.mergeCommit.oid | type == "string" and test("^[0-9a-f]{40}$"))
-  ' >/dev/null <<<"$pr_response" \
-    || die "$bead_id names $repo#$pr_number via its own gc.pr_url but it is not verifiably merged; refusing to close without proof."
+    (.headRefName | type == "string" and length > 0) and
+    (.baseRefName | type == "string" and length > 0) and
+    (.mergeCommit.oid | type == "string" and test("^[0-9a-f]{40}$")) and
+    (.url | type == "string" and test("^https://github\\.com/"))
+  ' >/dev/null <<<"$PR_RESPONSE" \
+    || die "PR $pr_number in $repo is not verifiably merged; refusing to close $bead_id without proof."
+
+  PR_HEAD=$(jq -r '.headRefOid' <<<"$PR_RESPONSE")
+  PR_HEAD_BRANCH=$(jq -r '.headRefName' <<<"$PR_RESPONSE")
+  MERGED_TARGET=$(jq -r '.baseRefName' <<<"$PR_RESPONSE")
+  MERGE_COMMIT=$(jq -r '.mergeCommit.oid' <<<"$PR_RESPONSE")
+  PR_URL=$(jq -r '.url' <<<"$PR_RESPONSE")
+
+  linked_url=$(metadata_value "$bead_json" "gc.pr_url")
+  linked_branch=$(metadata_value "$bead_json" "gc.work_branch")
+  linked_base=$(metadata_value "$bead_json" "gc.work_base_branch")
+  if [[ -n $linked_url ]]; then
+    parsed=$(parse_pr_url "$linked_url") \
+      || die "$bead_id carries gc.pr_url=$linked_url that is not a recognizable GitHub PR URL; refusing to close without verifiable proof."
+    [[ ${parsed%$'\t'*} == "$repo" && ${parsed#*$'\t'} == "$pr_number" ]] \
+      || die "$bead_id links $linked_url, not $repo#$pr_number; refusing mismatched delivery evidence."
+  fi
+  [[ -z $linked_branch || $linked_branch == "$PR_HEAD_BRANCH" ]] \
+    || die "$bead_id records gc.work_branch=$linked_branch but PR $pr_number head is $PR_HEAD_BRANCH."
+  [[ -z $linked_base || $linked_base == "$MERGED_TARGET" ]] \
+    || die "$bead_id records gc.work_base_branch=$linked_base but PR $pr_number target is $MERGED_TARGET."
+
+  capture_json actions_response "GitHub Actions for PR head $PR_HEAD" "$GH_BIN" api \
+    "repos/$repo/actions/runs?head_sha=$PR_HEAD&per_page=100"
+  ci_run=$(jq -c --arg workflow "$required_workflow" --arg head "$PR_HEAD" '
+    [.workflow_runs[]?
+      | select((.name // "") == $workflow)
+      | select((.head_sha // "") == $head)
+      | select((.event // "") == "pull_request")][0] // empty
+  ' <<<"$actions_response")
+  [[ -n $ci_run ]] \
+    || die "Required workflow '$required_workflow' has no pull_request run on exact PR head $PR_HEAD."
+  jq -e --arg head "$PR_HEAD" '
+    (.id | (type == "number" and . > 0)) and
+    .head_sha == $head and .event == "pull_request" and
+    .status == "completed" and .conclusion == "success"
+  ' >/dev/null <<<"$ci_run" \
+    || die "Required workflow '$required_workflow' is not successful on exact PR head $PR_HEAD."
+  CI_RUN_ID=$(jq -r '.id' <<<"$ci_run")
+  REQUIRED_WORKFLOW=$required_workflow
+}
+
+close_verified_pr() {  # bead-id repo pr reason verification
+  local bead_id=$1 repo=$2 pr_number=$3 reason=$4 verification=$5
+  local -a args=("$GC_BIN" bd update "$bead_id"
+    --set-metadata "gc.outcome=pass"
+    --set-metadata "gc.delivery_contract=pr-ci-merged-v1"
+    --set-metadata "gc.delivery_status=merged"
+    --set-metadata "gc.work_outcome=shipped"
+    --set-metadata "gc.github_repo=$repo"
+    --set-metadata "gc.pr_number=$pr_number"
+    --set-metadata "gc.pr_head=$PR_HEAD"
+    --set-metadata "gc.merge_commit=$MERGE_COMMIT"
+    --set-metadata "gc.pr_url=$PR_URL"
+    --set-metadata "gc.work_commit=$PR_HEAD"
+    --set-metadata "gc.work_branch=$PR_HEAD_BRANCH"
+    --set-metadata "pr_number=$pr_number"
+    --set-metadata "merge_result=merged"
+    --set-metadata "merged_sha=$MERGE_COMMIT"
+    --set-metadata "merged_target=$MERGED_TARGET"
+    --set-metadata "gc.required_ci_workflow=$REQUIRED_WORKFLOW"
+    --set-metadata "gc.ci_run_id=$CI_RUN_ID"
+    --set-metadata "gc.ci_head_sha=$PR_HEAD"
+    --set-metadata "gc.ci_conclusion=success")
+  [[ -z $verification ]] || args+=(--set-metadata "gc.work_verification=$verification")
+  args+=(--status=closed --notes "$reason")
+  "${args[@]}" || die "Beads update failed for $bead_id after delivery verification succeeded."
+  log "Closed $bead_id after verified merge and '$REQUIRED_WORKFLOW' success on $PR_HEAD ($repo#$pr_number, $MERGE_COMMIT)."
 }
 
 close_by_outcome() {
@@ -148,7 +242,7 @@ close_by_outcome() {
 
 main() {
   local bead_id="" repo="" pr_number="" outcome="" commit="" branch="" verification="" \
-    reason="Delivery verified and closed"
+    required_workflow="" reason="Delivery verified and closed"
 
   bead_id=${1:-}
   [[ -n $bead_id && $bead_id != -* ]] || { usage >&2; return 2; }
@@ -169,6 +263,11 @@ main() {
       --outcome)
         [[ $# -ge 2 ]] || { usage >&2; return 2; }
         outcome=$2
+        shift 2
+        ;;
+      --required-workflow)
+        [[ $# -ge 2 ]] || { usage >&2; return 2; }
+        required_workflow=$2
         shift 2
         ;;
       --commit)
@@ -205,13 +304,38 @@ main() {
   require_command "$GC_BIN"
   require_command jq
 
+  local bead_json
+  capture_json bead_json "Bead lookup for $bead_id" "$GC_BIN" bd show "$bead_id" --json
+  bead_object "$bead_json" | jq -e --arg id "$bead_id" '.id == $id' >/dev/null \
+    || die "Bead lookup for $bead_id did not return that exact bead."
+
   if [[ -n $outcome ]]; then
     [[ -z $repo && -z $pr_number ]] || die "--outcome cannot be combined with --repo/--pr."
     case "$outcome" in
       shipped|no-op|blocked|abandoned) ;;
       *) die "--outcome must be one of shipped, no-op, blocked, abandoned." ;;
     esac
-    refuse_unless_linked_pr_merged "$bead_id"
+    local linked_url linked_pair linked_repo linked_number resolved_workflow
+    linked_url=$(metadata_value "$bead_json" "gc.pr_url")
+    if [[ -n $linked_url ]]; then
+      linked_pair=$(parse_pr_url "$linked_url") \
+        || die "$bead_id carries gc.pr_url=$linked_url that is not a recognizable GitHub PR URL; refusing to close without verifiable proof."
+      linked_repo=${linked_pair%$'\t'*}
+      linked_number=${linked_pair#*$'\t'}
+      resolved_workflow=$(required_workflow_for "$linked_repo" "$required_workflow")
+      verify_pr_delivery "$bead_id" "$bead_json" "$linked_repo" "$linked_number" "$resolved_workflow"
+      if [[ $outcome == shipped ]]; then
+        [[ -n $commit && -n $branch ]] \
+          || die "--outcome shipped requires --commit <sha> and --branch <branch>."
+        [[ $branch == "$PR_HEAD_BRANCH" ]] \
+          || die "--branch $branch does not match linked PR head $PR_HEAD_BRANCH."
+        [[ $reason == "Delivery verified and closed" ]] && reason="Delivery verified and closed"
+        close_verified_pr "$bead_id" "$linked_repo" "$linked_number" "$reason" "$verification"
+        return 0
+      fi
+    elif [[ $outcome == shipped ]] && requires_pr_contract "$bead_json"; then
+      die "$bead_id requires PR+CI delivery proof; --outcome shipped cannot close it before a PR is linked and merged."
+    fi
     [[ $reason == "Delivery verified and closed" ]] && reason="Closed with gc.work_outcome=$outcome"
     close_by_outcome "$bead_id" "$outcome" "$commit" "$branch" "$verification" "$reason"
     return 0
@@ -225,35 +349,9 @@ main() {
   [[ $pr_number =~ ^[1-9][0-9]*$ ]] \
     || die "--pr must be a positive pull request number; refusing to close $bead_id without it."
 
-  local pr_response
-  capture_json pr_response "GitHub PR $pr_number" "$GH_BIN" pr view "$pr_number" \
-    --repo "$repo" --json number,state,mergedAt,mergeCommit,headRefOid,url
-
-  jq -e --argjson number "$pr_number" '
-    .number == $number and
-    .state == "MERGED" and
-    (.mergedAt | type == "string" and length > 0) and
-    (.headRefOid | type == "string" and test("^[0-9a-f]{40}$")) and
-    (.mergeCommit.oid | type == "string" and test("^[0-9a-f]{40}$"))
-  ' >/dev/null <<<"$pr_response" \
-    || die "PR $pr_number in $repo is not verifiably merged; refusing to close $bead_id without proof (gc.delivery_status stays whatever it already was)."
-
-  local pr_head merge_commit
-  pr_head=$(jq -r '.headRefOid' <<<"$pr_response")
-  merge_commit=$(jq -r '.mergeCommit.oid' <<<"$pr_response")
-
-  "$GC_BIN" bd update "$bead_id" \
-    --set-metadata "gc.delivery_status=merged" \
-    --set-metadata "gc.work_outcome=shipped" \
-    --set-metadata "gc.github_repo=$repo" \
-    --set-metadata "gc.pr_number=$pr_number" \
-    --set-metadata "gc.pr_head=$pr_head" \
-    --set-metadata "gc.merge_commit=$merge_commit" \
-    --status=closed \
-    --notes "$reason" \
-    || die "Beads update failed for $bead_id after PR verification succeeded; re-run 'gc bd show $bead_id' before retrying so a partial write is never assumed closed."
-
-  log "Closed $bead_id with all six delivery-proof fields verified against $repo#$pr_number ($merge_commit)."
+  required_workflow=$(required_workflow_for "$repo" "$required_workflow")
+  verify_pr_delivery "$bead_id" "$bead_json" "$repo" "$pr_number" "$required_workflow"
+  close_verified_pr "$bead_id" "$repo" "$pr_number" "$reason" "$verification"
 }
 
 if [[ ${DELIVER_CLOSE_SOURCE_ONLY:-0} != 1 ]]; then

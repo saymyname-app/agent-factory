@@ -18,11 +18,14 @@
 #     exactly as before, no report, no write.
 #   - the value looks like a bead ID and `gc bd show` resolves it (any rig
 #     gc bd can reach, per-prefix -- no --city pinning on that lookup):
-#       - target is closed -- the wait is over. Clear gc.waiting_on (and any
-#         prior missing-target marker) so the bead is ladder-eligible again
-#         next tick, and page the Mayor once. Self-converging like the
-#         dispatch/queue guards: once cleared, this guard never matches the
-#         same bead for the same drift again.
+#       - target is closed and its structural delivery predicate passes -- the
+#         wait is over. Clear gc.waiting_on (and any prior missing-target
+#         marker) so the bead is ladder-eligible again next tick, and page the
+#         Mayor once. Generic/non-PR closes and explicit no-op/blocked/abandoned
+#         outcomes preserve this behavior.
+#       - target is closed but PR-backed merge/exact-head-CI proof is absent or
+#         inconsistent -- keep the wait and report the rejected proof. A close
+#         reason such as "under review" is never completion (ADR-0026).
 #       - target is still open -- legitimate wait, left alone.
 #   - the value looks like a bead ID but nothing resolves it (typo, deleted,
 #     or a store this `gc` cannot reach) -- report it once via
@@ -39,6 +42,8 @@ set -uo pipefail
 PROGRAM_NAME="factory-waiting-guard"
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 GC_BIN="${GC_BIN:-gc}"
+PY_BIN="${PYTHON_BIN:-python3}"
+LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd -P)"
 CHECK_ONLY=0
 
 while [ $# -gt 0 ]; do
@@ -56,9 +61,14 @@ require_command() {
 }
 require_command "$GC_BIN"
 require_command jq
+require_command "$PY_BIN"
+[ -f "$LIB_DIR/factory_delivery_proof.py" ] || {
+  echo "$PROGRAM_NAME: lib/factory_delivery_proof.py not found" >&2
+  exit 2
+}
 
 PROBLEMS=(); ACTIONS=(); STATUS=0
-CHECKED=0; CLOSED_TARGETS=0; MISSING_TARGETS=0
+CHECKED=0; CLOSED_TARGETS=0; MISSING_TARGETS=0; UNPROVEN_TARGETS=0
 say()  { printf '%s\n' "$*"; }
 bad()  { PROBLEMS+=("$1"); STATUS=1; }
 did()  { ACTIONS+=("$1"); say "  REPAIRED: $1"; }
@@ -138,6 +148,17 @@ while IFS=$'\x1f' read -r id waiting_on prior_reported; do
   [ "$target_status" = "closed" ] || continue  # target still open -- legitimate wait
 
   CLOSED_TARGETS=$((CLOSED_TARGETS + 1))
+  readiness_json=$(printf '%s' "$target_json" \
+    | "$PY_BIN" "$LIB_DIR/factory_delivery_proof.py" --mode readiness 2>/dev/null) || readiness_json=''
+  readiness=$(jq -r '.ready // false' <<<"$readiness_json" 2>/dev/null)
+  if [ "$readiness" != "true" ]; then
+    UNPROVEN_TARGETS=$((UNPROVEN_TARGETS + 1))
+    missing=$(jq -r '(.missing // []) | join(",")' <<<"$readiness_json" 2>/dev/null)
+    [ -n "$missing" ] || missing="unreadable delivery proof"
+    bad "$id: gc.waiting_on='$waiting_on' is closed but cannot release the wait — delivery proof rejected ($missing)"
+    continue
+  fi
+
   bad "$id: gc.waiting_on='$waiting_on' but that bead is already closed -- stuck out of the idle ladder"
   if [ "$CHECK_ONLY" != "1" ]; then
     if (cd "$ROOT" && "$GC_BIN" --city "$ROOT" bd update "$id" \
@@ -159,6 +180,6 @@ if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - 
 if [ "${#PROBLEMS[@]}" -gt 0 ]; then
   say "UNRESOLVED ${#PROBLEMS[@]}:"; printf '  ! %s\n' "${PROBLEMS[@]}"
 else
-  say "healthy — $CHECKED open bead(s) with gc.waiting_on checked, $CLOSED_TARGETS closed-target wait(s) and $MISSING_TARGETS missing-target wait(s) seen this run"
+  say "healthy — $CHECKED open bead(s) with gc.waiting_on checked, $CLOSED_TARGETS closed-target wait(s), $UNPROVEN_TARGETS unproven-delivery wait(s) and $MISSING_TARGETS missing-target wait(s) seen this run"
 fi
 exit 0

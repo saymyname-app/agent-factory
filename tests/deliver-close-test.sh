@@ -28,7 +28,7 @@ run() {
     GC_BIN="$FIXTURE_ROOT/gc" \
     GH_BIN="$FIXTURE_ROOT/gh" \
     DELIVER_CLOSE_CALL_LOG="$CALL_LOG" \
-    "$SCRIPT" "$@"
+    "$SCRIPT" "$@" --required-workflow "Factory CI"
 }
 
 assert_closed_with_all_six() {
@@ -46,7 +46,14 @@ assert_closed_with_all_six() {
     "gc.github_repo=owner/repo" \
     "gc.pr_number=42" \
     "gc.pr_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
-    "gc.merge_commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    "gc.merge_commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+    "merge_result=merged" \
+    "merged_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+    "merged_target=main" \
+    "gc.required_ci_workflow=Factory CI" \
+    "gc.ci_run_id=35882143816" \
+    "gc.ci_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    "gc.ci_conclusion=success"
   do
     [[ $call == *"$field"* ]] || fail_test "$scenario missing proof field in Beads write: $field"
   done
@@ -75,6 +82,9 @@ assert_refused not-merged "not verifiably merged" af-outcome --repo owner/repo -
 assert_refused number-mismatch "not verifiably merged" af-outcome --repo owner/repo --pr 42
 assert_refused short-sha "not verifiably merged" af-outcome --repo owner/repo --pr 42
 assert_refused gh-failure "source command failed" af-outcome --repo owner/repo --pr 42
+assert_refused ci-failure "not successful on exact PR head" af-outcome --repo owner/repo --pr 42
+assert_refused ci-missing "has no pull_request run on exact PR head" af-outcome --repo owner/repo --pr 42
+assert_refused ci-head-mismatch "has no pull_request run on exact PR head" af-outcome --repo owner/repo --pr 42
 assert_refused merged "--repo must be a valid owner/repository name" af-outcome --repo not-a-repo --pr 42
 assert_refused merged "--pr must be a positive pull request number" af-outcome --repo owner/repo --pr abc
 assert_refused merged "--pr must be a positive pull request number" af-outcome --repo owner/repo --pr 0
@@ -113,6 +123,17 @@ assert_refused merged "--outcome must be one of" af-work --outcome bogus
 assert_refused merged "--outcome cannot be combined with --repo/--pr" \
   af-work --outcome shipped --commit c --branch b --repo owner/repo --pr 1
 
+# Approved delivery-graph work cannot take the lighter non-PR shipped exit.
+TESTS_RUN=$((TESTS_RUN + 1))
+if output=$(DELIVER_CLOSE_BEAD_METADATA='{"gc.plane":"delivery","gc.graph_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' \
+  run merged af-work --outcome shipped --commit cafef00d --branch do-work/af-work 2>&1); then
+  fail_test "delivery-graph shipped outcome without a linked PR should refuse to close"
+fi
+[[ $output == *"requires PR+CI delivery proof"* ]] \
+  || fail_test "delivery-graph refusal did not name the structural contract: $output"
+call=$(<"$CALL_LOG")
+[[ -z $call ]] || fail_test "delivery-graph refusal made a Beads write: $call"
+
 # af-fzlp2: the --outcome door must not accept a close (shipped or otherwise
 # -- close_by_outcome always sets gc.outcome=pass) when the target bead
 # already names its own gc.pr_url and that PR does not verify as merged.
@@ -149,5 +170,7 @@ DELIVER_CLOSE_PR_URL="https://github.com/owner/repo/pull/42" \
 call=$(<"$CALL_LOG")
 [[ $call == *"gc.work_outcome=shipped"* ]] \
   || fail_test "--outcome shipped with a verified linked PR missing gc.work_outcome in Beads write"
+[[ $call == *"gc.ci_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]] \
+  || fail_test "verified linked PR close missing exact-head CI proof"
 
 printf 'PASS: %d deterministic deliver-close checks\n' "$TESTS_RUN"

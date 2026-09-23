@@ -50,6 +50,12 @@ prints one line per bead in scope, again 0x1F-separated:
 The caller verifies with the same `gh pr view` path and flags
 (gc.delivery_proof_flagged_at) exactly once whatever does not verify as
 merged. Reopening a flagged bead stays a human/Mayor call.
+
+ADR-0026 adds a separate structural readiness predicate below. It preserves
+the original six-field reporting API, while requiring PR-backed dependencies
+and named waits to carry coherent merge target/SHA and successful required-CI
+evidence for the exact PR head. ``--mode readiness`` emits that classification
+for one bead as JSON.
 """
 from __future__ import annotations
 
@@ -78,6 +84,12 @@ DELIVERY_LABEL = "product-goal"
 # shipped" -- these are not delivery beads awaiting proof, and must never be
 # flagged, or every legitimately-cancelled goal becomes permanent noise.
 NON_SHIPPED_OUTCOMES = {"no-op", "cancelled", "dropped", "wont-fix", "descoped", "none", "not-shipped"}
+
+# Explicit terminal outcomes that do not claim code delivery.  They keep their
+# historical close semantics even when a stale PR URL is present: the structural
+# merge gate below applies to work that claims delivery, not to a recorded no-op
+# or failure outcome.
+NON_DELIVERY_TERMINAL_OUTCOMES = NON_SHIPPED_OUTCOMES | {"blocked", "abandoned"}
 
 REPO_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$")
 PR_NUMBER_RE = re.compile(r"^[1-9][0-9]*$")
@@ -130,6 +142,119 @@ def missing_proof_fields(metadata: dict[str, Any]) -> list[str]:
     return missing
 
 
+def _delivery_metadata(bead: dict[str, Any]) -> dict[str, Any]:
+    metadata = bead.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _explicit_non_delivery_outcome(metadata: dict[str, Any]) -> bool:
+    return _text(metadata.get("gc.work_outcome")).lower() in NON_DELIVERY_TERMINAL_OUTCOMES
+
+
+def requires_pr_delivery_proof(bead: dict[str, Any]) -> bool:
+    """Whether a bead's completion is governed by the PR+CI merge contract.
+
+    Existing graph nodes predate ``gc.delivery_contract``.  The positive
+    delivery-plane + graph-digest pair therefore remains an equivalent marker,
+    while any concrete PR/merge/CI field also makes the contract unambiguous.
+    Explicit non-delivery outcomes are deliberately exempt.
+    """
+    if not isinstance(bead, dict):
+        return False
+    metadata = _delivery_metadata(bead)
+    if _explicit_non_delivery_outcome(metadata):
+        return False
+    if _text(metadata.get("gc.delivery_contract")) == "pr-ci-merged-v1":
+        return True
+    if (
+        _text(metadata.get("gc.plane")) == "delivery"
+        and _text(metadata.get("gc.graph_digest")).startswith("sha256:")
+    ):
+        return True
+    return any(
+        _text(metadata.get(key))
+        for key in (
+            "gc.pr_url", "gc.github_repo", "gc.pr_number", "pr_number",
+            "merge_result", "merged_sha", "merged_target", "gc.pr_head",
+            "gc.merge_commit", "gc.ci_run_id", "gc.ci_head_sha",
+        )
+    )
+
+
+def missing_structural_pr_proof(metadata: dict[str, Any]) -> list[str]:
+    """Return absent, invalid, or internally inconsistent PR delivery proof.
+
+    This is intentionally stronger than ADR-0016's original six-field check:
+    a dependency may clear only after the PR is merged into its intended base
+    and the required workflow succeeded on that exact PR head.
+    """
+    missing = missing_proof_fields(metadata)
+    parsed_url = _parse_pr_url(metadata.get("gc.pr_url"))
+    if parsed_url is None:
+        missing.append("gc.pr_url")
+    else:
+        url_repo, url_number = parsed_url
+        if url_repo != _text(metadata.get("gc.github_repo")):
+            missing.append("gc.pr_url.repo!=gc.github_repo")
+        if url_number != _text(metadata.get("gc.pr_number")):
+            missing.append("gc.pr_url.number!=gc.pr_number")
+
+    if _text(metadata.get("merge_result")) != "merged":
+        missing.append("merge_result")
+    if not _valid_sha(metadata.get("merged_sha")):
+        missing.append("merged_sha")
+    elif _text(metadata.get("merged_sha")) != _text(metadata.get("gc.merge_commit")):
+        missing.append("merged_sha!=gc.merge_commit")
+    if not _text(metadata.get("merged_target")):
+        missing.append("merged_target")
+
+    legacy_number = _text(metadata.get("pr_number"))
+    if legacy_number and legacy_number != _text(metadata.get("gc.pr_number")):
+        missing.append("pr_number!=gc.pr_number")
+
+    if not _text(metadata.get("gc.required_ci_workflow")):
+        missing.append("gc.required_ci_workflow")
+    if not _valid_pr_number(metadata.get("gc.ci_run_id")):
+        missing.append("gc.ci_run_id")
+    if not _valid_sha(metadata.get("gc.ci_head_sha")):
+        missing.append("gc.ci_head_sha")
+    elif _text(metadata.get("gc.ci_head_sha")) != _text(metadata.get("gc.pr_head")):
+        missing.append("gc.ci_head_sha!=gc.pr_head")
+    if _text(metadata.get("gc.ci_conclusion")).lower() != "success":
+        missing.append("gc.ci_conclusion")
+    return list(dict.fromkeys(missing))
+
+
+def delivery_readiness(bead: dict[str, Any]) -> dict[str, Any]:
+    """Classify whether a bead may release a dependency or named wait.
+
+    Generic closed beads and explicit no-op/failure outcomes preserve Beads'
+    existing semantics.  A PR-backed delivery is fail-closed until all merge
+    and exact-head CI evidence is present and coherent.
+    """
+    status = _text(bead.get("status")) if isinstance(bead, dict) else ""
+    metadata = _delivery_metadata(bead) if isinstance(bead, dict) else {}
+    pr_backed = requires_pr_delivery_proof(bead) if isinstance(bead, dict) else False
+    if status != "closed":
+        return {
+            "ready": False,
+            "pr_backed": pr_backed,
+            "reason": f"status={status or 'missing'}",
+            "missing": ["status=closed"],
+        }
+    if _explicit_non_delivery_outcome(metadata):
+        return {"ready": True, "pr_backed": False, "reason": "explicit-non-delivery", "missing": []}
+    if not pr_backed:
+        return {"ready": True, "pr_backed": False, "reason": "closed-non-pr", "missing": []}
+    missing = missing_structural_pr_proof(metadata)
+    return {
+        "ready": not missing,
+        "pr_backed": True,
+        "reason": "merged-ci-proven" if not missing else "pr-delivery-unproven",
+        "missing": missing,
+    }
+
+
 def is_delivery_bead(bead: dict[str, Any]) -> bool:
     if not isinstance(bead, dict):
         return False
@@ -142,7 +267,7 @@ def is_delivery_bead(bead: dict[str, Any]) -> bool:
     if not isinstance(metadata, dict):
         metadata = {}
     outcome = _text(metadata.get("gc.work_outcome")).lower()
-    if outcome in NON_SHIPPED_OUTCOMES:
+    if outcome in NON_DELIVERY_TERMINAL_OUTCOMES:
         return False
     return True
 
@@ -252,7 +377,7 @@ def main() -> int:
         else:
             print(f"factory_delivery_proof: unrecognized arguments: {args}", file=sys.stderr)
             return 2
-    if mode not in ("delivery", "claimed-shipped"):
+    if mode not in ("delivery", "claimed-shipped", "readiness"):
         print(f"factory_delivery_proof: unknown --mode {mode!r}", file=sys.stderr)
         return 2
 
@@ -268,7 +393,12 @@ def main() -> int:
         print("delivery-proof beads payload unreadable (not a list)", file=sys.stderr)
         return 1
 
-    if mode == "delivery":
+    if mode == "readiness":
+        if len(value) != 1 or not isinstance(value[0], dict):
+            print("delivery-readiness requires exactly one bead", file=sys.stderr)
+            return 2
+        print(json.dumps(delivery_readiness(value[0]), sort_keys=True))
+    elif mode == "delivery":
         for report in find_incomplete(value):
             print("\x1f".join([
                 report["id"],

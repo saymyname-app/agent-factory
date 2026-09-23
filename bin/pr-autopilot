@@ -5,8 +5,10 @@
 #   1. ARM     every open non-draft PR targeting a rig's dev branch with GitHub
 #              auto-merge (squash). GitHub then merges it itself the moment the
 #              required status check goes green. Nothing polls, nothing watches.
-#   2. RECONCILE merged PRs back onto their work bead (merge_result=merged,
-#              merged_sha) so a closed bead can be trusted to mean "on dev".
+#   2. FINALIZE merged PRs through bin/deliver-close only after the configured
+#              required workflow succeeded on the exact PR head. The door
+#              writes merge_result/merged_sha/merged_target + CI proof and
+#              closes the work bead atomically.
 #   3. FLAG    PRs whose required checks failed, as a P1 bead, so a red build is
 #              visible as work instead of silently sitting open.
 #   4. HOLD    PRs whose migrations are not undoable inside the release
@@ -32,20 +34,36 @@ for arg in "$@"; do
   esac
 done
 
-# rig_dir | repo | dev branch
+# rig_dir | repo | dev branch | required GitHub Actions workflow
 RIGS=(
-  "rigs/saymyname-backend|saymyname-app/Say-my-name-back|dev"
-  "rigs/saymyname-frontend|saymyname-app/Say-my-name-front|dev"
+  "rigs/saymyname-backend|saymyname-app/Say-my-name-back|dev|Backend CI"
+  "rigs/saymyname-frontend|saymyname-app/Say-my-name-front|dev|Frontend CI"
   # The Factory's own repo. Its only long-lived branch is main and it now has a
   # required check (Factory CI), so the same rule applies: green check merges
   # itself, red check becomes a bead. Without this, agent-factory branches pile
   # up unmerged — 28 of them by 2026-09-15.
-  ".|saymyname-app/agent-factory|main"
+  ".|saymyname-app/agent-factory|main|Factory CI"
 )
+DELIVER_CLOSE_BIN="${DELIVER_CLOSE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/deliver-close}"
+DELIVERY_PROOF_BIN="${DELIVERY_PROOF_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" && pwd -P)/factory_delivery_proof.py}"
 
 log()  { printf '%s\n' "$*"; }
 vlog() { [ "$VERBOSE" = "1" ] && printf '  %s\n' "$*"; return 0; }
 run()  { if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: $*"; return 0; fi; "$@"; }
+
+finalize_delivery() {  # rig-path bead repo pr required-workflow
+  local rig_path=$1 bead=$2 repo=$3 pr=$4 workflow=$5
+  if [ "$DRY_RUN" = "1" ]; then
+    log "  DRY-RUN: $DELIVER_CLOSE_BIN $bead --repo $repo --pr $pr --required-workflow $workflow"
+    return 0
+  fi
+  (
+    cd "$rig_path" || exit 1
+    "$DELIVER_CLOSE_BIN" "$bead" --repo "$repo" --pr "$pr" \
+      --required-workflow "$workflow" \
+      --reason "Merged PR #$pr after required workflow '$workflow' succeeded on the exact PR head."
+  )
+}
 
 ARMED=0; RECONCILED=0; FLAGGED=0; SKIPPED=0; ERRORS=0; HELD=0
 TMPDIR_AP=$(mktemp -d); trap 'rm -rf "$TMPDIR_AP"' EXIT
@@ -245,7 +263,7 @@ for entry in "${RIGS[@]}"; do
     ERRORS=$((ERRORS+1))
     break
   fi
-  IFS='|' read -r rig_dir repo dev <<<"$entry"
+  IFS='|' read -r rig_dir repo dev required_workflow <<<"$entry"
   log "=== $repo (base: $dev) ==="
   rig_path="$FACTORY/$rig_dir"
   [ -d "$rig_path" ] || { log "  SKIP: $rig_path missing"; ERRORS=$((ERRORS+1)); continue; }
@@ -400,12 +418,9 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     --json number,headRefName,mergeCommit,mergedAt 2>/dev/null \
     | jq -r '.[]|[.number,.headRefName,(.mergeCommit.oid//""),(.mergedAt//"")]|@tsv' 2>/dev/null)
 
-  # af-k1f97: the work bead a merged PR reconciles onto is usually already
-  # closed by the time the PR merges (deliver-close runs before push-and-pr),
-  # so this lookup needs the full, unfiltered bead history -- not just open
-  # beads. Fetched once per rig, not once per merged PR, for the same reason
-  # as $RIG_OPEN_BEADS_JSON above. Only fetched when there is at least one
-  # merged PR to reconcile, since it's the more expensive of the two lists.
+  # The work bead now remains in_progress while its PR is under review. Keep
+  # the full-history lookup for pre-gate false-close records and historical
+  # backfills; it also avoids a race between merge and a status-filtered read.
   RIG_ALL_BEADS_JSON='[]'
   if [ -n "$merged" ]; then
     RIG_ALL_BEADS_JSON=$(cd "$rig_path" && gc bd list --all --limit 0 --json 2>/dev/null)
@@ -416,21 +431,31 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     [ -z "${num:-}" ] && continue
     [ -z "${branch:-}" ] && continue
 
-    # af-gpq0y: a PR that merges without ever showing up green in the open-PR
-    # loop above (e.g. this pass's first look at it is already post-merge)
-    # still needs its CI-failure bead, if any, closed -- not left open forever.
-    close_ci_failure_beads "$repo" "$rig_path" "$num" "merged at ${sha:0:8}"
-
     # The flag beads filed above ("[ci] ... failed", "[autopilot] ... stuck")
     # carry pr_number too; they are about the PR, not the work it delivers, and
     # must never be stamped merged in place of the work bead.
-    bead=$(printf '%s' "$RIG_ALL_BEADS_JSON" \
+    candidate=$(printf '%s' "$RIG_ALL_BEADS_JSON" \
       | jq -r --arg b "$branch" --arg n "$num" \
         '[.[]|select((.metadata.source//"")!="pr-autopilot")
               |select((.metadata["gc.work_branch"]//"")==$b
-                     or (.metadata.pr_number|tostring)==$n)
-              |select((.metadata.merge_result//"")!="merged")][0].id // empty' 2>/dev/null)
-    [ -z "$bead" ] && { vlog "PR #$num ($branch): no unreconciled bead"; continue; }
+                     or (.metadata.pr_number|tostring)==$n)][0] // empty
+         | @json' 2>/dev/null)
+    [ -z "$candidate" ] && { vlog "PR #$num ($branch): no linked work bead"; continue; }
+    bead=$(printf '%s' "$candidate" | jq -r '.id // empty' 2>/dev/null)
+    [ -z "$bead" ] && { vlog "PR #$num ($branch): linked bead has no id"; continue; }
+
+    # A legacy pass could already have written merge_result=merged without the
+    # exact-head CI tuple.  Re-run those partial records through the single
+    # delivery door after this gate reaches the live root.  Fully proven rows
+    # and explicit no-op/blocked/abandoned outcomes remain terminal.
+    readiness=$(printf '%s' "$candidate" | python3 "$DELIVERY_PROOF_BIN" --mode readiness 2>/dev/null || true)
+    readiness_reason=$(printf '%s' "$readiness" | jq -r '.reason // empty' 2>/dev/null)
+    merge_result=$(printf '%s' "$candidate" | jq -r '.metadata.merge_result // empty' 2>/dev/null)
+    if [ "$readiness_reason" = "explicit-non-delivery" ] \
+      || { [ "$merge_result" = "merged" ] && printf '%s' "$readiness" | jq -e '.ready == true' >/dev/null 2>&1; }; then
+      vlog "PR #$num ($branch): delivery already terminal and proven"
+      continue
+    fi
     log "  PR #$num merged at ${sha:0:8} -> reconciling bead $bead"
     waiters=$(active_waiters_for "$bead")
     wake_reason=""
@@ -439,15 +464,10 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     elif [ -n "$waiters" ]; then
       wake_reason="active waiter(s): $waiters"
     fi
-    if run bash -c "cd '$rig_path' && gc bd update '$bead' \
-      --set-metadata merge_result=merged \
-      --set-metadata merged_sha='$sha' \
-      --set-metadata pr_number='$num' \
-      --set-metadata merged_target='$dev'"; then
-      # The merge_result guard above makes this an exactly-once completion
-      # edge. Historical backfills remain metadata-only unless live work is
-      # waiting; recent delivery wakes use an explicit automation identity so
-      # replies can never be mistaken for a conversation with Benjamin.
+    if finalize_delivery "$rig_path" "$bead" "$repo" "$num" "$required_workflow"; then
+      # Exact merge+CI proof is now the completion edge. Only after the door
+      # succeeds may a former CI-failure finding close or a dependent wake.
+      close_ci_failure_beads "$repo" "$rig_path" "$num" "merged at ${sha:0:8} with exact-head CI success"
       if [ -n "$wake_reason" ] && ! run bash -c "cd '$rig_path' && gc mail send mayor --from pr-autopilot --notify \
         --subject 'SHIPPED: $bead via PR #$num' \
         --message 'ACTION: pr-autopilot reconciled $bead from merged PR #$num
@@ -461,7 +481,7 @@ NEXT: Mayor advances or finalizes work waiting on $bead.' >/dev/null 2>&1"; then
       fi
       RECONCILED=$((RECONCILED+1))
     else
-      log "    reconciliation write failed for bead $bead"
+      log "    delivery proof rejected for bead $bead — leaving it open/unreleased"
       ERRORS=$((ERRORS+1))
     fi
   done <<<"$merged"

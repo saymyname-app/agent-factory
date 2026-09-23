@@ -599,13 +599,15 @@ update --status=closed`; use the deterministic wrapper instead:
 ./bin/deliver-close <bead-id> --repo <owner/repository> --pr <number>
 ```
 
-It independently verifies with `gh pr view` that the named pull request is
-merged, then writes all six fields from that verified evidence and closes the
-Bead in the same call. If the PR cannot be verified as merged it refuses to
-close the Bead and makes no metadata change at all — never a bead that looks
-closed but is silently missing its proof. `tests/deliver-close-test.sh` covers
-the merged/not-merged/mismatched-evidence/GitHub-failure paths against
-`GC_BIN`/`GH_BIN` fixtures.
+It independently verifies the named pull request is merged, resolves the
+configured required GitHub Actions workflow, and requires its latest
+`pull_request` run to be successful on the exact PR head. It then writes the
+six ADR-0016 fields, `merge_result`/SHA/target, and the `gc.ci_*` proof while
+closing the Bead in one call. Unknown repositories pass
+`--required-workflow <name>` explicitly; the three Factory-managed repositories
+are inferred. Unmerged, red-CI, missing-run, head-mismatch, or branch/base/URL
+mismatch paths make no metadata change. `tests/deliver-close-test.sh` covers
+those cases against `GC_BIN`/`GH_BIN` fixtures.
 
 mol-do-work's own work bead uses the lighter door instead, before any PR
 exists to verify:
@@ -616,11 +618,12 @@ exists to verify:
 ```
 
 This form writes the ADR-0009 work-record outcome (`gc.outcome=pass`,
-`gc.work_outcome=<outcome>`) without requiring a merged PR — there usually
-is not one yet. But if `<bead-id>` already names its own `gc.pr_url` (a
-previous attempt's PR, still linked when the door is called again), it
-independently verifies that PR with `gh pr view` first and refuses the close
-(no metadata change) unless it is genuinely merged (af-fzlp2, 2026-09-18:
+`gc.work_outcome=<outcome>`) for explicit non-PR work. A bead governed by
+`gc.delivery_contract=pr-ci-merged-v1` (including an approved delivery-graph
+ticket) cannot use `--outcome shipped` before its PR is linked. If the bead
+already names `gc.pr_url`, the same merge+exact-head-CI verification runs and
+the shipped path records full proof. It refuses the close on any failed proof
+(af-fzlp2, 2026-09-18:
 af-jj9u7/PR #120 was closed shipped while still open with red CI, af-cwitl/PR
 #123 while it had unresolved merge conflicts — both caught only afterward by
 `factory-delivery-guard`, never blocked at close time before this check).
@@ -630,11 +633,10 @@ of the work: a non-HQ-rig dispatch, or a no-op/blocked/abandoned outcome.
 When `workspace-setup` isolated the dispatch into an HQ worktree, a PR is
 still to come — `do-work` defers the close instead of calling this door
 (af-6scsz, 2026-09-19: af-hyls9 had closed shipped via this path while PR
-#159 was still open with CI in_progress). `push-and-pr` closes the bead once
-the PR actually exists, with a plain `gc bd close` — "opened, under review,"
-never "shipped" — the same contract `mol-polecat-commit`'s commit-and-push
-step already uses; `pr-autopilot` reconciles `merge_result=merged` onto the
-bead once GitHub actually merges it.
+#159 was still open with CI in_progress). `push-and-pr` records the PR and
+waiting contract but leaves the bead `in_progress`; `mol-polecat-commit` and
+`mol-scoped-work` do the same. `pr-autopilot` later calls `deliver-close`, and
+only that verified write closes the PR-backed bead (ADR-0026).
 
 If a delivered result is closed by hand anyway while it is still the
 coordination's `gc.current`, the projection reports it as **finalizing**

@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import re
-
 from typing import Any
+
+from factory_delivery_proof import delivery_readiness
 
 
 FAILURE_THRESHOLD = 3
@@ -477,6 +478,7 @@ def plan_factory_lane(
     ready: list[dict[str, Any]],
     queue_candidates: list[dict[str, Any]] | None = None,
     graph_digest: str | None = None,
+    graph_beads: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Rungs 2/2b only: a ready Factory bead, or an eligible ``goal=none``
     queue candidate. Returns ``{"action": "none", "reason": "factory_lane_empty", ...}``
@@ -488,10 +490,35 @@ def plan_factory_lane(
     consulted *before* a product materialize decision, not only after one, so
     the Factory lane can win even while a product candidate is eligible.
     """
+    graph_by_id = {
+        str(item.get("id")): item
+        for item in (graph_beads or [])
+        if isinstance(item, dict) and item.get("id")
+    }
+
+    def blockers_are_delivery_complete(candidate: dict[str, Any]) -> bool:
+        if not graph_digest:
+            return True
+        stored = graph_by_id.get(str(candidate.get("id") or ""))
+        if stored is None:
+            return False
+        for dependency in stored.get("dependencies") or []:
+            if not isinstance(dependency, dict):
+                continue
+            dep_type = dependency.get("type") or dependency.get("dependency_type")
+            if dep_type != "blocks":
+                continue
+            blocker_id = str(dependency.get("depends_on_id") or dependency.get("id") or "").strip()
+            blocker = graph_by_id.get(blocker_id)
+            if blocker is None or not delivery_readiness(blocker)["ready"]:
+                return False
+        return True
+
     candidates = sorted(
         (
             bead for bead in ready
             if is_ladder_bead(bead) and is_scoped_delivery_bead(bead, graph_digest)
+            and blockers_are_delivery_complete(bead)
         ),
         key=lambda bead: (_priority(bead), str(bead.get("created_at") or ""), str(bead["id"])),
     )
@@ -557,6 +584,7 @@ def plan_idle_ladder(
     last_axis: Any = None,
     workflow_state: dict[str, Any] | None = None,
     graph_digest: str | None = None,
+    graph_beads: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Pick the next rung when product work has nothing to do.
 
@@ -643,7 +671,7 @@ def plan_idle_ladder(
         # never indistinguishable from class D/E (stalled, defective).
         return {"action": "none", "reason": "maintain_alive_off", "wake_key": None}
 
-    factory_plan = plan_factory_lane(ready, queue_candidates, graph_digest)
+    factory_plan = plan_factory_lane(ready, queue_candidates, graph_digest, graph_beads)
     if factory_plan["action"] == "wake_mayor":
         return factory_plan
 

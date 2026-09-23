@@ -10,7 +10,8 @@ Designed for small installations where a lightweight PR is enough review.
 
 1. Receive work (molecule poured with this formula, assigned to you)
 2. Follow steps in order (read descriptions, execute, move to next)
-3. Push a work branch, open a PR against base_branch, close bead, exit
+3. Push a work branch, open a PR against base_branch, leave the bead waiting
+   for merge+exact-head CI, exit
 4. You are GONE — no refinery step needed
 
 **A feature branch, always.** Work is committed to a branch named after the
@@ -355,7 +356,11 @@ PR_URL=$(gh pr create --base "{{base_branch}}" --head "$BRANCH" \
   --body "Closes $WORK_BEAD_ID.
 
 <what changed and why>")
-gc bd update "$WORK_BEAD_ID" --set-metadata "gc.pr_url=$PR_URL"
+gc bd update "$WORK_BEAD_ID" \
+  --set-metadata "gc.pr_url=$PR_URL" \
+  --set-metadata "gc.delivery_contract=pr-ci-merged-v1" \
+  --set-metadata "gc.delivery_status=waiting" \
+  --set-metadata "gc.work_base_branch={{base_branch}}"
 ```
 The PR is the review; CI and pr-autopilot merge it on green. This step does
 not wait for the merge — that is pr-autopilot's job, running on its own
@@ -369,14 +374,14 @@ git worktree remove "$WORKTREE_PATH" --force
 gc bd update "$WORK_BEAD_ID" --unset-metadata work_dir
 ```
 
-**5. Close the bead:**
+**5. Record the waiting state without closing the bead:**
 ```bash
-gc bd update "$WORK_BEAD_ID" --notes "Opened $PR_URL against {{base_branch}}: <brief summary>"
-gc bd close "$WORK_BEAD_ID"
+gc bd update "$WORK_BEAD_ID" \
+  --notes "Opened $PR_URL against {{base_branch}}: <brief summary>. Remains in_progress until merge and exact-head required CI are proven."
 ```
-Closing here means "the work is done and under review," not "merged" —
-pr-autopilot reconciles `merge_result=merged` onto this same bead once GitHub
-actually merges the PR; never treat this close as shipped by itself.
+`pr-autopilot` calls `deliver-close` on this same bead only after GitHub proves
+the PR merged and the required workflow succeeded on the exact PR head. That
+single write records merge+CI proof and closes the bead; PR creation never does.
 
 **6. Signal reconciler and exit.**
 ```bash
@@ -389,4 +394,5 @@ reconciler only restarts you if the pool check command finds more work.
 You are GONE. Done means gone. There is no idle state.
 
 **Exit criteria:** Branch pushed, PR opened against {{base_branch}}, worktree
-cleaned up, bead closed with the PR URL recorded, session exited."""
+cleaned up, bead left `in_progress` with the PR URL and waiting contract
+recorded, session exited."""
