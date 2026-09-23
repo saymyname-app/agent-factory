@@ -86,6 +86,9 @@ jobs:
       - name: Role, concurrency and retention qualification
         run: python tests/role-qualification-oracle-test.py
 
+      - name: Planning Map and decision concurrency
+        run: python tests/planning-map-concurrency-prototype-test.py
+
       - name: Factory guard worktree hygiene
         run: bash tests/factory-guard-worktree-test.sh
 
