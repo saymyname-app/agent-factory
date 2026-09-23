@@ -78,17 +78,20 @@ separate acceptance action.
 
 ## Hermeticity and failure injection
 
-Each adapter command runs under Bubblewrap with all namespaces unshared,
-including the network namespace. The sandbox exposes only read-only system
-runtime directories and the writable ephemeral fixture workspace; the host's
-home, identity files, repositories, and other data are absent. Each run also
-receives a new HOME, TMPDIR, and XDG cache. Credentials, provider variables,
-proxy configuration, and the caller's other environment are not inherited.
-`FIXTURE_CITY_EFFECT_MODE=deny` is mandatory for the adapter. A containment
-scenario probes the absence of host identity files, external network access,
-and system-directory writes. The checked-in scenarios contain only synthetic
-identities and revisions, so the fixture run cannot create a production,
-personal-data, external-publication, or spend effect.
+Each adapter command runs under Bubblewrap with every namespace except the
+network namespace unshared. The network namespace is retained because some CI
+runtimes permit Bubblewrap but deny its loopback setup; a seccomp filter denies
+socket creation and `io_uring` inside the adapter process and all descendants.
+The sandbox exposes only read-only system runtime directories and the writable
+ephemeral fixture workspace; the host's home, identity files, repositories,
+and other data are absent. Each run also receives a new HOME, TMPDIR, and XDG
+cache. Credentials, provider variables, proxy configuration, and the caller's
+other environment are not inherited. `FIXTURE_CITY_EFFECT_MODE=deny` is
+mandatory for the adapter. A containment scenario probes the absence of host
+identity files, network socket creation, and system-directory writes. The
+checked-in scenarios contain only synthetic identities and revisions, so the
+fixture run cannot create a production, personal-data, external-publication,
+or spend effect.
 
 Exact-revision assembly directories are over-mounted read-only inside every
 adapter sandbox, and the oracle requires clean Git worktrees before and after

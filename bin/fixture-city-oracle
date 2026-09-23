@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -302,6 +304,39 @@ def sandbox_copy(executable: Path, workspace: Path) -> Path:
     return target
 
 
+def network_seccomp_filter() -> bytes:
+    """Deny creation of sockets and io_uring inside a shared network namespace."""
+    machine = os.uname().machine
+    architectures = {
+        "x86_64": (0xC000003E, (41, 53, 425, 426, 427, 0x40000029, 0x40000035)),
+        "aarch64": (0xC00000B7, (198, 199, 425, 426, 427)),
+    }
+    if machine not in architectures:
+        raise OracleError(f"fixture sandbox does not support seccomp on {machine}")
+    audit_arch, denied_syscalls = architectures[machine]
+
+    load_word = 0x20
+    jump_equal = 0x15
+    return_value = 0x06
+    kill_process = 0x80000000
+    allow = 0x7FFF0000
+    fail_with_errno = 0x00050000 | errno.EPERM
+
+    instructions = [
+        (load_word, 0, 0, 4),
+        (jump_equal, 1, 0, audit_arch),
+        (return_value, 0, 0, kill_process),
+        (load_word, 0, 0, 0),
+    ]
+    for syscall_number in denied_syscalls:
+        instructions.extend((
+            (jump_equal, 0, 1, syscall_number),
+            (return_value, 0, 0, fail_with_errno),
+        ))
+    instructions.append((return_value, 0, 0, allow))
+    return b"".join(struct.pack("=HBBI", *instruction) for instruction in instructions)
+
+
 def run_interface(
     executable: Path,
     workspace: Path,
@@ -319,6 +354,7 @@ def run_interface(
     sandbox = [
         bubblewrap,
         "--unshare-all",
+        "--share-net",
         "--die-with-parent",
         "--new-session",
     ]
@@ -341,22 +377,29 @@ def run_interface(
     ))
     for key, value in environment.items():
         sandbox.extend(("--setenv", key, value))
-    sandbox.extend((
+    command_line = (
         str(contained_executable),
         "--workspace", str(workspace),
         command,
         *arguments,
-    ))
+    )
     try:
-        result = subprocess.run(
-            sandbox,
-            cwd=workspace,
-            env=environment,
-            text=True,
-            capture_output=True,
-            timeout=15,
-            check=False,
-        )
+        with tempfile.TemporaryFile() as seccomp_filter:
+            seccomp_filter.write(network_seccomp_filter())
+            seccomp_filter.flush()
+            seccomp_filter.seek(0)
+            sandbox.extend(("--seccomp", str(seccomp_filter.fileno())))
+            sandbox.extend(command_line)
+            result = subprocess.run(
+                sandbox,
+                cwd=workspace,
+                env=environment,
+                text=True,
+                capture_output=True,
+                timeout=15,
+                check=False,
+                pass_fds=(seccomp_filter.fileno(),),
+            )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise OracleError(f"{command} interface failed to run: {exc}") from exc
     if check and result.returncode != 0:

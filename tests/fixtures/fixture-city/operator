@@ -145,14 +145,13 @@ def command_start(args: argparse.Namespace) -> int:
         else:
             print("fixture sandbox allowed a host-system write", file=sys.stderr)
             return 2
-        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        probe.settimeout(0.1)
         try:
-            connected = probe.connect_ex(("1.1.1.1", 53)) == 0
-        finally:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        except OSError:
+            pass
+        else:
             probe.close()
-        if connected:
-            print("fixture sandbox allowed external network access", file=sys.stderr)
+            print("fixture sandbox allowed network socket creation", file=sys.stderr)
             return 2
     request_digest = canonical_digest(request).split(":", 1)[1]
     run_id = "planning-" + request_digest[:12]
