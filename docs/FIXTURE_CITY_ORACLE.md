@@ -82,6 +82,11 @@ Each adapter command runs under Bubblewrap with every namespace except the
 network namespace unshared. The network namespace is retained because some CI
 runtimes permit Bubblewrap but deny its loopback setup; a seccomp filter denies
 socket creation and `io_uring` inside the adapter process and all descendants.
+Ubuntu runners that apply AppArmor's host-wide unprivileged-user-namespace
+restriction load `config/fixture-city-bwrap.apparmor`. The attachment-specific
+profile grants `userns` only to `/usr/bin/bwrap`; CI does not disable the global
+restriction. This lets Bubblewrap create the mount namespace while keeping the
+runner's policy in force for every other executable.
 The sandbox exposes only read-only system runtime directories and the writable
 ephemeral fixture workspace; the host's home, identity files, repositories,
 and other data are absent. Each run also receives a new HOME, TMPDIR, and XDG

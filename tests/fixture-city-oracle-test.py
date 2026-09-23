@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ORACLE = ROOT / "bin" / "fixture-city-oracle"
 FIXTURES = ROOT / "tests" / "fixtures" / "fixture-city"
 OPERATOR = FIXTURES / "operator"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+BWRAP_PROFILE = ROOT / "config" / "fixture-city-bwrap.apparmor"
 
 
 class FixtureCityOracleTest(unittest.TestCase):
@@ -147,6 +149,19 @@ class FixtureCityOracleTest(unittest.TestCase):
         result = self.invoke("dirty-assembly-attempt.json", check=False)
         self.assertNotEqual(0, result.returncode)
         self.assertIn("assembly checkout is read-only", result.stderr)
+
+    def test_ci_preserves_the_global_user_namespace_restriction(self):
+        workflow = CI_WORKFLOW.read_text()
+        profile = BWRAP_PROFILE.read_text()
+
+        self.assertIn("apparmor_restrict_unprivileged_userns", workflow)
+        self.assertIn("config/fixture-city-bwrap.apparmor", workflow)
+        self.assertNotIn("sysctl -w", workflow)
+        self.assertIn(
+            "profile fixture-city-bwrap /usr/bin/bwrap flags=(unconfined)",
+            profile,
+        )
+        self.assertIn("userns,", profile)
 
     def test_reference_protocol_does_not_overclaim_three_rig_coverage(self):
         result = self.invoke("unsupported-three-rig.json", check=False)

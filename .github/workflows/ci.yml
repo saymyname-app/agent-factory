@@ -60,9 +60,18 @@ jobs:
 
       - name: Ensure fixture sandbox runtime
         run: |
-          if ! command -v bwrap >/dev/null; then
+          packages=()
+          command -v bwrap >/dev/null || packages+=(bubblewrap)
+          if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || true)" = "1" ]; then
+            command -v apparmor_parser >/dev/null || packages+=(apparmor)
+          fi
+          if ((${#packages[@]})); then
             sudo apt-get update
-            sudo apt-get install -y bubblewrap
+            sudo apt-get install -y "${packages[@]}"
+          fi
+          if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || true)" = "1" ]; then
+            sudo apparmor_parser --replace --skip-read-cache --skip-cache \
+              config/fixture-city-bwrap.apparmor
           fi
 
       - name: Fixture City public-behavior oracle

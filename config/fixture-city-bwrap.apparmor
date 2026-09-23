@@ -1,0 +1,12 @@
+# GitHub's Ubuntu 24.04 runner restricts unprivileged user namespaces through
+# AppArmor. Bubblewrap needs one to construct the Fixture City mount sandbox.
+# Keep the host-wide restriction enabled and grant that operation only to the
+# sandbox launcher used by the oracle.
+
+abi <abi/4.0>,
+
+include <tunables/global>
+
+profile fixture-city-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+}
