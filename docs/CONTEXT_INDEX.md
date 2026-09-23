@@ -51,6 +51,7 @@ Use progressive disclosure. Do not read every document by default.
 | Which minimum Gas City planning allocation P02 selected, where each responsibility runs, how it fails closed, and how to reverse it before canonical writing | `PLANNING_ALLOCATION_PROTOTYPE.md`, `ADAPTATION_REGISTER.md` (AR-001), `./bin/planning-allocation-prototype` |
 | How P04 shows one Planning Run decision surviving a provider/surface change through evidence rather than a transcript, and how it bounds any retained cross-surface conversation view | `PLANNING_RUN_RESUME_PROTOTYPE.md`, `./bin/planning-run-resume-oracle`, `tests/planning-run-resume-oracle-test.py` |
 | How P06 qualifies provider-independent roles against one acceptance standard, justifies any concurrency-ceiling reduction from a deliberately high starting point, and picks zero-vs-shortest-evidenced decision-session retention | `ROLE_QUALIFICATION_PROTOTYPE.md`, `./bin/role-qualification-oracle`, `tests/role-qualification-oracle-test.py` |
+| How P03 proves exactly-once Planning Decision claim, disjoint and merge-on-retry shared Planning Map updates with no lost writes, singular Spec/Ticket Graph Draft writers, and the mechanism's bounded reversal | `PLANNING_MAP_CONCURRENCY_PROTOTYPE.md`, `ADAPTATION_REGISTER.md` (AR-001), `./bin/planning-map-concurrency-prototype`, `tests/planning-map-concurrency-prototype-test.py` |
 | Token-efficient multi-provider orchestration proposal (routing matrix, Mayor session budget) | `PROPOSAL-token-efficient-orchestration-2026-09-15.md` |
 
 ## Authority order
