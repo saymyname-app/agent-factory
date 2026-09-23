@@ -181,6 +181,7 @@ def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str
             "metadata": {
                 "gc.graph_digest": digest,
                 "gc.plane": "delivery",
+                "gc.delivery_contract": "pr-ci-merged-v1",
                 "gc.ticket_id": ticket_id,
                 "gc.ticket_kind": str(ticket.get("kind") or "vertical_slice"),
                 "gc.artifact_id": artifact["id"],

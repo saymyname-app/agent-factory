@@ -1290,10 +1290,10 @@ fi
 # is_ladder_bead) unconditionally -- nothing used to clear it when the bead
 # it names closed, so "waiting on something" silently became "waiting
 # forever" (af-p4v9v sat excluded 14+ hours after the bead it waited on
-# merged). bin/factory-waiting-guard clears gc.waiting_on once its target
-# closes, reports once (never repeatedly) when the target doesn't resolve to
-# any bead, and leaves free-text waits (a person, "stalled") untouched. See
-# that script for detail.
+# merged). bin/factory-waiting-guard clears gc.waiting_on once its target is
+# terminal and, for PR-backed work, carries coherent merge+exact-head-CI proof.
+# It reports when structural proof is rejected, reports once (never repeatedly)
+# when the target does not resolve, and leaves free-text waits untouched.
 WAITING_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-waiting-guard"
 if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$WAITING_GUARD" ]; then
   say "· waiting-drift — not checked (not a city root, or gc unavailable)"

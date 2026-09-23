@@ -2,6 +2,22 @@
 
 set -Eeuo pipefail
 
+scenario=${DELIVER_SCENARIO:-merged}
+
+if [[ ${1:-} == api ]]; then
+  head_ref="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  conclusion="success"
+  case "$scenario" in
+    ci-failure) conclusion="failure" ;;
+    ci-missing) printf '{"workflow_runs":[]}\n'; exit 0 ;;
+    ci-head-mismatch) head_ref="cccccccccccccccccccccccccccccccccccccccc" ;;
+  esac
+  cat <<JSON
+{"workflow_runs":[{"id":35882143816,"name":"Factory CI","head_sha":"$head_ref","event":"pull_request","status":"completed","conclusion":"$conclusion"}]}
+JSON
+  exit 0
+fi
+
 [[ ${1:-} == pr && ${2:-} == view ]] || exit 64
 pr_arg=$3
 shift 3
@@ -15,8 +31,6 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-scenario=${DELIVER_SCENARIO:-merged}
-
 if [[ $scenario == gh-failure ]]; then
   printf 'gh: could not resolve pull request\n' >&2
   exit 1
@@ -27,15 +41,18 @@ state="MERGED"
 merged_at="2026-09-16T07:00:00Z"
 head_ref="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 merge_oid="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+head_branch="do-work/af-work"
+base_branch="main"
 
 case "$scenario" in
   merged) ;;
   not-merged) state="OPEN"; merged_at="" ;;
   number-mismatch) number=$((pr_arg + 1)) ;;
   short-sha) head_ref="abc123" ;;
+  ci-failure|ci-missing|ci-head-mismatch) ;;
   *) printf 'unknown DELIVER_SCENARIO: %s\n' "$scenario" >&2; exit 64 ;;
 esac
 
 cat <<JSON
-{"number":$number,"state":"$state","mergedAt":"$merged_at","headRefOid":"$head_ref","mergeCommit":{"oid":"$merge_oid"},"url":"https://github.example.invalid/$repo/pull/$pr_arg"}
+{"number":$number,"state":"$state","mergedAt":"$merged_at","headRefOid":"$head_ref","headRefName":"$head_branch","baseRefName":"$base_branch","mergeCommit":{"oid":"$merge_oid"},"url":"https://github.com/$repo/pull/$pr_arg"}
 JSON

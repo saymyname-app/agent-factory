@@ -121,7 +121,7 @@ replace available primary evidence for a load-bearing claim.
 
 Choose the lowest-risk sufficient profile when creating the work bead and record the profile as a label (`delivery:fast`, `delivery:standard`, or `delivery:guarded`). The bead description names the repository, allowed scope, required deterministic validations and the merge authority. Risk escalation changes the profile before the risky step; it does not broaden the original authorization.
 
-A delivery is complete only when the bead notes record the effective agent/session and model when an LLM ran, branch, commit SHA, PR URL/number, required checks and their conclusions, merge/final state, and deterministic validation. Closing a Bead never substitutes for GitHub merge evidence.
+A delivery is complete only when the bead notes record the effective agent/session and model when an LLM ran, branch, commit SHA, PR URL/number, required checks and their conclusions, merge/final state, and deterministic validation. Closing a Bead never substitutes for GitHub merge evidence. For PR-backed work, `closed` is itself guarded: only `bin/deliver-close` may atomically close after recording `merge_result=merged`, `merged_sha`, `merged_target`, the six ADR-0016 proof fields, and a successful required workflow run whose `gc.ci_head_sha` equals `gc.pr_head` (ADR-0026).
 
 For GUARDED work, create the gate against only the bead that performs the protected transition:
 
@@ -148,7 +148,8 @@ records what was verified about the machinery underneath.
 ### The wired path
 
 1. A work session implements on a branch and the `publisher` role opens a PR
-   against the rig's `dev`.
+   against the rig's `dev`. It records `gc.delivery_contract=pr-ci-merged-v1`
+   and `gc.delivery_status=waiting`; the work bead remains `in_progress`.
 2. `bin/pr-autopilot` (registered as `orders/pr-autopilot.toml`, cooldown 3 min)
    arms GitHub auto-merge (`--auto --squash --delete-branch`) on every open,
    non-draft PR targeting `dev`.
@@ -156,14 +157,18 @@ records what was verified about the machinery underneath.
    `Maven verify` (ruleset `22629508`) or `Tests and build` (ruleset
    `22629678`). Nothing polls; no session waits on CI.
 4. On its next pass, `pr-autopilot` loads the complete Beads history explicitly
-   (`gc bd list --all --limit 0`), then reconciles the merged PR back onto its
-   work bead — `merge_result=merged`, `merged_sha`, `pr_number`,
-   `merged_target` — matching bead `gc.work_branch` to the PR `headRefName`.
-   A first successful reconciliation sends one compact
+   (`gc bd list --all --limit 0`), matches bead `gc.work_branch` to the PR
+   `headRefName`, and calls `bin/deliver-close`. The door independently reads
+   the merged PR and the latest configured required workflow run for the exact
+   PR head. One atomic Beads write records `merge_result`, merge SHA/target,
+   PR identity, `gc.required_ci_workflow`, `gc.ci_run_id`,
+   `gc.ci_head_sha`, `gc.ci_conclusion=success`, and closes the work bead.
+   Missing/red CI, a different CI head, an unmerged PR, or mismatched recorded
+   branch/base/URL leaves the bead open and dependencies unreleased. A first successful finalization sends one compact
    `ACTION/STATE/EVIDENCE/NEXT` wake to the Mayor only when GitHub's `mergedAt`
    is at most one hour old, or an `open`/`in_progress` bead actively waits on
    the delivered bead through a `blocks` dependency or `gc.waiting_on`.
-   Historical backfills still receive delivery metadata but remain silent when
+   Historical backfills still receive delivery metadata through the same door but remain silent when
    nobody is waiting. The sender is explicitly `pr-autopilot`, never `human`,
    and the `merge_result` stamp makes later passes silent.
 5. A PR whose required check **failed** is never armed. It is raised as a P1
@@ -177,9 +182,13 @@ added to the autopilot's rig table (see *Production stays gated* below).
 
 ### Reading delivery state
 
-A bead carrying `merge_result=merged` and `merged_sha` is on `dev`. A closed
-bead **without** them means a pull request was opened and nothing more. Agents
-must never report the second as shipped.
+A PR-backed bead is delivered only when it is closed with coherent merge and
+exact-head CI proof. `merge_result=merged` alone, `closed` alone, or a green run
+for another head is insufficient. `lib/factory_delivery_proof.py` owns this
+pure predicate; the scoped Mayor lane and `factory-waiting-guard` both use it,
+so a legacy false close cannot release the next approved-graph ticket or clear
+a named wait. Explicit no-op, blocked, abandoned, and generic non-PR closes
+retain their prior terminal semantics.
 
 ### Multi-repo / cross-rig delivery proof (af-kidv)
 

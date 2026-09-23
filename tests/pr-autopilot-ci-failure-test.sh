@@ -32,7 +32,7 @@ JSON
 # already post-merge) -- its CI-failure bead must still close.
 cat > "$TMP/merged.json" <<'JSON'
 [
- {"number":45,"headRefName":"feat/smb-a6bm-leaderboard-slice2-board-scope","mergeCommit":{"oid":"1111111111111111111111111111111111111a"}}
+ {"number":45,"headRefName":"feat/smb-a6bm-leaderboard-slice2-board-scope","mergeCommit":{"oid":"1111111111111111111111111111111111111a"},"mergedAt":"2026-09-21T15:30:00Z"}
 ]
 JSON
 
@@ -55,15 +55,23 @@ echo "\$*" >> "$TMP/gc.log"
 if [[ \$1 == bd && \$2 == list ]]; then
   echo '[{"id":"af-ci47","title":"[ci] PR #47 failed required checks on dev","metadata":{"pr_number":"47","source":"pr-autopilot"}},
         {"id":"af-ci99","title":"[ci] PR #99 failed required checks on dev","metadata":{"pr_number":"99","source":"pr-autopilot"}},
-        {"id":"af-ci45","title":"[ci] PR #45 failed required checks on dev","metadata":{"pr_number":"45","source":"pr-autopilot"}}]'
+        {"id":"af-ci45","title":"[ci] PR #45 failed required checks on dev","metadata":{"pr_number":"45","source":"pr-autopilot"}},
+        {"id":"af-work45","status":"in_progress","title":"work delivered by PR 45","metadata":{"gc.work_branch":"feat/smb-a6bm-leaderboard-slice2-board-scope"}}]'
   exit 0
 fi
 exit 0
+STUB
+cat > "$TMP/bin/deliver-close" <<STUB
+#!/usr/bin/env bash
+set -Eeuo pipefail
+bead=\$1
+gc bd update "\$bead" --set-metadata merge_result=merged --set-metadata gc.ci_conclusion=success --status=closed
 STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/gh"
+export DELIVER_CLOSE_BIN="$TMP/bin/deliver-close"
 
 pilot() { "$AUTOPILOT" "$@" 2>&1 || true; }
 
@@ -79,5 +87,7 @@ grep -q "^bd update af-ci99 " "$TMP/gc.log" && fail "PR #99 is still failing but
 # PR 45: merged (first seen already merged, never green while open) -> closes too.
 grep -q "^bd update af-ci45 --status closed" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "PR #45's CI-failure bead was not closed on merge"; }
+grep -q "^bd update af-work45 .*merge_result=merged .*--status=closed" "$TMP/gc.log" \
+  || { echo "$out" >&2; fail "PR #45 work did not pass through the delivery finalizer"; }
 
 echo "OK pr-autopilot closes CI-failure beads once checks recover or the PR merges"

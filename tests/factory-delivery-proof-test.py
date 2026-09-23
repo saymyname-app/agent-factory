@@ -21,10 +21,12 @@ sys.path.insert(0, str(ROOT / "lib"))
 from factory_delivery_proof import (  # noqa: E402
     assess_bead,
     assess_claimed_shipped_bead,
+    delivery_readiness,
     find_claimed_shipped,
     find_incomplete,
     is_claimed_shipped_bead,
     missing_proof_fields,
+    missing_structural_pr_proof,
 )
 
 VALID_SHA_A = "a" * 40
@@ -39,6 +41,23 @@ def full_proof(**overrides):
         "gc.pr_number": 42,
         "gc.pr_head": VALID_SHA_A,
         "gc.merge_commit": VALID_SHA_B,
+    }
+    value.update(overrides)
+    return value
+
+
+def structural_proof(**overrides):
+    value = {
+        **full_proof(),
+        "gc.pr_url": "https://github.com/example-org/example-repo/pull/42",
+        "pr_number": 42,
+        "merge_result": "merged",
+        "merged_sha": VALID_SHA_B,
+        "merged_target": "main",
+        "gc.required_ci_workflow": "Factory CI",
+        "gc.ci_run_id": 35882143816,
+        "gc.ci_head_sha": VALID_SHA_A,
+        "gc.ci_conclusion": "success",
     }
     value.update(overrides)
     return value
@@ -135,6 +154,58 @@ class AssessBead(unittest.TestCase):
         report = assess_bead(bead(metadata={"gc.delivery_proof_flagged_at": "2026-09-16T12:00:00Z"}))
         self.assertIsNotNone(report)
         self.assertTrue(report["already_flagged"])
+
+
+class StructuralDeliveryReadiness(unittest.TestCase):
+    def graph_bead(self, ticket, metadata=None, status="closed"):
+        return {
+            "id": f"zz-{ticket.lower()}",
+            "status": status,
+            "metadata": {
+                "gc.ticket_id": ticket,
+                "gc.plane": "delivery",
+                "gc.graph_digest": "sha256:" + "5" * 64,
+                **(metadata or {}),
+            },
+        }
+
+    def test_p01_closed_under_review_is_not_delivery_complete(self):
+        result = delivery_readiness(self.graph_bead("P01", {
+            "gc.pr_url": "https://github.com/example-org/example-repo/pull/197",
+        }))
+        self.assertFalse(result["ready"])
+        self.assertTrue(result["pr_backed"])
+        self.assertIn("merge_result", result["missing"])
+        self.assertIn("gc.ci_run_id", result["missing"])
+
+    def test_p02_red_ci_and_head_mismatch_are_rejected(self):
+        red = delivery_readiness(self.graph_bead("P02", structural_proof(**{
+            "gc.ci_conclusion": "failure",
+        })))
+        self.assertFalse(red["ready"])
+        self.assertIn("gc.ci_conclusion", red["missing"])
+
+        mismatch = delivery_readiness(self.graph_bead("P02", structural_proof(**{
+            "gc.ci_head_sha": "c" * 40,
+        })))
+        self.assertFalse(mismatch["ready"])
+        self.assertIn("gc.ci_head_sha!=gc.pr_head", mismatch["missing"])
+
+    def test_exact_green_ci_and_merge_proof_release_delivery(self):
+        self.assertEqual([], missing_structural_pr_proof(structural_proof()))
+        result = delivery_readiness(self.graph_bead("P02", structural_proof()))
+        self.assertTrue(result["ready"])
+        self.assertEqual("merged-ci-proven", result["reason"])
+
+    def test_explicit_non_delivery_and_generic_closed_semantics_are_preserved(self):
+        for outcome in ("no-op", "blocked", "abandoned"):
+            with self.subTest(outcome=outcome):
+                result = delivery_readiness(self.graph_bead("P02", {
+                    "gc.work_outcome": outcome,
+                }))
+                self.assertTrue(result["ready"])
+                self.assertFalse(result["pr_backed"])
+        self.assertTrue(delivery_readiness({"id": "zz-generic", "status": "closed"})["ready"])
 
 
 class FindIncomplete(unittest.TestCase):
@@ -298,6 +369,19 @@ class Cli(unittest.TestCase):
         self.assertEqual(
             ["zz-fixture-af-x45xw", "example-org/example-repo", "114", "0"], fields
         )
+
+    def test_readiness_mode_reports_structural_failure_as_json(self):
+        result = self.run_cli_mode("readiness", json.dumps({
+            "id": "zz-p01", "status": "closed",
+            "metadata": {
+                "gc.plane": "delivery", "gc.graph_digest": "sha256:" + "5" * 64,
+                "gc.pr_url": "https://github.com/example-org/example-repo/pull/197",
+            },
+        }))
+        self.assertEqual(0, result.returncode, result.stderr)
+        readiness = json.loads(result.stdout)
+        self.assertFalse(readiness["ready"])
+        self.assertIn("merge_result", readiness["missing"])
 
     def test_unknown_mode_fails_loudly(self):
         result = self.run_cli_mode("bogus", "[]")

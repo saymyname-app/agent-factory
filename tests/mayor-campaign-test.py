@@ -577,6 +577,31 @@ def bead(bead_id, **extra):
     return value
 
 
+def merged_delivery_proof(pr_number=197, **overrides):
+    head = "a" * 40
+    merge = "b" * 40
+    value = {
+        "gc.delivery_contract": "pr-ci-merged-v1",
+        "gc.delivery_status": "merged",
+        "gc.work_outcome": "shipped",
+        "gc.github_repo": "saymyname-app/agent-factory",
+        "gc.pr_number": pr_number,
+        "gc.pr_head": head,
+        "gc.merge_commit": merge,
+        "gc.pr_url": f"https://github.com/saymyname-app/agent-factory/pull/{pr_number}",
+        "pr_number": pr_number,
+        "merge_result": "merged",
+        "merged_sha": merge,
+        "merged_target": "main",
+        "gc.required_ci_workflow": "Factory CI",
+        "gc.ci_run_id": 35875550823,
+        "gc.ci_head_sha": head,
+        "gc.ci_conclusion": "success",
+    }
+    value.update(overrides)
+    return value
+
+
 class IdleLadderPlanTest(unittest.TestCase):
     """ADR-0016 s.7: 'no eligible product candidate' is not inactivity."""
 
@@ -629,6 +654,7 @@ class IdleLadderPlanTest(unittest.TestCase):
             queue_candidates=[{"id": "af-q", "kind": "factory_campaign",
                                "state": "eligible", "title": "old queue"}],
             graph_digest=digest,
+            graph_beads=[scoped],
         )
         self.assertEqual("ladder:factory:af-scoped", plan["wake_key"])
 
@@ -637,9 +663,46 @@ class IdleLadderPlanTest(unittest.TestCase):
             queue_candidates=[{"id": "af-q", "kind": "factory_campaign",
                                "state": "eligible", "title": "old queue"}],
             graph_digest=digest,
+            graph_beads=[scoped],
         )
         self.assertEqual(("none", "scoped_graph_waiting"),
                          (waiting["action"], waiting["reason"]))
+
+    def test_p01_p02_false_done_blockers_do_not_release_scoped_dependents(self):
+        digest = "sha256:" + "5" * 64
+        base = {"gc.graph_digest": digest, "gc.plane": "delivery"}
+        p01 = bead("af-p01", status="closed", metadata={
+            **base,
+            "gc.ticket_id": "P01",
+            "gc.pr_url": "https://github.com/saymyname-app/agent-factory/pull/197",
+        })
+        p02 = bead("af-p02", metadata={**base, "gc.ticket_id": "P02"}, dependencies=[
+            {"depends_on_id": "af-p01", "type": "blocks"},
+        ])
+        held = plan_idle_ladder([p02], NOW, graph_digest=digest, graph_beads=[p01, p02])
+        self.assertEqual(("none", "scoped_graph_waiting"), (held["action"], held["reason"]))
+
+        p01["metadata"].update(merged_delivery_proof())
+        released = plan_idle_ladder([p02], NOW, graph_digest=digest, graph_beads=[p01, p02])
+        self.assertEqual("ladder:factory:af-p02", released["wake_key"])
+
+        p02.update(status="closed", metadata={
+            **base, "gc.ticket_id": "P02",
+            **merged_delivery_proof(200, **{"gc.ci_conclusion": "failure"}),
+        })
+        p04 = bead("af-p04", metadata={**base, "gc.ticket_id": "P04"}, dependencies=[
+            {"depends_on_id": "af-p02", "type": "blocks"},
+        ])
+        red_held = plan_idle_ladder([p04], NOW, graph_digest=digest, graph_beads=[p02, p04])
+        self.assertEqual("scoped_graph_waiting", red_held["reason"])
+
+        p02["metadata"].update(merged_delivery_proof(200, **{"gc.ci_head_sha": "c" * 40}))
+        mismatch_held = plan_idle_ladder([p04], NOW, graph_digest=digest, graph_beads=[p02, p04])
+        self.assertEqual("scoped_graph_waiting", mismatch_held["reason"])
+
+        p02["metadata"].update(merged_delivery_proof(200))
+        exact_released = plan_idle_ladder([p04], NOW, graph_digest=digest, graph_beads=[p02, p04])
+        self.assertEqual("ladder:factory:af-p04", exact_released["wake_key"])
 
     def test_one_factory_bead_at_a_time(self):
         tracked = bead("af-hi", status="in_progress", updated_at="2026-09-16T10:00:00Z")
@@ -838,6 +901,7 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         super().setUp()
         self.ready_file = self.root / "ready.json"
         self.env["CAMPAIGN_READY_FILE"] = str(self.ready_file)
+        self.env["CAMPAIGN_RIG_BEADS_FILE"] = str(self.ready_file)
         self.ready_file.write_text(json.dumps([
             bead("af-sess", issue_type="session", priority=0),
             bead("af-fix", issue_type="bug", priority=1, title="Réparer le test"),

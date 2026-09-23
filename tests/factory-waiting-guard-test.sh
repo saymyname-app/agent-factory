@@ -105,7 +105,7 @@ waiting_missing='{
 # 1. open target, free-text wait: both left alone, reported healthy ---------
 jq -n --argjson a "$waiting_open" --argjson b "$waiting_freetext" '[$a, $b]' > "$BEADS_FILE"
 out=$(guard --check-only)
-grep -q "healthy — 2 open bead(s) with gc.waiting_on checked, 0 closed-target wait(s) and 0 missing-target wait(s)" <<<"$out" \
+grep -q "healthy — 2 open bead(s) with gc.waiting_on checked, 0 closed-target wait(s), 0 unproven-delivery wait(s) and 0 missing-target wait(s)" <<<"$out" \
   || { echo "$out" >&2; fail "open-target/free-text waits were not reported healthy"; }
 [ "$(update_count zzwait-open)" = "0" ] || fail "touched a bead legitimately waiting on an open bead"
 [ "$(update_count zzwait-freetext)" = "0" ] || fail "touched a bead waiting on free text"
@@ -131,7 +131,65 @@ call=$(grep "^zzwait-closed " "$UPDATE_LOG" || true)
 [[ $call == *"--append-notes"* ]] || fail "repair call left no note: $call"
 [ "$(mail_count mayor)" = "1" ] || fail "expected exactly one page to the Mayor"
 
-# 4. missing target: --check-only reports it, writes and pages nothing -----
+# 4. A closed PR-backed target is not enough: P01/P02-shaped open-review,
+# red-CI, and head-mismatch proof must keep the wait. Exact merge+CI proof and
+# explicit no-op retain the historical closed-target clearing semantics.
+jq '. + [
+  {"id":"zztgt-p01","status":"closed","metadata":{
+    "gc.plane":"delivery","gc.graph_digest":"sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "gc.pr_url":"https://github.com/example-org/example-repo/pull/197"}},
+  {"id":"zztgt-red","status":"closed","metadata":{
+    "gc.delivery_status":"merged","gc.work_outcome":"shipped","gc.github_repo":"example-org/example-repo",
+    "gc.pr_number":200,"gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "gc.pr_url":"https://github.com/example-org/example-repo/pull/200","pr_number":200,
+    "merge_result":"merged","merged_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merged_target":"main",
+    "gc.required_ci_workflow":"Factory CI","gc.ci_run_id":35882143816,
+    "gc.ci_head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.ci_conclusion":"failure"}},
+  {"id":"zztgt-head","status":"closed","metadata":{
+    "gc.delivery_status":"merged","gc.work_outcome":"shipped","gc.github_repo":"example-org/example-repo",
+    "gc.pr_number":201,"gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "gc.pr_url":"https://github.com/example-org/example-repo/pull/201","pr_number":201,
+    "merge_result":"merged","merged_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merged_target":"main",
+    "gc.required_ci_workflow":"Factory CI","gc.ci_run_id":35882143817,
+    "gc.ci_head_sha":"cccccccccccccccccccccccccccccccccccccccc","gc.ci_conclusion":"success"}},
+  {"id":"zztgt-proven","status":"closed","metadata":{
+    "gc.delivery_status":"merged","gc.work_outcome":"shipped","gc.github_repo":"example-org/example-repo",
+    "gc.pr_number":202,"gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "gc.pr_url":"https://github.com/example-org/example-repo/pull/202","pr_number":202,
+    "merge_result":"merged","merged_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merged_target":"main",
+    "gc.required_ci_workflow":"Factory CI","gc.ci_run_id":35882143818,
+    "gc.ci_head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.ci_conclusion":"success"}},
+  {"id":"zztgt-noop","status":"closed","metadata":{
+    "gc.plane":"delivery","gc.graph_digest":"sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "gc.work_outcome":"no-op"}}
+]' "$TARGETS_FILE" > "$TARGETS_FILE.next" && mv "$TARGETS_FILE.next" "$TARGETS_FILE"
+
+jq -n '[
+  {"id":"zzwait-p01","status":"open","metadata":{"gc.waiting_on":"zztgt-p01"}},
+  {"id":"zzwait-red","status":"open","metadata":{"gc.waiting_on":"zztgt-red"}},
+  {"id":"zzwait-head","status":"open","metadata":{"gc.waiting_on":"zztgt-head"}},
+  {"id":"zzwait-proven","status":"open","metadata":{"gc.waiting_on":"zztgt-proven"}},
+  {"id":"zzwait-noop","status":"open","metadata":{"gc.waiting_on":"zztgt-noop"}}
+]' > "$BEADS_FILE"
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+out=$(guard)
+for id in zzwait-p01 zzwait-red zzwait-head; do
+  [ "$(update_count "$id")" = "0" ] || fail "$id was released without structural delivery proof"
+done
+grep -q "zzwait-p01: gc.waiting_on='zztgt-p01' is closed but cannot release the wait" <<<"$out" \
+  || { echo "$out" >&2; fail "P01 closed-under-review wait was not rejected"; }
+grep -q "gc.ci_conclusion" <<<"$out" || { echo "$out" >&2; fail "red CI was not named in the rejection"; }
+grep -q "gc.ci_head_sha!=gc.pr_head" <<<"$out" \
+  || { echo "$out" >&2; fail "head-mismatched CI was not named in the rejection"; }
+for id in zzwait-proven zzwait-noop; do
+  call=$(grep "^$id " "$UPDATE_LOG" || true)
+  [[ $call == *'--unset-metadata gc.waiting_on'* ]] || fail "$id did not clear after a valid terminal outcome"
+done
+
+# 5. missing target: --check-only reports it, writes and pages nothing -----
 : > "$UPDATE_LOG"; : > "$MAIL_LOG"
 jq -n --argjson d "$waiting_missing" '[$d]' > "$BEADS_FILE"
 out=$(guard --check-only)
@@ -140,7 +198,7 @@ grep -q "zzwait-missing: gc.waiting_on='zztgt-missing' names a bead ID that does
 [ "$(update_count zzwait-missing)" = "0" ] || fail "--check-only wrote to Beads"
 [ "$(mail_count mayor)" = "0" ] || fail "--check-only paged the Mayor"
 
-# 5. missing target: default run records the report marker and pages once -
+# 6. missing target: default run records the report marker and pages once -
 : > "$UPDATE_LOG"; : > "$MAIL_LOG"
 out=$(guard)
 grep -q "reported missing gc.waiting_on target 'zztgt-missing' (left in place; kept out of the ladder)" <<<"$out" \
@@ -150,7 +208,7 @@ call=$(grep "^zzwait-missing " "$UPDATE_LOG" || true)
   || fail "report call did not set the missing-report marker: $call"
 [ "$(mail_count mayor)" = "1" ] || fail "expected exactly one page to the Mayor"
 
-# 6. same missing value, marker already recorded: silent, no repeat page ---
+# 7. same missing value, marker already recorded: silent, no repeat page ---
 # (the guard itself never rewrites BEADS_FILE -- reflect what step 5's write
 # would have produced, same as factory-dispatch-guard-test.sh does for its
 # own repair-then-rerun case.)
@@ -161,7 +219,7 @@ waiting_missing_reported='{
 }'
 jq -n --argjson e "$waiting_missing_reported" '[$e]' > "$BEADS_FILE"
 out=$(guard)
-grep -q "healthy — 1 open bead(s) with gc.waiting_on checked, 0 closed-target wait(s) and 1 missing-target wait(s)" <<<"$out" \
+grep -q "healthy — 1 open bead(s) with gc.waiting_on checked, 0 closed-target wait(s), 0 unproven-delivery wait(s) and 1 missing-target wait(s)" <<<"$out" \
   || { echo "$out" >&2; fail "an already-reported missing target was not treated as quiet/healthy"; }
 [ "$(update_count zzwait-missing)" = "0" ] || fail "re-wrote a missing-target report already recorded for the same value"
 [ "$(mail_count mayor)" = "0" ] || fail "re-paged the Mayor for a missing-target value already reported"

@@ -86,6 +86,9 @@ jobs:
       - name: Deliver-close proof-field guard tests
         run: bash tests/deliver-close-test.sh
 
+      - name: Structural delivery formula and finalizer wiring
+        run: bash tests/delivery-formula-contract-test.sh
+
       - name: ADR-0023 campaign-pointer write door
         run: bash tests/campaign-pointer-test.sh
 

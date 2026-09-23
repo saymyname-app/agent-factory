@@ -66,6 +66,10 @@ class TicketGraphPublishTest(unittest.TestCase):
             self.assertEqual("delivery", node["metadata"]["gc.plane"])
             self.assertEqual(result["graph_digest"], node["metadata"]["gc.graph_digest"])
             self.assertEqual("true", node["metadata"]["gc.publication_validated"])
+            if node["key"] != "_convoy":
+                self.assertEqual(
+                    "pr-ci-merged-v1", node["metadata"]["gc.delivery_contract"]
+                )
         tracks = [edge for edge in plan["edges"] if edge["type"] == "tracks"]
         self.assertEqual(18, len(tracks))
         self.assertTrue(all(edge["from_key"] == "_convoy" for edge in tracks))
