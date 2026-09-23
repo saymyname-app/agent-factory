@@ -31,10 +31,11 @@ result bead itself (`current_result`) and checks its own gc.last_heartbeat_at
 / updated_at: recent activity there is ground truth the campaign is not
 stuck, independent of whether the sentinel's bookkeeping caught it.
 
-af-py8n1 / af-f1jhi: `current_result` can itself be a static top-level bead
-that delegates its real work to a workflow (e.g. build-basic). The workflow
-may be tracked through a shared convoy or, across rigs, named explicitly by
-`gc.backend_workflow`. Neither the workflow root nor its nested steps
+af-py8n1 / af-f1jhi / af-kozkj: `current_result` can itself be a static
+top-level bead that delegates its real work to a workflow (e.g. build-basic).
+The workflow may be tracked through a shared convoy or, across rigs, named
+explicitly by the supported `gc.backend_workflow` or `gc.frontend_workflow`
+phase pointer. Neither the workflow root nor its nested steps
 necessarily touch the result bead's own heartbeat/updated_at. `assess`
 therefore also takes `current_workflow`: the linked root, the live workflow
 beads bin/factory-guard can prove belong below it, and synthetic heartbeat
@@ -194,7 +195,16 @@ def _current_result_activity(
     if isinstance(current_result, dict):
         beads.append(current_result)
     if isinstance(current_workflow, list):
-        beads.extend(bead for bead in current_workflow if isinstance(bead, dict))
+        workflow_beads = [bead for bead in current_workflow if isinstance(bead, dict)]
+        # factory-guard places the selected linked root first. Once that root
+        # is closed, neither its close/update timestamp nor a lingering child
+        # or session may turn a completed workflow into present-tense progress.
+        root_status = (
+            str(workflow_beads[0].get("status") or "").lower()
+            if workflow_beads else ""
+        )
+        if root_status != "closed":
+            beads.extend(workflow_beads)
     activities = [a for a in (_bead_activity(bead) for bead in beads) if a is not None]
     return max(activities) if activities else None
 
