@@ -1,0 +1,45 @@
+{
+  "contract": "agent-factory-planning-run-resume-prototype/v1",
+  "decision": {
+    "id": "D-P04-001",
+    "summary": "Adopt skill-loaded-planner allocation for the Planning Run kernel",
+    "resolution": "accepted"
+  },
+  "roles": [
+    {
+      "id": "codex-planner",
+      "provider": "codex",
+      "surface": "codex-cli",
+      "model": "gpt-5.1-codex",
+      "effort": "medium"
+    },
+    {
+      "id": "claude-planner",
+      "provider": "claude",
+      "surface": "claude-code-cli",
+      "model": "claude-sonnet-5",
+      "effort": "medium"
+    },
+    {
+      "id": "cockpit-adapter",
+      "provider": "cockpit",
+      "surface": "factory-cockpit",
+      "model": null,
+      "effort": null
+    }
+  ],
+  "sequence": [
+    {"role_id": "codex-planner", "action": "resolve"},
+    {"role_id": "claude-planner", "action": "resume"},
+    {"role_id": "cockpit-adapter", "action": "observe_conversation", "target_role_id": "claude-planner"}
+  ],
+  "conversation_view": {
+    "held_by": "cockpit-adapter",
+    "of_role_id": "claude-planner",
+    "native": true,
+    "read_only": true,
+    "zero_token": true,
+    "cheap_to_maintain": true,
+    "reverse_exists": false
+  }
+}
