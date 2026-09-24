@@ -224,6 +224,13 @@ LADDER_GENERATIVE_RUNGS = (
     ("docs", 24 * 3600),
 )
 LADDER_STALE_SECONDS = 6 * 3600
+# af-nkuwa: how many delivery beads the ladder tracks concurrently. Ships at
+# 1 (a behavior-preserving no-op, identical to the old single-scalar
+# tracking) -- raising it against the live HQ rig is gated on the
+# multi-writer-per-rig canary called out in
+# docs/DESIGN_MAYOR_CAMPAIGN_CONCURRENT_TRACKING.md ("Blast radius") and is
+# deliberately out of scope for this change.
+LADDER_MAX_CONCURRENT = 1
 # Rung 5 (docs/FACTORY_CONTINUITY.md sec4): the named improvement axes, gated
 # by the maintain-alive master switch. Shorter than the tests/docs rungs
 # because a selected axis (code-review, security, ...) is concrete, scoped
@@ -573,16 +580,76 @@ def plan_factory_lane(
     return {"action": "none", "reason": reason, "wake_key": None}
 
 
+def _ladder_finalize_wake(tracked_id: str, workflow_state: dict[str, Any]) -> dict[str, Any]:
+    """The wake for a tracked bead whose latest execution workflow(s) all closed."""
+    failed = workflow_state.get("failed_nodes") or []
+    workflows = ", ".join(workflow_state.get("workflow_ids") or []) or "inconnu"
+    if failed:
+        failure_detail = ", ".join(
+            f"{item.get('id')}=gc.outcome:{item.get('outcome')}"
+            for item in failed[:8] if isinstance(item, dict)
+        )
+        if len(failed) > 8:
+            failure_detail += f", +{len(failed) - 8} autre(s)"
+        return {
+            "action": "wake_mayor",
+            "reason": "ladder_workflow_failed",
+            "wake_key": f"finalize:{tracked_id}",
+            "subject": f"USINE · échec de workflow {tracked_id}",
+            "message": (
+                f"Le ou les workflows d'exécution de {tracked_id} sont entièrement fermés "
+                f"({workflows}), mais au moins un résultat n'est pas pass : {failure_detail}. "
+                "Ne traite pas le travail comme terminé : diagnostique les échecs, relance ce "
+                "qui doit l'être, puis finalise le bead quand ses preuves sont réellement vertes."
+            ),
+            "ladder_bead": tracked_id,
+        }
+    return {
+        "action": "wake_mayor",
+        "reason": "ladder_workflow_complete",
+        "wake_key": f"finalize:{tracked_id}",
+        "subject": f"USINE · finaliser {tracked_id}",
+        "message": (
+            f"Le ou les workflows d'exécution de {tracked_id} et toutes leurs étapes sont "
+            f"fermés avec succès ({workflows}). Reprends {tracked_id} maintenant : vérifie les "
+            "preuves et PR, finalise-le, puis poursuis l'échelle d'inactivité."
+        ),
+        "ladder_bead": tracked_id,
+    }
+
+
+def _bundle_wakes(wakes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Collapse more-than-one wake due in the same tick into one mail.
+
+    Matches the sentinel's existing reminder-bundling precedent (~line 1145 of
+    bin/mayor-campaign): one subject per constituent wake, bodies concatenated,
+    not one mail per wake_key. Only reachable once LADDER_MAX_CONCURRENT > 1;
+    at the shipped value of 1, at most one bead is ever tracked and this path
+    is dead code kept ready for that later change.
+    """
+    subjects = " · ".join(str(wake["subject"]) for wake in wakes)
+    message = "\n\n".join(str(wake["message"]) for wake in wakes)
+    return {
+        "action": "wake_mayor",
+        "reason": "ladder_bundle",
+        "wake_key": "bundle:" + "+".join(str(wake["wake_key"]) for wake in wakes),
+        "subject": subjects,
+        "message": message,
+        "ladder_beads": [wake["ladder_bead"] for wake in wakes if wake.get("ladder_bead")],
+        "bundled_wakes": wakes,
+    }
+
+
 def plan_idle_ladder(
     ready: list[dict[str, Any]],
     now: float,
     last_generative: dict[str, Any] | None = None,
-    tracked: dict[str, Any] | None = None,
+    tracked: list[dict[str, Any]] | None = None,
     queue_candidates: list[dict[str, Any]] | None = None,
     maintain_alive: bool = True,
     axis: dict[str, Any] | None = None,
     last_axis: Any = None,
-    workflow_state: dict[str, Any] | None = None,
+    workflow_states: dict[str, Any] | None = None,
     graph_digest: str | None = None,
     graph_beads: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -590,7 +657,8 @@ def plan_idle_ladder(
 
     ``ready`` is ``gc bd ready --json`` for the city store. ``last_generative``
     maps a generative rung name to the ISO time it was last sent.
-    ``tracked`` is the rung-2 bead the Mayor was last pointed at, if any.
+    ``tracked`` is the list of rung-2 beads the Mayor was last pointed at (up
+    to ``LADDER_MAX_CONCURRENT``), if any.
     ``queue_candidates`` is ``saymyname-product-queue list --json`` (rung 2b).
     ``maintain_alive`` is the master switch (docs/FACTORY_CONTINUITY.md sec1):
     default True; when False, the ladder does not open a new rung beyond a
@@ -600,78 +668,75 @@ def plan_idle_ladder(
     ``factory_improvement_axes.select_improvement_axis`` (rung 5, sec4);
     ``last_axis`` is the ISO time that rung last fired, for the same
     throttle-then-rest treatment as the generative rungs.
-    ``workflow_state`` is the caller's best-effort summary of the latest
-    graph.v2 execution workflow(s) for ``tracked``.
+    ``workflow_states`` maps a tracked bead id to the caller's best-effort
+    summary of its latest graph.v2 execution workflow(s).
     """
     last_generative = last_generative or {}
+    workflow_states = workflow_states or {}
+    tracked_items = [item for item in (tracked or []) if isinstance(item, dict)]
 
-    # One Factory bead at a time, exactly like product results.
-    if (
-        isinstance(tracked, dict)
-        and tracked.get("status") == "in_progress"
-        and is_scoped_delivery_bead(tracked, graph_digest)
-    ):
-        tracked_id = str(tracked.get("id") or "")
+    wakes: list[dict[str, Any]] = []
+    still_tracked: list[tuple[dict[str, Any], Any]] = []
+    unstick_ids: list[str] = []
+
+    for item in tracked_items:
+        if not (item.get("status") == "in_progress" and is_scoped_delivery_bead(item, graph_digest)):
+            continue
+        tracked_id = str(item.get("id") or "")
+        workflow_state = workflow_states.get(tracked_id)
         if isinstance(workflow_state, dict) and workflow_state.get("all_closed"):
-            failed = workflow_state.get("failed_nodes") or []
-            workflows = ", ".join(workflow_state.get("workflow_ids") or []) or "inconnu"
-            if failed:
-                failure_detail = ", ".join(
-                    f"{item.get('id')}=gc.outcome:{item.get('outcome')}"
-                    for item in failed[:8] if isinstance(item, dict)
-                )
-                if len(failed) > 8:
-                    failure_detail += f", +{len(failed) - 8} autre(s)"
-                return {
-                    "action": "wake_mayor",
-                    "reason": "ladder_workflow_failed",
-                    "wake_key": f"finalize:{tracked_id}",
-                    "subject": f"USINE · échec de workflow {tracked_id}",
-                    "message": (
-                        f"Le ou les workflows d'exécution de {tracked_id} sont entièrement fermés "
-                        f"({workflows}), mais au moins un résultat n'est pas pass : {failure_detail}. "
-                        "Ne traite pas le travail comme terminé : diagnostique les échecs, relance ce "
-                        "qui doit l'être, puis finalise le bead quand ses preuves sont réellement vertes."
-                    ),
-                    "ladder_bead": tracked_id,
-                }
-            return {
-                "action": "wake_mayor",
-                "reason": "ladder_workflow_complete",
-                "wake_key": f"finalize:{tracked_id}",
-                "subject": f"USINE · finaliser {tracked_id}",
-                "message": (
-                    f"Le ou les workflows d'exécution de {tracked_id} et toutes leurs étapes sont "
-                    f"fermés avec succès ({workflows}). Reprends {tracked_id} maintenant : vérifie les "
-                    "preuves et PR, finalise-le, puis poursuis l'échelle d'inactivité."
-                ),
-                "ladder_bead": tracked_id,
-            }
-        updated = _epoch(tracked.get("updated_at"))
+            wakes.append(_ladder_finalize_wake(tracked_id, workflow_state))
+            continue
+        updated = _epoch(item.get("updated_at"))
         if updated is not None and now - updated > LADDER_STALE_SECONDS:
             # C6: this used to return a terminal NOOP forever, so one stuck
             # bead (af-6eqc, live) permanently starved rung 2 of ever trying a
-            # different candidate. Stop tracking it -- the caller marks it
-            # gc.waiting_on so is_ladder_bead excludes it even if it later
-            # reopens -- and fall through to pick the next one in this same
-            # tick. Liveness still sees no real progress: this path is reached
-            # only through "none"/"ladder_*" reasons, never a PROGRESS_REASON.
-            plan = plan_idle_ladder(
-                ready, now, last_generative, None, queue_candidates, maintain_alive, axis, last_axis,
-                None, graph_digest,
-            )
-            plan["unstick_bead"] = tracked.get("id")
-            return plan
+            # different candidate. Drop it from the tracked set -- the caller
+            # marks it gc.waiting_on so is_ladder_bead excludes it even if it
+            # later reopens -- and fall through to pick the next one in this
+            # same tick. Liveness still sees no real progress: this path is
+            # reached only through "none"/"ladder_*" reasons, never a
+            # PROGRESS_REASON.
+            unstick_ids.append(tracked_id)
+            continue
+        still_tracked.append((item, workflow_state))
+
+    if wakes:
+        # A tracked bead finalized/failed this tick: report it (bundled if
+        # more than one). Mirrors the old single-item behavior of returning
+        # immediately once an all_closed tracked bead was found.
+        return wakes[0] if len(wakes) == 1 else _bundle_wakes(wakes)
+
+    if unstick_ids:
+        remaining = [item for item, _ in still_tracked]
+        plan = plan_idle_ladder(
+            ready, now, last_generative, remaining, queue_candidates, maintain_alive, axis, last_axis,
+            workflow_states, graph_digest, graph_beads,
+        )
+        plan["unstick_bead"] = unstick_ids[0] if len(unstick_ids) == 1 else unstick_ids
+        return plan
+
+    if len(still_tracked) >= LADDER_MAX_CONCURRENT and still_tracked:
+        # Capacity is fully used by beads genuinely still in flight: exactly
+        # like the old single-tracked-bead behavior, this short-circuits
+        # before the maintain_alive check below -- a bead already tracked
+        # in progress is always allowed to keep running.
+        if len(still_tracked) == 1:
+            item, workflow_state = still_tracked[0]
+            return {"action": "none", "reason": "ladder_active", "wake_key": None,
+                    "ladder_bead": item.get("id"),
+                    "workflow_pending": isinstance(workflow_state, dict)}
         return {"action": "none", "reason": "ladder_active", "wake_key": None,
-                "ladder_bead": tracked.get("id"),
-                "workflow_pending": isinstance(workflow_state, dict)}
+                "ladder_beads": [item.get("id") for item, _ in still_tracked]}
 
     if not maintain_alive:
         # sec1: off means the campaign goes idle *and says so plainly* --
         # never indistinguishable from class D/E (stalled, defective).
         return {"action": "none", "reason": "maintain_alive_off", "wake_key": None}
 
-    factory_plan = plan_factory_lane(ready, queue_candidates, graph_digest, graph_beads)
+    exclude_ids = {str(item.get("id")) for item, _ in still_tracked}
+    filtered_ready = [bead for bead in ready if str(bead.get("id")) not in exclude_ids]
+    factory_plan = plan_factory_lane(filtered_ready, queue_candidates, graph_digest, graph_beads)
     if factory_plan["action"] == "wake_mayor":
         return factory_plan
 

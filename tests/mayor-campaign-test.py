@@ -13,7 +13,7 @@ NOW = 1789555200.0  # 2026-09-16T10:40:00Z, fixed so throttling is deterministic
 sys.path.insert(0, str(ROOT / "lib"))
 
 from factory_campaign import (  # noqa: E402
-    inspect_ladder_workflows, is_ladder_bead, plan_idle_ladder, plan_transition,
+    LADDER_MAX_CONCURRENT, inspect_ladder_workflows, is_ladder_bead, plan_idle_ladder, plan_transition,
 )
 
 
@@ -704,9 +704,15 @@ class IdleLadderPlanTest(unittest.TestCase):
         exact_released = plan_idle_ladder([p04], NOW, graph_digest=digest, graph_beads=[p02, p04])
         self.assertEqual("ladder:factory:af-p04", exact_released["wake_key"])
 
-    def test_one_factory_bead_at_a_time(self):
+    def test_ladder_tracks_up_to_max_concurrent(self):
+        # LADDER_MAX_CONCURRENT ships at 1 (af-nkuwa): once that many
+        # delivery beads are genuinely still in flight, the ladder holds --
+        # it does not open a new rung until capacity frees up. Formerly
+        # test_one_factory_bead_at_a_time, asserting a hardcoded scalar; now
+        # the same bound applies to a tracked *set*.
+        self.assertEqual(1, LADDER_MAX_CONCURRENT)
         tracked = bead("af-hi", status="in_progress", updated_at="2026-09-16T10:00:00Z")
-        plan = plan_idle_ladder([bead("af-next")], NOW, tracked=tracked)
+        plan = plan_idle_ladder([bead("af-next")], NOW, tracked=[tracked])
         self.assertEqual(("none", "ladder_active"), (plan["action"], plan["reason"]))
 
     def test_latest_child_workflows_must_all_close_before_finalize(self):
@@ -740,7 +746,7 @@ class IdleLadderPlanTest(unittest.TestCase):
         running = inspect_ladder_workflows(tracked, {"smb": backend, "smf": frontend})
         self.assertFalse(running["all_closed"])
         self.assertEqual(["smf-root"], running["open_nodes"])
-        plan = plan_idle_ladder([], NOW, tracked=tracked, workflow_state=running)
+        plan = plan_idle_ladder([], NOW, tracked=[tracked], workflow_states={"af-parent": running})
         self.assertEqual(("none", "ladder_active"), (plan["action"], plan["reason"]))
 
         frontend[1].update(status="closed", metadata={
@@ -748,7 +754,7 @@ class IdleLadderPlanTest(unittest.TestCase):
         })
         complete = inspect_ladder_workflows(tracked, {"smb": backend, "smf": frontend})
         self.assertEqual([], complete["failed_nodes"])  # the older failed retry is not current
-        plan = plan_idle_ladder([], NOW, tracked=tracked, workflow_state=complete)
+        plan = plan_idle_ladder([], NOW, tracked=[tracked], workflow_states={"af-parent": complete})
         self.assertEqual(
             ("wake_mayor", "ladder_workflow_complete", "finalize:af-parent"),
             (plan["action"], plan["reason"], plan["wake_key"]),
@@ -766,7 +772,7 @@ class IdleLadderPlanTest(unittest.TestCase):
             bead("af-step", status="closed", metadata={"gc.outcome": "fail"}),
         ]
         workflow = inspect_ladder_workflows(tracked, {"af": beads})
-        plan = plan_idle_ladder([], NOW, tracked=tracked, workflow_state=workflow)
+        plan = plan_idle_ladder([], NOW, tracked=[tracked], workflow_states={"af-parent": workflow})
         self.assertEqual("ladder_workflow_failed", plan["reason"])
         self.assertIn("af-step=gc.outcome:fail", plan["message"])
         self.assertIn("Ne traite pas le travail comme terminé", plan["message"])
@@ -777,17 +783,17 @@ class IdleLadderPlanTest(unittest.TestCase):
         # must instead mark the stalled bead for the caller to unstick and
         # move on, in the same tick, to whatever rung is next in line.
         tracked = bead("af-hi", status="in_progress", updated_at="2026-09-16T01:00:00Z")
-        no_candidate = plan_idle_ladder([], NOW, tracked=tracked)
+        no_candidate = plan_idle_ladder([], NOW, tracked=[tracked])
         self.assertEqual("af-hi", no_candidate["unstick_bead"])
         self.assertEqual("ladder_tests", no_candidate["reason"])  # falls to the next rung
-        with_candidate = plan_idle_ladder([bead("af-next")], NOW, tracked=tracked)
+        with_candidate = plan_idle_ladder([bead("af-next")], NOW, tracked=[tracked])
         self.assertEqual(
             ("af-hi", "ladder_factory", "ladder:factory:af-next"),
             (with_candidate["unstick_bead"], with_candidate["reason"], with_candidate["wake_key"]),
         )
 
     def test_a_closed_tracked_bead_releases_the_next_one(self):
-        plan = plan_idle_ladder([bead("af-next")], NOW, tracked=bead("af-hi", status="closed"))
+        plan = plan_idle_ladder([bead("af-next")], NOW, tracked=[bead("af-hi", status="closed")])
         self.assertEqual("ladder:factory:af-next", plan["wake_key"])
 
     def test_generative_rungs_are_throttled_then_rest(self):
@@ -842,7 +848,7 @@ class IdleLadderPlanTest(unittest.TestCase):
 
     def test_maintain_alive_off_still_lets_a_tracked_bead_finish(self):
         tracked = bead("af-hi", status="in_progress", updated_at="2026-09-16T10:00:00Z")
-        plan = plan_idle_ladder([], NOW, tracked=tracked, maintain_alive=False)
+        plan = plan_idle_ladder([], NOW, tracked=[tracked], maintain_alive=False)
         self.assertEqual(("none", "ladder_active"), (plan["action"], plan["reason"]))
 
     def test_axis_rung_fires_after_generative_rungs_when_maintain_alive_is_on(self):
@@ -987,9 +993,10 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         )
         self.assertEqual(1, result.returncode)
         meta = self.current_metadata()
-        self.assertEqual(("", "none", ""), (
+        self.assertEqual(("", "none", "", ""), (
             meta["gc.campaign_wake_key"], meta["gc.campaign_wake_state"],
             meta.get("gc.campaign_ladder_bead", ""),
+            meta.get("gc.campaign_ladder_beads", ""),
         ))
 
     def test_product_priority_lane_still_wins_when_set(self):
@@ -1014,7 +1021,8 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         out = self.sentinel(NOW).stdout
         self.assertIn("NOTIFIED: mayor — ladder:factory:af-fix", out)
         meta = self.current_metadata()
-        self.assertEqual("af-fix", meta["gc.campaign_ladder_bead"])
+        self.assertEqual(["af-fix"], json.loads(meta["gc.campaign_ladder_beads"]))
+        self.assertEqual("", meta.get("gc.campaign_ladder_bead", ""))
         # C5: dispatching a new wake is not progress by itself -- only a real
         # event (here, af-fix actually being claimed) is. See
         # test_the_claimed_factory_bead_counts_as_progress below.
@@ -1115,7 +1123,9 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         self.assertIn("NOTIFIED: mayor — ladder:factory:af-fix", out)
         log = self.log_file.read_text(encoding="utf-8")
         self.assertIn("bd update af-stuck --set-metadata gc.waiting_on=stalled", log)
-        self.assertEqual("af-fix", self.current_metadata()["gc.campaign_ladder_bead"])
+        meta = self.current_metadata()
+        self.assertEqual(["af-fix"], json.loads(meta["gc.campaign_ladder_beads"]))
+        self.assertEqual("", meta.get("gc.campaign_ladder_bead", ""))
 
     def test_closed_ladder_workflow_wakes_once_without_marking_the_bead_stalled(self):
         # af-8g95x: reproduce the 01:34Z -> 07:35Z shape. Even though the
