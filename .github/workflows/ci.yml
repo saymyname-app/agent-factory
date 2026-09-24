@@ -89,6 +89,9 @@ jobs:
       - name: Planning Run resume across provider and surface
         run: python tests/planning-run-resume-oracle-test.py
 
+      - name: Planning Run reaching a canonical Spec
+        run: python tests/planning-run-to-spec-oracle-test.py
+
       - name: Role, concurrency and retention qualification
         run: python tests/role-qualification-oracle-test.py
 
