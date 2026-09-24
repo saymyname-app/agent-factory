@@ -1,0 +1,29 @@
+{
+  "contract": "agent-factory-project-planning-profile/v1",
+  "project_id": "project-b",
+  "project_knowledge": {
+    "path": "tests/fixtures/project-planning-profile/knowledge/project-b.md"
+  },
+  "work_graph": {
+    "path": "tests/fixtures/project-planning-profile/work-graph/project-b.json",
+    "rigs": ["project-b"]
+  },
+  "participant_rigs": ["project-b"],
+  "checks": ["project-b-unit-tests"],
+  "risk_thresholds": {
+    "max_unreviewed_severity": "low"
+  },
+  "autonomy_policy": {
+    "safety": {
+      "no_production_without_human": true,
+      "no_personal_data_widening_without_human": true,
+      "no_unrecoverable_destruction_without_human": true,
+      "no_external_publication_without_human": true,
+      "no_spend_without_human": true
+    },
+    "allow_bounded_reversible_actions": false
+  },
+  "extensions": {
+    "lint_profile": "relaxed"
+  }
+}

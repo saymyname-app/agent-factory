@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""Validate and register a Project Planning Profile.
+
+A Project Planning Profile is the single object a project registers with a
+City: it points at that project's authoritative Project Knowledge and Work
+Graph, names its participating rigs, and declares checks, risk thresholds,
+autonomy policy and genuine rig-local extensions -- without copying any
+Factory-wide configuration or carrying SayMyName-specific fields, and without
+being able to silently disable the common people/data safety principles.
+
+This tool is stateless: `register` is a pure function of the profile and the
+City's rig registry it is given on that call. It keeps no registry of its
+own, so registering one project can never make it a global default or leak
+state into another project's registration.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+
+PROGRAM = "project-planning-profile"
+PROFILE_CONTRACT = "agent-factory-project-planning-profile/v1"
+REGISTRATION_CONTRACT = "agent-factory-project-registration/v1"
+SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+# Common people/data safety principles (spec: "Universal safety principles
+# govern people and data"). A profile may add its own stricter keys, but it
+# may never set one of these to a falsy value -- that would silently disable
+# a boundary the Method Baseline treats as non-negotiable.
+REQUIRED_SAFETY_PRINCIPLES = (
+    "no_production_without_human",
+    "no_personal_data_widening_without_human",
+    "no_unrecoverable_destruction_without_human",
+    "no_external_publication_without_human",
+    "no_spend_without_human",
+)
+
+# Keys that belong to Factory-wide configuration, never to one project's
+# profile. Their presence means the profile copied Factory config instead of
+# pointing at it.
+FACTORY_WIDE_ONLY_KEYS = (
+    "cost_policy",
+    "mail_format",
+    "escalation_contract",
+    "standing_admin_allowlist",
+    "inter_agent_mail_format",
+)
+
+SAYMYNAME_PATTERN = re.compile(r"saymyname", re.IGNORECASE)
+
+
+class ProfileError(RuntimeError):
+    """An actionable diagnostic about a Project Planning Profile."""
+
+
+def as_dict(value: Any, name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ProfileError(f"{name} must be an object")
+    return value
+
+
+def as_list(value: Any, name: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise ProfileError(f"{name} must be an array")
+    return value
+
+
+def required_string(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ProfileError(f"{name} must be a non-empty string")
+    return value
+
+
+def safe_id(value: Any, name: str) -> str:
+    text = required_string(value, name)
+    if not SAFE_ID.fullmatch(text):
+        raise ProfileError(f"{name} contains unsupported characters: {text!r}")
+    return text
+
+
+def safe_id_list(value: Any, name: str) -> list[str]:
+    items = as_list(value, name)
+    if not items:
+        raise ProfileError(f"{name} must name at least one rig")
+    return [safe_id(item, f"{name}[{index}]") for index, item in enumerate(items)]
+
+
+def find_forbidden_fields(value: Any, path: str, found: list[str]) -> None:
+    """Walk the whole profile looking for SayMyName-specific or
+    Factory-wide-only fields, so registration fails on the exact offending
+    path rather than a generic rejection."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}" if path else key
+            if SAYMYNAME_PATTERN.search(str(key)):
+                found.append(
+                    f"{child_path} is a SayMyName-specific field; a project "
+                    "profile must not carry another project's field"
+                )
+            elif path == "" and key in FACTORY_WIDE_ONLY_KEYS:
+                found.append(
+                    f"{child_path} copies Factory-wide configuration into "
+                    "the project profile; reference it instead of copying it"
+                )
+            find_forbidden_fields(child, child_path, found)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            find_forbidden_fields(child, f"{path}[{index}]", found)
+    elif isinstance(value, str):
+        if SAYMYNAME_PATTERN.search(value):
+            found.append(
+                f"{path} contains a SayMyName-specific value; a project "
+                "profile must not carry another project's value"
+            )
+
+
+def check_source(path_str: str, field: str, repo_root: Path) -> Path:
+    resolved = (repo_root / path_str) if not Path(path_str).is_absolute() else Path(path_str)
+    if not resolved.is_file():
+        raise ProfileError(
+            f"{field} names an authoritative source that does not exist: {path_str}"
+        )
+    return resolved
+
+
+def validate_safety(autonomy_policy: dict[str, Any]) -> dict[str, Any]:
+    safety = as_dict(autonomy_policy.get("safety", {}), "autonomy_policy.safety")
+    resolved = dict(safety)
+    for principle in REQUIRED_SAFETY_PRINCIPLES:
+        if principle in safety and not safety[principle]:
+            raise ProfileError(
+                f"autonomy_policy.safety.{principle} cannot be disabled; "
+                "project policy may only tighten common safety principles"
+            )
+        resolved.setdefault(principle, True)
+    return resolved
+
+
+def load_profile(path: Path, repo_root: Path) -> dict[str, Any]:
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProfileError(f"cannot read profile {path}: {exc}") from exc
+
+    profile = as_dict(raw, "profile")
+
+    contract = profile.get("contract")
+    if contract != PROFILE_CONTRACT:
+        raise ProfileError(
+            f"profile.contract must be {PROFILE_CONTRACT!r}, got {contract!r}"
+        )
+
+    forbidden: list[str] = []
+    find_forbidden_fields(profile, "", forbidden)
+    if forbidden:
+        raise ProfileError("; ".join(forbidden))
+
+    project_id = safe_id(profile.get("project_id"), "project_id")
+    participant_rigs = safe_id_list(profile.get("participant_rigs"), "participant_rigs")
+
+    project_knowledge = as_dict(profile.get("project_knowledge"), "project_knowledge")
+    knowledge_path = required_string(project_knowledge.get("path"), "project_knowledge.path")
+    check_source(knowledge_path, "project_knowledge.path", repo_root)
+
+    work_graph = as_dict(profile.get("work_graph"), "work_graph")
+    work_graph_path = required_string(work_graph.get("path"), "work_graph.path")
+    check_source(work_graph_path, "work_graph.path", repo_root)
+
+    work_graph_rigs = work_graph.get("rigs")
+    if work_graph_rigs is not None:
+        for rig in safe_id_list(work_graph_rigs, "work_graph.rigs"):
+            if rig not in participant_rigs:
+                raise ProfileError(
+                    f"work_graph.rigs names {rig!r}, which is not in "
+                    "participant_rigs -- authoritative sources contradict "
+                    "each other about which rigs this project spans"
+                )
+
+    checks = as_list(profile.get("checks", []), "checks")
+    checks = [required_string(item, f"checks[{i}]") for i, item in enumerate(checks)]
+
+    risk_thresholds = as_dict(profile.get("risk_thresholds", {}), "risk_thresholds")
+
+    autonomy_policy = as_dict(profile.get("autonomy_policy", {}), "autonomy_policy")
+    safety = validate_safety(autonomy_policy)
+    resolved_autonomy_policy = dict(autonomy_policy)
+    resolved_autonomy_policy["safety"] = safety
+
+    extensions = as_dict(profile.get("extensions", {}), "extensions")
+
+    return {
+        "project_id": project_id,
+        "participant_rigs": participant_rigs,
+        "project_knowledge": project_knowledge,
+        "work_graph": work_graph,
+        "checks": checks,
+        "risk_thresholds": risk_thresholds,
+        "autonomy_policy": resolved_autonomy_policy,
+        "extensions": extensions,
+    }
+
+
+def register(profile: dict[str, Any], city_registry: list[str]) -> dict[str, Any]:
+    registry = safe_id_list(city_registry, "city_registry") if city_registry else []
+    for rig in profile["participant_rigs"]:
+        if rig not in registry:
+            raise ProfileError(
+                f"participant_rigs names {rig!r}, which is not registered in "
+                "the City's rig registry"
+            )
+
+    return {
+        "contract": REGISTRATION_CONTRACT,
+        "project_id": profile["project_id"],
+        "effective_scope": list(profile["participant_rigs"]),
+        "project_knowledge": profile["project_knowledge"],
+        "work_graph": profile["work_graph"],
+        "checks": profile["checks"],
+        "risk_thresholds": profile["risk_thresholds"],
+        "autonomy_policy": profile["autonomy_policy"],
+        "extensions": profile["extensions"],
+    }
+
+
+def repo_root_default() -> Path:
+    here = Path(__file__).resolve().parent
+    return here.parent
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    try:
+        load_profile(Path(args.profile), Path(args.repo_root))
+    except ProfileError as exc:
+        print(json.dumps({"valid": False, "error": str(exc)}, indent=2))
+        return 1
+    print(json.dumps({"valid": True}, indent=2))
+    return 0
+
+
+def cmd_register(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root)
+    try:
+        profile = load_profile(Path(args.profile), repo_root)
+        city_registry = json.loads(Path(args.city_registry).read_text())
+        result = register(profile, city_registry)
+    except ProfileError as exc:
+        print(json.dumps({"registered": False, "error": str(exc)}, indent=2))
+        return 1
+    except (OSError, json.JSONDecodeError) as exc:
+        print(json.dumps({"registered": False, "error": f"cannot read city registry: {exc}"}, indent=2))
+        return 1
+    print(json.dumps({"registered": True, **result}, indent=2, sort_keys=True))
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__)
+    parser.add_argument(
+        "--repo-root", default=str(repo_root_default()), help="repository root used to resolve source paths"
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    validate_parser = subparsers.add_parser("validate", help="validate a Project Planning Profile")
+    validate_parser.add_argument("profile", help="path to the profile JSON file")
+    validate_parser.set_defaults(func=cmd_validate)
+
+    register_parser = subparsers.add_parser(
+        "register", help="validate a profile and register it against a City rig registry"
+    )
+    register_parser.add_argument("profile", help="path to the profile JSON file")
+    register_parser.add_argument(
+        "--city-registry", required=True, help="path to a JSON array of the City's registered rig ids"
+    )
+    register_parser.set_defaults(func=cmd_register)
+
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

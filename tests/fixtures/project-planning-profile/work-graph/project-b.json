@@ -1,0 +1,4 @@
+{
+  "work_graph_id": "project-b-work-graph",
+  "nodes": ["intake", "delivery"]
+}
