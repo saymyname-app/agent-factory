@@ -181,6 +181,9 @@ jobs:
       - name: Merge actor closes CI-failure beads once checks recover or merge
         run: bash tests/pr-autopilot-ci-failure-test.sh
 
+      - name: Merge actor retries a transient required-check failure once before flagging
+        run: bash tests/pr-autopilot-transient-retry-test.sh
+
       - name: Check rollup rebuilt from Actions runs (fine-grained token)
         run: python tests/factory-gh-rollup-test.py
 
