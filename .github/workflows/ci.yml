@@ -64,6 +64,9 @@ jobs:
       - name: Promote and resume a durable Wayfinding Run (af-q7r0d)
         run: python tests/wayfinding-run-test.py
 
+      - name: Approve, freeze and revise Planning Artifacts by exact digest (af-4x34b)
+        run: python tests/spec-approve-test.py
+
       - name: Ensure fixture sandbox runtime
         run: |
           packages=()
