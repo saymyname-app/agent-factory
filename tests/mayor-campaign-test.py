@@ -948,6 +948,37 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         out = self.sentinel(NOW + 60).stdout
         self.assertIn("NOOP: scoped_graph_waiting", out)
 
+    def test_a_stale_failure_counter_clears_once_a_scoped_ladder_tick_succeeds(self):
+        # Live 2026-09-24 incident: a single transient mail-send failure
+        # (2026-09-23T12:39:18Z) set gc.campaign_failure_count=1, then the
+        # campaign entered exclusive_graph scope for convoy af-vclsw. Every
+        # tick after that took the ladder_decision branch, which had no
+        # reset of its own, so the counter (and the human-state projection
+        # reading it) stayed stuck reporting a false "BLOQUÉ · transient
+        # retry" for 24h+ despite the sentinel ticking and progressing the
+        # whole time. A scoped tick that succeeds must clear it exactly like
+        # the unscoped plan_transition branch already does.
+        digest = "sha256:" + "e" * 64
+        self.write_state({
+            **metadata(),
+            "gc.campaign_scope_mode": "exclusive_graph",
+            "gc.campaign_scope_graph_digest": digest,
+            "gc.campaign_failure_count": "1",
+            "gc.campaign_failure_since": "2026-09-23T12:39:18Z",
+            "gc.campaign_last_error": "stale mail-send error from a prior day",
+        })
+        self.ready_file.write_text(json.dumps([
+            bead("af-scoped", priority=0, metadata={
+                "gc.graph_digest": digest, "gc.plane": "delivery",
+            }),
+        ]), encoding="utf-8")
+        out = self.sentinel(NOW).stdout
+        self.assertIn("NOTIFIED: mayor — ladder:factory:af-scoped", out)
+        meta = self.current_metadata()
+        self.assertEqual("0", meta["gc.campaign_failure_count"])
+        self.assertEqual("", meta.get("gc.campaign_failure_since", ""))
+        self.assertEqual("", meta.get("gc.campaign_last_error", ""))
+
     def test_a_mail_error_rolls_back_precommitted_ladder_tracking(self):
         self.write_status(status(next_id=None))
         result = self.invoke(

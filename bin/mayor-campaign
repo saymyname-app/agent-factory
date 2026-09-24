@@ -1003,6 +1003,21 @@ def sentinel(_: argparse.Namespace) -> None:
 
     if ladder_only or graph_scope:
         decision = ladder_decision(metadata, now)
+        if campaign["failure_count"] or campaign["last_error"]:
+            # Same clearing rule as the plan_transition branch below, for the
+            # same reason (a stale counter must not keep reporting a false
+            # transient-failure block once ticks are succeeding again) --
+            # this branch was missing it entirely (2026-09-24: a single
+            # 2026-09-23 send failure survived 24h+ of healthy scoped/ladder
+            # ticks because this path never reaches the reset). Unlike the
+            # plan_transition branch, ladder_decision does not consume a
+            # separately fetched `status` projection, so there is no stale
+            # blob to re-read and no "recovered" NOOP-return needed here --
+            # clearing the counter and continuing with `decision` is safe.
+            update_metadata({"gc.campaign_failure_count": "0", "gc.campaign_failure_since": "",
+                             "gc.campaign_last_error": ""})
+            metadata = {**metadata, "gc.campaign_failure_count": "0",
+                       "gc.campaign_failure_since": "", "gc.campaign_last_error": ""}
     else:
         try:
             status = json_run(STATUS_BIN, "--json", timeout=STATUS_COMMAND_TIMEOUT)
