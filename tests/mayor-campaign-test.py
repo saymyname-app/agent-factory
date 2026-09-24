@@ -577,6 +577,17 @@ def bead(bead_id, **extra):
     return value
 
 
+def convoy_bead(digest, *tracked_ids):
+    """A published-graph convoy node, mirroring bin/ticket-graph-publish's
+    ``tracks`` edges from the convoy to each ticket it carries."""
+    return {
+        "id": "af-convoy", "title": "convoy", "status": "open",
+        "issue_type": "convoy", "priority": 2,
+        "metadata": {"gc.graph_digest": digest, "gc.publication_validated": "true"},
+        "dependencies": [{"depends_on_id": tid, "type": "tracks"} for tid in tracked_ids],
+    }
+
+
 def merged_delivery_proof(pr_number=197, **overrides):
     head = "a" * 40
     merge = "b" * 40
@@ -642,19 +653,23 @@ class IdleLadderPlanTest(unittest.TestCase):
         digest = "sha256:" + "b" * 64
         scoped = bead("af-scoped", priority=3, metadata={
             "gc.graph_digest": digest, "gc.plane": "delivery",
+            "gc.publication_validated": "true",
         })
         wrong_plane = bead("af-planning", priority=0, metadata={
             "gc.graph_digest": digest, "gc.plane": "planning",
+            "gc.publication_validated": "true",
         })
         wrong_graph = bead("af-old", priority=0, metadata={
             "gc.graph_digest": "sha256:" + "c" * 64, "gc.plane": "delivery",
+            "gc.publication_validated": "true",
         })
+        graph_beads = [scoped, convoy_bead(digest, "af-scoped")]
         plan = plan_idle_ladder(
             [wrong_plane, wrong_graph, scoped], NOW,
             queue_candidates=[{"id": "af-q", "kind": "factory_campaign",
                                "state": "eligible", "title": "old queue"}],
             graph_digest=digest,
-            graph_beads=[scoped],
+            graph_beads=graph_beads,
         )
         self.assertEqual("ladder:factory:af-scoped", plan["wake_key"])
 
@@ -663,14 +678,46 @@ class IdleLadderPlanTest(unittest.TestCase):
             queue_candidates=[{"id": "af-q", "kind": "factory_campaign",
                                "state": "eligible", "title": "old queue"}],
             graph_digest=digest,
-            graph_beads=[scoped],
+            graph_beads=graph_beads,
         )
         self.assertEqual(("none", "scoped_graph_waiting"),
                          (waiting["action"], waiting["reason"]))
 
+    def test_scoped_delivery_bead_requires_publication_validated_and_convoy_attachment(self):
+        # af-vliwf: a bead carrying a spoofed or stale graph_digest/plane pair
+        # (hand-edited metadata, or a convoy later deleted) must not be
+        # treated as an eligible Ready Frontier member, even though the old
+        # digest+plane-only check would have accepted it.
+        digest = "sha256:" + "f" * 64
+        attached = bead("af-attached", metadata={
+            "gc.graph_digest": digest, "gc.plane": "delivery",
+            "gc.publication_validated": "true",
+        })
+        unvalidated = bead("af-unvalidated", metadata={
+            "gc.graph_digest": digest, "gc.plane": "delivery",
+        })
+        not_tracked = bead("af-not-tracked", metadata={
+            "gc.graph_digest": digest, "gc.plane": "delivery",
+            "gc.publication_validated": "true",
+        })
+        graph_beads = [convoy_bead(digest, "af-attached"), attached, unvalidated, not_tracked]
+
+        unvalidated_wait = plan_idle_ladder([unvalidated], NOW, graph_digest=digest, graph_beads=graph_beads)
+        self.assertEqual(("none", "scoped_graph_waiting"),
+                         (unvalidated_wait["action"], unvalidated_wait["reason"]))
+
+        untracked_wait = plan_idle_ladder([not_tracked], NOW, graph_digest=digest, graph_beads=graph_beads)
+        self.assertEqual(("none", "scoped_graph_waiting"),
+                         (untracked_wait["action"], untracked_wait["reason"]))
+
+        attached_plan = plan_idle_ladder([attached], NOW, graph_digest=digest, graph_beads=graph_beads)
+        self.assertEqual("ladder:factory:af-attached", attached_plan["wake_key"])
+
     def test_p01_p02_false_done_blockers_do_not_release_scoped_dependents(self):
         digest = "sha256:" + "5" * 64
-        base = {"gc.graph_digest": digest, "gc.plane": "delivery"}
+        base = {"gc.graph_digest": digest, "gc.plane": "delivery",
+                "gc.publication_validated": "true"}
+        convoy = convoy_bead(digest, "af-p01", "af-p02", "af-p04")
         p01 = bead("af-p01", status="closed", metadata={
             **base,
             "gc.ticket_id": "P01",
@@ -679,11 +726,11 @@ class IdleLadderPlanTest(unittest.TestCase):
         p02 = bead("af-p02", metadata={**base, "gc.ticket_id": "P02"}, dependencies=[
             {"depends_on_id": "af-p01", "type": "blocks"},
         ])
-        held = plan_idle_ladder([p02], NOW, graph_digest=digest, graph_beads=[p01, p02])
+        held = plan_idle_ladder([p02], NOW, graph_digest=digest, graph_beads=[convoy, p01, p02])
         self.assertEqual(("none", "scoped_graph_waiting"), (held["action"], held["reason"]))
 
         p01["metadata"].update(merged_delivery_proof())
-        released = plan_idle_ladder([p02], NOW, graph_digest=digest, graph_beads=[p01, p02])
+        released = plan_idle_ladder([p02], NOW, graph_digest=digest, graph_beads=[convoy, p01, p02])
         self.assertEqual("ladder:factory:af-p02", released["wake_key"])
 
         p02.update(status="closed", metadata={
@@ -693,15 +740,15 @@ class IdleLadderPlanTest(unittest.TestCase):
         p04 = bead("af-p04", metadata={**base, "gc.ticket_id": "P04"}, dependencies=[
             {"depends_on_id": "af-p02", "type": "blocks"},
         ])
-        red_held = plan_idle_ladder([p04], NOW, graph_digest=digest, graph_beads=[p02, p04])
+        red_held = plan_idle_ladder([p04], NOW, graph_digest=digest, graph_beads=[convoy, p02, p04])
         self.assertEqual("scoped_graph_waiting", red_held["reason"])
 
         p02["metadata"].update(merged_delivery_proof(200, **{"gc.ci_head_sha": "c" * 40}))
-        mismatch_held = plan_idle_ladder([p04], NOW, graph_digest=digest, graph_beads=[p02, p04])
+        mismatch_held = plan_idle_ladder([p04], NOW, graph_digest=digest, graph_beads=[convoy, p02, p04])
         self.assertEqual("scoped_graph_waiting", mismatch_held["reason"])
 
         p02["metadata"].update(merged_delivery_proof(200))
-        exact_released = plan_idle_ladder([p04], NOW, graph_digest=digest, graph_beads=[p02, p04])
+        exact_released = plan_idle_ladder([p04], NOW, graph_digest=digest, graph_beads=[convoy, p02, p04])
         self.assertEqual("ladder:factory:af-p04", exact_released["wake_key"])
 
     def test_ladder_tracks_up_to_max_concurrent(self):
@@ -937,7 +984,9 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
             bead("af-old", priority=0),
             bead("af-scoped", priority=3, metadata={
                 "gc.graph_digest": digest, "gc.plane": "delivery",
+                "gc.publication_validated": "true",
             }),
+            convoy_bead(digest, "af-scoped"),
         ]), encoding="utf-8")
         self.write_status(status(next_id="af-product"))
         out = self.sentinel(NOW).stdout
@@ -976,7 +1025,9 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         self.ready_file.write_text(json.dumps([
             bead("af-scoped", priority=0, metadata={
                 "gc.graph_digest": digest, "gc.plane": "delivery",
+                "gc.publication_validated": "true",
             }),
+            convoy_bead(digest, "af-scoped"),
         ]), encoding="utf-8")
         out = self.sentinel(NOW).stdout
         self.assertIn("NOTIFIED: mayor — ladder:factory:af-scoped", out)
