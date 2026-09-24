@@ -70,6 +70,9 @@ jobs:
       - name: Route a semantic surprise through one Planning Exception (af-oun2u)
         run: python tests/planning-exception-test.py
 
+      - name: Observe planning and delivery changes without idle model calls (af-ueuq6)
+        run: python tests/factory-observe-test.py
+
       - name: Ensure fixture sandbox runtime
         run: |
           packages=()
