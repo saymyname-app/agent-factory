@@ -1,0 +1,454 @@
+#!/usr/bin/env python3
+"""Approve, freeze and revise Planning Artifacts by exact digest (B05).
+
+This is a deterministic synthetic prototype, not a live Gas City write door:
+given a Spec artifact produced by `planning-run-to-spec-oracle` (state
+`DRAFT_SPEC`), `approve` names its artifact identity and exact content
+digest and flips the same file to `APPROVED_SPEC` -- it never writes a
+second document. When a Planning Map path is also given, `approve` closes
+that map in the same call, so a Planning Map never outlives the Spec it
+produced.
+
+Once `APPROVED_SPEC`, the artifact is frozen: `freeze-check` detects any
+drift between its recorded digest and its actual content and reports which
+section changed, and `revise` is the only sanctioned way to change it --
+it requires the caller to name the exact digest it is revising, refuses to
+mint a revision that does not actually change the content, and records
+provenance back to the digest it replaces. `expire-check` reports that the
+artifact stays recoverable while its convoy is open and is eligible to
+expire only after the convoy closes; it is never the artifact of durable
+truth, which belongs in code, tests, the domain glossary and qualifying
+ADRs.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import sys
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterator
+
+
+PROGRAM = "spec-approve"
+SPEC_CONTRACT = "agent-factory-planning-run-spec/v1"
+MAP_CONTRACT = "agent-factory-wayfinding-run/v1"
+
+DRAFT_SPEC = "DRAFT_SPEC"
+APPROVED_SPEC = "APPROVED_SPEC"
+
+MAP_TO_SPEC_READY = "to_spec_ready"
+MAP_CLOSED = "closed"
+
+REQUIRED_SECTIONS = (
+    "behavior",
+    "boundaries",
+    "decisions",
+    "acceptance_evidence",
+    "provenance",
+    "experiments",
+    "non_objectives",
+)
+
+
+class SpecApproveError(RuntimeError):
+    """An actionable diagnostic about a Planning Artifact approval."""
+
+
+def as_dict(value: Any, name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise SpecApproveError(f"{name} must be an object")
+    return value
+
+
+def required_string(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise SpecApproveError(f"{name} must be a non-empty string")
+    return value
+
+
+def canonical_digest(value: Any) -> str:
+    """Identical digest formula to `planning-run-to-spec-oracle`, so a Spec's
+    digest never changes just because it passed through this tool."""
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def load_spec(path: Path) -> dict[str, Any]:
+    try:
+        spec = as_dict(json.loads(path.read_text(encoding="utf-8")), "spec")
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SpecApproveError(f"cannot read spec {path}: {exc}") from exc
+    contract = spec.get("contract")
+    if contract != SPEC_CONTRACT:
+        raise SpecApproveError(f"spec.contract must be {SPEC_CONTRACT!r}, got {contract!r}")
+    return spec
+
+
+def spec_sections(spec: dict[str, Any]) -> dict[str, Any]:
+    sections = as_dict(spec.get("sections"), "spec.sections")
+    missing = [key for key in REQUIRED_SECTIONS if key not in sections]
+    if missing:
+        raise SpecApproveError(f"spec.sections is missing required section(s): {missing}")
+    return sections
+
+
+def write_spec(path: Path, spec: dict[str, Any]) -> None:
+    path.write_text(json.dumps(spec, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+@contextmanager
+def locked_map(path: Path) -> Iterator[dict[str, Any]]:
+    """Exclusive-lock a Planning Map file for one atomic read-modify-write --
+    the same discipline `wayfinding-run` uses, so closing a map here can
+    never race a concurrent map mutation."""
+    if not path.exists():
+        raise SpecApproveError(f"map not found: {path}")
+    with path.open("r+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            raw = handle.read().strip()
+            state = as_dict(json.loads(raw) if raw else {}, "map")
+            if state.get("contract") != MAP_CONTRACT:
+                raise SpecApproveError(f"map.contract must be {MAP_CONTRACT!r}, got {state.get('contract')!r}")
+            yield state
+            handle.seek(0)
+            handle.truncate()
+            handle.write(json.dumps(state, indent=2, sort_keys=True))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def append_history(spec: dict[str, Any], event: str, **fields: Any) -> None:
+    spec.setdefault("history", []).append({"event": event, "at": time.time(), **fields})
+
+
+# --- approve -----------------------------------------------------------------
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    spec_path = Path(args.spec)
+    try:
+        spec = load_spec(spec_path)
+        if spec.get("state") != DRAFT_SPEC:
+            raise SpecApproveError(
+                f"cannot approve state={spec.get('state')!r}: only a DRAFT_SPEC can be "
+                "approved -- an APPROVED_SPEC is already approved once and approval never "
+                "creates a duplicate approved document"
+            )
+        sections = spec_sections(spec)
+        actual_digest = canonical_digest(sections)
+        declared_digest = spec.get("content_digest")
+        if declared_digest != actual_digest:
+            raise SpecApproveError(
+                f"spec.content_digest {declared_digest!r} does not match the actual content "
+                f"digest {actual_digest!r} -- refusing to approve a mismatched identity"
+            )
+
+        spec_id = required_string(spec.get("spec_id"), "spec.spec_id")
+
+        # Validate every map precondition before mutating the spec file, so
+        # a map that cannot close leaves the spec exactly as it was --
+        # approval and map-closure either both happen or neither does.
+        map_path = Path(args.map) if args.map else None
+        if map_path is not None:
+            if not map_path.exists():
+                raise SpecApproveError(f"map not found: {map_path}")
+            precheck = as_dict(json.loads(map_path.read_text(encoding="utf-8")), "map")
+            if precheck.get("status") == MAP_CLOSED:
+                raise SpecApproveError("map is already closed -- approval closes a map exactly once")
+            if precheck.get("status") != MAP_TO_SPEC_READY:
+                raise SpecApproveError(
+                    f"cannot close map with status={precheck.get('status')!r}: a map only closes "
+                    f"from {MAP_TO_SPEC_READY!r}"
+                )
+
+        spec["state"] = APPROVED_SPEC
+        spec["approved_by"] = required_string(args.approved_by, "--approved-by")
+        spec["approved_evidence"] = required_string(args.evidence, "--evidence")
+        spec["approved_digest"] = actual_digest
+        # Recorded per-section digests, so a later freeze-check can name
+        # exactly which section drifted instead of only reporting a boolean.
+        spec["section_digests"] = {key: canonical_digest(sections[key]) for key in REQUIRED_SECTIONS}
+        append_history(
+            spec, "approve", approved_by=spec["approved_by"], evidence=spec["approved_evidence"], digest=actual_digest
+        )
+        write_spec(spec_path, spec)
+
+        map_closed = False
+        if map_path is not None:
+            with locked_map(map_path) as state:
+                if state.get("status") != MAP_TO_SPEC_READY:
+                    raise SpecApproveError(
+                        f"map status changed to {state.get('status')!r} concurrently with this approval"
+                    )
+                state["status"] = MAP_CLOSED
+                state.setdefault("history", []).append(
+                    {"event": "closed_by_spec_approval", "at": time.time(), "spec_id": spec_id, "digest": actual_digest}
+                )
+            map_closed = True
+    except SpecApproveError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "spec_id": spec_id,
+                "state": APPROVED_SPEC,
+                "digest": actual_digest,
+                "map_closed": map_closed,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+# --- freeze-check --------------------------------------------------------------
+
+
+def cmd_freeze_check(args: argparse.Namespace) -> int:
+    """Optional integrity check: reports which section drifted, not just a
+    boolean, so it earns its keep instead of becoming another fog audit.
+    Nothing in `approve` or `revise` requires this to run first."""
+    spec_path = Path(args.spec)
+    try:
+        spec = load_spec(spec_path)
+        if spec.get("state") != APPROVED_SPEC:
+            raise SpecApproveError(
+                f"cannot freeze-check state={spec.get('state')!r}: only an {APPROVED_SPEC} artifact is frozen"
+            )
+        sections = spec_sections(spec)
+        recorded_section_digests = as_dict(spec.get("section_digests"), "spec.section_digests")
+        drifted_sections = [
+            key for key in REQUIRED_SECTIONS if canonical_digest(sections[key]) != recorded_section_digests.get(key)
+        ]
+        actual_digest = canonical_digest(sections)
+        declared_digest = spec.get("content_digest")
+        identity_mismatch = args.expected_digest is not None and declared_digest != args.expected_digest
+
+        if drifted_sections:
+            raise SpecApproveError(
+                f"frozen artifact was mutated: section(s) {drifted_sections} no longer match their "
+                f"recorded digest (overall digest now {actual_digest!r}, recorded {declared_digest!r})"
+            )
+        if identity_mismatch:
+            raise SpecApproveError(
+                f"declared identity drifted: expected {args.expected_digest!r}, artifact carries {declared_digest!r}"
+            )
+    except SpecApproveError as exc:
+        print(
+            json.dumps(
+                {"ok": False, "error": str(exc), "drifted_sections": drifted_sections if "drifted_sections" in locals() else []},
+                indent=2,
+            )
+        )
+        return 1
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "digest": declared_digest,
+                "approved_by": spec.get("approved_by"),
+                "evidence": spec.get("approved_evidence"),
+                "sections_checked": list(REQUIRED_SECTIONS),
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+# --- revise --------------------------------------------------------------------
+
+
+def cmd_revise(args: argparse.Namespace) -> int:
+    spec_path = Path(args.spec)
+    try:
+        spec = load_spec(spec_path)
+        if spec.get("state") != APPROVED_SPEC:
+            raise SpecApproveError(
+                f"cannot revise state={spec.get('state')!r}: only an {APPROVED_SPEC} (frozen) artifact "
+                "can be revised -- a DRAFT_SPEC is edited by re-running the Planning Run, not revise"
+            )
+        current_sections = spec_sections(spec)
+        current_digest = canonical_digest(current_sections)
+        if spec.get("content_digest") != current_digest:
+            raise SpecApproveError(
+                "frozen artifact was mutated outside this tool -- refusing to revise an artifact "
+                "whose recorded digest does not match its actual content"
+            )
+        expected = required_string(args.expected_current_digest, "--expected-current-digest")
+        if expected != current_digest:
+            raise SpecApproveError(
+                f"mutation of a frozen artifact is rejected: --expected-current-digest {expected!r} does "
+                f"not match the artifact's current digest {current_digest!r}"
+            )
+
+        new_sections = spec_sections({"sections": as_dict(json.loads(Path(args.new_sections).read_text()), "new_sections")})
+        new_digest = canonical_digest(new_sections)
+        if new_digest == current_digest:
+            raise SpecApproveError(
+                "revise refuses to mint a revision with no semantic change -- the new sections "
+                "produce the same content digest as the current approved artifact"
+            )
+
+        revision_entry = {
+            "prior_digest": current_digest,
+            "prior_approved_by": spec.get("approved_by"),
+            "prior_evidence": spec.get("approved_evidence"),
+            "provenance": required_string(args.provenance, "--provenance"),
+            "revised_by": required_string(args.revised_by, "--revised-by"),
+            "revised_at": time.time(),
+        }
+        spec.setdefault("revisions", []).append(revision_entry)
+        spec["sections"] = new_sections
+        spec["content_digest"] = new_digest
+        spec["state"] = DRAFT_SPEC
+        spec["revision"] = int(spec.get("revision", 0)) + 1
+        for stale_field in ("approved_by", "approved_evidence", "approved_digest"):
+            spec.pop(stale_field, None)
+        append_history(spec, "revise", new_digest=new_digest, provenance=revision_entry["provenance"])
+        write_spec(spec_path, spec)
+    except SpecApproveError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "spec_id": spec.get("spec_id"),
+                "state": DRAFT_SPEC,
+                "prior_digest": revision_entry["prior_digest"],
+                "digest": new_digest,
+                "revision": spec["revision"],
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+# --- expire-check ----------------------------------------------------------------
+
+
+def cmd_expire_check(args: argparse.Namespace) -> int:
+    """Simulates convoy lifecycle without wiring a real convoy: while the
+    convoy is open the artifact must stay recoverable regardless of its
+    state; only after closure may it become expire-eligible. Durable truth
+    never lives here -- it belongs in code, tests, the glossary and
+    qualifying ADRs."""
+    spec_path = Path(args.spec)
+    try:
+        spec = load_spec(spec_path)
+        convoy_status = required_string(args.convoy_status, "--convoy-status")
+        if convoy_status not in ("open", "closed"):
+            raise SpecApproveError(f"--convoy-status must be 'open' or 'closed', got {convoy_status!r}")
+        convoy_closed = convoy_status == "closed"
+    except SpecApproveError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "spec_id": spec.get("spec_id"),
+                "state": spec.get("state"),
+                "recoverable": not convoy_closed,
+                "expire_eligible": convoy_closed,
+                "durable_truth_lives_here": False,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+# --- status ----------------------------------------------------------------------
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    try:
+        spec = load_spec(Path(args.spec))
+    except SpecApproveError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "spec_id": spec.get("spec_id"),
+                "state": spec.get("state"),
+                "content_digest": spec.get("content_digest"),
+                "approved_by": spec.get("approved_by"),
+                "revision": spec.get("revision", 0),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+# --- CLI ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    approve = subparsers.add_parser("approve", help="approve a DRAFT_SPEC by exact digest and close its map")
+    approve.add_argument("spec", help="path to the Spec JSON file")
+    approve.add_argument("--approved-by", required=True)
+    approve.add_argument("--evidence", required=True)
+    approve.add_argument("--map", help="path to the Planning Map JSON file to close on approval")
+    approve.set_defaults(func=cmd_approve)
+
+    freeze_check = subparsers.add_parser(
+        "freeze-check", help="optional integrity check: detect and localize drift on a frozen artifact"
+    )
+    freeze_check.add_argument("spec", help="path to the Spec JSON file")
+    freeze_check.add_argument("--expected-digest", help="the digest the caller expects this artifact to carry")
+    freeze_check.set_defaults(func=cmd_freeze_check)
+
+    revise = subparsers.add_parser(
+        "revise", help="create an explicit new revision of a frozen artifact with provenance"
+    )
+    revise.add_argument("spec", help="path to the Spec JSON file")
+    revise.add_argument("--expected-current-digest", required=True)
+    revise.add_argument("--new-sections", required=True, help="path to a JSON file with the new sections object")
+    revise.add_argument("--revised-by", required=True)
+    revise.add_argument("--provenance", required=True)
+    revise.set_defaults(func=cmd_revise)
+
+    expire_check = subparsers.add_parser(
+        "expire-check", help="report recoverability and expiry eligibility against a convoy status"
+    )
+    expire_check.add_argument("spec", help="path to the Spec JSON file")
+    expire_check.add_argument("--convoy-status", required=True, choices=("open", "closed"))
+    expire_check.set_defaults(func=cmd_expire_check)
+
+    status = subparsers.add_parser("status", help="report the Spec's state, digest and approval")
+    status.add_argument("spec", help="path to the Spec JSON file")
+    status.set_defaults(func=cmd_status)
+
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

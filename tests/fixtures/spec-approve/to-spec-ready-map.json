@@ -1,0 +1,30 @@
+{
+  "contract": "agent-factory-wayfinding-run/v1",
+  "decisions": {
+    "only-decision": {
+      "claimed_by": "me",
+      "delivery_routable": false,
+      "evidence": "af-fixture-evidence",
+      "map_key": "only_decision",
+      "plane": "planning",
+      "resolution": "done",
+      "session_id": "s-1",
+      "status": "resolved",
+      "summary": "fixture decision"
+    }
+  },
+  "delivery_routable": false,
+  "history": [
+    {
+      "at": 0,
+      "event": "promote",
+      "reason": "fixture"
+    }
+  ],
+  "plane": "planning",
+  "run_id": "wf-fixture-spec-approve",
+  "status": "to_spec_ready",
+  "time_sensitive_facts": {},
+  "time_sensitive_fields": [],
+  "trigger_reason": "fixture map ready to close on Spec approval"
+}
