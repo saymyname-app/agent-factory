@@ -1,0 +1,20 @@
+{
+  "contract": "agent-factory-fixture-scenario/v1",
+  "scenario_id": "reject-spec-mismatch",
+  "request": {
+    "project_id": "fixture-reject-spec-mismatch",
+    "intent": "Deliver a two-slice outcome and route its rejection to the spec_mismatch destination.",
+    "rigs": [
+      {
+        "name": "fixture-app",
+        "revision": "7a9e5aeffb4f73c649a22fd666208a22a80d9f46",
+        "fixture_source": "rigs/fixture-app"
+      }
+    ],
+    "slices": [
+      {"key": "S01", "title": "First atomic slice", "rigs": ["fixture-app"], "blocked_by": []},
+      {"key": "S02", "title": "Second atomic slice", "rigs": ["fixture-app"], "blocked_by": ["S01"]}
+    ]
+  },
+  "inject": {"publication_failure": "none", "reject_reason": "spec_mismatch"}
+}

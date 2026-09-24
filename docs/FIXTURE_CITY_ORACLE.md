@@ -158,3 +158,48 @@ the protocol with a check that consumes every additional participant.
 
 Cockpit V1 is deliberately outside this contract. It may consume future public
 state, but the deterministic fixture City remains the acceptance oracle.
+
+## Assembled-diff review and rejection routing (B10)
+
+Delivered proves exact-revision integration and assembled public behavior;
+Accepted is a separate, later decision, and the oracle keeps the two visibly
+distinct in every observation and result. Between them, a multi-slice outcome
+(`request.slices` names more than one vertical slice, regardless of rig
+count) requires exactly one independent `review-assembly` before `deliver`,
+scoped to the assembled diff and focused on `interaction_risks` and
+`spec_drift`. The oracle proves both directions: a multi-slice request must
+receive that review, and a second review over the same outcome is rejected
+(one unique review, not one per slice). A single-slice request must be
+refused a final review entirely — there is nothing left to assemble, so a
+duplicate review is not offered. `result.review` reports `{required,
+performed}` for both cases; see `tests/fixtures/fixture-city/multi-rig.json`
+(review required) and `containment.json` (single slice, no review).
+
+`inject.reject_reason` (`none` by default, or `spec_mismatch`,
+`changed_behavior`, `active_danger`) drives a scenario through `reject`
+instead of `accept` once Delivered is reached. Each reason routes to a
+distinct, fixed destination instead of a generic failure:
+
+| Reason | Routing |
+|---|---|
+| `spec_mismatch` | `targeted_repair` |
+| `changed_behavior` | `planning` |
+| `active_danger` | `safe_neutralization` |
+
+A rejection never performs a default whole-outcome rollback: the published
+delivery graph, convoy, and every already-verified per-rig integration
+survive it unchanged, and only the Delivered→Accepted boundary is affected.
+Acceptance is refused once an outcome is rejected. See
+`tests/fixtures/fixture-city/reject-spec-mismatch.json`,
+`reject-changed-behavior.json`, and `reject-active-danger.json`.
+
+The oracle also calls the operator's `attempt-effect` interface at multiple
+lifecycle points — after Delivered, after Accepted, and after a rejection —
+and requires every attempt to be refused with `effects` staying empty. This
+proves a sensitive effect (production, external publication, spend,
+destructive, or wider personal-data access) stays blocked on explicit human
+authority independent of how far integration or acceptance has progressed;
+the fixture's deny-mode operator never grants it regardless of any
+`--authority` value supplied, because the real authorization channel is a
+human decision outside the deterministic fixture, not a flag the fixture
+itself can honor.

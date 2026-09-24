@@ -62,6 +62,7 @@ def public_snapshot(state: dict[str, Any]) -> dict[str, Any]:
         "delivery_graph": state["delivery_graph"],
         "integrations": state["integrations"],
         "assembly_check": state["assembly_check"],
+        "review": state["review"],
         "outcome": state["outcome"],
         "effects": state["effects"],
     }
@@ -199,7 +200,8 @@ def command_start(args: argparse.Namespace) -> int:
         "integrations": [],
         "assembly_paths": {},
         "assembly_check": None,
-        "outcome": {"state": "none", "accepted": False},
+        "review": None,
+        "outcome": {"state": "none", "accepted": False, "reason": None, "routing": None},
         "effects": [],
     }
     save_state(args.workspace, state)
@@ -354,11 +356,81 @@ def command_deliver(args: argparse.Namespace) -> int:
     if not isinstance(state.get("assembly_check"), dict) or state["assembly_check"].get("passed") is not True:
         print("delivery requires a passing assembled public-behavior check", file=sys.stderr)
         return 2
-    state["outcome"] = {"state": "delivered", "accepted": False}
+    if len(state["request"]["slices"]) > 1:
+        review = state.get("review")
+        if not isinstance(review, dict) or review.get("verdict") != "pass":
+            print(
+                "a multi-slice outcome requires one independent assembled-diff "
+                "review before Delivered",
+                file=sys.stderr,
+            )
+            return 2
+    state["outcome"] = {"state": "delivered", "accepted": False, "reason": None, "routing": None}
     state["planning_run"]["state"] = "DELIVERED_OUTCOME"
     save_state(args.workspace, state)
     print_json({"ok": True})
     return 0
+
+
+def command_review_assembly(args: argparse.Namespace) -> int:
+    state = load_state(args.workspace)
+    if len(state["request"]["slices"]) <= 1:
+        print(
+            "review-assembly is a final review for multi-slice outcomes only; "
+            "a single-slice outcome receives no duplicate final review",
+            file=sys.stderr,
+        )
+        return 2
+    if not isinstance(state.get("assembly_check"), dict) or state["assembly_check"].get("passed") is not True:
+        print("review-assembly requires a passing assembled public-behavior check first", file=sys.stderr)
+        return 2
+    if state.get("review") is not None:
+        print("one independent assembled-diff review has already been recorded", file=sys.stderr)
+        return 2
+    state["review"] = {
+        "performed": True,
+        "scope": "assembled_diff",
+        "focus": ["interaction_risks", "spec_drift"],
+        "verdict": "pass",
+    }
+    save_state(args.workspace, state)
+    print_json({"ok": True})
+    return 0
+
+
+REJECTION_ROUTING = {
+    "spec_mismatch": "targeted_repair",
+    "changed_behavior": "planning",
+    "active_danger": "safe_neutralization",
+}
+
+
+def command_reject(args: argparse.Namespace) -> int:
+    state = load_state(args.workspace)
+    if state["outcome"].get("state") != "delivered":
+        print("rejection applies to a Delivered Outcome awaiting acceptance", file=sys.stderr)
+        return 2
+    routing = REJECTION_ROUTING[args.reason]
+    state["outcome"] = {
+        "state": "rejected",
+        "accepted": False,
+        "reason": args.reason,
+        "routing": routing,
+    }
+    state["planning_run"]["state"] = "REJECTED_OUTCOME"
+    save_state(args.workspace, state)
+    print_json({"ok": True, "routing": routing})
+    return 0
+
+
+def command_attempt_effect(args: argparse.Namespace) -> int:
+    load_state(args.workspace)
+    print(
+        f"sensitive effect ({args.kind}) blocked: explicit human authority is required "
+        "and the fixture City never grants it",
+        file=sys.stderr,
+    )
+    return 9
 
 
 def command_verify_assembly(args: argparse.Namespace) -> int:
@@ -423,7 +495,7 @@ def command_accept(args: argparse.Namespace) -> int:
     if state["outcome"].get("state") != "delivered":
         print("acceptance requires a Delivered Outcome", file=sys.stderr)
         return 2
-    state["outcome"] = {"state": "accepted", "accepted": True}
+    state["outcome"] = {"state": "accepted", "accepted": True, "reason": None, "routing": None}
     state["planning_run"]["state"] = "ACCEPTED_OUTCOME"
     save_state(args.workspace, state)
     print_json({"ok": True})
@@ -450,7 +522,18 @@ def parser() -> argparse.ArgumentParser:
     integrate.add_argument("--revision", required=True)
     integrate.add_argument("--checkout", type=Path, required=True)
     commands.add_parser("verify-assembly")
+    commands.add_parser("review-assembly")
     commands.add_parser("deliver")
+    reject = commands.add_parser("reject")
+    reject.add_argument("--reason", choices=tuple(REJECTION_ROUTING), required=True)
+    reject.add_argument("--detail", default="")
+    attempt_effect = commands.add_parser("attempt-effect")
+    attempt_effect.add_argument(
+        "--kind",
+        choices=("production", "external_publish", "spend", "destructive", "pii_access"),
+        required=True,
+    )
+    attempt_effect.add_argument("--authority", default="")
     commands.add_parser("accept")
     return value
 

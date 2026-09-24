@@ -198,6 +198,54 @@ class FixtureCityOracleTest(unittest.TestCase):
         self.assertEqual("cockpit-v1-export", rejection["selection"])
         self.assertIn("read-only evidence", rejection["reason"])
 
+    def test_multi_slice_outcome_receives_one_independent_assembled_diff_review(self):
+        result = json.loads(self.invoke("multi-rig.json").stdout)
+        self.assertEqual({"required": True, "performed": True}, result["review"])
+        self.assertIn("review-assembly", result["interfaces"]["operator"])
+
+    def test_single_slice_outcome_receives_no_duplicate_final_review(self):
+        result = json.loads(self.invoke("containment.json").stdout)
+        self.assertTrue(result["ok"])
+        self.assertEqual({"required": False, "performed": False}, result["review"])
+
+    def test_rejection_routes_a_spec_mismatch_to_targeted_repair(self):
+        result = json.loads(self.invoke("reject-spec-mismatch.json").stdout)
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            {"reason": "spec_mismatch", "routing": "targeted_repair"}, result["rejection"]
+        )
+        self.assertEqual({"delivered": True, "accepted": False}, result["outcome"])
+        self.assertEqual("published", result["publication"]["state"])
+        self.assertIsNotNone(result["publication"]["graph_digest"])
+        self.assertTrue(result["integration"]["evidence"])
+        self.assertEqual([], result["effects"])
+
+    def test_rejection_routes_changed_desired_behavior_to_planning(self):
+        result = json.loads(self.invoke("reject-changed-behavior.json").stdout)
+        self.assertEqual(
+            {"reason": "changed_behavior", "routing": "planning"}, result["rejection"]
+        )
+
+    def test_rejection_routes_active_danger_to_safe_neutralization(self):
+        result = json.loads(self.invoke("reject-active-danger.json").stdout)
+        self.assertEqual(
+            {"reason": "active_danger", "routing": "safe_neutralization"}, result["rejection"]
+        )
+
+    def test_rejection_does_not_perform_a_default_whole_outcome_rollback(self):
+        result = json.loads(self.invoke("reject-spec-mismatch.json").stdout)
+        # The already-verified per-rig integration evidence and the published
+        # delivery graph survive a rejection: only the Delivered/Accepted
+        # boundary is affected, never a blanket rollback of prior work.
+        self.assertTrue(result["integration"]["assembly_check"]["passed"])
+        self.assertIsNotNone(result["publication"]["convoy_id"])
+
+    def test_sensitive_effects_stay_blocked_regardless_of_integration_state(self):
+        for scenario in ("single-rig.json", "reject-spec-mismatch.json"):
+            result = json.loads(self.invoke(scenario).stdout)
+            self.assertEqual([], result["effects"])
+            self.assertIn("attempt-effect", result["interfaces"]["operator"])
+
     def test_default_planning_path_is_unaffected_by_the_legacy_fence(self):
         # Existing convoy-attached delivery (e.g. single-rig/multi-rig) must
         # keep working unchanged: the fence only engages when a request
