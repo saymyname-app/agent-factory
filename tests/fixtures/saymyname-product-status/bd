@@ -139,6 +139,16 @@ emit_workflows() {
 JSON
     return
   fi
+  if [[ $scenario == rotated-session ]]; then
+    # af-fwlwt: the workflow root's own gc.session_name names a session that
+    # has since rotated away and is no longer running; a different, live
+    # drain-role session is doing the actual open work below it under the
+    # same gc.root_bead_id (emit_steps).
+    cat <<'JSON'
+[{"id":"af-workflow","status":"in_progress","metadata":{"gc.kind":"workflow","gc.input_convoy_id":"af-convoy","gc.session_name":"codex-af-rotated-stale"}}]
+JSON
+    return
+  fi
   cat <<'JSON'
 [{"id":"af-workflow","status":"in_progress","metadata":{"gc.kind":"workflow","gc.input_convoy_id":"af-convoy","gc.session_name":"codex-af-test"}}]
 JSON
@@ -181,6 +191,12 @@ JSON
 }
 
 emit_steps() {
+  if [[ $scenario == rotated-session ]]; then
+    cat <<'JSON'
+[{"id":"af-step","status":"open","assignee":"codex-af-rotated-live","metadata":{"gc.root_bead_id":"af-workflow","gc.session_name":"codex-af-rotated-live","gc.step_ref":"mol-polecat-commit.implement"}}]
+JSON
+    return
+  fi
   cat <<'JSON'
 [{"id":"af-step","status":"open","assignee":"codex-af-test","metadata":{"gc.root_bead_id":"af-workflow","gc.session_name":"codex-af-test","gc.step_ref":"mol-polecat-commit.implement"}}]
 JSON
@@ -226,9 +242,16 @@ case "$command_name" in
     case "${2:-}" in
       --status=in_progress) emit_workflows ;;
       --status=closed) emit_closed_workflows ;;
-      --assignee=codex-af-test) emit_steps ;;
-      --assignee=codex-af-self) emit_self_steps ;;
-      --assignee=codex-af-handoff-stale) printf '[]\n' ;;
+      --metadata-field)
+        # af-fwlwt: steps under a workflow root are now looked up by
+        # gc.root_bead_id, not by the one stale session_name recorded on the
+        # workflow root -- so any role/template's live session is visible.
+        case "$scenario" in
+          self-workflow) emit_self_steps ;;
+          self-workflow-handoff) printf '[]\n' ;;
+          *) emit_steps ;;
+        esac
+        ;;
       *) printf 'unsupported fixture list: %s\n' "$*" >&2; exit 64 ;;
     esac
     ;;

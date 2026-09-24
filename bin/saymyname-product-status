@@ -210,7 +210,8 @@ derive_active_context() {
   local current_status
   local workflows_response workflow convoy_id convoy_response convoy cause resume_mode work_outcome
   local -a matching_workflows=()
-  local workflow_id session_name steps_response current_step step_ref live_count active_count
+  local workflow_id session_name steps_response current_step step_ref active_count
+  local step_sessions live_agent
   local workflow_convoy_id workflow_convoy workflow_convoy_response
   local direct_session_id direct_session_name direct_matches direct_agent
   local closed_workflows_response
@@ -504,20 +505,30 @@ derive_active_context() {
     return
   fi
 
+  # af-fwlwt: query every open/in_progress step under this workflow root, not
+  # just the one literal gc.session_name recorded once on the workflow root.
+  # A multi-role drain (build-basic gap-analyst, implementation-worker, ...)
+  # hands off between steps under rotating session IDs; filtering the list
+  # itself by --assignee="$session_name" before ever reaching liveness meant
+  # any step owned by a different, genuinely live session was invisible here
+  # from the start. Live case 2026-09-24: the sentinel sent 4 "no active
+  # product agent" resume alarms for af-5eh51 while `gc session list` showed
+  # af-x3m32/af-zdl0r/af-2k4ue (implementation-worker) and af-ikmbt
+  # (gap-analyst) all active 0-1s ago under the same gc.root_bead_id.
   capture_json steps_response "Beads workflow steps" \
-    gc_json bd list --assignee="$session_name" --json
+    gc_json bd list --metadata-field "gc.root_bead_id=$workflow_id" --status=open,in_progress --json
   jq -e 'type == "array"' >/dev/null <<<"$steps_response" \
     || die "Beads workflow step inventory is not an array."
-  current_step=$(jq -ce --arg root "$workflow_id" --arg session "$session_name" '
-    [.[] | select(
-      (.status == "open" or .status == "in_progress") and
-      .metadata["gc.root_bead_id"] == $root and
-      .metadata["gc.session_name"] == $session)][0] // null
+  # Prefer the step naming the recorded session, but fall back to any other
+  # open/in_progress step under this root so the reported phase still names
+  # real in-flight work instead of collapsing to "no specific step".
+  current_step=$(jq -ce --arg session "$session_name" '
+    (map(select(.metadata["gc.session_name"] == $session)) + .) | .[0] // null
   ' <<<"$steps_response")
-  # The convoy already proved the workflow is genuinely active; a stale
-  # session_name simply failing to name today's current step is not grounds
-  # to die() -- report active with no specific step/agent identified rather
-  # than mislabel it finalizing.
+  # The convoy already proved the workflow is genuinely active; no open step
+  # naming this root at all (stale session_name and nothing else found) is
+  # not grounds to die() -- report active with no specific step/agent
+  # identified rather than mislabel it finalizing.
   if [[ $current_step == null ]]; then
     CURRENT_STATE="active"
     CURRENT_PHASE="Réalisation"
@@ -532,13 +543,18 @@ derive_active_context() {
     CURRENT_AGENT="none"
     return
   fi
-  live_count=$(jq --arg session "$session_name" \
-    '[.agents[]? | select(.qualified_name == $session and .running == true)] | length' \
-    <<<"$CITY_RESPONSE")
-  [[ $live_count -le 1 ]] || die "Workflow session $session_name is not unique in Gas City."
-  if [[ $live_count -eq 1 ]]; then
+  # Liveness now considers every distinct session named by an open/
+  # in_progress step under this root, not only the workflow's own recorded
+  # gc.session_name: any one of them running proves a genuine product agent
+  # is active, regardless of which specific role/template it is.
+  step_sessions=$(jq -c '[.[].metadata["gc.session_name"] // empty] | unique' <<<"$steps_response")
+  live_agent=$(jq -r --argjson sessions "$step_sessions" '
+    [.agents[]? | select(.running == true and (.qualified_name as $q | $sessions | index($q) != null))]
+    | .[0].qualified_name // empty
+  ' <<<"$CITY_RESPONSE")
+  if [[ -n $live_agent ]]; then
     CURRENT_STATE="active"
-    CURRENT_AGENT=$session_name
+    CURRENT_AGENT=$live_agent
   else
     CURRENT_STATE="materialized"
     CURRENT_AGENT="none"
