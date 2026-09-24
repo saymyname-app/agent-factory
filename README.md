@@ -13,6 +13,12 @@ SayMyName is the first managed product, but this repository is deliberately proj
 
 Runtime state is volatile. Confirm it from the host rather than inferring it from this summary.
 
+## New to this Factory?
+
+Installing an independent Factory from Git, registering a generic project,
+starting its City, and reaching the first Planning Run: see
+[`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md).
+
 ## Pilot it with Codex
 
 Open Codex on host **BenForge** with `/home/benja/agent-factory` as the working
