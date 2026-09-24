@@ -1,0 +1,382 @@
+#!/usr/bin/env python3
+"""Route a semantic surprise through one Planning Exception (B08).
+
+A delivery worker never redesigns work it disagrees with -- it raises a
+Planning Exception. This tool implements that signal directly against a
+durable JSON register: `classify` tells a worker whether its situation stays
+inside the current ticket (bounded technical repair) or must return to the
+originating Planning Run (semantic or topology surprise); `raise` records
+exactly one Planning Decision for a surprise, parks only the affected bead
+and its descendants in the Delivery Work Graph snapshot, and detects a
+duplicate raise against work already parked; `resolve` closes the decision --
+`tactical` unparks the existing slice with no artifact change, `behavioral`/
+`topology` route an already-drafted, already-validated revision through the
+sole to-tickets authority (`bin/ticket-graph-publish patch`) before unparking.
+
+Concurrent `raise`/`resolve` calls against the same register are safe: every
+mutation takes an OS-level exclusive lock (`fcntl.flock`) around a read-
+modify-write, mirroring `wayfinding-run`'s map-file concurrency guarantee.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import subprocess
+import sys
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterator
+
+
+PROGRAM = "planning-exception"
+REGISTER_CONTRACT = "agent-factory-planning-exception-register/v1"
+ROOT = Path(__file__).resolve().parents[1]
+TICKET_GRAPH_PUBLISH = os.environ.get(
+    "PLANNING_EXCEPTION_PUBLISH_BIN", str(ROOT / "bin" / "ticket-graph-publish")
+)
+
+REPAIR = "repair"
+SEMANTIC = "semantic"
+TOPOLOGY = "topology"
+SURPRISE_KINDS = (SEMANTIC, TOPOLOGY)
+
+OPEN = "open"
+DUPLICATE = "duplicate"
+RESOLVED = "resolved"
+
+TACTICAL = "tactical"
+BEHAVIORAL = "behavioral"
+
+
+class PlanningExceptionError(RuntimeError):
+    """An actionable diagnostic about a Planning Exception."""
+
+
+def as_dict(value: Any, name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise PlanningExceptionError(f"{name} must be an object")
+    return value
+
+
+def required_string(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise PlanningExceptionError(f"{name} must be a non-empty string")
+    return value
+
+
+@contextmanager
+def locked_register(path: Path, create: bool = False) -> Iterator[dict[str, Any]]:
+    if create:
+        if path.exists():
+            raise PlanningExceptionError(f"refusing to overwrite an existing register: {path}")
+        path.write_text("{}")
+    if not path.exists():
+        raise PlanningExceptionError(f"register not found: {path}")
+
+    with path.open("r+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            raw = handle.read().strip()
+            state = json.loads(raw) if raw else {}
+            yield state
+            handle.seek(0)
+            handle.truncate()
+            handle.write(json.dumps(state, indent=2, sort_keys=True))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def append_history(state: dict[str, Any], event: str, **fields: Any) -> None:
+    state.setdefault("history", []).append({"event": event, "at": time.time(), **fields})
+
+
+# --- classify ----------------------------------------------------------------
+
+
+def cmd_classify(args: argparse.Namespace) -> int:
+    requires_exception = args.kind in SURPRISE_KINDS
+    print(json.dumps({
+        "ok": True,
+        "kind": args.kind,
+        "requires_planning_exception": requires_exception,
+        "guidance": (
+            "stays inside the approved slice as bounded technical repair"
+            if not requires_exception
+            else "return the affected work to its Planning Run via `raise`"
+        ),
+    }, indent=2, sort_keys=True))
+    return 0
+
+
+# --- init ----------------------------------------------------------------
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    try:
+        run_id = required_string(args.run, "--run")
+        out_path = Path(args.out)
+        if out_path.exists():
+            raise PlanningExceptionError(f"refusing to overwrite an existing register: {out_path}")
+        state = {
+            "contract": REGISTER_CONTRACT,
+            "run_id": run_id,
+            "decisions": {},
+            "history": [{"event": "init", "at": time.time(), "run_id": run_id}],
+        }
+        out_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except (PlanningExceptionError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(json.dumps({"ok": True, "run_id": run_id, "register": str(out_path)}, indent=2))
+    return 0
+
+
+# --- graph descendants ---------------------------------------------------
+
+
+def load_graph(path: Path) -> dict[str, list[str]]:
+    """A Delivery Work Graph snapshot: `{"beads": {id: {"blocked_by": [id,
+    ...]}}}`. Returns each bead's direct blockers, used to compute which
+    beads transitively depend on the affected bead (its descendants).
+    """
+    payload = as_dict(json.loads(path.read_text(encoding="utf-8")), "graph")
+    beads = as_dict(payload.get("beads"), "graph.beads")
+    blockers: dict[str, list[str]] = {}
+    for bead_id, entry in beads.items():
+        entry = as_dict(entry, f"graph.beads[{bead_id}]")
+        blockers[bead_id] = [str(b) for b in entry.get("blocked_by", [])]
+    return blockers
+
+
+def descendants(blockers: dict[str, list[str]], affected: str) -> set[str]:
+    """Every bead that (transitively) depends on `affected`, i.e. every bead
+    whose `blocked_by` chain includes it -- unrelated Ready Frontier beads,
+    which do not depend on `affected` at all, are never in this set.
+    """
+    dependents: dict[str, set[str]] = {bead_id: set() for bead_id in blockers}
+    for bead_id, blocked_by in blockers.items():
+        for blocker in blocked_by:
+            dependents.setdefault(blocker, set()).add(bead_id)
+
+    found: set[str] = set()
+    frontier = [affected]
+    while frontier:
+        node = frontier.pop()
+        for child in dependents.get(node, ()):
+            if child not in found:
+                found.add(child)
+                frontier.append(child)
+    return found
+
+
+# --- raise -----------------------------------------------------------------
+
+
+def cmd_raise(args: argparse.Namespace) -> int:
+    if args.kind not in SURPRISE_KINDS:
+        print(json.dumps({
+            "ok": False,
+            "error": f"--kind must be one of {SURPRISE_KINDS}; {args.kind!r} is bounded technical "
+                     "repair and stays inside the slice -- do not raise a Planning Exception for it",
+        }, indent=2))
+        return 1
+
+    register_path = Path(args.register)
+    try:
+        blockers = load_graph(Path(args.graph))
+        if args.bead not in blockers:
+            raise PlanningExceptionError(f"unknown bead in graph snapshot: {args.bead}")
+        parked = {args.bead} | descendants(blockers, args.bead)
+
+        with locked_register(register_path) as state:
+            decisions = state.setdefault("decisions", {})
+
+            duplicate = next(
+                (
+                    decision_id
+                    for decision_id, decision in decisions.items()
+                    if decision["status"] == OPEN and decision["bead"] == args.bead
+                ),
+                None,
+            )
+            if duplicate is not None:
+                append_history(
+                    state, "duplicate_detected", bead=args.bead, existing_decision=duplicate,
+                    raised_by=args.raised_by,
+                )
+                result = {
+                    "ok": True,
+                    "duplicate": True,
+                    "decision": duplicate,
+                    "note": f"an open Planning Decision already covers {args.bead}; no second decision created",
+                }
+            else:
+                decision_id = required_string(args.decision_id, "--decision-id")
+                if decision_id in decisions:
+                    raise PlanningExceptionError(f"decision id already exists: {decision_id}")
+                decisions[decision_id] = {
+                    "plane": "planning",
+                    "delivery_routable": False,
+                    "status": OPEN,
+                    "kind": args.kind,
+                    "bead": args.bead,
+                    "run_id": args.run,
+                    "summary": required_string(args.summary, "--summary"),
+                    "raised_by": args.raised_by,
+                    "parked": sorted(parked),
+                    "resolution_kind": None,
+                    "resolution_note": None,
+                }
+                append_history(
+                    state, "raise", decision=decision_id, bead=args.bead, kind=args.kind,
+                    parked=sorted(parked), raised_by=args.raised_by,
+                )
+                result = {"ok": True, "duplicate": False, "decision": decision_id, "parked": sorted(parked)}
+    except (PlanningExceptionError, OSError, json.JSONDecodeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+# --- resolve -----------------------------------------------------------------
+
+
+def run_patch(draft: str) -> dict[str, Any]:
+    try:
+        result = subprocess.run(
+            [TICKET_GRAPH_PUBLISH, "patch", draft], check=True, capture_output=True, text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise PlanningExceptionError(f"to-tickets patch failed: {detail}") from exc
+    return json.loads(result.stdout)
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    register_path = Path(args.register)
+    try:
+        if args.kind not in (TACTICAL, BEHAVIORAL, TOPOLOGY):
+            raise PlanningExceptionError(f"--kind must be one of tactical/behavioral/topology, got {args.kind!r}")
+
+        patch_result: dict[str, Any] | None = None
+        if args.kind in (BEHAVIORAL, TOPOLOGY):
+            if not args.patched_draft:
+                raise PlanningExceptionError(
+                    f"--patched-draft is required to resolve a {args.kind} exception: a behavioral or "
+                    "topology change patches unfinished work through the sole to-tickets authority"
+                )
+            patch_result = run_patch(args.patched_draft)
+
+        with locked_register(register_path) as state:
+            decisions = state.get("decisions", {})
+            decision = decisions.get(args.decision)
+            if decision is None:
+                raise PlanningExceptionError(f"unknown decision: {args.decision}")
+            if decision["status"] != OPEN:
+                raise PlanningExceptionError(
+                    f"decision {args.decision!r} is {decision['status']}, not open -- "
+                    "only an open decision can be resolved"
+                )
+            decision["status"] = RESOLVED
+            decision["resolution_kind"] = args.kind
+            decision["resolution_note"] = required_string(args.note, "--note")
+            unparked = decision["parked"]
+            decision["parked"] = []
+            append_history(
+                state, "resolve", decision=args.decision, kind=args.kind, unparked=unparked,
+                patch=patch_result,
+            )
+    except (PlanningExceptionError, OSError, json.JSONDecodeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(json.dumps({
+        "ok": True, "decision": args.decision, "status": RESOLVED, "unparked": unparked, "patch": patch_result,
+    }, indent=2, sort_keys=True))
+    return 0
+
+
+# --- status -----------------------------------------------------------------
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    try:
+        state = as_dict(json.loads(Path(args.register).read_text(encoding="utf-8")), "register")
+    except (OSError, json.JSONDecodeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    parked: set[str] = set()
+    for decision in state.get("decisions", {}).values():
+        parked |= set(decision.get("parked", []))
+    print(json.dumps({
+        "ok": True,
+        "run_id": state.get("run_id"),
+        "decisions": {
+            decision_id: decision["status"] for decision_id, decision in state.get("decisions", {}).items()
+        },
+        "parked": sorted(parked),
+    }, indent=2, sort_keys=True))
+    return 0
+
+
+# --- CLI --------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    classify = subparsers.add_parser(
+        "classify", help="tell a delivery worker whether its signal requires a Planning Exception"
+    )
+    classify.add_argument("--kind", required=True, choices=(REPAIR, SEMANTIC, TOPOLOGY))
+    classify.set_defaults(func=cmd_classify)
+
+    init = subparsers.add_parser("init", help="create a new empty Planning Exception register")
+    init.add_argument("--run", required=True, help="originating Planning/Wayfinding Run id")
+    init.add_argument("--out", required=True, help="path to write the new register JSON file")
+    init.set_defaults(func=cmd_init)
+
+    raise_ = subparsers.add_parser("raise", help="raise one Planning Exception for a bead")
+    raise_.add_argument("register", help="path to the Planning Exception register JSON file")
+    raise_.add_argument("--graph", required=True, help="path to a Delivery Work Graph snapshot JSON file")
+    raise_.add_argument("--bead", required=True, help="the affected delivery bead id")
+    raise_.add_argument("--kind", required=True, choices=(REPAIR, SEMANTIC, TOPOLOGY))
+    raise_.add_argument("--run", required=True, help="originating Planning/Wayfinding Run id")
+    raise_.add_argument("--decision-id", required=True, help="id for the new Planning Decision Bead")
+    raise_.add_argument("--summary", required=True)
+    raise_.add_argument("--raised-by", required=True, help="the delivery worker/session raising this")
+    raise_.set_defaults(func=cmd_raise)
+
+    resolve = subparsers.add_parser("resolve", help="resolve one open Planning Exception")
+    resolve.add_argument("register", help="path to the Planning Exception register JSON file")
+    resolve.add_argument("--decision", required=True)
+    resolve.add_argument("--kind", required=True, choices=(TACTICAL, BEHAVIORAL, TOPOLOGY))
+    resolve.add_argument("--note", required=True)
+    resolve.add_argument(
+        "--patched-draft", help="immutable revised Ticket Graph Draft (required for behavioral/topology)"
+    )
+    resolve.set_defaults(func=cmd_resolve)
+
+    status = subparsers.add_parser("status", help="report open decisions and parked beads")
+    status.add_argument("register", help="path to the Planning Exception register JSON file")
+    status.set_defaults(func=cmd_status)
+
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

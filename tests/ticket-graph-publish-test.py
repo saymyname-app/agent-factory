@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import hashlib
 import json
 import os
 import subprocess
@@ -11,6 +12,46 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLISHER = ROOT / "bin" / "ticket-graph-publish"
 DRAFT = ROOT / "docs" / "planning" / "agent-factory-project-agnostic-refactor-ticket-graph-draft.yaml"
 FAKE_BD = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "bd"
+
+SPEC_DIGEST = "sha256:" + "0" * 64
+
+
+def scoped_digest(raw: bytes) -> str:
+    marker = b"\nlegacy_boundary:"
+    start = raw.index(marker) + 1
+    return "sha256:" + hashlib.sha256(raw[start:]).hexdigest()
+
+
+def build_draft(tickets_yaml: str, revises: str | None = None) -> tuple[bytes, str]:
+    body = (
+        "legacy_boundary:\n"
+        "  note: test fixture\n"
+        "\n"
+        "global_execution_contract:\n"
+        "  models: no Astra or Fable\n"
+        "\n"
+        "tickets:\n"
+        f"{tickets_yaml}"
+    ).encode("utf-8")
+    digest = scoped_digest(b"\n" + body)
+    revises_line = f"  revises: {revises}\n" if revises else ""
+    header = (
+        "artifact:\n"
+        "  id: test-graph\n"
+        "  state: APPROVED_TICKET_GRAPH_DRAFT\n"
+        "  approved_by: Test\n"
+        "  approved_at: 2026-09-24\n"
+        f"  content_digest: {digest}\n"
+        "  digest_scope: UTF-8 bytes from the legacy_boundary key through end of file, with LF line endings\n"
+        "  source_spec:\n"
+        "    id: test-spec\n"
+        "    state: APPROVED_SPEC\n"
+        f"    digest: {SPEC_DIGEST}\n"
+        "  publication_authorized: true\n"
+        f"{revises_line}"
+        "\n"
+    ).encode("utf-8")
+    return header + body, digest
 
 
 class TicketGraphPublishTest(unittest.TestCase):
@@ -73,6 +114,94 @@ class TicketGraphPublishTest(unittest.TestCase):
         tracks = [edge for edge in plan["edges"] if edge["type"] == "tracks"]
         self.assertEqual(18, len(tracks))
         self.assertTrue(all(edge["from_key"] == "_convoy" for edge in tracks))
+
+    def test_patch_updates_unfinished_tickets_and_creates_new_ones(self):
+        old_digest = "sha256:" + "1" * 64
+        raw, new_digest = build_draft(
+            "  - id: X1\n"
+            "    kind: vertical_slice\n"
+            "    title: Ticket X1 revised\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does a revised thing\n"
+            "    acceptance_criteria: [does the revised thing]\n"
+            "  - id: X2\n"
+            "    kind: vertical_slice\n"
+            "    title: Ticket X2 new\n"
+            "    blocked_by: [X1]\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does a new thing\n"
+            "    acceptance_criteria: [does the new thing]\n",
+            revises=old_digest,
+        )
+        existing = [
+            {"id": "af-conv", "status": "open", "metadata": {"gc.graph_digest": old_digest}},
+            {"id": "af-x1", "status": "open", "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "X1",
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft_path = root / "revised.yaml"
+            draft_path.write_bytes(raw)
+            log = root / "bd.log"
+            result = json.loads(self.invoke(
+                "patch", str(draft_path), env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_BD_LOG": str(log),
+                    "TICKET_GRAPH_EXISTING": json.dumps(existing),
+                },
+            ).stdout)
+            calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(new_digest, result["graph_digest"])
+        self.assertEqual(["X1"], result["patched"])
+        self.assertEqual(["X2"], result["created"])
+        self.assertEqual("af-x1", result["ids"]["X1"])
+        self.assertEqual("af-conv", result["ids"]["_convoy"])
+        self.assertIn("X2", result["ids"])
+        update_x1 = next(c for c in calls if c[0] == "update" and c[1] == "af-x1")
+        self.assertIn("Ticket X1 revised", " ".join(update_x1))
+        create_x2 = next(c for c in calls if c[0] == "create")
+        self.assertIn(f"blocks:af-x1", ",".join(create_x2))
+        update_convoy = next(c for c in calls if c[0] == "update" and c[1] == "af-conv")
+        self.assertIn(f"gc.graph_digest={new_digest}", update_convoy)
+
+    def test_patch_refuses_to_touch_an_already_delivered_ticket(self):
+        old_digest = "sha256:" + "2" * 64
+        raw, _ = build_draft(
+            "  - id: X1\n"
+            "    kind: vertical_slice\n"
+            "    title: Ticket X1 revised\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does a revised thing\n"
+            "    acceptance_criteria: [does the revised thing]\n",
+            revises=old_digest,
+        )
+        existing = [
+            {"id": "af-conv", "status": "open", "metadata": {"gc.graph_digest": old_digest}},
+            {"id": "af-x1", "status": "closed", "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "X1",
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft_path = root / "revised.yaml"
+            draft_path.write_bytes(raw)
+            log = root / "bd.log"
+            result = self.invoke(
+                "patch", str(draft_path), env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_BD_LOG": str(log),
+                    "TICKET_GRAPH_EXISTING": json.dumps(existing),
+                },
+                check=False,
+            )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("already delivered", result.stderr)
+        self.assertIn("cannot modify a closed ticket", result.stderr)
 
 
 if __name__ == "__main__":

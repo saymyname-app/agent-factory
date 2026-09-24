@@ -1,0 +1,11 @@
+{
+  "beads": {
+    "af-b04": {"blocked_by": []},
+    "af-b06": {"blocked_by": []},
+    "af-b07": {"blocked_by": []},
+    "af-b08": {"blocked_by": ["af-b04", "af-b06", "af-b07"]},
+    "af-b10": {"blocked_by": ["af-b08"]},
+    "af-b09": {"blocked_by": ["af-b07"]},
+    "af-b11": {"blocked_by": []}
+  }
+}

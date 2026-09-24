@@ -28,5 +28,15 @@ if args[:2] == ["create", "--graph"]:
     }))
     raise SystemExit(0)
 
+if args and args[0] == "create":
+    counter_path = Path(os.environ["TICKET_GRAPH_BD_LOG"]).with_suffix(".counter")
+    n = int(counter_path.read_text()) + 1 if counter_path.exists() else 1
+    counter_path.write_text(str(n))
+    print(f"af-new{n:03d}")
+    raise SystemExit(0)
+
+if args and args[0] == "update":
+    raise SystemExit(0)
+
 print(f"unexpected fake bd arguments: {args}", file=sys.stderr)
 raise SystemExit(2)

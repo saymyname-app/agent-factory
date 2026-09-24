@@ -67,6 +67,9 @@ jobs:
       - name: Approve, freeze and revise Planning Artifacts by exact digest (af-4x34b)
         run: python tests/spec-approve-test.py
 
+      - name: Route a semantic surprise through one Planning Exception (af-oun2u)
+        run: python tests/planning-exception-test.py
+
       - name: Ensure fixture sandbox runtime
         run: |
           packages=()

@@ -196,28 +196,36 @@ def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str
     return {"nodes": nodes, "edges": edges}
 
 
-def existing_graph(digest: str, ticket_count: int) -> dict[str, str] | None:
+def graph_members(digest: str) -> dict[str, dict[str, str]]:
+    """All Beads already published under `digest`, keyed by ticket id (or
+    `_convoy`), each with its bead id and current status -- unlike
+    `existing_graph` this does not assert a node count, so a patch can look
+    up a prior graph whose ticket count differs from the revision being
+    applied.
+    """
     payload = json.loads(run("list", "--all", "--limit", "0", "--json").stdout or "[]")
-    matches = []
+    members: dict[str, dict[str, str]] = {}
     for issue in payload if isinstance(payload, list) else []:
         metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
-        if metadata.get("gc.graph_digest") == digest:
-            matches.append(issue)
-    if not matches:
+        if metadata.get("gc.graph_digest") != digest:
+            continue
+        key = str(metadata.get("gc.ticket_id") or "_convoy")
+        if key in members:
+            raise PublishError(f"graph {digest} has duplicate key {key}")
+        members[key] = {"id": str(issue["id"]), "status": str(issue.get("status") or "")}
+    return members
+
+
+def existing_graph(digest: str, ticket_count: int) -> dict[str, str] | None:
+    members = graph_members(digest)
+    if not members:
         return None
     expected = ticket_count + 1
-    if len(matches) != expected:
+    if len(members) != expected:
         raise PublishError(
-            f"existing graph {digest} is partial: expected {expected} nodes, found {len(matches)}"
+            f"existing graph {digest} is partial: expected {expected} nodes, found {len(members)}"
         )
-    mapping: dict[str, str] = {}
-    for issue in matches:
-        metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
-        key = str(metadata.get("gc.ticket_id") or "_convoy")
-        if key in mapping:
-            raise PublishError(f"existing graph {digest} has duplicate key {key}")
-        mapping[key] = str(issue["id"])
-    return mapping
+    return {key: entry["id"] for key, entry in members.items()}
 
 
 def publish(plan: dict[str, Any], digest: str, ticket_count: int) -> dict[str, str]:
@@ -234,9 +242,82 @@ def publish(plan: dict[str, Any], digest: str, ticket_count: int) -> dict[str, s
     return {str(key): str(value) for key, value in mapping.items()}
 
 
+def patch(draft: dict[str, Any], plan: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str, Any]:
+    """Apply an immutable revised draft to the unfinished tickets of the
+    graph it revises -- the same deterministic door as `publish`, extended
+    for B08's "validated patch to unfinished work through the sole
+    to-tickets authority" instead of a second decomposition mechanism.
+
+    A revised ticket already published and closed (delivered) can never be
+    touched: the revision must route new/changed scope through new ticket
+    ids instead.
+    """
+    old_digest = str(draft["artifact"].get("revises") or "").strip()
+    if not old_digest:
+        raise PublishError("artifact.revises must be a non-empty string")
+    new_digest = draft["artifact"]["content_digest"]
+    old_members = graph_members(old_digest)
+    if not old_members:
+        raise PublishError(f"no published graph found for revised digest {old_digest}")
+
+    convoy_id = old_members.get("_convoy", {}).get("id")
+    if convoy_id is None:
+        raise PublishError(f"revised graph {old_digest} has no convoy node")
+
+    by_key = {node["key"]: node for node in plan["nodes"]}
+    created: dict[str, str] = {}
+    updated: list[str] = []
+
+    def resolve_id(key: str) -> str:
+        if key in old_members:
+            return old_members[key]["id"]
+        if key in created:
+            return created[key]
+        raise PublishError(f"{key} is neither already published nor created earlier in this patch")
+
+    ordered_ticket_keys = [str(t["id"]) for t in tickets]
+    for key in ordered_ticket_keys:
+        node = by_key[key]
+        if key in old_members:
+            member = old_members[key]
+            if member["status"] == "closed":
+                raise PublishError(f"{key} ({member['id']}) is already delivered; patch cannot modify a closed ticket")
+            run(
+                "update", member["id"],
+                "--title", node["title"],
+                "--description", node["description"],
+                "--set-metadata", f"gc.graph_digest={new_digest}",
+                "--set-metadata", "gc.publication_validated=true",
+            )
+            updated.append(key)
+        else:
+            edge_ids = as_list(node.get("_blocked_by_keys", []), f"{key}._blocked_by_keys")
+            deps = ",".join(f"blocks:{resolve_id(str(edge_key))}" for edge_key in edge_ids)
+            deps = f"tracks:{convoy_id}" + (f",{deps}" if deps else "")
+            metadata_json = json.dumps(node["metadata"], ensure_ascii=False)
+            result = run(
+                "create", "--title", node["title"], "--description", node["description"],
+                "--type", "task", "--priority", str(node.get("priority", 1)),
+                "--labels", ",".join(node["labels"]), "--metadata", metadata_json,
+                "--deps", deps, "--silent",
+            )
+            created[key] = result.stdout.strip()
+
+    if old_members["_convoy"]["status"] != "closed":
+        run(
+            "update", convoy_id,
+            "--set-metadata", f"gc.graph_digest={new_digest}",
+            "--set-metadata", "gc.publication_validated=true",
+        )
+
+    mapping = {"_convoy": convoy_id, **{key: old_members[key]["id"] for key in old_members if key != "_convoy"}}
+    mapping.update(created)
+    return {"ids": mapping, "patched": sorted(updated), "created": sorted(created)}
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(prog=PROGRAM)
-    value.add_argument("command", choices=("validate", "publish"))
+    value.add_argument("command", choices=("validate", "publish", "patch"))
     value.add_argument("draft", type=Path)
     return value
 
@@ -246,6 +327,8 @@ def main() -> int:
         args = parser().parse_args()
         draft, tickets = validate_draft(args.draft)
         plan = graph_plan(draft, tickets)
+        for node, ticket in zip((n for n in plan["nodes"] if n["key"] != "_convoy"), tickets):
+            node["_blocked_by_keys"] = [str(b) for b in ticket["blocked_by"]]
         if args.command == "validate":
             print(json.dumps({
                 "ok": True,
@@ -253,6 +336,15 @@ def main() -> int:
                 "ticket_count": len(tickets),
                 "node_count": len(plan["nodes"]),
                 "edge_count": len(plan["edges"]),
+            }, ensure_ascii=False, sort_keys=True))
+            return 0
+        if args.command == "patch":
+            result = patch(draft, plan, tickets)
+            print(json.dumps({
+                "ok": True,
+                "graph_digest": draft["artifact"]["content_digest"],
+                "revises": draft["artifact"]["revises"],
+                **result,
             }, ensure_ascii=False, sort_keys=True))
             return 0
         mapping = publish(plan, draft["artifact"]["content_digest"], len(tickets))
