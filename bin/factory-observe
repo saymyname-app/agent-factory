@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""factory-observe -- B09: deterministic, zero-idle-call observation of
+Planning Runs, delivery progress and adaptation measures.
+
+L0, deterministic, zero model tokens by construction: `observe` only ever
+prints a JSON result and updates a host-local state file. It never invokes a
+model itself -- when `wakes` is empty the caller (a cockpit, a sentinel loop,
+a human) makes no call at all; when it is non-empty the caller wakes exactly
+the named `role`, once per fact, with the fact preserved verbatim as
+evidence. Policy: config/factory-observe-policy.json (versioned -- roles per
+observed area, exemption/handoff evidence conditions). State:
+.gc/runtime/factory-observe-state.json (host-local, mutable -- last-observed
+snapshot, current exemption activation, bounded history). Measures policy:
+config/factory-observe-measures.schema.json validated by
+lib/factory_measures.py. Design: docs/FACTORY_OBSERVE.md.
+
+  policy-validate                             validate the observe policy file
+  observe --snapshot <file> [--evidence <file>]   diff, wake, re-evaluate exemptions
+  status [--json]                             current snapshot/exemption state
+  measures-validate --measures <file>         validate a measures document
+  measures-show --measures <file>             per-work-class metrics, separated
+"""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+import factory_observe as fo  # noqa: E402
+import factory_measures as fm  # noqa: E402
+
+FACTORY_ROOT = Path(os.environ.get("FACTORY_ROOT") or ROOT)
+POLICY_FILE = Path(
+    os.environ.get("FACTORY_OBSERVE_POLICY_FILE") or FACTORY_ROOT / "config" / "factory-observe-policy.json"
+)
+STATE_FILE = Path(
+    os.environ.get("FACTORY_OBSERVE_STATE_FILE")
+    or FACTORY_ROOT / ".gc" / "runtime" / "factory-observe-state.json"
+)
+
+
+def now() -> float:
+    value = os.environ.get("FACTORY_OBSERVE_NOW")
+    return float(value) if value else time.time()
+
+
+def iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def load_policy() -> dict[str, Any]:
+    try:
+        return fo.validate_policy(json.loads(POLICY_FILE.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise fo.ObservePolicyError(f"cannot read {POLICY_FILE}: {exc}") from exc
+
+
+def load_state() -> dict[str, Any]:
+    try:
+        raw = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw = None  # a missing or damaged state degrades to empty, never fails
+    return fo.normalize_state(raw)
+
+
+def atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def save_state(state: dict[str, Any]) -> None:
+    atomic_write(STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+
+
+class Locked:
+    """One writer at a time: a sentinel loop, the cockpit and a human can all call in."""
+
+    def __enter__(self) -> "Locked":
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = open(STATE_FILE.with_name(STATE_FILE.name + ".lock"), "w")
+        fcntl.flock(self.handle, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        fcntl.flock(self.handle, fcntl.LOCK_UN)
+        self.handle.close()
+
+
+def read_json_arg(path: str | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise fo.ObservePolicyError(f"{path} must contain a JSON object")
+    return payload
+
+
+def cmd_policy_validate(args: argparse.Namespace) -> int:
+    try:
+        load_policy()
+    except fo.ObservePolicyError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
+    print(json.dumps({"ok": True, "policy": str(POLICY_FILE)}, ensure_ascii=False))
+    return 0
+
+
+def cmd_observe(args: argparse.Namespace) -> int:
+    policy = load_policy()
+    snapshot_doc = read_json_arg(args.snapshot)
+    current_areas = snapshot_doc.get("areas")
+    if not isinstance(current_areas, dict):
+        print(json.dumps({"ok": False, "error": "snapshot file must contain an 'areas' object"}))
+        return 2
+    evidence = read_json_arg(args.evidence)
+    moment = iso(now())
+    with Locked():
+        state = load_state()
+        result = fo.observe(state, policy, current_areas, evidence, moment)
+        save_state(state)
+    print(json.dumps({"ok": True, "at": moment, **result}, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    state = load_state()
+    payload = {
+        "contract": "agent-factory-observe-status/v1",
+        "areas_observed": sorted(state.get("snapshot", {}).keys()),
+        "exemptions": state.get("exemptions", {}),
+        "history": list(reversed(state.get("history") or []))[:15],
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+    print(f"factory-observe -- areas observed: {', '.join(payload['areas_observed']) or '(none)'}")
+    for name, active in payload["exemptions"].items():
+        print(f"  exemption {name}: {'active' if active else 'inactive'}")
+    return 0
+
+
+def cmd_measures_validate(args: argparse.Namespace) -> int:
+    try:
+        fm.validate_measures(json.loads(Path(args.measures).read_text(encoding="utf-8")))
+    except (fm.MeasuresError, OSError, json.JSONDecodeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
+    print(json.dumps({"ok": True, "measures": args.measures}, ensure_ascii=False))
+    return 0
+
+
+def cmd_measures_show(args: argparse.Namespace) -> int:
+    try:
+        measures = fm.validate_measures(json.loads(Path(args.measures).read_text(encoding="utf-8")))
+        by_class = fm.aggregate_by_class(measures)
+    except (fm.MeasuresError, OSError, json.JSONDecodeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
+    print(json.dumps({"ok": True, "work_classes": by_class}, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="factory-observe", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("policy-validate").set_defaults(func=cmd_policy_validate)
+
+    o = sub.add_parser("observe")
+    o.add_argument("--snapshot", required=True, help="path to a JSON file with an 'areas' object")
+    o.add_argument("--evidence", help="path to a JSON file mapping exemption name -> signal:bool")
+    o.set_defaults(func=cmd_observe)
+
+    s = sub.add_parser("status")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_status)
+
+    mv = sub.add_parser("measures-validate")
+    mv.add_argument("--measures", required=True)
+    mv.set_defaults(func=cmd_measures_validate)
+
+    ms = sub.add_parser("measures-show")
+    ms.add_argument("--measures", required=True)
+    ms.set_defaults(func=cmd_measures_show)
+
+    args = parser.parse_args()
+    try:
+        return args.func(args)
+    except fo.ObservePolicyError as exc:
+        print(f"factory-observe: {exc}", file=sys.stderr)
+        return 2
+    except (OSError, json.JSONDecodeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
