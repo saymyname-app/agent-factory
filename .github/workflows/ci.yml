@@ -61,6 +61,9 @@ jobs:
       - name: Register a project through one Project Planning Profile (af-i3k3f)
         run: python tests/project-planning-profile-test.py
 
+      - name: Promote and resume a durable Wayfinding Run (af-q7r0d)
+        run: python tests/wayfinding-run-test.py
+
       - name: Ensure fixture sandbox runtime
         run: |
           packages=()
