@@ -1,0 +1,11 @@
+{
+  "contract": "agent-factory-project-isolation-scenario/v1",
+  "scenario_id": "multi-project-grant",
+  "city_registry": ["project-a", "project-b"],
+  "agent_scope": ["project-a"],
+  "declared_grant": {
+    "outcome_id": "cross-project-outcome-1",
+    "participant_rigs": ["project-a", "project-b"]
+  },
+  "probe_rigs": ["project-a", "project-b"]
+}

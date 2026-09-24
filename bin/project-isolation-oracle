@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+"""Black-box oracle proving default project isolation and explicit grants.
+
+An agent scoped to one fixture project rig must not be able to read another
+registered rig's content unless a declared multi-project outcome names it as
+a participant. This oracle builds a real filesystem boundary with Bubblewrap
+mount-namespace isolation (the same mechanism `fixture-city-oracle` already
+uses) and runs a public adapter that has no knowledge of which rigs it is
+supposed to see -- its result reports only what the sandboxed filesystem
+actually exposes.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+
+PROGRAM = "project-isolation-oracle"
+SCENARIO_CONTRACT = "agent-factory-project-isolation-scenario/v1"
+RESULT_CONTRACT = "agent-factory-project-isolation-oracle-result/v1"
+SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+MECHANISM = (
+    "bubblewrap mount-namespace isolation: only rig directories in the "
+    "agent's effective scope are bind-mounted (read-only) into the "
+    "sandbox; the sandbox root starts empty, so every other registered "
+    "rig is simply absent from the mount namespace rather than merely "
+    "access-controlled"
+)
+UNSUPPORTED_HOST_NOTE = (
+    "requires Bubblewrap and functioning unprivileged user namespaces; a "
+    "host that denies both (for example an unpatched AppArmor "
+    "userns-restriction with no allowance profile installed) cannot run "
+    "this oracle at all -- it fails closed with an explicit error instead "
+    "of silently reporting isolation that was not exercised. See "
+    "config/fixture-city-bwrap.apparmor for the same allowance fixture-city-"
+    "oracle depends on."
+)
+
+
+class OracleError(RuntimeError):
+    pass
+
+
+def as_dict(value: Any, name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise OracleError(f"{name} must be an object")
+    return value
+
+
+def as_list(value: Any, name: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise OracleError(f"{name} must be an array")
+    return value
+
+
+def required_string(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise OracleError(f"{name} must be a non-empty string")
+    return value
+
+
+def safe_id(value: Any, name: str) -> str:
+    text = required_string(value, name)
+    if not SAFE_ID.fullmatch(text):
+        raise OracleError(f"{name} contains unsupported characters")
+    return text
+
+
+def safe_id_list(value: Any, name: str, *, allow_empty: bool = False) -> list[str]:
+    items = as_list(value, name)
+    if not items and not allow_empty:
+        raise OracleError(f"{name} must name at least one rig")
+    result = [safe_id(item, f"{name}[{index}]") for index, item in enumerate(items)]
+    if len(set(result)) != len(result):
+        raise OracleError(f"{name} contains a duplicate rig")
+    return result
+
+
+def canonical_digest(value: Any) -> str:
+    import hashlib
+
+    return "sha256:" + hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def validate_scenario(path: Path, fixtures_root: Path) -> dict[str, Any]:
+    try:
+        scenario = as_dict(json.loads(path.read_text(encoding="utf-8")), "scenario")
+    except (OSError, json.JSONDecodeError) as exc:
+        raise OracleError(f"cannot read scenario {path}: {exc}") from exc
+    if scenario.get("contract") != SCENARIO_CONTRACT:
+        raise OracleError(f"scenario contract must be {SCENARIO_CONTRACT}")
+    scenario_id = safe_id(scenario.get("scenario_id"), "scenario_id")
+
+    city_registry = safe_id_list(scenario.get("city_registry"), "city_registry")
+    for rig in city_registry:
+        rig_dir = fixtures_root / "rigs" / rig
+        if not (rig_dir / "secret.txt").is_file():
+            raise OracleError(f"city_registry names undeclared fixture rig: {rig}")
+
+    agent_scope = safe_id_list(scenario.get("agent_scope"), "agent_scope")
+    for rig in agent_scope:
+        if rig not in city_registry:
+            raise OracleError(f"agent_scope names a rig not in city_registry: {rig}")
+
+    declared_grant_raw = scenario.get("declared_grant")
+    declared_grant: dict[str, Any] | None = None
+    if declared_grant_raw is not None:
+        grant = as_dict(declared_grant_raw, "declared_grant")
+        outcome_id = safe_id(grant.get("outcome_id"), "declared_grant.outcome_id")
+        participant_rigs = safe_id_list(
+            grant.get("participant_rigs"), "declared_grant.participant_rigs"
+        )
+        for rig in participant_rigs:
+            if rig not in city_registry:
+                raise OracleError(
+                    f"declared_grant.participant_rigs names a rig not in city_registry: {rig}"
+                )
+        declared_grant = {"outcome_id": outcome_id, "participant_rigs": participant_rigs}
+
+    probe_rigs = safe_id_list(scenario.get("probe_rigs"), "probe_rigs")
+    for rig in probe_rigs:
+        if rig not in city_registry:
+            raise OracleError(f"probe_rigs names a rig not in city_registry: {rig}")
+
+    return {
+        "scenario_id": scenario_id,
+        "city_registry": city_registry,
+        "agent_scope": agent_scope,
+        "declared_grant": declared_grant,
+        "probe_rigs": probe_rigs,
+    }
+
+
+def effective_scope(request: dict[str, Any]) -> list[str]:
+    scope = set(request["agent_scope"])
+    grant = request["declared_grant"]
+    if grant is not None:
+        scope |= set(grant["participant_rigs"])
+    return sorted(scope)
+
+
+def host_support() -> dict[str, Any]:
+    bubblewrap = shutil.which("bwrap", path="/usr/local/bin:/usr/bin:/bin")
+    return {
+        "bubblewrap": bubblewrap is not None,
+        "note": UNSUPPORTED_HOST_NOTE,
+    }
+
+
+def sandboxed_read(
+    fixtures_root: Path, scope: list[str], probe_rigs: list[str]
+) -> dict[str, Any]:
+    bubblewrap = shutil.which("bwrap", path="/usr/local/bin:/usr/bin:/bin")
+    if bubblewrap is None:
+        raise OracleError(
+            "bubblewrap is required to enforce project isolation; refusing to "
+            "report an unenforced result on an unsupported host"
+        )
+    probe_source = fixtures_root / "probe"
+    if not probe_source.is_file():
+        raise OracleError(f"missing probe adapter: {probe_source}")
+
+    with tempfile.TemporaryDirectory(prefix="project-isolation-") as raw_workspace:
+        workspace = Path(raw_workspace)
+        probe = workspace / "probe"
+        shutil.copy2(probe_source, probe)
+        probe.chmod(0o755)
+        home = workspace / "home"
+        home.mkdir()
+
+        sandbox = [
+            bubblewrap,
+            "--unshare-all",
+            "--die-with-parent",
+            "--new-session",
+        ]
+        for system_path in ("/usr", "/bin", "/lib", "/lib64"):
+            if Path(system_path).exists():
+                sandbox.extend(("--ro-bind", system_path, system_path))
+        if Path("/etc/ld.so.cache").exists():
+            sandbox.extend(("--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache"))
+        sandbox.extend(("--dev", "/dev", "--proc", "/proc"))
+        sandbox.extend(("--bind", str(probe), str(probe)))
+        sandbox.extend(("--bind", str(home), str(home)))
+        for rig in scope:
+            rig_dir = fixtures_root / "rigs" / rig
+            sandboxed_rig_path = workspace / "rigs" / rig
+            sandbox.extend(("--ro-bind", str(rig_dir), str(sandboxed_rig_path)))
+        sandbox.extend(("--chdir", str(workspace), "--clearenv"))
+        for key, value in {
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "HOME": str(home),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }.items():
+            sandbox.extend(("--setenv", key, value))
+        sandbox.extend((str(probe), "--workspace", str(workspace), "read", *probe_rigs))
+
+        try:
+            result = subprocess.run(
+                sandbox,
+                cwd=workspace,
+                text=True,
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise OracleError(f"sandboxed probe failed to run: {exc}") from exc
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+            raise OracleError(f"sandboxed probe failed: {detail}")
+        try:
+            return as_dict(json.loads(result.stdout), "probe output")
+        except json.JSONDecodeError as exc:
+            raise OracleError("probe did not return one JSON object") from exc
+
+
+def expected_digest(fixtures_root: Path, rig: str) -> str:
+    import hashlib
+
+    content = (fixtures_root / "rigs" / rig / "secret.txt").read_bytes()
+    return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def execute(scenario_path: Path, fixtures_root: Path) -> dict[str, Any]:
+    request = validate_scenario(scenario_path, fixtures_root)
+    scope = effective_scope(request)
+    support = host_support()
+    read_results = sandboxed_read(fixtures_root, scope, request["probe_rigs"])
+
+    expected_readable = set(scope) & set(request["probe_rigs"])
+    observed_readable = {
+        rig for rig, outcome in read_results.items() if outcome.get("readable") is True
+    }
+    digests_match = all(
+        read_results[rig].get("digest") == expected_digest(fixtures_root, rig)
+        for rig in expected_readable
+    )
+    isolation_holds = observed_readable == expected_readable and digests_match
+
+    result = {
+        "schema": RESULT_CONTRACT,
+        "scenario_id": request["scenario_id"],
+        "city_registry": request["city_registry"],
+        "agent_scope": request["agent_scope"],
+        "declared_grant": request["declared_grant"],
+        "effective_scope": scope,
+        "probe_rigs": request["probe_rigs"],
+        "read_results": read_results,
+        "isolation_holds": isolation_holds,
+        "mechanism": MECHANISM,
+        "host_support": support,
+    }
+    result["result_digest"] = canonical_digest(result)
+    return result
+
+
+def parser() -> argparse.ArgumentParser:
+    value = argparse.ArgumentParser(prog=PROGRAM)
+    subparsers = value.add_subparsers(dest="command", required=True)
+
+    validate = subparsers.add_parser("validate")
+    validate.add_argument("scenario", type=Path)
+    validate.add_argument(
+        "--fixtures", type=Path, default=Path(__file__).resolve().parent.parent
+        / "tests" / "fixtures" / "project-isolation"
+    )
+
+    run = subparsers.add_parser("run")
+    run.add_argument("scenario", type=Path)
+    run.add_argument(
+        "--fixtures", type=Path, default=Path(__file__).resolve().parent.parent
+        / "tests" / "fixtures" / "project-isolation"
+    )
+
+    return value
+
+
+def main() -> int:
+    try:
+        args = parser().parse_args()
+        fixtures_root = args.fixtures.resolve()
+        if args.command == "validate":
+            validate_scenario(args.scenario.resolve(), fixtures_root)
+            print(json.dumps({"valid": True}, ensure_ascii=False, sort_keys=True))
+            return 0
+        result = execute(args.scenario.resolve(), fixtures_root)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0
+    except OracleError as exc:
+        print(f"{PROGRAM}: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

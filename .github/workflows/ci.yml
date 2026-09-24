@@ -89,6 +89,9 @@ jobs:
       - name: Planning Map and decision concurrency
         run: python tests/planning-map-concurrency-prototype-test.py
 
+      - name: Project isolation and multi-project grant
+        run: python tests/project-isolation-oracle-test.py
+
       - name: Factory guard worktree hygiene
         run: bash tests/factory-guard-worktree-test.sh
 
