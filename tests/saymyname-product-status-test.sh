@@ -170,6 +170,14 @@ assert_json self-workflow-handoff '.result.stage + ":" + (.result.agent == null 
 # sentinel would re-send a "reprendre" wake every tick even while the
 # workflow's convoy proves sub-agent sessions are genuinely active.
 assert_json self-workflow-handoff '.resume.mode' 'active_delivery'
+# af-fwlwt: liveness must recognize ANY open step's session under the
+# workflow root, not only the one gc.session_name stamped once on the root.
+# A rotated drain-role session (e.g. a build-basic gap-analyst or
+# implementation-worker step) doing the actual current work must count as an
+# active product agent even though the root's own recorded session has since
+# rotated away and is no longer running.
+assert_json rotated-session '.activity.state + ":" + .result.agent' 'working:codex-af-rotated-live'
+assert_json rotated-session '.resume.mode' 'active_delivery'
 assert_json workflow-pending-finalize '.resume.mode' 'active_delivery'
 # af-knbxq: the implementation convoy closing (active_count == 0) is not the
 # same as the whole v2 workflow finishing -- starter review, publish, and
