@@ -140,6 +140,13 @@ approved Spec and a Ticket Graph Draft — see
 Planning Map work. You approve the Spec and the resulting Ticket Graph
 before any delivery work is published.
 
+Under the hood, every new Planning Run — simple or Wayfinding — runs through
+one door, `bin/planning-run-router run <request.json>`
+([`PLANNING_RUN_ROUTER.md`](PLANNING_RUN_ROUTER.md)): there is no other
+coded path, and no flag reactivates a manual, tool-by-tool sequence. If a
+Cockpit V2 (C01) reservation is active, the router blocks any other new
+Planning Run until C01's own run has published.
+
 ## 6. Observe without spending tokens
 
 Once the City is running, check on it without waking any agent:

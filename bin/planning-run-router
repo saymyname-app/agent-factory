@@ -23,6 +23,16 @@ when the caller supplies approval evidence; an `APPROVED_SPEC` is published
 only when the caller supplies an already-approved Ticket Graph Draft --
 this router does not re-slice a Spec into tickets, it only sequences the
 existing to-tickets and publication doors.
+
+This is the only Planning Run entry point (af-mav0b): there is no flag, env
+var, or code branch that falls back to a legacy planning path. Right after
+`legacy_path` translation, a reservation recorded in
+`config/planning-run-reservation.json` (B12 AC#5) is checked, also before any
+Planning Run identity is created: while a reservation is active, only a
+request that declares a matching `planning_run_target` proceeds -- every
+other request is rejected the same identity-free way as a `legacy_path`
+selector. Publishing through as the reserved target clears the reservation
+for every request after it.
 """
 
 from __future__ import annotations
@@ -31,6 +41,7 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +49,7 @@ from typing import Any
 PROGRAM = "planning-run-router"
 REQUEST_CONTRACT = "agent-factory-planning-run-router-request/v1"
 RESULT_CONTRACT = "agent-factory-planning-run-router-result/v1"
+RESERVATION_CONTRACT = "agent-factory-planning-run-reservation/v1"
 
 BIN_DIR = Path(__file__).resolve().parent
 TO_SPEC_ORACLE = BIN_DIR / "planning-run-to-spec-oracle"
@@ -87,6 +99,39 @@ def required_string(value: Any, name: str) -> str:
 def resolve_path(value: str, repo_root: Path) -> Path:
     path = Path(value)
     return path if path.is_absolute() else repo_root / path
+
+
+def reservation_path(repo_root: Path) -> Path:
+    return repo_root / "config" / "planning-run-reservation.json"
+
+
+def load_reservation(repo_root: Path) -> dict[str, Any] | None:
+    """Read the active Planning Run reservation, if any (B12 AC#5).
+
+    Returns None when there is no reservation file, it is malformed as
+    "no reservation" (missing/blank `reserved_for`), or it has already been
+    cleared -- in every one of those cases the router proceeds unreserved.
+    """
+    path = reservation_path(repo_root)
+    if not path.exists():
+        return None
+    try:
+        reservation = as_dict(json.loads(path.read_text(encoding="utf-8")), "reservation")
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RouterError(f"cannot read reservation {path}: {exc}") from exc
+    if reservation.get("cleared_at") is not None:
+        return None
+    target = reservation.get("reserved_for")
+    if not isinstance(target, str) or not target.strip():
+        return None
+    return reservation
+
+
+def clear_reservation(repo_root: Path, reservation: dict[str, Any]) -> None:
+    path = reservation_path(repo_root)
+    cleared = dict(reservation)
+    cleared["cleared_at"] = datetime.now(timezone.utc).isoformat()
+    path.write_text(json.dumps(cleared, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def load_request(path: Path) -> dict[str, Any]:
@@ -245,6 +290,23 @@ def run_router(request_path: Path, repo_root: Path) -> dict[str, Any]:
             ),
         }
 
+    reservation = load_reservation(repo_root)
+    if reservation is not None:
+        reserved_for = reservation["reserved_for"]
+        if request.get("planning_run_target") != reserved_for:
+            return {
+                "contract": RESULT_CONTRACT,
+                "ok": True,
+                "result": "reservation_blocked",
+                "reserved_for": reserved_for,
+                "reason": (
+                    f"the next Planning Run is reserved for {reserved_for} -- "
+                    f"declare request.planning_run_target={reserved_for!r} once "
+                    "that work starts, or wait until it does -- no Planning Run "
+                    "identity, Spec, map or convoy was created"
+                ),
+            }
+
     session_path = resolve_path(required_string(request.get("session"), "session"), repo_root)
     city_registry_path = resolve_path(
         required_string(request.get("city_registry"), "city_registry"), repo_root
@@ -309,6 +371,9 @@ def run_router(request_path: Path, repo_root: Path) -> dict[str, Any]:
     draft_path = resolve_path(required_string(publish.get("draft"), "publish.draft"), repo_root)
     publish_result = ticket_graph_publish(draft_path)
     ids = as_dict(publish_result.get("ids"), "publish result.ids")
+
+    if reservation is not None:
+        clear_reservation(repo_root, reservation)
 
     return {
         "contract": RESULT_CONTRACT,

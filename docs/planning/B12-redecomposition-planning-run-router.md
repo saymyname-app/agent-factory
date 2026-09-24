@@ -1,6 +1,10 @@
 # B12 re-decomposition: Planning Run router, activation switch, fixture proof, Cockpit V2 reservation
 
-- Status: Draft decomposition note (not an ADR; authorizes narrower delivery tickets)
+- Status: Slice 1 delivered (`af-pxq7e`). Slices 2–4 delivered by `af-mav0b`,
+  collapsed into a one-way cutover per Benjamin's explicit instruction to
+  skip the reversible activation flag this note's Slice 3 proposed — see
+  "One-way collapse (af-mav0b)" below. Draft decomposition note (not an ADR;
+  the delivered shape differs from Slice 3 as originally proposed here).
 - Authority: `af-6eipz`, filed after `af-4a44k` (B12) closed `blocked`
 - Context: `docs/planning/agent-factory-project-agnostic-refactor-ticket-graph-draft.yaml` (B12),
   `docs/decisions/ADR-0027-legacy-planning-and-cockpit-v1-quarantine.md`,
@@ -165,6 +169,38 @@ Cockpit V2") needs a deterministic reservation, not a comment. Concretely:
 - The reservation does not block already-scoped delivery convoys (only new
   Planning Run creation), consistent with ADR-0025's `is_scoped_delivery_bead`
   boundary.
+
+## One-way collapse (af-mav0b)
+
+Filed 2026-09-24 (`gc.authorized_by: Benjamin, live PO conversation
+2026-09-24`), `af-mav0b` re-scoped Slices 2–4 from live evidence once
+`af-pxq7e` merged, exactly as this note anticipated above — with one
+deliberate departure from Slice 3 as designed here:
+
+- **Slice 2 (fixture proof)** landed as designed, using the "router's own
+  fixture" option this note explicitly allowed: `test_simple_request_
+  completes_end_to_end_through_the_router_alone` and `test_wayfinding_
+  request_completes_end_to_end_through_the_router_alone` in `tests/planning-
+  run-router-test.py` already proved both paths end-to-end (session →
+  `APPROVED_SPEC` → published graph → `_convoy`) before this bead started;
+  `af-mav0b` documented that proof in `PLANNING_RUN_ROUTER.md` rather than
+  duplicating it against the heavier `tests/fixtures/fixture-city/` harness,
+  which the router does not live inside.
+- **Slice 3 (activation switch) did not land as designed.** Benjamin's
+  explicit instruction for `af-mav0b` was one ticket covering both build and
+  cutover, "no flag, env var, or code branch allows falling back to the
+  legacy planning path" — a stronger, one-way requirement than this note's
+  reversible `planning_kernel_active` switch. Since no legacy Planning Run
+  orchestrator ever existed for a switch to gate (this note's own Slice 3
+  text: "B12 does not require deleting or disabling any legacy path, only
+  gating the new one"), the router became the unconditional entry point
+  instead — no `config/planning-kernel-activation.json`, no
+  `bin/planning-kernel-activation` door, no `true`/`false` state at all.
+- **Slice 4 (Cockpit V2 reservation)** landed as an enforced property exactly
+  as this note required (not documentation): `config/planning-run-
+  reservation.json` plus the router's own reservation check and clear, all
+  described in `PLANNING_RUN_ROUTER.md`'s "Reservation" and "Cutover
+  guarantees" sections.
 
 ## Buildable order
 
