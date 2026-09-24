@@ -1,31 +1,42 @@
 #!/usr/bin/env bash
 # factory-do-work-workspace — git-worktree lifecycle for mol-do-work, but
-# ONLY when the caller's cwd is the live agent-factory (HQ) root (af-ogg8z).
+# ONLY when the caller's cwd is currently on a protected branch (lib/
+# protected_rigs.sh: main on the live agent-factory root, dev on a product
+# rig pr-autopilot arms).
 #
 # 2026-09-17 incident: a worker running mol-do-work committed af-lb3q
-# directly in the live root (no branch, no worktree, no PR) -- the same
-# class of mistake the Mayor made minutes earlier in the same session. The
-# HQ rig gave dispatched workers the live root as their cwd with no
-# isolation. This script is what mol-do-work's workspace-setup and
-# push-and-pr steps call to fix that: elsewhere (a rig checkout, or a
-# worktree that already exists) it is a documented no-op, so it is safe to
-# call unconditionally from the formula regardless of which rig dispatched
-# the work.
+# directly in the live agent-factory root (no branch, no worktree, no PR) --
+# the same class of mistake the Mayor made minutes earlier in the same
+# session. This script is what mol-do-work's workspace-setup and push-and-pr
+# steps call to fix that: elsewhere (a non-protected branch, or a worktree
+# that already exists) it is a documented no-op, so it is safe to call
+# unconditionally from the formula regardless of which rig dispatched the
+# work.
+#
+# af-09hxz: the original version only ever isolated the live agent-factory
+# root, keyed on directory identity (cwd == FACTORY_ROOT). Dispatching this
+# formula at saymyname-backend/saymyname-frontend committed straight to
+# their protected `dev` branch instead, bypassing the CI gate pr-autopilot
+# relies on (incident smb-u3zzt / smb-intx3). The check is now keyed on
+# whether the repo's *current branch* is one lib/protected_rigs.sh lists for
+# that rig, not on which directory the repo happens to live in.
 #
 # Usage:
 #   factory-do-work-workspace enter  <bead-id>
-#       Prints "." and does nothing if cwd is not the live root. Otherwise
-#       creates (or reuses) an isolated worktree at
+#       Prints "." and does nothing if the calling repo is not on a
+#       protected branch (see lib/protected_rigs.sh). Otherwise creates (or
+#       reuses) an isolated worktree at
 #       $HOME/.local/share/agent-factory-runtime-worktrees/<bead-id> on
-#       branch do-work/<bead-id>, off whatever branch the live root is
-#       currently on, and prints the worktree path.
+#       branch do-work/<bead-id>, off the protected branch, and prints the
+#       worktree path.
 #
 #   factory-do-work-workspace finish <bead-id> <worktree-path> <branch> <base-branch>
 #       No-op if <worktree-path> is "." (enter's no-op marker) or does not
 #       exist. Otherwise: commits any remaining changes, pushes <branch>
 #       (rebasing onto <base-branch> up to twice on conflict), opens a PR
 #       with `gh` if available (prints the PR URL on its own stdout line if
-#       one was opened), then removes the worktree.
+#       one was opened), then removes the worktree from whichever repo it
+#       was created against.
 #
 # $HOME/.local/share/agent-factory-runtime-worktrees/ shares the
 # `agent-factory-runtime-*` prefix bin/factory-guard's stale-worktree check
@@ -44,12 +55,51 @@ usage() {
   exit 2
 }
 
+# protected_branch_for <repo-toplevel> — prints the branch lib/protected_rigs.sh
+# says is protected for this repo, or nothing if the repo isn't listed.
+protected_branch_for() {
+  local here="$1" rel_dir entry rig_dir _repo branch _workflow
+  case "$here" in
+    "$ROOT") rel_dir="." ;;
+    "$ROOT"/*) rel_dir="${here#"$ROOT"/}" ;;
+    *) return 0 ;;  # repo lives outside FACTORY_ROOT entirely -- not tracked
+  esac
+  [ -f "$ROOT/lib/protected_rigs.sh" ] || return 0
+  # shellcheck source=/dev/null
+  . "$ROOT/lib/protected_rigs.sh"
+  for entry in "${PROTECTED_RIGS[@]}"; do
+    IFS='|' read -r rig_dir _repo branch _workflow <<<"$entry"
+    if [ "$rig_dir" = "$rel_dir" ]; then
+      printf '%s\n' "$branch"
+      return 0
+    fi
+  done
+}
+
 case "$CMD" in
   enter)
     BEAD_ID="${1:-}"
     [ -n "$BEAD_ID" ] || usage
     HERE=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-    if [ "$HERE" != "$ROOT" ]; then
+    if [ -z "$HERE" ]; then
+      echo "."
+      exit 0
+    fi
+
+    PROTECTED_BRANCH=$(protected_branch_for "$HERE")
+    if [ -z "$PROTECTED_BRANCH" ]; then
+      echo "."
+      exit 0
+    fi
+
+    CURRENT_BRANCH=$(git -C "$HERE" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [ -z "$CURRENT_BRANCH" ] || [ "$CURRENT_BRANCH" = "HEAD" ]; then
+      echo "factory-do-work-workspace: $HERE is in a detached HEAD state; refusing to guess a base branch" >&2
+      exit 1
+    fi
+    if [ "$CURRENT_BRANCH" != "$PROTECTED_BRANCH" ]; then
+      # Already on a feature branch off the protected branch -- a direct
+      # commit here isn't a direct commit to the protected branch.
       echo "."
       exit 0
     fi
@@ -62,22 +112,17 @@ case "$CMD" in
       exit 0
     fi
 
-    BASE_BRANCH=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)
-    [ -n "$BASE_BRANCH" ] && [ "$BASE_BRANCH" != "HEAD" ] || {
-      echo "factory-do-work-workspace: live root is in a detached HEAD state; refusing to guess a base branch" >&2
-      exit 1
-    }
-    git -C "$ROOT" fetch --prune origin >/dev/null 2>&1 || true
+    git -C "$HERE" fetch --prune origin >/dev/null 2>&1 || true
 
     mkdir -p "$(dirname "$WT")"
-    if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-      git -C "$ROOT" worktree add "$WT" "$BRANCH" >/dev/null 2>&1 || {
+    if git -C "$HERE" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+      git -C "$HERE" worktree add "$WT" "$BRANCH" >/dev/null 2>&1 || {
         echo "factory-do-work-workspace: could not add a worktree for existing branch $BRANCH" >&2
         exit 1
       }
     else
-      git -C "$ROOT" worktree add "$WT" -b "$BRANCH" "$BASE_BRANCH" >/dev/null 2>&1 || {
-        echo "factory-do-work-workspace: could not create worktree/branch $BRANCH off $BASE_BRANCH" >&2
+      git -C "$HERE" worktree add "$WT" -b "$BRANCH" "$CURRENT_BRANCH" >/dev/null 2>&1 || {
+        echo "factory-do-work-workspace: could not create worktree/branch $BRANCH off $CURRENT_BRANCH" >&2
         exit 1
       }
     fi
@@ -123,7 +168,21 @@ case "$CMD" in
         --title "do-work: $BEAD_ID" --body "Closes $BEAD_ID." 2>/dev/null || true)
     fi
 
-    git -C "$ROOT" worktree remove "$WT" --force 2>/dev/null || rm -rf "$WT"
+    # af-09hxz: the worktree's origin repo is no longer always $ROOT (a
+    # product rig's own checkout can be the origin too) -- resolve it from
+    # the worktree's own git metadata instead of assuming FACTORY_ROOT.
+    GIT_COMMON_DIR=$(cd "$WT" && git rev-parse --git-common-dir 2>/dev/null)
+    case "$GIT_COMMON_DIR" in
+      /*) ;;
+      *) GIT_COMMON_DIR="$WT/$GIT_COMMON_DIR" ;;
+    esac
+    ORIGIN_REPO=""
+    [ -n "$GIT_COMMON_DIR" ] && ORIGIN_REPO=$(cd -- "$(dirname -- "$GIT_COMMON_DIR")" 2>/dev/null && pwd -P)
+    if [ -n "$ORIGIN_REPO" ] && [ -d "$ORIGIN_REPO" ]; then
+      git -C "$ORIGIN_REPO" worktree remove "$WT" --force 2>/dev/null || rm -rf "$WT"
+    else
+      rm -rf "$WT"
+    fi
 
     [ -n "$PR_URL" ] && echo "$PR_URL"
     exit 0

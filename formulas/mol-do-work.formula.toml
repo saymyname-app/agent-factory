@@ -2,10 +2,10 @@ description = """
 Simple work formula — read the bead, do what it says, close it.
 
 This is the minimal work lifecycle for coding agents. No refinery handoff.
-The agent reads the bead's description and implements the solution. On
-every rig except the HQ agent-factory root itself, that means the current
-working directory, same as before — no git branching, no worktree
-isolation.
+The agent reads the bead's description and implements the solution. On a
+rig whose current branch is not protected (see lib/protected_rigs.sh), that
+means the current working directory, same as before — no git branching, no
+worktree isolation.
 
 Use this for demos and simple single-agent workflows. For production
 multi-agent setups with worktree isolation, use mol-polecat-commit
@@ -26,6 +26,20 @@ committed straight into the live root, no branch, no PR. `workspace-setup`
 and `push-and-pr` now isolate work on the HQ rig in a worktree via
 `bin/factory-do-work-workspace`, which is a documented no-op everywhere
 else -- other rigs keep the exact behavior this formula always had.
+
+Local fork (2026-09-24, af-09hxz): "other rigs keep the exact behavior this
+formula always had" turned out to include committing straight to a product
+rig's protected `dev` branch, no branch, no PR -- pr-autopilot's auto-merge
+CI gate never saw the change. Live near-miss: smb-u3zzt (dispatched via
+`gc sling saymyname-backend/gc.implementation-worker ... --on mol-do-work`)
+committed `94c53f3` directly onto local `dev`; it was never pushed, so there
+was no actual CI/prod incident, but only by luck (smb-intx3). `workspace-
+setup`'s isolation check is no longer "is cwd the live HQ root" (a directory
+identity check) -- it is "is the repo currently on a branch
+`lib/protected_rigs.sh` lists as protected for it" (main on the HQ root,
+`dev` on any rig `bin/pr-autopilot` arms for auto-merge). A dispatch already
+on a feature branch is unaffected; only a dispatch that lands directly on
+main/dev now gets isolated into a worktree and pushed through `push-and-pr`.
 
 Local fork (2026-09-19, af-6scsz): once `workspace-setup` started isolating
 HQ-rig dispatches into a worktree, `do-work` kept closing the work bead
@@ -53,7 +67,7 @@ formula_compiler = ">=2.0.0"
 
 [[steps]]
 id = "workspace-setup"
-title = "Read assignment; on the HQ rig, isolate work in a worktree"
+title = "Read assignment; if on a protected branch, isolate work in a worktree"
 description = """
 **1. Read your assignment:**
 
@@ -95,22 +109,28 @@ shell command you expect to run for many minutes (long builds, test sweeps).
 It stamps `gc.last_heartbeat_at` so the dashboard can tell you are alive and
 working rather than wedged.
 
-**2. Never edit the live agent-factory root directly (af-ogg8z).**
+**2. Never commit directly to a protected branch (af-ogg8z, af-09hxz).**
 
 On 2026-09-17 the Mayor ran `git commit`/`checkout`/`reset --hard` directly
 in `/home/benja/agent-factory`, and a worker running this formula committed
 af-lb3q the same way. One side effect: `bin/provider-failover` lost its
-executable bit for 2 hours with no alert. `bin/factory-do-work-workspace`
-is a no-op everywhere except that exact directory, so it is safe to call
-unconditionally:
+executable bit for 2 hours with no alert. The same class of mistake also
+hit a product rig (smb-u3zzt): a dispatch landed straight on
+saymyname-backend's protected `dev`, no branch, no PR.
+`bin/factory-do-work-workspace` is a no-op unless the repo you're in is
+currently on a branch `lib/protected_rigs.sh` lists as protected for it
+(`main` on the HQ root, `dev` on a rig `bin/pr-autopilot` arms), so it is
+safe to call unconditionally:
 
 ```bash
 FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+HERE=$(git rev-parse --show-toplevel 2>/dev/null || echo "$FACTORY_ROOT")
+BASE_BRANCH_BEFORE=$(git -C "$HERE" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 WORKTREE=$("$FACTORY_ROOT/bin/factory-do-work-workspace" enter "$WORK_BEAD_ID")
 if [ "$WORKTREE" != "." ]; then
   cd "$WORKTREE"
   BRANCH="do-work/$WORK_BEAD_ID"
-  BASE_BRANCH=$(git -C "$FACTORY_ROOT" rev-parse --abbrev-ref HEAD)
+  BASE_BRANCH="$BASE_BRANCH_BEFORE"
   gc bd update "$WORK_BEAD_ID" \
     --set-metadata work_dir="$WORKTREE" \
     --set-metadata gc.work_branch="$BRANCH" \
@@ -119,12 +139,12 @@ if [ "$WORKTREE" != "." ]; then
 fi
 ```
 
-If `$WORKTREE` is `.` you were not in the live root — proceed exactly as
-before, in the current directory.
+If `$WORKTREE` is `.` you were not on a protected branch — proceed exactly
+as before, in the current directory.
 
-**Exit criteria:** you know your assignment, and if you started in the live
-agent-factory root you are now working inside an isolated worktree on its
-own branch instead."""
+**Exit criteria:** you know your assignment, and if you started on a
+protected branch (the live agent-factory root, or a product rig's `dev`)
+you are now working inside an isolated worktree on its own branch instead."""
 
 [[steps]]
 id = "do-work"
@@ -241,7 +261,7 @@ when `GC_BEAD_ID` is available."""
 
 [[steps]]
 id = "push-and-pr"
-title = "On the HQ rig: push the branch, open a PR, and remove the worktree"
+title = "If isolated on a protected branch: push the branch, open a PR, and remove the worktree"
 needs = ["do-work"]
 description = """
 Only applies if `workspace-setup` isolated you in a worktree (the work bead
@@ -257,7 +277,7 @@ BASE_BRANCH=$(printf '%s' "$BEAD_JSON" | jq -r '.[0].metadata["gc.work_base_bran
 FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 
 if [ "$WORKTREE" = "." ]; then
-  echo "push-and-pr: no HQ worktree for this dispatch — nothing to do"
+  echo "push-and-pr: no isolated worktree for this dispatch — nothing to do"
 else
   PR_URL=$("$FACTORY_ROOT/bin/factory-do-work-workspace" finish \
     "$WORK_BEAD_ID" "$WORKTREE" "$BRANCH" "$BASE_BRANCH")
@@ -283,9 +303,9 @@ gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "HELP: could not push $BRANC
   -m "Issue: $WORK_BEAD_ID. Worktree left at $WORKTREE for manual recovery."
 ```
 
-**Exit criteria:** if this was an HQ dispatch, the worktree no longer exists
-on disk and the branch is pushed with (when `gh` succeeded) an open PR
-against the base branch; a work bead that `do-work` deferred remains
+**Exit criteria:** if this dispatch was isolated in a worktree, the worktree
+no longer exists on disk and the branch is pushed with (when `gh` succeeded)
+an open PR against the base branch; a work bead that `do-work` deferred remains
 `in_progress` with `gc.delivery_status=waiting` until `deliver-close` records
 merge+exact-head-CI proof; otherwise this step is a documented no-op."""
 
