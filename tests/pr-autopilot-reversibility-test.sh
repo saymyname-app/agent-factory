@@ -66,6 +66,14 @@ if [[ \$1 == bd && \$2 == list ]]; then
   printf '%s\n' "\$rows"
   exit 0
 fi
+if [[ \$1 == bd && \$2 == show ]]; then
+  # af-cfl9j (B01): the live-reconciliation guard reads the CURRENT status of
+  # a bead the once-per-tick snapshot ($TMP/beads.json) already thinks is
+  # closed, before trusting that to skip. Answer from the same source of
+  # truth this test's beads.json already models, not a separate fixture.
+  jq --arg id "\$3" '[.[]|select(.id==\$id)]' "$TMP/beads.json" 2>/dev/null || echo '[]'
+  exit 0
+fi
 exit 0
 STUB
 cat > "$TMP/bin/check" <<STUB
