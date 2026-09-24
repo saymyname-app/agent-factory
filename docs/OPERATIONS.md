@@ -726,19 +726,19 @@ entries — `project_campaign_work` itself has no notion of paused/queued, so
 the caller is what must keep a paused candidate from being selected — and
 passes the file via `--queue-candidates`.
 
-**Still deferred (af-8ijhu):** the `queue_state_by_work_ref` overlay (a materialized or
+**Wired live (af-8ijhu):** the `queue_state_by_work_ref` overlay (a materialized or
 cancelled candidate's live state following its already-committed
 `work_graph` node without a hand-edited release contract). `product-queue
 list`/`next` deliberately exclude materialized/cancelled candidates by
-design (they're no longer "active"), so deriving this overlay needs a
-different, still-cheap read — a new read-only `product-queue` subcommand
-over the full per-product tuple set, fetched in the same parallel batch as
-the other sentinel-tick sources — rather than the `list --json` reuse that
-covers `queue_candidates`. Scoped as separate follow-up work; the pure
-mechanism is proven by `tests/product-release-test.py::QueueProjectionTest`'s
-`queue_state_by_work_ref` cases and by `bin/product-release project
---queue-state <file>` against `config/releases/saymyname-v1.json` for a
-manual dry-run in the meantime.
+design (they're no longer "active"), so this overlay needs a different,
+still-cheap read: `bin/product-queue states [--json]` is a new read-only
+subcommand over the full per-product tuple set (not the active-only
+`list --json` that `queue_candidates` reuses), reduced to a
+`work_ref -> materialized|cancelled` map, lenient the same way as
+`list`/`next` (af-tbkcc — one bad tuple is excluded with a stderr WARNING
+instead of failing the read closed). `bin/saymyname-product-status` fetches
+it in the same parallel batch as Gas City/queue/coordination-root and
+passes it straight through via `--queue-state`.
 
 `project_operational_release` overlays only the runtime `truth_state` versus
 `operational_state` distinction — an `approved`/`executing` release with the

@@ -214,6 +214,7 @@ assert_degraded invalid-repo '.last_delivery.evidence' 'Preuve de livraison manq
 assert_degraded direct-ambiguous '.result.stage' 'materialized' 'smb-direct'
 assert_failure source-failure "Beads product coordination source command failed"
 assert_failure queue-failure "SayMyName product queue source command failed"
+assert_failure queue-state-failure "SayMyName product queue state source command failed"
 assert_failure queue-inconsistent "canonical human candidate contract"
 # ADR-0023: gc.next_outcome is retired. A bead that still carries a stale
 # value in that field (leftover from before the retirement) must have no
@@ -253,5 +254,16 @@ output=$(run_fixture_json traceable-candidate) || fail_test "traceable-candidate
   || fail_test "traceable-candidate was not selected by the campaign projection: $(jq -c '.release.campaign' <<<"$output")"
 [[ $(jq -r '.release.campaign.reason' <<<"$output") == proven_independent_work ]] \
   || fail_test "traceable-candidate: unexpected campaign selection reason"
+
+# af-8ijhu: project_campaign_work's queue_state_by_work_ref overlay is now
+# wired end to end, the other half of af-3uefc's queue_candidates fix -- a
+# materialized/cancelled candidate's live state follows its already-committed
+# work_graph node without a hand-edited release contract.
+TESTS_RUN=$((TESTS_RUN + 1))
+output=$(run_fixture_json queue-state-reactivated) || fail_test "queue-state-reactivated should succeed"
+[[ $(jq -r '.release.campaign.selected.work_ref' <<<"$output") == af-ccvr ]] \
+  || fail_test "queue-state-reactivated was not selected by the campaign projection: $(jq -c '.release.campaign' <<<"$output")"
+[[ $(jq -r '.release.campaign.reason' <<<"$output") == proven_independent_work ]] \
+  || fail_test "queue-state-reactivated: unexpected campaign selection reason"
 
 printf 'PASS: %d deterministic product-status checks\n' "$TESTS_RUN"

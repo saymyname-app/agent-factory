@@ -2,6 +2,29 @@
 
 set -Eeuo pipefail
 
+if [[ ${1:-} == states && ${2:-} == --json ]]; then
+  case ${STATUS_SCENARIO:-active} in
+    queue-state-failure)
+      printf 'fixture queue-state outage\n' >&2
+      exit 42
+      ;;
+    queue-state-reactivated)
+      # af-8ijhu: proves the queue_state_by_work_ref overlay reaches
+      # project_campaign_work end to end. "af-ccvr" is the real,
+      # already-delivered "personal-csv" node in
+      # config/releases/saymyname-v1.json; overlaying it back to "candidate"
+      # must make the campaign select it again (proven independence,
+      # dependency already delivered, no blocker) -- with no hand-edited
+      # release contract.
+      printf '{"af-ccvr":"candidate"}\n'
+      ;;
+    *)
+      printf '{}\n'
+      ;;
+  esac
+  exit 0
+fi
+
 [[ ${1:-} == list && ${2:-} == --json ]] || exit 64
 case ${STATUS_SCENARIO:-active} in
   queue-failure)
