@@ -184,6 +184,9 @@ jobs:
       - name: Merge actor retries a transient required-check failure once before flagging
         run: bash tests/pr-autopilot-transient-retry-test.sh
 
+      - name: Merge actor re-verifies a stale already-terminal snapshot before skipping
+        run: bash tests/pr-autopilot-stale-snapshot-test.sh
+
       - name: Check rollup rebuilt from Actions runs (fine-grained token)
         run: python tests/factory-gh-rollup-test.py
 
