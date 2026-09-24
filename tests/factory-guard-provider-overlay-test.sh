@@ -34,7 +34,48 @@ STUB
 chmod +x bin/provider-failover
 git add -A; git commit -qm city; git branch -M main; git push -q origin main; git fetch -q origin
 
-guard() { FACTORY_ROOT="$TMP/city" "$GUARD" "$@" 2>&1 || true; }
+# af-kecgg: this test only exercises the provider-overlay section (1b, which
+# never touches gc/gh), but factory-guard's later sections are gated on
+# `[ -f city.toml ]` -- true for this fixture too -- not on "is this a real
+# city", so they run for real: campaign liveness (7) queries the live Beads
+# store, and delivery-proof (8) shells out to `gh pr view` against the real
+# GitHub repo for every closed product-goal bead it finds there. In a
+# sandbox with no outbound network, that `gh` call never returns, which is
+# the hang (confirmed via `ps --forest` mid-run: the tree bottoms out at
+# `gh pr view <n> --repo .../agent-factory ...` blocked in-kernel). A PATH
+# stub alone does not fully fix it: factory-queue-guard/dispatch-guard/
+# waiting-guard and factory-delivery-guard resolve their gc/gh calls via
+# `${GC_BIN:-gc}`/`${GH_BIN:-gh}`, and every Gas City agent session
+# (including the one that runs this test) pre-exports GC_BIN to the real
+# `gc` binary, which silently outranks a PATH-only stub and defeats the
+# ${VAR:-default} fallback (same fix already used by
+# tests/factory-delivery-guard-test.sh). Stub both the bare commands (PATH)
+# and the GC_BIN/GH_BIN overrides so every code path -- factory-guard's own
+# direct `gc` calls and every sub-guard's `$GC_BIN`/`$GH_BIN` -- resolves
+# locally and returns immediately, with no live store or network reachable
+# from this test at all.
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/gc" <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "bd show")      echo '[]' ;;
+  "bd list")      echo '[]' ;;
+  "session list") echo '{"sessions":[]}' ;;
+  "rig list")     echo '[]' ;;
+esac
+exit 0
+STUB
+chmod +x "$TMP/bin/gc"
+cat > "$TMP/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+exit 1
+STUB
+chmod +x "$TMP/bin/gh"
+
+guard() {
+  FACTORY_ROOT="$TMP/city" GC_BIN="$TMP/bin/gc" GH_BIN="$TMP/bin/gh" \
+    PATH="$TMP/bin:$PATH" "$GUARD" "$@" 2>&1 || true
+}
 
 # --check-only reports and repairs nothing
 out=$(guard --check-only)
