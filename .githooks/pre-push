@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs the zero-token real-PII leak guard (bin/factory-pii-guard, af-6eqc)
-# before every push, then bin/factory-main-gate before any push that lands a
-# ref on `main`. See bin/factory-main-gate for why (2026-09-16 incident
+# before every push, then tests/ci-registration-test.sh before every push
+# (any branch), then bin/factory-main-gate before any push that lands a ref
+# on `main`. See bin/factory-main-gate for why (2026-09-16 incident
 # 8d92c13), and bin/factory-pii-guard for why the PII check runs here too.
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 
@@ -18,6 +19,23 @@ if [ -x "$pii" ]; then
   fi
 else
   echo "pre-push: WARNING -- bin/factory-pii-guard missing or not executable; PII leak guard was skipped for this push" >&2
+fi
+
+# 2026-09-24: a new tests/*.sh file landed on a PR branch twice in the same
+# session without being added to .github/workflows/ci.yml -- factory-main-gate
+# never caught it (it only runs for pushes to `main`) and CI only found out
+# after the round trip to GitHub. tests/ci-registration-test.sh already
+# checks exactly this (every tests/*.py|*.sh is either wired into the Tests
+# job or declared `# ci: local-only`) and needs no live gc/Dolt runtime, so
+# it is cheap enough to run before every push, to every branch, not just main.
+reg="$root/tests/ci-registration-test.sh"
+if [ -x "$reg" ]; then
+  if ! "$reg"; then
+    echo "pre-push: BLOCKED -- tests/ci-registration-test.sh failed: a test file is not wired into .github/workflows/ci.yml and is not declared '# ci: local-only'. Fix the registration, or 'git push --no-verify' to bypass in an emergency." >&2
+    exit 1
+  fi
+else
+  echo "pre-push: WARNING -- tests/ci-registration-test.sh missing or not executable; CI-registration guard was skipped for this push" >&2
 fi
 
 gate="$root/bin/factory-main-gate"
