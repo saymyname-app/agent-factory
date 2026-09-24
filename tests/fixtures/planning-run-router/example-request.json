@@ -1,0 +1,7 @@
+{
+  "contract": "agent-factory-planning-run-router-request/v1",
+  "legacy_path": "none",
+  "session": "tests/fixtures/planning-run-router/sessions/simple.json",
+  "city_registry": "tests/fixtures/planning-run-router/city-registry.json",
+  "spec_out": "/tmp/planning-run-router-example-spec"
+}
