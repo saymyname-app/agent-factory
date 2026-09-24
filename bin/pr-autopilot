@@ -77,6 +77,21 @@ TMPDIR_AP=$(mktemp -d); trap 'rm -rf "$TMPDIR_AP"' EXIT
 # cleanly instead of being SIGKILLed.
 TICK_DEADLINE_SECONDS="${PR_AUTOPILOT_TICK_DEADLINE_SECONDS:-100}"
 
+# af-i3k3f (B02): PR #209's fix made the RECONCILE loop re-verify every
+# already-terminal merged PR with a live `gc bd show` before trusting the
+# once-per-tick snapshot -- correct, but paid on EVERY PR in the last-30-
+# merged window, EVERY tick, forever, growing with the rig's own history. A
+# live measurement on 2026-09-24 showed one full pr-autopilot tick (three
+# repos) taking 100-107s against this same order's 100s soft / 120s hard
+# (SIGKILL, no trace) budget -- almost entirely spent inside agent-factory's
+# own already-proven-PR re-verification. A merged PR's bead, once actually
+# observed status=closed live, can never legitimately un-close through this
+# path again, so that one live confirmation is durable: record it here and
+# never re-pay the Dolt round trip for the same repo#PR on a later tick. New
+# merges (not yet in the cache) still get the exact live re-check PR #209
+# added -- this only removes the *repeated* cost, not the protection.
+RECONCILE_CACHE="${PR_AUTOPILOT_RECONCILE_CACHE:-$FACTORY/.gc/pr-autopilot-reconciled-cache.tsv}"
+
 # A first reconciliation is not automatically a useful wake. When closed
 # history became visible (af-6s0xy), old merges were backfilled correctly but
 # each one also mailed the Mayor. Keep the durable backfill, and wake only for
@@ -497,9 +512,16 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     # already believes are done) and closes that failure mode regardless of
     # what staled the snapshot.
     if [ "$already_terminal" = "1" ]; then
+      cache_key="$repo#$num"
+      if grep -qF "${cache_key}"$'\t' "$RECONCILE_CACHE" 2>/dev/null; then
+        vlog "PR #$num ($branch): delivery already terminal and proven (cached, no live re-check)"
+        continue
+      fi
       live_status=$(cd "$rig_path" && gc bd show "$bead" --json 2>/dev/null | jq -r '.[0].status // empty' 2>/dev/null)
       if [ "$live_status" = "closed" ]; then
         vlog "PR #$num ($branch): delivery already terminal and proven"
+        mkdir -p "$(dirname "$RECONCILE_CACHE")"
+        printf '%s\t%s\n' "$cache_key" "$bead" >> "$RECONCILE_CACHE"
         continue
       fi
       log "  PR #$num ($branch): snapshot said already-terminal but live bead $bead is '${live_status:-unknown}' -- reconciling for real"
