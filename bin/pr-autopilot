@@ -479,9 +479,23 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     # The flag beads filed above ("[ci] ... failed", "[autopilot] ... stuck")
     # carry pr_number too; they are about the PR, not the work it delivers, and
     # must never be stamped merged in place of the work bead.
+    #
+    # 2026-09-24 (af-q7r0d/B04): a graph.v2 formula step-tracking wisp
+    # (metadata gc.step_ref set, e.g. "mol-do-work.workspace-setup") copies
+    # gc.work_branch from its parent work bead onto itself for its own
+    # bookkeeping -- so it can match this same query. With no way to prefer
+    # the real ticket, `[0]` picked whichever of the two `gc bd list --all`
+    # happened to return first: it stamped merge_result=merged/gc.work_outcome
+    # =shipped onto the wisp (af-unzig) instead of the actual work bead
+    # (af-q7r0d), which then looked "already terminal" to nothing and sat
+    # in_progress, unreconciled, forever -- silently stranding every
+    # dependent ticket behind it in the convoy chain. A step wisp is never a
+    # legitimate reconciliation target on its own; exclude it explicitly so
+    # the query can only ever land on the real work bead.
     candidate=$(printf '%s' "$RIG_ALL_BEADS_JSON" \
       | jq -r --arg b "$branch" --arg n "$num" \
         '[.[]|select((.metadata.source//"")!="pr-autopilot")
+              |select((.metadata["gc.step_ref"]//"")=="")
               |select((.metadata["gc.work_branch"]//"")==$b
                      or (.metadata.pr_number|tostring)==$n)][0] // empty
          | @json' 2>/dev/null)

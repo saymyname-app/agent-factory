@@ -202,6 +202,9 @@ jobs:
       - name: Merge actor caches a live-verified terminal PR across ticks
         run: bash tests/pr-autopilot-reconcile-cache-test.sh
 
+      - name: Merge actor never reconciles a step-tracking wisp instead of the real work bead
+        run: bash tests/pr-autopilot-step-wisp-collision-test.sh
+
       - name: Check rollup rebuilt from Actions runs (fine-grained token)
         run: python tests/factory-gh-rollup-test.py
 
