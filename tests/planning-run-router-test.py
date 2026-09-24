@@ -93,9 +93,15 @@ class PlanningRunRouterTest(unittest.TestCase):
         path.write_text(json.dumps(request), encoding="utf-8")
         return path
 
-    def run_router(self, request_path, env=None, check=False):
+    def run_router(self, request_path, env=None, check=False, repo_root=None):
+        # Default repo_root to this test's own scratch directory, not the
+        # real repo root -- every fixture path the tests pass is already
+        # absolute (resolve_path only joins repo_root onto a relative path),
+        # so this only changes where the router looks for
+        # config/planning-run-reservation.json: an empty scratch dir has none,
+        # keeping these tests isolated from the shipped C01 reservation.
         return subprocess.run(
-            (str(TOOL), "run", str(request_path)),
+            (str(TOOL), "--repo-root", str(repo_root or self.tmp), "run", str(request_path)),
             cwd=ROOT, env=env or {**os.environ}, text=True, capture_output=True, check=check,
         )
 
@@ -334,6 +340,70 @@ class PlanningRunRouterTest(unittest.TestCase):
         self.assertEqual("approved_awaiting_publication", result["result"])
         spec = json.loads((spec_out / "spec-router-simple-2026-09-24.json").read_text())
         self.assertEqual("APPROVED_SPEC", spec["state"])
+
+    # --- a reservation blocks every request except the one it names, and is
+    #     cleared once that reserved request publishes (B12 AC#5) -----------
+
+    def write_reservation(self, reserved_for="C01", cleared_at=None):
+        config_dir = self.tmp / "config"
+        config_dir.mkdir(exist_ok=True)
+        path = config_dir / "planning-run-reservation.json"
+        path.write_text(json.dumps({
+            "contract": "agent-factory-planning-run-reservation/v1",
+            "reserved_for": reserved_for,
+            "note": "test reservation",
+            "reserved_at": "2026-09-24",
+            "reserved_by": "planning-run-router-test",
+            "cleared_at": cleared_at,
+        }), encoding="utf-8")
+        return path
+
+    def test_reservation_blocks_a_request_that_does_not_declare_the_reserved_target(self):
+        self.write_reservation(reserved_for="C01")
+        request = self.base_request(SIMPLE_SESSION)
+        request_path = self.write_request(request)
+
+        proc = self.run_router(request_path, check=True)
+        result = json.loads(proc.stdout)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("reservation_blocked", result["result"])
+        self.assertEqual("C01", result["reserved_for"])
+        self.assertIn("C01", result["reason"])
+        self.assertFalse((self.tmp / "specs").exists())
+
+    def test_reservation_lets_the_declared_target_through_and_then_clears(self):
+        reservation_path = self.write_reservation(reserved_for="C01")
+        spec_out = self.tmp / "specs"
+        draft_bytes, _ = build_draft("router-simple-2026-09-24")
+        draft_path = self.tmp / "draft.yaml"
+        draft_path.write_bytes(draft_bytes)
+
+        request = self.base_request(
+            SIMPLE_SESSION,
+            spec_out=spec_out,
+            approval={"approved_by": "benjamin", "evidence": "af-fixture-evidence"},
+            publish={"draft": str(draft_path)},
+        )
+        request["planning_run_target"] = "C01"
+        request_path = self.write_request(request)
+
+        proc = self.run_router(request_path, env=self.bd_env(), check=True)
+        result = json.loads(proc.stdout)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("published", result["result"])
+
+        reservation_after = json.loads(reservation_path.read_text())
+        self.assertIsNotNone(reservation_after["cleared_at"])
+
+        # Once cleared, a later request that names no target is unblocked.
+        second_request = self.base_request(SIMPLE_SESSION, spec_out=self.tmp / "specs-2")
+        second_request_path = self.write_request(second_request, name="second-request.json")
+        second = json.loads(
+            self.run_router(second_request_path, check=True).stdout
+        )
+        self.assertNotEqual("reservation_blocked", second["result"])
 
 
 if __name__ == "__main__":

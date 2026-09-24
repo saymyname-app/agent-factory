@@ -1,0 +1,8 @@
+{
+  "contract": "agent-factory-planning-run-reservation/v1",
+  "reserved_for": "C01",
+  "note": "Cockpit V2 -- the next real non-critical Planning Run after the one-way cutover (af-mav0b AC#5, af-4a44k B12 AC#5, docs/planning/B12-redecomposition-planning-run-router.md Slice 4).",
+  "reserved_at": "2026-09-24",
+  "reserved_by": "af-mav0b",
+  "cleared_at": null
+}
