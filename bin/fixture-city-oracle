@@ -149,6 +149,11 @@ def validate_scenario(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     failure = inject.get("publication_failure", "none")
     if failure not in {"none", "after-stage"}:
         raise OracleError("inject.publication_failure must be none or after-stage")
+    reject_reason = inject.get("reject_reason", "none")
+    if reject_reason not in {"none", "spec_mismatch", "changed_behavior", "active_danger"}:
+        raise OracleError(
+            "inject.reject_reason must be none, spec_mismatch, changed_behavior, or active_danger"
+        )
 
     legacy_path = request.get("legacy_path", "none")
     if legacy_path not in {"none", "planning-base", "release-contract", "cockpit-v1-export"}:
@@ -600,6 +605,7 @@ def execute(scenario_path: Path, operator: Path, publication_door: Path) -> dict
     operator_calls: list[str] = []
     states: list[str] = []
     failure = scenario.get("inject", {}).get("publication_failure", "none")
+    reject_reason = scenario.get("inject", {}).get("reject_reason", "none")
     legacy_path = request.get("legacy_path", "none")
 
     with tempfile.TemporaryDirectory(prefix="fixture-city-oracle-") as directory:
@@ -786,6 +792,33 @@ def execute(scenario_path: Path, operator: Path, publication_door: Path) -> dict
             validate_integrations(snapshot, request, assemblies)
             assembly_check = validate_assembly_evidence(snapshot, request, assemblies)
 
+            multi_slice = len(request["slices"]) > 1
+            if multi_slice:
+                run_interface(operator, workspace, "review-assembly")
+                operator_calls.append("review-assembly")
+                snapshot = observe(operator, workspace)
+                operator_calls.append("observe")
+                review = as_dict(snapshot.get("review"), "review")
+                if (
+                    review.get("verdict") != "pass"
+                    or review.get("scope") != "assembled_diff"
+                    or set(as_list(review.get("focus"), "review.focus"))
+                    != {"interaction_risks", "spec_drift"}
+                ):
+                    raise OracleError(
+                        "multi-slice outcome did not receive one independent "
+                        "assembled-diff review of interaction risks and Spec drift"
+                    )
+                duplicate_review = run_interface(operator, workspace, "review-assembly", check=False)
+                operator_calls.append("review-assembly")
+                if duplicate_review.returncode == 0:
+                    raise OracleError("a second assembled-diff review was accepted for one outcome")
+            else:
+                duplicate_review = run_interface(operator, workspace, "review-assembly", check=False)
+                operator_calls.append("review-assembly")
+                if duplicate_review.returncode == 0:
+                    raise OracleError("a single-slice outcome received a duplicate final review")
+
             run_interface(operator, workspace, "deliver")
             operator_calls.append("deliver")
             snapshot = observe(operator, workspace)
@@ -798,41 +831,134 @@ def execute(scenario_path: Path, operator: Path, publication_door: Path) -> dict
                 raise OracleError("Delivered Outcome was not observable before acceptance")
             validate_integrations(snapshot, request, assemblies)
 
-            run_interface(operator, workspace, "accept")
-            operator_calls.append("accept")
+            blocked_effect = run_interface(
+                operator, workspace, "attempt-effect", "--kind", "production", check=False
+            )
+            operator_calls.append("attempt-effect")
+            if blocked_effect.returncode == 0 or not blocked_effect.stderr.strip():
+                raise OracleError("a sensitive effect was not blocked after Delivered")
             snapshot = observe(operator, workspace)
             operator_calls.append("observe")
-            validate_snapshot(snapshot, "ACCEPTED_OUTCOME", planning_run_id)
-            append_state(states, snapshot)
-            validate_artifact_summary(snapshot, artifact_id, artifact_digest, "APPROVED_SPEC")
-            outcome = as_dict(snapshot.get("outcome"), "outcome")
-            if outcome.get("state") != "accepted" or outcome.get("accepted") is not True:
-                raise OracleError("Accepted Outcome was not distinct from Delivered Outcome")
-            validate_integrations(snapshot, request, assemblies)
-            result = {
-                "contract": RESULT_CONTRACT,
-                "ok": True,
-                "scenario_id": scenario["scenario_id"],
-                "planning_run_id": planning_run_id,
-                "planning_states": states,
-                "artifact": {"id": artifact_id, "digest": artifact_digest},
-                "publication": {
-                    "state": "published",
-                    "graph_digest": graph_digest,
-                    "convoy_id": convoy_id,
-                },
-                "integration": {
-                    "mode": "single-rig" if len(request["rigs"]) == 1 else "exact-revision-multi-rig",
-                    "evidence": integration_evidence,
-                    "assembly_check": assembly_check,
-                },
-                "outcome": {"delivered": True, "accepted": True},
-                "effects": [],
-                "interfaces": {
-                    "operator": unique_commands(operator_calls),
-                    "write_doors": ["publish"],
-                },
-            }
+            if snapshot.get("effects") != []:
+                raise OracleError("a sensitive effect leaked into observation after Delivered")
+
+            if reject_reason != "none":
+                run_interface(operator, workspace, "reject", "--reason", reject_reason)
+                operator_calls.append("reject")
+                snapshot = observe(operator, workspace)
+                operator_calls.append("observe")
+                validate_snapshot(snapshot, "REJECTED_OUTCOME", planning_run_id)
+                append_state(states, snapshot)
+                validate_artifact_summary(snapshot, artifact_id, artifact_digest, "APPROVED_SPEC")
+                outcome = as_dict(snapshot.get("outcome"), "outcome")
+                routing = {
+                    "spec_mismatch": "targeted_repair",
+                    "changed_behavior": "planning",
+                    "active_danger": "safe_neutralization",
+                }[reject_reason]
+                if (
+                    outcome.get("state") != "rejected"
+                    or outcome.get("accepted") is not False
+                    or outcome.get("reason") != reject_reason
+                    or outcome.get("routing") != routing
+                ):
+                    raise OracleError("rejection did not route to the reason-specific destination")
+                if (
+                    snapshot.get("delivery_graph") is None
+                    or as_dict(snapshot.get("publication"), "publication").get("state") != "published"
+                ):
+                    raise OracleError(
+                        "rejection performed a default whole-outcome rollback of the delivery graph"
+                    )
+                validate_integrations(snapshot, request, assemblies)
+
+                blocked_after_reject = run_interface(operator, workspace, "accept", check=False)
+                operator_calls.append("accept")
+                if blocked_after_reject.returncode == 0:
+                    raise OracleError("acceptance succeeded for a rejected outcome")
+
+                blocked_effect = run_interface(
+                    operator, workspace, "attempt-effect", "--kind", "destructive", check=False
+                )
+                operator_calls.append("attempt-effect")
+                if blocked_effect.returncode == 0:
+                    raise OracleError("a sensitive effect was not blocked after rejection")
+
+                result = {
+                    "contract": RESULT_CONTRACT,
+                    "ok": True,
+                    "scenario_id": scenario["scenario_id"],
+                    "planning_run_id": planning_run_id,
+                    "planning_states": states,
+                    "artifact": {"id": artifact_id, "digest": artifact_digest},
+                    "publication": {
+                        "state": "published",
+                        "graph_digest": graph_digest,
+                        "convoy_id": convoy_id,
+                    },
+                    "integration": {
+                        "mode": "single-rig" if len(request["rigs"]) == 1 else "exact-revision-multi-rig",
+                        "evidence": integration_evidence,
+                        "assembly_check": assembly_check,
+                    },
+                    "review": {"required": multi_slice, "performed": multi_slice},
+                    "outcome": {"delivered": True, "accepted": False},
+                    "rejection": {"reason": reject_reason, "routing": routing},
+                    "effects": [],
+                    "interfaces": {
+                        "operator": unique_commands(operator_calls),
+                        "write_doors": ["publish"],
+                    },
+                }
+            else:
+                run_interface(operator, workspace, "accept")
+                operator_calls.append("accept")
+                snapshot = observe(operator, workspace)
+                operator_calls.append("observe")
+                validate_snapshot(snapshot, "ACCEPTED_OUTCOME", planning_run_id)
+                append_state(states, snapshot)
+                validate_artifact_summary(snapshot, artifact_id, artifact_digest, "APPROVED_SPEC")
+                outcome = as_dict(snapshot.get("outcome"), "outcome")
+                if outcome.get("state") != "accepted" or outcome.get("accepted") is not True:
+                    raise OracleError("Accepted Outcome was not distinct from Delivered Outcome")
+                validate_integrations(snapshot, request, assemblies)
+
+                blocked_effect = run_interface(
+                    operator, workspace, "attempt-effect", "--kind", "spend", check=False
+                )
+                operator_calls.append("attempt-effect")
+                if blocked_effect.returncode == 0:
+                    raise OracleError("a sensitive effect was not blocked after Accepted")
+                snapshot = observe(operator, workspace)
+                operator_calls.append("observe")
+                if snapshot.get("effects") != []:
+                    raise OracleError("a sensitive effect leaked into observation after Accepted")
+
+                result = {
+                    "contract": RESULT_CONTRACT,
+                    "ok": True,
+                    "scenario_id": scenario["scenario_id"],
+                    "planning_run_id": planning_run_id,
+                    "planning_states": states,
+                    "artifact": {"id": artifact_id, "digest": artifact_digest},
+                    "publication": {
+                        "state": "published",
+                        "graph_digest": graph_digest,
+                        "convoy_id": convoy_id,
+                    },
+                    "integration": {
+                        "mode": "single-rig" if len(request["rigs"]) == 1 else "exact-revision-multi-rig",
+                        "evidence": integration_evidence,
+                        "assembly_check": assembly_check,
+                    },
+                    "review": {"required": multi_slice, "performed": multi_slice},
+                    "outcome": {"delivered": True, "accepted": True},
+                    "effects": [],
+                    "interfaces": {
+                        "operator": unique_commands(operator_calls),
+                        "write_doors": ["publish"],
+                    },
+                }
 
     result["oracle_digest"] = canonical_digest(result)
     return result
