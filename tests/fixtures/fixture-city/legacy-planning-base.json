@@ -1,0 +1,20 @@
+{
+  "contract": "agent-factory-fixture-scenario/v1",
+  "scenario_id": "legacy-planning-base",
+  "request": {
+    "project_id": "fixture-legacy-planning-base",
+    "intent": "Prove a new Planning Run cannot select the legacy planning-base methodology.",
+    "legacy_path": "planning-base",
+    "rigs": [
+      {
+        "name": "fixture-app",
+        "revision": "7a9e5aeffb4f73c649a22fd666208a22a80d9f46",
+        "fixture_source": "rigs/fixture-app"
+      }
+    ],
+    "slices": [
+      {"key": "S01", "title": "Attempt legacy methodology selection", "rigs": ["fixture-app"], "blocked_by": []}
+    ]
+  },
+  "inject": {"publication_failure": "none"}
+}

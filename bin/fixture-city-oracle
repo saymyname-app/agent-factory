@@ -149,6 +149,12 @@ def validate_scenario(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     failure = inject.get("publication_failure", "none")
     if failure not in {"none", "after-stage"}:
         raise OracleError("inject.publication_failure must be none or after-stage")
+
+    legacy_path = request.get("legacy_path", "none")
+    if legacy_path not in {"none", "planning-base", "release-contract", "cockpit-v1-export"}:
+        raise OracleError(
+            "request.legacy_path must be none, planning-base, release-contract, or cockpit-v1-export"
+        )
     return scenario, request
 
 
@@ -594,6 +600,7 @@ def execute(scenario_path: Path, operator: Path, publication_door: Path) -> dict
     operator_calls: list[str] = []
     states: list[str] = []
     failure = scenario.get("inject", {}).get("publication_failure", "none")
+    legacy_path = request.get("legacy_path", "none")
 
     with tempfile.TemporaryDirectory(prefix="fixture-city-oracle-") as directory:
         workspace = Path(directory)
@@ -602,6 +609,38 @@ def execute(scenario_path: Path, operator: Path, publication_door: Path) -> dict
         request_path.write_text(
             json.dumps(request, ensure_ascii=False, sort_keys=True), encoding="utf-8"
         )
+
+        if legacy_path != "none":
+            start_result = run_interface(
+                operator, workspace, "start", "--request", str(request_path), check=False
+            )
+            operator_calls.append("start")
+            if start_result.returncode == 0:
+                raise OracleError(f"legacy path selection {legacy_path!r} unexpectedly succeeded")
+            reason = (start_result.stderr or "").strip()
+            if not reason:
+                raise OracleError(
+                    f"legacy path rejection for {legacy_path!r} produced no operator-readable reason"
+                )
+            result: dict[str, Any] = {
+                "contract": RESULT_CONTRACT,
+                "ok": True,
+                "scenario_id": scenario["scenario_id"],
+                "planning_run_id": None,
+                "planning_states": [],
+                "artifact": None,
+                "publication": {"state": "not_attempted", "graph_digest": None, "convoy_id": None},
+                "integration": {"mode": None, "evidence": [], "assembly_check": None},
+                "outcome": {"delivered": False, "accepted": False},
+                "effects": [],
+                "legacy_path_rejection": {"selection": legacy_path, "reason": reason},
+                "interfaces": {
+                    "operator": unique_commands(operator_calls),
+                    "write_doors": [],
+                },
+            }
+            result["oracle_digest"] = canonical_digest(result)
+            return result
 
         run_interface(operator, workspace, "start", "--request", str(request_path))
         operator_calls.append("start")

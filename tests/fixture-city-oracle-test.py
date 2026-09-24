@@ -168,6 +168,45 @@ class FixtureCityOracleTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("support one or two exact-revision rigs", result.stderr)
 
+    def test_new_planning_run_selecting_legacy_planning_base_fails_closed(self):
+        result = json.loads(self.invoke("legacy-planning-base.json").stdout)
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["planning_run_id"])
+        self.assertEqual([], result["planning_states"])
+        self.assertEqual({"delivered": False, "accepted": False}, result["outcome"])
+        self.assertEqual("not_attempted", result["publication"]["state"])
+        rejection = result["legacy_path_rejection"]
+        self.assertEqual("planning-base", rejection["selection"])
+        self.assertIn("legacy planning-base methodology is quarantined", rejection["reason"])
+        self.assertEqual(["start"], result["interfaces"]["operator"])
+        self.assertEqual([], result["interfaces"]["write_doors"])
+
+    def test_matt_path_cannot_create_or_consume_a_duplicated_release_contract(self):
+        result = json.loads(self.invoke("legacy-release-contract.json").stdout)
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["planning_run_id"])
+        rejection = result["legacy_path_rejection"]
+        self.assertEqual("release-contract", rejection["selection"])
+        self.assertIn("agent-factory-product-release/v1", rejection["reason"])
+        self.assertIn("Matt-path-forbidden", rejection["reason"])
+
+    def test_cockpit_v1_export_of_routes_screens_or_state_model_fails_closed(self):
+        result = json.loads(self.invoke("legacy-cockpit-v1-export.json").stdout)
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["planning_run_id"])
+        rejection = result["legacy_path_rejection"]
+        self.assertEqual("cockpit-v1-export", rejection["selection"])
+        self.assertIn("read-only evidence", rejection["reason"])
+
+    def test_default_planning_path_is_unaffected_by_the_legacy_fence(self):
+        # Existing convoy-attached delivery (e.g. single-rig/multi-rig) must
+        # keep working unchanged: the fence only engages when a request
+        # explicitly selects a legacy_path.
+        result = json.loads(self.invoke("single-rig.json").stdout)
+        self.assertTrue(result["ok"])
+        self.assertNotIn("legacy_path_rejection", result)
+        self.assertIsNotNone(result["planning_run_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

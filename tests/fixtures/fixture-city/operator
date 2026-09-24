@@ -132,8 +132,29 @@ def build_graph(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+LEGACY_PATH_REASONS = {
+    "planning-base": (
+        "legacy planning-base methodology is quarantined; new Planning Runs "
+        "must use the minimum kernel (B01 fence)"
+    ),
+    "release-contract": (
+        "the duplicated Release Contract (agent-factory-product-release/v1) "
+        "is Matt-path-forbidden; new Planning Runs may not create or consume it"
+    ),
+    "cockpit-v1-export": (
+        "Cockpit V1 routes, screens, and state model are read-only evidence; "
+        "new Planning Runs may not export them"
+    ),
+}
+
+
 def command_start(args: argparse.Namespace) -> int:
     request = json.loads(args.request.read_text(encoding="utf-8"))
+    legacy_path = request.get("legacy_path", "none")
+    if legacy_path != "none":
+        reason = LEGACY_PATH_REASONS.get(legacy_path, f"unsupported legacy_path value: {legacy_path}")
+        print(reason, file=sys.stderr)
+        return 3
     if request.get("fixture_fault") == "probe-containment":
         if Path("/etc/passwd").exists():
             print("fixture sandbox exposed host identity files", file=sys.stderr)

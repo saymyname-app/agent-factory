@@ -286,7 +286,7 @@ def run_prototype(manifest: dict[str, Any]) -> dict[str, Any]:
     max_lost_decisions = validated["acceptance_standard"]["max_lost_decisions"]
 
     work_class_report: dict[str, Any] = {}
-    provider_pass: dict[str, list[bool]] = {p: [] for p in validated["providers"]}
+    provider_pass: dict[str, list[bool]] = {p: [] for p in sorted(validated["providers"])}
     role_model_ceiling_ok = True
 
     for class_id, wc in validated["work_classes"].items():

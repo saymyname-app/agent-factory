@@ -1,0 +1,20 @@
+{
+  "contract": "agent-factory-fixture-scenario/v1",
+  "scenario_id": "legacy-cockpit-v1-export",
+  "request": {
+    "project_id": "fixture-legacy-cockpit-v1-export",
+    "intent": "Prove Cockpit V1 routes, screens, and state model cannot be exported by a new Planning Run.",
+    "legacy_path": "cockpit-v1-export",
+    "rigs": [
+      {
+        "name": "fixture-app",
+        "revision": "7a9e5aeffb4f73c649a22fd666208a22a80d9f46",
+        "fixture_source": "rigs/fixture-app"
+      }
+    ],
+    "slices": [
+      {"key": "S01", "title": "Attempt Cockpit V1 export", "rigs": ["fixture-app"], "blocked_by": []}
+    ]
+  },
+  "inject": {"publication_failure": "none"}
+}
