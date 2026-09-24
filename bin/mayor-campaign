@@ -521,6 +521,7 @@ def scope(args: argparse.Namespace) -> None:
             "gc.campaign_scope_mode": "",
             "gc.campaign_scope_graph_digest": "",
             "gc.campaign_ladder_bead": "",
+            "gc.campaign_ladder_beads": "[]",
             "gc.campaign_wake_key": "",
             "gc.campaign_wake_state": "none",
         })
@@ -533,6 +534,7 @@ def scope(args: argparse.Namespace) -> None:
         "gc.campaign_scope_graph_digest": args.graph,
         "gc.campaign_priority_lane": "factory",
         "gc.campaign_ladder_bead": "",
+        "gc.campaign_ladder_beads": "[]",
         "gc.campaign_wake_key": "",
         "gc.campaign_wake_state": "none",
     })
@@ -545,6 +547,32 @@ def failure_detail(exc: Exception) -> str:
 
 def node_issue(node_id: str) -> dict[str, Any]:
     return single_issue(json_run(GC_BIN, "bd", "show", node_id, "--json"), node_id)
+
+
+def parse_ladder_beads(metadata: dict[str, Any]) -> list[str]:
+    """Read the tracked ladder set, migrating the retired singular field.
+
+    af-nkuwa: gc.campaign_ladder_beads (a JSON array) replaces the singular
+    gc.campaign_ladder_bead. A coordination bead already carrying the old
+    field (nothing has written the new one yet) reads as its one-item list;
+    every write from here on writes the new field only (see
+    encode_ladder_beads), so this fallback drains naturally.
+    """
+    raw = metadata.get("gc.campaign_ladder_beads")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    legacy = str(metadata.get("gc.campaign_ladder_bead") or "").strip()
+    return [legacy] if legacy else []
+
+
+def encode_ladder_beads(ids: list[str]) -> str:
+    ordered = sorted({str(item).strip() for item in ids if str(item).strip()})
+    return json.dumps(ordered, ensure_ascii=False)
 
 
 # wake_key prefixes that name a bead/candidate the wake was about, e.g.
@@ -855,47 +883,53 @@ def factory_lane_peek(graph_digest: str | None = None) -> dict[str, Any]:
     )
 
 
-def ladder_workflow_state(tracked: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Best-effort latest graph.v2 workflow state for a tracked ladder bead.
+def ladder_workflow_states(tracked: list[dict[str, Any]]) -> dict[str, Any]:
+    """Best-effort latest graph.v2 workflow state for each tracked ladder bead.
 
     Fetch each involved rig once. Besides keeping the sentinel comfortably
     inside its hard tick budget, this makes root/child status a single-store
     snapshot instead of dozens of individually timed reads.
     """
-    if not isinstance(tracked, dict) or tracked.get("status") != "in_progress":
-        return None
-    targets = ladder_execution_targets(tracked)
-    if not targets:
-        return None
+    in_progress = [item for item in tracked if isinstance(item, dict) and item.get("status") == "in_progress"]
+    if not in_progress:
+        return {}
+    targets_by_id = {str(item.get("id")): ladder_execution_targets(item) for item in in_progress}
+    prefixes = {target.split("-", 1)[0] for targets in targets_by_id.values() for target in targets}
+    if not prefixes:
+        return {}
     try:
         rigs_payload = json_run(GC_BIN, "rig", "list", "--json")
     except CampaignCommandError:
-        return None
+        return {}
     rigs = rigs_payload.get("rigs") if isinstance(rigs_payload, dict) else None
     if not isinstance(rigs, list):
-        return None
+        return {}
     rig_by_prefix = {
         str(item.get("prefix")): str(item.get("name"))
         for item in rigs
         if isinstance(item, dict) and item.get("prefix") and item.get("name")
     }
-    prefixes = {target.split("-", 1)[0] for target in targets}
     beads_by_prefix: dict[str, list[dict[str, Any]]] = {}
     for prefix in sorted(prefixes):
         rig = rig_by_prefix.get(prefix)
         if not rig:
-            return None
+            return {}
         try:
             beads = json_run(
                 GC_BIN, "bd", "list", "--rig", rig, "--all", "--limit", "0",
                 "--include-gates", "--include-infra", "--include-templates", "--json",
             )
         except CampaignCommandError:
-            return None
+            return {}
         if not isinstance(beads, list):
-            return None
+            return {}
         beads_by_prefix[prefix] = beads
-    return inspect_ladder_workflows(tracked, beads_by_prefix)
+    states: dict[str, Any] = {}
+    for item in in_progress:
+        state = inspect_ladder_workflows(item, beads_by_prefix)
+        if state is not None:
+            states[str(item.get("id"))] = state
+    return states
 
 
 def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
@@ -905,13 +939,13 @@ def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
     except CampaignCommandError as exc:
         return {"action": "none", "reason": f"ladder_unavailable: {failure_detail(exc)}",
                 "wake_key": None}
-    tracked = None
-    tracked_id = str(metadata.get("gc.campaign_ladder_bead") or "").strip()
-    if tracked_id:
+    tracked_ids = parse_ladder_beads(metadata)
+    tracked: list[dict[str, Any]] = []
+    for tracked_id in tracked_ids:
         try:
-            tracked = node_issue(tracked_id)
+            tracked.append(node_issue(tracked_id))
         except CampaignCommandError:
-            tracked = None
+            continue
     last = {rung: metadata.get(f"gc.campaign_ladder_{rung}_at")
             for rung, _ in LADDER_GENERATIVE_RUNGS}
     try:
@@ -936,22 +970,29 @@ def ladder_decision(metadata: dict[str, Any], now: float) -> dict[str, Any]:
         if isinstance(axes_status.get("next_selected"), dict):
             axis = axes_status["next_selected"]
     last_axis = metadata.get("gc.campaign_ladder_axis_at")
-    workflow_state = ladder_workflow_state(tracked)
+    workflow_states = ladder_workflow_states(tracked)
     graph_scope = graph_scope_of(metadata)
     plan = plan_idle_ladder(
         ready, now, last, tracked, queue_candidates, maintain_alive, axis, last_axis,
-        workflow_state, graph_scope, scoped_graph_snapshot(graph_scope),
+        workflow_states, graph_scope, scoped_graph_snapshot(graph_scope),
     )
     unstick = plan.pop("unstick_bead", None)
     if unstick:
         # C6: best-effort, mirroring the rest of this function -- a failure
         # here must not stop the decision this tick already computed above.
+        unstick_ids = unstick if isinstance(unstick, list) else [unstick]
+        for unstick_id in unstick_ids:
+            try:
+                run(GC_BIN, "bd", "update", str(unstick_id), "--set-metadata", "gc.waiting_on=stalled")
+            except CampaignCommandError:
+                pass
         try:
-            run(GC_BIN, "bd", "update", str(unstick), "--set-metadata", "gc.waiting_on=stalled")
-        except CampaignCommandError:
-            pass
-        try:
-            update_metadata({"gc.campaign_ladder_bead": ""})
+            dropped = {str(item) for item in unstick_ids}
+            remaining = [item for item in tracked_ids if item not in dropped]
+            update_metadata({
+                "gc.campaign_ladder_beads": encode_ladder_beads(remaining),
+                "gc.campaign_ladder_bead": "",
+            })
         except CampaignCommandError:
             pass
     return plan
@@ -1185,9 +1226,20 @@ def sentinel(_: argparse.Namespace) -> None:
         }
         rung = decision.get("rung")
         if rung == "factory":
-            rung_key = "gc.campaign_ladder_bead"
+            # plan_idle_ladder only ever returns a *new*-candidate factory-rung
+            # decision when the tracked set had spare capacity that tick
+            # (LADDER_MAX_CONCURRENT=1: capacity was free, i.e. nothing else
+            # is genuinely still tracked) -- so this candidate is the whole
+            # tracked set going forward, not an addition to whatever the
+            # coordination bead's now-possibly-stale metadata snapshot still
+            # names (e.g. a bead ladder_decision's own unstick write already
+            # dropped this same tick).
+            rung_key = "gc.campaign_ladder_beads"
             rung_rollback[rung_key] = str(metadata.get(rung_key) or "")
-            sent[rung_key] = str(decision.get("ladder_bead") or "")
+            rung_rollback["gc.campaign_ladder_bead"] = str(metadata.get("gc.campaign_ladder_bead") or "")
+            new_id = str(decision.get("ladder_bead") or "")
+            sent[rung_key] = encode_ladder_beads([new_id])
+            sent["gc.campaign_ladder_bead"] = ""
         elif rung:
             rung_key = f"gc.campaign_ladder_{rung}_at"
             rung_rollback[rung_key] = str(metadata.get(rung_key) or "")
