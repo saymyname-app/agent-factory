@@ -1,0 +1,8 @@
+{
+  "contract": "agent-factory-project-isolation-scenario/v1",
+  "scenario_id": "scope-not-registered",
+  "city_registry": ["project-a", "project-b"],
+  "agent_scope": ["project-c"],
+  "declared_grant": null,
+  "probe_rigs": ["project-a", "project-b"]
+}
