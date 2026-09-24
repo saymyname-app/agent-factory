@@ -1,0 +1,52 @@
+{
+  "contract": "agent-factory-planning-session/v1",
+  "session_id": "router-missing-topic-2026-09-24",
+  "request": {
+    "summary": "Add a --dry-run flag to the router smoke tool",
+    "complexity": "simple"
+  },
+  "target_rigs": ["factory_workspace"],
+  "declared_context": {
+    "project_knowledge_path": "tests/fixtures/planning-run-router/project-knowledge.md",
+    "work_graph_path": "tests/fixtures/planning-run-router/work-graph.json"
+  },
+  "context_probe": [
+    "tests/fixtures/planning-run-router/project-knowledge.md",
+    "tests/fixtures/planning-run-router/work-graph.json"
+  ],
+  "wayfinder_ceremony_invoked": false,
+  "interview_rounds": 1,
+  "signals": [],
+  "shared_understanding": [
+    {
+      "topic": "behavior",
+      "statement": "`--dry-run` prints the planned action without executing it.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "boundary",
+      "statement": "Only the smoke tool's CLI gains the flag; no other tool changes.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "`--dry-run` is mutually exclusive with any write-mode flag.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "Running with `--dry-run` on the fixture dataset performs no writes and prints the plan.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "experiment",
+      "statement": "None needed; behavior is fully determined by the existing command surface.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "non_objective",
+      "statement": "This does not add a --dry-run flag to any other tool.",
+      "confirmed_by": "Benjamin"
+    }
+  ]
+}
