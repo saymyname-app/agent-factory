@@ -1,0 +1,13 @@
+{
+  "contract": "agent-factory-wayfinding-run-request/v1",
+  "run_id": "wf-fixture-002",
+  "exceeds_one_session": false,
+  "trigger_reason": "fits one healthy session",
+  "decisions": [
+    {
+      "id": "trivial",
+      "map_key": "trivial",
+      "summary": "A single in-session question."
+    }
+  ]
+}
