@@ -492,12 +492,33 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     # dependent ticket behind it in the convoy chain. A step wisp is never a
     # legitimate reconciliation target on its own; exclude it explicitly so
     # the query can only ever land on the real work bead.
+    #
+    # af-6xs2n: the step-wisp shape above is one instance of a broader class
+    # -- ANY duplicate match on gc.work_branch/pr_number where the wrong one
+    # gets picked leaves the real work bead permanently unreconciled with no
+    # error (af-cfl9j/PR#206, af-i3k3f/PR#210 both showed this: the real bead
+    # stayed status=in_progress -- proven by a direct `gc bd show` -- while
+    # pr-autopilot's own snapshot query kept resolving "already terminal" to
+    # a different bead entirely). Latch/tracking beads (gc.kind in the set
+    # below) are never legitimate reconciliation targets either, so exclude
+    # the whole class, not just step-tracking wisps. As a last line of
+    # defense against any *other* duplicate shape this doesn't yet name,
+    # break ties deterministically toward a candidate that is not already
+    # closed: the real, not-yet-reconciled work bead is always the one still
+    # open when this loop runs, so preferring it over an already-closed
+    # match can only ever recover the wrong-pick failure mode, never cause
+    # one -- a correctly-closed candidate with no open sibling is unaffected.
     candidate=$(printf '%s' "$RIG_ALL_BEADS_JSON" \
       | jq -r --arg b "$branch" --arg n "$num" \
         '[.[]|select((.metadata.source//"")!="pr-autopilot")
               |select((.metadata["gc.step_ref"]//"")=="")
+              |select((.metadata["gc.kind"]//"") as $k
+                      | ["workflow","scope","check","fanout","scope-check","workflow-finalize"]
+                        | index($k) | not)
               |select((.metadata["gc.work_branch"]//"")==$b
-                     or (.metadata.pr_number|tostring)==$n)][0] // empty
+                     or (.metadata.pr_number|tostring)==$n)]
+         | sort_by(if .status=="closed" then 1 else 0 end)
+         | .[0] // empty
          | @json' 2>/dev/null)
     [ -z "$candidate" ] && { vlog "PR #$num ($branch): no linked work bead"; continue; }
     bead=$(printf '%s' "$candidate" | jq -r '.id // empty' 2>/dev/null)
