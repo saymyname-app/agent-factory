@@ -732,6 +732,7 @@ main() {
   # (af-7rd5r; builds on af-rt1t2's convoy-show batching).
   bg_start "$tmp_dir/city.json" gc_json status --json
   bg_start "$tmp_dir/queue.json" "$QUEUE_BIN" list --json
+  bg_start "$tmp_dir/queue_state.json" "$QUEUE_BIN" states --json
   bg_start "$tmp_dir/parent.json" gc_json bd show "$PRODUCT_ROOT_BEAD" --json
 
   capture_json_bg CITY_RESPONSE "Gas City status" "$tmp_dir/city.json"
@@ -749,6 +750,20 @@ main() {
     (.state == "eligible" or .state == "paused") and
     .technical_status == "deferred")' >/dev/null <<<"$queue_response" \
     || die "Product queue did not return the canonical human candidate contract."
+
+  # af-8ijhu: the other half of af-pohgu's fix -- a node's `state` in the
+  # versioned release contract never follows its product-queue candidate
+  # once materialized/cancelled without a hand-edited Git change. Fetched in
+  # the same parallel batch as queue/city/coordination-root above so this
+  # adds no serial tick-budget cost.
+  local queue_state_response
+  capture_json_bg queue_state_response "SayMyName product queue state" "$tmp_dir/queue_state.json"
+  # Shape only: whether a value is a real WORK_STATES member is
+  # project_campaign_work's own fail-closed check (lib/product_release.py),
+  # not duplicated here.
+  jq -e 'type == "object" and (to_entries | all(.value | type == "string"))' \
+    >/dev/null <<<"$queue_state_response" \
+    || die "Product queue state overlay did not return a work_ref -> state map."
 
   capture_json_bg parent_response "Beads product coordination" "$tmp_dir/parent.json"
   parent=$(single_issue "$parent_response" "Product coordination root $PRODUCT_ROOT_BEAD")
@@ -905,8 +920,11 @@ main() {
   jq -c '[.[] | select(.state == "eligible") |
     {id: .id, title: .title, criterion_refs: .criterion_refs, independence: .independence}]' \
     <<<"$queue_response" >"$queue_candidates_file"
+  local queue_state_file="$tmp_dir/queue-state.json"
+  printf '%s' "$queue_state_response" >"$queue_state_file"
   capture_json release_json "SayMyName release contract" \
-    "$RELEASE_BIN" project "$RELEASE_FILE" --queue-candidates "$queue_candidates_file"
+    "$RELEASE_BIN" project "$RELEASE_FILE" \
+    --queue-state "$queue_state_file" --queue-candidates "$queue_candidates_file"
   state_json=$(jq -c \
     --arg product SAYMYNAME --arg last_title "$LAST_OUTCOME" \
     --arg last_evidence "$LAST_DELIVERY" --argjson release "$release_json" \

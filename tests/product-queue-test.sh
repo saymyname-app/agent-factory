@@ -215,6 +215,42 @@ assert_contains "$output" '"id":"af-live"'
 assert_not_contains "$output" 'af-old'
 assert_not_contains "$output" 'af-cancel'
 
+# af-8ijhu: `states` is the read-only counterpart -- it surfaces exactly the
+# materialized/cancelled candidates list/next exclude, reduced to a
+# work_ref -> WORK_STATES map for project_campaign_work's
+# queue_state_by_work_ref overlay.
+output=$("$QUEUE" states --json)
+assert_not_contains "$output" 'af-live'
+[[ $(jq -Sc . <<<"$output") == '{"af-cancel":"cancelled","af-old":"materialized"}' ]] \
+  || fail "states --json produced an unexpected map: $output"
+output=$("$QUEUE" states)
+assert_contains "$output" 'af-old: materialized'
+assert_contains "$output" 'af-cancel: cancelled'
+
+export QUEUE_INVENTORY='[
+  {"id":"af-live","title":"Live","status":"deferred","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"queued","gc.queue_rank":1000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}}
+]'
+output=$("$QUEUE" states --json)
+[[ $output == '{}' ]] || fail "an all-active queue must project an empty states map, not: $output"
+output=$("$QUEUE" states)
+assert_contains "$output" 'EMPTY'
+
+# The same af-tbkcc leniency: one bad materialized/cancelled tuple must not
+# take down the whole states read.
+export QUEUE_INVENTORY='[
+  {"id":"af-old","title":"Already delivered candidate","status":"closed","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"materialized","gc.queue_rank":2000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id","gc.materialized_bead":"af-exec.1"}},
+  {"id":"af-bad","title":"Bad tuple","status":"closed","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"materialized","gc.queue_rank":3000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}}
+]'
+output=$("$QUEUE" states --json 2>"$TEST_TMP/stderr") \
+  || fail "states --json must not fail closed on one bad candidate: $(cat "$TEST_TMP/stderr")"
+assert_contains "$output" '"af-old":"materialized"'
+assert_not_contains "$output" 'af-bad'
+assert_contains "$(cat "$TEST_TMP/stderr")" 'af-bad'
+export QUEUE_INVENTORY='[
+  {"id":"af-old","title":"Already delivered candidate","status":"closed","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"materialized","gc.queue_rank":2000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id","gc.materialized_bead":"af-exec.1"}},
+  {"id":"af-cancel","title":"Cancelled","status":"closed","metadata":{"gc.queue_product":"saymyname","gc.queue_state":"cancelled","gc.queue_rank":3000,"gc.queue_urgency":"normal","gc.queue_goal":"af-u8id"}}
+]'
+
 # A node the campaign sentinel quarantined after a durable failure (ADR-0016 §7)
 # must not poison the whole queue read; it is excluded like paused/materialized.
 export QUEUE_INVENTORY='[

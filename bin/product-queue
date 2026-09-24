@@ -22,6 +22,10 @@ Usage: PRODUCT_QUEUE_PRODUCT=<slug> product-queue <command> [arguments]
 Commands:
   list [--json]                              Show the ordered active candidate queue.
   next [--json]                              Show the first eligible candidate.
+  states [--json]                            Show materialized/cancelled candidates as
+                                              a work_ref -> WORK_STATES map (for
+                                              lib/product_release.py's
+                                              queue_state_by_work_ref overlay).
   add --title TEXT --authorized-by TEXT --acceptance TEXT
       [--goal ID] [--urgency LEVEL] [--why TEXT]
       [--criterion-ref ID ...] [--independence proven|unknown]
@@ -236,6 +240,58 @@ next_candidate() {
   else
     jq -r '"NEXT: \(.title) (\(.id)) — \(.state_label); lancement non automatique"' <<<"$next"
   fi
+}
+
+# states_by_work_ref [--json]
+#
+# `list`/`next` (and load_inventory) deliberately exclude materialized and
+# cancelled candidates -- they are no longer active. But once a candidate is
+# materialized into a work_graph node (bin/product-queue materialize), that
+# node's own `state` in the versioned release contract never follows the
+# candidate again without a hand-edited Git change (af-pohgu). This read-only
+# projection is the other half of that fix
+# (lib/product_release.py::project_campaign_work's queue_state_by_work_ref
+# parameter): the full per-product tuple set, filtered to settled
+# (materialized/cancelled) candidates and reduced to id -> WORK_STATES value,
+# so a caller can pass it straight through as the overlay. Same lenient
+# posture as list/next (af-tbkcc): one bad tuple is excluded with a WARNING
+# on stderr instead of failing the whole read closed.
+states_by_work_ref() {
+  local format=${1:-}
+  local raw report bad_id result
+  raw=$("$BD_BIN" list --all --label product-queue \
+    --label "product:$PRODUCT" --limit 0 --json) \
+    || die "Beads queue inventory is unavailable."
+  report=$(jq -ce --arg product "$PRODUCT" "
+    $JQ_CANDIDATE_PREDICATES
+    (if type != \"array\" then error(\"inventory must be an array\") else . end) |
+    map(select(.metadata[\"gc.queue_product\"] == \$product)) as \$candidates |
+    (\$candidates | map(select(valid_tuple))) as \$tuple_ok |
+    (\$candidates | map(select(valid_tuple | not) | .id)) as \$bad_tuple |
+    (\$tuple_ok | map(select(.status == \"closed\" and
+      (.metadata[\"gc.queue_state\"] == \"materialized\" or .metadata[\"gc.queue_state\"] == \"cancelled\")))) as \$settled |
+    {
+      states: (\$settled | map({key: .id, value: .metadata[\"gc.queue_state\"]}) | from_entries),
+      invalid: \$bad_tuple
+    }
+  " <<<"$raw") || die "Product queue state inventory could not be parsed."
+  while IFS= read -r bad_id; do
+    [[ -n $bad_id ]] || continue
+    printf '%s: WARNING: excluding invalid candidate %s from the work-state projection (bad status/state or metadata); repair it before it can be trusted.\n' \
+      "$PROGRAM_NAME" "$bad_id" >&2
+  done < <(jq -r '.invalid[]' <<<"$report")
+  result=$(jq -ce '.states' <<<"$report")
+  if [[ $format == --json ]]; then
+    printf '%s\n' "$result"
+    return
+  fi
+  [[ -z $format ]] || die "Unsupported states option: $format"
+  printf 'QUEUE STATE BY WORK_REF: %s\n' "$PRODUCT"
+  if [[ $(jq 'length' <<<"$result") -eq 0 ]]; then
+    printf 'EMPTY\n'
+    return
+  fi
+  jq -r 'to_entries[] | "\(.key): \(.value)"' <<<"$result"
 }
 
 add_candidate() {
@@ -462,6 +518,7 @@ main() {
     -h|--help|help) usage ;;
     list) list_queue "$@" ;;
     next) next_candidate "$@" ;;
+    states) states_by_work_ref "$@" ;;
     add) add_candidate "$@" ;;
     move) [[ $# -eq 2 ]] || die "Usage: $PROGRAM_NAME move ID POSITION"; move_candidate "$@" ;;
     urgency) [[ $# -eq 2 ]] || die "Usage: $PROGRAM_NAME urgency ID LEVEL"; set_urgency "$@" ;;
