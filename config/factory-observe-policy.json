@@ -1,0 +1,28 @@
+{
+  "contract": "agent-factory-observe-policy/v1",
+  "roles": [
+    {
+      "name": "delivery-worker",
+      "areas": ["delivery"],
+      "rank": 1,
+      "model": null,
+      "effort": "low",
+      "description": "Smallest qualified role for a delivery-progress fact: the worker already holding the affected bead."
+    },
+    {
+      "name": "mayor",
+      "areas": ["planning_runs", "adaptations", "delivery"],
+      "rank": 2,
+      "model": null,
+      "effort": "medium",
+      "description": "Escalation role for a Planning Run or adaptation-register fact, or a delivery fact with no dedicated worker role available."
+    }
+  ],
+  "exemptions": [
+    {
+      "name": "tactical-resolve-auto-handoff",
+      "requires": ["decision_kind_tactical", "patch_not_required"],
+      "description": "Auto-hand a tactical Planning Exception resolve to the delivery worker without Mayor review -- only when the decision is tactical and no Ticket Graph Draft patch is required. Restores (Mayor review required again) the instant either signal regresses."
+    }
+  ]
+}
