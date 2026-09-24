@@ -35,15 +35,13 @@ for arg in "$@"; do
 done
 
 # rig_dir | repo | dev branch | required GitHub Actions workflow
-RIGS=(
-  "rigs/saymyname-backend|saymyname-app/Say-my-name-back|dev|Backend CI"
-  "rigs/saymyname-frontend|saymyname-app/Say-my-name-front|dev|Frontend CI"
-  # The Factory's own repo. Its only long-lived branch is main and it now has a
-  # required check (Factory CI), so the same rule applies: green check merges
-  # itself, red check becomes a bead. Without this, agent-factory branches pile
-  # up unmerged — 28 of them by 2026-09-15.
-  ".|saymyname-app/agent-factory|main|Factory CI"
-)
+#
+# af-09hxz: this table is the same one bin/factory-do-work-workspace consults
+# to decide when a do-work dispatch must be isolated in a worktree instead of
+# committing in place, so it lives in lib/protected_rigs.sh and both scripts
+# source it from there. Add a rig once, and it is protected everywhere.
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/protected_rigs.sh"
+RIGS=("${PROTECTED_RIGS[@]}")
 DELIVER_CLOSE_BIN="${DELIVER_CLOSE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/deliver-close}"
 DELIVERY_PROOF_BIN="${DELIVERY_PROOF_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" && pwd -P)/factory_delivery_proof.py}"
 

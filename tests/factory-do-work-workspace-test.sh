@@ -37,6 +37,16 @@ export FACTORY_ROOT="$TMP/root"
 export HOME="$TMP/home"
 mkdir -p "$HOME"
 
+# a lib/protected_rigs.sh at FACTORY_ROOT, mirroring production's table (the
+# live root's own branch, plus a stand-in product rig used by test 6 below)
+mkdir -p "$FACTORY_ROOT/lib" "$FACTORY_ROOT/rigs/protected-rig-test"
+cat > "$FACTORY_ROOT/lib/protected_rigs.sh" <<'EOF'
+PROTECTED_RIGS=(
+  "rigs/protected-rig-test|test/protected-rig|dev|Test CI"
+  ".|test/live-root|main|Test CI"
+)
+EOF
+
 # ---------------------------------------------------------------------------
 # 1. `enter` in the live root creates an isolated worktree on its own branch
 # ---------------------------------------------------------------------------
@@ -79,7 +89,8 @@ git -C "$TMP/root" show-ref --verify --quiet refs/remotes/origin/do-work/af-work
   || fail "'finish . ...' (enter's no-op marker) must exit 0, not fail"
 
 # ---------------------------------------------------------------------------
-# 5. `enter` is a documented no-op anywhere that is NOT the live root
+# 5. `enter` is a documented no-op anywhere that is NOT the live root and NOT
+#    a rig listed in lib/protected_rigs.sh
 # ---------------------------------------------------------------------------
 mkdir -p "$TMP/some-rig"
 (
@@ -89,4 +100,48 @@ mkdir -p "$TMP/some-rig"
   [ "$out" = "." ] || { echo "expected '.', got '$out'" >&2; exit 1; }
 ) || fail "enter created a worktree outside the live root -- it must be a no-op there"
 
-echo "OK bin/factory-do-work-workspace isolates HQ dispatches in a worktree, pushes and cleans up on finish, and is a no-op elsewhere"
+# ---------------------------------------------------------------------------
+# 6. af-09hxz: `enter` isolates a product-rig checkout on its protected
+#    branch too, not only the live HQ root -- this is the regression that
+#    let mol-do-work commit straight to saymyname-backend's `dev` (smb-u3zzt).
+# ---------------------------------------------------------------------------
+git init -q --bare "$TMP/rig-origin.git"
+git init -q "$FACTORY_ROOT/rigs/protected-rig-test"
+(
+  cd "$FACTORY_ROOT/rigs/protected-rig-test"
+  git config user.email t@t; git config user.name t; git config commit.gpgsign false
+  git remote add origin "$TMP/rig-origin.git"
+  echo one > f && git add -A && git commit -qm one
+  git branch -M dev
+  git push -q origin dev
+)
+
+RIG_WT=$(cd "$FACTORY_ROOT/rigs/protected-rig-test" && "$SCRIPT" enter af-rig-workspace-test)
+[ -n "$RIG_WT" ] && [ "$RIG_WT" != "." ] || fail "enter did not isolate a product rig on its protected 'dev' branch"
+[ -d "$RIG_WT" ] || fail "enter reported rig worktree path $RIG_WT but it does not exist"
+rig_branch=$(git -C "$RIG_WT" rev-parse --abbrev-ref HEAD)
+[ "$rig_branch" = "do-work/af-rig-workspace-test" ] \
+  || fail "rig worktree is on branch '$rig_branch', expected 'do-work/af-rig-workspace-test'"
+[ "$(git -C "$FACTORY_ROOT/rigs/protected-rig-test" rev-parse --abbrev-ref HEAD)" = "dev" ] \
+  || fail "enter moved the rig checkout off its own 'dev' branch"
+
+echo work > "$RIG_WT/g"
+git -C "$RIG_WT" add g
+git -C "$RIG_WT" commit -qm "work"
+"$SCRIPT" finish af-rig-workspace-test "$RIG_WT" do-work/af-rig-workspace-test dev \
+  || fail "finish exited non-zero for a product-rig worktree"
+[ -d "$RIG_WT" ] && fail "finish did not remove the product-rig worktree"
+git -C "$FACTORY_ROOT/rigs/protected-rig-test" fetch -q origin
+git -C "$FACTORY_ROOT/rigs/protected-rig-test" show-ref --verify --quiet refs/remotes/origin/do-work/af-rig-workspace-test \
+  || fail "finish did not push the product-rig branch to its own origin"
+
+# a feature branch on the same rig must NOT be isolated (only the protected
+# branch itself is)
+(
+  cd "$FACTORY_ROOT/rigs/protected-rig-test"
+  git checkout -q -b feature/not-protected
+  out=$("$SCRIPT" enter af-feature-branch-test)
+  [ "$out" = "." ] || { echo "expected '.', got '$out'" >&2; exit 1; }
+) || fail "enter isolated a non-protected feature branch on a tracked rig"
+
+echo "OK bin/factory-do-work-workspace isolates HQ dispatches AND protected product-rig branches in a worktree, pushes and cleans up on finish, and is a no-op elsewhere"
