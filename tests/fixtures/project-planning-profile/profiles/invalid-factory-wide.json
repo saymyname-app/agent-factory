@@ -1,0 +1,15 @@
+{
+  "contract": "agent-factory-project-planning-profile/v1",
+  "project_id": "project-a",
+  "project_knowledge": {
+    "path": "tests/fixtures/project-planning-profile/knowledge/project-a.md"
+  },
+  "work_graph": {
+    "path": "tests/fixtures/project-planning-profile/work-graph/project-a.json",
+    "rigs": ["project-a"]
+  },
+  "participant_rigs": ["project-a"],
+  "cost_policy": {
+    "level": "L0"
+  }
+}

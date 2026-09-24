@@ -58,6 +58,9 @@ jobs:
       - name: Approved Ticket Graph atomic publication
         run: python tests/ticket-graph-publish-test.py
 
+      - name: Register a project through one Project Planning Profile (af-i3k3f)
+        run: python tests/project-planning-profile-test.py
+
       - name: Ensure fixture sandbox runtime
         run: |
           packages=()
