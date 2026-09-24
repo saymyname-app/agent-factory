@@ -283,23 +283,70 @@ def is_ladder_bead(bead: Any) -> bool:
     return True
 
 
-def is_scoped_delivery_bead(bead: Any, graph_digest: str | None) -> bool:
+def _convoy_tracked_ids(
+    graph_digest: str | None, graph_beads: list[dict[str, Any]] | None
+) -> set[str]:
+    """Ticket ids the published convoy node for ``graph_digest`` actually
+    ``tracks`` (bin/ticket-graph-publish's atomic door always emits this edge
+    alongside ``gc.publication_validated``). Empty when the digest, snapshot,
+    or convoy node is missing -- callers fail closed on an empty result
+    rather than treat "no evidence" as "attached".
+    """
+    if not graph_digest or not graph_beads:
+        return set()
+    tracked: set[str] = set()
+    for item in graph_beads:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        if (
+            str(item.get("issue_type") or item.get("type") or "") != "convoy"
+            or str(metadata.get("gc.graph_digest") or "").strip() != graph_digest
+        ):
+            continue
+        for dependency in item.get("dependencies") or []:
+            if not isinstance(dependency, dict):
+                continue
+            dep_type = dependency.get("type") or dependency.get("dependency_type")
+            if dep_type != "tracks":
+                continue
+            tracked_id = str(dependency.get("depends_on_id") or dependency.get("id") or "").strip()
+            if tracked_id:
+                tracked.add(tracked_id)
+    return tracked
+
+
+def is_scoped_delivery_bead(
+    bead: Any,
+    graph_digest: str | None,
+    convoy_tracked_ids: set[str] | None = None,
+) -> bool:
     """True when ``bead`` belongs to the active approved delivery graph.
 
     An empty scope preserves the legacy Factory-lane behavior.  A non-empty
-    scope is deliberately positive: both the exact graph digest and the
-    delivery plane must match.  This keeps old Factory beads, planning beads,
-    product candidates, and unvalidated lookalikes out of a bootstrap convoy.
+    scope is deliberately positive: the exact graph digest, the delivery
+    plane, a validated publication (``gc.publication_validated=="true"``),
+    and -- when ``convoy_tracked_ids`` is supplied -- live membership in the
+    published convoy's ``tracks`` edges must all match.  This keeps old
+    Factory beads, planning beads, product candidates, unvalidated
+    lookalikes, and a bead carrying a spoofed or stale graph_digest/plane
+    pair (hand-edited metadata, or a convoy deleted out from under it) out of
+    the Ready Frontier.
     """
     if not graph_digest:
         return True
     if not isinstance(bead, dict):
         return False
     metadata = bead.get("metadata") if isinstance(bead.get("metadata"), dict) else {}
-    return (
-        str(metadata.get("gc.graph_digest") or "").strip() == graph_digest
-        and str(metadata.get("gc.plane") or "").strip() == "delivery"
-    )
+    if (
+        str(metadata.get("gc.graph_digest") or "").strip() != graph_digest
+        or str(metadata.get("gc.plane") or "").strip() != "delivery"
+        or str(metadata.get("gc.publication_validated") or "").strip().lower() != "true"
+    ):
+        return False
+    if convoy_tracked_ids is None:
+        return True
+    return str(bead.get("id") or "").strip() in convoy_tracked_ids
 
 
 def _priority(bead: dict[str, Any]) -> int:
@@ -502,6 +549,7 @@ def plan_factory_lane(
         for item in (graph_beads or [])
         if isinstance(item, dict) and item.get("id")
     }
+    convoy_tracked_ids = _convoy_tracked_ids(graph_digest, graph_beads)
 
     def blockers_are_delivery_complete(candidate: dict[str, Any]) -> bool:
         if not graph_digest:
@@ -524,7 +572,8 @@ def plan_factory_lane(
     candidates = sorted(
         (
             bead for bead in ready
-            if is_ladder_bead(bead) and is_scoped_delivery_bead(bead, graph_digest)
+            if is_ladder_bead(bead)
+            and is_scoped_delivery_bead(bead, graph_digest, convoy_tracked_ids)
             and blockers_are_delivery_complete(bead)
         ),
         key=lambda bead: (_priority(bead), str(bead.get("created_at") or ""), str(bead["id"])),
@@ -674,13 +723,17 @@ def plan_idle_ladder(
     last_generative = last_generative or {}
     workflow_states = workflow_states or {}
     tracked_items = [item for item in (tracked or []) if isinstance(item, dict)]
+    convoy_tracked_ids = _convoy_tracked_ids(graph_digest, graph_beads)
 
     wakes: list[dict[str, Any]] = []
     still_tracked: list[tuple[dict[str, Any], Any]] = []
     unstick_ids: list[str] = []
 
     for item in tracked_items:
-        if not (item.get("status") == "in_progress" and is_scoped_delivery_bead(item, graph_digest)):
+        if not (
+            item.get("status") == "in_progress"
+            and is_scoped_delivery_bead(item, graph_digest, convoy_tracked_ids)
+        ):
             continue
         tracked_id = str(item.get("id") or "")
         workflow_state = workflow_states.get(tracked_id)
