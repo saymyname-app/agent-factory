@@ -1317,6 +1317,41 @@ else
   fi
 fi
 
+# --- 12. semantic/topology surprise closed blocked with no Planning Exception
+#     raised, or a redecomposition dispatched without one (af-zwhh0) ---------
+# B08's bin/planning-exception (ADR-0028) exists exactly so a delivery worker
+# that meets a semantic/topology surprise raises a Planning Exception instead
+# of redesigning the graph itself. B12 (af-4a44k) hit that surprise, its own
+# closing note said as much, but the tool was never invoked -- the Mayor
+# separately created an ad-hoc, self-authorized redecomposition bead instead.
+# bin/factory-planning-exception-guard flags both shapes: a blocked/abandoned
+# close classified semantic/topology with no gc.planning_exception_id, and a
+# bead redecomposing already-blocked work without an open exception or a real
+# human gc.authorized_by. Never auto-repaired -- only a human or the Mayor can
+# decide whether to raise the exception or correct the classification.
+PE_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-planning-exception-guard"
+if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$PE_GUARD" ]; then
+  say "· planning-exception — not checked (not a city root, or gc unavailable)"
+else
+  PEG_ARGS=()
+  [ "$CHECK_ONLY" = "1" ] && PEG_ARGS+=(--check-only)
+  PEG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$PE_GUARD" "${PEG_ARGS[@]}" 2>&1)
+  PEG_STATUS=$?
+  [ "$QUIET" = "1" ] || printf '%s\n' "$PEG_OUTPUT" | sed 's/^/  /'
+  PEG_PROBLEM_COUNT=0
+  while IFS= read -r raw_line; do
+    line="${raw_line#"${raw_line%%[![:space:]]*}"}"  # strip leading whitespace
+    case "$line" in
+      REPAIRED:\ *) ACTIONS+=("planning-exception: ${line#REPAIRED: }") ;;
+      !\ *)         PROBLEMS+=("planning-exception: ${line#! }"); STATUS=1; PEG_PROBLEM_COUNT=$((PEG_PROBLEM_COUNT+1)) ;;
+    esac
+  done <<<"$PEG_OUTPUT"
+  if [ "$PEG_STATUS" -ne 0 ] && [ "$PEG_PROBLEM_COUNT" -eq 0 ]; then
+    PROBLEMS+=("planning-exception: factory-planning-exception-guard exited $PEG_STATUS with no problem line captured")
+    STATUS=1
+  fi
+fi
+
 # --- report ------------------------------------------------------------------
 say ""
 if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi

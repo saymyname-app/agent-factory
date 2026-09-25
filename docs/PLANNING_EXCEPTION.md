@@ -88,3 +88,32 @@ Not proven here: translating a live Beads Delivery Work Graph into the
 snapshot format `raise` consumes, or a live Planning Run actually authoring
 the revised draft `resolve --kind behavioral|topology` requires -- both are
 callers of this tool, not part of it.
+
+## Enforcing that raising isn't optional (af-zwhh0)
+
+Recognizing a semantic/topology surprise and actually raising a Planning
+Exception used to be two separate, disconnected steps: B12 (af-4a44k) hit
+exactly this surprise, its own worker's closing note said as much, but
+`bin/planning-exception raise` was never invoked -- the Mayor separately
+created an ad-hoc, self-authorized redecomposition bead instead (AR-003's
+"second decomposition authority in disguise"). Two pieces close that gap:
+
+- `bin/deliver-close --outcome blocked|abandoned` accepts an optional
+  `--classification repair|semantic|topology`. `repair` writes
+  `gc.blocked_classification` and closes as before. `semantic`/`topology`
+  requires `--planning-exception-id <decision-id>` naming the decision an
+  earlier `raise` actually produced for this bead -- without it the close is
+  refused outright, before any Beads write.
+- `bin/factory-planning-exception-guard` (wired into `factory-guard`) is the
+  detection net for everything that bypasses that door: a bead closed
+  `blocked`/`abandoned` with `gc.blocked_classification` semantic/topology
+  and no `gc.planning_exception_id` is flagged once and the Mayor paged once,
+  never auto-repaired. It also flags a bead carrying
+  `gc.redecomposes=<bead-id>` (a bead that exists to redesign or re-scope
+  that bead's blocked work) unless the target already has an open Planning
+  Exception, or `gc.authorized_by` names a real human decision -- not the
+  target bead's own id acting as its own authority.
+
+See `tests/factory-planning-exception-guard-test.sh` and the
+`--classification`/`--planning-exception-id` cases in
+`tests/deliver-close-test.sh` for the regression proof.

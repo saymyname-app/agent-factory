@@ -118,6 +118,44 @@ call=$(<"$CALL_LOG")
 [[ $call == *"gc.work_outcome=blocked"* ]] || fail_test "--outcome blocked missing gc.work_outcome"
 [[ $call == *"Blocked: waiting on X"* ]] || fail_test "--outcome blocked did not carry --reason through"
 
+# af-zwhh0: --classification repair on a bounded technical repair closes as
+# before, with no Planning Exception required.
+TESTS_RUN=$((TESTS_RUN + 1))
+run merged af-work --outcome blocked --classification repair \
+  --reason "Blocked: waiting on X" >/dev/null \
+  || fail_test "--outcome blocked --classification repair should close successfully"
+call=$(<"$CALL_LOG")
+[[ $call == *"gc.blocked_classification=repair"* ]] \
+  || fail_test "--classification repair missing gc.blocked_classification"
+[[ $call != *"gc.planning_exception_id"* ]] \
+  || fail_test "--classification repair must not write gc.planning_exception_id"
+
+# af-zwhh0: a semantic/topology surprise must name the Planning Exception
+# decision that was actually raised for it -- refused outright otherwise,
+# before any Beads write (ADR-0028; the af-4a44k shape this closes).
+assert_refused merged "requires --planning-exception-id" \
+  af-work --outcome blocked --classification semantic --reason "Blocked: topology surprise"
+assert_refused merged "requires --planning-exception-id" \
+  af-work --outcome abandoned --classification topology --reason "Blocked: semantic surprise"
+assert_refused merged "--classification must be one of" \
+  af-work --outcome blocked --classification bogus
+assert_refused merged "--classification/--planning-exception-id only apply to --outcome blocked|abandoned" \
+  af-work --outcome shipped --commit cafef00d --branch do-work/af-work --classification repair
+assert_refused merged "--classification/--planning-exception-id only apply to --outcome blocked|abandoned" \
+  af-work --outcome no-op --planning-exception-id pd-1
+assert_refused merged "--planning-exception-id requires --classification" \
+  af-work --outcome blocked --planning-exception-id pd-1
+
+TESTS_RUN=$((TESTS_RUN + 1))
+run merged af-work --outcome blocked --classification semantic --planning-exception-id pd-1 \
+  --reason "Blocked: topology surprise" >/dev/null \
+  || fail_test "--classification semantic with --planning-exception-id should close successfully"
+call=$(<"$CALL_LOG")
+[[ $call == *"gc.blocked_classification=semantic"* ]] \
+  || fail_test "--classification semantic missing gc.blocked_classification"
+[[ $call == *"gc.planning_exception_id=pd-1"* ]] \
+  || fail_test "--classification semantic with a decision id missing gc.planning_exception_id"
+
 assert_refused merged "--outcome shipped requires --commit" af-work --outcome shipped
 assert_refused merged "--outcome must be one of" af-work --outcome bogus
 assert_refused merged "--outcome cannot be combined with --repo/--pr" \
