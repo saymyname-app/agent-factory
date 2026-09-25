@@ -51,6 +51,10 @@ and refused an automated N-way merge. This build's requirements are approved
 and covered, but the result is unmerged. A human or the Mayor must pick the
 canonical file set and land it via PR. Do not auto-merge or auto-PR (af-1c3yy)."
   --json | jq -r '.id // .[0].id')
+if [ -z "$FOLLOWUP_ID" ] || [ "$FOLLOWUP_ID" = "null" ]; then
+  echo "publish: gc bd create for the de-duplication follow-up bead failed or returned no usable id" >&2
+  exit 1
+fi
 bd update "<workflow-root-id>" --set-metadata "gc.publish_followup_bead_id=$FOLLOWUP_ID"
 ```
 
