@@ -5,9 +5,10 @@
 # is CONFLICTING or never ran CI, and a molecule/workflow bead that closed
 # CLOSED with a non-pass gc.outcome. It must also flag a broken `gh auth`
 # (Incident 2026-09-18, af-539b0) as one shared bead, a high rolling-24h
-# BLOCKED_STALLED count (observability audit finding C3, 2026-09-18), and
-# re-nudge about a still-open liveness defect. Every page is throttled
-# (never every run) and
+# BLOCKED_STALLED count (observability audit finding C3, 2026-09-18),
+# aggregated control-step quarantines grouped by (rig, failure_reason)
+# (af-uxz57: 126 quarantines over 8 days, zero signal), and re-nudge about a
+# still-open liveness defect. Every page is throttled (never every run) and
 # --check-only must mutate nothing. gc and gh are stubs on PATH here; the
 # watchdog must never reach a live store or GitHub from a test.
 
@@ -28,6 +29,9 @@ printf '[workspace]\nprovider = "claude"\n' > "$TMP/city/city.toml"
 GATES="$TMP/gates.json";         printf '[]' > "$GATES"
 PRS="$TMP/prs.json";             printf '[]' > "$PRS"
 WORKFLOWS="$TMP/workflows.json"; printf '[]' > "$WORKFLOWS"
+QUARANTINE="$TMP/quarantine.json"; printf '[]' > "$QUARANTINE"
+RIG_LIST="$TMP/rigs.json"
+jq -n --arg path "$TMP/city" '{"rigs":[{"name":"saymyname-backend","path":$path,"hq":false}]}' > "$RIG_LIST"
 EVENTS="$TMP/events.jsonl";       : > "$EVENTS"
 COORD="$TMP/coord.json";         printf '[{"id":"af-1vr4","metadata":{}}]' > "$COORD"
 GH_AUTH_RC="$TMP/gh-auth-rc";   printf '0' > "$GH_AUTH_RC"
@@ -46,8 +50,11 @@ case "\$1 \$2" in
   "bd gate")
     [[ "\$3" == list ]] && { cat "$GATES"; exit 0; }
     ;;
+  "rig list")
+    cat "$RIG_LIST"; exit 0 ;;
   "bd list")
     if [[ "\$*" == *"gc.kind=workflow"* ]]; then cat "$WORKFLOWS"; exit 0; fi
+    if [[ "\$*" == *"--label gc:control-quarantined"* ]]; then cat "$QUARANTINE"; exit 0; fi
     if [[ "\$*" == *"--title-contains"* ]]; then
       needle=""
       argv=("\$@")
@@ -356,4 +363,44 @@ out=$(watchdog)
 grep -q "sentinel ticks —" <<<"$out" && fail "a recovered sentinel must not remain reported"
 grep -q -- '--status=closed' "$CALLS" || fail "sentinel recovery should auto-resolve the slow-streak bead"
 
-printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, broken gh auth, high stall frequency, slow sentinel streaks, and open liveness defects, all throttled and silent under --check-only\n'
+# 12. control-step quarantines are aggregated by (rig, failure_reason), paged
+#     once as a group -- not once per bead (af-uxz57: 126 quarantines, zero
+#     signal) -- throttled on re-run, and auto-resolve once the group clears.
+jq -n --arg t "$(iso $((NOW - 3000)))" '
+  [range(0;3) | {
+    "id": ("smb-q" + (. | tostring)),
+    "metadata": {
+      "gc.control_quarantined": true,
+      "gc.control_quarantined_at": $t,
+      "gc.failure_reason": "control_dispatch_error",
+      "gc.controller_error": "resolving gate condition path: lstat .../.gc/scripts: no such file or directory"
+    }
+  }]' > "$QUARANTINE"
+reset_logs
+out=$(watchdog)
+grep -q "control quarantine — 3 control step(s) quarantined in saymyname-backend with failure_reason=control_dispatch_error" <<<"$out" \
+  || { echo "$out" >&2; fail "control quarantine group not reported"; }
+[ "$(creates)" = "1" ] || fail "a control-quarantine group should be filed exactly once, not once per bead"
+[ "$(mails)" = "1" ] || fail "a control-quarantine group should be paged exactly once"
+
+# ...re-run while still active must not duplicate the bead, and must be throttled.
+reset_logs
+out=$(watchdog)
+grep -q "control quarantine —" <<<"$out" || fail "the control-quarantine group should still be reported while active"
+[ "$(creates)" = "0" ] || fail "a control-quarantine bead must not be filed twice"
+[ "$(mails)" = "0" ] || fail "an immediate control-quarantine re-run must be throttled, not re-mailed"
+
+# ...--check-only reports but mutates nothing.
+reset_logs
+out=$(watchdog --check-only)
+grep -q "control quarantine —" <<<"$out" || fail "--check-only should still report the control-quarantine group"
+[ "$(mails)" = "0" ] || fail "--check-only must never send mail for control quarantine"
+
+# ...recovery (no new quarantine in the group) auto-resolves the bead.
+printf '[]' > "$QUARANTINE"
+reset_logs
+out=$(watchdog)
+grep -q "control quarantine —" <<<"$out" && fail "a recovered control-quarantine group must not still be reported as a problem"
+grep -q -- '--status=closed' "$CALLS" || fail "control-quarantine recovery should auto-resolve the bead"
+
+printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, broken gh auth, high stall frequency, slow sentinel streaks, aggregated control-step quarantines, and open liveness defects, all throttled and silent under --check-only\n'

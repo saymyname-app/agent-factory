@@ -27,6 +27,13 @@ failure behind a CLOSED status":
   sentinel-ticks  three consecutive mayor-campaign order runs at or near the
              hard timeout mean the wake loop is being killed under load, even
              when each dispatch wrapper later looks routine (af-v0w20).
+  quarantine  a control step quarantined (gc:control-quarantined,
+             gc.failure_reason=<reason>) reads as a normal per-step failure
+             unless something aggregates it -- 126 quarantines (backend 67,
+             frontend 59) over 8 days with the same failure_reason raised zero
+             signal until a human review looked (af-uxz57, af-1maov). Groups
+             by (rig, failure_reason) over a rolling window so one root cause
+             pages once, not once per bead.
 
 Each assessor is a pure function over already-fetched JSON, so it is
 unit-testable without gc/gh. bin/factory-watchdog does the fetching, paging,
@@ -58,6 +65,7 @@ STALL_THRESHOLD_DEFAULT = 5
 SENTINEL_SLOW_SECONDS_DEFAULT = 45
 SENTINEL_SLOW_STREAK_DEFAULT = 3
 SENTINEL_ORDER_NAME = "mayor-campaign"
+QUARANTINE_WINDOW_HOURS_DEFAULT = 24
 
 
 def _epoch(value: Any) -> float | None:
@@ -343,6 +351,51 @@ def assess_workflows(beads: Iterable[dict[str, Any]]) -> list[tuple[str, str, st
     return out
 
 
+def assess_quarantine(
+    beads: Iterable[dict[str, Any]],
+    rig: str,
+    now: float,
+    window_hours: int = QUARANTINE_WINDOW_HOURS_DEFAULT,
+) -> list[tuple[str, str, str]]:
+    """Group one rig's control-quarantined beads by failure_reason over a
+    rolling window -> one verdict per group.
+
+    af-uxz57: 67 backend + 59 frontend control-step beads quarantined
+    (gc:control-quarantined, gc.failure_reason=control_dispatch_error) over
+    8 days raised zero signal -- alerting per bead would have been 126 pages
+    for one root cause. This groups by (rig, failure_reason) instead, keyed
+    on gc.control_quarantined_at so the group clears itself the moment
+    nothing new lands in the window; bin/factory-watchdog re-derives "still
+    active" from the same query every tick, exactly like
+    stall-frequency/gh-auth do.
+    """
+    cutoff = now - window_hours * 3600
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for bead in beads:
+        metadata = bead.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            continue
+        if str(metadata.get("gc.control_quarantined") or "").strip().lower() != "true":
+            continue
+        quarantined_at = _epoch(metadata.get("gc.control_quarantined_at"))
+        if quarantined_at is None or quarantined_at < cutoff:
+            continue
+        reason = str(metadata.get("gc.failure_reason") or "unknown")
+        groups.setdefault(reason, []).append(bead)
+    out = []
+    for reason, items in groups.items():
+        items.sort(key=lambda b: _epoch((b.get("metadata") or {}).get("gc.control_quarantined_at")) or 0)
+        first_metadata = items[0].get("metadata") or {}
+        first_error = _truncate(first_metadata.get("gc.controller_error") or "")
+        count = len(items)
+        message = (
+            f"{count} control step(s) quarantined in {rig} with failure_reason={reason} "
+            f"in the last {window_hours}h -- first error: {first_error}"
+        )
+        out.append((reason, "control_quarantined", message))
+    return out
+
+
 _ASSESSORS = {
     "gates": (assess_gates, GATE_AGE_MINUTES_DEFAULT, "FACTORY_WATCHDOG_GATE_MINUTES"),
     "prs": (assess_prs, PR_STUCK_MINUTES_DEFAULT, "FACTORY_WATCHDOG_PR_MINUTES"),
@@ -500,6 +553,33 @@ def _cli_sentinel_ticks(argv: list[str]) -> int:
     return 0
 
 
+def _cli_quarantine(argv: list[str]) -> int:
+    if len(argv) != 2:
+        print(
+            "usage: factory_watchdog.py quarantine <rig>  "
+            "(reads `gc bd list --label gc:control-quarantined --json` on stdin)",
+            file=sys.stderr,
+        )
+        return 2
+    rig = argv[1]
+    raw = sys.stdin.read()
+    try:
+        items = json.loads(raw) if raw.strip() else []
+    except json.JSONDecodeError:
+        print("quarantine: stdin is not valid JSON", file=sys.stderr)
+        return 2
+    if not isinstance(items, list):
+        items = [items] if isinstance(items, dict) else []
+    now = float(os.environ.get("FACTORY_GUARD_NOW") or time.time())
+    window_hours = int(
+        os.environ.get("FACTORY_WATCHDOG_QUARANTINE_WINDOW_HOURS")
+        or QUARANTINE_WINDOW_HOURS_DEFAULT
+    )
+    for reason, code, message in assess_quarantine(items, rig, now, window_hours):
+        print(f"{reason}\t{code}\t{message}")
+    return 0
+
+
 def _cli_merge_signals(argv: list[str]) -> int:
     if len(argv) != 3:
         print(
@@ -530,12 +610,15 @@ def main() -> int:
         return _cli_stall_frequency(sys.argv[1:])
     if len(sys.argv) >= 2 and sys.argv[1] == "sentinel-ticks":
         return _cli_sentinel_ticks(sys.argv[1:])
+    if len(sys.argv) >= 2 and sys.argv[1] == "quarantine":
+        return _cli_quarantine(sys.argv[1:])
     if len(sys.argv) != 2 or sys.argv[1] not in ("gates", "prs", "workflows"):
         print(
             "usage: factory_watchdog.py <gates|prs|workflows>  (reads JSON array on stdin)\n"
             "       factory_watchdog.py gh-auth <returncode>  (reads `gh auth status` output on stdin)\n"
             "       factory_watchdog.py stall-frequency  (reads continuity history \"history\" array on stdin)\n"
             "       factory_watchdog.py sentinel-ticks  (reads gc events JSON Lines on stdin)\n"
+            "       factory_watchdog.py quarantine <rig>  (reads gc:control-quarantined bd list --json on stdin)\n"
             "       factory_watchdog.py merge-signals <path> <source>  (reads JSON array on stdin)",
             file=sys.stderr,
         )

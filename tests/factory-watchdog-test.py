@@ -15,6 +15,7 @@ from factory_watchdog import (  # noqa: E402
     assess_gate,
     assess_gh_auth,
     assess_pr,
+    assess_quarantine,
     assess_sentinel_tick_streak,
     assess_stall_frequency,
     assess_workflow,
@@ -267,6 +268,71 @@ class StallFrequencyRules(unittest.TestCase):
         self.assertIsNotNone(assess_stall_frequency(history, NOW, threshold_count=1))
 
 
+def _quarantined_bead(bead_id, reason, quarantined_at, error="controller error"):
+    return {
+        "id": bead_id,
+        "metadata": {
+            "gc.control_quarantined": True,
+            "gc.control_quarantined_at": quarantined_at,
+            "gc.failure_reason": reason,
+            "gc.controller_error": error,
+        },
+    }
+
+
+class QuarantineRules(unittest.TestCase):
+    """af-uxz57: 126 gc:control-quarantined beads with the same failure_reason
+    over 8 days raised zero signal. assess_quarantine groups by (rig,
+    failure_reason) over a rolling window instead of alerting per bead.
+    """
+
+    def test_a_single_quarantine_in_window_is_flagged(self):
+        beads = [_quarantined_bead("smb-1", "control_dispatch_error", "2026-09-16T10:00:00Z")]
+        verdicts = assess_quarantine(beads, "saymyname-backend", NOW)
+        self.assertEqual(1, len(verdicts))
+        reason, code, message = verdicts[0]
+        self.assertEqual("control_dispatch_error", reason)
+        self.assertEqual("control_quarantined", code)
+        self.assertIn("1 control step(s)", message)
+        self.assertIn("saymyname-backend", message)
+
+    def test_a_non_quarantined_bead_is_ignored(self):
+        beads = [{"id": "smb-1", "metadata": {"gc.failure_reason": "control_dispatch_error"}}]
+        self.assertEqual([], assess_quarantine(beads, "saymyname-backend", NOW))
+
+    def test_a_quarantine_outside_the_window_is_not_counted(self):
+        beads = [_quarantined_bead("smb-1", "control_dispatch_error", "2026-09-01T00:00:00Z")]
+        self.assertEqual([], assess_quarantine(beads, "saymyname-backend", NOW, window_hours=24))
+
+    def test_different_failure_reasons_produce_separate_groups(self):
+        beads = [
+            _quarantined_bead("smb-1", "control_dispatch_error", "2026-09-16T10:00:00Z"),
+            _quarantined_bead("smb-2", "timeout", "2026-09-16T10:05:00Z"),
+        ]
+        verdicts = assess_quarantine(beads, "saymyname-backend", NOW)
+        self.assertEqual({"control_dispatch_error", "timeout"}, {v[0] for v in verdicts})
+
+    def test_message_names_the_first_controller_error_by_time_not_input_order(self):
+        beads = [
+            _quarantined_bead("smb-2", "control_dispatch_error", "2026-09-16T10:20:00Z", error="second error"),
+            _quarantined_bead("smb-1", "control_dispatch_error", "2026-09-16T10:00:00Z", error="first error"),
+        ]
+        verdicts = assess_quarantine(beads, "saymyname-backend", NOW)
+        self.assertEqual(1, len(verdicts))
+        self.assertIn("first error", verdicts[0][2])
+        self.assertNotIn("second error", verdicts[0][2])
+
+    def test_67_in_8_days_pattern_produces_one_alert_not_67(self):
+        beads = [
+            _quarantined_bead(f"smb-{i}", "control_dispatch_error", "2026-09-16T09:00:00Z",
+                               error="resolving gate condition path: lstat .../.gc/scripts: no such file or directory")
+            for i in range(67)
+        ]
+        verdicts = assess_quarantine(beads, "saymyname-backend", NOW)
+        self.assertEqual(1, len(verdicts))
+        self.assertIn("67 control step(s)", verdicts[0][2])
+
+
 class MergeSignals(unittest.TestCase):
     """factory-watchdog-signals.json has three independently-scheduled writers
     (factory-watchdog, on-order-failed, on-session-stranded -- af-u61xq,
@@ -416,6 +482,36 @@ class Cli(unittest.TestCase):
         lines = self._run("sentinel-ticks", payload)
         self.assertEqual(1, len(lines))
         self.assertTrue(lines[0].startswith("sentinel_tick_slow\t"))
+
+    def test_quarantine_cli_is_silent_when_nothing_in_window(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "lib" / "factory_watchdog.py"), "quarantine", "saymyname-backend"],
+            input="[]", capture_output=True, text=True,
+            env={**os.environ, "FACTORY_GUARD_NOW": str(NOW)},
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("", result.stdout.strip())
+
+    def test_quarantine_cli_prints_one_line_per_group(self):
+        beads = [
+            {"id": f"smb-{i}", "metadata": {
+                "gc.control_quarantined": True,
+                "gc.control_quarantined_at": "2026-09-16T09:00:00Z",
+                "gc.failure_reason": "control_dispatch_error",
+                "gc.controller_error": "lstat .../.gc/scripts: no such file or directory",
+            }}
+            for i in range(67)
+        ]
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "lib" / "factory_watchdog.py"), "quarantine", "saymyname-backend"],
+            input=json.dumps(beads), capture_output=True, text=True,
+            env={**os.environ, "FACTORY_GUARD_NOW": str(NOW)},
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        lines = [line for line in result.stdout.strip().split("\n") if line]
+        self.assertEqual(1, len(lines))
+        self.assertTrue(lines[0].startswith("control_dispatch_error\tcontrol_quarantined\t"))
+        self.assertIn("67 control step(s)", lines[0])
 
     def test_merge_signals_subcommand_round_trips_through_the_real_cli(self):
         with tempfile.TemporaryDirectory() as tmp:
