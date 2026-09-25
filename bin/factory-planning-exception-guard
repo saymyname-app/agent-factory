@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# factory-planning-exception-guard — detects a recognized semantic/topology
+# surprise that never actually raised a Planning Exception, and a
+# redecomposition of already-blocked work that dispatches without one
+# (af-zwhh0).
+#
+# B08 (af-oun2u) built `bin/planning-exception` (ADR-0028) exactly so that a
+# delivery worker that meets a question about approved intent, behavior, or
+# work topology never redesigns the graph itself -- it raises a Planning
+# Exception back to its originating Planning Run. docs/PLANNING_EXCEPTION.md
+# and docs/ADAPTATION_REGISTER.md AR-003 both warn against a second, ad-hoc
+# decomposition authority appearing alongside it.
+#
+# B12 (af-4a44k) hit exactly that surprise: its own worker's closing note said
+# "per the formula's own contract this is a topology/semantic gap needing a
+# Planning Exception, correctly NOT patched unilaterally by the worker" -- but
+# `bin/planning-exception raise` was never actually invoked, and the Mayor
+# separately created an ad-hoc redecomposition bead self-authorized via
+# `gc.authorized_by` naming the blocked bead's own id (not a human decision or
+# a raised exception). No damage resulted -- the ad-hoc plan happened to
+# converge with the real, PO/Benjamin-authorized redecomposition -- but that
+# was luck: two uncoordinated redecompositions of the same blocked ticket ran
+# at once, neither able to see the other.
+#
+# This guard closes that gap deterministically, two ways:
+#
+#   1. blocked-classification without a raised exception. A bead closed
+#      `gc.work_outcome=blocked|abandoned` with `gc.blocked_classification`
+#      set to `semantic` or `topology` (bin/deliver-close's --classification,
+#      or a raw `gc bd update` bypassing that door) but no
+#      `gc.planning_exception_id` recorded is exactly the situation
+#      recognized-but-never-raised. Flagged once (gc.planning_exception_guard_
+#      flagged_at) and the Mayor paged once; never auto-repaired -- only a
+#      human or the Mayor can decide whether to raise the exception now or
+#      the classification was wrong.
+#
+#   2. unauthorized redecomposition dispatch. A bead carries
+#      `gc.redecomposes=<bead-id>` when it exists to redesign or re-scope
+#      that bead's already-blocked work (however named -- "re-decomposition",
+#      a superseding ticket, etc.). It is fine to dispatch only once the
+#      target bead has an open/resolved Planning Exception
+#      (`gc.planning_exception_id` set) or a human has explicitly authorized
+#      it via `gc.authorized_by` naming something other than the target
+#      bead's own id (a real name or conversation reference, never the
+#      blocked bead acting as its own authority). Anything else is flagged
+#      once and the Mayor paged once.
+#
+# --check-only reports without writing or paging anything.
+#
+# Usage: factory-planning-exception-guard [--check-only]
+set -uo pipefail
+
+PROGRAM_NAME="factory-planning-exception-guard"
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+GC_BIN="${GC_BIN:-gc}"
+BD_BIN="${BD_BIN:-bd}"
+CHECK_ONLY=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check-only) CHECK_ONLY=1 ;;
+    -h|--help)
+      sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "$PROGRAM_NAME: unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || { echo "$PROGRAM_NAME: required command unavailable: $1" >&2; exit 2; }
+}
+require_command "$GC_BIN"
+require_command "$BD_BIN"
+require_command jq
+
+PROBLEMS=(); ACTIONS=(); STATUS=0
+UNRAISED=0; UNAUTHORIZED=0; CHECKED=0
+say()  { printf '%s\n' "$*"; }
+bad()  { PROBLEMS+=("$1"); STATUS=1; }
+did()  { ACTIONS+=("$1"); say "  REPAIRED: $1"; }
+now()  { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+page_mayor_unraised_once() {  # id summary
+  local id=$1 summary=$2
+  (cd "$ROOT" && "$GC_BIN" mail send mayor --notify \
+    -s "Planning Exception never raised: $id" \
+    -m "ACTION: factory-planning-exception-guard detected $id was blocked-closed as a semantic/topology surprise with no Planning Exception raised
+STATE: $summary
+EVIDENCE: gc bd show $id
+NEXT: decide whether to run bin/planning-exception raise for $id now, or correct its gc.blocked_classification if it was actually a bounded repair" \
+    >/dev/null 2>&1)
+}
+
+page_mayor_unauthorized_once() {  # id target summary
+  local id=$1 target=$2 summary=$3
+  (cd "$ROOT" && "$GC_BIN" mail send mayor --notify \
+    -s "Unauthorized redecomposition dispatch: $id" \
+    -m "ACTION: factory-planning-exception-guard detected $id redecomposes $target without an open Planning Exception or real human authorization
+STATE: $summary
+EVIDENCE: gc bd show $id; gc bd show $target
+NEXT: raise a Planning Exception for $target via bin/planning-exception, or set $id's gc.authorized_by to a real human decision, before dispatching $id" \
+    >/dev/null 2>&1)
+}
+
+# --- 1. blocked-classification without a raised exception --------------------
+closed_beads=$(cd "$ROOT" && "$GC_BIN" bd list --all --status closed --limit 0 --json 2>/dev/null)
+jq -e . >/dev/null 2>&1 <<<"$closed_beads" || closed_beads='[]'
+
+unraised_rows=$(jq -r '
+  .[] |
+  select(.metadata["gc.work_outcome"] == "blocked" or .metadata["gc.work_outcome"] == "abandoned") |
+  select(.metadata["gc.blocked_classification"] == "semantic" or .metadata["gc.blocked_classification"] == "topology") |
+  select((.metadata["gc.planning_exception_id"] // "") == "") |
+  [
+    .id, .metadata["gc.blocked_classification"],
+    (.metadata["gc.planning_exception_guard_flagged_at"] // "")
+  ] | @tsv
+' <<<"$closed_beads")
+
+while IFS=$'\t' read -r id classification flagged_at; do
+  [ -z "$id" ] && continue
+  UNRAISED=$((UNRAISED + 1))
+  if [ -n "$flagged_at" ]; then
+    say "  · $id still unraised ($classification, no gc.planning_exception_id) — already flagged, awaiting a decision"
+    bad "$id blocked-closed as $classification with no Planning Exception raised; already flagged, unresolved"
+    continue
+  fi
+  bad "$id blocked-closed as $classification with no Planning Exception raised (bin/planning-exception raise was never called)"
+  if [ "$CHECK_ONLY" != "1" ]; then
+    if (cd "$ROOT" && "$GC_BIN" bd update "$id" \
+          --set-metadata "gc.planning_exception_guard_flagged_at=$(now)" \
+          >/dev/null 2>&1); then
+      page_mayor_unraised_once "$id" "classification=$classification, no gc.planning_exception_id"
+      did "flagged $id once for the Mayor ($classification blocked-close with no Planning Exception raised) and paged it"
+    else
+      bad "$id could not be flagged — the Beads write failed"
+    fi
+  fi
+done <<<"$unraised_rows"
+
+# --- 2. unauthorized redecomposition dispatch ---------------------------------
+open_beads=$(cd "$ROOT" && "$GC_BIN" bd list --all --status open,in_progress --limit 0 --json 2>/dev/null)
+jq -e . >/dev/null 2>&1 <<<"$open_beads" || open_beads='[]'
+
+redecomp_rows=$(jq -r '
+  .[] | select((.metadata["gc.redecomposes"] // "") != "") |
+  [
+    .id, .metadata["gc.redecomposes"], (.metadata["gc.authorized_by"] // ""),
+    (.metadata["gc.planning_exception_guard_flagged_at"] // "")
+  ] | @tsv
+' <<<"$open_beads")
+
+while IFS=$'\t' read -r id target authorized_by flagged_at; do
+  [ -z "$id" ] && continue
+  CHECKED=$((CHECKED + 1))
+
+  target_pe_id=""
+  target_json=$(cd "$ROOT" && "$GC_BIN" bd show "$target" --json 2>/dev/null)
+  if jq -e . >/dev/null 2>&1 <<<"$target_json"; then
+    target_pe_id=$(jq -r '(if type=="array" then .[0] else . end).metadata["gc.planning_exception_id"] // ""' <<<"$target_json")
+  fi
+
+  # authorized if the target already has an open/resolved Planning Exception,
+  # or a human named something other than the target bead's own id.
+  [ -n "$target_pe_id" ] && continue
+  [ -n "$authorized_by" ] && [ "$authorized_by" != "$target" ] && continue
+
+  UNAUTHORIZED=$((UNAUTHORIZED + 1))
+  if [ -n "$flagged_at" ]; then
+    say "  · $id still unauthorized (redecomposes $target, authorized_by='$authorized_by') — already flagged, awaiting authorization"
+    bad "$id redecomposes $target with no Planning Exception and no real human authorization; already flagged, unresolved"
+    continue
+  fi
+  bad "$id redecomposes $target with no open Planning Exception and gc.authorized_by is $( [ -z "$authorized_by" ] && echo "unset" || echo "the target's own id -- self-authorized, not a human decision" )"
+  if [ "$CHECK_ONLY" != "1" ]; then
+    if (cd "$ROOT" && "$GC_BIN" bd update "$id" \
+          --set-metadata "gc.planning_exception_guard_flagged_at=$(now)" \
+          >/dev/null 2>&1); then
+      page_mayor_unauthorized_once "$id" "$target" "authorized_by='$authorized_by', target has no gc.planning_exception_id"
+      did "flagged $id once for the Mayor (unauthorized redecomposition of $target) and paged it"
+    else
+      bad "$id could not be flagged — the Beads write failed"
+    fi
+  fi
+done <<<"$redecomp_rows"
+
+say ""
+if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
+if [ "${#PROBLEMS[@]}" -gt 0 ]; then
+  say "UNRESOLVED ${#PROBLEMS[@]}:"; printf '  ! %s\n' "${PROBLEMS[@]}"
+elif [ "$UNRAISED" -gt 0 ] || [ "$UNAUTHORIZED" -gt 0 ]; then
+  say "healthy — $UNRAISED unraised / $UNAUTHORIZED unauthorized case(s) seen this run, all flagged"
+else
+  say "healthy — $CHECKED redecomposition bead(s) checked, no unraised or unauthorized cases"
+fi

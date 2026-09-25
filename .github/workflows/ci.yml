@@ -247,6 +247,9 @@ jobs:
       - name: Factory guard clears or flags stale gc.waiting_on
         run: bash tests/factory-waiting-guard-test.sh
 
+      - name: Factory guard flags unraised Planning Exceptions and unauthorized redecomposition
+        run: bash tests/factory-planning-exception-guard-test.sh
+
       - name: Main-landing gate blocks a broken push to main
         run: bash tests/factory-main-gate-test.sh
 
