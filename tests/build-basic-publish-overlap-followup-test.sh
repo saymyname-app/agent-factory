@@ -26,9 +26,18 @@ grep -q 'af-1c3yy' "$PUBLISH_MD" \
   || fail "publish.md does not cite the design decision (af-1c3yy) against auto-merge/auto-PR"
 
 # The fallback must not silently swap in an auto-merge/auto-PR instead of
-# filing a bead — out of scope per af-1c3yy.
-if grep -qi 'automated N-way merge' "$PUBLISH_MD" && ! grep -qi 'do not attempt' "$PUBLISH_MD"; then
-  fail "publish.md mentions an N-way merge without explicitly forbidding it"
+# filing a bead — out of scope per af-1c3yy. The prohibition must be adjacent
+# to (part of the same sentence/line-window as) the N-way-merge mention, not
+# merely present anywhere else in the file — a reworded fallback that drops
+# the prohibition next to the merge mention must fail this check even if an
+# unrelated "do not attempt X" sentence exists elsewhere.
+if grep -qi 'automated N-way merge' "$PUBLISH_MD"; then
+  MERGE_LINE=$(grep -ni 'automated N-way merge' "$PUBLISH_MD" | head -1 | cut -d: -f1)
+  WINDOW_START=$((MERGE_LINE > 2 ? MERGE_LINE - 2 : 1))
+  WINDOW_END=$((MERGE_LINE + 2))
+  WINDOW=$(sed -n "${WINDOW_START},${WINDOW_END}p" "$PUBLISH_MD")
+  printf '%s' "$WINDOW" | grep -qi 'do not attempt' \
+    || fail "publish.md mentions an N-way merge without the 'do not attempt' prohibition adjacent to it"
 fi
 
 echo "PASS: build-basic publish.md files a follow-up bead on the overlapping-worktree no-op fallback"
