@@ -131,6 +131,16 @@ Rigs and agents already exist; you almost never add one. The real flow is:
    unclaimed for ~2h this way). `factory-dispatch-guard` self-heals this
    after the fact, but do not rely on it — pass `--reassign` at dispatch
    time.
+   **Delivery work is always dispatched, never run in-session.** Any work
+   that produces files, commits, or PRs goes to a city-materialized agent
+   through a bead (`factory-work-dispatch`/`gc sling` above) — never an
+   in-session sub-agent, even one isolated in its own worktree. An
+   in-session sub-agent has no city session or bead step: it is invisible
+   to the cockpit, the sentinel, cost accounting, and the independent-review
+   flow (2026-09-21, af-zdiln/PR #177). In-session helpers stay allowed only
+   for bounded read-only investigation, inside the existing 20-minute/30-tool-
+   call cap from "Diagnosis/investigation" above — never as a substitute for
+   dispatch.
 4. **Monitor:** `gc bd list`, `gc session peek <name>`.
 
 ## Working with rig beads
