@@ -71,8 +71,9 @@ request/v1`:
 `config/planning-run-reservation.json` (`contract:
 agent-factory-planning-run-reservation/v1`) can name the one Planning Run the
 factory is currently reserving all new capacity for: `{reserved_for: "C01",
-cleared_at: null, ...}`. The file the repo ships reserves the first Planning
-Run after this cutover for **C01, Cockpit V2** (B12 AC#5). While a
+cleared_at: null, ...}`. B12 AC#5 first reserved the Planning Run after
+this cutover for **C01, Cockpit V2**; see *Ordered sequence* below for the
+shipped order. While a
 reservation's `cleared_at` is `null`:
 
 - A request whose `planning_run_target` does not equal `reserved_for` returns
@@ -86,8 +87,17 @@ reservation's `cleared_at` is `null`:
   check: it only gates the creation of a *new* Planning Run identity,
   consistent with ADR-0025's `is_scoped_delivery_bead` boundary (AC#4).
 - Missing, absent, or already-`cleared_at` reservation files are silently
-  treated as "no reservation" -- the router runs unconditionally once C01 has
-  had its turn.
+  treated as "no reservation" -- the router runs unconditionally once the
+  last reserved run has had its turn.
+- **Ordered sequence.** A reservation may carry a `next` reservation (same
+  fields). When the active target publishes, the router promotes `next` to
+  the active reservation (`cleared_at: null`, `promoted_after`,
+  `promoted_at`) instead of clearing, so a sequence is enforced one run at a
+  time. Nest `next` inside `next` for longer sequences.
+
+The shipped file follows the sequence Benjamin validated on 2026-09-25:
+`factory-operations-v2` first, then C01 (Cockpit V2), whose requirements are
+listed on its `next` entry.
 
 ## Sequencing
 
@@ -108,7 +118,7 @@ reservation's `cleared_at` is `null`:
 | A `legacy_path` request is rejected before any Planning Run identity, Spec, map, or convoy is created, with a reason naming the quarantined artifact. | `test_legacy_path_selectors_are_rejected_before_any_identity_is_created` asserts all three ADR-0027 selectors return `legacy_path_rejected` with the artifact named in `reason`, and that `spec_out` is never created. |
 | A failure at any step (session, approval, or publication) leaves no partial artifact -- re-running the same request from scratch is safe. | `test_rerunning_the_same_simple_request_from_scratch_is_safe` runs the identical request twice and asserts the second run publishes the same `ids` through exactly one underlying `create --graph` transaction (the publish door's own digest-based dedup). `test_missing_trace_returns_to_planning_and_creates_no_spec_or_convoy` and `test_wayfinding_request_with_decisions_still_open_stays_pending` prove the router never writes a Spec before it is actually synthesized/route-clear. |
 | The router calls the existing tools only through their documented CLIs; it does not duplicate their state-machine logic. | The router source (`bin/planning-run-router`) only ever shells out to `planning-run-to-spec-oracle`, `wayfinding-run`, `spec-approve` and `ticket-graph-publish` and parses their public JSON output -- it holds no Spec/map/draft validation logic of its own. |
-| At least one automated test exercises the router directly, covering the simple path, the Wayfinding path, and one `legacy_path` rejection. | `tests/planning-run-router-test.py` (11 tests): simple end-to-end, Wayfinding end-to-end, Wayfinding pending, missing-trace return-to-planning, all three `legacy_path` selectors, missing-approval stop, approved-without-a-draft stop, full-request rerun safety, and the two reservation tests below. |
+| At least one automated test exercises the router directly, covering the simple path, the Wayfinding path, and one `legacy_path` rejection. | `tests/planning-run-router-test.py` (12 tests): simple end-to-end, Wayfinding end-to-end, Wayfinding pending, missing-trace return-to-planning, all three `legacy_path` selectors, missing-approval stop, approved-without-a-draft stop, full-request rerun safety, the two reservation tests below, and `test_publishing_the_reserved_run_promotes_the_next_reservation`. |
 | A reservation blocks every new Planning Run except its named target, and clears once that target publishes (B12 AC#5). | `test_reservation_blocks_a_request_that_does_not_declare_the_reserved_target` and `test_reservation_lets_the_declared_target_through_and_then_clears` each drive one `run` call against a scratch reservation file; the second also asserts a later, unrelated request is unblocked once the reserved run has published. |
 
 ## Scope of proof
@@ -166,6 +176,6 @@ reservation's `cleared_at` is `null`:
   for, using the "router's own fixture" option that note explicitly allowed
   because the router does not live inside the `tests/fixtures/fixture-city/`
   harness.
-- **Cockpit V2 reservation.** `config/planning-run-reservation.json` ships
-  reserving the first Planning Run after this cutover for C01 (AC#5); see
-  the Reservation section above.
+- **Reservation sequence.** `config/planning-run-reservation.json` ships
+  reserving `factory-operations-v2`, then C01 (Cockpit V2, AC#5); see the
+  Reservation section above.
