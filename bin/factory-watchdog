@@ -19,7 +19,7 @@
 #   4. GH AUTH UNREACHABLE  ten scripts depend on the gh CLI (reversibility-
 #                        check, factory-guard, pr-autopilot, factory-do-work-
 #                        workspace, factory-gh-rollup, factory-delivery-guard,
-#                        deliver-close, factory-queue-guard, factory-watchdog,
+#                        deliver-close, factory-watchdog,
 #                        factory-main-gate). A stale/invalid gh token fails
 #                        every one of them silently and separately -- af-539b0
 #                        (2026-09-18): pr-autopilot ticked every 3 min with
@@ -239,7 +239,7 @@ done < <(printf '%s' "$workflows_json" | python3 "$LIB/factory_watchdog.py" work
 # af-539b0 (2026-09-18): a stale/invalid gh token fails ten gh-dependent
 # scripts silently and separately. One shared bead + one throttled mail here,
 # never one per script and never one per tick; auto-resolved on recovery.
-GH_AUTH_SCRIPTS="reversibility-check, factory-guard, pr-autopilot, factory-do-work-workspace, factory-gh-rollup, factory-delivery-guard, deliver-close, factory-queue-guard, factory-watchdog, factory-main-gate"
+GH_AUTH_SCRIPTS="reversibility-check, factory-guard, pr-autopilot, factory-do-work-workspace, factory-gh-rollup, factory-delivery-guard, deliver-close, factory-watchdog, factory-main-gate"
 GH_AUTH_BEAD_TITLE="[watchdog] gh auth unreachable"
 if command -v gh >/dev/null 2>&1; then
   gh_auth_out=$(gh auth status 2>&1); gh_auth_rc=$?

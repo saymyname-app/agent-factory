@@ -11,9 +11,10 @@ Classify the request before touching state:
 - **EXECUTE**: deliver through the Mayor and Beads workflow unless the task is explicitly bounded Factory maintenance.
 - **ADMIN**: change the host, access, secrets, production, or recovery only with explicit authority.
 
-For “where is SayMyName?”, first run `./bin/saymyname-product-status` and answer
-with CURRENT, LAST DELIVERED, NEXT, NEEDS BENJAMIN, and any real risk. Do not
-dump sessions, issues, Formula steps, or logs unless asked.
+For “where is <project>?”, read that project's own repository and the live
+Beads/GitHub state, then answer with CURRENT, LAST DELIVERED, NEXT, NEEDS
+BENJAMIN, and any real risk. Do not dump sessions, issues, Formula steps, or
+logs unless asked.
 
 For “what is the Factory doing?”, use `gc status` and the Beads/GitHub state.
 Cockpit V1 is retired to `legacy/` (untrusted); Cockpit V2 is Planning Run C01.
@@ -29,10 +30,9 @@ For a change:
 ## Codex bridge contract
 
 - Desktop Codex, CLI Codex, and Codex Remote are operator surfaces for the same local Factory.
-- `bin/product-queue` is the deferred product-candidate projection over Beads,
-  not an executable queue. A PO may manage candidates under RECORD authority;
-  only the Mayor materializes the first eligible candidate as separate executable
-  work. The Mayor remains the sole product-work orchestrator.
+- New work enters through the Planning Run flow (`bin/planning-run-router`);
+  the Mayor executes approved ticket graphs. The pre-refactor product queue is
+  retired to `legacy/`.
 - A remote/mobile session has the same authority as its request, not broader authority because the host is reachable.
 - “Full access” means the tools may be available. It never means blanket permission to mutate, publish, expose, spend, handle secrets, or perform destructive operations.
 - Follow `docs/OPERATOR_BRIDGE.md` for the human protocol and access boundaries.

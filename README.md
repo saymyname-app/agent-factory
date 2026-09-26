@@ -37,19 +37,11 @@ while BenForge and its Codex app remain available.
 The complete protocol, authority levels, and recovery checks are in
 [`docs/OPERATOR_BRIDGE.md`](docs/OPERATOR_BRIDGE.md).
 
-For a read-only SayMyName snapshot without Factory noise:
-
-```bash
-./bin/saymyname-product-status
-```
-
-The Cockpit V1 browser view and its ntfy phone push are retired to
-[`legacy/`](legacy/README.md) (untrusted); their replacement is the Cockpit V2
-Planning Run (C01).
-
-For the deterministic local product preview, use `./bin/saymyname-preview start`
-and `./bin/saymyname-preview stop`. Detailed operation and recovery procedures
-are in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+Project status lives in each project's own repository, not here. Cockpit V1,
+its ntfy push, the campaign and the SayMyName product queue, status and preview
+are retired to [`legacy/`](legacy/README.md) (untrusted); Cockpit V2 is the
+Planning Run C01. Detailed operation and recovery procedures are in
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ## Source of truth
 
