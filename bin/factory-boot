@@ -2,22 +2,18 @@
 # factory-boot — bring the Factory back after an UNPLANNED machine restart.
 #
 # On 2026-09-17 a Windows reboot brought WSL and gascity-supervisor back
-# (systemd), but not the controller or the campaign: the Factory
+# (systemd), but not the controller: the Factory
 # sat dark until a PO session replayed RUNBOOK_STOP_AND_RESTART.md §3 by hand.
 # This is that section, idempotent, for the Windows logon task to call.
 #
 # It restores what a restart breaks. It never overrides a deliberate stop:
-#   - a city suspended by an operator (`gc suspend`) stays suspended;
-#   - a campaign blocked for an `admin` or `decision` reason stays blocked.
-# Only a block the restart itself caused (durable_failure / source_failure:
-# the sentinel failing while nothing was up) is resumed.
+# a city suspended by an operator (`gc suspend`) stays suspended.
 #
 # Usage: factory-boot [--dry-run]
 set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 GC_BIN="${GC_BIN:-gc}"
-COORDINATION_BEAD="${CAMPAIGN_COORDINATION_BEAD:-af-1vr4}"
 LOG="${FACTORY_BOOT_LOG:-$ROOT/.gc/runtime/factory-boot.log}"
 LOCK="${FACTORY_BOOT_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/agent-factory-boot.lock}"
 WAIT_SECONDS="${FACTORY_BOOT_WAIT_SECONDS:-120}"
@@ -77,23 +73,6 @@ else
     [ "$(date +%s)" -ge "$deadline" ] && { say "FAILED controller did not report running within ${WAIT_SECONDS}s"; FAILED=1; break; }
     sleep 5
   done
-fi
-
-# 4. Campaign: resume only a block the restart itself caused.
-META=$(timeout 30 "$GC_BIN" bd show "$COORDINATION_BEAD" --json 2>/dev/null | jq -c '.[0].metadata // {}' 2>/dev/null || echo '{}')
-STATE=$(jq -r '."gc.campaign_state" // ""' <<<"$META")
-KIND=$(jq -r '."gc.campaign_block_kind" // ""' <<<"$META")
-if [ "$STATE" != "blocked" ]; then
-  say "OK     campaign state is '${STATE:-unknown}' — nothing to resume"
-elif [ "$KIND" = "durable_failure" ] || [ "$KIND" = "source_failure" ]; then
-  if step "campaign resume (block kind: $KIND)" ./bin/mayor-campaign resume --mayor; then
-    [ "$DRY_RUN" = "1" ] || "$GC_BIN" mail send mayor \
-      -s "[factory-boot, automatic] campaign resumed after a machine restart" \
-      -m "AUTHOR: bin/factory-boot (script, not a human decision). The campaign was blocked as '$KIND' while the machine restarted; the controller is back, so it was resumed. If the block had another cause, block it again." \
-      >>"$LOG" 2>&1 || true
-  fi
-else
-  say "SKIP   campaign is blocked for '$KIND' — a deliberate block, left as is"
 fi
 
 [ "$FAILED" = "0" ] && say "factory-boot done — healthy start" || say "factory-boot done — WITH FAILURES, run ./bin/factory-guard"

@@ -6,7 +6,7 @@ hours: provider-failover resolved it to a provider that hard-rejected every
 attempt with an error shape the detection regexes did not recognise, so the
 pool was never marked unavailable and the named session cycled
 creating -> failed-create -> creating forever. Campaign-progress liveness
-(lib/factory_liveness.py, ADR-0016 s5.3) never caught it: that check only
+(legacy/lib/factory_liveness.py, ADR-0016 s5.3) never caught it: that check only
 asks "is the campaign advancing", which is a question the Mayor cannot even
 begin to answer while it cannot boot. Those are different failure modes and
 need a different signal.
@@ -128,7 +128,47 @@ def assess_identity(
     return "info", "booting", detail + f" (within the {threshold_minutes}-min grace window)"
 
 
+# The named Mayor session sitting asleep/quarantined past this grace window is
+# paged to a human (factory-guard section 7). creating/failed-create is not in
+# this set: that streak already has its own alert (assess_identity above), and
+# a second one here would race it.
+MAYOR_PAGE_STATES = frozenset({"asleep", "quarantine", "quarantined"})
+MAYOR_PAGE_MINUTES = 10
+
+
+def mayor_page_since(
+    mayor_session: dict[str, Any] | None,
+    now: float,
+    threshold_minutes: int = MAYOR_PAGE_MINUTES,
+) -> str | None:
+    """The mayor session's `last_active`, iff it has sat asleep/quarantined
+    longer than the grace window. factory-guard dedupes paging on this value,
+    so a session that flaps back to active and down again pages again, but a
+    still-down session does not repeat."""
+    if not isinstance(mayor_session, dict):
+        return None
+    state = str(mayor_session.get("state") or "").strip()
+    if state not in MAYOR_PAGE_STATES:
+        return None
+    since = str(mayor_session.get("last_active") or "").strip()
+    at = _epoch(since)
+    if at is None or (now - at) / 60 <= threshold_minutes:
+        return None
+    return since
+
+
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--mayor-page-check":
+        # factory-guard needs a bare "since" value or nothing, not a verdict line.
+        now = float(os.environ.get("FACTORY_GUARD_NOW") or time.time())
+        try:
+            mayor_session = json.loads(os.environ.get("FACTORY_MAYOR_SESSION_JSON") or "null")
+        except json.JSONDecodeError:
+            mayor_session = None
+        since = mayor_page_since(mayor_session if isinstance(mayor_session, dict) else None, now)
+        if since:
+            print(since)
+        return 0
     now = float(os.environ.get("FACTORY_GUARD_NOW") or time.time())
     threshold = int(os.environ.get("FACTORY_SESSION_BOOT_MINUTES") or THRESHOLD_MINUTES)
 

@@ -2,7 +2,7 @@
 # factory-waiting-guard — resolves `gc.waiting_on` against the bead it names
 # (af-atyry).
 #
-# `gc.waiting_on` keeps a bead out of the idle ladder (lib/factory_campaign.py
+# `gc.waiting_on` keeps a bead out of the idle ladder (legacy/lib/factory_campaign.py
 # _LADDER_EXCLUDED_METADATA / is_ladder_bead): any non-empty value excludes
 # it, unconditionally, forever. That is correct for a free-text wait
 # ("stalled", a person) but wrong once the value names a bead ID and that

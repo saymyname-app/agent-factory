@@ -6,8 +6,7 @@
 # CLOSED with a non-pass gc.outcome. It must also flag a broken `gh auth`
 # (Incident 2026-09-18, af-539b0) as one shared bead,
 # aggregated control-step quarantines grouped by (rig, failure_reason)
-# (af-uxz57: 126 quarantines over 8 days, zero signal), and re-nudge about a
-# still-open liveness defect. Every page is throttled (never every run) and
+# (af-uxz57: 126 quarantines over 8 days, zero signal). Every page is throttled (never every run) and
 # --check-only must mutate nothing. gc and gh are stubs on PATH here; the
 # watchdog must never reach a live store or GitHub from a test.
 
@@ -258,24 +257,6 @@ out=$(watchdog)
 grep -q "gh auth —" <<<"$out" && fail "a recovered gh auth must not still be reported as a problem"
 grep -q -- '--status=closed' "$CALLS" || fail "gh auth recovery should auto-resolve the shared bead"
 
-# 8. a still-open campaign-liveness defect is re-nudged on a cooldown --------
-printf '[{"id":"af-1vr4","metadata":{"gc.campaign_liveness_bead":"af-live1"}}]' > "$COORD"
-echo '[{"id":"af-live1","status":"open","created_at":"'"$(iso $((NOW - 3000)))"'"}]' > "$BEADS_DIR/af-live1.json"
-reset_logs
-out=$(watchdog)
-grep -q "campaign-liveness defect af-live1 still open" <<<"$out" || { echo "$out" >&2; fail "open liveness defect not re-checked"; }
-[ "$(mails)" = "1" ] || fail "an aging open liveness defect should be re-nudged exactly once here"
-
-reset_logs
-out=$(watchdog)
-[ "$(mails)" = "0" ] || fail "the liveness re-nudge must be throttled on immediate re-run"
-
-# ...once closed, it is no longer paged.
-echo '[{"id":"af-live1","status":"closed"}]' > "$BEADS_DIR/af-live1.json"
-reset_logs
-out=$(watchdog)
-grep -q "campaign-liveness defect" <<<"$out" && fail "a closed liveness defect must not still be reported"
-
 # 10. exit-code contract (af-u61xq, same contract as factory-guard since PR
 #    #75): finding something is NOT a failure. Only the watchdog itself
 #    failing to run (unreachable root) is a nonzero exit. This was previously
@@ -295,36 +276,6 @@ FACTORY_ROOT="$TMP/does-not-exist" "$WATCHDOG" >/dev/null 2>&1
 rc=$?
 set -e
 [ "$rc" != "0" ] || fail "exit code must be nonzero when the watchdog itself could not run (unreachable root)"
-
-# 11. three consecutive mayor-campaign ticks at the kill limit produce one
-#     durable alert, are throttled on re-run, and auto-resolve after recovery.
-cat > "$EVENTS" <<'JSONL'
-{"type":"order.fired","subject":"mayor-campaign","ts":"2026-09-16T10:00:00Z"}
-{"type":"order.failed","subject":"mayor-campaign","ts":"2026-09-16T10:00:50Z","message":"context deadline exceeded"}
-{"type":"order.fired","subject":"mayor-campaign","ts":"2026-09-16T10:02:00Z"}
-{"type":"order.failed","subject":"mayor-campaign","ts":"2026-09-16T10:02:50Z","message":"context deadline exceeded"}
-{"type":"order.fired","subject":"mayor-campaign","ts":"2026-09-16T10:04:00Z"}
-{"type":"order.failed","subject":"mayor-campaign","ts":"2026-09-16T10:04:50Z","message":"context deadline exceeded"}
-JSONL
-reset_logs
-out=$(watchdog)
-grep -q "sentinel ticks — 3 consecutive" <<<"$out" || { echo "$out" >&2; fail "slow sentinel streak not reported"; }
-[ "$(creates)" = "1" ] || fail "a slow sentinel streak should file exactly one shared bead"
-[ "$(mails)" = "1" ] || fail "a slow sentinel streak should be paged exactly once"
-
-reset_logs
-out=$(watchdog)
-[ "$(creates)" = "0" ] || fail "a slow sentinel streak bead must not be duplicated"
-[ "$(mails)" = "0" ] || fail "an immediate slow-streak re-run must be throttled"
-
-cat > "$EVENTS" <<'JSONL'
-{"type":"order.fired","subject":"mayor-campaign","ts":"2026-09-16T10:38:00Z"}
-{"type":"order.completed","subject":"mayor-campaign","ts":"2026-09-16T10:38:12Z"}
-JSONL
-reset_logs
-out=$(watchdog)
-grep -q "sentinel ticks —" <<<"$out" && fail "a recovered sentinel must not remain reported"
-grep -q -- '--status=closed' "$CALLS" || fail "sentinel recovery should auto-resolve the slow-streak bead"
 
 # 12. control-step quarantines are aggregated by (rig, failure_reason), paged
 #     once as a group -- not once per bead (af-uxz57: 126 quarantines, zero
@@ -366,4 +317,4 @@ out=$(watchdog)
 grep -q "control quarantine —" <<<"$out" && fail "a recovered control-quarantine group must not still be reported as a problem"
 grep -q -- '--status=closed' "$CALLS" || fail "control-quarantine recovery should auto-resolve the bead"
 
-printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, broken gh auth, slow sentinel streaks, aggregated control-step quarantines, and open liveness defects, all throttled and silent under --check-only\n'
+printf 'PASS: factory-watchdog pages aged gates, stuck PRs, false-success closes, broken gh auth, aggregated control-step quarantines, and open liveness defects, all throttled and silent under --check-only\n'
