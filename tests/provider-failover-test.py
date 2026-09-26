@@ -481,24 +481,6 @@ if args[:1] in (["reload"], ["session"], ["mail"]):
 sys.exit(0)
 '''
 
-STUB_CAMPAIGN = r'''#!/usr/bin/env python3
-import json, os, sys
-d = os.environ["PF_FIXTURE"]
-with open(os.path.join(d, "campaign.log"), "a") as log:
-    log.write(" ".join(sys.argv[1:]) + "\n")
-coord = os.path.join(d, "coord.json")
-value = json.load(open(coord))
-meta = value[0]["metadata"]
-if sys.argv[1] == "block":
-    a = sys.argv
-    meta.update({"gc.campaign_state": "blocked", "gc.campaign_block_kind": a[a.index("--kind") + 1],
-                 "gc.campaign_cause": a[a.index("--cause") + 1]})
-elif sys.argv[1] == "resume":
-    meta.update({"gc.campaign_state": "active", "gc.campaign_block_kind": "", "gc.campaign_cause": ""})
-json.dump(value, open(coord, "w"))
-'''
-
-
 class EndToEnd(unittest.TestCase):
     """bin/provider-failover against a stub city: the acceptance scenario."""
 
@@ -506,7 +488,7 @@ class EndToEnd(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.d = Path(self.tmp.name)
         (self.d / "panes").mkdir()
-        for name, body in (("gc", STUB_GC), ("mayor-campaign", STUB_CAMPAIGN)):
+        for name, body in (("gc", STUB_GC),):
             path = self.d / name
             path.write_text(body, encoding="utf-8")
             path.chmod(0o755)
@@ -522,7 +504,6 @@ class EndToEnd(unittest.TestCase):
             **os.environ,
             "PF_FIXTURE": str(self.d),
             "GC_BIN": str(self.d / "gc"),
-            "CAMPAIGN_BIN": str(self.d / "mayor-campaign"),
             "PROVIDER_STATE_FILE": str(self.d / "state.json"),
             "PROVIDER_OVERLAY_FILE": str(self.d / "city.provider.toml"),
             "PROVIDER_NOW": str(NOW),
@@ -564,8 +545,6 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("restarted saymyname-backend/codex-1: codex → claude-standard", out)
         state = json.loads((self.d / "state.json").read_text(encoding="utf-8"))
         self.assertEqual("2026-09-21T05:22:00Z", state["pools"]["openai"]["until"])
-        # Work continues: the campaign is not touched.
-        self.assertEqual([], self.calls("campaign.log"))
         # A second tick with nothing new changes nothing.
         before = len(self.calls())
         self.pane("af-w1", "")
@@ -619,32 +598,6 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("auth-recovered", [h["event"] for h in
                        json.loads(self.run_tool("status", "--json", PROVIDER_NOW=str(t)).stdout)["history"]])
 
-    def test_total_exhaustion_parks_then_resumes_on_its_own(self):
-        self.pane("af-w1", CODEX_WALL)
-        self.pane("af-m", CLAUDE_WALL)
-        self.sessions([
-            {"id": "af-w1", "template": "saymyname-backend/codex", "state": "active", "provider": "codex"},
-            {"id": "af-m", "template": "mayor", "state": "active", "provider": "claude-standard"},
-        ])
-        self.run_tool("tick")
-        parked = self.calls("campaign.log")
-        self.assertEqual(1, len(parked))
-        self.assertIn("block --mayor --kind limit --owner Mayor", parked[0])
-        self.assertIn("[provider-failover]", parked[0])
-        self.assertIn("reprise automatique vers 2026-09-16T16:50:00Z", parked[0])  # earliest: claude
-        # Never a human decision: no needs_benjamin, owner is the Mayor.
-        self.assertNotIn("Benjamin", parked[0].split("--action")[0])
-        # Ticking again while still exhausted does not park twice.
-        self.run_tool("tick")
-        self.assertEqual(1, len(self.calls("campaign.log")))
-        # A minute past Claude's reset both pools are usable again: the campaign resumes by itself.
-        for sid in ("af-w1", "af-m"):
-            self.pane(sid, "")
-        later = datetime(2026, 9, 16, 16, 51, tzinfo=timezone.utc).timestamp()
-        self.run_tool("tick", PROVIDER_NOW=str(later))
-        self.assertEqual("resume --mayor", self.calls("campaign.log")[-1])
-        self.assertIn('provider = "claude-standard"', self.overlay())
-
     def test_panes_are_read_from_tmux_without_calling_gc(self):
         """gc session peek cost 8 s a call; tmux answers in milliseconds."""
         tmux = self.d / "tmux"
@@ -670,24 +623,13 @@ class EndToEnd(unittest.TestCase):
         # ...and a session tmux does not know falls back to gc.
         self.assertIn("session peek af-m", self.calls())
 
-    def test_a_healthy_tick_does_not_read_the_campaign(self):
-        """Store reads are slow under load: only decide when there is a decision."""
+    def test_a_healthy_tick_does_not_read_the_store(self):
+        """Store reads are slow under load: a tick never needs one."""
         self.run_tool("tick")
         self.assertFalse(any(c.startswith("bd show") for c in self.calls()))
         before = len(self.calls())
         self.run_tool("status", "--json")
         self.assertEqual(before, len(self.calls()), "status must not call gc")
-
-    def test_a_block_we_did_not_set_is_never_lifted(self):
-        coord = [{"id": "af-1vr4", "metadata": {
-            "gc.campaign_mode": "automatic", "gc.campaign_state": "blocked",
-            "gc.campaign_block_kind": "limit", "gc.campaign_cause": "Limite posée par le Mayor"}}]
-        (self.d / "coord.json").write_text(json.dumps(coord), encoding="utf-8")
-        # Even believing it parked something, it lifts only its own marker.
-        (self.d / "state.json").write_text(json.dumps({"parked": True}), encoding="utf-8")
-        self.run_tool("tick")
-        self.assertEqual([], self.calls("campaign.log"))
-        self.assertFalse(json.loads((self.d / "state.json").read_text())["parked"])
 
     def test_cockpit_controls_through_the_cli(self):
         result = json.loads(self.run_tool(

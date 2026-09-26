@@ -26,11 +26,8 @@
 #                        errors=3 forever on all 3 repos with zero visible
 #                        signal until a human noticed an unarmed PR.
 #   5. (STALL FREQUENCY — retired 2026-09-26 with Cockpit V1, the only writer of factory-continuity-history.json (legacy/README.md))
-#   6. SLOW SENTINEL TICKS  three consecutive mayor-campaign runs at or near
-#                        the 50s order timeout mean the wake loop is being
-#                        killed under load. The 2026-09-21 incident delivered
-#                        the same wake 14 times while these kills were not
-#                        surfaced as a sustained condition.
+#   6. (SLOW SENTINEL TICKS — retired 2026-09-26 with the campaign and its
+#                        mayor-campaign order (legacy/README.md))
 #   7. CONTROL QUARANTINE BACKLOG  a control step quarantined
 #                        (gc:control-quarantined, gc.failure_reason=<reason>)
 #                        reads as one ordinary step failure unless something
@@ -42,10 +39,6 @@
 #                        pages once per group with the count and the first
 #                        controller error, and auto-resolves once no new
 #                        quarantine lands in the window.
-#
-# It also re-nudges the Mayor about a campaign-liveness defect
-# (lib/factory_liveness.py, filed by factory-guard) that is still open and
-# aging, closing the gap between "filed" and "read".
 #
 # This is observe-and-page ONLY (ADR-0016 section 7: a local reason may never
 # produce a global stop). It never resolves a gate, merges/holds a PR, reopens
@@ -67,11 +60,7 @@ GATE_MINUTES="${FACTORY_WATCHDOG_GATE_MINUTES:-30}"
 PR_MINUTES="${FACTORY_WATCHDOG_PR_MINUTES:-30}"
 RENUDGE_MINUTES="${FACTORY_WATCHDOG_RENUDGE_MINUTES:-30}"
 WORKFLOW_LOOKBACK_HOURS="${FACTORY_WATCHDOG_WORKFLOW_LOOKBACK_HOURS:-24}"
-SENTINEL_LOOKBACK_MINUTES="${FACTORY_WATCHDOG_SENTINEL_LOOKBACK_MINUTES:-30}"
-SENTINEL_SLOW_SECONDS="${FACTORY_WATCHDOG_SENTINEL_SLOW_SECONDS:-45}"
-SENTINEL_SLOW_STREAK="${FACTORY_WATCHDOG_SENTINEL_SLOW_STREAK:-3}"
 QUARANTINE_WINDOW_HOURS="${FACTORY_WATCHDOG_QUARANTINE_WINDOW_HOURS:-24}"
-COORD="${CAMPAIGN_COORDINATION_BEAD:-af-1vr4}"
 SIGNAL_FILE="$ROOT/.gc/runtime/factory-watchdog-signals.json"
 
 while [ $# -gt 0 ]; do
@@ -307,99 +296,6 @@ NEXT: re-authenticate (gh auth login -h github.com) -- affects $GH_AUTH_SCRIPTS"
   fi
 else
   say "· gh-auth — not checked (gh unavailable)"
-fi
-
-# --- 6. consecutive mayor-campaign ticks near the hard kill limit -------------
-# af-v0w20: the controller exposes fired/failed/completed events even though
-# each dispatch wrapper later looks routine. Pair those events and surface one
-# shared, auto-resolving alert instead of letting a sustained timeout pattern
-# remain invisible.
-SENTINEL_BEAD_TITLE="[watchdog] mayor-campaign ticks near kill limit"
-if sentinel_events=$(gc events --since "${SENTINEL_LOOKBACK_MINUTES}m" 2>/dev/null); then
-  sentinel_verdict=$(printf '%s' "$sentinel_events" \
-    | FACTORY_WATCHDOG_SENTINEL_SLOW_SECONDS="$SENTINEL_SLOW_SECONDS" \
-      FACTORY_WATCHDOG_SENTINEL_SLOW_STREAK="$SENTINEL_SLOW_STREAK" \
-      python3 "$LIB/factory_watchdog.py" sentinel-ticks 2>/dev/null)
-  if [ -n "$sentinel_verdict" ]; then
-    sentinel_code=${sentinel_verdict%%$'\t'*}
-    sentinel_msg=${sentinel_verdict#*$'\t'}
-    bad "sentinel ticks — $sentinel_msg"
-    add_alert "$sentinel_code" "mayor-campaign" "$sentinel_msg"
-    if [ "$CHECK_ONLY" != "1" ]; then
-      existing=$(gc bd list --status open --title-contains "$SENTINEL_BEAD_TITLE" --json 2>/dev/null \
-        | jq -r '(.[0].id // empty)')
-      if [ -z "$existing" ]; then
-        created=$(gc bd create "$SENTINEL_BEAD_TITLE" -p 1 -t bug \
-          -d "$sentinel_msg
-
-Detected from Gas City order.fired/order.failed/order.completed events over the last ${SENTINEL_LOOKBACK_MINUTES} minutes. Observe-and-page only (ADR-0016 section 7): watchdog does not restart or block the campaign. It auto-resolves this bead once a fast completed tick breaks the streak." \
-          --set-metadata "gc.source=factory-watchdog" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
-        if [ -n "$created" ]; then
-          gc mail send mayor --notify \
-            -s "$SENTINEL_BEAD_TITLE" \
-            -m "ACTION: factory-watchdog detected consecutive mayor-campaign ticks at the order kill limit
-STATE: $sentinel_msg
-EVIDENCE: bead $created; gc events --since ${SENTINEL_LOOKBACK_MINUTES}m
-NEXT: inspect sentinel load/runtime; watchdog auto-resolves $created after a fast completed tick" \
-            >/dev/null 2>&1 \
-            && gc bd update "$created" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
-            && did "flagged slow sentinel streak as $created and notified mayor"
-        else
-          bad "could not file a bead for slow sentinel ticks"
-        fi
-      elif should_nudge "$existing" "gc.watchdog_nudged_at"; then
-        gc mail send mayor --notify \
-          -s "$SENTINEL_BEAD_TITLE (still slow)" \
-          -m "ACTION: factory-watchdog re-checked mayor-campaign tick duration
-STATE: $sentinel_msg
-EVIDENCE: bead $existing; gc events --since ${SENTINEL_LOOKBACK_MINUTES}m
-NEXT: inspect sentinel load/runtime" \
-          >/dev/null 2>&1 \
-          && gc bd update "$existing" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
-          && did "re-nudged mayor about slow sentinel ticks ($existing)"
-      fi
-    fi
-  elif [ "$CHECK_ONLY" != "1" ]; then
-    existing=$(gc bd list --status open --title-contains "$SENTINEL_BEAD_TITLE" --json 2>/dev/null \
-      | jq -r '(.[0].id // empty)')
-    if [ -n "$existing" ]; then
-      gc bd update "$existing" --set-metadata gc.outcome=pass --status=closed \
-        --notes "mayor-campaign completed a fast tick; slow streak auto-resolved by factory-watchdog" >/dev/null 2>&1 \
-        && did "auto-resolved recovered slow-sentinel bead $existing"
-    fi
-  fi
-else
-  say "· sentinel ticks — not checked (gc events unavailable)"
-fi
-
-# --- 7. re-nudge on a still-open, aging campaign-liveness defect --------------
-# Extends the existing machinery (factory-guard files this bead; see its
-# "campaign liveness" check) rather than duplicating detection.
-if [ -f "$LIB/factory_liveness.py" ]; then
-  liveness_bead=$(gc bd show "$COORD" --json 2>/dev/null \
-    | jq -r '(.[0].metadata["gc.campaign_liveness_bead"] // empty)')
-  if [ -n "$liveness_bead" ]; then
-    liveness_status=$(gc bd show "$liveness_bead" --json 2>/dev/null | jq -r '(.[0].status // empty)')
-    if [ "$liveness_status" != "closed" ] && [ "$liveness_status" != "" ]; then
-      created_at=$(gc bd show "$liveness_bead" --json 2>/dev/null | jq -r '(.[0].created_at // empty)')
-      age_min=0
-      [ -n "$created_at" ] && age_min=$(( (($(now_epoch) - $(epoch_of "$created_at"))) / 60 ))
-      msg="campaign-liveness defect $liveness_bead still open after ${age_min} min"
-      bad "$msg"
-      add_alert "liveness_still_open" "$liveness_bead" "$msg"
-      if [ "$CHECK_ONLY" != "1" ] && should_nudge "$liveness_bead" "gc.watchdog_nudged_at"; then
-        gc mail send mayor --notify \
-          -s "Liveness defect still open: $liveness_bead" \
-          -m "ACTION: factory-watchdog re-checked the campaign-liveness defect factory-guard filed
-STATE: $msg
-EVIDENCE: gc bd show $liveness_bead
-NEXT: diagnose why the campaign is not advancing, then close $liveness_bead with the cause" \
-          >/dev/null 2>&1 \
-          && gc bd update "$liveness_bead" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
-          && did "re-nudged mayor about open liveness defect $liveness_bead"
-      fi
-    fi
-  fi
 fi
 
 # --- 8. aggregated control-quarantine backlog (rig, failure_reason) ---------

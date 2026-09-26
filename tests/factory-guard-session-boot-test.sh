@@ -39,16 +39,19 @@ EVENTS="$TMP/events.ndjson"; : > "$EVENTS"
 CALLS="$TMP/calls.log"; : > "$CALLS"
 mkdir -p "$TMP/beads" "$TMP/bin"
 
-# No coordination bead in this fixture: liveness (section 7) reports
-# "not checked" via its own store-read path, which is fine -- this test only
-# exercises the independent session-boot section.
+# The coordination bead starts empty; the stub creates it on the first
+# metadata write (dedup pointers of sections 7 and 7b).
 echo '[]' > "$TMP/coord.json"
+SESSIONS="$TMP/sessions.json"; echo '{"sessions":[]}' > "$SESSIONS"
 
 cat > "$TMP/bin/gc" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CALLS"
 if [[ \$1 == events ]]; then
   cat "$EVENTS"; exit 0
+fi
+if [[ \$1 == session && \$2 == list ]]; then
+  cat "$SESSIONS"; exit 0
 fi
 if [[ \$1 == bd && \$2 == show && \$3 == af-1vr4 ]]; then
   cat "$TMP/coord.json"; exit 0
@@ -146,6 +149,23 @@ grep -q "mayor stuck in 'creating' for 30 min" <<<"$out" \
 session_event mayor creating 1200
 guard --check-only >/dev/null
 grep -q '^bd create' "$CALLS" && fail "--check-only must never create a bead"
+
+# 8. the Mayor session itself, quarantined past the grace window, is paged to
+#    a human once per streak (section 7); inside the window, or with
+#    --check-only, it is not ------------------------------------------------
+pages() { grep -c '^mail send human --notify -s Mayor session down' "$CALLS" || true; }
+: > "$EVENTS"; : > "$CALLS"
+echo '{"sessions":[{"id":"af-m1","alias":"mayor","state":"quarantined","last_active":"'"$(iso $((NOW - 5 * 60)))"'"}]}' > "$SESSIONS"
+guard >/dev/null
+[ "$(pages)" = "0" ] || fail "a Mayor session inside the grace window was paged"
+echo '{"sessions":[{"id":"af-m1","alias":"mayor","state":"quarantined","last_active":"'"$(iso $((NOW - 40 * 60)))"'"}]}' > "$SESSIONS"
+guard --check-only >/dev/null
+[ "$(pages)" = "0" ] || fail "--check-only paged the Mayor session"
+guard >/dev/null
+[ "$(pages)" = "1" ] || { cat "$CALLS" >&2; fail "a quarantined Mayor session was not paged exactly once"; }
+guard >/dev/null
+[ "$(pages)" = "1" ] || fail "the same down streak paged a second time"
+echo '{"sessions":[]}' > "$SESSIONS"
 
 # 7. outside a city root the check stands down -------------------------------
 mkdir -p "$TMP/plain" && git -C "$TMP/plain" init -q

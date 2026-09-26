@@ -4,6 +4,7 @@
 # docs/OPERATIONS.md, docs/PRODUCT_QUEUE.md and the mail texts in
 # lib/factory_campaign.py shall contain no instruction to set a coordination
 # or proof gc.* field with --set-metadata; a test shall grep for it."
+# (lib/factory_campaign.py left for legacy/ on 2026-09-26: no mail text to scan.)
 #
 # The doors themselves (bin/campaign-pointer, bin/deliver-close,
 # bin/product-queue) are exempt -- they are the one place `--set-metadata` on
@@ -37,15 +38,6 @@ scan_fenced_code() {  # $1 = file -> prints offending lines, if any
   ' "$1"
 }
 
-# lib/factory_campaign.py has no fenced code blocks (it is Python, not
-# Markdown) -- its mail *text* is the thing in scope, and a hand-write
-# instruction there reads as prose telling the Mayor to "pointer gc.current"
-# etc. rather than naming a door script. Scan its f-string/plain-string
-# literals directly rather than for fences.
-scan_python_strings() {  # $1 = file -> prints offending lines, if any
-  grep -nE -- "--set-metadata.*${FIELDS}" "$1" || true
-}
-
 TARGETS_MD=(
   "$ROOT/agents/mayor/prompt.template.md"
   "$ROOT/docs/OPERATIONS.md"
@@ -58,10 +50,6 @@ for f in "${TARGETS_MD[@]}"; do
   hit=$(scan_fenced_code "$f")
   [ -z "$hit" ] || fail "$f has a fenced-code instruction to hand-write a coordination/proof gc.* field: $hit"
 done
-
-TESTS_RUN=$((TESTS_RUN + 1))
-hit=$(scan_python_strings "$ROOT/lib/factory_campaign.py")
-[ -z "$hit" ] || fail "lib/factory_campaign.py instructs a hand-write of a coordination/proof gc.* field: $hit"
 
 for f in "$ROOT"/formulas/*.toml; do
   TESTS_RUN=$((TESTS_RUN + 1))

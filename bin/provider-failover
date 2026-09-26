@@ -8,8 +8,7 @@ L0, deterministic, zero model tokens. Runs every two minutes as an order.
            its credential file and clear it the moment that file changes
            (af-zdiln -- never wait out the hold for a fixed login), choose a
            provider per target, write city.provider.toml, reload the city if
-           that changed, restart sessions stuck on an exhausted pool, and
-           park / resume the campaign when *nothing* is left
+           that changed, and restart sessions stuck on an exhausted pool
   apply    regenerate city.provider.toml from the current state (no detection)
   status   what is chosen and why (--json for the cockpit)
   check-models  daily (not per-tick): compare the model id configured for each
@@ -54,9 +53,6 @@ OVERLAY_FILE = Path(os.environ.get("PROVIDER_OVERLAY_FILE") or FACTORY_ROOT / "c
 MODEL_CATALOG_FILE = Path(os.environ.get("MODEL_CATALOG_FILE") or FACTORY_ROOT / "config" / "model-catalog.json")
 CITY_TOML_FILE = Path(os.environ.get("CITY_TOML_FILE") or FACTORY_ROOT / "city.toml")
 GC_BIN = os.environ.get("GC_BIN", "gc")
-CAMPAIGN_BIN = os.environ.get("CAMPAIGN_BIN", str(ROOT / "bin" / "mayor-campaign"))
-COORDINATION_BEAD = os.environ.get("CAMPAIGN_COORDINATION_BEAD", "af-1vr4")
-PARK_MARKER = "[provider-failover]"
 # Reading a pane through `gc session peek` cost 8 s and ~5 s of CPU per call on
 # 2026-09-16: one tick took 54 s wall, 22 s CPU, every two minutes. tmux
 # answers the same question in milliseconds, so it is tried first; gc stays
@@ -258,60 +254,6 @@ def reload_city() -> str:
     return lines[-1] if lines else "reloaded"
 
 
-def coordination_metadata() -> dict[str, Any] | None:
-    try:
-        value = json.loads(gc("bd", "show", COORDINATION_BEAD, "--json").stdout or "null")
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
-        return None
-    if isinstance(value, list):
-        value = value[0] if value else None
-    return value.get("metadata") if isinstance(value, dict) else None
-
-
-def campaign_action(state: dict[str, Any], resolution: dict[str, Any], moment: float,
-                    dry_run: bool) -> str | None:
-    """Park only when no worker can run at all; resume only what we parked.
-
-    Reading the coordination bead is a store round-trip that took 13 s on a
-    busy afternoon, so it happens only when there is something to decide:
-    nothing is left to run, or this tool parked the campaign and owes a resume.
-    """
-    workspace = resolution[pf.WORKSPACE]
-    if workspace["provider"] is not None and not state.get("parked"):
-        return None
-    metadata = coordination_metadata()
-    if not metadata or metadata.get("gc.campaign_mode") != "automatic":
-        return None
-    campaign_state = metadata.get("gc.campaign_state")
-    kind = metadata.get("gc.campaign_block_kind")
-    ours = str(metadata.get("gc.campaign_cause") or "").startswith(PARK_MARKER)
-    if workspace["provider"] is None and campaign_state != "blocked":
-        reset = workspace.get("next_reset")
-        when = f"vers {reset}" if reset else "dès qu'un fournisseur redevient disponible"
-        cause = (f"{PARK_MARKER} Tous les fournisseurs de la chaîne des ouvriers sont épuisés, "
-                 f"en erreur ou désactivés; reprise automatique {when}.")
-        action = ("Aucune action requise : la campagne reprend seule à la réinitialisation "
-                  "des quotas. Pour reprendre plus tôt, rétablir un fournisseur depuis le cockpit.")
-        if dry_run:
-            return f"would park: {cause}"
-        subprocess.run([CAMPAIGN_BIN, "block", "--mayor", "--kind", "limit", "--owner", "Mayor",
-                        "--cause", cause, "--action", action],
-                       cwd=FACTORY_ROOT, text=True, capture_output=True, timeout=60)
-        state["parked"] = True
-        return f"parked campaign: {cause}"
-    if workspace["provider"] is not None and campaign_state == "blocked" and kind == "limit" and ours:
-        if dry_run:
-            return "would resume campaign"
-        subprocess.run([CAMPAIGN_BIN, "resume", "--mayor"],
-                       cwd=FACTORY_ROOT, text=True, capture_output=True, timeout=60)
-        state["parked"] = False
-        return f"resumed campaign on {workspace['provider']}"
-    if workspace["provider"] is not None and not (campaign_state == "blocked" and kind == "limit" and ours):
-        # Someone else already resumed it, or it was never ours: forget the debt.
-        state["parked"] = False
-    return None
-
-
 def tick(args: argparse.Namespace) -> int:
     moment = now()
     policy = load_policy()
@@ -359,10 +301,6 @@ def tick(args: argparse.Namespace) -> int:
                 line = f"restarted {session.get('alias') or session.get('id')}: {session.get('provider')} → {chosen}"
                 pf.note(state, moment, "restart", line)
                 messages.append(line)
-        park = campaign_action(state, resolution, moment, args.dry_run)
-        if park:
-            pf.note(state, moment, "campaign", park)
-            messages.append(park)
         if not args.dry_run:
             save_state(state)
     if not args.quiet or messages:
@@ -536,12 +474,9 @@ def set_control(args: argparse.Namespace) -> int:
         resolution = pf.resolve(policy, state, moment)
         changed, switches = write_overlay(policy, state, resolution, moment, False)
         reload_note = reload_city() if changed and not args.no_reload else None
-        park = campaign_action(state, resolution, moment, False) if not args.no_reload else None
-        if park:
-            pf.note(state, moment, "campaign", park)
         save_state(state)
     print(json.dumps({"ok": True, "summary": summary, "switches": switches,
-                      "reload": reload_note, "campaign": park,
+                      "reload": reload_note,
                       "status": status_payload(policy, load_state(policy), moment)},
                      ensure_ascii=False))
     return 0

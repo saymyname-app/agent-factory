@@ -10,7 +10,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from factory_session_boot import assess_identity, extract_record, group_by_identity  # noqa: E402
+from factory_session_boot import (  # noqa: E402
+    assess_identity,
+    extract_record,
+    group_by_identity,
+    mayor_page_since,
+)
 
 NOW = 1789555200.0  # 2026-09-16T10:40:00Z
 
@@ -146,6 +151,20 @@ class Cli(unittest.TestCase):
     def test_ignores_garbage_lines(self):
         rows = self.run_cli([])
         self.assertEqual([], rows)
+
+
+class MayorPage(unittest.TestCase):
+    def test_only_asleep_or_quarantine_past_the_grace_window_pages(self):
+        recent = {"state": "quarantined", "last_active": "2026-09-16T10:35:00Z"}  # 5 min ago
+        self.assertIsNone(mayor_page_since(recent, NOW))
+        overdue = {"state": "quarantined", "last_active": "2026-09-16T10:00:00Z"}  # 40 min ago
+        self.assertEqual("2026-09-16T10:00:00Z", mayor_page_since(overdue, NOW))
+        active = {"state": "active", "last_active": "2026-09-16T10:00:00Z"}
+        self.assertIsNone(mayor_page_since(active, NOW))
+        # creating/failed-create already has its own alert (af-jj9u7).
+        booting = {"state": "creating", "last_active": "2026-09-16T10:00:00Z"}
+        self.assertIsNone(mayor_page_since(booting, NOW))
+        self.assertIsNone(mayor_page_since(None, NOW))
 
 
 if __name__ == "__main__":
