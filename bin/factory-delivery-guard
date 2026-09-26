@@ -76,6 +76,8 @@ PROGRAM_NAME="factory-delivery-guard"
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 GC_BIN="${GC_BIN:-gc}"
 GH_BIN="${GH_BIN:-gh}"
+# Host-local cache of PRs gh already confirmed merged ("<repo>#<pr>\t<head>\t<merge>").
+MERGED_CACHE="${FACTORY_DELIVERY_GUARD_MERGED_CACHE:-$ROOT/.gc/runtime/delivery-guard-merged-prs.tsv}"
 PY_BIN="${PYTHON_BIN:-python3}"
 LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd -P)"
 CHECK_ONLY=0
@@ -138,7 +140,13 @@ list_closed_delivery_beads() {  # $1 = rig name, or "" for the city root
 # bin/deliver-close's own verification exactly, on purpose: this is the same
 # proof deliver-close would have required at close time.
 verify_pr_merged() {
-  local repo=$1 pr=$2 response
+  local repo=$1 pr=$2 response hit shas
+  # A merge is terminal: once gh confirmed it, never ask again. Every guard
+  # tick used to re-ask for every claimed-shipped bead (~110 s on
+  # 2026-09-26, most of factory-guard's 180 s budget). Written only outside
+  # --check-only; never turned into a Beads write.
+  hit=$(awk -F'\t' -v k="$repo#$pr" '$1 == k {print $2 "\t" $3; exit}' "$MERGED_CACHE" 2>/dev/null)
+  if [ -n "$hit" ]; then printf '%s\n' "$hit"; return 0; fi
   response=$("$GH_BIN" pr view "$pr" --repo "$repo" \
     --json number,state,mergedAt,mergeCommit,headRefOid,url 2>/dev/null) || return 1
   jq -e . >/dev/null 2>&1 <<<"$response" || return 1
@@ -149,7 +157,11 @@ verify_pr_merged() {
     (.headRefOid | type == "string" and test("^[0-9a-f]{40}$")) and
     (.mergeCommit.oid | type == "string" and test("^[0-9a-f]{40}$"))
   ' >/dev/null <<<"$response" || return 1
-  jq -r '[.headRefOid, .mergeCommit.oid] | @tsv' <<<"$response"
+  shas=$(jq -r '[.headRefOid, .mergeCommit.oid] | @tsv' <<<"$response")
+  if [ "$CHECK_ONLY" != "1" ]; then
+    { mkdir -p "$(dirname "$MERGED_CACHE")" && printf '%s\t%s\n' "$repo#$pr" "$shas" >> "$MERGED_CACHE"; } 2>/dev/null || true
+  fi
+  printf '%s\n' "$shas"
 }
 
 handle_unverifiable() {  # id label rig missing already_flagged why

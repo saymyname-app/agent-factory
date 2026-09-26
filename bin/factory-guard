@@ -253,9 +253,13 @@ fi
 
 # --- 4. back up work that exists only on this machine ------------------------
 AT_RISK=0; PUSHED=0
+# One round trip for every branch. A per-branch `git ls-remote` cost ~0.7 s
+# each; with ~200 local branches this section alone outlived the order's
+# 180 s timeout, so no section after it ran (2026-09-25..26).
+REMOTE_HEADS=$(git ls-remote --heads origin 2>/dev/null) || REMOTE_HEADS=""
 while read -r b; do
   [ -z "$b" ] && continue
-  remote=$(git ls-remote --heads origin "$b" 2>/dev/null | awk '{print $1}')
+  remote=$(awk -v r="refs/heads/$b" '$2 == r {print $1}' <<<"$REMOTE_HEADS")
   local_sha=$(git rev-parse "$b")
   if [ -z "$remote" ]; then
     n=$(git rev-list --count origin/main.."$b" 2>/dev/null || echo 0)

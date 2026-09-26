@@ -24,6 +24,9 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 export BEADS_FILE="$TMP/city_beads.json"
 export UPDATE_LOG="$TMP/updates.log"; : > "$UPDATE_LOG"
 export MAIL_LOG="$TMP/mail.log"; : > "$MAIL_LOG"
+# Scenarios below reuse PR numbers across merged/open states; the merged-PR
+# cache is exercised on its own in case 6b.
+export FACTORY_DELIVERY_GUARD_MERGED_CACHE=/dev/null
 mkdir -p "$TMP/bin"
 
 # --- stub gc: serves `bd list` from BEADS_FILE, records every `bd update`
@@ -255,6 +258,26 @@ grep -q "zz-fixture-claimed-merged (city) claims shipped" <<<"$out" \
 grep -q "example-org/example-repo#7 verifies merged" <<<"$out" \
   || { echo "$out" >&2; fail "claimed-shipped bead with a merged PR was not reported healthy"; }
 [ "$(update_count zz-fixture-claimed-merged)" = "0" ] || fail "a verified claimed-shipped bead should not be written to"
+
+# 6b. a merged PR is asked of gh once, then served from the host-local cache
+#     (a merge is terminal) -- every tick used to re-ask for every bead ---
+cache="$TMP/merged-cache.tsv"; : > "$cache"; : > "$TMP/gh-calls.log"
+cat > "$TMP/gh-counting" <<STUB
+#!/usr/bin/env bash
+echo call >> "$TMP/gh-calls.log"
+exec "$TMP/bin/gh" "\$@"
+STUB
+chmod +x "$TMP/gh-counting"
+FACTORY_DELIVERY_GUARD_MERGED_CACHE="$cache" GH_BIN="$TMP/gh-counting" guard --check-only >/dev/null
+[ -s "$cache" ] && fail "--check-only must not write the merged-PR cache"
+for _ in 1 2; do
+  out=$(FACTORY_DELIVERY_GUARD_MERGED_CACHE="$cache" GH_BIN="$TMP/gh-counting" GUARD_TEST_SCENARIO=merged guard)
+done
+grep -q "example-org/example-repo#7 verifies merged" <<<"$out" \
+  || { echo "$out" >&2; fail "a cached merged PR was not reported healthy"; }
+[ "$(wc -l < "$TMP/gh-calls.log")" = "2" ] \
+  || fail "gh should be asked once in --check-only and once for the first real run, never again ($(wc -l < "$TMP/gh-calls.log") calls)"
+[ "$(update_count zz-fixture-claimed-merged)" = "0" ] || fail "the merged-PR cache must never become a Beads write"
 
 # 7. the af-x45xw shape itself: closed gc.outcome=pass, own gc.pr_url set,
 #    no product-goal label, PR still OPEN -- must be flagged, never trusted,
