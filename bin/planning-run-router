@@ -66,7 +66,7 @@ LEGACY_ARTIFACTS: dict[str, str] = {
     ),
     "release-contract": (
         "the agent-factory-product-release/v1 contract "
-        "(config/product-release.schema.json)"
+        "(legacy/config/product-release.schema.json)"
     ),
     "cockpit-v1-export": (
         "Cockpit V1 (legacy/lib/factory_cockpit.py, legacy/ui/factory-cockpit/)"
