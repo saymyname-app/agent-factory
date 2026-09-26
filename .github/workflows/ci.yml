@@ -127,9 +127,6 @@ jobs:
       - name: Operator context contract
         run: bash tests/operator-context-test.sh
 
-      - name: SayMyName PO context contract
-        run: bash tests/saymyname-po-context-test.sh
-
       - name: Doctor triage classification
         run: python tests/factory-doctor-test.py
 

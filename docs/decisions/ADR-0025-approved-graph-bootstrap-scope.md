@@ -40,6 +40,13 @@ construire les tickets, leurs blocages et le convoy dans la même écriture.
    transition autorisée vers le graphe suivant ou la clôture. La priorité
    Factory/product historique conserve son fallthrough en dehors de ce mode.
 
+*Amendement 2026-09-26 :* `mayor-campaign` (points 3 à 5) est parti dans
+`legacy/` avec la campagne. La publication (points 1-2) est inchangée. Plus
+rien ne sélectionne ni ne dispatche automatiquement les beads d'un graphe
+publié : le Mayor le fait quand il est réveillé (prompt, décisions 7-9 de
+Benjamin, 2026-09-25). Le déclencheur de ce réveil est une exigence du
+Planning Run « Factory operations v2 ».
+
 ## Conséquences selon ADR-0017
 
 1. **Vérifié** — les tests prouvent validation du digest, transaction de graphe

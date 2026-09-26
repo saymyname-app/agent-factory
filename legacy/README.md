@@ -49,6 +49,9 @@ questions to `saymyname-product-status`.
 - `bin/campaign-pointer` stays: `formulas/mol-scoped-work.formula.toml` uses
   it to escalate. The Mayor prompt is rewritten in its own PR (decisions
   7-9 of 2026-09-25).
+- Nothing wakes the Mayor when `bin/ticket-graph-publish` publishes an
+  approved graph (ADR-0025's sentinel scope left with the campaign); until
+  "Factory operations v2" adds a trigger, whoever publishes mails the Mayor.
 - On total provider exhaustion nothing is parked any more; whether an
   equivalent is needed is an input for "Factory operations v2".
 - Host-local runtime files `.gc/runtime/factory-cockpit-*` are no longer read;
