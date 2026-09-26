@@ -6,11 +6,16 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NOW = 1789555200.0  # 2026-09-16T10:40:00Z, fixed so throttling is deterministic
 sys.path.insert(0, str(ROOT / "lib"))
+
+
+def iso_of(epoch):
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 from factory_campaign import (  # noqa: E402
     LADDER_MAX_CONCURRENT, inspect_ladder_workflows, is_ladder_bead, plan_idle_ladder, plan_transition,
@@ -1256,6 +1261,48 @@ class IdleLadderSentinelTest(CampaignFixture, unittest.TestCase):
         self.assertIn("ladder_active", self.sentinel(later).stdout)
         self.assertEqual("2026-09-16T10:50:00Z", self.current_metadata()["gc.campaign_progress_at"])
         self.assertEqual(1, self.mail_count())
+
+    def test_ladder_active_progress_freezes_while_nothing_moves_then_resumes(self):
+        # af-7sn3o: replay of the 2026-09-21 02:24Z-07:35Z gap. A tracked
+        # bead's workflow sat in_progress with nothing actually moving for
+        # 5h11m, yet ladder_active re-stamped gc.campaign_progress_at every
+        # single tick, so the 60-min liveness rule never saw the stall.
+        # gc.campaign_progress_at must freeze while nothing on the tracked
+        # bead or its workflow children updates, and resume the instant
+        # something genuinely does.
+        self.write_state({**metadata(), "gc.campaign_ladder_bead": "af-qj1o0",
+                           "gc.campaign_progress_at": iso_of(NOW)})
+        (self.node_dir / "af-qj1o0.json").write_text(json.dumps({
+            "id": "af-qj1o0", "status": "in_progress", "metadata": {},
+            "updated_at": iso_of(NOW),
+        }), encoding="utf-8")
+        rig_beads = self.root / "rig-beads.json"
+
+        def write_rig_beads(step_updated_at):
+            rig_beads.write_text(json.dumps([
+                bead("af-convoy", issue_type="convoy", dependencies=[
+                    {"depends_on_id": "af-qj1o0", "type": "tracks"},
+                ]),
+                bead("af-root", status="in_progress", metadata={
+                    "gc.kind": "workflow", "gc.var.convoy_id": "af-convoy",
+                }, dependencies=[{"depends_on_id": "af-step", "type": "blocks"}]),
+                bead("af-step", status="open", updated_at=step_updated_at),
+            ]), encoding="utf-8")
+
+        write_rig_beads(iso_of(NOW))
+        self.write_status(status(next_id=None))
+
+        # 5h11m of ticks: nothing on the tracked bead or its workflow moves.
+        for minutes in (60, 120, 180, 240, 300, 311):
+            out = self.sentinel(NOW + minutes * 60, CAMPAIGN_RIG_BEADS_FILE=str(rig_beads)).stdout
+            self.assertIn("NOOP: ladder_active", out)
+            self.assertEqual(iso_of(NOW), self.current_metadata()["gc.campaign_progress_at"])
+
+        # The step finally updates: progress resumes on the very next tick.
+        write_rig_beads(iso_of(NOW + 311 * 60))
+        out = self.sentinel(NOW + 312 * 60, CAMPAIGN_RIG_BEADS_FILE=str(rig_beads)).stdout
+        self.assertIn("NOOP: ladder_active", out)
+        self.assertEqual(iso_of(NOW + 312 * 60), self.current_metadata()["gc.campaign_progress_at"])
 
     def test_a_stale_finalize_wake_clears_once_its_target_closes_even_under_ladder_active(self):
         # af-hnm7l: a wake sent for a product finalize/resume target used to
