@@ -496,12 +496,18 @@ def inspect_ladder_workflows(
         if outcome != "pass":
             failed_nodes.append({"id": node_id, "outcome": outcome})
     failed_nodes.sort(key=lambda item: item["id"])
+    node_updates = [u for u in (_epoch(node.get("updated_at")) for node in nodes.values()) if u is not None]
     return {
         "all_closed": not open_nodes and not missing,
         "workflow_ids": sorted(str(root["id"]) for root in roots),
         "open_nodes": open_nodes,
         "missing_nodes": sorted(missing),
         "failed_nodes": failed_nodes,
+        # af-7sn3o: the most recent update across every node this workflow
+        # walked, so the ladder can tell "still tracked" from "actually
+        # moved" instead of treating every tick of an untouched workflow as
+        # progress.
+        "latest_update": max(node_updates) if node_updates else None,
     }
 
 
@@ -689,6 +695,25 @@ def _bundle_wakes(wakes: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _ladder_activity_epoch(
+    bead_updated: float | None,
+    workflow_state: dict[str, Any] | None,
+) -> float | None:
+    """Most recent real activity for a still-tracked ladder bead.
+
+    af-7sn3o: the bead's own ``updated_at`` and, when known, the freshest
+    node across its linked workflow(s) -- whichever moved more recently.
+    ``None`` when neither is known, so the caller can tell "nothing to
+    compare against yet" from "definitely stale".
+    """
+    candidates = [bead_updated] if bead_updated is not None else []
+    if isinstance(workflow_state, dict):
+        latest = workflow_state.get("latest_update")
+        if isinstance(latest, (int, float)):
+            candidates.append(latest)
+    return max(candidates) if candidates else None
+
+
 def plan_idle_ladder(
     ready: list[dict[str, Any]],
     now: float,
@@ -726,7 +751,7 @@ def plan_idle_ladder(
     convoy_tracked_ids = _convoy_tracked_ids(graph_digest, graph_beads)
 
     wakes: list[dict[str, Any]] = []
-    still_tracked: list[tuple[dict[str, Any], Any]] = []
+    still_tracked: list[tuple[dict[str, Any], Any, float | None]] = []
     unstick_ids: list[str] = []
 
     for item in tracked_items:
@@ -752,7 +777,7 @@ def plan_idle_ladder(
             # PROGRESS_REASON.
             unstick_ids.append(tracked_id)
             continue
-        still_tracked.append((item, workflow_state))
+        still_tracked.append((item, workflow_state, updated))
 
     if wakes:
         # A tracked bead finalized/failed this tick: report it (bundled if
@@ -761,7 +786,7 @@ def plan_idle_ladder(
         return wakes[0] if len(wakes) == 1 else _bundle_wakes(wakes)
 
     if unstick_ids:
-        remaining = [item for item, _ in still_tracked]
+        remaining = [item for item, _, _ in still_tracked]
         plan = plan_idle_ladder(
             ready, now, last_generative, remaining, queue_candidates, maintain_alive, axis, last_axis,
             workflow_states, graph_digest, graph_beads,
@@ -775,19 +800,24 @@ def plan_idle_ladder(
         # before the maintain_alive check below -- a bead already tracked
         # in progress is always allowed to keep running.
         if len(still_tracked) == 1:
-            item, workflow_state = still_tracked[0]
+            item, workflow_state, updated = still_tracked[0]
             return {"action": "none", "reason": "ladder_active", "wake_key": None,
                     "ladder_bead": item.get("id"),
-                    "workflow_pending": isinstance(workflow_state, dict)}
+                    "workflow_pending": isinstance(workflow_state, dict),
+                    "ladder_activity_at": _ladder_activity_epoch(updated, workflow_state)}
+        activity = [
+            a for a in (_ladder_activity_epoch(u, ws) for _, ws, u in still_tracked) if a is not None
+        ]
         return {"action": "none", "reason": "ladder_active", "wake_key": None,
-                "ladder_beads": [item.get("id") for item, _ in still_tracked]}
+                "ladder_beads": [item.get("id") for item, _, _ in still_tracked],
+                "ladder_activity_at": max(activity) if activity else None}
 
     if not maintain_alive:
         # sec1: off means the campaign goes idle *and says so plainly* --
         # never indistinguishable from class D/E (stalled, defective).
         return {"action": "none", "reason": "maintain_alive_off", "wake_key": None}
 
-    exclude_ids = {str(item.get("id")) for item, _ in still_tracked}
+    exclude_ids = {str(item.get("id")) for item, _, _ in still_tracked}
     filtered_ready = [bead for bead in ready if str(bead.get("id")) not in exclude_ids]
     factory_plan = plan_factory_lane(filtered_ready, queue_candidates, graph_digest, graph_beads)
     if factory_plan["action"] == "wake_mayor":

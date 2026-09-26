@@ -1143,7 +1143,22 @@ def sentinel(_: argparse.Namespace) -> None:
         ):
             updates.update({"gc.campaign_wake_key": "", "gc.campaign_wake_state": "none"})
         if decision["reason"] in PROGRESS_REASONS and stamp_due(metadata, "gc.campaign_progress_at", now):
-            updates["gc.campaign_progress_at"] = iso(now)
+            stamp_progress = True
+            if decision["reason"] == "ladder_active":
+                # af-7sn3o: ladder_active used to re-stamp progress on every
+                # tick regardless of whether the tracked bead (or a workflow
+                # child it delegates to) actually moved, so a finished-but-
+                # not-yet-finalized workflow masked a real stall for as long
+                # as the bead stayed in_progress. Only count it as progress
+                # when the freshest known activity is newer than the last
+                # stamp (or, lacking any stamp yet, the watch-since anchor).
+                activity_at = decision.get("ladder_activity_at")
+                reference = epoch_of(metadata.get("gc.campaign_progress_at")) \
+                    or epoch_of(metadata.get("gc.campaign_watch_since"))
+                if isinstance(activity_at, (int, float)) and reference is not None:
+                    stamp_progress = activity_at > reference
+            if stamp_progress:
+                updates["gc.campaign_progress_at"] = iso(now)
         if updates:
             update_metadata(updates)
         print(f"NOOP: {decision['reason']}")
