@@ -128,9 +128,26 @@ def load_reservation(repo_root: Path) -> dict[str, Any] | None:
 
 
 def clear_reservation(repo_root: Path, reservation: dict[str, Any]) -> None:
+    """Close the active reservation once its target publishes.
+
+    When the reservation carries a `next` reservation with a non-blank
+    `reserved_for`, that one becomes active instead, so an ordered sequence
+    of Planning Runs is enforced one at a time. Otherwise `cleared_at` is
+    stamped and the router runs unreserved from then on.
+    """
     path = reservation_path(repo_root)
+    now = datetime.now(timezone.utc).isoformat()
+    following = reservation.get("next")
+    if isinstance(following, dict) and str(following.get("reserved_for") or "").strip():
+        promoted = dict(following)
+        promoted.setdefault("contract", reservation.get("contract", RESERVATION_CONTRACT))
+        promoted["cleared_at"] = None
+        promoted["promoted_at"] = now
+        promoted["promoted_after"] = reservation.get("reserved_for")
+        path.write_text(json.dumps(promoted, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return
     cleared = dict(reservation)
-    cleared["cleared_at"] = datetime.now(timezone.utc).isoformat()
+    cleared["cleared_at"] = now
     path.write_text(json.dumps(cleared, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 

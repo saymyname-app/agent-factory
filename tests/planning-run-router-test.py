@@ -344,19 +344,59 @@ class PlanningRunRouterTest(unittest.TestCase):
     # --- a reservation blocks every request except the one it names, and is
     #     cleared once that reserved request publishes (B12 AC#5) -----------
 
-    def write_reservation(self, reserved_for="C01", cleared_at=None):
+    def write_reservation(self, reserved_for="C01", cleared_at=None, next_reservation=None):
         config_dir = self.tmp / "config"
         config_dir.mkdir(exist_ok=True)
         path = config_dir / "planning-run-reservation.json"
-        path.write_text(json.dumps({
+        reservation = {
             "contract": "agent-factory-planning-run-reservation/v1",
             "reserved_for": reserved_for,
             "note": "test reservation",
             "reserved_at": "2026-09-24",
             "reserved_by": "planning-run-router-test",
             "cleared_at": cleared_at,
-        }), encoding="utf-8")
+        }
+        if next_reservation is not None:
+            reservation["next"] = next_reservation
+        path.write_text(json.dumps(reservation), encoding="utf-8")
         return path
+
+    def publish_reserved(self, target, spec_dir="specs"):
+        draft_bytes, _ = build_draft("router-simple-2026-09-24")
+        draft_path = self.tmp / "draft.yaml"
+        draft_path.write_bytes(draft_bytes)
+        request = self.base_request(
+            SIMPLE_SESSION,
+            spec_out=self.tmp / spec_dir,
+            approval={"approved_by": "benjamin", "evidence": "af-fixture-evidence"},
+            publish={"draft": str(draft_path)},
+        )
+        request["planning_run_target"] = target
+        request_path = self.write_request(request)
+        return json.loads(self.run_router(request_path, env=self.bd_env(), check=True).stdout)
+
+    def test_publishing_the_reserved_run_promotes_the_next_reservation(self):
+        reservation_path = self.write_reservation(
+            reserved_for="factory-operations-v2",
+            next_reservation={"reserved_for": "C01", "requirements": ["ntfy"]},
+        )
+
+        result = self.publish_reserved("factory-operations-v2")
+        self.assertEqual("published", result["result"])
+
+        after = json.loads(reservation_path.read_text())
+        self.assertEqual("C01", after["reserved_for"])
+        self.assertIsNone(after["cleared_at"])
+        self.assertEqual("factory-operations-v2", after["promoted_after"])
+        self.assertEqual(["ntfy"], after["requirements"])
+        self.assertEqual("agent-factory-planning-run-reservation/v1", after["contract"])
+
+        # The promoted reservation now gates every other request.
+        other = self.base_request(SIMPLE_SESSION, spec_out=self.tmp / "specs-2")
+        other_path = self.write_request(other, name="other-request.json")
+        blocked = json.loads(self.run_router(other_path, check=True).stdout)
+        self.assertEqual("reservation_blocked", blocked["result"])
+        self.assertEqual("C01", blocked["reserved_for"])
 
     def test_reservation_blocks_a_request_that_does_not_declare_the_reserved_target(self):
         self.write_reservation(reserved_for="C01")
