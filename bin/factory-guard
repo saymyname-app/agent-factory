@@ -655,34 +655,8 @@ else
   fi
 fi
 
-# --- 9. product-queue candidate status drift (af-tbkcc, ADR-0005) -----------
-# A candidate's status is only ever supposed to change through
-# product-queue's own commands. bin/factory-queue-guard detects a candidate
-# whose status contradicts its gc.queue_state (someone edited it directly),
-# restores status=deferred when no execution Bead is linked, and pages the
-# Mayor once per drift instead of repeatedly. See that script for detail.
-QUEUE_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-queue-guard"
-if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$QUEUE_GUARD" ]; then
-  say "· queue-drift — not checked (not a city root, or gc unavailable)"
-else
-  QG_ARGS=()
-  [ "$CHECK_ONLY" = "1" ] && QG_ARGS+=(--check-only)
-  QG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$QUEUE_GUARD" "${QG_ARGS[@]}" 2>&1)
-  QG_STATUS=$?
-  [ "$QUIET" = "1" ] || printf '%s\n' "$QG_OUTPUT" | sed 's/^/  /'
-  QG_PROBLEM_COUNT=0
-  while IFS= read -r raw_line; do
-    line="${raw_line#"${raw_line%%[![:space:]]*}"}"  # strip leading whitespace
-    case "$line" in
-      REPAIRED:\ *) ACTIONS+=("queue-drift: ${line#REPAIRED: }") ;;
-      !\ *)         PROBLEMS+=("queue-drift: ${line#! }"); STATUS=1; QG_PROBLEM_COUNT=$((QG_PROBLEM_COUNT+1)) ;;
-    esac
-  done <<<"$QG_OUTPUT"
-  if [ "$QG_STATUS" -ne 0 ] && [ "$QG_PROBLEM_COUNT" -eq 0 ]; then
-    PROBLEMS+=("queue-drift: factory-queue-guard exited $QG_STATUS with no problem line captured")
-    STATUS=1
-  fi
-fi
+# --- 9. (product-queue status drift -- retired 2026-09-26 with the product
+#     queue; legacy/README.md) ---------------------------------------------
 
 # --- 10. dispatch drift: a slung bead invisible to its target (af-33a4e) ----
 # `gc sling <target> <bead>` does not clear a pre-existing assignee unless

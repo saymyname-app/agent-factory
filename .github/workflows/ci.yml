@@ -127,17 +127,8 @@ jobs:
       - name: Operator context contract
         run: bash tests/operator-context-test.sh
 
-      - name: Product queue ordering and authority
-        run: bash tests/product-queue-test.sh
-
       - name: SayMyName PO context contract
         run: bash tests/saymyname-po-context-test.sh
-
-      - name: SayMyName product-status checks
-        run: bash tests/saymyname-product-status-test.sh
-
-      - name: SayMyName preview safety checks
-        run: bash tests/saymyname-preview-test.sh
 
       - name: Doctor triage classification
         run: python tests/factory-doctor-test.py
@@ -207,9 +198,6 @@ jobs:
 
       - name: Goal delivery pairs across rigs
         run: bash tests/goal-delivery-pairs-test.sh
-
-      - name: Factory guard restores or flags product-queue status drift
-        run: bash tests/factory-queue-guard-test.sh
 
       - name: Factory guard clears stale dispatch-drift assignees
         run: bash tests/factory-dispatch-guard-test.sh
