@@ -69,7 +69,7 @@ LEGACY_ARTIFACTS: dict[str, str] = {
         "(config/product-release.schema.json)"
     ),
     "cockpit-v1-export": (
-        "Cockpit V1 (lib/factory_cockpit.py, ui/factory-cockpit/)"
+        "Cockpit V1 (legacy/lib/factory_cockpit.py, legacy/ui/factory-cockpit/)"
     ),
 }
 

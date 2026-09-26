@@ -34,15 +34,6 @@ jobs:
             head -1 "$f" | grep -q 'bash\|sh$' && bash -n "$f" && echo "ok $f" || true
           done
 
-      - name: Cockpit tests
-        run: python tests/factory-cockpit-test.py
-
-      - name: Cockpit blocker tests
-        run: python tests/factory-cockpit-blocker-test.py
-
-      - name: Cockpit identity-genericity tests
-        run: python tests/factory-cockpit-genericity-test.py
-
       - name: Product release tests
         run: python tests/product-release-test.py
 
@@ -226,9 +217,6 @@ jobs:
       - name: Check rollup rebuilt from Actions runs (fine-grained token)
         run: python tests/factory-gh-rollup-test.py
 
-      - name: Chaos, as seen by the cockpit
-        run: python tests/factory-cockpit-chaos-test.py
-
       - name: Delivery-proof completeness rules
         run: python tests/factory-delivery-proof-test.py
 
@@ -264,9 +252,6 @@ jobs:
 
       - name: Provenance guard blocks unmarked fixture/seed/test-resource data
         run: bash tests/factory-provenance-guard-test.sh
-
-      - name: ntfy phone-push alert rules
-        run: python tests/ntfy-notify-test.py
 
       - name: Chronic order failures page the mayor
         run: bash tests/on-order-failed-test.sh

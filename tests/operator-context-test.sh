@@ -43,7 +43,7 @@ agent_bytes=$(wc -c < "$REPO_ROOT/AGENTS.md")
 (( agent_bytes <= 8192 )) || fail "AGENTS.md exceeds the 8 KiB bootstrap budget"
 
 assert_contains AGENTS.md 'docs/OPERATOR_BRIDGE.md'
-assert_contains AGENTS.md './bin/factory-cockpit snapshot'
+assert_contains AGENTS.md 'Cockpit V1 is retired to `legacy/`'
 assert_contains AGENTS.md 'Full access'
 assert_contains README.md 'docs/OPERATOR_BRIDGE.md'
 assert_contains README.md 'wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory'

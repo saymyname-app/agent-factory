@@ -13,7 +13,7 @@ about half a day before anyone noticed -- because nothing checked the way
 This module is the way-out check: given the beads already fetched by
 `gc bd list --all --status closed --label-any product-goal --json` (the same
 label factory_cockpit.py already uses to mean "delivery/goal outcome", see
-lib/factory_cockpit.py's PRODUCT_MARKERS), it finds closed delivery beads
+legacy/lib/factory_cockpit.py's PRODUCT_MARKERS), it finds closed delivery beads
 missing (or holding an invalid) proof field.
 
 A closed product-goal bead whose gc.work_outcome explicitly says the goal was
@@ -74,7 +74,7 @@ PROOF_FIELDS = (
 )
 
 # The label factory_cockpit.py already treats as "this bead is a product
-# delivery/goal outcome" (lib/factory_cockpit.py product_markers / the
+# delivery/goal outcome" (legacy/lib/factory_cockpit.py product_markers / the
 # --label-any query it issues). Reusing it means this check finds exactly the
 # beads the rest of the Factory already calls delivery beads, not a new
 # taxonomy invented here.

@@ -2,7 +2,7 @@
 # factory-boot — bring the Factory back after an UNPLANNED machine restart.
 #
 # On 2026-09-17 a Windows reboot brought WSL and gascity-supervisor back
-# (systemd), but not the controller, the cockpit or the campaign: the Factory
+# (systemd), but not the controller or the campaign: the Factory
 # sat dark until a PO session replayed RUNBOOK_STOP_AND_RESTART.md §3 by hand.
 # This is that section, idempotent, for the Windows logon task to call.
 #
@@ -18,7 +18,6 @@ set -uo pipefail
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 GC_BIN="${GC_BIN:-gc}"
 COORDINATION_BEAD="${CAMPAIGN_COORDINATION_BEAD:-af-1vr4}"
-COCKPIT_URL="${FACTORY_COCKPIT_URL:-http://127.0.0.1:8383}"
 LOG="${FACTORY_BOOT_LOG:-$ROOT/.gc/runtime/factory-boot.log}"
 LOCK="${FACTORY_BOOT_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/agent-factory-boot.lock}"
 WAIT_SECONDS="${FACTORY_BOOT_WAIT_SECONDS:-120}"
@@ -80,14 +79,7 @@ else
   done
 fi
 
-# 4. Cockpit.
-if curl -fsS -o /dev/null --max-time 5 "$COCKPIT_URL" 2>/dev/null; then
-  say "OK     cockpit already answering on $COCKPIT_URL"
-else
-  step "cockpit start" ./bin/factory-cockpit start
-fi
-
-# 5. Campaign: resume only a block the restart itself caused.
+# 4. Campaign: resume only a block the restart itself caused.
 META=$(timeout 30 "$GC_BIN" bd show "$COORDINATION_BEAD" --json 2>/dev/null | jq -c '.[0].metadata // {}' 2>/dev/null || echo '{}')
 STATE=$(jq -r '."gc.campaign_state" // ""' <<<"$META")
 KIND=$(jq -r '."gc.campaign_block_kind" // ""' <<<"$META")
@@ -97,7 +89,7 @@ elif [ "$KIND" = "durable_failure" ] || [ "$KIND" = "source_failure" ]; then
   if step "campaign resume (block kind: $KIND)" ./bin/mayor-campaign resume --mayor; then
     [ "$DRY_RUN" = "1" ] || "$GC_BIN" mail send mayor \
       -s "[factory-boot, automatic] campaign resumed after a machine restart" \
-      -m "AUTHOR: bin/factory-boot (script, not a human decision). The campaign was blocked as '$KIND' while the machine restarted; controller and cockpit are back, so it was resumed. If the block had another cause, block it again." \
+      -m "AUTHOR: bin/factory-boot (script, not a human decision). The campaign was blocked as '$KIND' while the machine restarted; the controller is back, so it was resumed. If the block had another cause, block it again." \
       >>"$LOG" 2>&1 || true
   fi
 else
