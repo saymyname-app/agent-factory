@@ -57,7 +57,9 @@ contract for a new Planning Run or its future Cockpit V2.
    Run to declare it as an export target is fenced.
    *Amendment 2026-09-26:* the same files now live, unchanged, under
    `legacy/` (Benjamin, 2026-09-25: isolate pre-refactor code; see
-   `legacy/README.md`). The fence above is unaffected.
+   `legacy/README.md`). The fence above is unaffected. The release contract
+   (`product-release`, its schema and `config/releases/`) followed on the
+   same day; its `release-contract` fence is unaffected too.
 
 ## Consequences and verification
 

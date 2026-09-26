@@ -34,9 +34,6 @@ jobs:
             head -1 "$f" | grep -q 'bash\|sh$' && bash -n "$f" && echo "ok $f" || true
           done
 
-      - name: Product release tests
-        run: python tests/product-release-test.py
-
       - name: Approved Ticket Graph atomic publication
         run: python tests/ticket-graph-publish-test.py
 
