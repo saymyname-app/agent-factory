@@ -69,9 +69,9 @@ sanity_hit=$(printf '```bash\ngc bd update af-1vr4 --set-metadata gc.needs_benja
 [ -n "$sanity_hit" ] || fail "sanity: the scanner should have flagged a synthetic hand-write instruction"
 
 # And prove it does NOT flag the legitimate prohibition prose that must stay
-# in docs/PRODUCT_QUEUE.md and agents/mayor/prompt.template.md.
+# in agents/mayor/prompt.template.md.
 TESTS_RUN=$((TESTS_RUN + 1))
-grep -q -- '--set-metadata gc.queue_state=' "$ROOT/agents/mayor/prompt.template.md" \
+grep -q -- '--set-metadata gc.needs_benjamin=' "$ROOT/agents/mayor/prompt.template.md" \
   || fail "sanity: the prohibition prose this scanner must NOT flag seems to have been removed from the prompt template"
 
 printf 'PASS: %d coordination-pointer-doors checks\n' "$TESTS_RUN"
