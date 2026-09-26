@@ -17,10 +17,8 @@ from factory_watchdog import (  # noqa: E402
     assess_pr,
     assess_quarantine,
     assess_sentinel_tick_streak,
-    assess_stall_frequency,
     assess_workflow,
     merge_signals,
-    stall_frequency,
 )
 
 NOW = 1789555200.0  # 2026-09-16T10:40:00Z
@@ -219,55 +217,6 @@ class SentinelTickRules(unittest.TestCase):
         self.assertIsNone(assess_sentinel_tick_streak(events, NOW))
 
 
-class StallFrequencyRules(unittest.TestCase):
-    """Rolling-window BLOCKED_STALLED count over lib/factory_continuity.py's own
-    record_transition history (one entry per state *change*, not per tick).
-    """
-
-    def test_below_threshold_is_not_flagged(self):
-        history = [
-            {"state": "DISPATCHING", "since": "2026-09-16T08:00:00Z"},
-            {"state": "BLOCKED_STALLED", "since": "2026-09-16T09:00:00Z"},
-        ]
-        self.assertIsNone(assess_stall_frequency(history, NOW))
-
-    def test_count_reaching_threshold_is_flagged(self):
-        history = []
-        for hour in range(5):
-            history.append({"state": "DISPATCHING", "since": f"2026-09-16T0{hour}:00:00Z"})
-            history.append({"state": "BLOCKED_STALLED", "since": f"2026-09-16T0{hour}:30:00Z"})
-        verdict = assess_stall_frequency(history, NOW, threshold_count=5)
-        self.assertIsNotNone(verdict)
-        code, message = verdict
-        self.assertEqual("stall_frequency_high", code)
-        self.assertIn("5 BLOCKED_STALLED", message)
-        self.assertIn("from DISPATCHING", message)
-
-    def test_entries_outside_the_window_are_not_counted(self):
-        history = [
-            {"state": "DISPATCHING", "since": "2026-09-10T00:00:00Z"},
-            {"state": "BLOCKED_STALLED", "since": "2026-09-10T01:00:00Z"},  # 6 days old
-        ]
-        result = stall_frequency(history, NOW)
-        self.assertEqual(0, result["count"])
-
-    def test_first_recorded_entry_with_no_predecessor_is_cause_unknown(self):
-        history = [{"state": "BLOCKED_STALLED", "since": "2026-09-16T09:00:00Z"}]
-        result = stall_frequency(history, NOW)
-        self.assertEqual(1, result["count"])
-        self.assertIsNone(result["stalls"][0]["preceding_state"])
-        verdict = assess_stall_frequency(history, NOW, threshold_count=1)
-        self.assertIn("cause unknown", verdict[1])
-
-    def test_threshold_is_configurable(self):
-        history = [
-            {"state": "DISPATCHING", "since": "2026-09-16T08:00:00Z"},
-            {"state": "BLOCKED_STALLED", "since": "2026-09-16T09:00:00Z"},
-        ]
-        self.assertIsNone(assess_stall_frequency(history, NOW, threshold_count=2))
-        self.assertIsNotNone(assess_stall_frequency(history, NOW, threshold_count=1))
-
-
 def _quarantined_bead(bead_id, reason, quarantined_at, error="controller error"):
     return {
         "id": bead_id,
@@ -447,26 +396,6 @@ class Cli(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertTrue(result.stdout.strip().startswith("gh_auth_unreachable\t"))
-
-    def test_stall_frequency_cli_is_silent_below_threshold(self):
-        history = [
-            {"state": "DISPATCHING", "since": "2026-09-16T08:00:00Z"},
-            {"state": "BLOCKED_STALLED", "since": "2026-09-16T09:00:00Z"},
-        ]
-        self.assertEqual([], self._run("stall-frequency", json.dumps(history)))
-
-    def test_stall_frequency_cli_prints_one_line_at_threshold(self):
-        history = []
-        for hour in range(5):
-            history.append({"state": "DISPATCHING", "since": f"2026-09-16T0{hour}:00:00Z"})
-            history.append({"state": "BLOCKED_STALLED", "since": f"2026-09-16T0{hour}:30:00Z"})
-        result = subprocess.run(
-            [sys.executable, str(ROOT / "lib" / "factory_watchdog.py"), "stall-frequency"],
-            input=json.dumps(history), capture_output=True, text=True,
-            env={**os.environ, "FACTORY_GUARD_NOW": str(NOW), "FACTORY_WATCHDOG_STALL_THRESHOLD": "5"},
-        )
-        self.assertEqual(0, result.returncode, result.stderr)
-        self.assertTrue(result.stdout.strip().startswith("stall_frequency_high\t"))
 
     def test_sentinel_ticks_cli_accepts_json_lines(self):
         events = []

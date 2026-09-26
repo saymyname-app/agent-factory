@@ -15,10 +15,9 @@ For “where is SayMyName?”, first run `./bin/saymyname-product-status` and an
 with CURRENT, LAST DELIVERED, NEXT, NEEDS BENJAMIN, and any real risk. Do not
 dump sessions, issues, Formula steps, or logs unless asked.
 
-For “what is the Factory doing?” or one-glance visibility, use the read-only
-`./bin/factory-cockpit snapshot` projection. Open its local UI with
-`./bin/factory-cockpit open`. Its monitoring is zero-token; only an explicit
-human send may message the PO or Mayor. Do not infer progress from session existence.
+For “what is the Factory doing?”, use `gc status` and the Beads/GitHub state.
+Cockpit V1 is retired to `legacy/` (untrusted); Cockpit V2 is Planning Run C01.
+Do not infer progress from session existence.
 
 For a change:
 
