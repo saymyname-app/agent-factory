@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # campaign-pointer — the one door for the coordination-root pointers
-# (ADR-0023: legacy/docs/decisions/ADR-0023-coordination-state-write-door.md).
+# (ADR-0023, pre-refactor: active mechanism, not re-validated).
 #
 # gc.current, gc.current_jit, gc.last_delivered, gc.needs_benjamin and
 # gc.blocked_reason on the coordination Bead had no door at all: the Mayor

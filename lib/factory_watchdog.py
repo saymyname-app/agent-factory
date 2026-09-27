@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Watchdog assessments: aged human gates, stuck PRs, false-success workflow closes.
 
-Incident 2026-09-16 (legacy/docs/INCIDENT_2026-09-16-silent-campaign-stall.md) found
-three gaps the existing campaign-liveness check (legacy/lib/factory_liveness.py) does
-not cover, because liveness only asks "is the campaign progressing" -- never
+Incident 2026-09-16 (silent campaign stall) found three gaps the campaign-liveness
+check (retired since) did not cover, because liveness only asks "is the campaign progressing" -- never
 "is something else sitting silently waiting on a human, a PR, or hiding a
 failure behind a CLOSED status":
 
@@ -37,7 +36,7 @@ CLI: one subcommand per assessor, each reads a JSON array on stdin (the raw
 `gc bd gate list --json` / `gh pr list --json` / `gc bd list --json` output)
 and prints one line per actionable item: "<id>\\t<code>\\t<message>". An item
 that is not (yet) actionable prints nothing -- silence is the expected steady
-state, exactly like legacy/lib/factory_liveness.py.
+state.
 """
 from __future__ import annotations
 

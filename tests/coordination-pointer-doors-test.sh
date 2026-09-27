@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 #
-# ADR-0023 rule 6: "agents/mayor/prompt.template.md, formulas/*.toml,
-# docs/OPERATIONS.md, legacy/docs/PRODUCT_QUEUE.md and the mail texts in
-# lib/factory_campaign.py shall contain no instruction to set a coordination
-# or proof gc.* field with --set-metadata; a test shall grep for it."
-# (lib/factory_campaign.py left for legacy/ on 2026-09-26: no mail text to scan.)
+# ADR-0023 rule 6: the Mayor prompt, formulas/*.toml and docs/OPERATIONS.md
+# shall contain no instruction to set a coordination or proof gc.* field with
+# --set-metadata; a test shall grep for it. (The product-queue doc and the
+# campaign mail texts it also named were retired on 2026-09-26.)
 #
 # The doors themselves (bin/campaign-pointer, bin/deliver-close,
 # bin/product-queue) are exempt -- they are the one place `--set-metadata` on

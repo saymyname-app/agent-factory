@@ -14,7 +14,7 @@
 #
 # This is the missing check on the way out. It lists every CLOSED bead
 # labelled product-goal (the label the rest of the Factory already uses to
-# mean "delivery/goal outcome" — see legacy/lib/factory_cockpit.py) in the city and
+# mean "delivery/goal outcome") in the city and
 # in the SayMyName rigs, and for each one missing a proof field
 # (lib/factory_delivery_proof.py holds the exact rules):
 #

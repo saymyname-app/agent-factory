@@ -26,7 +26,8 @@ L0, deterministic, zero model tokens. Runs every two minutes as an order.
              set --action auto    --args '{"enabled":false}'
 
 Policy: config/provider-policy.json (versioned). State: .gc/provider-state.json
-(host-local). Design and rules: legacy/docs/decisions/ADR-0018-automatic-provider-failover.md.
+(host-local). Design and rules: ADR-0018 (pre-refactor: active mechanism, not
+re-validated).
 """
 from __future__ import annotations
 

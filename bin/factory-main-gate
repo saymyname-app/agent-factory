@@ -4,8 +4,8 @@
 #
 # Incident (2026-09-16): commit 8d92c13 ("Defer all Enterprise-tier SayMyName
 # decisions...") landed directly on `main` and broke referential integrity
-# between legacy/docs/products/saymyname/DECISIONS.md and
-# config/products/saymyname.json's decision_refs — exactly what
+# between a product's DECISIONS.md and its product config's decision_refs
+# (both retired since) — exactly what
 # tests/factory-cockpit-test.py already checked (13 failing cases once it
 # broke). The check existed; nothing forced it to run before the commit
 # reached `main`. Factory CI runs on push too (see .github/workflows/ci.yml),

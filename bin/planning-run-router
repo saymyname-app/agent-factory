@@ -66,10 +66,10 @@ LEGACY_ARTIFACTS: dict[str, str] = {
     ),
     "release-contract": (
         "the agent-factory-product-release/v1 contract "
-        "(legacy/config/product-release.schema.json)"
+        "(pre-refactor, quarantined)"
     ),
     "cockpit-v1-export": (
-        "Cockpit V1 (legacy/lib/factory_cockpit.py, legacy/ui/factory-cockpit/)"
+        "Cockpit V1 (pre-refactor, quarantined)"
     ),
 }
 
