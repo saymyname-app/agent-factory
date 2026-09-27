@@ -230,7 +230,7 @@ class QuarantineRules(unittest.TestCase):
 class MergeSignals(unittest.TestCase):
     """factory-watchdog-signals.json has three independently-scheduled writers
     (factory-watchdog, on-order-failed, on-session-stranded -- af-u61xq,
-    tests/factory-cockpit-chaos-test.py's header comment, PR #82). A wholesale
+    PR #82). A wholesale
     overwrite from one used to erase whatever another just wrote; merge_signals
     must instead read-modify-write, replacing only its own writer's slice.
     """

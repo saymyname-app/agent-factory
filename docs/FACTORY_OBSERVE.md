@@ -14,9 +14,9 @@ automatic handoff against its own named evidence -- it activates only when
 every required signal holds, and restores (deactivates) the instant one
 regresses.
 
-This mirrors the policy/state split `lib/factory_improvement_axes.py`
-already proved (policy versioned and human-edited, state host-local and
-mutable) and the locked-register concurrency discipline `bin/planning-exception`
+This mirrors the policy/state split the pre-refactor improvement-axes
+register used (policy versioned and human-edited, state host-local and
+mutable; that register is retired to `legacy/`, untrusted) and the locked-register concurrency discipline `bin/planning-exception`
 (B08) already proved. It is a deterministic prototype over caller-supplied
 JSON snapshots, the same fixture-bound scope B08 and P06 used -- it does not
 itself poll live Beads, Git or GitHub; that wiring is a caller's job.
@@ -77,6 +77,6 @@ maps an exemption name to its signal booleans, e.g.
   read-modify-write discipline B08 proved for concurrent writers.
 
 Not proven here: translating live Beads/Git/GitHub state into the snapshot
-format `observe` consumes, or a live cockpit/sentinel actually dispatching a
+format `observe` consumes, or a live sentinel loop (or Cockpit V2) actually dispatching a
 model call to the named `role` -- both are callers of this tool, not part of
 it.

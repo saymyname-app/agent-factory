@@ -259,8 +259,7 @@ def merge_signals(
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Read-modify-write factory-watchdog-signals.json without clobbering the
-    other writers' alerts (tests/factory-cockpit-chaos-test.py's header
-    comment, PR #82: three independently-scheduled scripts -- factory-watchdog,
+    other writers' alerts (PR #82: three independently-scheduled scripts -- factory-watchdog,
     on-order-failed, on-session-stranded -- all write this same file, and a
     wholesale overwrite from one erases whatever another just wrote).
 

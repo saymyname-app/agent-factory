@@ -238,7 +238,7 @@ done
 [ -n "$MISSING" ] && bad "missing critical runtime file(s):$MISSING"
 [ -z "$MISSING" ] && say "✓ runtime-files — all present"
 [ -n "$BROKEN_CFG" ] && bad "config invariant broken: $BROKEN_CFG"
-[ -z "$BROKEN_CFG" ] && say "✓ config-invariants — permission_mode sane, all 5 providers resolve"
+[ -z "$BROKEN_CFG" ] && say "✓ config-invariants — permission_mode sane, all 4 checked providers resolve"
 
 # Unattended agents run with permissions skipped and push rights. With
 # enableAllProjectMcpServers=true, any .mcp.json that lands in a checkout (a PR

@@ -1,7 +1,7 @@
 # Effective model providers come from city.provider.toml, generated and kept
 # current by bin/provider-failover from config/provider-policy.json and the
 # quota walls it detects (ADR-0018). It must stay the first key of this file.
-# Change providers from the cockpit (Fournisseurs IA), never by editing here.
+# Change providers with `./bin/provider-failover set`, never by editing here.
 include = ["city.provider.toml"]
 
 [workspace]
@@ -181,7 +181,7 @@ enabled = true
 # Patches, not agents/<name>/, because a directory there normally needs its
 # own provider-policy target. agents/factory-worker is the deliberate
 # exception: it has no provider pin and is tested as a workspace inheritor,
-# so cockpit/failover changes to workspace move the HQ writer too.
+# so provider-failover changes to workspace move the HQ writer too.
 [[patches.agent]]
 name = "claude"
 max_active_sessions = 2

@@ -1,5 +1,5 @@
 [order]
-description = "Zero-token provider failover (ADR-0018): detect quota walls in live sessions, keep every target on a provider that can work, regenerate city.provider.toml, restart sessions stuck on an exhausted pool, and park/resume the campaign only when no worker provider is left"
+description = "Zero-token provider failover (ADR-0018): detect quota walls in live sessions, keep every target on a provider that can work, regenerate city.provider.toml, and restart sessions stuck on an exhausted pool"
 trigger = "cooldown"
 interval = "2m"
 exec = "./bin/provider-failover tick --quiet"

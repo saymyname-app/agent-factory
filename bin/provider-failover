@@ -10,13 +10,13 @@ L0, deterministic, zero model tokens. Runs every two minutes as an order.
            provider per target, write city.provider.toml, reload the city if
            that changed, and restart sessions stuck on an exhausted pool
   apply    regenerate city.provider.toml from the current state (no detection)
-  status   what is chosen and why (--json for the cockpit)
+  status   what is chosen and why (--json for scripts)
   check-models  daily (not per-tick): compare the model id configured for each
            provider in city.toml against config/model-catalog.json's
            recommended list. On drift, file a bead and mail the Mayor -- never
            switches a model itself, that stays a human/PO call (af-a1t44,
            ADR-0018).
-  set      one manual control, as used by the cockpit:
+  set      one manual control -- the only supported way to change providers:
              set --action mark    --args '{"pool":"openai","until":"2026-09-21T05:22:00Z"}'
              set --action clear   --args '{"pool":"openai"}'
              set --action disable --args '{"provider":"codex","reason":"..."}'
@@ -142,7 +142,7 @@ def save_state(state: dict[str, Any]) -> None:
 
 
 class Locked:
-    """One writer at a time: the order, the cockpit and a human can all call in."""
+    """One writer at a time: the order and a human can both call in."""
 
     def __enter__(self) -> "Locked":
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -330,7 +330,7 @@ def apply(args: argparse.Namespace) -> int:
 
 def status_payload(policy: dict[str, Any], state: dict[str, Any], moment: float) -> dict[str, Any]:
     resolution = pf.resolve(policy, state, moment)
-    # The cockpit polls this every 30 s. It reads the sessions the last tick
+    # A caller may poll this often. It reads the sessions the last tick
     # saw (at most two minutes old) instead of asking gc each time.
     sessions = list(state.get("sessions") or [])
     return {
@@ -417,8 +417,8 @@ def check_models(args: argparse.Namespace) -> int:
                 + "\n".join(lines) +
                 "\n\nThis is a surfaced decision only: nothing here switches a model. Either "
                 "update config/model-catalog.json (by commit) if the provider's current/"
-                "recommended list changed, or change the configured model via the cockpit / "
-                "./bin/provider-failover -- never by editing city.toml directly (AGENTS.md)."
+                "recommended list changed, or change the configured model via "
+                "./bin/provider-failover set -- never by editing city.toml directly (AGENTS.md)."
             )
             bead_id = None
             if not args.dry_run:

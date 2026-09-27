@@ -384,7 +384,7 @@ gc doctor
 git -C ~/agent-factory status --short --branch
 ```
 
-The 2026-09-12 drill restored `af-v7a`, its M2 commit/outcome metadata, the `af-c3u -> af-hhx` workflow dependency, and `issue_prefix=af`; the restored City survived restart. Canonical recovery ended at **79 passed, 4 warnings, 0 failed** with no data loss. Off-box backup is not yet configured because no existing DoltHub credential/private destination was available; this is a durability limitation, not a reason to push the raw runtime to GitHub.
+The 2026-09-12 drill restored `af-v7a`, its M2 commit/outcome metadata, the `af-c3u -> af-hhx` workflow dependency, and `issue_prefix=af`; the restored City survived restart. Canonical recovery ended at **79 passed, 4 warnings, 0 failed** with no data loss. At the time of this drill off-box backup was not configured because no existing DoltHub credential/private destination was available. Off-box backup is now configured: the `core/jsonl-archive` order exports the stores and pushes them to the private `saymyname-app/agent-factory-archive` repository every 15 minutes (`RUNBOOK_STOP_AND_RESTART.md` §5). That JSONL export is an interchange copy, not a Dolt-native backup, and it is still not a reason to push the raw runtime to GitHub.
 
 ## SayMyName rig operations
 
@@ -412,7 +412,7 @@ Each rig has a registered Dolt backup remote at `.dolt-backup/smb` or `.dolt-bac
 `gc.last_delivered` must only ever point at a Bead that carries all six
 ADR-0016 delivery-proof fields (`gc.delivery_status`, `gc.work_outcome`,
 `gc.github_repo`, `gc.pr_number`, `gc.pr_head`, `gc.merge_commit`), because
-`derive_delivery()` above requires every one of them and fails closed
+the delivery-proof predicate (`lib/factory_delivery_proof.py`) requires every one of them and fails closed
 otherwise. Never close that Bead by hand with `gc bd close` or a raw `gc bd
 update --status=closed`; use the deterministic wrapper instead:
 

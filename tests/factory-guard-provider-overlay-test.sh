@@ -37,7 +37,7 @@ git add -A; git commit -qm city; git branch -M main; git push -q origin main; gi
 # af-kecgg: this test only exercises the provider-overlay section (1b, which
 # never touches gc/gh), but factory-guard's later sections are gated on
 # `[ -f city.toml ]` -- true for this fixture too -- not on "is this a real
-# city", so they run for real: campaign liveness (7) queries the live Beads
+# city", so they run for real: later sections query the live Beads
 # store, and delivery-proof (8) shells out to `gh pr view` against the real
 # GitHub repo for every closed product-goal bead it finds there. In a
 # sandbox with no outbound network, that `gh` call never returns, which is

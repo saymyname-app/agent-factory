@@ -1,5 +1,5 @@
 [order]
-description = "Deterministic zero-token merge actor: arm GitHub auto-merge on rig PRs targeting dev, reconcile merged PRs onto their beads, flag red builds, hold PRs whose migrations cannot be undone (ADR-0019). Never touches PRs targeting main."
+description = "Deterministic zero-token merge actor: arm GitHub auto-merge on PRs targeting each repo's protected branch in lib/protected_rigs.sh (the SayMyName rigs' dev, the Factory repo's main), reconcile merged PRs onto their beads, flag red builds, hold PRs whose migrations cannot be undone (ADR-0019). Never arms a PR targeting any other branch, so product dev -> main promotion stays human."
 trigger = "cooldown"
 interval = "3m"
 exec = "/home/benja/agent-factory/bin/pr-autopilot"

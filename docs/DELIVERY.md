@@ -13,7 +13,9 @@ The configured writer provider inherits `builtin:codex` and appends `-m gpt-5.6-
   one-writer-per-rig rule.
 - **CONFIGURED secondary — Claude:** the explicit `claude` provider inherits
   Gas City `v1.4.1`'s `builtin:claude`, pins the host CLI to `2.1.236`, selects
-  `claude-sonnet-5`, and defaults to `plan`. The `claude-reviewer` template is
+  `sonnet-5`, and defaults to `permission_mode = "unrestricted"` (`city.toml`;
+  `factory-guard` treats `plan` as broken: it strands unattended agents). The
+  `claude-reviewer` template is
   on-demand only. Use it for fallback analysis or an independent GUARDED review
   when the risk justifies L3; it is not a global reviewer and must not overlap a
   writer on the same rig.
@@ -185,10 +187,15 @@ added to the autopilot's rig table (see *Production stays gated* below).
 A PR-backed bead is delivered only when it is closed with coherent merge and
 exact-head CI proof. `merge_result=merged` alone, `closed` alone, or a green run
 for another head is insufficient. `lib/factory_delivery_proof.py` owns this
-pure predicate; the scoped Mayor lane and `factory-waiting-guard` both use it,
-so a legacy false close cannot release the next approved-graph ticket or clear
+pure predicate; `factory-waiting-guard`, `factory-delivery-guard`,
+`factory-guard` and `pr-autopilot` use it, so a legacy false close cannot clear
 a named wait. Explicit no-op, blocked, abandoned, and generic non-PR closes
 retain their prior terminal semantics.
+
+*Amendment 2026-09-27:* the scoped Mayor readiness lane (`mayor-campaign`),
+which also rechecked approved-graph tickets with this predicate, left with the
+campaign (ADR-0025 and ADR-0026 amendments). The Mayor now releases the next
+approved-graph ticket itself when it is woken.
 
 ### Multi-repo / cross-rig delivery proof (af-kidv)
 
@@ -290,7 +297,8 @@ that it actually blocks a broken push and never blocks anything else.
 ## Real-PII leak guard — containment while the dev DB still holds real people (af-6eqc)
 
 The dev DB currently holds real person data (the "invariant de confinement"
-in `DESIGN_GOVERNANCE.md`). Removing that is a separate, non-urgent piece of
+in the pre-refactor `legacy/docs/products/saymyname/DESIGN_GOVERNANCE.md`,
+untrusted). Removing that is a separate, non-urgent piece of
 work (af-hq2j, a synthetic dataset with the same shape). Until it ships, this
 is a two-layer **containment** guard against a real identifier leaving the
 machine — it does not eliminate the underlying problem, it contains it.
@@ -461,9 +469,9 @@ comportement change. Le relecteur vérifie donc :
 ## Observed and proven baseline
 
 - **PROVEN FAST:** M2 bead `af-v7a` used one Codex/Sol writer, deterministic diff validation, commit `77f206a85ab97352aa2e6f9bd2a4f2e653db6d69`, PR #9 and merge `43614760bce9a855a6aeecbfb38090461a905e70`.
-- **OBSERVED GitHub:** this private repository currently has no Actions workflows and PR #9/#16 reported an empty check rollup. Repository rulesets and branch protection are unavailable on the current GitHub plan (API HTTP 403). Therefore checks cannot be claimed as configured here.
+- **OBSERVED GitHub (M2, historical):** at M2 this private repository had no Actions workflows and PR #9/#16 reported an empty check rollup. It has since gained `.github/workflows/ci.yml` (`Factory CI`), the required workflow `lib/protected_rigs.sh` names for this repository. Repository rulesets and branch protection are unavailable on the current GitHub plan (API HTTP 403).
 - **PROVEN scoped GUARDED gate:** gate `af-q4v` blocked only `af-wisp-2o0m`; independent `af-wisp-r31o` remained visible in `bd ready --include-ephemeral`. After resolution, the guarded bead became ready. All probe artifacts were closed.
-- **CONFIGURED STANDARD contract:** target rigs must declare their own deterministic tests and GitHub CI/check requirements before STANDARD delivery is claimed. The Agent Factory repository currently proves PR transport/review, not CI execution.
+- **CONFIGURED STANDARD contract:** target rigs must declare their own deterministic tests and GitHub CI/check requirements before STANDARD delivery is claimed. The Agent Factory repository runs `Factory CI` on its pull requests.
 
 These classifications are deliberately separate: the three contracts are durable and usable, FAST and gate isolation are proven, while target-repository CI remains to be observed during rig onboarding.
 

@@ -65,16 +65,12 @@ For a change:
   `factory-guard` names any that are left; it does not remove them for you.
 - Do not extend the retired SayMyName Linear/PowerShell runner except for transition or safety work.
 - Check Gas City, Beads, GitHub, the provider/runtime, and standards before inventing a proprietary primitive.
-- Campaign liveness includes pointer/current result, linked
-  `gc.backend_workflow` / `gc.frontend_workflow`, and verified descendants.
-  Sessions count only from linked heartbeats; closed workflows never count as
-  progress, and closed non-pass means recovery.
 - Never put secrets in Git, Beads, logs, prompts, or responses.
 - Architecture changes update durable documentation in the same change.
 - **Every factory improvement is verified, adds autonomy, optimises something,
   and is documented for agents and humans** (ADR-0017), or it is unfinished.
-- Switch models only via the cockpit or `./bin/provider-failover set --by <you>`
-  (ADR-0018), never by editing config.
+- Switch models only via `./bin/provider-failover set --by <you>` (ADR-0018),
+  never by editing config.
 - Stop/restart only per `docs/RUNBOOK_STOP_AND_RESTART.md`.
 - Discoveries outside scope become separate Beads work, not silent scope expansion.
 - **Close a formula step with its outcome:** `gc bd update <step-id>

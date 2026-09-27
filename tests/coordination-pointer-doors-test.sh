@@ -5,8 +5,8 @@
 # --set-metadata; a test shall grep for it. (The product-queue doc and the
 # campaign mail texts it also named were retired on 2026-09-26.)
 #
-# The doors themselves (bin/campaign-pointer, bin/deliver-close,
-# bin/product-queue) are exempt -- they are the one place `--set-metadata` on
+# The doors themselves (bin/campaign-pointer, bin/deliver-close; the retired
+# bin/product-queue was a third) are exempt -- they are the one place `--set-metadata` on
 # these fields is allowed to live. Everything else must call the door.
 #
 # Docs legitimately WARN against the pattern in prose ("Never edit a
@@ -25,7 +25,7 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
 # Coordination-root pointers (campaign-pointer's door) + the six ADR-0016
 # delivery-proof fields (deliver-close's door) + gc.queue_state
-# (product-queue's door).
+# (the retired product-queue's door, kept so no raw write to it comes back).
 FIELDS='gc\.(current|current_jit|last_delivered|next_outcome|needs_benjamin|blocked_reason|resume_[a-z_]+|delivery_status|work_outcome|github_repo|pr_number|pr_head|merge_commit|queue_state)'
 
 scan_fenced_code() {  # $1 = file -> prints offending lines, if any

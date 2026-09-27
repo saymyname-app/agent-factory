@@ -77,7 +77,7 @@ criterion honestly instead of hiding it).
   transcript, that one-way visibility must be declared rather than assumed,
   and that a partially-compliant conversation view cannot be retained.
 
-Not proven here: live provider behavior, the real `factory-cockpit`
-adapter's actual read-only/zero-token properties (asserted in
-`AGENTS.md` and `bin/factory-cockpit`, not re-verified by this harness), and
+Not proven here: live provider behavior, a real Cockpit adapter's actual
+read-only/zero-token properties (Cockpit V1 and `bin/factory-cockpit`, which
+asserted them, are retired to `legacy/`; Cockpit V2 is Planning Run C01), and
 concurrency or retention economics, which P06 owns.

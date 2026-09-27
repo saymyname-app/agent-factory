@@ -115,7 +115,7 @@ class AssessBead(unittest.TestCase):
 
     def test_a_closed_bead_without_the_product_goal_label_is_out_of_scope(self):
         """Only beads carrying the label the rest of the Factory calls a
-        delivery/goal outcome (lib/factory_cockpit.py) are in scope — a random
+        delivery/goal outcome (see bin/factory-delivery-guard) are in scope — a random
         closed task bead missing unrelated metadata is not this check's job."""
         self.assertIsNone(assess_bead(bead(labels=["task"], metadata={})))
 

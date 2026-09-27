@@ -7,7 +7,7 @@ SayMyName is the first managed product, but this repository is deliberately proj
 ## Current status
 
 - The local WSL Factory has been delivered and proven through migration milestones M2–M6.
-- Gas City, the Mayor, Beads/Dolt, both SayMyName rigs, product status, local preview, and tailnet dashboard access are configured.
+- Gas City, the Mayor, Beads/Dolt, both SayMyName rigs, and tailnet dashboard access are configured. Product status and the local preview are retired (see below).
 - The old SayMyName Linear/PowerShell runner is retired and preserved only as historical evidence.
 - M7 remains a future cloud-placement decision; no cloud resource is implied by this repository.
 

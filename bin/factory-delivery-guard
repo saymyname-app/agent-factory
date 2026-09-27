@@ -8,9 +8,9 @@
 # is genuinely merged. Nothing used to check the door OUT — a raw
 # `gc bd close` bypasses deliver-close entirely, which is exactly what
 # happened to delivery bead af-7700 on 2026-09-16: closed with none of the six
-# fields set, which silently blocked mayor-campaign status / product-status
-# (both read those fields off the last delivered bead) for about half a day
-# before anyone noticed.
+# fields set, which silently blocked the then-live campaign status and
+# product-status readers (both retired since; they read those fields off the
+# last delivered bead) for about half a day before anyone noticed.
 #
 # This is the missing check on the way out. It lists every CLOSED bead
 # labelled product-goal (the label the rest of the Factory already uses to
