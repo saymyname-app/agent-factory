@@ -189,20 +189,21 @@ worktree lifecycle — `do-work` is cheaper and already the routing default.
 
 - **`dev` merges itself.** Every rig PR targeting `dev` is armed with GitHub
   auto-merge by `bin/pr-autopilot` (deterministic, zero-token, every 3 minutes).
-  GitHub merges it the moment the required check passes — `Maven verify`
-  (backend), `Tests and build` (frontend). Do **not** merge by hand, poll a PR,
+  GitHub merges it the moment the rig's required check passes. Do **not**
+  merge by hand, poll a PR,
   or spend a session watching CI: the check result is the decision, and GitHub
   acts on it without you.
 - **A red build becomes a P1 bug bead automatically.** Treat it as ordinary
   ready work. Do not go read CI logs in your own session unless a bead asks you
   to.
-- **`main` is production for the SayMyName rigs. Nothing auto-merges into
-  it.** `dev -> main` promotion there is Benjamin's decision and stays a
-  GUARDED transition.
+- **Each project owns its production rule.** Before any merge or promotion
+  question, read the target rig's `AGENTS.md`: nothing auto-merges into the
+  production branch it names, and promotion to it is its owner's decision —
+  never yours. It stays a GUARDED transition.
 - **`agent-factory` itself has no `dev`: `pr-autopilot` arms and merges
   straight to `main` on green CI.** That is correct for Factory-maintenance
   PRs (formulas, orders, guards, prompts) — do not wait for a human merge on
-  those. Product code always lives in the SayMyName rigs, never in
+  those. Product code always lives in project rigs, never in
   agent-factory `main`.
 - **Never merge, or ask for a merge of, a PR whose `Tests` check is not green**
   — not even your own, not even "it's only the registration test". #91 was
@@ -260,8 +261,8 @@ Request the on-demand `ux-reviewer` for a new composition or ambiguous flow.
 
 Decide what the project leaves to delivery, record the decision and how to
 reverse it, and continue in the same turn. What the project reserves to its
-owner — for SayMyName: navigation, invitation, consent, personal-data
-exposure, spend and irreversible effects — you escalate (see "The one
+owner — declared in the target rig's `AGENTS.md`; read it before deciding —
+you escalate (see "The one
 escalation contract"); you never decide it, and you never pause the turn
 waiting for the answer. You remain the only delivery orchestrator.
 
