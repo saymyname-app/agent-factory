@@ -66,10 +66,9 @@ assert_contains agents/mayor/prompt.template.md '--labels proposal'
 # The Mayor is project-agnostic: project rules live in each rig's AGENTS.md.
 ! grep -qi 'saymyname' "$REPO_ROOT/agents/mayor/prompt.template.md" \
   || fail 'the Mayor prompt names a project; project rules belong in its rig AGENTS.md'
-assert_contains docs/OPERATOR_BRIDGE.md './bin/saymyname-product-status'
+assert_absent docs/OPERATOR_BRIDGE.md './bin/saymyname-product-status'
 assert_contains docs/OPERATOR_BRIDGE.md 'C:\Dev\Projects\AgentFactory'
-assert_contains docs/OPERATOR_BRIDGE.md './bin/factory-cockpit open'
-assert_contains docs/OPERATOR_BRIDGE.md 'may consume model tokens'
+assert_absent docs/OPERATOR_BRIDGE.md './bin/factory-cockpit'
 assert_contains docs/OPERATOR_BRIDGE.md 'capability of the connected host, not standing authority'
 assert_absent README.md 'No production City is configured or proven yet.'
 assert_absent README.md 'legacy SayMyName Automation runner remains available'

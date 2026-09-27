@@ -152,14 +152,14 @@ Planning Run until C01's own run has published.
 Once the City is running, check on it without waking any agent:
 
 ```bash
-./bin/factory-cockpit snapshot
+gc status
 ```
 
 This performs zero model calls — it is a deterministic read of Gas City and
 Beads state. The first run after `gc start` costs nothing beyond that read;
 you only spend tokens when you send the Mayor a message (step 5) or when a
-Planning Run needs a decision only you can make. Open the browser view with
-`./bin/factory-cockpit open` when you want the same information visually.
+Planning Run needs a decision only you can make. The Gas City dashboard
+(`http://127.0.0.1:8372`) shows the same state in detail.
 
 ## What this tutorial does not do
 
