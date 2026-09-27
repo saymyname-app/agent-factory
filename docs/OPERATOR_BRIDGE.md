@@ -36,79 +36,17 @@ whose working folder is `/home/benja/agent-factory`. BenForge, its network, and
 the Codex desktop app must remain available. The remote session uses the host's
 files and tools; it does not copy the Factory onto the phone.
 
-### SayMyName PO cockpit
-
-For normal SayMyName product work, open the local Codex project whose primary
-folder is `C:\Dev\Projects\SayMyName`. This is the single PO cockpit: it exposes
-the Backend and Frontend Windows repositories, local MySQL/Flyway helpers, and
-the Factory through explicit WSL commands. Its canonical instructions and
-configuration live in `legacy/docs/products/saymyname/` and are synchronized into the
-Windows workspace.
-
-The Factory project remains the direct engineering/operations entrance. The PO
-cockpit is the default human entrance when Benjamin wants to discuss the product,
-record a decision, choose a priority, or have the Mayor route delivery.
-
-### Factory workspace and human cockpit
+### Factory workspace
 
 For Factory engineering, use the local Codex project rooted at
 `C:\Dev\Projects\AgentFactory`. It is a small Windows bridge to the canonical WSL
 repository, not a clone. Its commands enter
 `/home/benja/agent-factory` explicitly.
 
-Open the human decision cockpit with:
-
-```bash
-./bin/factory-cockpit open
-```
-
-The browser opens `http://127.0.0.1:8383`. It shows understandable Mayor and
-agent objectives, evidence-based phase/step progress, elapsed time, signal age,
-filtered product Beads, future candidates, the last delivery, deterministic
-decision aids, and any Benjamin decision. Automatic monitoring performs zero
-model calls. Search, pause, copy-summary, tooltips and the integrated glossary
-remain local.
-
-Benjamin may also type an explicit question or non-interrupting follow-up to the
-persistent Mayor. Sending may consume model tokens and is visibly labelled as
-such. It does not create a second orchestrator: the cockpit cannot interrupt,
-dispatch, retry, merge, or recover work. Use the upstream Gas City dashboard at
-port `8372` only when detailed sessions, runs, events, or full transcripts are
-actually needed.
-
-The **Mon PO** view is a portfolio of authenticated local Codex conversations.
-Every decision owns one independent thread, created only on its first explicit
-send and reopened from that decision page; several decisions may therefore run
-in parallel. General vision/documentation discussions remain separate. Benjamin
-can DISCUSS without mutation or RECORD an approved answer. Local provider token
-counters, a Codex link and a copyable thread identifier are navigation aids and
-make no extra model call. Full host access is available to inspect the product
-and Factory, but it does not widen authority: only an explicit EXECUTE request
-may be handed to the Mayor.
-
-The **Produit** view is exclusively the interactive SayMyName reference: vision,
-users, concepts, journeys, views, criteria, roadmap and decisions. Factory
-context (PO, Mayor, Beads, agents, GitHub) belongs under **Workflow**. The product
-reference is drafted with the PO, represented clearly, approved by Benjamin,
-then used to feed the Factory in order. Preview buttons reuse the guarded
-`bin/saymyname-preview` lifecycle and display the exact frontend/backend SHAs.
-
-The cockpit keeps governance domains explicit: Enterprise covers customers,
-testers, channel, buyer and pricing; Product covers user value and behavior;
-Project covers views, design and delivery choices. The design loop is code-first
-and risk-tiered; Figma is an optional exploration/handoff tool, never a second
-product or implementation truth store.
-
-For private phone access, run once from Ubuntu:
-
-```bash
-./bin/factory-cockpit phone-enable
-./bin/factory-cockpit phone-status
-```
-
-Open the reported HTTPS address on a phone connected to Benjamin's Tailscale
-tailnet. The cockpit stays bound to loopback; Tailscale Serve terminates HTTPS
-and does not expose it publicly. Automatic views still make zero model calls.
+Use the upstream Gas City dashboard at port `8372` when detailed sessions,
+runs, events, or full transcripts are needed; it makes no model call. The
+Cockpit V1 human view, its phone access and the SayMyName preview are retired
+to `legacy/` (untrusted); Cockpit V2 is the Planning Run C01.
 
 ### Speak in intent, not commands
 
@@ -142,41 +80,21 @@ Codex uses the least access needed for the stated intent. Availability of a
 credential or tool never authorizes secret disclosure, public exposure,
 production mutation, spending, irreversible action, or unrelated work.
 
-## Product-first status contract
+## Project status contract
 
-For a normal `Où en est SayMyName ?`, Codex runs:
+For `Où en est <projet> ?`, Codex reads that project's own repository and the
+live Beads/GitHub state, then answers in plain language:
 
-```bash
-./bin/saymyname-product-status
-```
-
-It returns, in plain language:
-
-1. **Current:** the product outcome being built, or idle.
+1. **Current:** the outcome being built, or idle.
 2. **Last delivered:** the last merged outcome and its evidence.
-3. **Next:** the approved next product outcome, if any.
+3. **Next:** the approved next outcome, if any.
 4. **Needs Benjamin:** only a real decision or intervention.
 5. **Risk:** only when a verified inconsistency or blocker exists.
 
 Raw issues, agents, sessions, Formula steps, logs, and infrastructure details
-stay hidden unless requested or needed to explain a verified risk. If an
-authoritative source disagrees, Codex fails closed and names the source to fix
-instead of inventing a clean summary.
-
-## Product candidate queue
-
-For future SayMyName outcomes, Codex uses:
-
-```bash
-./bin/saymyname-product-queue list
-```
-
-The list is a separate, low-token view from current delivery status. Under
-RECORD authority the PO may add, reorder, mark urgency, pause, resume, or cancel
-deferred candidates. These candidates never become worker-ready. Under EXECUTE
-authority, the PO hands the selected outcome once to the Mayor; the Mayor alone
-creates and links executable work. Exact commands and state semantics are in
-`../legacy/docs/PRODUCT_QUEUE.md`.
+stay hidden unless requested or needed to explain a verified risk. New work
+enters through the Planning Run flow (`bin/planning-run-router`); the Mayor
+executes approved ticket graphs.
 
 ## How Codex resolves context
 
@@ -189,9 +107,7 @@ creates and links executable work. Exact commands and state semantics are in
 This order lets the bridge adapt to SayMyName or a future rig without copying
 the full Factory history into every prompt. A new project is ready only when it
 has a registered rig, a concise project `AGENTS.md`, authoritative build/test
-commands, and a product-status projection or explicit fallback. Its cockpit
-adapter is a validated `config/products/<slug>.json`; the reproducible onboarding
-checklist is in `../legacy/docs/PRODUCT_COCKPIT_TEMPLATE.md`.
+commands, and a registered Project Planning Profile (`PROJECT_PLANNING_PROFILE.md`).
 
 ## Self-improvement protocol
 
@@ -215,18 +131,16 @@ Use this when connection or context is doubtful:
 pwd
 git status --short --branch
 gc status
-./bin/saymyname-product-status
 ```
 
 Expected: the canonical path is `/home/benja/agent-factory`, Git identity is
-unambiguous, Gas City answers, and product status either prints a complete
-snapshot or a precise recovery error. Operational recovery is documented in
+unambiguous, and Gas City answers. Operational recovery is documented in
 `OPERATIONS.md`; security boundaries are in `SECURITY.md`.
 
 ## Current decision
 
-The native Codex local/remote path plus the private product cockpit is the
-accepted bridge. A custom ChatGPT plugin, MCP server, or public dashboard is
+The native Codex local/remote path is the accepted bridge; Cockpit V2
+(Planning Run C01) replaces the retired private cockpit. A custom ChatGPT plugin, MCP server, or public dashboard is
 deferred until a concrete missing capability is demonstrated. Notifications may
 be added as a thin product event projection; they must not become a second state
 store or require polling the entire backlog.

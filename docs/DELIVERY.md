@@ -223,11 +223,6 @@ The convention, made explicit rather than left as a per-goal judgment call:
   `gc.goal=<goal-id>` across the city and every registered rig, deduped by
   (repo, PR number) — the goal's own fields legitimately mirror one child's
   and must count once, not as an extra delivery.
-- `bin/saymyname-product-status`'s single-line "LAST DELIVERED" status keeps
-  reading only the goal bead's own six fields — that stays correct and
-  sufficient for a one-glance status line. Reach for
-  `bin/goal-delivery-pairs` when the question is "what shipped, across every
-  repo, for this goal" rather than "what's the one-line status."
 
 ### Production stays gated
 
@@ -267,7 +262,7 @@ runs the guarded local test suite first and refuses the push if it fails**
 This closes a real gap: commit `8d92c13` landed directly on `main` and broke
 referential integrity between `legacy/docs/products/saymyname/DECISIONS.md` and
 `config/products/saymyname.json`'s `decision_refs` — a check
-`tests/factory-cockpit-test.py` already had. Nothing forced that suite to run
+`legacy/tests/factory-cockpit-test.py` already had. Nothing forced that suite to run
 before the commit reached `main`; Factory CI (which also runs `on: push` to
 `main`, see `.github/workflows/ci.yml`) only reported it after the fact, and
 both CI and the live cockpit stayed broken for hours before it was noticed.
