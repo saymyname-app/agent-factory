@@ -787,7 +787,7 @@ cd ~/agent-factory
 Candidates are durable Beads in `deferred` status. The command rejects malformed
 or duplicate ranks and serializes local mutations. Use `list --json` or
 `next --json` for compact automation. The PO may mutate candidates only after a
-RECORD request. The Mayor follows `docs/PRODUCT_QUEUE.md` to create a separate
+RECORD request. The Mayor follows `legacy/docs/PRODUCT_QUEUE.md` to create a separate
 execution Bead and materialize only the first eligible candidate. Never change a
 candidate to `open` or dispatch it directly.
 

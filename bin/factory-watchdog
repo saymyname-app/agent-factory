@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # factory-watchdog — deterministic (L0, zero-token) paging for three gaps the
 # existing campaign-liveness check does not cover (Incident 2026-09-16,
-# docs/INCIDENT_2026-09-16-silent-campaign-stall.md):
+# legacy/docs/INCIDENT_2026-09-16-silent-campaign-stall.md):
 #
 #   1. AGED HUMAN GATE   a "Gate: human" issue can sit open for hours with no
 #                        re-notification and no visible cockpit signal. af-oihx

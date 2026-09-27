@@ -18,6 +18,9 @@ logs unless asked.
 
 For “what is the Factory doing?”, use `gc status` and the Beads/GitHub state.
 Cockpit V1 is retired to `legacy/` (untrusted); Cockpit V2 is Planning Run C01.
+ADR-0001..0024 are pre-refactor (`legacy/docs/decisions/`): where their
+mechanism still runs it is active but not re-validated — re-decide it through
+the Planning Run flow when you touch it.
 Do not infer progress from session existence.
 
 For a change:
@@ -85,7 +88,7 @@ For a change:
 - **Standing ADMIN allowlist:** routine reversible ops (dispatcher/preview
   restart, pruning merged branches, cleaning worktrees, log rotation, city
   config reload) don't trigger the escalation contract above — full list in
-  `docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` §7.
+  `legacy/docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` §7.
 - **No direct push to `main` or `dev`:** land through a pull request.
 
 ## Cost policy

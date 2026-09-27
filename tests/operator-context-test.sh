@@ -29,13 +29,6 @@ assert_absent() {
 
 assert_file AGENTS.md
 assert_file docs/OPERATOR_BRIDGE.md
-assert_file docs/decisions/ADR-0003-native-codex-operator-bridge.md
-assert_file docs/FACTORY_WORKSPACE_AGENTS.md
-assert_file docs/decisions/ADR-0006-token-free-human-factory-cockpit.md
-assert_file docs/decisions/ADR-0007-human-decision-center-and-mayor-channel.md
-assert_file docs/decisions/ADR-0010-governance-domains-and-design-loop.md
-assert_file docs/products/saymyname/PROJECT_INVENTORY.md
-assert_file docs/products/saymyname/DESIGN_GOVERNANCE.md
 assert_file agents/ux-reviewer/agent.toml
 assert_file agents/ux-reviewer/prompt.template.md
 
@@ -56,7 +49,11 @@ assert_contains docs/CONTEXT_INDEX.md 'OPERATOR_BRIDGE.md'
 # check self-maintaining AND makes it catch the stale index it was meant to.
 latest_adr=$(ls "$REPO_ROOT/docs/decisions"/ADR-*.md 2>/dev/null \
   | xargs -n1 basename | sort | tail -1 | sed 's/\.md$//')
-adr_range="\`decisions/ADR-0001-foundation.md\` through \`decisions/${latest_adr}.md\`"
+first_adr=$(ls "$REPO_ROOT/docs/decisions"/ADR-*.md 2>/dev/null \
+  | xargs -n1 basename | sort | head -1 | sed 's/\.md$//')
+adr_range="\`decisions/${first_adr}.md\` through \`decisions/${latest_adr}.md\`"
+# Pre-refactor material is reachable, and flagged untrusted, from the index.
+assert_contains docs/CONTEXT_INDEX.md '../legacy/README.md'
 assert_contains docs/CONTEXT_INDEX.md "$adr_range"
 assert_contains agents/mayor/prompt.template.md 'UI/UX design gate'
 # Decisions 7-9 (Benjamin, 2026-09-25): the Mayor executes approved graphs,
@@ -69,7 +66,6 @@ assert_contains agents/mayor/prompt.template.md '--labels proposal'
 # The Mayor is project-agnostic: project rules live in each rig's AGENTS.md.
 ! grep -qi 'saymyname' "$REPO_ROOT/agents/mayor/prompt.template.md" \
   || fail 'the Mayor prompt names a project; project rules belong in its rig AGENTS.md'
-assert_contains docs/PRODUCT_QUEUE.md "candidate's \`status\` (and \`gc.queue_state\`) is never edited directly"
 assert_contains docs/OPERATOR_BRIDGE.md './bin/saymyname-product-status'
 assert_contains docs/OPERATOR_BRIDGE.md 'C:\Dev\Projects\AgentFactory'
 assert_contains docs/OPERATOR_BRIDGE.md './bin/factory-cockpit open'

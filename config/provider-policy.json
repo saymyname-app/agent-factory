@@ -1,6 +1,6 @@
 {
   "contract": "agent-factory-provider-policy/v1",
-  "description": "Ordre de repli par défaut, par cible. Les réglages faits depuis le cockpit (ordre, marquages, désactivations, fournisseur imposé) vivent dans .gc/provider-state.json et ne modifient jamais ce fichier. Voir docs/decisions/ADR-0018-automatic-provider-failover.md.",
+  "description": "Ordre de repli par défaut, par cible. Les réglages faits depuis le cockpit (ordre, marquages, désactivations, fournisseur imposé) vivent dans .gc/provider-state.json et ne modifient jamais ce fichier. Voir legacy/docs/decisions/ADR-0018-automatic-provider-failover.md.",
   "unknown_reset_minutes": 60,
   "low_percent": 5,
   "low_hold_minutes": 360,

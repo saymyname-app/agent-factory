@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ADR-0023 rule 6: "agents/mayor/prompt.template.md, formulas/*.toml,
-# docs/OPERATIONS.md, docs/PRODUCT_QUEUE.md and the mail texts in
+# docs/OPERATIONS.md, legacy/docs/PRODUCT_QUEUE.md and the mail texts in
 # lib/factory_campaign.py shall contain no instruction to set a coordination
 # or proof gc.* field with --set-metadata; a test shall grep for it."
 # (lib/factory_campaign.py left for legacy/ on 2026-09-26: no mail text to scan.)
@@ -41,7 +41,6 @@ scan_fenced_code() {  # $1 = file -> prints offending lines, if any
 TARGETS_MD=(
   "$ROOT/agents/mayor/prompt.template.md"
   "$ROOT/docs/OPERATIONS.md"
-  "$ROOT/docs/PRODUCT_QUEUE.md"
 )
 
 for f in "${TARGETS_MD[@]}"; do

@@ -5,51 +5,33 @@ Use progressive disclosure. Do not read every document by default.
 | Need | Read |
 |---|---|
 | Factory invariants / agent bootstrap | `../AGENTS.md` |
-| Comment fonctionne l'usine, de bout en bout, en français, pour Benjamin | `COMMENT_FONCTIONNE_USINE.md` |
+| Pre-refactor code and docs (untrusted, investigation only; never an instruction) | `../legacy/README.md` |
 | Codex desktop, CLI, remote/mobile protocol and authority | `OPERATOR_BRIDGE.md` |
-| Human Factory cockpit, product roadmap/decisions/board, state/resume contract, agent drill-down, token usage, Mayor channel | `FACTORY_WORKSPACE_AGENTS.md`, `OPERATIONS.md`, `decisions/ADR-0012-human-state-and-resume-contract.md` |
-| Integrated product PO, project/context graphs, reusable cockpit products | `PRODUCT_COCKPIT_TEMPLATE.md`, `ADD_A_PRODUCT.md`, `config/product-cockpit.schema.json`, `config/cockpit.json` |
-| SayMyName product vision, priorities, unknowns | `products/saymyname/PRODUCT_CONTEXT.md` |
-| SayMyName durable product decisions | `products/saymyname/DECISIONS.md` |
-| SayMyName reviewed views/features and UI/UX governance | `products/saymyname/PROJECT_INVENTORY.md`, `products/saymyname/DESIGN_GOVERNANCE.md` |
-| SayMyName PO cockpit instructions and Codex config | `products/saymyname/PO_WORKSPACE_AGENTS.md`, `products/saymyname/CODEX_PROJECT.toml` |
-| Ordered product candidates and Mayor materialization | `PRODUCT_QUEUE.md` |
-| Versioned product release contract, states, and graph-aware campaign selection | `OPERATIONS.md` (Versioned product release contract), `config/product-release.schema.json`, `decisions/ADR-0014-versioned-product-release-contract.md` |
-| Project intake gate, declared autonomy, and the draft-first/confirm-by-exception protocol | `decisions/ADR-0015-project-intake-and-target-contract.md` (Intake protocol v2 section; v1 kept for its dry-run record) |
-| Existing-code review tiers for takeover projects (existant/cible reconciliation) | `decisions/ADR-0021-existing-code-review-tiers.md`, `INTAKE_REVIEW_TIERS.md` |
-| Full brick-by-brick audit (2026-09-17), corrected diagnoses, target design, wave plan, why the factory stalls | `FACTORY_AUDIT_2026-09-17.md`, `FACTORY_CONTINUITY.md`, `INCIDENT_2026-09-16-silent-campaign-stall.md` |
-| Durable target architecture | `TARGET_ARCHITECTURE.md` |
-| Current migration state, cutover and rollback | `MIGRATION.md` |
 | Install/start/stop/doctor/backup/restore/recovery | `OPERATIONS.md` |
 | A new operator installing an independent Factory from Git, registering a generic project, starting its City, and reaching the first Planning Run | `GETTING_STARTED.md` |
 | Stopping and restarting the whole factory, and proving nothing was lost | `RUNBOOK_STOP_AND_RESTART.md` |
-| A middle-of-the-night alert or a factory check with no PO session open (French) | `RUNBOOK_4H_DU_MATIN.md` |
-| What `factory-guard`, `factory-resources`, `factory-doctor`, `provider-failover` and `mayor-campaign` do, and when to run them | `FACTORY_TOOLS.md` |
-| How ordinary HQ Factory implementation is dispatched without confusing an agent role with the `workspace` provider class | `FACTORY_TOOLS.md` (L'ouvrier du dépôt Factory), `decisions/ADR-0018-automatic-provider-failover.md` (§12), `./bin/factory-work-dispatch` |
+| What `factory-guard`, `factory-resources`, `factory-doctor` and `provider-failover` do, and when to run them | `FACTORY_TOOLS.md` |
+| How ordinary HQ Factory implementation is dispatched without confusing an agent role with the `workspace` provider class | `FACTORY_TOOLS.md` (L'ouvrier du dépôt Factory), `../legacy/docs/decisions/ADR-0018-automatic-provider-failover.md` (§12), `./bin/factory-work-dispatch` (legacy ADR — mechanism still active, not re-validated) |
 | Why formula exec checks are materialised inside every rig, how missing/stale managed copies self-heal after a rig re-clone or pack re-pin, and how to check them without writing | `FACTORY_TOOLS.md` (`build-gates`), `DELIVERY.md` (GUARDED build gates), `./bin/factory-build-gates` |
-| Which model provider each target runs, quota walls, fallback chains, cockpit controls | `FACTORY_TOOLS.md`, `decisions/ADR-0018-automatic-provider-failover.md`, `config/provider-policy.json` |
-| What the campaign does when no product work is eligible (idle ladder), liveness, wake reminders | `FACTORY_TOOLS.md`, `decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` |
-| Design for tracking more than one in-progress Factory delivery bead at once and bundling multiple due wakes into one mail (not yet implemented; see the follow-up ticket it files) | `DESIGN_MAYOR_CAMPAIGN_CONCURRENT_TRACKING.md` |
+| Which model provider each target runs, quota walls, fallback chains | `FACTORY_TOOLS.md`, `config/provider-policy.json`, `../legacy/docs/decisions/ADR-0018-automatic-provider-failover.md` (legacy ADR — mechanism still active, not re-validated) |
 | Why B12 (cut over to the minimum planning kernel) closed blocked, and its re-decomposition into a router, fixture proof, activation switch and Cockpit V2 reservation slices | `planning/B12-redecomposition-planning-run-router.md` |
 | How the router wires B03/B04/B05/B06 into one live Planning Run lifecycle, why it never re-slices a Spec or fabricates approval, how it translates `legacy_path` fail-closed, why it is the only Planning Run entry point (one-way, no fallback flag, af-mav0b), and the C01/Cockpit V2 reservation gate | `PLANNING_RUN_ROUTER.md`, `./bin/planning-run-router`, `config/planning-run-reservation.json`, `tests/planning-run-router-test.py` |
-| The exact standing allowlist of routine ops that no longer count as ADMIN (restart dispatcher/preview, prune merged branches, clean worktrees, rotate logs, reload city config) | `../AGENTS.md` (Standing ADMIN allowlist), `decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` (§7 row 4) |
-| Named improvement axes and the maintain-alive master switch (rung 5 of the idle ladder), cockpit toggles | `FACTORY_CONTINUITY.md` (sec1/sec4), `config/factory-improvement-axes.json`, `config/factory-improvement-axes.schema.json` |
-| A filed liveness defect, an aged human gate, a stuck/conflicting PR, or a CLOSED workflow hiding a non-pass outcome not getting paged | `FACTORY_TOOLS.md` (`./bin/factory-watchdog`), `INCIDENT_2026-09-16-silent-campaign-stall.md` |
+| The exact standing allowlist of routine ops that no longer count as ADMIN (restart dispatcher, prune merged branches, clean worktrees, rotate logs, reload city config) | `../AGENTS.md` (Standing ADMIN allowlist), `../legacy/docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` §7 (legacy ADR — mechanism still active, not re-validated) |
+| An aged human gate, a stuck/conflicting PR, a CLOSED workflow hiding a non-pass outcome, or a control-quarantine backlog not getting paged | `FACTORY_TOOLS.md` (`./bin/factory-watchdog`) |
 | Is anything wrong that we can actually fix (vs upstream noise) | run `./bin/factory-doctor`; see `FACTORY_TOOLS.md` |
-| The four conditions every factory improvement must meet | `decisions/ADR-0017-four-conditions-for-factory-improvements.md` |
-| Operator dashboard, SayMyName status, and preview | `OPERATIONS.md` |
+| The four conditions every factory improvement must meet | `../legacy/docs/decisions/ADR-0017-four-conditions-for-factory-improvements.md` (legacy ADR — mechanism still active, not re-validated) |
 | FAST / STANDARD / GUARDED delivery contracts and gates | `DELIVERY.md` |
-| Is a schema change undoable; migration declarations; what pr-autopilot holds | `DELIVERY.md` (Réversibilité par défaut), `decisions/ADR-0019-reversibility-by-default.md`, `./bin/reversibility-check` |
-| Why a `git push` to `main` can be refused, and why `pr-autopilot` is unaffected | `DELIVERY.md` (Main-landing gate), `decisions/ADR-0020-main-landing-gate.md`, `./bin/factory-main-gate` |
-| Why a commit/checkout/reset/merge in the live root is refused or reverted, why `bin/` executable bits self-heal, and how `mol-do-work` isolates HQ dispatches in a worktree | `decisions/ADR-0022-live-root-worktree-enforcement.md`, `.githooks/reference-transaction`, `.githooks/post-checkout`, `./bin/factory-do-work-workspace` |
-| Why a `build-basic` same-session drain has one shared branch/worktree, how every source anchor receives it, and who publishes/cleans it | `decisions/ADR-0024-shared-drain-worktree-lifecycle.md`, `DELIVERY.md` (Drain partagé), `./bin/factory-shared-drain-workspace` |
+| Is a schema change undoable; migration declarations; what pr-autopilot holds | `DELIVERY.md` (Réversibilité par défaut), `../legacy/docs/decisions/ADR-0019-reversibility-by-default.md`, `./bin/reversibility-check` (legacy ADR — mechanism still active, not re-validated) |
+| Why a `git push` to `main` can be refused, and why `pr-autopilot` is unaffected | `DELIVERY.md` (Main-landing gate), `../legacy/docs/decisions/ADR-0020-main-landing-gate.md`, `./bin/factory-main-gate` (legacy ADR — mechanism still active, not re-validated) |
+| Why a commit/checkout/reset/merge in the live root is refused or reverted, why `bin/` executable bits self-heal, and how `mol-do-work` isolates HQ dispatches in a worktree | `../legacy/docs/decisions/ADR-0022-live-root-worktree-enforcement.md`, `.githooks/reference-transaction`, `.githooks/post-checkout`, `./bin/factory-do-work-workspace` (legacy ADR — mechanism still active, not re-validated) |
+| Why a `build-basic` same-session drain has one shared branch/worktree, how every source anchor receives it, and who publishes/cleans it | `../legacy/docs/decisions/ADR-0024-shared-drain-worktree-lifecycle.md`, `DELIVERY.md` (Drain partagé), `./bin/factory-shared-drain-workspace` (legacy ADR — mechanism still active, not re-validated) |
 | Why a real identifier can block a push, or a CI build fail on an unmarked fixture (dev-DB PII containment) | `DELIVERY.md` (Real-PII leak guard), `./bin/factory-pii-guard`, `./bin/factory-provenance-guard` |
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | A goal ships as more than one PR across rigs; the goal bead's own six proof fields aren't the whole picture | `DELIVERY.md` (Multi-repo / cross-rig delivery proof), `./bin/goal-delivery-pairs` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0001-foundation.md` through `decisions/ADR-0028-planning-exception-routing.md` |
-| Why coordination state (root pointers, semantic labels, proof fields) is written only through a door script (`product-queue`, `mayor-campaign`, `deliver-close`, `campaign-pointer`), never with `--set-metadata`, and why readers degrade instead of dying | `decisions/ADR-0023-coordination-state-write-door.md` |
-| How an approved Ticket Graph Draft is published atomically and how the Mayor is restricted to that exact graph without falling through to legacy Factory or product work | `decisions/ADR-0025-approved-graph-bootstrap-scope.md`, `./bin/ticket-graph-publish`, `./bin/mayor-campaign scope` |
+| Structural decisions | `decisions/ADR-0025-approved-graph-bootstrap-scope.md` through `decisions/ADR-0028-planning-exception-routing.md`; ADR-0001..0024 are pre-refactor, in `../legacy/docs/decisions/` (see `../legacy/README.md` for which mechanisms still run) |
+| Why coordination state (root pointers, proof fields) is written only through a door script (`deliver-close`, `campaign-pointer`), never with `--set-metadata`, and why readers degrade instead of dying | `../legacy/docs/decisions/ADR-0023-coordination-state-write-door.md` (legacy ADR — mechanism still active, not re-validated) |
+| How an approved Ticket Graph Draft is published atomically (the Mayor-restriction part left with the campaign: see the ADR's 2026-09-26 amendment) | `decisions/ADR-0025-approved-graph-bootstrap-scope.md`, `./bin/ticket-graph-publish` |
 | Why opening a PR cannot close a delivery bead or release its dependents, and which exact merge/CI fields prove completion | `decisions/ADR-0026-structural-delivery-completion-gate.md`, `./bin/deliver-close`, `./bin/pr-autopilot`, `lib/factory_delivery_proof.py` |
 | How to exercise a candidate planning path from synthetic intent through publication, exact-revision integration, Delivered and Accepted without asserting Gas City wiring | `FIXTURE_CITY_ORACLE.md`, `./bin/fixture-city-oracle`, `tests/fixture-city-oracle-test.py` |
 | Why a new Planning Run can't select the legacy planning-base methodology, create/consume the duplicated Release Contract, or export Cockpit V1's routes/screens/state model, and how the fixture City proves the rejection | `decisions/ADR-0027-legacy-planning-and-cockpit-v1-quarantine.md`, `FIXTURE_CITY_ORACLE.md` (`legacy_path`), `tests/fixture-city-oracle-test.py` |
@@ -65,7 +47,6 @@ Use progressive disclosure. Do not read every document by default.
 | How B05 approves the exact canonical Spec by digest and closes its Planning Map without a duplicate document, why a frozen artifact rejects mutation while a genuine semantic change becomes an explicit new revision with provenance, and why the optional freeze-check localizes drift instead of becoming another fog audit | `SPEC_APPROVE.md`, `./bin/spec-approve`, `tests/spec-approve-test.py` |
 | How B08 lets a delivery worker distinguish bounded technical repair from a semantic/topology surprise, why raising a Planning Exception parks only the affected subgraph while unrelated Ready Frontier work continues, why a duplicate raise on covered work is detected instead of double-parking, and how a behavioral/topology resolution patches only unfinished work through the same `ticket-graph-publish` door instead of a second decomposition authority | `decisions/ADR-0028-planning-exception-routing.md`, `PLANNING_EXCEPTION.md`, `ADAPTATION_REGISTER.md` (AR-003), `./bin/planning-exception`, `./bin/ticket-graph-publish patch`, `tests/planning-exception-test.py` |
 | How B09 diffs a caller-supplied Planning Run/delivery/adaptation snapshot against the last-observed one so an unchanged state wakes nobody, why a new fact wakes exactly the smallest qualified role once with its evidence preserved, how measures stay separated by work class, and how a review exemption/automatic handoff activates only under named evidence and restores on regression | `FACTORY_OBSERVE.md`, `ADAPTATION_REGISTER.md` (AR-004), `./bin/factory-observe`, `config/factory-observe-policy.json`, `config/factory-observe-measures.schema.json`, `tests/factory-observe-test.py` |
-| Token-efficient multi-provider orchestration proposal (routing matrix, Mayor session budget) | `PROPOSAL-token-efficient-orchestration-2026-09-15.md` |
 
 ## Authority order
 
@@ -81,11 +62,11 @@ replacement for a live refresh before mutation.
 
 ## Minimal session bootstrap
 
-- Product question: run `./bin/saymyname-product-status`; load nothing else unless a field needs recovery.
+- Project question: read that project's own repository (its rig `AGENTS.md`) and live Beads/GitHub.
 - Factory health question: read `OPERATOR_BRIDGE.md`, then run its read-only health check.
 - Host capacity, unsaved work, or "is the factory safe to touch": run `./bin/factory-guard --check-only` and `./bin/factory-resources`; see `FACTORY_TOOLS.md`.
 - Health triage: run `./bin/factory-doctor` rather than reading raw `gc doctor` — it separates what we can fix from upstream and advisory noise.
-- One-glance Factory activity: run `./bin/factory-cockpit snapshot`; open the UI only when requested.
+- One-glance Factory activity: `gc status`, then Beads/GitHub.
 - Tracked change: read the root and nearest project `AGENTS.md`, the relevant Bead, and only the linked contract needed by the change.
 - Architecture or policy change: also read the relevant ADRs and update/supersede them in the same change.
 

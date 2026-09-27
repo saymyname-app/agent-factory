@@ -42,7 +42,7 @@ For normal SayMyName product work, open the local Codex project whose primary
 folder is `C:\Dev\Projects\SayMyName`. This is the single PO cockpit: it exposes
 the Backend and Frontend Windows repositories, local MySQL/Flyway helpers, and
 the Factory through explicit WSL commands. Its canonical instructions and
-configuration live in `docs/products/saymyname/` and are synchronized into the
+configuration live in `legacy/docs/products/saymyname/` and are synchronized into the
 Windows workspace.
 
 The Factory project remains the direct engineering/operations entrance. The PO
@@ -176,7 +176,7 @@ RECORD authority the PO may add, reorder, mark urgency, pause, resume, or cancel
 deferred candidates. These candidates never become worker-ready. Under EXECUTE
 authority, the PO hands the selected outcome once to the Mayor; the Mayor alone
 creates and links executable work. Exact commands and state semantics are in
-`PRODUCT_QUEUE.md`.
+`../legacy/docs/PRODUCT_QUEUE.md`.
 
 ## How Codex resolves context
 
@@ -191,7 +191,7 @@ the full Factory history into every prompt. A new project is ready only when it
 has a registered rig, a concise project `AGENTS.md`, authoritative build/test
 commands, and a product-status projection or explicit fallback. Its cockpit
 adapter is a validated `config/products/<slug>.json`; the reproducible onboarding
-checklist is in `PRODUCT_COCKPIT_TEMPLATE.md`.
+checklist is in `../legacy/docs/PRODUCT_COCKPIT_TEMPLATE.md`.
 
 ## Self-improvement protocol
 

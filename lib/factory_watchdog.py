@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Watchdog assessments: aged human gates, stuck PRs, false-success workflow closes.
 
-Incident 2026-09-16 (docs/INCIDENT_2026-09-16-silent-campaign-stall.md) found
+Incident 2026-09-16 (legacy/docs/INCIDENT_2026-09-16-silent-campaign-stall.md) found
 three gaps the existing campaign-liveness check (legacy/lib/factory_liveness.py) does
 not cover, because liveness only asks "is the campaign progressing" -- never
 "is something else sitting silently waiting on a human, a PR, or hiding a
