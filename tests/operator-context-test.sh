@@ -66,6 +66,9 @@ assert_contains agents/mayor/prompt.template.md 'bin/ticket-graph-publish patch'
 assert_contains agents/mayor/prompt.template.md '--labels proposal'
 ! grep -q 'product-queue\|mayor-campaign\|saymyname-product' "$REPO_ROOT/agents/mayor/prompt.template.md" \
   || fail 'the Mayor prompt still points at retired legacy commands'
+# The Mayor is project-agnostic: project rules live in each rig's AGENTS.md.
+! grep -qi 'saymyname' "$REPO_ROOT/agents/mayor/prompt.template.md" \
+  || fail 'the Mayor prompt names a project; project rules belong in its rig AGENTS.md'
 assert_contains docs/PRODUCT_QUEUE.md "candidate's \`status\` (and \`gc.queue_state\`) is never edited directly"
 assert_contains docs/OPERATOR_BRIDGE.md './bin/saymyname-product-status'
 assert_contains docs/OPERATOR_BRIDGE.md 'C:\Dev\Projects\AgentFactory'
