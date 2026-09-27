@@ -73,4 +73,32 @@ grep -q "has diverged from origin/main" <<<"$out" \
   || { printf '%s\n' "$out" >&2; fail "guard did not report a diverged root"; }
 [ "$(git rev-parse HEAD)" = "$diverged" ] || fail "guard moved a diverged root"
 
-printf 'PASS: factory-guard live-root sync\n'
+# --- rig checkouts: same contract (section 3b) -----------------------------
+git init -q --bare "$TMP/rig-origin.git"
+git clone -q "$TMP/rig-origin.git" "$TMP/rig-seed" 2>/dev/null
+( cd "$TMP/rig-seed" && git config user.email s@s && git config user.name s \
+  && git config commit.gpgsign false && echo a > a && git add -A && git commit -qm a \
+  && git branch -M dev && git push -q origin dev )
+echo "rigs/" >> .git/info/exclude
+mkdir -p rigs && git clone -q -b dev "$TMP/rig-origin.git" rigs/r1
+( cd "$TMP/rig-seed" && echo b >> a && git commit -qam b && git push -q origin dev )
+rig_before=$(git -C rigs/r1 rev-parse HEAD)
+
+out=$(run_guard --check-only)
+grep -q "rig-sync — r1: 1 merged commit(s) not checked out yet (check-only)" <<<"$out" \
+  || { printf '%s\n' "$out" >&2; fail "--check-only did not report the rig as behind"; }
+[ "$(git -C rigs/r1 rev-parse HEAD)" = "$rig_before" ] || fail "--check-only moved the rig"
+
+echo wip >> rigs/r1/a
+out=$(run_guard)
+grep -q "rig-sync — r1: 1 merged commit(s) not checked out yet: tracked files are being edited" <<<"$out" \
+  || { printf '%s\n' "$out" >&2; fail "guard did not refuse to pull a rig over tracked edits"; }
+[ "$(git -C rigs/r1 rev-parse HEAD)" = "$rig_before" ] || fail "guard pulled a rig over tracked edits"
+git -C rigs/r1 checkout -q -- a
+
+out=$(run_guard)
+grep -q "fast-forwarded rig r1 by 1 merged commit(s)" <<<"$out" \
+  || { printf '%s\n' "$out" >&2; fail "guard did not fast-forward a clean rig"; }
+[ "$(git -C rigs/r1 rev-parse HEAD)" = "$(git -C rigs/r1 rev-parse origin/dev)" ] || fail "rig is not at origin/dev"
+
+printf 'PASS: factory-guard live-root and rig sync\n'

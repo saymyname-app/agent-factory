@@ -203,6 +203,38 @@ if [ "$CURRENT" = "$EXPECTED" ] && git remote get-url origin >/dev/null 2>&1 \
   fi
 fi
 
+# --- 3b. rig checkouts run their merged base branch ------------------------
+# (2026-09-27) The Mayor reads each project's rules from its rig checkout's
+# AGENTS.md, but nothing pulled rigs/: both SayMyName rigs sat 4 commits
+# behind origin/dev and missed a merged owner-decisions section. Same contract
+# as 3a: fast-forward only, only a branch tracking origin, never over local
+# commits or tracked edits in progress (a writer may be working there).
+for rig_dir in "$ROOT"/rigs/*/; do
+  rig_dir=${rig_dir%/}
+  [ -e "$rig_dir/.git" ] || continue
+  rig=$(basename "$rig_dir")
+  rig_br=$(git -C "$rig_dir" branch --show-current 2>/dev/null)
+  rig_up=$(git -C "$rig_dir" rev-parse --abbrev-ref "${rig_br}@{upstream}" 2>/dev/null) \
+    || { say "· rig-sync — $rig: branch '${rig_br:-detached}' tracks no upstream, left alone"; continue; }
+  timeout 30 git -C "$rig_dir" fetch -q origin "${rig_up#origin/}" 2>/dev/null \
+    || { bad "rig-sync — $rig: could not fetch $rig_up"; continue; }
+  rig_behind=$(git -C "$rig_dir" rev-list --count "HEAD..$rig_up" 2>/dev/null || echo 0)
+  rig_ahead=$(git -C "$rig_dir" rev-list --count "$rig_up..HEAD" 2>/dev/null || echo 0)
+  if [ "$rig_behind" -eq 0 ]; then
+    say "✓ rig-sync — $rig running the merged '$rig_up'"
+  elif [ "$CHECK_ONLY" = "1" ]; then
+    say "· rig-sync — $rig: $rig_behind merged commit(s) not checked out yet (check-only)"
+  elif [ "$rig_ahead" -gt 0 ]; then
+    bad "rig-sync — $rig has diverged from $rig_up ($rig_ahead ahead, $rig_behind behind); resolve by hand"
+  elif [ -n "$(git -C "$rig_dir" status --porcelain --untracked-files=no)" ]; then
+    say "· rig-sync — $rig: $rig_behind merged commit(s) not checked out yet: tracked files are being edited there, not pulling over them"
+  elif git -C "$rig_dir" merge -q --ff-only "$rig_up" >/dev/null 2>&1; then
+    did "fast-forwarded rig $rig by $rig_behind merged commit(s)"
+  else
+    bad "rig-sync — $rig is $rig_behind commit(s) behind $rig_up and the fast-forward failed"
+  fi
+done
+
 [ -n "$MISSING" ] && bad "missing critical runtime file(s):$MISSING"
 [ -z "$MISSING" ] && say "✓ runtime-files — all present"
 [ -n "$BROKEN_CFG" ] && bad "config invariant broken: $BROKEN_CFG"
