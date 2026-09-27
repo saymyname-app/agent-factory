@@ -130,6 +130,36 @@ run clear-decision >/dev/null || fail "clear-decision should succeed"
 [[ $(jq -r '.metadata["gc.blocked_reason"]' <<<"$(coordination)") == none ]] \
   || fail "clear-decision did not clear gc.blocked_reason"
 
+# An escalation on an ordinary work bead must be clearable through the door
+# too: before 2026-09-27 clear-decision only knew the coordination bead, so a
+# work-bead escalation stayed "needs Benjamin" forever (af-y2jgr, af-3pt18).
+seed af-blocker '{"id":"af-blocker","status":"open","metadata":{"gc.needs_benjamin":"Cause"},"notes":""}'
+seed af-1vr4 '{"id":"af-1vr4","status":"in_progress","metadata":{"gc.needs_benjamin":"Other","gc.blocked_reason":"Other"}}'
+TESTS_RUN=$((TESTS_RUN + 1))
+run clear-decision af-blocker >/dev/null || fail "clear-decision <bead> should succeed"
+[[ $(jq -r '.metadata["gc.needs_benjamin"]' "$TEST_TMP/beads/af-blocker.json") == none ]] \
+  || fail "clear-decision <bead> did not clear that bead's gc.needs_benjamin"
+[[ $(jq -r '.notes' "$TEST_TMP/beads/af-blocker.json") == *"DECISION CLEARED"* ]] \
+  || fail "clear-decision <bead> did not trace the clearance in the bead's notes"
+[[ $(jq -r '.metadata["gc.needs_benjamin"]' <<<"$(coordination)") == Other ]] \
+  || fail "clear-decision <bead> must not touch the coordination bead"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if run clear-decision af-does-not-exist >/dev/null 2>&1; then
+  fail "clear-decision on an unknown bead must refuse"
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+if run clear-decision 'not an id' >/dev/null 2>&1; then
+  fail "clear-decision with a malformed id must refuse"
+fi
+
+# The escalation mail names the exact command that clears it.
+TESTS_RUN=$((TESTS_RUN + 1))
+: >"$TEST_TMP/calls.log"
+run escalate af-blocker "Cause" >/dev/null || fail "escalate should succeed"
+grep -Fq 'clear-decision af-blocker' "$TEST_TMP/calls.log" \
+  || fail "the escalation mail must name clear-decision <bead>"
+
 # --- ADR-0023 incident replay: the campaign stays coherent afterward -------
 # 2026-09-18 02:40Z: the Mayor wrote free prose into gc.current by hand. The
 # door only ever accepts a validated bead id or "none" -- prose is refused
