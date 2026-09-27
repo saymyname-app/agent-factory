@@ -4,8 +4,8 @@
 #
 # Gas City ships no retry, no backoff, and no failure notification on its own
 # (upstream contract): failed orders are "not retried, not backed off, never
-# disabled, and have no notification hook" (legacy/docs/FACTORY_AUDIT_2026-09-17.md
-# O1). Live evidence: 371 order.failed events in the last 24h (2026-09-17),
+# disabled, and have no notification hook" (Factory audit 2026-09-17,
+# finding O1). Live evidence: 371 order.failed events in the last 24h (2026-09-17),
 # read by nobody -- most of them one order (dolt-remotes-patrol) failing every
 # ~15 minutes for hours. A single failure is often transient and self-heals;
 # FAILURE_STREAK failures of the SAME order inside LOOKBACK is not, and gets

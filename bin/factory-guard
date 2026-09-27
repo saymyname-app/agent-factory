@@ -24,7 +24,7 @@
 #   5. HEALTHY BUT IDLE  every check was green through six hours in which
 #                       the campaign advanced nothing. (Its campaign-
 #                       liveness check left with the campaign on
-#                       2026-09-26; see legacy/README.md.)
+#                       2026-09-26.)
 #
 # And on 2026-09-17 (af-ogg8z):
 #
@@ -504,7 +504,7 @@ fi
 # creating/failed-create. Dedup key is the session's own last_active: it
 # changes exactly when the session moves, so this pages once per streak.
 # Until 2026-09-26 this lived inside the campaign-liveness check, which left
-# with the campaign (legacy/README.md).
+# with the campaign.
 GUARD_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd)"
 COORD="${CAMPAIGN_COORDINATION_BEAD:-af-1vr4}"
 # Read once: section 7b also keys its dedup pointers on this bead.
@@ -692,7 +692,7 @@ else
 fi
 
 # --- 9. (product-queue status drift -- retired 2026-09-26 with the product
-#     queue; legacy/README.md) ---------------------------------------------
+#     queue) -------------------------------------------------------------
 
 # --- 10. dispatch drift: a slung bead invisible to its target (af-33a4e) ----
 # `gc sling <target> <bead>` does not clear a pre-existing assignee unless
@@ -725,8 +725,8 @@ else
 fi
 
 # --- 11. stale gc.waiting_on (af-atyry) --------------------------------------
-# gc.waiting_on keeps a bead out of the idle ladder (legacy/lib/factory_campaign.py
-# is_ladder_bead) unconditionally -- nothing used to clear it when the bead
+# gc.waiting_on kept a bead out of the campaign's idle ladder (retired
+# 2026-09-26) unconditionally -- nothing used to clear it when the bead
 # it names closed, so "waiting on something" silently became "waiting
 # forever" (af-p4v9v sat excluded 14+ hours after the bead it waited on
 # merged). bin/factory-waiting-guard clears gc.waiting_on once its target is

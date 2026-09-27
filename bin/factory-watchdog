@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # factory-watchdog — deterministic (L0, zero-token) paging for three gaps the
-# existing campaign-liveness check does not cover (Incident 2026-09-16,
-# legacy/docs/INCIDENT_2026-09-16-silent-campaign-stall.md):
+# campaign-liveness check (retired since) did not cover (Incident 2026-09-16,
+# silent campaign stall):
 #
 #   1. AGED HUMAN GATE   a "Gate: human" issue can sit open for hours with no
 #                        re-notification and no visible cockpit signal. af-oihx
@@ -25,9 +25,9 @@
 #                        (2026-09-18): pr-autopilot ticked every 3 min with
 #                        errors=3 forever on all 3 repos with zero visible
 #                        signal until a human noticed an unarmed PR.
-#   5. (STALL FREQUENCY — retired 2026-09-26 with Cockpit V1, the only writer of factory-continuity-history.json (legacy/README.md))
+#   5. (STALL FREQUENCY — retired 2026-09-26 with Cockpit V1, the only writer of factory-continuity-history.json)
 #   6. (SLOW SENTINEL TICKS — retired 2026-09-26 with the campaign and its
-#                        mayor-campaign order (legacy/README.md))
+#                        mayor-campaign order)
 #   7. CONTROL QUARANTINE BACKLOG  a control step quarantined
 #                        (gc:control-quarantined, gc.failure_reason=<reason>)
 #                        reads as one ordinary step failure unless something

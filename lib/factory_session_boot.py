@@ -6,7 +6,7 @@ hours: provider-failover resolved it to a provider that hard-rejected every
 attempt with an error shape the detection regexes did not recognise, so the
 pool was never marked unavailable and the named session cycled
 creating -> failed-create -> creating forever. Campaign-progress liveness
-(legacy/lib/factory_liveness.py, ADR-0016 s5.3) never caught it: that check only
+(retired with the campaign, ADR-0016 s5.3) never caught it: that check only
 asks "is the campaign advancing", which is a question the Mayor cannot even
 begin to answer while it cannot boot. Those are different failure modes and
 need a different signal.
