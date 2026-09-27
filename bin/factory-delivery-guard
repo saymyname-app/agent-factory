@@ -235,6 +235,24 @@ convoy_target() {
   jq -r 'if (.children|length)==1 then .children[0].id else empty end' <<<"$out" 2>/dev/null
 }
 
+# scope_statuses rig -> {id: status} for every bead of that store, in ONE
+# read. Looking each bead up with `bd show` cost ~1 s a call and ~64 calls a
+# tick (2026-09-27), most of factory-guard's 180 s order budget.
+scope_statuses() {
+  local rig=$1
+  (cd "$ROOT" && $(gc_for "$rig") list --all --limit 0 --json 2>/dev/null) \
+    | jq -c 'if type=="array" then (map({(.id): .status}) | add // {}) else {} end' 2>/dev/null \
+    || echo '{}'
+}
+
+# status_of statuses rig id -> status from the one-read map; falls back to a
+# single `bd show` only when that read returned nothing at all.
+status_of() {
+  local statuses=$1 rig=$2 id=$3
+  if [ "$statuses" = '{}' ] || [ -z "$statuses" ]; then bead_status "$rig" "$id"; return; fi
+  jq -r --arg id "$id" '.[$id] // empty' <<<"$statuses"
+}
+
 # bead_status rig id -> the bead's stored status, or empty if it cannot be read.
 bead_status() {
   local rig=$1 id=$2
@@ -264,6 +282,8 @@ process_convoy_delivery_scope() {  # rig label
     --has-metadata-key gc.delivery_status --metadata-field gc.delivery_status=merged \
     --limit 0 --json 2>/dev/null)
   jq -e . >/dev/null 2>&1 <<<"$delivered" || delivered='[]'
+  local statuses='{}'
+  [ "$(jq length <<<"$delivered")" = "0" ] || statuses=$(scope_statuses "$rig")
 
   while IFS= read -r row; do
     [ -z "$row" ] && continue
@@ -275,12 +295,12 @@ process_convoy_delivery_scope() {  # rig label
     if [ -n "$convoy_id" ]; then
       exec_id=$(convoy_target "$rig" "$convoy_id")
     elif [[ $authorized_by =~ ^[a-zA-Z][a-zA-Z0-9]*-[a-zA-Z0-9]+$ ]]; then
-      [ -n "$(bead_status "$rig" "$authorized_by")" ] && exec_id=$authorized_by
+      [ -n "$(status_of "$statuses" "$rig" "$authorized_by")" ] && exec_id=$authorized_by
     fi
     [ -n "$exec_id" ] || continue
     [ "$exec_id" != "$id" ] || continue
 
-    exec_status=$(bead_status "$rig" "$exec_id")
+    exec_status=$(status_of "$statuses" "$rig" "$exec_id")
     [ -n "$exec_status" ] || continue          # lookup failed -- nothing safe to do
     [ "$exec_status" != "closed" ] || continue # already fine
 
@@ -311,7 +331,7 @@ process_convoy_delivery_scope() {  # rig label
       INCOMPLETE=$((INCOMPLETE + 1))
       if [ -n "$convoy_id" ]; then
         local convoy_stat
-        convoy_stat=$(bead_status "$rig" "$convoy_id")
+        convoy_stat=$(status_of "$statuses" "$rig" "$convoy_id")
         if [ -n "$convoy_stat" ] && [ "$convoy_stat" != "closed" ]; then
           if (cd "$ROOT" && $(gc_for "$rig") update "$convoy_id" --status=closed \
                 --notes "Closed by factory-delivery-guard: tracked bead $exec_id delivered via $id." >/dev/null 2>&1); then

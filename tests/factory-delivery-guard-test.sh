@@ -40,7 +40,12 @@ if [[ ${1:-} == bd && ${2:-} == --rig ]]; then
   exit 0
 fi
 if [[ ${1:-} == bd && ${2:-} == list ]]; then
-  cat "$BEADS_FILE"
+  if [[ " $* " == *" --status "* || " $* " == *" --label "* || " $* " == *" --has-metadata-key "* ]]; then
+    cat "$BEADS_FILE"; exit 0
+  fi
+  # an unfiltered `list --all` sees every bead: fixtures plus execution beads
+  echo "list-all" >> "$TMP_LIST_ALL_LOG"
+  jq -s '.[0] + (.[1] | to_entries | map({id: .key, status: .value}))' "$BEADS_FILE" "$EXEC_STATUS_FILE"
   exit 0
 fi
 if [[ ${1:-} == bd && ${2:-} == update ]]; then
@@ -51,6 +56,7 @@ if [[ ${1:-} == bd && ${2:-} == update ]]; then
 fi
 if [[ ${1:-} == bd && ${2:-} == show ]]; then
   id=$3
+  echo "$id" >> "$TMP_SHOW_LOG"
   status=$(jq -r --arg id "$id" '.[$id] // empty' "$EXEC_STATUS_FILE" 2>/dev/null)
   if [ -n "$status" ]; then printf '[{"id":"%s","status":"%s"}]' "$id" "$status"; else echo '[]'; fi
   exit 0
@@ -69,6 +75,8 @@ exit 64
 STUB
 chmod +x "$TMP/bin/gc"
 export EXEC_STATUS_FILE="$TMP/exec_status.json"; echo '{}' > "$EXEC_STATUS_FILE"
+export TMP_SHOW_LOG="$TMP/show.log" TMP_LIST_ALL_LOG="$TMP/list-all.log"
+: > "$TMP_SHOW_LOG"; : > "$TMP_LIST_ALL_LOG"
 export CONVOY_CHILDREN_FILE="$TMP/convoy_children.json"; echo '{}' > "$CONVOY_CHILDREN_FILE"
 
 # --- stub gh: `pr view <n> --repo <repo>` reports per-scenario -------------
@@ -415,6 +423,18 @@ grep -q "execution bead zz-fixture-exec-buildbasic was never closed" <<<"$out" \
   || { echo "$out" >&2; fail "--check-only did not report the convoy-delivery gap"; }
 [ -z "$(cat "$UPDATE_LOG")" ] || fail "--check-only wrote to Beads for the convoy-delivery check"
 grep -q "^UNRESOLVED" <<<"$out" || fail "an unreconciled convoy-delivery gap must not read as healthy under --check-only"
+
+# 13. the convoy-delivery check reads each store ONCE, never one `bd show`
+#     per bead (64 shows a tick cost ~61 s of factory-guard's 180 s budget) --
+jq -n --argjson r "$buildbasic_root" '[$r]' > "$BEADS_FILE"
+jq -n '{"zz-fixture-exec-buildbasic":"open","zz-fixture-convoy":"open"}' > "$EXEC_STATUS_FILE"
+jq -n '{"zz-fixture-convoy":"zz-fixture-exec-buildbasic"}' > "$CONVOY_CHILDREN_FILE"
+: > "$TMP_SHOW_LOG"; : > "$TMP_LIST_ALL_LOG"
+out=$(guard --check-only)
+grep -q "execution bead zz-fixture-exec-buildbasic is still open" <<<"$out" \
+  || { echo "$out" >&2; fail "the one-read status map lost the open execution bead"; }
+[ ! -s "$TMP_SHOW_LOG" ] || fail "convoy-delivery still looks beads up one by one: $(tr '\n' ' ' < "$TMP_SHOW_LOG")"
+[ "$(wc -l < "$TMP_LIST_ALL_LOG")" = "1" ] || fail "the city store should be read exactly once"
 
 # reset the fixture files so they don't leak into any test appended after this one
 jq -n '{}' > "$EXEC_STATUS_FILE"; jq -n '{}' > "$CONVOY_CHILDREN_FILE"
