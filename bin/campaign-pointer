@@ -35,8 +35,10 @@
 #                                 blocks the whole automatic campaign (that is
 #                                 what mayor-campaign's activate/block/resume
 #                                 gates read).
-#   clear-decision                Clear gc.needs_benjamin and gc.blocked_reason
-#                                 back to none once the decision is resolved.
+#   clear-decision [<bead>]       Once the decision is resolved, clear
+#                                 gc.needs_benjamin on <bead> (default: the
+#                                 coordination Bead, where gc.blocked_reason is
+#                                 cleared too) and note the clearance.
 set -Eeuo pipefail
 
 PROGRAM_NAME="campaign-pointer"
@@ -48,7 +50,7 @@ log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2; }
 die() { log "ERROR: $1"; exit 1; }
 
 usage() {
-  sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
+  awk 'NR > 1 && /^set /{exit} NR > 1' "$0" | sed 's/^# \{0,1\}//'
 }
 
 require_command() {
@@ -122,17 +124,27 @@ cmd_escalate() {
     -m "ACTION: campaign-pointer escalated $bead
 STATE: $reason
 EVIDENCE: gc bd show $bead
-NEXT: decide, then run campaign-pointer clear-decision" \
+NEXT: decide, then run campaign-pointer clear-decision $bead" \
     >/dev/null || die "Could not mail human; gc.needs_benjamin is set but the mail was not sent -- retry rather than clearing it by hand."
   printf 'ESCALATED: %s — %s\n' "$bead" "$reason"
 }
 
 cmd_clear_decision() {
-  "$GC_BIN" bd update "$COORDINATION_BEAD" \
-    --set-metadata "gc.needs_benjamin=none" \
-    --set-metadata "gc.blocked_reason=none" \
-    >/dev/null || die "Beads write failed for $COORDINATION_BEAD."
-  printf 'CLEARED: decision on %s\n' "$COORDINATION_BEAD"
+  local bead=${1:-$COORDINATION_BEAD}
+  valid_bead_id "$bead" || die "'$bead' is not a Bead id."
+  show_bead "$bead" >/dev/null
+  if [[ $bead == "$COORDINATION_BEAD" ]]; then
+    "$GC_BIN" bd update "$bead" \
+      --set-metadata "gc.needs_benjamin=none" \
+      --set-metadata "gc.blocked_reason=none" \
+      >/dev/null || die "Beads write failed for $bead."
+  else
+    "$GC_BIN" bd update "$bead" \
+      --set-metadata "gc.needs_benjamin=none" \
+      --append-notes "DECISION CLEARED: gc.needs_benjamin reset to none" \
+      >/dev/null || die "Beads write failed for $bead."
+  fi
+  printf 'CLEARED: decision on %s\n' "$bead"
 }
 
 main() {
