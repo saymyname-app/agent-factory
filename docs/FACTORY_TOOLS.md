@@ -109,7 +109,7 @@ jamais signalée comme panne. Les règles sont dans `lib/factory_liveness.py`.
 
 La vivacité de `factory-guard` répond à « la campagne avance-t-elle ». Plusieurs
 autres signaux peuvent rester muets même quand elle avance
-(`INCIDENT_2026-09-16-silent-campaign-stall.md`, af-539b0) :
+(`../legacy/docs/INCIDENT_2026-09-16-silent-campaign-stall.md`, af-539b0) :
 
 ```bash
 ./bin/factory-watchdog                # par défaut : vérifie ET page (mail + bead)
@@ -234,7 +234,7 @@ descend l'**échelle d'inactivité** :
 3. durcissement des tests et chasse aux tests instables — au plus toutes les 12 h ;
 4. ménage du backlog et dette documentaire — au plus toutes les 24 h ;
 5. **un axe d'amélioration nommé** (`config/factory-improvement-axes.json`,
-   `FACTORY_CONTINUITY.md` §4) — au plus toutes les 6 h, et seulement si le
+   `../legacy/docs/FACTORY_CONTINUITY.md` §4) — au plus toutes les 6 h, et seulement si le
    commutateur maître **« maintenir en vie »** est actif (par défaut : oui) ;
 
 puis se repose. Ne sont jamais proposés : sessions, nudges, convois, étapes
@@ -374,7 +374,7 @@ associés dans `tests/factory-doctor-test.py`.
 Quand un quota GPT ou Claude est atteint, l'usine **bascule seule** sur le
 fournisseur suivant, et **revient seule** quand le quota se réinitialise. Plus
 personne n'a à éditer `city.toml` ni à se souvenir de « revenir à Codex ».
-Détails et règles : `decisions/ADR-0018-automatic-provider-failover.md`.
+Détails et règles : `../legacy/docs/decisions/ADR-0018-automatic-provider-failover.md`.
 
 **Depuis le cockpit** (ordinateur : « Aujourd'hui » › Fournisseurs IA ;
 téléphone : écran État) :
@@ -456,7 +456,7 @@ fournisseurs reste indépendante.
 ## `./bin/factory-improvement-axes` — les axes d'amélioration et « maintenir en vie »
 
 L'échelon 5 de l'échelle d'inactivité (`mayor-campaign` ci-dessus,
-`FACTORY_CONTINUITY.md` §1/§4, ADR-0016 §7) : quand la file de release n'a
+`../legacy/docs/FACTORY_CONTINUITY.md` §1/§4, ADR-0016 §7) : quand la file de release n'a
 plus rien d'éligible, l'usine avance sur un **axe nommé et borné** plutôt que
 de s'arrêter.
 

@@ -20,6 +20,7 @@ no order, script, test or CI step outside `legacy/` may reference it.
 | 2 | 2026-09-26 | Campaign: `bin/mayor-campaign` + `orders/mayor-campaign.toml` (the 1-min sentinel), `lib/factory_campaign.py`, `lib/factory_liveness.py`, `lib/factory_continuity.py`, `factory-improvement-axes` (bin, lib, 2 configs), 7 tests + `tests/fixtures/mayor-campaign/` | Mayor executes approved graphs (Benjamin's decisions 7-9, 2026-09-25); orders re-planned in the Planning Run "Factory operations v2" |
 | 3 | 2026-09-26 | SayMyName product queue: `bin/product-queue`, `bin/saymyname-product-{queue,status}`, `bin/saymyname-preview`, `bin/factory-human-state`, `bin/factory-queue-guard`, `lib/factory_state.py`, `config/products/`, `config/factory-human-status.schema.json`, 5 tests + 2 fixture dirs | Work enters through the Planning Run flow; project status lives in each project's own repository |
 | 4 | 2026-09-26 | Release contract: `bin/product-release`, `lib/product_release.py`, `config/product-release.schema.json`, `config/releases/`, 1 test | Approved Specs and ticket graphs from the Planning Run flow (ADR-0027 keeps the `release-contract` fence) |
+| 5 | 2026-09-27 | ADR-0001..0024 (`docs/decisions/`), `docs/products/` (SayMyName + example), 16 pre-refactor docs (audit, continuity, cockpit/product templates, product queue, migration, target architecture, 4 a.m. runbook, incident, load test, proposals…) | Refactor-born ADR-0025..0028 and docs; project knowledge lives in each project's own repository |
 
 Edges cut in PR 1: `bin/factory-boot` no longer starts a cockpit;
 `bin/factory-watchdog` §5 (stall frequency) is removed with its lib/tests,
@@ -58,6 +59,15 @@ questions to `saymyname-product-status`.
 - Host-local runtime files `.gc/runtime/factory-cockpit-*` are no longer read;
   they are not versioned.
 
+## Pre-refactor ADRs whose mechanism still runs (active, not re-validated)
+
+ADR-0009 (work-record outcome, `deliver-close --outcome`), ADR-0016 (six delivery
+proof fields; standing ADMIN allowlist in `AGENTS.md`), ADR-0017 (four conditions
+for Factory improvements), ADR-0018 (provider failover), ADR-0019 (reversibility
+gate), ADR-0020 (main-landing gate), ADR-0022 (live-root enforcement), ADR-0023
+(coordination write doors: `campaign-pointer`, `deliver-close`), ADR-0024 (shared
+drain worktree). Re-decide each through the Planning Run flow when touched.
+
 ## ADRs whose mechanism moved here
 
 - ADR-0006 (token-free human cockpit) — mechanism now entirely in `legacy/`.
@@ -66,4 +76,3 @@ questions to `saymyname-product-status`.
 - ADR-0027 §5 — the quarantined Cockpit V1 files moved here unchanged; the
   `cockpit-v1-export` fence still applies.
 
-ADR-0001..0024 themselves move here in a later PR.

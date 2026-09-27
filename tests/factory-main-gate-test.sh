@@ -5,7 +5,7 @@
 #
 # This is not hypothetical: on 2026-09-16 commit 8d92c13 landed directly on
 # `main` and broke referential integrity between
-# docs/products/saymyname/DECISIONS.md and config/products/saymyname.json's
+# legacy/docs/products/saymyname/DECISIONS.md and config/products/saymyname.json's
 # decision_refs — a check tests/factory-cockpit-test.py already had (13
 # failing cases). Nothing forced that suite to run before the commit reached
 # `main`. This test builds a throwaway repo with its own tiny, controllable
