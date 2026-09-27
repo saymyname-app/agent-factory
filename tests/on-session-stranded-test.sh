@@ -95,7 +95,7 @@ grep -q -- "^bd update af-stuck1 --status open --assignee  --set-metadata" "$CAL
 
 # --- reopening also writes to factory-watchdog-signals.json, without
 #     clobbering an alert another writer (factory-watchdog) already left
-#     there (af-u61xq, tests/factory-cockpit-chaos-test.py's header comment,
+#     there (af-u61xq,
 #     PR #82 gap) ----------------------------------------------------------
 SIGNAL_FILE="$TMP/.gc/runtime/factory-watchdog-signals.json"
 sources=$(python3 -c "import json; print(sorted(a['source'] for a in json.load(open('$SIGNAL_FILE'))['alerts']))" 2>/dev/null)

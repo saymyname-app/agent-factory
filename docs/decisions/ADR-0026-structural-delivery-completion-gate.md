@@ -44,6 +44,14 @@ close reason.
    work, retain their existing terminal semantics. The stronger predicate is
    only the completion contract for work that claims PR-backed delivery.
 
+*Amendment 2026-09-27:* `mayor-campaign` (the scoped readiness lane of point
+5) left for `legacy/` with the campaign (ADR-0025, amendment 2026-09-26), and
+`tests/mayor-campaign-test.py` with it. The predicate is unchanged:
+`lib/factory_delivery_proof.py` still owns it and is used by
+`factory-waiting-guard`, `factory-delivery-guard`, `factory-guard` and
+`pr-autopilot`. Nothing rechecks an approved graph's readiness automatically
+any more: the Mayor releases a published graph's tickets when it is woken.
+
 ## Consequences and verification
 
 - PR creation no longer means done; the merge actor is also the finalizer.

@@ -4,8 +4,8 @@ Planning Runs, delivery progress and adaptation measures.
 
 L0, deterministic, zero model tokens by construction: `observe` only ever
 prints a JSON result and updates a host-local state file. It never invokes a
-model itself -- when `wakes` is empty the caller (a cockpit, a sentinel loop,
-a human) makes no call at all; when it is non-empty the caller wakes exactly
+model itself -- when `wakes` is empty the caller (a sentinel loop, Cockpit V2
+once it exists, a human) makes no call at all; when it is non-empty the caller wakes exactly
 the named `role`, once per fact, with the fact preserved verbatim as
 evidence. Policy: config/factory-observe-policy.json (versioned -- roles per
 observed area, exemption/handoff evidence conditions). State:
@@ -84,7 +84,7 @@ def save_state(state: dict[str, Any]) -> None:
 
 
 class Locked:
-    """One writer at a time: a sentinel loop, the cockpit and a human can all call in."""
+    """One writer at a time: a sentinel loop and a human can both call in."""
 
     def __enter__(self) -> "Locked":
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)

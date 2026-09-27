@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# pr-autopilot — deterministic (L0, zero-token) merge actor for the SayMyName rigs.
+# pr-autopilot — deterministic (L0, zero-token) merge actor for the protected rigs in
+# lib/protected_rigs.sh (the SayMyName rigs' dev, the Factory repo's main).
 #
 # Closes the delivery loop without spending a single model token:
-#   1. ARM     every open non-draft PR targeting a rig's dev branch with GitHub
+#   1. ARM     every open non-draft PR targeting a rig's protected branch with GitHub
 #              auto-merge (squash). GitHub then merges it itself the moment the
 #              required status check goes green. Nothing polls, nothing watches.
 #   2. FINALIZE merged PRs through bin/deliver-close only after the configured
@@ -17,8 +18,10 @@
 #              declared irreversible is escalated to the Mayor (test 4 of
 #              ADR-0016) and only ever merged by a human.
 #
-# Production safety: PRs targeting anything other than the rig's dev branch are
-# never armed. dev -> main promotion stays a human decision by construction.
+# Production safety: PRs targeting anything other than the rig's protected
+# branch (lib/protected_rigs.sh) are never armed. For the product rigs that is
+# dev, so their dev -> main promotion stays a human decision by construction;
+# the Factory repo's protected branch is main itself, which is armed.
 #
 # Usage: pr-autopilot [--dry-run] [--verbose]
 set -uo pipefail
@@ -34,7 +37,7 @@ for arg in "$@"; do
   esac
 done
 
-# rig_dir | repo | dev branch | required GitHub Actions workflow
+# rig_dir | repo | protected branch | required GitHub Actions workflow
 #
 # af-09hxz: this table is the same one bin/factory-do-work-workspace consults
 # to decide when a do-work dispatch must be isolated in a worktree instead of

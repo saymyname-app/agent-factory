@@ -61,7 +61,7 @@ city_json() { timeout 30 "$GC_BIN" status --json 2>/dev/null; }
 STATUS_JSON=$(city_json || true)
 [ -n "$STATUS_JSON" ] || STATUS_JSON='{}'
 if [ "$(jq -r '.suspended // false' <<<"$STATUS_JSON" 2>/dev/null)" = "true" ]; then
-  say "SKIP   city is suspended by an operator — not resuming it, not starting the campaign"
+  say "SKIP   city is suspended by an operator — not resuming it"
   exit 0
 fi
 if [ "$(jq -r '.running // false' <<<"$STATUS_JSON" 2>/dev/null)" = "true" ]; then

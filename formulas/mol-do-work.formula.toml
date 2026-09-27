@@ -7,8 +7,8 @@ rig whose current branch is not protected (see lib/protected_rigs.sh), that
 means the current working directory, same as before — no git branching, no
 worktree isolation.
 
-Use this for demos and simple single-agent workflows. For production
-multi-agent setups with worktree isolation, use mol-polecat-commit
+This is the Mayor's default delivery formula (STANDARD tier) for
+single-agent work. For multi-agent setups with worktree isolation, use mol-polecat-commit
 instead (or mol-polecat-work from the gastown pack for full refinery
 review).
 
@@ -84,10 +84,8 @@ gc bd show "$WORK_BEAD_ID"
 
 **Claim it now (af-pl39t):** dispatching this convoy is the only signal that a
 workflow is active against `$WORK_BEAD_ID`. Nothing else flips it off
-`open`, so the idle ladder (`plan_idle_ladder`, ADR-0016 §7) cannot tell it
-apart from an unclaimed candidate and re-picks it every tick -- `gc.
-campaign_progress_at` freezes and factory-guard files a false "vivante mais
-immobile" defect every ~5-6 min for as long as the bead stays open:
+`open`, so it still reads as ready, unclaimed work and can be dispatched a
+second time while this workflow runs:
 ```bash
 gc bd update "$WORK_BEAD_ID" --claim
 gc bd update "$WORK_BEAD_ID" --assignee "" \
@@ -106,7 +104,7 @@ Read the bead's title and description carefully. This is your task.
 
 **Signal liveness:** run `gc bd heartbeat "$WORK_BEAD_ID"` now, and again before any
 shell command you expect to run for many minutes (long builds, test sweeps).
-It stamps `gc.last_heartbeat_at` so the dashboard can tell you are alive and
+It stamps `gc.last_heartbeat_at` so the Factory's guards (e.g. `factory-dispatch-guard`) can tell you are alive and
 working rather than wedged.
 
 **2. Never commit directly to a protected branch (af-ogg8z, af-09hxz).**

@@ -165,7 +165,8 @@ plan, then three parallel LLM reviewers, a synthesizer and an apply-findings
 pass — five-plus model calls of review per unit of work, unconditionally.
 `do-work` runs none. Default to `do-work` and escalate only on evidence.
 (On disk the formulas are `mol-do-work`, `mol-scoped-work`,
-`mol-polecat-commit` under `formulas/`; `build-basic` comes from the pack.)
+`mol-polecat-commit` under `formulas/`; `build-basic` is a local fork there
+too, `formulas/build-basic.formula.toml`, which overrides the pack's.)
 
 | Tier | Use when | Formula | LLM review |
 |---|---|---|---|

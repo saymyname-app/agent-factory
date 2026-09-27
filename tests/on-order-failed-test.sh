@@ -105,7 +105,7 @@ grep -qE '^(bd |mail )' "$CALLS" && fail "an empty event stream should not call 
 
 # --- paging also writes to factory-watchdog-signals.json, without clobbering
 #     an alert another writer (factory-watchdog) already left there (af-u61xq,
-#     tests/factory-cockpit-chaos-test.py's header comment, PR #82 gap) -------
+#     PR #82 gap) ----------------------------------------------------------
 SIGNAL_FILE="$TMP/.gc/runtime/factory-watchdog-signals.json"
 mkdir -p "$(dirname "$SIGNAL_FILE")"
 python3 -c '
