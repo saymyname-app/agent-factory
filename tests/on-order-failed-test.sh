@@ -56,6 +56,12 @@ if [[ \${1:-} == bd && \${2:-} == create ]]; then
   echo '{"id":"af-new1"}'
   exit 0
 fi
+if [[ \${1:-} == bd && \${2:-} == show ]]; then
+  # escalation-door's own show_bead call -- every id on the mayor path here
+  # is a bead this test just filed, so a minimal open bead is always valid.
+  echo '[{"id":"'"\${3:-}"'","status":"open","metadata":{}}]'
+  exit 0
+fi
 if [[ \${1:-} == mail && \${2:-} == send ]]; then
   exit 0
 fi
@@ -81,6 +87,9 @@ events_n dolt-remotes-patrol 5
 out=$(run)
 grep -q "^bd create" "$CALLS" || { echo "$out" >&2; fail "did not file a bead at the streak threshold"; }
 grep -q "^mail send mayor" "$CALLS" || fail "did not page the mayor at the streak threshold"
+# Routed through escalation-door's Mayor-first class (O06/O07), not a raw mail.
+grep -q "^mail send mayor --notify -s Escalation (Mayor first): af-new1" "$CALLS" \
+  || fail "did not route through escalation-door's mayor-first class"
 [ "$(grep -c '^bd create' "$CALLS")" = "1" ] || fail "filed more than one bead in a single run"
 # The count is a total inside the lookback window, so the page must not claim a run.
 grep -q "consecutive failures" "$CALLS" && fail "the page words a total count as consecutive failures"

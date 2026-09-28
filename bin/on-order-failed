@@ -18,6 +18,7 @@
 set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+ESCALATION_DOOR="$(dirname "${BASH_SOURCE[0]}")/escalation-door"
 CHECK_ONLY=0
 QUIET=0
 LOOKBACK="${ON_ORDER_FAILED_LOOKBACK:-3h}"
@@ -74,12 +75,7 @@ Gas City does not retry, back off, or notify on order failure by itself (upstrea
     say "on-order-failed: could not file a bead for $subject"
     continue
   fi
-  gc mail send mayor --notify \
-    -s "$title" \
-    -m "ACTION: on-order-failed detected $count failures of '$subject' in the last $LOOKBACK (total, not necessarily consecutive)
-STATE: $last_message
-EVIDENCE: bead $created; gc events --type order.failed --since $LOOKBACK
-NEXT: diagnose and fix the order (or the command it runs), then close $created with the cause" \
+  "$ESCALATION_DOOR" mayor "$created" "on-order-failed: '$subject' failed $count times in the last $LOOKBACK -- $(tr '\n' ' ' <<<"$last_message")" \
     >/dev/null 2>&1
   say "on-order-failed: filed $created and paged mayor for $subject ($count/$LOOKBACK)"
   PAGED=$((PAGED + 1))

@@ -51,6 +51,7 @@ set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd)"
+ESCALATION_DOOR="$(dirname "${BASH_SOURCE[0]}")/escalation-door"
 CHECK_ONLY=0
 QUIET=0
 REPO="${FACTORY_WATCHDOG_REPO:-saymyname-app/agent-factory}"
@@ -104,12 +105,7 @@ while IFS=$'\t' read -r gate_id code msg; do
   [ -z "$gate_id" ] && continue
   bad "aged gate — $msg"
   if [ "$CHECK_ONLY" != "1" ] && should_nudge "$gate_id" "gc.watchdog_nudged_at"; then
-    gc mail send mayor --notify \
-      -s "Gate aging: $gate_id" \
-      -m "ACTION: factory-watchdog observed an open human gate past ${GATE_MINUTES}m
-STATE: $msg
-EVIDENCE: gc bd gate show $gate_id
-NEXT: close it once resolved (gc bd gate resolve $gate_id) -- watchdog only pages, it never resolves gates" \
+    "$ESCALATION_DOOR" mayor "$gate_id" "factory-watchdog: open human gate past ${GATE_MINUTES}m -- $msg" \
       >/dev/null 2>&1 \
       && gc bd update "$gate_id" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
       && did "re-nudged mayor about aged gate $gate_id"
@@ -144,12 +140,7 @@ Detected by factory-watchdog. pr-autopilot's \"merge on green CI\" assumption ne
           --set-metadata "gc.pr_number=$pr_num" --set-metadata "gc.source=factory-watchdog" \
           --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
         if [ -n "$created" ]; then
-          gc mail send mayor --notify \
-            -s "$title" \
-            -m "ACTION: factory-watchdog flagged a stuck PR
-STATE: $msg
-EVIDENCE: bead $created, https://github.com/$REPO/pull/$pr_num
-NEXT: human/mayor decision -- pr-autopilot will not advance this PR unattended" \
+          "$ESCALATION_DOOR" mayor "$created" "factory-watchdog: stuck PR #$pr_num -- $msg (https://github.com/$REPO/pull/$pr_num)" \
             >/dev/null 2>&1
           did "flagged stuck PR #$pr_num as $created and notified mayor"
         else
@@ -197,15 +188,10 @@ while IFS=$'\t' read -r bead_id code msg; do
     if [ "$stored_fp" = "$current_fp" ]; then
       : # already reported this exact state -- stay silent
     else
-      gc mail send mayor --notify \
-        -s "False-success close: $bead_id" \
-        -m "ACTION: factory-watchdog detected a CLOSED workflow with a non-pass outcome
-STATE: $msg
-EVIDENCE: gc bd show $bead_id
-NEXT: read gc.outcome and downstream step outcomes -- CLOSED alone does not mean the work finished" \
-        >/dev/null 2>&1 \
+      "$ESCALATION_DOOR" mayor "$bead_id" "factory-watchdog: false-success close -- $msg" \
+        >/tmp/edoor-out.log 2>&1 \
         && gc bd update "$bead_id" --set-metadata "gc.watchdog_flagged_false_success=$(now_iso)" \
-             --set-metadata "gc.watchdog_false_success_fp=$current_fp" >/dev/null 2>&1 \
+             --set-metadata "gc.watchdog_false_success_fp=$current_fp" >/tmp/edoor-out.log 2>&1 \
         && did "flagged false-success close $bead_id and notified mayor"
     fi
   fi
@@ -235,27 +221,17 @@ Affected gh-dependent scripts: $GH_AUTH_SCRIPTS
 Detected by factory-watchdog. Only a human can re-authenticate (gh auth login -h github.com) -- this bead is visibility only; watchdog auto-resolves it once auth recovers." \
           --set-metadata "gc.source=factory-watchdog" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
         if [ -n "$created" ]; then
-          gc mail send mayor --notify \
-            -s "$GH_AUTH_BEAD_TITLE" \
-            -m "ACTION: factory-watchdog's gh auth probe failed
-STATE: $gh_msg
-EVIDENCE: bead $created
-NEXT: re-authenticate (gh auth login -h github.com) -- affects $GH_AUTH_SCRIPTS; watchdog auto-resolves $created once auth recovers" \
-            >/dev/null 2>&1 \
-            && gc bd update "$created" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
+          "$ESCALATION_DOOR" mayor "$created" "factory-watchdog: gh auth unreachable -- $gh_msg (affects $GH_AUTH_SCRIPTS)" \
+            >/tmp/edoor-out.log 2>&1 \
+            && gc bd update "$created" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/tmp/edoor-out.log 2>&1 \
             && did "flagged gh auth unreachable as $created and notified mayor"
         else
           bad "could not file a bead for gh auth unreachable"
         fi
       elif should_nudge "$existing" "gc.watchdog_nudged_at"; then
-        gc mail send mayor --notify \
-          -s "$GH_AUTH_BEAD_TITLE (still failing)" \
-          -m "ACTION: factory-watchdog's gh auth probe is still failing
-STATE: $gh_msg
-EVIDENCE: bead $existing
-NEXT: re-authenticate (gh auth login -h github.com) -- affects $GH_AUTH_SCRIPTS" \
-          >/dev/null 2>&1 \
-          && gc bd update "$existing" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
+        "$ESCALATION_DOOR" mayor "$existing" "factory-watchdog: gh auth still unreachable -- $gh_msg (affects $GH_AUTH_SCRIPTS)" \
+          >/tmp/edoor-out.log 2>&1 \
+          && gc bd update "$existing" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/tmp/edoor-out.log 2>&1 \
           && did "re-nudged mayor about gh auth still unreachable ($existing)"
       fi
     fi
@@ -264,7 +240,7 @@ NEXT: re-authenticate (gh auth login -h github.com) -- affects $GH_AUTH_SCRIPTS"
       | jq -r '(.[0].id // empty)')
     if [ -n "$existing" ]; then
       gc bd update "$existing" --set-metadata gc.outcome=pass --status=closed \
-        --notes "gh auth recovered; auto-resolved by factory-watchdog" >/dev/null 2>&1 \
+        --notes "gh auth recovered; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
         && did "auto-resolved recovered gh auth bead $existing"
     fi
   fi
@@ -301,27 +277,17 @@ if command -v gc >/dev/null 2>&1; then
 Detected by factory-watchdog from $rig_name's gc:control-quarantined beads. Observe-and-page only (ADR-0016 section 7): this bead does not unquarantine, retry, or touch the control steps themselves. Auto-resolves once no new quarantine in $rig_name with failure_reason=$reason lands for ${QUARANTINE_WINDOW_HOURS}h." \
             --set-metadata "gc.source=factory-watchdog" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
           if [ -n "$created" ]; then
-            gc mail send mayor --notify \
-              -s "$title" \
-              -m "ACTION: factory-watchdog aggregated control-step quarantines
-STATE: $msg
-EVIDENCE: bead $created; gc bd list --label gc:control-quarantined (rig $rig_name)
-NEXT: root-cause the controller error -- watchdog auto-resolves $created once this group stops for ${QUARANTINE_WINDOW_HOURS}h" \
-              >/dev/null 2>&1 \
-              && gc bd update "$created" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
+            "$ESCALATION_DOOR" mayor "$created" "factory-watchdog: control quarantine $rig_name/$reason -- $msg" \
+              >/tmp/edoor-out.log 2>&1 \
+              && gc bd update "$created" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/tmp/edoor-out.log 2>&1 \
               && did "flagged control quarantine $rig_name/$reason as $created and notified mayor"
           else
             bad "could not file a bead for control quarantine $rig_name/$reason"
           fi
         elif should_nudge "$existing" "gc.watchdog_nudged_at"; then
-          gc mail send mayor --notify \
-            -s "$title (still active)" \
-            -m "ACTION: factory-watchdog re-checked control-step quarantines
-STATE: $msg
-EVIDENCE: bead $existing
-NEXT: root-cause the controller error" \
-            >/dev/null 2>&1 \
-            && gc bd update "$existing" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/dev/null 2>&1 \
+          "$ESCALATION_DOOR" mayor "$existing" "factory-watchdog: control quarantine $rig_name/$reason still active -- $msg" \
+            >/tmp/edoor-out.log 2>&1 \
+            && gc bd update "$existing" --set-metadata "gc.watchdog_nudged_at=$(now_iso)" >/tmp/edoor-out.log 2>&1 \
             && did "re-nudged mayor about control quarantine $rig_name/$reason ($existing)"
         fi
       fi
@@ -334,7 +300,7 @@ NEXT: root-cause the controller error" \
       existing_title=$(gc bd show "$existing_id" --json 2>/dev/null | jq -r '(.[0].title // "")')
       if ! grep -Fxq "$existing_title" "$quarantine_active_titles" 2>/dev/null; then
         gc bd update "$existing_id" --set-metadata gc.outcome=pass --status=closed \
-          --notes "no new control-step quarantine in this group for ${QUARANTINE_WINDOW_HOURS}h; auto-resolved by factory-watchdog" >/dev/null 2>&1 \
+          --notes "no new control-step quarantine in this group for ${QUARANTINE_WINDOW_HOURS}h; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
           && did "auto-resolved recovered control-quarantine bead $existing_id"
       fi
     done < <(gc bd list --status open --title-contains "$QUARANTINE_BEAD_PREFIX" --json 2>/dev/null | jq -r '.[].id')

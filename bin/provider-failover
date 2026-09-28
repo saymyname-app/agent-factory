@@ -99,6 +99,13 @@ def gc(*args: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
     )
 
 
+def escalation_door(*args: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(ROOT / "bin" / "escalation-door"), *args], cwd=FACTORY_ROOT, text=True, capture_output=True,
+        timeout=timeout, env={**os.environ, "NO_COLOR": "1"},
+    )
+
+
 def load_policy() -> dict[str, Any]:
     try:
         return pf.validate_policy(json.loads(POLICY_FILE.read_text(encoding="utf-8")))
@@ -432,11 +439,9 @@ def check_models(args: argparse.Namespace) -> int:
                     bead_id = None
                 if bead_id:
                     newly_filed = True
-                    gc("mail", "send", "mayor", "--notify", "-s", f"Model staleness: {bead_id}", "-m",
-                       "ACTION: daily provider-failover check-models found configured model id(s) "
-                       f"not in the catalog\nSTATE: {signature}\nEVIDENCE: gc bd show {bead_id}\n"
-                       "NEXT: review config/model-catalog.json and decide whether to update the "
-                       "catalog or the configured model (human/PO call, ADR-0018)", timeout=30)
+                    escalation_door("mayor", bead_id,
+                                     f"model-staleness-check: configured model id(s) drifted from the "
+                                     f"catalog ({signature})", timeout=30)
         if not args.dry_run:
             state["model_staleness"] = {"checked_at": pf.iso(moment), "signature": signature, "bead": bead_id}
             save_state(state)
