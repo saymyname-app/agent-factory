@@ -13,6 +13,7 @@ PUBLISHER = ROOT / "bin" / "ticket-graph-publish"
 DRAFT = ROOT / "docs" / "planning" / "agent-factory-project-agnostic-refactor-ticket-graph-draft.yaml"
 FAKE_BD = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "bd"
 FAKE_GC = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "gc"
+FAKE_ESCALATION_DOOR = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "escalation-door"
 
 SPEC_DIGEST = "sha256:" + "0" * 64
 
@@ -176,7 +177,7 @@ class TicketGraphPublishTest(unittest.TestCase):
             draft_path.write_bytes(raw)
             log = root / "bd.log"
             result = json.loads(self.invoke(
-                "patch", str(draft_path), env={
+                "patch", str(draft_path), "--author", "Test", "--reason", "test patch", env={
                     "BD_BIN": str(FAKE_BD),
                     "TICKET_GRAPH_BD_LOG": str(log),
                     "TICKET_GRAPH_EXISTING": json.dumps(existing),
@@ -197,6 +198,9 @@ class TicketGraphPublishTest(unittest.TestCase):
         self.assertIn(f"blocks:af-x1", ",".join(create_x2))
         update_convoy = next(c for c in calls if c[0] == "update" and c[1] == "af-conv")
         self.assertIn(f"gc.graph_digest={new_digest}", update_convoy)
+        self.assertIn("gc.patch_author=Test", update_convoy)
+        self.assertIn("gc.patch_reason=test patch", update_convoy)
+        self.assertIn("PATCH by Test: test patch", update_convoy)
 
     def test_publish_wakes_the_mayor_exactly_once_on_success(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -265,7 +269,7 @@ class TicketGraphPublishTest(unittest.TestCase):
             draft_path.write_bytes(raw)
             gc_log = root / "gc.log"
             result = json.loads(self.invoke(
-                "patch", str(draft_path), env={
+                "patch", str(draft_path), "--author", "Test", "--reason", "test patch", env={
                     "BD_BIN": str(FAKE_BD),
                     "GC_BIN": str(FAKE_GC),
                     "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
@@ -304,7 +308,7 @@ class TicketGraphPublishTest(unittest.TestCase):
             log = root / "bd.log"
             gc_log = root / "gc.log"
             result = self.invoke(
-                "patch", str(draft_path), env={
+                "patch", str(draft_path), "--author", "Test", "--reason", "test patch", env={
                     "BD_BIN": str(FAKE_BD),
                     "GC_BIN": str(FAKE_GC),
                     "TICKET_GRAPH_BD_LOG": str(log),
@@ -317,6 +321,274 @@ class TicketGraphPublishTest(unittest.TestCase):
         self.assertFalse(gc_log.exists())
         self.assertIn("already delivered", result.stderr)
         self.assertIn("cannot modify a closed ticket", result.stderr)
+
+    # --- O09: decision 8 (ADR-0028 amended) ---------------------------------
+
+    def test_patch_reorders_dependencies_between_unfinished_tickets(self):
+        old_digest = "sha256:" + "4" * 64
+        raw, _ = build_draft(
+            "  - id: X1\n"
+            "    kind: vertical_slice\n"
+            "    title: Ticket X1\n"
+            "    blocked_by: [X2]\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does a thing\n"
+            "    acceptance_criteria: [does the thing]\n"
+            "  - id: X2\n"
+            "    kind: vertical_slice\n"
+            "    title: Ticket X2\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does another thing\n"
+            "    acceptance_criteria: [does the other thing]\n",
+            revises=old_digest,
+        )
+        existing = [
+            {"id": "af-conv", "status": "open", "metadata": {"gc.graph_digest": old_digest}},
+            {"id": "af-x1", "status": "open", "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "X1", "gc.blocked_by": "",
+            }},
+            {"id": "af-x2", "status": "open", "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "X2", "gc.blocked_by": "X1",
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft_path = root / "revised.yaml"
+            draft_path.write_bytes(raw)
+            log = root / "bd.log"
+            result = json.loads(self.invoke(
+                "patch", str(draft_path), "--author", "Test", "--reason", "reorder", env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_BD_LOG": str(log),
+                    "TICKET_GRAPH_EXISTING": json.dumps(existing),
+                },
+            ).stdout)
+            calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(["X1", "X2"], result["patched"])
+        self.assertIn(["dep", "add", "af-x1", "af-x2"], calls)
+        self.assertIn(["dep", "remove", "af-x2", "af-x1"], calls)
+
+    def test_patch_merges_an_unfinished_ticket_into_another(self):
+        old_digest = "sha256:" + "5" * 64
+        raw, new_digest = build_draft(
+            "  - id: Y1\n"
+            "    kind: vertical_slice\n"
+            "    title: Ticket Y1 absorbs Y2\n"
+            "    blocked_by: []\n"
+            "    merges: [Y2]\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does the merged thing\n"
+            "    acceptance_criteria: [does the merged thing]\n",
+            revises=old_digest,
+        )
+        existing = [
+            {"id": "af-conv", "status": "open", "metadata": {"gc.graph_digest": old_digest}},
+            {"id": "af-y1", "status": "open", "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "Y1", "gc.blocked_by": "",
+            }},
+            {"id": "af-y2", "status": "open", "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "Y2", "gc.blocked_by": "",
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft_path = root / "revised.yaml"
+            draft_path.write_bytes(raw)
+            log = root / "bd.log"
+            result = json.loads(self.invoke(
+                "patch", str(draft_path), "--author", "Test", "--reason", "merge Y2 into Y1", env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_BD_LOG": str(log),
+                    "TICKET_GRAPH_EXISTING": json.dumps(existing),
+                },
+            ).stdout)
+            calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+        self.assertTrue(result["ok"])
+        self.assertEqual({"Y2": "af-y1"}, result["merged"])
+        close_y2 = next(c for c in calls if c[0] == "update" and c[1] == "af-y2")
+        self.assertIn("--status", close_y2)
+        self.assertIn("closed", close_y2)
+        self.assertIn("gc.merged_into=af-y1", close_y2)
+        self.assertIn("MERGED by Test: merge Y2 into Y1", close_y2)
+
+    def test_patch_refuses_to_merge_an_already_closed_ticket(self):
+        old_digest = "sha256:" + "6" * 64
+        raw, _ = build_draft(
+            "  - id: Y1\n"
+            "    kind: vertical_slice\n"
+            "    title: Ticket Y1 absorbs Y2\n"
+            "    blocked_by: []\n"
+            "    merges: [Y2]\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does the merged thing\n"
+            "    acceptance_criteria: [does the merged thing]\n",
+            revises=old_digest,
+        )
+        existing = [
+            {"id": "af-conv", "status": "open", "metadata": {"gc.graph_digest": old_digest}},
+            {"id": "af-y1", "status": "open", "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "Y1", "gc.blocked_by": "",
+            }},
+            {"id": "af-y2", "status": "closed", "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "Y2", "gc.blocked_by": "",
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft_path = root / "revised.yaml"
+            draft_path.write_bytes(raw)
+            log = root / "bd.log"
+            result = self.invoke(
+                "patch", str(draft_path), "--author", "Test", "--reason", "merge Y2 into Y1", env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_BD_LOG": str(log),
+                    "TICKET_GRAPH_EXISTING": json.dumps(existing),
+                },
+                check=False,
+            )
+            calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("already delivered", result.stderr)
+        self.assertEqual(["list"], [call[0] for call in calls])
+
+    def test_patch_supersedes_an_unfinished_ticket_with_a_new_one(self):
+        old_digest = "sha256:" + "7" * 64
+        raw, new_digest = build_draft(
+            "  - id: Z2\n"
+            "    kind: vertical_slice\n"
+            "    title: Ticket Z2 supersedes Z1\n"
+            "    blocked_by: []\n"
+            "    supersedes: Z1\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does the replacement thing\n"
+            "    acceptance_criteria: [does the replacement thing]\n",
+            revises=old_digest,
+        )
+        existing = [
+            {"id": "af-conv", "status": "open", "metadata": {"gc.graph_digest": old_digest}},
+            {"id": "af-z1", "status": "open", "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "Z1", "gc.blocked_by": "",
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft_path = root / "revised.yaml"
+            draft_path.write_bytes(raw)
+            log = root / "bd.log"
+            result = json.loads(self.invoke(
+                "patch", str(draft_path), "--author", "Test", "--reason", "supersede Z1 with Z2", env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_BD_LOG": str(log),
+                    "TICKET_GRAPH_EXISTING": json.dumps(existing),
+                },
+            ).stdout)
+            calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+        self.assertTrue(result["ok"])
+        z2_id = result["ids"]["Z2"]
+        self.assertEqual({"Z1": z2_id}, result["superseded"])
+        close_z1 = next(c for c in calls if c[0] == "update" and c[1] == "af-z1")
+        self.assertIn(f"gc.superseded_by={z2_id}", close_z1)
+        self.assertIn("SUPERSEDED by Test: supersede Z1 with Z2", close_z1)
+
+    def test_reslice_patch_refuses_and_escalates_when_acceptance_criteria_change(self):
+        old_digest = "sha256:" + "8" * 64
+        raw, new_digest = build_draft(
+            "  - id: X1\n"
+            "    kind: vertical_slice\n"
+            "    title: Ticket X1\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does a thing\n"
+            "    acceptance_criteria: [does a NEW thing]\n",
+            revises=old_digest,
+        )
+        old_description = (
+            "## What to build\n\ndoes a thing\n\n"
+            "## Acceptance criteria\n\n- [ ] does the old thing\n\n"
+            "## Target rigs\n\nfixture_city\n\n"
+            "## Autonomous execution contract\n\n- models: none\n"
+        )
+        existing = [
+            {"id": "af-conv", "status": "open", "metadata": {"gc.graph_digest": old_digest}},
+            {"id": "af-x1", "status": "open", "description": old_description, "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "X1", "gc.blocked_by": "",
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft_path = root / "revised.yaml"
+            draft_path.write_bytes(raw)
+            log = root / "bd.log"
+            escalation_log = root / "escalation.log"
+            result = self.invoke(
+                "patch", str(draft_path), "--author", "Mayor", "--reason", "reslice", "--reslice", env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_BD_LOG": str(log),
+                    "TICKET_GRAPH_EXISTING": json.dumps(existing),
+                    "ESCALATION_DOOR_BIN": str(FAKE_ESCALATION_DOOR),
+                    "TICKET_GRAPH_ESCALATION_LOG": str(escalation_log),
+                },
+                check=False,
+            )
+            escalation_calls = [json.loads(line) for line in escalation_log.read_text(encoding="utf-8").splitlines()]
+            # nothing was written: only the read-only `list` call happened
+            bd_calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("acceptance criteria changed", result.stderr)
+        self.assertIn("escalated", result.stderr)
+        self.assertEqual(1, len(escalation_calls))
+        self.assertEqual(["benjamin", "af-conv"], escalation_calls[0][:2])
+        self.assertIn("X1", escalation_calls[0][2])
+        self.assertEqual(["list"], [call[0] for call in bd_calls])
+
+    def test_reslice_patch_succeeds_when_acceptance_criteria_are_unchanged(self):
+        old_digest = "sha256:" + "9" * 64
+        raw, new_digest = build_draft(
+            "  - id: X1\n"
+            "    kind: vertical_slice\n"
+            "    title: Ticket X1 renamed\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does a thing\n"
+            "    acceptance_criteria: [does the same thing]\n",
+            revises=old_digest,
+        )
+        old_description = (
+            "## What to build\n\ndoes a thing\n\n"
+            "## Acceptance criteria\n\n- [ ] does the same thing\n\n"
+            "## Target rigs\n\nfixture_city\n\n"
+            "## Autonomous execution contract\n\n- models: none\n"
+        )
+        existing = [
+            {"id": "af-conv", "status": "open", "metadata": {"gc.graph_digest": old_digest}},
+            {"id": "af-x1", "status": "open", "description": old_description, "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "X1", "gc.blocked_by": "",
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft_path = root / "revised.yaml"
+            draft_path.write_bytes(raw)
+            log = root / "bd.log"
+            escalation_log = root / "escalation.log"
+            result = json.loads(self.invoke(
+                "patch", str(draft_path), "--author", "Mayor", "--reason", "reslice", "--reslice", env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_BD_LOG": str(log),
+                    "TICKET_GRAPH_EXISTING": json.dumps(existing),
+                    "ESCALATION_DOOR_BIN": str(FAKE_ESCALATION_DOOR),
+                    "TICKET_GRAPH_ESCALATION_LOG": str(escalation_log),
+                },
+            ).stdout)
+            escalated = escalation_log.exists()
+        self.assertTrue(result["ok"])
+        self.assertEqual(["X1"], result["patched"])
+        self.assertFalse(escalated)
 
 
 if __name__ == "__main__":

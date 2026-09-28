@@ -249,10 +249,11 @@ def cmd_raise(args: argparse.Namespace) -> int:
 # --- resolve -----------------------------------------------------------------
 
 
-def run_patch(draft: str) -> dict[str, Any]:
+def run_patch(draft: str, author: str, reason: str) -> dict[str, Any]:
     try:
         result = subprocess.run(
-            [TICKET_GRAPH_PUBLISH, "patch", draft], check=True, capture_output=True, text=True,
+            [TICKET_GRAPH_PUBLISH, "patch", draft, "--author", author, "--reason", reason],
+            check=True, capture_output=True, text=True,
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
@@ -273,7 +274,9 @@ def cmd_resolve(args: argparse.Namespace) -> int:
                     f"--patched-draft is required to resolve a {args.kind} exception: a behavioral or "
                     "topology change patches unfinished work through the sole to-tickets authority"
                 )
-            patch_result = run_patch(args.patched_draft)
+            patch_result = run_patch(
+                args.patched_draft, author=f"planning-exception:{args.decision}", reason=args.note,
+            )
 
         with locked_register(register_path) as state:
             decisions = state.get("decisions", {})

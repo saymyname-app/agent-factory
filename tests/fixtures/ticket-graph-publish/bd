@@ -38,5 +38,8 @@ if args and args[0] == "create":
 if args and args[0] == "update":
     raise SystemExit(0)
 
+if args[:2] in (["dep", "add"], ["dep", "remove"]):
+    raise SystemExit(0)
+
 print(f"unexpected fake bd arguments: {args}", file=sys.stderr)
 raise SystemExit(2)

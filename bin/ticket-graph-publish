@@ -144,6 +144,39 @@ def ticket_description(ticket: dict[str, Any], execution: dict[str, Any]) -> str
     )
 
 
+def acceptance_criteria_from_description(description: str) -> list[str]:
+    """Extract the checklist rendered by `ticket_description` under
+    `## Acceptance criteria`, so a reslice patch can prove it is unchanged
+    against the live Bead text without a second source of truth.
+    """
+    items: list[str] = []
+    in_section = False
+    for line in description.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            in_section = stripped[3:].strip().lower() == "acceptance criteria"
+            continue
+        if in_section and stripped.startswith("- [ ]"):
+            items.append(stripped[len("- [ ]"):].strip())
+    return items
+
+
+def escalate_reslice_refusal(convoy_id: str, reason: str) -> None:
+    """Best-effort NEEDS BENJAMIN entry for a reslice `patch` refused because
+    it would have changed acceptance criteria without a Planning Run (O09):
+    a failed escalation must never look like a quietly-dropped refusal, but
+    it also must not turn an already-failing patch into a crash.
+    """
+    escalation_door = os.environ.get("ESCALATION_DOOR_BIN", str(ROOT / "bin" / "escalation-door"))
+    try:
+        subprocess.run(
+            [escalation_door, "benjamin", convoy_id, reason],
+            check=False, capture_output=True, text=True,
+        )
+    except OSError:
+        pass
+
+
 def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str, Any]:
     artifact = draft["artifact"]
     spec = artifact["source_spec"]
@@ -179,6 +212,21 @@ def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str
     edges: list[dict[str, str]] = []
     for ticket in tickets:
         ticket_id = str(ticket["id"])
+        metadata = {
+            "gc.graph_digest": digest,
+            "gc.plane": "delivery",
+            "gc.delivery_contract": "pr-ci-merged-v1",
+            "gc.ticket_id": ticket_id,
+            "gc.ticket_kind": str(ticket.get("kind") or "vertical_slice"),
+            "gc.artifact_id": artifact["id"],
+            "gc.spec_id": spec["id"],
+            "gc.spec_digest": spec["digest"],
+            "gc.publication_validated": "true",
+            "gc.blocked_by": ",".join(sorted(str(b) for b in ticket["blocked_by"])),
+        }
+        split_from = str(ticket.get("split_from") or "").strip()
+        if split_from:
+            metadata["gc.split_from"] = split_from
         nodes.append({
             "key": ticket_id,
             "type": "task",
@@ -186,17 +234,7 @@ def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str
             "title": f"{ticket_id} — {ticket['title']}",
             "description": ticket_description(ticket, execution),
             "labels": ["approved-ticket-graph", "delivery-plane", *ticket_labels],
-            "metadata": {
-                "gc.graph_digest": digest,
-                "gc.plane": "delivery",
-                "gc.delivery_contract": "pr-ci-merged-v1",
-                "gc.ticket_id": ticket_id,
-                "gc.ticket_kind": str(ticket.get("kind") or "vertical_slice"),
-                "gc.artifact_id": artifact["id"],
-                "gc.spec_id": spec["id"],
-                "gc.spec_digest": spec["digest"],
-                "gc.publication_validated": "true",
-            },
+            "metadata": metadata,
         })
         edges.append({"from_key": "_convoy", "to_key": ticket_id, "type": "tracks"})
         for blocker in ticket["blocked_by"]:
@@ -220,7 +258,12 @@ def graph_members(digest: str) -> dict[str, dict[str, str]]:
         key = str(metadata.get("gc.ticket_id") or "_convoy")
         if key in members:
             raise PublishError(f"graph {digest} has duplicate key {key}")
-        members[key] = {"id": str(issue["id"]), "status": str(issue.get("status") or "")}
+        members[key] = {
+            "id": str(issue["id"]),
+            "status": str(issue.get("status") or ""),
+            "description": str(issue.get("description") or ""),
+            "blocked_by": str(metadata.get("gc.blocked_by") or ""),
+        }
     return members
 
 
@@ -250,15 +293,29 @@ def publish(plan: dict[str, Any], digest: str, ticket_count: int) -> dict[str, s
     return {str(key): str(value) for key, value in mapping.items()}
 
 
-def patch(draft: dict[str, Any], plan: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str, Any]:
+def patch(
+    draft: dict[str, Any], plan: dict[str, Any], tickets: list[dict[str, Any]],
+    author: str, reason: str, reslice: bool,
+) -> dict[str, Any]:
     """Apply an immutable revised draft to the unfinished tickets of the
     graph it revises -- the same deterministic door as `publish`, extended
     for B08's "validated patch to unfinished work through the sole
-    to-tickets authority" instead of a second decomposition mechanism.
+    to-tickets authority" instead of a second decomposition mechanism, and
+    for decision 8's reorder/merge/supersede without a second Planning Run
+    (ADR-0028 amended).
 
     A revised ticket already published and closed (delivered) can never be
     touched: the revision must route new/changed scope through new ticket
-    ids instead.
+    ids instead. `merges`/`supersedes` targets follow the same rule -- a
+    patch never rewrites delivered history, only unfinished work.
+
+    `--reslice` marks a Mayor reslice applied without a fresh Planning Run:
+    every unfinished ticket the patch touches must keep the acceptance
+    criteria already published on its Bead, checked against the live
+    description text (the sole source of truth), or the whole patch is
+    refused and escalated to NEEDS BENJAMIN before anything is written.
+    Without `--reslice` (a draft revised and re-approved by a Planning Run)
+    acceptance criteria may change freely, as before.
     """
     old_digest = str(draft["artifact"].get("revises") or "").strip()
     if not old_digest:
@@ -273,8 +330,48 @@ def patch(draft: dict[str, Any], plan: dict[str, Any], tickets: list[dict[str, A
         raise PublishError(f"revised graph {old_digest} has no convoy node")
 
     by_key = {node["key"]: node for node in plan["nodes"]}
+    ticket_by_key = {str(ticket["id"]): ticket for ticket in tickets}
+    ordered_ticket_keys = [str(ticket["id"]) for ticket in tickets]
+
+    def closed_targets(key: str, target_keys: list[str]) -> None:
+        for target_key in target_keys:
+            if target_key not in old_members:
+                raise PublishError(f"{key} references unknown {target_key} to merge/supersede")
+            member = old_members[target_key]
+            if member["status"] == "closed":
+                raise PublishError(
+                    f"{target_key} ({member['id']}) is already delivered; patch cannot modify a closed ticket"
+                )
+
+    # Pass 1: validate everything before writing anything -- a partially
+    # applied patch (ADR-0028 §6) is worse than a refused one.
+    for key in ordered_ticket_keys:
+        ticket = ticket_by_key[key]
+        merge_targets = [str(m) for m in as_list(ticket.get("merges", []), f"{key}.merges")]
+        supersedes = str(ticket.get("supersedes") or "").strip()
+        closed_targets(key, merge_targets + ([supersedes] if supersedes else []))
+        if key in old_members:
+            member = old_members[key]
+            if member["status"] == "closed":
+                raise PublishError(f"{key} ({member['id']}) is already delivered; patch cannot modify a closed ticket")
+            if reslice:
+                existing_ac = acceptance_criteria_from_description(member["description"])
+                new_ac = [str(item) for item in ticket["acceptance_criteria"]]
+                if existing_ac != new_ac:
+                    escalation_reason = (
+                        f"reslice patch for {key} ({member['id']}) would change acceptance criteria "
+                        f"without a Planning Run -- author={author}, reason={reason}"
+                    )
+                    escalate_reslice_refusal(convoy_id, escalation_reason)
+                    raise PublishError(
+                        f"{key} ({member['id']}) acceptance criteria changed in a reslice patch; "
+                        "refused and escalated to NEEDS BENJAMIN"
+                    )
+
     created: dict[str, str] = {}
     updated: list[str] = []
+    merged: dict[str, str] = {}
+    superseded: dict[str, str] = {}
 
     def resolve_id(key: str) -> str:
         if key in old_members:
@@ -283,21 +380,33 @@ def patch(draft: dict[str, Any], plan: dict[str, Any], tickets: list[dict[str, A
             return created[key]
         raise PublishError(f"{key} is neither already published nor created earlier in this patch")
 
-    ordered_ticket_keys = [str(t["id"]) for t in tickets]
+    # Pass 2: apply. Validation above guarantees every closed-target and
+    # acceptance-criteria check has already passed.
     for key in ordered_ticket_keys:
         node = by_key[key]
+        ticket = ticket_by_key[key]
         if key in old_members:
             member = old_members[key]
-            if member["status"] == "closed":
-                raise PublishError(f"{key} ({member['id']}) is already delivered; patch cannot modify a closed ticket")
+            wanted_blocked_by = {str(b) for b in ticket["blocked_by"]}
+            previous_blocked_by = {b for b in member["blocked_by"].split(",") if b}
             run(
                 "update", member["id"],
                 "--title", node["title"],
                 "--description", node["description"],
                 "--set-metadata", f"gc.graph_digest={new_digest}",
                 "--set-metadata", "gc.publication_validated=true",
+                "--set-metadata", f"gc.blocked_by={','.join(sorted(wanted_blocked_by))}",
             )
+            for added in sorted(wanted_blocked_by - previous_blocked_by):
+                run("dep", "add", member["id"], resolve_id(added))
+            for removed in sorted(previous_blocked_by - wanted_blocked_by):
+                try:
+                    removed_id = resolve_id(removed)
+                except PublishError:
+                    continue
+                run("dep", "remove", member["id"], removed_id)
             updated.append(key)
+            resulting_id = member["id"]
         else:
             edge_ids = as_list(node.get("_blocked_by_keys", []), f"{key}._blocked_by_keys")
             deps = ",".join(f"blocks:{resolve_id(str(edge_key))}" for edge_key in edge_ids)
@@ -310,17 +419,46 @@ def patch(draft: dict[str, Any], plan: dict[str, Any], tickets: list[dict[str, A
                 "--deps", deps, "--silent",
             )
             created[key] = result.stdout.strip()
+            resulting_id = created[key]
+
+        merge_targets = [str(m) for m in as_list(ticket.get("merges", []), f"{key}.merges")]
+        for target_key in merge_targets:
+            target_id = old_members[target_key]["id"]
+            run(
+                "update", target_id, "--status", "closed",
+                "--set-metadata", f"gc.merged_into={resulting_id}",
+                "--append-notes", f"MERGED by {author}: {reason}",
+            )
+            merged[target_key] = resulting_id
+        supersedes = str(ticket.get("supersedes") or "").strip()
+        if supersedes:
+            target_id = old_members[supersedes]["id"]
+            run(
+                "update", target_id, "--status", "closed",
+                "--set-metadata", f"gc.superseded_by={resulting_id}",
+                "--append-notes", f"SUPERSEDED by {author}: {reason}",
+            )
+            superseded[supersedes] = resulting_id
 
     if old_members["_convoy"]["status"] != "closed":
         run(
             "update", convoy_id,
             "--set-metadata", f"gc.graph_digest={new_digest}",
             "--set-metadata", "gc.publication_validated=true",
+            "--set-metadata", f"gc.patch_author={author}",
+            "--set-metadata", f"gc.patch_reason={reason}",
+            "--append-notes", f"PATCH by {author}: {reason}",
         )
 
     mapping = {"_convoy": convoy_id, **{key: old_members[key]["id"] for key in old_members if key != "_convoy"}}
     mapping.update(created)
-    return {"ids": mapping, "patched": sorted(updated), "created": sorted(created)}
+    return {
+        "ids": mapping,
+        "patched": sorted(updated),
+        "created": sorted(created),
+        "merged": merged,
+        "superseded": superseded,
+    }
 
 
 def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> None:
@@ -353,6 +491,12 @@ def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(prog=PROGRAM)
     value.add_argument("command", choices=("validate", "publish", "patch"))
     value.add_argument("draft", type=Path)
+    value.add_argument("--author", help="who authored this patch (required for patch)")
+    value.add_argument("--reason", help="why this patch was applied (required for patch)")
+    value.add_argument(
+        "--reslice", action="store_true",
+        help="Mayor reslice without a fresh Planning Run: refuse and escalate any acceptance-criteria change",
+    )
     return value
 
 
@@ -373,7 +517,9 @@ def main() -> int:
             }, ensure_ascii=False, sort_keys=True))
             return 0
         if args.command == "patch":
-            result = patch(draft, plan, tickets)
+            if not (args.author or "").strip() or not (args.reason or "").strip():
+                raise PublishError("--author and --reason are required for patch")
+            result = patch(draft, plan, tickets, args.author, args.reason, args.reslice)
             graph_digest = draft["artifact"]["content_digest"]
             notify_mayor("patch", graph_digest, result["ids"].get("_convoy"))
             print(json.dumps({

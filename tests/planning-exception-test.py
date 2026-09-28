@@ -186,7 +186,11 @@ class PlanningExceptionTest(unittest.TestCase):
         self.assertEqual(["B08"], result["patch"]["patched"])
 
         calls = [json.loads(line) for line in log.read_text().splitlines()]
-        self.assertEqual([["patch", str(draft)]], calls)
+        self.assertEqual(
+            [["patch", str(draft), "--author", "planning-exception:pd-1",
+              "--reason", "AC changed, revised draft published"]],
+            calls,
+        )
 
         state = self.load(register)
         decision = state["decisions"]["pd-1"]

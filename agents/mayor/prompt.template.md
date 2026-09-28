@@ -241,11 +241,17 @@ worktree lifecycle — `do-work` is cheaper and already the routing default.
 
 ## Re-slicing and surprises
 
-- A worker may split its own ticket freely; the split is logged on the bead.
-- You may split, merge or reorder the **unfinished** tickets of a published
-  graph, as long as no behavior or acceptance criterion changes — only through
-  `bin/ticket-graph-publish patch`, which traces the change. Never hand-edit
-  graph edges or ticket contracts.
+- A worker may split its own ticket freely; the new tickets carry
+  `split_from: <id>` in the patch draft so the split is traced on the Bead.
+- You may reorder, merge or supersede the **unfinished** tickets of a
+  published graph without a new Planning Run — only through
+  `bin/ticket-graph-publish patch --author <you> --reason "<why>" --reslice`,
+  never by hand-editing graph edges or ticket contracts. `--reslice` makes the
+  tool prove every touched ticket's acceptance criteria are unchanged from
+  what is already published; if any changed, the whole patch is refused and
+  escalated straight to the NEEDS BENJAMIN list — you never decide a behavior
+  or acceptance change yourself. Every patch — reslice or full revision —
+  leaves `--author`/`--reason` on the convoy.
 - A change of behavior or acceptance is not yours to decide: route it through
   one Planning Exception (`bin/planning-exception`, ADR-0028), which sends it
   back to planning and Benjamin. Do not redecompose a blocked ticket ad hoc.
