@@ -28,15 +28,31 @@
 #       reuses) an isolated worktree at
 #       $HOME/.local/share/agent-factory-runtime-worktrees/<bead-id> on
 #       branch do-work/<bead-id>, off the protected branch, and prints the
-#       worktree path.
+#       worktree path. A newly created branch is pushed immediately (O04:
+#       "workers push their branch from the first commit"), and the
+#       worktree is given a per-worktree post-commit hook that pushes after
+#       every commit made in it -- so a session that dies mid-run before
+#       reaching `finish` still leaves its commits on the remote branch
+#       instead of losing them with the worktree.
 #
 #   factory-do-work-workspace finish <bead-id> <worktree-path> <branch> <base-branch>
 #       No-op if <worktree-path> is "." (enter's no-op marker) or does not
 #       exist. Otherwise: commits any remaining changes, pushes <branch>
 #       (rebasing onto <base-branch> up to twice on conflict), opens a PR
-#       with `gh` if available (prints the PR URL on its own stdout line if
-#       one was opened), then removes the worktree from whichever repo it
-#       was created against.
+#       with `gh` if available -- or, if one is already open for <branch>
+#       (a re-dispatch resuming earlier work, O04), resumes that PR instead
+#       of trying to create a duplicate -- (prints the PR URL on its own
+#       stdout line either way), then removes the worktree from whichever
+#       repo it was created against.
+#
+#   factory-do-work-workspace restart <bead-id> <worktree-path> <branch> <reason>
+#       O04: "starting over requires a written reason." The one supported
+#       way to discard an existing do-work branch/worktree instead of
+#       resuming it. Refuses (exit 2, no changes made) if <reason> is
+#       empty. With a reason: force-removes the worktree (if present) and
+#       deletes the local and (if pushed) remote do-work/<bead-id> branch,
+#       so the next `enter` starts clean, and prints the reason it used so
+#       the caller can record it on the bead.
 #
 # $HOME/.local/share/agent-factory-runtime-worktrees/ shares the
 # `agent-factory-runtime-*` prefix bin/factory-guard's stale-worktree check
@@ -76,6 +92,25 @@ protected_branch_for() {
   done
 }
 
+# install_post_commit_push_hook <worktree-path> — O04: "workers push their
+# branch ... after each commit." A per-worktree (not repo-wide) hooksPath so
+# this only affects commits made inside the isolated do-work worktree, never
+# the live root or other worktrees sharing the same .git. Best-effort: a
+# push failure here never blocks the commit that triggered it, the branch
+# is still recoverable from the worktree at `finish` or by hand.
+install_post_commit_push_hook() {
+  local wt="$1" hooks_dir="$1/.git-hooks"
+  git -C "$wt" config extensions.worktreeConfig true || return 0
+  mkdir -p "$hooks_dir"
+  cat > "$hooks_dir/post-commit" <<'HOOK'
+#!/usr/bin/env bash
+branch=$(git symbolic-ref --short HEAD 2>/dev/null) || exit 0
+git push origin "HEAD:refs/heads/$branch" >/dev/null 2>&1 || true
+HOOK
+  chmod +x "$hooks_dir/post-commit"
+  git -C "$wt" config --worktree core.hooksPath "$hooks_dir"
+}
+
 case "$CMD" in
   enter)
     BEAD_ID="${1:-}"
@@ -108,6 +143,7 @@ case "$CMD" in
     WT="$HOME/.local/share/agent-factory-runtime-worktrees/$BEAD_ID"
 
     if [ -d "$WT" ]; then
+      install_post_commit_push_hook "$WT" >/dev/null 2>&1 || true
       echo "$WT"
       exit 0
     fi
@@ -125,7 +161,12 @@ case "$CMD" in
         echo "factory-do-work-workspace: could not create worktree/branch $BRANCH off $CURRENT_BRANCH" >&2
         exit 1
       }
+      # O04: push the branch immediately, before any work commit lands, so
+      # it exists remotely from the start and the post-commit hook below
+      # always has a remote branch to push onto.
+      git -C "$WT" push -u origin "$BRANCH" >/dev/null 2>&1 || true
     fi
+    install_post_commit_push_hook "$WT" >/dev/null 2>&1 || true
     echo "$WT"
     ;;
 
@@ -166,6 +207,12 @@ case "$CMD" in
     if command -v gh >/dev/null 2>&1; then
       PR_URL=$(cd "$WT" && gh pr create --base "$BASE_BRANCH" --head "$BRANCH" \
         --title "do-work: $BEAD_ID" --body "Closes $BEAD_ID." 2>/dev/null || true)
+      if [ -z "$PR_URL" ]; then
+        # O04: a re-dispatch resuming an existing branch that already has an
+        # open PR must resume that PR, not silently fail to record one --
+        # `gh pr create` above fails when a PR already exists for this head.
+        PR_URL=$(cd "$WT" && gh pr view "$BRANCH" --json url -q .url 2>/dev/null || true)
+      fi
     fi
 
     # af-09hxz: the worktree's origin repo is no longer always $ROOT (a
@@ -191,6 +238,39 @@ case "$CMD" in
     fi
 
     [ -n "$PR_URL" ] && echo "$PR_URL"
+    exit 0
+    ;;
+
+  restart)
+    BEAD_ID="${1:-}"; WT="${2:-}"; BRANCH="${3:-}"; REASON="${4:-}"
+    [ -n "$BEAD_ID" ] && [ -n "$WT" ] && [ -n "$BRANCH" ] || {
+      echo "usage: factory-do-work-workspace restart <bead-id> <worktree-path> <branch> <reason>" >&2
+      exit 2
+    }
+    [ -n "$REASON" ] || {
+      echo "factory-do-work-workspace: restart of $BEAD_ID refused -- a written reason is required (O04: starting over without a recorded reason is refused)" >&2
+      exit 2
+    }
+
+    if [ "$WT" != "." ] && [ -d "$WT" ]; then
+      GIT_COMMON_DIR=$(cd "$WT" && git rev-parse --git-common-dir 2>/dev/null)
+      case "$GIT_COMMON_DIR" in
+        /*) ;;
+        *) GIT_COMMON_DIR="$WT/$GIT_COMMON_DIR" ;;
+      esac
+      ORIGIN_REPO=""
+      [ -n "$GIT_COMMON_DIR" ] && ORIGIN_REPO=$(cd -- "$(dirname -- "$GIT_COMMON_DIR")" 2>/dev/null && pwd -P)
+      if [ -n "$ORIGIN_REPO" ] && [ -d "$ORIGIN_REPO" ]; then
+        git -C "$ORIGIN_REPO" worktree remove "$WT" --force 2>/dev/null || \
+          echo "factory-do-work-workspace: could not remove worktree $WT while restarting $BEAD_ID; leaving it in place" >&2
+        git -C "$ORIGIN_REPO" branch -D "$BRANCH" >/dev/null 2>&1 || true
+        git -C "$ORIGIN_REPO" push origin --delete "$BRANCH" >/dev/null 2>&1 || true
+      else
+        echo "factory-do-work-workspace: could not resolve the origin repo for worktree $WT; leaving it in place" >&2
+      fi
+    fi
+
+    echo "restart: $REASON"
     exit 0
     ;;
 

@@ -54,6 +54,24 @@ after both the merge and a successful required CI run on the exact PR head are
 proven. Non-HQ dispatches (no worktree, commit == done) and no-op/blocked/
 abandoned outcomes are unaffected.
 
+Local fork (2026-09-28, O04): a re-dispatch of the same ticket -- a session
+stranded mid-run, or a fresh worker picking the ticket back up -- used to
+risk redoing work instead of resuming it: `finish` tried `gh pr create`
+again on a branch that already had an open PR and silently dropped the PR
+URL when that failed, and an interrupted session that never reached
+`push-and-pr` lost every commit made in its worktree along with the
+worktree itself. `bin/factory-do-work-workspace enter` now pushes a new
+branch immediately and installs a per-worktree post-commit hook that
+pushes after every commit, so commits survive a session dying mid-run;
+`finish` falls back to `gh pr view` to resume an already-open PR instead of
+failing to record one. A worker that genuinely needs to discard existing
+work now has exactly one path to do it -- `factory-do-work-workspace
+restart <bead-id> <worktree> <branch> <reason>` -- which refuses outright
+without a written reason. `bin/ticket-graph-publish patch`'s `supersedes`
+handling now copies `gc.work_branch`/`gc.work_base_branch`/`gc.pr_url` from
+the superseded ticket onto the ticket that supersedes it, so a re-planned
+ticket resumes the prior ticket's branch and PR instead of starting cold.
+
 ## Variables
 
 | Variable | Source | Description |

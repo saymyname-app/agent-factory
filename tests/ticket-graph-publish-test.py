@@ -495,6 +495,50 @@ class TicketGraphPublishTest(unittest.TestCase):
         self.assertIn(f"gc.superseded_by={z2_id}", close_z1)
         self.assertIn("SUPERSEDED by Test: supersede Z1 with Z2", close_z1)
 
+    def test_patch_supersede_inherits_branch_and_pr_of_the_superseded_ticket(self):
+        old_digest = "sha256:" + "9" * 64
+        raw, new_digest = build_draft(
+            "  - id: Z2\n"
+            "    kind: vertical_slice\n"
+            "    title: Ticket Z2 supersedes Z1\n"
+            "    blocked_by: []\n"
+            "    supersedes: Z1\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does the replacement thing\n"
+            "    acceptance_criteria: [does the replacement thing]\n",
+            revises=old_digest,
+        )
+        existing = [
+            {"id": "af-conv", "status": "open", "metadata": {"gc.graph_digest": old_digest}},
+            {"id": "af-z1", "status": "open", "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "Z1", "gc.blocked_by": "",
+                "gc.work_branch": "do-work/af-z1", "gc.work_base_branch": "main",
+                "gc.pr_url": "https://github.com/example/example/pull/42",
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft_path = root / "revised.yaml"
+            draft_path.write_bytes(raw)
+            log = root / "bd.log"
+            result = json.loads(self.invoke(
+                "patch", str(draft_path), "--author", "Test", "--reason", "supersede Z1 with Z2", env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_BD_LOG": str(log),
+                    "TICKET_GRAPH_EXISTING": json.dumps(existing),
+                },
+            ).stdout)
+            calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+        self.assertTrue(result["ok"])
+        z2_id = result["ids"]["Z2"]
+        inherit_call = next(
+            c for c in calls if c[0] == "update" and c[1] == z2_id and "gc.work_branch=do-work/af-z1" in c
+        )
+        self.assertIn("gc.work_base_branch=main", inherit_call)
+        self.assertIn("gc.pr_url=https://github.com/example/example/pull/42", inherit_call)
+        self.assertIn("Inherited work from superseded Z1 (af-z1)", " ".join(inherit_call))
+
     def test_reslice_patch_refuses_and_escalates_when_acceptance_criteria_change(self):
         old_digest = "sha256:" + "8" * 64
         raw, new_digest = build_draft(
