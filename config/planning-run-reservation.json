@@ -1,15 +1,27 @@
 {
-  "cleared_at": null,
   "contract": "agent-factory-planning-run-reservation/v1",
-  "note": "Cockpit V2 -- the next real non-critical Planning Run after the one-way cutover (af-mav0b AC#5, af-4a44k B12 AC#5, docs/planning/B12-redecomposition-planning-run-router.md Slice 4).",
-  "promoted_after": "factory-operations-v2",
-  "promoted_at": "2026-09-28T13:08:38.923724+00:00",
+  "reserved_for": "parallel-delivery",
+  "note": "Planning Run 'Parallel delivery': several workers on the same repo, safely (worktree per dispatch on every rig, declared file scope at planning time, leases on hot files, test isolation from the live city, up-to-date-before-merge with automatic branch update, bounded conflict-repair loop). Placed after A5 and before C01 (Benjamin, 2026-09-28: P1 'a'). Input: proposal af-i3prh and docs/planning/factory-operations-v2 research.",
+  "reserved_at": "2026-09-28",
+  "reserved_by": "PO (Benjamin, 2026-09-28: « il faut que l'usine soit conçue pour pouvoir travailler sur des taches en parallèle même si ca touche le même dépot »)",
+  "cleared_at": null,
   "requirements": [
-    "Phone notifications via ntfy (implementation retired with Cockpit V1 on 2026-09-26; the need stays -- Benjamin, 2026-09-25).",
-    "Ritual reminders (architecture / incident reviews) surfaced as notifications (Benjamin, 2026-09-25).",
-    "Move the NEEDS BENJAMIN list and the pending-proposal count from the operator session start into the cockpit, then remove them from session start (interim display decided in A5 -- Benjamin, 2026-09-28)."
+    "Design for N workers per repo; first activation 2 workers on the Factory rig only, then raise on measured RAM/conflict data (Benjamin, 2026-09-28: P2 'a'; WSL stays at 8 GB, host has 16 GB).",
+    "Designed for the Factory and the SayMyName repos, activated on the Factory first (Benjamin, 2026-09-28: P3 'a').",
+    "main requires up-to-date branches (ruleset strict) only once pr-autopilot updates behind PRs itself -- the 2026-09-17 reason for turning it off was that a behind PR stayed stuck (Benjamin, 2026-09-28: P4 'oui')."
   ],
-  "reserved_at": "2026-09-24",
-  "reserved_by": "af-mav0b",
-  "reserved_for": "C01"
+  "next": {
+    "cleared_at": null,
+    "note": "Cockpit V2 -- the next real non-critical Planning Run after the one-way cutover (af-mav0b AC#5, af-4a44k B12 AC#5, docs/planning/B12-redecomposition-planning-run-router.md Slice 4).",
+    "promoted_after": "factory-operations-v2",
+    "promoted_at": "2026-09-28T13:08:38.923724+00:00",
+    "requirements": [
+      "Phone notifications via ntfy (implementation retired with Cockpit V1 on 2026-09-26; the need stays -- Benjamin, 2026-09-25).",
+      "Ritual reminders (architecture / incident reviews) surfaced as notifications (Benjamin, 2026-09-25).",
+      "Move the NEEDS BENJAMIN list and the pending-proposal count from the operator session start into the cockpit, then remove them from session start (interim display decided in A5 -- Benjamin, 2026-09-28)."
+    ],
+    "reserved_at": "2026-09-24",
+    "reserved_by": "af-mav0b",
+    "reserved_for": "C01"
+  }
 }
