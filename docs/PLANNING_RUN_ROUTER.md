@@ -44,11 +44,11 @@ python3 tests/planning-run-router-test.py
 ```
 
 The example request above returns `result: reservation_blocked` against a
-repo with the shipped `config/planning-run-reservation.json` still in place
--- that is the reservation gate working as intended (see below), not a
-regression. The test suite runs each fixture request against its own scratch
-`--repo-root` with no reservation file, so it always exercises the full
-sequence.
+repo with the shipped `config/planning-run-reservation.json` seed still in
+place -- that is the reservation gate working as intended (see below), not
+a regression. The test suite runs each fixture request against its own
+scratch `--repo-root` with no reservation file, so it always exercises the
+full sequence.
 
 ## Request contract
 
@@ -68,21 +68,26 @@ request/v1`:
 
 ## Reservation (B12 AC#5, Slice 4)
 
-`config/planning-run-reservation.json` (`contract:
+`.gc/runtime/planning-run-reservation.json` (`contract:
 agent-factory-planning-run-reservation/v1`) can name the one Planning Run the
 factory is currently reserving all new capacity for: `{reserved_for: "C01",
-cleared_at: null, ...}`. B12 AC#5 first reserved the Planning Run after
-this cutover for **C01, Cockpit V2**; see *Ordered sequence* below for the
-shipped order. While a
-reservation's `cleared_at` is `null`:
+cleared_at: null, ...}`. `.gc/` is host-local Gas City/runtime state
+(gitignored) so a router run that clears or promotes the reservation never
+dirties the repo root's git status (F18). The tracked
+`config/planning-run-reservation.json` is a read-only seed: the first time a
+checkout has no runtime copy yet, the router copies the seed into
+`.gc/runtime/` and reads/writes only the copy from then on. B12 AC#5 first
+reserved the Planning Run after this cutover for **C01, Cockpit V2**; see
+*Ordered sequence* below for the shipped order. While a reservation's
+`cleared_at` is `null`:
 
 - A request whose `planning_run_target` does not equal `reserved_for` returns
   `result: reservation_blocked` before any session, Spec, map, or convoy is
   touched -- the same identity-free rejection `legacy_path` uses.
 - A request whose `planning_run_target` equals `reserved_for` proceeds
   normally; once it reaches `result: published`, the router stamps
-  `cleared_at` on the reservation file, so every request after it -- reserved
-  or not -- is unblocked.
+  `cleared_at` on the runtime reservation file, so every request after it --
+  reserved or not -- is unblocked.
 - Already-published convoys and graphs are never touched by a reservation
   check: it only gates the creation of a *new* Planning Run identity,
   consistent with ADR-0025's `is_scoped_delivery_bead` boundary (AC#4).
@@ -95,7 +100,7 @@ reservation's `cleared_at` is `null`:
   `promoted_at`) instead of clearing, so a sequence is enforced one run at a
   time. Nest `next` inside `next` for longer sequences.
 
-The shipped file follows the sequence Benjamin validated on 2026-09-25:
+The shipped seed file follows the sequence Benjamin validated on 2026-09-25:
 `factory-operations-v2` first, then C01 (Cockpit V2), whose requirements are
 listed on its `next` entry.
 
@@ -104,7 +109,7 @@ listed on its `next` entry.
 | Step | Effect |
 | --- | --- |
 | `legacy_path` translation | A non-`none` selector returns `result: legacy_path_rejected` with a reason naming the quarantined artifact. Nothing else runs. |
-| Reservation check | While `config/planning-run-reservation.json` names an uncleared `reserved_for` and the request's `planning_run_target` does not match, the router returns `result: reservation_blocked` naming the reserved target. Nothing else runs. |
+| Reservation check | While `.gc/runtime/planning-run-reservation.json` (seeded from `config/planning-run-reservation.json` on first read) names an uncleared `reserved_for` and the request's `planning_run_target` does not match, the router returns `result: reservation_blocked` naming the reserved target. Nothing else runs. |
 | Wayfinding (optional) | Promotes the map if it does not already exist, then claims/resolves every decision the request supplies. If the map is not yet `to_spec_eligible` afterward, the router returns `result: wayfinding_pending` -- the caller may submit the remaining decisions in a later call against the same map, exactly as B04's own resumable design intends. |
 | to-spec | Drives `planning-run-to-spec-oracle run` against `session`. A real contradiction/missing trace/undecided behavior/new test seam returns `result: returned_to_planning` with the oracle's own `signal`/`reason` -- no Spec is written. |
 | Approval (optional) | Once a `DRAFT_SPEC` exists, `spec-approve approve` runs only if the request supplies `approval`; the linked Wayfinding map (if any) closes in the same call. Without `approval`, the router returns `result: awaiting_approval`. |
@@ -177,5 +182,6 @@ listed on its `next` entry.
   because the router does not live inside the `tests/fixtures/fixture-city/`
   harness.
 - **Reservation sequence.** `config/planning-run-reservation.json` ships
-  reserving `factory-operations-v2`, then C01 (Cockpit V2, AC#5); see the
-  Reservation section above.
+  reserving `factory-operations-v2`, then C01 (Cockpit V2, AC#5), as the
+  read-only seed for `.gc/runtime/planning-run-reservation.json` (F18); see
+  the Reservation section above.

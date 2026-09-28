@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLISHER = ROOT / "bin" / "ticket-graph-publish"
 DRAFT = ROOT / "docs" / "planning" / "agent-factory-project-agnostic-refactor-ticket-graph-draft.yaml"
 FAKE_BD = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "bd"
+FAKE_GC = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "gc"
 
 SPEC_DIGEST = "sha256:" + "0" * 64
 
@@ -197,7 +198,88 @@ class TicketGraphPublishTest(unittest.TestCase):
         update_convoy = next(c for c in calls if c[0] == "update" and c[1] == "af-conv")
         self.assertIn(f"gc.graph_digest={new_digest}", update_convoy)
 
-    def test_patch_refuses_to_touch_an_already_delivered_ticket(self):
+    def test_publish_wakes_the_mayor_exactly_once_on_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gc_log = root / "gc.log"
+            result = json.loads(self.invoke(
+                "publish", str(DRAFT), env={
+                    "BD_BIN": str(FAKE_BD),
+                    "GC_BIN": str(FAKE_GC),
+                    "TICKET_GRAPH_CAPTURE": str(root / "graph.json"),
+                    "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+                    "TICKET_GRAPH_GC_LOG": str(gc_log),
+                },
+            ).stdout)
+            calls = [json.loads(line) for line in gc_log.read_text(encoding="utf-8").splitlines()]
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, len(calls))
+        self.assertEqual(["mail", "send", "mayor", "--notify"], calls[0][:4])
+        self.assertIn(result["graph_digest"], " ".join(calls[0]))
+
+    def test_publish_does_not_wake_the_mayor_when_the_graph_transaction_fails(self):
+        broken_bd = (
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "print('boom', file=sys.stderr)\n"
+            "raise SystemExit(1)\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            broken = root / "bd"
+            broken.write_text(broken_bd, encoding="utf-8")
+            broken.chmod(0o755)
+            gc_log = root / "gc.log"
+            result = self.invoke(
+                "publish", str(DRAFT), env={
+                    "BD_BIN": str(broken),
+                    "GC_BIN": str(FAKE_GC),
+                    "TICKET_GRAPH_GC_LOG": str(gc_log),
+                },
+                check=False,
+            )
+        self.assertNotEqual(0, result.returncode)
+        self.assertFalse(gc_log.exists())
+
+    def test_patch_wakes_the_mayor_exactly_once_on_success(self):
+        old_digest = "sha256:" + "3" * 64
+        raw, new_digest = build_draft(
+            "  - id: X1\n"
+            "    kind: vertical_slice\n"
+            "    title: Ticket X1 revised\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does a revised thing\n"
+            "    acceptance_criteria: [does the revised thing]\n",
+            revises=old_digest,
+        )
+        existing = [
+            {"id": "af-conv", "status": "open", "metadata": {"gc.graph_digest": old_digest}},
+            {"id": "af-x1", "status": "open", "metadata": {
+                "gc.graph_digest": old_digest, "gc.ticket_id": "X1",
+            }},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft_path = root / "revised.yaml"
+            draft_path.write_bytes(raw)
+            gc_log = root / "gc.log"
+            result = json.loads(self.invoke(
+                "patch", str(draft_path), env={
+                    "BD_BIN": str(FAKE_BD),
+                    "GC_BIN": str(FAKE_GC),
+                    "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+                    "TICKET_GRAPH_EXISTING": json.dumps(existing),
+                    "TICKET_GRAPH_GC_LOG": str(gc_log),
+                },
+            ).stdout)
+            calls = [json.loads(line) for line in gc_log.read_text(encoding="utf-8").splitlines()]
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, len(calls))
+        self.assertEqual(["mail", "send", "mayor", "--notify"], calls[0][:4])
+        self.assertIn(new_digest, " ".join(calls[0]))
+
+    def test_patch_does_not_wake_the_mayor_when_it_refuses_a_closed_ticket(self):
         old_digest = "sha256:" + "2" * 64
         raw, _ = build_draft(
             "  - id: X1\n"
@@ -220,15 +302,19 @@ class TicketGraphPublishTest(unittest.TestCase):
             draft_path = root / "revised.yaml"
             draft_path.write_bytes(raw)
             log = root / "bd.log"
+            gc_log = root / "gc.log"
             result = self.invoke(
                 "patch", str(draft_path), env={
                     "BD_BIN": str(FAKE_BD),
+                    "GC_BIN": str(FAKE_GC),
                     "TICKET_GRAPH_BD_LOG": str(log),
                     "TICKET_GRAPH_EXISTING": json.dumps(existing),
+                    "TICKET_GRAPH_GC_LOG": str(gc_log),
                 },
                 check=False,
             )
         self.assertNotEqual(0, result.returncode)
+        self.assertFalse(gc_log.exists())
         self.assertIn("already delivered", result.stderr)
         self.assertIn("cannot modify a closed ticket", result.stderr)
 

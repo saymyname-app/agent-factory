@@ -20,6 +20,7 @@ PROGRAM = "ticket-graph-publish"
 ROOT = Path(__file__).resolve().parents[1]
 BD_BIN = os.environ.get("BD_BIN", "bd")
 BD_WORKSPACE = Path(os.environ.get("TICKET_GRAPH_BD_WORKSPACE", str(ROOT)))
+GC_BIN = os.environ.get("GC_BIN", "gc")
 CONTENT_BOUNDARY = b"legacy_boundary:"
 
 
@@ -322,6 +323,29 @@ def patch(draft: dict[str, Any], plan: dict[str, Any], tickets: list[dict[str, A
     return {"ids": mapping, "patched": sorted(updated), "created": sorted(created)}
 
 
+def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> None:
+    """Wake the Mayor at the end of a successful publish or patch (O02):
+    this is the only door approved work enters by, so a silent Mayor after
+    publication is the single point of failure for the whole delivery plane
+    (the idle-ready-work order is only the safety net for when this call is
+    itself missed). Best-effort: a mail delivery failure must not turn a
+    successful publish into a reported failure.
+    """
+    subject = f"ticket-graph-{command}: {graph_digest}"
+    body = (
+        f"ACTION: ticket-graph-publish {command} completed\n"
+        f"STATE: published\n"
+        f"EVIDENCE: graph_digest={graph_digest}"
+        + (f" convoy={convoy_id}" if convoy_id else "")
+        + "\n"
+        "NEXT: dispatch newly ready delivery-plane tickets"
+    )
+    subprocess.run(
+        [GC_BIN, "mail", "send", "mayor", "--notify", "-s", subject, "-m", body],
+        check=False, capture_output=True, text=True,
+    )
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(prog=PROGRAM)
     value.add_argument("command", choices=("validate", "publish", "patch"))
@@ -347,17 +371,21 @@ def main() -> int:
             return 0
         if args.command == "patch":
             result = patch(draft, plan, tickets)
+            graph_digest = draft["artifact"]["content_digest"]
+            notify_mayor("patch", graph_digest, result["ids"].get("_convoy"))
             print(json.dumps({
                 "ok": True,
-                "graph_digest": draft["artifact"]["content_digest"],
+                "graph_digest": graph_digest,
                 "revises": draft["artifact"]["revises"],
                 **result,
             }, ensure_ascii=False, sort_keys=True))
             return 0
-        mapping = publish(plan, draft["artifact"]["content_digest"], len(tickets))
+        graph_digest = draft["artifact"]["content_digest"]
+        mapping = publish(plan, graph_digest, len(tickets))
+        notify_mayor("publish", graph_digest, mapping.get("_convoy"))
         print(json.dumps({
             "ok": True,
-            "graph_digest": draft["artifact"]["content_digest"],
+            "graph_digest": graph_digest,
             "ids": mapping,
         }, ensure_ascii=False, sort_keys=True))
         return 0

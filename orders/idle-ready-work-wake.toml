@@ -1,0 +1,12 @@
+# Safety net for O02 (t1-dispatch-wake): ticket-graph-publish's own
+# notify_mayor call is the primary wake at the end of a successful publish
+# or patch. This order exists only for when that call is missed. Evaluating
+# "ready delivery-plane work, no active Mayor session, idle > 15 minutes" is
+# 100% mechanical (bd ready + gc session list + a timestamp comparison) --
+# no LLM judgment needed, so the controller runs it directly via exec.
+[order]
+description = "Re-wakes the Mayor when ready delivery-plane work has been idle > 15 min with no active Mayor session (O02 safety net for ticket-graph-publish's own wake)."
+trigger = "condition"
+interval = "5m"
+check = "/home/benja/agent-factory/bin/idle-ready-work-wake"
+timeout = "60s"

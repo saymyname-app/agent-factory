@@ -98,8 +98,10 @@ class PlanningRunRouterTest(unittest.TestCase):
         # real repo root -- every fixture path the tests pass is already
         # absolute (resolve_path only joins repo_root onto a relative path),
         # so this only changes where the router looks for
-        # config/planning-run-reservation.json: an empty scratch dir has none,
-        # keeping these tests isolated from the shipped C01 reservation.
+        # .gc/runtime/planning-run-reservation.json (and its
+        # config/planning-run-reservation.json seed): an empty scratch dir
+        # has neither, keeping these tests isolated from the shipped C01
+        # reservation.
         return subprocess.run(
             (str(TOOL), "--repo-root", str(repo_root or self.tmp), "run", str(request_path)),
             cwd=ROOT, env=env or {**os.environ}, text=True, capture_output=True, check=check,
@@ -345,9 +347,13 @@ class PlanningRunRouterTest(unittest.TestCase):
     #     cleared once that reserved request publishes (B12 AC#5) -----------
 
     def write_reservation(self, reserved_for="C01", cleared_at=None, next_reservation=None):
-        config_dir = self.tmp / "config"
-        config_dir.mkdir(exist_ok=True)
-        path = config_dir / "planning-run-reservation.json"
+        # Writes the untracked runtime location directly (F18) -- the seed
+        # at config/planning-run-reservation.json only matters for a
+        # checkout that has never run the router, which these isolated
+        # scratch dirs never are.
+        runtime_dir = self.tmp / ".gc" / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        path = runtime_dir / "planning-run-reservation.json"
         reservation = {
             "contract": "agent-factory-planning-run-reservation/v1",
             "reserved_for": reserved_for,
@@ -444,6 +450,51 @@ class PlanningRunRouterTest(unittest.TestCase):
             self.run_router(second_request_path, check=True).stdout
         )
         self.assertNotEqual("reservation_blocked", second["result"])
+
+    # --- F18: reservation state lives in untracked runtime state, seeded
+    #     once from the tracked config/ file, so publishing never dirties
+    #     the repo root's git status -------------------------------------
+
+    def test_a_tracked_seed_is_copied_into_untracked_runtime_state_on_first_read(self):
+        config_dir = self.tmp / "config"
+        config_dir.mkdir(exist_ok=True)
+        seed_path = config_dir / "planning-run-reservation.json"
+        seed_path.write_text(json.dumps({
+            "contract": "agent-factory-planning-run-reservation/v1",
+            "reserved_for": "C01",
+            "cleared_at": None,
+            "reserved_at": "2026-09-24",
+            "reserved_by": "seed",
+        }), encoding="utf-8")
+        runtime_path = self.tmp / ".gc" / "runtime" / "planning-run-reservation.json"
+        self.assertFalse(runtime_path.exists())
+
+        request = self.base_request(SIMPLE_SESSION)
+        request_path = self.write_request(request)
+        result = json.loads(self.run_router(request_path, check=True).stdout)
+
+        self.assertEqual("reservation_blocked", result["result"])
+        self.assertEqual("C01", result["reserved_for"])
+        # The seed is copied, not moved -- it stays a read-only fallback for
+        # any other checkout that has not yet run the router.
+        self.assertTrue(runtime_path.exists())
+        self.assertTrue(seed_path.exists())
+        self.assertEqual("C01", json.loads(runtime_path.read_text())["reserved_for"])
+
+    def test_publishing_the_reserved_run_never_touches_the_tracked_seed(self):
+        seed_path = self.tmp / "config" / "planning-run-reservation.json"
+        self.write_reservation(reserved_for="C01")
+        self.assertFalse(seed_path.exists())
+
+        result = self.publish_reserved("C01")
+        self.assertEqual("published", result["result"])
+
+        # Only the untracked runtime copy exists and was mutated; nothing
+        # was ever written under config/, so a repo checkout's git status
+        # stays clean end to end (AC#3).
+        self.assertFalse(seed_path.exists())
+        runtime_path = self.tmp / ".gc" / "runtime" / "planning-run-reservation.json"
+        self.assertIsNotNone(json.loads(runtime_path.read_text())["cleared_at"])
 
 
 if __name__ == "__main__":

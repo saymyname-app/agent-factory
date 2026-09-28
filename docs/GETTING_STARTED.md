@@ -144,7 +144,8 @@ Under the hood, every new Planning Run — simple or Wayfinding — runs through
 one door, `bin/planning-run-router run <request.json>`
 ([`PLANNING_RUN_ROUTER.md`](PLANNING_RUN_ROUTER.md)): there is no other
 coded path, and no flag reactivates a manual, tool-by-tool sequence. While a
-reservation is active (`config/planning-run-reservation.json`: first
+reservation is active (`.gc/runtime/planning-run-reservation.json`, seeded
+from the tracked `config/planning-run-reservation.json`: first
 `factory-operations-v2`, then C01 Cockpit V2, promoted when the previous one
 publishes), the router blocks any other new Planning Run until the reserved
 run has published.
