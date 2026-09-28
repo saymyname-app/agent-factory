@@ -41,10 +41,10 @@ maps an exemption name to its signal booleans, e.g.
 
 | Subcommand | Effect |
 | --- | --- |
-| `policy-validate` | Read-only. Validates `config/factory-observe-policy.json` against its schema/contract. |
+| `policy-validate` | Read-only. Validates `config/factory-observe-policy.json` against its contract (`lib/factory_observe.py::validate_policy`, hand-written — no JSON Schema file backs it). |
 | `observe --snapshot --evidence` | Diffs the current snapshot against the persisted one; wakes the smallest qualified role once per new/changed fact (empty diff => `action: "none"`, zero wakes); re-evaluates every declared exemption against `--evidence`, activating/restoring only on a transition; persists the new snapshot and history under an exclusive file lock. |
 | `status [--json]` | Read-only. Reports the areas currently tracked, current exemption activation, and recent history. |
-| `measures-validate --measures` | Read-only. Validates a measures document against `config/factory-observe-measures.schema.json`. |
+| `measures-validate --measures` | Read-only. Validates a measures document against its contract (`lib/factory_measures.py::validate_measures`, hand-written — no JSON Schema file backs it). |
 | `measures-show --measures` | Read-only. Prints each work class's six measures, kept separate -- never summed or blended across classes. |
 
 ## Acceptance mapping
@@ -65,8 +65,9 @@ maps an exemption name to its signal booleans, e.g.
 - **CONFIGURED**: the `agent-factory-observe-policy/v1` role/exemption
   policy (`config/factory-observe-policy.json`), the
   `agent-factory-observe-measures/v1` measures contract
-  (`config/factory-observe-measures.schema.json`), and caller-supplied
-  snapshot/evidence/measures JSON fixtures exercised by
+  (hand-written in `lib/factory_measures.py`; the JSON Schema file that once
+  documented its shape had no reader and moved to `legacy/config/` — F20),
+  and caller-supplied snapshot/evidence/measures JSON fixtures exercised by
   `tests/factory-observe-test.py`.
 - **OBSERVED**: the deterministic CLI output and the acceptance-mapped
   tests above, including the zero-wake-on-repeat, smallest-role-wake,

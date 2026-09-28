@@ -113,20 +113,24 @@ effort = "low"
 # installed `gc` binary's own model validator (same failure as claude-opus
 # above); "fable-5" is, confirmed via `strings /usr/local/bin/gc` and matches
 # the short-form convention already used by the other tiers (sonnet-5, haiku).
-[providers.claude-fable]
-base = "builtin:claude"
-command = "/home/benja/.local/bin/claude"
-accept_startup_dialogs = true
-args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode"]
-
-[providers.claude-fable.env]
-CLAUDE_CONFIG_DIR = "/home/benja/.claude"
-DISABLE_AUTOUPDATER = "1"
-
-[providers.claude-fable.option_defaults]
-permission_mode = "unrestricted"
-model = "fable-5"
-effort = "high"
+# Removed from active config 2026-09-28 (O14, F19): no agent, order or
+# formula ever names it, and factory-guard's provider-resolution check does
+# not cover it either. Re-add (and add it to that check) the day a role
+# actually needs it.
+# [providers.claude-fable]
+# base = "builtin:claude"
+# command = "/home/benja/.local/bin/claude"
+# accept_startup_dialogs = true
+# args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode"]
+#
+# [providers.claude-fable.env]
+# CLAUDE_CONFIG_DIR = "/home/benja/.claude"
+# DISABLE_AUTOUPDATER = "1"
+#
+# [providers.claude-fable.option_defaults]
+# permission_mode = "unrestricted"
+# model = "fable-5"
+# effort = "high"
 
 [defaults]
 [defaults.rig]
@@ -246,9 +250,10 @@ name = "claude"
 dir = "saymyname-frontend"
 max_active_sessions = 1
 
-[[patches.agent]]
-name = "claude-reviewer"
-max_active_sessions = 1
+# claude-reviewer retired 2026-09-28 (O14, F15): no formula or prompt ever
+# dispatched it (dispatch-door has no path for an ad-hoc named reviewer
+# session, only a rig's fixed sling_target); its patch went with it. See
+# docs/INVENTORY.md for where it moved.
 
 # bd.dog (builtin bd pack) ships with idle_timeout set but no sleep_after_idle,
 # so effective_sleep_after_idle resolves to legacy "off": the session never

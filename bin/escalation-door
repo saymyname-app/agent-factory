@@ -54,6 +54,13 @@ PROGRAM_NAME="escalation-door"
 GC_BIN="${GC_BIN:-gc}"
 ESCALATION_RECIPIENT="${GC_ESCALATION_RECIPIENT:-human}"
 MAYOR_FIRST_GRACE_SECONDS="${ESCALATION_DOOR_MAYOR_GRACE_SECONDS:-7200}"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
+# Runtime messages name the operator from config, not a hardcoded string
+# (O14, F23) -- config/operator.toml's `name`, defaulting to "Benjamin" if
+# the file is missing or unset. The `gc.needs_benjamin` field and `benjamin`
+# subcommand are a separate, stable schema/API and are not renamed by this.
+OPERATOR_NAME="${GC_OPERATOR_NAME:-$(sed -n 's/^name[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${OPERATOR_CONFIG_FILE:-$ROOT/config/operator.toml}" 2>/dev/null | head -n1)}"
+OPERATOR_NAME="${OPERATOR_NAME:-Benjamin}"
 BEAD_ID_RE='^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(\.[A-Za-z0-9]+)*$'
 
 log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2; }
@@ -101,7 +108,7 @@ cmd_benjamin() {
     >/dev/null || die "Beads write failed for $bead."
   "$GC_BIN" mail send "$ESCALATION_RECIPIENT" --notify \
     -s "NEEDS BENJAMIN: $bead" \
-    -m "ACTION: escalation-door escalated $bead straight to Benjamin
+    -m "ACTION: escalation-door escalated $bead straight to $OPERATOR_NAME
 STATE: $reason
 EVIDENCE: gc bd show $bead
 NEXT: decide, then run escalation-door clear $bead" \
@@ -130,7 +137,7 @@ cmd_mayor() {
     -m "ACTION: escalation-door paged the Mayor first
 STATE: $reason
 EVIDENCE: gc bd show $bead
-NEXT: resolve within 2h of $paged_at, or escalation-door sweep escalates to Benjamin" \
+NEXT: resolve within 2h of $paged_at, or escalation-door sweep escalates to $OPERATOR_NAME" \
     >/dev/null || die "Could not mail mayor; retry rather than treating this page as delivered."
   printf 'ESCALATED (mayor-first): %s — %s\n' "$bead" "$reason"
 }
@@ -155,8 +162,8 @@ cmd_sweep() {
     age=$(( now - paged_epoch ))
     ((age >= MAYOR_FIRST_GRACE_SECONDS)) || continue
     cmd_benjamin "$bead" "Mayor-first escalation unresolved after 2h: $reason" >/dev/null \
-      || die "sweep could not escalate $bead to Benjamin."
-    printf 'SWEPT: %s promoted to Benjamin after %ds unresolved\n' "$bead" "$age"
+      || die "sweep could not escalate $bead to $OPERATOR_NAME."
+    printf 'SWEPT: %s promoted to %s after %ds unresolved\n' "$bead" "$OPERATOR_NAME" "$age"
     count=$((count + 1))
   done < <(jq -r '(if type == "array" then . else [.] end)[] | .id' <<<"$due_json")
   ((count > 0)) || printf 'SWEPT: nothing due\n'

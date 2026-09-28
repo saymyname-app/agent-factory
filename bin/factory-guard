@@ -253,36 +253,8 @@ done
 [ -n "$MCP_OPEN" ] && bad "enableAllProjectMcpServers=true lets a checked-out .mcp.json load unreviewed:$MCP_OPEN"
 [ -z "$MCP_OPEN" ] && say "✓ mcp-autoload — no agent settings auto-enable project MCP servers"
 
-# --- 3c. real-PII leak guard, Layer A (af-6eqc) ------------------------------
-# Local-only exact-match check against a gitignored real-identifier list
-# under .gc/ (see bin/factory-pii-guard for the full mechanism and why it
-# never prints the list or a matched value). The real block happens in the
-# pre-push hook, which has a real exit code; this is the same check surfaced
-# in the periodic report so an unpushed match doesn't wait for a push to be
-# noticed. Its own output never contains the list or a matched value, so it
-# is safe to fold into say()/bad() here.
-PII_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-pii-guard"
-if [ -x "$PII_GUARD" ]; then
-  PII_OUTPUT=$(FACTORY_ROOT="$ROOT" "$PII_GUARD" --repo-root "$ROOT" 2>&1)
-  PII_STATUS=$?
-  if [ "$PII_STATUS" -eq 1 ]; then
-    bad "pii-guard — real identifier found in outgoing diff or working tree (run bin/factory-pii-guard locally for detail; never paste the diff into a bead/mail)"
-  elif [ "$PII_STATUS" -eq 3 ]; then
-    # INACTIVE: no identifier list on this machine, nothing was actually
-    # checked. Reported with the same "not checked" marker as a missing
-    # binary below, never "✓" -- af-ox44d: this line used to read "✓
-    # pii-guard — nothing to check", which every reader (including a
-    # year of Oxyl real-person photos going untracked) reasonably took
-    # for "checked, clean" rather than "not checked at all".
-    say "· pii-guard — ${PII_OUTPUT#factory-pii-guard: }"
-  elif [ "$PII_STATUS" -eq 0 ]; then
-    say "✓ pii-guard — ${PII_OUTPUT#factory-pii-guard: }"
-  else
-    bad "pii-guard — factory-pii-guard exited $PII_STATUS (usage/environment error); containment could not be verified"
-  fi
-else
-  say "· pii-guard — not checked (bin/factory-pii-guard missing)"
-fi
+# --- 3c. (real-PII leak guard, Layer A -- retired 2026-09-28, O14, Benjamin
+#     Q4.3) ------------------------------------------------------------------
 
 # --- 4. back up work that exists only on this machine ------------------------
 AT_RISK=0; PUSHED=0
@@ -847,14 +819,18 @@ else
 fi
 
 # --- 11. stale gc.waiting_on (af-atyry) --------------------------------------
-# gc.waiting_on kept a bead out of the campaign's idle ladder (retired
+# gc.waiting_on used to keep a bead out of the campaign's idle ladder (retired
 # 2026-09-26) unconditionally -- nothing used to clear it when the bead
 # it names closed, so "waiting on something" silently became "waiting
 # forever" (af-p4v9v sat excluded 14+ hours after the bead it waited on
-# merged). bin/factory-waiting-guard clears gc.waiting_on once its target is
-# terminal and, for PR-backed work, carries coherent merge+exact-head-CI proof.
-# It reports when structural proof is rejected, reports once (never repeatedly)
-# when the target does not resolve, and leaves free-text waits untouched.
+# merged). The ladder is gone, but bin/pr-autopilot's active_waiters_for now
+# reads gc.waiting_on to decide whether a reconciled merge outside the wake
+# window still needs to wake the Mayor (O14, F12: re-justified, not retired,
+# for this reader). bin/factory-waiting-guard clears gc.waiting_on once its
+# target is terminal and, for PR-backed work, carries coherent
+# merge+exact-head-CI proof. It reports when structural proof is rejected,
+# reports once (never repeatedly) when the target does not resolve, and
+# leaves free-text waits untouched.
 WAITING_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-waiting-guard"
 if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$WAITING_GUARD" ]; then
   say "· waiting-drift — not checked (not a city root, or gc unavailable)"

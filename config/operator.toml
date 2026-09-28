@@ -1,0 +1,12 @@
+# Operator identity for runtime messages that address the human decision-
+# maker by name (O14, F23). Scripts read `name` from here instead of
+# hardcoding it, so a clone run by a different operator does not have to
+# edit script text to get correct-sounding messages.
+#
+# This is display text only. `gc.needs_benjamin` (the metadata field
+# bin/escalation-door writes) and its `benjamin` subcommand are a stable
+# schema/API referenced across scripts, tests and docs (the "NEEDS BENJAMIN"
+# list is a named Factory concept, not just this operator's name) and are
+# unaffected by this file — renaming those is a topology change, not this
+# ticket's repair.
+name = "Benjamin"

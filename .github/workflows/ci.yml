@@ -226,11 +226,11 @@ jobs:
       - name: Main-landing gate blocks a broken push to main
         run: bash tests/factory-main-gate-test.sh
 
+      - name: A fresh clone plus the setup script has the git hooks active
+        run: bash tests/factory-setup-test.sh
+
       - name: Pre-push blocks any branch when a new test file is not registered in CI
         run: bash tests/pre-push-ci-registration-test.sh
-
-      - name: Real-PII leak guard blocks a real identifier leaving the machine
-        run: bash tests/factory-pii-guard-test.sh
 
       - name: Provenance guard blocks unmarked fixture/seed/test-resource data
         run: bash tests/factory-provenance-guard-test.sh

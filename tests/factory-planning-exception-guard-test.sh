@@ -161,7 +161,7 @@ unauthorized_self='{
 }'
 authorized_human='{
   "id": "zz-fixture-redecomp-human", "status": "open",
-  "metadata": {"gc.redecomposes": "zz-fixture-target-no-pe", "gc.authorized_by": "benjamin-hurand"}
+  "metadata": {"gc.redecomposes": "zz-fixture-target-no-pe", "gc.authorized_by": "operator-1"}
 }'
 authorized_pe='{
   "id": "zz-fixture-redecomp-pe", "status": "open",

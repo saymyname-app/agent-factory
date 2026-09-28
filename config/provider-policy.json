@@ -55,15 +55,6 @@
         "claude-standard"
       ]
     },
-    "claude-reviewer": {
-      "label": "Relecteur Claude",
-      "why": "Relit un travail normalement écrit par Codex. Ne passe sur Codex qu’en dernier recours : un relecteur sur le modèle de l’auteur perd son indépendance.",
-      "chain": [
-        "claude",
-        "claude-standard",
-        "codex"
-      ]
-    },
     "ux-reviewer": {
       "label": "Relecteur UX",
       "why": "Codex en tête restauré (af-wpjgu, 2026-09-21) : l'auteur (workspace/mayor) est repassé sur Codex, donc ce relecteur retrouve son indépendance de modèle voulue à l'origine en gardant Codex en tête, Claude en repli.",

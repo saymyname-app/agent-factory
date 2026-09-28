@@ -52,6 +52,18 @@ cd my-factory
 to any other clone or any hosted service; every command below is local to
 this directory.
 
+A fresh clone has none of its git hooks active yet — `core.hooksPath` is a
+per-working-copy git setting, not something `git clone` reads from tracked
+files. Enable them before doing anything else:
+
+```bash
+./bin/factory-setup
+```
+
+This turns on the main-branch landing gate (`bin/factory-main-gate`) and the
+live-root git-hygiene enforcement (`.githooks/reference-transaction`,
+`.githooks/post-checkout`) for this clone. It is idempotent — safe to re-run.
+
 ## 2. Remove the example product rigs
 
 The repository ships `city.toml` and `pack.toml` already committed, because

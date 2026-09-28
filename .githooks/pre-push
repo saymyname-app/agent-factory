@@ -1,25 +1,11 @@
 #!/usr/bin/env bash
-# Runs the zero-token real-PII leak guard (bin/factory-pii-guard, af-6eqc)
-# before every push, then tests/ci-registration-test.sh before every push
-# (any branch), then bin/factory-main-gate before any push that lands a ref
-# on `main`. See bin/factory-main-gate for why (2026-09-16 incident
-# 8d92c13), and bin/factory-pii-guard for why the PII check runs here too.
+# Runs tests/ci-registration-test.sh before every push (any branch), then
+# bin/factory-main-gate before any push that lands a ref on `main`. See
+# bin/factory-main-gate for why (2026-09-16 incident 8d92c13). The real-PII
+# leak guard that used to run here (bin/factory-pii-guard, af-6eqc) was
+# retired 2026-09-28 (O14, Benjamin Q4.3); the written rule against real
+# person data stays in the SayMyName repo's own knowledge base.
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-
-pii="$root/bin/factory-pii-guard"
-if [ -x "$pii" ]; then
-  "$pii" --repo-root "$root"
-  pii_status=$?
-  # Exit 3 is INACTIVE (no identifier list on this machine) -- expected on
-  # every machine except the one with dev-DB access, so it must not block
-  # the push. Any other non-zero exit (1: match found, 2: usage/env error)
-  # does block, same as before.
-  if [ "$pii_status" -ne 0 ] && [ "$pii_status" -ne 3 ]; then
-    exit 1
-  fi
-else
-  echo "pre-push: WARNING -- bin/factory-pii-guard missing or not executable; PII leak guard was skipped for this push" >&2
-fi
 
 # 2026-09-24: a new tests/*.sh file landed on a PR branch twice in the same
 # session without being added to .github/workflows/ci.yml -- factory-main-gate
