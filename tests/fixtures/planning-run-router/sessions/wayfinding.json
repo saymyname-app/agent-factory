@@ -21,37 +21,37 @@
     {
       "topic": "behavior",
       "statement": "The rollout staffs both rigs using the resolved staffing model and topology.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "boundary",
       "statement": "Only the two named rigs are in scope for this rollout.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "decision",
       "statement": "Staffing model and rig topology are decided by the linked Wayfinding Run before to-spec.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "acceptance_evidence",
       "statement": "Both rigs are staffed and reachable per the resolved topology.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "provenance",
-      "statement": "Requested by Benjamin on 2026-09-24 to unblock router fixture testing of the Wayfinding path.",
-      "confirmed_by": "Benjamin"
+      "statement": "Requested by Operator-1 on 2026-09-24 to unblock router fixture testing of the Wayfinding path.",
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "experiment",
       "statement": "None needed; the rollout's shape is fully determined by the resolved decisions.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "non_objective",
       "statement": "This does not roll out to any rig beyond the two named ones.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     }
   ]
 }

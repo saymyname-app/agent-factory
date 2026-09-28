@@ -1,43 +1,43 @@
 {
   "acceptance_evidence": [
     {
-      "confirmed_by": "benjamin",
+      "confirmed_by": "operator-1",
       "statement": "af-4x34b acceptance criteria 1-5."
     }
   ],
   "behavior": [
     {
-      "confirmed_by": "benjamin",
+      "confirmed_by": "operator-1",
       "statement": "An owner can approve the exact canonical Spec by digest."
     }
   ],
   "boundaries": [
     {
-      "confirmed_by": "benjamin",
+      "confirmed_by": "operator-1",
       "statement": "Approval mutates the same artifact; it never creates a duplicate."
     }
   ],
   "decisions": [
     {
-      "confirmed_by": "benjamin",
+      "confirmed_by": "operator-1",
       "statement": "Only a DRAFT_SPEC may be approved."
     }
   ],
   "experiments": [
     {
-      "confirmed_by": "benjamin",
+      "confirmed_by": "operator-1",
       "statement": "None required for this fixture."
     }
   ],
   "non_objectives": [
     {
-      "confirmed_by": "benjamin",
+      "confirmed_by": "operator-1",
       "statement": "Not a live Gas City write door."
     }
   ],
   "provenance": [
     {
-      "confirmed_by": "benjamin",
+      "confirmed_by": "operator-1",
       "statement": "Synthesized from Planning Session ps-fixture-001."
     }
   ]

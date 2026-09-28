@@ -21,32 +21,32 @@
     {
       "topic": "behavior",
       "statement": "`--dry-run` prints the planned action without executing it.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "boundary",
       "statement": "Only the smoke tool's CLI gains the flag; no other tool changes.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "decision",
       "statement": "`--dry-run` is mutually exclusive with any write-mode flag.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "acceptance_evidence",
       "statement": "Running with `--dry-run` on the fixture dataset performs no writes and prints the plan.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "experiment",
       "statement": "None needed; behavior is fully determined by the existing command surface.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "non_objective",
       "statement": "This does not add a --dry-run flag to any other tool.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     }
   ]
 }

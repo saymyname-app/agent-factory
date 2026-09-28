@@ -1,46 +1,46 @@
 {
-  "content_digest": "sha256:f2abda1b3d557755e8575ab3d1ab6eadc64ed716fb9a142fdc9ce5649bdfbecc",
+  "content_digest": "sha256:6364ac31f911050ea266a994b112eca15deafd6e841e4bf028df21ee285267ac",
   "contract": "agent-factory-planning-run-spec/v1",
   "sections": {
     "acceptance_evidence": [
       {
-        "confirmed_by": "benjamin",
+        "confirmed_by": "operator-1",
         "statement": "af-4x34b acceptance criteria 1-5."
       }
     ],
     "behavior": [
       {
-        "confirmed_by": "benjamin",
+        "confirmed_by": "operator-1",
         "statement": "An owner can approve the exact canonical Spec by digest."
       }
     ],
     "boundaries": [
       {
-        "confirmed_by": "benjamin",
+        "confirmed_by": "operator-1",
         "statement": "Approval mutates the same artifact; it never creates a duplicate."
       }
     ],
     "decisions": [
       {
-        "confirmed_by": "benjamin",
+        "confirmed_by": "operator-1",
         "statement": "Only a DRAFT_SPEC may be approved."
       }
     ],
     "experiments": [
       {
-        "confirmed_by": "benjamin",
+        "confirmed_by": "operator-1",
         "statement": "None required for this fixture."
       }
     ],
     "non_objectives": [
       {
-        "confirmed_by": "benjamin",
+        "confirmed_by": "operator-1",
         "statement": "Not a live Gas City write door."
       }
     ],
     "provenance": [
       {
-        "confirmed_by": "benjamin",
+        "confirmed_by": "operator-1",
         "statement": "Synthesized from Planning Session ps-fixture-001."
       }
     ]
