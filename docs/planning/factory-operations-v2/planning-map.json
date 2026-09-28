@@ -1,0 +1,112 @@
+{
+  "contract": "agent-factory-wayfinding-run/v1",
+  "decisions": {
+    "framing": {
+      "claimed_by": "po",
+      "delivery_routable": false,
+      "evidence": "Benjamin live chat 2026-09-28, decisions-log.md",
+      "map_key": "framing",
+      "plane": "planning",
+      "resolution": "see decisions-log.md \u00a7 framing (6 points)",
+      "session_id": "po-2026-09-28",
+      "status": "resolved",
+      "summary": "How this Planning Run is run: form, reservation handling, upstream orders, who delivers, definition of done."
+    },
+    "t1-dispatch-wake": {
+      "claimed_by": null,
+      "delivery_routable": false,
+      "evidence": null,
+      "map_key": "dispatch_wake",
+      "plane": "planning",
+      "resolution": null,
+      "session_id": null,
+      "status": "open",
+      "summary": "How work is dispatched and how the Mayor learns a new approved graph exists."
+    },
+    "t2-escalation-alerts": {
+      "claimed_by": null,
+      "delivery_routable": false,
+      "evidence": null,
+      "map_key": "escalation_alerts",
+      "plane": "planning",
+      "resolution": null,
+      "session_id": null,
+      "status": "open",
+      "summary": "When and how the Factory alerts or escalates to Benjamin; campaign-pointer / af-1vr4, silent escalation, signals file, provider exhaustion."
+    },
+    "t3-work-preservation": {
+      "claimed_by": null,
+      "delivery_routable": false,
+      "evidence": null,
+      "map_key": "work_preservation",
+      "plane": "planning",
+      "resolution": null,
+      "session_id": null,
+      "status": "open",
+      "summary": "Never lose work: local-only commits after interrupted runs, re-dispatch redoing work, cleanup deleting fresh worktrees, root-owned build files."
+    },
+    "t4-project-agnostic": {
+      "claimed_by": null,
+      "delivery_routable": false,
+      "evidence": null,
+      "map_key": "project_agnostic",
+      "plane": "planning",
+      "resolution": null,
+      "session_id": null,
+      "status": "open",
+      "summary": "Move every SayMyName-specific value out of Factory code and docs (per-project rig config, docs to product repos, fixtures, fresh-clone hooks, local-only tests)."
+    },
+    "t5-hygiene": {
+      "claimed_by": null,
+      "delivery_routable": false,
+      "evidence": null,
+      "map_key": "hygiene",
+      "plane": "planning",
+      "resolution": null,
+      "session_id": null,
+      "status": "open",
+      "summary": "Retire or re-justify dead tools and orphan files; trace rotation; backup freshness; review of the 20 Gas City pack orders."
+    },
+    "t6-planning-doors": {
+      "claimed_by": null,
+      "delivery_routable": false,
+      "evidence": null,
+      "map_key": "planning_doors",
+      "plane": "planning",
+      "resolution": null,
+      "session_id": null,
+      "status": "open",
+      "summary": "Planning rules: ADR-0028 amendment (graph patch door), af-zwhh0 planning-exception gap, proposals flow (decision 9), reservation file rewrite (F18)."
+    }
+  },
+  "delivery_routable": false,
+  "history": [
+    {
+      "at": 1790592219.2921612,
+      "event": "promote",
+      "reason": "~35 inputs (28 orders, Mayor manual operations, INVENTORY F11-F25, state.md A5 list, ADR-0028 amendment, proposals flow) exceed one healthy session; decisions grilled with Benjamin theme by theme"
+    },
+    {
+      "at": 1790592219.3624809,
+      "claimant": "po",
+      "decision": "framing",
+      "event": "claim",
+      "session_id": "po-2026-09-28"
+    },
+    {
+      "at": 1790592219.44257,
+      "decision": "framing",
+      "event": "resolve",
+      "evidence": "Benjamin live chat 2026-09-28, decisions-log.md",
+      "session_id": "po-2026-09-28"
+    }
+  ],
+  "plane": "planning",
+  "run_id": "wf-factory-operations-v2",
+  "status": "active",
+  "time_sensitive_facts": {},
+  "time_sensitive_fields": [
+    "live_state"
+  ],
+  "trigger_reason": "~35 inputs (28 orders, Mayor manual operations, INVENTORY F11-F25, state.md A5 list, ADR-0028 amendment, proposals flow) exceed one healthy session; decisions grilled with Benjamin theme by theme"
+}
