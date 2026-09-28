@@ -39,6 +39,22 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
         )
         return json.loads(proc.stdout)
 
+    def run_check_only(self, now, ready=READY_ONE_DELIVERY_BEAD, mayor_active="0"):
+        env = {
+            **os.environ,
+            "BD_BIN": str(FAKE_BD),
+            "GC_BIN": str(FAKE_GC),
+            "IDLE_TEST_READY": ready,
+            "IDLE_TEST_MAYOR_ACTIVE": mayor_active,
+            "IDLE_TEST_GC_LOG": str(self.gc_log),
+            "IDLE_READY_WORK_NOW": now,
+        }
+        proc = subprocess.run(
+            (str(TOOL), "--repo-root", str(self.tmp), "--check-only"),
+            env=env, text=True, capture_output=True,
+        )
+        return proc.returncode, json.loads(proc.stdout)
+
     def wake_calls(self):
         if not self.gc_log.exists():
             return []
@@ -82,6 +98,23 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
     def test_stays_silent_with_no_ready_delivery_plane_work(self):
         self.run_tick("2026-09-28T10:00:00+00:00", ready=READY_NONE)
         result = self.run_tick("2026-09-28T10:30:00+00:00", ready=READY_NONE)
+        self.assertFalse(result["fired"])
+        self.assertEqual([], self.wake_calls())
+
+    def test_check_only_reports_but_never_notifies(self):
+        # af-1isbx: the order's `check=` leg must decide whether to run
+        # `exec=` (exit 0/1) without itself paging the Mayor -- only the
+        # `exec=` leg (the plain, non-check-only invocation) may notify.
+        self.run_tick("2026-09-28T10:00:00+00:00")
+        self.run_tick("2026-09-28T10:10:00+00:00")
+
+        code, result = self.run_check_only("2026-09-28T10:15:01+00:00")
+        self.assertEqual(0, code)
+        self.assertTrue(result["fired"])
+        self.assertEqual([], self.wake_calls())
+
+        code, result = self.run_check_only("2026-09-28T10:15:02+00:00", mayor_active="1")
+        self.assertEqual(1, code)
         self.assertFalse(result["fired"])
         self.assertEqual([], self.wake_calls())
 

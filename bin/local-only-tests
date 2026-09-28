@@ -35,6 +35,7 @@ command -v gc >/dev/null 2>&1 || { say "local-only-tests: gc unavailable, skippi
 TESTS=(
   "tests/build-basic-fail-fast-runtime-test.sh"
   "tests/factory-watchdog-order-test.sh"
+  "tests/orders-validate-test.sh"
 )
 
 FAILED=()

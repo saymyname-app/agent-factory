@@ -8,5 +8,6 @@
 description = "Re-wakes the Mayor when ready delivery-plane work has been idle > 15 min with no active Mayor session (O02 safety net for ticket-graph-publish's own wake)."
 trigger = "condition"
 interval = "5m"
-check = "/home/benja/agent-factory/bin/idle-ready-work-wake"
+check = "/home/benja/agent-factory/bin/idle-ready-work-wake --check-only"
+exec = "/home/benja/agent-factory/bin/idle-ready-work-wake"
 timeout = "60s"

@@ -107,7 +107,7 @@ def notify_mayor(ready_count: int, idle_since: str) -> None:
     )
 
 
-def evaluate(repo_root: Path) -> dict[str, Any]:
+def evaluate(repo_root: Path, notify: bool = True) -> dict[str, Any]:
     path = state_path(repo_root)
     current = now()
     ready_count = ready_delivery_plane_count(repo_root)
@@ -127,15 +127,24 @@ def evaluate(repo_root: Path) -> dict[str, Any]:
     if current - since_dt < IDLE_THRESHOLD:
         return {"ok": True, "fired": False, "reason": "idle window under 15m", "ready_count": ready_count}
 
-    notify_mayor(ready_count, idle_since)
+    if notify:
+        notify_mayor(ready_count, idle_since)
     return {"ok": True, "fired": True, "ready_count": ready_count, "idle_since": idle_since}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog=PROGRAM)
     parser.add_argument("--repo-root", default=str(ROOT))
+    parser.add_argument(
+        "--check-only", action="store_true",
+        help="evaluate and report without notifying the Mayor; exit 0 if the "
+             "condition would fire, 1 otherwise (for the order's check= leg)",
+    )
     args = parser.parse_args()
-    print(json.dumps(evaluate(Path(args.repo_root)), sort_keys=True))
+    result = evaluate(Path(args.repo_root), notify=not args.check_only)
+    print(json.dumps(result, sort_keys=True))
+    if args.check_only:
+        return 0 if result["fired"] else 1
     return 0
 
 
