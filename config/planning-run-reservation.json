@@ -6,7 +6,8 @@
   "promoted_at": "2026-09-28T13:08:38.923724+00:00",
   "requirements": [
     "Phone notifications via ntfy (implementation retired with Cockpit V1 on 2026-09-26; the need stays -- Benjamin, 2026-09-25).",
-    "Ritual reminders (architecture / incident reviews) surfaced as notifications (Benjamin, 2026-09-25)."
+    "Ritual reminders (architecture / incident reviews) surfaced as notifications (Benjamin, 2026-09-25).",
+    "Move the NEEDS BENJAMIN list and the pending-proposal count from the operator session start into the cockpit, then remove them from session start (interim display decided in A5 -- Benjamin, 2026-09-28)."
   ],
   "reserved_at": "2026-09-24",
   "reserved_by": "af-mav0b",
