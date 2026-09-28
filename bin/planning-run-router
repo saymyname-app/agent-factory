@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -283,6 +284,7 @@ def ticket_graph_publish(draft_path: Path) -> dict[str, Any]:
         result = subprocess.run(
             (str(TICKET_GRAPH_PUBLISH), "publish", str(draft_path)),
             text=True, capture_output=True, check=False,
+            env={**os.environ, "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR": "1"},
         )
     except OSError as exc:
         raise RouterError(f"failed to run ticket-graph-publish: {exc}") from exc

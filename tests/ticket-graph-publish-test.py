@@ -210,6 +210,7 @@ class TicketGraphPublishTest(unittest.TestCase):
                 "publish", str(DRAFT), env={
                     "BD_BIN": str(FAKE_BD),
                     "GC_BIN": str(FAKE_GC),
+                    "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR": "1",
                     "TICKET_GRAPH_CAPTURE": str(root / "graph.json"),
                     "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
                     "TICKET_GRAPH_GC_LOG": str(gc_log),
@@ -220,6 +221,22 @@ class TicketGraphPublishTest(unittest.TestCase):
         self.assertEqual(1, len(calls))
         self.assertEqual(["mail", "send", "mayor", "--notify"], calls[0][:4])
         self.assertIn(result["graph_digest"], " ".join(calls[0]))
+
+    def test_publish_does_not_wake_the_mayor_unless_notify_is_explicitly_enabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gc_log = root / "gc.log"
+            result = json.loads(self.invoke(
+                "publish", str(DRAFT), env={
+                    "BD_BIN": str(FAKE_BD),
+                    "GC_BIN": str(FAKE_GC),
+                    "TICKET_GRAPH_CAPTURE": str(root / "graph.json"),
+                    "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+                    "TICKET_GRAPH_GC_LOG": str(gc_log),
+                },
+            ).stdout)
+        self.assertTrue(result["ok"])
+        self.assertFalse(gc_log.exists())
 
     def test_publish_does_not_wake_the_mayor_when_the_graph_transaction_fails(self):
         broken_bd = (
@@ -272,6 +289,7 @@ class TicketGraphPublishTest(unittest.TestCase):
                 "patch", str(draft_path), "--author", "Test", "--reason", "test patch", env={
                     "BD_BIN": str(FAKE_BD),
                     "GC_BIN": str(FAKE_GC),
+                    "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR": "1",
                     "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
                     "TICKET_GRAPH_EXISTING": json.dumps(existing),
                     "TICKET_GRAPH_GC_LOG": str(gc_log),

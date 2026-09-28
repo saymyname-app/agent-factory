@@ -14,6 +14,7 @@ TOOL = ROOT / "bin" / "planning-exception"
 FIXTURES = ROOT / "tests" / "fixtures" / "planning-exception"
 GRAPH = FIXTURES / "graph.json"
 FAKE_PUBLISH = FIXTURES / "ticket-graph-publish"
+FAKE_GC = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "gc"
 
 
 class PlanningExceptionTest(unittest.TestCase):
@@ -24,7 +25,7 @@ class PlanningExceptionTest(unittest.TestCase):
     def run_tool(self, *args, env=None, check=False):
         return subprocess.run(
             (str(TOOL), *[str(a) for a in args]), text=True, capture_output=True, check=check,
-            env={**os.environ, **(env or {})},
+            env={**os.environ, "GC_BIN": str(FAKE_GC), **(env or {})},
         )
 
     def init(self, run_id="run-1", out=None, check=True):
