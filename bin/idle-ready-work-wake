@@ -6,7 +6,7 @@ successful publish or patch -- the primary wake, and the only door approved
 work enters the delivery plane by. This script is the safety net for when
 that call is missed (a mail delivery failure, a publish run outside the
 router, a manually created delivery-plane bead): it watches for ready
-delivery-plane work with no active Mayor session, and re-wakes the Mayor
+delivery-plane work with no active worker session, and re-wakes the Mayor
 once that condition has held for more than 15 minutes.
 
 Runtime state (the idle window's start time) is kept at
@@ -64,9 +64,13 @@ def ready_delivery_plane_count(repo_root: Path) -> int:
     )
 
 
-def mayor_session_active() -> bool:
+def worker_session_active() -> bool:
+    """The Mayor is an always-awake named session, so "no active Mayor
+    session" can never hold -- the Spec's actual intent (docs/planning/
+    factory-operations-v2/spec/spec-factory-operations-v2-2026-09-28.json)
+    is "no active worker", i.e. no `factory-worker` rig writer in progress."""
     result = subprocess.run(
-        [GC_BIN, "session", "list", "--json", "--template", "mayor"],
+        [GC_BIN, "session", "list", "--json", "--template", "factory-worker"],
         check=True, capture_output=True, text=True,
     )
     payload = json.loads(result.stdout or "{}")
@@ -96,9 +100,9 @@ def notify_mayor(ready_count: int, idle_since: str) -> None:
             "-s", "idle-ready-work: ready delivery-plane work, no active worker",
             "-m", (
                 f"ACTION: idle-ready-work-wake observed {ready_count} ready delivery-plane "
-                f"bead(s) with no active Mayor session since {idle_since}\n"
+                f"bead(s) with no active worker session since {idle_since}\n"
                 "STATE: idle > 15m\n"
-                "EVIDENCE: bd ready --json (gc.plane=delivery); gc session list --template mayor\n"
+                "EVIDENCE: bd ready --json (gc.plane=delivery); gc session list --template factory-worker\n"
                 "NEXT: dispatch the ready work, or investigate why the primary publish-time wake "
                 "did not reach the Mayor"
             ),
@@ -111,7 +115,7 @@ def evaluate(repo_root: Path, notify: bool = True) -> dict[str, Any]:
     path = state_path(repo_root)
     current = now()
     ready_count = ready_delivery_plane_count(repo_root)
-    active = mayor_session_active()
+    active = worker_session_active()
     idle_since = read_idle_since(path)
 
     if ready_count == 0 or active:

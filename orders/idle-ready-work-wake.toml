@@ -5,7 +5,7 @@
 # 100% mechanical (bd ready + gc session list + a timestamp comparison) --
 # no LLM judgment needed, so the controller runs it directly via exec.
 [order]
-description = "Re-wakes the Mayor when ready delivery-plane work has been idle > 15 min with no active Mayor session (O02 safety net for ticket-graph-publish's own wake)."
+description = "Re-wakes the Mayor when ready delivery-plane work has been idle > 15 min with no active worker session (O02 safety net for ticket-graph-publish's own wake)."
 trigger = "condition"
 interval = "5m"
 check = "/home/benja/agent-factory/bin/idle-ready-work-wake --check-only"
