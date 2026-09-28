@@ -263,6 +263,7 @@ def graph_members(digest: str) -> dict[str, dict[str, str]]:
             "status": str(issue.get("status") or ""),
             "description": str(issue.get("description") or ""),
             "blocked_by": str(metadata.get("gc.blocked_by") or ""),
+            "metadata": metadata,
         }
     return members
 
@@ -432,13 +433,33 @@ def patch(
             merged[target_key] = resulting_id
         supersedes = str(ticket.get("supersedes") or "").strip()
         if supersedes:
-            target_id = old_members[supersedes]["id"]
+            target = old_members[supersedes]
+            target_id = target["id"]
             run(
                 "update", target_id, "--status", "closed",
                 "--set-metadata", f"gc.superseded_by={resulting_id}",
                 "--append-notes", f"SUPERSEDED by {author}: {reason}",
             )
             superseded[supersedes] = resulting_id
+            # O04: a re-planned ticket inherits the superseded ticket's
+            # in-flight work (branch, base branch, open PR) instead of the
+            # next worker starting over -- otherwise every reslice throws
+            # away a branch/PR that is still perfectly good to resume.
+            inherited = {
+                inherit_key: value
+                for inherit_key in ("gc.work_branch", "gc.work_base_branch", "gc.pr_url")
+                if (value := target.get("metadata", {}).get(inherit_key))
+            }
+            if inherited:
+                set_metadata_args = [
+                    arg for k, v in inherited.items() for arg in ("--set-metadata", f"{k}={v}")
+                ]
+                run(
+                    "update", resulting_id, *set_metadata_args,
+                    "--append-notes",
+                    f"Inherited work from superseded {supersedes} ({target_id}): "
+                    + ", ".join(f"{k}={v}" for k, v in inherited.items()),
+                )
 
     if old_members["_convoy"]["status"] != "closed":
         run(

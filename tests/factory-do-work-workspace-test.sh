@@ -144,4 +144,93 @@ git -C "$FACTORY_ROOT/rigs/protected-rig-test" show-ref --verify --quiet refs/re
   [ "$out" = "." ] || { echo "expected '.', got '$out'" >&2; exit 1; }
 ) || fail "enter isolated a non-protected feature branch on a tracked rig"
 
+# ---------------------------------------------------------------------------
+# 7. O04: a session that dies mid-run without ever calling `finish` still
+#    leaves its commits on the remote branch (the post-commit push hook
+#    `enter` installs, not a final push at the end).
+# ---------------------------------------------------------------------------
+WT7=$("$SCRIPT" enter af-interrupted-test)
+echo interrupted > "$WT7/h"
+git -C "$WT7" add h
+git -C "$WT7" commit -qm "interrupted work"
+git -C "$TMP/root" fetch -q origin
+git -C "$TMP/root" show-ref --verify --quiet refs/remotes/origin/do-work/af-interrupted-test \
+  || fail "enter's post-commit hook did not push do-work/af-interrupted-test after a commit"
+remote_head=$(git -C "$TMP/root" rev-parse origin/do-work/af-interrupted-test)
+local_head=$(git -C "$WT7" rev-parse HEAD)
+[ "$remote_head" = "$local_head" ] \
+  || fail "remote branch is not at the same commit as the worktree after an unfinished commit"
+git -C "$TMP/root" worktree remove --force "$WT7" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 8. O04: `finish` resumes an already-open PR instead of trying (and
+#    silently failing) to create a duplicate one on re-dispatch.
+# ---------------------------------------------------------------------------
+FAKE_GH_DIR="$TMP/fake-gh-bin"
+mkdir -p "$FAKE_GH_DIR"
+GH_PR_STATE="$TMP/gh-pr-state"
+cat > "$FAKE_GH_DIR/gh" <<EOF
+#!/usr/bin/env bash
+STATE="$GH_PR_STATE"
+if [ "\$1 \$2" = "pr create" ]; then
+  if [ -f "\$STATE" ]; then
+    echo "a pull request for branch already exists" >&2
+    exit 1
+  fi
+  echo "https://github.com/example/example/pull/99" | tee "\$STATE"
+  exit 0
+fi
+if [ "\$1 \$2" = "pr view" ]; then
+  [ -f "\$STATE" ] || exit 1
+  cat "\$STATE"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$FAKE_GH_DIR/gh"
+export PATH="$FAKE_GH_DIR:$PATH"
+
+WT8=$("$SCRIPT" enter af-pr-resume-test)
+echo first > "$WT8/i"
+git -C "$WT8" add i
+git -C "$WT8" commit -qm "first"
+PR_URL_1=$("$SCRIPT" finish af-pr-resume-test "$WT8" do-work/af-pr-resume-test main)
+[ "$PR_URL_1" = "https://github.com/example/example/pull/99" ] \
+  || fail "finish did not report the PR opened by the (fake) gh pr create: got '$PR_URL_1'"
+
+# simulate a re-dispatch: resume the same bead, add more work, finish again
+WT8b=$("$SCRIPT" enter af-pr-resume-test)
+[ "$WT8b" != "." ] || fail "enter did not resume the existing do-work/af-pr-resume-test branch on re-dispatch"
+branch8b=$(git -C "$WT8b" rev-parse --abbrev-ref HEAD)
+[ "$branch8b" = "do-work/af-pr-resume-test" ] \
+  || fail "re-dispatch worktree is on branch '$branch8b', expected the resumed do-work branch"
+echo second > "$WT8b/j"
+git -C "$WT8b" add j
+git -C "$WT8b" commit -qm "second"
+PR_URL_2=$("$SCRIPT" finish af-pr-resume-test "$WT8b" do-work/af-pr-resume-test main)
+[ "$PR_URL_2" = "$PR_URL_1" ] \
+  || fail "re-dispatch finish did not resume the existing open PR (got '$PR_URL_2', expected '$PR_URL_1')"
+
+# ---------------------------------------------------------------------------
+# 9. O04: starting over (discarding an existing do-work branch/worktree)
+#    without a written reason is refused; with one, it proceeds.
+# ---------------------------------------------------------------------------
+WT9=$("$SCRIPT" enter af-restart-test)
+echo before > "$WT9/k"
+git -C "$WT9" add k
+git -C "$WT9" commit -qm "before restart"
+
+"$SCRIPT" restart af-restart-test "$WT9" do-work/af-restart-test 2>/dev/null \
+  && fail "restart without a reason must be refused, not succeed"
+[ -d "$WT9" ] || fail "restart without a reason must not remove the worktree"
+
+"$SCRIPT" restart af-restart-test "$WT9" do-work/af-restart-test "operator asked to abandon this approach" \
+  || fail "restart with a written reason should succeed"
+[ -d "$WT9" ] && fail "restart with a reason did not remove the worktree"
+git -C "$TMP/root" branch --list do-work/af-restart-test | grep -q . \
+  && fail "restart with a reason did not delete the local do-work/af-restart-test branch"
+
+WT9b=$("$SCRIPT" enter af-restart-test)
+[ -f "$WT9b/k" ] && fail "enter after a restart resumed the discarded branch instead of starting clean"
+
 echo "OK bin/factory-do-work-workspace isolates HQ dispatches AND protected product-rig branches in a worktree, pushes and cleans up on finish, and is a no-op elsewhere"
