@@ -340,10 +340,13 @@ def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> None
         + "\n"
         "NEXT: dispatch newly ready delivery-plane tickets"
     )
-    subprocess.run(
-        [GC_BIN, "mail", "send", "mayor", "--notify", "-s", subject, "-m", body],
-        check=False, capture_output=True, text=True,
-    )
+    try:
+        subprocess.run(
+            [GC_BIN, "mail", "send", "mayor", "--notify", "-s", subject, "-m", body],
+            check=False, capture_output=True, text=True,
+        )
+    except OSError:
+        pass
 
 
 def parser() -> argparse.ArgumentParser:
