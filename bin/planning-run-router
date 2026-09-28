@@ -51,6 +51,9 @@ REQUEST_CONTRACT = "agent-factory-planning-run-router-request/v1"
 RESULT_CONTRACT = "agent-factory-planning-run-router-result/v1"
 RESERVATION_CONTRACT = "agent-factory-planning-run-reservation/v1"
 
+MAP_STATUS_CLOSED = "closed"
+SPEC_STATE_APPROVED = "APPROVED_SPEC"
+
 BIN_DIR = Path(__file__).resolve().parent
 TO_SPEC_ORACLE = BIN_DIR / "planning-run-to-spec-oracle"
 WAYFINDING_RUN = BIN_DIR / "wayfinding-run"
@@ -182,10 +185,17 @@ def invoke(*argv: str) -> tuple[int, dict[str, Any]]:
 # --- step wrappers over the four existing tools -----------------------------
 
 
-def to_spec_run(session_path: Path, city_registry_path: Path, spec_out_dir: Path) -> dict[str, Any]:
+def to_spec_run(session_path: Path, city_registry_path: Path) -> dict[str, Any]:
+    """Synthesize the Spec a session would produce, without writing it.
+
+    The router decides whether to actually write the result once it has
+    seen what (if anything) already sits at the target spec path -- an
+    already-`APPROVED_SPEC` there must never be overwritten by a rerun, so
+    `--out` is never passed here; only `run_router` writes the Spec file.
+    """
     returncode, payload = invoke(
         str(TO_SPEC_ORACLE), "run", str(session_path),
-        "--city-registry", str(city_registry_path), "--out", str(spec_out_dir),
+        "--city-registry", str(city_registry_path),
     )
     if returncode != 0:
         raise RouterError(f"to-spec rejected the session: {payload.get('error')}")
@@ -220,6 +230,15 @@ def wayfinding_resolve(
     if returncode != 0 or not payload.get("ok"):
         raise RouterError(f"Wayfinding resolve of {decision!r} failed: {payload.get('error')}")
     return payload
+
+
+def load_map_status(map_path: Path) -> str | None:
+    try:
+        state = as_dict(json.loads(map_path.read_text(encoding="utf-8")), "map")
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RouterError(f"cannot read map {map_path}: {exc}") from exc
+    status = state.get("status")
+    return status if isinstance(status, str) else None
 
 
 def wayfinding_status(map_path: Path) -> dict[str, Any]:
@@ -275,6 +294,13 @@ def run_wayfinding(wayfinding: dict[str, Any], repo_root: Path) -> Path:
     map_path = resolve_path(required_string(wayfinding.get("map"), "wayfinding.map"), repo_root)
     if not map_path.exists():
         wayfinding_promote(request_path, map_path)
+    elif load_map_status(map_path) == MAP_STATUS_CLOSED:
+        # A prior call already reached publication: `spec-approve approve`
+        # closes the map in the same call it approves the Spec, so a closed
+        # map means every decision here is already resolved. Replaying
+        # claim/resolve against it would hit "already resolved"/"not active"
+        # guards for no reason -- resume past Wayfinding entirely instead.
+        return map_path
 
     decisions = as_list(wayfinding.get("decisions", []), "wayfinding.decisions")
     for index, raw_entry in enumerate(decisions):
@@ -330,21 +356,26 @@ def run_router(request_path: Path, repo_root: Path) -> dict[str, Any]:
     )
     spec_out_dir = resolve_path(required_string(request.get("spec_out"), "spec_out"), repo_root)
 
+    resumed_from: list[str] = []
+
     map_path: Path | None = None
     wayfinding = request.get("wayfinding")
     if wayfinding is not None:
         map_path = run_wayfinding(as_dict(wayfinding, "wayfinding"), repo_root)
-        status = wayfinding_status(map_path)
-        if not status.get("to_spec_eligible"):
-            return {
-                "contract": RESULT_CONTRACT,
-                "ok": True,
-                "result": "wayfinding_pending",
-                "map": str(map_path),
-                "decisions": status.get("decisions"),
-            }
+        if load_map_status(map_path) == MAP_STATUS_CLOSED:
+            resumed_from.append("wayfinding")
+        else:
+            status = wayfinding_status(map_path)
+            if not status.get("to_spec_eligible"):
+                return {
+                    "contract": RESULT_CONTRACT,
+                    "ok": True,
+                    "result": "wayfinding_pending",
+                    "map": str(map_path),
+                    "decisions": status.get("decisions"),
+                }
 
-    to_spec_result = to_spec_run(session_path, city_registry_path, spec_out_dir)
+    to_spec_result = to_spec_run(session_path, city_registry_path)
     if to_spec_result.get("result") == "returned_to_planning":
         return {
             "contract": RESULT_CONTRACT,
@@ -356,34 +387,61 @@ def run_router(request_path: Path, repo_root: Path) -> dict[str, Any]:
     if to_spec_result.get("result") != "spec_synthesized":
         raise RouterError(f"unrecognized to-spec result: {to_spec_result.get('result')!r}")
 
-    spec = as_dict(to_spec_result.get("spec"), "to-spec result.spec")
-    spec_id = required_string(spec.get("spec_id"), "spec.spec_id")
+    synthesized_spec = as_dict(to_spec_result.get("spec"), "to-spec result.spec")
+    spec_id = required_string(synthesized_spec.get("spec_id"), "spec.spec_id")
     spec_path = spec_out_dir / f"{spec_id}.json"
 
+    existing_spec: dict[str, Any] | None = None
+    if spec_path.exists():
+        try:
+            existing_spec = as_dict(json.loads(spec_path.read_text(encoding="utf-8")), "existing spec")
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RouterError(f"cannot read existing spec {spec_path}: {exc}") from exc
+
+    approved_digest: str | None = None
+    if existing_spec is not None and existing_spec.get("state") == SPEC_STATE_APPROVED:
+        if existing_spec.get("content_digest") != synthesized_spec.get("content_digest"):
+            raise RouterError(
+                f"session {session_path} would synthesize Spec {spec_id!r} with digest "
+                f"{synthesized_spec.get('content_digest')!r}, but the already-approved Spec at "
+                f"{spec_path} carries digest {existing_spec.get('content_digest')!r} -- refusing to "
+                "resume a session whose content no longer matches what was already approved"
+            )
+        resumed_from.append("spec_approval")
+        approved_digest = existing_spec.get("approved_digest") or existing_spec.get("content_digest")
+    else:
+        spec_out_dir.mkdir(parents=True, exist_ok=True)
+        spec_path.write_text(json.dumps(synthesized_spec, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     approval = request.get("approval")
-    if approval is None:
-        return {
-            "contract": RESULT_CONTRACT,
-            "ok": True,
-            "result": "awaiting_approval",
-            "spec_id": spec_id,
-            "spec_path": str(spec_path),
-        }
-    approval = as_dict(approval, "approval")
-    approved_by = required_string(approval.get("approved_by"), "approval.approved_by")
-    evidence = required_string(approval.get("evidence"), "approval.evidence")
-    approve_result = spec_approve_approve(spec_path, approved_by, evidence, map_path)
+    if approved_digest is None:
+        if approval is None:
+            return {
+                "contract": RESULT_CONTRACT,
+                "ok": True,
+                "result": "awaiting_approval",
+                "spec_id": spec_id,
+                "spec_path": str(spec_path),
+            }
+        approval = as_dict(approval, "approval")
+        approved_by = required_string(approval.get("approved_by"), "approval.approved_by")
+        evidence = required_string(approval.get("evidence"), "approval.evidence")
+        approve_result = spec_approve_approve(spec_path, approved_by, evidence, map_path)
+        approved_digest = approve_result.get("digest")
 
     publish = request.get("publish")
     if publish is None:
-        return {
+        result: dict[str, Any] = {
             "contract": RESULT_CONTRACT,
             "ok": True,
             "result": "approved_awaiting_publication",
             "spec_id": spec_id,
             "spec_path": str(spec_path),
-            "spec_digest": approve_result.get("digest"),
+            "spec_digest": approved_digest,
         }
+        if resumed_from:
+            result["resumed_from"] = resumed_from
+        return result
     publish = as_dict(publish, "publish")
     draft_path = resolve_path(required_string(publish.get("draft"), "publish.draft"), repo_root)
     publish_result = ticket_graph_publish(draft_path)
@@ -392,16 +450,19 @@ def run_router(request_path: Path, repo_root: Path) -> dict[str, Any]:
     if reservation is not None:
         clear_reservation(repo_root, reservation)
 
-    return {
+    result = {
         "contract": RESULT_CONTRACT,
         "ok": True,
         "result": "published",
         "spec_id": spec_id,
-        "spec_digest": approve_result.get("digest"),
+        "spec_digest": approved_digest,
         "graph_digest": publish_result.get("graph_digest"),
         "convoy_id": ids.get("_convoy"),
         "ids": ids,
     }
+    if resumed_from:
+        result["resumed_from"] = resumed_from
+    return result
 
 
 def repo_root_default() -> Path:
