@@ -1,0 +1,308 @@
+artifact:
+  id: ticket-graph-draft-factory-operations-v2
+  title: Factory operations v2 (A5)
+  labels:
+  - approved-ticket-graph
+  - factory-operations-v2
+  state: DRAFT_TICKET_GRAPH
+  approved_by: null
+  content_digest: sha256:db8a428daa58e62c8c0d9672b953751b5c06f1a7a189b07feeb2914bfcd40074
+  digest_scope: UTF-8 bytes from the legacy_boundary key through end of file, with LF line endings
+  source_spec:
+    id: spec-factory-operations-v2-2026-09-28
+    state: APPROVED_SPEC
+    digest: sha256:cdc8df26785c531780461cbe405fd815ca2705d3bbe4941c6b7187be78342920
+  method_baseline:
+    skill: Matt Pocock /to-tickets (Factory adaptation)
+  publication_authorized: false
+  publication_authorized_by: null
+
+legacy_boundary:
+  quarantine_read_only_evidence:
+  - Everything under legacy/ stays read-only evidence; no trusted code may reference it (tests/legacy-isolation-test.sh).
+target_rigs:
+  agent-factory:
+    purpose: Factory code, orders, formulas, prompts, config and docs.
+    status: existing Factory repository
+  saymyname-backend:
+    purpose: Receives only the moved SayMyName rig contracts (O15).
+    status: product repository, PR to dev
+  saymyname-frontend:
+    purpose: Receives only the moved SayMyName rig contracts (O15).
+    status: product repository, PR to dev
+global_execution_contract:
+  context: Each ticket receives a fresh implementation context and the exact Approved Spec trace it needs
+    (spec-factory-operations-v2-2026-09-28).
+  test_method: Small red then green cycles at a public-behavior seam; the Factory battery runs on every
+    slice.
+  review: One independent reviewer checks Spec fidelity and design quality for every slice.
+  readiness: 'A blocker clears only after its checks and review pass and its code is merged on main (product
+    repos: dev).'
+  repair: Technical repair stays inside the ticket; behaviour or topology change raises a Planning Exception.
+  safety: No production, real sending, external publication, spend, unrecoverable destruction or wider
+    personal-data access without explicit human authority; nothing edited in the live root.
+tickets:
+- id: O01
+  kind: prefactor
+  title: One project file per project replaces every hardcoded SayMyName rig list
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  what_it_delivers: '`config/projects/<project>.toml` (repos, protected branch, required CI) plus one
+    loader; lib/protected_rigs.sh, factory-guard''s rig loop, factory-delivery-guard, deliver-close and
+    pr-autopilot read it; a check fails loudly when a rig known to Gas City has no project file.'
+  acceptance_criteria:
+  - A test adds a third synthetic project with only a new project file and gets guard, delivery-guard
+    and autopilot coverage.
+  - A rig registered in Gas City without a project file makes the check fail with an operator-readable
+    reason.
+  - No `saymyname`, `smb`, `smf` literal remains in bin/, lib/, formulas/, orders/ outside comments and
+    fixtures.
+  - The live SayMyName rigs keep exactly their current protected branch and required CI.
+- id: O02
+  kind: vertical_slice
+  title: Publishing a graph wakes the Mayor; idle ready work re-wakes it
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  what_it_delivers: '`ticket-graph-publish` (publish and patch) notifies the Mayor at the end of a successful
+    run; a `condition` order re-wakes the Mayor when ready work has been idle > 15 min with no active
+    worker; the router''s reservation state moves to untracked runtime state (F18).'
+  acceptance_criteria:
+  - A publish test observes exactly one Mayor notification per successful publish or patch and none on
+    failure.
+  - A fake-clock test fires the idle-ready-work condition after 15 min and not before; it stays silent
+    while a worker is active.
+  - Running the router to publication leaves `git status` of the repo root clean.
+  - The reservation sequence (next run, then the one after) is preserved across the move.
+- id: O03
+  kind: vertical_slice
+  title: One dispatch door for every rig and formula
+  blocked_by:
+  - O01
+  target_rigs:
+  - agent-factory
+  what_it_delivers: A single dispatch door validates target, formula (`mol-do-work`, `build-basic`, role
+    formulas) and `--reassign` for every rig from the project files; the Mayor prompt forbids raw `gc
+    sling`; a guard check reports any dispatch that bypassed the door (F16).
+  acceptance_criteria:
+  - Door tests cover each rig and each formula, including `build-basic` which has no valid door today.
+  - A synthetic raw `gc sling` is reported by the guard check within one guard cycle.
+  - The Mayor prompt names only the door for dispatch.
+- id: O04
+  kind: vertical_slice
+  title: Resume instead of redo on re-dispatch
+  blocked_by:
+  - O03
+  target_rigs:
+  - agent-factory
+  what_it_delivers: Workers push their branch from the first commit and after each commit; the branch
+    is written on the ticket at claim time; on re-dispatch the door hands the ticket's branch, PR and
+    notes to the next worker, who continues them; a re-planned ticket carries `supersedes <id>` and inherits
+    the work; on-session-stranded passes branch and PR along; starting over requires a written reason
+    in the ticket.
+  acceptance_criteria:
+  - A re-dispatch test with an existing branch and open PR resumes on that branch and PR instead of creating
+    new ones.
+  - An interrupted run test leaves its commits on the remote branch.
+  - A superseding ticket test inherits branch and PR of the superseded one.
+  - Starting over without a recorded reason is refused.
+- id: O05
+  kind: vertical_slice
+  title: No work is ever deleted before it is pushed
+  blocked_by:
+  - O01
+  target_rigs:
+  - agent-factory
+  what_it_delivers: factory-guard's local-commit backup covers product rigs, detached HEADs included;
+    worktree cleanup never falls back to `rm -rf` and keeps (and reports to the Mayor) any worktree with
+    unpushed or uncommitted work; a fresh branch with no own commit is spared 24 h; any root-owned file
+    in a worker worktree is reported.
+  acceptance_criteria:
+  - A product-rig worktree with an unpushed commit on a detached HEAD gets that commit backed up.
+  - Cleanup of a worktree with unpushed work removes nothing and reports it.
+  - A fresh `po/*` branch sitting on origin/main survives 24 h.
+  - A root-owned file in a worker worktree is reported within one guard cycle.
+  - factory-guard stays inside its 180 s budget on the live city.
+- id: O06
+  kind: vertical_slice
+  title: One escalation door feeds the NEEDS BENJAMIN list
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  what_it_delivers: 'An escalation door replaces `campaign-pointer escalate` and writes one NEEDS BENJAMIN
+    list with a read-only CLI for the operator session (list + pending-proposal count); routing: straight
+    to Benjamin for owner decisions (consent, personal data, spend, production, behaviour/acceptance change),
+    Factory stopped (Mayor down > 10 min, all providers exhausted) and plan fully delivered; Mayor first
+    then Benjamin after 2 h for repeated order failures and stuck PR / repeated red CI; no escalation
+    fails silently (F14); campaign-pointer, its dead af-1vr4 fields and the unread watchdog signals file
+    are retired.'
+  acceptance_criteria:
+  - Each 'straight to Benjamin' case lands on the list at once; each 'Mayor first' case reaches it only
+    after 2 h unresolved (fake clock).
+  - A failing escalation exits non-zero and is visible; no `>/dev/null || true` remains on an escalation
+    path.
+  - The read-only CLI prints the list and the pending-proposal count.
+  - No live code reads or writes `gc.campaign_*` fields or the signals file.
+- id: O07
+  kind: vertical_slice
+  title: Watchdog and failure hooks page through the escalation door
+  blocked_by:
+  - O06
+  target_rigs:
+  - agent-factory
+  what_it_delivers: factory-watchdog, on-order-failed, on-session-stranded, model-staleness-check and
+    factory-guard §7/§7b escalate only through the door with the routing rules of O06.
+  acceptance_criteria:
+  - Each of these paths is covered by a test that asserts the door is used with the right routing class.
+  - No direct `gc mail send human` remains in bin/, formulas/ or lib/.
+- id: O08
+  kind: vertical_slice
+  title: Total provider exhaustion pauses dispatch and resumes by itself
+  blocked_by:
+  - O03
+  - O06
+  target_rigs:
+  - agent-factory
+  what_it_delivers: When provider-failover resolves all providers unavailable, the dispatch door stops
+    sending new work, resumes at the next reset, and writes one NEEDS BENJAMIN line.
+  acceptance_criteria:
+  - 'All-unavailable test: dispatch refused with an explicit reason, one list line written.'
+  - 'Reset test: dispatch resumes without human action and the pause is logged.'
+- id: O09
+  kind: vertical_slice
+  title: Graph patches follow decision 8 (ADR-0028 amended)
+  blocked_by:
+  - O06
+  target_rigs:
+  - agent-factory
+  what_it_delivers: ADR-0028 amended; `ticket-graph-publish patch` can reorder, merge and supersede unfinished
+    tickets; the Mayor may reslice without a Planning Run only when the tool proves the acceptance criteria
+    unchanged, otherwise the question goes to the NEEDS BENJAMIN list; every patch records author and
+    reason; a worker's self-split tickets carry `split from <id>`.
+  acceptance_criteria:
+  - Patch tests prove reorder, merge and supersede on unfinished tickets and refusal on closed ones.
+  - A patch that changes any acceptance criterion is refused and escalated.
+  - Every patch leaves author and reason on the convoy.
+  - ADR-0028 carries the amendment with Intent and Mechanism lines.
+- id: O10
+  kind: vertical_slice
+  title: A blocked ticket cannot close without its classification
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  what_it_delivers: The delivery formulas pass `--classification repair|semantic|topology` to deliver-close;
+    behaviour or topology opens a Planning Exception (finishes af-zwhh0 wiring).
+  acceptance_criteria:
+  - A formula test closing a blocked ticket without classification is refused.
+  - A semantic or topology close without a Planning Exception id is refused; with one it succeeds.
+- id: O11
+  kind: vertical_slice
+  title: Improvement ideas become proposal tickets
+  blocked_by:
+  - O06
+  target_rigs:
+  - agent-factory
+  what_it_delivers: Improvement ideas are tickets labelled `proposal`, never dispatched by the door; the
+    operator CLI counts them; the router's Planning Run checklist starts by triaging them with the operator.
+  acceptance_criteria:
+  - The door refuses to dispatch a `proposal` ticket.
+  - The CLI count matches the open `proposal` tickets.
+  - The Mayor prompt and the Planning Run doc describe the flow in one place each.
+- id: O12
+  kind: vertical_slice
+  title: Mayor upkeep gestures become safe named scripts
+  blocked_by:
+  - O05
+  target_rigs:
+  - agent-factory
+  what_it_delivers: '`bin/factory-maintain <gesture>` implements each upkeep gesture the Mayor does by
+    hand today (worktree cleanup, dispatcher restart, and every other one listed in its prompt/AGENTS.md);
+    each checks its own safety criteria, logs what it did and can be undone; the text list of allowed
+    gestures is replaced by these scripts; anything else stays ADMIN.'
+  acceptance_criteria:
+  - Each gesture has a test for its refusal criteria (e.g. never removes a worktree with unmerged or unpushed
+    work) and its undo.
+  - The Mayor prompt lists only the scripts; no free-text upkeep permission remains.
+  - Every run appends a log entry readable by the operator.
+- id: O13
+  kind: vertical_slice
+  title: Orders tuned to the verdict table
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  what_it_delivers: '`city.toml` applies the Spec''s per-order verdicts with `[orders] skip` and `[[orders.overrides]]`
+    (no pack fork), after reading each pack script for gap tolerance; convoy-parent-sweep moves to event
+    `bead.closed`, model-staleness-check to daily cron; `[events.rotation] archive_retain_age` = 14 days;
+    new orders `backup-freshness` and `local-only-tests`; supervisor environment carries `BD_DISABLE_METRICS=1`
+    and `GC_DISABLE_USAGE_METRICS=1`; the stray `.config/` in the live root and gc''s pending metrics
+    queue are removed.'
+  acceptance_criteria:
+  - '`gc order list` matches the verdict table (skipped orders absent, overrides visible).'
+  - backup-freshness pages the Mayor in a test where the archive is older than 24 h and beads changed.
+  - local-only-tests runs nightly and pages the Mayor on failure.
+  - '`bd metrics status` and `gc metrics status` report disabled for order runs.'
+- id: O14
+  kind: vertical_slice
+  title: Dead tools retired or wired; fresh clone is safe
+  blocked_by:
+  - O01
+  - O03
+  target_rigs:
+  - agent-factory
+  what_it_delivers: F12 factory-waiting-guard re-justified or retired (pr-autopilot still reads `gc.waiting_on`);
+    F15 unrouted formulas, agents and scripts wired or moved to `legacy/`; F19 `claude-fable` checked
+    or removed; F20 unread schemas loaded or removed; PII guard retired (code, hook and guard calls);
+    a setup script enables `.githooks` on a fresh clone (F17); tests use a synthetic operator `operator-1`
+    and runtime messages name the operator from config (F23).
+  acceptance_criteria:
+  - Each listed tool has exactly one verdict applied, recorded in docs/INVENTORY.md.
+  - A fresh clone plus the setup script has the hooks active.
+  - No test fixture contains the operator's real name or GitHub login.
+  - '`tests/legacy-isolation-test.sh` stays green.'
+- id: O15
+  kind: vertical_slice
+  title: SayMyName docs leave the Factory
+  blocked_by:
+  - O01
+  target_rigs:
+  - agent-factory
+  - saymyname-backend
+  - saymyname-frontend
+  what_it_delivers: 'SayMyName rig contracts in docs/DELIVERY.md and docs/OPERATIONS.md move to dedicated
+    files in each product repo (progressive disclosure: at most a one-line pointer in their AGENTS.md,
+    by PR to `dev`); host operations (Dolt backups) become a generic Factory doc; dead sections (old cutover,
+    M6 rollback) go to `legacy/`.'
+  acceptance_criteria:
+  - Factory docs contain no SayMyName-only section.
+  - Each product repo holds the moved content in a dedicated file, reachable from its AGENTS.md in at
+    most one line.
+  - Product PRs target `dev` and pass their CI.
+- id: O16
+  kind: verification
+  title: 'A5 closes: every verdict written, 24 h clean'
+  blocked_by:
+  - O01
+  - O02
+  - O03
+  - O04
+  - O05
+  - O06
+  - O07
+  - O08
+  - O09
+  - O10
+  - O11
+  - O12
+  - O13
+  - O14
+  - O15
+  target_rigs:
+  - agent-factory
+  what_it_delivers: docs/INVENTORY.md carries a verdict for each of the 28 orders and each Mayor manual
+    operation, rows F11-F25 are closed or point to a ticket, and the live city shows no `order.failed`
+    over the 24 h after the last merge of this graph.
+  acceptance_criteria:
+  - INVENTORY lists 28 order verdicts and every Mayor manual operation with its verdict.
+  - '`gc events` over the 24 h after the last merge shows no `order.failed`.'
+  - The grep checks of O01 and O14 pass on main.
