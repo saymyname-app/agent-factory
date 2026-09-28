@@ -104,37 +104,47 @@ Rigs and agents already exist; you almost never add one. The real flow is:
    create carries `--set-metadata gc.authorized_by=<convoy or ticket id,
    decision, ADR or parent bead>`. If you cannot name what authorizes it, it
    is a proposal (see "Improvements are proposals"), not a bead for a worker.
-3. **Dispatch:** for ordinary work in the HQ `agent-factory` rig, always run
+3. **Dispatch:** every dispatch, for every rig and every formula, goes
+   through the dispatch door — never raw `gc sling` (O03, af-ui0ua). For
+   ordinary work in the HQ `agent-factory` rig, always run
    `./bin/factory-work-dispatch <af-bead-id>`; it atomically fixes the target to
    the named `factory-worker` implementation role, selects `mol-do-work`, and
    passes `--reassign`. `workspace` is its provider-failover policy class, not
    a configured sling target. `bd.dog` is Dolt maintenance only and must never
-   receive product or Factory implementation workflows. For other rigs and
-   role-specific formulas, use `gc sling <qualified-agent> <bead-id>` with the
-   formula from the routing table below. One writer per rig at a time — a
-   second writer on the same rig shares its checkout.
-   **Never `gc sling` a raw provider name** (`codex`, `claude`,
+   receive product or Factory implementation workflows. For every other rig
+   and role-specific formula (including `build-basic`), run
+   `./bin/dispatch-door <bead-id> --rig <project-name> --formula <formula>`
+   with the formula from the routing table below — `<project-name>` is a
+   `config/projects/<project-name>.toml` filename (e.g. `saymyname-backend`).
+   The door validates both against that project file, resolves the qualified
+   sling target itself, and always passes `--reassign`; it fails loudly on an
+   unknown rig or a formula that project does not allow, instead of silently
+   guessing. `factory-work-dispatch` is itself a thin HQ wrapper around this
+   same door. **Never construct a `gc sling` command by hand** — a raw sling
+   is reported as a dispatch-door bypass by `dispatch-door-guard` within one
+   guard cycle. One writer per rig at a time — a second writer on the same
+   rig shares its checkout.
+   **Never dispatch a raw provider name** (`codex`, `claude`,
    `claude-standard`, `claude-cheap`, ...) — those are scaled agent groups
    whose provider is hardcoded by their own `agent.toml`/pack definition, so
    provider-failover's overlay cannot patch them and a quota wall on that
    provider becomes an unmanaged restart-thrash loop instead of a failover
    (af-qugqd, 2026-09-18). Provider-failover targets are policy classes, not
-   automatically executable agent names; dispatch only to a configured named
-   role (the HQ door above uses `factory-worker`).
-   **Always pass `--reassign` when dispatching to a pool/infrastructure
-   agent** (`bd.dog` and any other agent that is never a human-owned
-   handoff) — `gc sling` does NOT clear a bead's existing assignee unless
-   `--reassign` is passed, and a pool target's own claim query keys off
-   assignee, not `gc.routed_to`. Without it, a bead that already has an
-   assignee (e.g. still `mayor` from before) reports "routed" successfully
-   but stays invisible to the target, which then reports "no assigned work"
-   indefinitely (af-33a4e, 2026-09-18: `gc sling bd.dog af-c6tdz` sat
-   unclaimed for ~2h this way). `factory-dispatch-guard` self-heals this
-   after the fact, but do not rely on it — pass `--reassign` at dispatch
-   time.
+   automatically executable agent names; the door resolves a configured named
+   role from each project's `sling_target` (the HQ door above uses
+   `factory-worker`).
+   **The door always passes `--reassign`** so a pool/infrastructure target's
+   claim query (which keys off assignee, not `gc.routed_to`) can see the
+   bead — a bead that keeps a pre-existing assignee (e.g. still `mayor` from
+   before) reports "routed" successfully but stays invisible to the target,
+   which then reports "no assigned work" indefinitely (af-33a4e, 2026-09-18:
+   a raw `gc sling bd.dog af-c6tdz` without `--reassign` sat unclaimed for
+   ~2h this way). `factory-dispatch-guard` self-heals this drift after the
+   fact, but the door dispatching with `--reassign` unconditionally is what
+   prevents it in the first place.
    **Delivery work is always dispatched, never run in-session.** Any work
    that produces files, commits, or PRs goes to a city-materialized agent
-   through a bead (`factory-work-dispatch`/`gc sling` above) — never an
+   through a bead (`factory-work-dispatch`/`dispatch-door` above) — never an
    in-session sub-agent, even one isolated in its own worktree. An
    in-session sub-agent has no city session or bead step: it is invisible
    to Beads, cost accounting, and the independent-review flow (2026-09-21,

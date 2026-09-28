@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# dispatch-door-guard — reports any dispatch that bypassed bin/dispatch-door
+# (O03, spec-factory-operations-v2-2026-09-28).
+#
+# `gc sling` lives outside this repo (a separately built binary, see
+# packs.lock) and cannot be patched to refuse a bypass outright, so this is
+# the repo-side detection half: bin/dispatch-door stamps
+# gc.dispatched_via=dispatch-door on every bead it routes. A bead carrying
+# gc.routed_to (something was `gc sling`d to it) that is NOT a formula-
+# internal step bead (gc.step_ref unset -- a molecule/workflow step gets its
+# own gc.routed_to from the formula engine, never from a hand-typed sling)
+# and NOT a graph.v2 workflow root (gc.kind=workflow -- routed by the
+# Planning Run/ticket-graph machinery, a different system O01/O02 already
+# cover) must also carry that stamp. Anything else is a raw `gc sling` that
+# skipped the door.
+#
+# This guard reports, it does not repair: a bypass is a process violation
+# to fix at the source (re-dispatch through the door), not metadata to
+# silently patch over. It pages the Mayor once per bead
+# (gc.dispatch_bypass_reported_at) so a repeat run of this guard does not
+# re-page for the same bypass.
+#
+# --check-only reports without writing or paging anything.
+#
+# Usage: dispatch-door-guard [--check-only]
+set -uo pipefail
+
+PROGRAM_NAME="dispatch-door-guard"
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+GC_BIN="${GC_BIN:-gc}"
+CONFIG_DIR="${DISPATCH_DOOR_GUARD_CONFIG_DIR:-$ROOT/config/projects}"
+CHECK_ONLY=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check-only) CHECK_ONLY=1 ;;
+    -h|--help)
+      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "$PROGRAM_NAME: unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || { echo "$PROGRAM_NAME: required command unavailable: $1" >&2; exit 2; }
+}
+require_command "$GC_BIN"
+require_command jq
+
+SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=lib/project_registry.sh
+. "$SELF_DIR/../lib/project_registry.sh"
+
+PROBLEMS=(); ACTIONS=(); STATUS=0
+CHECKED=0; BYPASSED=0
+say() { printf '%s\n' "$*"; }
+bad() { PROBLEMS+=("$1"); STATUS=1; }
+did() { ACTIONS+=("$1"); say "  REPORTED: $1"; }
+now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+page_mayor_once() {  # id summary
+  local id=$1 summary=$2
+  (cd "$ROOT" && "$GC_BIN" --city "$ROOT" mail send mayor --notify \
+    -s "Dispatch door bypassed: $id" \
+    -m "ACTION: dispatch-door-guard found a dispatch that skipped bin/dispatch-door
+STATE: $summary
+EVIDENCE: gc bd show $id
+NEXT: re-dispatch $id through bin/dispatch-door (or bin/factory-work-dispatch on the HQ rig) so it carries gc.dispatched_via" \
+    >/dev/null 2>&1)
+}
+
+# scan_rig <rig_name-or-empty>
+#   Empty means the HQ root (no --rig flag); anything else is a product
+#   rig name from project_registry_rig_names.
+scan_rig() {
+  local rig=$1
+  local -a rig_flag=()
+  [ -n "$rig" ] && rig_flag=(--rig "$rig")
+
+  local rows_json
+  rows_json=$(cd "$ROOT" && "$GC_BIN" --city "$ROOT" bd "${rig_flag[@]}" list --all --has-metadata-key gc.routed_to \
+    --status open,in_progress --limit 0 --json 2>/dev/null)
+  jq -e . >/dev/null 2>&1 <<<"$rows_json" || rows_json='[]'
+
+  local rows
+  rows=$(jq -r '
+    .[] | [
+      .id,
+      (.metadata["gc.step_ref"] // ""),
+      (.metadata["gc.kind"] // ""),
+      (.metadata["gc.dispatched_via"] // ""),
+      (.metadata["gc.routed_to"] // ""),
+      (.metadata["gc.dispatch_bypass_reported_at"] // "")
+    ] | join("")
+  ' <<<"$rows_json")
+
+  local id step_ref kind dispatched_via routed_to reported_at
+  while IFS=$'\x1f' read -r id step_ref kind dispatched_via routed_to reported_at; do
+    [ -z "$id" ] && continue
+    CHECKED=$((CHECKED + 1))
+    [ -z "$step_ref" ] || continue           # formula-internal step, not a hand dispatch
+    [ "$kind" != "workflow" ] || continue     # graph.v2 workflow root, a different system
+    [ "$dispatched_via" = "dispatch-door" ] && continue
+
+    BYPASSED=$((BYPASSED + 1))
+    bad "$id routed to '$routed_to' with no gc.dispatched_via=dispatch-door stamp — a raw gc sling bypassed the door"
+    if [ "$CHECK_ONLY" != "1" ] && { [ -z "$reported_at" ] || [ "$reported_at" = "none" ]; }; then
+      if (cd "$ROOT" && "$GC_BIN" --city "$ROOT" bd "${rig_flag[@]}" update "$id" \
+            --set-metadata "gc.dispatch_bypass_reported_at=$(now_iso)" \
+            --append-notes "dispatch-door-guard: routed to '$routed_to' with no dispatch-door stamp — bypassed the door; re-dispatch through bin/dispatch-door." \
+            >/dev/null 2>&1); then
+        page_mayor_once "$id" "routed to '$routed_to' with no dispatch-door stamp"
+        did "$id: routed to '$routed_to' bypassed the door; paged the Mayor"
+      else
+        bad "$id could not be marked reported — the Beads write failed"
+      fi
+    fi
+  done <<<"$rows"
+}
+
+scan_rig ""
+while IFS= read -r rig; do
+  [ -n "$rig" ] || continue
+  scan_rig "$rig"
+done < <(project_registry_rig_names "$CONFIG_DIR")
+
+say ""
+if [ "${#ACTIONS[@]}" -gt 0 ]; then say "reported ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
+if [ "${#PROBLEMS[@]}" -gt 0 ]; then
+  say "UNRESOLVED ${#PROBLEMS[@]}:"; printf '  ! %s\n' "${PROBLEMS[@]}"
+elif [ "$BYPASSED" -gt 0 ]; then
+  say "healthy — $BYPASSED bypass(es) seen this run, all reported"
+else
+  say "healthy — $CHECKED routed bead(s) checked, no dispatch-door bypass"
+fi
+exit 0
