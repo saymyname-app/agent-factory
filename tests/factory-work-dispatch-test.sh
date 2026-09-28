@@ -19,6 +19,15 @@ STUB
 chmod +x "$TMP/gc"
 export CALLS
 
+# O08: dispatch-door checks provider-failover before dispatching; stub it
+# available so this test does not depend on this host's live provider state.
+cat > "$TMP/provider-failover" <<'STUB'
+#!/usr/bin/env bash
+printf '{"total_exhaustion":{"active":false}}\n'
+STUB
+chmod +x "$TMP/provider-failover"
+export DISPATCH_DOOR_PROVIDER_FAILOVER_BIN="$TMP/provider-failover"
+
 GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" "$DISPATCH" af-fixture >/dev/null
 mapfile -t calls < "$CALLS"
 [ "${#calls[@]}" -eq 3 ] || fail "expected a label-check call, a sling call, and a dispatch-door stamp call, got: ${calls[*]-}"
