@@ -95,10 +95,11 @@ relancé sur un délai de repli, jamais à chaque passage) et, pour les portes e
 PR, un bead qui survit au passage suivant. Les règles pures sont dans
 `lib/factory_watchdog.py`.
 
-Les signalements sont aussi écrits dans
-`.gc/runtime/factory-watchdog-signals.json`. Depuis le retrait du Cockpit V1
-plus rien ne le lit ; son avenir est un point du Planning Run « Factory
-operations v2 ».
+Les signalements n'écrivent plus dans un fichier signal local : depuis le
+retrait du Cockpit V1 rien ne lisait `.gc/runtime/factory-watchdog-signals.json`,
+et O06 (Factory operations v2) a retiré cet écrivain (`factory-watchdog`,
+`on-order-failed`, `on-session-stranded`) ainsi que
+`lib/factory_watchdog.py`'s `merge_signals`.
 
 **Quand le lancer** : il tourne seul via son order (`orders/factory-watchdog.toml`,
 5 min, bien en-dessous de l'heure qui a coûté 4h20 le 2026-09-16-17).

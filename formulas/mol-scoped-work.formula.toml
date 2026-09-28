@@ -117,9 +117,8 @@ CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
 WORK_BEAD_ID=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
 FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 if [ "$BODY_OUTCOME" = "fail" ]; then
-  "$FACTORY_ROOT/bin/campaign-pointer" escalate "${WORK_BEAD_ID:-body}" \
-    "mol-scoped-work body scope failed for ${WORK_BEAD_ID:-this convoy}" \
-    >/dev/null 2>&1 || true
+  "$FACTORY_ROOT/bin/escalation-door" mayor "${WORK_BEAD_ID:-body}" \
+    "mol-scoped-work body scope failed for ${WORK_BEAD_ID:-this convoy}" || exit 1
 fi
 gc bd update notify-failure --set-metadata gc.outcome=pass --status=closed --notes "checked body outcome: ${BODY_OUTCOME:-unknown}"
 ```

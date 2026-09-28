@@ -44,9 +44,7 @@
 # produce a global stop). It never resolves a gate, merges/holds a PR, reopens
 # a workflow, or blocks the campaign. Every finding becomes at most one mail
 # to the Mayor (re-sent on a cooldown, never every run) and, for gates/PRs, one
-# tracked bead so the finding survives past the next run. Findings are also
-# written to a small local signal file the cockpit's "Aujourd'hui" panel reads
-# additively -- it never flips the campaign's own blocked state.
+# tracked bead so the finding survives past the next run.
 #
 # Usage: factory-watchdog [--check-only] [--quiet]
 set -uo pipefail
@@ -61,7 +59,6 @@ PR_MINUTES="${FACTORY_WATCHDOG_PR_MINUTES:-30}"
 RENUDGE_MINUTES="${FACTORY_WATCHDOG_RENUDGE_MINUTES:-30}"
 WORKFLOW_LOOKBACK_HOURS="${FACTORY_WATCHDOG_WORKFLOW_LOOKBACK_HOURS:-24}"
 QUARANTINE_WINDOW_HOURS="${FACTORY_WATCHDOG_QUARANTINE_WINDOW_HOURS:-24}"
-SIGNAL_FILE="$ROOT/.gc/runtime/factory-watchdog-signals.json"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -77,17 +74,12 @@ done
 cd "$ROOT" || { echo "factory-watchdog: $ROOT unreachable"; exit 2; }
 
 PROBLEMS=(); ACTIONS=(); STATUS=0
-ALERTS_JSON="[]"
 say()  { [ "$QUIET" = "1" ] || printf '%s\n' "$*"; }
 bad()  { PROBLEMS+=("$1"); STATUS=1; }
 did()  { ACTIONS+=("$1"); say "  PAGED: $1"; }
 now_epoch() { date -u +%s; }
 now_iso()   { date -u -d "@$(now_epoch)" +%Y-%m-%dT%H:%M:%SZ; }
 epoch_of()  { date -u -d "$1" +%s 2>/dev/null || echo 0; }
-add_alert() {  # add_alert <kind> <id> <message>
-  ALERTS_JSON=$(printf '%s' "$ALERTS_JSON" | jq --arg k "$1" --arg i "$2" --arg m "$3" \
-    '. + [{"kind":$k, "id":$i, "message":$m}]')
-}
 
 if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 \
    || [ ! -f "$LIB/factory_watchdog.py" ]; then
@@ -111,7 +103,6 @@ gates_json=$(gc bd gate list --json 2>/dev/null || echo '[]')
 while IFS=$'\t' read -r gate_id code msg; do
   [ -z "$gate_id" ] && continue
   bad "aged gate — $msg"
-  add_alert "$code" "$gate_id" "$msg"
   if [ "$CHECK_ONLY" != "1" ] && should_nudge "$gate_id" "gc.watchdog_nudged_at"; then
     gc mail send mayor --notify \
       -s "Gate aging: $gate_id" \
@@ -139,7 +130,6 @@ if command -v gh >/dev/null 2>&1; then
   while IFS=$'\t' read -r pr_num code msg; do
     [ -z "$pr_num" ] && continue
     bad "stuck PR — $msg"
-    add_alert "$code" "$pr_num" "$msg"
     if [ "$CHECK_ONLY" != "1" ]; then
       title="[watchdog] PR #$pr_num stuck ($code)"
       existing=$(gc bd list --status open --title-contains "$title" --json 2>/dev/null \
@@ -181,24 +171,11 @@ workflows_json=$(gc bd list --status closed --metadata-field gc.kind=workflow \
 while IFS=$'\t' read -r bead_id code msg; do
   [ -z "$bead_id" ] && continue
   bad "false-success close — $msg"
-  # Fingerprint (status:outcome) is read up front so the cockpit-facing
-  # signal file can apply the same "already reported this exact state, stay
-  # silent" rule the mail throttle below already applies -- af-d1jfc-class
-  # fix (2026-09-18). Before this, add_alert ran unconditionally, so
-  # .gc/runtime/factory-watchdog-signals.json (what the cockpit reads)
-  # re-listed a bead every single run even after it was mailed once and its
-  # own notes explained the fix -- while the mail itself correctly never
-  # repeated. `bad` above stays unconditional: the raw watchdog log is meant
-  # to keep showing the current state on every run, only the *signal file*
-  # must stop re-surfacing state nothing has changed on.
   bead_json=$(gc bd show "$bead_id" --json 2>/dev/null)
   current_status=$(printf '%s' "$bead_json" | jq -r '(.[0].status // "")')
   current_outcome=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.outcome"] // "")')
   current_fp="${current_status}:${current_outcome}"
   stored_fp=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.watchdog_false_success_fp"] // empty)')
-  if [ "$stored_fp" != "$current_fp" ]; then
-    add_alert "$code" "$bead_id" "$msg"
-  fi
   if [ "$CHECK_ONLY" != "1" ]; then
     # Report-once, keyed on a fingerprint of what was reported (status:outcome),
     # not just "has this bead ever been flagged" -- af-u61xq. A bare "already
@@ -210,11 +187,10 @@ while IFS=$'\t' read -r bead_id code msg; do
     # (af-nf8en, 2026-09-18): an earlier version special-cased the 7
     # pre-fingerprint ("legacy_flagged") beads to backfill the fingerprint
     # without mailing, on the theory they were already reported once under
-    # the old idiom. That backfill made add_alert stop re-firing for them
+    # the old idiom. That backfill made the watchdog stop re-firing for them
     # from the very next tick on -- so if the state it backfilled against
     # was in fact new (never mailed under the old idiom either), the alert
-    # flashed in the cockpit signal file for exactly one tick, then vanished
-    # forever with no mail ever sent. Every fingerprint-empty bead now goes
+    # was silently lost. Every fingerprint-empty bead now goes
     # through the same mail-then-backfill path as a brand-new one; the only
     # cost is a one-time mail for the known legacy offenders on first tick
     # post-deploy, which is strictly safer than a silently-lost alert.
@@ -245,10 +221,8 @@ if command -v gh >/dev/null 2>&1; then
   gh_auth_out=$(gh auth status 2>&1); gh_auth_rc=$?
   gh_auth_verdict=$(printf '%s' "$gh_auth_out" | python3 "$LIB/factory_watchdog.py" gh-auth "$gh_auth_rc" 2>/dev/null)
   if [ -n "$gh_auth_verdict" ]; then
-    gh_code=${gh_auth_verdict%%$'\t'*}
     gh_msg=${gh_auth_verdict#*$'\t'}
     bad "gh auth — $gh_msg"
-    add_alert "$gh_code" "gh-auth" "$gh_msg"
     if [ "$CHECK_ONLY" != "1" ]; then
       existing=$(gc bd list --status open --title-contains "$GH_AUTH_BEAD_TITLE" --json 2>/dev/null \
         | jq -r '(.[0].id // empty)')
@@ -315,7 +289,6 @@ if command -v gc >/dev/null 2>&1; then
     while IFS=$'\t' read -r reason code msg; do
       [ -z "$reason" ] && continue
       bad "control quarantine — $msg"
-      add_alert "$code" "$rig_name:$reason" "$msg"
       title="$QUARANTINE_BEAD_PREFIX $rig_name/$reason"
       printf '%s\n' "$title" >> "$quarantine_active_titles"
       if [ "$CHECK_ONLY" != "1" ]; then
@@ -369,14 +342,6 @@ NEXT: root-cause the controller error" \
   rm -f "$quarantine_active_titles"
 else
   say "· control-quarantine — not checked (gc unavailable)"
-fi
-
-# --- signal file for the cockpit's Aujourd'hui panel (additive; never flips
-#     the campaign's own blocked state -- ADR-0016 section 7). A read-modify-
-#     write keyed by source="factory-watchdog" so it never clobbers what
-#     on-order-failed / on-session-stranded wrote (af-u61xq, PR #82 gap) ------
-if [ "$CHECK_ONLY" != "1" ]; then
-  printf '%s' "$ALERTS_JSON" | python3 "$LIB/factory_watchdog.py" merge-signals "$SIGNAL_FILE" "factory-watchdog" 2>/dev/null
 fi
 
 # --- report --------------------------------------------------------------------

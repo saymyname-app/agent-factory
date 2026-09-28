@@ -17,7 +17,6 @@ from factory_watchdog import (  # noqa: E402
     assess_pr,
     assess_quarantine,
     assess_workflow,
-    merge_signals,
 )
 
 NOW = 1789555200.0  # 2026-09-16T10:40:00Z
@@ -227,75 +226,6 @@ class QuarantineRules(unittest.TestCase):
         self.assertIn("67 control step(s)", verdicts[0][2])
 
 
-class MergeSignals(unittest.TestCase):
-    """factory-watchdog-signals.json has three independently-scheduled writers
-    (factory-watchdog, on-order-failed, on-session-stranded -- af-u61xq,
-    PR #82). A wholesale
-    overwrite from one used to erase whatever another just wrote; merge_signals
-    must instead read-modify-write, replacing only its own writer's slice.
-    """
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.path = str(Path(self._tmp.name) / "factory-watchdog-signals.json")
-
-    def _alerts(self):
-        return json.loads(Path(self.path).read_text(encoding="utf-8"))["alerts"]
-
-    def test_two_writers_do_not_clobber_each_other(self):
-        merge_signals(self.path, "factory-watchdog", [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate aged"}])
-        merge_signals(self.path, "on-order-failed", [{"kind": "order_failed", "id": "af-new1", "message": "dolt-remotes-patrol failing"}])
-        alerts = self._alerts()
-        self.assertEqual(2, len(alerts))
-        sources = {a["source"] for a in alerts}
-        self.assertEqual({"factory-watchdog", "on-order-failed"}, sources)
-
-    def test_a_writer_re_running_replaces_only_its_own_slice(self):
-        merge_signals(self.path, "factory-watchdog", [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate aged 30m"}])
-        merge_signals(self.path, "on-session-stranded", [{"kind": "session_stranded", "id": "af-br7i", "message": "reopened af-stuck1"}])
-        # factory-watchdog runs again with an updated view (gate resolved, nothing to report)
-        merge_signals(self.path, "factory-watchdog", [])
-        alerts = self._alerts()
-        self.assertEqual(1, len(alerts))
-        self.assertEqual("on-session-stranded", alerts[0]["source"])
-        self.assertEqual("af-br7i", alerts[0]["id"])
-
-    def test_untagged_legacy_entries_are_dropped_not_kept_forever(self):
-        # Pre-dates the "source" tag (2026-09-18, C1): an entry with no
-        # source can never be matched by any writer's replace-my-own-slice
-        # pass, so it must be swept on the next merge instead of persisting
-        # in the cockpit's signal file forever.
-        Path(self.path).write_text(json.dumps({
-            "generated_at": "2026-09-17T09:38:59Z",
-            "alerts": [{"kind": "false_success_close", "id": "af-x4p4", "message": "legacy, no source"}],
-        }), encoding="utf-8")
-        merge_signals(self.path, "on-order-failed", [{"kind": "order_failed", "id": "af-new1", "message": "m1"}])
-        alerts = self._alerts()
-        self.assertEqual(1, len(alerts))
-        self.assertEqual("af-new1", alerts[0]["id"])
-
-    def test_a_writer_updates_its_own_stale_entry_in_place(self):
-        merge_signals(self.path, "factory-watchdog", [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate aged 30m"}])
-        merge_signals(self.path, "factory-watchdog", [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate aged 60m"}])
-        alerts = self._alerts()
-        self.assertEqual(1, len(alerts))
-        self.assertEqual("gate aged 60m", alerts[0]["message"])
-
-    def test_three_writers_all_survive_in_any_order(self):
-        merge_signals(self.path, "on-session-stranded", [{"kind": "session_stranded", "id": "af-br7i", "message": "m1"}])
-        merge_signals(self.path, "factory-watchdog", [{"kind": "pr_conflicting", "id": "57", "message": "m2"}])
-        merge_signals(self.path, "on-order-failed", [{"kind": "order_failed", "id": "af-new1", "message": "m3"}])
-        alerts = self._alerts()
-        ids = {a["id"] for a in alerts}
-        self.assertEqual({"af-br7i", "57", "af-new1"}, ids)
-
-    def test_a_missing_or_malformed_file_starts_clean(self):
-        Path(self.path).write_text("not json", encoding="utf-8")
-        merge_signals(self.path, "factory-watchdog", [{"kind": "aged_human_gate", "id": "af-oihx", "message": "m"}])
-        self.assertEqual(1, len(self._alerts()))
-
-
 class Cli(unittest.TestCase):
     def _run(self, subcommand: str, payload: str) -> list[str]:
         result = subprocess.run(
@@ -371,22 +301,6 @@ class Cli(unittest.TestCase):
         self.assertEqual(1, len(lines))
         self.assertTrue(lines[0].startswith("control_dispatch_error\tcontrol_quarantined\t"))
         self.assertIn("67 control step(s)", lines[0])
-
-    def test_merge_signals_subcommand_round_trips_through_the_real_cli(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = str(Path(tmp) / "signals.json")
-            for source, alert in (
-                ("factory-watchdog", {"kind": "aged_human_gate", "id": "af-oihx", "message": "m1"}),
-                ("on-order-failed", {"kind": "order_failed", "id": "af-new1", "message": "m2"}),
-            ):
-                result = subprocess.run(
-                    [sys.executable, str(ROOT / "lib" / "factory_watchdog.py"), "merge-signals", path, source],
-                    input=json.dumps([alert]), capture_output=True, text=True,
-                )
-                self.assertEqual(0, result.returncode, result.stderr)
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
-            self.assertEqual(2, len(data["alerts"]))
-            self.assertEqual({"factory-watchdog", "on-order-failed"}, {a["source"] for a in data["alerts"]})
 
 
 if __name__ == "__main__":
