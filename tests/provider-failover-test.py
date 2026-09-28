@@ -779,10 +779,9 @@ class ModelStalenessCLI(unittest.TestCase):
         self.assertFalse(any(c.startswith("bd create") for c in self.calls()))
         self.assertFalse((self.d / "state.json").exists())
 
-    def test_runs_on_a_daily_cooldown_not_per_tick(self):
+    def test_runs_on_a_daily_cron_not_per_tick(self):
         order = (ROOT / "orders" / "model-staleness-check.toml").read_text(encoding="utf-8")
-        self.assertIn('trigger = "cooldown"', order)
-        self.assertIn('interval = "24h"', order)
+        self.assertIn('trigger = "cron"', order)
         self.assertIn("check-models", order)
 
 
