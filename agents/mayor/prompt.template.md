@@ -114,8 +114,8 @@ Rigs and agents already exist; you almost never add one. The real flow is:
    receive product or Factory implementation workflows. For every other rig
    and role-specific formula (including `build-basic`), run
    `./bin/dispatch-door <bead-id> --rig <project-name> --formula <formula>`
-   with the formula from the routing table below — `<project-name>` is a
-   `config/projects/<project-name>.toml` filename (e.g. `saymyname-backend`).
+   with the formula from the routing table below — `<project-name>` matches
+   the filename of one of that rig's `config/projects/<project-name>.toml`.
    The door validates both against that project file, resolves the qualified
    sling target itself, and always passes `--reassign`; it fails loudly on an
    unknown rig or a formula that project does not allow, instead of silently
