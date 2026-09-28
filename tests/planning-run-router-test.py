@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin" / "planning-run-router"
 FIXTURES = ROOT / "tests" / "fixtures" / "planning-run-router"
 FAKE_BD = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "bd"
+FAKE_GC = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "gc"
 
 CITY_REGISTRY = FIXTURES / "city-registry.json"
 SIMPLE_SESSION = FIXTURES / "sessions" / "simple.json"
@@ -78,14 +79,17 @@ class PlanningRunRouterTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.bd_log = self.tmp / "bd.log"
         self.bd_capture = self.tmp / "bd-graph.json"
+        self.gc_log = self.tmp / "gc.log"
 
     def bd_env(self):
         return {
             **os.environ,
             "BD_BIN": str(FAKE_BD),
+            "GC_BIN": str(FAKE_GC),
             "TICKET_GRAPH_BD_LOG": str(self.bd_log),
             "TICKET_GRAPH_CAPTURE": str(self.bd_capture),
             "TICKET_GRAPH_EXISTING": "[]",
+            "TICKET_GRAPH_GC_LOG": str(self.gc_log),
         }
 
     def write_request(self, request, name="request.json"):
