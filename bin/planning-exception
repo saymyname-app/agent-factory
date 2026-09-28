@@ -254,6 +254,7 @@ def run_patch(draft: str, author: str, reason: str) -> dict[str, Any]:
         result = subprocess.run(
             [TICKET_GRAPH_PUBLISH, "patch", draft, "--author", author, "--reason", reason],
             check=True, capture_output=True, text=True,
+            env={**os.environ, "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR": "1"},
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()

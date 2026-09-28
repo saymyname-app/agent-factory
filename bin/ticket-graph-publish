@@ -22,6 +22,7 @@ BD_BIN = os.environ.get("BD_BIN", "bd")
 BD_WORKSPACE = Path(os.environ.get("TICKET_GRAPH_BD_WORKSPACE", str(ROOT)))
 GC_BIN = os.environ.get("GC_BIN", "gc")
 CONTENT_BOUNDARY = b"legacy_boundary:"
+NOTIFY_MAYOR_ENV = "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR"
 
 
 class PublishError(RuntimeError):
@@ -489,7 +490,13 @@ def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> None
     (the idle-ready-work order is only the safety net for when this call is
     itself missed). Best-effort: a mail delivery failure must not turn a
     successful publish into a reported failure.
+
+    No-op unless NOTIFY_MAYOR_ENV is set: only the live planning-run-router
+    sets it when invoking this tool, so a default or test invocation (which
+    leaves it unset) never wakes the real Mayor (af-l46o6).
     """
+    if not os.environ.get(NOTIFY_MAYOR_ENV):
+        return
     subject = f"ticket-graph-{command}: {graph_digest}"
     body = (
         f"ACTION: ticket-graph-publish {command} completed\n"
