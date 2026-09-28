@@ -48,6 +48,21 @@ the quarantined artifact; no session, Spec, map or convoy is touched.
 This is a deterministic synthetic prototype, not a live Gas City write door
 -- the same fixture-bound scope B03/B04/B05/B06 declared.
 
+## Planning Run checklist
+
+Before the Mayor or a human starts or resumes a Planning Run:
+
+1. **Triage open proposals with the operator.** `./bin/escalation-door list`
+   prints the pending-proposal count (open beads labelled `proposal`) along
+   with the NEEDS BENJAMIN list. Each `proposal` bead is an improvement idea
+   the Mayor recorded instead of acting on unilaterally (O11,
+   `agents/mayor/prompt.template.md`, "Improvements are proposals"); it is
+   never dispatched, so it only becomes work once this triage folds it into
+   the next request. Decide which proposals become tickets and which are
+   dropped before constructing the request record.
+2. Construct the request record and run `bin/planning-run-router run
+   <request.json>` (below) -- the only Planning Run entry point.
+
 ## Run it
 
 ```bash

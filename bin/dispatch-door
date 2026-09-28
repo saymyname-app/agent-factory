@@ -25,6 +25,12 @@
 # `gc sling` that bypassed it -- gc sling itself lives outside this repo (a
 # separately built binary, see packs.lock) and cannot be patched to refuse
 # a bypass outright, so the guard is the repo-side detection half.
+#
+# It also refuses to dispatch a bead labelled `proposal` (O11,
+# spec-factory-operations-v2-2026-09-28): a proposal is an improvement idea
+# raised for the next Planning Run to triage with the operator
+# (agents/mayor/prompt.template.md, "Improvements are proposals"), never
+# work to hand a worker directly.
 set -Eeuo pipefail
 
 PROGRAM_NAME="dispatch-door"
@@ -127,6 +133,12 @@ if [ "$DRY_RUN" = "1" ]; then
   printf '%q ' "${CMD[@]}"
   printf '\n'
   exit 0
+fi
+
+bead_json=$("$GC_BIN" --city "$ROOT" bd show "$BEAD_ID" --json) \
+  || fail "could not read $BEAD_ID to check its labels before dispatch"
+if printf '%s' "$bead_json" | jq -e '(.[0].labels // []) | index("proposal") != null' >/dev/null 2>&1; then
+  fail "$BEAD_ID is labelled proposal -- proposals are never dispatched, they are triaged at the next Planning Run"
 fi
 
 "${CMD[@]}" || fail "gc sling failed routing $BEAD_ID to $qualified_target"
