@@ -14,15 +14,53 @@ for required in gc bd jq git; do
   command -v "$required" >/dev/null 2>&1 || fail "required command is unavailable: $required"
 done
 
-TEST_CITY=$(mktemp -d /tmp/af-o13-backup-freshness.XXXXXX)
+TEST_TMPDIR=$(mktemp -d /tmp/af-o13-backup-freshness.XXXXXX)
+TEST_CITY="$TEST_TMPDIR/city"
 ARCHIVE=$(mktemp -d /tmp/af-o13-backup-freshness-archive.XXXXXX)
+mkdir -p "$TEST_CITY"
+# Isolated tmux socket dir and a stub `codex` ahead of PATH: gc mail send
+# --notify (via escalation-door) starts the configured named session on
+# demand even with the reconciler off (--no-start only skips the
+# supervisor's own startup, not a later on-demand session start). Without
+# this, that session execs the REAL `codex` CLI (bypass-sandbox, gpt-5.5,
+# xhigh) under a tmux server on the shared default socket dir -- a live
+# process this test never tears down and that collides by name with any
+# concurrent run (live incident: two such orphans, af-o13-backup-freshness
+# and af-o13-local-only-tests, held the live escalation-door flock for
+# 40+ min, root-caused 2026-09-28).
+TMUX_TMPDIR="$TEST_TMPDIR/tmux"
+STUB_BIN="$TEST_TMPDIR/stubbin"
+mkdir -p "$TMUX_TMPDIR" "$STUB_BIN"
+cat >"$STUB_BIN/codex" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$STUB_BIN/codex"
+
 cleanup() {
   status=$?
   trap - EXIT
+  # Kill every tmux server this run may have started before removing its
+  # socket directory -- rm -rf alone orphans the process behind it.
+  for sock in "$TMUX_TMPDIR"/tmux-*/*; do
+    [ -S "$sock" ] || continue
+    tmux -S "$sock" kill-server >/dev/null 2>&1 || true
+  done
+  # Anything else this run started (managed Dolt server/watchdog, a stub
+  # session that didn't exit cleanly) has $TEST_TMPDIR in its argv/cwd.
+  # Wait for them to actually die before rm -rf: a signalled-but-still-
+  # exiting Dolt process can hold its data dir open long enough to leave
+  # files behind (silent, but a slow leak across CI runs).
+  pkill -f -- "$TEST_TMPDIR" >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -f -- "$TEST_TMPDIR" >/dev/null 2>&1 || break
+    sleep 0.3
+  done
+  pkill -9 -f -- "$TEST_TMPDIR" >/dev/null 2>&1 || true
   if [ "${KEEP_TEST_CITY:-0}" = 1 ]; then
     echo "test city preserved at $TEST_CITY, archive at $ARCHIVE" >&2
   else
-    rm -rf -- "$TEST_CITY" "$ARCHIVE"
+    rm -rf -- "$TEST_TMPDIR" "$ARCHIVE"
   fi
   exit "$status"
 }
@@ -43,6 +81,8 @@ run_clean() {
     -u GC_BEAD_ID -u GC_ROOT_BEAD_ID -u GC_CONTINUATION_GROUP \
     -u GC_CITY -u GC_CITY_PATH -u GC_CITY_RUNTIME_DIR -u GC_BEADS_SCOPE_ROOT -u GC_DIR \
     -u GC_TRIGGER_BEAD_ID -u GC_TRIGGER_WORK_BEAD_ID -u GC_TRIGGER_BEAD_STORE_REF -u GC_TRIGGER_WORK_STORE_REF \
+    PATH="$STUB_BIN:$PATH" \
+    TMUX_TMPDIR="$TMUX_TMPDIR" \
     "$@"
 }
 

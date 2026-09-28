@@ -14,11 +14,58 @@ for required in gc bd jq; do
   command -v "$required" >/dev/null 2>&1 || fail "required command is unavailable: $required"
 done
 
-# See tests/backup-freshness-order-test.sh for why every one of these has to
-# go: GC_CITY/GC_CITY_PATH/GC_BEADS_SCOPE_ROOT override cwd-based city
-# discovery and will silently redirect every `gc`/`bd` call in this test at
-# the LIVE Factory city instead of the isolated one (live incident during
-# this ticket's own development: af-ize6u).
+# FACTORY_ROOT doubles as both "where the two hardcoded test paths live" and
+# "which city to write beads/mail into" (bin/local-only-tests cd's there and
+# never passes --city), so the test city itself has to carry the fake tests/.
+TEST_TMPDIR=$(mktemp -d /tmp/af-o13-local-only-tests.XXXXXX)
+TEST_CITY="$TEST_TMPDIR/city"
+mkdir -p "$TEST_CITY"
+# Isolated tmux socket dir and a stub `codex` ahead of PATH: gc mail send
+# --notify (via escalation-door) starts the configured named session on
+# demand even with the reconciler off, and without a stub that session
+# execs the REAL codex CLI under a tmux server on the shared socket dir --
+# a live, untorn-down process (live incident: this test's own
+# af-o13-local-only-tests orphan held the live escalation-door flock for
+# 40+ min, root-caused 2026-09-28; see tests/backup-freshness-order-test.sh
+# for the fuller writeup).
+TMUX_TMPDIR="$TEST_TMPDIR/tmux"
+STUB_BIN="$TEST_TMPDIR/stubbin"
+mkdir -p "$TMUX_TMPDIR" "$STUB_BIN"
+cat >"$STUB_BIN/codex" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$STUB_BIN/codex"
+
+cleanup() {
+  status=$?
+  trap - EXIT
+  for sock in "$TMUX_TMPDIR"/tmux-*/*; do
+    [ -S "$sock" ] || continue
+    tmux -S "$sock" kill-server >/dev/null 2>&1 || true
+  done
+  # Wait for anything matched to actually die before rm -rf: a signalled-
+  # but-still-exiting Dolt process can hold its data dir open long enough
+  # to leave files behind (silent, but a slow leak across CI runs).
+  pkill -f -- "$TEST_TMPDIR" >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -f -- "$TEST_TMPDIR" >/dev/null 2>&1 || break
+    sleep 0.3
+  done
+  pkill -9 -f -- "$TEST_TMPDIR" >/dev/null 2>&1 || true
+  if [ "${KEEP_TEST_CITY:-0}" = 1 ]; then
+    echo "test city preserved at $TEST_CITY" >&2
+  else
+    rm -rf -- "$TEST_TMPDIR"
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+
+# GC_CITY/GC_CITY_PATH/GC_BEADS_SCOPE_ROOT override cwd-based city discovery
+# and will silently redirect every `gc`/`bd` call in this test at the LIVE
+# Factory city instead of the isolated one (live incident during this
+# ticket's own development: af-ize6u).
 run_clean() {
   env \
     -u GC_DOLT_HOST -u GC_DOLT_PORT -u GC_DOLT_DATABASE -u GC_DOLT_PROJECT_ID -u GC_DOLT_USER \
@@ -26,6 +73,8 @@ run_clean() {
     -u GC_BEAD_ID -u GC_ROOT_BEAD_ID -u GC_CONTINUATION_GROUP \
     -u GC_CITY -u GC_CITY_PATH -u GC_CITY_RUNTIME_DIR -u GC_BEADS_SCOPE_ROOT -u GC_DIR \
     -u GC_TRIGGER_BEAD_ID -u GC_TRIGGER_WORK_BEAD_ID -u GC_TRIGGER_BEAD_STORE_REF -u GC_TRIGGER_WORK_STORE_REF \
+    PATH="$STUB_BIN:$PATH" \
+    TMUX_TMPDIR="$TMUX_TMPDIR" \
     "$@"
 }
 
@@ -43,22 +92,6 @@ jq -e --arg source "$ROOT/orders/local-only-tests.toml" '
 ' >/dev/null <<<"$order" || fail "local-only-tests Order is not discoverable and deterministic"
 
 # 2. Functional: an injected failing test must file a bead and page the Mayor.
-# FACTORY_ROOT doubles as both "where the two hardcoded test paths live" and
-# "which city to write beads/mail into" (bin/local-only-tests cd's there and
-# never passes --city), so the test city itself has to carry the fake tests/.
-TEST_CITY=$(mktemp -d /tmp/af-o13-local-only-tests.XXXXXX)
-cleanup() {
-  status=$?
-  trap - EXIT
-  if [ "${KEEP_TEST_CITY:-0}" = 1 ]; then
-    echo "test city preserved at $TEST_CITY" >&2
-  else
-    rm -rf -- "$TEST_CITY"
-  fi
-  exit "$status"
-}
-trap cleanup EXIT
-
 run_clean gc init \
   --template minimal --default-provider codex --skip-provider-readiness --no-start --yes \
   --name af-o13-local-only-tests "$TEST_CITY" >/dev/null
