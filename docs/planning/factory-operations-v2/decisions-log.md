@@ -156,3 +156,16 @@ Mechanism (PO interpretation):
    unpushed work), log what they did and can be undone; the Mayor may call
    them freely; anything else stays ADMIN (Benjamin); a repetitive safe
    gesture becomes an order. Plus the best-practice research on orders.
+
+## Addendum after research — 2026-09-28
+
+Source: `orders-best-practices.md` (this folder).
+- t5.2 corrected: Gas City already bounds `session-reconciler-trace/`
+  (1 GiB / 7 days) and `core.control-dispatcher-trace.log` (200 MiB, 2
+  copies); `events.jsonl` rotates at 256 MiB but keeps archives forever →
+  the 14-day retention becomes `[events.rotation] archive_retain_age` only.
+- t5.5: `condition` triggers exist upstream and `[[orders.overrides]]` /
+  `[orders] skip` change pack orders from `city.toml` without a fork.
+- t5.6: gc usage metrics also turned off (`gc metrics off`), per Benjamin's
+  Q5.3 answer (« a » = bd and gc). Orders must also run with
+  `BD_DISABLE_METRICS=1` (supervisor sets only `GC_DISABLE_USAGE_METRICS`).
