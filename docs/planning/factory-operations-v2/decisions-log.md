@@ -60,3 +60,44 @@ Mechanism (PO interpretation):
    file replaced by the list (C01 reads it); no escalation may fail silently
    (F14 `>/dev/null || true`).
 Does NOT mean: a phone channel before C01.
+
+## t3-work-preservation — 2026-09-28
+
+Intent (Benjamin, 2026-09-28): « Q3.1 : OK », « Q3.2: Je ne sais pas ».
+Mechanism (PO interpretation):
+1. Workers push their branch from the first commit and after each commit;
+   the branch name is recorded on the ticket at claim time (feeds t1 resume).
+2. factory-guard's local-commit backup also covers the product rigs,
+   detached HEADs included.
+3. No `rm -rf` fallback in worktree cleanup (`mol-scoped-work`,
+   `factory-do-work-workspace`): a worktree holding unpushed work is kept
+   and the Mayor is alerted.
+4. A fresh branch with no own commit is spared 24 h by factory-guard §6.
+5. No build/test as root in worker worktrees; the guard reports any
+   root-owned file there. Origin of the 2026-09-27 root files unknown (a root
+   WSL shell opened 2026-09-27 14:09, author unknown) — no operator rule added.
+
+## t4-project-agnostic — 2026-09-28
+
+Intent (Benjamin, 2026-09-28): « Q4.1: A »; Q4.2 « OK mais faut pas encombrer
+AGENTS.md betement, utilisons (si et seulement si y'a besoin) index et
+documents exterieurs au md principal pour les elements de contextes qui sont
+pas utiles à chaque fois … (c'est qu'une intuition) »; Q4.3 « j'ai
+l'impression que B suffirait. Plutôt B. ».
+Mechanism (PO interpretation):
+1. One project file per project in the Factory (e.g.
+   `config/projects/saymyname.toml`: repos, protected branch, required CI);
+   every script reads it; a check fails when a rig known to Gas City has no
+   project file. Product rules stay in the product repos.
+2. SayMyName sections of Factory docs move to dedicated files in the product
+   repos (progressive disclosure): the main `AGENTS.md` gets at most a
+   one-line pointer, only if an agent needs it to find them. Host operations
+   (Dolt backups) become a generic Factory doc; dead sections (old cutover,
+   M6 rollback) go to `legacy/`. Tests use a synthetic operator
+   (`operator-1`); runtime messages name "the operator" from config. A setup
+   script enables `.githooks` on a fresh clone. The two local-only tests run
+   in a nightly order; failure pages the Mayor.
+3. PII guard retired (code + hook calls): it was INACTIVE everywhere (no
+   identifier list on the machine). The written rule in the SayMyName repo
+   `knowledge/real-person-data.md` stays.
+Does NOT mean: bigger `AGENTS.md` files.
