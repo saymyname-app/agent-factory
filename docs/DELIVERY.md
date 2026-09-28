@@ -2,7 +2,7 @@
 
 ## Status and authority
 
-GitHub is authoritative for branches, commits, pull requests, checks and merges. Beads is authoritative for executable work, dependencies and gates. Gas City provides dispatch through existing formulas and provider configuration. V1 has one writer per rig (since 2026-09-18 the worker pools are capped — `[[patches.agent]]` in `city.toml` — at 1 session per rig and for the reviewer, 2 for the city pool; the load test af-48sx3 measures it); concurrent worktrees and multiple writers remain TARGET, not PROVEN.
+GitHub is authoritative for branches, commits, pull requests, checks and merges. Beads is authoritative for executable work, dependencies and gates. Gas City provides dispatch through existing formulas and provider configuration. V1 has one writer per rig (since 2026-09-18 the worker pools are capped — `[[patches.agent]]` in `city.toml` — at 1 session per rig, 2 for the city pool; the load test af-48sx3 measures it); concurrent worktrees and multiple writers remain TARGET, not PROVEN.
 
 The configured writer provider inherits `builtin:codex` and appends `-m gpt-5.6-sol`. M2 observed and proved that effective model on a real writer session. Mechanical decisions such as exit codes, diffs, SHAs, PR state and check conclusions are L0 deterministic work.
 
@@ -15,10 +15,12 @@ The configured writer provider inherits `builtin:codex` and appends `-m gpt-5.6-
   Gas City `v1.4.1`'s `builtin:claude`, pins the host CLI to `2.1.236`, selects
   `sonnet-5`, and defaults to `permission_mode = "unrestricted"` (`city.toml`;
   `factory-guard` treats `plan` as broken: it strands unattended agents). The
-  `claude-reviewer` template is
-  on-demand only. Use it for fallback analysis or an independent GUARDED review
-  when the risk justifies L3; it is not a global reviewer and must not overlap a
-  writer on the same rig.
+  standalone `claude-reviewer` template was retired 2026-09-28 (O14, F15): no
+  formula or prompt ever dispatched it, and the dispatch door has no path for
+  an ad-hoc named reviewer session outside a rig's fixed `sling_target`. L3
+  independent review for GUARDED-tier risk comes from `build-basic`'s own
+  plan-review/review steps or the on-demand `ux-reviewer`, not a standalone
+  reviewer pool.
 - **EXPERIMENTAL local candidate — OpenCode/Ollama:** Gas City already provides
   `builtin:opencode`, and OpenCode supports Ollama through its standard
   OpenAI-compatible provider plus denyable edit/shell permissions. Do not add a
@@ -294,56 +296,27 @@ this is a local convenience gate, not a security boundary. See ADR-0020 for
 the full decision record and `tests/factory-main-gate-test.sh` for the proof
 that it actually blocks a broken push and never blocks anything else.
 
-## Real-PII leak guard — containment while the dev DB still holds real people (af-6eqc)
+## Real-PII containment — CI structural backstop (af-6eqc)
 
 The dev DB currently holds real person data (the "invariant de confinement"
 in the pre-refactor `legacy/docs/products/saymyname/DESIGN_GOVERNANCE.md`,
 untrusted). Removing that is a separate, non-urgent piece of
-work (af-hq2j, a synthetic dataset with the same shape). Until it ships, this
-is a two-layer **containment** guard against a real identifier leaving the
-machine — it does not eliminate the underlying problem, it contains it.
+work (af-hq2j, a synthetic dataset with the same shape). Until it ships,
+this is a **containment** guard against a real identifier landing in a
+tracked data file — it does not eliminate the underlying problem, it
+contains it.
 
-**Layer A — local, exact-match (`bin/factory-pii-guard`, installed in
-`.githooks/pre-push`).** Only this machine has dev-DB access, so only this
-machine can build the identifier list, and only this machine can run this
-check meaningfully. A local, gitignored file at
-`.gc/pii-guard/real-identifiers.local` (one exact real identifier per line,
-populated by hand or by a separate local-only script — `.gc/` is already
-excluded by the root `.gitignore`) is grepped, exact-match, against the
-outgoing diff (`origin/main...HEAD`) plus the working tree, on every
-`git push`. A match refuses the push. The guard never prints the list, which
-identifier matched, or where — the value being protected must never land in
-a bead, in mail, or in any shared log, so it does not appear even in this
-check's own output. `bin/factory-guard` also surfaces this check (same
-non-disclosure) in its periodic report, so an unpushed match does not wait
-for a push to be noticed.
+The local, exact-match layer (`bin/factory-pii-guard`, formerly installed in
+`.githooks/pre-push` and surfaced in `bin/factory-guard`'s periodic report)
+was retired 2026-09-28 (O14, Benjamin Q4.3); the written rule against real
+person data stays in the SayMyName repo's own `knowledge/real-person-data.md`.
+What remains is the structural backstop:
 
-Layer A only checks what is in that diff and working tree, as literal text
-against the list — it is not a general PII scanner. It has three distinct
-outcomes, not two, and the difference matters: **ACTIVE, clean** (exit 0,
-list present and non-empty, no match — the check actually ran and found
-nothing), **BLOCKED** (exit 1, a listed identifier was found), and
-**INACTIVE** (exit 3, no list or an empty list on this machine — nothing was
-checked at all). Any machine other than the one with dev-DB access is
-expected to be INACTIVE; that is normal, not a fault. What is not
-acceptable is treating INACTIVE like a pass: `bin/factory-pii-guard` used to
-`exit 0` for both "checked, clean" and "nothing to check", so both
-`.githooks/pre-push` and `bin/factory-guard`'s report read the inactive case
-as a plain pass — a repo could go a long time with an empty or missing list
-and every push and every periodic report would still say things were fine
-(observed 2026-09-19: real-person photos in the dev DB, out of scope for
-either layer below, went a year with no signal at all). INACTIVE now has its
-own exit code and its own visible line in `bin/factory-guard`'s report
-(`· pii-guard — INACTIVE …`, not `✓`), and `.githooks/pre-push` still lets
-the push through on INACTIVE — only a real match (exit 1) or a check that
-could not run at all (exit 2, e.g. `git diff` itself failed) blocks it.
-
-**Layer B — both rigs' CI, structural backstop, zero secrets
-(`bin/factory-provenance-guard`, run from each rig's GitHub Actions
-workflow).** CI cannot hold the real-identifier list at all — putting it in
-a GitHub Actions secret would itself hand real PII to a third party, which is
-exactly what this guards against. So CI does not attempt exact-value
-matching. Instead it requires that any data file under a
+**CI, both rigs, zero secrets (`bin/factory-provenance-guard`, run from each
+rig's GitHub Actions workflow).** CI cannot hold a real-identifier list at
+all — putting one in a GitHub Actions secret would itself hand real PII to
+a third party, which is exactly what this guards against. So it does not
+attempt exact-value matching. Instead it requires that any data file under a
 fixture/seed/test-resource path (`fixtures?/`, `seeds?/`, `test-resources?/`,
 `testdata/`, `test-data/`, or Maven's `.../test/resources/`, any depth) carry
 a provenance marker proving it came from the synthetic generator (af-hq2j): a
@@ -357,29 +330,25 @@ An unmarked or stale-attestation data file in one of those paths fails the
 build — it is either real data that should never have landed there, or a
 synthetic file someone forgot to record (or re-record after editing).
 
-Layer B's coverage is narrower than "any real data" and the two boundaries
-that matter are both hard-coded in `bin/factory-provenance-guard`. **Path:**
-only the fixture/seed/test-resource directory names above, at any depth —
-a data file anywhere else in the tree (application code paths, docs,
-top-level data directories that aren't named one of those) is not looked at
-by this guard at all. **File type:** only these extensions —
+Its coverage is narrower than "any real data" and the two boundaries that
+matter are both hard-coded in `bin/factory-provenance-guard`. **Path:** only
+the fixture/seed/test-resource directory names above, at any depth — a data
+file anywhere else in the tree (application code paths, docs, top-level data
+directories that aren't named one of those) is not looked at by this guard
+at all. **File type:** only these extensions —
 `.json .csv .sql .yaml .yml .xml .properties .tsv`. Anything else under a
 watched directory, including images and other binary formats
-(`.jpg .jpeg .png .heic .pdf`, …), is invisible to Layer B's regex and is
-never asked for a `PROVENANCE.md` entry. This is why real-person photos
-(Oxyl dev data) produced no signal from either layer for a year: they are
-binary files, so Layer B's extension filter never selects them even when
-they sit under a watched path, and Layer A only ever looks at `git diff`
-text, which does not usefully match inside binary blobs either.
+(`.jpg .jpeg .png .heic .pdf`, …), is invisible to its regex and is never
+asked for a `PROVENANCE.md` entry. This is why real-person photos (Oxyl dev
+data) produced no signal for a year: they are binary files, so the extension
+filter never selects them even when they sit under a watched path.
 Distinguishing real photo data from synthetic photo data is separate,
 future work (see the guard candidate referenced from af-ox44d); today,
-binary files of any kind are outside what either guard claims to contain.
+binary files of any kind are outside what this guard claims to contain.
 
-Emergency bypass for Layer A is the standard `git push --no-verify`. Neither
-layer is a security boundary against a determined actor; both are local/CI
-convenience gates that catch the mistake before it leaves the machine or
-merges. See `bin/factory-pii-guard` and `bin/factory-provenance-guard` for
-the exact mechanism.
+This is not a security boundary against a determined actor; it is a CI
+convenience gate that catches the mistake before it merges. See
+`bin/factory-provenance-guard` for the exact mechanism.
 
 ## Réversibilité par défaut
 

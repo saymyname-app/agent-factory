@@ -2,15 +2,23 @@
 # factory-waiting-guard — resolves `gc.waiting_on` against the bead it names
 # (af-atyry).
 #
-# `gc.waiting_on` kept a bead out of the campaign's idle ladder (retired
-# 2026-09-26): any non-empty value excluded
-# it, unconditionally, forever. That is correct for a free-text wait
-# ("stalled", a person) but wrong once the value names a bead ID and that
-# bead closes -- "waiting on something" means "not yet", not "never", and
-# nothing clears the field when the wait is over. Live cases (2026-09-19):
-# af-p4v9v (Benjamin's own cockpit feedback) has gc.waiting_on=af-r3j5r,
-# closed since PR #141 merged, and sat excluded from the ladder for 14+
-# hours with no mechanism to notice.
+# `gc.waiting_on` used to keep a bead out of the campaign's idle ladder
+# (retired 2026-09-26): any non-empty value excluded it, unconditionally,
+# forever. That is correct for a free-text wait ("stalled", a person) but
+# wrong once the value names a bead ID and that bead closes -- "waiting on
+# something" means "not yet", not "never", and nothing clears the field when
+# the wait is over. Live cases (2026-09-19): af-p4v9v (Benjamin's own
+# cockpit feedback) has gc.waiting_on=af-r3j5r, closed since PR #141 merged,
+# and sat excluded from the ladder for 14+ hours with no mechanism to notice.
+#
+# The idle ladder is gone, but the field is not orphaned (O14, F12): a merged
+# PR reconciled outside the current delivery loop's wake window still needs a
+# reason to wake the Mayor, and `bin/pr-autopilot`'s `active_waiters_for`
+# reads `gc.waiting_on` for exactly that -- an open/in_progress bead naming
+# the merged one as its `gc.waiting_on` (or a `blocks` dependency) is an
+# active waiter worth waking for. A stale, uncleared `gc.waiting_on` would
+# make that live check see a wait that is actually over, so this guard stays
+# in service to keep the field accurate for that reader.
 #
 # Detection, per open bead carrying a non-empty gc.waiting_on:
 #   - the value does not look like a bead ID (no `prefix-suffix` shape) --

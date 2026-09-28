@@ -3,8 +3,8 @@
 
 The acceptance criterion: a reproducible exhaustion scenario shows the factory
 falls back to another profile instead of stopping; only total exhaustion parks
-work, and that park resumes on its own at quota reset -- never by asking
-Benjamin. The detection fixtures are the exact messages seen on this host.
+work, and that park resumes on its own at quota reset -- never by asking the
+operator. The detection fixtures are the exact messages seen on this host.
 """
 import json
 import os
@@ -247,9 +247,9 @@ class Resolution(unittest.TestCase):
 
     def test_one_claude_limit_takes_every_claude_profile_with_it(self):
         self.exhaust("anthropic")
-        entries = {e["provider"]: e["state"] for e in self.pick("claude-reviewer")["chain"]}
-        self.assertEqual({"claude": "exhausted", "claude-standard": "exhausted", "codex": "available"}, entries)
-        self.assertEqual("codex", self.pick("claude-reviewer")["provider"])
+        entries = {e["provider"]: e["state"] for e in self.pick()["chain"]}
+        self.assertEqual({"claude-standard": "exhausted", "claude-cheap": "exhausted", "codex": "available"}, entries)
+        self.assertEqual("codex", self.pick()["provider"])
 
     def test_total_exhaustion_names_the_earliest_reset(self):
         self.exhaust("openai", "2026-09-21T05:22:00+00:00")
@@ -334,13 +334,13 @@ class Resolution(unittest.TestCase):
         # Mark/clear the now-preferred pool (openai, af-wpjgu restore
         # 2026-09-21) so the effect is actually visible on the default pick.
         pf.apply_control(self.state, self.policy, "mark",
-                         {"pool": "openai", "until": "2026-09-21T05:22:00Z", "reason": "vu à l'écran"}, NOW, "Benjamin")
+                         {"pool": "openai", "until": "2026-09-21T05:22:00Z", "reason": "vu à l'écran"}, NOW, "operator-1")
         # A later detection with another reset does not overwrite a human mark.
         self.assertFalse(pf.record_detection(self.state, self.policy, "openai",
                                              {"kind": "exhausted", "until": NOW + 60, "evidence": "x"}, NOW))
-        self.assertEqual("Benjamin", self.state["pools"]["openai"]["by"])
+        self.assertEqual("operator-1", self.state["pools"]["openai"]["by"])
         self.assertEqual("claude-standard", self.pick()["provider"])
-        pf.apply_control(self.state, self.policy, "clear", {"pool": "openai"}, NOW, "Benjamin")
+        pf.apply_control(self.state, self.policy, "clear", {"pool": "openai"}, NOW, "operator-1")
         self.assertEqual("codex", self.pick()["provider"])
 
     def test_disable_force_and_reorder(self):
@@ -401,7 +401,7 @@ class Resolution(unittest.TestCase):
         stale = {
             "auto": True,
             "pools": {"openai-spark": {"status": "exhausted", "until": pf.iso(NOW + 3600), "source": "detected"}},
-            "disabled": {"codex-spark": {"reason": "server rejects it", "by": "Benjamin"}},
+            "disabled": {"codex-spark": {"reason": "server rejects it", "by": "operator-1"}},
             "forced": {"workspace": "codex-spark"},
             "chains": {"workspace": ["codex-spark", "claude-standard"]},
         }
@@ -586,7 +586,7 @@ class EndToEnd(unittest.TestCase):
         """Regression, 2026-09-20: Claude login expired ~12:10Z; provider-failover
         marked pool anthropic error/auth; 7 error detections (one per tick
         while the login stayed broken) climbed the old exponential backoff
-        (10 * 2**(strikes-1), capped 8h) to an 8h hold. Benjamin fixed the
+        (10 * 2**(strikes-1), capped 8h) to an 8h hold. the operator fixed the
         login at ~17:34Z but the factory only came back at ~17:45Z, after a
         human ran `set --action clear` by hand. This replays it end to end:
         the hold must never grow past auth_hold_minutes, and a credential
@@ -610,7 +610,7 @@ class EndToEnd(unittest.TestCase):
         self.assertIn('name = "mayor"\nprovider = "codex"', self.overlay())  # anthropic unusable meanwhile
         self.assertIn("session reset af-m", self.calls())  # stuck session moved off it
 
-        # Benjamin fixes the login: the credentials file is rewritten.
+        # The operator fixes the login: the credentials file is rewritten.
         creds.write_text('{"token": "fresh"}', encoding="utf-8")
         os.utime(creds, (t + 600, t + 600))  # force a distinct mtime, whatever the fs clock resolution
         before = len(self.calls())
@@ -620,10 +620,18 @@ class EndToEnd(unittest.TestCase):
         self.assertNotIn("anthropic", state["pools"])  # cleared, not just held shorter
         self.assertIn('name = "mayor"\nprovider = "codex"', self.overlay())
         self.assertIn("credential file changed since the error was marked -- cleared", out)
-        self.assertIn("reload", self.calls()[before:])  # Gas City's own config-drift restart
-        # takes it from here (ADR-0018 s4): the overlay flipping back to the
-        # preferred provider and reloading is exactly the mechanism verified
-        # live 2026-09-16, moving a running session within 15s each way.
+        # ADR-0018 s4's mechanism (overlay flipping back to the preferred
+        # provider, then Gas City's own config-drift restart reloading it --
+        # verified live 2026-09-16, moving a running session within 15s each
+        # way) fires only when some target's *resolved* provider actually
+        # reverts. `claude-reviewer` was the only target whose default pick
+        # was an anthropic-pool provider; retired 2026-09-28 (O14, F15), so a
+        # pure anthropic outage no longer changes any target's resolution --
+        # every remaining target (workspace/mayor/ux-reviewer) prefers codex,
+        # unaffected throughout. Nothing here still exercises a "reload"; the
+        # session-level reset above is what actually moved the live mayor
+        # session, both into and back out of the incident.
+        self.assertNotIn("reload", self.calls()[before:])
         self.assertIn("auth-recovered", [h["event"] for h in
                        json.loads(self.run_tool("status", "--json", PROVIDER_NOW=str(t)).stdout)["history"]])
 
@@ -662,7 +670,7 @@ class EndToEnd(unittest.TestCase):
 
     def test_cockpit_controls_through_the_cli(self):
         result = json.loads(self.run_tool(
-            "set", "--action", "mark", "--by", "Benjamin (cockpit)",
+            "set", "--action", "mark", "--by", "operator-1 (cockpit)",
             "--args", json.dumps({"pool": "openai", "minutes": 90, "reason": "limite vue sur le site"})).stdout)
         self.assertTrue(result["ok"])
         self.assertEqual("claude-standard", result["status"]["targets"]["workspace"]["provider"])
@@ -674,7 +682,7 @@ class EndToEnd(unittest.TestCase):
         self.run_tool("tick")  # the snapshot of live sessions comes from a tick
         status = json.loads(self.run_tool("status", "--json").stdout)
         self.assertEqual("agent-factory-provider-status/v1", status["contract"])
-        self.assertEqual({"workspace", "mayor", "claude-reviewer", "ux-reviewer"}, set(status["targets"]))
+        self.assertEqual({"workspace", "mayor", "ux-reviewer"}, set(status["targets"]))
         self.assertIn("manual:mark", [h["event"] for h in status["history"]])
         self.assertEqual({"af-w1", "af-m"}, {s["id"] for s in status["sessions"]})
 
@@ -690,7 +698,7 @@ class EndToEnd(unittest.TestCase):
         self.assertTrue((self.d / "city.provider.toml").exists())
 
     def test_total_provider_exhaustion_pauses_dispatch_and_resumes_by_itself(self):
-        """O08 (af-harft): every pool down files one bead and pages Benjamin
+        """O08 (af-harft): every pool down files one bead and pages the operator
         straight away (bin/dispatch-door then refuses new work while it reads
         provider-failover status as active); the moment a provider recovers
         the pause clears and the bead closes automatically -- no human

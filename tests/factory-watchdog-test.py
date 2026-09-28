@@ -148,7 +148,7 @@ class WorkflowRules(unittest.TestCase):
 
 class GhAuthRules(unittest.TestCase):
     def test_a_healthy_gh_auth_is_not_flagged(self):
-        self.assertIsNone(assess_gh_auth(0, "Logged in to github.com account benjamin-hurand"))
+        self.assertIsNone(assess_gh_auth(0, "Logged in to github.com account operator-1"))
 
     def test_a_failing_gh_auth_is_flagged(self):
         code, message = assess_gh_auth(1, "You are not logged into any GitHub hosts")

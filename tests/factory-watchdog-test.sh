@@ -33,7 +33,7 @@ jq -n --arg path "$TMP/city" '{"rigs":[{"name":"saymyname-backend","path":$path,
 EVENTS="$TMP/events.jsonl";       : > "$EVENTS"
 COORD="$TMP/coord.json";         printf '[{"id":"af-1vr4","metadata":{}}]' > "$COORD"
 GH_AUTH_RC="$TMP/gh-auth-rc";   printf '0' > "$GH_AUTH_RC"
-GH_AUTH_OUT="$TMP/gh-auth-out"; printf 'Logged in to github.com account benjamin-hurand' > "$GH_AUTH_OUT"
+GH_AUTH_OUT="$TMP/gh-auth-out"; printf 'Logged in to github.com account operator-1' > "$GH_AUTH_OUT"
 mkdir -p "$TMP/city/.gc/runtime"
 BEADS_DIR="$TMP/beads"; mkdir -p "$BEADS_DIR"
 CALLS="$TMP/calls.log"; : > "$CALLS"
@@ -261,7 +261,7 @@ grep -q '^bd create' "$CALLS" && fail "--check-only must never file a bead for g
 
 # ...recovery auto-resolves the shared bead without a human closing it by hand.
 printf '0' > "$GH_AUTH_RC"
-printf 'Logged in to github.com account benjamin-hurand' > "$GH_AUTH_OUT"
+printf 'Logged in to github.com account operator-1' > "$GH_AUTH_OUT"
 reset_logs
 out=$(watchdog)
 grep -q "gh auth —" <<<"$out" && fail "a recovered gh auth must not still be reported as a problem"

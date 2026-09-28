@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+#
+# factory-setup — one-time bootstrap for a fresh clone (O14, F17).
+#
+# A fresh `git clone` of this repository runs with none of its git hooks
+# active: `core.hooksPath=.githooks` lives only in a checked-out working
+# copy's own `.git/config`, which `git clone` never populates from tracked
+# state (`.githooks/` files are ordinary tracked files until something points
+# git at them). Before this script existed, a brand-new clone had no main-
+# branch landing gate (`bin/factory-main-gate`) and no live-root git-hygiene
+# enforcement (`.githooks/reference-transaction`, `.githooks/post-checkout`)
+# until an operator remembered to run `git config core.hooksPath .githooks`
+# by hand — GETTING_STARTED.md never told them to.
+#
+# This is idempotent: safe to re-run on a clone that is already configured.
+set -Eeuo pipefail
+
+PROGRAM_NAME="factory-setup"
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+
+case "${1:-}" in
+  -h|--help|help)
+    printf 'Usage: %s\n\nEnables this clone'"'"'s tracked .githooks/ (main-branch landing gate,\nlive-root git-hygiene enforcement). Idempotent.\n' "$PROGRAM_NAME"
+    exit 0
+    ;;
+esac
+
+cd "$ROOT"
+
+if [ ! -d .git ]; then
+  echo "$PROGRAM_NAME: $ROOT is not a git working copy (no .git/) — run this from a clone of the repository" >&2
+  exit 2
+fi
+
+if [ ! -d .githooks ]; then
+  echo "$PROGRAM_NAME: .githooks/ not found under $ROOT" >&2
+  exit 2
+fi
+
+git config core.hooksPath .githooks
+echo "$PROGRAM_NAME: core.hooksPath=.githooks (main-branch landing gate, live-root git-hygiene enforcement)"
+
+missing_exec=""
+for hook in .githooks/*; do
+  [ -f "$hook" ] || continue
+  [ -x "$hook" ] || missing_exec="$missing_exec ${hook#./}"
+done
+if [ -n "$missing_exec" ]; then
+  chmod +x $missing_exec
+  echo "$PROGRAM_NAME: restored the executable bit on:$missing_exec"
+fi
+
+echo "$PROGRAM_NAME: done — this clone's git hooks are active"

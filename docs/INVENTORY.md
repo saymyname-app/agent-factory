@@ -22,11 +22,11 @@ only when verified in the code; live checks for runtime state.
 
 | Verdict | Files |
 |---|---|
-| kernel | 76 |
-| ops | 91 |
-| to-redo | 46 |
-| legacy | 1 |
-| **total** | **214** (fixture directories counted once each) |
+| kernel | 75 |
+| ops | 94 |
+| to-redo | 42 |
+| legacy | 0 |
+| **total** | **211** (fixture directories counted once each; O14/af-8l3ea moved 6 files to `legacy/`, re-verdicted 4, and added 3 new files — `bin/factory-setup`, `config/operator.toml`, `tests/factory-setup-test.sh` — see F12, F15, F17, F19, F20, F23 and the PII-guard row) |
 
 ## Findings
 
@@ -43,18 +43,18 @@ only when verified in the code; live checks for runtime state.
 | F09 | low | `agents/mayor/prompt.template.md` | says `build-basic` "comes from the pack" (a local fork in `formulas/` overrides it) | A4-DOCS |
 | F10 | med | `docs/decisions/ADR-0026-*.md`, `docs/DELIVERY.md:188` | rely on the retired `mayor-campaign` readiness lane; needs the same dated amendment ADR-0025 got | A4-DOCS |
 | F11 | med | `lib/protected_rigs.sh`, `bin/deliver-close:127-139`, `bin/factory-guard:384`, `bin/factory-delivery-guard:84`, `bin/factory-watchdog:58`, `city.toml` (`[[patches.agent]] dir=saymyname-*`, `/home/benja` paths), `.githooks/post-checkout:20`, `pr-autopilot-*`/watchdog/failover test fixtures | SayMyName and host paths hardcoded in a project-agnostic Factory; `deliver-close` duplicates the "single source"; a new project's rig gets no guard coverage and no warning | A5 (per-project rig config) |
-| F12 | med | `bin/factory-waiting-guard`, `bin/factory-guard` §11 + tests | only reader of `gc.waiting_on` was the retired idle ladder (verdict `legacy`) | A5 (retire or re-justify) |
+| F12 | med | `bin/factory-waiting-guard`, `bin/factory-guard` §11 + tests | only reader of `gc.waiting_on` was the retired idle ladder (verdict `legacy`) | RE-JUSTIFIED (O14, af-8l3ea): `bin/pr-autopilot`'s `active_waiters_for` reads `gc.waiting_on` to decide whether a reconciled merge outside its wake window still needs to wake the Mayor; a stale value would corrupt that live check, so the guard that keeps it accurate stays in service |
 | F13 | med | `bin/campaign-pointer` start/finish, Mayor prompt 283-286 | write `gc.current`, `gc.current_jit`, `gc.last_delivered`, `gc.campaign_progress_at` that nothing outside legacy reads; lock named after the campaign | FIXED (O06, af-sau1a): `campaign-pointer` retired entirely, its dead fields no longer written anywhere |
 | F14 | med | `formulas/mol-scoped-work.formula.toml` | prints "refuses base=main" then pushes/opens a PR against `main` (default base); escalation goes to `/dev/null \|\| true` (silent failure) | PARTIALLY FIXED (O06, af-sau1a): `notify-failure` now calls `escalation-door mayor` and `exit 1`s if it fails; the base=main misprint is untouched |
-| F15 | low | `formulas/mol-scoped-work`, `formulas/mol-polecat-commit`, `agents/claude-reviewer`, `bin/factory-observe`, `bin/factory-resources`, `bin/goal-delivery-pairs`, 5 prototype/oracle scripts | no runtime caller (only tests/docs); `mol-polecat-commit` refuses base `main` so cannot run on the Factory repo | A5 (keep, route, or retire each) |
+| F15 | low | `formulas/mol-scoped-work`, `formulas/mol-polecat-commit`, `agents/claude-reviewer`, `bin/factory-observe`, `bin/factory-resources`, `bin/goal-delivery-pairs`, 5 prototype/oracle scripts | no runtime caller (only tests/docs); `mol-polecat-commit` refuses base `main` so cannot run on the Factory repo | RESOLVED per-item (O14, af-8l3ea): `mol-scoped-work`/`mol-polecat-commit` are wired — `bin/dispatch-door` validates and routes both against `config/projects/saymyname-{backend,frontend}.toml`'s `formulas` list (O03, af-ui0ua landed after this finding was written; nothing dispatches them yet, but the door accepts them for the theme that needs worktree isolation on those rigs). `claude-reviewer` retired — no prompt or formula ever dispatched it, and the dispatch door has no path for an ad-hoc named reviewer session outside a rig's fixed `sling_target`; moved to `legacy/agents/`. `factory-observe`, `factory-resources`, `goal-delivery-pairs` and the 5 prototype/oracle scripts keep their existing `kernel`/`ops` verdicts unchanged: each is a deliberate, documented capability (B09 kernel foundation; manual operator tools; one-time Planning Run proofs) whose lack of a runtime caller is by design, not drift |
 | F16 | low | Mayor prompt, `bin/factory-work-dispatch` | GUARDED Factory work goes to `build-basic` but no target is named, and `factory-work-dispatch` accepts only `mol-do-work` | FIXED (O03, af-ui0ua): `bin/dispatch-door` resolves target and validates formula for every rig (`build-basic` included) from `config/projects/*.toml`; `factory-work-dispatch` wraps it; `bin/dispatch-door-guard` reports any dispatch that bypasses it |
 | F17 | med | `.githooks/`, `docs/GETTING_STARTED.md` | a fresh clone runs without PII guard, main gate or live-root hooks: `core.hooksPath` is only in the live `.git/config` | A5 |
 | F18 | med | `bin/planning-run-router:130-149` | `clear_reservation` rewrites tracked `config/planning-run-reservation.json` in the live root (dirty tree, guard snapshots, drift from `main`) | A5 |
-| F19 | low | `bin/factory-guard:138`, `city.toml`, provider policy, model catalog | `claude-fable` defined in `city.toml`, checked nowhere, absent from policy and catalog | A5 |
-| F20 | low | `config/factory-observe*.schema.json` | no code loads either schema (validation hand-written); the doc says the policy is validated against it | A5 |
+| F19 | low | `bin/factory-guard:138`, `city.toml`, provider policy, model catalog | `claude-fable` defined in `city.toml`, checked nowhere, absent from policy and catalog | FIXED (O14, af-8l3ea): no agent, order or formula ever names `claude-fable`, so it is commented out of `city.toml` (same treatment as the unused `claude-opus` tier already there) instead of checked by the guard |
+| F20 | low | `config/factory-observe*.schema.json` | no code loads either schema (validation hand-written); the doc says the policy is validated against it | FIXED (O14, af-8l3ea): both schema files moved to `legacy/config/` (neither had a reader); `docs/FACTORY_OBSERVE.md`, `docs/CONTEXT_INDEX.md` and `bin/factory-observe`'s docstring now point at the hand-written validators (`lib/factory_observe.py`, `lib/factory_measures.py`) instead of a schema file nothing loads |
 | F21 | low | `tests/build-basic-fail-fast-runtime-test.sh`, `tests/factory-watchdog-order-test.sh` | local-only tests run nowhere automatically; the second hardcodes `/home/benja/agent-factory` | PARTIALLY FIXED (O13): new `local-only-tests` order (`orders/local-only-tests.toml`, `bin/local-only-tests`) runs both nightly and pages the Mayor on failure. The hardcoded path in `factory-watchdog-order-test.sh` is untouched -- it matches the live root by design, which is what this order runs against. |
 | F22 | med | `docs/DELIVERY.md:558-577`, `docs/OPERATIONS.md:389-506` | SayMyName-only rig contracts and operations; `gc bd create --rig saymyname-*` contradicts "new work enters through the Planning Run router" | A5 (move to the product repos) |
-| F23 | low | planning-run fixtures (15 files), watchdog / planning-exception-guard tests, `provider-failover-test.py` | operator's first name and GitHub login as signer; SayMyName backend test output as fixture | A5 (synthetic operator id) |
+| F23 | low | planning-run fixtures (15 files), watchdog / planning-exception-guard tests, `provider-failover-test.py` | operator's first name and GitHub login as signer; SayMyName backend test output as fixture | FIXED (O14, af-8l3ea): `tests/provider-failover-test.py`, `tests/factory-watchdog-test.{sh,py}` and `tests/factory-planning-exception-guard-test.sh` now use the synthetic `operator-1` instead of the operator's real name or GitHub login. Runtime messages: `bin/escalation-door`'s mail/printed text now names the operator from `config/operator.toml` (`GC_OPERATOR_NAME` override, defaulting to that file's `name`) instead of a hardcoded string; the `gc.needs_benjamin` metadata field, the `benjamin` subcommand and the "NEEDS BENJAMIN" list name are a separate, stable schema/concept and are unchanged (renaming those is topology, not this ticket's repair). No "SayMyName backend test output as fixture" was found under `tests/fixtures/` to replace — the only SayMyName-named fixture (`tests/fixtures/project-planning-profile/profiles/invalid-saymyname.json`) is deliberate rejection-rule test data, not captured backend output |
 | F24 | low | off-box backup | archive repo last pushed 18:42Z while `jsonl-export` completes every 15 min: no freshness signal says whether pushes still happen | FIXED (O13): new `backup-freshness` order (`orders/backup-freshness.toml`, `bin/backup-freshness`) pages the Mayor when the archive hasn't been pushed in 24h while beads kept changing. |
 | F25 | low | `.gc/runtime/factory-watchdog-signals.json` | written by three scripts, no reader | FIXED (O06, af-sau1a): none of the three writers touches the file any more; `merge_signals`/`merge-signals` removed from `lib/factory_watchdog.py` |
 
@@ -86,8 +86,6 @@ an A5 input.
 | `CLAUDE.md` | ops | Claude Code | @AGENTS.md include |
 | `CONTEXT.md` | kernel | ADR-0028, refactor spec | project-agnostic domain glossary |
 | `README.md` | to-redo | entry point | says product status and preview are configured while also retired (F04) |
-| `agents/claude-reviewer/agent.toml` | ops | city.toml patch (max 1), config/provider-policy.json, docs/DELIVERY.md | On-demand reviewer pool; no prompt/formula ever dispatches it (see findings) |
-| `agents/claude-reviewer/prompt.template.md` | ops | claude-reviewer agent | Generic read-only reviewer prompt, coherent; no dispatcher names it |
 | `agents/factory-worker/agent.toml` | kernel | bin/factory-work-dispatch, city.toml, mayor prompt, tests/factory-work-dispatch-test.sh | The HQ implementation role every approved-graph af-* bead goes to |
 | `agents/factory-worker/prompt.template.md` | kernel | factory-worker sessions | Generic graph.v2 claim/close protocol; no drift found vs gc hook/bd usage |
 | `agents/mayor/agent.toml` | kernel | pack.toml named_session mayor | Mayor provider pin |
@@ -121,12 +119,12 @@ an A5 input.
 | `bin/factory-guard` | to-redo | orders/factory-guard.toml (5m), git hooks, factory-boot | Core live guard, but §5 hardcodes SayMyName rigs, §7/7b store dedup on campaign bead af-1vr4, §11 serves the retired idle ladder |
 | `bin/factory-main-gate` | ops | .githooks/pre-push, factory-watchdog, CI tests | Pre-push main landing gate (ADR-0020); header cites legacy incident only as history |
 | `bin/factory-observe` | kernel | CI test, docs/FACTORY_OBSERVE.md | B09 observe/wake kernel; no order or script calls it at runtime (see findings) |
-| `bin/factory-pii-guard` | ops | .githooks/pre-push, factory-guard §3c, CI test | Layer A real-PII guard |
 | `bin/factory-planning-exception-guard` | kernel | factory-guard §12, deliver-close, CI test | Detection net for ADR-0028 semantic/topology closes |
 | `bin/factory-provenance-guard` | ops | Backend/Frontend CI workflows (backend-ci.yml, frontend-ci.yml), CI test | Layer B PII provenance guard run by product-repo CI |
 | `bin/factory-resources` | ops | operator tool (docs/RUNBOOK_STOP_AND_RESTART.md) only | Host RAM/swap headroom check; no order, no test |
+| `bin/factory-setup` | ops | docs/GETTING_STARTED.md, CI test | NEW (O14, F17): one-time fresh-clone bootstrap — sets `core.hooksPath=.githooks`, restores the executable bit if a clone drops it |
 | `bin/factory-shared-drain-workspace` | ops | assets/workflows/build-basic/{prepare-shared-worktree,publish,cleanup-shared-worktree}.md, CI test | Shared-drain worktree adapter for build-basic same-session |
-| `bin/factory-waiting-guard` | legacy | factory-guard §11, CI test | Maintains gc.waiting_on, whose only consumer was the retired idle ladder (legacy/lib/factory_campaign.py) |
+| `bin/factory-waiting-guard` | ops | factory-guard §11, CI test | RE-JUSTIFIED (O14, F12): maintains `gc.waiting_on`, which `bin/pr-autopilot`'s `active_waiters_for` now reads live to decide whether a reconciled merge still needs to wake the Mayor |
 | `bin/factory-watchdog` | to-redo | orders/factory-watchdog.toml, CI tests | Live paging (§1-4,7); FIXED (O06, af-sau1a): the reader-less cockpit signal file is no longer written; some header/comments still describe campaign/cockpit |
 | `bin/factory-work-dispatch` | kernel | mayor prompt, CI test | The HQ convenience wrapper (factory-worker, mol-do-work, --reassign) around bin/dispatch-door (O03) |
 | `bin/fixture-city-oracle` | kernel | CI test, project-isolation-oracle, docs | Fixture-city oracle (ADR-0027 legacy_path fences) |
@@ -149,11 +147,10 @@ an A5 input.
 | `bin/ticket-graph-publish` | kernel | mayor prompt (patch), planning-run-router, planning-exception, CI | validate/publish/patch; `patch` exists as the prompt says |
 | `bin/wayfinding-run` | kernel | planning-run-router, spec-approve, planning-exception, CI | Wayfinding stage |
 | `city.toml` | to-redo | gc; factory-guard; provider-failover; build-gates | live, but comments route provider changes via retired cockpit; SayMyName rigs/patches + /home/benja paths |
-| `config/factory-observe-measures.schema.json` | kernel | docs only (bin/factory-observe docstring, FACTORY_OBSERVE.md); no code loads it | B09 measures contract; validation hand-coded in lib/factory_measures.py |
 | `config/factory-observe-policy.json` | kernel | bin/factory-observe, lib/factory_observe.py, test | B09 policy |
-| `config/factory-observe-policy.schema.json` | to-redo | nobody (0 references) | orphan schema; policy validated by hand-coded lib/factory_observe.validate_policy |
 | `config/fixture-city-bwrap.apparmor` | kernel | ci.yml, bin/project-isolation-oracle, test | P05 sandbox profile for CI |
 | `config/model-catalog.json` | ops | bin/provider-failover check-models, orders/model-staleness-check.toml | coherent; omits claude-fable (skipped by design); description quotes cockpit |
+| `config/operator.toml` | ops | bin/escalation-door | NEW (O14, F23): operator display name for runtime messages, read instead of a hardcoded string; `GC_OPERATOR_NAME` overrides |
 | `config/planning-allocation-prototype.json` | kernel | bin/planning-allocation-prototype, test (CI) | P02 oracle input |
 | `config/planning-map-concurrency-prototype.json` | kernel | bin/planning-map-concurrency-prototype, test (CI) | P03 oracle input |
 | `config/planning-run-reservation.json` | kernel | bin/planning-run-router (reads AND rewrites) | B12 AC#5 reservation: factory-operations-v2 then C01 |
@@ -196,8 +193,8 @@ an A5 input.
 | `formulas/build-basic-review-scoped.formula.toml` | kernel | build-basic (expand), tests/build-basic-fail-fast-test.py | GUARDED-tier review expansion (local fail-fast fork) |
 | `formulas/build-basic.formula.toml` | kernel | mayor prompt GUARDED tier, assets/workflows/build-basic, CI | Local fork overriding the pack's build-basic |
 | `formulas/mol-do-work.formula.toml` | to-redo | factory-work-dispatch (only formula allowed), mayor prompt default, CI contract test | Core writer formula, but description says "for demos" and claim rationale cites idle ladder/campaign_progress_at |
-| `formulas/mol-polecat-commit.formula.toml` | to-redo | mayor prompt (optional), factory-delivery-guard, CI contract test | No routing path selects it; refuses main so unusable on HQ; rationale cites idle ladder |
-| `formulas/mol-scoped-work.formula.toml` | to-redo | CI contract test, factory-watchdog test only | No routing path selects it; "refuses base=main" but proceeds; FIXED (O06, af-sau1a): escalates through `escalation-door mayor`, `exit 1`s if it fails |
+| `formulas/mol-polecat-commit.formula.toml` | ops | mayor prompt (optional), factory-delivery-guard, `config/projects/saymyname-{backend,frontend}.toml` (`formulas`), CI contract test | RE-VERDICTED (O14, F15): `bin/dispatch-door` (O03, af-ui0ua) validates and routes it for both SayMyName rigs; refuses base `main` so still unusable on HQ, which is correct since HQ's project file does not list it |
+| `formulas/mol-scoped-work.formula.toml` | ops | `config/projects/saymyname-{backend,frontend}.toml` (`formulas`), CI contract test, factory-watchdog test | RE-VERDICTED (O14, F15): `bin/dispatch-door` (O03, af-ui0ua) validates and routes it for both SayMyName rigs; "refuses base=main" but proceeds — FIXED (O06, af-sau1a): escalates through `escalation-door mayor`, `exit 1`s if it fails |
 | `lib/factory_build_gates.py` | ops | bin/factory-build-gates | Build-gate wiring check |
 | `lib/factory_delivery_proof.py` | ops | factory-delivery-guard, factory-guard, factory-waiting-guard, pr-autopilot, CI | Proof-field rules; comments cite cockpit as label origin (history) |
 | `lib/factory_measures.py` | kernel | bin/factory-observe, CI | Measures validation for B09 |
@@ -243,12 +240,12 @@ an A5 input.
 | `tests/factory-live-root-guard-test.sh` | ops | .githooks post-checkout/reference-transaction live-root guard | in CI (ci.yml:230) |
 | `tests/factory-main-gate-test.sh` | ops | bin/factory-main-gate + .githooks/pre-push | in CI (ci.yml:209); header cites legacy factory-cockpit-test.py as the incident |
 | `tests/factory-observe-test.py` | kernel | factory-observe | in CI (ci.yml:56) |
-| `tests/factory-pii-guard-test.sh` | ops | bin/factory-pii-guard | in CI (ci.yml:215); uses synthetic example.com identity |
 | `tests/factory-planning-exception-guard-test.sh` | kernel | bin/factory-planning-exception-guard + bin/planning-exception | in CI (ci.yml:206) |
 | `tests/factory-provenance-guard-test.sh` | ops | bin/factory-provenance-guard | in CI (ci.yml:218) |
 | `tests/factory-session-boot-test.py` | ops | lib/factory_session_boot.py | in CI (ci.yml:131) |
+| `tests/factory-setup-test.sh` | ops | bin/factory-setup | NEW (O14, F17); in CI |
 | `tests/factory-shared-drain-workspace-test.sh` | ops | bin/factory-shared-drain-workspace; fixture shared-drain | in CI (ci.yml:155) |
-| `tests/factory-waiting-guard-test.sh` | to-redo | bin/factory-waiting-guard (clears gc.waiting_on) | in CI (ci.yml:203) but the guard's stated purpose is re-admitting beads to the idle ladder of legacy/lib/factory_campaign.py (retired) |
+| `tests/factory-waiting-guard-test.sh` | ops | bin/factory-waiting-guard (clears gc.waiting_on) | in CI (ci.yml:203); RE-VERDICTED (O14, F12) with the guard it tests — `gc.waiting_on` now serves `pr-autopilot`'s live wake-window check, not the retired idle ladder |
 | `tests/factory-watchdog-order-test.sh` | to-redo | orders/factory-watchdog.toml via live gc | not in ci.yml; "# ci: local-only"; hardcodes /home/benja/agent-factory exec path |
 | `tests/factory-watchdog-test.py` | to-redo | lib/factory_watchdog.py | in CI (ci.yml:137); quarantine fixtures use rig "saymyname-backend" (SayMyName-specific fixture) |
 | `tests/factory-watchdog-test.sh` | to-redo | bin/factory-watchdog | in CI (ci.yml:140); rig list + repo saymyname-*; comment mentions cockpit signal file / campaign liveness |

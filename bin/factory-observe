@@ -11,8 +11,8 @@ evidence. Policy: config/factory-observe-policy.json (versioned -- roles per
 observed area, exemption/handoff evidence conditions). State:
 .gc/runtime/factory-observe-state.json (host-local, mutable -- last-observed
 snapshot, current exemption activation, bounded history). Measures policy:
-config/factory-observe-measures.schema.json validated by
-lib/factory_measures.py. Design: docs/FACTORY_OBSERVE.md.
+hand-validated by lib/factory_measures.py (no JSON Schema file backs it — see
+F20). Design: docs/FACTORY_OBSERVE.md.
 
   policy-validate                             validate the observe policy file
   observe --snapshot <file> [--evidence <file>]   diff, wake, re-evaluate exemptions
