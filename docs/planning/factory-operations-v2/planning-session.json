@@ -1,0 +1,456 @@
+{
+  "contract": "agent-factory-planning-session/v1",
+  "session_id": "factory-operations-v2-2026-09-28",
+  "request": {
+    "summary": "Factory operations v2: review every order and the Mayor's manual operations, then regroup/add/modify/delete them (A5).",
+    "complexity": "complex"
+  },
+  "target_rigs": [
+    "agent-factory",
+    "saymyname-backend",
+    "saymyname-frontend"
+  ],
+  "declared_context": {
+    "project_knowledge_path": "docs/planning/factory-operations-v2/decisions-log.md",
+    "work_graph_path": "docs/planning/factory-operations-v2/work-graph.json"
+  },
+  "context_probe": [
+    "docs/planning/factory-operations-v2/decisions-log.md",
+    "docs/planning/factory-operations-v2/work-graph.json"
+  ],
+  "wayfinder_ceremony_invoked": true,
+  "interview_rounds": 7,
+  "signals": [],
+  "shared_understanding": [
+    {
+      "topic": "behavior",
+      "statement": "Wake: `bin/ticket-graph-publish` notifies the Mayor itself at the end of every successful publish (and patch). Safety net: when ready work has been idle > 15 min with no active worker, the Mayor is re-woken (a `condition` order).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "Dispatch door: every dispatch, for every rig and every formula (`mol-do-work`, `build-basic`, role formulas), goes through one door script that validates target, formula and `--reassign`; raw `gc sling` is forbidden to the Mayor and a guard check reports any dispatch that bypassed the door.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "Resume, don't redo: on re-dispatch the door finds the ticket's branch, PR and notes and hands them to the worker, who must continue them; a re-planned ticket carries `supersedes <old id>` and inherits the existing work; starting over is allowed only when the worker records in the ticket why the old work is unusable.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "One NEEDS BENJAMIN list, fed by one escalation door (replacing `bin/campaign-pointer escalate`); no escalation may fail silently (no `>/dev/null || true`).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "Straight to Benjamin: a decision only he owns (consent, personal data, spend, production, behaviour/acceptance change), Factory stopped (Mayor down > 10 min, all providers exhausted), a plan fully delivered. Mayor first, Benjamin only if unresolved after 2 h: an order failing repeatedly, a stuck PR or repeated red CI.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "Total provider exhaustion: dispatch of new work pauses, resumes by itself at quota reset, and one line lands on the NEEDS BENJAMIN list.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "Interim display: the operator session (Claude/Codex) shows the NEEDS BENJAMIN list and a one-line count of pending proposals at session start; this is transitional until C01 moves both to the cockpit.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "Workers push their branch from the first commit and after each commit; the branch name is written on the ticket at claim time.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "factory-guard's local-commit backup covers the product rigs too, detached HEADs included; worktree cleanup never uses an `rm -rf` fallback and keeps (and reports to the Mayor) any worktree holding unpushed or uncommitted work; a fresh branch with no own commit is spared 24 h.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "No build/test runs as root in worker worktrees; the guard reports any root-owned file there.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "One project file per project in the Factory (`config/projects/<project>.toml`: repos, protected branch, required CI); every script that today hardcodes SayMyName reads it; a check fails loudly when a rig known to Gas City has no project file.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "A setup script enables `.githooks` on a fresh clone; the two local-only tests run in a nightly order whose failure pages the Mayor; tests use a synthetic operator (`operator-1`); runtime messages name the operator from config.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "Pack orders are tuned only from `city.toml` (`[orders] skip`, `[[orders.overrides]]`), never forked; order triggers follow the per-order verdict table in `decisions`.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "`events.jsonl` rotated archives are kept 14 days (`[events.rotation] archive_retain_age`); traces keep Gas City's built-in caps.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "Backup freshness: the Mayor is paged when the JSONL archive has not been pushed for > 24 h while beads changed.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "bd and gc usage telemetry are off for interactive use and for every order (`BD_DISABLE_METRICS=1`, `GC_DISABLE_USAGE_METRICS=1` in the supervisor environment); the stray untracked `.config/` in the live root and gc's pending local metrics queue are removed.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "ADR-0028 is amended to decision 8: `ticket-graph-publish patch` can reorder, merge and supersede tickets; the Mayor may reslice without a Planning Run only when the tool proves the acceptance criteria unchanged, else the question goes to the NEEDS BENJAMIN list; every patch records author and reason; a worker's self-split tickets carry `split from <id>`.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "A blocked ticket cannot close without a classification (repair / behaviour / topology); behaviour or topology opens a Planning Exception (af-zwhh0 wiring finished in the formulas).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "Improvement ideas become tickets labelled `proposal`, never dispatched; each Planning Run starts by triaging them with Benjamin.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "The Mayor's manual upkeep gestures become named scripts (`bin/factory-maintain <gesture>`) that check their own safety criteria before acting, log what they did and can be undone; the Mayor may call them freely; anything else stays ADMIN (Benjamin); a repetitive safe gesture becomes an order.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "behavior",
+      "statement": "The router's reservation state lives in untracked runtime state, so a publish no longer dirties the live root (F18).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "boundary",
+      "statement": "Target rigs: `agent-factory` (all code, orders, formulas, prompts, docs); `saymyname-backend` and `saymyname-frontend` only receive the SayMyName rig contracts moved out of Factory docs, as dedicated files (progressive disclosure: at most a one-line pointer in their `AGENTS.md`), by PR to `dev`.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "boundary",
+      "statement": "Gas City and bd binaries and pack code are never modified; only city configuration.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "boundary",
+      "statement": "The Mayor prompt changes only where this Spec changes a mechanism (dispatch door, escalation door, factory-maintain, patch rights, proposals); decision 7 stands (the Mayor never selects work on its own).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "boundary",
+      "statement": "Every change reaches `main` through a Factory PR with a green battery; nothing is edited in the live root.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Run form: Wayfinding Run with one Planning Decision per theme (framing, t1-t6), all resolved; source of intent and mechanism: `docs/planning/factory-operations-v2/decisions-log.md`.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Reservation handling for this very run: router runs with `--repo-root` on a `po/*` worktree; the rewritten reservation reaches `main` by PR.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Delivery: the Factory (Mayor + workers) delivers this graph; the PO agent intervenes only when a defect of the Factory's own mechanics blocks, and records it as an A5 finding.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "PII guard (`bin/factory-pii-guard` and its hook/guard calls) is retired; the written rule in the SayMyName repo `knowledge/real-person-data.md` stays (Benjamin, Q4.3).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Unrouted tools (F15, F19, F20): each is wired when a theme needs it, else moved to `legacy/`; `claude-fable` is checked by the guard if used, else removed from `city.toml`.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "SayMyName doc sections: rig contracts to product repos; host operations (Dolt backups) to a generic Factory doc; dead sections (old cutover, M6 rollback) to `legacy/`.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `dolt-health`: keep; interval 30s -> 2m (override); page only on sustained failure.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `beads-health`: keep; interval 30s -> 2m (override).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `mol-dog-doctor`: keep (5m, read-only deep probe).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `dolt-remotes-patrol`: skip (no Dolt remote configured).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `mol-dog-backup`: keep (6h); age covered by the backup-freshness check.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `mol-dog-compactor`: retrigger as `condition` on Dolt journal size, after checking the pack script tolerates it; else keep.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `mol-dog-phantom-db`: keep.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `mol-dog-stale-db`: keep.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `wisp-compact`: keep.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `reaper`: keep.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `cascade-nudge-on-blocker-close`: keep (event).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `nudge-on-route`: keep (event).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `cross-rig-deps`: skip if the implementing ticket measures zero cross-rig dependencies, else keep.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `gate-sweep`: retrigger as `condition` open gates > 0, or 5m.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `jsonl-export`: keep (15m, commits only on change; it is the off-box backup).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `nudge-mail-sweep`: skip (duplicates the controller's own sweep).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `order-tracking-sweep`: keep; interval 1m -> 10m.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `orphan-sweep`: keep.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `spawn-storm-detect`: keep.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `prune-branches`: skip (no `gc/*` branch; worktree/branch cleanup belongs to factory-maintain).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `factory-guard`: keep; modified (product-rig backup, 24 h grace, root-file check, dispatch-bypass check, project files, factory-waiting-guard retired or re-justified: pr-autopilot still reads gc.waiting_on).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `factory-watchdog`: keep; pages through the escalation door with the Mayor-first / 2 h rule; signals file retired.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `pr-autopilot`: keep; reads project files instead of lib/protected_rigs.sh.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `provider-failover`: keep; total exhaustion pauses dispatch, resumes at reset, NEEDS BENJAMIN line.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `on-order-failed`: keep; escalates through the door (Mayor first, Benjamin after 2 h).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `on-session-stranded`: keep; hands branch/PR of the stranded attempt to the next one.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `convoy-parent-sweep`: retrigger on event `bead.closed`.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Order verdict `model-staleness-check`: move to `cron` daily.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "New order `ready-work-idle` (condition): ready work idle > 15 min with no active worker re-wakes the Mayor.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "New order `backup-freshness` (condition): archive not pushed > 24 h while beads changed pages the Mayor.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "New order `local-only-tests` (cron nightly): runs the two local-only tests; failure pages the Mayor.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "decision",
+      "statement": "Mayor manual operations verdicts: read/answer mail — keep; dispatch — only through the dispatch door (raw `gc sling` forbidden); investigate guard beads — keep (20 min / 30 calls cap); end-of-turn report and handoff — keep; tier/formula choice — keep, validated by the door; split/merge/reorder — `ticket-graph-publish patch` under the acceptance-unchanged proof; Planning Exception — keep; escalate — escalation door (replaces campaign-pointer); PROPOSAL tickets — keep with label `proposal`; upkeep gestures — `bin/factory-maintain` scripts only; monitoring and CI reading — keep.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "Publishing a fixture graph with `ticket-graph-publish` produces a Mayor notification (test); the idle-ready-work condition fires after 15 min in a test with a fake clock.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "A dispatch test covers every rig and formula through the door; the guard flags a synthetic raw `gc sling` in a test.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "Re-dispatch test: a ticket with an existing branch and PR is handed to the next worker with that branch/PR; a re-planned ticket carries `supersedes`.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "Escalation door test: each 'straight to Benjamin' case lands on the list; each 'Mayor first' case reaches the list only after 2 h; a failing escalation exits non-zero (no silent drop).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "provider-failover test: all providers unavailable -> dispatch paused, list line written; reset -> dispatch resumes.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "Guard tests: unpushed commit in a product-rig worktree is backed up; worktree with unpushed work is never removed; fresh branch spared 24 h; root-owned file reported.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "Adding a third project in a test needs only a new `config/projects/*.toml`; a rig without a project file fails the check; `grep` finds no `saymyname`/`smb`/`smf` literal and no `/home/benja` path in `bin/`, `lib/`, `formulas/`, `orders/` outside comments.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "`gc order list` matches the verdict table (skipped orders absent, overrides visible); 24 h after the last merge, `gc events` shows no `order.failed`.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "`docs/INVENTORY.md` carries a written verdict for each of the 28 orders and each Mayor manual operation, and rows F11-F25 are closed or point to a ticket of this graph.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "ADR-0028 amended; a patch test proves reorder/merge/supersede, rejection when acceptance criteria change, and author+reason recorded.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "`bd metrics status` and `gc metrics status` report disabled; supervisor environment carries both opt-out variables.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "acceptance_evidence",
+      "statement": "The publish of this very graph leaves the live root clean (`git status` empty) once F18 is fixed.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "provenance",
+      "statement": "Benjamin, 2026-09-25 23:09 (Paris): « rechercher ce qui se fait, les bonnes pratiques, et remettre en question ce qu'on a pour soit regrouper, ajouter, modifier ou supprimer des orders » (decision 12), and « 1/ ok » to criteria-based maintenance scripts.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "provenance",
+      "statement": "Benjamin, 2026-09-25: decisions 7, 8, 9 (Mayor executor, reslicing not escalated, agents propose); decision 6 (ntfy kept for C01).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "provenance",
+      "statement": "Grilling with Benjamin, 2026-09-28, rounds framing and t1-t6 (decisions-log.md); A4 inventory `docs/INVENTORY.md` F11-F25; state.md 'Known inputs for A5'; research `docs/planning/factory-operations-v2/orders-best-practices.md`.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "experiment",
+      "statement": "Before any interval override, read the pack script to confirm it tolerates the longer gap.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "experiment",
+      "statement": "Measure the count of cross-rig dependencies before skipping `cross-rig-deps`.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "experiment",
+      "statement": "This run is the first real Planning Run since the one-way cutover (af-mav0b): any router, publish or dispatch defect met while running it is recorded as a finding and fixed inside this graph.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "non_objective",
+      "statement": "No phone/cockpit channel (C01 owns ntfy and the cockpit; the session-start display is interim).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "non_objective",
+      "statement": "No fork or patch of Gas City or bd code; no upstream issue or PR.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "non_objective",
+      "statement": "No SayMyName product work, no dev -> main promotion.",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "non_objective",
+      "statement": "No automated code re-review or autonomous self-improvement (rituals stay human-run).",
+      "confirmed_by": "Benjamin"
+    },
+    {
+      "topic": "non_objective",
+      "statement": "No revival of the PII identifier-list guard.",
+      "confirmed_by": "Benjamin"
+    }
+  ]
+}

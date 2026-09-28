@@ -1,0 +1,13 @@
+{
+  "contract": "agent-factory-planning-run-router-request/v1",
+  "legacy_path": "none",
+  "session": "docs/planning/factory-operations-v2/planning-session.json",
+  "city_registry": "docs/planning/factory-operations-v2/city-registry.json",
+  "spec_out": "docs/planning/factory-operations-v2/spec",
+  "wayfinding": {
+    "request": "docs/planning/factory-operations-v2/wayfinding-request.json",
+    "map": "docs/planning/factory-operations-v2/planning-map.json",
+    "decisions": []
+  },
+  "planning_run_target": "factory-operations-v2"
+}
