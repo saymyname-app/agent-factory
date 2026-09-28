@@ -187,11 +187,17 @@
     {
       "at": 1790598315.6254094,
       "event": "route_clear"
+    },
+    {
+      "at": 1790599741.4695702,
+      "digest": "sha256:cdc8df26785c531780461cbe405fd815ca2705d3bbe4941c6b7187be78342920",
+      "event": "closed_by_spec_approval",
+      "spec_id": "spec-factory-operations-v2-2026-09-28"
     }
   ],
   "plane": "planning",
   "run_id": "wf-factory-operations-v2",
-  "status": "to_spec_ready",
+  "status": "closed",
   "time_sensitive_facts": {},
   "time_sensitive_fields": [
     "live_state"
