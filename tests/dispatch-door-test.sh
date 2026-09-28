@@ -31,6 +31,16 @@ chmod +x "$TMP/gc"
 export CALLS
 export BEAD_LABELS_JSON='[{"labels":[]}]'
 
+# A stub provider-failover that reports providers available by default --
+# O08's exhaustion gate must not depend on this host's live provider state.
+cat > "$TMP/provider-failover" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$PROVIDER_STATUS_JSON"
+STUB
+chmod +x "$TMP/provider-failover"
+export DISPATCH_DOOR_PROVIDER_FAILOVER_BIN="$TMP/provider-failover"
+export PROVIDER_STATUS_JSON='{"total_exhaustion":{"active":false}}'
+
 # ---------------------------------------------------------------------------
 # 1. Every rig, every formula that project registers in the real repo --
 #    including build-basic, which had no valid door before this (O03's
@@ -139,5 +149,31 @@ while IFS= read -r line; do
     *) fail "Mayor prompt still instructs building a gc sling command by hand: $line" ;;
   esac
 done < <(grep -F 'gc sling' "$MAYOR_PROMPT")
+
+# ---------------------------------------------------------------------------
+# 6. Total provider exhaustion (O08, af-harft): dispatch is refused before
+#    any gc call, with an explicit reason naming the tracked bead; --dry-run
+#    still bypasses it (a pure preview of the sling command).
+# ---------------------------------------------------------------------------
+: > "$CALLS"
+PROVIDER_STATUS_JSON='{"total_exhaustion":{"active":true,"next_reset":"2026-09-29T05:00:00Z","bead":"af-exh1"}}'
+if GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" PROVIDER_STATUS_JSON="$PROVIDER_STATUS_JSON" \
+    "$DOOR" af-fixture --rig agent-factory --formula mol-do-work >/dev/null 2>/tmp/dispatch-door-exhaustion-err.$$; then
+  fail "dispatched while provider-failover reported total exhaustion"
+fi
+err=$(cat "/tmp/dispatch-door-exhaustion-err.$$")
+rm -f "/tmp/dispatch-door-exhaustion-err.$$"
+[[ $err == *"total provider exhaustion"* ]] || fail "exhaustion refusal did not name the reason: $err"
+[[ $err == *"af-exh1"* ]] || fail "exhaustion refusal did not name the tracked bead: $err"
+[ ! -s "$CALLS" ] || fail "called gc while refusing dispatch for total provider exhaustion"
+
+: > "$CALLS"
+out=$(GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" PROVIDER_STATUS_JSON="$PROVIDER_STATUS_JSON" \
+  "$DOOR" af-fixture --rig agent-factory --formula mol-do-work --dry-run)
+out="${out% }"
+[[ $out == "$TMP/gc --city $REPO_ROOT sling factory-worker af-fixture --on mol-do-work --reassign" ]] \
+  || fail "--dry-run did not bypass the exhaustion gate: $out"
+PROVIDER_STATUS_JSON='{"total_exhaustion":{"active":false}}'
+export PROVIDER_STATUS_JSON
 
 echo "PASS: dispatch-door validates target/formula/--reassign for every rig and formula from project files"

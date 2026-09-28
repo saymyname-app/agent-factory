@@ -8,7 +8,12 @@ L0, deterministic, zero model tokens. Runs every two minutes as an order.
            its credential file and clear it the moment that file changes
            (af-zdiln -- never wait out the hold for a fixed login), choose a
            provider per target, write city.provider.toml, reload the city if
-           that changed, and restart sessions stuck on an exhausted pool
+           that changed, and restart sessions stuck on an exhausted pool.
+           Also runs exhaustion_gate (O08, af-harft): when every pool is
+           exhausted or erroring, files one bead and escalates it straight
+           to Benjamin (bin/dispatch-door then refuses new work); the
+           moment a provider is available again the bead closes and the
+           pause clears automatically, no human action needed.
   apply    regenerate city.provider.toml from the current state (no detection)
   status   what is chosen and why (--json for scripts)
   check-models  daily (not per-tick): compare the model id configured for each
@@ -262,6 +267,52 @@ def reload_city() -> str:
     return lines[-1] if lines else "reloaded"
 
 
+def exhaustion_gate(state: dict[str, Any], policy: dict[str, Any], moment: float, dry_run: bool) -> list[str]:
+    """O08: edge-triggered pause/resume for total provider exhaustion.
+
+    Entering the state files one bead and escalates it straight to Benjamin
+    (dispatch-door then refuses new work while it reads active, af-harft) --
+    never re-escalated while the same outage continues, so exactly one line
+    lands on the NEEDS BENJAMIN list per outage. Leaving the state clears and
+    closes that bead automatically: dispatch resumes the moment a provider
+    is available again, with no human action required.
+    """
+    active_now = pf.total_exhaustion(state, policy, moment)
+    tracked = dict(state.get("total_exhaustion") or {})
+    was_active = bool(tracked.get("active"))
+    messages: list[str] = []
+    if active_now and not was_active:
+        next_reset = pf.total_exhaustion_next_reset(state, policy, moment)
+        detail = ("Total provider exhaustion: every pool is exhausted or erroring; dispatch is "
+                 f"paused until {next_reset or 'a provider recovers'}.")
+        pf.note(state, moment, "dispatch-paused", detail)
+        bead_id = tracked.get("bead")
+        if not dry_run:
+            try:
+                created = json.loads(gc("bd", "create", "Total provider exhaustion -- dispatch paused",
+                                        "-p", "1", "-t", "task", "-d", detail, "--json", timeout=30).stdout or "null")
+                if isinstance(created, list):
+                    created = created[0] if created else None
+                bead_id = (created or {}).get("id")
+            except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+                bead_id = None
+            if bead_id:
+                escalation_door("benjamin", bead_id, detail, timeout=30)
+        state["total_exhaustion"] = {"active": True, "since": pf.iso(moment), "bead": bead_id}
+        messages.append(f"dispatch paused: {detail}" + (f" (bead {bead_id})" if bead_id else ""))
+    elif not active_now and was_active:
+        detail = "Provider available again -- dispatch resumes automatically."
+        pf.note(state, moment, "dispatch-resumed", detail)
+        bead_id = tracked.get("bead")
+        if bead_id and not dry_run:
+            escalation_door("clear", bead_id, timeout=30)
+            gc("bd", "close", bead_id, "--reason",
+               "Provider recovered; dispatch resumed automatically.", timeout=30)
+        state["total_exhaustion"] = {"active": False, "since": None, "bead": None}
+        messages.append(detail + (f" (bead {bead_id})" if bead_id else ""))
+    return messages
+
+
 def tick(args: argparse.Namespace) -> int:
     moment = now()
     policy = load_policy()
@@ -300,6 +351,7 @@ def tick(args: argparse.Namespace) -> int:
         messages = list(probed) + list(switches)
         if changed and not args.dry_run:
             messages.append(f"overlay rewritten; {reload_city()}")
+        messages += exhaustion_gate(state, policy, moment, args.dry_run)
         for session in stuck:
             target = pf.target_of(session, policy)
             chosen = resolution.get(target, {}).get("provider") if target else None
@@ -367,6 +419,12 @@ def status_payload(policy: dict[str, Any], state: dict[str, Any], moment: float)
         },
         "sessions": sessions,
         "sessions_at": state.get("sessions_at"),
+        "total_exhaustion": {
+            "active": pf.total_exhaustion(state, policy, moment),
+            "since": (state.get("total_exhaustion") or {}).get("since"),
+            "bead": (state.get("total_exhaustion") or {}).get("bead"),
+            "next_reset": pf.total_exhaustion_next_reset(state, policy, moment),
+        },
         "history": list(reversed(state["history"][-15:])),
     }
 

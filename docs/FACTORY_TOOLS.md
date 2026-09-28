@@ -251,9 +251,14 @@ Un quota s'applique à un **pool** : les trois profils Claude partagent le même
 compte, donc une limite Claude les épuise tous. Codex standard est son propre
 pool.
 
-Si **aucun** fournisseur ne reste pour les ouvriers, plus rien n'est mis en
-pause automatiquement depuis le retrait de la campagne (2026-09-26) ; c'est un
-point du Planning Run « Factory operations v2 ».
+Si **aucun** fournisseur ne reste pour aucun pool (épuisement total, O08,
+af-harft), `bin/dispatch-door` (et donc `bin/factory-work-dispatch`) refuse
+tout nouveau dispatch avec une raison explicite tant que
+`./bin/provider-failover status --json` lit `total_exhaustion.active`. Le
+`tick` périodique dépose alors **une seule** ligne NEEDS BENJAMIN (un bead
+dédié, via `escalation-door benjamin`) ; dès qu'un fournisseur redevient
+disponible, le même `tick` referme ce bead et efface l'état tout seul — le
+dispatch reprend au prochain appel sans intervention humaine.
 
 La tâche planifiée `provider-failover` tourne toutes les 2 min (~1 s, < 1 s de
 CPU : les écrans sont lus via tmux, pas via `gc session peek` qui coûtait 8 s).

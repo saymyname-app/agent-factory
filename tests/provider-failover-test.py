@@ -258,6 +258,33 @@ class Resolution(unittest.TestCase):
         self.assertEqual((None, "all_unavailable", "2026-09-16T16:50:00Z"),
                          (pick["provider"], pick["reason"], pick["next_reset"]))
 
+    def test_total_exhaustion_is_false_with_a_pool_still_available(self):
+        self.exhaust("openai")
+        self.assertFalse(pf.total_exhaustion(self.state, self.policy, NOW))
+
+    def test_total_exhaustion_is_false_with_only_a_low_pool_left(self):
+        # O08: "low" still has capacity -- a degraded-but-working pool must
+        # not read as total exhaustion (dispatch-door would refuse work that
+        # could still ship).
+        self.exhaust("openai")
+        pf.record_detection(self.state, self.policy, "anthropic",
+                            {"kind": "low", "percent": 3, "evidence": "low"}, NOW)
+        self.assertEqual("low", pf.pool_status(self.state, self.policy, "anthropic", NOW)["state"])
+        self.assertFalse(pf.total_exhaustion(self.state, self.policy, NOW))
+
+    def test_total_exhaustion_is_true_when_every_pool_is_exhausted_or_erroring(self):
+        self.exhaust("openai", "2026-09-21T05:22:00+00:00")
+        self.error("anthropic")
+        self.assertTrue(pf.total_exhaustion(self.state, self.policy, NOW))
+        self.assertIsNotNone(pf.total_exhaustion_next_reset(self.state, self.policy, NOW))
+
+    def test_total_exhaustion_clears_the_moment_one_pool_recovers(self):
+        self.exhaust("openai", "2026-09-16T11:00:00+00:00")
+        self.exhaust("anthropic", "2026-09-16T12:00:00+00:00")
+        self.assertTrue(pf.total_exhaustion(self.state, self.policy, NOW))
+        after = datetime(2026, 9, 16, 11, 1, tzinfo=timezone.utc).timestamp()
+        self.assertFalse(pf.total_exhaustion(self.state, self.policy, after))
+
     def test_it_comes_back_by_itself_at_reset(self):
         # Codex is the preferred pool again (af-wpjgu, 2026-09-21): exhaust it
         # to show the target falls to Claude meanwhile and recovers on its own.
@@ -661,6 +688,53 @@ class EndToEnd(unittest.TestCase):
         (self.d / "city.provider.toml").unlink()
         self.assertIn("written", self.run_tool("apply", "--no-reload").stdout)
         self.assertTrue((self.d / "city.provider.toml").exists())
+
+    def test_total_provider_exhaustion_pauses_dispatch_and_resumes_by_itself(self):
+        """O08 (af-harft): every pool down files one bead and pages Benjamin
+        straight away (bin/dispatch-door then refuses new work while it reads
+        provider-failover status as active); the moment a provider recovers
+        the pause clears and the bead closes automatically -- no human
+        action needed to resume dispatch itself."""
+        self.sessions([
+            {"id": "af-w1", "alias": "workspace-1", "template": "saymyname-backend/codex",
+             "state": "active", "provider": "codex"},
+            {"id": "af-m", "alias": "mayor", "template": "mayor", "state": "active", "provider": "claude-standard"},
+        ])
+        self.pane("af-w1", CODEX_WALL)   # openai exhausted, resets 2026-09-21T05:22:00Z
+        self.pane("af-m", CLAUDE_WALL)   # anthropic exhausted too -- every pool is now down
+        out = self.run_tool("tick").stdout
+        self.assertIn("dispatch paused: Total provider exhaustion", out)
+        state = json.loads((self.d / "state.json").read_text(encoding="utf-8"))
+        self.assertTrue(state["total_exhaustion"]["active"])
+        bead_id = state["total_exhaustion"]["bead"]
+        self.assertTrue(bead_id)
+        self.assertTrue(any(c.startswith("bd create Total provider exhaustion") for c in self.calls()))
+        self.assertTrue(any(c.startswith(f"mail send human --notify -s NEEDS BENJAMIN: {bead_id}")
+                            for c in self.calls()))
+        status = json.loads(self.run_tool("status", "--json").stdout)
+        self.assertTrue(status["total_exhaustion"]["active"])
+        self.assertEqual(bead_id, status["total_exhaustion"]["bead"])
+
+        # A second tick while still exhausted never re-files or re-pages --
+        # exactly one NEEDS BENJAMIN line for the whole outage.
+        before = len(self.calls())
+        self.run_tool("tick")
+        self.assertFalse(any(c.startswith("bd create") for c in self.calls()[before:]))
+
+        # A provider recovers: dispatch resumes and the bead closes, with no
+        # human action -- the same live status bin/dispatch-door reads flips
+        # to inactive the moment this tick runs.
+        self.pane("af-w1", "")
+        self.pane("af-m", "")
+        after = datetime(2026, 9, 21, 5, 23, tzinfo=timezone.utc).timestamp()
+        out = self.run_tool("tick", PROVIDER_NOW=str(after)).stdout
+        self.assertIn("dispatch resumes", out)
+        state = json.loads((self.d / "state.json").read_text(encoding="utf-8"))
+        self.assertFalse(state["total_exhaustion"]["active"])
+        self.assertTrue(any(c == f"bd close {bead_id} --reason Provider recovered; dispatch resumed automatically."
+                            for c in self.calls()))
+        status = json.loads(self.run_tool("status", "--json", PROVIDER_NOW=str(after)).stdout)
+        self.assertFalse(status["total_exhaustion"]["active"])
 
 
 FIXTURE_CITY_TOML = '''

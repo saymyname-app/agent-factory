@@ -31,12 +31,21 @@
 # raised for the next Planning Run to triage with the operator
 # (agents/mayor/prompt.template.md, "Improvements are proposals"), never
 # work to hand a worker directly.
+#
+# It also refuses to dispatch while bin/provider-failover reports total
+# provider exhaustion -- every pool exhausted or erroring, nobody left to
+# execute the work (O08, af-harft). provider-failover's own tick is what
+# files and clears the one NEEDS BENJAMIN line for the outage
+# (exhaustion_gate); this door only reads its live status and stops sending
+# new work while it reads active, resuming on its own the moment a provider
+# is available again -- no human action needed to unpause dispatch itself.
 set -Eeuo pipefail
 
 PROGRAM_NAME="dispatch-door"
 ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
 GC_BIN="${GC_BIN:-gc}"
 CONFIG_DIR="${DISPATCH_DOOR_CONFIG_DIR:-$ROOT/config/projects}"
+PROVIDER_FAILOVER_BIN="${DISPATCH_DOOR_PROVIDER_FAILOVER_BIN:-$ROOT/bin/provider-failover}"
 
 SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=lib/project_registry.sh
@@ -133,6 +142,18 @@ if [ "$DRY_RUN" = "1" ]; then
   printf '%q ' "${CMD[@]}"
   printf '\n'
   exit 0
+fi
+
+provider_status_json=$("$PROVIDER_FAILOVER_BIN" status --json 2>/dev/null) || provider_status_json=""
+if [ -n "$provider_status_json" ]; then
+  exhausted=$(printf '%s' "$provider_status_json" | jq -r '.total_exhaustion.active // false' 2>/dev/null) || exhausted="false"
+  if [ "$exhausted" = "true" ]; then
+    next_reset=$(printf '%s' "$provider_status_json" | jq -r '.total_exhaustion.next_reset // "unknown"' 2>/dev/null)
+    bead_tracking=$(printf '%s' "$provider_status_json" | jq -r '.total_exhaustion.bead // empty' 2>/dev/null)
+    detail="total provider exhaustion -- every pool is exhausted or erroring, next reset $next_reset"
+    [ -n "$bead_tracking" ] && detail="$detail (see gc bd show $bead_tracking, NEEDS BENJAMIN)"
+    fail "$BEAD_ID dispatch refused: $detail"
+  fi
 fi
 
 bead_json=$("$GC_BIN" --city "$ROOT" bd show "$BEAD_ID" --json) \

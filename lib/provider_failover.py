@@ -111,6 +111,7 @@ def empty_state() -> dict[str, Any]:
         "sessions": [],     # live model sessions, as seen by the last tick
         "sessions_at": None,
         "model_staleness": {},  # {checked_at, signature, bead} -- af-a1t44, daily, not per-tick
+        "total_exhaustion": {},  # {active, since, bead} -- O08, edge-triggered by tick()
         "history": [],
     }
 
@@ -121,7 +122,7 @@ def normalize_state(state: Any, policy: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(state, dict):
         return base
     base["auto"] = bool(state.get("auto", True))
-    for key in ("pools", "disabled", "forced", "chains", "effective", "model_staleness"):
+    for key in ("pools", "disabled", "forced", "chains", "effective", "model_staleness", "total_exhaustion"):
         if isinstance(state.get(key), dict):
             base[key] = deepcopy(state[key])
     if isinstance(state.get("history"), list):
@@ -475,6 +476,22 @@ def provider_status(state: dict[str, Any], policy: dict[str, Any], provider: str
 
 def chain_for(state: dict[str, Any], policy: dict[str, Any], target: str) -> list[str]:
     return list(state["chains"].get(target) or policy["targets"][target]["chain"])
+
+
+def total_exhaustion(state: dict[str, Any], policy: dict[str, Any], now: float) -> bool:
+    """True when every pool has nothing to offer -- the Factory-wide "no
+    provider anywhere" state (O08). A "low" pool still has capacity, so it
+    does not count as exhausted; only "exhausted"/"error" do.
+    """
+    return all(pool_status(state, policy, pool, now)["state"] in {"exhausted", "error"}
+              for pool in policy["pools"])
+
+
+def total_exhaustion_next_reset(state: dict[str, Any], policy: dict[str, Any], now: float) -> str | None:
+    """The earliest known reset across every pool, or None if none is known."""
+    resets = [epoch(pool_status(state, policy, pool, now).get("until")) for pool in policy["pools"]]
+    resets = [r for r in resets if r is not None]
+    return iso(min(resets)) if resets else None
 
 
 def resolve(policy: dict[str, Any], state: dict[str, Any], now: float) -> dict[str, Any]:
