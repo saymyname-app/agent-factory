@@ -24,37 +24,37 @@
     {
       "topic": "behavior",
       "statement": "`--format csv` writes the same records as `--format json`, as CSV with a header row.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "boundary",
       "statement": "Only the export CLI's output formatting changes; the export query and record set are unchanged.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "decision",
       "statement": "CSV fields are comma-separated with double-quote escaping, matching Python's csv module defaults.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "acceptance_evidence",
       "statement": "`widget-export --format csv` on the fixture dataset produces a header row plus one row per record, byte-identical across runs.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "provenance",
-      "statement": "Requested by Benjamin on 2026-09-24 to unblock a spreadsheet import workflow.",
-      "confirmed_by": "Benjamin"
+      "statement": "Requested by Operator-1 on 2026-09-24 to unblock a spreadsheet import workflow.",
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "experiment",
       "statement": "None needed; CSV formatting behavior is fully determined by the existing record schema.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     },
     {
       "topic": "non_objective",
       "statement": "This does not add a --format tsv or --format xlsx flag; those are separate requests if ever needed.",
-      "confirmed_by": "Benjamin"
+      "confirmed_by": "Operator-1"
     }
   ]
 }

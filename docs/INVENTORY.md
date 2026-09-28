@@ -42,19 +42,19 @@ only when verified in the code; live checks for runtime state.
 | F08 | low | `lib/factory_watchdog.py:263`, `lib/provider_failover.py:93`, 5 test comments, `tests/coordination-pointer-doors-test.sh` | comments point at deleted tests / retired `product-queue`, `gc.queue_state` | A4-DOCS |
 | F09 | low | `agents/mayor/prompt.template.md` | says `build-basic` "comes from the pack" (a local fork in `formulas/` overrides it) | A4-DOCS |
 | F10 | med | `docs/decisions/ADR-0026-*.md`, `docs/DELIVERY.md:188` | rely on the retired `mayor-campaign` readiness lane; needs the same dated amendment ADR-0025 got | A4-DOCS |
-| F11 | med | `lib/protected_rigs.sh`, `bin/deliver-close:127-139`, `bin/factory-guard:384`, `bin/factory-delivery-guard:84`, `bin/factory-watchdog:58`, `city.toml` (`[[patches.agent]] dir=saymyname-*`, `/home/benja` paths), `.githooks/post-checkout:20`, `pr-autopilot-*`/watchdog/failover test fixtures | SayMyName and host paths hardcoded in a project-agnostic Factory; `deliver-close` duplicates the "single source"; a new project's rig gets no guard coverage and no warning | A5 (per-project rig config) |
+| F11 | med | `lib/protected_rigs.sh`, `bin/deliver-close:127-139`, `bin/factory-guard:384`, `bin/factory-delivery-guard:84`, `bin/factory-watchdog:58`, `city.toml` (`[[patches.agent]] dir=saymyname-*`, `/home/benja` paths), `.githooks/post-checkout:20`, `pr-autopilot-*`/watchdog/failover test fixtures | SayMyName and host paths hardcoded in a project-agnostic Factory; `deliver-close` duplicates the "single source"; a new project's rig gets no guard coverage and no warning | FIXED (O01, af-vsevn): `config/projects/<project>.toml` (one file per project, `config/projects/agent-factory.toml` plus the two SayMyName rigs) is now the single source; `lib/protected_rigs.sh`, `bin/factory-guard`, `bin/factory-delivery-guard` and `bin/deliver-close` all read it through the shared project-registry loader instead of a hardcoded rig list |
 | F12 | med | `bin/factory-waiting-guard`, `bin/factory-guard` §11 + tests | only reader of `gc.waiting_on` was the retired idle ladder (verdict `legacy`) | RE-JUSTIFIED (O14, af-8l3ea): `bin/pr-autopilot`'s `active_waiters_for` reads `gc.waiting_on` to decide whether a reconciled merge outside its wake window still needs to wake the Mayor; a stale value would corrupt that live check, so the guard that keeps it accurate stays in service |
 | F13 | med | `bin/campaign-pointer` start/finish, Mayor prompt 283-286 | write `gc.current`, `gc.current_jit`, `gc.last_delivered`, `gc.campaign_progress_at` that nothing outside legacy reads; lock named after the campaign | FIXED (O06, af-sau1a): `campaign-pointer` retired entirely, its dead fields no longer written anywhere |
 | F14 | med | `formulas/mol-scoped-work.formula.toml` | prints "refuses base=main" then pushes/opens a PR against `main` (default base); escalation goes to `/dev/null \|\| true` (silent failure) | PARTIALLY FIXED (O06, af-sau1a): `notify-failure` now calls `escalation-door mayor` and `exit 1`s if it fails; the base=main misprint is untouched |
 | F15 | low | `formulas/mol-scoped-work`, `formulas/mol-polecat-commit`, `agents/claude-reviewer`, `bin/factory-observe`, `bin/factory-resources`, `bin/goal-delivery-pairs`, 5 prototype/oracle scripts | no runtime caller (only tests/docs); `mol-polecat-commit` refuses base `main` so cannot run on the Factory repo | RESOLVED per-item (O14, af-8l3ea): `mol-scoped-work`/`mol-polecat-commit` are wired — `bin/dispatch-door` validates and routes both against `config/projects/saymyname-{backend,frontend}.toml`'s `formulas` list (O03, af-ui0ua landed after this finding was written; nothing dispatches them yet, but the door accepts them for the theme that needs worktree isolation on those rigs). `claude-reviewer` retired — no prompt or formula ever dispatched it, and the dispatch door has no path for an ad-hoc named reviewer session outside a rig's fixed `sling_target`; moved to `legacy/agents/`. `factory-observe`, `factory-resources`, `goal-delivery-pairs` and the 5 prototype/oracle scripts keep their existing `kernel`/`ops` verdicts unchanged: each is a deliberate, documented capability (B09 kernel foundation; manual operator tools; one-time Planning Run proofs) whose lack of a runtime caller is by design, not drift |
 | F16 | low | Mayor prompt, `bin/factory-work-dispatch` | GUARDED Factory work goes to `build-basic` but no target is named, and `factory-work-dispatch` accepts only `mol-do-work` | FIXED (O03, af-ui0ua): `bin/dispatch-door` resolves target and validates formula for every rig (`build-basic` included) from `config/projects/*.toml`; `factory-work-dispatch` wraps it; `bin/dispatch-door-guard` reports any dispatch that bypasses it |
-| F17 | med | `.githooks/`, `docs/GETTING_STARTED.md` | a fresh clone runs without PII guard, main gate or live-root hooks: `core.hooksPath` is only in the live `.git/config` | A5 |
-| F18 | med | `bin/planning-run-router:130-149` | `clear_reservation` rewrites tracked `config/planning-run-reservation.json` in the live root (dirty tree, guard snapshots, drift from `main`) | A5 |
+| F17 | med | `.githooks/`, `docs/GETTING_STARTED.md` | a fresh clone runs without PII guard, main gate or live-root hooks: `core.hooksPath` is only in the live `.git/config` | FIXED (O14, af-8l3ea): `bin/factory-setup` runs `git config core.hooksPath .githooks` (idempotent) so a fresh clone plus the setup script has the hooks active |
+| F18 | med | `bin/planning-run-router:130-149` | `clear_reservation` rewrites tracked `config/planning-run-reservation.json` in the live root (dirty tree, guard snapshots, drift from `main`) | OPEN, tracked: `clear_reservation`/`set_reservation` still `Path.write_text` the tracked file directly (verified live 2026-09-28); no O-ticket touched this write path. Follow-up bead af-1hvva |
 | F19 | low | `bin/factory-guard:138`, `city.toml`, provider policy, model catalog | `claude-fable` defined in `city.toml`, checked nowhere, absent from policy and catalog | FIXED (O14, af-8l3ea): no agent, order or formula ever names `claude-fable`, so it is commented out of `city.toml` (same treatment as the unused `claude-opus` tier already there) instead of checked by the guard |
 | F20 | low | `config/factory-observe*.schema.json` | no code loads either schema (validation hand-written); the doc says the policy is validated against it | FIXED (O14, af-8l3ea): both schema files moved to `legacy/config/` (neither had a reader); `docs/FACTORY_OBSERVE.md`, `docs/CONTEXT_INDEX.md` and `bin/factory-observe`'s docstring now point at the hand-written validators (`lib/factory_observe.py`, `lib/factory_measures.py`) instead of a schema file nothing loads |
 | F21 | low | `tests/build-basic-fail-fast-runtime-test.sh`, `tests/factory-watchdog-order-test.sh` | local-only tests run nowhere automatically; the second hardcodes `/home/benja/agent-factory` | PARTIALLY FIXED (O13): new `local-only-tests` order (`orders/local-only-tests.toml`, `bin/local-only-tests`) runs both nightly and pages the Mayor on failure. The hardcoded path in `factory-watchdog-order-test.sh` is untouched -- it matches the live root by design, which is what this order runs against. |
-| F22 | med | `docs/DELIVERY.md:558-577`, `docs/OPERATIONS.md:389-506` | SayMyName-only rig contracts and operations; `gc bd create --rig saymyname-*` contradicts "new work enters through the Planning Run router" | A5 (move to the product repos) |
-| F23 | low | planning-run fixtures (15 files), watchdog / planning-exception-guard tests, `provider-failover-test.py` | operator's first name and GitHub login as signer; SayMyName backend test output as fixture | FIXED (O14, af-8l3ea): `tests/provider-failover-test.py`, `tests/factory-watchdog-test.{sh,py}` and `tests/factory-planning-exception-guard-test.sh` now use the synthetic `operator-1` instead of the operator's real name or GitHub login. Runtime messages: `bin/escalation-door`'s mail/printed text now names the operator from `config/operator.toml` (`GC_OPERATOR_NAME` override, defaulting to that file's `name`) instead of a hardcoded string; the `gc.needs_benjamin` metadata field, the `benjamin` subcommand and the "NEEDS BENJAMIN" list name are a separate, stable schema/concept and are unchanged (renaming those is topology, not this ticket's repair). No "SayMyName backend test output as fixture" was found under `tests/fixtures/` to replace — the only SayMyName-named fixture (`tests/fixtures/project-planning-profile/profiles/invalid-saymyname.json`) is deliberate rejection-rule test data, not captured backend output |
+| F22 | med | `docs/DELIVERY.md:558-577`, `docs/OPERATIONS.md:389-506` | SayMyName-only rig contracts and operations; `gc bd create --rig saymyname-*` contradicts "new work enters through the Planning Run router" | FIXED (O15, af-rse7p): SayMyName rig contracts moved out of `docs/DELIVERY.md`/`docs/OPERATIONS.md` into each product repo's own file; remaining Factory-doc mentions are either the Factory's own GitHub repo slug (`saymyname-app/agent-factory`) or pointers into `legacy/docs/products/saymyname/`, not a live SayMyName-only section |
+| F23 | low | planning-run fixtures (15 files), watchdog / planning-exception-guard tests, `provider-failover-test.py` | operator's first name and GitHub login as signer; SayMyName backend test output as fixture | FIXED (O14, af-8l3ea): `tests/provider-failover-test.py`, `tests/factory-watchdog-test.{sh,py}` and `tests/factory-planning-exception-guard-test.sh` now use the synthetic `operator-1` instead of the operator's real name or GitHub login. Runtime messages: `bin/escalation-door`'s mail/printed text now names the operator from `config/operator.toml` (`GC_OPERATOR_NAME` override, defaulting to that file's `name`) instead of a hardcoded string; the `gc.needs_benjamin` metadata field, the `benjamin` subcommand and the "NEEDS BENJAMIN" list name are a separate, stable schema/concept and are unchanged (renaming those is topology, not this ticket's repair). No "SayMyName backend test output as fixture" was found under `tests/fixtures/` to replace — the only SayMyName-named fixture (`tests/fixtures/project-planning-profile/profiles/invalid-saymyname.json`) is deliberate rejection-rule test data, not captured backend output. Addendum (O16, af-dqhwo, 2026-09-29): the "planning-run fixtures (15 files)" half of this finding was still open — `confirmed_by`/`statement` fields in 16 files under `tests/fixtures/planning-run-to-spec/`, `tests/fixtures/planning-run-router/` and `tests/fixtures/spec-approve/` still carried the operator's real first name. Replaced with the same synthetic `operator-1` (`draft-spec.json`'s `content_digest` recomputed to match); the `escalation-door benjamin` subcommand fixture is unchanged, same rationale as above. `tests/spec-approve-test.py`, `tests/planning-run-router-test.py` and `tests/planning-run-to-spec-oracle-test.py` stay green |
 | F24 | low | off-box backup | archive repo last pushed 18:42Z while `jsonl-export` completes every 15 min: no freshness signal says whether pushes still happen | FIXED (O13): new `backup-freshness` order (`orders/backup-freshness.toml`, `bin/backup-freshness`) pages the Mayor when the archive hasn't been pushed in 24h while beads kept changing. |
 | F25 | low | `.gc/runtime/factory-watchdog-signals.json` | written by three scripts, no reader | FIXED (O06, af-sau1a): none of the three writers touches the file any more; `merge_signals`/`merge-signals` removed from `lib/factory_watchdog.py` |
 
@@ -291,3 +291,88 @@ an A5 input.
 | `tests/spec-approve-test.py` | kernel | spec-approve; fixture spec-approve | in CI (ci.yml:47) |
 | `tests/ticket-graph-publish-test.py` | kernel | ticket-graph-publish; fixture ticket-graph-publish | in CI (ci.yml:38) |
 | `tests/wayfinding-run-test.py` | kernel | wayfinding-run; fixture wayfinding-run | in CI (ci.yml:44) |
+
+## O16 closeout — orders, Mayor manual operations, 24 h clean (added 2026-09-29, af-dqhwo)
+
+A4/A5 findings above are a frozen 2026-09-27 snapshot; this section is a
+dated addendum that closes out the last O16 acceptance criteria without
+rewriting the snapshot. It does not re-verdict any file already covered
+above.
+
+### The 28 live orders (`gc order list`, checked 2026-09-28)
+
+Four pack orders are skipped in `city.toml` (`dolt-remotes-patrol`,
+`nudge-mail-sweep`, `prune-branches`, `cross-rig-deps`, see the `[orders]
+skip` comment there for why) and so do not appear in the live list or here.
+
+| Order | Verdict | Note |
+|---|---|---|
+| `dolt-health` | ops | pack order; interval tuned to 2m (O13) |
+| `beads-health` | ops | pack order; interval tuned to 2m (O13) |
+| `mol-dog-backup` | ops | pack order; kept on its own clock (O13 review) |
+| `mol-dog-compactor` | ops | pack order; kept (O13 review; duplicates Dolt auto-GC but harmless) |
+| `mol-dog-doctor` | ops | pack order; kept |
+| `mol-dog-phantom-db` | ops | pack order; kept |
+| `mol-dog-stale-db` | ops | pack order; kept |
+| `cascade-nudge-on-blocker-close` | ops | pack order; event-driven, kept |
+| `gate-sweep` | ops | pack order; retriggered on `condition` (open gates > 0) instead of a 30s poll (O13) |
+| `jsonl-export` | ops | pack order; off-box backup export, kept |
+| `nudge-on-route` | ops | pack order; event-driven, kept |
+| `order-tracking-sweep` | ops | pack order; interval tuned to 10m (O13) |
+| `orphan-sweep` | ops | pack order; kept |
+| `reaper` | ops | pack order; kept |
+| `spawn-storm-detect` | ops | pack order; kept |
+| `wisp-compact` | ops | pack order; kept |
+| `orders/backup-freshness.toml` | ops | new (O13, F24 FIXED): pages the Mayor when the archive repo hasn't been pushed in 24h |
+| `orders/convoy-parent-sweep.toml` | ops | unchanged, see "Every file" above |
+| `orders/escalation-door-sweep.toml` | ops | new (O06, af-sau1a): sweeps unresolved Mayor-first escalations to Benjamin after 2h |
+| `orders/factory-guard.toml` | ops | unchanged, see "Every file" above |
+| `orders/factory-watchdog.toml` | to-redo | unchanged (F06, still A4-DOCS: description text drift, not behavior) |
+| `orders/idle-ready-work-wake.toml` | ops | new (O02, af-mbpt1): re-wakes the Mayor when ready work sits idle |
+| `orders/local-only-tests.toml` | ops | new (O13, F21 PARTIALLY FIXED): runs the local-only battery nightly, pages on failure |
+| `orders/model-staleness-check.toml` | ops | unchanged, see "Every file" above |
+| `orders/on-order-failed.toml` | ops | unchanged, see "Every file" above |
+| `orders/on-session-stranded.toml` | ops | unchanged, see "Every file" above |
+| `orders/pr-autopilot.toml` | to-redo | unchanged (F06, still A4-DOCS: description text drift, not behavior) |
+| `orders/provider-failover.toml` | to-redo | unchanged (F06, still A4-DOCS: description text drift, not behavior) |
+
+Count: 28 verdicts (25 `ops`, 3 `to-redo` carried from F06, all already
+`A4-DOCS`-dispositioned wording fixes, not behavior bugs).
+
+### Mayor manual operations (`bin/factory-maintain`, ADR-0016 §7 standing allowlist)
+
+| Gesture | Verdict | Note |
+|---|---|---|
+| `restart-service` | ops | O12 (af-1lofk): wraps `gc service restart <name>`, refuses an unknown service name |
+| `prune-merged-branches` | ops | O12: refuses anything unmerged, unpushed, current, or a rig's protected branch |
+| `clean-worktrees` | ops | O12: refuses anything with unmerged or unpushed work |
+| `rotate-logs` | ops | O12: gzip-archives over a size threshold, never deletes a log outright |
+| `reload-city-config` | ops | O12: wraps `gc reload`, logged like every other gesture |
+
+All five gestures log to `var/factory-maintain.log`, checked in
+`tests/factory-maintain-test.sh` (CI, ci.yml). No manual upkeep gesture
+outside this named-script set is in scope per AGENTS.md's standing ADMIN
+allowlist.
+
+### 24 h clean (`gc events --type order.failed`)
+
+The last merge among this graph's 17 tickets (O01-O17) landed at
+**2026-09-28T21:32:51Z** (O14, af-8l3ea, PR merge). As of this ticket's own
+work (2026-09-28T22:42Z, about 1h10m later), `gc events --type order.failed
+--since 24h` shows:
+
+- 14 `order.failed` events between 2026-09-28T12:09Z and 2026-09-28T15:51Z
+  UTC (subjects `factory-guard`, `pr-autopilot`, `escalation-door-sweep`),
+  all landing *before* O14's merge, during the graph's own active
+  dispatch/merge window.
+- **Zero** `order.failed` events since 2026-09-28T15:51:45Z UTC — i.e. zero
+  in the ~7h that includes the last merge and everything after it, as
+  observed at close time.
+
+The full 24h-after-last-merge window (to 2026-09-29T21:32:51Z) had not yet
+elapsed when this ticket closed. `orders/on-order-failed.toml` (ops, pages
+the Mayor on every `order.failed`) and `orders/escalation-door-sweep.toml`
+(ops) continue to enforce this after close: an escalation fires
+immediately if the window is not in fact clean, rather than requiring a
+worker session to sit and wait. No `gc.needs_benjamin` page fired for an
+order failure in this window as of close.
