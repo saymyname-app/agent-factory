@@ -23,13 +23,13 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="idle-ready-work-wake-test-"))
         self.gc_log = self.tmp / "gc.log"
 
-    def run_tick(self, now, ready=READY_ONE_DELIVERY_BEAD, mayor_active="0"):
+    def run_tick(self, now, ready=READY_ONE_DELIVERY_BEAD, worker_active="0"):
         env = {
             **os.environ,
             "BD_BIN": str(FAKE_BD),
             "GC_BIN": str(FAKE_GC),
             "IDLE_TEST_READY": ready,
-            "IDLE_TEST_MAYOR_ACTIVE": mayor_active,
+            "IDLE_TEST_WORKER_ACTIVE": worker_active,
             "IDLE_TEST_GC_LOG": str(self.gc_log),
             "IDLE_READY_WORK_NOW": now,
         }
@@ -39,13 +39,13 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
         )
         return json.loads(proc.stdout)
 
-    def run_check_only(self, now, ready=READY_ONE_DELIVERY_BEAD, mayor_active="0"):
+    def run_check_only(self, now, ready=READY_ONE_DELIVERY_BEAD, worker_active="0"):
         env = {
             **os.environ,
             "BD_BIN": str(FAKE_BD),
             "GC_BIN": str(FAKE_GC),
             "IDLE_TEST_READY": ready,
-            "IDLE_TEST_MAYOR_ACTIVE": mayor_active,
+            "IDLE_TEST_WORKER_ACTIVE": worker_active,
             "IDLE_TEST_GC_LOG": str(self.gc_log),
             "IDLE_READY_WORK_NOW": now,
         }
@@ -81,14 +81,14 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
         self.assertEqual(["mail", "send", "mayor", "--notify"], calls[0][:4])
 
     def test_stays_silent_while_a_worker_is_active(self):
-        self.run_tick("2026-09-28T10:00:00+00:00", mayor_active="1")
-        later = self.run_tick("2026-09-28T10:30:00+00:00", mayor_active="1")
+        self.run_tick("2026-09-28T10:00:00+00:00", worker_active="1")
+        later = self.run_tick("2026-09-28T10:30:00+00:00", worker_active="1")
         self.assertFalse(later["fired"])
         self.assertEqual([], self.wake_calls())
 
     def test_a_worker_becoming_active_resets_the_idle_window(self):
         self.run_tick("2026-09-28T10:00:00+00:00")
-        self.run_tick("2026-09-28T10:10:00+00:00", mayor_active="1")
+        self.run_tick("2026-09-28T10:10:00+00:00", worker_active="1")
         # The window reset when the worker showed up, so 10 more idle
         # minutes is not yet 15 from the new start.
         result = self.run_tick("2026-09-28T10:20:00+00:00")
@@ -113,7 +113,7 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
         self.assertTrue(result["fired"])
         self.assertEqual([], self.wake_calls())
 
-        code, result = self.run_check_only("2026-09-28T10:15:02+00:00", mayor_active="1")
+        code, result = self.run_check_only("2026-09-28T10:15:02+00:00", worker_active="1")
         self.assertEqual(1, code)
         self.assertFalse(result["fired"])
         self.assertEqual([], self.wake_calls())
