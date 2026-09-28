@@ -574,7 +574,15 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
       # Exact merge+CI proof is now the completion edge. Only after the door
       # succeeds may a former CI-failure finding close or a dependent wake.
       close_ci_failure_beads "$repo" "$rig_path" "$num" "merged at ${sha:0:8} with exact-head CI success"
-      if [ -n "$wake_reason" ] && ! run bash -c "cd '$rig_path' && gc mail send mayor --from pr-autopilot --notify \
+      # af-4ruvv: this used to pass --from pr-autopilot for honest attribution.
+      # `gc mail send` validates --from against live sessions (or "human")
+      # only -- pr-autopilot is a deterministic exec script with no session,
+      # so every wake with a non-empty $wake_reason failed with "session not
+      # found: pr-autopilot", incrementing ERRORS and failing the whole order
+      # (9x order.failed on 2026-09-28, clustered around merges: every one had
+      # a fresh wake_reason). Omit --from; the message body's own "ACTION:
+      # pr-autopilot reconciled ..." line already names the true actor.
+      if [ -n "$wake_reason" ] && ! run bash -c "cd '$rig_path' && gc mail send mayor --notify \
         --subject 'SHIPPED: $bead via PR #$num' \
         --message 'ACTION: pr-autopilot reconciled $bead from merged PR #$num
 STATE: SHIPPED
