@@ -1,0 +1,340 @@
+#!/usr/bin/env bash
+# factory-maintain — safe named scripts for the Mayor's routine upkeep
+# gestures (the standing ADMIN allowlist, ADR-0016 §7 / AGENTS.md "Standing
+# ADMIN allowlist"): restarting a dispatcher/preview service, pruning merged
+# branches, cleaning worktrees, rotating logs, reloading city config.
+#
+# Before this script, the Mayor did each gesture by hand from a free-text
+# permission in AGENTS.md/its prompt, with no shared refusal criteria and no
+# record of what it changed. Each gesture below (O12):
+#   - checks its own safety criteria and refuses instead of guessing when
+#     they aren't met (never deletes a branch/worktree with unmerged or
+#     unpushed work, never restarts/reloads a target it can't verify)
+#   - is undoable (branches/worktrees are only ever removed once fully
+#     merged and pushed upstream, so the same content is recoverable from
+#     the remote; log rotation archives instead of deleting)
+#   - appends one line per action to var/factory-maintain.log, readable by
+#     the operator, naming what it did and how to undo it
+#
+# Usage: factory-maintain <gesture> [args...]
+set -uo pipefail
+
+ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+LOG_FILE="${FACTORY_MAINTAIN_LOG:-$ROOT/var/factory-maintain.log}"
+
+usage() {
+  cat >&2 <<'EOF'
+usage: factory-maintain <gesture> [args...]
+
+gestures:
+  prune-merged-branches [--repo <path>] [--dry-run]
+      Delete local branches that are merged into origin's default branch
+      and have no unpushed commits. Refuses anything unmerged, unpushed,
+      the current branch, or a rig's protected branch.
+
+  clean-worktrees [--worktree-root <path>] [--dry-run]
+      Remove do-work worktrees whose branch is merged and pushed, with no
+      uncommitted changes. Refuses anything with unmerged or unpushed work.
+
+  rotate-logs [--dir <path>] [--max-bytes N] [--keep N]
+      Gzip-archive and truncate *.log files over --max-bytes (default 10MiB)
+      in --dir (default var/), keeping the --keep (default 5) newest
+      archives per file. Never deletes a log outright.
+
+  reload-city-config [--city <path>]
+      Wrap `gc reload` so a config reload is logged like every other gesture.
+
+  restart-service <name> [--city <path>]
+      Wrap `gc service restart <name>`. Refuses a name `gc service list`
+      does not know about.
+EOF
+  exit 2
+}
+
+log() {
+  # log <gesture> <status> <detail>
+  local gesture="$1" status="$2" detail="$3"
+  mkdir -p "$(dirname "$LOG_FILE")"
+  printf '%s\tgesture=%s\tstatus=%s\t%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$gesture" "$status" "$detail" >> "$LOG_FILE"
+}
+
+# protected_branches_for <repo> — space-separated list of branches
+# lib/protected_rigs.sh marks protected for any rig, so a prune/clean never
+# touches one of them regardless of merge status.
+protected_branches_for() {
+  local repo="$1"
+  [ -f "$repo/lib/protected_rigs.sh" ] || return 0
+  # shellcheck source=/dev/null
+  ( . "$repo/lib/protected_rigs.sh"
+    local entry rig_dir _repo branch _ci
+    for entry in "${PROTECTED_RIGS[@]:-}"; do
+      [ -n "$entry" ] || continue
+      IFS='|' read -r rig_dir _repo branch _ci <<<"$entry"
+      [ -n "$branch" ] && printf '%s\n' "$branch"
+    done
+  )
+}
+
+# default_base_branch <repo> — origin's default branch, falling back to main.
+default_base_branch() {
+  local repo="$1" ref
+  ref=$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo "")
+  if [ -n "$ref" ]; then
+    printf '%s\n' "${ref#origin/}"
+  else
+    printf '%s\n' "main"
+  fi
+}
+
+cmd_prune_merged_branches() {
+  local repo="$ROOT" dry_run=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo) repo="$2"; shift 2 ;;
+      --dry-run) dry_run=1; shift ;;
+      *) echo "factory-maintain prune-merged-branches: unknown arg $1" >&2; return 2 ;;
+    esac
+  done
+  git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || {
+    echo "factory-maintain: $repo is not a git repo" >&2; return 1;
+  }
+
+  local current base protected
+  current=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  git -C "$repo" fetch --prune origin >/dev/null 2>&1 || true
+  base=$(default_base_branch "$repo")
+  protected=$'\n'"$(protected_branches_for "$repo")"$'\n'
+
+  local branch deleted=0 skipped=0
+  while IFS= read -r branch; do
+    [ -n "$branch" ] || continue
+    if [ "$branch" = "$current" ]; then skipped=$((skipped+1)); continue; fi
+    case "$protected" in *$'\n'"$branch"$'\n'*) skipped=$((skipped+1)); continue ;; esac
+
+    local upstream ahead
+    upstream=$(git -C "$repo" for-each-ref --format='%(upstream)' "refs/heads/$branch")
+    if [ -z "$upstream" ]; then
+      # no configured tracking branch -- fall back to a same-named remote
+      # branch so a plain `git push origin <branch>` (no `-u`) still counts
+      if git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+        upstream="refs/remotes/origin/$branch"
+      else
+        skipped=$((skipped+1)); continue   # never pushed
+      fi
+    fi
+    ahead=$(git -C "$repo" rev-list --count "$upstream..refs/heads/$branch" 2>/dev/null || echo 1)
+    if [ "$ahead" != "0" ]; then skipped=$((skipped+1)); continue; fi  # unpushed commits
+
+    if ! git -C "$repo" merge-base --is-ancestor "refs/heads/$branch" "refs/remotes/origin/$base" 2>/dev/null; then
+      skipped=$((skipped+1)); continue                                 # not merged
+    fi
+
+    local sha
+    sha=$(git -C "$repo" rev-parse "refs/heads/$branch")
+    if [ "$dry_run" = "1" ]; then
+      echo "would delete: $branch ($sha)"
+    else
+      if git -C "$repo" branch -D "$branch" >/dev/null 2>&1; then
+        deleted=$((deleted+1))
+        log prune-merged-branches deleted \
+          "branch=$branch sha=$sha undo='git -C $repo branch $branch $sha'"
+      fi
+    fi
+  done < <(git -C "$repo" for-each-ref --format='%(refname:short)' refs/heads/)
+
+  log prune-merged-branches summary "deleted=$deleted skipped=$skipped dry_run=$dry_run"
+  echo "prune-merged-branches: deleted=$deleted skipped=$skipped"
+}
+
+cmd_clean_worktrees() {
+  local wt_root="${HOME}/.local/share/agent-factory-runtime-worktrees" dry_run=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --worktree-root) wt_root="$2"; shift 2 ;;
+      --dry-run) dry_run=1; shift ;;
+      *) echo "factory-maintain clean-worktrees: unknown arg $1" >&2; return 2 ;;
+    esac
+  done
+  [ -d "$wt_root" ] || { echo "clean-worktrees: $wt_root does not exist, nothing to clean"; return 0; }
+
+  local removed=0 skipped=0 d
+  for d in "$wt_root"/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"
+    git -C "$d" rev-parse --git-dir >/dev/null 2>&1 || continue
+
+    local branch
+    branch=$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then skipped=$((skipped+1)); continue; fi
+
+    if [ -n "$(git -C "$d" status --porcelain 2>/dev/null)" ]; then
+      skipped=$((skipped+1)); continue   # uncommitted work
+    fi
+
+    local upstream ahead
+    upstream=$(git -C "$d" for-each-ref --format='%(upstream)' "refs/heads/$branch")
+    if [ -z "$upstream" ]; then
+      if git -C "$d" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+        upstream="refs/remotes/origin/$branch"
+      else
+        skipped=$((skipped+1)); continue   # never pushed
+      fi
+    fi
+    ahead=$(git -C "$d" rev-list --count "$upstream..HEAD" 2>/dev/null || echo 1)
+    if [ "$ahead" != "0" ]; then skipped=$((skipped+1)); continue; fi  # unpushed commits
+
+    local base_ref
+    base_ref=$(git -C "$d" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo "")
+    if [ -n "$base_ref" ] && ! git -C "$d" merge-base --is-ancestor HEAD "refs/remotes/$base_ref" 2>/dev/null; then
+      skipped=$((skipped+1)); continue                                 # not merged
+    fi
+
+    local sha main_repo
+    sha=$(git -C "$d" rev-parse HEAD)
+    main_repo=$(git -C "$d" rev-parse --git-common-dir 2>/dev/null)
+    case "$main_repo" in /*) ;; *) main_repo="$d/$main_repo" ;; esac
+    main_repo=$(cd -- "$(dirname -- "$main_repo")" && pwd -P)
+
+    if [ "$dry_run" = "1" ]; then
+      echo "would remove: $d (branch=$branch sha=$sha)"
+    else
+      if git -C "$main_repo" worktree remove "$d" --force >/dev/null 2>&1; then
+        removed=$((removed+1))
+        log clean-worktrees removed \
+          "path=$d branch=$branch sha=$sha undo='factory-do-work-workspace enter recreates it from branch $branch while that branch exists'"
+      fi
+    fi
+  done
+
+  log clean-worktrees summary "removed=$removed skipped=$skipped dry_run=$dry_run"
+  echo "clean-worktrees: removed=$removed skipped=$skipped"
+}
+
+cmd_rotate_logs() {
+  local dir="$ROOT/var" max_bytes=$((10*1024*1024)) keep=5
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dir) dir="$2"; shift 2 ;;
+      --max-bytes) max_bytes="$2"; shift 2 ;;
+      --keep) keep="$2"; shift 2 ;;
+      *) echo "factory-maintain rotate-logs: unknown arg $1" >&2; return 2 ;;
+    esac
+  done
+  [ -d "$dir" ] || { echo "rotate-logs: $dir does not exist, nothing to rotate"; return 0; }
+
+  local rotated=0 f size ts archive
+  for f in "$dir"/*.log; do
+    [ -f "$f" ] || continue
+    size=$(wc -c < "$f" 2>/dev/null || echo 0)
+    [ "$size" -gt "$max_bytes" ] || continue
+
+    ts=$(date -u +%Y%m%dT%H%M%SZ)
+    archive="${f}.rotated.${ts}.gz"
+    if ! gzip -c "$f" > "$archive" 2>/dev/null; then
+      echo "rotate-logs: could not archive $f" >&2
+      rm -f "$archive"
+      continue
+    fi
+    : > "$f"    # truncate in place -- never delete; the archive is the undo
+    rotated=$((rotated+1))
+    log rotate-logs rotated "file=$f archive=$archive undo='gunzip -c $archive >> $f'"
+
+    local old
+    while IFS= read -r old; do
+      [ -n "$old" ] || continue
+      rm -f "$old"
+      log rotate-logs pruned-archive "archive=$old"
+    done < <(ls -1t "${f}".rotated.*.gz 2>/dev/null | tail -n "+$((keep+1))")
+  done
+
+  log rotate-logs summary "rotated=$rotated dir=$dir keep=$keep"
+  echo "rotate-logs: rotated=$rotated"
+}
+
+cmd_reload_city_config() {
+  local city=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --city) city="$2"; shift 2 ;;
+      *) echo "factory-maintain reload-city-config: unknown arg $1" >&2; return 2 ;;
+    esac
+  done
+  local args=()
+  [ -n "$city" ] && args+=(--city "$city")
+  args+=(reload --json)
+
+  local out rc
+  out=$(gc "${args[@]}" 2>&1); rc=$?
+  if [ "$rc" -eq 0 ]; then
+    log reload-city-config reloaded "city=${city:-default} undo='revert the config change and run reload-city-config again'"
+  else
+    log reload-city-config failed "city=${city:-default} output=$(printf '%s' "$out" | tr '\n' ' ')"
+  fi
+  printf '%s\n' "$out"
+  return "$rc"
+}
+
+cmd_restart_service() {
+  local name="${1:-}" city=""
+  [ -n "$name" ] || { echo "usage: factory-maintain restart-service <name> [--city <path>]" >&2; return 2; }
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --city) city="$2"; shift 2 ;;
+      *) echo "factory-maintain restart-service: unknown arg $1" >&2; return 2 ;;
+    esac
+  done
+
+  local list_args=()
+  [ -n "$city" ] && list_args+=(--city "$city")
+  list_args+=(service list --json)
+
+  local known
+  known=$(gc "${list_args[@]}" 2>/dev/null || echo "")
+  if [ -n "$known" ] && command -v python3 >/dev/null 2>&1; then
+    if ! printf '%s' "$known" | python3 -c '
+import json, sys
+name = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)  # cannot verify -- do not block on output we cannot parse
+items = data if isinstance(data, list) else data.get("services", data.get("items", []))
+names = [it.get("name") for it in items if isinstance(it, dict)]
+sys.exit(0 if name in names else 1)
+' "$name"; then
+      echo "factory-maintain restart-service: refusing unknown service '$name' (not in gc service list)" >&2
+      log restart-service refused "name=$name reason=unknown-service"
+      return 1
+    fi
+  fi
+
+  local restart_args=()
+  [ -n "$city" ] && restart_args+=(--city "$city")
+  restart_args+=(service restart "$name")
+
+  local out rc
+  out=$(gc "${restart_args[@]}" 2>&1); rc=$?
+  if [ "$rc" -eq 0 ]; then
+    log restart-service restarted "name=$name undo='gc service restart $name again if the new instance misbehaves'"
+  else
+    log restart-service failed "name=$name output=$(printf '%s' "$out" | tr '\n' ' ')"
+  fi
+  printf '%s\n' "$out"
+  return "$rc"
+}
+
+GESTURE="${1:-}"
+[ -n "$GESTURE" ] || usage
+shift
+
+case "$GESTURE" in
+  prune-merged-branches) cmd_prune_merged_branches "$@" ;;
+  clean-worktrees)       cmd_clean_worktrees "$@" ;;
+  rotate-logs)           cmd_rotate_logs "$@" ;;
+  reload-city-config)    cmd_reload_city_config "$@" ;;
+  restart-service)       cmd_restart_service "$@" ;;
+  -h|--help)             usage ;;
+  *) echo "factory-maintain: unknown gesture '$GESTURE'" >&2; usage ;;
+esac

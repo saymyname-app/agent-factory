@@ -250,5 +250,8 @@ jobs:
       - name: mol-do-work isolates HQ dispatches in a worktree (af-ogg8z)
         run: bash tests/factory-do-work-workspace-test.sh
 
+      - name: Mayor upkeep gestures are safe named scripts (O12)
+        run: bash tests/factory-maintain-test.sh
+
       - name: Every test is registered in CI
         run: bash tests/ci-registration-test.sh
