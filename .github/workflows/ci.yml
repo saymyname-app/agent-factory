@@ -110,8 +110,8 @@ jobs:
       - name: build-basic publish files a follow-up bead on overlapping-worktree no-op
         run: bash tests/build-basic-publish-overlap-followup-test.sh
 
-      - name: ADR-0023 campaign-pointer write door
-        run: bash tests/campaign-pointer-test.sh
+      - name: O06 escalation door write door and routing rules
+        run: bash tests/escalation-door-test.sh
 
       - name: ADR-0023 coordination pointers are written only through a door
         run: bash tests/coordination-pointer-doors-test.sh

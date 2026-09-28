@@ -119,7 +119,7 @@ export PATH="$TMP/bin:$PATH"
 # 2026-09-18 incident (af-txnw2) where it let a test write reach the live
 # store instead of its fixture. Override both explicitly, the same
 # belt-and-braces pattern tests/factory-queue-guard-test.sh and
-# tests/campaign-pointer-test.sh already use.
+# tests/escalation-door-test.sh already use.
 export GC_BIN="$TMP/bin/gc"
 export GH_BIN="$TMP/bin/gh"
 touch "$TMP/city.toml"

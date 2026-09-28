@@ -98,12 +98,15 @@ exactly this surprise, its own worker's closing note said as much, but
 created an ad-hoc, self-authorized redecomposition bead instead (AR-003's
 "second decomposition authority in disguise"). Two pieces close that gap:
 
-- `bin/deliver-close --outcome blocked|abandoned` accepts an optional
-  `--classification repair|semantic|topology`. `repair` writes
-  `gc.blocked_classification` and closes as before. `semantic`/`topology`
-  requires `--planning-exception-id <decision-id>` naming the decision an
-  earlier `raise` actually produced for this bead -- without it the close is
-  refused outright, before any Beads write.
+- `bin/deliver-close --outcome blocked|abandoned` requires
+  `--classification repair|semantic|topology` (af-cphvt: leaving it optional
+  let a worker skip the triage question entirely by just never passing the
+  flag). `repair` writes `gc.blocked_classification` and closes as before.
+  `semantic`/`topology` requires `--planning-exception-id <decision-id>`
+  naming the decision an earlier `raise` actually produced for this bead --
+  without it the close is refused outright, before any Beads write. A
+  blocked/abandoned close with no `--classification` at all is refused the
+  same way.
 - `bin/factory-planning-exception-guard` (wired into `factory-guard`) is the
   detection net for everything that bypasses that door: a bead closed
   `blocked`/`abandoned` with `gc.blocked_classification` semantic/topology

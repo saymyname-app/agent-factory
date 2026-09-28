@@ -111,12 +111,13 @@ call=$(<"$CALL_LOG")
 [[ $call == *"gc.work_outcome=no-op"* ]] || fail_test "--outcome no-op missing gc.work_outcome"
 [[ $call != *"gc.work_commit"* ]] || fail_test "--outcome no-op must not write gc.work_commit"
 
-TESTS_RUN=$((TESTS_RUN + 1))
-run merged af-work --outcome blocked --reason "Blocked: waiting on X" >/dev/null \
-  || fail_test "--outcome blocked should close successfully"
-call=$(<"$CALL_LOG")
-[[ $call == *"gc.work_outcome=blocked"* ]] || fail_test "--outcome blocked missing gc.work_outcome"
-[[ $call == *"Blocked: waiting on X"* ]] || fail_test "--outcome blocked did not carry --reason through"
+# af-cphvt: a blocked/abandoned close is refused outright with no
+# classification at all -- leaving it optional let a worker skip the
+# ADR-0028 triage question entirely by just never passing the flag.
+assert_refused merged "requires --classification" \
+  af-work --outcome blocked --reason "Blocked: waiting on X"
+assert_refused merged "requires --classification" \
+  af-work --outcome abandoned --reason "Nobody will unblock this"
 
 # af-zwhh0: --classification repair on a bounded technical repair closes as
 # before, with no Planning Exception required.
@@ -125,6 +126,8 @@ run merged af-work --outcome blocked --classification repair \
   --reason "Blocked: waiting on X" >/dev/null \
   || fail_test "--outcome blocked --classification repair should close successfully"
 call=$(<"$CALL_LOG")
+[[ $call == *"gc.work_outcome=blocked"* ]] || fail_test "--outcome blocked missing gc.work_outcome"
+[[ $call == *"Blocked: waiting on X"* ]] || fail_test "--outcome blocked did not carry --reason through"
 [[ $call == *"gc.blocked_classification=repair"* ]] \
   || fail_test "--classification repair missing gc.blocked_classification"
 [[ $call != *"gc.planning_exception_id"* ]] \

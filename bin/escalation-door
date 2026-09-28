@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+#
+# escalation-door — the one door for every escalation (O06, replaces
+# `bin/campaign-pointer escalate`; ADR-0023's transitional/together write
+# discipline, without the retired af-1vr4 campaign-coordination fields).
+#
+# No escalation of any kind is ever written by hand (no raw
+# `gc bd update --set-metadata gc.needs_benjamin=...`); this script is the
+# only door, and it fails loudly and non-zero rather than silently
+# (`>/dev/null || true` on an escalation path is exactly the failure mode
+# this closes).
+#
+# Routing (spec-factory-operations-v2-2026-09-28, ticket O06):
+#   straight to Benjamin  -- an owner decision (consent, personal data,
+#                            spend, production, behaviour/acceptance
+#                            change), the Factory stopped (Mayor down > 10
+#                            min, all providers exhausted), or a plan fully
+#                            delivered.
+#   Mayor first            -- a repeated order failure, a stuck PR, or
+#                            repeated red CI; Benjamin only sees it if it is
+#                            still unresolved 2 hours later.
+#
+# Usage: escalation-door <command> [arguments]
+#
+# Commands:
+#   benjamin <bead> <reason>   Straight-to-Benjamin escalation: set
+#                              gc.needs_benjamin on <bead>, append the cause
+#                              to its notes, clear any pending Mayor-first
+#                              state on it, and mail the escalation
+#                              recipient ($GC_ESCALATION_RECIPIENT, default
+#                              human) -- one atomic command, same shape as
+#                              the old campaign-pointer escalate.
+#   mayor <bead> <reason>      Mayor-first escalation: mail mayor and stamp
+#                              gc.escalation_mayor_paged_at (only on the
+#                              first page; a repeat call re-mails mayor
+#                              without resetting the 2h clock).
+#   sweep                      Promote every Mayor-first escalation that is
+#                              still unresolved (no gc.needs_benjamin) 2
+#                              hours after its first page to a straight-to-
+#                              Benjamin escalation. Deterministic: the clock
+#                              is `date +%s`, overridable with
+#                              $ESCALATION_DOOR_NOW for tests.
+#   clear <bead>                Once the decision is resolved, clear
+#                              gc.needs_benjamin and any Mayor-first paging
+#                              state on <bead>, and note the clearance.
+#   list                       Read-only: print the NEEDS BENJAMIN list
+#                              (every open/in_progress bead carrying
+#                              gc.needs_benjamin) and the pending-proposal
+#                              count (open beads labelled `proposal`). Safe
+#                              for the operator session to run at startup.
+set -Eeuo pipefail
+
+PROGRAM_NAME="escalation-door"
+GC_BIN="${GC_BIN:-gc}"
+ESCALATION_RECIPIENT="${GC_ESCALATION_RECIPIENT:-human}"
+MAYOR_FIRST_GRACE_SECONDS="${ESCALATION_DOOR_MAYOR_GRACE_SECONDS:-7200}"
+BEAD_ID_RE='^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(\.[A-Za-z0-9]+)*$'
+
+log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2; }
+die() { log "ERROR: $1"; exit 1; }
+
+usage() {
+  awk 'NR > 1 && /^set /{exit} NR > 1' "$0" | sed 's/^# \{0,1\}//'
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command is unavailable: $1"
+}
+
+valid_bead_id() {
+  [[ $1 =~ $BEAD_ID_RE ]]
+}
+
+now_epoch() {
+  printf '%s' "${ESCALATION_DOOR_NOW:-$(date -u +%s)}"
+}
+
+now_iso() {
+  date -u -d "@$(now_epoch)" +%Y-%m-%dT%H:%M:%SZ
+}
+
+show_bead() {  # $1 = bead id -> prints the single-object JSON, or dies
+  local id=$1 raw
+  raw=$("$GC_BIN" bd show "$id" --json 2>/dev/null) \
+    || die "$id is unavailable."
+  jq -e 'if type == "array" then (if length == 1 then .[0] else error("ambiguous") end) else . end' \
+    <<<"$raw" 2>/dev/null || die "$id did not resolve to exactly one Bead."
+}
+
+cmd_benjamin() {
+  local bead=${1:-} reason=${2:-}
+  [[ -n $bead && -n $reason ]] || die "Usage: $PROGRAM_NAME benjamin <bead> <reason>"
+  [[ $reason != *$'\n'* && $reason != *$'\r'* ]] || die "reason must be a single line."
+  valid_bead_id "$bead" || die "'$bead' is not a Bead id."
+  show_bead "$bead" >/dev/null
+  "$GC_BIN" bd update "$bead" \
+    --set-metadata "gc.needs_benjamin=$reason" \
+    --set-metadata "gc.escalation_mayor_paged_at=none" \
+    --set-metadata "gc.escalation_mayor_reason=none" \
+    --append-notes "NEEDS BENJAMIN: $reason" \
+    >/dev/null || die "Beads write failed for $bead."
+  "$GC_BIN" mail send "$ESCALATION_RECIPIENT" --notify \
+    -s "NEEDS BENJAMIN: $bead" \
+    -m "ACTION: escalation-door escalated $bead straight to Benjamin
+STATE: $reason
+EVIDENCE: gc bd show $bead
+NEXT: decide, then run escalation-door clear $bead" \
+    >/dev/null || die "Could not mail $ESCALATION_RECIPIENT; gc.needs_benjamin is set but the mail was not sent -- retry rather than clearing it by hand."
+  printf 'ESCALATED (benjamin): %s — %s\n' "$bead" "$reason"
+}
+
+cmd_mayor() {
+  local bead=${1:-} reason=${2:-}
+  [[ -n $bead && -n $reason ]] || die "Usage: $PROGRAM_NAME mayor <bead> <reason>"
+  [[ $reason != *$'\n'* && $reason != *$'\r'* ]] || die "reason must be a single line."
+  valid_bead_id "$bead" || die "'$bead' is not a Bead id."
+  local issue paged_at
+  issue=$(show_bead "$bead")
+  paged_at=$(jq -r '.metadata["gc.escalation_mayor_paged_at"] // empty' <<<"$issue")
+  if [[ -z $paged_at || $paged_at == none ]]; then
+    paged_at=$(now_iso)
+    "$GC_BIN" bd update "$bead" \
+      --set-metadata "gc.escalation_mayor_paged_at=$paged_at" \
+      --set-metadata "gc.escalation_mayor_reason=$reason" \
+      --append-notes "MAYOR FIRST: $reason" \
+      >/dev/null || die "Beads write failed for $bead."
+  fi
+  "$GC_BIN" mail send mayor --notify \
+    -s "Escalation (Mayor first): $bead" \
+    -m "ACTION: escalation-door paged the Mayor first
+STATE: $reason
+EVIDENCE: gc bd show $bead
+NEXT: resolve within 2h of $paged_at, or escalation-door sweep escalates to Benjamin" \
+    >/dev/null || die "Could not mail mayor; retry rather than treating this page as delivered."
+  printf 'ESCALATED (mayor-first): %s — %s\n' "$bead" "$reason"
+}
+
+cmd_sweep() {
+  local now due_json
+  now=$(now_epoch)
+  due_json=$("$GC_BIN" bd list --all --has-metadata-key gc.escalation_mayor_paged_at --json 2>/dev/null) \
+    || die "Could not list Mayor-first escalations."
+  [[ -n $due_json ]] || due_json='[]'
+  local count=0
+  while IFS= read -r bead; do
+    [[ -n $bead ]] || continue
+    local issue paged_at needs reason paged_epoch age
+    issue=$(show_bead "$bead")
+    paged_at=$(jq -r '.metadata["gc.escalation_mayor_paged_at"] // empty' <<<"$issue")
+    [[ -n $paged_at && $paged_at != none ]] || continue
+    needs=$(jq -r '.metadata["gc.needs_benjamin"] // empty' <<<"$issue")
+    [[ -z $needs || $needs == none ]] || continue
+    reason=$(jq -r '.metadata["gc.escalation_mayor_reason"] // "unresolved"' <<<"$issue")
+    paged_epoch=$(date -u -d "$paged_at" +%s 2>/dev/null) || continue
+    age=$(( now - paged_epoch ))
+    ((age >= MAYOR_FIRST_GRACE_SECONDS)) || continue
+    cmd_benjamin "$bead" "Mayor-first escalation unresolved after 2h: $reason" >/dev/null \
+      || die "sweep could not escalate $bead to Benjamin."
+    printf 'SWEPT: %s promoted to Benjamin after %ds unresolved\n' "$bead" "$age"
+    count=$((count + 1))
+  done < <(jq -r '(if type == "array" then . else [.] end)[] | .id' <<<"$due_json")
+  ((count > 0)) || printf 'SWEPT: nothing due\n'
+}
+
+cmd_clear() {
+  local bead=${1:-}
+  [[ -n $bead ]] || die "Usage: $PROGRAM_NAME clear <bead>"
+  valid_bead_id "$bead" || die "'$bead' is not a Bead id."
+  show_bead "$bead" >/dev/null
+  "$GC_BIN" bd update "$bead" \
+    --set-metadata "gc.needs_benjamin=none" \
+    --set-metadata "gc.escalation_mayor_paged_at=none" \
+    --set-metadata "gc.escalation_mayor_reason=none" \
+    --append-notes "DECISION CLEARED: escalation reset to none" \
+    >/dev/null || die "Beads write failed for $bead."
+  printf 'CLEARED: decision on %s\n' "$bead"
+}
+
+cmd_list() {
+  local needs_json proposals_json needs_count proposals_count
+  needs_json=$("$GC_BIN" bd list --status open,in_progress --has-metadata-key gc.needs_benjamin --json 2>/dev/null) \
+    || die "Could not list NEEDS BENJAMIN beads."
+  [[ -n $needs_json ]] || needs_json='[]'
+  proposals_json=$("$GC_BIN" bd list --status open --label proposal --json 2>/dev/null) \
+    || die "Could not count pending proposals."
+  [[ -n $proposals_json ]] || proposals_json='[]'
+
+  printf 'NEEDS BENJAMIN:\n'
+  needs_count=0
+  while IFS=$'\t' read -r id reason; do
+    [[ -n $id ]] || continue
+    [[ -n $reason && $reason != none ]] || continue
+    printf '  %s — %s\n' "$id" "$reason"
+    needs_count=$((needs_count + 1))
+  done < <(jq -r '(if type == "array" then . else [.] end)[] | [.id, (.metadata["gc.needs_benjamin"] // "")] | @tsv' <<<"$needs_json")
+  ((needs_count > 0)) || printf '  (none)\n'
+
+  proposals_count=$(jq -r 'if type == "array" then length else 1 end' <<<"$proposals_json")
+  printf 'Pending proposals: %s\n' "${proposals_count:-0}"
+}
+
+main() {
+  local command=${1:-}
+  [[ -n $command ]] || { usage >&2; return 2; }
+  shift
+  case "$command" in
+    -h|--help|help) usage ;;
+    benjamin) cmd_benjamin "$@" ;;
+    mayor) cmd_mayor "$@" ;;
+    sweep) cmd_sweep "$@" ;;
+    clear) cmd_clear "$@" ;;
+    list) cmd_list "$@" ;;
+    *) usage >&2; return 2 ;;
+  esac
+}
+
+require_command jq
+require_command "$GC_BIN"
+require_command flock
+LOCK_FILE="${ESCALATION_DOOR_LOCK_FILE:-${XDG_RUNTIME_DIR:-/tmp}/agent-factory-escalation-door.lock}"
+exec 9>"$LOCK_FILE"
+flock -w 10 9 || die "Could not acquire the escalation-door lock."
+main "$@"

@@ -28,6 +28,18 @@ human approval: `spec-approve approve` runs only when the caller supplies
 approval evidence, and `ticket-graph-publish publish` runs only against a
 caller-supplied, already-approved Ticket Graph Draft.
 
+**Resuming a Planning Run.** Each `run` call is independently safe to make
+against state a previous call already advanced: an already-`APPROVED_SPEC`
+whose digest still matches the session is accepted as-is (`to-spec` never
+rewrites it back to `DRAFT_SPEC`, and `spec-approve approve` never runs a
+second time), and an already-`closed` Planning Map is accepted as-is (its
+decisions are never replayed through `claim`/`resolve`). A result that
+resumed past a stage names it in `resumed_from` (e.g. `["wayfinding",
+"spec_approval"]`). If the session's content has drifted since approval --
+its recomputed digest no longer matches the approved Spec's -- the router
+refuses with an operator-readable `RouterError` instead of silently
+approving different content under the same identity.
+
 `legacy_path` is translated before any Planning Run identity is created --
 the ADR-0027 kernel obligation the ADR itself flagged as outstanding. A
 non-`none` value is rejected fail-closed with a plain-language reason naming
@@ -110,9 +122,10 @@ listed on its `next` entry.
 | --- | --- |
 | `legacy_path` translation | A non-`none` selector returns `result: legacy_path_rejected` with a reason naming the quarantined artifact. Nothing else runs. |
 | Reservation check | While `.gc/runtime/planning-run-reservation.json` (seeded from `config/planning-run-reservation.json` on first read) names an uncleared `reserved_for` and the request's `planning_run_target` does not match, the router returns `result: reservation_blocked` naming the reserved target. Nothing else runs. |
-| Wayfinding (optional) | Promotes the map if it does not already exist, then claims/resolves every decision the request supplies. If the map is not yet `to_spec_eligible` afterward, the router returns `result: wayfinding_pending` -- the caller may submit the remaining decisions in a later call against the same map, exactly as B04's own resumable design intends. |
-| to-spec | Drives `planning-run-to-spec-oracle run` against `session`. A real contradiction/missing trace/undecided behavior/new test seam returns `result: returned_to_planning` with the oracle's own `signal`/`reason` -- no Spec is written. |
-| Approval (optional) | Once a `DRAFT_SPEC` exists, `spec-approve approve` runs only if the request supplies `approval`; the linked Wayfinding map (if any) closes in the same call. Without `approval`, the router returns `result: awaiting_approval`. |
+| Wayfinding (optional) | If the map is already `closed` (a prior call reached approval), the router resumes past Wayfinding untouched. Otherwise it promotes the map if it does not already exist, then claims/resolves every decision the request supplies. If the map is not yet `to_spec_eligible` afterward, the router returns `result: wayfinding_pending` -- the caller may submit the remaining decisions in a later call against the same map, exactly as B04's own resumable design intends. |
+| to-spec | Drives `planning-run-to-spec-oracle run` against `session` (without writing a file yet). A real contradiction/missing trace/undecided behavior/new test seam returns `result: returned_to_planning` with the oracle's own `signal`/`reason` -- no Spec is written. |
+| Spec resume check | If a Spec file already sits at the target path and is `APPROVED_SPEC`, the router compares its digest to what the session would now synthesize: a match resumes past synthesis and approval untouched; a mismatch is refused with an actionable `RouterError`. Otherwise the freshly synthesized `DRAFT_SPEC` is written (as before). |
+| Approval (optional) | Once a `DRAFT_SPEC` exists (i.e. the Spec was not already approved), `spec-approve approve` runs only if the request supplies `approval`; the linked Wayfinding map (if any) closes in the same call. Without `approval`, the router returns `result: awaiting_approval`. |
 | Publication (optional) | Once `APPROVED_SPEC`, `ticket-graph-publish publish` runs only if the request supplies `publish.draft`. Without it, the router returns `result: approved_awaiting_publication`. With it, the router returns `result: published` with the graph digest and the published `ids` (including `_convoy`). |
 
 ## Acceptance mapping
@@ -123,8 +136,9 @@ listed on its `next` entry.
 | A `legacy_path` request is rejected before any Planning Run identity, Spec, map, or convoy is created, with a reason naming the quarantined artifact. | `test_legacy_path_selectors_are_rejected_before_any_identity_is_created` asserts all three ADR-0027 selectors return `legacy_path_rejected` with the artifact named in `reason`, and that `spec_out` is never created. |
 | A failure at any step (session, approval, or publication) leaves no partial artifact -- re-running the same request from scratch is safe. | `test_rerunning_the_same_simple_request_from_scratch_is_safe` runs the identical request twice and asserts the second run publishes the same `ids` through exactly one underlying `create --graph` transaction (the publish door's own digest-based dedup). `test_missing_trace_returns_to_planning_and_creates_no_spec_or_convoy` and `test_wayfinding_request_with_decisions_still_open_stays_pending` prove the router never writes a Spec before it is actually synthesized/route-clear. |
 | The router calls the existing tools only through their documented CLIs; it does not duplicate their state-machine logic. | The router source (`bin/planning-run-router`) only ever shells out to `planning-run-to-spec-oracle`, `wayfinding-run`, `spec-approve` and `ticket-graph-publish` and parses their public JSON output -- it holds no Spec/map/draft validation logic of its own. |
-| At least one automated test exercises the router directly, covering the simple path, the Wayfinding path, and one `legacy_path` rejection. | `tests/planning-run-router-test.py` (12 tests): simple end-to-end, Wayfinding end-to-end, Wayfinding pending, missing-trace return-to-planning, all three `legacy_path` selectors, missing-approval stop, approved-without-a-draft stop, full-request rerun safety, the two reservation tests below, and `test_publishing_the_reserved_run_promotes_the_next_reservation`. |
+| At least one automated test exercises the router directly, covering the simple path, the Wayfinding path, and one `legacy_path` rejection. | `tests/planning-run-router-test.py` (15 tests): simple end-to-end, Wayfinding end-to-end, Wayfinding pending, missing-trace return-to-planning, all three `legacy_path` selectors, missing-approval stop, approved-without-a-draft stop, full-request rerun safety, the two reservation tests below, `test_publishing_the_reserved_run_promotes_the_next_reservation`, and the three resume tests below. |
 | A reservation blocks every new Planning Run except its named target, and clears once that target publishes (B12 AC#5). | `test_reservation_blocks_a_request_that_does_not_declare_the_reserved_target` and `test_reservation_lets_the_declared_target_through_and_then_clears` each drive one `run` call against a scratch reservation file; the second also asserts a later, unrelated request is unblocked once the reserved run has published. |
+| A router resumes an already-`APPROVED_SPEC`/closed-map Planning Run instead of rewriting or replaying it, and refuses on a digest mismatch. | `test_resuming_separate_calls_reaches_published` drives `awaiting_approval` → `approved_awaiting_publication` → `published` as three separate `run` calls and asserts the Spec's approval history is recorded exactly once, from the second call. `test_rerunning_a_wayfinding_request_after_the_map_closed_does_not_replay_decisions` reruns a fully published Wayfinding request and asserts the closed map's decisions are never replayed. `test_digest_mismatch_between_approved_spec_and_session_is_refused` mutates the session after approval and asserts the router refuses with a digest-naming error. |
 
 ## Scope of proof
 

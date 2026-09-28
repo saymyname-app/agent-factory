@@ -226,13 +226,38 @@ fi
 ```
 
 **3b. Blocked / abandoned** (you could not complete it):
+
+`--classification` is required on every blocked/abandoned close; `deliver-close`
+refuses the close outright without it (af-cphvt). First decide (ADR-0028)
+whether this is a bounded technical repair still inside your ticket's
+approved scope, or a genuine surprise about approved intent, behavior, or
+dependency/decomposition topology — `bin/planning-exception classify --kind
+repair|semantic|topology` reports which.
+
+If it is `repair`, pass just that:
+
 ```bash
 "$FACTORY_ROOT/bin/deliver-close" "$WORK_BEAD_ID" \
-  --outcome blocked --reason "Blocked: <exactly what is blocking this, and on whom/what>."
+  --outcome blocked --classification repair \
+  --reason "Blocked: <exactly what is blocking this, and on whom/what>."
 gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "BLOCKED: $WORK_BEAD_ID" \
   -m "STATE: <exactly what is blocking this>
 NEXT: <what unblocking looks like>"
 ```
+
+If it is `semantic` or `topology`, run `bin/planning-exception raise` first
+(see `docs/PLANNING_EXCEPTION.md` for the register/graph arguments it needs)
+and pass the decision id it returns as `--planning-exception-id`:
+
+```bash
+"$FACTORY_ROOT/bin/deliver-close" "$WORK_BEAD_ID" \
+  --outcome blocked --classification semantic|topology --planning-exception-id "<decision-id-from-raise>" \
+  --reason "Blocked: <exactly what is blocking this, and on whom/what>."
+gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "BLOCKED: $WORK_BEAD_ID" \
+  -m "STATE: <exactly what is blocking this>
+NEXT: <what unblocking looks like>"
+```
+
 Use `--outcome abandoned` instead of `blocked` if nobody is expected to
 unblock it (out of scope, superseded, etc.) — mail the same way regardless.
 

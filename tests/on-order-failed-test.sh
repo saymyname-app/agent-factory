@@ -103,23 +103,4 @@ grep -q "would flag dolt-remotes-patrol" <<<"$out" || { echo "$out" >&2; fail "-
 run >/dev/null || fail "an empty event stream must not be an error"
 grep -qE '^(bd |mail )' "$CALLS" && fail "an empty event stream should not call gc bd/mail at all"
 
-# --- paging also writes to factory-watchdog-signals.json, without clobbering
-#     an alert another writer (factory-watchdog) already left there (af-u61xq,
-#     PR #82 gap) ----------------------------------------------------------
-SIGNAL_FILE="$TMP/.gc/runtime/factory-watchdog-signals.json"
-mkdir -p "$(dirname "$SIGNAL_FILE")"
-python3 -c '
-import json
-json.dump(
-    {"generated_at": "2026-09-17T00:00:00Z",
-     "alerts": [{"kind": "aged_human_gate", "id": "af-oihx", "message": "gate aged", "source": "factory-watchdog"}]},
-    open("'"$SIGNAL_FILE"'", "w"))
-'
-rm -f "$TMP/beads/filed"; : > "$CALLS"
-events_n dolt-remotes-patrol 5
-run >/dev/null
-sources=$(python3 -c "import json; print(sorted(a['source'] for a in json.load(open('$SIGNAL_FILE'))['alerts']))")
-[[ "$sources" == "['factory-watchdog', 'on-order-failed']" ]] \
-  || { echo "signal sources: $sources" >&2; fail "on-order-failed must add its own alert without clobbering factory-watchdog's"; }
-
 echo "OK on-order-failed pages a chronic failure, not a transient one"

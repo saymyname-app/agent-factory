@@ -18,12 +18,10 @@
 set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
-LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd)"
 CHECK_ONLY=0
 QUIET=0
 LOOKBACK="${ON_ORDER_FAILED_LOOKBACK:-3h}"
 FAILURE_STREAK="${ON_ORDER_FAILED_STREAK:-5}"
-SIGNAL_FILE="$ROOT/.gc/runtime/factory-watchdog-signals.json"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -50,13 +48,6 @@ SUBJECTS=$(printf '%s\n' "$EVENTS" | jq -r 'select(.subject) | .subject' | sort 
 [ -n "$SUBJECTS" ] || exit 0
 
 PAGED=0
-# Seed with this writer's own alerts already on file, so a run that pages a
-# NEW subject does not silently drop an older still-open one -- merge-signals
-# replaces this writer's whole slice, so the slice passed in must already be
-# complete, not just this run's delta.
-SIGNAL_ALERTS=$(jq -c '[(.alerts // [])[] | select(.source == "on-order-failed") | {kind,id,message}]' \
-  "$SIGNAL_FILE" 2>/dev/null || echo '[]')
-[ -n "$SIGNAL_ALERTS" ] || SIGNAL_ALERTS='[]'
 while IFS= read -r subject; do
   [ -n "$subject" ] || continue
   # Total failures inside LOOKBACK, not a consecutive run: successes in between
@@ -91,17 +82,8 @@ EVIDENCE: bead $created; gc events --type order.failed --since $LOOKBACK
 NEXT: diagnose and fix the order (or the command it runs), then close $created with the cause" \
     >/dev/null 2>&1
   say "on-order-failed: filed $created and paged mayor for $subject ($count/$LOOKBACK)"
-  SIGNAL_ALERTS=$(printf '%s' "$SIGNAL_ALERTS" | jq --arg i "$created" --arg m "$last_message" \
-    '. + [{"kind":"order_failed", "id":$i, "message":$m}]')
   PAGED=$((PAGED + 1))
 done <<<"$SUBJECTS"
-
-# Read-modify-write factory-watchdog-signals.json (af-u61xq, PR #82 gap): only
-# when this run actually filed a bead / paged the Mayor, and only ever add --
-# never clobber what factory-watchdog or on-session-stranded already wrote.
-if [ "$CHECK_ONLY" != "1" ] && [ "$PAGED" -gt 0 ] && [ -n "$LIB" ]; then
-  printf '%s' "$SIGNAL_ALERTS" | python3 "$LIB/factory_watchdog.py" merge-signals "$SIGNAL_FILE" "on-order-failed" 2>/dev/null
-fi
 
 [ "$PAGED" -gt 0 ] && say "on-order-failed: flagged $PAGED order(s)"
 exit 0

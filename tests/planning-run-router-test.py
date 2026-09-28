@@ -418,6 +418,123 @@ class PlanningRunRouterTest(unittest.TestCase):
         self.assertIn("C01", result["reason"])
         self.assertFalse((self.tmp / "specs").exists())
 
+    # --- a router resumes from where an earlier call stopped: an approved
+    #     Spec or a closed map is accepted, never rewritten or replayed -----
+
+    def test_resuming_separate_calls_reaches_published(self):
+        spec_out = self.tmp / "specs"
+        draft_bytes, _ = build_draft("router-simple-2026-09-24")
+        draft_path = self.tmp / "draft.yaml"
+        draft_path.write_bytes(draft_bytes)
+
+        stage1 = self.base_request(SIMPLE_SESSION, spec_out=spec_out)
+        stage1_path = self.write_request(stage1, name="stage1.json")
+        result1 = json.loads(self.run_router(stage1_path, check=True).stdout)
+        self.assertEqual("awaiting_approval", result1["result"])
+        spec_path = Path(result1["spec_path"])
+        self.assertEqual("DRAFT_SPEC", json.loads(spec_path.read_text())["state"])
+
+        stage2 = self.base_request(
+            SIMPLE_SESSION, spec_out=spec_out,
+            approval={"approved_by": "benjamin", "evidence": "stage2-evidence"},
+        )
+        stage2_path = self.write_request(stage2, name="stage2.json")
+        result2 = json.loads(self.run_router(stage2_path, check=True).stdout)
+        self.assertEqual("approved_awaiting_publication", result2["result"])
+        self.assertEqual("APPROVED_SPEC", json.loads(spec_path.read_text())["state"])
+
+        # A different evidence value here proves stage 3 never re-approves:
+        # if it did, this evidence would land in the Spec's history instead
+        # of stage 2's.
+        stage3 = self.base_request(
+            SIMPLE_SESSION, spec_out=spec_out,
+            approval={"approved_by": "benjamin", "evidence": "stage3-evidence-should-be-ignored"},
+            publish={"draft": str(draft_path)},
+        )
+        stage3_path = self.write_request(stage3, name="stage3.json")
+        result3 = json.loads(self.run_router(stage3_path, env=self.bd_env(), check=True).stdout)
+        self.assertEqual("published", result3["result"])
+        self.assertEqual(["spec_approval"], result3.get("resumed_from"))
+
+        final_spec = json.loads(spec_path.read_text())
+        self.assertEqual("APPROVED_SPEC", final_spec["state"])
+        approve_events = [h for h in final_spec.get("history", []) if h["event"] == "approve"]
+        self.assertEqual(1, len(approve_events))
+        self.assertEqual("stage2-evidence", approve_events[0]["evidence"])
+
+    def test_rerunning_a_wayfinding_request_after_the_map_closed_does_not_replay_decisions(self):
+        spec_out = self.tmp / "specs"
+        draft_bytes, _ = build_draft("router-wayfinding-2026-09-24")
+        draft_path = self.tmp / "draft.yaml"
+        draft_path.write_bytes(draft_bytes)
+        map_path = self.tmp / "map.json"
+
+        wayfinding = {
+            "request": str(WAYFINDING_REQUEST),
+            "map": str(map_path),
+            "decisions": [
+                {
+                    "decision": "staffing-model",
+                    "claimant": "session-a",
+                    "session": "s-a",
+                    "resolution": "embedded staffing",
+                    "evidence": "af-fixture-evidence",
+                },
+                {
+                    "decision": "rig-topology",
+                    "claimant": "session-a",
+                    "session": "s-a",
+                    "resolution": "hub-and-spoke",
+                    "evidence": "af-fixture-evidence",
+                },
+            ],
+        }
+        request = self.base_request(
+            WAYFINDING_SESSION,
+            spec_out=spec_out,
+            approval={"approved_by": "benjamin", "evidence": "af-fixture-evidence"},
+            publish={"draft": str(draft_path)},
+            wayfinding=wayfinding,
+        )
+        request_path = self.write_request(request)
+
+        first = json.loads(self.run_router(request_path, env=self.bd_env(), check=True).stdout)
+        self.assertEqual("published", first["result"])
+        self.assertEqual("closed", json.loads(map_path.read_text())["status"])
+
+        second = json.loads(self.run_router(request_path, env=self.bd_env(), check=True).stdout)
+        self.assertEqual("published", second["result"])
+        self.assertEqual("closed", json.loads(map_path.read_text())["status"])
+        self.assertIn("wayfinding", second.get("resumed_from", []))
+        self.assertIn("spec_approval", second.get("resumed_from", []))
+
+    def test_digest_mismatch_between_approved_spec_and_session_is_refused(self):
+        spec_out = self.tmp / "specs"
+        request = self.base_request(
+            SIMPLE_SESSION, spec_out=spec_out,
+            approval={"approved_by": "benjamin", "evidence": "af-fixture-evidence"},
+        )
+        request_path = self.write_request(request)
+        first = json.loads(self.run_router(request_path, check=True).stdout)
+        self.assertEqual("approved_awaiting_publication", first["result"])
+
+        session = json.loads(SIMPLE_SESSION.read_text())
+        session["shared_understanding"][0]["statement"] += " (edited after approval)"
+        mutated_session_path = self.tmp / "mutated-session.json"
+        mutated_session_path.write_text(json.dumps(session), encoding="utf-8")
+
+        mutated_request = self.base_request(
+            mutated_session_path, spec_out=spec_out,
+            approval={"approved_by": "benjamin", "evidence": "af-fixture-evidence"},
+        )
+        mutated_request_path = self.write_request(mutated_request, name="mutated-request.json")
+
+        proc = self.run_router(mutated_request_path)
+        self.assertNotEqual(0, proc.returncode)
+        result = json.loads(proc.stdout)
+        self.assertFalse(result["ok"])
+        self.assertIn("digest", result["error"].lower())
+
     def test_reservation_lets_the_declared_target_through_and_then_clears(self):
         reservation_path = self.write_reservation(reserved_for="C01")
         spec_out = self.tmp / "specs"

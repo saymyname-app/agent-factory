@@ -5,9 +5,10 @@
 # --set-metadata; a test shall grep for it. (The product-queue doc and the
 # campaign mail texts it also named were retired on 2026-09-26.)
 #
-# The doors themselves (bin/campaign-pointer, bin/deliver-close; the retired
-# bin/product-queue was a third) are exempt -- they are the one place `--set-metadata` on
-# these fields is allowed to live. Everything else must call the door.
+# The doors themselves (bin/escalation-door, bin/deliver-close; the retired
+# bin/campaign-pointer and bin/product-queue were two more) are exempt -- they
+# are the one place `--set-metadata` on these fields is allowed to live.
+# Everything else must call the door.
 #
 # Docs legitimately WARN against the pattern in prose ("Never edit a
 # candidate's status... (no raw `gc bd update --status ...` / `--set-metadata
@@ -23,9 +24,10 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 TESTS_RUN=0
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
-# Coordination-root pointers (campaign-pointer's door) + the six ADR-0016
-# delivery-proof fields (deliver-close's door) + gc.queue_state
-# (the retired product-queue's door, kept so no raw write to it comes back).
+# Escalation and retired coordination-root pointer fields (escalation-door's
+# and the retired campaign-pointer's door) + the six ADR-0016 delivery-proof
+# fields (deliver-close's door) + gc.queue_state (the retired product-queue's
+# door, kept so no raw write to it comes back).
 FIELDS='gc\.(current|current_jit|last_delivered|next_outcome|needs_benjamin|blocked_reason|resume_[a-z_]+|delivery_status|work_outcome|github_repo|pr_number|pr_head|merge_commit|queue_state)'
 
 scan_fenced_code() {  # $1 = file -> prints offending lines, if any
@@ -59,7 +61,7 @@ done
 # so a change to FIELDS/the awk pattern that stops matching anything (a
 # silently broken test) is caught too.
 TESTS_RUN=$((TESTS_RUN + 1))
-sanity_hit=$(printf '```bash\ngc bd update af-1vr4 --set-metadata gc.needs_benjamin=x\n```\n' \
+sanity_hit=$(printf '```bash\ngc bd update af-example --set-metadata gc.needs_benjamin=x\n```\n' \
   | awk '
       /^[[:space:]]*```/ { in_fence = !in_fence; next }
       in_fence && $0 ~ /--set-metadata.*'"$FIELDS"'/ && $0 ~ /gc bd update/ { print }
