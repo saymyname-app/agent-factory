@@ -21,11 +21,13 @@ export CALLS
 
 GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" "$DISPATCH" af-fixture >/dev/null
 mapfile -t calls < "$CALLS"
-[ "${#calls[@]}" -eq 2 ] || fail "expected a sling call plus a dispatch-door stamp call, got: ${calls[*]-}"
-[[ ${calls[0]} == "--city $REPO_ROOT sling factory-worker af-fixture --on mol-do-work --reassign" ]] \
-  || fail "unexpected sling call: ${calls[0]}"
-[[ ${calls[1]} == "--city $REPO_ROOT bd update af-fixture --set-metadata gc.dispatched_via=dispatch-door --set-metadata gc.dispatch_formula=mol-do-work --set-metadata gc.dispatch_target=factory-worker --set-metadata gc.dispatch_rig=agent-factory" ]] \
-  || fail "unexpected dispatch-door stamp call: ${calls[1]}"
+[ "${#calls[@]}" -eq 3 ] || fail "expected a label-check call, a sling call, and a dispatch-door stamp call, got: ${calls[*]-}"
+[[ ${calls[0]} == "--city $REPO_ROOT bd show af-fixture --json" ]] \
+  || fail "unexpected label-check call: ${calls[0]}"
+[[ ${calls[1]} == "--city $REPO_ROOT sling factory-worker af-fixture --on mol-do-work --reassign" ]] \
+  || fail "unexpected sling call: ${calls[1]}"
+[[ ${calls[2]} == "--city $REPO_ROOT bd update af-fixture --set-metadata gc.dispatched_via=dispatch-door --set-metadata gc.dispatch_formula=mol-do-work --set-metadata gc.dispatch_target=factory-worker --set-metadata gc.dispatch_rig=agent-factory" ]] \
+  || fail "unexpected dispatch-door stamp call: ${calls[2]}"
 
 : > "$CALLS"
 if GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" "$DISPATCH" bd.dog af-fixture >/dev/null 2>&1; then
