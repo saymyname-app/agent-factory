@@ -524,6 +524,83 @@ if [ "$STALE" = "0" ]; then
   say "✓ worktrees — $LIVE_WT human worktree(s), none pinning a merged branch"
 fi
 
+# --- 6b. runtime worktrees, whichever repo they belong to (O05) --------------
+# Section 4/4b above only ever look at $ROOT's own refs/heads/ and working
+# tree. bin/factory-do-work-workspace opens a runtime worktree against
+# whichever repo was current when a worker was isolated -- for a product-rig
+# dispatch that is the rig's own checkout under rigs/<rig>/, not $ROOT -- so a
+# detached-HEAD commit or an uncommitted file living only in one of those was
+# invisible to every backup check above. This scans every worktree under the
+# shared runtime-worktree root regardless of which repo it belongs to: it
+# backs up any commit (branch or detached) that exists on no origin branch,
+# reports (never removes) uncommitted work, and reports a root-owned file a
+# worker cannot itself clean up. A worktree whose HEAD is already reachable
+# from some origin branch -- including a freshly created branch still sitting
+# on it, e.g. a `po/*` planning-run worktree -- is left alone indefinitely;
+# there is nothing there that exists only on this machine.
+RUNTIME_WT_ROOT="$HOME/.local/share/agent-factory-runtime-worktrees"
+if [ -d "$RUNTIME_WT_ROOT" ]; then
+  # Scope to repos this Factory actually knows about ($ROOT itself, and every
+  # rig under rigs/*/) -- never an arbitrary directory that happens to sit
+  # under the shared runtime-worktree path. Two reasons: a stray worktree
+  # from something else has no business being pushed to, and this is what
+  # keeps a test run (FACTORY_ROOT pointed at a throwaway fixture) from
+  # reaching out to whatever real worktrees/origins the live host also has
+  # under the same $HOME.
+  declare -A RT_KNOWN_ORIGIN=()
+  KO=$(git remote get-url origin 2>/dev/null) && [ -n "$KO" ] && RT_KNOWN_ORIGIN[$KO]=1
+  for rig_dir in "$ROOT"/rigs/*/; do
+    rig_dir=${rig_dir%/}
+    [ -e "$rig_dir/.git" ] || continue
+    KO=$(git -C "$rig_dir" remote get-url origin 2>/dev/null) && [ -n "$KO" ] && RT_KNOWN_ORIGIN[$KO]=1
+  done
+  declare -A RT_REMOTE_CACHE=()
+  for wt in "$RUNTIME_WT_ROOT"/*/; do
+    wt=${wt%/}
+    [ -e "$wt/.git" ] || continue
+
+    RT_ORIGIN=$(git -C "$wt" remote get-url origin 2>/dev/null)
+    [ -n "$RT_ORIGIN" ] || continue
+    [ -n "${RT_KNOWN_ORIGIN[$RT_ORIGIN]+x}" ] || continue
+
+    # -- root-owned files: a worker cannot remove these itself -------------
+    RT_ROOT_OWNED=$(find "$wt" -user root -not -path '*/.git/*' 2>/dev/null | head -5)
+    if [ -n "$RT_ROOT_OWNED" ]; then
+      bad "worktree '$wt' has root-owned file(s) a worker cannot remove: $(tr '\n' ' ' <<<"$RT_ROOT_OWNED")"
+    fi
+
+    RT_HEAD=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || continue
+    RT_BRANCH=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)
+    [ "$RT_BRANCH" = "HEAD" ] && RT_BRANCH="detached"
+
+    if [ -z "${RT_REMOTE_CACHE[$RT_ORIGIN]+x}" ]; then
+      RT_REMOTE_CACHE[$RT_ORIGIN]=$(timeout 30 git -C "$wt" ls-remote --heads origin 2>/dev/null)
+    fi
+    RT_ON_ORIGIN=0
+    while read -r rsha _rref; do
+      [ -z "$rsha" ] && continue
+      if git -C "$wt" merge-base --is-ancestor "$RT_HEAD" "$rsha" 2>/dev/null; then
+        RT_ON_ORIGIN=1; break
+      fi
+    done <<<"${RT_REMOTE_CACHE[$RT_ORIGIN]}"
+
+    RT_DIRTY=$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null | grep -c . || true)
+    if [ "${RT_DIRTY:-0}" -gt 0 ]; then
+      bad "worktree '$wt' has uncommitted work (branch '${RT_BRANCH:-detached}') — never removed; a worker may still be using it"
+    fi
+    if [ "$RT_ON_ORIGIN" != "1" ]; then
+      RT_SNAP_REF="refs/factory-guard/snapshots/worktree/$(basename "$wt")"
+      if [ "$CHECK_ONLY" = "1" ]; then
+        bad "worktree '$wt' has commit(s) on branch '${RT_BRANCH:-detached}' that exist nowhere but this machine"
+      elif timeout 30 git -C "$wt" push origin "$RT_HEAD:$RT_SNAP_REF" >/dev/null 2>&1; then
+        did "backed up worktree '$wt' HEAD (branch '${RT_BRANCH:-detached}') to origin $RT_SNAP_REF"
+      else
+        bad "could not back up worktree '$wt' HEAD to origin — commit(s) exist nowhere else"
+      fi
+    fi
+  done
+fi
+
 # --- 7. mayor session down (asleep/quarantined), page once per streak ------
 # af-9ur0s: a Mayor sitting asleep/quarantined cannot receive a
 # "mail send mayor" page, so this pages GC_ESCALATION_RECIPIENT (human by
