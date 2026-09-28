@@ -381,7 +381,9 @@ elif [ "$AT_RISK" = "0" ] && [ -n "$SNAP_REF" ]; then
 fi
 
 # --- 5. a rig with ready work but no dispatcher ------------------------------
-for rig in saymyname-backend saymyname-frontend; do
+# shellcheck source=lib/project_registry.sh
+. "$ROOT/lib/project_registry.sh"
+for rig in $(project_registry_rig_names "$ROOT/config/projects"); do
   [ -d "rigs/$rig" ] || continue
   # `gc rig status` reports "unknown (partial status)" whenever its runtime
   # probe times out, which silently hid a genuinely stopped dispatcher. The
@@ -433,6 +435,30 @@ else
   if [ "$BG_STATUS" -ne 0 ] && [ "$BG_PROBLEM_COUNT" -eq 0 ]; then
     PROBLEMS+=("build-gates: factory-build-gates exited $BG_STATUS with no problem line captured")
     STATUS=1
+  fi
+fi
+
+# --- 5c. every rig Gas City knows about has a project file (af-vsevn) -------
+# config/projects/<project>.toml is the only source of truth for a rig's
+# protected branch and required CI (lib/protected_rigs.sh,
+# factory-delivery-guard, deliver-close, pr-autopilot all read it). A rig
+# registered in Gas City with no project file would silently run
+# unprotected everywhere at once, so this fails loudly instead.
+if command -v gc >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  RIG_LIST_JSON=$(gc rig list --json 2>/dev/null || true)
+  if [ -n "$RIG_LIST_JSON" ] && jq -e . >/dev/null 2>&1 <<<"$RIG_LIST_JSON"; then
+    REGISTERED_RIG_DIRS=()
+    while IFS= read -r rd; do
+      REGISTERED_RIG_DIRS+=("$rd")
+    done < <(jq -r '.rigs[] | if .hq then "." else "rigs/" + .name end' <<<"$RIG_LIST_JSON")
+    PRC_OUTPUT=$(project_registry_check_coverage "$ROOT/config/projects" "${REGISTERED_RIG_DIRS[@]}" 2>&1)
+    if [ $? -ne 0 ]; then
+      while IFS= read -r prc_line; do
+        [ -n "$prc_line" ] && bad "project-registry: $prc_line"
+      done <<<"$PRC_OUTPUT"
+    else
+      say "✓ project-registry — every Gas City rig has a config/projects/*.toml file"
+    fi
   fi
 fi
 

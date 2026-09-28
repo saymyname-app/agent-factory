@@ -1,0 +1,12 @@
+# Project file for the Factory HQ rig itself (af-vsevn). One file per
+# project is the single source of truth for its rig directory, GitHub repo,
+# protected branch, and required CI workflow — lib/protected_rigs.sh,
+# bin/factory-guard, bin/factory-delivery-guard, bin/deliver-close, and
+# bin/pr-autopilot all read this directory instead of hardcoding the rig
+# list themselves. A rig with no project file here fails
+# bin/project-registry's coverage check loudly instead of silently losing
+# protection.
+rig_dir = "."
+repo = "saymyname-app/agent-factory"
+protected_branch = "main"
+required_ci = "Factory CI"

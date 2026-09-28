@@ -8,9 +8,19 @@
 # added here is protected everywhere, not just in whichever script an author
 # remembered to update.
 #
-# rig_dir (relative to FACTORY_ROOT, "." for the factory root itself) | repo | protected branch | required GitHub Actions workflow
-PROTECTED_RIGS=(
-  "rigs/saymyname-backend|saymyname-app/Say-my-name-back|dev|Backend CI"
-  "rigs/saymyname-frontend|saymyname-app/Say-my-name-front|dev|Frontend CI"
-  ".|saymyname-app/agent-factory|main|Factory CI"
-)
+# The actual data lives in config/projects/<project>.toml (one file per
+# project — af-vsevn), not here: this file just loads it, through
+# lib/project_registry.sh, into the PROTECTED_RIGS array consumers already
+# expect, so adding a rig means adding one project file, not editing this
+# array by hand.
+#
+# PROTECTED_RIGS rows: "rig_dir|repo|protected_branch|required_ci"
+_PROTECTED_RIGS_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=lib/project_registry.sh
+. "$_PROTECTED_RIGS_LIB_DIR/project_registry.sh"
+
+PROTECTED_RIGS=()
+while IFS='|' read -r _pr_rig_dir _pr_repo _pr_branch _pr_ci _pr_name; do
+  PROTECTED_RIGS+=("${_pr_rig_dir}|${_pr_repo}|${_pr_branch}|${_pr_ci}")
+done < <(project_registry_rows "$_PROTECTED_RIGS_LIB_DIR/../config/projects")
+unset _pr_rig_dir _pr_repo _pr_branch _pr_ci _pr_name

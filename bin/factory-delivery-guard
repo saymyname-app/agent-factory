@@ -81,7 +81,10 @@ MERGED_CACHE="${FACTORY_DELIVERY_GUARD_MERGED_CACHE:-$ROOT/.gc/runtime/delivery-
 PY_BIN="${PYTHON_BIN:-python3}"
 LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd -P)"
 CHECK_ONLY=0
-RIGS=(saymyname-backend saymyname-frontend)
+# shellcheck source=lib/project_registry.sh
+. "$LIB_DIR/project_registry.sh"
+RIGS=()
+while IFS= read -r rig_name; do RIGS+=("$rig_name"); done < <(project_registry_rig_names "$ROOT/config/projects")
 
 while [ $# -gt 0 ]; do
   case "$1" in
