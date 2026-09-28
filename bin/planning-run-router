@@ -27,12 +27,14 @@ existing to-tickets and publication doors.
 This is the only Planning Run entry point (af-mav0b): there is no flag, env
 var, or code branch that falls back to a legacy planning path. Right after
 `legacy_path` translation, a reservation recorded in
-`config/planning-run-reservation.json` (B12 AC#5) is checked, also before any
-Planning Run identity is created: while a reservation is active, only a
-request that declares a matching `planning_run_target` proceeds -- every
-other request is rejected the same identity-free way as a `legacy_path`
-selector. Publishing through as the reserved target clears the reservation
-for every request after it.
+`.gc/runtime/planning-run-reservation.json` (B12 AC#5; untracked runtime
+state per F18 -- seeded once from the tracked, read-only
+`config/planning-run-reservation.json`) is checked, also before any Planning
+Run identity is created: while a reservation is active, only a request that
+declares a matching `planning_run_target` proceeds -- every other request is
+rejected the same identity-free way as a `legacy_path` selector. Publishing
+through as the reserved target clears the reservation for every request
+after it.
 """
 
 from __future__ import annotations
@@ -104,8 +106,20 @@ def resolve_path(value: str, repo_root: Path) -> Path:
     return path if path.is_absolute() else repo_root / path
 
 
-def reservation_path(repo_root: Path) -> Path:
+def reservation_seed_path(repo_root: Path) -> Path:
+    """The git-tracked path a reservation used to live and mutate at before
+    F18. Read-only from here on: it seeds the untracked runtime copy the
+    first time a repo checkout sees this reservation, so the C01 reservation
+    already committed there is not lost by the move."""
     return repo_root / "config" / "planning-run-reservation.json"
+
+
+def reservation_path(repo_root: Path) -> Path:
+    """The untracked runtime location a reservation reads and writes from
+    (F18): `.gc/` is Host-local Gas City/runtime state (gitignored), so a
+    router run that clears or promotes a reservation no longer dirties the
+    repo root's git status."""
+    return repo_root / ".gc" / "runtime" / "planning-run-reservation.json"
 
 
 def load_reservation(repo_root: Path) -> dict[str, Any] | None:
@@ -117,7 +131,11 @@ def load_reservation(repo_root: Path) -> dict[str, Any] | None:
     """
     path = reservation_path(repo_root)
     if not path.exists():
-        return None
+        seed = reservation_seed_path(repo_root)
+        if not seed.exists():
+            return None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(seed.read_text(encoding="utf-8"), encoding="utf-8")
     try:
         reservation = as_dict(json.loads(path.read_text(encoding="utf-8")), "reservation")
     except (OSError, json.JSONDecodeError) as exc:

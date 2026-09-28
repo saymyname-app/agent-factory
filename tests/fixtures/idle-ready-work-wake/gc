@@ -1,0 +1,26 @@
+#!/usr/bin/env python3
+"""Fake `gc` used by idle-ready-work-wake-test.py: reports the Mayor session
+state from IDLE_TEST_MAYOR_ACTIVE ("1"/"0", default "0") for `gc session
+list --json --template mayor`, and logs every `gc mail send mayor ...` call
+to IDLE_TEST_GC_LOG so a test can assert exactly one wake per idle window."""
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+
+if args[:4] == ["session", "list", "--json", "--template"]:
+    active = os.environ.get("IDLE_TEST_MAYOR_ACTIVE", "0") == "1"
+    sessions = [{"state": "active"}] if active else []
+    print(json.dumps({"ok": True, "sessions": sessions}))
+    raise SystemExit(0)
+
+if args[:3] == ["mail", "send", "mayor"]:
+    log = Path(os.environ["IDLE_TEST_GC_LOG"])
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(args) + "\n")
+    raise SystemExit(0)
+
+print(f"unexpected fake gc arguments: {args}", file=sys.stderr)
+raise SystemExit(2)
