@@ -81,9 +81,13 @@ For a change:
   tests): set `gc.needs_benjamin=true` AND mail `human` AND state the cause,
   then keep working on what is eligible. Anything else: mail `mayor` BLOCKED,
   `gc.outcome=fail`, drain. Never create a `human` gate: it notifies nobody.
-- **Standing ADMIN allowlist:** routine reversible ops (dispatcher/preview
-  restart, pruning merged branches, cleaning worktrees, log rotation, city
-  config reload) don't trigger the escalation contract above — full list in
+- **Standing ADMIN allowlist:** the routine upkeep gestures ADR-0016 §7
+  exempts from the escalation contract above are run only through
+  `bin/factory-maintain <gesture>` — `restart-service`, `prune-merged-branches`,
+  `clean-worktrees`, `rotate-logs`, `reload-city-config` — never by hand; each
+  gesture checks its own refusal criteria, logs what it did to
+  `var/factory-maintain.log`, and is undoable. No other free-text upkeep
+  action is in scope; anything else stays ADMIN. Background in
   `legacy/docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` §7.
 - **No direct push to `main` or `dev`:** land through a pull request.
 
