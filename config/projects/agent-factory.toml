@@ -6,7 +6,14 @@
 # list themselves. A rig with no project file here fails
 # bin/project-registry's coverage check loudly instead of silently losing
 # protection.
+#
+# sling_target/formulas (O03, af-ui0ua) feed bin/dispatch-door -- the one
+# door every dispatch to this rig goes through. sling_target is the bare
+# qualified-agent name (rig_dir "." means it is used unqualified); formulas
+# is the comma-separated allowed-formula list for this rig.
 rig_dir = "."
 repo = "saymyname-app/agent-factory"
 protected_branch = "main"
 required_ci = "Factory CI"
+sling_target = "factory-worker"
+formulas = "mol-do-work"

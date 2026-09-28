@@ -208,6 +208,12 @@ jobs:
       - name: HQ Factory work uses its workspace-inherited implementation role
         run: bash tests/factory-work-dispatch-test.sh
 
+      - name: O03 dispatch-door validates target/formula/--reassign for every rig and formula
+        run: bash tests/dispatch-door-test.sh
+
+      - name: O03 dispatch-door-guard reports a raw gc sling that bypassed the door
+        run: bash tests/dispatch-door-guard-test.sh
+
       - name: Factory guard clears or flags stale gc.waiting_on
         run: bash tests/factory-waiting-guard-test.sh
 

@@ -73,6 +73,36 @@ project_registry_ci_for_repo() {
   return 1
 }
 
+# project_registry_field <config_dir> <project_name> <key>
+#   Prints the raw value of <key> from config_dir/<project_name>.toml, or
+#   nothing if the file or the key is absent (returns 0 either way -- these
+#   are optional fields; project_registry_rows above already fails loudly
+#   on a missing required one). Used for the dispatch-door fields below,
+#   which not every project_registry consumer needs.
+project_registry_field() {
+  local config_dir="$1" project_name="$2" key="$3" file value
+  file="$config_dir/$project_name.toml"
+  [ -f "$file" ] || return 0
+  value=$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "$file" | tail -1 | cut -d'=' -f2-)
+  value="$(printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//')"
+  printf '%s\n' "$value"
+}
+
+# project_registry_dispatch_target <config_dir> <project_name>
+#   Prints the project's sling_target (the bare qualified-agent name
+#   bin/dispatch-door routes to, e.g. "factory-worker" or "claude"), or
+#   nothing if unset.
+project_registry_dispatch_target() {
+  project_registry_field "$1" "$2" "sling_target"
+}
+
+# project_registry_dispatch_formulas <config_dir> <project_name>
+#   Prints the project's comma-separated allowed-formulas list (e.g.
+#   "mol-do-work,build-basic"), or nothing if unset.
+project_registry_dispatch_formulas() {
+  project_registry_field "$1" "$2" "formulas"
+}
+
 # project_registry_check_coverage <config_dir> <rig-dir-1> [<rig-dir-2> ...]
 #   Given the rig directories Gas City actually has registered (relative to
 #   the Factory root, "." for the HQ root itself), fails with an

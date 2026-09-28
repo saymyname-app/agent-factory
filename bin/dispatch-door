@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# dispatch-door — the one door for every dispatch, for every rig and every
+# formula (O03, spec-factory-operations-v2-2026-09-28).
+#
+# Before this, "not a raw provider name, always pass --reassign, pick the
+# right formula" lived only as prose in agents/mayor/prompt.template.md; the
+# Mayor followed it (or not) by building its own `gc sling` command by hand.
+# `bin/factory-work-dispatch` already did this correctly for HQ implementation
+# work by pinning target+formula in code instead of prose, but every other
+# rig and role formula -- `build-basic` included -- had no equivalent and
+# still went through a raw `gc sling ... --reassign` the Mayor assembled
+# itself, matching the prompt only by discipline. This script generalizes
+# that pattern to every rig: it validates the rig (config/projects/<rig>.toml
+# must exist), the formula (against that project's `formulas` list), resolves
+# the qualified sling target from the same file (`sling_target`), and always
+# passes --reassign -- so no dispatch anywhere in the Factory needs to
+# reconstruct that command by hand. `bin/factory-work-dispatch` is now a
+# thin HQ convenience wrapper around this door (fixed target/formula, no
+# --rig to type); every other rig and formula (build-basic included) calls
+# this door directly.
+#
+# On a real dispatch (not --dry-run) it also stamps the routed bead with
+# gc.dispatched_via=dispatch-door (plus the formula/target/rig it used) so
+# bin/dispatch-door-guard can tell a door-routed dispatch apart from a raw
+# `gc sling` that bypassed it -- gc sling itself lives outside this repo (a
+# separately built binary, see packs.lock) and cannot be patched to refuse
+# a bypass outright, so the guard is the repo-side detection half.
+set -Eeuo pipefail
+
+PROGRAM_NAME="dispatch-door"
+ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+GC_BIN="${GC_BIN:-gc}"
+CONFIG_DIR="${DISPATCH_DOOR_CONFIG_DIR:-$ROOT/config/projects}"
+
+SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=lib/project_registry.sh
+. "$SELF_DIR/../lib/project_registry.sh"
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: dispatch-door <bead-id> --rig <project-name> --formula <formula> [--dry-run]
+
+The one door for every dispatch: validates <project-name> against
+config/projects/<project-name>.toml, validates <formula> against that
+project's `formulas` list, resolves the qualified sling target from the
+same file's `sling_target`, and dispatches with --reassign. Stamps
+gc.dispatched_via on the routed bead so bin/dispatch-door-guard can detect
+a raw `gc sling` that bypassed this door.
+USAGE
+}
+
+fail() {
+  printf '%s: %s\n' "$PROGRAM_NAME" "$1" >&2
+  exit 2
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+[ $# -ge 1 ] || { usage; exit 2; }
+BEAD_ID=$1
+shift
+
+RIG=""
+FORMULA=""
+DRY_RUN=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --rig)
+      [ $# -ge 2 ] || fail "--rig requires a project name"
+      RIG=$2
+      shift 2
+      ;;
+    --formula)
+      [ $# -ge 2 ] || fail "--formula requires a formula name"
+      FORMULA=$2
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    *) fail "unsupported argument '$1'" ;;
+  esac
+done
+
+[ -n "$BEAD_ID" ] || fail "a bead id is required"
+[ -n "$RIG" ] || fail "--rig is required"
+[ -n "$FORMULA" ] || fail "--formula is required"
+
+[ -f "$CONFIG_DIR/$RIG.toml" ] \
+  || fail "'$RIG' has no $CONFIG_DIR/$RIG.toml -- unknown project, refusing to guess a dispatch target"
+
+registry_rows=$(project_registry_rows "$CONFIG_DIR") || fail "config/projects/*.toml failed to load"
+rig_dir=""
+while IFS='|' read -r r_dir _repo _branch _ci r_name; do
+  [ "$r_name" = "$RIG" ] && rig_dir="$r_dir"
+done <<<"$registry_rows"
+[ -n "$rig_dir" ] || fail "'$RIG' did not load through project_registry_rows (check its required fields)"
+
+target=$(project_registry_dispatch_target "$CONFIG_DIR" "$RIG")
+[ -n "$target" ] || fail "'$RIG' has no sling_target in $CONFIG_DIR/$RIG.toml"
+
+formulas_csv=$(project_registry_dispatch_formulas "$CONFIG_DIR" "$RIG")
+[ -n "$formulas_csv" ] || fail "'$RIG' has no formulas list in $CONFIG_DIR/$RIG.toml"
+
+formula_ok=0
+IFS=',' read -ra allowed <<<"$formulas_csv"
+for f in "${allowed[@]}"; do
+  if [ "$f" = "$FORMULA" ]; then
+    formula_ok=1
+    break
+  fi
+done
+[ "$formula_ok" -eq 1 ] \
+  || fail "formula '$FORMULA' is not valid for '$RIG' (allowed: $formulas_csv)"
+
+if [ "$rig_dir" = "." ]; then
+  qualified_target="$target"
+else
+  qualified_target="$RIG/$target"
+fi
+
+CMD=("$GC_BIN" --city "$ROOT" sling "$qualified_target" "$BEAD_ID" --on "$FORMULA" --reassign)
+if [ "$DRY_RUN" = "1" ]; then
+  printf '%q ' "${CMD[@]}"
+  printf '\n'
+  exit 0
+fi
+
+"${CMD[@]}" || fail "gc sling failed routing $BEAD_ID to $qualified_target"
+
+"$GC_BIN" --city "$ROOT" bd update "$BEAD_ID" \
+  --set-metadata "gc.dispatched_via=dispatch-door" \
+  --set-metadata "gc.dispatch_formula=$FORMULA" \
+  --set-metadata "gc.dispatch_target=$qualified_target" \
+  --set-metadata "gc.dispatch_rig=$RIG" \
+  >/dev/null \
+  || fail "$BEAD_ID was dispatched to $qualified_target but the door stamp write failed -- dispatch-door-guard will report it as bypassed until this is retried"

@@ -1,6 +1,11 @@
 # Project file for the SayMyName frontend rig (af-vsevn). See
 # config/projects/agent-factory.toml for what reads this directory.
+#
+# sling_target/formulas (O03, af-ui0ua) feed bin/dispatch-door; see that
+# file's comment for what they mean.
 rig_dir = "rigs/saymyname-frontend"
 repo = "saymyname-app/Say-my-name-front"
 protected_branch = "dev"
 required_ci = "Frontend CI"
+sling_target = "claude"
+formulas = "mol-do-work,mol-scoped-work,mol-polecat-commit,build-basic"

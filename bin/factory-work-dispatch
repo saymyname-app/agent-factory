@@ -2,6 +2,12 @@
 # The single supported door for ordinary HQ Factory implementation work.
 # It deliberately exposes no target option: factory-worker is the implementation
 # role, while workspace is its provider-failover class and bd.dog is Dolt-only.
+#
+# A thin HQ convenience wrapper (O03, af-ui0ua): the target/formula stay
+# pinned in code exactly as before, but the actual validation, dispatch and
+# gc.dispatched_via stamping now run through bin/dispatch-door -- the one
+# door every rig and formula (this one included) goes through. See
+# bin/dispatch-door for what the stamp is for.
 set -Eeuo pipefail
 
 PROGRAM_NAME="factory-work-dispatch"
@@ -54,10 +60,6 @@ esac
 [ "$FORMULA" = "mol-do-work" ] || \
   fail "formula '$FORMULA' is not an ordinary HQ implementation formula; use the tier-specific workflow instead"
 
-CMD=("$GC_BIN" --city "$ROOT" sling factory-worker "$BEAD_ID" --on "$FORMULA" --reassign)
-if [ "$DRY_RUN" = "1" ]; then
-  printf '%q ' "${CMD[@]}"
-  printf '\n'
-  exit 0
-fi
-exec "${CMD[@]}"
+CMD=("$ROOT/bin/dispatch-door" "$BEAD_ID" --rig agent-factory --formula "$FORMULA")
+[ "$DRY_RUN" = "1" ] && CMD+=(--dry-run)
+exec env GC_BIN="$GC_BIN" FACTORY_ROOT="$ROOT" "${CMD[@]}"

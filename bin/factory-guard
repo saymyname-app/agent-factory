@@ -741,6 +741,34 @@ else
   fi
 fi
 
+# --- 10b. dispatch door bypass: a raw `gc sling` that skipped bin/dispatch-
+#     door (O03, af-ui0ua) -----------------------------------------------
+# bin/dispatch-door stamps gc.dispatched_via on every bead it routes;
+# bin/dispatch-door-guard reports (does not repair) any routed bead missing
+# that stamp. See that script for detail.
+DISPATCH_DOOR_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/dispatch-door-guard"
+if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$DISPATCH_DOOR_GUARD" ]; then
+  say "· dispatch-door-bypass — not checked (not a city root, or gc unavailable)"
+else
+  DDG_ARGS=()
+  [ "$CHECK_ONLY" = "1" ] && DDG_ARGS+=(--check-only)
+  DDG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$DISPATCH_DOOR_GUARD" "${DDG_ARGS[@]}" 2>&1)
+  DDG_STATUS=$?
+  [ "$QUIET" = "1" ] || printf '%s\n' "$DDG_OUTPUT" | sed 's/^/  /'
+  DDG_PROBLEM_COUNT=0
+  while IFS= read -r raw_line; do
+    line="${raw_line#"${raw_line%%[![:space:]]*}"}"  # strip leading whitespace
+    case "$line" in
+      REPORTED:\ *) ACTIONS+=("dispatch-door-bypass: ${line#REPORTED: }") ;;
+      !\ *)         PROBLEMS+=("dispatch-door-bypass: ${line#! }"); STATUS=1; DDG_PROBLEM_COUNT=$((DDG_PROBLEM_COUNT+1)) ;;
+    esac
+  done <<<"$DDG_OUTPUT"
+  if [ "$DDG_STATUS" -ne 0 ] && [ "$DDG_PROBLEM_COUNT" -eq 0 ]; then
+    PROBLEMS+=("dispatch-door-bypass: dispatch-door-guard exited $DDG_STATUS with no problem line captured")
+    STATUS=1
+  fi
+fi
+
 # --- 11. stale gc.waiting_on (af-atyry) --------------------------------------
 # gc.waiting_on kept a bead out of the campaign's idle ladder (retired
 # 2026-09-26) unconditionally -- nothing used to clear it when the bead
