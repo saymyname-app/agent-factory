@@ -1,0 +1,6 @@
+[order]
+description = "Promote every Mayor-first escalation still unresolved 2 hours after its first page to a straight-to-Benjamin escalation (O06 routing rule)"
+trigger = "cooldown"
+interval = "15m"
+exec = "/home/benja/agent-factory/bin/escalation-door sweep"
+timeout = "60s"

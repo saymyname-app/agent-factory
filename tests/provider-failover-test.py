@@ -498,8 +498,10 @@ class EndToEnd(unittest.TestCase):
             {"id": "af-m", "alias": "mayor", "template": "mayor", "state": "active", "provider": "codex"},
             {"id": "af-d", "alias": "core.control-dispatcher", "template": "core.control-dispatcher", "state": "active"},
         ])
-        (self.d / "coord.json").write_text(json.dumps([{"id": "af-1vr4", "metadata": {
-            "gc.campaign_mode": "automatic", "gc.campaign_state": "active"}}]), encoding="utf-8")
+        # Generic fallback body for any stub `gc bd show` call; provider-failover
+        # itself never calls `bd show` (only `bd create`), so no field here is
+        # ever read live.
+        (self.d / "coord.json").write_text(json.dumps([{"id": "af-example", "metadata": {}}]), encoding="utf-8")
         self.env = {
             **os.environ,
             "PF_FIXTURE": str(self.d),

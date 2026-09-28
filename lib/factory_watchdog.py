@@ -40,13 +40,11 @@ state.
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import sys
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Iterable
 
 GATE_AGE_MINUTES_DEFAULT = 30
@@ -252,71 +250,6 @@ _ASSESSORS = {
 }
 
 
-def merge_signals(
-    path: str,
-    source: str,
-    alerts: Iterable[dict[str, Any]],
-    generated_at: str | None = None,
-) -> dict[str, Any]:
-    """Read-modify-write factory-watchdog-signals.json without clobbering the
-    other writers' alerts (PR #82: three independently-scheduled scripts -- factory-watchdog,
-    on-order-failed, on-session-stranded -- all write this same file, and a
-    wholesale overwrite from one erases whatever another just wrote).
-
-    Every alert this writer previously contributed (matched by its own
-    "source" tag) is replaced by the fresh set passed here; every alert any
-    OTHER writer contributed is left untouched. An `flock` on a sibling
-    `<path>.lock` file serialises concurrent writers so a read-modify-write
-    race can never interleave and drop an update.
-
-    An entry with no "source" at all (written before this tag existed) is
-    dropped rather than kept forever: every current writer always tags its
-    own alerts, so an untagged entry can never be matched and replaced by
-    anyone again -- it would otherwise persist in the cockpit's signal file
-    indefinitely even after the finding it described was independently
-    fixed (2026-09-18, the C1 observability-audit finding: 7 pre-tagging
-    false_success_close alerts kept re-surfacing after the bead they named
-    had already been explained/closed for over a day, because they had no
-    "source" for any writer's replace-my-own-slice pass to match against).
-    """
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = str(target) + ".lock"
-    generated_at = generated_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    with open(lock_path, "a+") as lockf:
-        fcntl.flock(lockf, fcntl.LOCK_EX)
-        try:
-            try:
-                existing = json.loads(target.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                existing = {}
-            if not isinstance(existing, dict):
-                existing = {}
-            prior = existing.get("alerts")
-            if not isinstance(prior, list):
-                prior = []
-            kept = [
-                item for item in prior
-                if isinstance(item, dict) and item.get("source") and item.get("source") != source
-            ]
-            fresh = []
-            for item in alerts:
-                if not isinstance(item, dict):
-                    continue
-                merged_item = dict(item)
-                merged_item["source"] = source
-                fresh.append(merged_item)
-            out = {"generated_at": generated_at, "alerts": kept + fresh}
-            tmp_path = str(target) + ".next"
-            with open(tmp_path, "w", encoding="utf-8") as fh:
-                json.dump(out, fh)
-            os.replace(tmp_path, target)
-            return out
-        finally:
-            fcntl.flock(lockf, fcntl.LOCK_UN)
-
-
 def _cli_gh_auth(argv: list[str]) -> int:
     if len(argv) != 2:
         print(
@@ -365,30 +298,7 @@ def _cli_quarantine(argv: list[str]) -> int:
     return 0
 
 
-def _cli_merge_signals(argv: list[str]) -> int:
-    if len(argv) != 3:
-        print(
-            "usage: factory_watchdog.py merge-signals <path> <source>  "
-            "(reads a JSON array of {kind,id,message} on stdin)",
-            file=sys.stderr,
-        )
-        return 2
-    path, source = argv[1], argv[2]
-    raw = sys.stdin.read()
-    try:
-        alerts = json.loads(raw) if raw.strip() else []
-    except json.JSONDecodeError:
-        print("merge-signals: stdin is not valid JSON", file=sys.stderr)
-        return 2
-    if not isinstance(alerts, list):
-        alerts = [alerts] if isinstance(alerts, dict) else []
-    merge_signals(path, source, alerts)
-    return 0
-
-
 def main() -> int:
-    if len(sys.argv) >= 2 and sys.argv[1] == "merge-signals":
-        return _cli_merge_signals(sys.argv[1:])
     if len(sys.argv) >= 2 and sys.argv[1] == "gh-auth":
         return _cli_gh_auth(sys.argv[1:])
     if len(sys.argv) >= 2 and sys.argv[1] == "quarantine":
@@ -397,8 +307,7 @@ def main() -> int:
         print(
             "usage: factory_watchdog.py <gates|prs|workflows>  (reads JSON array on stdin)\n"
             "       factory_watchdog.py gh-auth <returncode>  (reads `gh auth status` output on stdin)\n"
-            "       factory_watchdog.py quarantine <rig>  (reads gc:control-quarantined bd list --json on stdin)\n"
-            "       factory_watchdog.py merge-signals <path> <source>  (reads JSON array on stdin)",
+            "       factory_watchdog.py quarantine <rig>  (reads gc:control-quarantined bd list --json on stdin)",
             file=sys.stderr,
         )
         return 2

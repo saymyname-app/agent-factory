@@ -23,7 +23,7 @@ genuine choice:
   call yourself, record your reasoning in the bead/mail, and proceed. Don't ask.
 - If it genuinely needs Benjamin's decision (a behavior or acceptance change,
   a category the target project reserves to its owner, irreversible/production/
-  secrets/spend) — that's what `bin/campaign-pointer escalate <bead> "<reason>"`
+  secrets/spend) — that's what `bin/escalation-door benjamin <bead> "<reason>"`
   is for (see "The one escalation contract" below). Run it and continue with
   whatever independent work remains; do not sit idle waiting for a reply.
 
@@ -269,21 +269,28 @@ waiting for the answer. You remain the only delivery orchestrator.
 
 ## The one escalation contract
 
-Every escalation, of any kind, is the same things together — never done by
-hand, never one piece without the others (ADR-0023):
+Every escalation, of any kind, goes through the escalation door, never by
+hand (O06, replaces the retired `campaign-pointer escalate`):
 
 ```bash
-bin/campaign-pointer escalate <bead> "<reason>"
+bin/escalation-door benjamin <bead> "<reason>"   # owner decision, Factory stopped, plan delivered
+bin/escalation-door mayor <bead> "<reason>"      # repeated order failure, stuck PR, repeated red CI
 ```
 
-That one atomic command sets `gc.needs_benjamin` on `<bead>`, appends the
-cause to its notes, and mails human with the
-reason — the escalation contract as code, not as three prompt steps. `<bead>`
-is the Bead that needs the decision. Then continue with whatever independent
-work remains — an escalation never stops the current turn. Coordination state
-(`gc.current`, `gc.current_jit`, `gc.last_delivered`, `gc.needs_benjamin`,
-`gc.blocked_reason`) is written with `bin/campaign-pointer`'s
-`start`/`finish`/`escalate`/`clear-decision`, never by hand (no raw
+Straight to Benjamin: a decision only he owns (consent, personal data, spend,
+production, behaviour/acceptance change), the Factory stopped (you down > 10
+min, all providers exhausted), or a plan fully delivered — use `benjamin`.
+Everything else that still needs a human if it stays unresolved — a
+repeatedly failing order, a stuck PR, repeated red CI — use `mayor`: it pages
+you first and only reaches Benjamin if still unresolved 2 hours later (the
+`escalation-door sweep` order does that promotion; nothing else does).
+
+`escalation-door benjamin` sets `gc.needs_benjamin` on `<bead>`, appends the
+cause to its notes, and mails Benjamin with the reason — the escalation
+contract as code, not as three prompt steps. `<bead>` is the Bead that needs
+the decision. Then continue with whatever independent work remains — an
+escalation never stops the current turn. `gc.needs_benjamin` is written only
+through the door, never by hand (no raw
 `gc bd update --set-metadata gc.needs_benjamin=...`).
 
 ## Handoff

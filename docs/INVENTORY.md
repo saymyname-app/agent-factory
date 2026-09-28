@@ -44,8 +44,8 @@ only when verified in the code; live checks for runtime state.
 | F10 | med | `docs/decisions/ADR-0026-*.md`, `docs/DELIVERY.md:188` | rely on the retired `mayor-campaign` readiness lane; needs the same dated amendment ADR-0025 got | A4-DOCS |
 | F11 | med | `lib/protected_rigs.sh`, `bin/deliver-close:127-139`, `bin/factory-guard:384`, `bin/factory-delivery-guard:84`, `bin/factory-watchdog:58`, `city.toml` (`[[patches.agent]] dir=saymyname-*`, `/home/benja` paths), `.githooks/post-checkout:20`, `pr-autopilot-*`/watchdog/failover test fixtures | SayMyName and host paths hardcoded in a project-agnostic Factory; `deliver-close` duplicates the "single source"; a new project's rig gets no guard coverage and no warning | A5 (per-project rig config) |
 | F12 | med | `bin/factory-waiting-guard`, `bin/factory-guard` §11 + tests | only reader of `gc.waiting_on` was the retired idle ladder (verdict `legacy`) | A5 (retire or re-justify) |
-| F13 | med | `bin/campaign-pointer` start/finish, Mayor prompt 283-286 | write `gc.current`, `gc.current_jit`, `gc.last_delivered`, `gc.campaign_progress_at` that nothing outside legacy reads; lock named after the campaign | A5 (existing item "campaign-pointer / af-1vr4") |
-| F14 | med | `formulas/mol-scoped-work.formula.toml` | prints "refuses base=main" then pushes/opens a PR against `main` (default base); escalation goes to `/dev/null \|\| true` (silent failure) | A5 |
+| F13 | med | `bin/campaign-pointer` start/finish, Mayor prompt 283-286 | write `gc.current`, `gc.current_jit`, `gc.last_delivered`, `gc.campaign_progress_at` that nothing outside legacy reads; lock named after the campaign | FIXED (O06, af-sau1a): `campaign-pointer` retired entirely, its dead fields no longer written anywhere |
+| F14 | med | `formulas/mol-scoped-work.formula.toml` | prints "refuses base=main" then pushes/opens a PR against `main` (default base); escalation goes to `/dev/null \|\| true` (silent failure) | PARTIALLY FIXED (O06, af-sau1a): `notify-failure` now calls `escalation-door mayor` and `exit 1`s if it fails; the base=main misprint is untouched |
 | F15 | low | `formulas/mol-scoped-work`, `formulas/mol-polecat-commit`, `agents/claude-reviewer`, `bin/factory-observe`, `bin/factory-resources`, `bin/goal-delivery-pairs`, 5 prototype/oracle scripts | no runtime caller (only tests/docs); `mol-polecat-commit` refuses base `main` so cannot run on the Factory repo | A5 (keep, route, or retire each) |
 | F16 | low | Mayor prompt, `bin/factory-work-dispatch` | GUARDED Factory work goes to `build-basic` but no target is named, and `factory-work-dispatch` accepts only `mol-do-work` | A5 |
 | F17 | med | `.githooks/`, `docs/GETTING_STARTED.md` | a fresh clone runs without PII guard, main gate or live-root hooks: `core.hooksPath` is only in the live `.git/config` | A5 |
@@ -56,7 +56,7 @@ only when verified in the code; live checks for runtime state.
 | F22 | med | `docs/DELIVERY.md:558-577`, `docs/OPERATIONS.md:389-506` | SayMyName-only rig contracts and operations; `gc bd create --rig saymyname-*` contradicts "new work enters through the Planning Run router" | A5 (move to the product repos) |
 | F23 | low | planning-run fixtures (15 files), watchdog / planning-exception-guard tests, `provider-failover-test.py` | operator's first name and GitHub login as signer; SayMyName backend test output as fixture | A5 (synthetic operator id) |
 | F24 | low | off-box backup | archive repo last pushed 18:42Z while `jsonl-export` completes every 15 min: no freshness signal says whether pushes still happen | A5 |
-| F25 | low | `.gc/runtime/factory-watchdog-signals.json` | written by three scripts, no reader | A5 (existing item) |
+| F25 | low | `.gc/runtime/factory-watchdog-signals.json` | written by three scripts, no reader | FIXED (O06, af-sau1a): none of the three writers touches the file any more; `merge_signals`/`merge-signals` removed from `lib/factory_watchdog.py` |
 
 ## Host-local state (not versioned; checked live 2026-09-27)
 
@@ -80,7 +80,7 @@ an A5 input.
 | `.githooks/post-checkout` | ops | git (core.hooksPath in .git/config); tests/factory-live-root-guard-test.sh | reverts branch switch in live root (ADR-0022 mechanism) |
 | `.githooks/pre-push` | ops | git; pre-push-ci-registration, factory-main-gate, pii-guard tests | PII guard + CI registration + main gate |
 | `.githooks/reference-transaction` | ops | git; tests/factory-live-root-guard-test.sh | refuses commit/reset/merge in live root |
-| `.github/workflows/ci.yml` | ops | GitHub Actions; tests/ci-registration-test.sh | runs kernel + ops suites; campaign-pointer test still valid (bin stays) |
+| `.github/workflows/ci.yml` | ops | GitHub Actions; tests/ci-registration-test.sh | runs kernel + ops suites; escalation-door test replaces the retired campaign-pointer test (O06, af-sau1a) |
 | `.gitignore` | ops | git; factory-guard work-tree check | coherent (city.provider.toml, *.before-*) |
 | `AGENTS.md` | to-redo | all agents (CLAUDE.md, mayor prompt, operator-context test) | invariants still cite campaign liveness, cockpit, SayMyName runner, preview |
 | `CLAUDE.md` | ops | Claude Code | @AGENTS.md include |
@@ -91,7 +91,7 @@ an A5 input.
 | `agents/factory-worker/agent.toml` | kernel | bin/factory-work-dispatch, city.toml, mayor prompt, tests/factory-work-dispatch-test.sh | The HQ implementation role every approved-graph af-* bead goes to |
 | `agents/factory-worker/prompt.template.md` | kernel | factory-worker sessions | Generic graph.v2 claim/close protocol; no drift found vs gc hook/bd usage |
 | `agents/mayor/agent.toml` | kernel | pack.toml named_session mayor | Mayor provider pin |
-| `agents/mayor/prompt.template.md` | to-redo | Mayor named session (pack.toml) | Refactor-born prompt, but escalation door is still campaign-pointer (coordination pointers nobody reads), build-basic "from the pack" is wrong, GUARDED HQ dispatch path undefined |
+| `agents/mayor/prompt.template.md` | to-redo | Mayor named session (pack.toml) | Escalation door is now `escalation-door` (O06, af-sau1a); build-basic "from the pack" is wrong, GUARDED HQ dispatch path undefined |
 | `agents/ux-reviewer/agent.toml` | kernel | mayor prompt UX gate, provider-policy.json, tests | On-demand UX role named by the Mayor's UI/UX gate |
 | `agents/ux-reviewer/prompt.template.md` | kernel | ux-reviewer sessions | Project-agnostic (reads target project's governance); coherent |
 | `assets/workflows/build-basic/cleanup-shared-worktree.md` | ops | formulas/build-basic.formula.toml | delivery formula step prompt; no retired/project refs |
@@ -107,8 +107,8 @@ an A5 input.
 | `assets/workflows/build-basic/requirements.md` | ops | formulas/build-basic.formula.toml | delivery formula step prompt; no retired/project refs |
 | `assets/workflows/build-basic/review.md` | ops | formulas/build-basic(-review-scoped).formula.toml | delivery formula step prompt; no retired/project refs |
 | `assets/workflows/build-basic/summarize-implementation.md` | ops | formulas/build-basic.formula.toml | delivery formula step prompt; no retired/project refs |
-| `bin/campaign-pointer` | to-redo | mayor prompt (escalate), mol-scoped-work notify-failure, CI tests campaign-pointer/coordination-pointer-doors | Only `escalate` is live; start/finish write campaign pointers nobody reads; clear-decision clears the wrong bead; name/lock/header are campaign |
 | `bin/deliver-close` | to-redo | mol-do-work, pr-autopilot, factory-delivery-guard, planning-exception-guard, CI | Live delivery door (ADR-0009/0016/0028) but hardcodes SayMyName repo->workflow map duplicating lib/protected_rigs.sh |
+| `bin/escalation-door` | ops | mayor prompt (`benjamin`/`mayor`), mol-scoped-work notify-failure, CI test tests/escalation-door-test.sh, coordination-pointer-doors-test.sh | O06 (af-sau1a): the one escalation door; retired `bin/campaign-pointer` (`escalate`/`start`/`finish`/`clear-decision` and its dead `af-1vr4` fields) |
 | `bin/factory-boot` | ops | Windows logon task (external), docs/RUNBOOK_STOP_AND_RESTART.md | Restart restore; one stale "campaign" log string |
 | `bin/factory-build-gates` | ops | factory-boot, factory-guard, CI test | CLI wrapper for lib/factory_build_gates.py (materialises pack check scripts) |
 | `bin/factory-delivery-guard` | to-redo | factory-guard, CI test | Live proof-field backfill, but RIGS hardcoded to saymyname-backend/frontend and rationale cites mayor-campaign/product-status readers |
@@ -125,12 +125,12 @@ an A5 input.
 | `bin/factory-resources` | ops | operator tool (docs/RUNBOOK_STOP_AND_RESTART.md) only | Host RAM/swap headroom check; no order, no test |
 | `bin/factory-shared-drain-workspace` | ops | assets/workflows/build-basic/{prepare-shared-worktree,publish,cleanup-shared-worktree}.md, CI test | Shared-drain worktree adapter for build-basic same-session |
 | `bin/factory-waiting-guard` | legacy | factory-guard §11, CI test | Maintains gc.waiting_on, whose only consumer was the retired idle ladder (legacy/lib/factory_campaign.py) |
-| `bin/factory-watchdog` | to-redo | orders/factory-watchdog.toml, CI tests | Live paging (§1-4,7) but writes cockpit signal file with no reader; header/comments describe campaign/cockpit |
+| `bin/factory-watchdog` | to-redo | orders/factory-watchdog.toml, CI tests | Live paging (§1-4,7); FIXED (O06, af-sau1a): the reader-less cockpit signal file is no longer written; some header/comments still describe campaign/cockpit |
 | `bin/factory-work-dispatch` | kernel | mayor prompt, CI test | The single HQ dispatch door (factory-worker, mol-do-work, --reassign); matches prompt |
 | `bin/fixture-city-oracle` | kernel | CI test, project-isolation-oracle, docs | Fixture-city oracle (ADR-0027 legacy_path fences) |
 | `bin/goal-delivery-pairs` | ops | docs/DELIVERY.md, CI test | Read-only multi-rig delivery-pair query; no runtime caller |
-| `bin/on-order-failed` | ops | orders/on-order-failed.toml, CI test | Pages Mayor on repeated order failure; also writes the reader-less signal file |
-| `bin/on-session-stranded` | ops | orders/on-session-stranded.toml, CI test | Reopens orphaned beads + pages; also writes the reader-less signal file |
+| `bin/on-order-failed` | ops | orders/on-order-failed.toml, CI test | Pages Mayor on repeated order failure; FIXED (O06, af-sau1a): no longer writes the reader-less signal file |
+| `bin/on-session-stranded` | ops | orders/on-session-stranded.toml, CI test | Reopens orphaned beads + pages; FIXED (O06, af-sau1a): no longer writes the reader-less signal file |
 | `bin/planning-allocation-prototype` | kernel | CI test, config/planning-allocation-prototype.json, docs | P02 synthetic allocation proof; no runtime caller (prototype evidence) |
 | `bin/planning-exception` | kernel | mayor prompt, deliver-close, factory-guard, planning-exception-guard, CI | ADR-0028 Planning Exception register; subcommands match docs |
 | `bin/planning-map-concurrency-prototype` | kernel | CI test, wayfinding-run (docstring), docs | Synthetic concurrency proof; no runtime caller |
@@ -195,13 +195,13 @@ an A5 input.
 | `formulas/build-basic.formula.toml` | kernel | mayor prompt GUARDED tier, assets/workflows/build-basic, CI | Local fork overriding the pack's build-basic |
 | `formulas/mol-do-work.formula.toml` | to-redo | factory-work-dispatch (only formula allowed), mayor prompt default, CI contract test | Core writer formula, but description says "for demos" and claim rationale cites idle ladder/campaign_progress_at |
 | `formulas/mol-polecat-commit.formula.toml` | to-redo | mayor prompt (optional), factory-delivery-guard, CI contract test | No routing path selects it; refuses main so unusable on HQ; rationale cites idle ladder |
-| `formulas/mol-scoped-work.formula.toml` | to-redo | CI contract test, factory-watchdog test only | No routing path selects it; "refuses base=main" but proceeds; escalates through campaign-pointer |
+| `formulas/mol-scoped-work.formula.toml` | to-redo | CI contract test, factory-watchdog test only | No routing path selects it; "refuses base=main" but proceeds; FIXED (O06, af-sau1a): escalates through `escalation-door mayor`, `exit 1`s if it fails |
 | `lib/factory_build_gates.py` | ops | bin/factory-build-gates | Build-gate wiring check |
 | `lib/factory_delivery_proof.py` | ops | factory-delivery-guard, factory-guard, factory-waiting-guard, pr-autopilot, CI | Proof-field rules; comments cite cockpit as label origin (history) |
 | `lib/factory_measures.py` | kernel | bin/factory-observe, CI | Measures validation for B09 |
 | `lib/factory_observe.py` | kernel | bin/factory-observe, CI | B09 pure logic; docstring cites legacy factory_improvement_axes as precedent |
 | `lib/factory_session_boot.py` | ops | factory-guard §7/§7b, CI | Mayor session-down/boot rules |
-| `lib/factory_watchdog.py` | ops | factory-watchdog, on-order-failed, on-session-stranded, CI | Watchdog logic; signal-file writer comments point to a deleted cockpit test |
+| `lib/factory_watchdog.py` | ops | factory-watchdog, on-order-failed, on-session-stranded, CI | Watchdog logic; FIXED (O06, af-sau1a): `merge_signals`/`merge-signals` (the signal-file writer) removed |
 | `lib/protected_rigs.sh` | to-redo | pr-autopilot, factory-do-work-workspace, mol-do-work (doc) | "Single source of truth" hardcoding SayMyName repos in the Factory; bypassed by deliver-close/delivery-guard/guard |
 | `lib/provider_failover.py` | to-redo | bin/provider-failover, CI | Dead `parked` state field; generated overlay header tells readers to use the cockpit |
 | `lib/reversibility.py` | ops | reversibility-check, pr-autopilot, factory-watchdog, CI | ADR-0019 rules |
@@ -218,11 +218,11 @@ an A5 input.
 | `tests/build-basic-fail-fast-runtime-test.sh` | to-redo | build-basic fail-fast on a real gc/bd city; fixture build-basic-fail-fast | not in ci.yml; declared "# ci: local-only" so ci-registration passes, but nothing runs it automatically |
 | `tests/build-basic-fail-fast-test.py` | ops | build-basic formula fail-fast (static) | in CI (ci.yml:152) |
 | `tests/build-basic-publish-overlap-followup-test.sh` | ops | build-basic publish follow-up bead on overlapping worktree | in CI (ci.yml:105) |
-| `tests/campaign-pointer-test.sh` | ops | bin/campaign-pointer (ADR-0023 coordination write door); fixture campaign-pointer | in CI (ci.yml:108); door kept live per legacy/README.md:51 (mol-scoped-work + Mayor prompt use it) |
 | `tests/ci-registration-test.sh` | ops | meta: every tests/*.sh\|py named in ci.yml or marked local-only | in CI (ci.yml:236); header cites retired tests (product-queue, saymyname-*) as history only |
 | `tests/coordination-pointer-doors-test.sh` | ops | ADR-0023 rule 6 scan of Mayor prompt, OPERATIONS.md, formulas | in CI (ci.yml:111); header/FIELDS still name legacy bin/product-queue and gc.queue_state |
 | `tests/deliver-close-test.sh` | ops | bin/deliver-close (ADR-0026 delivery proof door); fixture deliver-close | in CI (ci.yml:99) |
 | `tests/delivery-formula-contract-test.sh` | ops | mol-do-work/mol-scoped-work/mol-polecat-commit wiring to deliver-close/pr-autopilot | in CI (ci.yml:102) |
+| `tests/escalation-door-test.sh` | ops | bin/escalation-door (O06 escalation write door + routing rules); fixture escalation-door | in CI (ci.yml:110); replaces the retired campaign-pointer-test.sh |
 | `tests/factory-build-gates-test.py` | ops | bin/factory-build-gates (installs .gc/scripts gates into rigs) | in CI (ci.yml:149); scripts/validate_build_artifact.py etc. are generated/copied in temp, not missing |
 | `tests/factory-delivery-guard-test.sh` | ops | bin/factory-delivery-guard | in CI (ci.yml:191) |
 | `tests/factory-delivery-proof-test.py` | ops | lib/factory_delivery_proof.py | in CI (ci.yml:188); docstring line 118 cites retired lib/factory_cockpit.py |
@@ -251,8 +251,8 @@ an A5 input.
 | `tests/factory-work-dispatch-test.sh` | ops | bin/factory-work-dispatch | in CI (ci.yml:200) |
 | `tests/fixture-city-oracle-test.py` | kernel | Fixture City oracle; fixture fixture-city | in CI (ci.yml:75); legacy-* cases assert retired paths fail closed (correct) |
 | `tests/fixtures/build-basic-fail-fast` | to-redo | build-basic-fail-fast-runtime-test.sh only | used only by a local-only test that never runs automatically |
-| `tests/fixtures/campaign-pointer` | ops | campaign-pointer-test.sh | fake gc for the live campaign-pointer door |
 | `tests/fixtures/deliver-close` | ops | deliver-close-test.sh | fake gc/gh for deliver-close |
+| `tests/fixtures/escalation-door` | ops | escalation-door-test.sh | fake gc for the live escalation door |
 | `tests/fixtures/fixture-city` | kernel | fixture-city-oracle-test.py | synthetic fixture-* rigs; legacy-*.json are fail-closed probes |
 | `tests/fixtures/planning-exception` | kernel | planning-exception-test.py | graph + fake ticket-graph-publish |
 | `tests/fixtures/planning-run-router` | to-redo | planning-run-router-test.py | session fixtures sign "confirmed_by": "Benjamin" (real operator name) 20x |

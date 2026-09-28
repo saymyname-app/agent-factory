@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+#
+# Deterministic `gc` fixture for tests/escalation-door-test.sh. Beads live
+# as one JSON file per id under ED_BEAD_DIR; every call is appended to
+# ED_CALL_LOG. Status defaults to "open" for a bead created by --set-metadata
+# on first touch.
+
+set -Eeuo pipefail
+
+: "${ED_BEAD_DIR:?ED_BEAD_DIR must be set by the test}"
+: "${ED_CALL_LOG:?ED_CALL_LOG must be set by the test}"
+printf '%q ' "$@" >>"$ED_CALL_LOG"
+printf '\n' >>"$ED_CALL_LOG"
+
+bead_file() { printf '%s/%s.json' "$ED_BEAD_DIR" "$1"; }
+
+if [[ ${1:-} == bd && ${2:-} == show && ${4:-} == --json ]]; then
+  id=$3
+  file=$(bead_file "$id")
+  [[ -f $file ]] || { printf 'not found\n' >&2; exit 42; }
+  jq -c '[.]' "$file"
+  exit 0
+fi
+
+if [[ ${1:-} == bd && ${2:-} == update ]]; then
+  id=$3
+  file=$(bead_file "$id")
+  [[ -f $file ]] || printf '{"id":"%s","status":"open","metadata":{},"notes":"","labels":[]}' "$id" >"$file"
+  shift 3
+  tmp="${file}.tmp"
+  cp "$file" "$tmp"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --set-metadata)
+        pair=$2
+        key=${pair%%=*}
+        value=${pair#*=}
+        jq --arg key "$key" --arg value "$value" '.metadata[$key] = $value' "$tmp" >"${tmp}.next"
+        mv "${tmp}.next" "$tmp"
+        shift 2
+        ;;
+      --append-notes)
+        jq --arg note "$2" '.notes = ((.notes // "") + "\n" + $note)' "$tmp" >"${tmp}.next"
+        mv "${tmp}.next" "$tmp"
+        shift 2
+        ;;
+      *)
+        printf 'unsupported gc bd update flag: %s\n' "$1" >&2
+        exit 64
+        ;;
+    esac
+  done
+  mv "$tmp" "$file"
+  printf '{}\n'
+  exit 0
+fi
+
+if [[ ${1:-} == bd && ${2:-} == list ]]; then
+  shift 2
+  status_filter=""
+  metadata_key=""
+  label=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --status) status_filter=$2; shift 2 ;;
+      --has-metadata-key) metadata_key=$2; shift 2 ;;
+      --label) label=$2; shift 2 ;;
+      --all) shift ;;
+      --json) shift ;;
+      *) shift ;;
+    esac
+  done
+  matches=()
+  for file in "$ED_BEAD_DIR"/*.json; do
+    [[ -f $file ]] || continue
+    [[ $file == *.tmp* ]] && continue
+    bead=$(jq -c '.' "$file")
+    if [[ -n $status_filter ]]; then
+      status=$(jq -r '.status // "open"' <<<"$bead")
+      IFS=',' read -r -a wanted <<<"$status_filter"
+      keep=0
+      for w in "${wanted[@]}"; do [[ $w == "$status" ]] && keep=1; done
+      [[ $keep == 1 ]] || continue
+    fi
+    if [[ -n $metadata_key ]]; then
+      has=$(jq -r --arg k "$metadata_key" '(.metadata[$k] // empty) | length > 0' <<<"$bead" 2>/dev/null)
+      [[ $has == true ]] || continue
+    fi
+    if [[ -n $label ]]; then
+      has_label=$(jq -r --arg l "$label" '(.labels // []) | index($l) != null' <<<"$bead")
+      [[ $has_label == true ]] || continue
+    fi
+    matches+=("$bead")
+  done
+  if [[ ${#matches[@]} -eq 0 ]]; then
+    printf '[]\n'
+  else
+    (IFS=,; printf '[%s]\n' "${matches[*]}")
+  fi
+  exit 0
+fi
+
+if [[ ${1:-} == mail && ${2:-} == send ]]; then
+  recipient=$3
+  [[ ,${ED_MAIL_FAIL:-}, != *,"$recipient",* ]] || { printf 'mail unavailable\n' >&2; exit 42; }
+  printf '{"ok":true}\n'
+  exit 0
+fi
+
+printf 'unsupported gc fixture command\n' >&2
+exit 64
