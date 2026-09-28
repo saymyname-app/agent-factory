@@ -148,16 +148,23 @@ def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str
     spec = artifact["source_spec"]
     digest = artifact["content_digest"]
     execution = as_dict(draft.get("global_execution_contract"), "global_execution_contract")
+    # Convoy title and labels come from the draft; the fallbacks keep the
+    # first published graph (the project-agnostic refactor) byte-identical.
+    graph_title = str(artifact.get("title") or "Project-agnostic Agent Factory refactor")
+    graph_labels = [str(item) for item in as_list(
+        artifact.get("labels") or ["approved-ticket-graph", "factory-refactor"], "artifact.labels"
+    )]
+    ticket_labels = [label for label in graph_labels if label != "approved-ticket-graph"]
     nodes: list[dict[str, Any]] = [
         {
             "key": "_convoy",
             "type": "convoy",
-            "title": "Project-agnostic Agent Factory refactor",
+            "title": graph_title,
             "description": (
-                "Approved delivery graph for the project-agnostic Agent Factory refactor. "
+                f"Approved delivery graph: {graph_title}. "
                 "The Mayor advances only positively eligible delivery-plane children."
             ),
-            "labels": ["approved-ticket-graph", "factory-refactor"],
+            "labels": graph_labels,
             "metadata": {
                 "gc.graph_digest": digest,
                 "gc.plane": "delivery",
@@ -177,7 +184,7 @@ def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str
             "priority": 1,
             "title": f"{ticket_id} — {ticket['title']}",
             "description": ticket_description(ticket, execution),
-            "labels": ["approved-ticket-graph", "delivery-plane", "factory-refactor"],
+            "labels": ["approved-ticket-graph", "delivery-plane", *ticket_labels],
             "metadata": {
                 "gc.graph_digest": digest,
                 "gc.plane": "delivery",

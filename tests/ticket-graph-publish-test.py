@@ -115,6 +115,35 @@ class TicketGraphPublishTest(unittest.TestCase):
         self.assertEqual(18, len(tracks))
         self.assertTrue(all(edge["from_key"] == "_convoy" for edge in tracks))
 
+    def test_convoy_title_and_labels_come_from_the_draft(self):
+        raw, _ = build_draft(
+            "  - id: T1\n"
+            "    title: One ticket\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [r]\n"
+            "    what_it_delivers: w\n"
+            "    acceptance_criteria: [c]\n"
+        )
+        raw = raw.replace(
+            b"  id: test-graph\n",
+            b"  id: test-graph\n  title: Ops v2\n  labels: [approved-ticket-graph, ops-v2]\n",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft = root / "draft.yaml"
+            draft.write_bytes(raw)
+            capture = root / "graph.json"
+            self.invoke("publish", str(draft), env={
+                "BD_BIN": str(FAKE_BD),
+                "TICKET_GRAPH_CAPTURE": str(capture),
+                "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+            })
+            plan = json.loads(capture.read_text(encoding="utf-8"))
+        convoy, ticket = plan["nodes"][0], plan["nodes"][1]
+        self.assertEqual("Ops v2", convoy["title"])
+        self.assertEqual(["approved-ticket-graph", "ops-v2"], convoy["labels"])
+        self.assertEqual(["approved-ticket-graph", "delivery-plane", "ops-v2"], ticket["labels"])
+
     def test_patch_updates_unfinished_tickets_and_creates_new_ones(self):
         old_digest = "sha256:" + "1" * 64
         raw, new_digest = build_draft(
