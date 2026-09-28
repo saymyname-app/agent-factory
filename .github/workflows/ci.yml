@@ -52,6 +52,9 @@ jobs:
       - name: Planning Run router wiring to-spec, approve, publish, wayfinding (af-pxq7e)
         run: python tests/planning-run-router-test.py
 
+      - name: Idle-ready-work safety net re-wakes the Mayor (O02)
+        run: python tests/idle-ready-work-wake-test.py
+
       - name: Observe planning and delivery changes without idle model calls (af-ueuq6)
         run: python tests/factory-observe-test.py
 
