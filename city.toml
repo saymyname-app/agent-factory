@@ -135,6 +135,56 @@ effort = "high"
 source = "https://github.com/gastownhall/gascity-packs/tree/main/gascity/roles"
 version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
 
+# Per-order verdicts from Spec spec-factory-operations-v2-2026-09-28 (ticket
+# O13), applied without forking any pack order file. Each interval/trigger
+# change below was checked against the pack script it drives (see
+# docs/planning/factory-operations-v2/orders-best-practices.md section 1,
+# "check that the pack script tolerates the longer gap") before being made.
+[orders]
+# dolt-remotes-patrol: no Dolt remote is configured, so every run is a
+# guaranteed no-op (spec decision).
+# nudge-mail-sweep: the controller watchdog already runs this same sweep
+# every 5 minutes on its own (order's own header comment) -- duplicate owner.
+# prune-branches: no `gc/*` branch exists in this city or its rigs; cleanup
+# belongs to factory-maintain per the spec decision.
+# cross-rig-deps: 934 runs since 2026-09-21 (5m cooldown) produced zero
+# "bead"-type cross-rig gates -- this city measures zero cross-rig
+# dependencies for the order to convert.
+skip = ["dolt-remotes-patrol", "nudge-mail-sweep", "prune-branches", "cross-rig-deps"]
+
+[[orders.overrides]]
+# dolt-health.sh only checks live server health; a 2m gap is still well
+# inside any operator's reaction window and halves the 30s health-probe
+# volume together with beads-health.
+name = "dolt-health"
+interval = "2m"
+
+[[orders.overrides]]
+# beads-health.sh only checks provider health and self-heals; same
+# reasoning as dolt-health above.
+name = "beads-health"
+interval = "2m"
+
+[[orders.overrides]]
+# gc order sweep-tracking --stale-after 10m is idempotent and only prunes;
+# a 10m sweep cadence still catches everything before its own 10m staleness
+# window closes.
+name = "order-tracking-sweep"
+interval = "10m"
+
+[[orders.overrides]]
+# gate-sweep.sh is a pure mechanical evaluation (no LLM) that is a no-op
+# when there is nothing open -- retrigger on "open gates > 0" instead of
+# polling every 30s.
+name = "gate-sweep"
+trigger = "condition"
+check = "test \"$(bd gate list --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0)\" -gt 0"
+
+[events.rotation]
+# 14 days (336h), per the Spec's decision -- the ticket text is authoritative
+# over the 720h figure in orders-best-practices.md's draft recommendation.
+archive_retain_age = "336h"
+
 [mail]
 # retention_ttl controls how long read messages are retained before purge.
 # 0 disables retention; use "168h" for 7 days.

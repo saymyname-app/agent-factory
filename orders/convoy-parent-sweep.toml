@@ -1,6 +1,10 @@
 [order]
 description = "Deterministic zero-token cleanup (af-mu8j4): auto-close open convoy/drain-unit beads whose tracked child issues are all closed, via the existing `gc convoy check`. Prevents closed-parent convoys from lingering in the ready list -- it does not touch wisps (wisp-compact already TTL-sweeps those) or order-tracking beads (order-tracking-sweep already owns that retention)."
-trigger = "cooldown"
-interval = "15m"
+# Event-triggered (O13, spec-factory-operations-v2-2026-09-28): a convoy can
+# only go closeable when one of its tracked children closes, so the 15m
+# cooldown was pure polling. `bead.closed` fires this exactly when there is
+# something to check, with no drift in reaction time.
+trigger = "event"
+on = "bead.closed"
 exec = "gc convoy check --json"
 timeout = "60s"

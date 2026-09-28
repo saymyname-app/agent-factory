@@ -1,0 +1,12 @@
+# New order (O13, spec-factory-operations-v2-2026-09-28): the off-box
+# jsonl archive had no freshness signal (docs/INVENTORY.md F24) -- pushes
+# could silently stop and nobody would know until someone needed a backup.
+# Condition-triggered: `check` fires only when the archive is both stale
+# (>24h since last commit) and beads have actually changed since, so a
+# quiet city with nothing new never pages.
+[order]
+description = "Page the Mayor when the off-box jsonl archive hasn't been pushed in 24h while beads changed"
+trigger = "condition"
+check = "/home/benja/agent-factory/bin/backup-freshness --check-only --quiet"
+exec = "/home/benja/agent-factory/bin/backup-freshness --quiet"
+timeout = "60s"

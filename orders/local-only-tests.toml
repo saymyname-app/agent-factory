@@ -1,0 +1,11 @@
+# New order (O13, spec-factory-operations-v2-2026-09-28): the tests marked
+# `# ci: local-only` (docs/INVENTORY.md F21) ran nowhere automatically --
+# CI can't run them (they need the installed gc/bd runtime and the live
+# city), so regressions in that surface went unnoticed until someone ran
+# them by hand. Runs nightly, off-peak, and pages the Mayor on failure.
+[order]
+description = "Run the local-only test suite nightly and page the Mayor on failure"
+trigger = "cron"
+schedule = "0 4 * * *"
+exec = "/home/benja/agent-factory/bin/local-only-tests --quiet"
+timeout = "300s"

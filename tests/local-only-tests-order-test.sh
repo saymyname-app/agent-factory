@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# ci: local-only — requires the installed gc/bd runtime and an isolated Dolt server
+
+set -Eeuo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+for required in gc bd jq; do
+  command -v "$required" >/dev/null 2>&1 || fail "required command is unavailable: $required"
+done
+
+# See tests/backup-freshness-order-test.sh for why every one of these has to
+# go: GC_CITY/GC_CITY_PATH/GC_BEADS_SCOPE_ROOT override cwd-based city
+# discovery and will silently redirect every `gc`/`bd` call in this test at
+# the LIVE Factory city instead of the isolated one (live incident during
+# this ticket's own development: af-ize6u).
+run_clean() {
+  env \
+    -u GC_DOLT_HOST -u GC_DOLT_PORT -u GC_DOLT_DATABASE -u GC_DOLT_PROJECT_ID -u GC_DOLT_USER \
+    -u GC_SESSION_ID -u GC_SESSION_NAME -u GC_ALIAS -u GC_AGENT \
+    -u GC_BEAD_ID -u GC_ROOT_BEAD_ID -u GC_CONTINUATION_GROUP \
+    -u GC_CITY -u GC_CITY_PATH -u GC_CITY_RUNTIME_DIR -u GC_BEADS_SCOPE_ROOT -u GC_DIR \
+    -u GC_TRIGGER_BEAD_ID -u GC_TRIGGER_WORK_BEAD_ID -u GC_TRIGGER_BEAD_STORE_REF -u GC_TRIGGER_WORK_STORE_REF \
+    "$@"
+}
+
+# 1. The order itself is discoverable and deterministic.
+order=$(run_clean gc order show local-only-tests --city "$ROOT" --json)
+jq -e --arg source "$ROOT/orders/local-only-tests.toml" '
+  .ok == true and
+  .order.type == "exec" and
+  .order.trigger == "cron" and
+  .order.schedule == "0 4 * * *" and
+  .order.exec == "/home/benja/agent-factory/bin/local-only-tests --quiet" and
+  .order.timeout == "300s" and
+  .order.enabled == true and
+  .order.source == $source
+' >/dev/null <<<"$order" || fail "local-only-tests Order is not discoverable and deterministic"
+
+# 2. Functional: an injected failing test must file a bead and page the Mayor.
+# FACTORY_ROOT doubles as both "where the two hardcoded test paths live" and
+# "which city to write beads/mail into" (bin/local-only-tests cd's there and
+# never passes --city), so the test city itself has to carry the fake tests/.
+TEST_CITY=$(mktemp -d /tmp/af-o13-local-only-tests.XXXXXX)
+cleanup() {
+  status=$?
+  trap - EXIT
+  if [ "${KEEP_TEST_CITY:-0}" = 1 ]; then
+    echo "test city preserved at $TEST_CITY" >&2
+  else
+    rm -rf -- "$TEST_CITY"
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+
+run_clean gc init \
+  --template minimal --default-provider codex --skip-provider-readiness --no-start --yes \
+  --name af-o13-local-only-tests "$TEST_CITY" >/dev/null
+
+mkdir -p "$TEST_CITY/tests"
+cat >"$TEST_CITY/tests/build-basic-fail-fast-runtime-test.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat >"$TEST_CITY/tests/factory-watchdog-order-test.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "FAIL: injected failure for local-only-tests-order-test.sh" >&2
+exit 1
+EOF
+chmod +x "$TEST_CITY/tests/"*.sh
+
+# ESCALATION_DOOR_BIN points at the real repo since the fresh minimal city
+# has no bin/ of its own; ESCALATION_DOOR_LOCK_FILE keeps this test from
+# waiting on (or colliding with) the live Factory's own escalation-door lock.
+run_clean env FACTORY_ROOT="$TEST_CITY" ESCALATION_DOOR_BIN="$ROOT/bin/escalation-door" \
+  ESCALATION_DOOR_LOCK_FILE="$TEST_CITY/.escalation-door.lock" \
+  "$ROOT/bin/local-only-tests" --quiet \
+  && fail "local-only-tests should exit non-zero when a test fails"
+
+FILED=$(run_clean gc --city "$TEST_CITY" bd list --status open --json \
+  | jq '[.[] | select(.metadata["gc.source"] == "local-only-tests")] | length')
+[ "${FILED:-0}" = 1 ] || fail "expected exactly one local-only-tests bead, got ${FILED:-0}"
+
+PAGED=$(run_clean gc --city "$TEST_CITY" mail inbox mayor --json \
+  | jq '[.messages[] | select(.subject | startswith("Escalation (Mayor first): "))] | length')
+[ "${PAGED:-0}" -ge 1 ] || fail "expected the Mayor to be paged via escalation-door"
+
+echo "PASS: local-only-tests files a bead and pages the Mayor on a failing local-only test"
