@@ -562,24 +562,3 @@ PR, le retrait du worktree et l'absence de changement du drain séparé. Ce
 raccord supprime les reprises manuelles après l'erreur « source anchor has no
 work_dir metadata » et remplace jusqu'à N worktrees/PR par un seul pour N items,
 sans coût modèle supplémentaire pour le cycle Git.
-
-## SayMyName rig contracts
-
-### Backend — `saymyname-backend` / `smb`
-
-- **CONFIGURED:** default branch `dev`; one Codex/Sol writer; GitHub PR is the delivery boundary.
-- **OBSERVED:** Java 21, Maven and Spring Boot 3.3.1; `Backend CI` executes `mvn -B -ntp -Pit verify` on pull requests to `dev`/`main`; Flyway and Testcontainers/MySQL are present. Active GitHub ruleset `22629508` requires the `Maven verify` status check.
-- **PROVEN GitHub cleanup:** PR #27 merged at `5fc753308a1522c5f4f5d0ccc98df69bc982cc7b` with the required check green.
-- **PROVEN locally:** unit test modules pass with Java 21. After the 2026-09-13 WSL/Docker remediation, `CourseKnowledgeTenantIsolationIT` passed 2/2 through Testcontainers, Ryuk, MySQL 8.0.41 and Flyway V1-V9. This scoped canary does not replace the full GitHub `Backend CI`, which remains authoritative for a STANDARD delivery.
-- **FAST:** documentation or bounded test-only maintenance with task-specific deterministic validation. **STANDARD:** ordinary bounded backend changes with `-Pit verify` green in GitHub CI, including additive Flyway migrations (see *Réversibilité par défaut* above). **GUARDED:** non-additive Flyway/schema changes (loss, rewrite, rename), persistent data changes, production actions, secrets, security-sensitive changes or irreversible transitions.
-- **Reversibility:** every new Flyway migration passes `bin/reversibility-check` before merge; see *Réversibilité par défaut* above (ADR-0019).
-
-### Frontend — `saymyname-frontend` / `smf`
-
-- **CONFIGURED:** default branch `dev`; one Codex/Sol writer; GitHub PR is the delivery boundary.
-- **OBSERVED:** Node 22/npm; `Frontend CI` runs `npm ci`, non-blocking `npm run lint`, `npm test`, and `npm run build` on pull requests to `dev`/`main`. Active GitHub ruleset `22629678` requires the `Tests and build` status check.
-- **PROVEN GitHub cleanup:** PR #41 merged at `b98e1ee176b7ed8af62987fdd84b35065b49c9e1` with the required check green.
-- **PROVEN:** baseline tests pass (108 unit and 2 component) and the production build passes with CI placeholders. Full lint is currently non-gating and reports 197 errors/31 warnings; a task must still avoid introducing a scoped lint regression.
-- **FAST:** documentation, isolated tests or bounded low-risk maintenance. **STANDARD:** ordinary bounded UI bugs/features with tests and build green in GitHub CI. **GUARDED:** production deployment/configuration, secrets, irreversible operations, security-sensitive changes or substantive product decisions.
-
-M5 provides the first **PROVEN STANDARD** path: `smf-0jx` -> workflow `smf-7og` -> session `af-4g6` on `gpt-5.6-sol` -> commit `ba6745cd7193f79811471c8956698c1929303f2c` -> Frontend PR #40 -> successful `Frontend CI` -> merge `aa82099a183c64e0b02af80979dc1e28353edc4c`. The existing Claude review workflow exhausted its own turn limit without comments; M4 does not promote that optional paid reviewer into a gate for this low-risk one-line change.

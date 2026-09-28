@@ -386,28 +386,26 @@ git -C ~/agent-factory status --short --branch
 
 The 2026-09-12 drill restored `af-v7a`, its M2 commit/outcome metadata, the `af-c3u -> af-hhx` workflow dependency, and `issue_prefix=af`; the restored City survived restart. Canonical recovery ended at **79 passed, 4 warnings, 0 failed** with no data loss. At the time of this drill off-box backup was not configured because no existing DoltHub credential/private destination was available. Off-box backup is now configured: the `core/jsonl-archive` order exports the stores and pushes them to the private `saymyname-app/agent-factory-archive` repository every 15 minutes (`RUNBOOK_STOP_AND_RESTART.md` §5). That JSONL export is an interchange copy, not a Dolt-native backup, and it is still not a reason to push the raw runtime to GitHub.
 
-## SayMyName rig operations
+## Product rig operations
 
-The two application rigs use clean Linux clones under the host-local, Git-ignored `~/agent-factory/rigs/` directory. Their site-bound paths remain in `.gc/site.toml`; `city.toml` versions only names, unique prefixes, default branches and pinned imports.
+A product rig uses a clean Linux clone under the host-local, Git-ignored `~/agent-factory/rigs/` directory. Its site-bound path remains in `.gc/site.toml`; `city.toml` versions only its name, unique prefix, default branch and pinned imports.
 
 ```bash
 gc rig list
-gc rig status saymyname-backend
-gc rig status saymyname-frontend
-gc bd --rig saymyname-backend config get issue_prefix  # smb
-gc bd --rig saymyname-frontend config get issue_prefix # smf
+gc rig status <rig>
+gc bd --rig <rig> config get issue_prefix
 gc doctor
 ```
 
-Gas City runtime paths generated inside application clones must remain untracked. Each clone uses local `.git/info/exclude` entries for `.beads/`, `.codex/`, `.gc/` and `rigs/`; do not modify an application `.gitignore` merely to host a rig.
+Gas City runtime paths generated inside an application clone must remain untracked. Each clone uses local `.git/info/exclude` entries for `.beads/`, `.codex/`, `.gc/` and `rigs/`; do not modify an application `.gitignore` merely to host a rig.
 
-The host toolchains proven during M5 are Temurin Java `21.0.12.1`, Maven `3.9.9`, Node `22.23.2` and npm `10.9.8`. Backend Docker/Testcontainers integration is now proven locally through the scoped `CourseKnowledgeTenantIsolationIT` canary; the existing GitHub `Backend CI` remains authoritative before merge. Frontend full lint is a known non-gating baseline; require tests/build and task-scoped lint evidence rather than claiming the baseline is clean.
+A product-specific toolchain, proven CI baseline, and per-rig Dolt backup remote are recorded in that rig's own repository, not here — see its `AGENTS.md` for the pointer (progressive disclosure).
 
-Each rig has a registered Dolt backup remote at `.dolt-backup/smb` or `.dolt-backup/smf`. Refresh them through the managed Dolt server before risky maintenance, using the port reported by `gc dolt status` and the official `CALL DOLT_BACKUP('sync', '<prefix>-backup')` primitive. These directories contain runtime data and remain excluded from Git.
+Each rig has a registered Dolt backup remote at `.dolt-backup/<rig-prefix>`. Refresh it through the managed Dolt server before risky maintenance, using the port reported by `gc dolt status` and the official `CALL DOLT_BACKUP('sync', '<prefix>-backup')` primitive. This directory contains runtime data and remains excluded from Git.
 
 `accept_startup_dialogs = true` is configured on the Codex provider. This is the supported Gas City option that lets a newly materialized ephemeral session pass Codex's startup trust dialog; it does not weaken repository, GitHub or human delivery gates.
 
-#### Closing the delivered-outcome Bead
+## Closing the delivered-outcome Bead
 
 `gc.last_delivered` must only ever point at a Bead that carries all six
 ADR-0016 delivery-proof fields (`gc.delivery_status`, `gc.work_outcome`,
@@ -459,49 +457,9 @@ waiting contract but leaves the bead `in_progress`; `mol-polecat-commit` and
 `mol-scoped-work` do the same. `pr-autopilot` later calls `deliver-close`, and
 only that verified write closes the PR-backed bead (ADR-0026).
 
-
-### Legacy cutover boundary
-
-The cutover occurred at `2026-09-12T16:38:00Z`. The Windows repo at
-`/mnt/c/Dev/Projects/SayMyName/Automation` is not a Gas City rig. Its GitHub
-repository is archived and its Scheduled Task `SayMyName-LocalCodexRunner`
-remains installed but disabled. The archived repository is the reversible
-write barrier for the former GitHub queue; do not unarchive it for ordinary
-history access.
-
-Preserve `.runner/state`, receipts, recovery receipts, logs and historical
-worktree registrations for audit/rollback. Do not clean the dirty Windows
-checkout, prune worktrees, delete the task, edit `config/runner.json`, or rotate
-secrets merely as part of decommissioning.
-
-New work procedure:
-
-```bash
-gc bd create "<bounded backend task>" --rig saymyname-backend --labels delivery:standard
-gc bd create "<bounded frontend task>" --rig saymyname-frontend --labels delivery:standard
-```
-
-Create only actually ready tasks; never bulk-copy Linear Done/Todo history.
-
-### Temporary M6 rollback
-
-Rollback is an emergency choice, not a routine retry:
-
-1. prove no Backend/Frontend Bead is assigned or in progress and no application
-   PR has ambiguous ownership;
-2. suspend both new paths with `gc rig suspend saymyname-backend` and
-   `gc rig suspend saymyname-frontend`;
-3. re-check that the legacy ledgers and queue contain no in-flight item;
-4. unarchive `saymyname-app/Say-my-name-automation` in GitHub;
-5. verify the retained task still has URI `\\SayMyName-LocalCodexRunner`, source
-   `SayMyNameAutomationPhase4`, the expected script/config paths, and remains
-   disabled;
-6. run the legacy manager's `Status`, then `Resume` only after those proofs;
-7. never resume either Gas City rig while the legacy dispatcher is enabled.
-
-To return to the new path, pause the managed Scheduled Task first, prove its
-process has exited and no queue item is in flight, archive Automation again,
-then resume both rigs. Do not test rollback by enabling both systems.
+The SayMyName legacy-automation cutover boundary and its temporary M6
+rollback procedure are dead, product-specific history now retired to
+`legacy/docs/products/saymyname/CUTOVER_AND_M6_ROLLBACK.md`.
 
 ## Upgrade
 
