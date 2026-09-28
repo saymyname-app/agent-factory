@@ -78,6 +78,9 @@ out=$(run)
 grep -q "af-stuck1 updated" "$TMP/updated.log" || { echo "$out" >&2; fail "the in_progress bead was not reopened"; }
 grep -q "af-done1 updated" "$TMP/updated.log" 2>/dev/null && fail "an already-closed bead must not be touched"
 [ "$(grep -c 'mail send mayor' "$CALLS")" = "1" ] || fail "the mayor was not paged exactly once"
+# Routed through escalation-door's Mayor-first class (O06/O07), not a raw mail.
+grep -q "^mail send mayor --notify -s Escalation (Mayor first): af-stuck1" "$CALLS" \
+  || fail "did not route through escalation-door's mayor-first class"
 grep -q '"af-br7i"' "$STATE_FILE" || fail "the session was not recorded as handled"
 # "$*" logging turns the empty --assignee value into a double space.
 grep -q -- "^bd update af-stuck1 --status open --assignee  --set-metadata" "$CALLS" \

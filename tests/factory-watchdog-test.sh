@@ -58,7 +58,7 @@ case "\$1 \$2" in
       for ((i=0; i<\${#argv[@]}; i++)); do
         [[ "\${argv[i]}" == "--title-contains" ]] && needle="\${argv[i+1]}"
       done
-      for f in "$BEADS_DIR"/open-*.json; do
+      for f in "$BEADS_DIR"/*.json; do
         [[ -f "\$f" ]] || continue
         if [[ -z "\$needle" ]] || jq -e --arg n "\$needle" '(.[0].title // "") | contains(\$n)' "\$f" >/dev/null 2>&1; then
           cat "\$f"
@@ -71,12 +71,19 @@ case "\$1 \$2" in
     id="\$3"
     if [[ "\$id" == af-1vr4 ]]; then cat "$COORD"; exit 0; fi
     f="$BEADS_DIR/\$id.json"
-    if [[ -f "\$f" ]]; then cat "\$f"; else echo '[]'; fi
+    if [[ -f "\$f" ]]; then
+      cat "\$f"
+    else
+      # Every id watchdog/escalation-door ever shows here is a real bead in
+      # production (gate ids included); synthesize a minimal open one so
+      # escalation-door's show_bead never dies on a fixture gap.
+      echo '[{"id":"'"\$id"'","status":"open","metadata":{}}]'
+    fi
     exit 0 ;;
   "bd create")
-    id="af-new-\$RANDOM"
+    id="af-new\$RANDOM"
     title="\$3"
-    printf '%s' "\$title" | jq -R --arg id "\$id" '[{"id":\$id,"status":"open","title":.}]' > "$BEADS_DIR/open-\$id.json"
+    printf '%s' "\$title" | jq -R --arg id "\$id" '[{"id":\$id,"status":"open","title":.,"metadata":{}}]' > "$BEADS_DIR/\$id.json"
     printf '{"id":"%s"}' "\$id"
     exit 0 ;;
   "bd update")
@@ -138,6 +145,9 @@ grep -q "aged gate — gate af-oihx open" <<<"$out" || { echo "$out" >&2; fail "
 grep -q "^ATTENTION" <<<"$out" || fail "an aged gate must not read as healthy"
 [ "$(mails)" = "1" ] || fail "aged gate should send exactly one mail"
 grep -q "gc.watchdog_nudged_at" "$CALLS" || fail "aged gate nudge was not stamped on the gate bead"
+# Routed through escalation-door's Mayor-first class (O06/O07), not a raw mail.
+grep -q "^mail send mayor --notify -s Escalation (Mayor first): af-oihx" "$MAIL" \
+  || { cat "$MAIL" >&2; fail "aged gate did not route through escalation-door's mayor-first class"; }
 
 reset_logs
 out=$(watchdog)

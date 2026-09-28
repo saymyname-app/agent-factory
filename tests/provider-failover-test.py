@@ -711,6 +711,9 @@ class ModelStalenessCLI(unittest.TestCase):
         gc_path.chmod(0o755)
         (self.d / "city.toml").write_text(FIXTURE_CITY_TOML, encoding="utf-8")
         (self.d / "model-catalog.json").write_text(FIXTURE_CATALOG, encoding="utf-8")
+        # STUB_GC's `bd show` always answers from coord.json (escalation-door's
+        # own show_bead call on the mayor-paging path needs one to exist).
+        (self.d / "coord.json").write_text(json.dumps([{"id": "af-example", "metadata": {}}]), encoding="utf-8")
         self.env = {
             **os.environ,
             "PF_FIXTURE": str(self.d),
@@ -739,7 +742,12 @@ class ModelStalenessCLI(unittest.TestCase):
         self.assertIn("stale: claude-cheap configured=haiku-legacy-2024", out)
         self.assertIn("bead filed:", out)
         self.assertTrue(any(c.startswith("bd create") for c in self.calls()))
-        self.assertTrue(any(c.startswith("mail send mayor") for c in self.calls()))
+        # Routed through escalation-door's Mayor-first class (O06/O07), not a
+        # raw mail send: the subject line is escalation-door's own.
+        bead_id = json.loads((self.d / "state.json").read_text(encoding="utf-8"))["model_staleness"]["bead"]
+        self.assertTrue(any(
+            c.startswith(f"mail send mayor --notify -s Escalation (Mayor first): {bead_id}")
+            for c in self.calls()))
         state = json.loads((self.d / "state.json").read_text(encoding="utf-8"))
         self.assertIn("claude-cheap=haiku-legacy-2024", state["model_staleness"]["signature"])
         self.assertTrue(state["model_staleness"]["bead"])

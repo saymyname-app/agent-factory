@@ -47,6 +47,7 @@
 set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+ESCALATION_DOOR="$(dirname "${BASH_SOURCE[0]}")/escalation-door"
 STATE="$ROOT/.gc/factory-guard.branch"
 CHECK_ONLY=0
 QUIET=0
@@ -568,12 +569,7 @@ try:
     print((json.load(sys.stdin) or {}).get("state") or "")
 except Exception:
     print("")')
-      gc mail send "${GC_ESCALATION_RECIPIENT:-human}" --notify \
-        -s "Mayor session down: $mayor_state" \
-        -m "ACTION: factory-guard detected the named mayor session is $mayor_state and has been for over 10 minutes
-STATE: $mayor_state since $page_since
-EVIDENCE: gc session list --json
-NEXT: diagnose why the Mayor session cannot stay active (provider, quota, host), then restart or repair it" \
+      "$ESCALATION_DOOR" benjamin "$COORD" "factory-guard: mayor session $mayor_state since $page_since (over 10 minutes)" \
         >/dev/null 2>&1 || true
       gc bd update "$COORD" --set-metadata "gc.mayor_session_down_paged_since=$page_since" >/dev/null 2>&1 || true
       did "paged ${GC_ESCALATION_RECIPIENT:-human}: mayor session $mayor_state since $page_since"
@@ -662,12 +658,7 @@ except Exception:
                 # The stuck identity may itself be the Mayor and unreachable,
                 # so this pages the human directly rather than routing
                 # through the orchestrator that cannot boot to read it.
-                gc mail send "${GC_ESCALATION_RECIPIENT:-human}" --notify \
-                  -s "Session boot stuck: $identity ($created)" \
-                  -m "ACTION: factory-guard detected a named always-on session cannot boot and filed a defect
-STATE: $message
-EVIDENCE: gc bd show $created
-NEXT: diagnose why $identity cannot boot (provider config, host resources, other), then fix and close $created with the cause" \
+                "$ESCALATION_DOOR" benjamin "$created" "factory-guard: named always-on session $identity cannot boot -- $(tr '\n' ' ' <<<"$message")" \
                   >/dev/null 2>&1 || true
                 did "filed session-boot-stuck defect $created for $identity and paged ${GC_ESCALATION_RECIPIENT:-human}"
               else

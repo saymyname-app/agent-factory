@@ -120,8 +120,8 @@ grep -q "filed session-boot-stuck defect af-boot1 for mayor" <<<"$out" \
   || { echo "$out" >&2; fail "stuck session not filed"; }
 [ "$(jq -r '.[0].metadata["gc.session_boot_stuck_bead.mayor"]' "$TMP/coord.json")" = "af-boot1" ] \
   || fail "the filed defect is not remembered"
-grep -q "^mail send human --notify" "$CALLS" \
-  || fail "a stuck session must page a human directly (the orchestrator itself may be unreachable)"
+grep -q "^mail send human --notify -s NEEDS BENJAMIN: af-boot1" "$CALLS" \
+  || fail "a stuck session must route through escalation-door's straight-to-Benjamin class (the orchestrator itself may be unreachable)"
 grep -q "^mail send mayor" "$CALLS" \
   && fail "must not page the Mayor about the Mayor being unable to boot"
 out=$(guard)
@@ -153,7 +153,7 @@ grep -q '^bd create' "$CALLS" && fail "--check-only must never create a bead"
 # 8. the Mayor session itself, quarantined past the grace window, is paged to
 #    a human once per streak (section 7); inside the window, or with
 #    --check-only, it is not ------------------------------------------------
-pages() { grep -c '^mail send human --notify -s Mayor session down' "$CALLS" || true; }
+pages() { grep -c '^mail send human --notify -s NEEDS BENJAMIN: af-1vr4' "$CALLS" || true; }
 : > "$EVENTS"; : > "$CALLS"
 echo '{"sessions":[{"id":"af-m1","alias":"mayor","state":"quarantined","last_active":"'"$(iso $((NOW - 5 * 60)))"'"}]}' > "$SESSIONS"
 guard >/dev/null
@@ -163,6 +163,10 @@ guard --check-only >/dev/null
 [ "$(pages)" = "0" ] || fail "--check-only paged the Mayor session"
 guard >/dev/null
 [ "$(pages)" = "1" ] || { cat "$CALLS" >&2; fail "a quarantined Mayor session was not paged exactly once"; }
+# Routed through escalation-door's straight-to-Benjamin class, not a raw mail:
+# the coordination bead itself must now carry gc.needs_benjamin.
+[ "$(jq -r '.[0].metadata["gc.needs_benjamin"] // empty' "$TMP/coord.json")" != "" ] \
+  || fail "mayor-session-down did not route through escalation-door benjamin (gc.needs_benjamin unset)"
 guard >/dev/null
 [ "$(pages)" = "1" ] || fail "the same down streak paged a second time"
 echo '{"sessions":[]}' > "$SESSIONS"

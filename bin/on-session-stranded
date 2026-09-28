@@ -16,6 +16,7 @@
 set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+ESCALATION_DOOR="$(dirname "${BASH_SOURCE[0]}")/escalation-door"
 CHECK_ONLY=0
 QUIET=0
 LOOKBACK="${ON_SESSION_STRANDED_LOOKBACK:-30m}"
@@ -91,12 +92,8 @@ while IFS= read -r event; do
 
   if [ -n "$reopened_here" ]; then
     count=$(wc -w <<<"$reopened_here")
-    gc mail send mayor --notify \
-      -s "Session $session_name stranded — $count bead(s) reopened" \
-      -m "ACTION: on-session-stranded reopened bead(s) left in_progress by a session that terminated without a clean drain
-STATE: $reopened_here
-EVIDENCE: gc events --type session.stranded --since $LOOKBACK
-NEXT: pick each one back up through the normal flow; if one is not actually resumable, mark it gc.waiting_on and say why" \
+    first_bead=$(awk '{print $1}' <<<"$reopened_here")
+    "$ESCALATION_DOOR" mayor "$first_bead" "on-session-stranded: session $session_name terminated without a clean drain; reopened $count bead(s): $reopened_here" \
       >/dev/null 2>&1
     say "on-session-stranded: reopened $count bead(s) from $session_id ($reopened_here)"
     REOPENED=$((REOPENED + count))
