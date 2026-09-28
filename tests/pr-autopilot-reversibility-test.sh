@@ -11,7 +11,8 @@
 # fixed PR is released; a checker that cannot run fails closed; reconciliation
 # sees closed work beyond the CLI's default 50-row window, silently backfills
 # old history, and wakes the Mayor exactly once for a recent merge or active
-# waiter under an honest automation identity; --dry-run changes nothing.
+# waiter, with no --from (real gc mail send rejects any --from that is not a
+# live session alias or "human" -- af-4ruvv); --dry-run changes nothing.
 
 set -Eeuo pipefail
 
@@ -258,8 +259,8 @@ grep -q "^mail send mayor" "$TMP/gc.log" && fail "--dry-run sent the completion 
 : > "$TMP/gc.log"
 out=$(pilot)
 grep -q "^bd update af-work9 .*merge_result=merged" "$TMP/gc.log" || { echo "$out" >&2; fail "recent merge was not reconciled"; }
-test "$(grep -c '^mail send mayor --from pr-autopilot --notify' "$TMP/gc.log" || true)" = "1" || fail "recent reconciliation did not send exactly one honestly attributed wake"
-grep -q "^mail send mayor --notify" "$TMP/gc.log" && fail "completion wake omitted its explicit sender"
+test "$(grep -c '^mail send mayor --notify' "$TMP/gc.log" || true)" = "1" || fail "recent reconciliation did not send exactly one completion wake"
+grep -q -- "--from pr-autopilot" "$TMP/gc.log" && fail "completion wake passed --from pr-autopilot, which real gc mail send rejects (session not found: only a live session alias or human is a valid sender; af-4ruvv)"
 grep -q -- "--from human" "$TMP/gc.log" && fail "completion wake impersonated human"
 grep -q "SHIPPED: af-work9 via PR #9" "$TMP/gc.log" || fail "completion wake did not name the bead and PR"
 grep -q "ACTION: pr-autopilot reconciled af-work9 from merged PR #9" "$TMP/gc.log" || fail "completion wake lacks its ACTION"
@@ -296,7 +297,7 @@ jq '. + [
 : > "$TMP/gc.log"
 out=$(pilot)
 grep -q "^bd update af-work10 .*merge_result=merged" "$TMP/gc.log" || { echo "$out" >&2; fail "old merge with active waiter was not reconciled"; }
-test "$(grep -c '^mail send mayor --from pr-autopilot --notify' "$TMP/gc.log" || true)" = "1" || fail "old merge with active waiter did not send exactly one wake"
+test "$(grep -c '^mail send mayor --notify' "$TMP/gc.log" || true)" = "1" || fail "old merge with active waiter did not send exactly one wake"
 grep -q "ACTION: pr-autopilot reconciled af-work10 from merged PR #10" "$TMP/gc.log" || fail "active-waiter wake lacks its ACTION"
 rm -f "$TMP/backend-merged.json" "$TMP/beads.json"
 
