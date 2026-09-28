@@ -178,10 +178,16 @@ case "$CMD" in
     esac
     ORIGIN_REPO=""
     [ -n "$GIT_COMMON_DIR" ] && ORIGIN_REPO=$(cd -- "$(dirname -- "$GIT_COMMON_DIR")" 2>/dev/null && pwd -P)
+    # O05: never fall back to rm -rf. By this point $BRANCH is already
+    # pushed (the block above exits before here otherwise), so a failed
+    # `worktree remove` loses nothing -- it just leaves a directory for
+    # factory-guard's runtime-worktree audit (bin/factory-guard section 6b)
+    # to report and a human to clean up by hand.
     if [ -n "$ORIGIN_REPO" ] && [ -d "$ORIGIN_REPO" ]; then
-      git -C "$ORIGIN_REPO" worktree remove "$WT" --force 2>/dev/null || rm -rf "$WT"
+      git -C "$ORIGIN_REPO" worktree remove "$WT" --force 2>/dev/null || \
+        echo "factory-do-work-workspace: could not remove worktree $WT after pushing $BRANCH; leaving it in place" >&2
     else
-      rm -rf "$WT"
+      echo "factory-do-work-workspace: could not resolve the origin repo for worktree $WT; leaving it in place" >&2
     fi
 
     [ -n "$PR_URL" ] && echo "$PR_URL"

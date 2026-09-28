@@ -98,6 +98,9 @@ jobs:
       - name: Factory guard worktree hygiene
         run: bash tests/factory-guard-worktree-test.sh
 
+      - name: Factory guard runtime-worktree audit (backup, root-owned files)
+        run: bash tests/factory-guard-runtime-worktree-test.sh
+
       - name: Deliver-close proof-field guard tests
         run: bash tests/deliver-close-test.sh
 
