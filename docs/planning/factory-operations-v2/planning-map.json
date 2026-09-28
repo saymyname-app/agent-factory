@@ -13,25 +13,25 @@
       "summary": "How this Planning Run is run: form, reservation handling, upstream orders, who delivers, definition of done."
     },
     "t1-dispatch-wake": {
-      "claimed_by": null,
+      "claimed_by": "po",
       "delivery_routable": false,
-      "evidence": null,
+      "evidence": "Benjamin live chat 2026-09-28",
       "map_key": "dispatch_wake",
       "plane": "planning",
-      "resolution": null,
-      "session_id": null,
-      "status": "open",
+      "resolution": "see decisions-log.md \u00a7 t1-dispatch-wake",
+      "session_id": "po-2026-09-28",
+      "status": "resolved",
       "summary": "How work is dispatched and how the Mayor learns a new approved graph exists."
     },
     "t2-escalation-alerts": {
-      "claimed_by": null,
+      "claimed_by": "po",
       "delivery_routable": false,
-      "evidence": null,
+      "evidence": "Benjamin live chat 2026-09-28",
       "map_key": "escalation_alerts",
       "plane": "planning",
-      "resolution": null,
-      "session_id": null,
-      "status": "open",
+      "resolution": "see decisions-log.md \u00a7 t2-escalation-alerts",
+      "session_id": "po-2026-09-28",
+      "status": "resolved",
       "summary": "When and how the Factory alerts or escalates to Benjamin; campaign-pointer / af-1vr4, silent escalation, signals file, provider exhaustion."
     },
     "t3-work-preservation": {
@@ -98,6 +98,34 @@
       "decision": "framing",
       "event": "resolve",
       "evidence": "Benjamin live chat 2026-09-28, decisions-log.md",
+      "session_id": "po-2026-09-28"
+    },
+    {
+      "at": 1790594488.3721416,
+      "claimant": "po",
+      "decision": "t1-dispatch-wake",
+      "event": "claim",
+      "session_id": "po-2026-09-28"
+    },
+    {
+      "at": 1790594488.4255073,
+      "decision": "t1-dispatch-wake",
+      "event": "resolve",
+      "evidence": "Benjamin live chat 2026-09-28",
+      "session_id": "po-2026-09-28"
+    },
+    {
+      "at": 1790594488.47792,
+      "claimant": "po",
+      "decision": "t2-escalation-alerts",
+      "event": "claim",
+      "session_id": "po-2026-09-28"
+    },
+    {
+      "at": 1790594488.527475,
+      "decision": "t2-escalation-alerts",
+      "event": "resolve",
+      "evidence": "Benjamin live chat 2026-09-28",
       "session_id": "po-2026-09-28"
     }
   ],
