@@ -1,0 +1,6 @@
+# Project file for the SayMyName frontend rig (af-vsevn). See
+# config/projects/agent-factory.toml for what reads this directory.
+rig_dir = "rigs/saymyname-frontend"
+repo = "saymyname-app/Say-my-name-front"
+protected_branch = "dev"
+required_ci = "Frontend CI"

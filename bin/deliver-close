@@ -56,6 +56,9 @@ set -Eeuo pipefail
 PROGRAM_NAME="deliver-close"
 GC_BIN="${GC_BIN:-gc}"
 GH_BIN="${GH_BIN:-gh}"
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+# shellcheck source=lib/project_registry.sh
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/project_registry.sh"
 
 log() {
   printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2
@@ -125,17 +128,16 @@ metadata_value() {
 }
 
 required_workflow_for() {  # repo explicit-name
-  local repo=$1 explicit=${2:-}
+  local repo=$1 explicit=${2:-} ci
   if [[ -n $explicit ]]; then
     printf '%s\n' "$explicit"
     return
   fi
-  case "$repo" in
-    saymyname-app/Say-my-name-back) printf '%s\n' "Backend CI" ;;
-    saymyname-app/Say-my-name-front) printf '%s\n' "Frontend CI" ;;
-    saymyname-app/agent-factory) printf '%s\n' "Factory CI" ;;
-    *) die "--required-workflow is required for $repo; refusing to guess which CI run gates delivery." ;;
-  esac
+  if ci=$(project_registry_ci_for_repo "$ROOT/config/projects" "$repo"); then
+    printf '%s\n' "$ci"
+    return
+  fi
+  die "--required-workflow is required for $repo; refusing to guess which CI run gates delivery."
 }
 
 parse_pr_url() {  # url -> owner/repo<TAB>number

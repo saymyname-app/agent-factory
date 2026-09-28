@@ -98,6 +98,9 @@ jobs:
       - name: Deliver-close proof-field guard tests
         run: bash tests/deliver-close-test.sh
 
+      - name: Project registry loads config/projects into every consumer
+        run: bash tests/project-registry-test.sh
+
       - name: Structural delivery formula and finalizer wiring
         run: bash tests/delivery-formula-contract-test.sh
 
