@@ -1,0 +1,17 @@
+{
+  "contract": "agent-factory-planning-run-router-request/v1",
+  "legacy_path": "none",
+  "session": "docs/planning/factory-operations-v2/planning-session.json",
+  "city_registry": "docs/planning/factory-operations-v2/city-registry.json",
+  "spec_out": "docs/planning/factory-operations-v2/spec",
+  "wayfinding": {
+    "request": "docs/planning/factory-operations-v2/wayfinding-request.json",
+    "map": "docs/planning/factory-operations-v2/planning-map.json",
+    "decisions": []
+  },
+  "planning_run_target": "factory-operations-v2",
+  "approval": {
+    "approved_by": "Benjamin",
+    "evidence": "live chat 2026-09-28 « j'approuve la Spec A5 » on digest sha256:cdc8df26785c531780461cbe405fd815ca2705d3bbe4941c6b7187be78342920"
+  }
+}

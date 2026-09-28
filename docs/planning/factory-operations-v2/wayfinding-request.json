@@ -1,0 +1,16 @@
+{
+  "contract": "agent-factory-wayfinding-run-request/v1",
+  "run_id": "wf-factory-operations-v2",
+  "exceeds_one_session": true,
+  "trigger_reason": "~35 inputs (28 orders, Mayor manual operations, INVENTORY F11-F25, state.md A5 list, ADR-0028 amendment, proposals flow) exceed one healthy session; decisions grilled with Benjamin theme by theme",
+  "time_sensitive_fields": ["live_state"],
+  "decisions": [
+    {"id": "framing", "map_key": "framing", "summary": "How this Planning Run is run: form, reservation handling, upstream orders, who delivers, definition of done."},
+    {"id": "t1-dispatch-wake", "map_key": "dispatch_wake", "summary": "How work is dispatched and how the Mayor learns a new approved graph exists."},
+    {"id": "t2-escalation-alerts", "map_key": "escalation_alerts", "summary": "When and how the Factory alerts or escalates to Benjamin; campaign-pointer / af-1vr4, silent escalation, signals file, provider exhaustion."},
+    {"id": "t3-work-preservation", "map_key": "work_preservation", "summary": "Never lose work: local-only commits after interrupted runs, re-dispatch redoing work, cleanup deleting fresh worktrees, root-owned build files."},
+    {"id": "t4-project-agnostic", "map_key": "project_agnostic", "summary": "Move every SayMyName-specific value out of Factory code and docs (per-project rig config, docs to product repos, fixtures, fresh-clone hooks, local-only tests)."},
+    {"id": "t5-hygiene", "map_key": "hygiene", "summary": "Retire or re-justify dead tools and orphan files; trace rotation; backup freshness; review of the 20 Gas City pack orders."},
+    {"id": "t6-planning-doors", "map_key": "planning_doors", "summary": "Planning rules: ADR-0028 amendment (graph patch door), af-zwhh0 planning-exception gap, proposals flow (decision 9), reservation file rewrite (F18)."}
+  ]
+}
