@@ -64,6 +64,46 @@ publié.
 4. **Documentation** — cette ADR, `docs/ADAPTATION_REGISTER.md` (AR-003) et
    `CONTEXT.md` (glossaire *Planning Exception*) décrivent le mécanisme.
 
+## Amendement — décision 8 (t6-planning-doors, 2026-09-28)
+
+Intent (Benjamin, 2026-09-28, "Q6.3 oui mais je ne me souviens plus", source
+2026-09-25 23:09 : « on a ajouté ces scripts orders au compte-goutte avec les
+incidents … rechercher ce qui se fait, les bonnes pratiques, et remettre en
+question ce qu'on a pour soit regrouper, ajouter, modifier ou supprimer des
+orders »): le Mayor peut resliceer un graphe publié sans repasser par une
+Planning Run tant que l'outil déterministe prouve que les critères
+d'acceptation ne changent pas ; sinon la question va sur la liste NEEDS
+BENJAMIN. Chaque patch — reslice ou révision complète — laisse la trace de
+qui l'a fait et pourquoi. Un ticket que le worker se scinde lui-même reste
+traçable jusqu'à son origine.
+
+Mechanism (implémentation) :
+
+1. `bin/ticket-graph-publish patch` prend `--author` et `--reason`
+   (obligatoires) et les écrit sur le convoy (`gc.patch_author`,
+   `gc.patch_reason`, note `PATCH by <author>: <reason>`), qu'il s'agisse
+   d'un reslice ou d'une révision complète.
+2. `--reslice` marque un reslice du Mayor sans nouvelle Planning Run. Pour
+   chaque ticket non terminé que le patch touche, l'outil compare les
+   critères d'acceptation déjà publiés (extraits du texte de la Bead, seule
+   source de vérité) à ceux du draft ; toute différence refuse tout le patch
+   avant la moindre écriture et l'escalade via `escalation-door benjamin`
+   sur le convoy (liste NEEDS BENJAMIN). Sans `--reslice` (draft révisé et
+   réapprouvé par une Planning Run), les critères d'acceptation peuvent
+   changer librement, comme avant cet amendement.
+3. Un ticket peut déclarer `merges: [<id>, ...]` : les tickets listés,
+   forcément non terminés (`patch` refuse un ticket déjà `closed`, comme au
+   §5 ci-dessus), sont fermés et marqués `gc.merged_into=<id résultant>`.
+   Un ticket peut déclarer `supersedes: <id>` : le ticket remplacé, non
+   terminé, est fermé et marqué `gc.superseded_by=<nouvel id>`. `reorder`
+   n'est pas un champ séparé : changer `blocked_by` d'un ticket non terminé
+   déjà publié fait que `patch` réconcilie ses dépendances (`bd dep
+   add`/`bd dep remove`) contre l'instantané `gc.blocked_by` qu'il maintient
+   lui-même sur chaque Bead.
+4. Un ticket créé par le patch peut déclarer `split_from: <id>` : la Bead
+   créée porte `gc.split_from=<id>`, pour qu'un self-split de worker reste
+   traçable jusqu'à son origine sans mécanisme séparé.
+
 ## Reprise et limites
 
 - `planning-exception` ne lit ni n'écrit Beads directement : il opère sur un

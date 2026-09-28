@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""Fake `escalation-door` used by ticket-graph-publish-test.py to observe a
+reslice patch's NEEDS BENJAMIN escalation without a live Beads/mail stack.
+Every invocation is appended, one JSON array per line, to
+TICKET_GRAPH_ESCALATION_LOG."""
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+log = Path(os.environ["TICKET_GRAPH_ESCALATION_LOG"])
+with log.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(args) + "\n")
+
+if args[:1] == ["benjamin"]:
+    raise SystemExit(0)
+
+print(f"unexpected fake escalation-door arguments: {args}", file=sys.stderr)
+raise SystemExit(2)
