@@ -33,7 +33,7 @@
 # with no gc.pr_url yet -- the ordinary case -- has nothing to verify and
 # closes exactly as before.
 #
-# af-zwhh0: --outcome blocked|abandoned may optionally carry --classification
+# af-zwhh0/af-cphvt: --outcome blocked|abandoned must carry --classification
 # repair|semantic|topology (bin/planning-exception's own vocabulary --
 # "classify" tells a worker whether its situation is a bounded technical
 # repair or a genuine semantic/topology surprise that must raise a Planning
@@ -44,9 +44,11 @@
 # the close is refused outright, before any Beads write, so a worker cannot
 # record "this needs a Planning Exception" in free text and close anyway (the
 # af-4a44k shape this bead exists to close: a worker's own closing note said
-# exactly this, but no exception was ever raised). --classification/
-# --planning-exception-id are optional: a caller that never passes
-# --classification gets the old, unclassified behavior unchanged.
+# exactly this, but no exception was ever raised). A blocked/abandoned close
+# with no --classification at all is refused the same way (af-cphvt): the
+# original af-zwhh0 cut left --classification optional, which let a worker
+# skip the triage question entirely by just never passing the flag -- the
+# same silent-skip shape with one fewer step.
 # bin/factory-planning-exception-guard is the complementary detection net for
 # beads already closed this way without going through this enforcement (e.g.
 # a raw `gc bd update` bypassing this door).
@@ -73,7 +75,7 @@ usage() {
   cat <<'USAGE'
 Usage: deliver-close <bead-id> --repo <owner/repository> --pr <number> [--required-workflow <name>] [--reason <text>]
    or: deliver-close <bead-id> --outcome shipped --commit <sha> --branch <branch> [--verification <text>] [--reason <text>]
-   or: deliver-close <bead-id> --outcome no-op|blocked|abandoned [--reason <text>]
+   or: deliver-close <bead-id> --outcome no-op [--reason <text>]
    or: deliver-close <bead-id> --outcome blocked|abandoned --classification repair|semantic|topology \
        [--planning-exception-id <decision-id>] [--reason <text>]
 
@@ -92,12 +94,13 @@ yet has nothing to verify. A bead explicitly governed by
 gc.delivery_contract=pr-ci-merged-v1 (or an approved delivery graph) cannot use
 --outcome shipped without a linked PR.
 
---classification (blocked/abandoned only): repair writes gc.blocked_classification
-and closes as before. semantic/topology means the delivery worker hit a
-question about approved intent, behavior, or topology (ADR-0028) -- it must
-also pass --planning-exception-id naming the decision id an already-run
-`bin/planning-exception raise` produced for this bead, or the close is
-refused before any Beads write.
+--classification (required for --outcome blocked|abandoned): repair writes
+gc.blocked_classification and closes as before. semantic/topology means the
+delivery worker hit a question about approved intent, behavior, or topology
+(ADR-0028) -- it must also pass --planning-exception-id naming the decision
+id an already-run `bin/planning-exception raise` produced for this bead, or
+the close is refused before any Beads write. A blocked/abandoned close with
+no --classification at all is refused the same way.
 USAGE
 }
 
@@ -262,22 +265,28 @@ close_by_outcome() {
     [[ -z $classification && -z $planning_exception_id ]] \
       || die "--classification/--planning-exception-id only apply to --outcome blocked|abandoned."
     args+=(--set-metadata "gc.work_commit=$commit" --set-metadata "gc.work_branch=$branch")
+  elif [[ $outcome == blocked || $outcome == abandoned ]]; then
+    [[ -z $commit && -z $branch ]] \
+      || die "--commit/--branch only apply to --outcome shipped."
+    if [[ -z $classification ]]; then
+      [[ -z $planning_exception_id ]] \
+        || die "--planning-exception-id requires --classification semantic|topology."
+      die "--outcome blocked|abandoned requires --classification repair|semantic|topology (run bin/planning-exception classify first)."
+    fi
+    case "$classification" in
+      repair|semantic|topology) ;;
+      *) die "--classification must be one of repair, semantic, topology." ;;
+    esac
+    if [[ $classification == semantic || $classification == topology ]]; then
+      [[ -n $planning_exception_id ]] \
+        || die "--classification $classification requires --planning-exception-id <decision-id> (run bin/planning-exception raise first)."
+    fi
+    args+=(--set-metadata "gc.blocked_classification=$classification")
   else
     [[ -z $commit && -z $branch ]] \
       || die "--commit/--branch only apply to --outcome shipped."
-    if [[ -n $classification ]]; then
-      case "$classification" in
-        repair|semantic|topology) ;;
-        *) die "--classification must be one of repair, semantic, topology." ;;
-      esac
-      if [[ $classification == semantic || $classification == topology ]]; then
-        [[ -n $planning_exception_id ]] \
-          || die "--classification $classification requires --planning-exception-id <decision-id> (run bin/planning-exception raise first)."
-      fi
-      args+=(--set-metadata "gc.blocked_classification=$classification")
-    elif [[ -n $planning_exception_id ]]; then
-      die "--planning-exception-id requires --classification semantic|topology."
-    fi
+    [[ -z $classification && -z $planning_exception_id ]] \
+      || die "--classification/--planning-exception-id only apply to --outcome blocked|abandoned."
   fi
   [[ -z $verification ]] || args+=(--set-metadata "gc.work_verification=$verification")
   [[ -z $planning_exception_id ]] || args+=(--set-metadata "gc.planning_exception_id=$planning_exception_id")
