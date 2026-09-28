@@ -57,25 +57,25 @@
       "summary": "Move every SayMyName-specific value out of Factory code and docs (per-project rig config, docs to product repos, fixtures, fresh-clone hooks, local-only tests)."
     },
     "t5-hygiene": {
-      "claimed_by": null,
+      "claimed_by": "po",
       "delivery_routable": false,
-      "evidence": null,
+      "evidence": "Benjamin live chat 2026-09-28",
       "map_key": "hygiene",
       "plane": "planning",
-      "resolution": null,
-      "session_id": null,
-      "status": "open",
+      "resolution": "see decisions-log.md \u00a7 t5-hygiene",
+      "session_id": "po-2026-09-28",
+      "status": "resolved",
       "summary": "Retire or re-justify dead tools and orphan files; trace rotation; backup freshness; review of the 20 Gas City pack orders."
     },
     "t6-planning-doors": {
-      "claimed_by": null,
+      "claimed_by": "po",
       "delivery_routable": false,
-      "evidence": null,
+      "evidence": "Benjamin live chat 2026-09-28",
       "map_key": "planning_doors",
       "plane": "planning",
-      "resolution": null,
-      "session_id": null,
-      "status": "open",
+      "resolution": "see decisions-log.md \u00a7 t6-planning-doors",
+      "session_id": "po-2026-09-28",
+      "status": "resolved",
       "summary": "Planning rules: ADR-0028 amendment (graph patch door), af-zwhh0 planning-exception gap, proposals flow (decision 9), reservation file rewrite (F18)."
     }
   },
@@ -155,11 +155,43 @@
       "event": "resolve",
       "evidence": "Benjamin live chat 2026-09-28",
       "session_id": "po-2026-09-28"
+    },
+    {
+      "at": 1790598315.5319102,
+      "claimant": "po",
+      "decision": "t5-hygiene",
+      "event": "claim",
+      "session_id": "po-2026-09-28"
+    },
+    {
+      "at": 1790598315.562427,
+      "decision": "t5-hygiene",
+      "event": "resolve",
+      "evidence": "Benjamin live chat 2026-09-28",
+      "session_id": "po-2026-09-28"
+    },
+    {
+      "at": 1790598315.5946913,
+      "claimant": "po",
+      "decision": "t6-planning-doors",
+      "event": "claim",
+      "session_id": "po-2026-09-28"
+    },
+    {
+      "at": 1790598315.6254058,
+      "decision": "t6-planning-doors",
+      "event": "resolve",
+      "evidence": "Benjamin live chat 2026-09-28",
+      "session_id": "po-2026-09-28"
+    },
+    {
+      "at": 1790598315.6254094,
+      "event": "route_clear"
     }
   ],
   "plane": "planning",
   "run_id": "wf-factory-operations-v2",
-  "status": "active",
+  "status": "to_spec_ready",
   "time_sensitive_facts": {},
   "time_sensitive_fields": [
     "live_state"
