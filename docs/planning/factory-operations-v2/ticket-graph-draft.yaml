@@ -4,9 +4,9 @@ artifact:
   labels:
   - approved-ticket-graph
   - factory-operations-v2
-  state: DRAFT_TICKET_GRAPH
-  approved_by: null
-  content_digest: sha256:db8a428daa58e62c8c0d9672b953751b5c06f1a7a189b07feeb2914bfcd40074
+  state: APPROVED_TICKET_GRAPH_DRAFT
+  approved_by: Benjamin
+  content_digest: sha256:9e78aa02b0efc6de0638f2d1fa508c6bc2deb42415c072123db5e24a6f6fb918
   digest_scope: UTF-8 bytes from the legacy_boundary key through end of file, with LF line endings
   source_spec:
     id: spec-factory-operations-v2-2026-09-28
@@ -14,8 +14,8 @@ artifact:
     digest: sha256:cdc8df26785c531780461cbe405fd815ca2705d3bbe4941c6b7187be78342920
   method_baseline:
     skill: Matt Pocock /to-tickets (Factory adaptation)
-  publication_authorized: false
-  publication_authorized_by: null
+  publication_authorized: true
+  publication_authorized_by: Benjamin
 
 legacy_boundary:
   quarantine_read_only_evidence:
@@ -278,6 +278,22 @@ tickets:
   - Each product repo holds the moved content in a dedicated file, reachable from its AGENTS.md in at
     most one line.
   - Product PRs target `dev` and pass their CI.
+- id: O17
+  kind: vertical_slice
+  title: The router resumes a Planning Run after an earlier approval
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  what_it_delivers: '`bin/planning-run-router` resumes from where a previous call stopped: an already
+    APPROVED_SPEC with a matching digest and its closed Planning Map are accepted, to-spec does not rewrite
+    an approved Spec, and approval is not re-run; the result names the stage it resumed from. Found on
+    2026-09-28 while publishing this very graph (the router answered wayfinding_pending on a closed map
+    with every decision resolved).'
+  acceptance_criteria:
+  - A router test runs awaiting_approval, then approval, then publication as three separate calls and
+    reaches `published`.
+  - Re-running any stage never downgrades an approved Spec to DRAFT_SPEC nor reopens a closed map.
+  - A digest mismatch between the approved Spec and the session is refused with an operator-readable reason.
 - id: O16
   kind: verification
   title: 'A5 closes: every verdict written, 24 h clean'
@@ -297,6 +313,7 @@ tickets:
   - O13
   - O14
   - O15
+  - O17
   target_rigs:
   - agent-factory
   what_it_delivers: docs/INVENTORY.md carries a verdict for each of the 28 orders and each Mayor manual

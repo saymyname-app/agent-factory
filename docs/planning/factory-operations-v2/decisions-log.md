@@ -169,3 +169,17 @@ Source: `orders-best-practices.md` (this folder).
 - t5.6: gc usage metrics also turned off (`gc metrics off`), per Benjamin's
   Q5.3 answer (« a » = bd and gc). Orders must also run with
   `BD_DISABLE_METRICS=1` (supervisor sets only `GC_DISABLE_USAGE_METRICS`).
+
+## Ticket graph approval and publication — 2026-09-28
+
+Intent (Benjamin, 2026-09-28): « j'approuve le plan de tickets A5 », then
+« a, j'approuve le plan avec O17 ».
+Mechanism (PO): O17 (router resumes after an earlier approval) added before
+publication — the router answered `wayfinding_pending` on the closed map with
+every decision resolved, and a re-run would have rewritten the approved Spec
+to DRAFT (reproduced on a throwaway copy). Publication therefore went through
+the router's own door, `bin/ticket-graph-publish publish`, and the
+reservation was promoted with the router's own `clear_reservation` on this
+worktree (F18 handling decided in framing). Result: `publish-result.json`.
+Also found and fixed first: every convoy was titled after the old refactor
+(#255).
