@@ -185,6 +185,36 @@ class PlanningRunRouterTest(unittest.TestCase):
         self.assertEqual("APPROVED_SPEC", spec["state"])
         self.assertEqual("benjamin", spec["approved_by"])
 
+    def test_published_result_surfaces_whether_the_mayor_was_woken(self):
+        # The router always opts in to the Mayor wake; a failed wake must
+        # reach its caller (2026-09-29, A6: it failed silently).
+        for fail, expected in ((False, True), (True, False)):
+            with self.subTest(mail_fails=fail):
+                spec_out = self.tmp / f"specs-{fail}"
+                draft_bytes, _ = build_draft("router-simple-2026-09-24")
+                draft_path = self.tmp / f"draft-{fail}.yaml"
+                draft_path.write_bytes(draft_bytes)
+                request = self.base_request(
+                    SIMPLE_SESSION,
+                    spec_out=spec_out,
+                    approval={"approved_by": "benjamin", "evidence": "af-fixture-evidence"},
+                    publish={"draft": str(draft_path)},
+                )
+                request_path = self.write_request(request, name=f"request-{fail}.json")
+                env = {**self.bd_env(), "FACTORY_ROOT": str(self.tmp)}
+                if fail:
+                    env["TICKET_GRAPH_GC_MAIL_FAIL"] = "1"
+                proc = self.run_router(request_path, env=env, check=True)
+                result = json.loads(proc.stdout)
+                self.assertTrue(result["ok"])
+                self.assertEqual("published", result["result"])
+                self.assertIs(expected, result["mayor_notified"])
+                if fail:
+                    self.assertIn("not in a city directory", result["mayor_notify_error"])
+                    self.assertIn("Mayor was NOT woken", proc.stderr)
+                else:
+                    self.assertNotIn("mayor_notify_error", result)
+
     def test_rerunning_the_same_simple_request_from_scratch_is_safe(self):
         spec_out = self.tmp / "specs"
         draft_bytes, _ = build_draft("router-simple-2026-09-24")

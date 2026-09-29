@@ -23,6 +23,7 @@ BD_WORKSPACE = Path(os.environ.get("TICKET_GRAPH_BD_WORKSPACE", str(ROOT)))
 GC_BIN = os.environ.get("GC_BIN", "gc")
 CONTENT_BOUNDARY = b"legacy_boundary:"
 NOTIFY_MAYOR_ENV = "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR"
+MAYOR_NOTIFY_TIMEOUT_SECONDS = 60
 
 
 class PublishError(RuntimeError):
@@ -483,20 +484,37 @@ def patch(
     }
 
 
-def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> None:
+def mayor_city() -> Path:
+    """The city whose Mayor is woken: FACTORY_ROOT if set, else this tool's
+    own repository root -- the same resolution every other Factory tool uses
+    (bin/provider-failover, bin/factory-observe, the bash guards). Never the
+    caller's cwd: planning-run-router runs on a `po/*` worktree by design
+    (F18), where `gc` walking up from cwd finds no running city, and the Mayor
+    silently stayed asleep after the A6 publish (2026-09-29)."""
+    return Path(os.environ.get("FACTORY_ROOT") or ROOT)
+
+
+def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> dict[str, Any]:
     """Wake the Mayor at the end of a successful publish or patch (O02):
     this is the only door approved work enters by, so a silent Mayor after
     publication is the single point of failure for the whole delivery plane
     (the idle-ready-work order is only the safety net for when this call is
-    itself missed). Best-effort: a mail delivery failure must not turn a
-    successful publish into a reported failure.
+    itself missed). A mail delivery failure must not turn a successful
+    publish into a reported failure -- but it must be LOUD: the returned
+    fields go into the result JSON (`mayor_notified` false +
+    `mayor_notify_error`) and a warning goes to stderr.
+
+    The mail targets the live city explicitly (`gc --city <mayor_city()>`,
+    run from that directory), whatever the caller's cwd.
 
     No-op unless NOTIFY_MAYOR_ENV is set: only the live planning-run-router
     sets it when invoking this tool, so a default or test invocation (which
-    leaves it unset) never wakes the real Mayor (af-l46o6).
+    leaves it unset) never wakes the real Mayor (af-l46o6). Then
+    `mayor_notified` is null: not attempted.
     """
     if not os.environ.get(NOTIFY_MAYOR_ENV):
-        return
+        return {"mayor_notified": None}
+    city = mayor_city()
     subject = f"ticket-graph-{command}: {graph_digest}"
     body = (
         f"ACTION: ticket-graph-publish {command} completed\n"
@@ -507,12 +525,24 @@ def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> None
         "NEXT: dispatch newly ready delivery-plane tickets"
     )
     try:
-        subprocess.run(
-            [GC_BIN, "mail", "send", "mayor", "--notify", "-s", subject, "-m", body],
-            check=False, capture_output=True, text=True,
+        proc = subprocess.run(
+            [GC_BIN, "--city", str(city), "mail", "send", "mayor", "--notify", "-s", subject, "-m", body],
+            cwd=str(city), check=False, capture_output=True, text=True,
+            timeout=MAYOR_NOTIFY_TIMEOUT_SECONDS,
         )
-    except OSError:
-        pass
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        error = f"could not run gc mail send: {exc}"
+    else:
+        if proc.returncode == 0:
+            return {"mayor_notified": True, "mayor_city": str(city)}
+        detail = (proc.stderr or proc.stdout or "").strip() or "no output"
+        error = f"gc mail send exited {proc.returncode}: {detail}"
+    print(
+        f"{PROGRAM}: WARNING: {command} succeeded but the Mayor was NOT woken "
+        f"(city {city}): {error}",
+        file=sys.stderr,
+    )
+    return {"mayor_notified": False, "mayor_notify_error": error, "mayor_city": str(city)}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -549,21 +579,23 @@ def main() -> int:
                 raise PublishError("--author and --reason are required for patch")
             result = patch(draft, plan, tickets, args.author, args.reason, args.reslice)
             graph_digest = draft["artifact"]["content_digest"]
-            notify_mayor("patch", graph_digest, result["ids"].get("_convoy"))
+            notice = notify_mayor("patch", graph_digest, result["ids"].get("_convoy"))
             print(json.dumps({
                 "ok": True,
                 "graph_digest": graph_digest,
                 "revises": draft["artifact"]["revises"],
                 **result,
+                **notice,
             }, ensure_ascii=False, sort_keys=True))
             return 0
         graph_digest = draft["artifact"]["content_digest"]
         mapping = publish(plan, graph_digest, len(tickets))
-        notify_mayor("publish", graph_digest, mapping.get("_convoy"))
+        notice = notify_mayor("publish", graph_digest, mapping.get("_convoy"))
         print(json.dumps({
             "ok": True,
             "graph_digest": graph_digest,
             "ids": mapping,
+            **notice,
         }, ensure_ascii=False, sort_keys=True))
         return 0
     except (OSError, PublishError, json.JSONDecodeError) as exc:
