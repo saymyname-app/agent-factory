@@ -479,7 +479,18 @@ def run_router(request_path: Path, repo_root: Path) -> dict[str, Any]:
         "graph_digest": publish_result.get("graph_digest"),
         "convoy_id": ids.get("_convoy"),
         "ids": ids,
+        # Surfaced, never swallowed: false means the graph IS published but
+        # the Mayor was not woken (the idle-ready-work order is then the only
+        # safety net) -- the caller must see it.
+        "mayor_notified": publish_result.get("mayor_notified"),
     }
+    if publish_result.get("mayor_notify_error"):
+        result["mayor_notify_error"] = publish_result["mayor_notify_error"]
+        print(
+            f"{PROGRAM}: WARNING: graph published but the Mayor was NOT woken: "
+            f"{publish_result['mayor_notify_error']}",
+            file=sys.stderr,
+        )
     if resumed_from:
         result["resumed_from"] = resumed_from
     return result

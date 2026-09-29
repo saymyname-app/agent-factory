@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Fake `gc` used by ticket-graph-publish-test.py to observe Mayor wake
 calls without a live Gas City. Every invocation is appended, one JSON array
-per line, to TICKET_GRAPH_GC_LOG."""
+per line, to TICKET_GRAPH_GC_LOG; its cwd, one per line, to
+TICKET_GRAPH_GC_CWD_LOG when set. TICKET_GRAPH_GC_MAIL_FAIL=1 makes the mail
+fail the way a real gc does outside a city."""
 import json
 import os
 import sys
@@ -11,8 +13,15 @@ args = sys.argv[1:]
 log = Path(os.environ["TICKET_GRAPH_GC_LOG"])
 with log.open("a", encoding="utf-8") as handle:
     handle.write(json.dumps(args) + "\n")
+if os.environ.get("TICKET_GRAPH_GC_CWD_LOG"):
+    with Path(os.environ["TICKET_GRAPH_GC_CWD_LOG"]).open("a", encoding="utf-8") as handle:
+        handle.write(os.getcwd() + "\n")
 
-if args[:3] == ["mail", "send", "mayor"]:
+command = args[2:] if args[:1] == ["--city"] else args
+if command[:3] == ["mail", "send", "mayor"]:
+    if os.environ.get("TICKET_GRAPH_GC_MAIL_FAIL"):
+        print("gc mail send: not in a city directory (no city.toml or .gc/ found)", file=sys.stderr)
+        raise SystemExit(1)
     raise SystemExit(0)
 
 print(f"unexpected fake gc arguments: {args}", file=sys.stderr)

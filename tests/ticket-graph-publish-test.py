@@ -57,9 +57,9 @@ def build_draft(tickets_yaml: str, revises: str | None = None) -> tuple[bytes, s
 
 
 class TicketGraphPublishTest(unittest.TestCase):
-    def invoke(self, *args, env=None, check=True):
+    def invoke(self, *args, env=None, check=True, cwd=ROOT):
         return subprocess.run(
-            (str(PUBLISHER), *args), cwd=ROOT, env={**os.environ, **(env or {})},
+            (str(PUBLISHER), *args), cwd=cwd, env={**os.environ, **(env or {})},
             text=True, capture_output=True, check=check,
         )
 
@@ -219,8 +219,71 @@ class TicketGraphPublishTest(unittest.TestCase):
             calls = [json.loads(line) for line in gc_log.read_text(encoding="utf-8").splitlines()]
         self.assertTrue(result["ok"])
         self.assertEqual(1, len(calls))
-        self.assertEqual(["mail", "send", "mayor", "--notify"], calls[0][:4])
+        self.assertEqual("--city", calls[0][0])
+        self.assertEqual(["mail", "send", "mayor", "--notify"], calls[0][2:6])
         self.assertIn(result["graph_digest"], " ".join(calls[0]))
+        self.assertIs(True, result["mayor_notified"])
+        self.assertNotIn("mayor_notify_error", result)
+
+    def test_mayor_wake_targets_the_live_city_explicitly_from_a_non_city_cwd(self):
+        # 2026-09-29: planning-run-router ran on a po/* worktree (F18); gc,
+        # walking up from that cwd, found no running city and the A6 publish
+        # left the Mayor asleep, silently. The wake must name the city itself.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            city = root / "city"
+            elsewhere = root / "not-a-city"
+            city.mkdir()
+            elsewhere.mkdir()
+            gc_log = root / "gc.log"
+            cwd_log = root / "gc-cwd.log"
+            result = json.loads(self.invoke(
+                "publish", str(DRAFT), cwd=elsewhere, env={
+                    "BD_BIN": str(FAKE_BD),
+                    "GC_BIN": str(FAKE_GC),
+                    "FACTORY_ROOT": str(city),
+                    "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR": "1",
+                    "TICKET_GRAPH_CAPTURE": str(root / "graph.json"),
+                    "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+                    "TICKET_GRAPH_GC_LOG": str(gc_log),
+                    "TICKET_GRAPH_GC_CWD_LOG": str(cwd_log),
+                },
+            ).stdout)
+            calls = [json.loads(line) for line in gc_log.read_text(encoding="utf-8").splitlines()]
+            cwds = cwd_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(1, len(calls))
+        self.assertEqual(["--city", str(city), "mail", "send", "mayor", "--notify"], calls[0][:6])
+        self.assertEqual([str(city)], cwds)
+        self.assertIs(True, result["mayor_notified"])
+        self.assertEqual(str(city), result["mayor_city"])
+
+    def test_failed_mayor_wake_is_loud_but_the_publish_still_succeeds(self):
+        cases = {
+            "gc exits non-zero": ({"GC_BIN": str(FAKE_GC), "TICKET_GRAPH_GC_MAIL_FAIL": "1"}, "not in a city directory"),
+            "gc cannot run": ({"GC_BIN": "/nonexistent/gc"}, "could not run gc mail send"),
+        }
+        for name, (extra, expected) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                proc = self.invoke(
+                    "publish", str(DRAFT), cwd=root, env={
+                        "BD_BIN": str(FAKE_BD),
+                        "FACTORY_ROOT": str(root),
+                        "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR": "1",
+                        "TICKET_GRAPH_CAPTURE": str(root / "graph.json"),
+                        "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+                        "TICKET_GRAPH_GC_LOG": str(root / "gc.log"),
+                        **extra,
+                    },
+                )
+                result = json.loads(proc.stdout)
+                self.assertEqual(0, proc.returncode)
+                self.assertTrue(result["ok"])
+                self.assertIn("_convoy", result["ids"])
+                self.assertIs(False, result["mayor_notified"])
+                self.assertIn(expected, result["mayor_notify_error"])
+                self.assertIn("WARNING", proc.stderr)
+                self.assertIn("Mayor was NOT woken", proc.stderr)
 
     def test_publish_does_not_wake_the_mayor_unless_notify_is_explicitly_enabled(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -237,6 +300,7 @@ class TicketGraphPublishTest(unittest.TestCase):
             ).stdout)
         self.assertTrue(result["ok"])
         self.assertFalse(gc_log.exists())
+        self.assertIsNone(result["mayor_notified"])
 
     def test_publish_does_not_wake_the_mayor_when_the_graph_transaction_fails(self):
         broken_bd = (
@@ -298,8 +362,10 @@ class TicketGraphPublishTest(unittest.TestCase):
             calls = [json.loads(line) for line in gc_log.read_text(encoding="utf-8").splitlines()]
         self.assertTrue(result["ok"])
         self.assertEqual(1, len(calls))
-        self.assertEqual(["mail", "send", "mayor", "--notify"], calls[0][:4])
+        self.assertEqual("--city", calls[0][0])
+        self.assertEqual(["mail", "send", "mayor", "--notify"], calls[0][2:6])
         self.assertIn(new_digest, " ".join(calls[0]))
+        self.assertIs(True, result["mayor_notified"])
 
     def test_patch_does_not_wake_the_mayor_when_it_refuses_a_closed_ticket(self):
         old_digest = "sha256:" + "2" * 64
