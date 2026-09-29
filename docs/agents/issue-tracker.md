@@ -40,7 +40,7 @@ Used by `/wayfinder`. The **map** is one bead (the Planning Map Bead) with
 **child** beads as tickets (Planning Decision Beads).
 
 - **Map**: `bd create --type epic --title "<effort>" --labels wayfinder:map --metadata '{"gc.plane":"planning"}' --body-file map.md`. The description holds the Destination / Notes / Decisions so far / Not yet specified / Out of scope body; update it with `bd update <map> --body-file map.md`.
-- **Child ticket**: `bd create --parent <map> --type task --title "<name>" --labels wayfinder:<type> --metadata '{"gc.plane":"planning"}' --body-file q.md`, where `<type>` is `research`/`prototype`/`grilling`/`task` and the body is `## Question`.
+- **Child ticket**: `bd create --parent <map> --no-inherit-labels --type task --title "<name>" --labels wayfinder:<type> --metadata '{"gc.plane":"planning"}' --body-file q.md`, where `<type>` is `research`/`prototype`/`grilling`/`task` and the body is `## Question`. `--no-inherit-labels` is required: `bd create --parent` copies the parent's labels by default, which would tag every ticket `wayfinder:map` (seen on af-0aiero).
 - **Blocking**: Beads' native `blocks` dependency: `bd dep add <blocked> <blocker>`. A ticket is unblocked when every blocker is closed.
 - **Frontier query**: `bd ready --parent <map> --unassigned --json` (ready already drops blocked and in-progress beads); first by creation order wins.
 - **Claim**: `bd --actor po-agent/<session-id> update <id> --claim`, the session's first write. Only `--claim` is atomic, and only between distinct actors: exit 1 ("already claimed") means take the next frontier ticket. Never claim with `--assignee` (last writer wins silently). Research: branch `research/a6b-beads-claim`, af-0aiero.2.
