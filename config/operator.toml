@@ -10,3 +10,10 @@
 # unaffected by this file — renaming those is a topology change, not this
 # ticket's repair.
 name = "Benjamin"
+
+# Sender identity `bin/operator-mail` uses for mail from the operator entry
+# path (docs/OPERATOR_BRIDGE.md). Never "human" and never Benjamin's name:
+# the operator's Codex session is an agent acting on Benjamin's stated
+# intent, not Benjamin himself, and the Mayor prompt treats every mail as an
+# agent's request regardless of its displayed sender (P15).
+mail_alias = "po-agent"

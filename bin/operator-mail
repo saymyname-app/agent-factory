@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# operator-mail: the only way the operator entry path (docs/OPERATOR_BRIDGE.md)
+# sends mail into the Factory. `gc mail send` resolves an unclaimed sender to
+# "human" (facts.md §7, docs/planning/parallel-delivery), which reads as
+# Benjamin himself even though the operator's Codex session is an agent
+# acting on his stated intent, not Benjamin. This always sends with an
+# explicit non-human identity instead (config/operator.toml `mail_alias`,
+# default "po-agent") and self-identifies in the body, matching the
+# convention every other bin/ mail sender already follows (P15).
+set -Eeuo pipefail
+
+PROGRAM_NAME=$(basename "$0")
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+GC_BIN="${GC_BIN:-gc}"
+
+usage() {
+  cat >&2 <<USAGE
+Usage: $PROGRAM_NAME <to> -s <subject> -m <message> [--notify]
+
+Sends mail from the operator entry path with an explicit sender identity
+(config/operator.toml mail_alias, default po-agent) — never "human".
+USAGE
+  exit 2
+}
+
+[ $# -ge 1 ] || usage
+to=$1
+shift
+
+subject=""
+message=""
+notify_flag=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--subject) subject="${2:-}"; shift 2 ;;
+    -m|--message) message="${2:-}"; shift 2 ;;
+    --notify) notify_flag=(--notify); shift ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+[ -n "$subject" ] || usage
+[ -n "$message" ] || usage
+
+MAIL_ALIAS="${GC_OPERATOR_MAIL_ALIAS:-$(sed -n 's/^mail_alias[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${OPERATOR_CONFIG_FILE:-$ROOT/config/operator.toml}" 2>/dev/null | head -n1)}"
+MAIL_ALIAS="${MAIL_ALIAS:-po-agent}"
+
+body="ACTION: $MAIL_ALIAS (operator entry path) sends this on the operator's behalf, not Benjamin
+$message"
+
+exec "$GC_BIN" mail send "$to" --from "$MAIL_ALIAS" "${notify_flag[@]}" -s "$subject" -m "$body"
