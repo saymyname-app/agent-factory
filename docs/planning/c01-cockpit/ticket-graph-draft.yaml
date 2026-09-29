@@ -4,8 +4,8 @@ artifact:
   labels:
   - approved-ticket-graph
   - c01-cockpit
-  state: TICKET_GRAPH_DRAFT
-  approved_by: null
+  state: APPROVED_TICKET_GRAPH_DRAFT
+  approved_by: Benjamin
   content_digest: sha256:4efe99666f995811a65cff6206c28dab051b74dfa90e1155c0445f9a7efbe3e1
   digest_scope: UTF-8 bytes from the legacy_boundary key through end of file, with LF line endings
   source_spec:
@@ -14,9 +14,9 @@ artifact:
     digest: sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b
   method_baseline:
     skill: Matt Pocock /to-tickets (Factory adaptation)
-  publication_authorized: false
-  publication_authorized_by: null
-  approval_evidence: null
+  publication_authorized: true
+  publication_authorized_by: Benjamin
+  approval_evidence: "live chat 2026-09-29 « j'approuve le plan de tickets C01 » on digest sha256:4efe99666f995811a65cff6206c28dab051b74dfa90e1155c0445f9a7efbe3e1"
 
 legacy_boundary:
   quarantine_read_only_evidence:
