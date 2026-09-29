@@ -84,9 +84,13 @@ if you are not sure which City a shell will resolve to (an inherited
 `GC_CITY`/`GC_CITY_PATH` environment variable takes priority over your
 current directory).
 
-After this, `city.toml` carries no project-specific rig, path, or rule —
-only the generic Factory scaffolding: agent roles, provider tiers, and the
-formulas that drive delivery.
+After this, `city.toml` carries no project-specific rig entry, only the
+generic Factory scaffolding: agent roles, provider tiers, and the formulas
+that drive delivery. A couple of `[[patches.agent]]` session-cap overrides
+still name `saymyname-backend`/`saymyname-frontend` by directory — `gc rig
+remove` does not touch patches, only the `[[rigs]]` entry and its local path
+binding — but they are inert once those directories no longer exist, so they
+need no action from you.
 
 ## 3. Register your project
 
