@@ -21,6 +21,9 @@ set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
 LOG_FILE="${FACTORY_MAINTAIN_LOG:-$ROOT/var/factory-maintain.log}"
+# Overridable so a test city (which has no bin/ of its own) can point this
+# at the real repo's escalation-door instead of $FACTORY_ROOT's.
+ESCALATION_DOOR_BIN="${ESCALATION_DOOR_BIN:-$ROOT/bin/escalation-door}"
 
 usage() {
   cat >&2 <<'EOF'
@@ -32,9 +35,13 @@ gestures:
       and have no unpushed commits. Refuses anything unmerged, unpushed,
       the current branch, or a rig's protected branch.
 
-  clean-worktrees [--worktree-root <path>] [--dry-run]
-      Remove do-work worktrees whose branch is merged and pushed, with no
-      uncommitted changes. Refuses anything with unmerged or unpushed work.
+  clean-worktrees [--worktree-root <path>] [--idle-days N] [--dry-run]
+      Remove do-work worktrees that are clean (no uncommitted changes) and
+      fully pushed, and whose branch is either merged into the default
+      branch or has gone untouched for more than --idle-days (default 7).
+      Refuses anything with uncommitted changes. A worktree with commits
+      that were never pushed, or ahead of its pushed upstream, is reported
+      through the escalation door instead of removed (unrecoverable).
 
   rotate-logs [--dir <path>] [--max-bytes N] [--keep N]
       Gzip-archive and truncate *.log files over --max-bytes (default 10MiB)
@@ -147,18 +154,73 @@ cmd_prune_merged_branches() {
   echo "prune-merged-branches: deleted=$deleted skipped=$skipped"
 }
 
+# escalate_unpushed_worktree <path> <branch> — file (or reuse) a bead for a
+# worktree that clean-worktrees refuses to remove because it holds commits
+# that are not recoverable from the remote, and page the Mayor through the
+# one escalation door (never a silent skip -- the whole point of routing
+# this through a schedule is that nobody is watching for it by hand).
+escalate_unpushed_worktree() {
+  local path="$1" branch="$2"
+  local title="[clean-worktrees] unpushed commits in $path (branch $branch)"
+
+  local existing
+  existing=$(gc bd list --status open --title-contains "$title" --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    data = []
+print(len(data) if isinstance(data, list) else 0)
+' 2>/dev/null)
+  if [ "${existing:-0}" != "0" ]; then
+    log clean-worktrees escalation-skipped "path=$path branch=$branch reason=already-filed"
+    return 0
+  fi
+
+  local created
+  created=$(gc bd create "$title" -p 2 -t task \
+    -d "factory-maintain clean-worktrees found worktree $path on branch $branch with commits that are not pushed to its upstream. It was left in place rather than removed, because removing it would lose work with no remote copy to recover from. Push the branch (or confirm it is abandoned and hand-remove it), then close this bead." \
+    --metadata '{"gc.source":"clean-worktrees"}' \
+    --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print("")
+    raise SystemExit(0)
+if isinstance(data, list):
+    data = data[0] if data else {}
+print(data.get("id", "") if isinstance(data, dict) else "")
+' 2>/dev/null)
+  if [ -z "$created" ]; then
+    log clean-worktrees escalation-failed "path=$path branch=$branch reason=bd-create-failed"
+    return 1
+  fi
+
+  if "$ESCALATION_DOOR_BIN" mayor "$created" \
+    "worktree $path (branch $branch) has commits not pushed to its upstream; clean-worktrees left it in place"; then
+    log clean-worktrees escalated "path=$path branch=$branch bead=$created"
+  else
+    log clean-worktrees escalation-failed "path=$path branch=$branch bead=$created reason=escalation-door-failed"
+    return 1
+  fi
+}
+
 cmd_clean_worktrees() {
   local wt_root="${HOME}/.local/share/agent-factory-runtime-worktrees" dry_run=0
+  local idle_days=7
   while [ $# -gt 0 ]; do
     case "$1" in
       --worktree-root) wt_root="$2"; shift 2 ;;
+      --idle-days) idle_days="$2"; shift 2 ;;
       --dry-run) dry_run=1; shift ;;
       *) echo "factory-maintain clean-worktrees: unknown arg $1" >&2; return 2 ;;
     esac
   done
   [ -d "$wt_root" ] || { echo "clean-worktrees: $wt_root does not exist, nothing to clean"; return 0; }
 
-  local removed=0 skipped=0 d
+  local idle_seconds=$((idle_days * 86400))
+  local removed=0 skipped=0 escalated=0 d
   for d in "$wt_root"/*/; do
     [ -d "$d" ] || continue
     d="${d%/}"
@@ -172,22 +234,46 @@ cmd_clean_worktrees() {
       skipped=$((skipped+1)); continue   # uncommitted work
     fi
 
-    local upstream ahead
+    local upstream ahead=1
     upstream=$(git -C "$d" for-each-ref --format='%(upstream)' "refs/heads/$branch")
     if [ -z "$upstream" ]; then
       if git -C "$d" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
         upstream="refs/remotes/origin/$branch"
-      else
-        skipped=$((skipped+1)); continue   # never pushed
       fi
     fi
-    ahead=$(git -C "$d" rev-list --count "$upstream..HEAD" 2>/dev/null || echo 1)
-    if [ "$ahead" != "0" ]; then skipped=$((skipped+1)); continue; fi  # unpushed commits
+    if [ -n "$upstream" ]; then
+      ahead=$(git -C "$d" rev-list --count "$upstream..HEAD" 2>/dev/null || echo 1)
+    fi
+    if [ -z "$upstream" ] || [ "$ahead" != "0" ]; then
+      # never pushed, or pushed but ahead of its upstream -- either way some
+      # commits here exist only on this machine; never remove, always escalate
+      local sha
+      sha=$(git -C "$d" rev-parse HEAD)
+      if [ "$dry_run" = "1" ]; then
+        echo "would escalate: $d (branch=$branch sha=$sha, unpushed commits)"
+      else
+        escalate_unpushed_worktree "$d" "$branch" || true
+      fi
+      escalated=$((escalated+1))
+      continue
+    fi
 
-    local base_ref
+    local base_ref merged=0
     base_ref=$(git -C "$d" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo "")
-    if [ -n "$base_ref" ] && ! git -C "$d" merge-base --is-ancestor HEAD "refs/remotes/$base_ref" 2>/dev/null; then
-      skipped=$((skipped+1)); continue                                 # not merged
+    if [ -n "$base_ref" ] && git -C "$d" merge-base --is-ancestor HEAD "refs/remotes/$base_ref" 2>/dev/null; then
+      merged=1
+    fi
+
+    if [ "$merged" != "1" ]; then
+      # not merged: only eligible once clean, pushed, and untouched for
+      # more than --idle-days (a stale-but-not-abandoned worktree stays)
+      local last_commit_epoch now age
+      last_commit_epoch=$(git -C "$d" log -1 --format=%ct HEAD 2>/dev/null || echo 0)
+      now=$(date +%s)
+      age=$((now - last_commit_epoch))
+      if [ "$age" -lt "$idle_seconds" ]; then
+        skipped=$((skipped+1)); continue
+      fi
     fi
 
     local sha main_repo
@@ -207,8 +293,8 @@ cmd_clean_worktrees() {
     fi
   done
 
-  log clean-worktrees summary "removed=$removed skipped=$skipped dry_run=$dry_run"
-  echo "clean-worktrees: removed=$removed skipped=$skipped"
+  log clean-worktrees summary "removed=$removed skipped=$skipped escalated=$escalated dry_run=$dry_run"
+  echo "clean-worktrees: removed=$removed skipped=$skipped escalated=$escalated"
 }
 
 cmd_rotate_logs() {

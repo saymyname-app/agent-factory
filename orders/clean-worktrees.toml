@@ -1,0 +1,13 @@
+# P09 (spec-parallel-delivery-2026-09-29): do-work worktrees under
+# ~/.local/share/agent-factory-runtime-worktrees accumulate once a ticket's
+# branch merges or its work stalls, with nothing removing them. Runs the
+# existing `factory-maintain clean-worktrees` gesture daily -- it only ever
+# removes a worktree that is merged, or clean/pushed/untouched for more than
+# 7 days; anything with unpushed commits is reported through the escalation
+# door instead (never removed, so no work is ever lost silently).
+[order]
+description = "Daily cleanup of abandoned do-work worktrees: removes merged or long-idle clean/pushed ones, escalates any with unpushed commits instead of removing them"
+trigger = "cron"
+schedule = "0 5 * * *"
+exec = "/home/benja/agent-factory/bin/factory-maintain clean-worktrees"
+timeout = "120s"

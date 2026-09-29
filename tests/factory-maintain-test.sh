@@ -94,7 +94,43 @@ REPO2="$TMP/clean/repo"
 WT_ROOT="$TMP/clean-worktrees"
 mkdir -p "$WT_ROOT"
 
-# a merged, fully-pushed worktree -- eligible for removal
+# stub `gc` (bd list/create) and $FACTORY_ROOT/bin/escalation-door so the
+# unpushed-worktree case below never touches a real Beads store or pages a
+# real Mayor -- it only proves factory-maintain called the escalation door.
+FAKE_BIN="$TMP/fakebin"
+mkdir -p "$FAKE_BIN"
+export BD_CREATE_LOG="$TMP/bd-create.log"
+: > "$BD_CREATE_LOG"
+cat > "$FAKE_BIN/gc" <<'FAKEGC'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "bd list")
+    echo '[]'
+    ;;
+  "bd create")
+    printf '%s\n' "$*" >> "$BD_CREATE_LOG"
+    echo '[{"id":"fake-bead-1"}]'
+    ;;
+  *)
+    echo "fake-gc: unexpected invocation: $*" >&2
+    exit 1
+    ;;
+esac
+FAKEGC
+chmod +x "$FAKE_BIN/gc"
+export PATH="$FAKE_BIN:$PATH"
+
+mkdir -p "$FACTORY_ROOT/bin"
+ESCALATION_LOG="$TMP/escalation.log"
+: > "$ESCALATION_LOG"
+cat > "$FACTORY_ROOT/bin/escalation-door" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$ESCALATION_LOG"
+exit 0
+EOF
+chmod +x "$FACTORY_ROOT/bin/escalation-door"
+
+# a merged, fully-pushed worktree -- eligible for removal regardless of age
 git -C "$REPO2" worktree add -q -b clean-merged-pushed "$WT_ROOT/clean-merged-pushed" main
 git -C "$REPO2" -C "$WT_ROOT/clean-merged-pushed" push -q origin clean-merged-pushed 2>/dev/null \
   || git -C "$WT_ROOT/clean-merged-pushed" push -q origin clean-merged-pushed
@@ -104,27 +140,59 @@ CLEAN_SHA=$(git -C "$WT_ROOT/clean-merged-pushed" rev-parse HEAD)
 git -C "$REPO2" worktree add -q -b dirty-worktree "$WT_ROOT/dirty-worktree" main
 echo dirty > "$WT_ROOT/dirty-worktree/uncommitted.txt"
 
-# a worktree with unpushed commits -- must be refused
+# a worktree with unpushed commits -- must never be removed, and must be
+# reported through the escalation door instead of silently skipped
 git -C "$REPO2" worktree add -q -b unpushed-worktree "$WT_ROOT/unpushed-worktree" main
 echo more > "$WT_ROOT/unpushed-worktree/h"
 git -C "$WT_ROOT/unpushed-worktree" add -A
 git -C "$WT_ROOT/unpushed-worktree" commit -qm "not pushed"
+
+# a not-merged, clean, fully-pushed worktree, untouched for 10 days -- old
+# enough to be eligible for removal even though its branch never merged
+git -C "$REPO2" worktree add -q -b clean-pushed-old "$WT_ROOT/clean-pushed-old" main
+echo old > "$WT_ROOT/clean-pushed-old/old.txt"
+git -C "$WT_ROOT/clean-pushed-old" add -A
+TEN_DAYS_AGO=$(date -u -d "10 days ago" +%Y-%m-%dT%H:%M:%S)
+GIT_AUTHOR_DATE="$TEN_DAYS_AGO" GIT_COMMITTER_DATE="$TEN_DAYS_AGO" \
+  git -C "$WT_ROOT/clean-pushed-old" commit -qm old
+git -C "$WT_ROOT/clean-pushed-old" push -q origin clean-pushed-old
+OLD_SHA=$(git -C "$WT_ROOT/clean-pushed-old" rev-parse HEAD)
+
+# a not-merged, clean, fully-pushed worktree, touched just now -- too recent
+# to remove even though it will never merge on its own
+git -C "$REPO2" worktree add -q -b clean-pushed-recent "$WT_ROOT/clean-pushed-recent" main
+echo recent > "$WT_ROOT/clean-pushed-recent/recent.txt"
+git -C "$WT_ROOT/clean-pushed-recent" add -A
+git -C "$WT_ROOT/clean-pushed-recent" commit -qm recent
+git -C "$WT_ROOT/clean-pushed-recent" push -q origin clean-pushed-recent
 
 OUT2=$("$SCRIPT" clean-worktrees --worktree-root "$WT_ROOT" 2>&1) || fail "clean-worktrees exited non-zero: $OUT2"
 
 [ -d "$WT_ROOT/clean-merged-pushed" ] && fail "clean-worktrees did not remove a merged, fully-pushed, clean worktree"
 [ -d "$WT_ROOT/dirty-worktree" ] || fail "clean-worktrees removed a worktree with uncommitted changes"
 [ -d "$WT_ROOT/unpushed-worktree" ] || fail "clean-worktrees removed a worktree with unpushed commits"
+[ -d "$WT_ROOT/clean-pushed-old" ] && fail "clean-worktrees did not remove a clean, pushed worktree untouched for over 7 days"
+[ -d "$WT_ROOT/clean-pushed-recent" ] || fail "clean-worktrees removed a clean, pushed worktree that was recently touched"
 
 grep -q "gesture=clean-worktrees.*status=removed.*path=$WT_ROOT/clean-merged-pushed" "$FACTORY_MAINTAIN_LOG" \
-  || fail "clean-worktrees did not log the removal"
+  || fail "clean-worktrees did not log the removal of the merged worktree"
 grep -q "sha=$CLEAN_SHA" "$FACTORY_MAINTAIN_LOG" || fail "clean-worktrees log entry is missing the sha (needed for undo)"
 grep -q "gesture=clean-worktrees.*undo=.*factory-do-work-workspace enter" "$FACTORY_MAINTAIN_LOG" \
   || fail "clean-worktrees log entry did not record how to undo it"
+grep -q "gesture=clean-worktrees.*status=removed.*path=$WT_ROOT/clean-pushed-old.*sha=$OLD_SHA" "$FACTORY_MAINTAIN_LOG" \
+  || fail "clean-worktrees did not log the removal of the stale, clean, pushed worktree"
 
 # the branch clean-worktrees removed the worktree for is still recoverable (undo path)
 git -C "$REPO2" show-ref --verify --quiet refs/heads/clean-merged-pushed \
   || fail "clean-worktrees deleted the underlying branch, not just the worktree (undo would be impossible)"
+
+# the unpushed worktree was reported through the escalation door, not silently skipped
+grep -q "unpushed-worktree" "$BD_CREATE_LOG" \
+  || fail "clean-worktrees did not file a bead for the unpushed worktree"
+grep -q "unpushed-worktree" "$ESCALATION_LOG" \
+  || fail "clean-worktrees did not page the escalation door for the unpushed worktree"
+grep -q "gesture=clean-worktrees.*status=escalated.*path=$WT_ROOT/unpushed-worktree" "$FACTORY_MAINTAIN_LOG" \
+  || fail "clean-worktrees did not log the escalation for the unpushed worktree"
 
 echo "PASS: clean-worktrees"
 
