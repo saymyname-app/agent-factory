@@ -668,9 +668,9 @@ class EndToEnd(unittest.TestCase):
         self.run_tool("status", "--json")
         self.assertEqual(before, len(self.calls()), "status must not call gc")
 
-    def test_cockpit_controls_through_the_cli(self):
+    def test_manual_controls_through_the_cli(self):
         result = json.loads(self.run_tool(
-            "set", "--action", "mark", "--by", "operator-1 (cockpit)",
+            "set", "--action", "mark", "--by", "operator-1",
             "--args", json.dumps({"pool": "openai", "minutes": 90, "reason": "limite vue sur le site"})).stdout)
         self.assertTrue(result["ok"])
         self.assertEqual("claude-standard", result["status"]["targets"]["workspace"]["provider"])
