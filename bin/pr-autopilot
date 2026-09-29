@@ -384,6 +384,23 @@ linked_work_candidate_for() {  # branch num -> json of the linked work bead, or 
        | @json' 2>/dev/null
 }
 
+# ---------- P07 (af-87f9u): a ticket fixed through another ticket's PR ----------
+# A repair sometimes lands on another ticket's branch instead of its own (the
+# fix and the other change are the same logical unit). The worker records
+# that with `gc.delivered_via_pr=<PR number>` on the fixed ticket
+# (formulas/mol-do-work.formula.toml, step 3c) instead of opening a branch/PR
+# of its own -- so the branch-keyed RECONCILE above, which matches on
+# gc.work_branch/pr_number, can never find it. This closes that ticket
+# directly, through the same deliver-close merge+CI proof, once the *named*
+# PR (not its own) merges.
+delivered_via_pr_candidates_for() {  # num -> newline-separated still-open bead ids naming it
+  printf '%s' "$RIG_ALL_BEADS_JSON" \
+    | jq -r --arg n "$1" \
+      '.[]|select((.metadata["gc.delivered_via_pr"]|tostring)==$n)
+          |select(.status=="open" or .status=="in_progress")
+          |.id' 2>/dev/null
+}
+
 ensure_base_sha() {  # sets $BASE_SHA (cached per rig per tick) for the "conflict with <base>@<sha>" reason
   [ -n "$BASE_SHA" ] && return 0
   BASE_SHA=$(gh api "repos/$repo/commits/$dev" --jq '.sha' 2>/dev/null)
@@ -787,6 +804,44 @@ NEXT: Mayor advances or finalizes work waiting on $bead.' >/dev/null 2>&1"; then
       log "    delivery proof rejected for bead $bead — leaving it open/unreleased"
       ERRORS=$((ERRORS+1))
     fi
+  done <<<"$merged"
+
+  # ---------- 2b. RECONCILE delivered_via_pr tickets (P07, af-87f9u) ----------
+  # A distinct bead from the one(s) reconciled above can also name one of
+  # this tick's merged PRs as its own delivery vehicle, via
+  # gc.delivered_via_pr (formulas/mol-do-work.formula.toml, step 3c) --
+  # separate from the loop above because that loop `continue`s past a PR with
+  # no branch-linked candidate, which would otherwise skip this check too. An
+  # unmerged, or closed-without-merging, named PR never appears in $merged, so
+  # a ticket naming one of those simply stays open with nothing further to do.
+  while IFS=$'\t' read -r num branch sha merged_at; do
+    [ -z "${num:-}" ] && continue
+    while IFS= read -r via_bead; do
+      [ -z "$via_bead" ] && continue
+      log "  PR #$num merged at ${sha:0:8} -> delivered_via_pr reconciles $via_bead"
+      if finalize_delivery "$rig_path" "$via_bead" "$repo" "$num" "$required_workflow"; then
+        via_waiters=$(active_waiters_for "$via_bead")
+        via_wake_reason=""
+        if merge_is_recent "$merged_at"; then
+          via_wake_reason="merge $merged_at is within ${RECONCILE_WAKE_WINDOW_SECONDS}s"
+        elif [ -n "$via_waiters" ]; then
+          via_wake_reason="active waiter(s): $via_waiters"
+        fi
+        if [ -n "$via_wake_reason" ] && ! run bash -c "cd '$rig_path' && gc mail send mayor --notify \
+          --subject 'SHIPPED: $via_bead via PR #$num' \
+          --message 'ACTION: pr-autopilot reconciled $via_bead from merged PR #$num (delivered via another ticket)
+STATE: SHIPPED
+EVIDENCE: $via_bead; PR #$num; merge SHA $sha
+NEXT: Mayor advances or finalizes work waiting on $via_bead.' >/dev/null 2>&1"; then
+          log "    reconciliation wake failed for bead $via_bead"
+          ERRORS=$((ERRORS+1))
+        fi
+        RECONCILED=$((RECONCILED+1))
+      else
+        log "    delivery proof rejected for delivered_via_pr bead $via_bead — leaving it open/unreleased"
+        ERRORS=$((ERRORS+1))
+      fi
+    done < <(delivered_via_pr_candidates_for "$num")
   done <<<"$merged"
 done
 
