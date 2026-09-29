@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#
+# ci-run-tests — discover and run every test under tests/, so CI and the
+# main-landing gate run the current test set without anyone editing this
+# script or .github/workflows/ci.yml per file (P01, af-tltj3).
+#
+# Before this, ci.yml listed each tests/*.py|*.sh file by hand: 41 of the
+# last 100 PRs touched it just to register a new test, and the registration
+# check (tests/ci-registration-test.sh) kept catching test files that were
+# neither wired into ci.yml nor declared local-only, because a human had to
+# remember the edit. Discovery removes the edit: every tests/*.sh and
+# tests/*.py file runs automatically unless it carries a
+#   # ci: local-only — <reason>
+# marker (tests that need the live gc/bd runtime and a Dolt server, which a
+# GitHub runner does not have).
+#
+# Usage:
+#   ci-run-tests            # run every discovered test, print PASS/FAIL, then
+#                            # exit non-zero if any failed
+#   ci-run-tests --list     # print the discovered file paths, one per line,
+#                            # and exit 0 (used by bin/factory-main-gate-like
+#                            # callers that want the list without running it)
+
+set -uo pipefail
+
+REPO_ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+cd "$REPO_ROOT" || { echo "ci-run-tests: $REPO_ROOT unreachable" >&2; exit 2; }
+
+MODE="run"
+case "${1:-}" in
+  --list) MODE="list" ;;
+  "") ;;
+  *) echo "ci-run-tests: unknown argument: $1" >&2; exit 2 ;;
+esac
+
+is_local_only() {
+  grep -qE '^#[[:space:]]*ci:[[:space:]]*local-only' "$1"
+}
+
+mapfile -t files < <(
+  for f in tests/*.sh tests/*.py; do
+    [ -e "$f" ] || continue
+    is_local_only "$f" && continue
+    printf '%s\n' "$f"
+  done | sort
+)
+
+if [ "$MODE" = "list" ]; then
+  printf '%s\n' "${files[@]}"
+  exit 0
+fi
+
+if [ "${#files[@]}" -eq 0 ]; then
+  echo "ci-run-tests: no discoverable tests under tests/*.sh, tests/*.py" >&2
+  exit 1
+fi
+
+PYTHON=python3
+command -v python3 >/dev/null 2>&1 || PYTHON=python
+
+failed=()
+for f in "${files[@]}"; do
+  case "$f" in
+    *.py) interp=$PYTHON ;;
+    *.sh) interp=bash ;;
+  esac
+  printf '  %-70s ' "$f"
+  if out=$("$interp" "$f" 2>&1); then
+    echo OK
+  else
+    echo FAIL
+    printf '%s\n' "$out" | sed 's/^/    /'
+    failed+=("$f")
+  fi
+done
+
+echo
+echo "ci-run-tests: ran ${#files[@]} test(s), ${#failed[@]} failure(s)"
+if [ "${#failed[@]}" -gt 0 ]; then
+  printf 'FAILED: %s\n' "${failed[@]}"
+  exit 1
+fi
+exit 0
