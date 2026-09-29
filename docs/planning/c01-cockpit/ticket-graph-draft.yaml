@@ -1,0 +1,523 @@
+artifact:
+  id: ticket-graph-draft-c01-cockpit
+  title: Cockpit V2 (C01, roadmap A7)
+  labels:
+  - approved-ticket-graph
+  - c01-cockpit
+  state: TICKET_GRAPH_DRAFT
+  approved_by: null
+  content_digest: sha256:4efe99666f995811a65cff6206c28dab051b74dfa90e1155c0445f9a7efbe3e1
+  digest_scope: UTF-8 bytes from the legacy_boundary key through end of file, with LF line endings
+  source_spec:
+    id: spec-c01-cockpit-2026-09-29
+    state: APPROVED_SPEC
+    digest: sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b
+  method_baseline:
+    skill: Matt Pocock /to-tickets (Factory adaptation)
+  publication_authorized: false
+  publication_authorized_by: null
+  approval_evidence: null
+
+legacy_boundary:
+  quarantine_read_only_evidence:
+  - Everything under legacy/ (Cockpit V1, old ntfy notifier) stays read-only evidence; no trusted code may reference or copy it (tests/legacy-isolation-test.sh).
+target_rigs:
+  agent-factory:
+    purpose: Factory code, orders, config, docs, tests and the Windows-side watcher script.
+    status: existing Factory repository
+global_execution_contract:
+  context: >-
+    Each ticket receives a fresh implementation context and the exact Approved Spec trace it needs
+    (spec-c01-cockpit-2026-09-29, folder docs/planning/c01-cockpit/: decisions-log.md holds
+    Benjamin's words and the PO interpretation per question Q1-Q26).
+  test_method: >-
+    Small red then green cycles at a public-behavior seam; the Factory battery runs in CI on every
+    slice; every test runs in the A6 sandbox (fake gc/bd/gh, no live city, no real ntfy send).
+  review: One independent reviewer checks Spec fidelity and design quality for every slice.
+  readiness: A blocker clears only after its checks and review pass and its code is merged on main.
+  declared_scope: >-
+    Each ticket declares scope.paths; touching a file outside it is allowed only when recorded in the
+    ticket notes with the reason. docs/INVENTORY.md is written only by K16 (shared hot file, A6 13:44
+    finding); other tickets list their new files in their PR description for K16.
+  zero_tokens: >-
+    Cockpit, notifier, heartbeat and watcher code paths never call a model or an agent CLI (Spec Q19);
+    K02 adds the static check that enforces it.
+  plain_language: >-
+    Every text shown to the operator comes from a message catalogue in the operator's configured
+    language (French for this operator); ids and codes appear only in folded details (Spec Q15).
+  repair: Technical repair stays inside the ticket; behaviour or topology change raises a Planning Exception.
+  safety: >-
+    No production, real sending, external publication, spend, unrecoverable destruction or wider
+    personal-data access without explicit human authority; nothing edited in the live root; no test
+    reaches the live city or ntfy.sh; no host or network setting (Tailscale, Windows scheduled task,
+    phone) is changed by a worker -- those are K05's guided steps with Benjamin; notification payloads
+    never carry bead bodies, agent free text, product data or a real person's data; the ntfy topic
+    is never committed, logged or printed.
+tickets:
+- id: K01
+  kind: prefactor
+  title: Escalations to Benjamin can carry prepared options
+  display_title: Une escalade vers Benjamin peut proposer des options prêtes
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/escalation-door
+    - tests/escalation-door*
+  what_it_delivers: >-
+    `escalation-door benjamin <bead> <reason>` accepts repeatable `--option <key>=<label>` (a, b, c...),
+    stored as structured bead metadata next to gc.needs_benjamin; `escalation-door list --json` prints
+    each NEEDS BENJAMIN item with its reason, options (possibly none), escalation time and bead id; the
+    text list keeps its current shape. A new `escalation-door answer <bead> <key> --by <identity>
+    --via <channel>` records the chosen option and the identity in the bead notes and metadata, emits
+    one gc event, clears the item through the existing clear path, and mails the Mayor a sender-
+    identified notice (P15 identity rules; the answer itself is the traced record). Files:
+    bin/escalation-door, tests/escalation-door*.
+  acceptance_criteria:
+  - "An escalation with two options is listed by `list --json` with both options; one without options lists an empty list."
+  - "`answer` with an unknown key fails non-zero and changes nothing; a valid answer writes notes, metadata and one event, and the item leaves the list."
+  - "Existing escalation-door tests stay green; the text output of `list` is unchanged for items without options."
+- id: K02
+  kind: vertical_slice
+  title: Cockpit service shows what waits for Benjamin, live, from the NEEDS BENJAMIN list
+  display_title: Le cockpit affiche en direct ce qui attend Benjamin
+  blocked_by:
+  - K01
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/cockpit
+    - lib/cockpit/__init__.py
+    - lib/cockpit/conditions.py
+    - lib/cockpit/sources.py
+    - lib/cockpit/server.py
+    - lib/cockpit/messages*
+    - lib/cockpit/templates/**
+    - config/cockpit.json
+    - config/systemd/factory-cockpit.service
+    - tests/cockpit-server*
+    - tests/cockpit-no-model-call*
+  what_it_delivers: >-
+    A token-free cockpit service (`bin/cockpit serve`, Python standard library only) listening on
+    127.0.0.1 only (Tailscale serve on Windows will publish it to the tailnet in K05). Its first page
+    shows zone 1 'Ce qui t'attend' built from a condition model (lib/cockpit/conditions.py: a condition
+    has a stable dedup key, level, what / why / what-to-do texts, source and checked-at time) fed by
+    `escalation-door list --json`. It keeps no copy of state: every request re-reads the source; each
+    block shows its source and check time (Paris); a failing source shows 'inconnu : <source>
+    injoignable', never an older value; an empty list shows 'Rien ne t'attend -- vérifié HH:MM'. Texts
+    come from a message catalogue selected by the operator language in config/cockpit.json. A systemd
+    user unit file is provided but not enabled (K05). A CI static check fails if any file under
+    bin/cockpit*, lib/cockpit/, the watcher or the heartbeat invokes a model or an agent CLI (codex,
+    claude, gc session/sling/nudge). Files: see scope.
+  acceptance_criteria:
+  - "Test: the page lists the same NEEDS BENJAMIN items as a faked `escalation-door list --json`, with source and check time."
+  - "Test: with the source failing, the block shows the 'inconnu' text and no item; with no item, the explicit empty text."
+  - "Test: the server binds 127.0.0.1 only; the static no-model-call check fails on a planted `codex` call and passes on the real tree."
+  - "Every displayed string comes from the French catalogue; no bead id appears outside folded details."
+- id: K03
+  kind: vertical_slice
+  title: A new NEEDS BENJAMIN item sends exactly one ntfy notification
+  display_title: Une nouvelle décision attendue envoie une seule notification téléphone
+  blocked_by:
+  - K02
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/cockpit-notify
+    - orders/cockpit-notify.toml
+    - lib/cockpit/notify.py
+    - tests/cockpit-notify*
+  what_it_delivers: >-
+    An order (every 2 minutes) runs `bin/cockpit-notify`, which evaluates the condition model and sends
+    one ntfy message per new urgent condition (here: a new NEEDS BENJAMIN item) to hosted ntfy.sh. It
+    keeps only notification bookkeeping (dedup key, level, sent-at) in .gc/runtime/cockpit-notify-
+    state.json. On first run it generates a new random topic into an untracked 0600 file
+    (.gc/cockpit-ntfy-topic.local) and never prints, logs or commits it; `bin/cockpit-notify
+    show-subscribe-hint` prints only the file path to read it from. Payload = level (priority), event
+    class, project and a click link to the cockpit item (base URL from config/cockpit.json, filled in
+    K05); never bead bodies or agent text. The ntfy endpoint is configurable; tests use a fake endpoint
+    and the sandbox forbids ntfy.sh. A failed send is logged loudly and retried next tick, never
+    swallowed. Files: see scope.
+  acceptance_criteria:
+  - "Test: one new item gives one POST to the fake endpoint; the same item on the next 10 ticks gives none."
+  - "Test: the payload contains level, class, project and link only; a bead body with a person-like name never appears in it."
+  - "Test: the topic file is created 0600, untracked, and its value appears in no log or stdout."
+  - "Test: an endpoint error makes the order exit non-zero with the error on stderr and the notification is retried on the next tick."
+- id: K04
+  kind: vertical_slice
+  title: Benjamin answers a prepared option from the cockpit, with a trace, or continues with an agent
+  display_title: Répondre à une option depuis le cockpit (tracé), ou continuer avec un agent
+  blocked_by:
+  - K02
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - lib/cockpit/actions.py
+    - lib/cockpit/identity.py
+    - lib/cockpit/prompts.py
+    - tests/cockpit-actions*
+    - tests/cockpit-identity*
+    - docs/COCKPIT_TRUST.md
+  what_it_delivers: >-
+    Each NEEDS BENJAMIN item with options shows one button per option plus 'Autre -> continuer avec un
+    agent'; an item without options shows only the latter. Answering calls `escalation-door answer`
+    with the identity taken from the Tailscale identity headers added by `tailscale serve`
+    (Tailscale-User-Login, device name) and `--via cockpit`; requests without them are recorded as the
+    local PC. Actions are POST-only with an anti-forgery token bound to the page. 'Continuer avec un
+    agent' shows and copies a provider-neutral ready prompt (what happens, ids, open question, where to
+    look) usable in Codex or Claude. docs/COCKPIT_TRUST.md states the trust model plainly, including
+    the residual risk that a process running as the same Linux user could forge a local request, and
+    the mitigations (identity recorded, every action visible in the journal, no Factory code may call
+    the action endpoint -- enforced by a check). Files: see scope.
+  acceptance_criteria:
+  - "Test: clicking an option runs `escalation-door answer` once with the option, identity and 'cockpit'; the item disappears on reload."
+  - "Test: a GET or a POST without the page token changes nothing."
+  - "Test: the ready prompt contains the item's what/why/ids and no bead body free text beyond the escalation reason."
+  - "A check fails if any file outside lib/cockpit and tests calls the cockpit action endpoint."
+- id: K05
+  kind: verification
+  title: Mobile slice proven end to end on Benjamin's iPhone
+  display_title: Tranche mobile prouvée de bout en bout sur l'iPhone de Benjamin
+  blocked_by:
+  - K03
+  - K04
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - docs/planning/c01-cockpit/mobile-slice-proof.md
+    - config/cockpit.json
+  what_it_delivers: >-
+    Run by the PO agent with Benjamin present, never by a worker. Guided host steps (Benjamin does
+    them): ntfy app on the iPhone subscribed to the new topic; Tailscale always-on on the iPhone;
+    `tailscale serve` on Windows publishing the cockpit port to the tailnet only (never funnel); the
+    PO enables the WSL user unit and sets the cockpit base URL. Then a synthetic NEEDS BENJAMIN item
+    with two options on a throwaway bead reaches the phone, the tap opens the item over Tailscale, an
+    answer is recorded with the iPhone identity, and the throwaway bead is closed. Evidence (times in
+    Paris, delay condition->notification, no secret) in mobile-slice-proof.md.
+  acceptance_criteria:
+  - "One notification on the iPhone within the measured delay; tapping opens the item over Tailscale."
+  - "The answer is in the bead notes, metadata and gc events with Benjamin, via cockpit, iphone device, Paris time."
+  - "The cockpit is unreachable from outside the tailnet (checked: no funnel, bind 127.0.0.1)."
+- id: K06
+  kind: prefactor
+  title: Order-failure escalation never re-fires on skip-listed orders or unrelated beads (af-pgm3y)
+  display_title: Les alertes d'échec ne se relancent plus sur des éléments périmés
+  blocked_by:
+  - K01
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/on-order-failed
+    - orders/on-order-failed.toml
+    - orders/escalation-door-sweep.toml
+    - bin/escalation-door
+    - tests/on-order-failed*
+    - tests/escalation-door-sweep*
+  what_it_delivers: >-
+    on-order-failed ignores failures of orders on the skip list and attaches an escalation only to a
+    bead it created for that order or to that order's own open tracking bead, never to an unrelated or
+    closed bead; the 2 h sweep never promotes an escalation whose bead is closed or whose order is
+    skip-listed. Reproduces the 2026-09-29 00:09 stale 'NEEDS BENJAMIN: af-fnew1' case with synthetic
+    ids. Closes proposal af-pgm3y on merge. Files: see scope.
+  acceptance_criteria:
+  - "Test: a failure of a skip-listed order produces no mail and no escalation."
+  - "Test: the sweep does not promote an escalation on a closed bead."
+  - "Test: the 00:09 case replayed with synthetic ids produces no NEEDS BENJAMIN."
+- id: K07
+  kind: prefactor
+  title: Notification mails to the Mayor are not sent in duplicate bursts (af-sqrri)
+  display_title: Plus de rafales de messages en double vers le Mayor
+  blocked_by:
+  - K06
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/idle-ready-work-wake
+    - orders/idle-ready-work-wake.toml
+    - bin/factory-watchdog
+    - lib/factory_watchdog.py
+    - orders/factory-watchdog.toml
+    - bin/on-order-failed
+    - tests/idle-ready-work-wake*
+    - tests/factory-watchdog*
+    - tests/on-order-failed*
+  what_it_delivers: >-
+    idle-ready-work-wake, factory-watchdog and on-order-failed send at most one mail per condition key
+    while the condition stays open (cooldown honoured across concurrent runs with a lock), and nothing
+    for a condition already resolved. Reproduces the af-sqrri bursts (3 mails in 43 s; 4 repeats in
+    40 s despite a 5-minute cooldown; re-send after clear) with synthetic ids. Closes proposal af-sqrri
+    on merge. Files: see scope.
+  acceptance_criteria:
+  - "Test: three concurrent runs for the same condition send one mail."
+  - "Test: a resolved condition sends nothing on the next runs."
+  - "Test: each af-sqrri burst replayed gives one mail."
+- id: K08
+  kind: vertical_slice
+  title: Every signal becomes a condition with a level, and the notifier obeys the anti-noise rule
+  display_title: Tous les signaux classés par niveau, sans bruit sur le téléphone
+  blocked_by:
+  - K03
+  - K07
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - lib/cockpit/conditions.py
+    - lib/cockpit/sources.py
+    - lib/cockpit/notify.py
+    - tests/cockpit-conditions*
+    - tests/cockpit-replay*
+    - tests/fixtures/cockpit-replay/**
+  what_it_delivers: >-
+    The condition model reads every Spec Q18 signal from its live source: NEEDS BENJAMIN (urgent);
+    Factory stopped -- controller down, all providers exhausted, factory-guard failing repeatedly
+    (urgent); a session paused by factory-session-loop-guard (urgent); a ticket graph delivered, a
+    proof window passed or broken (normal); proposals, red PRs, isolated order.failed, idle Mayor with
+    ready work (not on the phone; in Factory health only if they persist beyond a threshold). The
+    notifier sends once on start, again only on level rise or recurrence after resolution, 'résolu'
+    only for urgent, no reminder, no digest. A replay harness feeds a synthetic reconstruction of the
+    night of 2026-09-28/29 (event types and timings only, synthetic ids, no real bead text) and the
+    af-sqrri / af-pgm3y cases. Files: see scope.
+  acceptance_criteria:
+  - "Test per signal: its level and its what/why/what-to-do texts."
+  - "Replay: zero duplicate notification; each urgent condition notified once and 'résolu' once."
+  - "Test: a condition that stays open for 24 h produces no second notification; one that rises from normal to urgent produces one."
+- id: K09
+  kind: vertical_slice
+  title: Home screen in three zones, with a journal, and nothing that is neither action nor progress
+  display_title: Accueil en trois zones, avec journal, sans bruit
+  blocked_by:
+  - K04
+  - K08
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - lib/cockpit/server.py
+    - lib/cockpit/home.py
+    - lib/cockpit/journal.py
+    - lib/cockpit/messages*
+    - lib/cockpit/templates/**
+    - tests/cockpit-home*
+    - tests/cockpit-journal*
+  what_it_delivers: >-
+    The home page shows (1) 'Ce qui t'attend' (actionable conditions only, or the explicit empty
+    text), (2) 'Avancement des projets' (placeholder cards listing convoys until K14), (3) 'Santé de la
+    Factory' in one line ('normal' or the plain statement of what is not). One line per condition key;
+    resolved conditions leave the home page for a journal page that lists them with their resolution
+    time and any action taken (read from events, not from a cockpit copy); technical details folded.
+    Layout usable on an iPhone screen. Files: see scope.
+  acceptance_criteria:
+  - "Replay of the night fixture: the home page has no duplicate line and no resolved item; its line count is recorded in the PR."
+  - "Test: a resolved condition appears in the journal with its resolution time and not on the home page."
+  - "Test: each block still shows source and check time, or 'inconnu'."
+- id: K10
+  kind: vertical_slice
+  title: Other actions without an agent -- alerts, proposals, paused sessions
+  display_title: Autres actions sans agent -- alertes, propositions, sessions en pause
+  blocked_by:
+  - K09
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - lib/cockpit/actions.py
+    - bin/proposal-door
+    - tests/cockpit-actions*
+    - tests/proposal-door*
+  what_it_delivers: >-
+    From the cockpit, with the K04 identity trace and anti-forgery rules: acknowledge or snooze an
+    alert (a traced event; the condition stays visible while open); accept a proposal (labelled as
+    input for a future Planning Run), reject it with a reason (closed with the reason) or defer it to a
+    date, through a new `bin/proposal-door` that is the only writer of those transitions; resume a
+    session paused by the loop guard through `factory-session-loop-guard resume`. Nothing else is
+    actionable; every other item offers 'continuer avec un agent'. Files: see scope.
+  acceptance_criteria:
+  - "Test per action: the door is called once with the identity and 'cockpit'; one event is written; a replayed POST changes nothing."
+  - "Test: rejecting without a reason is refused."
+  - "Test: no action exists for Spec or graph approval or any owner-tier item."
+- id: K11
+  kind: vertical_slice
+  title: A Windows-side watcher warns once when the Factory falls silent, and once when it is back
+  display_title: Un veilleur Windows prévient si la Factory se tait, puis quand elle revient
+  blocked_by:
+  - K03
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/cockpit-heartbeat
+    - orders/cockpit-heartbeat.toml
+    - tools/windows/**
+    - tests/cockpit-heartbeat*
+    - tests/cockpit-watcher*
+  what_it_delivers: >-
+    An order writes a heartbeat (timestamp) every 5 minutes. A PowerShell 5.1-compatible watcher
+    (tools/windows/cockpit-watcher.ps1, run every 5 minutes by a Windows scheduled task that Benjamin
+    installs from a documented one-line command during K17 at the latest) reads it with a short
+    timeout through the WSL path; after 30 minutes without a fresh heartbeat or with the read timing
+    out, it sends one urgent 'Factory silencieuse depuis HH:MM' notification, then one 'Factory de
+    retour' when it resumes; it keeps its own copy of the topic in a Windows user-profile file set at
+    install, so a frozen WSL does not block it. CI runs its logic with pwsh against a fake endpoint.
+    Files: see scope.
+  acceptance_criteria:
+  - "Test: a faked 45-minute gap gives exactly one 'silent' and one 'back' notification."
+  - "Test: a heartbeat read that times out counts as silence, and the watcher itself finishes within its timeout."
+  - "The install command is documented and changes nothing without Benjamin running it."
+- id: K12
+  kind: prefactor
+  title: Project Planning Profiles carry what the cockpit shows about a project
+  display_title: Le profil de projet décrit ce que le cockpit montre du projet
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/project-planning-profile
+    - config/project-profiles.json
+    - config/factory-project-profile.json
+    - tests/project-planning-profile*
+    - docs/PROJECT_PLANNING_PROFILE.md
+  what_it_delivers: >-
+    The existing Project Planning Profile (bin/project-planning-profile) gains optional cockpit fields:
+    display name, display language, roadmap steps (id, display title, optional convoy label, declared
+    status for steps with no convoy), roadmap and state file locations, and an optional read-only
+    rituals-status command. The Factory keeps one pointer per project in config/project-profiles.json
+    (path to the profile inside the project's own repository) and its own profile
+    (config/factory-project-profile.json, no roadmap -- Spec Q24). No Factory code names a project.
+    The SayMyName profile itself is written by the PO in the SayMyName repo, not by this ticket.
+    Files: see scope.
+  acceptance_criteria:
+  - "Test: a synthetic third project declared only through a pointer and a profile validates and registers without code change."
+  - "Test: a profile missing required cockpit fields is rejected with an operator-readable reason; existing profiles without them still validate."
+  - "No SayMyName name appears in the new code or config (checked by test)."
+- id: K13
+  kind: prefactor
+  title: Ticket graphs carry a display title in the operator's language
+  display_title: Les graphes de tickets portent un titre en français
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/ticket-graph-publish
+    - tests/ticket-graph-publish*
+    - docs/PLANNING_RUN_ROUTER.md
+  what_it_delivers: >-
+    ticket-graph-publish accepts an optional per-ticket `display_title`, stores it on the published
+    bead as gc.display_title (publish and patch), and the planning docs tell the to-tickets step to
+    write it in the operator's language. Drafts without it still publish. Files: see scope.
+  acceptance_criteria:
+  - "Test: a draft with display titles publishes them into bead metadata; a patch that changes one updates it."
+  - "Test: a draft without display titles publishes unchanged."
+- id: K14
+  kind: vertical_slice
+  title: Project cards and project pages with roadmap, read-only kanban and history
+  display_title: Cartes et pages projet -- feuille de route, kanban en lecture, historique
+  blocked_by:
+  - K09
+  - K12
+  - K13
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - lib/cockpit/projects.py
+    - lib/cockpit/kanban.py
+    - lib/cockpit/templates/project*
+    - tests/cockpit-projects*
+    - tests/cockpit-kanban*
+  what_it_delivers: >-
+    One card per registered project on the home page: current roadmap step, current convoy progress
+    (done/total, what runs, earliest end when the graph declares one), blocked or not. A project page:
+    roadmap steps (status derived live from the linked convoy; a step with no convoy shows its declared
+    status with the profile file's last-commit date so its age is visible), a read-only kanban of the
+    current graph (to do -- ready or waiting on another ticket; in progress -- with who; in PR -- with
+    CI state; done -- with merged PR link), previous graphs folded as history. Only approved-graph
+    tickets, bugs and proposals; never molecules, steps, mails or wisps. Cards show display_title, or
+    the original title marked as such. No editing, no drag and drop; 'continuer avec un agent' on each
+    card. Files: see scope.
+  acceptance_criteria:
+  - "Test: for a synthetic convoy, each ticket lands in the right column from faked bd/gh output; molecules and mails never appear."
+  - "Test: a synthetic third project shows its card and page from its profile alone."
+  - "Test: a card without display_title shows the original title with the fallback marker."
+- id: K15
+  kind: vertical_slice
+  title: A due ritual becomes one notification and an item Benjamin can run with an agent or postpone
+  display_title: Un rituel dû devient une notification et une ligne à lancer ou reporter
+  blocked_by:
+  - K10
+  - K12
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - lib/cockpit/rituals.py
+    - tests/cockpit-rituals*
+  what_it_delivers: >-
+    For each project whose profile declares a rituals-status command, the cockpit runs it read-only
+    (with a timeout) and turns each DUE line into a normal-level condition: one notification when it
+    becomes due, an item 'Ce qui t'attend' with 'lancer avec un agent' (ready prompt) and 'reporter'
+    (traced event with a date; the item returns after it). Rituals are still run only on Benjamin's
+    choice (decision 11). Files: see scope.
+  acceptance_criteria:
+  - "Test: a faked DUE line gives one notification and one item; the same DUE on later ticks gives none."
+  - "Test: 'reporter' hides the item until the chosen date and writes one event."
+  - "Test: a status command that fails or times out shows 'inconnu' for rituals, never an old value."
+- id: K16
+  kind: prefactor
+  title: Operator guide, inventory rows and doc references for the cockpit
+  display_title: Guide du cockpit, inventaire et documentation à jour
+  blocked_by:
+  - K05
+  - K10
+  - K11
+  - K14
+  - K15
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - docs/COCKPIT.md
+    - docs/INVENTORY.md
+    - docs/PLANNING_RUN_ROUTER.md
+    - docs/OPERATIONS.md
+  what_it_delivers: >-
+    docs/COCKPIT.md explains to the operator what the cockpit shows, what each level means, which
+    actions exist and how to continue with an agent; docs/INVENTORY.md gets a verdict row for every
+    file C01 added; docs that still point the operator to session start for NEEDS BENJAMIN, proposals
+    or rituals now point to the cockpit. The removal of the interim lines in the SayMyName project repo
+    is done by the PO after K17, not here. Files: see scope.
+  acceptance_criteria:
+  - "Every file added by K01-K15 has an INVENTORY row (list compared in the PR)."
+  - "No Factory doc still tells the operator to read NEEDS BENJAMIN or proposals at session start."
+- id: K17
+  kind: verification
+  title: C01 closes -- three days of real use with a cockpit Benjamin trusts
+  display_title: Clôture C01 -- trois jours d'usage réel
+  blocked_by:
+  - K16
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - docs/planning/c01-cockpit/closing-proof.md
+  what_it_delivers: >-
+    Run by the PO agent with Benjamin, never by a worker. The Windows watcher task is installed
+    (guided). Then 3 days of real use; evidence in closing-proof.md (Paris times): every NEEDS BENJAMIN
+    item reached the phone, zero duplicate notification, zero false or stale screen line (spot checks
+    against sources), notification delays, home-screen line counts, actions without an agent vs
+    through an agent. Benjamin declares whether he needed to ask an agent 'where are we'. After a pass,
+    the PO removes the interim session-start lines from the SayMyName project repo, and proposals
+    af-sqrri and af-pgm3y are confirmed closed.
+  acceptance_criteria:
+  - "closing-proof.md shows the 3 days with the measures above and no duplicate notification."
+  - "Benjamin's declaration is quoted with its date."
+  - "The graph is delivered and closed."
