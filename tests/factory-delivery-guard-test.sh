@@ -18,6 +18,7 @@ set -Eeuo pipefail
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 GUARD="$REPO_ROOT/bin/factory-delivery-guard"
 TMP=$(mktemp -d)
+export TMP
 trap 'rm -rf "$TMP"' EXIT
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
@@ -35,8 +36,23 @@ cat > "$TMP/bin/gc" <<'STUB'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ ${1:-} == bd && ${2:-} == --rig ]]; then
-  # rig-scoped call: no fixtures configured for it in this test, empty list
-  if [[ ${5:-} == list ]]; then echo '[]'; exit 0; fi
+  rig=$3
+  shift 3
+  if [[ ${1:-} == list ]]; then
+    # Only the exact product-goal-labelled listing is fixture-backed (case
+    # 14 below); every other rig-scoped list call (has-metadata-key,
+    # unfiltered convoy-delivery scan) sees an empty rig, same as before.
+    if [[ " $* " == *" --label-any product-goal "* && -f "$TMP/rig-$rig-goal-beads.json" ]]; then
+      cat "$TMP/rig-$rig-goal-beads.json"; exit 0
+    fi
+    echo '[]'; exit 0
+  fi
+  if [[ ${1:-} == update ]]; then
+    id=$2
+    shift 2
+    printf '%s %s %s\n' "$rig" "$id" "$*" >> "$UPDATE_LOG"
+    exit 0
+  fi
   exit 0
 fi
 if [[ ${1:-} == bd && ${2:-} == list ]]; then
@@ -438,5 +454,33 @@ grep -q "execution bead zz-fixture-exec-buildbasic is still open" <<<"$out" \
 
 # reset the fixture files so they don't leak into any test appended after this one
 jq -n '{}' > "$EXEC_STATUS_FILE"; jq -n '{}' > "$CONVOY_CHILDREN_FILE"
+
+# 14. O01/P24: a rig named only in a config/projects/*.toml file (never
+#     hardcoded anywhere in the guard) is scanned exactly like the city and
+#     every other rig -- proves RIGS is genuinely config-driven, not a
+#     stale hardcoded SayMyName list. Added last so this rig only exists for
+#     this one assertion.
+mkdir -p "$TMP/config/projects" "$TMP/rigs/synthetic-project"
+cat > "$TMP/config/projects/synthetic-project.toml" <<'TOML'
+rig_dir = "rigs/synthetic-project"
+repo = "synthetic-org/synthetic-repo"
+protected_branch = "dev"
+required_ci = "Synthetic CI"
+TOML
+synthetic_unverifiable='{
+  "id": "zz-fixture-synthetic-rig", "status": "closed", "title": "Raw close on a config-only rig",
+  "labels": ["product-goal"], "metadata": {}
+}'
+jq -n --argjson u "$synthetic_unverifiable" '[$u]' > "$TMP/rig-synthetic-project-goal-beads.json"
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+out=$(guard)
+grep -q "no verifiable GitHub repo/PR recorded" <<<"$out" \
+  || { echo "$out" >&2; fail "a rig known only via config/projects was never scanned"; }
+grep -q "flagged zz-fixture-synthetic-rig" <<<"$out" \
+  || { echo "$out" >&2; fail "the config-only rig's bead was not flagged"; }
+[ "$(grep -c '^synthetic-project zz-fixture-synthetic-rig ' "$UPDATE_LOG")" = "1" ] \
+  || fail "expected exactly one rig-scoped write for the config-only rig's bead"
+[ "$(mail_count mayor)" = "1" ] || fail "expected exactly one page to the Mayor for the config-only rig's bead"
+rm -f "$TMP/config/projects/synthetic-project.toml" "$TMP/rig-synthetic-project-goal-beads.json"
 
 echo "PASS: factory-delivery-guard backfills verified proof and flags the rest exactly once"
