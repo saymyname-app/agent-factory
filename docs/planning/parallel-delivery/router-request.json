@@ -8,5 +8,8 @@
   "approval": {
     "approved_by": "Benjamin",
     "evidence": "live chat 2026-09-29 « j'approuve la Spec A6 » on digest sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324"
+  },
+  "publish": {
+    "draft": "docs/planning/parallel-delivery/ticket-graph-draft.yaml"
   }
 }

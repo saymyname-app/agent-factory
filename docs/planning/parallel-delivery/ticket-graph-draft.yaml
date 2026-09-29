@@ -4,9 +4,9 @@ artifact:
   labels:
   - approved-ticket-graph
   - parallel-delivery
-  state: TICKET_GRAPH_DRAFT
-  approved_by: null
-  content_digest: null
+  state: APPROVED_TICKET_GRAPH_DRAFT
+  approved_by: Benjamin
+  content_digest: sha256:1e3ee0b52615913dc16bb6d5c7dfefe9e5ee1e3c289f144950ffe10c4a9bc07b
   digest_scope: UTF-8 bytes from the legacy_boundary key through end of file, with LF line endings
   source_spec:
     id: spec-parallel-delivery-2026-09-29
@@ -14,8 +14,9 @@ artifact:
     digest: sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324
   method_baseline:
     skill: Matt Pocock /to-tickets (Factory adaptation)
-  publication_authorized: false
-  publication_authorized_by: null
+  publication_authorized: true
+  publication_authorized_by: Benjamin
+  approval_evidence: "live chat 2026-09-29 « j'approuve le plan de tickets A6 avec a » (Q17 a: P23, P24 added)"
 
 legacy_boundary:
   quarantine_read_only_evidence:
@@ -384,6 +385,38 @@ tickets:
   acceptance_criteria:
   - Descriptions match behaviour (reviewer checks against the code).
   - No saymyname literal remains in those tests' fixtures.
+- id: P23
+  kind: vertical_slice
+  title: 'Final batch: test fixtures use synthetic names (A4 to-redo)'
+  blocked_by:
+  - P17
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    Session fixtures under tests/fixtures/planning-run-router and tests/fixtures/planning-run-to-spec
+    sign with the synthetic operator (config/operator.toml) instead of the real operator's name, and the
+    pr-autopilot tests (candidate-duplicate, ci-failure, reconcile-cache, reversibility, stale-snapshot,
+    step-wisp-collision) use synthetic project fixtures instead of saymyname repos; rows re-verdicted.
+    Behaviour unchanged. Files: those fixtures and tests, their INVENTORY rows.
+  acceptance_criteria:
+  - The affected tests pass with synthetic names only; no real person's name and no saymyname literal remains in those fixtures.
+  - If a tool requires the operator's name, it reads it from config/operator.toml (recorded in the ticket).
+- id: P24
+  kind: vertical_slice
+  title: 'Final batch: deliver-close and delivery-guard read the project files (A4 to-redo)'
+  blocked_by:
+  - P17
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    bin/deliver-close and bin/factory-delivery-guard stop hardcoding the SayMyName repo/rig lists and
+    workflow map and read config/projects/*.toml through the existing loader, like pr-autopilot; the
+    stale campaign/product-status rationale is removed; rows re-verdicted. bin/factory-guard is NOT
+    touched (A3 budget). Files: bin/deliver-close, bin/factory-delivery-guard, their tests, their
+    INVENTORY rows.
+  acceptance_criteria:
+  - A synthetic third project added only through a project file is covered by both tools (test).
+  - No saymyname, smb or smf literal remains in either tool outside comments and fixtures.
 - id: P22
   kind: verification
   title: 'A6 closes: one day at 2 workers with main always green'
@@ -392,6 +425,8 @@ tickets:
   - P19
   - P20
   - P21
+  - P23
+  - P24
   target_rigs:
   - agent-factory
   what_it_delivers: >-
