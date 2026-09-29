@@ -1,6 +1,27 @@
 {
+  "approved_by": "Benjamin",
+  "approved_digest": "sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324",
+  "approved_evidence": "live chat 2026-09-29 \u00ab j'approuve la Spec A6 \u00bb on digest sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324",
   "content_digest": "sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324",
   "contract": "agent-factory-planning-run-spec/v1",
+  "history": [
+    {
+      "approved_by": "Benjamin",
+      "at": 1790641741.3504503,
+      "digest": "sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324",
+      "event": "approve",
+      "evidence": "live chat 2026-09-29 \u00ab j'approuve la Spec A6 \u00bb on digest sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324"
+    }
+  ],
+  "section_digests": {
+    "acceptance_evidence": "sha256:494057dbacf11e2b395245ec684b1983cf07173d2f6487b960f488228ab8029c",
+    "behavior": "sha256:ff8328722ffb62b2971cbb65b66d340b6769d2e23046d1dbeec8573afb97e9b5",
+    "boundaries": "sha256:27be16c64616dd3979870a1081b72056111e977213d0cb626f339b42650aeab1",
+    "decisions": "sha256:370e4500300217f86bd86a1adfd455ee8d0939ed78a38355ec0f817a643c9cc9",
+    "experiments": "sha256:8e0f4a81b839308af51ca7e885f7beb542c953b7799d1421928adda7bdc44794",
+    "non_objectives": "sha256:86820dff26cced4aa9a42d18b810d27237f7abe4c422df892a023a48f0163d5d",
+    "provenance": "sha256:dca5f2a08b86e8b6d16b0780931809b5d7eb1b2ed0cc2c23fc816ccef514b65a"
+  },
   "sections": {
     "acceptance_evidence": [
       {
@@ -211,5 +232,5 @@
   },
   "session_id": "parallel-delivery-2026-09-29",
   "spec_id": "spec-parallel-delivery-2026-09-29",
-  "state": "DRAFT_SPEC"
+  "state": "APPROVED_SPEC"
 }
