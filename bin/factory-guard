@@ -766,7 +766,8 @@ except Exception:
     print("")')
       bounded 30 "$ESCALATION_DOOR" benjamin "$COORD" "factory-guard: mayor session $mayor_state since $page_since (over 10 minutes)" \
         >/dev/null 2>&1 || true
-      bounded 15 gc bd update "$COORD" --set-metadata "gc.mayor_session_down_paged_since=$page_since" >/dev/null 2>&1 || true
+      update_err=$(bounded 15 gc bd update "$COORD" --set-metadata "gc.mayor_session_down_paged_since=$page_since" 2>&1 1>/dev/null) \
+        || say "  WARNING: gc bd update $COORD --set-metadata gc.mayor_session_down_paged_since failed: $update_err"
       did "paged ${GC_ESCALATION_RECIPIENT:-human}: mayor session $mayor_state since $page_since"
     fi
   fi
@@ -856,7 +857,10 @@ try:
 except Exception:
     print("")')
               if [ -n "$created" ]; then
-                [ -n "$COORD" ] && bounded 15 gc bd update "$COORD" --set-metadata "$ptr_key=$created" >/dev/null 2>&1 || true
+                if [ -n "$COORD" ]; then
+                  update_err=$(bounded 15 gc bd update "$COORD" --set-metadata "$ptr_key=$created" 2>&1 1>/dev/null) \
+                    || say "  WARNING: gc bd update $COORD --set-metadata $ptr_key failed: $update_err"
+                fi
                 # The stuck identity may itself be the Mayor and unreachable,
                 # so this pages the human directly rather than routing
                 # through the orchestrator that cannot boot to read it.

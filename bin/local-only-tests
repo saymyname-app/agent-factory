@@ -36,6 +36,7 @@ TESTS=(
   "tests/build-basic-fail-fast-runtime-test.sh"
   "tests/factory-watchdog-order-test.sh"
   "tests/orders-validate-test.sh"
+  "tests/fake-tool-contract-test.py"
 )
 
 FAILED=()
