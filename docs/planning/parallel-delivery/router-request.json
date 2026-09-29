@@ -1,0 +1,8 @@
+{
+  "contract": "agent-factory-planning-run-router-request/v1",
+  "legacy_path": "none",
+  "session": "docs/planning/parallel-delivery/planning-session.json",
+  "city_registry": "docs/planning/parallel-delivery/city-registry.json",
+  "spec_out": "docs/planning/parallel-delivery/spec",
+  "planning_run_target": "parallel-delivery"
+}
