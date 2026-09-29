@@ -72,14 +72,14 @@ _French conversational alias_: Bead de décision de planification
 _Avoid_: implementation ticket, Vertical Slice, agent session
 
 **Ticket Graph Draft**:
-The temporary, non-executable, structured Planning Artifact containing proposed Vertical Slices, acceptance criteria, target rigs, and blocking edges that `to-tickets` presents for approval before atomic publication. It is frozen with the Spec during delivery and may expire after the convoy closes.
+The temporary, non-executable, structured Planning Artifact containing proposed Vertical Slices, acceptance criteria, target rigs, and blocking edges that `to-tickets` presents for approval before atomic publication. It stays frozen with the Spec during delivery and is closed with it when the convoy closes.
 _French conversational alias_: brouillon du graphe de tickets
-_Avoid_: Bead, convoy, Delivery Work Graph, second decomposition
+_Avoid_: delivery Bead, convoy, Delivery Work Graph, second decomposition
 
 **Planning Artifact**:
-A temporary file artifact owned by a Planning Run, identified by a stable ID and content digest and referenced from Beads without turning its full contents into a Bead. Planning Artifacts coordinate multi-session work but are not permanent system documentation.
+A temporary, never-routed planning-plane Bead owned by a Planning Run, such as a Spec or a Ticket Graph Draft, identified by a stable ID and a content digest frozen at approval. Planning Artifacts coordinate multi-session work but are not permanent system documentation.
 _French conversational alias_: artefact de planification
-_Avoid_: Planning Bead, durable product documentation, source of truth after delivery
+_Avoid_: delivery Bead, durable product documentation, source of truth after delivery
 
 **Method Baseline**:
 The faithful reference workflow and observable contracts reproduced before deliberate adaptation, used as the comparison point for prototypes, canaries, and measurements.
