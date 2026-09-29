@@ -37,6 +37,11 @@ _LEAK_ENV = (
     "GC_CITY_RUNTIME_DIR", "GC_DIR",
     "GC_TRIGGER_BEAD_ID", "GC_TRIGGER_WORK_BEAD_ID",
     "GC_TRIGGER_BEAD_STORE_REF", "GC_TRIGGER_WORK_STORE_REF",
+    # Every Gas City agent session pre-exports GC_BIN to the real installed
+    # `gc`; a script resolving `${GC_BIN:-gc}` (or os.environ.get("GC_BIN",
+    # "gc")) picks that up regardless of what is first on PATH, bypassing
+    # the fake binaries below (live incident 2026-09-29, af-0h4vnc).
+    "GC_BIN", "BD_BIN", "GH_BIN",
 )
 
 
@@ -67,6 +72,10 @@ class Sandbox:
         env["GC_CITY_PATH"] = str(self.city)
         env["GC_BEADS_SCOPE_ROOT"] = str(self.city)
         env["PATH"] = str(self.stub_bin) + os.pathsep + env.get("PATH", "")
+        if not real_gc:
+            env["GC_BIN"] = str(self.stub_bin / "gc")
+            env["BD_BIN"] = str(self.stub_bin / "bd")
+            env["GH_BIN"] = str(self.stub_bin / "gh")
         self.env = env
 
     def __enter__(self):

@@ -13,8 +13,15 @@ set -Eeuo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 SCRIPT="$REPO_ROOT/bin/on-order-failed"
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+# tests/lib/sandbox.sh (P10, af-ygibh): a throwaway HOME/city and, crucially,
+# GC_BIN pointed off the real binary. on-order-failed shells out to
+# bin/escalation-door, which resolves ${GC_BIN:-gc} directly, so a PATH-only
+# stub does not stop it reaching the live city (live incident 2026-09-29,
+# af-0h4vnc: this test paged the live Mayor and filed a real bead -- "af-new1"
+# resolved to the unrelated live bead af-fnew1).
+. "$REPO_ROOT/tests/lib/sandbox.sh"
+sandbox_init
+TMP="$SANDBOX_DIR"
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
 mkdir -p "$TMP/bin" "$TMP/beads"
@@ -69,6 +76,7 @@ exit 0
 STUB
 chmod +x "$TMP/bin/gc"
 export PATH="$TMP/bin:$PATH"
+export GC_BIN="$TMP/bin/gc"
 export FACTORY_ROOT="$TMP"
 export ON_ORDER_FAILED_STREAK=5
 touch "$TMP/city.toml" 2>/dev/null || true

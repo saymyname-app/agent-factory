@@ -32,6 +32,13 @@
 # anything the test started under $SANDBOX_DIR and removes it. Set
 # KEEP_SANDBOX=1 to preserve the directory (e.g. for debugging a failure)
 # instead of deleting it.
+#
+# It also (re)exports GC_BIN/BD_BIN/GH_BIN to the fakes: every Gas City
+# agent session pre-exports GC_BIN to the real installed `gc`, and a script
+# resolving `${GC_BIN:-gc}` picks that up regardless of what is first on
+# PATH -- a stubbed PATH alone does not stop it (live incident 2026-09-29,
+# af-0h4vnc: factory-watchdog-test.sh's own PATH stub was bypassed this way
+# by bin/escalation-door, paging the live Mayor).
 
 SANDBOX_DIR=""
 SANDBOX_CITY=""
@@ -69,6 +76,14 @@ sandbox_init() {
   export GC_CITY_PATH="$SANDBOX_CITY"
   export GC_BEADS_SCOPE_ROOT="$SANDBOX_CITY"
   export PATH="$SANDBOX_STUB_BIN:$PATH"
+
+  if [ "$real_gc" -eq 1 ]; then
+    unset GC_BIN BD_BIN
+  else
+    export GC_BIN="$SANDBOX_STUB_BIN/gc"
+    export BD_BIN="$SANDBOX_STUB_BIN/bd"
+  fi
+  export GH_BIN="$SANDBOX_STUB_BIN/gh"
 
   unset GC_DOLT_HOST GC_DOLT_PORT GC_DOLT_DATABASE GC_DOLT_PROJECT_ID GC_DOLT_USER
   unset GC_SESSION_ID GC_SESSION_NAME GC_ALIAS GC_AGENT

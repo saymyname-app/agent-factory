@@ -23,6 +23,20 @@
 # used before the shared harness existed), or routes gc/bd through its own
 # PATH/GC_BIN/BD_BIN indirection instead of calling the installed binary
 # directly.
+#
+# A test that invokes bin/escalation-door, or a script that shells out to it
+# (bin/factory-watchdog, bin/on-order-failed, bin/on-session-stranded), needs
+# more than a PATH stub: every Gas City agent session pre-exports GC_BIN to
+# the real installed `gc`, escalation-door resolves `${GC_BIN:-gc}`, and that
+# indirection silently bypasses a stubbed PATH and reaches the live city
+# (live incident 2026-09-29, af-0h4vnc: factory-watchdog-test.sh's PATH-only
+# stub was bypassed exactly this way, paging the live Mayor and filing a real
+# bead). Such a test must show an actual `GC_BIN=<something>` assignment, not
+# merely the bare substring "GC_BIN" somewhere in the file, or source the
+# shared harness (which now sets GC_BIN itself). The script list below is
+# hand-picked to this one incident class -- other GC_BIN-resolving scripts
+# (bin/deliver-close, bin/provider-failover, bin/ticket-graph-publish, ...)
+# are a separate, broader gap tracked outside this ticket, not enforced here.
 
 set -Eeuo pipefail
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -72,12 +86,33 @@ check_gc_opt_in() {
   return 1
 }
 
+# escalation-door itself, plus every bin/ script known to shell out to it.
+GCBIN_ESCALATION_SCRIPTS="escalation-door factory-watchdog on-order-failed on-session-stranded"
+
+check_gcbin_opt_in() {
+  local f=$1 script
+  [ -e "$f" ] || return 0
+  is_local_only "$f" && return 0
+  grep -qE 'tests/lib/sandbox\.(sh|py)|sandbox_init|from sandbox import Sandbox|sandbox\.Sandbox\(' "$f" && return 0
+  for script in $GCBIN_ESCALATION_SCRIPTS; do
+    # Require a path-like reference (preceded by "/") so a prose mention
+    # like "escalation-door's mayor-first class" in a comment or fail
+    # message doesn't count as an invocation.
+    grep -vE '^[[:space:]]*#' "$f" | grep -qE "/${script}([[:space:]\"'\`]|\$)" || continue
+    grep -vE '^[[:space:]]*#' "$f" | grep -qE 'GC_BIN[[:space:]]*=[^=]|"GC_BIN"[[:space:]]*:' && return 0
+    echo "$f invokes $script (resolves \${GC_BIN:-gc}) with no actual GC_BIN= assignment and no shared sandbox harness -- a PATH stub alone does not protect it"
+    return 1
+  done
+  return 0
+}
+
 violations=0
 for f in "$REPO_ROOT"/tests/*.sh "$REPO_ROOT"/tests/*.py; do
   [ -e "$f" ] || continue
   [ "$(basename -- "$f")" = "$SELF" ] && continue
   out=$(check_live_root "$f") || { fail "$out"; violations=$((violations + 1)); }
   out=$(check_gc_opt_in "$f") || { fail "$out"; violations=$((violations + 1)); }
+  out=$(check_gcbin_opt_in "$f") || { fail "$out"; violations=$((violations + 1)); }
 done
 
 # Prove the check actually catches what it claims to, not just that the
@@ -94,6 +129,33 @@ canary=0
 out=$(check_live_root "$tmp/offender.sh") || canary=$((canary + 1))
 out=$(check_gc_opt_in "$tmp/offender.sh") || canary=$((canary + 1))
 [ "$canary" -eq 2 ] || { fail "the check does not catch its own synthetic violations -- it would pass anything"; violations=$((violations + 1)); }
+
+# Same proof for the escalation-door check: a synthetic test that invokes
+# bin/escalation-door with only a PATH stub must be flagged; the same test
+# with an actual GC_BIN= assignment must not be; and a file that only
+# mentions "escalation-door" in prose (no leading "/") must not be flagged.
+cat >"$tmp/gcbin-offender.sh" <<'EOF'
+#!/usr/bin/env bash
+export PATH="$TMP/bin:$PATH"
+"$REPO_ROOT/bin/escalation-door" mayor af-fixture "test"
+EOF
+gcbin_canary=0
+out=$(check_gcbin_opt_in "$tmp/gcbin-offender.sh") || gcbin_canary=$((gcbin_canary + 1))
+[ "$gcbin_canary" -eq 1 ] || { fail "the escalation-door check does not catch a PATH-only stub invoking bin/escalation-door"; violations=$((violations + 1)); }
+
+cat >"$tmp/gcbin-compliant.sh" <<'EOF'
+#!/usr/bin/env bash
+export PATH="$TMP/bin:$PATH"
+export GC_BIN="$TMP/bin/gc"
+"$REPO_ROOT/bin/escalation-door" mayor af-fixture "test"
+EOF
+out=$(check_gcbin_opt_in "$tmp/gcbin-compliant.sh") || { fail "the escalation-door check false-positives on a test that actually assigns GC_BIN"; violations=$((violations + 1)); }
+
+cat >"$tmp/gcbin-prose-only.sh" <<'EOF'
+#!/usr/bin/env bash
+fail() { echo "did not route through escalation-door's mayor-first class"; }
+EOF
+out=$(check_gcbin_opt_in "$tmp/gcbin-prose-only.sh") || { fail "the escalation-door check false-positives on a file that only mentions escalation-door in prose"; violations=$((violations + 1)); }
 
 if [ "$violations" -gt 0 ]; then
   echo "sandbox-isolation-check: $violations violation(s)" >&2
