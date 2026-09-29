@@ -48,6 +48,42 @@ RIGS=("${PROTECTED_RIGS[@]}")
 DELIVER_CLOSE_BIN="${DELIVER_CLOSE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/deliver-close}"
 DELIVERY_PROOF_BIN="${DELIVERY_PROOF_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" && pwd -P)/factory_delivery_proof.py}"
 
+# af-37h58 (P03): RIGS' 4th field (required_ci) is the required GitHub
+# Actions *workflow* name (e.g. "Factory CI") -- retry_ci_failure and
+# deliver-close's --required-workflow both need exactly that, to match
+# `gh run list`'s workflow-run `.name`. It is NOT the ruleset's required
+# *status check* name actually reported on a PR (the workflow's job name,
+# e.g. "Tests") -- arming/holding below must gate on that instead, or an
+# unrelated failing check (or a same-named-workflow coincidence) can hold a
+# healthy PR, and a genuinely red required check can be missed entirely.
+# Each project file names both (config/projects/*.toml); read the check
+# name straight from there via project_registry's existing optional-field
+# reader instead of widening PROTECTED_RIGS' row shape, which
+# bin/factory-guard, bin/factory-delivery-guard, bin/deliver-close and
+# bin/dispatch-door all also consume and do not need this field.
+CONFIG_PROJECTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/config/projects"
+declare -A REQUIRED_CHECK_FOR_REPO
+while IFS='|' read -r _pc_rig_dir _pc_repo _pc_branch _pc_ci _pc_name; do
+  [ -n "$_pc_repo" ] || continue
+  REQUIRED_CHECK_FOR_REPO["$_pc_repo"]=$(project_registry_field "$CONFIG_PROJECTS_DIR" "$_pc_name" "required_check")
+done < <(project_registry_rows "$CONFIG_PROJECTS_DIR")
+unset _pc_rig_dir _pc_repo _pc_branch _pc_ci _pc_name
+
+# The live ruleset is the ground truth for which check name actually gates
+# a merge; config/projects/*.toml just declares what pr-autopilot believes
+# that name is. Read-only `gh api` on the "rules for a branch" endpoint
+# (a fine-grained PAT can read this -- facts sheet 2026-09-29 §3) proves the
+# two agree, once per rig per tick, and never mutates anything.
+verify_required_check_live() {  # repo branch required-check -> 0 ok, 1 mismatch, 2 unknown
+  local repo=$1 branch=$2 required=$3 actual
+  actual=$(gh api "repos/$repo/rules/branches/$branch" --jq '
+    [.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[]?.context]
+    | unique' 2>/dev/null) || return 2
+  [ -n "$actual" ] || return 2
+  printf '%s' "$actual" | jq -e --arg c "$required" 'index($c) != null' >/dev/null 2>&1 && return 0
+  return 1
+}
+
 log()  { printf '%s\n' "$*"; }
 vlog() { [ "$VERBOSE" = "1" ] && printf '  %s\n' "$*"; return 0; }
 run()  { if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: $*"; return 0; fi; "$@"; }
@@ -310,6 +346,19 @@ for entry in "${RIGS[@]}"; do
   rig_path="$FACTORY/$rig_dir"
   [ -d "$rig_path" ] || { log "  SKIP: $rig_path missing"; ERRORS=$((ERRORS+1)); continue; }
 
+  required_check="${REQUIRED_CHECK_FOR_REPO[$repo]:-}"
+  if [ -z "$required_check" ]; then
+    log "  ERROR: config/projects has no required_check for $repo -- refusing to gate arming on an unnamed check"
+    ERRORS=$((ERRORS+1))
+    continue
+  fi
+  verify_required_check_live "$repo" "$dev" "$required_check"
+  case $? in
+    1) log "  LOUD: config/projects names required_check='$required_check' for $repo but the live ruleset on $dev does not require it -- fix the config or the ruleset before trusting this repo's gating"
+       ERRORS=$((ERRORS+1)) ;;
+    2) vlog "could not verify $repo's live ruleset required checks (gh api unavailable) -- proceeding with configured required_check='$required_check'" ;;
+  esac
+
   # af-k1f97: fetch this rig's bead lists ONCE per tick and reuse them for
   # every PR below, instead of re-running `gc bd list` per PR. The RECONCILE
   # loop used to run close_ci_failure_beads() (one `gc bd list --status open`)
@@ -443,15 +492,21 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
         esac
       fi
     fi
-  done < <(printf '%s' "$open_prs" | jq -r '.[]|[
+  done < <(printf '%s' "$open_prs" | jq -r --arg reqcheck "$required_check" '.[]|[
       .number, (.isDraft|tostring), (.autoMergeRequest|if .==null then "null" else "armed" end),
       (.mergeStateStatus//"?"),
-      ((.statusCheckRollup//[]) as $roll|$roll|map(.conclusion//.state//"")|
-        if any(.=="FAILURE" or .=="ERROR" or .=="TIMED_OUT") then "FAILURE"
-        elif length==0 then "NONE"
-        # A check run not yet COMPLETED, or a commit status still PENDING/EXPECTED.
-        elif ($roll|any((.status//"COMPLETED")!="COMPLETED" or .state=="PENDING" or .state=="EXPECTED")) then "PENDING"
-        else "OK" end),
+      # Gate on the one required check by name/context, not every check the
+      # commit happens to report (af-37h58/P03): an unrelated check failing
+      # must never hold a PR whose required check is green, and vice versa.
+      # An entry with no name/context at all (older/synthetic single-check
+      # fixtures) is treated as a match -- there is nothing to disambiguate.
+      ((.statusCheckRollup//[]) as $roll
+       | ($roll|map(select((((.name//.context//"")=="") or ((.name//.context//"")==$reqcheck))))) as $req
+       | if ($req|length)==0 then "NONE"
+         elif ($req|map(.conclusion//.state//"")|any(.=="FAILURE" or .=="ERROR" or .=="TIMED_OUT")) then "FAILURE"
+         # A check run not yet COMPLETED, or a commit status still PENDING/EXPECTED.
+         elif ($req|any((.status//"COMPLETED")!="COMPLETED" or .state=="PENDING" or .state=="EXPECTED")) then "PENDING"
+         else "OK" end),
       (.headRefOid//"unknown"),
       ((.labels//[])|map(.name)|join(",")|if .=="" then "-" else . end)
     ]|@tsv' 2>/dev/null)

@@ -15,5 +15,11 @@ rig_dir = "."
 repo = "saymyname-app/agent-factory"
 protected_branch = "main"
 required_ci = "Factory CI"
+# required_check (af-37h58/P03) is the ruleset's actual required status
+# check name reported on a PR (the workflow's job name) -- distinct from
+# required_ci above, which is the Actions *workflow* name gh run
+# list/deliver-close need. Ruleset AF-main-protection (23626687) requires
+# "Tests", the job bin/../.github/workflows/ci.yml names inside "Factory CI".
+required_check = "Tests"
 sling_target = "factory-worker"
 formulas = "mol-do-work"

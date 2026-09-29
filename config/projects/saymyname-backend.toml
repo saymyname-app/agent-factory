@@ -7,5 +7,9 @@ rig_dir = "rigs/saymyname-backend"
 repo = "saymyname-app/Say-my-name-back"
 protected_branch = "dev"
 required_ci = "Backend CI"
+# required_check (af-37h58/P03): ruleset SMN-back-dev-protection (22629508)
+# requires "Maven verify", the job name inside the "Backend CI" workflow --
+# see config/projects/agent-factory.toml for why this differs from required_ci.
+required_check = "Maven verify"
 sling_target = "claude"
 formulas = "mol-do-work,mol-scoped-work,mol-polecat-commit,build-basic"
