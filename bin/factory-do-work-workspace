@@ -21,6 +21,15 @@
 # whether the repo's *current branch* is one lib/protected_rigs.sh lists for
 # that rig, not on which directory the repo happens to live in.
 #
+# af-jz4zb (P08): `enter` now takes an exclusive per-repository lock around
+# the fetch+worktree-add sequence (two concurrent dispatches on the same
+# repo used to race on git's internal refs/index locks with no
+# serialization), branches off a freshly fetched `origin/<base>` instead of
+# the possibly-stale local branch, and fails loudly -- exits non-zero with a
+# readable reason, and removes any worktree it just created -- if the
+# auto-push hook cannot be installed, instead of silently swallowing that
+# failure and handing back a worktree with no safety net.
+#
 # Usage:
 #   factory-do-work-workspace enter  <bead-id>
 #       Prints "." and does nothing if the calling repo is not on a
@@ -95,20 +104,64 @@ protected_branch_for() {
 # install_post_commit_push_hook <worktree-path> — O04: "workers push their
 # branch ... after each commit." A per-worktree (not repo-wide) hooksPath so
 # this only affects commits made inside the isolated do-work worktree, never
-# the live root or other worktrees sharing the same .git. Best-effort: a
-# push failure here never blocks the commit that triggered it, the branch
-# is still recoverable from the worktree at `finish` or by hand.
+# the live root or other worktrees sharing the same .git.
+#
+# af-jz4zb (P08): installing the hook itself must fail loudly -- a worktree
+# with no working auto-push hook silently loses O04's "commits survive a
+# session dying mid-run" guarantee. The *push* that hook performs after each
+# commit stays best-effort (a transient network failure must never block the
+# commit that triggered it; the branch is still recoverable at `finish` or
+# by hand), but getting the hook installed in the first place is not.
 install_post_commit_push_hook() {
   local wt="$1" hooks_dir="$1/.git-hooks"
-  git -C "$wt" config extensions.worktreeConfig true || return 0
-  mkdir -p "$hooks_dir"
+  git -C "$wt" config extensions.worktreeConfig true || {
+    echo "factory-do-work-workspace: could not enable worktree-scoped git config for $wt" >&2
+    return 1
+  }
+  mkdir -p "$hooks_dir" || {
+    echo "factory-do-work-workspace: could not create hooks dir $hooks_dir" >&2
+    return 1
+  }
   cat > "$hooks_dir/post-commit" <<'HOOK'
 #!/usr/bin/env bash
 branch=$(git symbolic-ref --short HEAD 2>/dev/null) || exit 0
 git push origin "HEAD:refs/heads/$branch" >/dev/null 2>&1 || true
 HOOK
-  chmod +x "$hooks_dir/post-commit"
-  git -C "$wt" config --worktree core.hooksPath "$hooks_dir"
+  if [ $? -ne 0 ]; then
+    echo "factory-do-work-workspace: could not write post-commit hook at $hooks_dir" >&2
+    return 1
+  fi
+  chmod +x "$hooks_dir/post-commit" || {
+    echo "factory-do-work-workspace: could not make post-commit hook executable at $hooks_dir" >&2
+    return 1
+  }
+  git -C "$wt" config --worktree core.hooksPath "$hooks_dir" || {
+    echo "factory-do-work-workspace: could not set core.hooksPath to $hooks_dir for $wt" >&2
+    return 1
+  }
+}
+
+# with_repo_lock <repo-toplevel> <command...> — af-jz4zb (P08): an exclusive
+# per-repository lock around the fetch+worktree-add sequence. Two concurrent
+# `enter` calls for different bead ids on the same repo used to race on
+# git's shared internal state (refs/index locks, the .git/worktrees
+# directory) with no serialization; this makes them queue instead, so both
+# still succeed. Scoped per-repository (keyed on the repo's absolute path),
+# not global, so concurrent `enter` calls against different repos never wait
+# on each other.
+with_repo_lock() {
+  local repo="$1"; shift
+  local lock_dir="$HOME/.local/share/agent-factory-runtime-worktrees/.locks"
+  mkdir -p "$lock_dir"
+  local lock_file="$lock_dir/$(printf '%s' "$repo" | cksum | awk '{print $1}').lock"
+  (
+    exec 9>"$lock_file"
+    flock -w 60 9 || {
+      echo "factory-do-work-workspace: could not acquire the workspace lock for $repo within 60s" >&2
+      exit 1
+    }
+    "$@"
+  )
 }
 
 case "$CMD" in
@@ -143,30 +196,55 @@ case "$CMD" in
     WT="$HOME/.local/share/agent-factory-runtime-worktrees/$BEAD_ID"
 
     if [ -d "$WT" ]; then
-      install_post_commit_push_hook "$WT" >/dev/null 2>&1 || true
+      install_post_commit_push_hook "$WT" || {
+        echo "factory-do-work-workspace: existing worktree $WT has no working auto-push hook and it could not be (re)installed" >&2
+        exit 1
+      }
       echo "$WT"
       exit 0
     fi
 
-    git -C "$HERE" fetch --prune origin >/dev/null 2>&1 || true
+    # af-jz4zb (P08): the whole create-or-reuse sequence runs under an
+    # exclusive per-repository lock -- two concurrent `enter` calls for
+    # different bead ids on the same repo must not race on git's shared
+    # internal state.
+    with_repo_lock "$HERE" bash -c '
+      set -uo pipefail
+      HERE="$1"; BEAD_ID="$2"; BRANCH="$3"; WT="$4"; CURRENT_BRANCH="$5"
 
-    mkdir -p "$(dirname "$WT")"
-    if git -C "$HERE" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-      git -C "$HERE" worktree add "$WT" "$BRANCH" >/dev/null 2>&1 || {
-        echo "factory-do-work-workspace: could not add a worktree for existing branch $BRANCH" >&2
-        exit 1
-      }
-    else
-      git -C "$HERE" worktree add "$WT" -b "$BRANCH" "$CURRENT_BRANCH" >/dev/null 2>&1 || {
-        echo "factory-do-work-workspace: could not create worktree/branch $BRANCH off $CURRENT_BRANCH" >&2
-        exit 1
-      }
-      # O04: push the branch immediately, before any work commit lands, so
-      # it exists remotely from the start and the post-commit hook below
-      # always has a remote branch to push onto.
-      git -C "$WT" push -u origin "$BRANCH" >/dev/null 2>&1 || true
-    fi
-    install_post_commit_push_hook "$WT" >/dev/null 2>&1 || true
+      git -C "$HERE" fetch --prune origin >/dev/null 2>&1 || true
+
+      # af-jz4zb (P08): branch off a freshly fetched origin/<base> when the
+      # remote branch exists, not the possibly-stale local branch -- the
+      # live root/rig checkout may be behind origin at dispatch time.
+      START_REF="$CURRENT_BRANCH"
+      if git -C "$HERE" show-ref --verify --quiet "refs/remotes/origin/$CURRENT_BRANCH"; then
+        START_REF="origin/$CURRENT_BRANCH"
+      fi
+
+      mkdir -p "$(dirname "$WT")"
+      if git -C "$HERE" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+        git -C "$HERE" worktree add "$WT" "$BRANCH" >/dev/null 2>&1 || {
+          echo "factory-do-work-workspace: could not add a worktree for existing branch $BRANCH" >&2
+          exit 1
+        }
+      else
+        git -C "$HERE" worktree add "$WT" -b "$BRANCH" "$START_REF" >/dev/null 2>&1 || {
+          echo "factory-do-work-workspace: could not create worktree/branch $BRANCH off $START_REF" >&2
+          exit 1
+        }
+        # O04: push the branch immediately, before any work commit lands, so
+        # it exists remotely from the start and the post-commit hook below
+        # always has a remote branch to push onto.
+        git -C "$WT" push -u origin "$BRANCH" >/dev/null 2>&1 || true
+      fi
+    ' -- "$HERE" "$BEAD_ID" "$BRANCH" "$WT" "$CURRENT_BRANCH" || exit 1
+
+    install_post_commit_push_hook "$WT" || {
+      echo "factory-do-work-workspace: could not install the auto-push hook for $WT; removing the worktree rather than handing back one with no safety net" >&2
+      git -C "$HERE" worktree remove --force "$WT" 2>/dev/null || true
+      exit 1
+    }
     echo "$WT"
     ;;
 

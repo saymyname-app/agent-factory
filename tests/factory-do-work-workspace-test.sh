@@ -233,4 +233,65 @@ git -C "$TMP/root" branch --list do-work/af-restart-test | grep -q . \
 WT9b=$("$SCRIPT" enter af-restart-test)
 [ -f "$WT9b/k" ] && fail "enter after a restart resumed the discarded branch instead of starting clean"
 
+# ---------------------------------------------------------------------------
+# 10. af-jz4zb (P08): two concurrent `enter` calls for different bead ids on
+#     the same repository both succeed, each producing its own worktree
+#     based on `origin/main` with the auto-push hook installed -- the
+#     per-repository lock must serialize them, not deadlock or corrupt
+#     either one.
+# ---------------------------------------------------------------------------
+echo two > "$TMP/root/f2" && git -C "$TMP/root" add f2 && git -C "$TMP/root" commit -qm two
+git -C "$TMP/root" push -q origin main
+
+"$SCRIPT" enter af-concurrent-a >"$TMP/wt-a.out" 2>"$TMP/wt-a.err" &
+PID_A=$!
+"$SCRIPT" enter af-concurrent-b >"$TMP/wt-b.out" 2>"$TMP/wt-b.err" &
+PID_B=$!
+wait "$PID_A" || { cat "$TMP/wt-a.err" >&2; fail "concurrent enter af-concurrent-a failed"; }
+wait "$PID_B" || { cat "$TMP/wt-b.err" >&2; fail "concurrent enter af-concurrent-b failed"; }
+WT_A=$(cat "$TMP/wt-a.out")
+WT_B=$(cat "$TMP/wt-b.out")
+[ -d "$WT_A" ] || fail "concurrent enter did not produce a worktree for af-concurrent-a"
+[ -d "$WT_B" ] || fail "concurrent enter did not produce a worktree for af-concurrent-b"
+[ "$WT_A" != "$WT_B" ] || fail "concurrent enter for two different bead ids returned the same worktree"
+[ "$(git -C "$WT_A" rev-parse HEAD)" = "$(git -C "$TMP/root" rev-parse origin/main)" ] \
+  || fail "af-concurrent-a's worktree is not based on the freshly fetched origin/main"
+[ "$(git -C "$WT_B" rev-parse HEAD)" = "$(git -C "$TMP/root" rev-parse origin/main)" ] \
+  || fail "af-concurrent-b's worktree is not based on the freshly fetched origin/main"
+git -C "$WT_A" config --worktree --get core.hooksPath >/dev/null \
+  || fail "af-concurrent-a's worktree has no auto-push hook installed"
+git -C "$WT_B" config --worktree --get core.hooksPath >/dev/null \
+  || fail "af-concurrent-b's worktree has no auto-push hook installed"
+git -C "$TMP/root" worktree remove --force "$WT_A" 2>/dev/null || true
+git -C "$TMP/root" worktree remove --force "$WT_B" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 11. af-jz4zb (P08): a forced hook-install failure makes `enter` exit
+#     non-zero with a readable reason, and does not hand back a worktree
+#     with no safety net.
+# ---------------------------------------------------------------------------
+REAL_GIT=$(command -v git)
+FAKE_GIT_DIR="$TMP/fake-git-bin"
+mkdir -p "$FAKE_GIT_DIR"
+cat > "$FAKE_GIT_DIR/git" <<EOF
+#!/usr/bin/env bash
+case " \$* " in
+  *" config --worktree core.hooksPath "*)
+    echo "fake git: simulated hooksPath config failure" >&2
+    exit 1
+    ;;
+esac
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$FAKE_GIT_DIR/git"
+
+set +e
+PATH="$FAKE_GIT_DIR:$PATH" "$SCRIPT" enter af-hook-failure-test >"$TMP/hook-fail.out" 2>"$TMP/hook-fail.err"
+HOOK_FAIL_RC=$?
+set -e
+[ "$HOOK_FAIL_RC" -ne 0 ] || fail "enter must exit non-zero when the auto-push hook cannot be installed"
+grep -q "." "$TMP/hook-fail.err" || fail "enter gave no readable reason for the forced hook-install failure"
+[ -d "$HOME/.local/share/agent-factory-runtime-worktrees/af-hook-failure-test" ] \
+  && fail "enter left behind a worktree with no working auto-push hook after a forced install failure"
+
 echo "OK bin/factory-do-work-workspace isolates HQ dispatches AND protected product-rig branches in a worktree, pushes and cleans up on finish, and is a no-op elsewhere"

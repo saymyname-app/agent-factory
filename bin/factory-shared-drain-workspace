@@ -87,6 +87,24 @@ registered_worktree() {
     | awk -v wanted="$WORKTREE" '$1 == "worktree" && $2 == wanted { found=1 } END { exit(found ? 0 : 1) }'
 }
 
+# with_rig_lock <rig-root> <command...> — af-jz4zb (P08): an exclusive
+# per-repository lock around the registered-worktree check + creation, the
+# same mechanism `bin/factory-do-work-workspace enter` uses. Two concurrent
+# `prepare` calls for different workflow roots against the same rig must not
+# race on git's shared internal state (refs/index locks, the .git/worktrees
+# directory).
+with_rig_lock() {
+  local rig="$1"; shift
+  local lock_dir="$HOME/.local/share/agent-factory-runtime-worktrees/.locks"
+  mkdir -p "$lock_dir"
+  local lock_file="$lock_dir/$(printf '%s' "$rig" | cksum | awk '{print $1}').lock"
+  (
+    exec 9>"$lock_file"
+    flock -w 60 9 || die "could not acquire the shared-drain workspace lock for $rig within 60s"
+    "$@"
+  )
+}
+
 load_shared_metadata() {
   WORKTREE=$(printf '%s' "$ROOT_JSON" | metadata_value 'gc.shared_worktree')
   BRANCH=$(printf '%s' "$ROOT_JSON" | metadata_value 'gc.work_branch')
@@ -104,6 +122,34 @@ verify_member_worktree() {
   member_worktree=$(printf '%s' "$member_json" | metadata_value 'work_dir')
   [ "$member_worktree" = "$WORKTREE" ] \
     || die "source anchor $member did not retain authoritative work_dir $WORKTREE"
+}
+
+# ensure_shared_worktree — runs under with_rig_lock, using the globals
+# `prepare` has already set (RIG_ROOT, WORKTREE, BRANCH, BASE_BRANCH). A
+# freshly fetched `origin/<base>` is preferred as the branch point when it
+# exists, same as `bin/factory-do-work-workspace enter`.
+ensure_shared_worktree() {
+  git -C "$RIG_ROOT" fetch --prune origin "$BASE_BRANCH" >/dev/null 2>&1 || true
+
+  if registered_worktree; then
+    [ -d "$WORKTREE" ] || die "registered shared worktree is missing: $WORKTREE"
+    local observed_branch
+    observed_branch=$(git -C "$WORKTREE" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    [ "$observed_branch" = "$BRANCH" ] \
+      || die "shared worktree uses branch ${observed_branch:-DETACHED}, expected $BRANCH"
+  else
+    [ ! -e "$WORKTREE" ] \
+      || die "shared worktree path exists but is not registered: $WORKTREE"
+    local start_ref=$BASE_BRANCH
+    if git -C "$RIG_ROOT" show-ref --verify --quiet "refs/remotes/origin/$BASE_BRANCH"; then
+      start_ref="origin/$BASE_BRANCH"
+    fi
+    if git -C "$RIG_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+      git -C "$RIG_ROOT" worktree add "$WORKTREE" "$BRANCH" >/dev/null
+    else
+      git -C "$RIG_ROOT" worktree add -b "$BRANCH" "$WORKTREE" "$start_ref" >/dev/null
+    fi
+  fi
 }
 
 prepare() {
@@ -127,27 +173,12 @@ prepare() {
   done
 
   mkdir -p "$(dirname "$WORKTREE")"
-  git -C "$RIG_ROOT" fetch --prune origin "$BASE_BRANCH" >/dev/null 2>&1 || true
 
-  if registered_worktree; then
-    [ -d "$WORKTREE" ] || die "registered shared worktree is missing: $WORKTREE"
-    local observed_branch
-    observed_branch=$(git -C "$WORKTREE" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-    [ "$observed_branch" = "$BRANCH" ] \
-      || die "shared worktree uses branch ${observed_branch:-DETACHED}, expected $BRANCH"
-  else
-    [ ! -e "$WORKTREE" ] \
-      || die "shared worktree path exists but is not registered: $WORKTREE"
-    local start_ref=$BASE_BRANCH
-    if git -C "$RIG_ROOT" show-ref --verify --quiet "refs/remotes/origin/$BASE_BRANCH"; then
-      start_ref="origin/$BASE_BRANCH"
-    fi
-    if git -C "$RIG_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-      git -C "$RIG_ROOT" worktree add "$WORKTREE" "$BRANCH" >/dev/null
-    else
-      git -C "$RIG_ROOT" worktree add -b "$BRANCH" "$WORKTREE" "$start_ref" >/dev/null
-    fi
-  fi
+  # af-jz4zb (P08): the fetch + registered-worktree check + creation runs
+  # under an exclusive per-rig lock -- two concurrent `prepare` calls for
+  # different workflow roots against the same rig must not race on git's
+  # shared internal state.
+  with_rig_lock "$RIG_ROOT" ensure_shared_worktree
 
   "$GC_BIN" bd update "$ROOT_ID" \
     --set-metadata "gc.shared_worktree=$WORKTREE" \
