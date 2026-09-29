@@ -9,15 +9,19 @@
 
 ## V1 concurrency policy
 
-One writer per rig.
-
-Do not enable parallel writers in one repository until canaries prove:
+Parallel writers in one repository are allowed only where the canary conditions
+below are proven, and only up to the pool cap configured for that rig:
 
 1. each writer receives a genuinely isolated work directory/worktree;
 2. the canonical checkout and peer worktrees remain untouched;
 3. branches are deterministic and pushes are non-force;
 4. integration/merge contention is serialized;
 5. provider writes outside the allowed scope are prevented or fail visibly.
+
+The `agent-factory` rig meets all five (P08 worktree-per-ticket, P16 declared-
+scope/hot-file serialization, pr-autopilot's return loop) and runs up to 2
+concurrent `factory-worker` sessions (`agents/factory-worker/agent.toml`).
+Product rigs have not run this canary yet and stay at 1 writer until they do.
 
 ## Secrets
 

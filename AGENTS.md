@@ -57,7 +57,11 @@ For a change:
 - One active Gas City controller per City.
 - HQ Factory work uses `bin/factory-work-dispatch <af-bead-id>`: its fixed
   `factory-worker` inherits `workspace`; never sling `workspace` or `bd.dog`.
-- V1 allows one writer per rig until worktree isolation is proven by canary.
+- V1 writer counts are capped per rig, not fixed at one: `agent-factory` runs
+  up to 2 concurrent writers (each in its own isolated worktree, with
+  declared-scope/hot-file serialization ahead of dispatch); a rig gets a
+  higher cap only once its own isolation canary is proven, and product rigs
+  stay at 1 until then.
 - Branch work happens in a `git worktree`, never by checking out in the live
   root (the root is the running city). Remove the worktree when its PR merges
   or closes: one left pinning a merged branch makes `gh pr merge

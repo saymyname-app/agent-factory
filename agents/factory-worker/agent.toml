@@ -2,5 +2,5 @@ description = "HQ Factory implementation worker; inherits the workspace provider
 scope = "city"
 work_dir = ".gc/agents/factory-worker"
 min_active_sessions = 0
-max_active_sessions = 1
+max_active_sessions = 2
 idle_timeout = "2h"

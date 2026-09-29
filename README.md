@@ -62,7 +62,10 @@ live under `docs/`; executable work and dependencies live in Beads.
 
 ## Core constraints
 
-- One active controller per City and one writer per rig until isolation is proven.
+- One active controller per City. Writer counts are capped per rig and raised
+  only once that rig's isolation canary is proven — `agent-factory` runs up to
+  2 concurrent writers, each in its own worktree with declared-scope/hot-file
+  serialization ahead of dispatch; product rigs stay at 1.
 - The Mayor is the product-work orchestration entry point.
 - GitHub remains authoritative for code and delivery evidence; Beads is authoritative for work.
 - Access capability is not standing authorization: production, secrets, public exposure, spend, and destructive actions remain explicit decisions.

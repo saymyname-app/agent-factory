@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Regression for af-41ahv: an HQ implementation workflow must route through
-# factory-worker, inherit the workspace provider, and keep one resumable slot.
+# factory-worker, inherit the workspace provider, and keep resumable slots
+# at the configured pool cap (af-puf4p: two concurrent writers on this rig,
+# each isolated in its own worktree).
 set -Eeuo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -53,7 +55,7 @@ AGENT_TOML="$REPO_ROOT/agents/factory-worker/agent.toml"
 PROMPT="$REPO_ROOT/agents/factory-worker/prompt.template.md"
 FORMULA="$REPO_ROOT/formulas/mol-do-work.formula.toml"
 grep -q '^scope = "city"$' "$AGENT_TOML" || fail "factory-worker is not city-scoped"
-grep -q '^max_active_sessions = 1$' "$AGENT_TOML" || fail "factory-worker is not a singleton"
+grep -q '^max_active_sessions = 2$' "$AGENT_TOML" || fail "factory-worker is not scaled to the configured two-writer cap"
 if grep -q '^wake_mode[[:space:]]*=[[:space:]]*"fresh"' "$AGENT_TOML"; then
   fail "factory-worker discards continuity by forcing a fresh wake"
 fi
@@ -72,4 +74,4 @@ release_line=$(grep -nF 'gc bd update "$WORK_BEAD_ID" --assignee ""' "$FORMULA" 
 grep -qF 'gc.session_name=${GC_SESSION_NAME:-${GC_AGENT:-}}' "$FORMULA" \
   || fail "mol-do-work loses target session evidence during continuation handoff"
 
-echo "PASS: HQ work dispatch is role-fixed, workspace-inherited, and single-session"
+echo "PASS: HQ work dispatch is role-fixed, workspace-inherited, and capped at the configured pool size"

@@ -88,6 +88,16 @@ rejection of the same ticket pages the Mayor via `bin/escalation-door mayor`
 (promoted to NEEDS BENJAMIN after 2h unresolved by
 `orders/escalation-door-sweep.toml`, unchanged by this fork).
 
+Local fork (2026-09-29, P17/af-puf4p): "single-agent work" above describes
+one agent per ticket, not one worker session per rig -- that older reading is
+retired. `agents/factory-worker/agent.toml` now runs up to two concurrent
+sessions on the `agent-factory` rig (product rigs stay at one); nothing in
+this formula changes, because `workspace-setup` already gives each dispatch
+its own worktree/branch and `ticket-graph-publish`/`dispatch-door` already
+serialize declared-scope overlaps and hot-file contention ahead of dispatch
+(P08/P16). This formula is unaffected either way, and still uses
+`mol-polecat-commit` for the distinct case of several agents on one ticket.
+
 ## Variables
 
 | Variable | Source | Description |
