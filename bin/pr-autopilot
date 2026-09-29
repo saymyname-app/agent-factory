@@ -48,6 +48,12 @@ RIGS=("${PROTECTED_RIGS[@]}")
 DELIVER_CLOSE_BIN="${DELIVER_CLOSE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/deliver-close}"
 DELIVERY_PROOF_BIN="${DELIVERY_PROOF_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" && pwd -P)/factory_delivery_proof.py}"
 ESCALATION_DOOR_BIN="${ESCALATION_DOOR_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/escalation-door}"
+# The test-4 escalation message below names the operator from config, not a
+# hardcoded string (O14, F23, same pattern as bin/escalation-door) --
+# config/operator.toml's `name`, defaulting to "Benjamin" if the file is
+# missing or unset.
+OPERATOR_NAME="${GC_OPERATOR_NAME:-$(sed -n 's/^name[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${OPERATOR_CONFIG_FILE:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/config/operator.toml}" 2>/dev/null | head -n1)}"
+OPERATOR_NAME="${OPERATOR_NAME:-Benjamin}"
 
 # af-37h58 (P03): RIGS' 4th field (required_ci) is the required GitHub
 # Actions *workflow* name (e.g. "Factory CI") -- retry_ci_failure and
@@ -62,7 +68,7 @@ ESCALATION_DOOR_BIN="${ESCALATION_DOOR_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE
 # reader instead of widening PROTECTED_RIGS' row shape, which
 # bin/factory-guard, bin/factory-delivery-guard, bin/deliver-close and
 # bin/dispatch-door all also consume and do not need this field.
-CONFIG_PROJECTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/config/projects"
+CONFIG_PROJECTS_DIR="${PROTECTED_RIGS_CONFIG_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/config/projects}"
 declare -A REQUIRED_CHECK_FOR_REPO
 while IFS='|' read -r _pc_rig_dir _pc_repo _pc_branch _pc_ci _pc_name; do
   [ -n "$_pc_repo" ] || continue
@@ -246,7 +252,7 @@ reversibility_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
           if [ "$rc" = "4" ]; then
             run bash -c "cd '$FACTORY' && gc mail send mayor --from mayor --notify \
               --subject 'ESCALADE test 4 · PR #$num irréversible ($repo)' \
-              --message 'Auteur : pr-autopilot (script déterministe), pas Benjamin. La PR https://github.com/$repo/pull/$num contient une migration déclarée irréversible. Test d escalade 4 (ADR-0016) : ne la fusionne pas toi-même ; mets ce sous-graphe en attente et soumets la décision à Benjamin avec la raison déclarée dans la migration. Le reste de la campagne continue.'" >/dev/null 2>&1
+              --message 'Auteur : pr-autopilot (script déterministe), pas $OPERATOR_NAME. La PR https://github.com/$repo/pull/$num contient une migration déclarée irréversible. Test d escalade 4 (ADR-0016) : ne la fusionne pas toi-même ; mets ce sous-graphe en attente et soumets la décision à $OPERATOR_NAME avec la raison déclarée dans la migration. Le reste de la campagne continue.'" >/dev/null 2>&1
           fi ;;
       esac
       HELD=$((HELD+1))

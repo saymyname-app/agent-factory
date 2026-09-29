@@ -15,6 +15,12 @@
 # array by hand.
 #
 # PROTECTED_RIGS rows: "rig_dir|repo|protected_branch|required_ci"
+#
+# PROTECTED_RIGS_CONFIG_DIR overrides the config/projects directory this
+# reads (default: this repo's real config/projects) so tests can point it at
+# a synthetic project-fixture directory instead of asserting against the
+# real SayMyName rig names (P23). Unset in every real dispatch/pr-autopilot
+# invocation, so production behavior is unchanged.
 _PROTECTED_RIGS_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=lib/project_registry.sh
 . "$_PROTECTED_RIGS_LIB_DIR/project_registry.sh"
@@ -22,5 +28,5 @@ _PROTECTED_RIGS_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 PROTECTED_RIGS=()
 while IFS='|' read -r _pr_rig_dir _pr_repo _pr_branch _pr_ci _pr_name; do
   PROTECTED_RIGS+=("${_pr_rig_dir}|${_pr_repo}|${_pr_branch}|${_pr_ci}")
-done < <(project_registry_rows "$_PROTECTED_RIGS_LIB_DIR/../config/projects")
+done < <(project_registry_rows "${PROTECTED_RIGS_CONFIG_DIR:-$_PROTECTED_RIGS_LIB_DIR/../config/projects}")
 unset _pr_rig_dir _pr_repo _pr_branch _pr_ci _pr_name

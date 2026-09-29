@@ -20,7 +20,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
-mkdir -p "$TMP/factory/rigs/saymyname-backend" "$TMP/factory/rigs/saymyname-frontend" "$TMP/bin"
+mkdir -p "$TMP/factory/rigs/example-backend" "$TMP/factory/rigs/example-frontend" "$TMP/bin"
 : > "$TMP/gh.log"; : > "$TMP/gc.log"
 
 cat > "$TMP/open.json" <<'JSON'
@@ -39,8 +39,8 @@ cat > "$TMP/merged.json" <<'JSON'
 JSON
 cat > "$TMP/all_beads.json" <<'JSON'
 [
- {"id":"af-stale","status":"closed","title":"work delivered by PR 60","metadata":{"gc.work_branch":"b60","gc.delivery_contract":"pr-ci-merged-v1","gc.plane":"delivery","gc.graph_digest":"sha256:deadbeef","merge_result":"merged","merged_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.merge_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","merged_target":"main","gc.pr_url":"https://github.com/saymyname-app/agent-factory/pull/60","gc.github_repo":"saymyname-app/agent-factory","gc.pr_number":"60","gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.delivery_status":"merged","gc.work_outcome":"shipped","gc.required_ci_workflow":"Factory CI","gc.ci_run_id":"1","gc.ci_head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.ci_conclusion":"success"}},
- {"id":"af-done","status":"closed","title":"work delivered by PR 61","metadata":{"gc.work_branch":"b61","gc.delivery_contract":"pr-ci-merged-v1","gc.plane":"delivery","gc.graph_digest":"sha256:deadbeef","merge_result":"merged","merged_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merged_target":"main","gc.pr_url":"https://github.com/saymyname-app/agent-factory/pull/61","gc.github_repo":"saymyname-app/agent-factory","gc.pr_number":"61","gc.pr_head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","gc.delivery_status":"merged","gc.work_outcome":"shipped","gc.required_ci_workflow":"Factory CI","gc.ci_run_id":"2","gc.ci_head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","gc.ci_conclusion":"success"}}
+ {"id":"af-stale","status":"closed","title":"work delivered by PR 60","metadata":{"gc.work_branch":"b60","gc.delivery_contract":"pr-ci-merged-v1","gc.plane":"delivery","gc.graph_digest":"sha256:deadbeef","merge_result":"merged","merged_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.merge_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","merged_target":"main","gc.pr_url":"https://github.com/example-corp/example-app/pull/60","gc.github_repo":"example-corp/example-app","gc.pr_number":"60","gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.delivery_status":"merged","gc.work_outcome":"shipped","gc.required_ci_workflow":"Factory CI","gc.ci_run_id":"1","gc.ci_head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.ci_conclusion":"success"}},
+ {"id":"af-done","status":"closed","title":"work delivered by PR 61","metadata":{"gc.work_branch":"b61","gc.delivery_contract":"pr-ci-merged-v1","gc.plane":"delivery","gc.graph_digest":"sha256:deadbeef","merge_result":"merged","merged_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merged_target":"main","gc.pr_url":"https://github.com/example-corp/example-app/pull/61","gc.github_repo":"example-corp/example-app","gc.pr_number":"61","gc.pr_head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","gc.delivery_status":"merged","gc.work_outcome":"shipped","gc.required_ci_workflow":"Factory CI","gc.ci_run_id":"2","gc.ci_head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","gc.ci_conclusion":"success"}}
 ]
 JSON
 # Live `gc bd show` disagrees with the snapshot for af-stale (in_progress),
@@ -56,7 +56,7 @@ cat > "$TMP/bin/gh" <<STUB
 #!/usr/bin/env bash
 echo "\$*" >> "$TMP/gh.log"
 if [[ "\$1" == pr && "\$2" == list ]]; then
-  if [[ "\$*" != *"Say-my-name-back"* ]]; then echo '[]'; exit 0; fi
+  if [[ "\$*" != *"example-backend"* ]]; then echo '[]'; exit 0; fi
   if [[ "\$*" == *"--state open"* ]]; then cat "$TMP/open.json";
   elif [[ "\$*" == *"--state merged"* ]]; then cat "$TMP/merged.json";
   else echo '[]'; fi
@@ -91,6 +91,7 @@ export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/gh"
 export DELIVER_CLOSE_BIN="$TMP/bin/deliver-close"
+export PROTECTED_RIGS_CONFIG_DIR="$REPO_ROOT/tests/fixtures/pr-autopilot-projects"
 
 pilot() { "$AUTOPILOT" "$@" 2>&1 || true; }
 out=$(pilot)
