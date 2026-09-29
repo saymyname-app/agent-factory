@@ -80,12 +80,12 @@ run_clean() {
 
 # 1. The order itself is discoverable and deterministic.
 order=$(run_clean gc order show local-only-tests --city "$ROOT" --json)
-jq -e --arg source "$ROOT/orders/local-only-tests.toml" '
+jq -e --arg source "$ROOT/orders/local-only-tests.toml" --arg exec "$ROOT/bin/local-only-tests --quiet" '
   .ok == true and
   .order.type == "exec" and
   .order.trigger == "cron" and
   .order.schedule == "0 4 * * *" and
-  .order.exec == "/home/benja/agent-factory/bin/local-only-tests --quiet" and
+  .order.exec == $exec and
   .order.timeout == "300s" and
   .order.enabled == true and
   .order.source == $source

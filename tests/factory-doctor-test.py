@@ -169,8 +169,10 @@ class Classification(unittest.TestCase):
 class Portability(unittest.TestCase):
     """The tool must run anywhere the repo is checked out.
 
-    The first version hardcoded ROOT = "/home/benja/agent-factory". Locally
-    every test passed, because that path exists here — a false green. On a
+    The first version hardcoded ROOT to the live Factory root's absolute
+    path. Locally every test passed, because that path exists here — a
+    false green (P10, af-ygibh: a test may not name that path either, for
+    the same reason). On a
     GitHub runner the directory does not exist, subprocess raised
     FileNotFoundError for the missing cwd, and the tool blamed "gc not found on
     PATH": the wrong cause, sending the reader hunting in the wrong place,

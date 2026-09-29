@@ -39,6 +39,7 @@ assert_contains AGENTS.md 'docs/OPERATOR_BRIDGE.md'
 assert_contains AGENTS.md 'Cockpit V1 is retired to `legacy/`'
 assert_contains AGENTS.md 'Full access'
 assert_contains README.md 'docs/OPERATOR_BRIDGE.md'
+# sandbox: allow-live-root -- real operator-facing doc text (P10, af-ygibh)
 assert_contains README.md 'wsl -d Ubuntu-24.04 -u benja --cd /home/benja/agent-factory'
 assert_contains docs/CONTEXT_INDEX.md 'OPERATOR_BRIDGE.md'
 # The structural-decisions row must span ADR-0001 through the HIGHEST ADR that

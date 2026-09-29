@@ -89,12 +89,14 @@ run_clean() {
 # 1. The order itself is discoverable and deterministic (mirrors
 #    factory-watchdog-order-test.sh's static check).
 order=$(run_clean gc order show backup-freshness --city "$ROOT" --json)
-jq -e --arg source "$ROOT/orders/backup-freshness.toml" '
+jq -e --arg source "$ROOT/orders/backup-freshness.toml" \
+      --arg exec "$ROOT/bin/backup-freshness --quiet" \
+      --arg check "$ROOT/bin/backup-freshness --check-only --quiet" '
   .ok == true and
   .order.type == "exec" and
   .order.trigger == "condition" and
-  .order.exec == "/home/benja/agent-factory/bin/backup-freshness --quiet" and
-  .order.check == "/home/benja/agent-factory/bin/backup-freshness --check-only --quiet" and
+  .order.exec == $exec and
+  .order.check == $check and
   .order.enabled == true and
   .order.source == $source
 ' >/dev/null <<<"$order" || fail "backup-freshness Order is not discoverable and deterministic"
