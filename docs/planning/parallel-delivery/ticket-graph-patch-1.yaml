@@ -1,0 +1,71 @@
+artifact:
+  id: ticket-graph-draft-parallel-delivery
+  title: Parallel delivery (A6)
+  labels:
+  - approved-ticket-graph
+  - parallel-delivery
+  state: APPROVED_TICKET_GRAPH_DRAFT
+  approved_by: Benjamin
+  content_digest: sha256:4ab72f8413b16708b95af0670e5e28e92ba66f95b43bc7085681ad600d536542
+  digest_scope: UTF-8 bytes from the legacy_boundary key through end of file, with LF line endings
+  revises: sha256:1e3ee0b52615913dc16bb6d5c7dfefe9e5ee1e3c289f144950ffe10c4a9bc07b
+  patch_note: >-
+    Patch 1 adds P25 only. The full approved graph stays in ticket-graph-draft.yaml;
+    `ticket-graph-publish patch` refuses delivered tickets, so this file carries only the new one.
+    P25 follows P10 (delivered, af-ygibh), which is why it lists no blocker.
+  source_spec:
+    id: spec-parallel-delivery-2026-09-29
+    state: APPROVED_SPEC
+    digest: sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324
+  method_baseline:
+    skill: Matt Pocock /to-tickets (Factory adaptation)
+  publication_authorized: true
+  publication_authorized_by: Benjamin
+  approval_evidence: "live chat 2026-09-29 « a, patche le graphe A6 » (choice a: attack the SayMyName incident review 2026-09-29 cause B as a patch to A6 rather than a separate Planning Run)"
+
+legacy_boundary:
+  quarantine_read_only_evidence:
+  - Everything under legacy/ stays read-only evidence; no trusted code may reference it (tests/legacy-isolation-test.sh).
+target_rigs:
+  agent-factory:
+    purpose: Factory code, orders, formulas, prompts, config, docs and the agent-factory GitHub repo settings.
+    status: existing Factory repository
+global_execution_contract:
+  context: Each ticket receives a fresh implementation context and the exact Approved Spec trace it needs
+    (spec-parallel-delivery-2026-09-29, folder docs/planning/parallel-delivery/).
+  test_method: Small red then green cycles at a public-behavior seam; the Factory battery runs in CI on
+    every slice.
+  review: One independent reviewer checks Spec fidelity and design quality for every slice.
+  readiness: A blocker clears only after its checks and review pass and its code is merged on main.
+  declared_scope: Each ticket names the files it expects to touch ("Files:"). Touching a file outside it
+    is allowed only when recorded in the ticket notes with the reason (input for P16's measurement).
+  repair: Technical repair stays inside the ticket; behaviour or topology change raises a Planning Exception.
+  safety: No production, real sending, external publication, spend, unrecoverable destruction or wider
+    personal-data access without explicit human authority; nothing edited in the live root; no test
+    may reach the live city; SayMyName repos' GitHub settings and worker counts are not changed.
+tickets:
+- id: P25
+  kind: vertical_slice
+  title: Fakes refuse what the real tools refuse; a failed external call is never silent
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    Since P10 every test runs against fakes of `gc`, `bd`, `gh`, `codex` and `claude`, so a fake
+    that accepts a command the real tool refuses turns a broken script green. Four safety nets broke
+    silently that way (af-sa2i1 `gc bd create --set-metadata`, af-1isbx, af-4ruvv, pr-autopilot's
+    `gh pr update-branch` absent from the installed gh 2.45 on 2026-09-29). Each fake under
+    tests/fixtures (including tests/fixtures/shared-drain) now accepts only subcommands and flags the
+    installed real version accepts, and fails like the real tool otherwise. A local-only contract test
+    (`# ci: local-only`, run by the local-only-tests order, since CI has no `gc`) checks every command
+    shape the fakes accept against the real binaries' own help/usage for the installed versions, and
+    records those versions. A lint test fails any bin/ script that drops the stderr of a failed `gc`,
+    `bd` or `gh` call (subprocess with check=False and output discarded, or `2>/dev/null` without a
+    logged failure); existing offenders are fixed. Order-file validation already exists
+    (tests/orders-validate-test.sh) and is not redone. Files: tests/fixtures/fake-*.py,
+    tests/fixtures/shared-drain/fake-*.py, tests/lib/, two new tests, the offending bin/ scripts.
+  acceptance_criteria:
+  - Teaching a fake `gh pr update-branch` or `gc bd create --set-metadata` makes the contract test fail against the installed gh 2.45 / gc (shown in the PR, then removed).
+  - The contract test's first run on the host lists the real tool versions and passes; its output is in the ticket note.
+  - The lint test reports zero offenders on main; a throwaway bin/ script dropping gh stderr fails it (shown in the PR, then removed).
+  - The whole suite stays green in CI under the P10 sandbox.

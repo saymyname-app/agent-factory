@@ -92,3 +92,18 @@ Mechanism (PO interpretation):
    the cap. A CPU cap shortens factory-guard's margin (A3, 180 s); a
    `.wslconfig` change needs `wsl --shutdown`, so it is done while no
    ticket runs.
+
+## Patch 1 — 2026-09-29 (P25)
+
+Intent (Benjamin, 2026-09-29, live chat): « a, patche le graphe A6 » — choice
+a of the SayMyName incident review of 2026-09-29: attack cause B (a fake
+accepts what the real tool refuses, and the failure is swallowed) inside A6
+rather than in a separate Planning Run after it.
+Mechanism (PO agent): `ticket-graph-patch-1.yaml` revises the published graph
+`sha256:1e3ee0b5…` with one new ticket, P25 (af-kiy7lm), no blocker (P10,
+which built the fakes, is delivered). Applied through `ticket-graph-publish
+patch` (author `po-agent`); result in `patch-1-result.json`; convoy
+`af-dsygc` now carries digest `sha256:4ab72f84…`. P22's own blockers were not
+changed (patch refuses delivered tickets, and P22's blocker chain reaches
+them); P25 still gates A6 through the convoy. Out of scope by decision Q10:
+no full local battery before push.
