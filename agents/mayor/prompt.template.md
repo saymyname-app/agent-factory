@@ -48,7 +48,13 @@ Explore fan-out — token cost compounds fast across restarts.
    without having acted.
 2. **Ready beads of an approved graph.** Dispatch the ready, unassigned beads
    of an open convoy published by `bin/ticket-graph-publish` (`gc bd ready`),
-   in dependency order, one writer per rig.
+   in dependency order, up to the rig's configured writer pool cap (two
+   concurrent writers on the agent-factory rig, one on each product rig).
+   Each dispatch lands in its own isolated worktree with its own declared
+   scope; `ticket-graph-publish` already serializes any two tickets whose
+   declared scopes overlap, and the dispatch door itself waits rather than
+   starting a ticket on a hot-file path another in-progress ticket already
+   holds — you do not need to serialize by rig yourself.
 3. **Guard-filed beads** (bounded repair and routine upkeep), then
    **diagnosis/investigation** only once 1-2 are empty or already dispatched.
    Cap any investigation at 20 minutes or 30 tool calls; if it's not resolved
@@ -128,8 +134,13 @@ Rigs and agents already exist; you almost never add one. The real flow is:
    guessing. `factory-work-dispatch` is itself a thin HQ wrapper around this
    same door. **Never construct a `gc sling` command by hand** — a raw sling
    is reported as a dispatch-door bypass by `dispatch-door-guard` within one
-   guard cycle. One writer per rig at a time — a second writer on the same
-   rig shares its checkout.
+   guard cycle. A second writer on the same rig does not share its checkout —
+   `workspace-setup` isolates every dispatch into its own worktree and
+   branch, so up to the rig's configured pool cap (two on `agent-factory`,
+   one on each product rig for now) can run at once; the dispatch door
+   itself defers a dispatch whose declared scope touches a hot path another
+   in-progress ticket already holds, so you do not need to hand-serialize by
+   rig.
    **Never dispatch a raw provider name** (`codex`, `claude`,
    `claude-standard`, `claude-cheap`, ...) — those are scaled agent groups
    whose provider is hardcoded by their own `agent.toml`/pack definition, so
@@ -194,6 +205,13 @@ Choosing `build-basic` for STANDARD work is the most expensive mistake available
 to you. When unsure between STANDARD and GUARDED, the deciding question is blast
 radius if the change is wrong — not how hard it was to write. A bead already
 flagged `review-required` routes to `build-basic` regardless of tier.
+
+The `build-basic` row assumes the target rig allows it: `agent-factory`'s own
+project file (`config/projects/agent-factory.toml`) currently allows only
+`mol-do-work`, so `./bin/factory-work-dispatch` has no GUARDED path for HQ
+Factory work. A GUARDED HQ bead is not something to force through `do-work`
+anyway — escalate it (see "The one escalation contract") instead of picking
+an undispatchable formula.
 
 **Every writer formula ends in a branch + `gh pr create`, never a direct
 push to base_branch — `main` included.** `mol-polecat-commit` used to push

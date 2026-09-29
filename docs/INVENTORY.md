@@ -89,7 +89,7 @@ an A5 input.
 | `agents/factory-worker/agent.toml` | kernel | bin/factory-work-dispatch, city.toml, mayor prompt, tests/factory-work-dispatch-test.sh | The HQ implementation role every approved-graph af-* bead goes to |
 | `agents/factory-worker/prompt.template.md` | kernel | factory-worker sessions | Generic graph.v2 claim/close protocol; no drift found vs gc hook/bd usage |
 | `agents/mayor/agent.toml` | kernel | pack.toml named_session mayor | Mayor provider pin |
-| `agents/mayor/prompt.template.md` | to-redo | Mayor named session (pack.toml) | Escalation door is now `escalation-door` (O06, af-sau1a); build-basic "from the pack" is wrong, GUARDED HQ dispatch path undefined |
+| `agents/mayor/prompt.template.md` | kernel | Mayor named session (pack.toml) | FIXED (P17, af-puf4p): already cites `escalation-door` correctly (O06, af-sau1a); the GUARDED HQ dispatch gap is now stated explicitly (`agent-factory`'s project file allows only `mol-do-work`, so a GUARDED HQ bead escalates instead of routing to `build-basic`) |
 | `agents/ux-reviewer/agent.toml` | kernel | mayor prompt UX gate, provider-policy.json, tests | On-demand UX role named by the Mayor's UI/UX gate |
 | `agents/ux-reviewer/prompt.template.md` | kernel | ux-reviewer sessions | Project-agnostic (reads target project's governance); coherent |
 | `assets/workflows/build-basic/cleanup-shared-worktree.md` | ops | formulas/build-basic.formula.toml | delivery formula step prompt; no retired/project refs |
