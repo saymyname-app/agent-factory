@@ -278,9 +278,14 @@ referential integrity between `legacy/docs/products/saymyname/DECISIONS.md` and
 before the commit reached `main`; Factory CI (which also runs `on: push` to
 `main`, see `.github/workflows/ci.yml`) only reported it after the fact, and
 both CI and the live cockpit stayed broken for hours before it was noticed.
-This repository cannot use GitHub branch protection or a required check —
-private repo, no GitHub Pro, `403` on the branches API — so a local gate is
-the available mechanism, not a fallback choice.
+At the time (2026-09-16) this repository could not use GitHub branch
+protection or a required check — private repo, no GitHub Pro, `403` on the
+branches API — so a local gate was the available mechanism, not a fallback
+choice. Ruleset `AF-main-protection` exists since 2026-09-17 and is now
+read/write with the Factory's token (see "Merge safety — `main` requires
+up-to-date branches" below); this local gate remains the only mechanism for
+the guarded local test suite itself, which a GitHub required check does not
+run.
 
 The gate runs `bin/ci-run-tests` — the same discovery CI itself runs (every
 `tests/*.py|*.sh` file, minus anything marked `# ci: local-only`) — so it can
@@ -298,6 +303,54 @@ Emergency bypass is the standard git escape hatch, `git push --no-verify` —
 this is a local convenience gate, not a security boundary. See ADR-0020 for
 the full decision record and `tests/factory-main-gate-test.sh` for the proof
 that it actually blocks a broken push and never blocks anything else.
+
+## Merge safety — `main` requires up-to-date branches (P05, af-yl964)
+
+**As of 2026-09-29, ruleset `AF-main-protection` on `saymyname-app/agent-factory`
+requires PRs to be up to date with `main` before merge**
+(`strict_required_status_checks_policy: true`), and the repo setting
+`allow_update_branch: true` lets `gh pr update-branch` catch a PR up.
+Applied and read back once by `bin/enable-strict-main-protection`
+(A6 Planning Run, `docs/planning/parallel-delivery/decisions-log.md` Q4).
+
+This closes the gap P04 (`bin/pr-autopilot`, af-s6lef) could only work
+around: before this change a PR could merge onto `main` while BEHIND, so two
+PRs each green against an older `main` could combine into a red `main`
+without ever conflicting textually. P04 already never arms a BEHIND PR and
+updates the oldest BEHIND PR one per tick — this ruleset flip is what makes
+that mechanism load-bearing instead of optional, by making GitHub itself
+refuse a BEHIND merge.
+
+This is a poor-man's merge queue, not GitHub's merge queue: the org's plan
+does not confirm GitHub Enterprise Cloud, which the real merge queue
+requires on a private repo, so no spend was made (decision Q4). `main`
+going red from two independently-green-but-combined PRs stays possible only
+if pr-autopilot's per-tick update-branch step itself races a second
+concurrent merge — not addressed here.
+
+**Scope:** `saymyname-app/agent-factory` only. `bin/enable-strict-main-protection`
+refuses any other `--repo` before making a single `gh api` call.
+Say-my-name-back's `SMN-back-dev-protection` and Say-my-name-front's
+`SMN-front-dev-protection` rulesets, and both repos' `allow_update_branch`,
+are untouched by design (SayMyName repos' GitHub settings are out of scope
+per the ticket's safety contract).
+
+**Idempotent:** re-running the script reads the live ruleset and repo
+setting first and only writes what is not already applied; a second run
+against an already-applied repo makes no write call.
+
+**Rollback (one command):**
+
+```
+bin/enable-strict-main-protection --rollback
+```
+
+This sets `strict_required_status_checks_policy` and `allow_update_branch`
+back to `false` — the values recorded live on 2026-09-29 before this script
+first ran (`docs/planning/parallel-delivery/facts.md`).
+
+See `tests/enable-strict-main-protection-test.sh` for the proof (idempotent,
+scope-guarded, rollback) against a faked `gh`.
 
 ## Real-PII containment — CI structural backstop (af-6eqc)
 
