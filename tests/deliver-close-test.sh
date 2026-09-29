@@ -214,4 +214,46 @@ call=$(<"$CALL_LOG")
 [[ $call == *"gc.ci_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]] \
   || fail_test "verified linked PR close missing exact-head CI proof"
 
+# O01/P24: a repo named only in a config/projects/*.toml file (never
+# hardcoded in deliver-close) has its required CI workflow resolved
+# automatically via project_registry -- proves the --repo/--pr form's
+# lookup is genuinely config-driven, not a stale hardcoded SayMyName case.
+SYNTHETIC_ROOT=$(mktemp -d)
+trap 'rm -f "$CALL_LOG"; rm -rf "$SYNTHETIC_ROOT"' EXIT
+mkdir -p "$SYNTHETIC_ROOT/config/projects"
+cat > "$SYNTHETIC_ROOT/config/projects/synthetic-project.toml" <<'TOML'
+rig_dir = "rigs/synthetic-project"
+repo = "synthetic-org/synthetic-repo"
+protected_branch = "dev"
+required_ci = "Factory CI"
+TOML
+
+run_auto() {
+  local scenario=$1
+  shift
+  : > "$CALL_LOG"
+  DELIVER_SCENARIO="$scenario" \
+    GC_BIN="$FIXTURE_ROOT/gc" \
+    GH_BIN="$FIXTURE_ROOT/gh" \
+    DELIVER_CLOSE_CALL_LOG="$CALL_LOG" \
+    FACTORY_ROOT="$SYNTHETIC_ROOT" \
+    "$SCRIPT" "$@"
+}
+
+TESTS_RUN=$((TESTS_RUN + 1))
+run_auto merged af-outcome --repo synthetic-org/synthetic-repo --pr 42 >/dev/null \
+  || fail_test "a repo known only via config/projects should auto-resolve its required workflow and close"
+call=$(<"$CALL_LOG")
+[[ $call == *"gc.required_ci_workflow=Factory CI"* ]] \
+  || fail_test "auto-resolved required workflow missing from Beads write: $call"
+[[ $call == *"gc.github_repo=synthetic-org/synthetic-repo"* ]] \
+  || fail_test "auto-resolved close missing repo field: $call"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if output=$(run_auto merged af-outcome --repo unknown-org/unknown-repo --pr 42 2>&1); then
+  fail_test "a repo named in no project file and no --required-workflow should refuse to close"
+fi
+[[ $output == *"--required-workflow is required for unknown-org/unknown-repo"* ]] \
+  || fail_test "unresolvable-repo refusal did not name the repo: $output"
+
 printf 'PASS: %d deterministic deliver-close checks\n' "$TESTS_RUN"

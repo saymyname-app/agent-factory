@@ -8,15 +8,13 @@
 # is genuinely merged. Nothing used to check the door OUT — a raw
 # `gc bd close` bypasses deliver-close entirely, which is exactly what
 # happened to delivery bead af-7700 on 2026-09-16: closed with none of the six
-# fields set, which silently blocked the then-live campaign status and
-# product-status readers (both retired since; they read those fields off the
-# last delivered bead) for about half a day before anyone noticed.
+# fields set, which went unnoticed for about half a day.
 #
 # This is the missing check on the way out. It lists every CLOSED bead
 # labelled product-goal (the label the rest of the Factory already uses to
-# mean "delivery/goal outcome") in the city and
-# in the SayMyName rigs, and for each one missing a proof field
-# (lib/factory_delivery_proof.py holds the exact rules):
+# mean "delivery/goal outcome") in the city and in every rig
+# config/projects/*.toml names (lib/project_registry.sh), and for each one
+# missing a proof field (lib/factory_delivery_proof.py holds the exact rules):
 #
 #   - if the bead already names a GitHub repo + PR number, independently
 #     verify with `gh pr view` — the same check bin/deliver-close performs —
