@@ -560,7 +560,17 @@ else
   PRUNED=$(git worktree prune -v 2>&1 | grep -c . || true)
   [ "${PRUNED:-0}" -gt 0 ] && did "pruned ${PRUNED} dangling worktree registration(s)"
 fi
-STALE=0; LIVE_WT=0; WT_UNKNOWN=""
+STALE=0; LIVE_WT=0; FRESH_WT=0; WT_UNKNOWN=""
+# A brand-new worktree is not a finished one (2026-09-29). A clean branch just
+# cut from origin/main IS an ancestor of origin/main, so it read as "already
+# in origin/main" and was removed within one 5-minute tick of its creation,
+# before its owner's first commit. Grace: a worktree younger than this (its
+# .git file is written once, by `git worktree add`) whose branch has no
+# commit of its own (the branch reflog still holds only its creation entry)
+# is left alone. A branch with commits of its own is judged as before,
+# whatever its age; a commit-less one is cleaned once the grace has passed.
+WT_GRACE="${FACTORY_GUARD_WORKTREE_GRACE_SECONDS:-7200}"
+WT_NOW=$(date +%s)
 while read -r wt; do
   [ -z "$wt" ] && continue
   [ "$wt" = "$ROOT" ] && continue
@@ -571,6 +581,11 @@ while read -r wt; do
   [ "$br" = "HEAD" ] && continue
   # Uncommitted work means someone may still be in there: never call it stale.
   [ "$(git -C "$wt" status --porcelain 2>/dev/null | wc -l)" != "0" ] && continue
+  wt_born=$(stat -c %Y "$wt/.git" 2>/dev/null || echo 0)
+  if [ $((WT_NOW - wt_born)) -lt "$WT_GRACE" ] \
+     && [ "$(git reflog show --format=%H "refs/heads/$br" -- 2>/dev/null | wc -l)" -le 1 ]; then
+    FRESH_WT=$((FRESH_WT+1)); continue
+  fi
   # A squash merge does NOT make the branch an ancestor of main, so asking git
   # alone would miss every branch this repo actually merges. The PR state is
   # the authoritative answer; the ancestor test only covers the fast-forward
@@ -610,7 +625,7 @@ while read -r wt; do
   fi
 done < <(git worktree list --porcelain | awk '/^worktree /{print $2}')
 if [ "$STALE" = "0" ] && [ -z "$WT_UNKNOWN" ]; then
-  say "✓ worktrees — $LIVE_WT human worktree(s), none pinning a merged branch"
+  say "✓ worktrees — $LIVE_WT human worktree(s)$([ "$FRESH_WT" -gt 0 ] && echo " ($FRESH_WT brand-new, in grace)"), none pinning a merged branch"
 fi
 
 # --- 6b. runtime worktrees, whichever repo they belong to (O05) --------------

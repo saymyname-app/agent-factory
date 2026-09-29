@@ -93,6 +93,35 @@ out=$(FACTORY_ROOT="$TMP/repo" "$GUARD" 2>&1 || true)
 [ -d "$TMP/wt2" ] || fail "guard removed a worktree that had uncommitted work"
 git worktree remove --force "$TMP/wt2"
 
+# --- a brand-new clean worktree cut from origin/main is NOT stale (2026-09-29):
+#     it is an ancestor of origin/main, which used to read as "already merged"
+#     and got it removed within 5 minutes, before its owner's first commit ----
+git fetch -q origin
+git worktree add -q "$TMP/wt3" -b feat/fresh origin/main
+out=$(FACTORY_ROOT="$TMP/repo" "$GUARD" --check-only 2>&1 || true)
+grep -q "still pins 'feat/fresh'" <<<"$out" && { printf '%s\n' "$out" >&2; fail "--check-only flagged a brand-new worktree as stale"; }
+out=$(FACTORY_ROOT="$TMP/repo" "$GUARD" 2>&1 || true)
+[ -d "$TMP/wt3" ] || { printf '%s\n' "$out" >&2; fail "guard removed a brand-new worktree inside its grace period"; }
+grep -q "worktrees — 1 human worktree(s) (1 brand-new, in grace)" <<<"$out" \
+  || { printf '%s\n' "$out" >&2; fail "guard did not report the brand-new worktree as in grace"; }
+
+# --- past the grace period, the same commit-less merged worktree is cleaned --
+touch -d '3 hours ago' "$TMP/wt3/.git"
+out=$(FACTORY_ROOT="$TMP/repo" "$GUARD" 2>&1 || true)
+grep -q "FIXED: removed stale worktree '$TMP/wt3' (feat/fresh: already in origin/main)" <<<"$out" \
+  || { printf '%s\n' "$out" >&2; fail "guard did not clean an old commit-less merged worktree"; }
+[ -d "$TMP/wt3" ] && fail "old merged worktree directory still exists after the guard run"
+
+# --- a young worktree whose OWN commits are already in origin/main (fast-forward
+#     merge) is truly finished: the grace does not protect it -----------------
+git worktree add -q "$TMP/wt4" -b feat/ff origin/main
+( cd "$TMP/wt4" && echo four > file && git commit -qam four && git push -q origin HEAD:main )
+git fetch -q origin
+out=$(FACTORY_ROOT="$TMP/repo" "$GUARD" 2>&1 || true)
+grep -q "FIXED: removed stale worktree '$TMP/wt4' (feat/ff: already in origin/main)" <<<"$out" \
+  || { printf '%s\n' "$out" >&2; fail "grace wrongly protected a young worktree whose own commits are merged"; }
+[ -d "$TMP/wt4" ] && fail "merged worktree with its own commits still exists after the guard run"
+
 # --- and it must go quiet once the worktree is gone --------------------------
 out=$(FACTORY_ROOT="$TMP/repo" "$GUARD" --check-only 2>&1 || true)
 grep -q "still pins" <<<"$out" && fail "guard still complains after the worktree was removed"
