@@ -148,3 +148,38 @@ Mechanism (PO interpretation):
    ntfy app subscribed to the new topic; Tailscale always-on on the iPhone;
    `tailscale serve` on Windows publishing the cockpit to the tailnet only
    (never `funnel`).
+
+## Round 5 — 2026-09-29 (after Spec and graph approval)
+
+Intent (Benjamin): « j'approuve le plan de tickets C01 mais pourquoi
+absolument attendre A6 et attendre demain ? j'ai pas le temps d'attendre
+aussi est ce que l'UI UX est pris en compte dans ces tickets dans
+l'implementation de l'usine ? par exemple , on a pas fait de prototype etc.
+Aussi j'ai eu ce hint avec un test que je viens de faire sur saymyname: le
+site vitrine que l'usine avait faite pour l'app saymyname est absolument
+horriblement moche. » then, on the PO's options: « A oui, B oui ».
+
+Mechanism (PO interpretation):
+1. A — publish C01 now, without waiting for A6 to close. Amends SayMyName
+   decision 23. Reason: A6's last batch merged 14:04, so the 2 workers are
+   idle and P22's 24 h window proves little without work; C01 gives it
+   real parallel load. Accepted consequence: if a C01 merge breaks `main`
+   or makes an order fail, P22's window restarts.
+2. B — UI/UX gate. (a) K00: a throwaway clickable HTML prototype of the
+   cockpit (home in 3 zones, a project page with the kanban, answering an
+   option), synthetic data, made by the PO with Benjamin and approved by
+   him on PC and iPhone; it fixes the visual baseline (type, colours,
+   spacing, dark mode). (b) Every ticket that renders UI waits for K00 and
+   shows phone-width and desktop-width screenshots in its PR; the reviewer
+   compares them with the prototype and escalates visible deviations.
+   (c) General rule for any project: a ticket that renders UI requires an
+   operator-approved prototype ticket among its blockers and screenshots in
+   its PR (enforced at publish). Class: SayMyName's showcase site was
+   delivered with no prototype, no design baseline, no visual acceptance.
+3. Planning method gap (PO finding, not yet decided): this run used the
+   `grilling` skill and a read-only fact agent, not Matt Pocock's
+   `wayfinder` (not installed; Factory `wayfinding-run` only keeps a
+   decision map). No research or prototype step exists in the Planning Run
+   flow. For C01: K00 is the prototype; a sourced research on ntfy / iOS /
+   `tailscale serve` runs now (research.md). For the method: a proposal
+   bead, Benjamin decides.

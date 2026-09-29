@@ -4,19 +4,19 @@ artifact:
   labels:
   - approved-ticket-graph
   - c01-cockpit
-  state: APPROVED_TICKET_GRAPH_DRAFT
-  approved_by: Benjamin
-  content_digest: sha256:4efe99666f995811a65cff6206c28dab051b74dfa90e1155c0445f9a7efbe3e1
+  state: TICKET_GRAPH_DRAFT
+  approved_by: null
+  content_digest: sha256:14a27eb1811ad3ef522dcc5adbed61cd72ead9dc7474eed428de2dedb0628887
   digest_scope: UTF-8 bytes from the legacy_boundary key through end of file, with LF line endings
   source_spec:
     id: spec-c01-cockpit-2026-09-29
     state: APPROVED_SPEC
-    digest: sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b
+    digest: sha256:6793899fbbca2c3bc139a53a92b4ab1ebf504508422e8a16b07ed35059d5dda2
   method_baseline:
     skill: Matt Pocock /to-tickets (Factory adaptation)
-  publication_authorized: true
-  publication_authorized_by: Benjamin
-  approval_evidence: "live chat 2026-09-29 « j'approuve le plan de tickets C01 » on digest sha256:4efe99666f995811a65cff6206c28dab051b74dfa90e1155c0445f9a7efbe3e1"
+  publication_authorized: false
+  publication_authorized_by: null
+  approval_evidence: null
 
 legacy_boundary:
   quarantine_read_only_evidence:
@@ -45,6 +45,11 @@ global_execution_contract:
   plain_language: >-
     Every text shown to the operator comes from a message catalogue in the operator's configured
     language (French for this operator); ids and codes appear only in folded details (Spec Q15).
+  ui_gate: >-
+    A ticket marked `renders_ui: true` starts only after K00 (the operator-approved prototype); its
+    PR shows phone-width (390 px) and desktop-width screenshots of every screen it changes, rendered
+    from synthetic data; the reviewer compares them with the approved prototype and escalates any
+    visible deviation instead of accepting it.
   repair: Technical repair stays inside the ticket; behaviour or topology change raises a Planning Exception.
   safety: >-
     No production, real sending, external publication, spend, unrecoverable destruction or wider
@@ -54,6 +59,28 @@ global_execution_contract:
     never carry bead bodies, agent free text, product data or a real person's data; the ntfy topic
     is never committed, logged or printed.
 tickets:
+- id: K00
+  kind: prototype
+  title: Cockpit prototype approved by Benjamin fixes the visual baseline
+  display_title: Maquette du cockpit validée par Benjamin (référence visuelle)
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - docs/planning/c01-cockpit/prototype/**
+  what_it_delivers: >-
+    Run by the PO agent with Benjamin, never by a worker. A throwaway clickable HTML prototype
+    (standard HTML/CSS only, synthetic data, no real person's data) of the home page in three zones,
+    a project page with roadmap and read-only kanban, the journal, and answering a prepared option,
+    viewed by Benjamin on the PC and the iPhone and iterated until he approves it. The approved
+    version is committed with a short baseline note (typography, colours, spacing, light and dark
+    mode, iPhone layout) that K02, K04, K09, K10, K14 and K15 follow. Evidence: Benjamin's approval
+    quoted with its date in docs/planning/c01-cockpit/prototype/APPROVAL.md.
+  acceptance_criteria:
+  - "Benjamin's approval of the prototype is quoted with its date."
+  - "The baseline note names the fonts, colour tokens, spacing scale and both colour modes."
+  - "The prototype contains only synthetic data."
 - id: K01
   kind: prefactor
   title: Escalations to Benjamin can carry prepared options
@@ -82,7 +109,9 @@ tickets:
   kind: vertical_slice
   title: Cockpit service shows what waits for Benjamin, live, from the NEEDS BENJAMIN list
   display_title: Le cockpit affiche en direct ce qui attend Benjamin
+  renders_ui: true
   blocked_by:
+  - K00
   - K01
   target_rigs:
   - agent-factory
@@ -112,6 +141,7 @@ tickets:
     bin/cockpit*, lib/cockpit/, the watcher or the heartbeat invokes a model or an agent CLI (codex,
     claude, gc session/sling/nudge). Files: see scope.
   acceptance_criteria:
+  - "The PR shows phone-width and desktop-width screenshots of every changed screen, matching the K00 prototype (reviewer check)."
   - "Test: the page lists the same NEEDS BENJAMIN items as a faked `escalation-door list --json`, with source and check time."
   - "Test: with the source failing, the block shows the 'inconnu' text and no item; with no item, the explicit empty text."
   - "Test: the server binds 127.0.0.1 only; the static no-model-call check fails on a planted `codex` call and passes on the real tree."
@@ -150,7 +180,9 @@ tickets:
   kind: vertical_slice
   title: Benjamin answers a prepared option from the cockpit, with a trace, or continues with an agent
   display_title: Répondre à une option depuis le cockpit (tracé), ou continuer avec un agent
+  renders_ui: true
   blocked_by:
+  - K00
   - K02
   target_rigs:
   - agent-factory
@@ -174,6 +206,7 @@ tickets:
     the mitigations (identity recorded, every action visible in the journal, no Factory code may call
     the action endpoint -- enforced by a check). Files: see scope.
   acceptance_criteria:
+  - "The PR shows phone-width and desktop-width screenshots of every changed screen, matching the K00 prototype (reviewer check)."
   - "Test: clicking an option runs `escalation-door answer` once with the option, identity and 'cockpit'; the item disappears on reload."
   - "Test: a GET or a POST without the page token changes nothing."
   - "Test: the ready prompt contains the item's what/why/ids and no bead body free text beyond the escalation reason."
@@ -293,7 +326,9 @@ tickets:
   kind: vertical_slice
   title: Home screen in three zones, with a journal, and nothing that is neither action nor progress
   display_title: Accueil en trois zones, avec journal, sans bruit
+  renders_ui: true
   blocked_by:
+  - K00
   - K04
   - K08
   target_rigs:
@@ -315,6 +350,7 @@ tickets:
     time and any action taken (read from events, not from a cockpit copy); technical details folded.
     Layout usable on an iPhone screen. Files: see scope.
   acceptance_criteria:
+  - "The PR shows phone-width and desktop-width screenshots of every changed screen, matching the K00 prototype (reviewer check)."
   - "Replay of the night fixture: the home page has no duplicate line and no resolved item; its line count is recorded in the PR."
   - "Test: a resolved condition appears in the journal with its resolution time and not on the home page."
   - "Test: each block still shows source and check time, or 'inconnu'."
@@ -322,7 +358,9 @@ tickets:
   kind: vertical_slice
   title: Other actions without an agent -- alerts, proposals, paused sessions
   display_title: Autres actions sans agent -- alertes, propositions, sessions en pause
+  renders_ui: true
   blocked_by:
+  - K00
   - K09
   target_rigs:
   - agent-factory
@@ -340,6 +378,7 @@ tickets:
     session paused by the loop guard through `factory-session-loop-guard resume`. Nothing else is
     actionable; every other item offers 'continuer avec un agent'. Files: see scope.
   acceptance_criteria:
+  - "The PR shows phone-width and desktop-width screenshots of every changed screen, matching the K00 prototype (reviewer check)."
   - "Test per action: the door is called once with the identity and 'cockpit'; one event is written; a replayed POST changes nothing."
   - "Test: rejecting without a reason is refused."
   - "Test: no action exists for Spec or graph approval or any owner-tier item."
@@ -421,7 +460,9 @@ tickets:
   kind: vertical_slice
   title: Project cards and project pages with roadmap, read-only kanban and history
   display_title: Cartes et pages projet -- feuille de route, kanban en lecture, historique
+  renders_ui: true
   blocked_by:
+  - K00
   - K09
   - K12
   - K13
@@ -445,6 +486,7 @@ tickets:
     the original title marked as such. No editing, no drag and drop; 'continuer avec un agent' on each
     card. Files: see scope.
   acceptance_criteria:
+  - "The PR shows phone-width and desktop-width screenshots of every changed screen, matching the K00 prototype (reviewer check)."
   - "Test: for a synthetic convoy, each ticket lands in the right column from faked bd/gh output; molecules and mails never appear."
   - "Test: a synthetic third project shows its card and page from its profile alone."
   - "Test: a card without display_title shows the original title with the fallback marker."
@@ -452,7 +494,9 @@ tickets:
   kind: vertical_slice
   title: A due ritual becomes one notification and an item Benjamin can run with an agent or postpone
   display_title: Un rituel dû devient une notification et une ligne à lancer ou reporter
+  renders_ui: true
   blocked_by:
+  - K00
   - K10
   - K12
   target_rigs:
@@ -468,6 +512,7 @@ tickets:
     (traced event with a date; the item returns after it). Rituals are still run only on Benjamin's
     choice (decision 11). Files: see scope.
   acceptance_criteria:
+  - "The PR shows phone-width and desktop-width screenshots of every changed screen, matching the K00 prototype (reviewer check)."
   - "Test: a faked DUE line gives one notification and one item; the same DUE on later ticks gives none."
   - "Test: 'reporter' hides the item until the chosen date and writes one event."
   - "Test: a status command that fails or times out shows 'inconnu' for rituals, never an old value."
@@ -481,6 +526,7 @@ tickets:
   - K11
   - K14
   - K15
+  - K18
   target_rigs:
   - agent-factory
   scope:
@@ -521,3 +567,30 @@ tickets:
   - "closing-proof.md shows the 3 days with the measures above and no duplicate notification."
   - "Benjamin's declaration is quoted with its date."
   - "The graph is delivered and closed."
+- id: K18
+  kind: prefactor
+  title: Any ticket that renders UI needs an approved prototype and screenshots (all projects)
+  display_title: Tout ticket d'interface exige une maquette validée et des captures (tous projets)
+  blocked_by:
+  - K13
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/ticket-graph-publish
+    - tests/ticket-graph-publish*
+    - docs/PLANNING_RUN_ROUTER.md
+    - docs/UI_GATE.md
+  what_it_delivers: >-
+    A ticket may declare `renders_ui: true`; ticket-graph-publish refuses (validate, publish and
+    patch) a draft in which such a ticket has no ticket of kind `prototype` among its transitive
+    blockers, with an operator-readable reason, and stores gc.renders_ui on the published bead.
+    docs/UI_GATE.md states the rule for every project: the prototype is approved by the operator
+    before UI tickets start; each UI PR carries phone-width and desktop-width screenshots from
+    synthetic data; the reviewer compares them with the approved prototype and escalates visible
+    deviations. The planning docs tell the to-tickets step to mark UI tickets and add the prototype
+    ticket. Files: see scope.
+  acceptance_criteria:
+  - "Test: a draft with a `renders_ui` ticket and no prototype ancestor is refused; with one, it publishes and the bead carries gc.renders_ui."
+  - "Test: drafts without `renders_ui` publish unchanged."
+  - "docs/UI_GATE.md is linked from the planning docs and names the reviewer's check."

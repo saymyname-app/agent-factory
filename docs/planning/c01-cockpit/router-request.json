@@ -4,9 +4,5 @@
   "session": "docs/planning/c01-cockpit/planning-session.json",
   "city_registry": "docs/planning/c01-cockpit/city-registry.json",
   "spec_out": "docs/planning/c01-cockpit/spec",
-  "planning_run_target": "C01",
-  "approval": {
-    "approved_by": "Benjamin",
-    "evidence": "live chat 2026-09-29 « j'approuve la Spec C01 » on digest sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b"
-  }
+  "planning_run_target": "C01"
 }

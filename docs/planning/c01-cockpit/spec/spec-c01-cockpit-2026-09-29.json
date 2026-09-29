@@ -1,32 +1,19 @@
 {
-  "approved_by": "Benjamin",
-  "approved_digest": "sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b",
-  "approved_evidence": "live chat 2026-09-29 \u00ab j'approuve la Spec C01 \u00bb on digest sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b",
-  "content_digest": "sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b",
+  "content_digest": "sha256:6793899fbbca2c3bc139a53a92b4ab1ebf504508422e8a16b07ed35059d5dda2",
   "contract": "agent-factory-planning-run-spec/v1",
-  "history": [
-    {
-      "approved_by": "Benjamin",
-      "at": 1790690842.7095451,
-      "digest": "sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b",
-      "event": "approve",
-      "evidence": "live chat 2026-09-29 \u00ab j'approuve la Spec C01 \u00bb on digest sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b"
-    }
-  ],
-  "section_digests": {
-    "acceptance_evidence": "sha256:8e909565cb2748647347f5dba4cb8edcf86ed742aa8cd145299247f331abced7",
-    "behavior": "sha256:665d793935f46d8e839d1ef9f8db32efe49755a145c7fb8bd069fe588d6a2426",
-    "boundaries": "sha256:1b2faa77cf75dbebb502dbcc6cfa8d73457b3aaa29fdbd626c87e8722f8fc09d",
-    "decisions": "sha256:cf041e7fea15918d8e82a05120e33a722c9d9180746f78db89a7644e6464f6b5",
-    "experiments": "sha256:97186eeee599aeb7c0a95d96ac7137992cd90324c0cd8292e460afe5c2324bd0",
-    "non_objectives": "sha256:1b8dd3317dfde068f540f496b817264568a30523a36e6dacd13826f4e714f747",
-    "provenance": "sha256:078a2483a1950761c844ced582df44bfd02edc6881c4d423bf06ca3e1e4ef3e8"
-  },
   "sections": {
     "acceptance_evidence": [
       {
         "confirmed_by": "Benjamin",
         "statement": "Mobile slice: a synthetic NEEDS BENJAMIN item with prepared options produces one ntfy notification on the iPhone; tapping it opens the cockpit item over Tailscale; answering an option executes through the escalation door and writes the trace (Benjamin, via cockpit, device, Paris time) in the bead and in gc events."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "The prototype is approved by Benjamin in the live chat (quoted with its date) before any UI ticket starts; each UI ticket's PR shows phone-width and desktop-width screenshots matching it."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Test: ticket-graph-publish refuses a draft in which a ticket declared as rendering UI has no approved prototype ticket among its blockers."
       },
       {
         "confirmed_by": "Benjamin",
@@ -192,7 +179,15 @@
       },
       {
         "confirmed_by": "Benjamin",
-        "statement": "The graph is published only after A6 closes (A6's P22 verification ticket closed), so A6's 24 h two-worker proof is not mixed with C01 tickets (decision 23)."
+        "statement": "The graph is published as soon as Benjamin approves it, without waiting for A6 to close (amends SayMyName decision 23; round 5 \u00ab A oui \u00bb): A6's workers are idle after its last batch, so C01 gives P22's 24 h window real parallel work. Accepted consequence: if a C01 merge breaks main or makes an order fail, P22's window restarts."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "UI/UX gate (round 5 \u00ab B oui \u00bb): before any ticket that renders the cockpit UI, a throwaway clickable prototype (home in three zones, a project page with the kanban, answering an option; synthetic data) is made by the PO with Benjamin and approved by him on PC and iPhone; it fixes the visual baseline (typography, colours, spacing, dark mode). Every UI ticket shows phone-width and desktop-width screenshots in its PR; the reviewer compares them with the approved prototype and escalates any visible deviation."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "General rule for every project (class fix: SayMyName's showcase site was delivered with no prototype, no design baseline and no visual acceptance): a ticket that renders UI declares it in the ticket graph and must have an operator-approved prototype ticket among its blockers, and its PR carries phone-width and desktop-width screenshots checked by the reviewer against the prototype (round 5 \u00ab B oui \u00bb)."
       }
     ],
     "experiments": [
@@ -222,7 +217,7 @@
     "provenance": [
       {
         "confirmed_by": "Benjamin",
-        "statement": "Intent: Benjamin, SayMyName decisions 6 (2026-09-25, ntfy need kept: \u00ab Je veux continuer \u00e0 avoir un syst\u00e8me de notifications ntfy. Mais son utilisation devra \u00eatre revue en m\u00eame temps que le cockpit \u00bb), 11 (ritual reminders become notifications), 18 (NEEDS BENJAMIN list and proposal count move from session start into the cockpit) and 23 (C01 before B1, graph published only after A6 closes). Grilled with the PO on 2026-09-29 in four rounds (Q1-Q26 plus the kanban discussion); exact answers in decisions-log.md; recap confirmed \u00ab Q24 \u00e0 Q26 ok, lance le router \u00bb."
+        "statement": "Intent: Benjamin, SayMyName decisions 6 (2026-09-25, ntfy need kept: \u00ab Je veux continuer \u00e0 avoir un syst\u00e8me de notifications ntfy. Mais son utilisation devra \u00eatre revue en m\u00eame temps que le cockpit \u00bb), 11 (ritual reminders become notifications), 18 (NEEDS BENJAMIN list and proposal count move from session start into the cockpit) and 23 (C01 before B1; its 'publish after A6 closes' part amended in round 5). Grilled with the PO on 2026-09-29 in four rounds (Q1-Q26 plus the kanban discussion); exact answers in decisions-log.md; recap confirmed \u00ab Q24 \u00e0 Q26 ok, lance le router \u00bb. A first Spec (sha256:fada0d2e\u2026) was approved, then amended in round 5 (publish now; UI/UX gate) after Benjamin's questions \u00ab pourquoi absolument attendre A6 \u00bb and \u00ab est ce que l'UI UX est pris en compte \u00bb and his answer \u00ab A oui, B oui \u00bb."
       },
       {
         "confirmed_by": "Benjamin",
@@ -232,5 +227,5 @@
   },
   "session_id": "c01-cockpit-2026-09-29",
   "spec_id": "spec-c01-cockpit-2026-09-29",
-  "state": "APPROVED_SPEC"
+  "state": "DRAFT_SPEC"
 }
