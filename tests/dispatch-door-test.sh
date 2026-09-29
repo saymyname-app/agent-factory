@@ -137,6 +137,21 @@ label_check=$(cat "$CALLS" | sed -n '1p')
 BEAD_LABELS_JSON='[{"labels":[]}]'
 
 # ---------------------------------------------------------------------------
+# 4b. A planning-plane bead (gc.plane=planning: a wayfinder map or decision
+#     ticket, Work Plane in CONTEXT.md) is refused the same way, before any
+#     sling or stamp call. Research af-0aiero.3 (A6b) found the door had no
+#     plane gate: only Mayor prompt prose kept planning beads from dispatch.
+# ---------------------------------------------------------------------------
+: > "$CALLS"
+BEAD_LABELS_JSON='[{"labels":["wayfinder:grilling"],"metadata":{"gc.plane":"planning"}}]'
+if GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" BEAD_LABELS_JSON="$BEAD_LABELS_JSON" "$DOOR" af-fixture --rig agent-factory --formula mol-do-work >/dev/null 2>&1; then
+  fail "dispatched a planning-plane bead"
+fi
+[ "$(wc -l < "$CALLS")" -eq 1 ] \
+  || fail "planning refusal: called gc after the plane check ($(cat "$CALLS"))"
+BEAD_LABELS_JSON='[{"labels":[]}]'
+
+# ---------------------------------------------------------------------------
 # 5. The Mayor prompt names only the door for dispatch (O03 acceptance
 #    criterion): it points at bin/dispatch-door for every rig, and every
 #    remaining `gc sling` mention is a prohibition or an incident citation,
