@@ -47,6 +47,7 @@ done
 RIGS=("${PROTECTED_RIGS[@]}")
 DELIVER_CLOSE_BIN="${DELIVER_CLOSE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/deliver-close}"
 DELIVERY_PROOF_BIN="${DELIVERY_PROOF_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" && pwd -P)/factory_delivery_proof.py}"
+ESCALATION_DOOR_BIN="${ESCALATION_DOOR_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/escalation-door}"
 
 # af-37h58 (P03): RIGS' 4th field (required_ci) is the required GitHub
 # Actions *workflow* name (e.g. "Factory CI") -- retry_ci_failure and
@@ -343,6 +344,96 @@ retry_ci_failure() {  # repo num sha workflow -> 0 retried this pass, 1 flag as 
   return 0
 }
 
+# ---------- P06: DIRTY/red-after-retry returns a ticket to the pool ----------
+# af-elhn7: a factory-worker used to leave a red or conflicted PR behind when
+# it moved on to the next ticket -- nobody watched the PR come back, and a
+# human had to notice and manually re-dispatch it. This reuses the same
+# ticket-lookup RECONCILE already does for a merged PR (linked_work_candidate_for,
+# below) to find the work bead a still-open PR belongs to, so a ticket-owned
+# PR that goes DIRTY, or whose required check is still red after the one
+# automatic retry, is put straight back in the ready pool with a structured
+# rejection reason -- instead of only filing a side "[ci] failed"/"[autopilot]
+# stuck" bead nobody is dispatched to act on. The branch and PR are left
+# exactly as they are: `bin/factory-do-work-workspace enter` is keyed on the
+# same bead id, so the next dispatch resumes the same worktree/branch instead
+# of starting cold. A PR with no linked work bead (a manual/non-ticket PR)
+# falls through to the pre-existing stuck/CI-failure flagging unchanged.
+ensure_rig_all_beads() {  # fetch $RIG_ALL_BEADS_JSON once per rig, lazily
+  [ "$RIG_ALL_BEADS_FETCHED" = "1" ] && return 0
+  RIG_ALL_BEADS_JSON=$(cd "$rig_path" && gc bd list --all --limit 0 --json 2>/dev/null)
+  [ -n "$RIG_ALL_BEADS_JSON" ] || RIG_ALL_BEADS_JSON='[]'
+  RIG_ALL_BEADS_FETCHED=1
+}
+
+linked_work_candidate_for() {  # branch num -> json of the linked work bead, or empty
+  # Same exclusions RECONCILE below relies on: never a bead pr-autopilot itself
+  # filed, never a step-tracking wisp, never a latch/tracking bead (af-6xs2n,
+  # af-q7r0d/B04) -- and prefer a still-open candidate over an already-closed
+  # one on any remaining duplicate match.
+  printf '%s' "$RIG_ALL_BEADS_JSON" \
+    | jq -r --arg b "$1" --arg n "$2" \
+      '[.[]|select((.metadata.source//"")!="pr-autopilot")
+            |select((.metadata["gc.step_ref"]//"")=="")
+            |select((.metadata["gc.kind"]//"") as $k
+                    | ["workflow","scope","check","fanout","scope-check","workflow-finalize"]
+                      | index($k) | not)
+            |select((.metadata["gc.work_branch"]//"")==$b
+                   or (.metadata.pr_number|tostring)==$n)]
+       | sort_by(if .status=="closed" then 1 else 0 end)
+       | .[0] // empty
+       | @json' 2>/dev/null
+}
+
+ensure_base_sha() {  # sets $BASE_SHA (cached per rig per tick) for the "conflict with <base>@<sha>" reason
+  [ -n "$BASE_SHA" ] && return 0
+  BASE_SHA=$(gh api "repos/$repo/commits/$dev" --jq '.sha' 2>/dev/null)
+  [ -n "$BASE_SHA" ] || BASE_SHA="unknown"
+}
+
+reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR), 1 not ticket-owned
+  local repo=$1 rig_path=$2 num=$3 sha=$4 reason=$5
+  local branch candidate bead status marker count
+
+  branch=$(gh pr view "$num" --repo "$repo" --json headRefName --jq .headRefName 2>/dev/null)
+  [ -n "$branch" ] || return 1
+  ensure_rig_all_beads
+  candidate=$(linked_work_candidate_for "$branch" "$num")
+  [ -n "$candidate" ] || return 1
+  bead=$(printf '%s' "$candidate" | jq -r '.id // empty' 2>/dev/null)
+  [ -n "$bead" ] || return 1
+  status=$(printf '%s' "$candidate" | jq -r '.status // empty' 2>/dev/null)
+  case "$status" in
+    open|in_progress) ;;
+    *) return 1 ;;  # closed/terminal -- never reopen an already-delivered ticket
+  esac
+
+  # Idempotent per head: a PR comment names the exact sha so the same
+  # rejection is never counted (or re-mailed) twice while nobody has pushed a
+  # fix for it yet -- the ticket just waits in the pool until it does.
+  marker="pr-autopilot: rejected $bead for ${sha:0:12}"
+  if gh pr view "$num" --repo "$repo" --json comments --jq '.comments[].body' 2>/dev/null \
+    | grep -qF "$marker"; then
+    vlog "PR #$num: already rejected for this head ($bead)"
+    return 0
+  fi
+
+  count=$(( $(printf '%s' "$candidate" | jq -r '.metadata["gc.pr_rejection_count"] // 0' 2>/dev/null) + 1 ))
+  log "  PR #$num: $reason -> reopening ticket $bead to the pool (rejection $count)"
+  run bash -c "cd '$rig_path' && gc bd update '$bead' --status open --assignee '' \
+    --set-metadata 'gc.pr_rejection_reason=$reason' \
+    --set-metadata 'gc.pr_rejection_count=$count' \
+    --append-notes 'pr-autopilot: rejected PR #$num ($reason); rejection $count.'"
+  run gh pr comment "$num" --repo "$repo" --body "$marker: $reason." >/dev/null 2>&1
+
+  if [ "$count" -ge 3 ]; then
+    if ! run "$ESCALATION_DOOR_BIN" mayor "$bead" "PR #$num rejected $count times: $reason" >/dev/null 2>&1; then
+      log "    escalation-door mayor failed for $bead"
+      ERRORS=$((ERRORS+1))
+    fi
+  fi
+  return 0
+}
+
 for entry in "${RIGS[@]}"; do
   if [ "$SECONDS" -ge "$TICK_DEADLINE_SECONDS" ]; then
     log "TICK_TIMEOUT: ${SECONDS}s elapsed (budget ${TICK_DEADLINE_SECONDS}s) -- stopping before $entry, remaining repos wait for the next run"
@@ -378,6 +469,11 @@ for entry in "${RIGS[@]}"; do
   # PR cannot be both "open" and "merged" in the same `gh pr list` snapshot.
   RIG_OPEN_BEADS_JSON=$(cd "$rig_path" && gc bd list --status open --json 2>/dev/null)
   [ -n "$RIG_OPEN_BEADS_JSON" ] || RIG_OPEN_BEADS_JSON='[]'
+  # Lazily fetched by ensure_rig_all_beads only when reject_ticket or the
+  # RECONCILE loop below actually needs it (a DIRTY/red PR, or a merge).
+  RIG_ALL_BEADS_JSON='[]'
+  RIG_ALL_BEADS_FETCHED=0
+  BASE_SHA=""
 
   # ---------- 1. ARM open PRs targeting dev ----------
   open_prs=$(gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
@@ -424,6 +520,12 @@ for entry in "${RIGS[@]}"; do
         vlog "PR #$num: retried once, re-checking next pass"
         continue
       fi
+      # P06: a ticket-owned PR still red after the single retry goes straight
+      # back to the pool with a rejection reason instead of a side bead.
+      if reject_ticket "$repo" "$rig_path" "$num" "$sha" \
+          "required check '$required_check' failed after one retry"; then
+        continue
+      fi
       log "  PR #$num: required checks FAILED -> flagging"
       title="[ci] PR #$num failed required checks on $dev"
       existing=$(printf '%s' "$RIG_OPEN_BEADS_JSON" \
@@ -438,6 +540,17 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
         vlog "PR #$num: failure already tracked"
       fi
       continue
+    fi
+
+    # P06: a ticket-owned PR that went DIRTY (a real merge conflict, never
+    # self-healing the way a pending check does) goes straight back to the
+    # pool with a rejection reason instead of waiting for the generic
+    # two-pass stuck flow below. A non-ticket PR falls through unchanged.
+    if [ "$state" = "DIRTY" ]; then
+      ensure_base_sha
+      if reject_ticket "$repo" "$rig_path" "$num" "$sha" "conflict with $dev@${BASE_SHA:0:12}"; then
+        continue
+      fi
     fi
 
     # af-grln2: a DIRTY/BLOCKED/BEHIND merge state or a PR with no status
@@ -556,11 +669,9 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
   # The work bead now remains in_progress while its PR is under review. Keep
   # the full-history lookup for pre-gate false-close records and historical
   # backfills; it also avoids a race between merge and a status-filtered read.
-  RIG_ALL_BEADS_JSON='[]'
-  if [ -n "$merged" ]; then
-    RIG_ALL_BEADS_JSON=$(cd "$rig_path" && gc bd list --all --limit 0 --json 2>/dev/null)
-    [ -n "$RIG_ALL_BEADS_JSON" ] || RIG_ALL_BEADS_JSON='[]'
-  fi
+  # ensure_rig_all_beads reuses the same fetch reject_ticket already paid for
+  # above, on any tick that also had a DIRTY/red-after-retry PR this rig.
+  [ -n "$merged" ] && ensure_rig_all_beads
 
   while IFS=$'\t' read -r num branch sha merged_at; do
     [ -z "${num:-}" ] && continue
@@ -598,18 +709,7 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     # open when this loop runs, so preferring it over an already-closed
     # match can only ever recover the wrong-pick failure mode, never cause
     # one -- a correctly-closed candidate with no open sibling is unaffected.
-    candidate=$(printf '%s' "$RIG_ALL_BEADS_JSON" \
-      | jq -r --arg b "$branch" --arg n "$num" \
-        '[.[]|select((.metadata.source//"")!="pr-autopilot")
-              |select((.metadata["gc.step_ref"]//"")=="")
-              |select((.metadata["gc.kind"]//"") as $k
-                      | ["workflow","scope","check","fanout","scope-check","workflow-finalize"]
-                        | index($k) | not)
-              |select((.metadata["gc.work_branch"]//"")==$b
-                     or (.metadata.pr_number|tostring)==$n)]
-         | sort_by(if .status=="closed" then 1 else 0 end)
-         | .[0] // empty
-         | @json' 2>/dev/null)
+    candidate=$(linked_work_candidate_for "$branch" "$num")
     [ -z "$candidate" ] && { vlog "PR #$num ($branch): no linked work bead"; continue; }
     bead=$(printf '%s' "$candidate" | jq -r '.id // empty' 2>/dev/null)
     [ -z "$bead" ] && { vlog "PR #$num ($branch): linked bead has no id"; continue; }

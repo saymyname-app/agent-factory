@@ -72,6 +72,22 @@ handling now copies `gc.work_branch`/`gc.work_base_branch`/`gc.pr_url` from
 the superseded ticket onto the ticket that supersedes it, so a re-planned
 ticket resumes the prior ticket's branch and PR instead of starting cold.
 
+Local fork (2026-09-29, P06/af-elhn7): the return loop this resume machinery
+exists for is now closed on the pr-autopilot side too. A ticket's PR going
+DIRTY, or its required check still red after pr-autopilot's one automatic
+retry, reopens the ticket bead itself (status open, unassigned, a structured
+`gc.pr_rejection_reason` and `gc.pr_rejection_count`) instead of only filing a
+side `[ci]`/`[autopilot]` bead nobody was dispatched to act on -- the branch
+and PR are left exactly as they are. Whoever claims this reopened ticket next
+(this same `workspace-setup` step, keyed on the unchanged bead id) resumes
+that same worktree/branch through `bin/factory-do-work-workspace enter`
+exactly as the O04 resume path above already does for a stranded session --
+there is nothing extra to do here, and `restart` must not be used to discard
+a rejected ticket's work just because it came back to the pool. A third
+rejection of the same ticket pages the Mayor via `bin/escalation-door mayor`
+(promoted to NEEDS BENJAMIN after 2h unresolved by
+`orders/escalation-door-sweep.toml`, unchanged by this fork).
+
 ## Variables
 
 | Variable | Source | Description |
