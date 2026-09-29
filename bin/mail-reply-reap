@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""mail-reply-reap -- P13 (af-6675l): sessions wake only for claimable work;
+resolved mail-reply beads close themselves.
+
+Root cause (2026-09-28, af-6675l): a mail-reply bead is created as a
+`message`-type infrastructure bead (id prefix `af-wisp-`), assigned to the
+recipient session, and is never claimable via `gc hook --claim` -- `bd list`
+hides `message`-type beads from its default (non `--include-infra`) output
+for exactly this reason. But an unclosed one still shows up as "assigned
+work" on that session to whatever supervises session wake, so a resolved
+mail-reply bead left open re-wakes and drain-acks its session in a tight
+loop (observed ~55 cycles/hour on factory-worker session af-driu0) even
+though it was never real work.
+
+`gc order sweep-nudge-mail` already closes read mail beads, but on a 1h
+default TTL that never appears in this repo's config (it is a gc-runtime
+watchdog default, not a repo-side knob) -- far too slow for a loop firing
+tens of times an hour, and it only fires once a bead is marked "read",
+which a message-type bead assigned to (but never claimed by) a session may
+never be. This script is a faster, content-aware repo-side complement: it
+closes a mail-reply bead as soon as its own body says it is resolved
+(`NEXT: none`), regardless of read state or age, on the 5-minute cadence in
+orders/mail-reply-reap.toml.
+
+Two commands:
+
+  sweep         Find open, resolved mail-reply beads (issue_type=message
+                whose body's `NEXT:` line is "none", the ACTION/STATE/
+                EVIDENCE/NEXT convention this factory's mail follows --
+                see AGENTS.md) and close them, removing the stale
+                assigned-work signal.
+  should-wake   Report whether a given assignee has any claimable assigned
+                work. Deliberately queries `bd list` WITHOUT
+                `--include-infra`, the same default a claim query uses, so
+                a message-type bead assigned to a session never counts and
+                a real (non-infrastructure) open/in_progress bead always
+                does. Exit 0 when it should wake, 1 otherwise, for use as
+                an order's `check=` leg or any other gate.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+PROGRAM = "mail-reply-reap"
+ROOT = Path(__file__).resolve().parents[1]
+BD_BIN = os.environ.get("BD_BIN", "bd")
+
+RESOLVED_NEXT = re.compile(r"(?im)^NEXT:\s*none\b")
+
+
+def bd(repo_root: Path, *args: str) -> str:
+    result = subprocess.run(
+        [BD_BIN, "-C", str(repo_root), *args],
+        check=True, capture_output=True, text=True,
+    )
+    return result.stdout
+
+
+def is_resolved(bead: dict[str, Any]) -> bool:
+    description = bead.get("description") or ""
+    return bool(RESOLVED_NEXT.search(description))
+
+
+def open_mail_reply_beads(repo_root: Path) -> list[dict[str, Any]]:
+    payload = json.loads(bd(repo_root, "list", "--include-infra", "--type", "message",
+                            "--status", "open", "--json", "--limit", "0") or "[]")
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def cmd_sweep(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root)
+    closed: list[str] = []
+    skipped = 0
+    for bead in open_mail_reply_beads(repo_root):
+        bead_id = bead.get("id")
+        if not isinstance(bead_id, str):
+            continue
+        if not is_resolved(bead):
+            skipped += 1
+            continue
+        if not args.dry_run:
+            bd(repo_root, "close", bead_id, "--reason",
+               "mail-reply-reap: resolved mail-reply bead (NEXT: none) auto-closed "
+               "to remove a stale assigned-work signal (af-6675l)")
+        closed.append(bead_id)
+    print(json.dumps({"ok": True, "closed": closed, "skipped": skipped}, sort_keys=True))
+    if args.dry_run:
+        return 0 if closed else 1
+    return 0
+
+
+def claimable_assigned_count(repo_root: Path, assignee: str) -> int:
+    """Deliberately omits --include-infra: this is the same default a claim
+    query uses, so a message-type bead assigned to `assignee` never counts."""
+    payload = json.loads(bd(repo_root, "list", "--assignee", assignee,
+                             "--status", "open,in_progress", "--json", "--limit", "0") or "[]")
+    return sum(1 for item in payload if isinstance(item, dict))
+
+
+def cmd_should_wake(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root)
+    count = claimable_assigned_count(repo_root, args.assignee)
+    result = {"ok": True, "assignee": args.assignee, "claimable_count": count, "should_wake": count > 0}
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["should_wake"] else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__,
+                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--repo-root", default=str(ROOT))
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sweep = sub.add_parser("sweep", help="close resolved, open mail-reply beads")
+    sweep.add_argument(
+        "--dry-run", action="store_true",
+        help="report without closing; exit 0 if there is anything to close, 1 "
+             "otherwise (for the order's check= leg)",
+    )
+    sweep.set_defaults(func=cmd_sweep)
+
+    should_wake = sub.add_parser("should-wake", help="does this assignee have claimable work")
+    should_wake.add_argument("--assignee", required=True)
+    should_wake.set_defaults(func=cmd_should_wake)
+
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
