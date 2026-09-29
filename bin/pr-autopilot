@@ -432,9 +432,55 @@ ensure_base_sha() {  # sets $BASE_SHA (cached per rig per tick) for the "conflic
   [ -n "$BASE_SHA" ] || BASE_SHA="unknown"
 }
 
+# ---------- P16 (af-45knz): measure undeclared-scope PR conflicts ----------
+# A DIRTY ticket-owned PR is a real merge conflict against the base -- almost
+# always caused by whatever ticket most recently landed there. record_pr_conflict
+# is best-effort and never fails the caller: it identifies that other ticket
+# from the same published graph (the most recently closed, merged one) and
+# hands both tickets' declared scopes to bin/overlap-conflict-log, which is the
+# single place that decides whether the undeclared-conflict count crosses the
+# threshold for filing the "dynamic leases" proposal (never built without
+# Benjamin). No other ticket can be identified -> nothing is recorded, since
+# the log only ever carries entries naming both tickets.
+OVERLAP_CONFLICT_LOG_BIN="${OVERLAP_CONFLICT_LOG_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/overlap-conflict-log}"
+
+record_pr_conflict() {  # candidate_json sha rig_name
+  local candidate=$1 sha=$2 rig_name=$3
+  local ticket_a scope_a digest other ticket_b scope_b
+
+  ticket_a=$(printf '%s' "$candidate" | jq -r '.metadata["gc.ticket_id"] // .id // empty' 2>/dev/null)
+  [ -n "$ticket_a" ] || return 0
+  digest=$(printf '%s' "$candidate" | jq -r '.metadata["gc.graph_digest"] // empty' 2>/dev/null)
+  [ -n "$digest" ] || return 0
+  scope_a=$(printf '%s' "$candidate" | jq -r '.metadata["gc.scope_paths"] // ""' 2>/dev/null)
+
+  other=$(printf '%s' "$RIG_ALL_BEADS_JSON" \
+    | jq -r --arg digest "$digest" --arg self "$ticket_a" \
+      '[.[]|select(.status=="closed")
+            |select((.metadata["gc.graph_digest"]//"")==$digest)
+            |select((.metadata["merge_result"]//"")=="merged")
+            |select((.metadata["gc.ticket_id"]//.id))
+            |select((.metadata["gc.ticket_id"]//.id)!=$self)]
+       | sort_by(.updated_at) | reverse | .[0] // empty
+       | @json' 2>/dev/null)
+  [ -n "$other" ] || return 0
+
+  ticket_b=$(printf '%s' "$other" | jq -r '.metadata["gc.ticket_id"] // .id // empty' 2>/dev/null)
+  [ -n "$ticket_b" ] || return 0
+  scope_b=$(printf '%s' "$other" | jq -r '.metadata["gc.scope_paths"] // ""' 2>/dev/null)
+
+  run "$OVERLAP_CONFLICT_LOG_BIN" record-conflict \
+    --ticket-a "$ticket_a" --scope-a "$scope_a" \
+    --ticket-b "$ticket_b" --scope-b "$scope_b" \
+    --sha "$sha" --rig "$rig_name" >/dev/null 2>&1
+}
+
 reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR), 1 not ticket-owned
   local repo=$1 rig_path=$2 num=$3 sha=$4 reason=$5
   local branch candidate bead status marker count
+
+  REJECT_TICKET_CANDIDATE_JSON=""
+  REJECT_TICKET_FRESH=0
 
   branch=$(gh pr view "$num" --repo "$repo" --json headRefName --jq .headRefName 2>/dev/null)
   [ -n "$branch" ] || return 1
@@ -448,6 +494,7 @@ reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR)
     open|in_progress) ;;
     *) return 1 ;;  # closed/terminal -- never reopen an already-delivered ticket
   esac
+  REJECT_TICKET_CANDIDATE_JSON="$candidate"
 
   # Idempotent per head: a PR comment names the exact sha so the same
   # rejection is never counted (or re-mailed) twice while nobody has pushed a
@@ -459,6 +506,7 @@ reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR)
     return 0
   fi
 
+  REJECT_TICKET_FRESH=1
   count=$(( $(printf '%s' "$candidate" | jq -r '.metadata["gc.pr_rejection_count"] // 0' 2>/dev/null) + 1 ))
   log "  PR #$num: $reason -> reopening ticket $bead to the pool (rejection $count)"
   run bash -c "cd '$rig_path' && gc bd update '$bead' --status open --assignee '' \
@@ -591,6 +639,9 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     if [ "$state" = "DIRTY" ]; then
       ensure_base_sha
       if reject_ticket "$repo" "$rig_path" "$num" "$sha" "conflict with $dev@${BASE_SHA:0:12}"; then
+        if [ "$REJECT_TICKET_FRESH" = "1" ]; then
+          record_pr_conflict "$REJECT_TICKET_CANDIDATE_JSON" "$sha" "$repo"
+        fi
         continue
       fi
     fi
