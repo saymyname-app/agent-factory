@@ -101,6 +101,35 @@ class IdleReadyWorkWakeTest(unittest.TestCase):
         self.assertFalse(result["fired"])
         self.assertEqual([], self.wake_calls())
 
+    def test_does_not_renotify_on_every_evaluation_past_15_minutes(self):
+        self.run_tick("2026-09-28T10:00:00+00:00")
+        self.run_tick("2026-09-28T10:10:00+00:00")
+
+        first = self.run_tick("2026-09-28T10:15:01+00:00")
+        self.assertTrue(first["fired"])
+
+        second = self.run_tick("2026-09-28T10:15:06+00:00")
+        self.assertFalse(second["fired"])
+
+        calls = self.wake_calls()
+        self.assertEqual(1, len(calls))
+
+    def test_renotifies_after_the_cooldown_elapses_while_still_idle(self):
+        self.run_tick("2026-09-28T10:00:00+00:00")
+        self.run_tick("2026-09-28T10:10:00+00:00")
+
+        first = self.run_tick("2026-09-28T10:15:01+00:00")
+        self.assertTrue(first["fired"])
+
+        still_cooling = self.run_tick("2026-09-28T10:30:00+00:00")
+        self.assertFalse(still_cooling["fired"])
+
+        after_cooldown = self.run_tick("2026-09-28T11:15:02+00:00")
+        self.assertTrue(after_cooldown["fired"])
+
+        calls = self.wake_calls()
+        self.assertEqual(2, len(calls))
+
     def test_check_only_reports_but_never_notifies(self):
         # af-1isbx: the order's `check=` leg must decide whether to run
         # `exec=` (exit 0/1) without itself paging the Mayor -- only the
