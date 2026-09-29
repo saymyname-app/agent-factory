@@ -221,7 +221,7 @@ if printf '%s' "$bead_json" | jq -e '(.[0].labels // []) | index("proposal") != 
   fail "$BEAD_ID is labelled proposal -- proposals are never dispatched, they are triaged at the next Planning Run"
 fi
 
-target_scope=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.scope_paths"] // "")')
+target_scope=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.scope_paths"] // "")' 2>/dev/null) || target_scope=""
 if [ -n "$target_scope" ] && [ -f "$HOT_PATHS_FILE" ]; then
   hot_paths_csv=$(jq -r '(.paths // []) | join(",")' "$HOT_PATHS_FILE" 2>/dev/null) || hot_paths_csv=""
   if [ -n "$hot_paths_csv" ]; then
