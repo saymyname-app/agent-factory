@@ -1,6 +1,27 @@
 {
+  "approved_by": "Benjamin",
+  "approved_digest": "sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b",
+  "approved_evidence": "live chat 2026-09-29 \u00ab j'approuve la Spec C01 \u00bb on digest sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b",
   "content_digest": "sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b",
   "contract": "agent-factory-planning-run-spec/v1",
+  "history": [
+    {
+      "approved_by": "Benjamin",
+      "at": 1790690842.7095451,
+      "digest": "sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b",
+      "event": "approve",
+      "evidence": "live chat 2026-09-29 \u00ab j'approuve la Spec C01 \u00bb on digest sha256:fada0d2e23606bbed13c711bb7ae10f872bfbb4a86ad75304f6eb2b2cf7ee35b"
+    }
+  ],
+  "section_digests": {
+    "acceptance_evidence": "sha256:8e909565cb2748647347f5dba4cb8edcf86ed742aa8cd145299247f331abced7",
+    "behavior": "sha256:665d793935f46d8e839d1ef9f8db32efe49755a145c7fb8bd069fe588d6a2426",
+    "boundaries": "sha256:1b2faa77cf75dbebb502dbcc6cfa8d73457b3aaa29fdbd626c87e8722f8fc09d",
+    "decisions": "sha256:cf041e7fea15918d8e82a05120e33a722c9d9180746f78db89a7644e6464f6b5",
+    "experiments": "sha256:97186eeee599aeb7c0a95d96ac7137992cd90324c0cd8292e460afe5c2324bd0",
+    "non_objectives": "sha256:1b8dd3317dfde068f540f496b817264568a30523a36e6dacd13826f4e714f747",
+    "provenance": "sha256:078a2483a1950761c844ced582df44bfd02edc6881c4d423bf06ca3e1e4ef3e8"
+  },
   "sections": {
     "acceptance_evidence": [
       {
@@ -211,5 +232,5 @@
   },
   "session_id": "c01-cockpit-2026-09-29",
   "spec_id": "spec-c01-cockpit-2026-09-29",
-  "state": "DRAFT_SPEC"
+  "state": "APPROVED_SPEC"
 }
