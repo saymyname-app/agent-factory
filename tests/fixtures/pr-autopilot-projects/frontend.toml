@@ -1,0 +1,8 @@
+# Synthetic project fixture for the pr-autopilot test suite (P23): a
+# stand-in "frontend" product rig, paired with backend.toml. See that file
+# for why this exists and how tests point at it.
+rig_dir = "rigs/example-frontend"
+repo = "example-corp/example-frontend"
+protected_branch = "dev"
+required_ci = "Frontend CI"
+required_check = "Tests and build"

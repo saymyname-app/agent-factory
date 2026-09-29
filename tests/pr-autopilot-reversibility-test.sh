@@ -22,7 +22,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
-mkdir -p "$TMP/factory/rigs/saymyname-backend" "$TMP/factory/rigs/saymyname-frontend" \
+mkdir -p "$TMP/factory/rigs/example-backend" "$TMP/factory/rigs/example-frontend" \
          "$TMP/bin" "$TMP/verdicts"
 : > "$TMP/gh.log"; : > "$TMP/gc.log"; : > "$TMP/check.log"; : > "$TMP/deliver.log"
 
@@ -40,8 +40,8 @@ cat > "$TMP/bin/gh" <<STUB
 #!/usr/bin/env bash
 echo "\$*" >> "$TMP/gh.log"
 if [[ \$1 == pr && \$2 == list ]]; then
-  if [[ "\$*" == *"--state open"* && "\$*" == *"Say-my-name-back"* ]]; then cat "$TMP/backend-open.json"
-  elif [[ "\$*" == *"--state merged"* && "\$*" == *"Say-my-name-back"* && -f "$TMP/backend-merged.json" ]]; then cat "$TMP/backend-merged.json"
+  if [[ "\$*" == *"--state open"* && "\$*" == *"example-backend"* ]]; then cat "$TMP/backend-open.json"
+  elif [[ "\$*" == *"--state merged"* && "\$*" == *"example-backend"* && -f "$TMP/backend-merged.json" ]]; then cat "$TMP/backend-merged.json"
   else echo '[]'; fi
   exit 0
 fi
@@ -123,6 +123,8 @@ export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/check"
 export DELIVER_CLOSE_BIN="$TMP/bin/deliver-close"
+export PROTECTED_RIGS_CONFIG_DIR="$REPO_ROOT/tests/fixtures/pr-autopilot-projects"
+export GC_OPERATOR_NAME=operator-1
 export REVERSIBILITY_CACHE="$TMP/factory/.gc/rev-cache.tsv"
 export PR_AUTOPILOT_NOW_EPOCH
 PR_AUTOPILOT_NOW_EPOCH=$(date -u -d '2026-09-21T16:00:00Z' +%s)
@@ -141,7 +143,7 @@ grep -q "mail send" "$TMP/gc.log" && fail "--dry-run mailed the Mayor"
 : > "$TMP/gh.log"; : > "$TMP/check.log"; rm -f "$REVERSIBILITY_CACHE"
 out=$(pilot)
 # 1: reversible -> armed exactly as before
-grep -q "^pr merge 1 --repo saymyname-app/Say-my-name-back --auto --squash" "$TMP/gh.log" \
+grep -q "^pr merge 1 --repo example-corp/example-backend --auto --squash" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "reversible PR was not armed"; }
 # 2: undeclared -> held, labelled, explained, not armed, no escalation
 grep -q "^pr merge 2 " "$TMP/gh.log" && fail "undeclared destructive PR was armed"
@@ -149,11 +151,11 @@ grep -q "^label create reversibility-declaration-needed" "$TMP/gh.log" || fail "
 grep -q "^pr comment 2 " "$TMP/gh.log" || fail "hold not explained on PR 2"
 grep -q "^pr edit 2 .*--add-label reversibility-declaration-needed" "$TMP/gh.log" || fail "PR 2 not labelled"
 # 3: declared irreversible and already armed -> disarmed, labelled, escalated
-grep -q "^pr merge 3 --repo saymyname-app/Say-my-name-back --disable-auto" "$TMP/gh.log" || fail "armed irreversible PR not disarmed"
+grep -q "^pr merge 3 --repo example-corp/example-backend --disable-auto" "$TMP/gh.log" || fail "armed irreversible PR not disarmed"
 grep -q "^pr edit 3 .*--add-label irreversible-change" "$TMP/gh.log" || fail "PR 3 not labelled irreversible"
 grep -q "mail send mayor" "$TMP/gc.log" || fail "irreversible PR not escalated to the Mayor"
 grep -q "ESCALADE test 4" "$TMP/gc.log" || fail "escalation does not name test 4"
-grep -q "pas Benjamin" "$TMP/gc.log" || fail "escalation does not state its author"
+grep -q "pas operator-1" "$TMP/gc.log" || fail "escalation does not state its author"
 grep -q "held=2" <<<"$out" || { echo "$out" >&2; fail "summary does not count the holds"; }
 
 # --- second pass: cached verdicts, no second comment once labelled ---------------------
@@ -211,7 +213,7 @@ grep -q "^bd list --all --limit 0 --json$" "$TMP/gc.log" || { echo "$out" >&2; f
 grep -q "^bd update af-work7 .*merge_result=merged" "$TMP/gc.log" || { echo "$out" >&2; fail "merged PR was not reconciled onto its work bead"; }
 grep -q "^bd update af-work8 .*merge_result=merged" "$TMP/gc.log" || { echo "$out" >&2; fail "second historical PR was not backfilled"; }
 grep -q "^bd update af-flag7 .*merge_result=merged" "$TMP/gc.log" && fail "reconcile stamped a pr-autopilot flag bead as merged"
-grep -q "^af-work7 --repo saymyname-app/Say-my-name-back --pr 7 --required-workflow Backend CI" "$TMP/deliver.log" \
+grep -q "^af-work7 --repo example-corp/example-backend --pr 7 --required-workflow Backend CI" "$TMP/deliver.log" \
   || fail "reconciliation did not go through the exact-CI deliver-close door"
 grep -q "^bd update af-work7 .*gc.ci_conclusion=success .*--status=closed" "$TMP/gc.log" \
   || fail "delivery door did not atomically close with CI proof"
@@ -225,16 +227,16 @@ grep -q "^mail send mayor" "$TMP/gc.log" && fail "old bulk backfill with no acti
 jq 'map(if .id=="af-work7" then
       .status="closed"
       | .metadata += {"gc.work_outcome":"shipped","gc.delivery_status":"merged",
-          "gc.github_repo":"saymyname-app/Say-my-name-back","gc.pr_number":"7",
-          "gc.pr_url":"https://github.com/saymyname-app/Say-my-name-back/pull/7",
+          "gc.github_repo":"example-corp/example-backend","gc.pr_number":"7",
+          "gc.pr_url":"https://github.com/example-corp/example-backend/pull/7",
           "gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merge_result":"merged",
           "merged_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merged_target":"dev","gc.required_ci_workflow":"Backend CI",
           "gc.ci_run_id":"123","gc.ci_head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.ci_conclusion":"success"}
      elif .id=="af-work8" then
       .status="closed"
       | .metadata += {"gc.work_outcome":"shipped","gc.delivery_status":"merged",
-          "gc.github_repo":"saymyname-app/Say-my-name-back","gc.pr_number":"8",
-          "gc.pr_url":"https://github.com/saymyname-app/Say-my-name-back/pull/8",
+          "gc.github_repo":"example-corp/example-backend","gc.pr_number":"8",
+          "gc.pr_url":"https://github.com/example-corp/example-backend/pull/8",
           "gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merge_result":"merged",
           "merged_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merged_target":"dev","gc.required_ci_workflow":"Backend CI",
           "gc.ci_run_id":"123","gc.ci_head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.ci_conclusion":"success"}
@@ -273,8 +275,8 @@ grep -q "^NEXT: Mayor advances or finalizes work waiting on af-work9\.$" "$TMP/g
 jq 'map(if .id=="af-work9" then
       .status="closed"
       | .metadata += {"gc.work_outcome":"shipped","gc.delivery_status":"merged",
-          "gc.github_repo":"saymyname-app/Say-my-name-back","gc.pr_number":"9",
-          "gc.pr_url":"https://github.com/saymyname-app/Say-my-name-back/pull/9",
+          "gc.github_repo":"example-corp/example-backend","gc.pr_number":"9",
+          "gc.pr_url":"https://github.com/example-corp/example-backend/pull/9",
           "gc.pr_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.merge_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merge_result":"merged",
           "merged_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","merged_target":"dev","gc.required_ci_workflow":"Backend CI",
           "gc.ci_run_id":"123","gc.ci_head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.ci_conclusion":"success"}

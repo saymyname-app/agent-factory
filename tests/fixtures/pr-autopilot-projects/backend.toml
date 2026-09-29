@@ -1,0 +1,11 @@
+# Synthetic project fixture for the pr-autopilot test suite (P23): a
+# stand-in "backend" product rig so tests exercise the real
+# lib/protected_rigs.sh / config/projects loading path without asserting
+# against the real SayMyName rig names. Pointed to via
+# PROTECTED_RIGS_CONFIG_DIR in tests/pr-autopilot-*-test.sh; never read in
+# production (config/projects/ is the real source of truth there).
+rig_dir = "rigs/example-backend"
+repo = "example-corp/example-backend"
+protected_branch = "dev"
+required_ci = "Backend CI"
+required_check = "Maven verify"

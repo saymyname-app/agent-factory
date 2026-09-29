@@ -22,7 +22,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
-mkdir -p "$TMP/factory/rigs/saymyname-backend" "$TMP/factory/rigs/saymyname-frontend" "$TMP/bin"
+mkdir -p "$TMP/factory/rigs/example-backend" "$TMP/factory/rigs/example-frontend" "$TMP/bin"
 : > "$TMP/gh.log"; : > "$TMP/gc.log"
 
 cat > "$TMP/open.json" <<'JSON'
@@ -51,7 +51,7 @@ cat > "$TMP/bin/gh" <<STUB
 #!/usr/bin/env bash
 echo "\$*" >> "$TMP/gh.log"
 if [[ "\$1" == pr && "\$2" == list ]]; then
-  if [[ "\$*" != *"Say-my-name-back"* ]]; then echo '[]'; exit 0; fi
+  if [[ "\$*" != *"example-backend"* ]]; then echo '[]'; exit 0; fi
   if [[ "\$*" == *"--state open"* ]]; then cat "$TMP/open.json";
   elif [[ "\$*" == *"--state merged"* ]]; then cat "$TMP/merged.json";
   else echo '[]'; fi
@@ -86,6 +86,7 @@ export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/gh"
 export DELIVER_CLOSE_BIN="$TMP/bin/deliver-close"
+export PROTECTED_RIGS_CONFIG_DIR="$REPO_ROOT/tests/fixtures/pr-autopilot-projects"
 
 pilot() { "$AUTOPILOT" "$@" 2>&1 || true; }
 out=$(pilot)
