@@ -1,0 +1,236 @@
+{
+  "approved_by": "Benjamin",
+  "approved_digest": "sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324",
+  "approved_evidence": "live chat 2026-09-29 \u00ab j'approuve la Spec A6 \u00bb on digest sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324",
+  "content_digest": "sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324",
+  "contract": "agent-factory-planning-run-spec/v1",
+  "history": [
+    {
+      "approved_by": "Benjamin",
+      "at": 1790641741.3504503,
+      "digest": "sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324",
+      "event": "approve",
+      "evidence": "live chat 2026-09-29 \u00ab j'approuve la Spec A6 \u00bb on digest sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324"
+    }
+  ],
+  "section_digests": {
+    "acceptance_evidence": "sha256:494057dbacf11e2b395245ec684b1983cf07173d2f6487b960f488228ab8029c",
+    "behavior": "sha256:ff8328722ffb62b2971cbb65b66d340b6769d2e23046d1dbeec8573afb97e9b5",
+    "boundaries": "sha256:27be16c64616dd3979870a1081b72056111e977213d0cb626f339b42650aeab1",
+    "decisions": "sha256:370e4500300217f86bd86a1adfd455ee8d0939ed78a38355ec0f817a643c9cc9",
+    "experiments": "sha256:8e0f4a81b839308af51ca7e885f7beb542c953b7799d1421928adda7bdc44794",
+    "non_objectives": "sha256:86820dff26cced4aa9a42d18b810d27237f7abe4c422df892a023a48f0163d5d",
+    "provenance": "sha256:dca5f2a08b86e8b6d16b0780931809b5d7eb1b2ed0cc2c23fc816ccef514b65a"
+  },
+  "sections": {
+    "acceptance_evidence": [
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Test: two BEHIND PRs; pr-autopilot updates exactly one per tick; none merges while BEHIND. Live read (`gh api`) shows strict true and allow_update_branch true on agent-factory only."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Test: a DIRTY PR and a red PR each reopen their ticket with a rejection reason and keep the branch; the resume dispatch continues the same branch; the third rejection calls the escalation door."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Test: a ticket whose fix merged through another PR is closed by reconciliation with the hosting PR recorded."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Test: two concurrent `enter` calls on one repository both produce worktrees from `origin/<base>` with the auto-push hook installed; a forced hook-install failure makes `enter` fail."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "The full suite passes under the sandbox harness; a fixture test naming the live root is rejected by the CI check; no test sends mail, starts a provider session or writes a bead in the live city (checked over the final-batch day)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Test: two draft tickets with overlapping `scope.paths` get a dependency edge at publish; a ticket touching a held hot path is deferred by the dispatch door."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Adding a test and a tool entry after the restructure touches no line shared with another entry (shown in the restructure PR)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Tests: an assigned message-type bead does not wake a session; 11 wake/stop cycles in an hour trigger the alert and the pause; memory floor defers a dispatch under a faked 1.4 GiB MemAvailable."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "A mail sent from the operator entry path reaches the Mayor with sender `po-agent`, not `human`."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Final proof: one day (>= 24 h) with 2 factory-workers on independent tickets: main CI green after every merge, no live-state collision, no order.failed caused by parallel work, minimum WSL MemAvailable recorded; the graph delivered and closed."
+      }
+    ],
+    "behavior": [
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Safe main: the agent-factory ruleset requires branches up to date (strict) and the repo allows 'update branch'; each pr-autopilot tick updates at most one BEHIND PR (oldest first) and no PR merges while BEHIND."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Return loop: when a ticket's PR is DIRTY, or its required checks are still red after pr-autopilot's single retry, pr-autopilot reopens the ticket to the pool with a structured rejection reason (conflict with <base>@<sha> or failing check), keeps branch and PR, and the next dispatch resumes them through the A5 resume door. A third rejection calls the escalation door (Mayor, then NEEDS BENJAMIN after 2 h). A ticket closes only on merge; a worker never leaves a red or conflicted PR without the ticket being back in the pool."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "A fix delivered on another ticket's PR is recorded in the fixed ticket as structured metadata naming that PR; reconciliation closes the ticket when that PR merges, without manual Mayor work (af-87f9u)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Worktree per ticket: `factory-do-work-workspace enter` takes an exclusive per-repository lock, branches from a freshly fetched `origin/<base>`, and fails loudly if it cannot configure the worktree or install the auto-push hook; every work formula allowed on a rig uses an isolated worktree; no worker writes in a rig checkout or the live root."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "A scheduled order runs `factory-maintain clean-worktrees`: it removes only worktrees whose branch is merged, or clean and pushed and abandoned for more than N days; a worktree holding unpushed commits is reported, never removed."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Test sandbox: a shared harness gives every test a throwaway HOME, city, beads dir and tmux dir, with fake `gc`, `bd`, `gh`, `codex` and `claude` first on PATH; a test that needs the real `gc` opts in explicitly and runs against a throwaway city. A CI check fails any test that names the live root path or calls the real `gc` without the opt-in."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Declared scope: every ticket of a graph draft declares `scope.paths` (globs); `ticket-graph-publish` adds a dependency edge between any two not-yet-ordered tickets whose scopes overlap and logs it in the publish result; the dispatch door does not start a ticket touching a hot-file path already held by an in-progress ticket (it waits, nothing is killed)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Registries restructured: CI discovers tests instead of listing each one in `.github/workflows/ci.yml`; `docs/CONTEXT_INDEX.md` and `docs/FACTORY_TOOLS.md` are generated or split so that adding an entry touches no shared line."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Measurement: every publish-time overlap and every PR conflict is recorded; if conflicts occur between tickets whose declared scopes did not overlap 3 times within 7 days, a proposal 'dynamic leases' is filed automatically (never built without Benjamin)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Two workers: the factory-worker pool on the agent-factory rig goes to max 2 sessions; product rigs stay at 1. The 'one writer per rig' rule in the Mayor prompt, mol-do-work header, DELIVERY.md, SECURITY.md, AGENTS.md and README.md is rewritten into the new rule (isolated worktree + declared scope + hot-file list + return loop); the singleton assertion test checks the configured cap instead."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Memory floor: the dispatch door defers starting a new worker session while WSL MemAvailable is below 1.5 GiB and logs it; running work is never killed."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Wake loop: a session is woken only for claimable assigned work (message-type beads do not count); a mail-reply bead that is resolved closes itself; a detector alerts through the escalation door and pauses a session that wakes and stops more than 10 times in one hour, whatever the cause."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Agent identity: every operator agent entering the city (PO agent, Codex) sends with an explicit identity (e.g. `po-agent`), orders send with their own name, and no mail is sent as `human`; the Mayor prompt states that every mail is an agent's request and that Benjamin's decisions reach the Factory only through approved Specs and graphs."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "pr-autopilot maps each repo's required checks to the ruleset's actual check names (`Tests`, `Maven verify`, `Tests and build`), proven by a test for all three repos."
+      }
+    ],
+    "boundaries": [
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "The only GitHub settings changed are on saymyname-app/agent-factory: ruleset strict on `main` and `allow_update_branch`. Product repos' settings are untouched."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Worker count raised only on the agent-factory rig (1 to 2); product rigs stay at 1; reviewer pool unchanged."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Host `.wslconfig` (memory, CPU) is not edited by any ticket."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Tickets that change the return loop, the ruleset or the worker cap land in the activation order; the 2-worker cap ships only after safe main, worktree hardening, test sandbox and declared scope are merged."
+      }
+    ],
+    "decisions": [
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "The four open proposals af-i3prh, af-elhn7, af-6675l and af-87f9u are delivered by this run and closed with it (Q1 A)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "The graph is published as soon as Benjamin approves it; if an A6 merge makes an order fail before 2026-09-30 00:50 (Paris), A5's 24 h proof restarts (Q2 B)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Agent identity is in scope; the stray untracked `.config/` in the live root is a bounded repair outside this graph (Q3 B)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "No spend: no GitHub merge queue (requires GitHub Enterprise Cloud on a private repo). Integration safety comes from the ruleset 'require branches up to date' plus pr-autopilot updating BEHIND PRs (Q4 A, P4)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "One return loop for a conflicted (DIRTY) or red PR: the ticket goes back to the worker pool with its branch and a rejection reason; any free worker resumes it; after 2 repair attempts it escalates to the Mayor, then to the NEEDS BENJAMIN list under the A5 rule. No dedicated integration agent, no full local test battery before push (Q5 a, Q10 A)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Conflict prevention is light: declared file scope per ticket, serialisation of overlapping tickets at publish, a short hot-file list. Dynamic per-dispatch leases are not built; they become an automatically filed proposal only if measured conflicts recur (Q6 B, C conditional)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Append-style registries are restructured so that adding an entry touches no shared line; only what cannot be restructured (`city.toml`, SQL migrations) goes on the hot-file list (Q11)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Activation order: safe main, then isolation (worktrees, test sandbox), then prevention, then 2 workers on the Factory rig, then the final batch. Each step is safe if the next never ships (Q12)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "'Require up to date' and 2 workers are activated on the Factory repo only; Say-my-name-back and Say-my-name-front keep their GitHub settings and 1 worker until a separate decision of Benjamin (Q13 A, P3)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Benjamin never mails the Mayor; he always goes through an agent. Every mail is therefore an agent's request, never a decision of Benjamin (Q14)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "WSL memory and CPU caps (`.wslconfig`) are Benjamin's host setting and are not changed by this run (P2); a memory floor of 1.5 GiB available gates new worker sessions (Q16 A)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Proof of done: a final batch of independent tickets delivered by 2 workers over one day, topped up with A4 inventory 'to redo' lines if needed; it does not wait for C01 (Q7 a+c)."
+      }
+    ],
+    "experiments": [
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "During the final batch, measure per-worker RAM and the count of overlaps and conflicts; report them in the run's closing note as input for raising beyond 2 workers or activating the product repos (a later decision of Benjamin)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "After strict is on, measure the extra CI runs caused by branch updates per merged PR."
+      }
+    ],
+    "non_objectives": [
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "No activation on the SayMyName repos (settings or worker count) and no dev -> main promotion."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "No GitHub merge queue, no Enterprise spend, no Refinery / integration role."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "No dynamic per-dispatch leases (only the conditional proposal)."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "No full local test battery before push; no change to WSL memory or CPU caps; no removal of the stray `.config/` inside this graph."
+      }
+    ],
+    "provenance": [
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Intent: Benjamin, 2026-09-28 (SayMyName decision 19): the Factory must work on tasks in parallel even on the same repo, checking conflicts and working on several branches before merge. Grilled with the PO on 2026-09-29 in two rounds (Q1-Q16), exact answers in decisions-log.md; recap confirmed \u00ab ok \u00bb."
+      },
+      {
+        "confirmed_by": "Benjamin",
+        "statement": "Inputs: proposals af-i3prh, af-elhn7, af-6675l, af-87f9u; research.md (2026-09-28, sourced) and facts.md (2026-09-29, live read-only) in this folder; A5 delivery findings (tests reaching the live city, red PR without owner, PO-agent mail read as Benjamin's)."
+      }
+    ]
+  },
+  "session_id": "parallel-delivery-2026-09-29",
+  "spec_id": "spec-parallel-delivery-2026-09-29",
+  "state": "APPROVED_SPEC"
+}

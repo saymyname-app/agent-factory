@@ -1,0 +1,442 @@
+artifact:
+  id: ticket-graph-draft-parallel-delivery
+  title: Parallel delivery (A6)
+  labels:
+  - approved-ticket-graph
+  - parallel-delivery
+  state: APPROVED_TICKET_GRAPH_DRAFT
+  approved_by: Benjamin
+  content_digest: sha256:1e3ee0b52615913dc16bb6d5c7dfefe9e5ee1e3c289f144950ffe10c4a9bc07b
+  digest_scope: UTF-8 bytes from the legacy_boundary key through end of file, with LF line endings
+  source_spec:
+    id: spec-parallel-delivery-2026-09-29
+    state: APPROVED_SPEC
+    digest: sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324
+  method_baseline:
+    skill: Matt Pocock /to-tickets (Factory adaptation)
+  publication_authorized: true
+  publication_authorized_by: Benjamin
+  approval_evidence: "live chat 2026-09-29 « j'approuve le plan de tickets A6 avec a » (Q17 a: P23, P24 added)"
+
+legacy_boundary:
+  quarantine_read_only_evidence:
+  - Everything under legacy/ stays read-only evidence; no trusted code may reference it (tests/legacy-isolation-test.sh).
+target_rigs:
+  agent-factory:
+    purpose: Factory code, orders, formulas, prompts, config, docs and the agent-factory GitHub repo settings.
+    status: existing Factory repository
+global_execution_contract:
+  context: Each ticket receives a fresh implementation context and the exact Approved Spec trace it needs
+    (spec-parallel-delivery-2026-09-29, folder docs/planning/parallel-delivery/).
+  test_method: Small red then green cycles at a public-behavior seam; the Factory battery runs in CI on
+    every slice.
+  review: One independent reviewer checks Spec fidelity and design quality for every slice.
+  readiness: A blocker clears only after its checks and review pass and its code is merged on main.
+  declared_scope: Each ticket names the files it expects to touch ("Files:"). Touching a file outside it
+    is allowed only when recorded in the ticket notes with the reason (input for P16's measurement).
+  repair: Technical repair stays inside the ticket; behaviour or topology change raises a Planning Exception.
+  safety: No production, real sending, external publication, spend, unrecoverable destruction or wider
+    personal-data access without explicit human authority; nothing edited in the live root; no test
+    may reach the live city; SayMyName repos' GitHub settings and worker counts are not changed.
+tickets:
+- id: P01
+  kind: prefactor
+  title: CI discovers tests instead of listing each one
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  what_it_delivers: '`.github/workflows/ci.yml` runs every `tests/*` file not marked `# ci: local-only`
+    through one discovery step, so adding a test no longer edits ci.yml (41 of the last 100 PRs touched
+    it). The registration check keeps failing a test that is neither run by CI nor declared local-only.
+    Files: .github/workflows/ci.yml, tests/ci-registration* (or its equivalent), one runner script under bin/ or tests/.'
+  acceptance_criteria:
+  - CI runs the same set of tests as before (list compared in the PR) and stays green.
+  - Adding a new test file requires no change to ci.yml (shown with a throwaway test in the PR, then removed).
+  - A test file without CI coverage or `# ci: local-only` still fails the registration check.
+- id: P02
+  kind: prefactor
+  title: Context index and tool catalogue no longer shared append lists
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  what_it_delivers: '`docs/CONTEXT_INDEX.md` and `docs/FACTORY_TOOLS.md` (31 and 17 of the last 100 PRs)
+    are generated from per-entry sources or split one file per entry, so adding a tool or a doc touches
+    no line shared with another entry; a CI check fails when the generated file is stale. Files:
+    docs/CONTEXT_INDEX.md, docs/FACTORY_TOOLS.md, new per-entry source files, one generator script, its test.'
+  acceptance_criteria:
+  - Adding a tool entry and a doc entry each touch only their own new file (plus nothing shared), shown in the PR.
+  - The generated files keep every current entry (diff reviewed in the PR).
+  - A stale generated file fails CI with an operator-readable message.
+- id: P03
+  kind: prefactor
+  title: pr-autopilot reads the real required-check names of every repo
+  blocked_by:
+  - P01
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    pr-autopilot maps each project's required CI to the ruleset check names actually
+    reported on PRs (`Tests` for agent-factory, `Maven verify` for Say-my-name-back, `Tests and build`
+    for Say-my-name-front) instead of workflow names; the mapping lives in `config/projects/*.toml`.
+    Files: bin/pr-autopilot, config/projects/*.toml, tests/pr-autopilot-*.
+  acceptance_criteria:
+  - A test per repo shows a PR with the real check name green is armed, and red is not.
+  - A project file naming a check that its ruleset does not require is reported loudly (read-only gh api in a live check, faked in tests).
+- id: P04
+  kind: vertical_slice
+  title: pr-autopilot updates BEHIND PRs one at a time and never merges one while BEHIND
+  blocked_by:
+  - P03
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    On each tick pr-autopilot updates at most one BEHIND PR (oldest ready first) with
+    `gh pr update-branch`, and does not arm auto-merge on a BEHIND PR. Works whether or not the ruleset
+    is strict, so it can merge before P05 flips the setting. Files: bin/pr-autopilot, tests/pr-autopilot-*.
+  acceptance_criteria:
+  - With two BEHIND PRs, one tick updates exactly one (the oldest) and the next tick the other.
+  - A BEHIND PR is never armed for auto-merge; once up to date and green it is armed.
+  - An update-branch failure is logged and retried next tick, never silently dropped.
+- id: P05
+  kind: vertical_slice
+  title: main requires up-to-date branches on the Factory repo
+  blocked_by:
+  - P04
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    A versioned, idempotent script applies `strict_required_status_checks_policy: true`
+    to ruleset AF-main-protection and `allow_update_branch: true` on saymyname-app/agent-factory only,
+    reads both back, and documents the one-command rollback. Applied once after P04 is merged. Files:
+    one bin/ script, its test (gh faked), docs/DELIVERY.md section on merge safety.
+  acceptance_criteria:
+  - The script's test proves it only targets agent-factory and is idempotent.
+  - A live read (`gh api`) after application shows strict true and allow_update_branch true on agent-factory, and unchanged settings on Say-my-name-back and Say-my-name-front (output pasted in the ticket).
+  - The next merged PR after application was updated by pr-autopilot if it was BEHIND (ticket note).
+- id: P06
+  kind: vertical_slice
+  title: A conflicted or red PR sends its ticket back to the pool, never left behind
+  blocked_by:
+  - P04
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    When a ticket's PR is DIRTY, or its required checks are red after the single retry,
+    pr-autopilot reopens the ticket to the pool with a structured rejection reason (`conflict with
+    <base>@<sha>` or the failing check), keeps branch and PR, and the dispatch door's resume path hands
+    them to the next worker. The third rejection calls the escalation door (Mayor, then NEEDS BENJAMIN
+    after 2 h). A ticket closes only on merge. Replaces the separate `[ci] PR failed` / `[autopilot] stuck`
+    beads for PRs that belong to a ticket (af-elhn7). Files: bin/pr-autopilot, bin/dispatch-door
+    (resume path only), formulas/mol-do-work.formula.toml (resume instruction), tests.
+  acceptance_criteria:
+  - A DIRTY PR and a red PR each reopen their ticket with the reason and keep the branch; no extra bead is filed.
+  - The resume dispatch continues the same branch and PR.
+  - The third rejection of the same ticket calls the escalation door exactly once.
+  - A ticket whose worker moved on while its PR went red is back in the ready pool within one tick.
+- id: P07
+  kind: vertical_slice
+  title: A ticket fixed through another ticket's PR closes itself on that merge
+  blocked_by:
+  - P06
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    A repair delivered on another ticket's branch records `delivered_via_pr` in the
+    fixed ticket's metadata; pr-autopilot / factory-delivery-guard reconciliation closes that ticket
+    with the merge evidence when the hosting PR merges (af-87f9u). Files: bin/pr-autopilot,
+    bin/factory-delivery-guard, formulas/mol-do-work.formula.toml (how to record it), tests.
+  acceptance_criteria:
+  - A test closes a ticket whose `delivered_via_pr` PR merged, with merged sha recorded.
+  - A ticket naming an unmerged or closed-unmerged PR stays open.
+- id: P08
+  kind: vertical_slice
+  title: Every ticket gets a locked, fresh, isolated worktree
+  blocked_by:
+  - P01
+  target_rigs:
+  - agent-factory
+  what_it_delivers: '`bin/factory-do-work-workspace enter` takes an exclusive per-repository lock,
+    branches from a freshly fetched `origin/<base>`, and fails loudly if worktree config or the auto-push
+    hook cannot be installed; every work formula allowed on a rig (mol-do-work, mol-scoped-work,
+    mol-polecat-commit, build-basic) works in an isolated worktree, never in a rig checkout or the live
+    root. Also fixes the mol-do-work "for demos" description (A4 to-redo line). Files:
+    bin/factory-do-work-workspace, bin/factory-shared-drain-workspace, formulas/*.formula.toml, tests.'
+  acceptance_criteria:
+  - Two concurrent `enter` calls on one repository both produce worktrees based on `origin/<base>` with the hook installed.
+  - A forced hook-install failure makes `enter` exit non-zero with a readable reason.
+  - A contract test fails if any work formula can run with the rig checkout or live root as its work dir.
+- id: P09
+  kind: vertical_slice
+  title: Abandoned worktrees are cleaned on a schedule without losing work
+  blocked_by:
+  - P08
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    An order runs `factory-maintain clean-worktrees` daily; it removes only worktrees
+    whose branch is merged, or clean, pushed and untouched for more than 7 days; a worktree with unpushed
+    commits is reported through the escalation door, never removed. The 9 worktrees left from 2026-09-18
+    are handled by the first run. Files: orders/ (new order), bin/factory-maintain, tests.
+  acceptance_criteria:
+  - Tests cover merged, clean-pushed-old, clean-pushed-recent and unpushed worktrees with the expected action each.
+  - The first live run's report lists what was removed and what was kept (ticket note).
+  - The new order passes gc's own order validation (loaded through gc, not only parsed).
+- id: P10
+  kind: vertical_slice
+  title: Tests run in a sandbox and can no longer reach the live city
+  blocked_by:
+  - P01
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    A shared harness gives every test a throwaway HOME, city, beads dir and tmux dir,
+    with fake `gc`, `bd`, `gh`, `codex` and `claude` first on PATH; a test that needs the real `gc` opts
+    in explicitly and runs against a throwaway city. A CI check fails any test naming the live root path
+    or calling the real `gc` without the opt-in. The 5 tests hard-coding the live root and the 2 reading
+    the live city are migrated. Files: tests/lib (harness), tests/fixtures/fake-*.py, the migrated tests,
+    the CI check.
+  acceptance_criteria:
+  - The whole suite passes under the harness in CI.
+  - A throwaway test naming /home/benja/agent-factory or calling real gc without opt-in fails the check (shown in the PR, then removed).
+  - Running the suite on the host sends no mail, starts no provider session and writes no bead in the live city (before/after counts in the ticket note).
+- id: P11
+  kind: vertical_slice
+  title: Tickets declare their files; overlapping tickets are serialised at publish
+  blocked_by:
+  - P01
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    A ticket in a graph draft may carry `scope.paths` (globs); `ticket-graph-publish`
+    copies them to the bead, adds a dependency edge between any two not-yet-ordered tickets whose scopes
+    overlap, and lists each added edge in the publish result. A config list of hot paths (`city.toml`,
+    Flyway `V*__*.sql`, and whatever P01/P02 could not restructure) is versioned. Files:
+    bin/ticket-graph-publish, config/ (hot-path list), tests/ticket-graph-publish-test.py, planning docs
+    describing the field.
+  acceptance_criteria:
+  - Two tickets with overlapping scopes and no edge get one edge, recorded in the publish result; disjoint ones get none.
+  - An existing edge is never reversed or duplicated.
+  - A draft without scopes still publishes exactly as today.
+- id: P12
+  kind: vertical_slice
+  title: Dispatch waits for a held hot file or low memory, never kills
+  blocked_by:
+  - P11
+  target_rigs:
+  - agent-factory
+  what_it_delivers: '`bin/dispatch-door` defers (does not refuse permanently) a ticket whose scope
+    touches a hot path held by an in-progress ticket, and defers starting any new worker session while
+    WSL MemAvailable is below 1.5 GiB; each deferral is logged with its reason and retried when the
+    Mayor next dispatches. Running work is never stopped. Files: bin/dispatch-door, tests.'
+  acceptance_criteria:
+  - A ticket touching a held hot path is deferred and dispatched once the holder merges.
+  - With a faked MemAvailable of 1.4 GiB, dispatch is deferred with a readable log line; at 1.6 GiB it proceeds.
+  - No test or code path stops a running session because of either gate.
+- id: P13
+  kind: vertical_slice
+  title: Sessions wake only for claimable work; resolved mail beads close themselves
+  blocked_by:
+  - P01
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    The wake trigger counts only claimable assigned work (message-type beads do not
+    count), and a mail-reply bead whose content is resolved closes itself, removing the stale signal
+    that looped factory-worker ~55 times per hour on 2026-09-28 (af-6675l cause). Files: the wake
+    order/script, the mail-reply handling, tests.
+  acceptance_criteria:
+  - An assigned message-type bead does not wake a session.
+  - A resolved mail-reply bead is closed by the next pass.
+  - A real claimable ticket still wakes its worker.
+- id: P14
+  kind: vertical_slice
+  title: A session looping wake/stop is detected and paused
+  blocked_by:
+  - P13
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    A detector (extend spawn-storm-detect or equivalent) alerts through the escalation
+    door and pauses any session that wakes and stops more than 10 times in one hour, whatever the cause
+    (af-6675l safety net). Files: the detector script and order, tests.
+  acceptance_criteria:
+  - 11 wake/stop cycles in an hour trigger one alert and a pause; 10 do not.
+  - The pause is reversible by the Mayor with a named gesture, logged.
+  - The order passes gc's own order validation.
+- id: P15
+  kind: vertical_slice
+  title: Agents mail with their own identity; no mail carries Benjamin's authority
+  blocked_by:
+  - P01
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    The operator entry path (the WSL command operator agents use) sets an explicit
+    identity (`po-agent`), orders send with their own names, and nothing sends as `human`; the Mayor
+    prompt states that every mail is an agent's request and that Benjamin's decisions reach the Factory
+    only through approved Specs and graphs; `docs/DELIVERY.md:176` corrected. Files: bin/ operator entry
+    script, config/operator.toml if needed, agents/mayor/prompt.template.md, docs/DELIVERY.md,
+    bin/pr-autopilot (sender), tests.
+  acceptance_criteria:
+  - A mail sent through the operator entry path is received with sender `po-agent`.
+  - A grep test fails if any bin/ or orders/ caller sends mail without an explicit sender.
+  - The Mayor prompt test asserts the "every mail is an agent's request" rule.
+- id: P16
+  kind: vertical_slice
+  title: Overlaps and conflicts are measured; leases proposed only on evidence
+  blocked_by:
+  - P06
+  - P11
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    Every publish-time overlap edge and every PR conflict (with the two tickets' declared
+    scopes) is recorded in one append-only runtime log; when conflicts between tickets whose declared
+    scopes did not overlap reach 3 within 7 days, a `proposal` bead "dynamic leases" is filed once (never
+    built without Benjamin). Files: bin/pr-autopilot (record), bin/ticket-graph-publish (record), a small
+    reader script, tests.
+  acceptance_criteria:
+  - Recorded entries carry both tickets, their scopes and the conflict sha.
+  - The third undeclared conflict in 7 days files exactly one proposal; a declared overlap does not count.
+- id: P17
+  kind: vertical_slice
+  title: Two workers on the Factory rig; the one-writer rule is rewritten
+  blocked_by:
+  - P02
+  - P05
+  - P06
+  - P07
+  - P08
+  - P09
+  - P10
+  - P12
+  - P14
+  - P15
+  - P16
+  target_rigs:
+  - agent-factory
+  what_it_delivers: '`agents/factory-worker/agent.toml` max_active_sessions = 2 (product rigs stay 1,
+    reviewer unchanged); "one writer per rig" in the Mayor prompt, mol-do-work header, docs/DELIVERY.md,
+    docs/SECURITY.md, AGENTS.md and README.md is rewritten into the new rule (isolated worktree +
+    declared scope + hot paths + return loop + memory floor); tests/factory-work-dispatch-test.sh
+    asserts the configured caps instead of a singleton; the Mayor prompt''s stale escalation/build-basic
+    lines (A4 to-redo) are fixed at the same time. Files: agents/factory-worker/agent.toml,
+    agents/mayor/prompt.template.md, formulas/mol-do-work.formula.toml (header), docs/DELIVERY.md,
+    docs/SECURITY.md, AGENTS.md, README.md, tests/factory-work-dispatch-test.sh.'
+  acceptance_criteria:
+  - After merge and city reload, `gc status` shows factory-worker scaled max=2 and product rigs unchanged.
+  - No trusted doc or prompt still states one writer per rig (grep test).
+  - The Mayor dispatches two independent ready tickets at once in a synthetic dispatch test.
+- id: P18
+  kind: vertical_slice
+  title: 'Final batch: entry docs brought up to date (A4 to-redo)'
+  blocked_by:
+  - P17
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    The A4 to-redo lines on README.md, docs/GETTING_STARTED.md and docs/OPERATOR_BRIDGE.md
+    are fixed (retired product status/preview, clean city.toml claim, core.hooksPath step, retired
+    product-queue intents) and their INVENTORY rows re-verdicted. Files: README.md,
+    docs/GETTING_STARTED.md, docs/OPERATOR_BRIDGE.md, their INVENTORY rows.
+  acceptance_criteria:
+  - Each listed INVENTORY to-redo reason is gone from the file and the row carries its new verdict.
+  - No retired command or concept is cited as live in these three files.
+- id: P19
+  kind: vertical_slice
+  title: 'Final batch: operations docs brought up to date (A4 to-redo)'
+  blocked_by:
+  - P17
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    The A4 to-redo lines on docs/OPERATIONS.md, docs/FACTORY_OBSERVE.md,
+    docs/PLANNING_RUN_RESUME_PROTOTYPE.md and docs/ADAPTATION_REGISTER.md are fixed and their rows
+    re-verdicted (no ADR changed). Files: those four docs, their INVENTORY rows.
+  acceptance_criteria:
+  - Each listed to-redo reason is gone and the row carries its new verdict.
+  - No legacy/ path is cited as a live pattern in these files.
+- id: P20
+  kind: vertical_slice
+  title: 'Final batch: provider failover texts no longer cite the retired cockpit (A4 to-redo)'
+  blocked_by:
+  - P17
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    Help/status texts and descriptions in bin/provider-failover, lib/provider_failover.py
+    (plus the dead `parked` field), config/provider-policy.json and orders/provider-failover.toml stop
+    citing the cockpit or campaign; rows re-verdicted. Behaviour unchanged. Files: those four files,
+    their tests, their INVENTORY rows.
+  acceptance_criteria:
+  - Provider failover tests pass unchanged in behaviour; no text cites the cockpit or campaign.
+  - The `parked` field is removed or justified in the row.
+- id: P21
+  kind: vertical_slice
+  title: 'Final batch: watchdog and autopilot descriptions and fixtures made generic (A4 to-redo)'
+  blocked_by:
+  - P17
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    bin/factory-watchdog header, orders/factory-watchdog.toml and orders/pr-autopilot.toml
+    descriptions match what they do; tests/factory-watchdog-test.{py,sh} use synthetic rig names; rows
+    re-verdicted. Files: those files and rows.
+  acceptance_criteria:
+  - Descriptions match behaviour (reviewer checks against the code).
+  - No saymyname literal remains in those tests' fixtures.
+- id: P23
+  kind: vertical_slice
+  title: 'Final batch: test fixtures use synthetic names (A4 to-redo)'
+  blocked_by:
+  - P17
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    Session fixtures under tests/fixtures/planning-run-router and tests/fixtures/planning-run-to-spec
+    sign with the synthetic operator (config/operator.toml) instead of the real operator's name, and the
+    pr-autopilot tests (candidate-duplicate, ci-failure, reconcile-cache, reversibility, stale-snapshot,
+    step-wisp-collision) use synthetic project fixtures instead of saymyname repos; rows re-verdicted.
+    Behaviour unchanged. Files: those fixtures and tests, their INVENTORY rows.
+  acceptance_criteria:
+  - The affected tests pass with synthetic names only; no real person's name and no saymyname literal remains in those fixtures.
+  - If a tool requires the operator's name, it reads it from config/operator.toml (recorded in the ticket).
+- id: P24
+  kind: vertical_slice
+  title: 'Final batch: deliver-close and delivery-guard read the project files (A4 to-redo)'
+  blocked_by:
+  - P17
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    bin/deliver-close and bin/factory-delivery-guard stop hardcoding the SayMyName repo/rig lists and
+    workflow map and read config/projects/*.toml through the existing loader, like pr-autopilot; the
+    stale campaign/product-status rationale is removed; rows re-verdicted. bin/factory-guard is NOT
+    touched (A3 budget). Files: bin/deliver-close, bin/factory-delivery-guard, their tests, their
+    INVENTORY rows.
+  acceptance_criteria:
+  - A synthetic third project added only through a project file is covered by both tools (test).
+  - No saymyname, smb or smf literal remains in either tool outside comments and fixtures.
+- id: P22
+  kind: verification
+  title: 'A6 closes: one day at 2 workers with main always green'
+  blocked_by:
+  - P18
+  - P19
+  - P20
+  - P21
+  - P23
+  - P24
+  target_rigs:
+  - agent-factory
+  what_it_delivers: >-
+    A closing note in docs/planning/parallel-delivery/ proves, over at least 24 h from
+    P17's activation, that 2 factory-workers ran tickets at the same time, main CI was green after every
+    merge, no test reached the live city, no order failed because of parallel work, and records the minimum
+    WSL MemAvailable, per-worker RAM, overlaps and conflicts. Proposals af-i3prh, af-elhn7, af-6675l and
+    af-87f9u are closed with a pointer to their tickets.
+  acceptance_criteria:
+  - The note shows at least two time windows where both workers were active, with ticket ids.
+  - '`gc events` and CI history over the window show no red main after a merge and no order.failed caused by parallel work.'
+  - Per-worker RAM, minimum MemAvailable, overlap and conflict counts are recorded.
+  - The four proposals are closed with pointers.

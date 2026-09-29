@@ -1,0 +1,39 @@
+{
+  "contract": "agent-factory-planning-run-router-result/v1",
+  "convoy_id": "af-dsygc",
+  "graph_digest": "sha256:1e3ee0b52615913dc16bb6d5c7dfefe9e5ee1e3c289f144950ffe10c4a9bc07b",
+  "ids": {
+    "P01": "af-tltj3",
+    "P02": "af-ulqtp",
+    "P03": "af-37h58",
+    "P04": "af-s6lef",
+    "P05": "af-yl964",
+    "P06": "af-pfwru",
+    "P07": "af-3vn2w",
+    "P08": "af-jz4zb",
+    "P09": "af-qij75",
+    "P10": "af-ygibh",
+    "P11": "af-prmyy",
+    "P12": "af-8j7tb",
+    "P13": "af-oj4tp",
+    "P14": "af-llc2y",
+    "P15": "af-wrlfy",
+    "P16": "af-45knz",
+    "P17": "af-puf4p",
+    "P18": "af-stdt7",
+    "P19": "af-5l657",
+    "P20": "af-r48pb",
+    "P21": "af-k91yx",
+    "P22": "af-a3ajo",
+    "P23": "af-39j7j",
+    "P24": "af-v5dsd",
+    "_convoy": "af-dsygc"
+  },
+  "ok": true,
+  "result": "published",
+  "resumed_from": [
+    "spec_approval"
+  ],
+  "spec_digest": "sha256:6cac205b5f7ada47c9b234c6aa4e9232fa423141d54a9805a2968922da9e9324",
+  "spec_id": "spec-parallel-delivery-2026-09-29"
+}
