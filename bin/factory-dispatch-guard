@@ -29,6 +29,15 @@
 # ladder's cadence, so a formula that legitimately self-claims within
 # seconds of dispatch, per af-pl39t, is never a false positive).
 #
+# Last progress = the newest *known* of updated_at / gc.last_heartbeat_at.
+# An empty or unparseable timestamp is unknown and contributes nothing (a
+# missing heartbeat falls back to updated_at). If neither is known there is
+# no evidence of progress at all, so the bead is treated as stale and its age
+# reported as unknown -- never invented. (Until 2026-09-29 an empty heartbeat
+# went through `date -d ""`, which silently answers midnight UTC today: a
+# drift was invisible 00:00-00:15 UTC every day and the displayed age was
+# wrong for every bead without a heartbeat.)
+#
 # Repair: clear the stale assignee (`gc bd update <id> --assignee ""`) so the
 # bead becomes visible to the target's own claim query again — the same
 # effect `--reassign` would have had at sling time — leave a note, and page
@@ -88,8 +97,25 @@ CHECKED=0; DRIFTED=0
 say()  { printf '%s\n' "$*"; }
 bad()  { PROBLEMS+=("$1"); STATUS=1; }
 did()  { ACTIONS+=("$1"); say "  REPAIRED: $1"; }
-epoch_of() { date -u -d "$1" +%s 2>/dev/null || echo 0; }
-now_epoch() { date -u +%s; }
+# epoch_of <timestamp>: epoch seconds, or NOTHING when the timestamp is empty
+# or unparseable. Never call `date -d` on an empty string: it does not fail,
+# it answers midnight UTC of the current day.
+epoch_of() {
+  local ts=$1 e
+  [ -n "${ts//[[:space:]]/}" ] || return 0
+  e=$(date -u -d "$ts" +%s 2>/dev/null) || return 0
+  [[ $e =~ ^-?[0-9]+$ ]] && printf '%s\n' "$e"
+  return 0
+}
+# FACTORY_DISPATCH_NOW_EPOCH pins the clock -- a test seam only, so the test
+# is independent of the time of day it runs at.
+now_epoch() {
+  if [[ ${FACTORY_DISPATCH_NOW_EPOCH:-} =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$FACTORY_DISPATCH_NOW_EPOCH"
+  else
+    date -u +%s
+  fi
+}
 
 page_mayor_once() {  # id summary
   local id=$1 summary=$2
@@ -156,22 +182,30 @@ while IFS=$'\x1f' read -r id status assignee routed_to updated_at heartbeat_at s
   # that session is still alive, however stale it looks (af-7qxzh).
   [ "$session_affinity" = "require" ] && is_session_alive "$assignee" && continue
 
-  updated_epoch=$(epoch_of "$updated_at")
-  heartbeat_epoch=$(epoch_of "$heartbeat_at")
-  last_progress=$updated_epoch
-  [ "$heartbeat_epoch" -gt "$last_progress" ] && last_progress=$heartbeat_epoch
-  age=$((NOW - last_progress))
-  [ "$age" -ge "$STALE_SECONDS" ] || continue
+  # Newest KNOWN progress signal; an unknown one contributes nothing.
+  last_progress=""
+  for e in "$(epoch_of "$updated_at")" "$(epoch_of "$heartbeat_at")"; do
+    [ -n "$e" ] || continue
+    if [ -z "$last_progress" ] || [ "$e" -gt "$last_progress" ]; then last_progress=$e; fi
+  done
+  if [ -n "$last_progress" ]; then
+    age=$((NOW - last_progress))
+    [ "$age" -ge "$STALE_SECONDS" ] || continue
+    age_label="$((age / 60))m"
+  else
+    # No parseable updated_at nor heartbeat: no evidence anyone is working
+    # it -- stale by definition, with an honest "unknown" age.
+    age_label="unknown age (no parseable updated_at or heartbeat)"
+  fi
 
   DRIFTED=$((DRIFTED + 1))
-  age_minutes=$((age / 60))
-  bad "$id routed to '$routed_to' but assignee is still '$assignee' (stale ${age_minutes}m, threshold ${STALE_MINUTES}m) — invisible to '$routed_to''s own claim query"
+  bad "$id routed to '$routed_to' but assignee is still '$assignee' (stale ${age_label}, threshold ${STALE_MINUTES}m) — invisible to '$routed_to''s own claim query"
   if [ "$CHECK_ONLY" != "1" ]; then
     if (cd "$ROOT" && "$GC_BIN" --city "$ROOT" bd update "$id" --assignee "" \
-          --append-notes "factory-dispatch-guard: cleared stale assignee '$assignee' (routed to '$routed_to' but not visible to its claim query for ${age_minutes}m; see af-33a4e). Dispatching to a pool/infrastructure target must pass --reassign to clear a pre-existing human assignee." \
+          --append-notes "factory-dispatch-guard: cleared stale assignee '$assignee' (routed to '$routed_to' but not visible to its claim query for ${age_label}; see af-33a4e). Dispatching to a pool/infrastructure target must pass --reassign to clear a pre-existing human assignee." \
           >/dev/null 2>&1); then
-      page_mayor_once "$id" "assignee was '$assignee' (routed to '$routed_to', stale ${age_minutes}m); cleared so '$routed_to' can claim it"
-      did "$id: cleared stale assignee '$assignee' (routed to '$routed_to', stale ${age_minutes}m) and paged the Mayor"
+      page_mayor_once "$id" "assignee was '$assignee' (routed to '$routed_to', stale ${age_label}); cleared so '$routed_to' can claim it"
+      did "$id: cleared stale assignee '$assignee' (routed to '$routed_to', stale ${age_label}) and paged the Mayor"
     else
       bad "$id could not be repaired — the Beads write failed"
     fi
