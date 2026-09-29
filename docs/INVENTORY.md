@@ -85,7 +85,7 @@ an A5 input.
 | `AGENTS.md` | to-redo | all agents (CLAUDE.md, mayor prompt, operator-context test) | invariants still cite campaign liveness, cockpit, SayMyName runner, preview |
 | `CLAUDE.md` | ops | Claude Code | @AGENTS.md include |
 | `CONTEXT.md` | kernel | ADR-0028, refactor spec | project-agnostic domain glossary |
-| `README.md` | to-redo | entry point | says product status and preview are configured while also retired (F04) |
+| `README.md` | ops | entry point | FIXED (A4 wording fixes, #254): "Current status" separates what is configured from what is retired (product status/preview); no longer contradicts itself |
 | `agents/factory-worker/agent.toml` | kernel | bin/factory-work-dispatch, city.toml, mayor prompt, tests/factory-work-dispatch-test.sh | The HQ implementation role every approved-graph af-* bead goes to |
 | `agents/factory-worker/prompt.template.md` | kernel | factory-worker sessions | Generic graph.v2 claim/close protocol; no drift found vs gc hook/bd usage |
 | `agents/mayor/agent.toml` | kernel | pack.toml named_session mayor | Mayor provider pin |
@@ -163,9 +163,9 @@ an A5 input.
 | `docs/FACTORY_OBSERVE.md` | kernel | CONTEXT_INDEX, bin/factory-observe | FIXED (P19, af-5l657): cites the improvement-axes register and its moved JSON Schema as retired to `legacy/`; policy/measures validation text now states plainly it is hand-written with no JSON Schema file backing it |
 | `docs/FACTORY_TOOLS.md` | to-redo | CONTEXT_INDEX, ADR-0025 | mostly current; "5 providers" (4 checked); SayMyName example commands |
 | `docs/FIXTURE_CITY_ORACLE.md` | kernel | CONTEXT_INDEX, ADR-0027 | fixture oracle contract; cockpit refs are the quarantine fence |
-| `docs/GETTING_STARTED.md` | to-redo | README, CONTEXT_INDEX | claims clean city.toml after rig removal (false); no core.hooksPath step |
+| `docs/GETTING_STARTED.md` | ops | README, CONTEXT_INDEX | FIXED (O14, af-8l3ea; P18, af-stdt7): step 1 has the `bin/factory-setup`/`core.hooksPath` step; step 2's post-removal claim is scoped to the `[[rigs]]` entry and now names the inert `[[patches.agent]]` leftovers `gc rig remove` does not touch |
 | `docs/OPERATIONS.md` | ops | README, CONTEXT_INDEX, RUNBOOK | FIXED (P19, af-5l657): SayMyName cutover/M6 rollback retired to `legacy/docs/products/saymyname/CUTOVER_AND_M6_ROLLBACK.md`; no `gc bd create` new-work section, no `derive_delivery()` reference, and off-box backup now accurately describes the live `core/jsonl-archive` order |
-| `docs/OPERATOR_BRIDGE.md` | to-redo | AGENTS.md, README, operator-context test | example intents target the retired product queue |
+| `docs/OPERATOR_BRIDGE.md` | ops | AGENTS.md, README, operator-context test | FIXED (legacy PR 5b/5, #250): the "Product candidate queue" section and its example intents were purged with the rest of the retired product queue; current examples route through the Mayor/Planning Run flow |
 | `docs/PLANNING_ALLOCATION_PROTOTYPE.md` | kernel | CONTEXT_INDEX | P02 doc |
 | `docs/PLANNING_EXCEPTION.md` | kernel | CONTEXT_INDEX, planning-exception guard | B08 doc |
 | `docs/PLANNING_MAP_CONCURRENCY_PROTOTYPE.md` | kernel | CONTEXT_INDEX, ADAPTATION_REGISTER | P03 doc |
