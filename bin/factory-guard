@@ -72,6 +72,83 @@ say()  { [ "$QUIET" = "1" ] || printf '%s\n' "$*"; }
 bad()  { PROBLEMS+=("$1"); STATUS=1; }
 did()  { ACTIONS+=("$1"); say "  FIXED: $1"; }
 
+# --- run budget (2026-09-29) -------------------------------------------------
+# The order kills this guard at 180 s (orders/factory-guard.toml); p50 is
+# ~32 s. On 2026-09-28 14:09 the Windows host was saturated (a game froze
+# mouse and screen), unbounded gh/git/gc calls stretched the run past 180 s
+# and the controller killed it: no report at all, every check lost at once.
+# So every network, Dolt and sub-guard call goes through bounded() (its own
+# cap, never past the hard stop), no section starts once the budget is spent,
+# and every section not run is reported as a problem -- never silently green.
+# The guard then exits normally with its report.
+GUARD_BUDGET="${FACTORY_GUARD_BUDGET_SECONDS:-150}"                 # no section starts after this
+GUARD_HARD=$((GUARD_BUDGET + ${FACTORY_GUARD_GRACE_SECONDS:-20}))  # no bounded call outlives this
+GUARD_SLOW="${FACTORY_GUARD_SLOW_SECONDS:-60}"                      # print section timings past this
+GUARD_SECTIONS=(invariants live-root-sync rig-sync work-backup rig-dispatch build-gates
+  project-registry worktrees runtime-worktrees mayor-session session-boot delivery-proof
+  dispatch-drift dispatch-door-bypass waiting-drift planning-exception)
+SECONDS=0; GUARD_SECTION=""; SECTION_T0=0; TIMINGS=(); SKIPPED=0
+GUARD_TMO=$(mktemp); trap 'rm -f "$GUARD_TMO"' EXIT
+
+timed_out()   { [ "$1" = 124 ] || [ "$1" = 137 ]; }
+over_budget() { [ "$SECONDS" -ge "$GUARD_BUDGET" ]; }
+skipped()     { bad "$1 — not checked (time budget exhausted: ${SECONDS}s of ${GUARD_BUDGET}s)"; SKIPPED=$((SKIPPED+1)); }
+
+# bounded <cap-seconds> <cmd...>: timeout(1) capped by what is left before the
+# hard stop. A cut call returns 124/137 and is logged for the timing report;
+# callers treat it as "unknown" -- never a green answer, never a reason to act.
+bounded() {
+  local cap=$1 left=$((GUARD_HARD - SECONDS)) rc; shift
+  [ "$left" -lt 1 ] && left=1
+  [ "$cap" -gt "$left" ] && cap=$left
+  timeout -k 5 "$cap" "$@"; rc=$?
+  timed_out "$rc" && printf '%s: %s — cut at %ss\n' "$GUARD_SECTION" "${*:1:3}" "$cap" >> "$GUARD_TMO"
+  return "$rc"
+}
+
+# section <name>: close the previous section's timing and open <name>. Once
+# the budget is spent, <name> and every section after it are reported as not
+# checked and the guard reports and exits (the first section always runs).
+section() {
+  [ -n "$GUARD_SECTION" ] && TIMINGS+=("$GUARD_SECTION $((SECONDS - SECTION_T0))s")
+  GUARD_SECTION=$1; SECTION_T0=$SECONDS
+  { [ "$1" = "${GUARD_SECTIONS[0]}" ] || ! over_budget; } && return 0
+  local s left=0
+  for s in "${GUARD_SECTIONS[@]}"; do
+    [ "$s" = "$1" ] && left=1
+    [ "$left" = 1 ] && skipped "$s"
+  done
+  GUARD_SECTION=""; finish
+}
+
+finish() {
+  [ -n "$GUARD_SECTION" ] && TIMINGS+=("$GUARD_SECTION $((SECONDS - SECTION_T0))s")
+  say ""
+  if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
+  if [ "${#PROBLEMS[@]}" -gt 0 ]; then
+    say "UNRESOLVED ${#PROBLEMS[@]}:"; printf '  ! %s\n' "${PROBLEMS[@]}"
+  else
+    say "healthy"
+  fi
+  # Slow, cut short or partly timed out: print what each section cost and the
+  # host load (quiet mode too), so the next slow run tells host saturation
+  # (high load, every section slower) from one hung call (one section, a
+  # "timed out" line).
+  if [ "$SECONDS" -ge "$GUARD_SLOW" ] || [ "$SKIPPED" -gt 0 ] || [ -s "$GUARD_TMO" ]; then
+    printf 'timing: %ss of a %ss budget — loadavg %s\n' "$SECONDS" "$GUARD_BUDGET" \
+      "$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
+    printf '  sections: %s\n' "$(printf '%s · ' "${TIMINGS[@]}" | sed 's/ · $//')"
+    [ -s "$GUARD_TMO" ] && sed 's/^/  timed out: /' "$GUARD_TMO"
+  fi
+  # O2: this guard runs as a zero-token cooldown order (orders/factory-guard.toml).
+  # It used to exit 1 whenever it FOUND something -- routine, already-repaired or
+  # not -- which is indistinguishable from the order itself crashing, and floods
+  # Gas City's order.failed stream with noise (see O1). "Found" is reported above
+  # in stdout (UNRESOLVED ... / the exit code below); only the two explicit exit 2
+  # paths above (bad CLI argument, unreachable root) mean the guard itself broke.
+  exit 0
+}
+
 # --- pin the expected branch -------------------------------------------------
 if [ -n "$PIN" ]; then
   printf '%s\n' "$PIN" > "$STATE"
@@ -88,6 +165,7 @@ say "factory-guard — $ROOT"
 say ""
 
 # --- 1. critical runtime files ----------------------------------------------
+section invariants
 CRITICAL="bin/pr-autopilot orders/pr-autopilot.toml bin/factory-guard orders/factory-guard.toml bin/factory-build-gates bin/provider-failover orders/provider-failover.toml bin/factory-watchdog orders/factory-watchdog.toml"
 MISSING=""
 for f in $CRITICAL; do [ -e "$f" ] || MISSING="$MISSING $f"; done
@@ -123,7 +201,7 @@ if grep -qE '^[[:space:]]*include[[:space:]]*=.*city\.provider\.toml' city.toml 
    && [ ! -f city.provider.toml ]; then
   if [ "$CHECK_ONLY" = "1" ]; then
     bad "city.provider.toml is missing — the city config cannot load; run factory-guard to regenerate it"
-  elif [ -x bin/provider-failover ] && bin/provider-failover apply --no-reload >/dev/null 2>&1 \
+  elif [ -x bin/provider-failover ] && bounded 30 bin/provider-failover apply --no-reload >/dev/null 2>&1 \
        && [ -f city.provider.toml ]; then
     did "regenerated the missing provider overlay city.provider.toml"
   else
@@ -132,13 +210,19 @@ if grep -qE '^[[:space:]]*include[[:space:]]*=.*city\.provider\.toml' city.toml 
 fi
 
 # --- 2. config invariants ----------------------------------------------------
-BROKEN_CFG=""
+BROKEN_CFG=""; CFG_UNKNOWN=""
 if grep -qE '^\s*permission_mode\s*=\s*"plan"' city.toml 2>/dev/null; then
   BROKEN_CFG="permission_mode=plan (strands unattended agents)"
 fi
+# A timed-out probe is unknown, not broken: it must not trigger section 3's
+# self-heal checkout.
 for p in codex claude claude-standard claude-cheap; do
-  gc config explain --provider "$p" >/dev/null 2>&1 || \
+  bounded 15 gc config explain --provider "$p" >/dev/null 2>&1; cfg_rc=$?
+  if timed_out "$cfg_rc"; then
+    CFG_UNKNOWN=1; bad "config-invariants — provider '$p' not checked (gc config explain timed out)"
+  elif [ "$cfg_rc" -ne 0 ]; then
     BROKEN_CFG="${BROKEN_CFG:+$BROKEN_CFG; }provider '$p' does not resolve"
+  fi
 done
 
 # --- 3. branch drift, and self-heal only if it broke something ---------------
@@ -169,13 +253,35 @@ else
   say "✓ branch — live root on pinned '$EXPECTED'"
 fi
 
+[ -n "$MISSING" ] && bad "missing critical runtime file(s):$MISSING"
+[ -z "$MISSING" ] && say "✓ runtime-files — all present"
+[ -n "$BROKEN_CFG" ] && bad "config invariant broken: $BROKEN_CFG"
+[ -z "$BROKEN_CFG$CFG_UNKNOWN" ] && say "✓ config-invariants — permission_mode sane, all 4 checked providers resolve"
+
+# Unattended agents run with permissions skipped and push rights. With
+# enableAllProjectMcpServers=true, any .mcp.json that lands in a checkout (a PR
+# is enough) is loaded as a tool server without anyone approving it (audit
+# 2026-09-17, S1). Reported, never auto-edited: these files belong to gc.
+MCP_OPEN=""
+for f in "$ROOT/.gc/settings.json" "$ROOT"/rigs/*/.gc/settings.json "$ROOT"/.gc/agents/*/.gc/settings.json; do
+  [ -f "$f" ] || continue
+  grep -Eq '"enableAllProjectMcpServers"[[:space:]]*:[[:space:]]*true' "$f" && MCP_OPEN="$MCP_OPEN ${f#$ROOT/}"
+done
+[ -n "$MCP_OPEN" ] && bad "enableAllProjectMcpServers=true lets a checked-out .mcp.json load unreviewed:$MCP_OPEN"
+[ -z "$MCP_OPEN" ] && say "✓ mcp-autoload — no agent settings auto-enable project MCP servers"
+
 # --- 3a. the live root runs what is checked out, not what is merged ----------
 # pr-autopilot merges to origin, but nothing pulled the live root: on
 # 2026-09-17 a merged sentinel fix (#87) stayed inactive until a human noticed
 # the root was 4 commits behind. Fast-forward only, only on the pinned branch,
 # only with a clean tracked tree; anything else is reported, never forced.
-if [ "$CURRENT" = "$EXPECTED" ] && git remote get-url origin >/dev/null 2>&1 \
-   && timeout 30 git fetch -q origin "$EXPECTED" 2>/dev/null; then
+section live-root-sync
+FETCH_RC=1
+if [ "$CURRENT" = "$EXPECTED" ] && git remote get-url origin >/dev/null 2>&1; then
+  bounded 30 git fetch -q origin "$EXPECTED" 2>/dev/null; FETCH_RC=$?
+  timed_out "$FETCH_RC" && bad "live-root-sync — not checked (git fetch timed out)"
+fi
+if [ "$FETCH_RC" = 0 ]; then
   BEHIND=$(git rev-list --count "HEAD..origin/$EXPECTED" 2>/dev/null || echo 0)
   AHEAD=$(git rev-list --count "origin/$EXPECTED..HEAD" 2>/dev/null || echo 0)
   if [ "$BEHIND" -eq 0 ]; then
@@ -196,7 +302,7 @@ if [ "$CURRENT" = "$EXPECTED" ] && git remote get-url origin >/dev/null 2>&1 \
       did "fast-forwarded the live root by $BEHIND merged commit(s)"
       # Some config is only read on reload; a reload with nothing new is a no-op.
       if git diff --name-only "$OLD_HEAD" HEAD | grep -qE '^(city\.toml|pack\.toml|orders/|agents/)'; then
-        timeout 60 gc reload >/dev/null 2>&1 && did "reloaded the city config changed by that fast-forward"
+        bounded 60 gc reload >/dev/null 2>&1 && did "reloaded the city config changed by that fast-forward"
       fi
     else
       bad "live root is $BEHIND merged commit(s) behind origin/$EXPECTED and the fast-forward failed"
@@ -210,14 +316,16 @@ fi
 # behind origin/dev and missed a merged owner-decisions section. Same contract
 # as 3a: fast-forward only, only a branch tracking origin, never over local
 # commits or tracked edits in progress (a writer may be working there).
+section rig-sync
 for rig_dir in "$ROOT"/rigs/*/; do
   rig_dir=${rig_dir%/}
   [ -e "$rig_dir/.git" ] || continue
   rig=$(basename "$rig_dir")
+  over_budget && { skipped "rig-sync — $rig and any rig after it"; break; }
   rig_br=$(git -C "$rig_dir" branch --show-current 2>/dev/null)
   rig_up=$(git -C "$rig_dir" rev-parse --abbrev-ref "${rig_br}@{upstream}" 2>/dev/null) \
     || { say "· rig-sync — $rig: branch '${rig_br:-detached}' tracks no upstream, left alone"; continue; }
-  timeout 30 git -C "$rig_dir" fetch -q origin "${rig_up#origin/}" 2>/dev/null \
+  bounded 30 git -C "$rig_dir" fetch -q origin "${rig_up#origin/}" 2>/dev/null \
     || { bad "rig-sync — $rig: could not fetch $rig_up"; continue; }
   rig_behind=$(git -C "$rig_dir" rev-list --count "HEAD..$rig_up" 2>/dev/null || echo 0)
   rig_ahead=$(git -C "$rig_dir" rev-list --count "$rig_up..HEAD" 2>/dev/null || echo 0)
@@ -236,34 +344,23 @@ for rig_dir in "$ROOT"/rigs/*/; do
   fi
 done
 
-[ -n "$MISSING" ] && bad "missing critical runtime file(s):$MISSING"
-[ -z "$MISSING" ] && say "✓ runtime-files — all present"
-[ -n "$BROKEN_CFG" ] && bad "config invariant broken: $BROKEN_CFG"
-[ -z "$BROKEN_CFG" ] && say "✓ config-invariants — permission_mode sane, all 4 checked providers resolve"
-
-# Unattended agents run with permissions skipped and push rights. With
-# enableAllProjectMcpServers=true, any .mcp.json that lands in a checkout (a PR
-# is enough) is loaded as a tool server without anyone approving it (audit
-# 2026-09-17, S1). Reported, never auto-edited: these files belong to gc.
-MCP_OPEN=""
-for f in "$ROOT/.gc/settings.json" "$ROOT"/rigs/*/.gc/settings.json "$ROOT"/.gc/agents/*/.gc/settings.json; do
-  [ -f "$f" ] || continue
-  grep -Eq '"enableAllProjectMcpServers"[[:space:]]*:[[:space:]]*true' "$f" && MCP_OPEN="$MCP_OPEN ${f#$ROOT/}"
-done
-[ -n "$MCP_OPEN" ] && bad "enableAllProjectMcpServers=true lets a checked-out .mcp.json load unreviewed:$MCP_OPEN"
-[ -z "$MCP_OPEN" ] && say "✓ mcp-autoload — no agent settings auto-enable project MCP servers"
-
 # --- 3c. (real-PII leak guard, Layer A -- retired 2026-09-28, O14, Benjamin
 #     Q4.3) ------------------------------------------------------------------
 
 # --- 4. back up work that exists only on this machine ------------------------
-AT_RISK=0; PUSHED=0
+section work-backup
+AT_RISK=0; PUSHED=0; WB_UNKNOWN=""
 # One round trip for every branch. A per-branch `git ls-remote` cost ~0.7 s
 # each; with ~200 local branches this section alone outlived the order's
 # 180 s timeout, so no section after it ran (2026-09-25..26).
-REMOTE_HEADS=$(git ls-remote --heads origin 2>/dev/null) || REMOTE_HEADS=""
+REMOTE_HEADS=$(bounded 30 git ls-remote --heads origin 2>/dev/null); LS_RC=$?
+[ "$LS_RC" -ne 0 ] && REMOTE_HEADS=""
+# Unknown remote heads must not read as "no remote branch": skip, never push blind.
+timed_out "$LS_RC" && { WB_UNKNOWN=1; bad "work-backup — branches not checked (git ls-remote timed out)"; }
 while read -r b; do
   [ -z "$b" ] && continue
+  timed_out "$LS_RC" && break
+  over_budget && { WB_UNKNOWN=1; skipped "work-backup — branch '$b' and any after it"; break; }
   remote=$(awk -v r="refs/heads/$b" '$2 == r {print $1}' <<<"$REMOTE_HEADS")
   local_sha=$(git rev-parse "$b")
   if [ -z "$remote" ]; then
@@ -282,7 +379,7 @@ while read -r b; do
   AT_RISK=$((AT_RISK+1))
   if [ "$CHECK_ONLY" = "1" ]; then
     bad "unpushed work on '$b'"
-  elif git push origin "$b:$b" >/dev/null 2>&1; then
+  elif bounded 30 git push origin "$b:$b" >/dev/null 2>&1; then
     did "backed up '$b' to origin"; PUSHED=$((PUSHED+1))
   else
     bad "could not back up '$b' to origin"
@@ -331,12 +428,12 @@ if [ "${DIRTY:-0}" -gt 0 ]; then
         -m "factory-guard snapshot ${stamp}: ${DIRTY} entries that existed only on this machine" \
         2>/dev/null)
       SNAP_REF="refs/factory-guard/snapshots/${stamp}"
-      if [ -n "$commit" ] && git push -q origin "$commit:$SNAP_REF" 2>/dev/null; then
+      if [ -n "$commit" ] && bounded 30 git push -q origin "$commit:$SNAP_REF" 2>/dev/null; then
         did "snapshotted ${DIRTY} working-tree entr(y|ies) to origin $SNAP_REF"
         # Keep the ten most recent; older ones describe states long superseded.
-        git ls-remote --refs origin 'refs/factory-guard/snapshots/*' 2>/dev/null \
+        bounded 30 git ls-remote --refs origin 'refs/factory-guard/snapshots/*' 2>/dev/null \
           | awk '{print $2}' | sort | head -n -10 \
-          | while read -r old; do git push -q origin ":$old" 2>/dev/null || true; done
+          | while read -r old; do bounded 30 git push -q origin ":$old" 2>/dev/null || true; done
       else
         bad "could not snapshot the working tree to origin — ${DIRTY} entries at risk"
       fi
@@ -347,31 +444,39 @@ if [ "${DIRTY:-0}" -gt 0 ]; then
   fi
 fi
 
-if [ "$AT_RISK" = "0" ] && [ "${DIRTY:-0}" = "0" ]; then
+if [ -n "$WB_UNKNOWN" ]; then
+  :  # reported above: never "nothing exists only here" when branches went unchecked
+elif [ "$AT_RISK" = "0" ] && [ "${DIRTY:-0}" = "0" ]; then
   say "✓ work-backup — branches pushed, working tree clean; nothing exists only here"
 elif [ "$AT_RISK" = "0" ] && [ -n "$SNAP_REF" ]; then
   say "✓ work-backup — branches pushed; working tree snapshotted to origin"
 fi
 
 # --- 5. a rig with ready work but no dispatcher ------------------------------
+section rig-dispatch
 # shellcheck source=lib/project_registry.sh
 . "$ROOT/lib/project_registry.sh"
 for rig in $(project_registry_rig_names "$ROOT/config/projects"); do
   [ -d "rigs/$rig" ] || continue
+  over_budget && { skipped "rig:$rig and any rig after it"; break; }
   # `gc rig status` reports "unknown (partial status)" whenever its runtime
   # probe times out, which silently hid a genuinely stopped dispatcher. The
   # session list is authoritative — use that instead.
-  running=$(gc session list 2>/dev/null \
-    | grep -c "$rig/core.control-dispatcher.*active" || true)
-  ready=$(cd "rigs/$rig" && gc bd ready 2>/dev/null | grep -c . || echo 0)
+  sessions=$(bounded 15 gc session list 2>/dev/null); s_rc=$?
+  running=$(grep -c "$rig/core.control-dispatcher.*active" <<<"$sessions" || true)
+  ready_out=$(cd "rigs/$rig" && bounded 30 gc bd ready 2>/dev/null); r_rc=$?
+  ready=$(grep -c . <<<"$ready_out" || true)
   # This city runs its agents scale-to-zero: a dispatcher stops itself with
   # "drain acknowledged by agent" once nothing is claimable, and the reconciler
   # brings it back when work is slung. A stopped dispatcher is therefore NOT a
   # fault on its own, and treating it as one produced a false alarm for hours.
   # Only a suspended rig genuinely blocks delivery.
-  suspended=$(gc rig status --rig "$rig" 2>/dev/null | grep -c "Suspended:  yes" || true)
+  rig_status=$(bounded 15 gc rig status --rig "$rig" 2>/dev/null); st_rc=$?
+  suspended=$(grep -c "Suspended:  yes" <<<"$rig_status" || true)
   if [ "${suspended:-0}" -gt 0 ]; then
     bad "rig '$rig' is SUSPENDED — no work can be dispatched to it"
+  elif timed_out "$s_rc" || timed_out "$r_rc" || timed_out "$st_rc"; then
+    bad "rig:$rig — not checked (gc timed out: suspension/dispatcher state unknown)"
   elif [ "${running:-0}" -gt 0 ]; then
     say "✓ rig:$rig — dispatcher running ($ready ready)"
   else
@@ -388,13 +493,14 @@ done
 # manifest-tracked regular-file gates plus the pack-linked validator dependency
 # whose schemas resolve from its real pack path. Default mode repairs missing or
 # stale managed artifacts; --check-only reports each rig/path once without writing.
+section build-gates
 BUILD_GATES="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-build-gates"
 if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$BUILD_GATES" ]; then
   say "· build-gates — not checked (not a city root, or gc/helper unavailable)"
 else
   BG_ARGS=()
   [ "$CHECK_ONLY" = "1" ] && BG_ARGS+=(--check-only)
-  BG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$BUILD_GATES" "${BG_ARGS[@]}" 2>&1)
+  BG_OUTPUT=$(FACTORY_ROOT="$ROOT" bounded 60 "$BUILD_GATES" "${BG_ARGS[@]}" 2>&1)
   BG_STATUS=$?
   [ "$QUIET" = "1" ] || printf '%s\n' "$BG_OUTPUT" | sed 's/^/  /'
   BG_PROBLEM_COUNT=0
@@ -405,7 +511,9 @@ else
       !\ *)      PROBLEMS+=("${line#! }"); STATUS=1; BG_PROBLEM_COUNT=$((BG_PROBLEM_COUNT+1)) ;;
     esac
   done <<<"$BG_OUTPUT"
-  if [ "$BG_STATUS" -ne 0 ] && [ "$BG_PROBLEM_COUNT" -eq 0 ]; then
+  if timed_out "$BG_STATUS"; then
+    PROBLEMS+=("build-gates: not fully checked — factory-build-gates timed out"); STATUS=1
+  elif [ "$BG_STATUS" -ne 0 ] && [ "$BG_PROBLEM_COUNT" -eq 0 ]; then
     PROBLEMS+=("build-gates: factory-build-gates exited $BG_STATUS with no problem line captured")
     STATUS=1
   fi
@@ -417,8 +525,10 @@ fi
 # factory-delivery-guard, deliver-close, pr-autopilot all read it). A rig
 # registered in Gas City with no project file would silently run
 # unprotected everywhere at once, so this fails loudly instead.
+section project-registry
 if command -v gc >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-  RIG_LIST_JSON=$(gc rig list --json 2>/dev/null || true)
+  RIG_LIST_JSON=$(bounded 15 gc rig list --json 2>/dev/null)
+  timed_out $? && bad "project-registry — not checked (gc rig list timed out)"
   if [ -n "$RIG_LIST_JSON" ] && jq -e . >/dev/null 2>&1 <<<"$RIG_LIST_JSON"; then
     REGISTERED_RIG_DIRS=()
     while IFS= read -r rd; do
@@ -442,6 +552,7 @@ fi
 # --delete-branch` exit non-zero AFTER merging -- which pr-autopilot used to
 # report as "direct merge failed - left for a human" on a PR that had in fact
 # merged. Runtime worktrees under ~/.local/share are the city's own; leave them.
+section worktrees
 if [ "$CHECK_ONLY" = "1" ]; then
   DANGLING=$(git worktree prune --dry-run -v 2>&1 | grep -c . || true)
   [ "${DANGLING:-0}" -gt 0 ] && bad "${DANGLING} dangling worktree registration(s); run factory-guard to prune"
@@ -449,11 +560,12 @@ else
   PRUNED=$(git worktree prune -v 2>&1 | grep -c . || true)
   [ "${PRUNED:-0}" -gt 0 ] && did "pruned ${PRUNED} dangling worktree registration(s)"
 fi
-STALE=0; LIVE_WT=0
+STALE=0; LIVE_WT=0; WT_UNKNOWN=""
 while read -r wt; do
   [ -z "$wt" ] && continue
   [ "$wt" = "$ROOT" ] && continue
   case "$wt" in "$HOME/.local/share/agent-factory-runtime-"*) continue ;; esac
+  over_budget && { WT_UNKNOWN=1; skipped "worktrees — '$wt' and any after it"; break; }
   LIVE_WT=$((LIVE_WT+1))
   br=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
   [ "$br" = "HEAD" ] && continue
@@ -467,8 +579,11 @@ while read -r wt; do
   if git merge-base --is-ancestor "$br" origin/main 2>/dev/null; then
     reason="already in origin/main"
   else
-    pr_state=$(gh pr list --head "$br" --state all \
+    pr_state=$(bounded 20 gh pr list --head "$br" --state all \
       --json state --jq '.[0].state // empty' 2>/dev/null)
+    # An unknown PR state is never "merged": the worktree stays, and says so.
+    timed_out $? && { WT_UNKNOWN=1
+      bad "worktree '$wt' ($br): PR state unknown (gh pr list timed out) — left in place"; continue; }
     case "$pr_state" in
       MERGED) reason="its PR is merged" ;;
       CLOSED) reason="its PR is closed" ;;
@@ -479,7 +594,9 @@ while read -r wt; do
     # 2026-09-18 alone), so the guard does it: clean tree, merged/closed
     # branch, not locked, no live session working in it. Anything else is
     # still only reported.
-    in_use=$(gc session list 2>/dev/null | grep -c -F "$wt" || true)
+    # Session list unknown means "maybe in use": never remove on a timeout.
+    sessions=$(bounded 15 gc session list 2>/dev/null)
+    if timed_out $?; then in_use=unknown; else in_use=$(grep -c -F "$wt" <<<"$sessions" || true); fi
     locked=$(git worktree list --porcelain | awk -v w="$wt" '$1=="worktree" && $2==w {f=1; next} f && /^locked/ {print "yes"; exit} /^$/ {f=0}')
     if [ "$CHECK_ONLY" = "1" ]; then
       STALE=$((STALE+1))
@@ -492,7 +609,7 @@ while read -r wt; do
     fi
   fi
 done < <(git worktree list --porcelain | awk '/^worktree /{print $2}')
-if [ "$STALE" = "0" ]; then
+if [ "$STALE" = "0" ] && [ -z "$WT_UNKNOWN" ]; then
   say "✓ worktrees — $LIVE_WT human worktree(s), none pinning a merged branch"
 fi
 
@@ -510,6 +627,7 @@ fi
 # from some origin branch -- including a freshly created branch still sitting
 # on it, e.g. a `po/*` planning-run worktree -- is left alone indefinitely;
 # there is nothing there that exists only on this machine.
+section runtime-worktrees
 RUNTIME_WT_ROOT="$HOME/.local/share/agent-factory-runtime-worktrees"
 if [ -d "$RUNTIME_WT_ROOT" ]; then
   # Scope to repos this Factory actually knows about ($ROOT itself, and every
@@ -530,6 +648,7 @@ if [ -d "$RUNTIME_WT_ROOT" ]; then
   for wt in "$RUNTIME_WT_ROOT"/*/; do
     wt=${wt%/}
     [ -e "$wt/.git" ] || continue
+    over_budget && { skipped "runtime-worktrees — '$wt' and any after it"; break; }
 
     RT_ORIGIN=$(git -C "$wt" remote get-url origin 2>/dev/null)
     [ -n "$RT_ORIGIN" ] || continue
@@ -546,9 +665,15 @@ if [ -d "$RUNTIME_WT_ROOT" ]; then
     [ "$RT_BRANCH" = "HEAD" ] && RT_BRANCH="detached"
 
     if [ -z "${RT_REMOTE_CACHE[$RT_ORIGIN]+x}" ]; then
-      RT_REMOTE_CACHE[$RT_ORIGIN]=$(timeout 30 git -C "$wt" ls-remote --heads origin 2>/dev/null)
+      RT_REMOTE_CACHE[$RT_ORIGIN]=$(bounded 30 git -C "$wt" ls-remote --heads origin 2>/dev/null)
+      timed_out $? && RT_REMOTE_CACHE[$RT_ORIGIN]="timed-out"
     fi
     RT_ON_ORIGIN=0
+    # Unknown origin heads: neither "safe" nor a reason to push a backup blind.
+    if [ "${RT_REMOTE_CACHE[$RT_ORIGIN]}" = "timed-out" ]; then
+      RT_ON_ORIGIN=unknown
+      bad "worktree '$wt' not checked for unpushed commits (git ls-remote timed out)"
+    fi
     while read -r rsha _rref; do
       [ -z "$rsha" ] && continue
       if git -C "$wt" merge-base --is-ancestor "$RT_HEAD" "$rsha" 2>/dev/null; then
@@ -560,11 +685,11 @@ if [ -d "$RUNTIME_WT_ROOT" ]; then
     if [ "${RT_DIRTY:-0}" -gt 0 ]; then
       bad "worktree '$wt' has uncommitted work (branch '${RT_BRANCH:-detached}') — never removed; a worker may still be using it"
     fi
-    if [ "$RT_ON_ORIGIN" != "1" ]; then
+    if [ "$RT_ON_ORIGIN" = "0" ]; then
       RT_SNAP_REF="refs/factory-guard/snapshots/worktree/$(basename "$wt")"
       if [ "$CHECK_ONLY" = "1" ]; then
         bad "worktree '$wt' has commit(s) on branch '${RT_BRANCH:-detached}' that exist nowhere but this machine"
-      elif timeout 30 git -C "$wt" push origin "$RT_HEAD:$RT_SNAP_REF" >/dev/null 2>&1; then
+      elif bounded 30 git -C "$wt" push origin "$RT_HEAD:$RT_SNAP_REF" >/dev/null 2>&1; then
         did "backed up worktree '$wt' HEAD (branch '${RT_BRANCH:-detached}') to origin $RT_SNAP_REF"
       else
         bad "could not back up worktree '$wt' HEAD to origin — commit(s) exist nowhere else"
@@ -581,16 +706,20 @@ fi
 # changes exactly when the session moves, so this pages once per streak.
 # Until 2026-09-26 this lived inside the campaign-liveness check, which left
 # with the campaign.
+section mayor-session
 GUARD_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd)"
 COORD="${CAMPAIGN_COORDINATION_BEAD:-af-1vr4}"
 # Read once: section 7b also keys its dedup pointers on this bead.
-coord_json=""
+coord_json=""; COORD_UNKNOWN=""
 if [ -f "$ROOT/city.toml" ] && command -v gc >/dev/null 2>&1; then
-  coord_json=$(gc bd show "$COORD" --json 2>/dev/null || true)
+  coord_json=$(bounded 15 gc bd show "$COORD" --json 2>/dev/null)
+  # Unknown dedup pointers: page or file nothing rather than a duplicate.
+  timed_out $? && COORD_UNKNOWN=1
 fi
 if [ "$CHECK_ONLY" != "1" ] && [ -f "$ROOT/city.toml" ] && command -v gc >/dev/null 2>&1 \
    && [ -f "$GUARD_LIB/factory_session_boot.py" ]; then
-  mayor_session_json=$(gc session list --json 2>/dev/null | python3 -c '
+  mayor_raw=$(bounded 15 gc session list --json 2>/dev/null); ms_rc=$?
+  mayor_session_json=$(printf '%s' "$mayor_raw" | python3 -c '
 import json, sys
 try:
     v = json.load(sys.stdin)
@@ -603,7 +732,9 @@ except Exception:
 ' 2>/dev/null || echo '{}')
   page_since=$(FACTORY_MAYOR_SESSION_JSON="$mayor_session_json" \
     python3 "$GUARD_LIB/factory_session_boot.py" --mayor-page-check 2>/dev/null || true)
-  if [ -n "$page_since" ]; then
+  if timed_out "$ms_rc" || [ -n "$COORD_UNKNOWN" ]; then
+    bad "mayor-session — not checked (gc timed out: session state or page dedup unknown)"
+  elif [ -n "$page_since" ]; then
     prior_paged=$(printf '%s' "$coord_json" | python3 -c '
 import json, sys
 try:
@@ -618,9 +749,9 @@ try:
     print((json.load(sys.stdin) or {}).get("state") or "")
 except Exception:
     print("")')
-      "$ESCALATION_DOOR" benjamin "$COORD" "factory-guard: mayor session $mayor_state since $page_since (over 10 minutes)" \
+      bounded 30 "$ESCALATION_DOOR" benjamin "$COORD" "factory-guard: mayor session $mayor_state since $page_since (over 10 minutes)" \
         >/dev/null 2>&1 || true
-      gc bd update "$COORD" --set-metadata "gc.mayor_session_down_paged_since=$page_since" >/dev/null 2>&1 || true
+      bounded 15 gc bd update "$COORD" --set-metadata "gc.mayor_session_down_paged_since=$page_since" >/dev/null 2>&1 || true
       did "paged ${GC_ESCALATION_RECIPIENT:-human}: mayor session $mayor_state since $page_since"
     fi
   fi
@@ -637,6 +768,7 @@ fi
 # physically receive the nag. This reads the same identity's session-boot
 # events straight from `gc events` (no coordination bead involved) and
 # lib/factory_session_boot.py holds the streak-detection rules.
+section session-boot
 SESSION_BOOT_MINUTES="${FACTORY_SESSION_BOOT_MINUTES:-15}"
 SESSION_BOOT_WINDOW_MINUTES="${FACTORY_SESSION_BOOT_WINDOW_MINUTES:-60}"
 if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 \
@@ -649,11 +781,13 @@ else
   # trips that fallback and silently queries live production event data
   # instead of erroring. Pinning `--city "$ROOT"` makes an unscopeable city
   # fail fast instead.
-  boot_events=$(gc events --city "$ROOT" --since "${SESSION_BOOT_WINDOW_MINUTES}m" \
-    --payload-match "bead.metadata.configured_named_mode=always" 2>/dev/null || true)
+  boot_events=$(bounded 30 gc events --city "$ROOT" --since "${SESSION_BOOT_WINDOW_MINUTES}m" \
+    --payload-match "bead.metadata.configured_named_mode=always" 2>/dev/null); be_rc=$?
   boot_verdicts=$(printf '%s' "$boot_events" \
     | FACTORY_SESSION_BOOT_MINUTES="$SESSION_BOOT_MINUTES" python3 "$GUARD_LIB/factory_session_boot.py" 2>/dev/null || true)
-  if [ -z "$boot_verdicts" ]; then
+  if timed_out "$be_rc"; then
+    bad "session-boot — not checked (gc events timed out)"
+  elif [ -z "$boot_verdicts" ]; then
     say "· session-boot — no named always-on sessions observed in the last ${SESSION_BOOT_WINDOW_MINUTES}m"
   else
     while IFS=$'\t' read -r identity level code message; do
@@ -678,7 +812,7 @@ except Exception:
             fi
             still_open=0
             if [ -n "$prior" ]; then
-              prior_status=$(gc bd show "$prior" --json 2>/dev/null | python3 -c '
+              prior_status=$(bounded 15 gc bd show "$prior" --json 2>/dev/null | python3 -c '
 import json, sys
 try:
     v = json.load(sys.stdin)
@@ -686,12 +820,16 @@ try:
     print(v.get("status", ""))
 except Exception:
     print("")')
+              prior_rc=$?
               [ -n "$prior_status" ] && [ "$prior_status" != "closed" ] && still_open=1
+              timed_out "$prior_rc" && still_open=unknown
             fi
             if [ "$still_open" = "1" ]; then
               say "  session-boot-stuck defect already filed: $prior"
+            elif [ "$still_open" = "unknown" ] || [ -n "$COORD_UNKNOWN" ]; then
+              say "  session-boot-stuck: prior defect unknown (gc timed out) — not filing a duplicate this run"
             else
-              created=$(gc bd create "Session bloquée au démarrage — $identity" \
+              created=$(bounded 30 gc bd create "Session bloquée au démarrage — $identity" \
                 -p 1 -t bug \
                 -d "Détecté par factory-guard (démarrage de session, af-jj9u7) : $message. La session nommée toujours-active « $identity » n'arrive pas à démarrer -- ce n'est pas un problème de progression de campagne (section 7), c'est que l'orchestrateur lui-même ne peut pas s'initialiser. Diagnostiquer la cause (config fournisseur, ressources hôte, autre) via gc events et provider-state.json, puis réparer ou documenter, et fermer ce bead avec la cause." \
                 --json 2>/dev/null | python3 -c '
@@ -703,11 +841,11 @@ try:
 except Exception:
     print("")')
               if [ -n "$created" ]; then
-                [ -n "$COORD" ] && gc bd update "$COORD" --set-metadata "$ptr_key=$created" >/dev/null 2>&1 || true
+                [ -n "$COORD" ] && bounded 15 gc bd update "$COORD" --set-metadata "$ptr_key=$created" >/dev/null 2>&1 || true
                 # The stuck identity may itself be the Mayor and unreachable,
                 # so this pages the human directly rather than routing
                 # through the orchestrator that cannot boot to read it.
-                "$ESCALATION_DOOR" benjamin "$created" "factory-guard: named always-on session $identity cannot boot -- $(tr '\n' ' ' <<<"$message")" \
+                bounded 30 "$ESCALATION_DOOR" benjamin "$created" "factory-guard: named always-on session $identity cannot boot -- $(tr '\n' ' ' <<<"$message")" \
                   >/dev/null 2>&1 || true
                 did "filed session-boot-stuck defect $created for $identity and paged ${GC_ESCALATION_RECIPIENT:-human}"
               else
@@ -733,6 +871,7 @@ fi
 # proof fields it can independently verify via `gh pr view`, and flags (once,
 # never repeatedly) whatever it cannot verify. See that script and
 # lib/factory_delivery_proof.py for the exact rules.
+section delivery-proof
 DELIVERY_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-delivery-guard"
 if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || ! command -v gh >/dev/null 2>&1 \
    || [ ! -x "$DELIVERY_GUARD" ]; then
@@ -740,7 +879,7 @@ if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || ! command -v
 else
   DG_ARGS=()
   [ "$CHECK_ONLY" = "1" ] && DG_ARGS+=(--check-only)
-  DG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$DELIVERY_GUARD" "${DG_ARGS[@]}" 2>&1)
+  DG_OUTPUT=$(FACTORY_ROOT="$ROOT" bounded 60 "$DELIVERY_GUARD" "${DG_ARGS[@]}" 2>&1)
   DG_STATUS=$?
   [ "$QUIET" = "1" ] || printf '%s\n' "$DG_OUTPUT" | sed 's/^/  /'
   DG_PROBLEM_COUNT=0
@@ -751,7 +890,9 @@ else
       !\ *)         PROBLEMS+=("delivery-proof: ${line#! }"); STATUS=1; DG_PROBLEM_COUNT=$((DG_PROBLEM_COUNT+1)) ;;
     esac
   done <<<"$DG_OUTPUT"
-  if [ "$DG_STATUS" -ne 0 ] && [ "$DG_PROBLEM_COUNT" -eq 0 ]; then
+  if timed_out "$DG_STATUS"; then
+    PROBLEMS+=("delivery-proof: not fully checked — factory-delivery-guard timed out"); STATUS=1
+  elif [ "$DG_STATUS" -ne 0 ] && [ "$DG_PROBLEM_COUNT" -eq 0 ]; then
     PROBLEMS+=("delivery-proof: factory-delivery-guard exited $DG_STATUS with no problem line captured")
     STATUS=1
   fi
@@ -767,13 +908,14 @@ fi
 # target for hours. bin/factory-dispatch-guard detects a routed bead whose
 # assignee is stale and mismatched, clears it, and pages the Mayor once per
 # drift. See that script for detail.
+section dispatch-drift
 DISPATCH_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-dispatch-guard"
 if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$DISPATCH_GUARD" ]; then
   say "· dispatch-drift — not checked (not a city root, or gc unavailable)"
 else
   DPG_ARGS=()
   [ "$CHECK_ONLY" = "1" ] && DPG_ARGS+=(--check-only)
-  DPG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$DISPATCH_GUARD" "${DPG_ARGS[@]}" 2>&1)
+  DPG_OUTPUT=$(FACTORY_ROOT="$ROOT" bounded 60 "$DISPATCH_GUARD" "${DPG_ARGS[@]}" 2>&1)
   DPG_STATUS=$?
   [ "$QUIET" = "1" ] || printf '%s\n' "$DPG_OUTPUT" | sed 's/^/  /'
   DPG_PROBLEM_COUNT=0
@@ -784,7 +926,9 @@ else
       !\ *)         PROBLEMS+=("dispatch-drift: ${line#! }"); STATUS=1; DPG_PROBLEM_COUNT=$((DPG_PROBLEM_COUNT+1)) ;;
     esac
   done <<<"$DPG_OUTPUT"
-  if [ "$DPG_STATUS" -ne 0 ] && [ "$DPG_PROBLEM_COUNT" -eq 0 ]; then
+  if timed_out "$DPG_STATUS"; then
+    PROBLEMS+=("dispatch-drift: not fully checked — factory-dispatch-guard timed out"); STATUS=1
+  elif [ "$DPG_STATUS" -ne 0 ] && [ "$DPG_PROBLEM_COUNT" -eq 0 ]; then
     PROBLEMS+=("dispatch-drift: factory-dispatch-guard exited $DPG_STATUS with no problem line captured")
     STATUS=1
   fi
@@ -795,13 +939,14 @@ fi
 # bin/dispatch-door stamps gc.dispatched_via on every bead it routes;
 # bin/dispatch-door-guard reports (does not repair) any routed bead missing
 # that stamp. See that script for detail.
+section dispatch-door-bypass
 DISPATCH_DOOR_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/dispatch-door-guard"
 if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$DISPATCH_DOOR_GUARD" ]; then
   say "· dispatch-door-bypass — not checked (not a city root, or gc unavailable)"
 else
   DDG_ARGS=()
   [ "$CHECK_ONLY" = "1" ] && DDG_ARGS+=(--check-only)
-  DDG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$DISPATCH_DOOR_GUARD" "${DDG_ARGS[@]}" 2>&1)
+  DDG_OUTPUT=$(FACTORY_ROOT="$ROOT" bounded 60 "$DISPATCH_DOOR_GUARD" "${DDG_ARGS[@]}" 2>&1)
   DDG_STATUS=$?
   [ "$QUIET" = "1" ] || printf '%s\n' "$DDG_OUTPUT" | sed 's/^/  /'
   DDG_PROBLEM_COUNT=0
@@ -812,7 +957,9 @@ else
       !\ *)         PROBLEMS+=("dispatch-door-bypass: ${line#! }"); STATUS=1; DDG_PROBLEM_COUNT=$((DDG_PROBLEM_COUNT+1)) ;;
     esac
   done <<<"$DDG_OUTPUT"
-  if [ "$DDG_STATUS" -ne 0 ] && [ "$DDG_PROBLEM_COUNT" -eq 0 ]; then
+  if timed_out "$DDG_STATUS"; then
+    PROBLEMS+=("dispatch-door-bypass: not fully checked — dispatch-door-guard timed out"); STATUS=1
+  elif [ "$DDG_STATUS" -ne 0 ] && [ "$DDG_PROBLEM_COUNT" -eq 0 ]; then
     PROBLEMS+=("dispatch-door-bypass: dispatch-door-guard exited $DDG_STATUS with no problem line captured")
     STATUS=1
   fi
@@ -831,13 +978,14 @@ fi
 # merge+exact-head-CI proof. It reports when structural proof is rejected,
 # reports once (never repeatedly) when the target does not resolve, and
 # leaves free-text waits untouched.
+section waiting-drift
 WAITING_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-waiting-guard"
 if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$WAITING_GUARD" ]; then
   say "· waiting-drift — not checked (not a city root, or gc unavailable)"
 else
   WG_ARGS=()
   [ "$CHECK_ONLY" = "1" ] && WG_ARGS+=(--check-only)
-  WG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$WAITING_GUARD" "${WG_ARGS[@]}" 2>&1)
+  WG_OUTPUT=$(FACTORY_ROOT="$ROOT" bounded 60 "$WAITING_GUARD" "${WG_ARGS[@]}" 2>&1)
   WG_STATUS=$?
   [ "$QUIET" = "1" ] || printf '%s\n' "$WG_OUTPUT" | sed 's/^/  /'
   WG_PROBLEM_COUNT=0
@@ -848,7 +996,9 @@ else
       !\ *)         PROBLEMS+=("waiting-drift: ${line#! }"); STATUS=1; WG_PROBLEM_COUNT=$((WG_PROBLEM_COUNT+1)) ;;
     esac
   done <<<"$WG_OUTPUT"
-  if [ "$WG_STATUS" -ne 0 ] && [ "$WG_PROBLEM_COUNT" -eq 0 ]; then
+  if timed_out "$WG_STATUS"; then
+    PROBLEMS+=("waiting-drift: not fully checked — factory-waiting-guard timed out"); STATUS=1
+  elif [ "$WG_STATUS" -ne 0 ] && [ "$WG_PROBLEM_COUNT" -eq 0 ]; then
     PROBLEMS+=("waiting-drift: factory-waiting-guard exited $WG_STATUS with no problem line captured")
     STATUS=1
   fi
@@ -866,13 +1016,14 @@ fi
 # bead redecomposing already-blocked work without an open exception or a real
 # human gc.authorized_by. Never auto-repaired -- only a human or the Mayor can
 # decide whether to raise the exception or correct the classification.
+section planning-exception
 PE_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/factory-planning-exception-guard"
 if [ ! -f "$ROOT/city.toml" ] || ! command -v gc >/dev/null 2>&1 || [ ! -x "$PE_GUARD" ]; then
   say "· planning-exception — not checked (not a city root, or gc unavailable)"
 else
   PEG_ARGS=()
   [ "$CHECK_ONLY" = "1" ] && PEG_ARGS+=(--check-only)
-  PEG_OUTPUT=$(FACTORY_ROOT="$ROOT" "$PE_GUARD" "${PEG_ARGS[@]}" 2>&1)
+  PEG_OUTPUT=$(FACTORY_ROOT="$ROOT" bounded 60 "$PE_GUARD" "${PEG_ARGS[@]}" 2>&1)
   PEG_STATUS=$?
   [ "$QUIET" = "1" ] || printf '%s\n' "$PEG_OUTPUT" | sed 's/^/  /'
   PEG_PROBLEM_COUNT=0
@@ -883,24 +1034,13 @@ else
       !\ *)         PROBLEMS+=("planning-exception: ${line#! }"); STATUS=1; PEG_PROBLEM_COUNT=$((PEG_PROBLEM_COUNT+1)) ;;
     esac
   done <<<"$PEG_OUTPUT"
-  if [ "$PEG_STATUS" -ne 0 ] && [ "$PEG_PROBLEM_COUNT" -eq 0 ]; then
+  if timed_out "$PEG_STATUS"; then
+    PROBLEMS+=("planning-exception: not fully checked — factory-planning-exception-guard timed out"); STATUS=1
+  elif [ "$PEG_STATUS" -ne 0 ] && [ "$PEG_PROBLEM_COUNT" -eq 0 ]; then
     PROBLEMS+=("planning-exception: factory-planning-exception-guard exited $PEG_STATUS with no problem line captured")
     STATUS=1
   fi
 fi
 
 # --- report ------------------------------------------------------------------
-say ""
-if [ "${#ACTIONS[@]}" -gt 0 ]; then say "repaired ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
-if [ "${#PROBLEMS[@]}" -gt 0 ]; then
-  say "UNRESOLVED ${#PROBLEMS[@]}:"; printf '  ! %s\n' "${PROBLEMS[@]}"
-else
-  say "healthy"
-fi
-# O2: this guard runs as a zero-token cooldown order (orders/factory-guard.toml).
-# It used to exit 1 whenever it FOUND something -- routine, already-repaired or
-# not -- which is indistinguishable from the order itself crashing, and floods
-# Gas City's order.failed stream with noise (see O1). "Found" is reported above
-# in stdout (UNRESOLVED ... / the exit code below); only the two explicit exit 2
-# paths above (bad CLI argument, unreachable root) mean the guard itself broke.
-exit 0
+finish

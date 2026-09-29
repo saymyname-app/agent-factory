@@ -101,6 +101,9 @@ jobs:
       - name: Factory guard runtime-worktree audit (backup, root-owned files)
         run: bash tests/factory-guard-runtime-worktree-test.sh
 
+      - name: Factory guard finishes inside its order timeout under host load
+        run: bash tests/factory-guard-time-budget-test.sh
+
       - name: Deliver-close proof-field guard tests
         run: bash tests/deliver-close-test.sh
 
