@@ -1,0 +1,8 @@
+{
+  "contract": "agent-factory-planning-run-router-request/v1",
+  "legacy_path": "none",
+  "session": "docs/planning/c01-cockpit/planning-session.json",
+  "city_registry": "docs/planning/c01-cockpit/city-registry.json",
+  "spec_out": "docs/planning/c01-cockpit/spec",
+  "planning_run_target": "C01"
+}
