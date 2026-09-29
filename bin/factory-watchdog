@@ -42,7 +42,7 @@
 #
 # This is observe-and-page ONLY (ADR-0016 section 7: a local reason may never
 # produce a global stop). It never resolves a gate, merges/holds a PR, reopens
-# a workflow, or blocks the campaign. Every finding becomes at most one mail
+# a workflow, or halts the Factory. Every finding becomes at most one mail
 # to the Mayor (re-sent on a cooldown, never every run) and, for gates/PRs, one
 # tracked bead so the finding survives past the next run.
 #
