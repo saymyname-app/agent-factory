@@ -283,14 +283,24 @@ case "$CMD" in
 
     PR_URL=""
     if command -v gh >/dev/null 2>&1; then
-      PR_URL=$(cd "$WT" && gh pr create --base "$BASE_BRANCH" --head "$BRANCH" \
-        --title "do-work: $BEAD_ID" --body "Closes $BEAD_ID." 2>/dev/null || true)
+      GH_ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/factory-do-work-workspace.gh-err.XXXXXX")
+      # af-kiy7lm: capture stderr instead of `2>/dev/null || true`, so a
+      # failed `gh pr create`/`gh pr view` (auth expired, rate-limited,
+      # network) is logged instead of silently leaving PR_URL empty.
+      CREATE_ERR=$(cd "$WT" && gh pr create --base "$BASE_BRANCH" --head "$BRANCH" \
+        --title "do-work: $BEAD_ID" --body "Closes $BEAD_ID." 2>&1 1>"$GH_ERR_FILE.out") || true
+      PR_URL=$(cat "$GH_ERR_FILE.out" 2>/dev/null || true)
       if [ -z "$PR_URL" ]; then
         # O04: a re-dispatch resuming an existing branch that already has an
         # open PR must resume that PR, not silently fail to record one --
         # `gh pr create` above fails when a PR already exists for this head.
-        PR_URL=$(cd "$WT" && gh pr view "$BRANCH" --json url -q .url 2>/dev/null || true)
+        VIEW_ERR=$(cd "$WT" && gh pr view "$BRANCH" --json url -q .url 2>&1 1>"$GH_ERR_FILE.out") || true
+        PR_URL=$(cat "$GH_ERR_FILE.out" 2>/dev/null || true)
+        if [ -z "$PR_URL" ]; then
+          echo "factory-do-work-workspace: could not create or resume a PR for $BRANCH: create: ${CREATE_ERR:-<no output>}; view: ${VIEW_ERR:-<no output>}" >&2
+        fi
       fi
+      rm -f "$GH_ERR_FILE.out" "$GH_ERR_FILE"
     fi
 
     # af-09hxz: the worktree's origin repo is no longer always $ROOT (a
