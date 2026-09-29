@@ -103,6 +103,14 @@ finalize_delivery() {  # rig-path bead repo pr required-workflow
 }
 
 ARMED=0; RECONCILED=0; FLAGGED=0; SKIPPED=0; ERRORS=0; HELD=0
+# af-s6lef (P04): a BEHIND PR is never armed for auto-merge (before P05 makes
+# the ruleset strict, GitHub would otherwise merge it without ever picking up
+# the base's latest required check), and at most one BEHIND PR is updated per
+# tick, oldest (lowest PR number) first, so a burst of BEHIND PRs does not
+# spend the whole tick's `gh` budget updating branches serially. A failed
+# `gh pr update-branch` is only logged here -- nothing marks the attempt, so
+# the same PR (still BEHIND) is naturally retried on the next tick.
+BEHIND_UPDATED_THIS_TICK=0
 TMPDIR_AP=$(mktemp -d); trap 'rm -rf "$TMPDIR_AP"' EXIT
 
 # O3: the order (orders/pr-autopilot.toml) hard-kills the whole run at 120s
@@ -443,6 +451,28 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     # is never empty -- jq writes "-" -- because read would swallow it.)
     reversibility_gate "$repo" "$num" "$sha" "${labels//,/ }" "$armed" || continue
 
+    # af-s6lef (P04): BEHIND is never armable -- GitHub would happily arm
+    # auto-merge and, on a non-strict ruleset, merge without the base's
+    # latest required check ever running against this branch. Bring at most
+    # one BEHIND PR per tick up to date instead; a second BEHIND PR this same
+    # tick just waits its turn.
+    if [ "$state" = "BEHIND" ]; then
+      if [ "$BEHIND_UPDATED_THIS_TICK" = "0" ]; then
+        log "  PR #$num: BEHIND base -> updating branch"
+        if run gh pr update-branch "$num" --repo "$repo" >/dev/null 2>&1; then
+          vlog "PR #$num: branch update requested"
+        else
+          log "    branch update failed -- will retry next tick"
+          ERRORS=$((ERRORS+1))
+        fi
+        BEHIND_UPDATED_THIS_TICK=1
+      else
+        vlog "PR #$num: BEHIND base, another PR already updated this tick -- waiting"
+      fi
+      SKIPPED=$((SKIPPED+1))
+      continue
+    fi
+
     if [ "$armed" != "null" ] && [ -n "$armed" ]; then
       vlog "PR #$num: auto-merge already armed"; SKIPPED=$((SKIPPED+1)); continue
     fi
@@ -492,7 +522,11 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
         esac
       fi
     fi
-  done < <(printf '%s' "$open_prs" | jq -r --arg reqcheck "$required_check" '.[]|[
+  done < <(printf '%s' "$open_prs" | jq -r --arg reqcheck "$required_check" '
+    # af-s6lef (P04): "oldest ready first" for BEHIND PRs needs a stable order
+    # -- gh pr list is not guaranteed sorted by age. PR numbers increase
+    # monotonically per repo, so ascending number is exactly oldest-first.
+    sort_by(.number)|.[]|[
       .number, (.isDraft|tostring), (.autoMergeRequest|if .==null then "null" else "armed" end),
       (.mergeStateStatus//"?"),
       # Gate on the one required check by name/context, not every check the
