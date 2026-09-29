@@ -140,7 +140,7 @@ an A5 input.
 | `bin/pr-autopilot` | ops | orders/pr-autopilot.toml (3m), CI tests | Arms/finalizes PRs from lib/protected_rigs.sh; header "for the SayMyName rigs" stale |
 | `bin/project-isolation-oracle` | kernel | CI test, docs | Project isolation oracle |
 | `bin/project-planning-profile` | kernel | docs/GETTING_STARTED.md, CI test | Per-project planning profile validator (rejects SayMyName-specific fields by design) |
-| `bin/provider-failover` | to-redo | orders provider-failover + model-staleness-check, factory-boot, factory-guard | Live failover, but help/status/set text is written for the retired cockpit |
+| `bin/provider-failover` | ops | orders provider-failover + model-staleness-check, factory-boot, factory-guard | FIXED (P20, af-r48pb): help/status/set text names no cockpit or campaign; live failover unchanged |
 | `bin/reversibility-check` | ops | pr-autopilot, factory-watchdog, CI test | ADR-0019 reversibility gate CLI |
 | `bin/role-qualification-oracle` | kernel | CI test, docs | P06 role qualification oracle; no runtime caller |
 | `bin/spec-approve` | kernel | planning-run-router, CI test | Spec approval stage |
@@ -155,7 +155,7 @@ an A5 input.
 | `config/planning-map-concurrency-prototype.json` | kernel | bin/planning-map-concurrency-prototype, test (CI) | P03 oracle input |
 | `config/planning-run-reservation.json` | kernel | bin/planning-run-router (reads AND rewrites) | B12 AC#5 reservation: factory-operations-v2 then C01 |
 | `config/planning-run-resume-prototype.json` | kernel | bin/planning-run-resume-oracle, test (CI) | P04 synthetic input (names a factory-cockpit surface) |
-| `config/provider-policy.json` | to-redo | bin/provider-failover, lib/provider_failover.py | chains live and correct, but description says settings are made from the retired cockpit |
+| `config/provider-policy.json` | ops | bin/provider-failover, lib/provider_failover.py | FIXED (P20, af-r48pb): chains live and correct; description points to `bin/provider-failover set`, not the retired cockpit |
 | `config/role-qualification-prototype.json` | kernel | bin/role-qualification-oracle, test (CI) | P06 oracle input |
 | `docs/ADAPTATION_REGISTER.md` | kernel | CONTEXT_INDEX, planning-exception guard, tests | FIXED (P19, af-5l657): AR-004 now cites the pre-refactor improvement-axes register as retired to `legacy/`, not a live pattern |
 | `docs/CONTEXT_INDEX.md` | ops | AGENTS.md, README, mayor prompt, operator-context test | updated for legacy split; all cited paths exist |
@@ -202,7 +202,7 @@ an A5 input.
 | `lib/factory_session_boot.py` | ops | factory-guard §7/§7b, CI | Mayor session-down/boot rules |
 | `lib/factory_watchdog.py` | ops | factory-watchdog, on-order-failed, on-session-stranded, CI | Watchdog logic; FIXED (O06, af-sau1a): `merge_signals`/`merge-signals` (the signal-file writer) removed |
 | `lib/protected_rigs.sh` | to-redo | pr-autopilot, factory-do-work-workspace, mol-do-work (doc) | "Single source of truth" hardcoding SayMyName repos in the Factory; bypassed by deliver-close/delivery-guard/guard |
-| `lib/provider_failover.py` | to-redo | bin/provider-failover, CI | Dead `parked` state field; generated overlay header tells readers to use the cockpit |
+| `lib/provider_failover.py` | ops | bin/provider-failover, CI | FIXED (P20, af-r48pb): dead `parked` state field removed; generated overlay header points to `bin/provider-failover set`, not the cockpit |
 | `lib/reversibility.py` | ops | reversibility-check, pr-autopilot, factory-watchdog, CI | ADR-0019 rules |
 | `orders/convoy-parent-sweep.toml` | ops | gc order scheduler | Runs builtin `gc convoy check --json` every 15m |
 | `orders/factory-guard.toml` | ops | gc order scheduler | 5m factory-guard --quiet |
@@ -211,7 +211,7 @@ an A5 input.
 | `orders/on-order-failed.toml` | ops | gc event order.failed | Event hook |
 | `orders/on-session-stranded.toml` | ops | gc event session.stranded | Event hook |
 | `orders/pr-autopilot.toml` | to-redo | gc order scheduler | Description "Never touches PRs targeting main" is false for the Factory repo |
-| `orders/provider-failover.toml` | to-redo | gc order scheduler | Description still says it parks/resumes the campaign |
+| `orders/provider-failover.toml` | ops | gc order scheduler | FIXED (P20, af-r48pb): description describes zero-token failover behavior only, no campaign park/resume wording |
 | `pack.toml` | ops | gc | pack imports pinned |
 | `packs.lock` | ops | gc; bin/factory-dispatch-guard | pack pins |
 | `tests/build-basic-fail-fast-runtime-test.sh` | to-redo | build-basic fail-fast on a real gc/bd city; fixture build-basic-fail-fast | not in ci.yml; declared "# ci: local-only" so ci-registration passes, but nothing runs it automatically |
@@ -334,9 +334,9 @@ skip` comment there for why) and so do not appear in the live list or here.
 | `orders/on-order-failed.toml` | ops | unchanged, see "Every file" above |
 | `orders/on-session-stranded.toml` | ops | unchanged, see "Every file" above |
 | `orders/pr-autopilot.toml` | to-redo | unchanged (F06, still A4-DOCS: description text drift, not behavior) |
-| `orders/provider-failover.toml` | to-redo | unchanged (F06, still A4-DOCS: description text drift, not behavior) |
+| `orders/provider-failover.toml` | ops | FIXED (P20, af-r48pb): description text drift resolved, see `docs/INVENTORY.md` row above |
 
-Count: 28 verdicts (25 `ops`, 3 `to-redo` carried from F06, all already
+Count: 28 verdicts (26 `ops`, 2 `to-redo` carried from F06, all already
 `A4-DOCS`-dispositioned wording fixes, not behavior bugs).
 
 ### Mayor manual operations (`bin/factory-maintain`, ADR-0016 §7 standing allowlist)
