@@ -863,6 +863,80 @@ class TicketGraphPublishTest(unittest.TestCase):
         d1 = next(n for n in plan["nodes"] if n["key"] == "D1")
         self.assertEqual("bin/foo.py,config/*.json", d1["metadata"]["gc.scope_paths"])
 
+    def test_publish_records_the_scope_overlap_edge_in_the_overlap_conflict_log(self):
+        # P16 (af-45knz): the overlap edge add_scope_overlap_edges finds at
+        # publish time is measurement input -- it must land in the append-only
+        # overlap/conflict log with both tickets and their declared scopes.
+        raw, digest = build_draft(
+            "  - id: E1\n"
+            "    title: First\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [r]\n"
+            "    what_it_delivers: w\n"
+            "    acceptance_criteria: [c]\n"
+            "    scope:\n"
+            "      paths: [bin/foo.py]\n"
+            "  - id: E2\n"
+            "    title: Second\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [r]\n"
+            "    what_it_delivers: w\n"
+            "    acceptance_criteria: [c]\n"
+            "    scope:\n"
+            "      paths: [bin/foo.py]\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft = root / "draft.yaml"
+            draft.write_bytes(raw)
+            log_path = root / "overlap-conflict-log.jsonl"
+            self.invoke(
+                "publish", str(draft), env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_CAPTURE": str(root / "graph.json"),
+                    "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+                    "OVERLAP_CONFLICT_LOG_PATH": str(log_path),
+                    "OVERLAP_CONFLICT_MARKER_PATH": str(root / "marker"),
+                },
+            )
+            entries = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(1, len(entries))
+        entry = entries[0]
+        self.assertEqual("overlap", entry["kind"])
+        self.assertEqual(("E1", "E2"), (entry["ticket_a"], entry["ticket_b"]))
+        self.assertEqual(["bin/foo.py"], entry["scope_a"])
+        self.assertEqual(["bin/foo.py"], entry["scope_b"])
+        self.assertEqual(digest, entry["digest"])
+
+    def test_validate_never_writes_to_the_overlap_conflict_log(self):
+        raw, _ = build_draft(
+            "  - id: F1\n"
+            "    title: First\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [r]\n"
+            "    what_it_delivers: w\n"
+            "    acceptance_criteria: [c]\n"
+            "    scope:\n"
+            "      paths: [bin/foo.py]\n"
+            "  - id: F2\n"
+            "    title: Second\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [r]\n"
+            "    what_it_delivers: w\n"
+            "    acceptance_criteria: [c]\n"
+            "    scope:\n"
+            "      paths: [bin/foo.py]\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft = root / "draft.yaml"
+            draft.write_bytes(raw)
+            log_path = root / "overlap-conflict-log.jsonl"
+            self.invoke(
+                "validate", str(draft), env={"OVERLAP_CONFLICT_LOG_PATH": str(log_path)},
+            )
+            self.assertFalse(log_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

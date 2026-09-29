@@ -16,9 +16,9 @@ from typing import Any
 
 import yaml
 
-
 PROGRAM = "ticket-graph-publish"
 ROOT = Path(__file__).resolve().parents[1]
+
 BD_BIN = os.environ.get("BD_BIN", "bd")
 BD_WORKSPACE = Path(os.environ.get("TICKET_GRAPH_BD_WORKSPACE", str(ROOT)))
 GC_BIN = os.environ.get("GC_BIN", "gc")
@@ -208,6 +208,32 @@ def add_scope_overlap_edges(tickets: list[dict[str, Any]]) -> list[dict[str, str
             by_id[ticket_id]["blocked_by"] = sorted(blocked_by[ticket_id])
             added.append({"blocked": ticket_id, "by": earlier_id})
     return added
+
+
+def record_scope_overlaps(
+    scope_edges: list[dict[str, str]], tickets: list[dict[str, Any]], digest: str,
+) -> None:
+    """P16 (af-45knz): every scope-overlap edge add_scope_overlap_edges just
+    added is measurement input -- record it in the append-only overlap/conflict
+    log via bin/overlap-conflict-log (best-effort: a logging failure must never
+    fail a publish/patch that otherwise succeeded)."""
+    if not scope_edges:
+        return
+    by_id = {str(ticket["id"]): ticket for ticket in tickets}
+    script = str(ROOT / "bin" / "overlap-conflict-log")
+    for edge in scope_edges:
+        ticket_a, ticket_b = edge["blocked"], edge["by"]
+        rigs = as_list(by_id[ticket_a].get("target_rigs") or [], f"{ticket_a}.target_rigs")
+        rig = ",".join(str(item) for item in rigs) or "unknown"
+        subprocess.run(
+            [sys.executable, script, "record-overlap",
+             "--ticket-a", ticket_a,
+             "--scope-a", ",".join(ticket_scope_paths(by_id[ticket_a], ticket_a)),
+             "--ticket-b", ticket_b,
+             "--scope-b", ",".join(ticket_scope_paths(by_id[ticket_b], ticket_b)),
+             "--digest", digest, "--rig", rig],
+            check=False, capture_output=True, text=True,
+        )
 
 
 def ticket_description(ticket: dict[str, Any], execution: dict[str, Any]) -> str:
@@ -647,6 +673,8 @@ def main() -> int:
         args = parser().parse_args()
         draft, tickets = validate_draft(args.draft)
         scope_edges = add_scope_overlap_edges(tickets)
+        if args.command != "validate":
+            record_scope_overlaps(scope_edges, tickets, draft["artifact"]["content_digest"])
         plan = graph_plan(draft, tickets)
         for node, ticket in zip((n for n in plan["nodes"] if n["key"] != "_convoy"), tickets):
             node["_blocked_by_keys"] = [str(b) for b in ticket["blocked_by"]]

@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""P16 (af-45knz): record publish-time scope-overlap edges and PR conflicts
+to one append-only runtime log, and file the "dynamic leases" proposal bead
+the moment undeclared conflicts (two tickets whose declared scopes did NOT
+overlap, yet still conflicted) reach the threshold in the trailing window --
+exactly once, and only ever as a proposal (labelled `proposal`), never built
+without Benjamin.
+
+Both bin/pr-autopilot (bash) and bin/ticket-graph-publish (python) call this
+as a subprocess so there is exactly one place that writes the log and decides
+when the threshold is crossed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+import overlap_conflict_log as ocl  # noqa: E402
+
+GC_BIN = os.environ.get("GC_BIN", "gc")
+DEFAULT_LOG_PATH = Path(
+    os.environ.get("OVERLAP_CONFLICT_LOG_PATH", str(ROOT / ".gc" / "runtime" / "overlap-conflict-log.jsonl"))
+)
+DEFAULT_MARKER_PATH = Path(
+    os.environ.get(
+        "OVERLAP_CONFLICT_MARKER_PATH", str(ROOT / ".gc" / "runtime" / "overlap-conflict-lease-proposal-filed")
+    )
+)
+PROPOSAL_TITLE = "Propose dynamic leases: repeated undeclared-scope PR conflicts"
+
+
+def log_path(args: argparse.Namespace) -> Path:
+    return Path(args.log_path) if args.log_path else DEFAULT_LOG_PATH
+
+
+def marker_path(args: argparse.Namespace) -> Path:
+    return Path(args.marker_path) if args.marker_path else DEFAULT_MARKER_PATH
+
+
+def now_of(args: argparse.Namespace) -> float:
+    return args.now if args.now is not None else time.time()
+
+
+def cmd_record_overlap(args: argparse.Namespace) -> int:
+    path = log_path(args)
+    scope_a = ocl.parse_scope(args.scope_a)
+    scope_b = ocl.parse_scope(args.scope_b)
+    entries = ocl.load_entries(path)
+    if ocl.has_overlap_entry(entries, args.ticket_a, args.ticket_b, args.digest):
+        print(f"overlap already recorded: {args.ticket_a} <-> {args.ticket_b} ({args.digest})")
+        return 0
+    entry = ocl.make_overlap_entry(
+        ticket_a=args.ticket_a, scope_a=scope_a,
+        ticket_b=args.ticket_b, scope_b=scope_b,
+        digest=args.digest, rig=args.rig, now=now_of(args),
+    )
+    ocl.append_entry(path, entry)
+    print(f"recorded overlap: {entry['ticket_a']} <-> {entry['ticket_b']}")
+    return 0
+
+
+def cmd_record_conflict(args: argparse.Namespace) -> int:
+    now = now_of(args)
+    entry = ocl.make_conflict_entry(
+        ticket_a=args.ticket_a, scope_a=ocl.parse_scope(args.scope_a),
+        ticket_b=args.ticket_b, scope_b=ocl.parse_scope(args.scope_b),
+        sha=args.sha, rig=args.rig, now=now,
+    )
+    path = log_path(args)
+    ocl.append_entry(path, entry)
+    print(
+        f"recorded conflict: {entry['ticket_a']} <-> {entry['ticket_b']} "
+        f"(declared_overlap={entry['declared_overlap']})"
+    )
+    if not entry["declared_overlap"]:
+        _maybe_file_lease_proposal(args, path, now)
+    return 0
+
+
+def _maybe_file_lease_proposal(args: argparse.Namespace, path: Path, now: float) -> None:
+    marker = marker_path(args)
+    if marker.exists():
+        return
+    entries = ocl.load_entries(path)
+    if not ocl.lease_proposal_due(entries, now=now):
+        return
+    count = ocl.undeclared_conflict_count(entries, now=now)
+    body = (
+        f"Evidence: {count} undeclared-scope PR conflicts recorded in the trailing "
+        f"7 days (log: {path}). Two tickets whose declared scopes did not overlap "
+        "still conflicted on delivery -- consider dynamic leases. Never built "
+        "without Benjamin: this bead is a proposal only, triaged at the next "
+        "Planning Run."
+    )
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    if args.dry_run:
+        print(f"DRY-RUN: would file proposal bead: {PROPOSAL_TITLE}")
+        marker.write_text("dry-run\n", encoding="utf-8")
+        return
+    result = subprocess.run(
+        [GC_BIN, "bd", "create", PROPOSAL_TITLE,
+         "-l", "proposal", "-t", "task", "-p", "2", "-d", body],
+        check=False, capture_output=True, text=True,
+    )
+    marker.write_text(
+        f"filed at {now}: rc={result.returncode} stdout={result.stdout.strip()}\n",
+        encoding="utf-8",
+    )
+    if result.returncode != 0:
+        print(f"warning: gc bd create failed: {result.stderr.strip()}", file=sys.stderr)
+    else:
+        print(f"filed lease proposal: {result.stdout.strip()}")
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    entries = ocl.load_entries(log_path(args))
+    now = now_of(args)
+    overlaps = sum(1 for e in entries if e.get("kind") == "overlap")
+    conflicts = sum(1 for e in entries if e.get("kind") == "conflict")
+    undeclared = ocl.undeclared_conflict_count(entries, now=now)
+    print(
+        f"entries={len(entries)} overlaps={overlaps} conflicts={conflicts} "
+        f"undeclared_conflicts_7d={undeclared} "
+        f"lease_proposal_filed={marker_path(args).exists()}"
+    )
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="overlap-conflict-log")
+    parser.add_argument("--log-path", default=None, help="override the log file (tests)")
+    parser.add_argument("--marker-path", default=None, help="override the lease-proposal marker file (tests)")
+    parser.add_argument("--now", type=float, default=None, help="override the current epoch seconds (tests)")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    record_overlap = sub.add_parser("record-overlap", help="record a publish-time declared scope-overlap edge (P11)")
+    record_overlap.add_argument("--ticket-a", required=True)
+    record_overlap.add_argument("--scope-a", default="")
+    record_overlap.add_argument("--ticket-b", required=True)
+    record_overlap.add_argument("--scope-b", default="")
+    record_overlap.add_argument("--digest", required=True)
+    record_overlap.add_argument("--rig", required=True)
+    record_overlap.set_defaults(func=cmd_record_overlap)
+
+    record_conflict = sub.add_parser("record-conflict", help="record a PR conflict against another ticket (P06)")
+    record_conflict.add_argument("--ticket-a", required=True)
+    record_conflict.add_argument("--scope-a", default="")
+    record_conflict.add_argument("--ticket-b", required=True)
+    record_conflict.add_argument("--scope-b", default="")
+    record_conflict.add_argument("--sha", required=True)
+    record_conflict.add_argument("--rig", required=True)
+    record_conflict.add_argument("--dry-run", action="store_true")
+    record_conflict.set_defaults(func=cmd_record_conflict)
+
+    report = sub.add_parser("report", help="print a one-line summary of the log")
+    report.set_defaults(func=cmd_report)
+
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
