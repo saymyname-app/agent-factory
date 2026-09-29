@@ -157,19 +157,19 @@ an A5 input.
 | `config/planning-run-resume-prototype.json` | kernel | bin/planning-run-resume-oracle, test (CI) | P04 synthetic input (names a factory-cockpit surface) |
 | `config/provider-policy.json` | to-redo | bin/provider-failover, lib/provider_failover.py | chains live and correct, but description says settings are made from the retired cockpit |
 | `config/role-qualification-prototype.json` | kernel | bin/role-qualification-oracle, test (CI) | P06 oracle input |
-| `docs/ADAPTATION_REGISTER.md` | to-redo | CONTEXT_INDEX, planning-exception guard, tests | kernel register but AR-004 cites legacy lib/factory_improvement_axes.py + schema as live proven pattern |
+| `docs/ADAPTATION_REGISTER.md` | kernel | CONTEXT_INDEX, planning-exception guard, tests | FIXED (P19, af-5l657): AR-004 now cites the pre-refactor improvement-axes register as retired to `legacy/`, not a live pattern |
 | `docs/CONTEXT_INDEX.md` | ops | AGENTS.md, README, mayor prompt, operator-context test | updated for legacy split; all cited paths exist |
 | `docs/DELIVERY.md` | to-redo | CONTEXT_INDEX, pr-autopilot, reversibility | provider facts contradict city.toml; "no Actions workflows"; missing DESIGN_GOVERNANCE.md; nonexistent scoped Mayor lane; SayMyName rig contracts |
-| `docs/FACTORY_OBSERVE.md` | to-redo | CONTEXT_INDEX, bin/factory-observe | kernel doc; cites legacy lib/factory_improvement_axes.py; claims schema validation the code does not do |
+| `docs/FACTORY_OBSERVE.md` | kernel | CONTEXT_INDEX, bin/factory-observe | FIXED (P19, af-5l657): cites the improvement-axes register and its moved JSON Schema as retired to `legacy/`; policy/measures validation text now states plainly it is hand-written with no JSON Schema file backing it |
 | `docs/FACTORY_TOOLS.md` | to-redo | CONTEXT_INDEX, ADR-0025 | mostly current; "5 providers" (4 checked); SayMyName example commands |
 | `docs/FIXTURE_CITY_ORACLE.md` | kernel | CONTEXT_INDEX, ADR-0027 | fixture oracle contract; cockpit refs are the quarantine fence |
 | `docs/GETTING_STARTED.md` | to-redo | README, CONTEXT_INDEX | claims clean city.toml after rig removal (false); no core.hooksPath step |
-| `docs/OPERATIONS.md` | to-redo | README, CONTEXT_INDEX, RUNBOOK | SayMyName rig ops/cutover/M6 rollback; gc bd create new-work procedure; dangling derive_delivery(); stale off-box backup claim |
+| `docs/OPERATIONS.md` | ops | README, CONTEXT_INDEX, RUNBOOK | FIXED (P19, af-5l657): SayMyName cutover/M6 rollback retired to `legacy/docs/products/saymyname/CUTOVER_AND_M6_ROLLBACK.md`; no `gc bd create` new-work section, no `derive_delivery()` reference, and off-box backup now accurately describes the live `core/jsonl-archive` order |
 | `docs/OPERATOR_BRIDGE.md` | to-redo | AGENTS.md, README, operator-context test | example intents target the retired product queue |
 | `docs/PLANNING_ALLOCATION_PROTOTYPE.md` | kernel | CONTEXT_INDEX | P02 doc |
 | `docs/PLANNING_EXCEPTION.md` | kernel | CONTEXT_INDEX, planning-exception guard | B08 doc |
 | `docs/PLANNING_MAP_CONCURRENCY_PROTOTYPE.md` | kernel | CONTEXT_INDEX, ADAPTATION_REGISTER | P03 doc |
-| `docs/PLANNING_RUN_RESUME_PROTOTYPE.md` | to-redo | CONTEXT_INDEX | P04 doc cites legacy bin/factory-cockpit and an AGENTS.md assertion that no longer exists |
+| `docs/PLANNING_RUN_RESUME_PROTOTYPE.md` | kernel | CONTEXT_INDEX | FIXED (P19, af-5l657): Cockpit V1/`bin/factory-cockpit` cited only as retired to `legacy/` (Cockpit V2 is Planning Run C01); no dangling AGENTS.md assertion remains |
 | `docs/PLANNING_RUN_ROUTER.md` | kernel | CONTEXT_INDEX, GETTING_STARTED | consistent with bin/planning-run-router (reservation sequence) |
 | `docs/PLANNING_RUN_TO_SPEC_PROTOTYPE.md` | kernel | CONTEXT_INDEX | B03 doc |
 | `docs/PROJECT_ISOLATION_PROTOTYPE.md` | kernel | CONTEXT_INDEX | P05 doc |
