@@ -15,9 +15,14 @@ set -Eeuo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 SCRIPT="$REPO_ROOT/bin/operator-mail"
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
-
+# tests/lib/sandbox.sh (P10, af-ygibh): throwaway HOME/city plus GC_BIN/
+# BD_BIN/GH_BIN pointed off the real binaries. This test already overrides
+# GC_BIN itself below (bin/operator-mail resolves ${GC_BIN:-gc} directly),
+# but sourcing the shared harness keeps every test's isolation pattern in
+# one place instead of re-deriving it per test.
+. "$REPO_ROOT/tests/lib/sandbox.sh"
+sandbox_init
+TMP="$SANDBOX_DIR"
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
 mkdir -p "$TMP/bin"

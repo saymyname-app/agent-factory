@@ -14,8 +14,15 @@ set -Eeuo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 WATCHDOG="$REPO_ROOT/bin/factory-watchdog"
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+# tests/lib/sandbox.sh (P10, af-ygibh): a throwaway HOME/city and, crucially,
+# GC_BIN/BD_BIN/GH_BIN pointed off the real binaries -- every Gas City agent
+# session (this one included) pre-exports GC_BIN to the real `gc`, and
+# bin/escalation-door resolves `${GC_BIN:-gc}`, so a PATH-only stub here is
+# not enough on its own (live incident 2026-09-29, af-0h4vnc: this test paged
+# the live Mayor with fixture gate "af-oihx").
+. "$REPO_ROOT/tests/lib/sandbox.sh"
+sandbox_init
+TMP="$SANDBOX_DIR"
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
 NOW=1789555200   # 2026-09-16T10:40:00Z
@@ -124,6 +131,12 @@ STUB
 chmod +x "$TMP/bin/gh"
 
 export PATH="$TMP/bin:$PATH"
+# sandbox_init pointed GC_BIN/GH_BIN at its own generic fakes in
+# $SANDBOX_STUB_BIN; bin/escalation-door and bin/factory-watchdog resolve
+# $GC_BIN/$GH_BIN directly (not just via PATH), so they must be repointed at
+# this test's own scripted stubs above it, not just left on PATH.
+export GC_BIN="$TMP/bin/gc"
+export GH_BIN="$TMP/bin/gh"
 export FACTORY_GUARD_NOW=$NOW
 export FACTORY_WATCHDOG_REPO="saymyname-app/agent-factory"
 

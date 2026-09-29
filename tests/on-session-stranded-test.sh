@@ -15,8 +15,15 @@ set -Eeuo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 SCRIPT="$REPO_ROOT/bin/on-session-stranded"
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+# tests/lib/sandbox.sh (P10, af-ygibh): a throwaway HOME/city and, crucially,
+# GC_BIN pointed off the real binary. on-session-stranded shells out to
+# bin/escalation-door, which resolves ${GC_BIN:-gc} directly, so a PATH-only
+# stub does not stop it reaching the live city (same class of live incident
+# as factory-watchdog-test.sh and on-order-failed-test.sh, 2026-09-29,
+# af-0h4vnc).
+. "$REPO_ROOT/tests/lib/sandbox.sh"
+sandbox_init
+TMP="$SANDBOX_DIR"
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
 mkdir -p "$TMP/bin" "$TMP/beads"
@@ -61,6 +68,7 @@ exit 0
 STUB
 chmod +x "$TMP/bin/gc"
 export PATH="$TMP/bin:$PATH"
+export GC_BIN="$TMP/bin/gc"
 touch "$TMP/city.toml" 2>/dev/null || true
 
 run() {
