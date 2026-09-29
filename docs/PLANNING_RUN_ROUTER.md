@@ -128,8 +128,11 @@ reserved the Planning Run after this cutover for **C01, Cockpit V2**; see
   time. Nest `next` inside `next` for longer sequences.
 
 The shipped seed file follows the sequence Benjamin validated on 2026-09-25:
-`factory-operations-v2` first, then C01 (Cockpit V2), whose requirements are
-listed on its `next` entry.
+`factory-operations-v2` first, then C01 (Cockpit V2). On 2026-09-29 A6b
+(wiring the upstream wayfinder into the Planning Run) was inserted before C01
+(SayMyName decision 24); C01 stays on its `next` entry. A reservation's `note`
+states WHY the run is reserved, not only its requirements: C01's first
+attempt lost its intended method because its reservation carried none.
 
 ## Sequencing
 
