@@ -14,7 +14,6 @@
   },
   "context_probe": [
     "docs/planning/c01-cockpit/decisions-log.md",
-    "docs/planning/c01-cockpit/facts.md",
     "docs/planning/c01-cockpit/work-graph.json"
   ],
   "wayfinder_ceremony_invoked": false,
