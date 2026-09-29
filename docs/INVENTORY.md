@@ -23,10 +23,10 @@ only when verified in the code; live checks for runtime state.
 | Verdict | Files |
 |---|---|
 | kernel | 75 |
-| ops | 94 |
-| to-redo | 42 |
+| ops | 99 |
+| to-redo | 37 |
 | legacy | 0 |
-| **total** | **211** (fixture directories counted once each; O14/af-8l3ea moved 6 files to `legacy/`, re-verdicted 4, and added 3 new files — `bin/factory-setup`, `config/operator.toml`, `tests/factory-setup-test.sh` — see F12, F15, F17, F19, F20, F23 and the PII-guard row) |
+| **total** | **211** (fixture directories counted once each; O14/af-8l3ea moved 6 files to `legacy/`, re-verdicted 4, and added 3 new files — `bin/factory-setup`, `config/operator.toml`, `tests/factory-setup-test.sh` — see F12, F15, F17, F19, F20, F23 and the PII-guard row; P21/af-k91yx re-verdicted 5 more — `bin/factory-watchdog`, `orders/factory-watchdog.toml`, `orders/pr-autopilot.toml`, `tests/factory-watchdog-test.{py,sh}` — from `to-redo` to `ops`) |
 
 ## Findings
 
@@ -37,7 +37,7 @@ only when verified in the code; live checks for runtime state.
 | F03 | med | `docs/DELIVERY.md` | says claude defaults to `plan`/`claude-sonnet-5`; `city.toml` sets `unrestricted`/`sonnet-5` and the guard treats `plan` as broken; says "no Actions workflows" though `ci.yml` exists; points at `DESIGN_GOVERNANCE.md` (legacy only) | A4-DOCS |
 | F04 | med | `AGENTS.md`, `README.md`, `docs/OPERATOR_BRIDGE.md`, `docs/OPERATIONS.md` | "campaign liveness" invariant; product status/preview "configured"; examples route to the product queue; `derive_delivery()` exists only in legacy; "off-box backup not configured" (live: `jsonl-export` every 15 min to the private archive repo) | A4-DOCS |
 | F05 | low | `AGENTS.md`, `city.toml`, `config/provider-policy.json`, `config/model-catalog.json`, `bin/provider-failover` (help + generated header) | "change providers from the cockpit"; only `provider-failover set` exists | A4-DOCS |
-| F06 | low | `orders/provider-failover.toml`, `orders/factory-watchdog.toml`, `orders/pr-autopilot.toml`, `formulas/mol-*`, `bin/factory-boot`, `bin/pr-autopilot`, `bin/factory-observe` | descriptions still cite the campaign (parking, liveness, idle ladder, `gc.campaign_progress_at`, "for the dashboard"); pr-autopilot "never touches PRs targeting main" is false (Factory `main` is armed) | A4-DOCS (P24 already removed `bin/factory-delivery-guard`'s "for the SayMyName rigs"/campaign wording) |
+| F06 | low | `orders/provider-failover.toml`, `formulas/mol-*`, `bin/factory-boot`, `bin/pr-autopilot`, `bin/factory-observe` | descriptions still cite the campaign (parking, liveness, idle ladder, `gc.campaign_progress_at`, "for the dashboard"); pr-autopilot "never touches PRs targeting main" is false (Factory `main` is armed) | A4-DOCS (P24 already removed `bin/factory-delivery-guard`'s "for the SayMyName rigs"/campaign wording; P21, af-k91yx: `orders/factory-watchdog.toml` and `orders/pr-autopilot.toml` FIXED and split out of this row's file list — see their own rows below; remaining files unchanged) |
 | F07 | low | `docs/FACTORY_OBSERVE.md`, `docs/ADAPTATION_REGISTER.md`, `docs/PLANNING_RUN_RESUME_PROTOTYPE.md`, `docs/GETTING_STARTED.md`, `docs/FACTORY_TOOLS.md` | legacy improvement-axes cited as a live pattern; `bin/factory-cockpit` cited; "C01 reservation" (active one is factory-operations-v2); "5 providers" checked (loop checks 4) | A4-DOCS |
 | F08 | low | `lib/factory_watchdog.py:263`, `lib/provider_failover.py:93`, 5 test comments, `tests/coordination-pointer-doors-test.sh` | comments point at deleted tests / retired `product-queue`, `gc.queue_state` | A4-DOCS |
 | F09 | low | `agents/mayor/prompt.template.md` | says `build-basic` "comes from the pack" (a local fork in `formulas/` overrides it) | A4-DOCS |
@@ -125,7 +125,7 @@ an A5 input.
 | `bin/factory-setup` | ops | docs/GETTING_STARTED.md, CI test | NEW (O14, F17): one-time fresh-clone bootstrap — sets `core.hooksPath=.githooks`, restores the executable bit if a clone drops it |
 | `bin/factory-shared-drain-workspace` | ops | assets/workflows/build-basic/{prepare-shared-worktree,publish,cleanup-shared-worktree}.md, CI test | Shared-drain worktree adapter for build-basic same-session |
 | `bin/factory-waiting-guard` | ops | factory-guard §11, CI test | RE-JUSTIFIED (O14, F12): maintains `gc.waiting_on`, which `bin/pr-autopilot`'s `active_waiters_for` now reads live to decide whether a reconciled merge still needs to wake the Mayor |
-| `bin/factory-watchdog` | to-redo | orders/factory-watchdog.toml, CI tests | Live paging (§1-4,7); FIXED (O06, af-sau1a): the reader-less cockpit signal file is no longer written; some header/comments still describe campaign/cockpit |
+| `bin/factory-watchdog` | ops | orders/factory-watchdog.toml, CI tests | Live paging (§1-4,7); FIXED (O06, af-sau1a): the reader-less cockpit signal file is no longer written. FIXED (P21, af-k91yx): remaining campaign/cockpit mentions in the header are explicitly marked retired/historical (incident context, retired checks), except "blocks the campaign" which described current behavior in present tense — reworded to "halts the Factory" |
 | `bin/factory-work-dispatch` | kernel | mayor prompt, CI test | The HQ convenience wrapper (factory-worker, mol-do-work, --reassign) around bin/dispatch-door (O03) |
 | `bin/fixture-city-oracle` | kernel | CI test, project-isolation-oracle, docs | Fixture-city oracle (ADR-0027 legacy_path fences) |
 | `bin/goal-delivery-pairs` | ops | docs/DELIVERY.md, CI test | Read-only multi-rig delivery-pair query; no runtime caller |
@@ -206,11 +206,11 @@ an A5 input.
 | `lib/reversibility.py` | ops | reversibility-check, pr-autopilot, factory-watchdog, CI | ADR-0019 rules |
 | `orders/convoy-parent-sweep.toml` | ops | gc order scheduler | Runs builtin `gc convoy check --json` every 15m |
 | `orders/factory-guard.toml` | ops | gc order scheduler | 5m factory-guard --quiet |
-| `orders/factory-watchdog.toml` | to-redo | gc order scheduler | Description lists a campaign-liveness check the watchdog no longer has; omits §4/§7 |
+| `orders/factory-watchdog.toml` | ops | gc order scheduler | FIXED (P21, af-k91yx): description now lists all 5 live checks (aged gate, stuck PR, false-success close, gh auth, control-quarantine backlog) and cites no campaign-liveness check |
 | `orders/model-staleness-check.toml` | ops | gc order scheduler | Daily provider-failover check-models (subcommand exists) |
 | `orders/on-order-failed.toml` | ops | gc event order.failed | Event hook |
 | `orders/on-session-stranded.toml` | ops | gc event session.stranded | Event hook |
-| `orders/pr-autopilot.toml` | to-redo | gc order scheduler | Description "Never touches PRs targeting main" is false for the Factory repo |
+| `orders/pr-autopilot.toml` | ops | gc order scheduler | FIXED (P21, af-k91yx): description no longer claims PRs targeting main are never touched — it says only "never arms a PR targeting any other branch" than each repo's protected branch, which correctly covers the Factory repo's `main` being armed |
 | `orders/provider-failover.toml` | ops | gc order scheduler | FIXED (P20, af-r48pb): description describes zero-token failover behavior only, no campaign park/resume wording |
 | `pack.toml` | ops | gc | pack imports pinned |
 | `packs.lock` | ops | gc; bin/factory-dispatch-guard | pack pins |
@@ -247,8 +247,8 @@ an A5 input.
 | `tests/factory-shared-drain-workspace-test.sh` | ops | bin/factory-shared-drain-workspace; fixture shared-drain | in CI (ci.yml:155) |
 | `tests/factory-waiting-guard-test.sh` | ops | bin/factory-waiting-guard (clears gc.waiting_on) | in CI (ci.yml:203); RE-VERDICTED (O14, F12) with the guard it tests — `gc.waiting_on` now serves `pr-autopilot`'s live wake-window check, not the retired idle ladder |
 | `tests/factory-watchdog-order-test.sh` | to-redo | orders/factory-watchdog.toml via live gc | not in ci.yml; "# ci: local-only"; hardcodes /home/benja/agent-factory exec path |
-| `tests/factory-watchdog-test.py` | to-redo | lib/factory_watchdog.py | in CI (ci.yml:137); quarantine fixtures use rig "saymyname-backend" (SayMyName-specific fixture) |
-| `tests/factory-watchdog-test.sh` | to-redo | bin/factory-watchdog | in CI (ci.yml:140); rig list + repo saymyname-*; comment mentions cockpit signal file / campaign liveness |
+| `tests/factory-watchdog-test.py` | ops | lib/factory_watchdog.py | in CI (ci.yml:137); FIXED (P21, af-k91yx): quarantine fixtures now use synthetic rig "acme-backend" and bead ids "acme-q*" |
+| `tests/factory-watchdog-test.sh` | ops | bin/factory-watchdog | in CI (ci.yml:140); FIXED (P21, af-k91yx): rig list + repo now use synthetic "acme-backend" / "acme/factory-hq"; the remaining cockpit/campaign mentions are incident history (2026-09-16/af-nf8en), not a claim about current behavior |
 | `tests/factory-work-dispatch-test.sh` | ops | bin/factory-work-dispatch | in CI (ci.yml:200) |
 | `tests/fixture-city-oracle-test.py` | kernel | Fixture City oracle; fixture fixture-city | in CI (ci.yml:75); legacy-* cases assert retired paths fail closed (correct) |
 | `tests/fixtures/build-basic-fail-fast` | to-redo | build-basic-fail-fast-runtime-test.sh only | used only by a local-only test that never runs automatically |
@@ -327,17 +327,17 @@ skip` comment there for why) and so do not appear in the live list or here.
 | `orders/convoy-parent-sweep.toml` | ops | unchanged, see "Every file" above |
 | `orders/escalation-door-sweep.toml` | ops | new (O06, af-sau1a): sweeps unresolved Mayor-first escalations to Benjamin after 2h |
 | `orders/factory-guard.toml` | ops | unchanged, see "Every file" above |
-| `orders/factory-watchdog.toml` | to-redo | unchanged (F06, still A4-DOCS: description text drift, not behavior) |
+| `orders/factory-watchdog.toml` | ops | FIXED (P21, af-k91yx), see "Every file" above |
 | `orders/idle-ready-work-wake.toml` | ops | new (O02, af-mbpt1): re-wakes the Mayor when ready work sits idle |
 | `orders/local-only-tests.toml` | ops | new (O13, F21 PARTIALLY FIXED): runs the local-only battery nightly, pages on failure |
 | `orders/model-staleness-check.toml` | ops | unchanged, see "Every file" above |
 | `orders/on-order-failed.toml` | ops | unchanged, see "Every file" above |
 | `orders/on-session-stranded.toml` | ops | unchanged, see "Every file" above |
-| `orders/pr-autopilot.toml` | to-redo | unchanged (F06, still A4-DOCS: description text drift, not behavior) |
+| `orders/pr-autopilot.toml` | ops | FIXED (P21, af-k91yx), see "Every file" above |
 | `orders/provider-failover.toml` | ops | FIXED (P20, af-r48pb): description text drift resolved, see `docs/INVENTORY.md` row above |
 
-Count: 28 verdicts (26 `ops`, 2 `to-redo` carried from F06, all already
-`A4-DOCS`-dispositioned wording fixes, not behavior bugs).
+Count: 28 verdicts (28 `ops`, 0 `to-redo` carried from F06 — both wording
+fixes now landed).
 
 ### Mayor manual operations (`bin/factory-maintain`, ADR-0016 §7 standing allowlist)
 

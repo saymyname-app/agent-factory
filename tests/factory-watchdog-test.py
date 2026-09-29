@@ -180,48 +180,48 @@ class QuarantineRules(unittest.TestCase):
     """
 
     def test_a_single_quarantine_in_window_is_flagged(self):
-        beads = [_quarantined_bead("smb-1", "control_dispatch_error", "2026-09-16T10:00:00Z")]
-        verdicts = assess_quarantine(beads, "saymyname-backend", NOW)
+        beads = [_quarantined_bead("acme-q1", "control_dispatch_error", "2026-09-16T10:00:00Z")]
+        verdicts = assess_quarantine(beads, "acme-backend", NOW)
         self.assertEqual(1, len(verdicts))
         reason, code, message = verdicts[0]
         self.assertEqual("control_dispatch_error", reason)
         self.assertEqual("control_quarantined", code)
         self.assertIn("1 control step(s)", message)
-        self.assertIn("saymyname-backend", message)
+        self.assertIn("acme-backend", message)
 
     def test_a_non_quarantined_bead_is_ignored(self):
-        beads = [{"id": "smb-1", "metadata": {"gc.failure_reason": "control_dispatch_error"}}]
-        self.assertEqual([], assess_quarantine(beads, "saymyname-backend", NOW))
+        beads = [{"id": "acme-q1", "metadata": {"gc.failure_reason": "control_dispatch_error"}}]
+        self.assertEqual([], assess_quarantine(beads, "acme-backend", NOW))
 
     def test_a_quarantine_outside_the_window_is_not_counted(self):
-        beads = [_quarantined_bead("smb-1", "control_dispatch_error", "2026-09-01T00:00:00Z")]
-        self.assertEqual([], assess_quarantine(beads, "saymyname-backend", NOW, window_hours=24))
+        beads = [_quarantined_bead("acme-q1", "control_dispatch_error", "2026-09-01T00:00:00Z")]
+        self.assertEqual([], assess_quarantine(beads, "acme-backend", NOW, window_hours=24))
 
     def test_different_failure_reasons_produce_separate_groups(self):
         beads = [
-            _quarantined_bead("smb-1", "control_dispatch_error", "2026-09-16T10:00:00Z"),
-            _quarantined_bead("smb-2", "timeout", "2026-09-16T10:05:00Z"),
+            _quarantined_bead("acme-q1", "control_dispatch_error", "2026-09-16T10:00:00Z"),
+            _quarantined_bead("acme-q2", "timeout", "2026-09-16T10:05:00Z"),
         ]
-        verdicts = assess_quarantine(beads, "saymyname-backend", NOW)
+        verdicts = assess_quarantine(beads, "acme-backend", NOW)
         self.assertEqual({"control_dispatch_error", "timeout"}, {v[0] for v in verdicts})
 
     def test_message_names_the_first_controller_error_by_time_not_input_order(self):
         beads = [
-            _quarantined_bead("smb-2", "control_dispatch_error", "2026-09-16T10:20:00Z", error="second error"),
-            _quarantined_bead("smb-1", "control_dispatch_error", "2026-09-16T10:00:00Z", error="first error"),
+            _quarantined_bead("acme-q2", "control_dispatch_error", "2026-09-16T10:20:00Z", error="second error"),
+            _quarantined_bead("acme-q1", "control_dispatch_error", "2026-09-16T10:00:00Z", error="first error"),
         ]
-        verdicts = assess_quarantine(beads, "saymyname-backend", NOW)
+        verdicts = assess_quarantine(beads, "acme-backend", NOW)
         self.assertEqual(1, len(verdicts))
         self.assertIn("first error", verdicts[0][2])
         self.assertNotIn("second error", verdicts[0][2])
 
     def test_67_in_8_days_pattern_produces_one_alert_not_67(self):
         beads = [
-            _quarantined_bead(f"smb-{i}", "control_dispatch_error", "2026-09-16T09:00:00Z",
+            _quarantined_bead(f"acme-q{i}", "control_dispatch_error", "2026-09-16T09:00:00Z",
                                error="resolving gate condition path: lstat .../.gc/scripts: no such file or directory")
             for i in range(67)
         ]
-        verdicts = assess_quarantine(beads, "saymyname-backend", NOW)
+        verdicts = assess_quarantine(beads, "acme-backend", NOW)
         self.assertEqual(1, len(verdicts))
         self.assertIn("67 control step(s)", verdicts[0][2])
 
@@ -274,7 +274,7 @@ class Cli(unittest.TestCase):
 
     def test_quarantine_cli_is_silent_when_nothing_in_window(self):
         result = subprocess.run(
-            [sys.executable, str(ROOT / "lib" / "factory_watchdog.py"), "quarantine", "saymyname-backend"],
+            [sys.executable, str(ROOT / "lib" / "factory_watchdog.py"), "quarantine", "acme-backend"],
             input="[]", capture_output=True, text=True,
             env={**os.environ, "FACTORY_GUARD_NOW": str(NOW)},
         )
@@ -283,7 +283,7 @@ class Cli(unittest.TestCase):
 
     def test_quarantine_cli_prints_one_line_per_group(self):
         beads = [
-            {"id": f"smb-{i}", "metadata": {
+            {"id": f"acme-q{i}", "metadata": {
                 "gc.control_quarantined": True,
                 "gc.control_quarantined_at": "2026-09-16T09:00:00Z",
                 "gc.failure_reason": "control_dispatch_error",
@@ -292,7 +292,7 @@ class Cli(unittest.TestCase):
             for i in range(67)
         ]
         result = subprocess.run(
-            [sys.executable, str(ROOT / "lib" / "factory_watchdog.py"), "quarantine", "saymyname-backend"],
+            [sys.executable, str(ROOT / "lib" / "factory_watchdog.py"), "quarantine", "acme-backend"],
             input=json.dumps(beads), capture_output=True, text=True,
             env={**os.environ, "FACTORY_GUARD_NOW": str(NOW)},
         )
