@@ -22,6 +22,9 @@ case "$*" in
   *"bd show "*"--json"*)
     printf '%s\n' "$BEAD_LABELS_JSON"
     ;;
+  *"bd list "*"--json"*)
+    printf '%s\n' "${BEAD_HOLDERS_JSON:-[]}"
+    ;;
   *)
     printf '{"ok":true}\n'
     ;;
@@ -30,6 +33,7 @@ STUB
 chmod +x "$TMP/gc"
 export CALLS
 export BEAD_LABELS_JSON='[{"labels":[]}]'
+export BEAD_HOLDERS_JSON='[]'
 
 # A stub provider-failover that reports providers available by default --
 # O08's exhaustion gate must not depend on this host's live provider state.
@@ -175,5 +179,93 @@ out="${out% }"
   || fail "--dry-run did not bypass the exhaustion gate: $out"
 PROVIDER_STATUS_JSON='{"total_exhaustion":{"active":false}}'
 export PROVIDER_STATUS_JSON
+
+# ---------------------------------------------------------------------------
+# 7. P12 (af-8j7tb): low guest memory defers (exit 75), never fails
+#    permanently (exit 2), and never touches gc -- no running session is
+#    ever stopped by this gate. --dry-run still bypasses it.
+# ---------------------------------------------------------------------------
+write_meminfo() {  # <path> <MemAvailable-kib>
+  printf 'MemTotal:        8000000 kB\nMemAvailable:    %s kB\n' "$2" > "$1"
+}
+
+: > "$CALLS"
+write_meminfo "$TMP/meminfo-low" 1468006  # ~1.4 GiB
+set +e
+DISPATCH_DOOR_MEMINFO_FILE="$TMP/meminfo-low" GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" \
+  "$DOOR" af-fixture --rig agent-factory --formula mol-do-work >/dev/null 2>/tmp/dispatch-door-mem-err.$$
+rc=$?
+set -e
+err=$(cat "/tmp/dispatch-door-mem-err.$$"); rm -f "/tmp/dispatch-door-mem-err.$$"
+[ "$rc" -eq 75 ] || fail "low-memory gate did not exit 75 (deferral), got $rc: $err"
+[[ $err == *"deferred"* ]] || fail "low-memory refusal was not logged as a deferral: $err"
+[[ $err == *"1.4 GiB"* ]] || fail "low-memory refusal did not name the available memory: $err"
+[ ! -s "$CALLS" ] || fail "called gc while deferring dispatch for low guest memory"
+
+: > "$CALLS"
+write_meminfo "$TMP/meminfo-high" 1677721  # ~1.6 GiB
+out=$(DISPATCH_DOOR_MEMINFO_FILE="$TMP/meminfo-high" GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" \
+  "$DOOR" af-fixture --rig agent-factory --formula mol-do-work)
+[[ -n $out ]] || fail "dispatch at 1.6 GiB MemAvailable produced no output"
+[ -s "$CALLS" ] || fail "dispatch at 1.6 GiB MemAvailable never called gc"
+
+: > "$CALLS"
+out=$(DISPATCH_DOOR_MEMINFO_FILE="$TMP/meminfo-low" GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" \
+  "$DOOR" af-fixture --rig agent-factory --formula mol-do-work --dry-run)
+out="${out% }"
+[[ $out == "$TMP/gc --city $REPO_ROOT sling factory-worker af-fixture --on mol-do-work --reassign" ]] \
+  || fail "--dry-run did not bypass the low-memory gate: $out"
+
+# ---------------------------------------------------------------------------
+# 8. P12 (af-8j7tb): a ticket whose declared scope touches a hot path is
+#    deferred (exit 75) while an in-progress ticket already holds that same
+#    hot path, dispatched normally once nobody holds it, and untouched when
+#    it declares no scope at all (the common case today).
+# ---------------------------------------------------------------------------
+HOT_PATHS_FILE="$TMP/hot-paths.json"
+cat > "$HOT_PATHS_FILE" <<'JSON'
+{"contract": "agent-factory-hot-paths/v1", "paths": ["city.toml"]}
+JSON
+
+: > "$CALLS"
+BEAD_LABELS_JSON='[{"labels":[],"metadata":{"gc.scope_paths":"city.toml"}}]'
+BEAD_HOLDERS_JSON='[{"id":"af-holder","metadata":{"gc.scope_paths":"city.toml"}}]'
+set +e
+DISPATCH_DOOR_HOT_PATHS_FILE="$HOT_PATHS_FILE" BEAD_LABELS_JSON="$BEAD_LABELS_JSON" BEAD_HOLDERS_JSON="$BEAD_HOLDERS_JSON" \
+  GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" \
+  "$DOOR" af-fixture --rig agent-factory --formula mol-do-work >/dev/null 2>/tmp/dispatch-door-hotpath-err.$$
+rc=$?
+set -e
+err=$(cat "/tmp/dispatch-door-hotpath-err.$$"); rm -f "/tmp/dispatch-door-hotpath-err.$$"
+[ "$rc" -eq 75 ] || fail "held-hot-path gate did not exit 75 (deferral), got $rc: $err"
+[[ $err == *"deferred"* ]] || fail "held-hot-path refusal was not logged as a deferral: $err"
+[[ $err == *"city.toml"* ]] || fail "held-hot-path refusal did not name the hot path: $err"
+[[ $err == *"af-holder"* ]] || fail "held-hot-path refusal did not name the holder: $err"
+calls_after_hotpath=$(wc -l < "$CALLS")
+[ "$calls_after_hotpath" -eq 2 ] \
+  || fail "held-hot-path gate should call gc exactly twice (label check, holder query) before deferring, got $calls_after_hotpath: $(cat "$CALLS")"
+grep -qF 'sling ' "$CALLS" && fail "dispatched (sling) while a held hot path should have deferred"
+
+# No holder anymore (e.g. it merged) -- the same ticket now dispatches.
+: > "$CALLS"
+BEAD_HOLDERS_JSON='[]'
+out=$(DISPATCH_DOOR_HOT_PATHS_FILE="$HOT_PATHS_FILE" BEAD_LABELS_JSON="$BEAD_LABELS_JSON" BEAD_HOLDERS_JSON="$BEAD_HOLDERS_JSON" \
+  GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" \
+  "$DOOR" af-fixture --rig agent-factory --formula mol-do-work)
+[[ -n $out ]] || fail "dispatch with no holder produced no output"
+grep -qF 'sling ' "$CALLS" || fail "dispatch with no holder never called sling: $(cat "$CALLS")"
+
+# A ticket with no declared scope is untouched by the hot-path gate at all
+# (today's common case) -- no holder query is even issued.
+: > "$CALLS"
+BEAD_LABELS_JSON='[{"labels":[]}]'
+BEAD_HOLDERS_JSON='[{"id":"af-holder","metadata":{"gc.scope_paths":"city.toml"}}]'
+out=$(DISPATCH_DOOR_HOT_PATHS_FILE="$HOT_PATHS_FILE" BEAD_LABELS_JSON="$BEAD_LABELS_JSON" BEAD_HOLDERS_JSON="$BEAD_HOLDERS_JSON" \
+  GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" \
+  "$DOOR" af-fixture --rig agent-factory --formula mol-do-work)
+[[ -n $out ]] || fail "dispatch with no declared scope produced no output"
+grep -qF 'bd list ' "$CALLS" && fail "hot-path gate queried holders for a ticket with no declared scope: $(cat "$CALLS")"
+BEAD_LABELS_JSON='[{"labels":[]}]'
+BEAD_HOLDERS_JSON='[]'
 
 echo "PASS: dispatch-door validates target/formula/--reassign for every rig and formula from project files"

@@ -39,6 +39,24 @@
 # (exhaustion_gate); this door only reads its live status and stops sending
 # new work while it reads active, resuming on its own the moment a provider
 # is available again -- no human action needed to unpause dispatch itself.
+#
+# It also defers -- never permanently refuses -- a dispatch in two cases
+# (P12, af-8j7tb):
+#   - the guest is critically low on memory (WSL MemAvailable below a 1.5
+#     GiB floor): starting one more worker session costs about the same
+#     regardless of the ticket, so this check runs before any bead is even
+#     read.
+#   - the target ticket's declared scope (`gc.scope_paths`, stamped by
+#     ticket-graph-publish/P11) touches a hot path (config/hot-paths.json)
+#     that an in-progress ticket's own declared scope already touches. P11's
+#     overlap edges only compare two tickets' own scope.paths against each
+#     other at publish time; hot-paths.json instead names files two tickets
+#     must never hold at once even when neither declared the other in scope,
+#     so this is a dispatch-time check, not a publish-time one.
+# Both are transient: nothing here stops a running session, and a deferred
+# dispatch is simply retried the next time the Mayor dispatches. `fail`
+# below exits 2 for a permanent refusal; `defer` exits 75 (EX_TEMPFAIL) so a
+# caller can tell the two apart.
 set -Eeuo pipefail
 
 PROGRAM_NAME="dispatch-door"
@@ -46,6 +64,9 @@ ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}
 GC_BIN="${GC_BIN:-gc}"
 CONFIG_DIR="${DISPATCH_DOOR_CONFIG_DIR:-$ROOT/config/projects}"
 PROVIDER_FAILOVER_BIN="${DISPATCH_DOOR_PROVIDER_FAILOVER_BIN:-$ROOT/bin/provider-failover}"
+HOT_PATHS_FILE="${DISPATCH_DOOR_HOT_PATHS_FILE:-$ROOT/config/hot-paths.json}"
+MEMINFO_FILE="${DISPATCH_DOOR_MEMINFO_FILE:-/proc/meminfo}"
+MEM_MIN_KIB="${DISPATCH_DOOR_MEM_MIN_KIB:-1572864}"  # 1.5 GiB
 
 SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=lib/project_registry.sh
@@ -61,12 +82,43 @@ project's `formulas` list, resolves the qualified sling target from the
 same file's `sling_target`, and dispatches with --reassign. Stamps
 gc.dispatched_via on the routed bead so bin/dispatch-door-guard can detect
 a raw `gc sling` that bypassed this door.
+
+Exits 2 on a permanent refusal (invalid rig/formula, a proposal-labelled
+bead, total provider exhaustion). Exits 75 on a deferral -- low guest
+memory, or the bead's scope touching a hot path an in-progress ticket
+already holds -- which is transient and safe to retry on the next dispatch.
 USAGE
 }
 
 fail() {
   printf '%s: %s\n' "$PROGRAM_NAME" "$1" >&2
   exit 2
+}
+
+defer() {
+  printf '%s: deferred -- %s\n' "$PROGRAM_NAME" "$1" >&2
+  exit 75
+}
+
+meminfo_kib() {
+  awk -v key="$1:" '$1 == key { print $2; exit }' "$MEMINFO_FILE" 2>/dev/null
+}
+
+gib() {
+  awk -v kib="$1" 'BEGIN { printf "%.1f", kib / 1048576 }'
+}
+
+# Two glob patterns overlap using the same cheap, exact-for-plain-paths
+# approximation as ticket-graph-publish's scopes_overlap (P11): equal, or
+# either matches the other as a literal string.
+pattern_overlap() {
+  python3 - "$1" "$2" <<'PY'
+import fnmatch
+import sys
+
+a, b = sys.argv[1], sys.argv[2]
+sys.exit(0 if (a == b or fnmatch.fnmatch(a, b) or fnmatch.fnmatch(b, a)) else 1)
+PY
 }
 
 case "${1:-}" in
@@ -156,10 +208,51 @@ if [ -n "$provider_status_json" ]; then
   fi
 fi
 
+if [ -r "$MEMINFO_FILE" ]; then
+  mem_available_kib=$(meminfo_kib MemAvailable)
+  if [ -n "$mem_available_kib" ] && [ "$mem_available_kib" -lt "$MEM_MIN_KIB" ]; then
+    defer "guest MemAvailable is $(gib "$mem_available_kib") GiB, below the $(gib "$MEM_MIN_KIB") GiB floor for starting a new worker session -- $BEAD_ID will be retried on the next dispatch"
+  fi
+fi
+
 bead_json=$("$GC_BIN" --city "$ROOT" bd show "$BEAD_ID" --json) \
   || fail "could not read $BEAD_ID to check its labels before dispatch"
 if printf '%s' "$bead_json" | jq -e '(.[0].labels // []) | index("proposal") != null' >/dev/null 2>&1; then
   fail "$BEAD_ID is labelled proposal -- proposals are never dispatched, they are triaged at the next Planning Run"
+fi
+
+target_scope=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.scope_paths"] // "")' 2>/dev/null) || target_scope=""
+if [ -n "$target_scope" ] && [ -f "$HOT_PATHS_FILE" ]; then
+  hot_paths_csv=$(jq -r '(.paths // []) | join(",")' "$HOT_PATHS_FILE" 2>/dev/null) || hot_paths_csv=""
+  if [ -n "$hot_paths_csv" ]; then
+    IFS=',' read -ra hot_paths <<<"$hot_paths_csv"
+    IFS=',' read -ra target_paths <<<"$target_scope"
+    touched_hot_paths=()
+    for hp in "${hot_paths[@]}"; do
+      for tp in "${target_paths[@]}"; do
+        if pattern_overlap "$hp" "$tp"; then
+          touched_hot_paths+=("$hp")
+          break
+        fi
+      done
+    done
+    if [ "${#touched_hot_paths[@]}" -gt 0 ]; then
+      held_json=$("$GC_BIN" --city "$ROOT" bd list --all --has-metadata-key gc.scope_paths --status in_progress --limit 0 --json 2>/dev/null) || held_json="[]"
+      jq -e 'type == "array"' >/dev/null 2>&1 <<<"$held_json" || held_json="[]"
+      holders_tsv=$(jq -r --arg self "$BEAD_ID" '.[] | select(.id != $self) | [.id, (.metadata["gc.scope_paths"] // "")] | @tsv' <<<"$held_json")
+      while IFS=$'\t' read -r holder_id holder_scope; do
+        [ -n "$holder_id" ] && [ -n "$holder_scope" ] || continue
+        IFS=',' read -ra holder_paths <<<"$holder_scope"
+        for hp in "${touched_hot_paths[@]}"; do
+          for hpp in "${holder_paths[@]}"; do
+            if pattern_overlap "$hp" "$hpp"; then
+              defer "$BEAD_ID's scope touches hot path '$hp', already held by in-progress $holder_id -- retry once $holder_id merges"
+            fi
+          done
+        done
+      done <<<"$holders_tsv"
+    fi
+  fi
 fi
 
 "${CMD[@]}" || fail "gc sling failed routing $BEAD_ID to $qualified_target"
