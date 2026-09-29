@@ -22,6 +22,14 @@
 # is treated as ordinary drift (cleared, Mayor paged) once that session is
 # gone.
 #
+# Also regression for the empty-heartbeat bug (2026-09-29): `date -d ""`
+# turned a missing heartbeat into midnight UTC today, so a drift was invisible
+# 00:00-00:15 UTC and this very test failed daily 00:00-00:30 UTC. The clock
+# is now pinned (FACTORY_DISPATCH_NOW_EPOCH) to 00:05 UTC -- inside the old
+# blind window -- so the test is time-of-day independent AND proves: a
+# missing, empty or unparseable heartbeat falls back to updated_at; a bead
+# with no parseable timestamp at all is stale with an "unknown" age.
+#
 # All bead ids here are synthetic fixtures (zz-fixture*), never a real af-*
 # id from the live store.
 
@@ -87,9 +95,10 @@ export GC_BIN="$TMP/bin/gc"
 export BD_BIN="$TMP/bin/bd"
 touch "$TMP/city.toml"
 
-NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-STALE=$(date -u -d '-30 minutes' +%Y-%m-%dT%H:%M:%SZ)
-FRESH=$(date -u -d '-2 minutes' +%Y-%m-%dT%H:%M:%SZ)
+# Fixed clock at 00:05 UTC: inside the window the empty-heartbeat bug hid.
+export FACTORY_DISPATCH_NOW_EPOCH=$(date -u -d '2026-09-29T00:05:00Z' +%s)
+STALE='2026-09-28T23:35:00Z'   # 30 minutes before the pinned clock
+FRESH='2026-09-29T00:03:00Z'   # 2 minutes before the pinned clock
 
 guard() { FACTORY_ROOT="$TMP" "$GUARD" "$@" 2>&1 || true; }
 update_count() { grep -c "^$1 " "$UPDATE_LOG" 2>/dev/null || true; }
@@ -175,5 +184,48 @@ grep -q "cleared stale assignee 'claude-af-c9a25' (routed to 'claude', stale 30m
 call=$(grep "^zz-fixture-affinity-alive " "$UPDATE_LOG" || true)
 [[ $call == *'--assignee '* ]] || fail "repair call did not clear the assignee: $call"
 [ "$(mail_count mayor)" = "1" ] || fail "expected exactly one page to the Mayor once the owning session is gone"
+
+# 6. empty-heartbeat regression: no heartbeat key, an empty one and an
+#    unparseable one all fall back to updated_at (30m stale, at 00:05 UTC);
+#    a bead with no parseable timestamp at all is stale, age "unknown" ------
+hb_missing='{
+  "id": "zz-fixture-hb-missing", "status": "in_progress", "title": "No heartbeat key",
+  "assignee": "mayor", "updated_at": "'"$STALE"'",
+  "metadata": {"gc.routed_to": "bd.dog"}
+}'
+hb_empty='{
+  "id": "zz-fixture-hb-empty", "status": "in_progress", "title": "Empty heartbeat",
+  "assignee": "mayor", "updated_at": "'"$STALE"'",
+  "metadata": {"gc.routed_to": "bd.dog", "gc.last_heartbeat_at": ""}
+}'
+hb_garbage='{
+  "id": "zz-fixture-hb-garbage", "status": "in_progress", "title": "Unparseable heartbeat",
+  "assignee": "mayor", "updated_at": "'"$STALE"'",
+  "metadata": {"gc.routed_to": "bd.dog", "gc.last_heartbeat_at": "not-a-time"}
+}'
+no_time='{
+  "id": "zz-fixture-no-time", "status": "in_progress", "title": "No timestamp at all",
+  "assignee": "mayor", "updated_at": "",
+  "metadata": {"gc.routed_to": "bd.dog"}
+}'
+hb_fresh='{
+  "id": "zz-fixture-hb-fresh", "status": "in_progress", "title": "Old update, fresh heartbeat",
+  "assignee": "mayor", "updated_at": "'"$STALE"'",
+  "metadata": {"gc.routed_to": "bd.dog", "gc.last_heartbeat_at": "'"$FRESH"'"}
+}'
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+echo '{"sessions":[]}' > "$SESSIONS_FILE"
+jq -n --argjson a "$hb_missing" --argjson b "$hb_empty" --argjson c "$hb_garbage" \
+  --argjson d "$no_time" --argjson e "$hb_fresh" '[$a, $b, $c, $d, $e]' > "$BEADS_FILE"
+out=$(guard --check-only)
+for id in zz-fixture-hb-missing zz-fixture-hb-empty zz-fixture-hb-garbage; do
+  grep -q "$id routed to 'bd.dog' but assignee is still 'mayor' (stale 30m, threshold 15m)" <<<"$out" \
+    || { echo "$out" >&2; fail "$id: a missing/empty/unparseable heartbeat did not fall back to updated_at (stale 30m at 00:05 UTC)"; }
+done
+grep -q "zz-fixture-no-time routed to 'bd.dog' but assignee is still 'mayor' (stale unknown age" <<<"$out" \
+  || { echo "$out" >&2; fail "a bead with no parseable timestamp was not reported stale with an unknown age"; }
+grep -q "zz-fixture-hb-fresh" <<<"$out" \
+  && { echo "$out" >&2; fail "a bead with a fresh heartbeat was flagged"; }
+[ -s "$UPDATE_LOG" ] && fail "--check-only wrote to Beads"
 
 echo "PASS: factory-dispatch-guard clears stale dispatch-drift assignees, leaves matched/fresh/unclaimed beads alone, and respects session-affinity liveness"
