@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# enable-strict-main-protection -- P05 (af-yl964): flips ruleset
+# AF-main-protection's strict_required_status_checks_policy to true and the
+# repository setting allow_update_branch to true, on saymyname-app/agent-factory
+# only. This is the "poor-man's merge queue" decided in the A6 Planning Run
+# (docs/planning/parallel-delivery/decisions-log.md Q4): main requires PRs to
+# be up to date before merge, and P04's pr-autopilot keeps BEHIND PRs updated
+# one at a time so this does not stall the queue.
+#
+# Idempotent: reads the current live state first and only writes what is not
+# already applied. Hardcoded to a single repo -- any other target is refused
+# before any write call is made.
+#
+# Rollback (one command): re-run with --rollback. It sets both settings back
+# to false, the values recorded live on 2026-09-29 before this script first
+# ran (docs/planning/parallel-delivery/facts.md#L39-41).
+
+set -Eeuo pipefail
+
+REPO="saymyname-app/agent-factory"
+RULESET_NAME="AF-main-protection"
+GH_BIN="${GH_BIN:-gh}"
+
+usage() {
+  cat <<'USAGE'
+Usage: enable-strict-main-protection [--repo OWNER/REPO] [--rollback]
+
+Applies, idempotently:
+  - ruleset AF-main-protection: strict_required_status_checks_policy = true
+  - repo setting:                allow_update_branch = true
+
+Only ever targets saymyname-app/agent-factory; passing any other --repo
+value is refused.
+
+--rollback reverts both settings to false (the state before this script
+first ran).
+USAGE
+}
+
+target_repo="$REPO"
+rollback=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      target_repo="$2"
+      shift 2
+      ;;
+    --rollback)
+      rollback=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "enable-strict-main-protection: unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "$target_repo" != "$REPO" ]]; then
+  echo "enable-strict-main-protection: refusing -- this script only ever targets $REPO (got: $target_repo)" >&2
+  exit 1
+fi
+
+desired_strict=true
+desired_allow_update_branch=true
+if [[ "$rollback" -eq 1 ]]; then
+  desired_strict=false
+  desired_allow_update_branch=false
+fi
+
+ruleset_id=$("$GH_BIN" api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$RULESET_NAME\") | .id")
+if [[ -z "$ruleset_id" ]]; then
+  echo "enable-strict-main-protection: ruleset $RULESET_NAME not found on $REPO" >&2
+  exit 1
+fi
+
+ruleset_json=$("$GH_BIN" api "repos/$REPO/rulesets/$ruleset_id")
+current_strict=$(printf '%s' "$ruleset_json" | jq -r '.rules[] | select(.type == "required_status_checks") | .parameters.strict_required_status_checks_policy')
+
+if [[ "$current_strict" == "$desired_strict" ]]; then
+  echo "ruleset $RULESET_NAME: strict_required_status_checks_policy already $desired_strict -- no change"
+else
+  updated_ruleset=$(printf '%s' "$ruleset_json" | jq \
+    --argjson strict "$desired_strict" \
+    '{name, target, enforcement, conditions, bypass_actors,
+      rules: (.rules | map(
+        if .type == "required_status_checks"
+        then .parameters.strict_required_status_checks_policy = $strict
+        else . end))}')
+  printf '%s' "$updated_ruleset" | "$GH_BIN" api -X PUT "repos/$REPO/rulesets/$ruleset_id" --input - >/dev/null
+  echo "ruleset $RULESET_NAME: strict_required_status_checks_policy -> $desired_strict"
+fi
+
+current_allow_update_branch=$("$GH_BIN" api "repos/$REPO" --jq '.allow_update_branch')
+if [[ "$current_allow_update_branch" == "$desired_allow_update_branch" ]]; then
+  echo "repo $REPO: allow_update_branch already $desired_allow_update_branch -- no change"
+else
+  "$GH_BIN" api -X PATCH "repos/$REPO" -F "allow_update_branch=$desired_allow_update_branch" >/dev/null
+  echo "repo $REPO: allow_update_branch -> $desired_allow_update_branch"
+fi
+
+echo
+echo "Live read-back:"
+"$GH_BIN" api "repos/$REPO/rulesets/$ruleset_id" \
+  --jq '{ruleset: .name, strict_required_status_checks_policy: (.rules[] | select(.type == "required_status_checks") | .parameters.strict_required_status_checks_policy)}'
+"$GH_BIN" api "repos/$REPO" --jq '{repo: .full_name, allow_update_branch}'
