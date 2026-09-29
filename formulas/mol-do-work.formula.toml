@@ -230,6 +230,9 @@ gc.work_outcome=...`. Choose the outcome from what actually happened:
   `--commit`/`--branch`.
 - `blocked` / `abandoned` — you could not complete it. Also mail the escalation
   recipient (see step 3b) — never leave a blocked bead silent.
+- delivered on another ticket's branch — the fix for this bead is the same
+  logical unit as another ticket already in flight, so you committed it there
+  instead of opening a branch/PR of your own for this bead (see 3c below).
 
 **Shipped** (you committed a change):
 ```bash
@@ -294,6 +297,20 @@ NEXT: <what unblocking looks like>"
 
 Use `--outcome abandoned` instead of `blocked` if nobody is expected to
 unblock it (out of scope, superseded, etc.) — mail the same way regardless.
+
+**3c. Delivered on another ticket's branch** (P07, af-87f9u): the repair this
+bead needs is the same logical unit as another ticket's change, so you
+committed it on that other ticket's branch instead of a branch of your own.
+Do not close this bead and do not call `deliver-close` — it has no PR of its
+own to verify yet. Record the hosting PR so pr-autopilot closes this ticket,
+with the merge SHA as evidence, once that PR merges:
+```bash
+gc bd update "$WORK_BEAD_ID" \
+  --set-metadata "gc.delivered_via_pr=<hosting PR number>" \
+  --append-notes "Delivered via PR #<hosting PR number> (<hosting ticket/branch>); pr-autopilot closes this ticket once that PR merges."
+```
+A PR named here that never merges, or merges closed-without-merging, leaves
+this ticket open — nothing else should touch it.
 
 **4. Close this formula step:**
 
