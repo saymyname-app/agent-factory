@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# factory-session-loop-guard — the generic safety net for a session stuck
+# waking and stopping in a loop, whatever the cause (P14, af-llc2y).
+#
+# af-6675l (2026-09-28): one factory-worker session woke and stopped ~55
+# times in an hour because its wake trigger counted a stale mail-reply bead
+# as claimable work. P13 fixes that one cause (the wake trigger now counts
+# only claimable assigned work, and a resolved mail-reply bead closes
+# itself). This is the net underneath that fix, decided separately
+# (decisions-log.md round 2, Q15): "whatever the cause", more than 10
+# wake/stop cycles on one session within a rolling hour is itself worth
+# paging and pausing, independent of why it is happening.
+#
+# Deterministic and zero-token like factory-watchdog: reads
+# `gc events --since <window>` (session.woke / session.stopped, keyed by
+# session_id), counts completed wake+stop cycles per session in the
+# trailing window via lib/factory_session_loop.py, and for any session over
+# threshold:
+#   - files one tracked bead per looping session (title-deduped, never one
+#     per tick)
+#   - pages through escalation-door's Mayor-first class
+#   - suspends the session (`gc session suspend`) -- reversible, never a
+#     kill/close
+# A session that stops looping (cycle count back at or under threshold) has
+# its bead auto-resolved, the same idiom as factory-watchdog's control-
+# quarantine group.
+#
+# Reversal is a named, logged gesture on this same script (the Mayor is
+# explicitly meant to be able to undo the pause): `factory-session-loop-guard
+# resume <session-id> [--reason "..."]` calls `gc session wake` and appends
+# one line to var/factory-session-loop-guard.log naming what it did, mirroring
+# bin/factory-maintain's gesture-logging discipline.
+#
+# Usage:
+#   factory-session-loop-guard [--check-only] [--quiet]
+#   factory-session-loop-guard resume <session-id> [--reason "..."]
+set -uo pipefail
+
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd)"
+ESCALATION_DOOR="$(dirname "${BASH_SOURCE[0]}")/escalation-door"
+GC_BIN="${GC_BIN:-gc}"
+LOG_FILE="${FACTORY_SESSION_LOOP_GUARD_LOG:-$ROOT/var/factory-session-loop-guard.log}"
+WINDOW_SECONDS="${FACTORY_SESSION_LOOP_GUARD_WINDOW_SECONDS:-3600}"
+THRESHOLD="${FACTORY_SESSION_LOOP_GUARD_THRESHOLD:-10}"
+BEAD_PREFIX="[session-loop]"
+
+now_epoch() { printf '%s\n' "${FACTORY_SESSION_LOOP_GUARD_NOW:-$(date -u +%s)}"; }
+now_iso()   { date -u -d "@$(now_epoch)" +%Y-%m-%dT%H:%M:%SZ; }
+
+log() {
+  # log <gesture> <status> <detail>
+  local gesture="$1" status="$2" detail="$3"
+  mkdir -p "$(dirname "$LOG_FILE")"
+  printf '%s\tgesture=%s\tstatus=%s\t%s\n' \
+    "$(now_iso)" "$gesture" "$status" "$detail" >> "$LOG_FILE"
+}
+
+cmd_resume() {
+  local session_id="${1:-}" reason="paused loop no longer active"
+  [ -n "$session_id" ] || { echo "usage: factory-session-loop-guard resume <session-id> [--reason \"...\"]" >&2; return 2; }
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason) reason="$2"; shift 2 ;;
+      *) echo "factory-session-loop-guard resume: unknown argument $1" >&2; return 2 ;;
+    esac
+  done
+
+  local out rc
+  out=$("$GC_BIN" session wake "$session_id" 2>&1); rc=$?
+  if [ "$rc" -eq 0 ]; then
+    log resume resumed "session=$session_id reason=$reason undo='factory-session-loop-guard will re-pause it if it starts looping again'"
+    local title="$BEAD_PREFIX $session_id"
+    local existing
+    existing=$("$GC_BIN" bd list --status open --title-contains "$title" --json 2>/dev/null | jq -r '(.[0].id // empty)' 2>/dev/null)
+    if [ -n "$existing" ]; then
+      "$GC_BIN" bd update "$existing" --set-metadata gc.outcome=pass --status=closed \
+        --notes "Resumed by Mayor gesture: $reason" >/dev/null 2>&1
+    fi
+  else
+    log resume failed "session=$session_id output=$(printf '%s' "$out" | tr '\n' ' ')"
+  fi
+  printf '%s\n' "$out"
+  return "$rc"
+}
+
+cmd_detect() {
+  local check_only=0 quiet=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check-only) check_only=1 ;;
+      --quiet) quiet=1 ;;
+      -h|--help)
+        sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; return 0 ;;
+      *) echo "unknown argument: $1" >&2; return 2 ;;
+    esac
+    shift
+  done
+
+  cd "$ROOT" || { echo "factory-session-loop-guard: $ROOT unreachable"; return 2; }
+
+  say()  { [ "$quiet" = "1" ] || printf '%s\n' "$*"; }
+  bad()  { PROBLEMS+=("$1"); }
+  did()  { ACTIONS+=("$1"); say "  PAGED: $1"; }
+  PROBLEMS=(); ACTIONS=()
+
+  if [ ! -f "$ROOT/city.toml" ] || ! command -v "$GC_BIN" >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 \
+     || [ ! -f "$LIB/factory_session_loop.py" ]; then
+    say "· session-loop-guard — not checked (not a city root, or gc/jq unavailable)"
+    return 0
+  fi
+
+  local now window_hours
+  now=$(now_epoch)
+  window_hours=$(( (WINDOW_SECONDS + 3599) / 3600 ))
+  local events_json
+  events_json=$("$GC_BIN" events --since "${window_hours}h" 2>/dev/null || echo '')
+
+  local active_titles
+  active_titles=$(mktemp)
+
+  while IFS=$'\t' read -r session_id cycles msg; do
+    [ -z "$session_id" ] && continue
+    bad "wake/stop loop — $msg"
+    local title="$BEAD_PREFIX $session_id"
+    printf '%s\n' "$title" >> "$active_titles"
+    if [ "$check_only" != "1" ]; then
+      local existing
+      existing=$("$GC_BIN" bd list --status open --title-contains "$title" --json 2>/dev/null | jq -r '(.[0].id // empty)')
+      if [ -z "$existing" ]; then
+        local created
+        created=$("$GC_BIN" bd create "$title" -p 1 -t bug \
+          -d "$msg
+
+Detected by factory-session-loop-guard. Session suspended pending investigation (reversible: \`factory-session-loop-guard resume $session_id\`). af-6675l safety net -- this pages independent of cause." \
+          --set-metadata "gc.session_id=$session_id" --set-metadata "gc.source=factory-session-loop-guard" \
+          --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
+        if [ -n "$created" ]; then
+          "$ESCALATION_DOOR" mayor "$created" "factory-session-loop-guard: session $session_id looping -- $msg" \
+            >/dev/null 2>&1
+          "$GC_BIN" session suspend "$session_id" >/dev/null 2>&1
+          log pause paused "session=$session_id cycles=$cycles bead=$created undo='factory-session-loop-guard resume $session_id'"
+          did "flagged looping session $session_id as $created, paged mayor, and suspended it"
+        else
+          bad "could not file a bead for looping session $session_id"
+        fi
+      fi
+    fi
+  done < <(printf '%s' "$events_json" | FACTORY_SESSION_LOOP_GUARD_NOW="$now" \
+    python3 "$LIB/factory_session_loop.py" assess --now "$now" --window-seconds "$WINDOW_SECONDS" --threshold "$THRESHOLD" 2>/dev/null)
+
+  if [ "$check_only" != "1" ]; then
+    while IFS= read -r existing_id; do
+      [ -z "$existing_id" ] && continue
+      local existing_title
+      existing_title=$("$GC_BIN" bd show "$existing_id" --json 2>/dev/null | jq -r '(.[0].title // "")')
+      if ! grep -Fxq "$existing_title" "$active_titles" 2>/dev/null; then
+        "$GC_BIN" bd update "$existing_id" --set-metadata gc.outcome=pass --status=closed \
+          --notes "no new wake/stop cycles past threshold in the window; auto-resolved by factory-session-loop-guard" >/dev/null 2>&1 \
+          && did "auto-resolved recovered session-loop bead $existing_id"
+      fi
+    done < <("$GC_BIN" bd list --status open --title-contains "$BEAD_PREFIX" --json 2>/dev/null | jq -r '.[].id')
+  fi
+  rm -f "$active_titles"
+
+  say ""
+  if [ "${#ACTIONS[@]}" -gt 0 ]; then say "paged ${#ACTIONS[@]}:"; printf '  - %s\n' "${ACTIONS[@]}"; fi
+  if [ "${#PROBLEMS[@]}" -gt 0 ]; then
+    say "ATTENTION ${#PROBLEMS[@]}:"; printf '  ! %s\n' "${PROBLEMS[@]}"
+  else
+    say "quiet — no session over ${THRESHOLD} wake/stop cycles in the window"
+  fi
+  # Same exit-code contract as factory-watchdog (af-u61xq): finding a loop is
+  # not a failure, it is already reported above. Only the guard itself being
+  # unable to run is nonzero.
+  return 0
+}
+
+case "${1:-}" in
+  resume) shift; cmd_resume "$@" ;;
+  *)      cmd_detect "$@" ;;
+esac
