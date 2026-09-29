@@ -36,7 +36,7 @@ PRS="$TMP/prs.json";             printf '[]' > "$PRS"
 WORKFLOWS="$TMP/workflows.json"; printf '[]' > "$WORKFLOWS"
 QUARANTINE="$TMP/quarantine.json"; printf '[]' > "$QUARANTINE"
 RIG_LIST="$TMP/rigs.json"
-jq -n --arg path "$TMP/city" '{"rigs":[{"name":"saymyname-backend","path":$path,"hq":false}]}' > "$RIG_LIST"
+jq -n --arg path "$TMP/city" '{"rigs":[{"name":"acme-backend","path":$path,"hq":false}]}' > "$RIG_LIST"
 EVENTS="$TMP/events.jsonl";       : > "$EVENTS"
 COORD="$TMP/coord.json";         printf '[{"id":"af-1vr4","metadata":{}}]' > "$COORD"
 GH_AUTH_RC="$TMP/gh-auth-rc";   printf '0' > "$GH_AUTH_RC"
@@ -138,7 +138,7 @@ export PATH="$TMP/bin:$PATH"
 export GC_BIN="$TMP/bin/gc"
 export GH_BIN="$TMP/bin/gh"
 export FACTORY_GUARD_NOW=$NOW
-export FACTORY_WATCHDOG_REPO="saymyname-app/agent-factory"
+export FACTORY_WATCHDOG_REPO="acme/factory-hq"
 
 watchdog() { FACTORY_ROOT="$TMP/city" "$WATCHDOG" "$@" 2>&1 || true; }
 mails()   { grep -c '^mail send' "$MAIL" || true; }
@@ -305,7 +305,7 @@ set -e
 #     signal) -- throttled on re-run, and auto-resolve once the group clears.
 jq -n --arg t "$(iso $((NOW - 3000)))" '
   [range(0;3) | {
-    "id": ("smb-q" + (. | tostring)),
+    "id": ("acme-q" + (. | tostring)),
     "metadata": {
       "gc.control_quarantined": true,
       "gc.control_quarantined_at": $t,
@@ -315,7 +315,7 @@ jq -n --arg t "$(iso $((NOW - 3000)))" '
   }]' > "$QUARANTINE"
 reset_logs
 out=$(watchdog)
-grep -q "control quarantine — 3 control step(s) quarantined in saymyname-backend with failure_reason=control_dispatch_error" <<<"$out" \
+grep -q "control quarantine — 3 control step(s) quarantined in acme-backend with failure_reason=control_dispatch_error" <<<"$out" \
   || { echo "$out" >&2; fail "control quarantine group not reported"; }
 [ "$(creates)" = "1" ] || fail "a control-quarantine group should be filed exactly once, not once per bead"
 [ "$(mails)" = "1" ] || fail "a control-quarantine group should be paged exactly once"
