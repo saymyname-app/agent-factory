@@ -718,6 +718,151 @@ class TicketGraphPublishTest(unittest.TestCase):
         self.assertEqual(["X1"], result["patched"])
         self.assertFalse(escalated)
 
+    def test_overlapping_scopes_with_no_edge_get_one_edge_recorded_in_the_result(self):
+        raw, _ = build_draft(
+            "  - id: A1\n"
+            "    title: First\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [r]\n"
+            "    what_it_delivers: w\n"
+            "    acceptance_criteria: [c]\n"
+            "    scope:\n"
+            "      paths: [bin/foo.py]\n"
+            "  - id: A2\n"
+            "    title: Second\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [r]\n"
+            "    what_it_delivers: w\n"
+            "    acceptance_criteria: [c]\n"
+            "    scope:\n"
+            "      paths: [bin/foo.py]\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft = root / "draft.yaml"
+            draft.write_bytes(raw)
+            capture = root / "graph.json"
+            result = json.loads(self.invoke(
+                "publish", str(draft), env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_CAPTURE": str(capture),
+                    "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+                },
+            ).stdout)
+            plan = json.loads(capture.read_text(encoding="utf-8"))
+        self.assertEqual([{"blocked": "A2", "by": "A1"}], result["scope_edges"])
+        self.assertIn(
+            {"from_key": "A2", "to_key": "A1", "type": "blocks"},
+            [e for e in plan["edges"] if e["type"] == "blocks"],
+        )
+        a2 = next(n for n in plan["nodes"] if n["key"] == "A2")
+        self.assertEqual("A1", a2["metadata"]["gc.blocked_by"])
+
+    def test_disjoint_scopes_get_no_edge(self):
+        raw, _ = build_draft(
+            "  - id: B1\n"
+            "    title: First\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [r]\n"
+            "    what_it_delivers: w\n"
+            "    acceptance_criteria: [c]\n"
+            "    scope:\n"
+            "      paths: [bin/one.py]\n"
+            "  - id: B2\n"
+            "    title: Second\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [r]\n"
+            "    what_it_delivers: w\n"
+            "    acceptance_criteria: [c]\n"
+            "    scope:\n"
+            "      paths: [bin/two.py]\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft = root / "draft.yaml"
+            draft.write_bytes(raw)
+            result = json.loads(self.invoke(
+                "publish", str(draft), env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_CAPTURE": str(root / "graph.json"),
+                    "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+                },
+            ).stdout)
+        self.assertEqual([], result["scope_edges"])
+
+    def test_an_existing_edge_is_never_reversed_or_duplicated(self):
+        raw, _ = build_draft(
+            "  - id: C1\n"
+            "    title: First\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [r]\n"
+            "    what_it_delivers: w\n"
+            "    acceptance_criteria: [c]\n"
+            "    scope:\n"
+            "      paths: [bin/x.py]\n"
+            "  - id: C2\n"
+            "    title: Second\n"
+            "    blocked_by: [C1]\n"
+            "    target_rigs: [r]\n"
+            "    what_it_delivers: w\n"
+            "    acceptance_criteria: [c]\n"
+            "    scope:\n"
+            "      paths: [bin/x.py]\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft = root / "draft.yaml"
+            draft.write_bytes(raw)
+            capture = root / "graph.json"
+            result = json.loads(self.invoke(
+                "publish", str(draft), env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_CAPTURE": str(capture),
+                    "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+                },
+            ).stdout)
+            plan = json.loads(capture.read_text(encoding="utf-8"))
+        self.assertEqual([], result["scope_edges"])
+        blocks = [e for e in plan["edges"] if e["type"] == "blocks"]
+        self.assertEqual([{"from_key": "C2", "to_key": "C1", "type": "blocks"}], blocks)
+
+    def test_a_draft_without_scopes_still_publishes_exactly_as_today(self):
+        result = json.loads(self.invoke(
+            "validate", str(DRAFT),
+        ).stdout)
+        self.assertEqual([], result["scope_edges"])
+        self.assertEqual(
+            (True, 18, 19, 59),
+            (result["ok"], result["ticket_count"], result["node_count"], result["edge_count"]),
+        )
+
+    def test_scope_paths_are_copied_to_the_bead_metadata(self):
+        raw, _ = build_draft(
+            "  - id: D1\n"
+            "    title: First\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [r]\n"
+            "    what_it_delivers: w\n"
+            "    acceptance_criteria: [c]\n"
+            "    scope:\n"
+            "      paths: [bin/foo.py, config/*.json]\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft = root / "draft.yaml"
+            draft.write_bytes(raw)
+            capture = root / "graph.json"
+            self.invoke(
+                "publish", str(draft), env={
+                    "BD_BIN": str(FAKE_BD),
+                    "TICKET_GRAPH_CAPTURE": str(capture),
+                    "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+                },
+            )
+            plan = json.loads(capture.read_text(encoding="utf-8"))
+        d1 = next(n for n in plan["nodes"] if n["key"] == "D1")
+        self.assertEqual("bin/foo.py,config/*.json", d1["metadata"]["gc.scope_paths"])
+
 
 if __name__ == "__main__":
     unittest.main()

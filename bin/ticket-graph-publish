@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -65,6 +66,19 @@ def as_list(value: Any, where: str) -> list[Any]:
     return value
 
 
+def ticket_scope_paths(ticket: dict[str, Any], ticket_id: str) -> list[str]:
+    """The glob patterns a ticket declares under `scope.paths` (P11), or []
+    for a ticket (or a whole draft) that declares no scope -- publishing
+    such a draft must behave exactly as it did before this field existed.
+    """
+    scope = ticket.get("scope")
+    if scope is None:
+        return []
+    scope_dict = as_dict(scope, f"{ticket_id}.scope")
+    paths = as_list(scope_dict.get("paths", []), f"{ticket_id}.scope.paths")
+    return [str(item) for item in paths]
+
+
 def validate_draft(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     raw = path.read_bytes()
     try:
@@ -113,6 +127,7 @@ def validate_draft(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             raise PublishError(f"{ticket_id} has no acceptance criteria")
         if not as_list(ticket.get("target_rigs"), f"{ticket_id}.target_rigs"):
             raise PublishError(f"{ticket_id} has no target rigs")
+        ticket_scope_paths(ticket, ticket_id)  # validated eagerly; fails closed on malformed scope
 
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -132,6 +147,67 @@ def validate_draft(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     for ticket_id in ids:
         visit(ticket_id)
     return draft, tickets
+
+
+def scopes_overlap(a_paths: list[str], b_paths: list[str]) -> bool:
+    """Two glob lists overlap if any pattern from one could match a path the
+    other pattern could also match. Cross-matching each pattern against the
+    other as a literal string (both directions) is the standard cheap
+    approximation for glob/glob overlap and is exact for the plain file
+    paths these tickets actually declare.
+    """
+    for pattern_a in a_paths:
+        for pattern_b in b_paths:
+            if pattern_a == pattern_b:
+                return True
+            if fnmatch.fnmatch(pattern_a, pattern_b) or fnmatch.fnmatch(pattern_b, pattern_a):
+                return True
+    return False
+
+
+def add_scope_overlap_edges(tickets: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Serialise any two tickets with overlapping declared `scope.paths` that
+    are not already ordered (directly or transitively) by `blocked_by`, so
+    two workers never land branches that touch the same files at once (P11).
+    Ticket declaration order is the sole tie-break -- a later ticket becomes
+    `blocked_by` an earlier one it overlaps with -- so an added edge is
+    deterministic, never reversed, and (via the reachability check) never
+    duplicated even across several overlapping pairs in one draft.
+    """
+    ids = [str(ticket["id"]) for ticket in tickets]
+    by_id = {str(ticket["id"]): ticket for ticket in tickets}
+    scopes = {ticket_id: ticket_scope_paths(by_id[ticket_id], ticket_id) for ticket_id in ids}
+    blocked_by: dict[str, set[str]] = {
+        ticket_id: {str(b) for b in (by_id[ticket_id].get("blocked_by") or [])} for ticket_id in ids
+    }
+
+    def reachable(start: str, goal: str) -> bool:
+        stack, seen = [start], set()
+        while stack:
+            current = stack.pop()
+            if current == goal:
+                return True
+            if current in seen:
+                continue
+            seen.add(current)
+            stack.extend(blocked_by.get(current, ()))
+        return False
+
+    added: list[dict[str, str]] = []
+    for index, ticket_id in enumerate(ids):
+        if not scopes[ticket_id]:
+            continue
+        for earlier_id in ids[:index]:
+            if not scopes[earlier_id]:
+                continue
+            if reachable(ticket_id, earlier_id) or reachable(earlier_id, ticket_id):
+                continue
+            if not scopes_overlap(scopes[ticket_id], scopes[earlier_id]):
+                continue
+            blocked_by[ticket_id].add(earlier_id)
+            by_id[ticket_id]["blocked_by"] = sorted(blocked_by[ticket_id])
+            added.append({"blocked": ticket_id, "by": earlier_id})
+    return added
 
 
 def ticket_description(ticket: dict[str, Any], execution: dict[str, Any]) -> str:
@@ -229,6 +305,9 @@ def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str
         split_from = str(ticket.get("split_from") or "").strip()
         if split_from:
             metadata["gc.split_from"] = split_from
+        scope_paths = ticket_scope_paths(ticket, ticket_id)
+        if scope_paths:
+            metadata["gc.scope_paths"] = ",".join(scope_paths)
         nodes.append({
             "key": ticket_id,
             "type": "task",
@@ -392,6 +471,10 @@ def patch(
             member = old_members[key]
             wanted_blocked_by = {str(b) for b in ticket["blocked_by"]}
             previous_blocked_by = {b for b in member["blocked_by"].split(",") if b}
+            scope_metadata_args = (
+                ["--set-metadata", f"gc.scope_paths={node['metadata']['gc.scope_paths']}"]
+                if "gc.scope_paths" in node["metadata"] else []
+            )
             run(
                 "update", member["id"],
                 "--title", node["title"],
@@ -399,6 +482,7 @@ def patch(
                 "--set-metadata", f"gc.graph_digest={new_digest}",
                 "--set-metadata", "gc.publication_validated=true",
                 "--set-metadata", f"gc.blocked_by={','.join(sorted(wanted_blocked_by))}",
+                *scope_metadata_args,
             )
             for added in sorted(wanted_blocked_by - previous_blocked_by):
                 run("dep", "add", member["id"], resolve_id(added))
@@ -562,6 +646,7 @@ def main() -> int:
     try:
         args = parser().parse_args()
         draft, tickets = validate_draft(args.draft)
+        scope_edges = add_scope_overlap_edges(tickets)
         plan = graph_plan(draft, tickets)
         for node, ticket in zip((n for n in plan["nodes"] if n["key"] != "_convoy"), tickets):
             node["_blocked_by_keys"] = [str(b) for b in ticket["blocked_by"]]
@@ -572,6 +657,7 @@ def main() -> int:
                 "ticket_count": len(tickets),
                 "node_count": len(plan["nodes"]),
                 "edge_count": len(plan["edges"]),
+                "scope_edges": scope_edges,
             }, ensure_ascii=False, sort_keys=True))
             return 0
         if args.command == "patch":
@@ -584,6 +670,7 @@ def main() -> int:
                 "ok": True,
                 "graph_digest": graph_digest,
                 "revises": draft["artifact"]["revises"],
+                "scope_edges": scope_edges,
                 **result,
                 **notice,
             }, ensure_ascii=False, sort_keys=True))
@@ -595,6 +682,7 @@ def main() -> int:
             "ok": True,
             "graph_digest": graph_digest,
             "ids": mapping,
+            "scope_edges": scope_edges,
             **notice,
         }, ensure_ascii=False, sort_keys=True))
         return 0
