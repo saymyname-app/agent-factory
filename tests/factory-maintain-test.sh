@@ -119,6 +119,7 @@ esac
 FAKEGC
 chmod +x "$FAKE_BIN/gc"
 export PATH="$FAKE_BIN:$PATH"
+export GC_BIN="$FAKE_BIN/gc"
 
 mkdir -p "$FACTORY_ROOT/bin"
 ESCALATION_LOG="$TMP/escalation.log"
