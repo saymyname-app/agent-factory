@@ -279,10 +279,10 @@ This repository cannot use GitHub branch protection or a required check —
 private repo, no GitHub Pro, `403` on the branches API — so a local gate is
 the available mechanism, not a fallback choice.
 
-The gate reads its test list straight out of `.github/workflows/ci.yml`
-(every `python`/`bash tests/*.py|*.sh` line under the `Tests` job), so it can
-never drift from CI's own list the way that list once drifted from the tests
-directory (ADR-0017, `tests/ci-registration-test.sh`).
+The gate runs `bin/ci-run-tests` — the same discovery CI itself runs (every
+`tests/*.py|*.sh` file, minus anything marked `# ci: local-only`) — so it can
+never drift from CI's own list, and neither has to be hand-edited when a
+test file is added (ADR-0017, `tests/ci-registration-test.sh`).
 
 **It does not touch the automated delivery loop.** `bin/pr-autopilot` lands
 merges with `gh pr merge` — a GitHub-side API call, never a local `git push`

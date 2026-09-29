@@ -22,6 +22,7 @@ set -Eeuo pipefail
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 GATE="$REPO_ROOT/bin/factory-main-gate"
 HOOK="$REPO_ROOT/.githooks/pre-push"
+RUNNER="$REPO_ROOT/bin/ci-run-tests"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
@@ -29,6 +30,7 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
 [ -x "$GATE" ] || fail "$GATE is not executable"
 [ -x "$HOOK" ] || fail "$HOOK is not executable"
+[ -x "$RUNNER" ] || fail "$RUNNER is not executable"
 
 # --- a throwaway repo with an origin, the real hook, and a fake CI ----------
 git init -q --bare "$TMP/origin.git"
@@ -40,7 +42,8 @@ git remote add origin "$TMP/origin.git"
 mkdir -p .githooks bin tests .github/workflows
 cp "$HOOK" .githooks/pre-push
 cp "$GATE" bin/factory-main-gate
-chmod +x .githooks/pre-push bin/factory-main-gate
+cp "$RUNNER" bin/ci-run-tests
+chmod +x .githooks/pre-push bin/factory-main-gate bin/ci-run-tests
 git config core.hooksPath .githooks
 
 cat > .github/workflows/ci.yml <<'YAML'
@@ -49,10 +52,11 @@ on: [push]
 jobs:
   tests:
     steps:
-      - run: python tests/fixture-test.py
+      - run: bin/ci-run-tests
 YAML
 
 # The fixture test: passes unless FIXTURE_SHOULD_FAIL exists in the repo.
+# factory-main-gate discovers this through bin/ci-run-tests, not by name.
 cat > tests/fixture-test.py <<'PY'
 import pathlib, sys
 if pathlib.Path("FIXTURE_SHOULD_FAIL").exists():
