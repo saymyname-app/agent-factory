@@ -52,12 +52,22 @@ _French conversational alias_: graphe de planification
 _Avoid_: Delivery Work Graph, implementation convoy, session tree
 
 **Planning Map Bead**:
-The root and low-resolution index of a Wayfinding Run; it points to decisions and unresolved fog without restating their detail.
+The root and low-resolution index of a Wayfinding Run: its Destination, standing notes, a pointer to each decision made, the fog not yet specified, and what is ruled out of scope, without restating any decision's detail.
 _French conversational alias_: Bead carte Wayfinder
 _Avoid_: Spec, implementation epic, conversation transcript
 
+**Destination**:
+What reaching the end of a Wayfinding Run looks like (a Spec to hand off, a decision to lock, or a change made in place); it fixes the run's scope and every Planning Decision Bead is judged against it.
+_French conversational alias_: destination
+_Avoid_: goal, epic, outcome when scope is meant
+
+**Out of Scope**:
+Work consciously ruled beyond a Wayfinding Run's Destination; it is recorded on the Planning Map Bead with its reason and never graduates into a Planning Decision Bead.
+_French conversational alias_: hors périmètre
+_Avoid_: fog, backlog, later
+
 **Planning Decision Bead**:
-A non-executable child of a Planning Map Bead that resolves one research, grilling, prototype, or prerequisite-task question and records its resolution plus linked evidence.
+A non-executable child of a Planning Map Bead that resolves one research, grilling, prototype, or task question and records its resolution plus linked evidence.
 _French conversational alias_: Bead de décision de planification
 _Avoid_: implementation ticket, Vertical Slice, agent session
 
