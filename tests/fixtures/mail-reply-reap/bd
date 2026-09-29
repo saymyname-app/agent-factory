@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Fake `bd` used by mail-reply-reap-test.py.
+
+Handles the three calls mail-reply-reap makes:
+  bd -C <root> list --include-infra --type message --status open --json --limit 0
+      -> prints MAIL_TEST_MESSAGES (a JSON array), default "[]"
+  bd -C <root> list --assignee <name> --status open,in_progress --json --limit 0
+      -> prints the entry for <name> in MAIL_TEST_ASSIGNED_MAP (a JSON object
+         mapping assignee -> array), default "[]" if <name> is absent
+  bd -C <root> close <id> --reason <reason>
+      -> appends {"id": <id>, "reason": <reason>} to MAIL_TEST_CLOSE_LOG
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if len(args) >= 2 and args[0] == "-C":
+    args = args[2:]
+
+if args[:1] == ["list"] and "--type" in args and "message" in args:
+    print(os.environ.get("MAIL_TEST_MESSAGES", "[]"))
+    raise SystemExit(0)
+
+if args[:1] == ["list"] and "--assignee" in args:
+    assignee = args[args.index("--assignee") + 1]
+    mapping = json.loads(os.environ.get("MAIL_TEST_ASSIGNED_MAP", "{}"))
+    print(json.dumps(mapping.get(assignee, [])))
+    raise SystemExit(0)
+
+if args[:1] == ["close"]:
+    bead_id = args[1]
+    reason = args[args.index("--reason") + 1] if "--reason" in args else ""
+    log = Path(os.environ["MAIL_TEST_CLOSE_LOG"])
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"id": bead_id, "reason": reason}) + "\n")
+    raise SystemExit(0)
+
+print(f"unexpected fake bd arguments: {args}", file=sys.stderr)
+raise SystemExit(2)

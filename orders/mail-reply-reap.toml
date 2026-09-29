@@ -1,0 +1,13 @@
+# P13 (af-6675l): a resolved mail-reply bead left open reads as "assigned
+# work" to whatever supervises session wake, even though `bd list` already
+# hides message-type beads from claim queries by default -- so an unclosed
+# one re-wakes and drain-acks its session in a tight loop for zero progress.
+# Closing it is 100% mechanical (a NEXT: none regex + bd close), so the
+# controller runs it directly via exec on a short, cheap cooldown.
+[order]
+description = "Closes open mail-reply beads (issue_type=message) whose body is resolved (NEXT: none), removing a stale assigned-work signal that re-wakes a drained session (af-6675l)."
+trigger = "condition"
+interval = "5m"
+check = "/home/benja/agent-factory/bin/mail-reply-reap sweep --dry-run"
+exec = "/home/benja/agent-factory/bin/mail-reply-reap sweep"
+timeout = "60s"
