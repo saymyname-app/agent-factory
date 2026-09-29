@@ -1,0 +1,2 @@
+Need: How B10 requires exactly one independent assembled-diff review for a multi-slice outcome and none for a single-slice one, why rejection routes a Spec mismatch/changed behavior/active danger to a distinct destination without a default whole-outcome rollback, and why a sensitive effect stays blocked on human authority at every integration/acceptance state
+Read: `FIXTURE_CITY_ORACLE.md` (Assembled-diff review and rejection routing), `./bin/fixture-city-oracle`, `tests/fixture-city-oracle-test.py`

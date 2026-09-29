@@ -1,0 +1,2 @@
+Need: How the router wires B03/B04/B05/B06 into one live Planning Run lifecycle, why it never re-slices a Spec or fabricates approval, how it translates `legacy_path` fail-closed, why it is the only Planning Run entry point (one-way, no fallback flag, af-mav0b), and the C01/Cockpit V2 reservation gate
+Read: `PLANNING_RUN_ROUTER.md`, `./bin/planning-run-router`, `.gc/runtime/planning-run-reservation.json` (seeded from `config/planning-run-reservation.json`), `tests/planning-run-router-test.py`

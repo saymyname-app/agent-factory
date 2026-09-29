@@ -1,0 +1,2 @@
+Need: How B09 diffs a caller-supplied Planning Run/delivery/adaptation snapshot against the last-observed one so an unchanged state wakes nobody, why a new fact wakes exactly the smallest qualified role once with its evidence preserved, how measures stay separated by work class, and how a review exemption/automatic handoff activates only under named evidence and restores on regression
+Read: `FACTORY_OBSERVE.md`, `ADAPTATION_REGISTER.md` (AR-004), `./bin/factory-observe`, `config/factory-observe-policy.json`, `lib/factory_measures.py`, `tests/factory-observe-test.py`

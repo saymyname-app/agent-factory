@@ -1,0 +1,2 @@
+Need: How B02 registers a project through one Project Planning Profile (authoritative Project Knowledge/Work Graph/rigs/checks/thresholds/autonomy/extensions), why registration rejects SayMyName/Factory-wide fields and contradictory or missing sources, and why policy can tighten but never disable common safety principles
+Read: `PROJECT_PLANNING_PROFILE.md`, `./bin/project-planning-profile`, `tests/project-planning-profile-test.py`
