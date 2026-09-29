@@ -1,0 +1,8 @@
+{
+  "contract": "agent-factory-hot-paths/v1",
+  "description": "Files two parallel tickets must never hold at once even when neither declared the other in scope.paths (Q6/Q11, A6 decisions-log). Kept to what append-only restructuring (P01, P02) could not remove: single shared config files and forward-only migration files, where two concurrent edits collide on the same line or the same ordinal. Consumed by dispatch-door (P12) to defer a ticket whose scope touches a path a held ticket is already working; ticket-graph-publish (P11) does not read this file -- overlap edges come only from each ticket's own declared scope.paths.",
+  "paths": [
+    "city.toml",
+    "**/V*__*.sql"
+  ]
+}
