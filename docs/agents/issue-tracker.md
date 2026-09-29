@@ -6,8 +6,8 @@ for Planning Run A6b. Its `## Agent skills` pointer is in `AGENTS.md`, not
 
 Issues for this repo live as **Beads** in the Factory's HQ Beads database
 (Dolt-backed). Use the `bd` CLI (v1.2.2), run **only from the live root**
-`/home/benja/agent-factory`, with `--actor po-agent` when the operator session
-writes. Never create a second tracker (GitHub Issues, `.scratch/`) for this repo.
+`/home/benja/agent-factory`, with `--actor po-agent/<session-id>` (one actor per
+operator session, see Claim) when the operator session writes. Never create a second tracker (GitHub Issues, `.scratch/`) for this repo.
 
 ## Conventions
 
@@ -43,6 +43,6 @@ Used by `/wayfinder`. The **map** is one bead (the Planning Map Bead) with
 - **Child ticket**: `bd create --parent <map> --type task --title "<name>" --labels wayfinder:<type> --metadata '{"gc.plane":"planning"}' --body-file q.md`, where `<type>` is `research`/`prototype`/`grilling`/`task` and the body is `## Question`.
 - **Blocking**: Beads' native `blocks` dependency: `bd dep add <blocked> <blocker>`. A ticket is unblocked when every blocker is closed.
 - **Frontier query**: `bd ready --parent <map> --unassigned --json` (ready already drops blocked and in-progress beads); first by creation order wins.
-- **Claim**: `bd update <id> --assignee po-agent --status in_progress`, the session's first write.
-- **Resolve**: `bd comments add <id> -f answer.md`, then `bd close <id> --reason "<gist>"`, then append a context pointer (name + id + gist) to the map's Decisions so far.
+- **Claim**: `bd --actor po-agent/<session-id> update <id> --claim`, the session's first write. Only `--claim` is atomic, and only between distinct actors: exit 1 ("already claimed") means take the next frontier ticket. Never claim with `--assignee` (last writer wins silently). Research: branch `research/a6b-beads-claim`, af-0aiero.2.
+- **Resolve**: `bd comments add <id> -f answer.md`, then `bd close <id> --reason "<gist>"`, then append a context pointer (name + id + gist) to the map's Decisions so far. `bd update --body-file` replaces the whole description (last writer wins, no compare-and-set): re-read the map immediately before writing and keep one writer at a time on it.
 - **Research assets**: the research subagent writes its cited file on a throwaway `research/<name>` branch of this repo (in a worktree, never in the live root) and the ticket's resolution comment links it.
