@@ -1,0 +1,2 @@
+Need: How B05 approves the exact canonical Spec by digest and closes its Planning Map without a duplicate document, why a frozen artifact rejects mutation while a genuine semantic change becomes an explicit new revision with provenance, and why the optional freeze-check localizes drift instead of becoming another fog audit
+Read: `SPEC_APPROVE.md`, `./bin/spec-approve`, `tests/spec-approve-test.py`
