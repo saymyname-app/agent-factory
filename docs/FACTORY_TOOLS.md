@@ -58,6 +58,21 @@ git log --oneline refs/remotes/snapshots/*        # lister
 git show refs/remotes/snapshots/<utc>:<fichier>   # lire un fichier
 ```
 
+**Budget de temps** (2026-09-29). L'order tue le garde à 180 s ; un passage
+normal prend ~30-45 s. Le 2026-09-28 à 14:09, l'hôte Windows saturé a étiré
+des appels `gh`/`git`/`gc` sans borne au-delà de 180 s : le garde a été tué
+sans aucun rapport. Désormais chaque appel réseau, Dolt ou sous-garde passe
+par `bounded` (plafond propre : `gc` 15-30 s, `git` réseau 30 s, `gh` 20 s,
+sous-gardes 60 s, jamais au-delà de budget + 20 s) ; un appel coupé vaut
+« inconnu » — jamais vert, jamais une raison d'agir (un `gh pr list` coupé
+ne supprime pas de worktree). Aucune section ne démarre après 150 s
+(`FACTORY_GUARD_BUDGET_SECONDS`) : chaque section sautée sort en problème
+« not checked (time budget exhausted) » et le garde rend son rapport. Un
+passage lent (> 60 s, `FACTORY_GUARD_SLOW_SECONDS`), écourté ou avec un appel
+coupé imprime, même en `--quiet`, la durée de chaque section et
+`/proc/loadavg` : charge élevée et toutes les sections plus lentes = hôte
+saturé ; une seule section et une ligne `timed out:` = un appel bloqué.
+
 **Quand le lancer** : avant tout arrêt, après toute session qui a touché la
 racine, et avant de croire qu'un travail est en sécurité. Il tourne aussi seul
 via son order.
