@@ -57,11 +57,9 @@ For a change:
 - One active Gas City controller per City.
 - HQ Factory work uses `bin/factory-work-dispatch <af-bead-id>`: its fixed
   `factory-worker` inherits `workspace`; never sling `workspace` or `bd.dog`.
-- V1 writer counts are capped per rig, not fixed at one: `agent-factory` runs
-  up to 2 concurrent writers (each in its own isolated worktree, with
-  declared-scope/hot-file serialization ahead of dispatch); a rig gets a
-  higher cap only once its own isolation canary is proven, and product rigs
-  stay at 1 until then.
+- V1 caps writers per rig instead of fixing one: `agent-factory` allows 2,
+  each isolated in its own worktree with declared-scope/hot-file
+  serialization ahead of dispatch; other rigs stay at 1 until proven by canary.
 - Branch work happens in a `git worktree`, never by checking out in the live
   root (the root is the running city). Remove the worktree when its PR merges
   or closes: one left pinning a merged branch makes `gh pr merge
@@ -86,13 +84,11 @@ For a change:
   then keep working on what is eligible. Anything else: mail `mayor` BLOCKED,
   `gc.outcome=fail`, drain. Never create a `human` gate: it notifies nobody.
 - **Standing ADMIN allowlist:** the routine upkeep gestures ADR-0016 §7
-  exempts from the escalation contract above are run only through
-  `bin/factory-maintain <gesture>` — `restart-service`, `prune-merged-branches`,
-  `clean-worktrees`, `rotate-logs`, `reload-city-config` — never by hand; each
-  gesture checks its own refusal criteria, logs what it did to
-  `var/factory-maintain.log`, and is undoable. No other free-text upkeep
-  action is in scope; anything else stays ADMIN. Background in
-  `legacy/docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` §7.
+  exempts from the escalation contract run only through `bin/factory-maintain
+  <gesture>` — `restart-service`, `prune-merged-branches`, `clean-worktrees`,
+  `rotate-logs`, `reload-city-config` — never by hand; each logs to
+  `var/factory-maintain.log` and is undoable. Anything else stays ADMIN
+  (`legacy/docs/decisions/ADR-0016-standing-delegation-and-non-stop-campaign.md` §7).
 - **No direct push to `main` or `dev`:** land through a pull request.
 
 ## Cost policy
