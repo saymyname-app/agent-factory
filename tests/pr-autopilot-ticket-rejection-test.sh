@@ -107,6 +107,7 @@ export PATH="$TMP/bin:$PATH"
 export FACTORY_ROOT="$TMP/factory"
 export REVERSIBILITY_CHECK_BIN="$TMP/bin/gh"
 export ESCALATION_DOOR_BIN="$TMP/bin/escalation-door"
+export GC_BIN="$TMP/bin/gc"
 
 pilot() { COMMENTS_MODE="$1" "$AUTOPILOT" 2>&1 || true; }
 
