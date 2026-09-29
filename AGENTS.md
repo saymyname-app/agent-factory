@@ -98,14 +98,12 @@ proven low-risk class; L2 one strong writer; L3 writer plus independent review f
 meaningful risk; L4 multi-agent only when decomposition has measured value. Never
 load whole backlogs or histories by default.
 
-Context engineering discipline (write / select / compress / isolate):
-quality degrades past roughly half a session's context window, well
-before the hard limit — treat that as the compaction/handoff trigger
-(see the Mayor's session-budget guidance). Put load-bearing instructions
-at the start or end of prompts and docs, not buried mid-document —
-models attend to edges more reliably than the middle. Give each agent
-role only the tool/skill surface its job needs; an unused tool still
-taxes every turn's context.
+Context discipline (write / select / compress / isolate): quality drops
+past about half the context window — that is the compaction/handoff
+trigger (Mayor session-budget guidance). Put load-bearing instructions at
+the start or end of prompts and docs; models attend to edges more than the
+middle. Give each role only the tools/skills its job needs: an unused tool
+still taxes every turn.
 
 ## Inter-agent mail format
 
@@ -134,3 +132,8 @@ NEXT:   <what happens next, or "none">
 - **Keep the mailbox drained.** Archive or mark-read mail once acted on
   (`gc.retention_ttl` purges read mail after 7 days, but an unbounded unread
   backlog still buries the signal that actually needs a response).
+
+## Agent skills
+
+Matt Pocock skills: tracker = Beads, see `docs/agents/issue-tracker.md`;
+domain docs, see `docs/agents/domain.md`.
