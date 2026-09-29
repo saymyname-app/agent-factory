@@ -79,6 +79,19 @@ Codex uses the least access needed for the stated intent. Availability of a
 credential or tool never authorizes secret disclosure, public exposure,
 production mutation, spending, irreversible action, or unrelated work.
 
+## Sending mail from the operator path
+
+If a task requires notifying the Mayor or another agent, send it with
+`bin/operator-mail <to> -s <subject> -m <message>`, never a raw
+`gc mail send`. Raw `gc mail send` from this shell has no live gc session to
+attribute the message to and silently resolves the sender to `human` — which
+reads as Benjamin himself. `bin/operator-mail` always sends as an explicit
+agent identity (`config/operator.toml` `mail_alias`, default `po-agent`) and
+self-identifies in the body. Per the Mayor's own prompt, every mail — whatever
+its sender — is treated as an agent's request, not a standing order:
+Benjamin's decisions reach the Factory only through an approved Spec and its
+published ticket graph.
+
 ## Project status contract
 
 For `Où en est <projet> ?`, Codex reads that project's own repository and the

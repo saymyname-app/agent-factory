@@ -173,8 +173,11 @@ records what was verified about the machinery underneath.
    is at most one hour old, or an `open`/`in_progress` bead actively waits on
    the delivered bead through a `blocks` dependency or `gc.waiting_on`.
    Historical backfills still receive delivery metadata through the same door but remain silent when
-   nobody is waiting. The sender is explicitly `pr-autopilot`, never `human`,
-   and the `merge_result` stamp makes later passes silent.
+   nobody is waiting. `gc mail send` has no live session to attribute this to
+   (`pr-autopilot` is a deterministic script, not a session) and resolves the
+   sender to `human`; the message body's own `ACTION: pr-autopilot reconciled
+   …` line self-identifies the true actor instead (af-4ruvv). The
+   `merge_result` stamp makes later passes silent.
 5. A PR whose required check **failed** is never armed. It is raised as a P1
    bug bead in the rig instead, so a red build becomes ready work rather than a
    silently open PR.
