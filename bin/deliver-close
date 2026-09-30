@@ -52,6 +52,22 @@
 # bin/factory-planning-exception-guard is the complementary detection net for
 # beads already closed this way without going through this enforcement (e.g.
 # a raw `gc bd update` bypassing this door).
+#
+# af-1al0t1 (2026-09-30, C01 T21): a delivery worker posted a NEEDS BENJAMIN
+# (a variant choice) through escalation-door, then ran `--outcome blocked
+# --classification repair` as mol-do-work step 3b told it to. This door
+# closed the ticket with gc.outcome=pass: its dependents (T22 among them)
+# were released without the choice, and `escalation-door list` never showed
+# the question. Two rules close that class:
+#   * --outcome blocked parks the bead instead of closing it: status
+#     blocked, gc.outcome=blocked, gc.work_outcome=blocked. Blocked work is
+#     neither ready nor done, so its dependents stay gated. The linked-PR
+#     check does not apply (parking claims nothing delivered).
+#     `escalation-door repondre` reopens it once the operator answers.
+#   * no form of this door closes a bead that still carries an active
+#     gc.needs_benjamin (set and not "none"): the close would silently drop
+#     the operator's question. Answer it (`escalation-door repondre`) or
+#     clear it (`escalation-door clear`) first. Parking stays allowed.
 
 set -Eeuo pipefail
 
@@ -87,7 +103,12 @@ workflow; other repositories must pass --required-workflow.
 
 --outcome form: writes the ADR-0009 work-record outcome (gc.outcome=pass,
 gc.work_outcome=<outcome>, and for shipped gc.work_commit/gc.work_branch) and
-closes the bead. If <bead-id> already carries its own gc.pr_url (a previous
+closes the bead -- except --outcome blocked, which parks it instead (status
+blocked, gc.outcome=blocked; dependents stay gated; escalation-door repondre
+reopens it).
+
+No form closes a bead whose gc.needs_benjamin is still active (set and not
+"none"): answer or clear it through escalation-door first. If <bead-id> already carries its own gc.pr_url (a previous
 attempt's PR), that PR is independently verified with `gh pr view` first and
 the close is refused unless it is genuinely merged; a bead with no gc.pr_url
 yet has nothing to verify. A bead explicitly governed by
@@ -95,7 +116,7 @@ gc.delivery_contract=pr-ci-merged-v1 (or an approved delivery graph) cannot use
 --outcome shipped without a linked PR.
 
 --classification (required for --outcome blocked|abandoned): repair writes
-gc.blocked_classification and closes as before. semantic/topology means the
+gc.blocked_classification and parks (blocked) or closes (abandoned). semantic/topology means the
 delivery worker hit a question about approved intent, behavior, or topology
 (ADR-0028) -- it must also pass --planning-exception-id naming the decision
 id an already-run `bin/planning-exception raise` produced for this bead, or
@@ -150,6 +171,13 @@ parse_pr_url() {  # url -> owner/repo<TAB>number
   else
     return 1
   fi
+}
+
+refuse_close_on_active_needs_benjamin() {  # bead-id bead-json
+  local question
+  question=$(bead_object "$2" | jq -r '.metadata["gc.needs_benjamin"] // "" | tostring')
+  [[ -z $question || $question == none ]] \
+    || die "$1 carries an active NEEDS BENJAMIN ($question); refusing to close it. Answer it with 'escalation-door repondre $1 <lettre>' or clear it with 'escalation-door clear $1' first; to wait for the answer use --outcome blocked, which parks the bead without closing it."
 }
 
 requires_pr_contract() {
@@ -257,7 +285,13 @@ close_verified_pr() {  # bead-id repo pr reason verification
 close_by_outcome() {
   local bead_id=$1 outcome=$2 commit=$3 branch=$4 verification=$5 reason=$6 \
     classification=$7 planning_exception_id=$8
-  local -a args=("$GC_BIN" bd update "$bead_id" --set-metadata "gc.outcome=pass" \
+  # af-1al0t1: blocked parks, it never records a success nor closes.
+  local gc_outcome=pass final_status=closed
+  if [[ $outcome == blocked ]]; then
+    gc_outcome=blocked
+    final_status=blocked
+  fi
+  local -a args=("$GC_BIN" bd update "$bead_id" --set-metadata "gc.outcome=$gc_outcome" \
     --set-metadata "gc.work_outcome=$outcome")
   if [[ $outcome == shipped ]]; then
     [[ -n $commit && -n $branch ]] \
@@ -290,9 +324,13 @@ close_by_outcome() {
   fi
   [[ -z $verification ]] || args+=(--set-metadata "gc.work_verification=$verification")
   [[ -z $planning_exception_id ]] || args+=(--set-metadata "gc.planning_exception_id=$planning_exception_id")
-  args+=(--status=closed --notes "$reason")
+  args+=(--status="$final_status" --notes "$reason")
   "${args[@]}" || die "Beads update failed for $bead_id."
-  log "Closed $bead_id with gc.work_outcome=$outcome."
+  if [[ $final_status == blocked ]]; then
+    log "Parked $bead_id (status blocked, gc.work_outcome=blocked); dependents stay gated until it is answered and reopened."
+  else
+    log "Closed $bead_id with gc.work_outcome=$outcome."
+  fi
 }
 
 main() {
@@ -390,8 +428,13 @@ main() {
       [[ -z $classification && -z $planning_exception_id ]] \
         || die "--classification/--planning-exception-id only apply to --outcome blocked|abandoned."
     fi
+    [[ $outcome == blocked ]] || refuse_close_on_active_needs_benjamin "$bead_id" "$bead_json"
     local linked_url linked_pair linked_repo linked_number resolved_workflow
     linked_url=$(metadata_value "$bead_json" "gc.pr_url")
+    # Parking (blocked) claims nothing delivered: no linked-PR proof needed.
+    if [[ $outcome == blocked ]]; then
+      linked_url=""
+    fi
     if [[ -n $linked_url ]]; then
       linked_pair=$(parse_pr_url "$linked_url") \
         || die "$bead_id carries gc.pr_url=$linked_url that is not a recognizable GitHub PR URL; refusing to close without verifiable proof."
@@ -418,6 +461,7 @@ main() {
   fi
 
   require_command "$GH_BIN"
+  refuse_close_on_active_needs_benjamin "$bead_id" "$bead_json"
 
   [[ -n $repo ]] || die "--repo owner/repository is required; refusing to close $bead_id without it."
   [[ $repo =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$ ]] \

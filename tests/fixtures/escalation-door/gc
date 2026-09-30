@@ -39,6 +39,16 @@ if [[ ${1:-} == bd && ${2:-} == update ]]; then
         mv "${tmp}.next" "$tmp"
         shift 2
         ;;
+      --unset-metadata)
+        jq --arg key "$2" 'del(.metadata[$key])' "$tmp" >"${tmp}.next"
+        mv "${tmp}.next" "$tmp"
+        shift 2
+        ;;
+      --status)
+        jq --arg status "$2" '.status = $status' "$tmp" >"${tmp}.next"
+        mv "${tmp}.next" "$tmp"
+        shift 2
+        ;;
       --append-notes)
         jq --arg note "$2" '.notes = ((.notes // "") + "\n" + $note)' "$tmp" >"${tmp}.next"
         mv "${tmp}.next" "$tmp"
