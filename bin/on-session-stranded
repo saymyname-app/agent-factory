@@ -12,6 +12,14 @@
 # stop or a human decision -- it makes the bead eligible for normal dispatch
 # again instead of leaving it stuck in_progress with nobody watching it.
 #
+# T09 (af-xv706q): while the city is suspended (Clean stop, `gc suspend`),
+# a session terminating is a deliberate stop, not a crash -- its work stays
+# claimed exactly as it was so the same session resumes it at restart. This
+# entire pass is skipped (events stay unprocessed, unread) rather than only
+# skipping the reopen, so a session that stopped voluntarily during the
+# suspension is still re-evaluated normally once the city is no longer
+# suspended.
+#
 # Usage: on-session-stranded [--check-only] [--quiet]
 set -uo pipefail
 
@@ -41,6 +49,12 @@ fi
 
 say() { [ "$QUIET" = "1" ] || printf '%s\n' "$*"; }
 mkdir -p "$(dirname "$STATE_FILE")"
+
+CITY_STATUS=$(gc status --json 2>/dev/null) || CITY_STATUS=""
+if [ -n "$CITY_STATUS" ] && [ "$(printf '%s' "$CITY_STATUS" | jq -r '.suspended // false' 2>/dev/null)" = "true" ]; then
+  say "on-session-stranded: city is suspended -- leaving stranded session claims as-is for resume"
+  exit 0
+fi
 
 EVENTS=$(gc events --type session.stranded --since "$LOOKBACK" 2>/dev/null) || exit 0
 [ -n "$EVENTS" ] || { say "on-session-stranded: no session.stranded events in $LOOKBACK"; exit 0; }

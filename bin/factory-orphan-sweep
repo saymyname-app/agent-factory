@@ -20,6 +20,17 @@ set -euo pipefail
 
 GC_BIN="${GC_BIN:-gc}"
 
+# T09 (af-xv706q): while the city is suspended (Clean stop, `gc suspend`) a
+# session that stops is a deliberate stop, not a dead agent -- its claim must
+# survive the suspension untouched so the same session resumes it at
+# restart, instead of this sweep releasing it for someone else to pick up
+# while the city is down. Skip the whole pass rather than only the guard
+# below so no in-progress claim (owned or not) is reset during a suspension.
+CITY_STATUS=$("$GC_BIN" status --json 2>/dev/null) || CITY_STATUS=""
+if [ -n "$CITY_STATUS" ] && [ "$(printf '%s' "$CITY_STATUS" | jq -r '.suspended // false' 2>/dev/null)" = "true" ]; then
+    exit 0
+fi
+
 # Step 1: Collect in-progress beads from HQ and every rig whose session
 # liveness can be determined.
 # `gc bd list` without --rig is HQ-scoped from the city cwd, so per-rig

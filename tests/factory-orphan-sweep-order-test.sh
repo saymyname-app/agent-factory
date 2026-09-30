@@ -20,7 +20,12 @@
 #   3. a claim by an unknown delivery actor is released;
 #   4. bin/factory-orphan-sweep's content still matches the upstream script
 #      it was copied from -- a `gc` upgrade that changes that script must
-#      fail this test, not silently drift out of sync.
+#      fail this test, not silently drift out of sync;
+#   5. T09 (af-xv706q): while the city is suspended, no in_progress claim
+#      is released -- not even a genuinely orphaned delivery claim -- so a
+#      session stopped voluntarily during the suspension keeps its work
+#      claimed for resume; outside the suspension the sweep behaves as
+#      before.
 
 set -Eeuo pipefail
 
@@ -140,4 +145,31 @@ orphan_assignee=$(run_clean bd show awfos-orphan1 --directory "$TEST_CITY" --jso
 [ "$orphan_status" != "in_progress" ] || fail "a claim by an unknown delivery actor must be released, still in_progress"
 [ -z "$orphan_assignee" ] || fail "a released claim must have no assignee, got assignee=$orphan_assignee"
 
-echo "PASS: factory-orphan-sweep keeps po-agent/* and planning-plane claims, releases genuinely orphaned delivery claims, and its upstream copy is pinned"
+# 4. T09 (af-xv706q): a session stopped voluntarily during a city suspension
+#    (`gc suspend`) is not a dead agent -- its claim must survive the sweep
+#    exactly as-is, so the same session resumes it at restart instead of the
+#    sweep releasing it for someone else to pick up while the city is down.
+run_clean bd create "orphaned delivery claim during suspension" --directory "$TEST_CITY" --id awfos-susp1 \
+  --metadata '{"gc.plane":"delivery"}' >/dev/null
+run_clean bd update awfos-susp1 --directory "$TEST_CITY" --status in_progress --assignee "unknown-delivery-actor" >/dev/null
+
+run_clean gc suspend --city "$TEST_CITY" --json >/dev/null
+
+(cd "$TEST_CITY" && run_clean "$ROOT/bin/factory-orphan-sweep") \
+  || fail "bin/factory-orphan-sweep exited non-zero while the city was suspended"
+
+susp_status=$(run_clean bd show awfos-susp1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .status')
+susp_assignee=$(run_clean bd show awfos-susp1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .assignee // ""')
+[ "$susp_status" = "in_progress" ] || fail "an orphaned claim must survive the sweep while the city is suspended, got status=$susp_status"
+[ "$susp_assignee" = "unknown-delivery-actor" ] || fail "an orphaned claim's assignee must survive the sweep while the city is suspended, got assignee=$susp_assignee"
+
+# 5. Outside the suspension, the sweep resumes its normal behavior unchanged.
+run_clean gc resume --city "$TEST_CITY" --json >/dev/null
+
+(cd "$TEST_CITY" && run_clean "$ROOT/bin/factory-orphan-sweep") \
+  || fail "bin/factory-orphan-sweep exited non-zero after resume"
+
+susp_status=$(run_clean bd show awfos-susp1 --directory "$TEST_CITY" --json | jq -r 'if type=="array" then .[0] else . end | .status')
+[ "$susp_status" != "in_progress" ] || fail "an orphaned claim must be released once the city is no longer suspended"
+
+echo "PASS: factory-orphan-sweep keeps po-agent/* and planning-plane claims, releases genuinely orphaned delivery claims, keeps a claim intact during a city suspension, and behaves as before once resumed; its upstream copy is pinned"
