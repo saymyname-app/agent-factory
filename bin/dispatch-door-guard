@@ -11,7 +11,9 @@
 # own gc.routed_to from the formula engine, never from a hand-typed sling)
 # and NOT a graph.v2 workflow root (gc.kind=workflow -- routed by the
 # Planning Run/ticket-graph machinery, a different system O01/O02 already
-# cover) must also carry that stamp. Anything else is a raw `gc sling` that
+# cover) and NOT routed to bd.dog (Gas City's own Dolt-maintenance agent
+# group: core runtime wisps such as mol-dog-stale-db that no project may
+# dispatch through the door, af-r2y2w9) must also carry that stamp. Anything else is a raw `gc sling` that
 # skipped the door.
 #
 # This guard reports, it does not repair: a bypass is a process violation
@@ -100,6 +102,7 @@ scan_rig() {
     CHECKED=$((CHECKED + 1))
     [ -z "$step_ref" ] || continue           # formula-internal step, not a hand dispatch
     [ "$kind" != "workflow" ] || continue     # graph.v2 workflow root, a different system
+    [ "$routed_to" != "bd.dog" ] || continue  # core Gas City Dolt maintenance, never door-routed (af-r2y2w9)
     [ "$dispatched_via" = "dispatch-door" ] && continue
 
     BYPASSED=$((BYPASSED + 1))
