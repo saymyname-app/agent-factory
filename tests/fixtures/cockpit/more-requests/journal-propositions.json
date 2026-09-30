@@ -1,0 +1,10 @@
+{
+  "af-prop1": [
+    {"body": "PROPOSITION: ajouter un cache", "created_at": "2026-09-29T07:00:00Z", "author": "proposal-door"},
+    {"body": "PROPOSITION ACCEPTÉE par benjamin — passe à planifier", "created_at": "2026-09-29T10:00:00Z", "author": "benjamin"}
+  ],
+  "af-prop2": [
+    {"body": "PROPOSITION: réécrire le module X", "created_at": "2026-09-29T07:00:00Z", "author": "proposal-door"},
+    {"body": "PROPOSITION REJETÉE par benjamin — pas maintenant", "created_at": "2026-09-29T11:00:00Z", "author": "benjamin"}
+  ]
+}
