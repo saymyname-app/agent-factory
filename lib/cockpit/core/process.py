@@ -11,7 +11,7 @@ import threading
 
 from cockpit.access.guard import ActionGuard, new_session_token
 from cockpit.actions.registry import build_action_handlers
-from cockpit.core.beads_source import read_beads_json
+from cockpit.core.beads_source import read_operator_beads
 from cockpit.core.clock import SystemClock
 from cockpit.core.gc_client import GcSsePoller
 from cockpit.core.polling_source import PollingSource
@@ -41,7 +41,7 @@ def build(config, clock=None):
             PollingSource(
                 read_model,
                 "beads",
-                lambda: read_beads_json(["list"], bd_bin=config.bd_bin),
+                lambda: read_operator_beads(bd_bin=config.bd_bin),
                 config.beads_poll_seconds,
             )
         )
