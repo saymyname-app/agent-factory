@@ -95,6 +95,40 @@ log()  { printf '%s\n' "$*"; }
 vlog() { [ "$VERBOSE" = "1" ] && printf '  %s\n' "$*"; return 0; }
 run()  { if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: $*"; return 0; fi; bounded "$AP_WRITE_CAP" "$@"; }
 
+# Labels go through the REST issues endpoint, never `gh pr edit`: the host's
+# gh (2.45, Ubuntu package) asks GitHub for the retired Projects (classic)
+# field on every `pr edit`, which fails before the label is touched. The
+# failure was discarded, so a hold whose "already explained" proof is its
+# label re-explained itself every pass (PR #356: one comment per 3 min).
+add_label() {  # repo num label
+  run gh api -X POST "repos/$1/issues/$2/labels" -f "labels[]=$3" >/dev/null 2>&1 \
+    || { log "  PR #$2: could not add label '$3' -> retried next pass"; return 1; }
+}
+remove_label() {  # repo num label
+  run gh api -X DELETE "repos/$1/issues/$2/labels/$3" >/dev/null 2>&1 \
+    || { log "  PR #$2: could not remove label '$3' -> retried next pass"; return 1; }
+}
+
+# A hold is explained once even if its label does not stick: the label is the
+# cheap "already explained" check, this hidden marker in the comment is the
+# proof. -> 0 posted now, 2 already on the PR, 1 unknown (read failed: hold,
+# post nothing, retry next pass).
+explain_once() {  # repo num marker body-file
+  local repo=$1 num=$2 marker="<!-- pr-autopilot:$3 -->" body=$4 comments rc
+  comments=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json comments --jq '.comments[].body' 2>/dev/null); rc=$?
+  if [ "$rc" != 0 ]; then
+    log "  PR #$num: could not read PR comments -> not explaining this pass (retried next tick)"
+    return 1
+  fi
+  if grep -qF "$marker" <<<"$comments"; then
+    vlog "PR #$num: hold already explained on the PR (label missing, re-adding)"
+    return 2
+  fi
+  printf '\n%s\n' "$marker" >> "$body"
+  run gh pr comment "$num" --repo "$repo" --body-file "$body" >/dev/null 2>&1
+  return 0
+}
+
 finalize_delivery() {  # rig-path bead repo pr required-workflow
   local rig_path=$1 bead=$2 repo=$3 pr=$4 workflow=$5
   if [ "$DRY_RUN" = "1" ]; then
@@ -282,7 +316,7 @@ reversibility_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
       for l in $HOLD_LABELS; do
         case "$labels" in *" $l "*)
           log "  PR #$num: reversibility now ok -> removing '$l'"
-          run gh pr edit "$num" --repo "$repo" --remove-label "$l" >/dev/null 2>&1 ;;
+          remove_label "$repo" "$num" "$l" ;;
         esac
       done
       return 0 ;;
@@ -303,11 +337,12 @@ reversibility_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
             log "    explanation timed out -> labelled and explained next pass"
             HELD=$((HELD+1)); return 1
           fi
+          explain_once "$repo" "$num" "$label@$sha" "$TMPDIR_AP/comment.md"; c_rc=$?
+          if [ "$c_rc" = 1 ]; then HELD=$((HELD+1)); return 1; fi
           run gh label create "$label" --repo "$repo" --color "$color" --force \
             --description "pr-autopilot reversibility gate (ADR-0019)" >/dev/null 2>&1
-          run gh pr comment "$num" --repo "$repo" --body-file "$TMPDIR_AP/comment.md" >/dev/null 2>&1
-          run gh pr edit "$num" --repo "$repo" --add-label "$label" >/dev/null 2>&1
-          if [ "$rc" = "4" ]; then
+          add_label "$repo" "$num" "$label"
+          if [ "$rc" = "4" ] && [ "$c_rc" = 0 ]; then
             run bash -c "cd '$FACTORY' && gc mail send mayor --from mayor --notify \
               --subject 'ESCALADE test 4 · PR #$num irréversible ($repo)' \
               --message 'Auteur : pr-autopilot (script déterministe), pas $OPERATOR_NAME. La PR https://github.com/$repo/pull/$num contient une migration déclarée irréversible. Test d escalade 4 (ADR-0016) : ne la fusionne pas toi-même ; mets ce sous-graphe en attente et soumets la décision à $OPERATOR_NAME avec la raison déclarée dans la migration. Le reste de la campagne continue.'" >/dev/null 2>&1
@@ -346,7 +381,7 @@ project_descriptor_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
   if [ -z "$added" ] && [ -z "$removed" ]; then
     case "$labels" in *" $PROJECT_HOLD_LABEL "*)
       log "  PR #$num: no longer adds/removes a project descriptor -> removing '$PROJECT_HOLD_LABEL'"
-      run gh pr edit "$num" --repo "$repo" --remove-label "$PROJECT_HOLD_LABEL" >/dev/null 2>&1 ;;
+      remove_label "$repo" "$num" "$PROJECT_HOLD_LABEL" ;;
     esac
     return 0
   fi
@@ -365,10 +400,11 @@ project_descriptor_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
         [ -n "$removed" ] && printf '%s\n' "$removed" | sed 's/^/- retiré : `/; s/$/`/'
         printf '\nAjouter ou retirer un projet reste la décision de %s, par exception à la fusion automatique de la maintenance usine : pr-autopilot ne fusionne jamais cette PR seul. %s la fusionne lui-même une fois relue.\n' "$OPERATOR_NAME" "$OPERATOR_NAME"
       } > "$TMPDIR_AP/project-hold.md"
-      run gh label create "$PROJECT_HOLD_LABEL" --repo "$repo" --color 5319E7 --force \
-        --description "pr-autopilot: ajout/retrait de projet, fusion réservée à $OPERATOR_NAME" >/dev/null 2>&1
-      run gh pr comment "$num" --repo "$repo" --body-file "$TMPDIR_AP/project-hold.md" >/dev/null 2>&1
-      run gh pr edit "$num" --repo "$repo" --add-label "$PROJECT_HOLD_LABEL" >/dev/null 2>&1
+      if explain_once "$repo" "$num" "$PROJECT_HOLD_LABEL" "$TMPDIR_AP/project-hold.md" || [ $? = 2 ]; then
+        run gh label create "$PROJECT_HOLD_LABEL" --repo "$repo" --color 5319E7 --force \
+          --description "pr-autopilot: ajout/retrait de projet, fusion réservée à $OPERATOR_NAME" >/dev/null 2>&1
+        add_label "$repo" "$num" "$PROJECT_HOLD_LABEL"
+      fi
       ;;
   esac
   HELD=$((HELD+1))
@@ -454,7 +490,7 @@ Not armable as-is; needs a human/Mayor look (resolve conflicts, push a commit to
     *)
       run gh label create "$STUCK_LABEL" --repo "$repo" --color EDEDED --force \
         --description "pr-autopilot: not armable across at least 2 passes" >/dev/null 2>&1
-      run gh pr edit "$num" --repo "$repo" --add-label "$STUCK_LABEL" >/dev/null 2>&1
+      add_label "$repo" "$num" "$STUCK_LABEL"
       vlog "PR #$num: stuck ($reason), marked -- filing next pass if still stuck"
       ;;
   esac
@@ -751,7 +787,7 @@ for entry in "${RIGS[@]}"; do
     case " ${labels//,/ } " in
       *" $STUCK_LABEL "*)
         if [ -z "$(stuck_reason "$state" "$checks")" ]; then
-          run gh pr edit "$num" --repo "$repo" --remove-label "$STUCK_LABEL" >/dev/null 2>&1
+          remove_label "$repo" "$num" "$STUCK_LABEL"
           vlog "PR #$num: no longer stuck -> removed $STUCK_LABEL"
           for stale in $(stuck_beads "$num"); do
             log "  PR #$num: recovered -> closing stuck bead $stale"

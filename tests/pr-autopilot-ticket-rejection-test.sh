@@ -144,7 +144,7 @@ grep -q "^mayor af-tick2 " "$TMP/escalation.log" \
 
 # PR 30 (DIRTY, no linked ticket): falls through to the pre-existing generic
 # stuck-PR flow (first pass: label only, no bead, no ticket touched).
-grep -q "^pr edit 30 --repo saymyname-app/Say-my-name-back --add-label autopilot-stuck" "$TMP/gh.log" \
+grep -q "^api -X POST repos/saymyname-app/Say-my-name-back/issues/30/labels -f labels\[\]=autopilot-stuck" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "PR #30 (no ticket) did not fall through to the generic stuck-PR label"; }
 grep -qF "PR #30" "$TMP/gc.log" && fail "PR #30 touched a ticket bead despite having no linked work bead"
 
