@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# upstream-skills-check — daily, read-only upstream release check (W13,
+# A6b, spec-a6b-wayfinder-wiring-2026-09-30 user story 48, af-hxc8ra).
+#
+# Compares the tags mattpocock/skills has published against the Method
+# Baseline pinned in docs/UPSTREAM_SKILLS.md. It never updates a pin, a
+# skill file, or any config -- switching the baseline stays a deliberate,
+# by-hand change (docs/UPSTREAM_SKILLS.md's update procedure). When a tag
+# newer than the last one this order flagged appears, it files exactly one
+# `proposal`-labelled bead (never built without Benjamin, same discipline
+# as bin/overlap-conflict-log's lease proposal) so it surfaces at the next
+# session start via `./bin/escalation-door list`'s pending-proposal count.
+# Seeing the same tag again on a later run never files a second proposal.
+#
+# Usage: upstream-skills-check [--dry-run]
+#
+# Test/override points (never set these in production):
+#   GC_BIN                              -- bd/gc binary (default: gc)
+#   UPSTREAM_SKILLS_CHECK_REPO_URL      -- upstream repo to query
+#   UPSTREAM_SKILLS_CHECK_BASELINE_FILE -- where the pinned baseline lives
+#   UPSTREAM_SKILLS_CHECK_STATE_FILE    -- where the last-flagged tag is recorded
+#   UPSTREAM_SKILLS_CHECK_TAGS_FILE     -- a file of `git ls-remote --tags`
+#                                          output to read instead of the network
+#   UPSTREAM_SKILLS_CHECK_NOW           -- epoch seconds to stamp the state file with
+set -Eeuo pipefail
+
+PROGRAM_NAME="upstream-skills-check"
+GC_BIN="${GC_BIN:-gc}"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
+
+REPO_URL="${UPSTREAM_SKILLS_CHECK_REPO_URL:-https://github.com/mattpocock/skills}"
+BASELINE_FILE="${UPSTREAM_SKILLS_CHECK_BASELINE_FILE:-$ROOT/docs/UPSTREAM_SKILLS.md}"
+STATE_FILE="${UPSTREAM_SKILLS_CHECK_STATE_FILE:-$ROOT/.gc/runtime/upstream-skills-check-state.json}"
+TAGS_FILE="${UPSTREAM_SKILLS_CHECK_TAGS_FILE:-}"
+NOW="${UPSTREAM_SKILLS_CHECK_NOW:-$(date +%s)}"
+
+DRY_RUN=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help)
+      awk 'NR > 1 && /^set /{exit} NR > 1' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "$PROGRAM_NAME: unrecognized argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
+log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*"; }
+die() { printf '%s: ERROR: %s\n' "$PROGRAM_NAME" "$*" >&2; exit 1; }
+
+[ -f "$BASELINE_FILE" ] || die "no pinned baseline file at $BASELINE_FILE"
+
+baseline_commit=$(sed -n 's/^Pinned baseline commit: `\{0,1\}\([0-9a-f]\{7,40\}\)`\{0,1\}.*/\1/p' "$BASELINE_FILE" | head -n1)
+[ -n "$baseline_commit" ] || die "no 'Pinned baseline commit: <sha>' line found in $BASELINE_FILE"
+
+if [ -n "$TAGS_FILE" ]; then
+  [ -f "$TAGS_FILE" ] || die "tags file not found: $TAGS_FILE"
+  tags_raw=$(cat "$TAGS_FILE")
+else
+  tags_raw=$(git ls-remote --tags "$REPO_URL" 2>/dev/null) || tags_raw=""
+fi
+
+# `git ls-remote --tags` output is "<sha>\trefs/tags/<name>", with a second
+# "<name>^{}" line for an annotated tag's dereferenced commit -- strip both
+# the ref prefix and the deref suffix before comparing.
+latest_tag=$(printf '%s\n' "$tags_raw" \
+  | awk -F'\t' 'NF >= 2 {print $2}' \
+  | sed -e 's#^refs/tags/##' -e 's/\^{}$//' \
+  | sort -V \
+  | tail -n1)
+
+if [ -z "$latest_tag" ]; then
+  log "no tags published at $REPO_URL -- nothing to compare"
+  exit 0
+fi
+
+previous_tag=""
+if [ -f "$STATE_FILE" ]; then
+  previous_tag=$(jq -r '.last_flagged_tag // empty' "$STATE_FILE" 2>/dev/null || echo "")
+fi
+
+if [ "$latest_tag" = "$previous_tag" ]; then
+  log "$latest_tag already flagged -- no new proposal"
+  exit 0
+fi
+
+title="Upstream mattpocock/skills published $latest_tag (Method Baseline pinned at $baseline_commit)"
+body=$(cat <<EOF
+Daily upstream release check (W13, A6b, af-hxc8ra) found mattpocock/skills tag
+'$latest_tag' at $REPO_URL, past the Method Baseline pinned at commit
+$baseline_commit in $BASELINE_FILE.
+
+This is a surfaced decision only: nothing here updates a pin, a skill file,
+or any config. Follow the update procedure in docs/UPSTREAM_SKILLS.md if
+this update is adopted, which re-pins the baseline and rewrites every pin
+reference in the same change.
+EOF
+)
+
+if [ "$DRY_RUN" = 1 ]; then
+  log "DRY-RUN: would file proposal bead: $title"
+  exit 0
+fi
+
+create_output=$("$GC_BIN" bd create "$title" -l proposal -t task -p 3 -d "$body" 2>&1) \
+  || die "gc bd create failed: $create_output"
+bead_id=$(printf '%s\n' "$create_output" | grep -oE '[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+' | head -n1)
+bead_id="${bead_id:-unknown}"
+
+mkdir -p "$(dirname "$STATE_FILE")"
+tmp_state="$STATE_FILE.$$.tmp"
+printf '{"last_flagged_tag": %s, "checked_at": %s, "bead": %s}\n' \
+  "$(printf '%s' "$latest_tag" | jq -R .)" "$NOW" "$(printf '%s' "$bead_id" | jq -R .)" \
+  >"$tmp_state"
+mv "$tmp_state" "$STATE_FILE"
+
+log "filed proposal $bead_id for $latest_tag"
