@@ -2,22 +2,29 @@
 """A fake `bd`, scoped to the cockpit-requests seam test (T12, af-is5e97).
 
 Unlike tests/fixtures/cockpit/core/fake-bd (a fixed canned response), this
-one is controllable at runtime: it prints whatever JSON a test last wrote
-to $FAKE_BD_STATE_FILE, so a test can grow/close a NEEDS BENJAMIN or a
+one is controllable at runtime: it answers from whatever JSON a test last
+wrote to $FAKE_BD_STATE_FILE, so a test can grow/close a NEEDS BENJAMIN or a
 proposal across polls the way FakeGc.push_event() does for gc (Testing
 Decisions: "faux bd"). Missing/unset state, or the presence of the file named by
 $FAKE_BD_FAIL_FLAG_FILE (toggle-able mid-test, unlike an env var fixed at
 process start), simulates an unreadable source (spec .16: "Inconnu :
 illisible ...") without killing the cockpit process under test.
 
+It keeps the two read shapes the real `bd` has (af-1al0t1): plain
+`list` hides closed beads, `list --all --limit 0 --has-metadata-key K`
+returns every bead carrying K whatever its status — so a test can put a
+NEEDS BENJAMIN on a closed bead and see what the cockpit makes of it.
+
 Refuses every call it wasn't told to answer, loudly, like the other fakes
 in tests/fixtures/ — a test that stops driving this should see a clear
 failure, not a false green from a silent no-op.
 """
+import json
 import os
 import sys
 
-if sys.argv[1:] == ["list", "--json"]:
+
+def _read_state():
     fail_flag = os.environ.get("FAKE_BD_FAIL_FLAG_FILE")
     if fail_flag and os.path.exists(fail_flag):
         sys.stderr.write("fake bd (cockpit-requests): forced failure\n")
@@ -27,10 +34,22 @@ if sys.argv[1:] == ["list", "--json"]:
         sys.stderr.write("fake bd (cockpit-requests): no state file\n")
         sys.exit(1)
     with open(state_file) as fh:
-        sys.stdout.write(fh.read())
+        return json.load(fh)
+
+
+args = sys.argv[1:]
+if args == ["list", "--json"]:
+    beads = [b for b in _read_state() if b.get("status") != "closed"]
+    sys.stdout.write(json.dumps(beads))
+    sys.exit(0)
+
+if len(args) == 7 and args[:5] == ["list", "--all", "--limit", "0", "--has-metadata-key"] and args[6] == "--json":
+    key = args[5]
+    beads = [b for b in _read_state() if key in (b.get("metadata") or {})]
+    sys.stdout.write(json.dumps(beads))
     sys.exit(0)
 
 sys.stderr.write(
-    "fake bd (cockpit-requests): no canned response for: bd %s\n" % " ".join(sys.argv[1:])
+    "fake bd (cockpit-requests): no canned response for: bd %s\n" % " ".join(args)
 )
 sys.exit(1)

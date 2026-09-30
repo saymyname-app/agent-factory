@@ -336,6 +336,38 @@ class RequestsSeamTest(unittest.TestCase):
         self.wait_for_requests(lambda p: len(p["requests"]) == 0)
 
     # ------------------------------------------------------------------
+    # af-1al0t1 — closing the work does not answer the question: a bead
+    # closed while its NEEDS BENJAMIN is still set stays a request (plain
+    # `bd list` hides closed beads), listed once, until it is answered.
+    # ------------------------------------------------------------------
+    def test_open_question_on_a_closed_bead_stays_a_request(self):
+        self.start_cockpit()
+        closed_question = escalation_bead(
+            "af-hhhh", "une question reste sans réponse", "le travail a été fermé avant ta réponse",
+            SOME_OPTIONS, "2026-09-30T08:00:00Z",
+        )
+        closed_question["status"] = "closed"
+        closed_answered = escalation_bead(
+            "af-iiii", "une question déjà tranchée", "tu as déjà répondu",
+            SOME_OPTIONS, "2026-09-30T08:00:00Z",
+        )
+        closed_answered["status"] = "closed"
+        closed_answered["metadata"]["gc.needs_benjamin"] = "none"
+        open_question = escalation_bead(
+            "af-jjjj", "une autre question", "elle attend aussi",
+            SOME_OPTIONS, "2026-09-30T09:00:00Z",
+        )
+        self.write_beads([closed_question, closed_answered, open_question])
+        payload = self.wait_for_requests(lambda p: len(p["requests"]) >= 2)
+        self.assertEqual(["af-hhhh", "af-jjjj"], sorted(r["id"] for r in payload["requests"]))
+        self.assertIn("une question reste sans réponse", self.home_body())
+
+        closed_question["metadata"]["gc.needs_benjamin"] = "none"
+        self.write_beads([closed_question, closed_answered, open_question])
+        payload = self.wait_for_requests(lambda p: len(p["requests"]) == 1)
+        self.assertEqual("af-jjjj", payload["requests"][0]["id"])
+
+    # ------------------------------------------------------------------
     # AC5 (runtime half) — a main-text validation failure (here: an
     # identifier in "quoi") produces the fallback and a counted defect,
     # even though the field was technically present.

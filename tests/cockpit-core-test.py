@@ -140,8 +140,12 @@ class CockpitSeamTest(unittest.TestCase):
         wait_for_port("127.0.0.1", self.port)
 
         self.fake_gc.push_event({"running": True, "suspended": False, "partial": False})
+        # "Tout est à jour" needs every source fresh: wait for beads too,
+        # not only gc (the beads source makes two bd reads, af-1al0t1).
         snapshot = wait_until(
-            lambda: self.snapshot() if self.snapshot()["gc"]["freshness"] == "fresh" else None,
+            lambda: self.snapshot()
+            if all(self.snapshot()[s]["freshness"] == "fresh" for s in ("gc", "beads"))
+            else None,
             timeout=5,
         )
         self.assertEqual("fresh", snapshot["gc"]["freshness"])
