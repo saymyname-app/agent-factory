@@ -119,19 +119,67 @@ assert_refused merged "requires --classification" \
 assert_refused merged "requires --classification" \
   af-work --outcome abandoned --reason "Nobody will unblock this"
 
-# af-zwhh0: --classification repair on a bounded technical repair closes as
-# before, with no Planning Exception required.
+# af-zwhh0: --classification repair on a bounded technical repair needs no
+# Planning Exception.
+# af-1al0t1: --outcome blocked parks the bead (status blocked,
+# gc.outcome=blocked) instead of closing it as a success -- closing released
+# T21's dependents without the operator's answer.
 TESTS_RUN=$((TESTS_RUN + 1))
 run merged af-work --outcome blocked --classification repair \
   --reason "Blocked: waiting on X" >/dev/null \
-  || fail_test "--outcome blocked --classification repair should close successfully"
+  || fail_test "--outcome blocked --classification repair should park successfully"
 call=$(<"$CALL_LOG")
+[[ $(wc -l <<<"$call") -eq 1 ]] || fail_test "--outcome blocked should write Beads exactly once"
 [[ $call == *"gc.work_outcome=blocked"* ]] || fail_test "--outcome blocked missing gc.work_outcome"
+[[ $call == *"gc.outcome=blocked"* ]] || fail_test "--outcome blocked must record gc.outcome=blocked"
+[[ $call != *"gc.outcome=pass"* ]] || fail_test "--outcome blocked must never record gc.outcome=pass: $call"
+[[ $call == *"--status=blocked"* ]] || fail_test "--outcome blocked must park the bead in status blocked: $call"
+[[ $call != *"--status=closed"* ]] || fail_test "--outcome blocked must not close the bead: $call"
 [[ $call == *"Blocked: waiting on X"* ]] || fail_test "--outcome blocked did not carry --reason through"
 [[ $call == *"gc.blocked_classification=repair"* ]] \
   || fail_test "--classification repair missing gc.blocked_classification"
 [[ $call != *"gc.planning_exception_id"* ]] \
   || fail_test "--classification repair must not write gc.planning_exception_id"
+
+# af-1al0t1 exact shape: a delivery-graph ticket carrying an active NEEDS
+# BENJAMIN (and an as-yet unmerged linked PR) is parked, not closed and not
+# refused for its PR -- parking claims nothing delivered.
+TESTS_RUN=$((TESTS_RUN + 1))
+DELIVER_CLOSE_BEAD_METADATA='{"gc.plane":"delivery","gc.delivery_contract":"pr-ci-merged-v1","gc.graph_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gc.needs_benjamin":"Choisir une variante"}' \
+  DELIVER_CLOSE_PR_URL="https://github.com/owner/repo/pull/42" \
+  run not-merged af-work --outcome blocked --classification repair \
+  --reason "Blocked: NEEDS BENJAMIN" >/dev/null \
+  || fail_test "a delivery ticket awaiting the operator should park with --outcome blocked"
+call=$(<"$CALL_LOG")
+[[ $call == *"--status=blocked"* && $call != *"--status=closed"* && $call != *"gc.outcome=pass"* ]] \
+  || fail_test "a delivery ticket awaiting the operator was not parked: $call"
+
+# af-1al0t1: no form of the door closes a bead whose NEEDS BENJAMIN is still
+# active -- the close would silently drop the operator's question.
+NEEDS_ACTIVE='{"gc.needs_benjamin":"Choisir une variante"}'
+for form in "--outcome no-op" "--outcome abandoned --classification repair" \
+  "--outcome shipped --commit cafef00d --branch do-work/af-work"; do
+  TESTS_RUN=$((TESTS_RUN + 1))
+  # shellcheck disable=SC2086
+  if output=$(DELIVER_CLOSE_BEAD_METADATA="$NEEDS_ACTIVE" run merged af-work $form 2>&1); then
+    fail_test "$form must refuse to close a bead with an active NEEDS BENJAMIN"
+  fi
+  [[ $output == *"active NEEDS BENJAMIN"* ]] \
+    || fail_test "$form refusal did not name the active NEEDS BENJAMIN: $output"
+  [[ -z $(<"$CALL_LOG") ]] || fail_test "$form made a Beads write despite an active NEEDS BENJAMIN"
+done
+TESTS_RUN=$((TESTS_RUN + 1))
+if output=$(DELIVER_CLOSE_BEAD_METADATA="$NEEDS_ACTIVE" run merged af-work --repo owner/repo --pr 42 2>&1); then
+  fail_test "--repo/--pr must refuse to close a bead with an active NEEDS BENJAMIN"
+fi
+[[ $output == *"active NEEDS BENJAMIN"* && -z $(<"$CALL_LOG") ]] \
+  || fail_test "--repo/--pr refusal on an active NEEDS BENJAMIN wrong: $output"
+
+# An answered or cleared question ("none") no longer holds the close.
+TESTS_RUN=$((TESTS_RUN + 1))
+DELIVER_CLOSE_BEAD_METADATA='{"gc.needs_benjamin":"none"}' run merged af-work --outcome no-op >/dev/null \
+  || fail_test "a cleared NEEDS BENJAMIN (none) must not hold the close"
+[[ $(<"$CALL_LOG") == *"--status=closed"* ]] || fail_test "cleared NEEDS BENJAMIN close did not close"
 
 # af-zwhh0: a semantic/topology surprise must name the Planning Exception
 # decision that was actually raised for it -- refused outright otherwise,
@@ -152,7 +200,7 @@ assert_refused merged "--planning-exception-id requires --classification" \
 TESTS_RUN=$((TESTS_RUN + 1))
 run merged af-work --outcome blocked --classification semantic --planning-exception-id pd-1 \
   --reason "Blocked: topology surprise" >/dev/null \
-  || fail_test "--classification semantic with --planning-exception-id should close successfully"
+  || fail_test "--classification semantic with --planning-exception-id should park successfully"
 call=$(<"$CALL_LOG")
 [[ $call == *"gc.blocked_classification=semantic"* ]] \
   || fail_test "--classification semantic missing gc.blocked_classification"
