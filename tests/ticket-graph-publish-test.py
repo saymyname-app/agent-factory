@@ -189,6 +189,32 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
         self.assertIn("no target rigs", proc.stderr)
         self.assertEqual({"draft-1", "spec-1"}, set(self.current_state()["beads"]))
 
+    PROTOTYPE_TICKET_YAML = (
+        "  - id: T1\n"
+        "    kind: prototype\n"
+        "    title: Try two layouts\n"
+        "    blocked_by: []\n"
+        "    target_rigs: [fixture_city]\n"
+        "    what_it_delivers: a throwaway prototype\n"
+        "    acceptance_criteria: [Benjamin picks a variant]\n"
+    )
+
+    def test_bd_publish_refuses_a_prototype_ticket_before_any_write(self):
+        # Benjamin, 2026-09-30: a prototype is planning work, done by the
+        # Planning Run (wayfinder:prototype map ticket), never by a worker.
+        prototype_t2 = self.PROTOTYPE_TICKET_YAML.replace("T1", "T2")
+        self.seed({
+            "draft-1": self.draft_bead(tickets_yaml=self.ONE_TICKET_YAML + prototype_t2),
+            "spec-1": self.spec_bead(),
+        })
+        before = self.current_state()
+
+        proc = self.bd_publish()
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("T2 declare kind: prototype", proc.stderr)
+        self.assertIn("wayfinder:prototype", proc.stderr)
+        self.assertEqual(before, self.current_state())
+
     # --- nominal --------------------------------------------------------------
 
     def test_bd_publish_creates_delivery_beads_and_convoy_advances_reservation_and_wakes_mayor(self):
@@ -297,6 +323,38 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
 
         state = self.current_state()
         self.assertIn("does a thing", state["beads"]["af-t1"]["description"])
+
+    def seed_patch(self, tickets_yaml):
+        old_digest = "sha256:" + "1" * 64
+        self.seed({
+            "draft-1": self.draft_bead(tickets_yaml=tickets_yaml, revises_digest=old_digest),
+            "spec-1": self.spec_bead(),
+            "af-conv": {
+                "id": "af-conv", "status": "open", "labels": [], "title": "", "description": "",
+                "metadata": {"gc.graph_digest": old_digest},
+            },
+            "af-t1": {
+                "id": "af-t1", "status": "open", "labels": [], "title": "", "description": "",
+                "metadata": {"gc.graph_digest": old_digest, "gc.ticket_id": "T1", "gc.blocked_by": ""},
+            },
+        })
+
+    def test_bd_patch_refuses_a_new_prototype_ticket_before_any_write(self):
+        self.seed_patch(self.ONE_TICKET_YAML + self.PROTOTYPE_TICKET_YAML.replace("T1", "T2"))
+        before = self.current_state()
+
+        proc = self.bd_patch()
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("T2 declare kind: prototype", proc.stderr)
+        self.assertEqual(before, self.current_state())
+
+    def test_bd_patch_keeps_a_prototype_ticket_already_published(self):
+        # A graph published before the rule (C01's T21) stays patchable.
+        self.seed_patch(self.PROTOTYPE_TICKET_YAML)
+
+        result = json.loads(self.bd_patch(check=True).stdout)
+        self.assertEqual(["T1"], result["patched"])
+        self.assertEqual([], result["created"])
 
     def test_bd_patch_refuses_without_revises_digest(self):
         self.seed({

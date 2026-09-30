@@ -58,7 +58,11 @@ Planning Run starts.
    criteria, target rig, scope paths if any -- exactly as it will be
    published. The approved breakdown is published as a Ticket Graph Draft
    bead linked to the Spec bead; target rigs and scope paths live in its
-   metadata, never in ticket text. A session that hands `/to-tickets` to
+   metadata, never in ticket text. `/to-tickets` never creates a prototype
+   ticket: every prototype is built during the Planning Run, as a map
+   ticket (see "Research and prototype tickets"), and
+   `ticket-graph-publish` refuses a draft with a `kind: prototype` ticket
+   before any write. A session that hands `/to-tickets` to
    another session reserves the Spec bead first and offers one launch chip
    (`docs/agents/issue-tracker.md`, "Spec handoff"); the Spec stays
    claimed until its convoy closes.
@@ -94,6 +98,12 @@ other map ticket.
   recorded verbatim in the ticket's resolution comment.
 - Either way, the local worktree for the ticket is removed when the ticket
   closes, so finished planning leaves no worktree behind.
+- A prototype is never a delivery ticket (Benjamin, 2026-09-30): a design
+  question found late, during `/to-tickets`, sends the run back to its map
+  for a `wayfinder:prototype` ticket; only the chosen variant is sliced.
+  `bin/ticket-graph-publish` (`bd-publish`, `bd-patch`) refuses a draft
+  with a `kind: prototype` ticket before any write; a ticket already
+  published that way (C01's T21) is left as it is.
 
 ## Claims and concurrency
 
