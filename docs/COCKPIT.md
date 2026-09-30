@@ -87,3 +87,47 @@ clock and a fake pinger (no HTTP/CLI surface of its own yet), covering:
 one ping per 5 min while sources are fresh, no ping while one is not, a
 missing secret and a failing ping each showing up in `health_issues()`,
 and pausing in no state other than `CLEANLY_STOPPED`.
+
+## Clean stop / restart (T23, af-s5e3yo)
+
+`lib/cockpit/stop/driver.py` — `StopDriver`: Clean stop by suspending the
+city (`gc.suspend()`, the PATCH `suspended=true`) and restart by `gc
+resume()`, rien d'autre — never `gc stop` / `gc stop --force` (those stay
+at the runbook). Seven states: `en_marche`, `arret_en_cours`,
+`arretee_proprement` (`CLEANLY_STOPPED`, imported from
+`cockpit.heartbeat.emitter` so the T18 pause condition and this driver
+can never drift apart), `redemarrage`, `reprise_verifiee`,
+`reprise_avec_ecarts`, `arret_force`, `arret_interrompu`. A "photo"
+(`snapshot_fn`) is taken at `request_stop()` and compared against a fresh
+read once the city is suspended with no live session (`bilan()` — empty
+is "0 perte") and again after `resume()` (`reprise_verifiee` vs.
+`reprise_avec_ecarts` if any bead comes back under a different assignee).
+30 min without progress (no session event, no closed step) surfaces a
+pending "l'arrêt n'avance plus" request (`lib/cockpit/stop/requests.py`)
+offering a forced stop — never an automatic switch. State persists
+through the same `state_store` seam as the T17 notify engine
+(`cockpit.notify.state_store`), so a cockpit restart mid-stop resumes the
+same state; if that restart's first tick finds the city still not
+suspended, nothing could have kept the stop moving while the cockpit was
+down, so the driver reports `arret_interrompu` instead of silently
+continuing as if nothing happened.
+
+`lib/cockpit/ui/stop/render.py` renders the zone with the stop button
+`hidden` — the spec keeps it hidden until the three prior factory
+corrections are delivered and a real trial succeeds, so nothing here
+should be read as "ready to show" (a later ticket removes `hidden`).
+
+`tests/cockpit-stop-test.py` drives `StopDriver` directly against
+`tests/fixtures/cockpit/stop/fake_gc_city.py` (a fake exposing only
+`status`/`suspend`/`resume`/`force_stop_sessions`, whose `stop`/
+`stop_force` raise if ever called), covering: the full En marche → Arrêt
+en cours → Arrêtée proprement sequence with a 0-perte bilan and state
+surviving a simulated cockpit restart; the no-progress request after 30
+min with no automatic forced stop, and a forced stop that keeps the bead
+assigned; "usine arrêtée par toi" instead of a false alarm, the heartbeat
+pausing only once `arretee_proprement` is reached, and a simulated PC
+reboot mid-stop giving `arret_interrompu` with écarts; that the driver
+never calls `stop`/`stop_force` and only ever touches the city; and both
+resume outcomes (`reprise_verifiee` / `reprise_avec_ecarts`). Process
+wiring (poller thread, the button's hidden condition, the "Ce qui
+t'attend" feed) is left to a later ticket, same precedent as T17/T18.
