@@ -61,7 +61,9 @@ assert_contains agents/mayor/prompt.template.md 'UI/UX design gate'
 # re-slices only through the traced door, and proposes instead of improving.
 assert_contains agents/mayor/prompt.template.md 'Where work comes from'
 assert_contains agents/mayor/prompt.template.md 'bin/ticket-graph-publish patch'
-assert_contains agents/mayor/prompt.template.md '--labels proposal'
+# T07 (C01 Cockpit V2): the Mayor proposes through the one proposal door
+# (bin/proposal-door), never a bare `gc bd create -l/--labels proposal`.
+assert_contains agents/mayor/prompt.template.md 'bin/proposal-door create'
 ! grep -q 'product-queue\|mayor-campaign\|saymyname-product' "$REPO_ROOT/agents/mayor/prompt.template.md" \
   || fail 'the Mayor prompt still points at retired legacy commands'
 # The Mayor is project-agnostic: project rules live in each rig's AGENTS.md.

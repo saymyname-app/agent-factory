@@ -27,6 +27,14 @@ echo "$@" >> "$GC_CALLS_LOG"
 echo '{"id":"af-fakeprop"}'
 """
 
+# overlap-conflict-log no longer creates a proposal bead by hand (T07): it
+# calls proposal-door create with the proposal's fields as a JSON payload,
+# so this fixture stands in for the door itself and records every call.
+FAKE_PROPOSAL_DOOR = """#!/usr/bin/env bash
+echo "$@" >> "$PROPOSAL_DOOR_CALLS_LOG"
+echo 'PROPOSITION CRÉÉE: af-fakeprop — dynamic leases'
+"""
+
 
 class OverlapConflictLogTest(unittest.TestCase):
     def setUp(self):
@@ -37,13 +45,20 @@ class OverlapConflictLogTest(unittest.TestCase):
         self.marker_path = root / "marker"
         self.gc_calls_log = root / "gc.log"
         self.gc_calls_log.write_text("", encoding="utf-8")
+        self.proposal_door_calls_log = root / "proposal-door.log"
+        self.proposal_door_calls_log.write_text("", encoding="utf-8")
         fake_gc = root / "gc"
         fake_gc.write_text(FAKE_GC, encoding="utf-8")
         fake_gc.chmod(0o755)
+        fake_proposal_door = root / "proposal-door"
+        fake_proposal_door.write_text(FAKE_PROPOSAL_DOOR, encoding="utf-8")
+        fake_proposal_door.chmod(0o755)
         self.env = {
             **os.environ,
             "GC_BIN": str(fake_gc),
             "GC_CALLS_LOG": str(self.gc_calls_log),
+            "PROPOSAL_DOOR_BIN": str(fake_proposal_door),
+            "PROPOSAL_DOOR_CALLS_LOG": str(self.proposal_door_calls_log),
         }
 
     def invoke(self, *args, now=None, check=True):
@@ -105,7 +120,7 @@ class OverlapConflictLogTest(unittest.TestCase):
         entry = self.entries()[0]
         self.assertTrue(entry["declared_overlap"])
         self.assertFalse(self.marker_path.exists())
-        self.assertEqual("", self.gc_calls_log.read_text(encoding="utf-8"))
+        self.assertEqual("", self.proposal_door_calls_log.read_text(encoding="utf-8"))
 
     def test_third_undeclared_conflict_in_7_days_files_exactly_one_proposal(self):
         for index, (ticket_a, ticket_b, sha, now) in enumerate([
@@ -119,10 +134,14 @@ class OverlapConflictLogTest(unittest.TestCase):
                 "--ticket-b", ticket_b, "--scope-b", "b.txt",
                 "--sha", sha, "--rig", "agent-factory", now=now,
             )
-        calls = self.gc_calls_log.read_text(encoding="utf-8").strip().splitlines()
+        calls = self.proposal_door_calls_log.read_text(encoding="utf-8").strip().splitlines()
         self.assertEqual(1, len(calls))
-        self.assertIn("bd create", calls[0])
-        self.assertIn("-l proposal", calls[0])
+        self.assertIn("create", calls[0])
+        payload = json.loads(calls[0].split(" ", 1)[1])
+        self.assertEqual("fr", payload["langue"])
+        self.assertTrue(payload["quoi"])
+        self.assertTrue(payload["pourquoi"])
+        self.assertTrue(payload["que_faire"])
         self.assertTrue(self.marker_path.exists())
 
     def test_a_declared_overlap_conflict_does_not_count_toward_the_threshold(self):
@@ -138,7 +157,7 @@ class OverlapConflictLogTest(unittest.TestCase):
             "--ticket-b", "P25", "--scope-b", "z.txt",
             "--sha", "sha3", "--rig", "agent-factory", now=1000,
         )
-        self.assertEqual("", self.gc_calls_log.read_text(encoding="utf-8"))
+        self.assertEqual("", self.proposal_door_calls_log.read_text(encoding="utf-8"))
         self.assertFalse(self.marker_path.exists())
 
     def test_conflicts_older_than_7_days_fall_out_of_the_window(self):
@@ -158,7 +177,7 @@ class OverlapConflictLogTest(unittest.TestCase):
             "--ticket-b", "P25", "--scope-b", "b.txt",
             "--sha", "sha3", "--rig", "agent-factory", now=8 * 24 * 3600,
         )
-        self.assertEqual("", self.gc_calls_log.read_text(encoding="utf-8"))
+        self.assertEqual("", self.proposal_door_calls_log.read_text(encoding="utf-8"))
         self.assertFalse(self.marker_path.exists())
 
     def test_report_summarises_the_log(self):

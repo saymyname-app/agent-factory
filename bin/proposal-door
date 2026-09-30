@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+#
+# proposal-door — the one door for every proposal (C01 Cockpit V2, T07).
+#
+# Creates a proposal only with the same required fields an escalation-door
+# request needs (quoi / pourquoi / que_faire, each option with its
+# consequence and at most one "Recommandé" with its raison, langue = the
+# Operator Language) -- no proposal producer writes `gc bd create ... -l
+# proposal` by hand any more. Moves a proposal between states: accepter (->
+# "à planifier"), rejeter (raison obligatoire), reporter (jusqu'à une
+# heure). Every transition is traced on the bead (comment + metadata,
+# acteur), never by erasing a prior trace.
+#
+# A proposal created before this door existed (no gc.proposal_* fields)
+# stays readable and still counts as pending -- this door never rewrites an
+# existing proposal's fields, only adds the new ones going forward.
+#
+# Usage: proposal-door <command> [arguments]
+#
+# Commands:
+#   create <json>               Create a proposal. <json> is a JSON object
+#                                 carrying the same fields escalation-door's
+#                                 `benjamin` command requires -- the door
+#                                 infers nothing and refuses the write (no
+#                                 bead created) if any is missing, malformed,
+#                                 over 140 characters on one line, or not in
+#                                 the Operator Language:
+#                                   quoi       -- one line, what the proposal
+#                                                 is.
+#                                   pourquoi   -- one line, why it is being
+#                                                 proposed.
+#                                   que_faire  -- a non-empty array of
+#                                                 options, each {option,
+#                                                 consequence, recommande?,
+#                                                 raison?}; every option
+#                                                 needs its consequence, at
+#                                                 most one option may be
+#                                                 recommande=true, and that
+#                                                 one needs its raison.
+#                                   langue     -- must equal the Operator
+#                                                 Language.
+#                                 On success, creates a bead labelled
+#                                 `proposal` with those fields recorded as
+#                                 metadata (state: ouverte) and prints
+#                                 "PROPOSITION CRÉÉE: <bead> — <quoi>".
+#   accepter <bead> <acteur>    Accept: gc.proposal_state -> a_planifier,
+#                                 traced (comment + metadata, acteur).
+#   rejeter <bead> <raison> <acteur>
+#                                Reject with a mandatory reason; refuses
+#                                 (no write) without one. gc.proposal_state
+#                                 -> rejetee, traced.
+#   reporter <bead> <heure> <acteur>
+#                                Defer until <heure> (free text: an hour or
+#                                 a date); traced. State is unchanged --
+#                                 a reported proposal is still pending.
+#   compte                      Read-only: print the count of proposals
+#                                 still pending (open, labelled `proposal`,
+#                                 not accepted nor rejected). A legacy
+#                                 proposal with no gc.proposal_state counts
+#                                 as pending.
+set -Eeuo pipefail
+
+PROGRAM_NAME="proposal-door"
+GC_BIN="${GC_BIN:-gc}"
+MAX_LINE_LENGTH=140
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
+OPERATOR_CONFIG_BIN="${OPERATOR_CONFIG_BIN:-$ROOT/bin/operator-config}"
+BEAD_ID_RE='^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(\.[A-Za-z0-9]+)*$'
+OPTION_LETTERS="abcdefghijklmnopqrstuvwxyz"
+
+log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2; }
+die() { log "ERROR: $1"; exit 1; }
+
+usage() {
+  awk 'NR > 1 && /^set /{exit} NR > 1' "$0" | sed 's/^# \{0,1\}//'
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command is unavailable: $1"
+}
+
+valid_bead_id() {
+  [[ $1 =~ $BEAD_ID_RE ]]
+}
+
+now_epoch() {
+  printf '%s' "${PROPOSAL_DOOR_NOW:-$(date -u +%s)}"
+}
+
+now_iso() {
+  date -u -d "@$(now_epoch)" +%Y-%m-%dT%H:%M:%SZ
+}
+
+operator_language() {  # prints the Operator Language, or dies
+  local out
+  out=$("$OPERATOR_CONFIG_BIN" language 2>&1) \
+    || die "Could not read the Operator Language: $out"
+  printf '%s' "$out"
+}
+
+show_bead() {  # $1 = bead id -> prints the single-object JSON, or dies
+  local id=$1 raw
+  raw=$("$GC_BIN" bd show "$id" --json 2>/dev/null) \
+    || die "$id is unavailable."
+  jq -e 'if type == "array" then (if length == 1 then .[0] else error("ambiguous") end) else . end' \
+    <<<"$raw" 2>/dev/null || die "$id did not resolve to exactly one Bead."
+}
+
+field_ok() {  # $1 = label (for the diagnostic) $2 = value
+  local label=$1 value=$2
+  [[ -n $value ]] || die "proposition incomplète : champ « $label » manquant."
+  [[ $value != *$'\n'* && $value != *$'\r'* ]] || die "champ « $label » doit tenir sur une seule ligne."
+  (( ${#value} <= MAX_LINE_LENGTH )) || die "champ « $label » dépasse $MAX_LINE_LENGTH caractères."
+}
+
+# validate_que_faire checks a JSON array of options (.option, .consequence,
+# optional .recommande/.raison), then prints it back with a .lettre (a, b,
+# c, ...) added to each item in order -- or dies without printing anything.
+validate_que_faire() {  # $1 = JSON array
+  local json=$1
+  jq -e 'type == "array" and length > 0' <<<"$json" >/dev/null 2>&1 \
+    || die "proposition incomplète : champ « que faire » manquant ou vide."
+  local count i
+  count=$(jq 'length' <<<"$json")
+  for ((i = 0; i < count; i++)); do
+    local item option consequence recommande raison
+    item=$(jq -c ".[$i]" <<<"$json")
+    option=$(jq -r '.option // ""' <<<"$item")
+    consequence=$(jq -r '.consequence // ""' <<<"$item")
+    recommande=$(jq -r 'if (.recommande // false) == true then "true" else "false" end' <<<"$item")
+    raison=$(jq -r '.raison // ""' <<<"$item")
+    field_ok "option $((i + 1))" "$option"
+    field_ok "conséquence de l'option $((i + 1))" "$consequence"
+    if [[ $recommande == true ]]; then
+      field_ok "raison de la recommandation" "$raison"
+    fi
+  done
+  local recommended_count
+  recommended_count=$(jq '[.[] | (.recommande // false)] | map(select(. == true)) | length' <<<"$json")
+  (( recommended_count <= 1 )) || die "au plus une option « Recommandé »."
+  jq -c --arg letters "$OPTION_LETTERS" \
+    '[to_entries[] | .value + {lettre: $letters[.key:(.key + 1)]}]' <<<"$json"
+}
+
+cmd_create() {
+  local payload=${1:-}
+  [[ -n $payload ]] || die "Usage: $PROGRAM_NAME create <json>"
+  jq -e 'type == "object"' <<<"$payload" >/dev/null 2>&1 \
+    || die "proposition incomplète : le corps n'est pas un objet JSON valide."
+  local quoi pourquoi langue que_faire_raw lettered expected_language titre bead_id create_output
+  quoi=$(jq -r '.quoi // ""' <<<"$payload")
+  pourquoi=$(jq -r '.pourquoi // ""' <<<"$payload")
+  langue=$(jq -r '.langue // ""' <<<"$payload")
+  que_faire_raw=$(jq -c '.que_faire // []' <<<"$payload")
+  field_ok "quoi" "$quoi"
+  field_ok "pourquoi" "$pourquoi"
+  field_ok "langue" "$langue"
+  lettered=$(validate_que_faire "$que_faire_raw")
+  expected_language=$(operator_language)
+  [[ $langue == "$expected_language" ]] \
+    || die "la proposition est dans la langue « $langue », la langue de l'opérateur est « $expected_language »."
+
+  titre="PROPOSITION: $quoi"
+  create_output=$("$GC_BIN" bd create "$titre" -l proposal -t task -d "$pourquoi" 2>&1) \
+    || die "gc bd create failed: $create_output"
+  bead_id=$(printf '%s\n' "$create_output" | grep -oE '[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+' | head -n1)
+  [[ -n $bead_id ]] || die "gc bd create did not report a bead id: $create_output"
+
+  "$GC_BIN" bd update "$bead_id" \
+    --set-metadata "gc.proposal_quoi=$quoi" \
+    --set-metadata "gc.proposal_pourquoi=$pourquoi" \
+    --set-metadata "gc.proposal_que_faire=$lettered" \
+    --set-metadata "gc.proposal_langue=$langue" \
+    --set-metadata "gc.proposal_state=ouverte" \
+    --set-metadata "gc.proposal_horodatage=$(now_iso)" \
+    --append-notes "PROPOSITION: $quoi" \
+    >/dev/null || die "Beads write failed for $bead_id."
+  printf 'PROPOSITION CRÉÉE: %s — %s\n' "$bead_id" "$quoi"
+}
+
+cmd_accepter() {
+  local bead=${1:-} acteur=${2:-}
+  [[ -n $bead && -n $acteur ]] || die "Usage: $PROGRAM_NAME accepter <bead> <acteur>"
+  valid_bead_id "$bead" || die "'$bead' is not a Bead id."
+  show_bead "$bead" >/dev/null
+  "$GC_BIN" bd update "$bead" \
+    --set-metadata "gc.proposal_state=a_planifier" \
+    --set-metadata "gc.proposal_response_at=$(now_iso)" \
+    --set-metadata "gc.proposal_response_actor=$acteur" \
+    --append-notes "PROPOSITION ACCEPTÉE par $acteur — passe à planifier" \
+    >/dev/null || die "Beads write failed for $bead."
+  printf 'ACCEPTÉE: %s — à planifier\n' "$bead"
+}
+
+cmd_rejeter() {
+  local bead=${1:-} raison=${2:-} acteur=${3:-}
+  [[ -n $bead && -n $acteur ]] || die "Usage: $PROGRAM_NAME rejeter <bead> <raison> <acteur>"
+  field_ok "raison" "$raison"
+  valid_bead_id "$bead" || die "'$bead' is not a Bead id."
+  show_bead "$bead" >/dev/null
+  "$GC_BIN" bd update "$bead" \
+    --set-metadata "gc.proposal_state=rejetee" \
+    --set-metadata "gc.proposal_reject_reason=$raison" \
+    --set-metadata "gc.proposal_response_at=$(now_iso)" \
+    --set-metadata "gc.proposal_response_actor=$acteur" \
+    --append-notes "PROPOSITION REJETÉE par $acteur — $raison" \
+    >/dev/null || die "Beads write failed for $bead."
+  printf 'REJETÉE: %s — %s\n' "$bead" "$raison"
+}
+
+cmd_reporter() {
+  local bead=${1:-} heure=${2:-} acteur=${3:-}
+  [[ -n $bead && -n $acteur ]] || die "Usage: $PROGRAM_NAME reporter <bead> <heure> <acteur>"
+  field_ok "heure" "$heure"
+  valid_bead_id "$bead" || die "'$bead' is not a Bead id."
+  show_bead "$bead" >/dev/null
+  "$GC_BIN" bd update "$bead" \
+    --set-metadata "gc.proposal_report_until=$heure" \
+    --set-metadata "gc.proposal_response_at=$(now_iso)" \
+    --set-metadata "gc.proposal_response_actor=$acteur" \
+    --append-notes "PROPOSITION REPORTÉE par $acteur — jusqu'à $heure" \
+    >/dev/null || die "Beads write failed for $bead."
+  printf 'REPORTÉE: %s — jusqu'"'"'à %s\n' "$bead" "$heure"
+}
+
+cmd_compte() {
+  local proposals_json
+  proposals_json=$("$GC_BIN" bd list --status open --label proposal --json 2>/dev/null) \
+    || die "Could not count pending proposals."
+  [[ -n $proposals_json ]] || proposals_json='[]'
+  jq -r '
+    (if type == "array" then . else [.] end)
+    | map(select((.metadata["gc.proposal_state"] // "ouverte") as $s | ($s != "a_planifier" and $s != "rejetee")))
+    | length
+  ' <<<"$proposals_json"
+}
+
+main() {
+  local command=${1:-}
+  [[ -n $command ]] || { usage >&2; return 2; }
+  shift
+  case "$command" in
+    -h|--help|help) usage ;;
+    create) cmd_create "$@" ;;
+    accepter) cmd_accepter "$@" ;;
+    rejeter) cmd_rejeter "$@" ;;
+    reporter) cmd_reporter "$@" ;;
+    compte) cmd_compte "$@" ;;
+    *) usage >&2; return 2 ;;
+  esac
+}
+
+require_command jq
+require_command "$GC_BIN"
+require_command flock
+LOCK_FILE="${PROPOSAL_DOOR_LOCK_FILE:-${XDG_RUNTIME_DIR:-/tmp}/agent-factory-proposal-door.lock}"
+exec 9>"$LOCK_FILE"
+flock -w 10 9 || die "Could not acquire the proposal-door lock."
+main "$@"

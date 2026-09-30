@@ -14,6 +14,7 @@ when the threshold is crossed.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -25,6 +26,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 import overlap_conflict_log as ocl  # noqa: E402
 
 GC_BIN = os.environ.get("GC_BIN", "gc")
+PROPOSAL_DOOR_BIN = os.environ.get("PROPOSAL_DOOR_BIN", str(ROOT / "bin" / "proposal-door"))
 DEFAULT_LOG_PATH = Path(
     os.environ.get("OVERLAP_CONFLICT_LOG_PATH", str(ROOT / ".gc" / "runtime" / "overlap-conflict-log.jsonl"))
 )
@@ -84,6 +86,14 @@ def cmd_record_conflict(args: argparse.Namespace) -> int:
     return 0
 
 
+def _operator_language() -> str:
+    result = subprocess.run(
+        [str(ROOT / "bin" / "operator-config"), "language"],
+        check=True, capture_output=True, text=True,
+    )
+    return result.stdout.strip()
+
+
 def _maybe_file_lease_proposal(args: argparse.Namespace, path: Path, now: float) -> None:
     marker = marker_path(args)
     if marker.exists():
@@ -92,21 +102,27 @@ def _maybe_file_lease_proposal(args: argparse.Namespace, path: Path, now: float)
     if not ocl.lease_proposal_due(entries, now=now):
         return
     count = ocl.undeclared_conflict_count(entries, now=now)
-    body = (
-        f"Evidence: {count} undeclared-scope PR conflicts recorded in the trailing "
-        f"7 days (log: {path}). Two tickets whose declared scopes did not overlap "
-        "still conflicted on delivery -- consider dynamic leases. Never built "
-        "without Benjamin: this bead is a proposal only, triaged at the next "
-        "Planning Run."
-    )
+    # proposal-door (T07) requires the same fields an escalation-door
+    # request needs, in the Operator Language: it never accepts a plain
+    # title+body any more.
+    payload = json.dumps({
+        "quoi": "Proposer des leases dynamiques : conflits PR non déclarés répétés",
+        "pourquoi": f"{count} conflits PR sans chevauchement déclaré en 7 jours",
+        "que_faire": [{
+            "option": "Étudier les leases dynamiques au prochain Planning Run",
+            "consequence": "Aucun changement immédiat ; trié à la prochaine carte de planification.",
+            "recommande": True,
+            "raison": "Le seuil de conflits non déclarés est franchi.",
+        }],
+        "langue": _operator_language(),
+    })
     marker.parent.mkdir(parents=True, exist_ok=True)
     if args.dry_run:
         print(f"DRY-RUN: would file proposal bead: {PROPOSAL_TITLE}")
         marker.write_text("dry-run\n", encoding="utf-8")
         return
     result = subprocess.run(
-        [GC_BIN, "bd", "create", PROPOSAL_TITLE,
-         "-l", "proposal", "-t", "task", "-p", "2", "-d", body],
+        [PROPOSAL_DOOR_BIN, "create", payload],
         check=False, capture_output=True, text=True,
     )
     marker.write_text(
@@ -114,7 +130,7 @@ def _maybe_file_lease_proposal(args: argparse.Namespace, path: Path, now: float)
         encoding="utf-8",
     )
     if result.returncode != 0:
-        print(f"warning: gc bd create failed: {result.stderr.strip()}", file=sys.stderr)
+        print(f"warning: proposal-door create failed: {result.stderr.strip()}", file=sys.stderr)
     else:
         print(f"filed lease proposal: {result.stdout.strip()}")
 
