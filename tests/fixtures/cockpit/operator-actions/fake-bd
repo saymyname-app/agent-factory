@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""A controllable fake `bd` for the T14 (af-peh3yy) Operator Actions seam
+test -- same idiom as tests/fixtures/cockpit/actions/fake-bd (T13), plus
+`show <id>` so cockpit.actions.registry can read back what
+escalation-door/proposal-door just wrote (répondre's display text needs
+the bead's own gc.escalation_response_option/_at, not a value the cockpit
+computed itself).
+
+Keeps the beads list as a JSON array in $FAKE_BD_STATE_FILE -- the SAME
+state file the fake escalation-door/proposal-door in this directory read
+and write, so all the fakes in a given test see consistent bead state,
+exactly like the real `bd` would be the single source of truth for all of
+them.
+
+Every invocation is appended, one JSON line per call, to
+$FAKE_BD_CALLS_FILE. Refuses every call it wasn't told to answer, loudly.
+"""
+import json
+import os
+import sys
+import uuid
+
+
+def _state_path():
+    return os.environ["FAKE_BD_STATE_FILE"]
+
+
+def _load():
+    path = _state_path()
+    if not os.path.exists(path):
+        return []
+    with open(path) as fh:
+        raw = fh.read().strip()
+    return json.loads(raw) if raw else []
+
+
+def _save(beads):
+    with open(_state_path(), "w") as fh:
+        json.dump(beads, fh)
+
+
+def _log_call(args):
+    log_path = os.environ.get("FAKE_BD_CALLS_FILE")
+    if not log_path:
+        return
+    with open(log_path, "a") as fh:
+        fh.write(json.dumps(args) + "\n")
+
+
+def _fail_if_flagged():
+    fail_flag = os.environ.get("FAKE_BD_FAIL_FLAG_FILE")
+    if fail_flag and os.path.exists(fail_flag):
+        sys.stderr.write("fake bd (cockpit-operator-actions): forced failure\n")
+        sys.exit(1)
+
+
+def cmd_list(args):
+    _fail_if_flagged()
+    beads = _load()
+    has_key = None
+    if "--has-metadata-key" in args:
+        has_key = args[args.index("--has-metadata-key") + 1]
+    if has_key:
+        beads = [b for b in beads if has_key in (b.get("metadata") or {})]
+    sys.stdout.write(json.dumps(beads))
+    sys.exit(0)
+
+
+def cmd_show(args):
+    _fail_if_flagged()
+    if not args:
+        sys.stderr.write("fake bd (cockpit-operator-actions): show needs an id\n")
+        sys.exit(1)
+    bead_id = args[0]
+    beads = _load()
+    bead = next((b for b in beads if b.get("id") == bead_id), None)
+    if bead is None:
+        sys.stderr.write("fake bd (cockpit-operator-actions): unknown bead %s\n" % bead_id)
+        sys.exit(1)
+    sys.stdout.write(json.dumps(bead))
+    sys.exit(0)
+
+
+def cmd_update(args):
+    _fail_if_flagged()
+    if not args:
+        sys.stderr.write("fake bd (cockpit-operator-actions): update needs an id\n")
+        sys.exit(1)
+    bead_id = args[0]
+    rest = args[1:]
+    beads = _load()
+    bead = next((b for b in beads if b.get("id") == bead_id), None)
+    if bead is None:
+        sys.stderr.write("fake bd (cockpit-operator-actions): unknown bead %s\n" % bead_id)
+        sys.exit(1)
+    metadata = bead.setdefault("metadata", {})
+    notes = bead.get("notes", "")
+    i = 0
+    while i < len(rest):
+        token = rest[i]
+        if token == "--set-metadata":
+            i += 1
+            key, _, value = rest[i].partition("=")
+            metadata[key] = value
+        elif token == "--append-notes":
+            i += 1
+            notes = (notes + "\n" + rest[i]) if notes else rest[i]
+        i += 1
+    bead["notes"] = notes
+    _save(beads)
+    sys.stdout.write(json.dumps(bead))
+    sys.exit(0)
+
+
+def cmd_create(args):
+    _fail_if_flagged()
+    title = args[0] if args and not args[0].startswith("--") else "(sans titre)"
+    metadata = {}
+    if "--metadata" in args:
+        raw = args[args.index("--metadata") + 1]
+        metadata = json.loads(raw)
+    beads = _load()
+    new_id = "af-journal-" + uuid.uuid4().hex[:6]
+    beads.append(
+        {
+            "id": new_id,
+            "status": "open",
+            "labels": [],
+            "notes": "",
+            "metadata": metadata,
+            "title": title,
+        }
+    )
+    _save(beads)
+    sys.stdout.write(new_id + "\n")
+    sys.exit(0)
+
+
+def main():
+    argv = sys.argv[1:]
+    # cockpit.core.beads_source always appends --json for reads; strip it
+    # before dispatch, this fake always emits JSON regardless.
+    call_args = [a for a in argv if a != "--json"]
+    _log_call(call_args)
+    if not call_args:
+        sys.exit(1)
+    command, rest = call_args[0], call_args[1:]
+    if command == "list":
+        cmd_list(rest)
+    elif command == "show":
+        cmd_show(rest)
+    elif command == "update":
+        cmd_update(rest)
+    elif command == "create":
+        cmd_create(rest)
+    else:
+        sys.stderr.write("fake bd (cockpit-operator-actions): unsupported command %s\n" % command)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
