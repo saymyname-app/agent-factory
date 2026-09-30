@@ -15,8 +15,8 @@ sole to-tickets authority (`bin/ticket-graph-publish patch`) before unparking.
 
 Concurrent `raise`/`resolve` calls against the same register are safe: every
 mutation takes an OS-level exclusive lock (`fcntl.flock`) around a read-
-modify-write, the same map-file concurrency pattern P03's
-`planning-map-concurrency-prototype` proved synthetically.
+modify-write, the same map-file concurrency pattern P03 proved synthetically
+in commit ea2fefd (retired, W12).
 """
 
 from __future__ import annotations

@@ -38,7 +38,7 @@ only when verified in the code; live checks for runtime state.
 | F04 | med | `AGENTS.md`, `README.md`, `docs/OPERATOR_BRIDGE.md`, `docs/OPERATIONS.md` | "campaign liveness" invariant; product status/preview "configured"; examples route to the product queue; `derive_delivery()` exists only in legacy; "off-box backup not configured" (live: `jsonl-export` every 15 min to the private archive repo) | A4-DOCS |
 | F05 | low | `AGENTS.md`, `city.toml`, `config/provider-policy.json`, `config/model-catalog.json`, `bin/provider-failover` (help + generated header) | "change providers from the cockpit"; only `provider-failover set` exists | A4-DOCS |
 | F06 | low | `orders/provider-failover.toml`, `formulas/mol-*`, `bin/factory-boot`, `bin/pr-autopilot`, `bin/factory-observe` | descriptions still cite the campaign (parking, liveness, idle ladder, `gc.campaign_progress_at`, "for the dashboard"); pr-autopilot "never touches PRs targeting main" is false (Factory `main` is armed) | A4-DOCS (P24 already removed `bin/factory-delivery-guard`'s "for the SayMyName rigs"/campaign wording; P21, af-k91yx: `orders/factory-watchdog.toml` and `orders/pr-autopilot.toml` FIXED and split out of this row's file list — see their own rows below; remaining files unchanged) |
-| F07 | low | `docs/FACTORY_OBSERVE.md`, `docs/ADAPTATION_REGISTER.md`, `docs/PLANNING_RUN_RESUME_PROTOTYPE.md`, `docs/GETTING_STARTED.md`, `docs/FACTORY_TOOLS.md` | legacy improvement-axes cited as a live pattern; `bin/factory-cockpit` cited; "C01 reservation" (active one is factory-operations-v2); "5 providers" checked (loop checks 4) | A4-DOCS |
+| F07 | low | `docs/FACTORY_OBSERVE.md`, `docs/ADAPTATION_REGISTER.md`, `docs/GETTING_STARTED.md`, `docs/FACTORY_TOOLS.md` | legacy improvement-axes cited as a live pattern; `bin/factory-cockpit` cited; "C01 reservation" (active one is factory-operations-v2); "5 providers" checked (loop checks 4); `docs/PLANNING_RUN_RESUME_PROTOTYPE.md` retired with P04 (W12, af-eyxetw) |
 | F08 | low | `lib/factory_watchdog.py:263`, `lib/provider_failover.py:93`, 5 test comments, `tests/coordination-pointer-doors-test.sh` | comments point at deleted tests / retired `product-queue`, `gc.queue_state` | A4-DOCS |
 | F09 | low | `agents/mayor/prompt.template.md` | says `build-basic` "comes from the pack" (a local fork in `formulas/` overrides it) | A4-DOCS |
 | F10 | med | `docs/decisions/ADR-0026-*.md`, `docs/DELIVERY.md:188` | rely on the retired `mayor-campaign` readiness lane; needs the same dated amendment ADR-0025 got | A4-DOCS |
@@ -131,16 +131,12 @@ an A5 input.
 | `bin/goal-delivery-pairs` | ops | docs/DELIVERY.md, CI test | Read-only multi-rig delivery-pair query; no runtime caller |
 | `bin/on-order-failed` | ops | orders/on-order-failed.toml, CI test | Pages Mayor on repeated order failure; FIXED (O06, af-sau1a): no longer writes the reader-less signal file |
 | `bin/on-session-stranded` | ops | orders/on-session-stranded.toml, CI test | Reopens orphaned beads + pages; FIXED (O06, af-sau1a): no longer writes the reader-less signal file |
-| `bin/planning-allocation-prototype` | kernel | CI test, config/planning-allocation-prototype.json, docs | P02 synthetic allocation proof; no runtime caller (prototype evidence) |
 | `bin/planning-exception` | kernel | mayor prompt, deliver-close, factory-guard, planning-exception-guard, CI | ADR-0028 Planning Exception register; subcommands match docs |
-| `bin/planning-map-concurrency-prototype` | kernel | CI test, planning-exception (docstring), docs | Synthetic concurrency proof; no runtime caller |
-| `bin/planning-run-resume-oracle` | kernel | CI test, docs | P04 resume oracle; no runtime caller |
 | `bin/pr-autopilot` | ops | orders/pr-autopilot.toml (3m), CI tests | Arms/finalizes PRs from lib/protected_rigs.sh; header "for the SayMyName rigs" stale |
 | `bin/project-isolation-oracle` | kernel | CI test, docs | Project isolation oracle |
 | `bin/project-planning-profile` | kernel | docs/GETTING_STARTED.md, CI test | Per-project planning profile validator (rejects SayMyName-specific fields by design) |
 | `bin/provider-failover` | ops | orders provider-failover + model-staleness-check, factory-boot, factory-guard | FIXED (P20, af-r48pb): help/status/set text names no cockpit or campaign; live failover unchanged |
 | `bin/reversibility-check` | ops | pr-autopilot, factory-watchdog, CI test | ADR-0019 reversibility gate CLI |
-| `bin/role-qualification-oracle` | kernel | CI test, docs | P06 role qualification oracle; no runtime caller |
 | `bin/spec-approve` | kernel | CI test | Spec approval stage; bead mode only (`bd-approve`/`bd-status`) since A6b W10 retired the file-Spec mode with the router |
 | `bin/ticket-graph-publish` | kernel | mayor prompt (bd-patch), planning-exception, CI | `bd-publish`/`bd-patch` only since A6b W10 retired the file-draft mode with the router |
 | `city.toml` | to-redo | gc; factory-guard; provider-failover; build-gates | live, but comments route provider changes via retired cockpit; SayMyName rigs/patches + /home/benja paths |
@@ -148,12 +144,8 @@ an A5 input.
 | `config/fixture-city-bwrap.apparmor` | kernel | ci.yml, bin/project-isolation-oracle, test | P05 sandbox profile for CI |
 | `config/model-catalog.json` | ops | bin/provider-failover check-models, orders/model-staleness-check.toml | coherent; omits claude-fable (skipped by design); description quotes cockpit |
 | `config/operator.toml` | ops | bin/escalation-door | NEW (O14, F23): operator display name for runtime messages, read instead of a hardcoded string; `GC_OPERATOR_NAME` overrides |
-| `config/planning-allocation-prototype.json` | kernel | bin/planning-allocation-prototype, test (CI) | P02 oracle input |
-| `config/planning-map-concurrency-prototype.json` | kernel | bin/planning-map-concurrency-prototype, test (CI) | P03 oracle input |
 | `config/planning-run-reservation.json` | kernel | bin/spec-approve bd-approve (checks), bin/ticket-graph-publish bd-publish (advances) | B12 AC#5 reservation: factory-operations-v2 then C01 |
-| `config/planning-run-resume-prototype.json` | kernel | bin/planning-run-resume-oracle, test (CI) | P04 synthetic input (names a factory-cockpit surface) |
 | `config/provider-policy.json` | ops | bin/provider-failover, lib/provider_failover.py | FIXED (P20, af-r48pb): chains live and correct; description points to `bin/provider-failover set`, not the retired cockpit |
-| `config/role-qualification-prototype.json` | kernel | bin/role-qualification-oracle, test (CI) | P06 oracle input |
 | `docs/ADAPTATION_REGISTER.md` | kernel | CONTEXT_INDEX, planning-exception guard, tests | FIXED (P19, af-5l657): AR-004 now cites the pre-refactor improvement-axes register as retired to `legacy/`, not a live pattern |
 | `docs/CONTEXT_INDEX.md` | ops | AGENTS.md, README, mayor prompt, operator-context test | updated for legacy split; all cited paths exist |
 | `docs/DELIVERY.md` | to-redo | CONTEXT_INDEX, pr-autopilot, reversibility | provider facts contradict city.toml; "no Actions workflows"; missing DESIGN_GOVERNANCE.md; nonexistent scoped Mayor lane; SayMyName rig contracts |
@@ -163,17 +155,13 @@ an A5 input.
 | `docs/GETTING_STARTED.md` | ops | README, CONTEXT_INDEX | FIXED (O14, af-8l3ea; P18, af-stdt7): step 1 has the `bin/factory-setup`/`core.hooksPath` step; step 2's post-removal claim is scoped to the `[[rigs]]` entry and now names the inert `[[patches.agent]]` leftovers `gc rig remove` does not touch |
 | `docs/OPERATIONS.md` | ops | README, CONTEXT_INDEX, RUNBOOK | FIXED (P19, af-5l657): SayMyName cutover/M6 rollback retired to `legacy/docs/products/saymyname/CUTOVER_AND_M6_ROLLBACK.md`; no `gc bd create` new-work section, no `derive_delivery()` reference, and off-box backup now accurately describes the live `core/jsonl-archive` order |
 | `docs/OPERATOR_BRIDGE.md` | ops | AGENTS.md, README, operator-context test | FIXED (legacy PR 5b/5, #250): the "Product candidate queue" section and its example intents were purged with the rest of the retired product queue; current examples route through the Mayor/Planning Run flow |
-| `docs/PLANNING_ALLOCATION_PROTOTYPE.md` | kernel | CONTEXT_INDEX | P02 doc |
 | `docs/PLANNING_EXCEPTION.md` | kernel | CONTEXT_INDEX, planning-exception guard | B08 doc |
-| `docs/PLANNING_MAP_CONCURRENCY_PROTOTYPE.md` | kernel | CONTEXT_INDEX, ADAPTATION_REGISTER | P03 doc |
 | `docs/PLANNING_RUN.md` | kernel | CONTEXT_INDEX, GETTING_STARTED, issue-tracker | A6b, W09: the wired chain (`/wayfinder`, `/to-spec`, `spec-approve`, `/to-tickets`, `ticket-graph-publish`), No-fog exit, overflow rule |
-| `docs/PLANNING_RUN_RESUME_PROTOTYPE.md` | kernel | CONTEXT_INDEX | FIXED (P19, af-5l657): Cockpit V1/`bin/factory-cockpit` cited only as retired to `legacy/` (Cockpit V2 is Planning Run C01); no dangling AGENTS.md assertion remains |
 | `docs/PLANNING_RUN_ROUTER.md` | kernel | PLANNING_RUN | A6b, W09: reduced to a one-line pointer to PLANNING_RUN.md; retiring in W10 |
 | `docs/PLANNING_RUN_TO_SPEC_PROTOTYPE.md` | kernel | CONTEXT_INDEX | B03 doc |
 | `docs/PROJECT_ISOLATION_PROTOTYPE.md` | kernel | CONTEXT_INDEX | P05 doc |
 | `docs/PROJECT_PLANNING_PROFILE.md` | kernel | CONTEXT_INDEX, GETTING_STARTED, OPERATOR_BRIDGE | B02 doc; SayMyName mentions are the rejection rule |
 | `docs/RESEARCH_BRIEF.md` | ops | CONTEXT_INDEX, DELIVERY | External Evidence Gate template |
-| `docs/ROLE_QUALIFICATION_PROTOTYPE.md` | kernel | CONTEXT_INDEX | P06 doc |
 | `docs/RUNBOOK_STOP_AND_RESTART.md` | ops | AGENTS.md, bin/factory-boot, CONTEXT_INDEX | commands verified; minor hardcoded SayMyName rig loop (:42) |
 | `docs/SECURITY.md` | ops | CONTEXT_INDEX, OPERATOR_BRIDGE | generic trust boundaries |
 | `docs/SPEC_APPROVE.md` | kernel | CONTEXT_INDEX | B05 doc; subcommands match |
@@ -264,10 +252,7 @@ an A5 input.
 | `tests/on-order-failed-test.sh` | ops | bin/on-order-failed | in CI (ci.yml:221); comment cites legacy factory-cockpit-chaos-test.py |
 | `tests/on-session-stranded-test.sh` | ops | bin/on-session-stranded | in CI (ci.yml:224); comment cites legacy factory-cockpit-chaos-test.py |
 | `tests/operator-context-test.sh` | ops | AGENTS.md/Mayor prompt/OPERATOR_BRIDGE free of retired commands | in CI (ci.yml:125); asserts absence of cockpit/product-queue/saymyname (correct) |
-| `tests/planning-allocation-prototype-test.py` | kernel | planning allocation prototype | in CI (ci.yml:78) |
 | `tests/planning-exception-test.py` | kernel | planning-exception; fixtures planning-exception + ticket-graph-publish | in CI (ci.yml:50) |
-| `tests/planning-map-concurrency-prototype-test.py` | kernel | planning map concurrency prototype | in CI (ci.yml:90) |
-| `tests/planning-run-resume-oracle-test.py` | kernel | Planning Run resume oracle | in CI (ci.yml:81) |
 | `tests/pr-autopilot-candidate-duplicate-test.sh` | kernel | bin/pr-autopilot | FIXED (P23): drives pr-autopilot with `PROTECTED_RIGS_CONFIG_DIR` pointed at the new `tests/fixtures/pr-autopilot-projects/` synthetic project fixture (rigs `example-backend`/`example-frontend`, repo `example-corp/example-backend`) instead of the real SayMyName rigs; in CI (ci.yml:182) |
 | `tests/pr-autopilot-ci-failure-test.sh` | kernel | bin/pr-autopilot | FIXED (P23): same synthetic project fixture as candidate-duplicate; in CI (ci.yml:167) |
 | `tests/pr-autopilot-reconcile-cache-test.sh` | kernel | bin/pr-autopilot | FIXED (P23): same synthetic project fixture; asserts `example-corp/example-backend#61` instead of the real repo |
@@ -281,7 +266,6 @@ an A5 input.
 | `tests/project-planning-profile-test.py` | kernel | project-planning-profile; fixture project-planning-profile | in CI (ci.yml:41); rejects SayMyName-specific fields (correct) |
 | `tests/provider-failover-test.py` | to-redo | bin/provider-failover | in CI (ci.yml:143); fixtures carry SayMyName backend output + saymyname-backend sessions + inert gc.campaign_* metadata |
 | `tests/reversibility-test.py` | ops | reversibility classifier (pr-autopilot) | in CI (ci.yml:158) |
-| `tests/role-qualification-oracle-test.py` | kernel | role qualification oracle | in CI (ci.yml:87) |
 | `tests/spec-approve-test.py` | kernel | spec-approve; fixture spec-approve | in CI (ci.yml:47) |
 | `tests/ticket-graph-publish-test.py` | kernel | ticket-graph-publish; fixture ticket-graph-publish | in CI (ci.yml:38) |
 
