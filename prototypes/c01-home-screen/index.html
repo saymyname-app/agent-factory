@@ -88,6 +88,9 @@ body.framed .frame-note{display:block}
 .btn.ghost{border-color:transparent;background:transparent;color:var(--accent);padding-inline:6px}
 .btn.opt{text-align:left;display:flex;gap:10px;align-items:baseline;width:100%}
 .btn.opt .k{font-family:var(--mono);color:var(--accent)}
+.btn.opt .ot{display:grid;gap:3px}
+.oc{font-size:var(--fs-xs);font-weight:400;color:var(--ink-2);line-height:1.4}
+.hint{margin:0;font-size:var(--fs-xs);color:var(--muted)}
 .btn[disabled]{opacity:.45;cursor:not-allowed}
 .confirm{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--accent-soft);border-radius:8px;padding:8px 10px;font-size:var(--fs-s)}
 details.more{font-size:var(--fs-s)}
@@ -262,7 +265,8 @@ const baseItems = () => ([
    quoi:"Les tests automatiques échouent pour la 3e fois sur la PR « Export des listes ».",
    pourquoi:"L'usine a essayé de corriger seule pendant 2 h ; la suite demande un choix de ton niveau.",
    faire:"Choisis la suite :",
-   options:[{k:"a",t:"Relancer avec un délai de test doublé"},{k:"b",t:"Retirer ce ticket du graphe et continuer"}],
+   options:[{k:"a",t:"Relancer avec un délai de test doublé", reco:"Les 3 échecs sont des dépassements de délai, pas des erreurs.", c:"Le ticket reste dans le graphe ; si l'export est seulement lent, la PR passe. Environ 20 min de tests en plus."},
+            {k:"b",t:"Retirer ce ticket du graphe et continuer", c:"Le chantier se termine sans l'export des listes. Rien d'autre n'en dépend : rien ne casse. L'export devra revenir comme nouveau travail."}],
    det:{ids:"ticket af-demo7k · PR #412 · run CI 18 322 145", origine:"CI red 3x on PR #412 (export timeout in ListExportIT). Retry budget exhausted. Options: a) raise timeout b) drop from graph.", source:"porte d'escalade · lu 14:31", hist:"apparu 11:04 · remonté vers toi à 13:10"}},
   {id:"d2", lvl:"normal", proj:"Usine", since:"12:47",
    quoi:"La Spec « Rappels de rituels » est prête et attend ton approbation.",
@@ -397,14 +401,19 @@ function actions(x, compact){
       <button class="btn ghost" data-a="cancel">Annuler</button></div>`;
   }
   let main="";
-  if(x.options) main = `<div class="opts">${x.options.map(o=>`<button class="btn opt" data-a="opt" data-id="${x.id}" data-t="${esc(o.t)}" ${dis}><span class="k">${o.k}</span><span>${esc(o.t)}</span></button>`).join("")}</div>`;
+  if(x.options){
+    const hasReco = x.options.some(o=>o.reco);
+    main = `<div class="opts">${x.options.map(o=>`<button class="btn opt" data-a="opt" data-id="${x.id}" data-t="${esc(o.t)}" ${dis}><span class="k">${o.k}</span><span class="ot"><span>${esc(o.t)}</span>${o.reco?` <span class="chip atoi">Recommandé</span>`:""}
+      <span class="oc">${o.c?esc(o.c):"Conséquence non fournie par l'agent."}</span>${o.reco?`<span class="oc"><b>Pourquoi recommandé :</b> ${esc(o.reco)}</span>`:""}</span></button>`).join("")}
+      ${hasReco?"":`<span class="oc">Pas de recommandation fournie.</span>`}</div>`;
+  }
   let row=[];
   if(x.proposal){ row.push(`<button class="btn primary" data-a="accept" data-id="${x.id}" ${dis}>Accepter</button>`, `<button class="btn" data-a="refuseopen" data-id="${x.id}" ${dis}>Refuser…</button>`); }
   else if(x.primary) row.push(`<button class="btn primary" data-a="primary" data-id="${x.id}" ${dis}>${esc(x.primary)}</button>`);
   row.push(`<button class="btn" data-a="agent" data-id="${x.id}">${x.options?"Autre → agent":"Continuer avec un agent"}</button>`);
   if(!(st.local[x.id]&&st.local[x.id].ack)) row.push(`<button class="btn ghost" data-a="ack" data-id="${x.id}" ${dis}>Acquitter</button>`);
   row.push(`<button class="btn ghost" data-a="snoozeopen" data-id="${x.id}" ${dis}>Reporter</button>`);
-  return main + `<div class="acts">${row.join("")}</div>`;
+  return main + `<div class="acts">${row.join("")}</div><p class="hint">Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu'à l'heure choisie, puis elle revient. Aucun des deux ne change rien dans l'usine.</p>`;
 }
 function snoozedLine(){
   const s = snoozed(); if(!s.length) return "";
