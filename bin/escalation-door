@@ -97,6 +97,7 @@ MAYOR_FIRST_GRACE_SECONDS="${ESCALATION_DOOR_MAYOR_GRACE_SECONDS:-7200}"
 MAX_LINE_LENGTH=140
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
 OPERATOR_CONFIG_BIN="${OPERATOR_CONFIG_BIN:-$ROOT/bin/operator-config}"
+PROPOSAL_DOOR_BIN="${PROPOSAL_DOOR_BIN:-$ROOT/bin/proposal-door}"
 # Runtime messages name the operator from config, not a hardcoded string
 # (O14, F23) -- config/operator.toml's `name`, defaulting to "Benjamin" if
 # the file is missing or unset. The `gc.needs_benjamin` field and `benjamin`
@@ -365,13 +366,10 @@ cmd_clear() {
 }
 
 cmd_list() {
-  local needs_json proposals_json needs_count proposals_count
+  local needs_json needs_count proposals_count
   needs_json=$("$GC_BIN" bd list --status open,in_progress --has-metadata-key gc.needs_benjamin --json 2>/dev/null) \
     || die "Could not list NEEDS BENJAMIN beads."
   [[ -n $needs_json ]] || needs_json='[]'
-  proposals_json=$("$GC_BIN" bd list --status open --label proposal --json 2>/dev/null) \
-    || die "Could not count pending proposals."
-  [[ -n $proposals_json ]] || proposals_json='[]'
 
   printf 'NEEDS BENJAMIN:\n'
   needs_count=0
@@ -383,7 +381,11 @@ cmd_list() {
   done < <(jq -r '(if type == "array" then . else [.] end)[] | [.id, (.metadata["gc.needs_benjamin"] // "")] | @tsv' <<<"$needs_json")
   ((needs_count > 0)) || printf '  (none)\n'
 
-  proposals_count=$(jq -r 'if type == "array" then length else 1 end' <<<"$proposals_json")
+  # Pending proposals is counted by proposal-door itself (T07) -- it
+  # excludes proposals already accepted or rejected; a legacy proposal
+  # with no gc.proposal_state still counts as pending.
+  proposals_count=$("$PROPOSAL_DOOR_BIN" compte 2>/dev/null) \
+    || die "Could not count pending proposals."
   printf 'Pending proposals: %s\n' "${proposals_count:-0}"
 }
 
