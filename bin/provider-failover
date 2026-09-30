@@ -111,6 +111,33 @@ def escalation_door(*args: str, timeout: int = 30) -> subprocess.CompletedProces
     )
 
 
+def operator_language() -> str:
+    try:
+        result = subprocess.run(
+            [str(ROOT / "bin" / "operator-config"), "language"],
+            text=True, capture_output=True, timeout=10,
+        )
+        value = (result.stdout or "").strip()
+        return value if result.returncode == 0 and value else "fr"
+    except (OSError, subprocess.SubprocessError):
+        return "fr"
+
+
+def escalation_payload(quoi: str, pourquoi: str, option: str, consequence: str) -> str:
+    """The JSON escalation-door's `benjamin` command requires (T06, C01
+    Cockpit V2): quoi / pourquoi / que_faire (one option here, with its
+    consequence) / the Operator Language. Machine events use fixed French
+    phrases, not a translated English string."""
+    if len(quoi) > 140:
+        quoi = quoi[:139] + "…"
+    return json.dumps({
+        "quoi": quoi,
+        "pourquoi": pourquoi,
+        "que_faire": [{"option": option, "consequence": consequence}],
+        "langue": operator_language(),
+    })
+
+
 def load_policy() -> dict[str, Any]:
     try:
         return pf.validate_policy(json.loads(POLICY_FILE.read_text(encoding="utf-8")))
@@ -297,7 +324,13 @@ def exhaustion_gate(state: dict[str, Any], policy: dict[str, Any], moment: float
             except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
                 bead_id = None
             if bead_id:
-                escalation_door("benjamin", bead_id, detail, timeout=30)
+                payload = escalation_payload(
+                    "Chaque fournisseur de modèle est épuisé ou en erreur : la livraison est en pause",
+                    "Aucun agent ne peut relancer un fournisseur de modèle à ta place",
+                    "Vérifier les fournisseurs et débloquer manuellement",
+                    "La livraison reprend automatiquement dès qu'un fournisseur redevient disponible.",
+                )
+                escalation_door("benjamin", bead_id, payload, timeout=30)
         state["total_exhaustion"] = {"active": True, "since": pf.iso(moment), "bead": bead_id}
         messages.append(f"dispatch paused: {detail}" + (f" (bead {bead_id})" if bead_id else ""))
     elif not active_now and was_active:

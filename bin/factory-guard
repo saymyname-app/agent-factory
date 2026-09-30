@@ -48,6 +48,19 @@ set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 ESCALATION_DOOR="$(dirname "${BASH_SOURCE[0]}")/escalation-door"
+OPERATOR_CONFIG="$(dirname "${BASH_SOURCE[0]}")/operator-config"
+
+# escalation_payload builds the JSON escalation-door's `benjamin` command
+# requires (T06, C01 Cockpit V2): quoi / pourquoi / que_faire (one option
+# here, with its consequence) / the Operator Language. Machine events use
+# fixed French phrases, not a translated English string.
+escalation_payload() {  # quoi pourquoi option consequence
+  local quoi=$1
+  (( ${#quoi} <= 140 )) || quoi="${quoi:0:139}…"
+  jq -nc --arg quoi "$quoi" --arg pourquoi "$2" --arg option "$3" --arg consequence "$4" \
+    --arg langue "$("$OPERATOR_CONFIG" language 2>/dev/null || printf fr)" \
+    '{quoi: $quoi, pourquoi: $pourquoi, que_faire: [{option: $option, consequence: $consequence}], langue: $langue}'
+}
 STATE="$ROOT/.gc/factory-guard.branch"
 CHECK_ONLY=0
 QUIET=0
@@ -764,7 +777,11 @@ try:
     print((json.load(sys.stdin) or {}).get("state") or "")
 except Exception:
     print("")')
-      bounded 30 "$ESCALATION_DOOR" benjamin "$COORD" "factory-guard: mayor session $mayor_state since $page_since (over 10 minutes)" \
+      bounded 30 "$ESCALATION_DOOR" benjamin "$COORD" "$(escalation_payload \
+        "La session du Maire est $mayor_state depuis $page_since (plus de 10 min)" \
+        "Aucun agent ne peut relancer la session du Maire à ta place" \
+        "Relancer la session du Maire" \
+        "Le Maire reprend le pilotage de la livraison.")" \
         >/dev/null 2>&1 || true
       update_err=$(bounded 15 gc bd update "$COORD" --set-metadata "gc.mayor_session_down_paged_since=$page_since" 2>&1 1>/dev/null) \
         || say "  WARNING: gc bd update $COORD --set-metadata gc.mayor_session_down_paged_since failed: $update_err"
@@ -864,7 +881,11 @@ except Exception:
                 # The stuck identity may itself be the Mayor and unreachable,
                 # so this pages the human directly rather than routing
                 # through the orchestrator that cannot boot to read it.
-                bounded 30 "$ESCALATION_DOOR" benjamin "$created" "factory-guard: named always-on session $identity cannot boot -- $(tr '\n' ' ' <<<"$message")" \
+                bounded 30 "$ESCALATION_DOOR" benjamin "$created" "$(escalation_payload \
+                  "La session toujours-active $identity ne démarre pas" \
+                  "Aucun agent ne peut diagnostiquer pourquoi $identity ne démarre pas" \
+                  "Diagnostiquer et relancer $identity" \
+                  "La session reprend son rôle dans l'usine.")" \
                   >/dev/null 2>&1 || true
                 did "filed session-boot-stuck defect $created for $identity and paged ${GC_ESCALATION_RECIPIENT:-human}"
               else

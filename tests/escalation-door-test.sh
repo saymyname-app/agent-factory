@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 #
-# O06: escalation-door is the one door for every escalation (replaces
-# bin/campaign-pointer escalate). Proves the routing rules -- straight to
-# Benjamin lands on the list at once, Mayor-first only escalates after 2h
-# unresolved (fake clock) -- every escalation fails loudly (no
-# `>/dev/null || true`), and the read-only CLI reports the list and the
-# pending-proposal count.
+# O06 / C01 T06: escalation-door is the one door for every escalation
+# (replaces bin/campaign-pointer escalate). Proves: `benjamin` refuses an
+# incomprehensible request without writing anything (missing field, a line
+# over 140 characters, an option with no consequence, two "Recommandé",
+# a recommendation with no reason, a language other than the Operator
+# Language); a complete request is written with its fields, timestamp and
+# blocking flag and still shows up on `list`; `repondre` writes the chosen
+# option, clears NEEDS BENJAMIN and wakes the Mayor, and refuses an unknown
+# option; Mayor-first only escalates after 2h unresolved (fake clock) and a
+# sweep promotion never fails even on an incomplete source; every escalation
+# fails loudly (no `>/dev/null || true`).
 
 set -Eeuo pipefail
 
@@ -35,32 +40,132 @@ door() {
     ESCALATION_DOOR_LOCK_FILE="$TEST_TMP/lock" "$SCRIPT" "$@"
 }
 
-# --- benjamin (straight to Benjamin) ----------------------------------------
+# A complete request Benjamin can understand without opening an agent
+# session: quoi / pourquoi / que faire (each option with its consequence, at
+# most one Recommandé with its reason) / langue.
+COMPLETE_REQUEST='{
+  "quoi": "Le graphe du chantier T09 est en attente d'\''approbation",
+  "pourquoi": "Aucun agent ne peut approuver un graphe : c'\''est ta décision",
+  "que_faire": [
+    {"option": "Approuver le graphe", "consequence": "La livraison démarre.", "recommande": true, "raison": "Le graphe respecte la Spec approuvée."},
+    {"option": "Rejeter le graphe", "consequence": "Retour à la carte de planification."}
+  ],
+  "langue": "fr"
+}'
+
+# --- benjamin refuses an incomplete or malformed request --------------------
 reset_beads
 seed af-blocker '{"id":"af-blocker","status":"open","metadata":{},"notes":"","labels":[]}'
-TESTS_RUN=$((TESTS_RUN + 1))
-door benjamin af-blocker "Irreversible production change" >/dev/null \
-  || fail "benjamin should succeed"
-[[ $(jq -r '.metadata["gc.needs_benjamin"]' "$TEST_TMP/beads/af-blocker.json") == "Irreversible production change" ]] \
-  || fail "benjamin did not set gc.needs_benjamin on the target bead"
-[[ $(jq -r '.notes' "$TEST_TMP/beads/af-blocker.json") == *"Irreversible production change"* ]] \
-  || fail "benjamin did not append the cause to the bead's notes"
-grep -Fq 'mail send human' "$TEST_TMP/calls.log" || fail "benjamin did not mail the escalation recipient"
 
 TESTS_RUN=$((TESTS_RUN + 1))
-if door benjamin af-blocker $'two\nlines' >/dev/null 2>&1; then
-  fail "benjamin with a multi-line reason must refuse"
+missing_field=$(jq 'del(.pourquoi)' <<<"$COMPLETE_REQUEST")
+if door benjamin af-blocker "$missing_field" >/dev/null 2>&1; then
+  fail "benjamin with a missing field must refuse"
 fi
+[[ $(jq -c '.' "$TEST_TMP/beads/af-blocker.json") == '{"id":"af-blocker","status":"open","metadata":{},"notes":"","labels":[]}' ]] \
+  || fail "benjamin must leave the bead untouched when it refuses a missing field"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+long_line=$(jq --arg q "$(printf 'x%.0s' {1..141})" '.quoi = $q' <<<"$COMPLETE_REQUEST")
+if door benjamin af-blocker "$long_line" >/dev/null 2>&1; then
+  fail "benjamin with a line over 140 characters must refuse"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+no_consequence=$(jq '.que_faire[0] |= del(.consequence)' <<<"$COMPLETE_REQUEST")
+if door benjamin af-blocker "$no_consequence" >/dev/null 2>&1; then
+  fail "benjamin with an option lacking a consequence must refuse"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+two_recommended=$(jq '.que_faire[1].recommande = true | .que_faire[1].raison = "aussi valable"' <<<"$COMPLETE_REQUEST")
+if door benjamin af-blocker "$two_recommended" >/dev/null 2>&1; then
+  fail "benjamin with two Recommandé options must refuse"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+unreasoned_recommendation=$(jq '.que_faire[0] |= del(.raison)' <<<"$COMPLETE_REQUEST")
+if door benjamin af-blocker "$unreasoned_recommendation" >/dev/null 2>&1; then
+  fail "benjamin with a Recommandé option lacking its raison must refuse"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+other_language=$(jq '.langue = "en"' <<<"$COMPLETE_REQUEST")
+if door benjamin af-blocker "$other_language" >/dev/null 2>&1; then
+  fail "benjamin with a request not in the Operator Language must refuse"
+fi
+
+[[ $(jq -c '.' "$TEST_TMP/beads/af-blocker.json") == '{"id":"af-blocker","status":"open","metadata":{},"notes":"","labels":[]}' ]] \
+  || fail "every refused benjamin call must leave the bead intact"
 
 TESTS_RUN=$((TESTS_RUN + 1))
 : >"$TEST_TMP/calls.log"
 if ED_MAIL_FAIL=human GC_BIN="$FIXTURE" ED_BEAD_DIR="$TEST_TMP/beads" ED_CALL_LOG="$TEST_TMP/calls.log" \
-    ESCALATION_DOOR_LOCK_FILE="$TEST_TMP/lock" "$SCRIPT" benjamin af-blocker "Cause" >/dev/null 2>&1; then
+    ESCALATION_DOOR_LOCK_FILE="$TEST_TMP/lock" "$SCRIPT" benjamin af-blocker "$COMPLETE_REQUEST" >/dev/null 2>&1; then
   fail "benjamin must refuse (non-zero, visible) when the mail cannot be sent"
+fi
+
+# --- benjamin writes a complete request with its timestamp and flag --------
+reset_beads
+seed af-blocker '{"id":"af-blocker","status":"open","metadata":{},"notes":"","labels":[]}'
+TESTS_RUN=$((TESTS_RUN + 1))
+blocking_request=$(jq '.bloquant = true' <<<"$COMPLETE_REQUEST")
+door benjamin af-blocker "$blocking_request" >/dev/null || fail "a complete request should be accepted"
+written=$(bead af-blocker)
+[[ $(jq -r '.metadata["gc.needs_benjamin"]' <<<"$written") == *"graphe du chantier T09"* ]] \
+  || fail "benjamin did not write the quoi field onto gc.needs_benjamin"
+[[ $(jq -r '.metadata["gc.escalation_pourquoi"]' <<<"$written") == *"c'est ta décision"* ]] \
+  || fail "benjamin did not write the pourquoi field"
+[[ $(jq -r '.metadata["gc.escalation_bloquant"]' <<<"$written") == "true" ]] \
+  || fail "benjamin did not write the blocking flag"
+[[ -n $(jq -r '.metadata["gc.escalation_horodatage"]' <<<"$written") ]] \
+  || fail "benjamin did not stamp a timestamp"
+que_faire=$(jq -r '.metadata["gc.escalation_que_faire"]' <<<"$written")
+[[ $(jq -r '.[0].lettre' <<<"$que_faire") == a ]] || fail "benjamin did not letter the first option 'a'"
+[[ $(jq -r '.[1].lettre' <<<"$que_faire") == b ]] || fail "benjamin did not letter the second option 'b'"
+[[ $(jq -r '.notes' <<<"$written") == *"NEEDS BENJAMIN"* ]] \
+  || fail "benjamin did not append the cause to the bead's notes"
+grep -Fq 'mail send human' "$TEST_TMP/calls.log" || fail "benjamin did not mail the escalation recipient"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+out=$(door list) || fail "list should succeed"
+grep -Fq "graphe du chantier T09" <<<"$out" \
+  || { echo "$out" >&2; fail "list did not display the complete request as before"; }
+
+# --- repondre writes the chosen option, clears, and wakes the Mayor --------
+TESTS_RUN=$((TESTS_RUN + 1))
+: >"$TEST_TMP/calls.log"
+door repondre af-blocker a >/dev/null || fail "repondre should succeed for a known option"
+written=$(bead af-blocker)
+[[ $(jq -r '.metadata["gc.escalation_response_option"]' <<<"$written") == a ]] \
+  || fail "repondre did not write the chosen option"
+[[ -n $(jq -r '.metadata["gc.escalation_response_at"]' <<<"$written") ]] \
+  || fail "repondre did not write when it happened"
+[[ $(jq -r '.metadata["gc.escalation_response_actor"]' <<<"$written") == benjamin ]] \
+  || fail "repondre did not write the acting actor"
+[[ $(jq -r '.metadata["gc.needs_benjamin"]' <<<"$written") == none ]] \
+  || fail "repondre did not clear NEEDS BENJAMIN"
+[[ $(jq -r '.notes' <<<"$written") == *"RÉPONSE"* ]] \
+  || fail "repondre did not trace the response in the bead's notes"
+grep -Fq 'mail send mayor' "$TEST_TMP/calls.log" || fail "repondre did not wake the Mayor"
+grep -Fq "répondu a sur af-blocker" "$TEST_TMP/calls.log" \
+  || fail "repondre's wake-up mail did not name the fixed phrase 'répondu <lettre> sur <bead>'"
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if door repondre af-blocker z >/dev/null 2>&1; then
+  fail "repondre with an option that was never offered must refuse"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+reset_beads
+seed af-no-options '{"id":"af-no-options","status":"open","metadata":{},"notes":"","labels":[]}'
+if door repondre af-no-options a >/dev/null 2>&1; then
+  fail "repondre on a bead with no recorded options must refuse"
 fi
 
 # --- list (read-only CLI) ---------------------------------------------------
 TESTS_RUN=$((TESTS_RUN + 1))
+reset_beads
 seed af-blocker '{"id":"af-blocker","status":"open","metadata":{"gc.needs_benjamin":"Irreversible production change"},"notes":"","labels":[]}'
 seed af-proposal-1 '{"id":"af-proposal-1","status":"open","metadata":{},"notes":"","labels":["proposal"]}'
 seed af-proposal-2 '{"id":"af-proposal-2","status":"open","metadata":{},"notes":"","labels":["proposal"]}'
@@ -97,12 +202,19 @@ ESCALATION_DOOR_NOW=$((T0 + 3600)) door sweep >/dev/null || fail "sweep should s
   || fail "sweep escalated to Benjamin before the 2h grace period elapsed"
 grep -Fq 'mail send human' "$TEST_TMP/calls.log" && fail "sweep mailed Benjamin before 2h"
 
-# At/after 2h: sweep must escalate to Benjamin.
+# At/after 2h: sweep must escalate to Benjamin -- and never fail even though
+# af-order carries no quoi/pourquoi/que_faire of its own (T06: an incomplete
+# source stays a written, incomplete request, not a sweep failure).
 TESTS_RUN=$((TESTS_RUN + 1))
 : >"$TEST_TMP/calls.log"
 ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should succeed at the 2h boundary"
-[[ $(jq -r '.metadata["gc.needs_benjamin"]' "$TEST_TMP/beads/af-order.json") == *"unresolved after 2h"* ]] \
+written=$(bead af-order)
+[[ $(jq -r '.metadata["gc.needs_benjamin"]' <<<"$written") == *"non résolue après 2h"* ]] \
   || fail "sweep did not promote the unresolved Mayor-first escalation to Benjamin"
+[[ $(jq -r '.metadata["gc.escalation_pourquoi"]' <<<"$written") == *"il n'a pas dit pourquoi"* ]] \
+  || fail "sweep did not fill the fixed repli pourquoi for an incomplete source"
+[[ $(jq -r '.metadata["gc.escalation_que_faire"]' <<<"$written") == *"continuer avec un agent"* ]] \
+  || fail "sweep did not fill the fixed repli option for an incomplete source"
 grep -Fq 'mail send human' "$TEST_TMP/calls.log" || fail "sweep did not mail Benjamin once promoted"
 
 # A second sweep must not re-page: the bead now carries gc.needs_benjamin.
@@ -110,6 +222,25 @@ TESTS_RUN=$((TESTS_RUN + 1))
 : >"$TEST_TMP/calls.log"
 ESCALATION_DOOR_NOW=$((T0 + 10800)) door sweep >/dev/null || fail "a later sweep should still succeed"
 grep -Fq 'mail send human' "$TEST_TMP/calls.log" && fail "sweep re-escalated an already-escalated bead"
+
+# A sweep promotion keeps quoi/pourquoi/que_faire escalation-door already
+# wrote on the bead, instead of overwriting them with the repli text.
+reset_beads
+EXISTING_QUE_FAIRE='[{"option":"Continuer","consequence":"Rien ne change.","lettre":"a"}]'
+seed af-has-fields "$(jq -nc --arg que_faire "$EXISTING_QUE_FAIRE" '
+  {id: "af-has-fields", status: "open",
+   metadata: {"gc.escalation_mayor_paged_at": "2026-09-30T00:00:00Z",
+              "gc.escalation_mayor_reason": "stuck PR",
+              "gc.escalation_pourquoi": "Déjà posée avec sa raison",
+              "gc.escalation_que_faire": $que_faire},
+   notes: "", labels: []}')"
+TESTS_RUN=$((TESTS_RUN + 1))
+ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should succeed on a bead with existing fields"
+written=$(bead af-has-fields)
+[[ $(jq -r '.metadata["gc.escalation_pourquoi"]' <<<"$written") == "Déjà posée avec sa raison" ]] \
+  || fail "sweep must keep an existing pourquoi instead of overwriting it with the repli text"
+[[ $(jq -r '.metadata["gc.escalation_que_faire"]' <<<"$written") == *"Continuer"* ]] \
+  || fail "sweep must keep the existing que_faire instead of overwriting it with the repli option"
 
 # A Mayor-first escalation resolved before 2h (cleared) must never reach Benjamin.
 reset_beads
@@ -147,17 +278,17 @@ reset_beads
 seed af-blocker '{"id":"af-blocker","status":"open","metadata":{},"notes":"","labels":[]}'
 TESTS_RUN=$((TESTS_RUN + 1))
 : >"$TEST_TMP/calls.log"
-door benjamin af-blocker "Cause" >/dev/null || fail "benjamin should succeed"
+door benjamin af-blocker "$COMPLETE_REQUEST" >/dev/null || fail "benjamin should succeed"
 grep -Fq 'clear af-blocker' "$TEST_TMP/calls.log" \
   || fail "the escalation mail must name escalation-door clear <bead>"
 
 # --- malformed / unknown bead ids are refused for every write command ------
 TESTS_RUN=$((TESTS_RUN + 1))
-if door benjamin 'prose, not an id' "Cause" >/dev/null 2>&1; then
+if door benjamin 'prose, not an id' "$COMPLETE_REQUEST" >/dev/null 2>&1; then
   fail "benjamin must refuse prose in place of a bead id"
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
-if door benjamin af-does-not-exist "Cause" >/dev/null 2>&1; then
+if door benjamin af-does-not-exist "$COMPLETE_REQUEST" >/dev/null 2>&1; then
   fail "benjamin on an unknown bead must refuse"
 fi
 
