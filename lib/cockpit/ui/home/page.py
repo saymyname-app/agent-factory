@@ -9,6 +9,8 @@ from datetime import datetime
 
 from cockpit.core.readmodel import PARIS
 from cockpit.requests.model import URGENT
+from cockpit.ui.actions.render import SCRIPT as ACTIONS_SCRIPT
+from cockpit.ui.actions.render import render_actions
 
 SECTION_TITLE = "Ce qui t'attend"
 EMPTY_TEXT = "Rien ne t'attend — vérifié à %s"
@@ -46,8 +48,8 @@ def render_requests_section(requests, verified_at=None, source_unknown=False, la
     items = "".join(_render_request(r) for r in requests)
     return (
         '<section class="cockpit-requests" data-state="filled">'
-        '<h2>%s</h2><ul class="cockpit-requests-list">%s</ul></section>\n'
-    ) % (html.escape(SECTION_TITLE), items)
+        '<h2>%s</h2><ul class="cockpit-requests-list">%s</ul></section>\n%s'
+    ) % (html.escape(SECTION_TITLE), items, ACTIONS_SCRIPT)
 
 
 def _render_request(r):
@@ -83,8 +85,13 @@ def _render_request(r):
         "<dl><dt>identifiant</dt><dd>%s</dd><dt>type</dt><dd>%s</dd></dl></details>"
     ) % (html.escape(r.id), html.escape(r.type))
 
+    # Out-of-scope touch (T13, af-cx20q9 — declared scope
+    # lib/cockpit/ui/actions/**): the Operator Action controls only mean
+    # something attached to the request they act on.
+    actions_html = render_actions(r)
+
     return (
-        '<li class="cockpit-request" data-level="%s" data-incomplete="%s">'
+        '<li class="cockpit-request" data-level="%s" data-incomplete="%s" data-reportee="%s">'
         '<span class="cockpit-request-level">%s</span>'
         "<p class=\"cockpit-request-quoi\">%s</p>"
         "%s"
@@ -93,10 +100,12 @@ def _render_request(r):
         "%s"
         '<p class="cockpit-request-meta">%s</p>'
         "%s"
+        "%s"
         "</li>"
     ) % (
         niveau_class,
         "true" if r.incomplete else "false",
+        "true" if r.reportee else "false",
         html.escape(r.niveau),
         html.escape(r.quoi),
         incomplete_badge,
@@ -105,6 +114,7 @@ def _render_request(r):
         recommande_note,
         meta,
         details,
+        actions_html,
     )
 
 

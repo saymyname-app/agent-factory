@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""A controllable fake `bd` for the cockpit actions seam test (T13,
+af-cx20q9 — Spec af-oohx2x Testing Decisions: "faux bd"). Keeps the beads
+list as a JSON array in $FAKE_BD_STATE_FILE (same shape as
+tests/fixtures/cockpit/requests/fake-bd) but, unlike that read-only fake,
+also understands `update` and `create` so a test can assert what the
+cockpit wrote as an Operator Action trace (spec .35) and see it reflected
+on the next `list` poll — exactly like the live `bd` the trace would
+actually land on.
+
+Every invocation is appended, one JSON line per call, to
+$FAKE_BD_CALLS_FILE — the seam test's only way to see order/content (no
+internal function is ever called directly, Testing Decisions).
+
+Refuses every call it wasn't told to answer, loudly, like the other fakes
+in tests/fixtures/ — a test that stops driving this should see a clear
+failure, not a false green from a silent no-op.
+"""
+import json
+import os
+import sys
+import uuid
+
+
+def _state_path():
+    return os.environ["FAKE_BD_STATE_FILE"]
+
+
+def _load():
+    path = _state_path()
+    if not os.path.exists(path):
+        return []
+    with open(path) as fh:
+        raw = fh.read().strip()
+    return json.loads(raw) if raw else []
+
+
+def _save(beads):
+    with open(_state_path(), "w") as fh:
+        json.dump(beads, fh)
+
+
+def _log_call(args):
+    log_path = os.environ.get("FAKE_BD_CALLS_FILE")
+    if not log_path:
+        return
+    with open(log_path, "a") as fh:
+        fh.write(json.dumps(args) + "\n")
+
+
+def _fail_if_flagged():
+    fail_flag = os.environ.get("FAKE_BD_FAIL_FLAG_FILE")
+    if fail_flag and os.path.exists(fail_flag):
+        sys.stderr.write("fake bd (cockpit-actions): forced failure\n")
+        sys.exit(1)
+
+
+def cmd_list(args):
+    _fail_if_flagged()
+    beads = _load()
+    has_key = None
+    if "--has-metadata-key" in args:
+        has_key = args[args.index("--has-metadata-key") + 1]
+    if has_key:
+        beads = [b for b in beads if has_key in (b.get("metadata") or {})]
+    sys.stdout.write(json.dumps(beads))
+    sys.exit(0)
+
+
+def cmd_update(args):
+    _fail_if_flagged()
+    if not args:
+        sys.stderr.write("fake bd (cockpit-actions): update needs an id\n")
+        sys.exit(1)
+    bead_id = args[0]
+    rest = args[1:]
+    beads = _load()
+    bead = next((b for b in beads if b.get("id") == bead_id), None)
+    if bead is None:
+        sys.stderr.write("fake bd (cockpit-actions): unknown bead %s\n" % bead_id)
+        sys.exit(1)
+    metadata = bead.setdefault("metadata", {})
+    notes = bead.get("notes", "")
+    i = 0
+    while i < len(rest):
+        token = rest[i]
+        if token == "--set-metadata":
+            i += 1
+            key, _, value = rest[i].partition("=")
+            metadata[key] = value
+        elif token == "--append-notes":
+            i += 1
+            notes = (notes + "\n" + rest[i]) if notes else rest[i]
+        i += 1
+    bead["notes"] = notes
+    _save(beads)
+    sys.stdout.write(json.dumps(bead))
+    sys.exit(0)
+
+
+def cmd_create(args):
+    _fail_if_flagged()
+    title = args[0] if args and not args[0].startswith("--") else "(sans titre)"
+    metadata = {}
+    if "--metadata" in args:
+        raw = args[args.index("--metadata") + 1]
+        metadata = json.loads(raw)
+    beads = _load()
+    new_id = "af-journal-" + uuid.uuid4().hex[:6]
+    beads.append(
+        {
+            "id": new_id,
+            "status": "open",
+            "labels": [],
+            "notes": "",
+            "metadata": metadata,
+            "title": title,
+        }
+    )
+    _save(beads)
+    sys.stdout.write(new_id + "\n")
+    sys.exit(0)
+
+
+def main():
+    argv = sys.argv[1:]
+    # cockpit.core.beads_source always appends --json for reads; strip it
+    # before dispatch, this fake always emits JSON regardless.
+    call_args = [a for a in argv if a != "--json"]
+    _log_call(call_args)
+    if not call_args:
+        sys.exit(1)
+    command, rest = call_args[0], call_args[1:]
+    if command == "list":
+        cmd_list(rest)
+    elif command == "update":
+        cmd_update(rest)
+    elif command == "create":
+        cmd_create(rest)
+    else:
+        sys.stderr.write("fake bd (cockpit-actions): unsupported command %s\n" % command)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

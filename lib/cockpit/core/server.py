@@ -8,6 +8,8 @@ from the tailnet or LAN by an operator mistake in a config file.
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from cockpit.access.guard import session_cookie_header
+from cockpit.actions.registry import ActionError
 from cockpit.core.freshness import UNKNOWN
 from cockpit.requests.builder import build_requests
 from cockpit.requests.defects import DefectCounter
@@ -31,6 +33,13 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/api/requests":
             self._send_json(self._requests_payload(read_model.snapshot()))
             return
+        if self.path.startswith("/api/actions/"):
+            # T13, af-cx20q9 AC1: an action in GET is refused the same
+            # way as any other guard failure, not a bare 404 — the guard
+            # itself rejects on method before anything else is checked.
+            guard_result = self.server.action_guard.check("GET", self.headers)
+            self._send_json({"error": guard_result.reason}, status=403)
+            return
         if self.path == "/":
             snapshot = read_model.snapshot()
             stale_names = read_model.stale_or_unknown()
@@ -43,11 +52,47 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            # T13, af-cx20q9: the SameSite=Strict cookie an action POST
+            # must echo back — a cross-site POST never carries it, so its
+            # presence alone proves this request came from a page the
+            # cockpit itself served (cockpit.access.guard.ActionGuard).
+            self.send_header("Set-Cookie", session_cookie_header(self.server.session_token))
             self.end_headers()
             self.wfile.write(body)
             return
         self.send_response(404)
         self.end_headers()
+
+    def do_POST(self):
+        """Operator Actions (T13, af-cx20q9; spec af-oohx2x §"Actions
+        opérateur"). Every write goes through the access guard first —
+        refused, nothing downstream (Beads included) is ever touched."""
+        if not self.path.startswith("/api/actions/"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        action = self.path[len("/api/actions/"):]
+        guard_result = self.server.action_guard.check("POST", self.headers)
+        if not guard_result.allowed:
+            self._send_json({"error": guard_result.reason}, status=403)
+            return
+        handler = self.server.action_handlers.get(action)
+        if handler is None:
+            self._send_json({"error": "unknown_action"}, status=404)
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw_body = self.rfile.read(length) if length else b"{}"
+        try:
+            payload = json.loads(raw_body.decode("utf-8") or "{}")
+        except ValueError:
+            self._send_json({"error": "bad_json"}, status=400)
+            return
+        try:
+            result = handler(payload)
+        except ActionError as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        self._send_json(result)
 
     def _render_requests_section(self, snapshot):
         """"Ce qui t'attend" (T12, af-is5e97): built from the beads source
@@ -92,22 +137,24 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                     "verifie_a": r.verifie_a,
                     "incomplete": r.incomplete,
                     "missing_fields": r.missing_fields,
+                    "acquittee": r.acquittee,
+                    "reportee": r.reportee,
                 }
                 for r in requests
             ],
             "defect_count": self.server.defect_counter.count,
         }
 
-    def _send_json(self, payload):
+    def _send_json(self, payload, status=200):
         body = json.dumps(payload).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
 
-def make_server(read_model, host="127.0.0.1", port=0):
+def make_server(read_model, host="127.0.0.1", port=0, action_guard=None, action_handlers=None, session_token=""):
     if host not in ALLOWED_HOSTS:
         raise ValueError(
             "cockpit refuses to listen on %r — only 127.0.0.1/localhost "
@@ -123,4 +170,17 @@ def make_server(read_model, host="127.0.0.1", port=0):
         raise ValueError("cockpit bound to %r, not 127.0.0.1 — refusing" % (sockname[0],))
     server.read_model = read_model
     server.defect_counter = DefectCounter()
+    # T13, af-cx20q9: no guard supplied (a caller that only wants GET /,
+    # e.g. an older test) means every action is refused rather than left
+    # unchecked -- fail closed, never fail open on a write path.
+    server.action_guard = action_guard or _AlwaysRefuseGuard()
+    server.action_handlers = action_handlers or {}
+    server.session_token = session_token
     return server
+
+
+class _AlwaysRefuseGuard:
+    def check(self, method, headers):
+        from cockpit.access.guard import GuardResult, REFUSED_SESSION
+
+        return GuardResult(False, REFUSED_SESSION)
