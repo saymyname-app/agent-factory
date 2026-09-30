@@ -63,7 +63,18 @@ def http_post(port, path, timeout=3):
         return resp.status
 
 
-def wait_until(predicate, timeout=15, interval=0.05):
+# CI runners are observed to run this file ~1.5-2x slower than a local
+# machine (seed data: 75s in CI vs 42s local for the same 7 tests), and
+# each beads poll spawns a fresh `python3` fixture process
+# (COCKPIT_BEADS_POLL_SECONDS=0.2) whose read is silently dropped on any
+# transient failure (PollingSource._poll_once, by design: one bad read
+# never takes the cockpit down). A 15s ceiling that is comfortable locally
+# can intermittently starve for actual polls under CI load; give every
+# wait_until call the same headroom.
+DEFAULT_WAIT_SECONDS = 30
+
+
+def wait_until(predicate, timeout=DEFAULT_WAIT_SECONDS, interval=0.05):
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
@@ -151,7 +162,16 @@ class CockpitHealthZoneTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def set_beads(self, beads):
-        self.bd_state_file.write_text(json.dumps(beads))
+        # Atomic replace: the beads poller (COCKPIT_BEADS_POLL_SECONDS=0.2)
+        # runs concurrently and re-reads this file on its own rhythm. A
+        # plain write_text() lets a poll land mid-write and hand the fixture
+        # a truncated/partial JSON body -- json.loads() raises, and
+        # PollingSource._poll_once() drops that read silently by design
+        # (one bad source read never takes the cockpit down), so the test
+        # would just wait out its timeout for a read that never happened.
+        tmp = self.bd_state_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(beads))
+        tmp.replace(self.bd_state_file)
 
     def start_cockpit(self, extra_env=None):
         env = dict(os.environ)
@@ -186,7 +206,7 @@ class CockpitHealthZoneTest(unittest.TestCase):
     def home(self):
         return http_get(self.port, "/")[1]
 
-    def wait_for_line_containing(self, needle, timeout=15):
+    def wait_for_line_containing(self, needle, timeout=DEFAULT_WAIT_SECONDS):
         return wait_until(
             lambda: next((l for l in self.health()["lines"] if needle in l["text"]), None),
             timeout=timeout,
@@ -236,7 +256,7 @@ class CockpitHealthZoneTest(unittest.TestCase):
         self.assertFalse(any("Superviseur injoignable" in l["text"] for l in self.health()["lines"]))
 
         self.fake_gc.go_down()
-        line = self.wait_for_line_containing("Superviseur injoignable", timeout=15)
+        line = self.wait_for_line_containing("Superviseur injoignable")
         self.assertEqual("bad", line["kind"])
 
         self.fake_gc.go_up()
@@ -327,11 +347,19 @@ class CockpitHealthZoneTest(unittest.TestCase):
             "metadata": {"gc.loop_detected": "true", "gc.loop_since": time.time()},
         }])
         # Poll interval is 300s -- without a recheck this would not show up
-        # within the test's lifetime.
-        status = http_post(self.port, "/api/health/recheck")
-        self.assertIn(status, (200, 303))  # urllib follows the 303 -> final GET's 200
-        health = self.health()
-        self.assertTrue(any("boucle" in l["text"] for l in health["lines"]))
+        # within the test's lifetime. /api/health/recheck reads every
+        # source synchronously before answering, but a single subprocess
+        # read can still be silently dropped by PollingSource._poll_once()
+        # under CI load (design: one bad source read never takes the
+        # cockpit down) -- so re-issue the recheck instead of trusting the
+        # very first one to land.
+        def _recheck_shows_boucle():
+            status = http_post(self.port, "/api/health/recheck")
+            self.assertIn(status, (200, 303))  # urllib follows the 303 -> final GET's 200
+            health = self.health()
+            return health if any("boucle" in l["text"] for l in health["lines"]) else None
+
+        wait_until(_recheck_shows_boucle, interval=0.5)
 
 
 if __name__ == "__main__":
