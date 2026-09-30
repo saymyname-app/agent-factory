@@ -62,9 +62,20 @@ def render_actions(request):
 
 # One tap, then an "Annuler" window of 10 s before the POST actually goes
 # out (spec .33) -- Copier avec un agent copies to the clipboard in the
-# same pattern instead of writing anything. Everything else (répondre,
-# accepter/rejeter une proposition, ...) is a later ticket's two-step
-# confirmation and is not wired up here.
+# same pattern instead of writing anything.
+#
+# répondre, accepter/rejeter/reporter une proposition, and relancer (T14,
+# af-peh3yy) use a different, stricter pattern instead: "deux temps"
+# (spec: every one of those five gestures needs a two-step confirmation).
+# A first click on one of these controls only arms it (toggles a
+# "Confirmer ?" state, no network call at all); a second click on the
+# same control within the confirm window sends the POST with
+# `confirm: true`. Clicking anything else, or waiting past the window,
+# disarms it -- so a single tap never writes anything
+# (cockpit.actions.registry also refuses a POST missing `confirm: true`
+# server-side, so this is a defence in depth, not the only guard).
+TWO_STEP_ACTIONS = ("repondre", "accepter_proposition", "rejeter_proposition", "reporter_proposition", "relancer")
+
 SCRIPT = """
 <script>
 (function () {
@@ -92,10 +103,92 @@ SCRIPT = """
       if (!cancelled) { run(); }
     }, 10000);
   }
+  // "Deux temps" (T14, af-peh3yy): répondre, accepter/rejeter/reporter
+  // une proposition, and relancer never send confirm:true on a first
+  // click -- they only arm the control (CSS class + label change). A
+  // second click on the SAME armed control within CONFIRM_WINDOW_MS
+  // sends confirm:true; any other click disarms it first.
+  var TWO_STEP_ACTIONS = ['repondre', 'accepter_proposition', 'rejeter_proposition', 'reporter_proposition', 'relancer'];
+  var CONFIRM_WINDOW_MS = 10000;
+  var armed = null; // {el, timer}
+
+  function disarm() {
+    if (armed) {
+      armed.el.classList.remove('cockpit-armed');
+      armed.el.textContent = armed.originalLabel;
+      clearTimeout(armed.timer);
+      armed = null;
+    }
+  }
+
+  function bodyFor(action, el) {
+    var beadId = el.getAttribute('data-bead-id');
+    if (action === 'repondre') {
+      return {bead_id: beadId, lettre: el.getAttribute('data-lettre') || ''};
+    }
+    if (action === 'accepter_proposition') {
+      return {bead_id: beadId};
+    }
+    if (action === 'rejeter_proposition') {
+      var raisonEl = document.querySelector('.cockpit-rejeter-raison[data-bead-id="' + beadId + '"]');
+      return {bead_id: beadId, raison: raisonEl ? raisonEl.value : ''};
+    }
+    if (action === 'reporter_proposition') {
+      var heureEl = document.querySelector('.cockpit-reporter-heure[data-bead-id="' + beadId + '"]');
+      return {bead_id: beadId, heure: heureEl ? heureEl.value : ''};
+    }
+    if (action === 'relancer') {
+      return {
+        bead_id: beadId,
+        target_type: el.getAttribute('data-target-type') || '',
+        session_id: el.getAttribute('data-session-id') || undefined,
+        order_name: el.getAttribute('data-order-name') || undefined
+      };
+    }
+    return {bead_id: beadId};
+  }
+
   document.addEventListener('click', function (event) {
     var el = event.target.closest('[data-action]');
     if (!el) { return; }
     var action = el.getAttribute('data-action');
+
+    if (TWO_STEP_ACTIONS.indexOf(action) !== -1) {
+      if (armed && armed.el === el) {
+        var body = bodyFor(action, el);
+        body.confirm = true;
+        disarm();
+        post(action, body).then(function (resp) {
+          return resp.json();
+        }).then(function (data) {
+          // répondre's immediate feedback (spec .26: "la demande affiche
+          // « répondu b à HH:MM, en cours de traitement par l'usine »")
+          // -- a transient toast at the moment of the action, since the
+          // request itself exits the list once gc.needs_benjamin clears
+          // (builder.py: "Exit is at-source only").
+          if (data && data.display) {
+            var toast = document.createElement('div');
+            toast.className = 'cockpit-undo-toast cockpit-repondu-toast';
+            toast.textContent = data.display;
+            document.body.appendChild(toast);
+            setTimeout(function () { toast.remove(); }, 10000);
+          }
+        });
+        return;
+      }
+      disarm();
+      var originalLabel = el.textContent;
+      el.classList.add('cockpit-armed');
+      el.textContent = 'Confirmer ?';
+      armed = {
+        el: el,
+        originalLabel: originalLabel,
+        timer: setTimeout(disarm, CONFIRM_WINDOW_MS)
+      };
+      return;
+    }
+
+    disarm();
     var beadId = el.getAttribute('data-bead-id');
     if (action === 'acquitter') {
       withUndo('Acquitter', function () { post('acquitter', {bead_id: beadId}); });
