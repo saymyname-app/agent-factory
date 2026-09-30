@@ -127,3 +127,55 @@ project_registry_check_coverage() {
 
   [ "$missing" -eq 0 ]
 }
+
+# project_registry_check_project_coverage <descriptors_dir> <rig-1> [<rig-2> ...]
+#   config/projects/*.toml files (read above) describe rigs, not projects;
+#   config/project-descriptors/*.json files (T04, af-xqgvat) each declare a
+#   project_id and the rigs it spans. One rig must belong to exactly one
+#   project. Given the rig names actually registered with Gas City, fails
+#   loudly on stderr, naming the rig, if it belongs to no declared project
+#   or to more than one -- this is the CI check the spec asks for (af-oohx2x
+#   .12).
+project_registry_check_project_coverage() {
+  local descriptors_dir="$1"
+  shift
+  local mapping rig owners count problem=0
+
+  mapping="$(python3 -c '
+import json
+import sys
+from pathlib import Path
+
+directory = Path(sys.argv[1])
+if directory.is_dir():
+    for file in sorted(directory.glob("*.json")):
+        try:
+            data = json.loads(file.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        project_id = data.get("project_id")
+        rigs = data.get("rigs")
+        if not isinstance(project_id, str) or not isinstance(rigs, list):
+            continue
+        for rig in rigs:
+            if isinstance(rig, str):
+                print(f"{rig}|{project_id}")
+' "$descriptors_dir")" || {
+    echo "project_registry: failed to read project descriptors in $descriptors_dir" >&2
+    return 1
+  }
+
+  for rig in "$@"; do
+    owners="$(printf '%s\n' "$mapping" | awk -F'|' -v r="$rig" '$1==r{print $2}')"
+    count="$(printf '%s\n' "$owners" | grep -c . || true)"
+    if [ "$count" -eq 0 ]; then
+      echo "project_registry: rig '$rig' belongs to no declared project (config/project-descriptors/*.json)" >&2
+      problem=1
+    elif [ "$count" -gt 1 ]; then
+      echo "project_registry: rig '$rig' is declared in more than one project: $(printf '%s' "$owners" | tr '\n' ' ')" >&2
+      problem=1
+    fi
+  done
+
+  [ "$problem" -eq 0 ]
+}

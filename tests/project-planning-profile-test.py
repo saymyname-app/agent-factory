@@ -12,6 +12,9 @@ FIXTURES = ROOT / "tests" / "fixtures" / "project-planning-profile"
 PROFILES = FIXTURES / "profiles"
 CITY_REGISTRY = FIXTURES / "city-registry.json"
 PROJECTS_CONFIG_DIR = FIXTURES / "projects"
+DESCRIPTORS = FIXTURES / "descriptors"
+DESCRIPTORS_LIST = FIXTURES / "descriptors-list"
+REAL_DESCRIPTORS_DIR = ROOT / "config" / "project-descriptors"
 
 
 class ProjectPlanningProfileTest(unittest.TestCase):
@@ -157,6 +160,106 @@ class ProjectPlanningProfileTest(unittest.TestCase):
         error = json.loads(proc.stdout)
         self.assertFalse(error["ok"])
         self.assertIn("no-such-project", error["error"])
+
+    # --- extended descriptor (T04, af-xqgvat: "un rig = un projet") --------
+
+    def describe(self, path, check=False):
+        return subprocess.run(
+            (str(TOOL), "describe", str(path)),
+            cwd=ROOT, text=True, capture_output=True, check=check,
+        )
+
+    def test_valid_descriptor_is_accepted_and_describes_the_project(self):
+        result = json.loads(self.describe(DESCRIPTORS / "fixture-project-a.json", check=True).stdout)
+        self.assertEqual("fixture-project-a", result["project_id"])
+        self.assertEqual(["fixture-rig-a"], result["rigs"])
+        self.assertEqual({}, result["promotion_branch"])
+
+    def test_valid_descriptor_with_promotion_branch_is_accepted(self):
+        result = json.loads(self.describe(DESCRIPTORS / "fixture-project-b.json", check=True).stdout)
+        self.assertEqual(
+            {"from": "dev", "to": "main"}, result["promotion_branch"]["fixture-rig-b-back"]
+        )
+
+    def test_descriptor_missing_a_required_field_is_rejected(self):
+        proc = self.describe(DESCRIPTORS / "invalid-missing-field.json")
+        self.assertNotEqual(0, proc.returncode)
+        error = json.loads(proc.stdout)
+        self.assertFalse(error["valid"])
+        self.assertIn("knowledge_repo", error["error"])
+
+    def test_promotion_branch_naming_an_undeclared_rig_is_rejected(self):
+        proc = self.describe(DESCRIPTORS / "invalid-promotion-undeclared-rig.json")
+        self.assertNotEqual(0, proc.returncode)
+        error = json.loads(proc.stdout)
+        self.assertFalse(error["valid"])
+        self.assertIn("promotion_branch", error["error"])
+        self.assertIn("not in rigs", error["error"])
+
+    def test_descriptor_has_no_production_field(self):
+        proc = self.describe(DESCRIPTORS / "invalid-production-field.json")
+        self.assertNotEqual(0, proc.returncode)
+        error = json.loads(proc.stdout)
+        self.assertFalse(error["valid"])
+        self.assertIn("production", error["error"])
+
+    def test_descriptor_has_no_language_field(self):
+        descriptor = json.loads((DESCRIPTORS / "fixture-project-a.json").read_text())
+        descriptor["language"] = "fr"
+        tmp = DESCRIPTORS / "tmp-invalid-language-field.json"
+        tmp.write_text(json.dumps(descriptor))
+        try:
+            proc = self.describe(tmp)
+            self.assertNotEqual(0, proc.returncode)
+            error = json.loads(proc.stdout)
+            self.assertFalse(error["valid"])
+            self.assertIn("language", error["error"])
+        finally:
+            tmp.unlink()
+
+    def test_list_reports_declared_projects_as_json(self):
+        proc = subprocess.run(
+            (str(TOOL), "list", "--descriptors-dir", str(DESCRIPTORS_LIST)),
+            cwd=ROOT, text=True, capture_output=True, check=True,
+        )
+        result = json.loads(proc.stdout)
+        self.assertTrue(result["ok"])
+        project_ids = {project["project_id"] for project in result["projects"]}
+        self.assertEqual({"fixture-project-a", "fixture-project-b"}, project_ids)
+
+    # --- real descriptors (acceptance criterion: agent-factory & saymyname) -
+
+    def test_real_agent_factory_descriptor_has_no_promotion_branch(self):
+        result = json.loads(
+            self.describe(REAL_DESCRIPTORS_DIR / "agent-factory.json", check=True).stdout
+        )
+        self.assertEqual("agent-factory", result["project_id"])
+        self.assertEqual(["agent-factory"], result["rigs"])
+        self.assertEqual({}, result["promotion_branch"])
+        self.assertEqual("docs/roadmap.toml", result["roadmap_path"])
+        self.assertEqual("bin/rituals-status", result["rituals_status_command"])
+
+    def test_real_saymyname_descriptor_declares_dev_to_main_promotion(self):
+        result = json.loads(
+            self.describe(REAL_DESCRIPTORS_DIR / "saymyname.json", check=True).stdout
+        )
+        self.assertEqual("saymyname", result["project_id"])
+        self.assertEqual(["saymyname-backend", "saymyname-frontend"], result["rigs"])
+        self.assertEqual("saymyname-app/Say-my-name-product", result["knowledge_repo"])
+        self.assertEqual("knowledge/roadmap.toml", result["roadmap_path"])
+        self.assertEqual("tools/rituals-status.sh", result["rituals_status_command"])
+        for rig in result["rigs"]:
+            self.assertEqual({"from": "dev", "to": "main"}, result["promotion_branch"][rig])
+
+    def test_real_descriptors_are_listed(self):
+        proc = subprocess.run(
+            (str(TOOL), "list", "--descriptors-dir", str(REAL_DESCRIPTORS_DIR)),
+            cwd=ROOT, text=True, capture_output=True, check=True,
+        )
+        result = json.loads(proc.stdout)
+        self.assertTrue(result["ok"])
+        project_ids = {project["project_id"] for project in result["projects"]}
+        self.assertEqual({"agent-factory", "saymyname"}, project_ids)
 
 
 if __name__ == "__main__":

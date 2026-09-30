@@ -95,3 +95,73 @@ printf '%s\n' "$coverage_err" | grep -q "zz-fixture-orphan-rig" \
   || fail "check_coverage's failure did not name the orphan rig: $coverage_err"
 
 echo "OK lib/project_registry.sh: a new project file alone gives a rig protected_rigs/guard/delivery-guard/deliver-close coverage, and an unregistered rig fails loudly by name"
+
+# ---------------------------------------------------------------------------
+# 4. project_registry_check_project_coverage: config/project-descriptors/
+#    (T04, af-xqgvat) each declare a project_id and the rigs it spans -- one
+#    rig must belong to exactly one project.
+# ---------------------------------------------------------------------------
+DESCRIPTORS_DIR="$TMP/config/project-descriptors"
+mkdir -p "$DESCRIPTORS_DIR"
+
+cat > "$DESCRIPTORS_DIR/zz-fixture-project-a.json" <<'EOF'
+{
+  "contract": "agent-factory-project-descriptor/v1",
+  "project_id": "zz-fixture-project-a",
+  "display_name": "Fixture A",
+  "rigs": ["zz-fixture-rig-a"],
+  "knowledge_repo": "zz-fixture/knowledge-a",
+  "roadmap_path": "docs/roadmap.toml",
+  "rituals_status_command": "bin/rituals-status",
+  "promotion_branch": {}
+}
+EOF
+
+cat > "$DESCRIPTORS_DIR/zz-fixture-project-b.json" <<'EOF'
+{
+  "contract": "agent-factory-project-descriptor/v1",
+  "project_id": "zz-fixture-project-b",
+  "display_name": "Fixture B",
+  "rigs": ["zz-fixture-rig-b"],
+  "knowledge_repo": "zz-fixture/knowledge-b",
+  "roadmap_path": "docs/roadmap.toml",
+  "rituals_status_command": "bin/rituals-status",
+  "promotion_branch": {}
+}
+EOF
+
+# 4a. every given rig belongs to exactly one declared project: passes.
+project_registry_check_project_coverage "$DESCRIPTORS_DIR" "zz-fixture-rig-a" "zz-fixture-rig-b" \
+  || fail "check_project_coverage failed even though every rig belongs to exactly one project"
+
+# 4b. a rig with no declared project fails loudly, by name.
+coverage_err="$(project_registry_check_project_coverage "$DESCRIPTORS_DIR" "zz-fixture-rig-a" "zz-fixture-orphan-rig" 2>&1)" && \
+  fail "check_project_coverage should have failed for a rig with no declared project"
+printf '%s\n' "$coverage_err" | grep -q "zz-fixture-orphan-rig" \
+  || fail "check_project_coverage's failure did not name the orphan rig: $coverage_err"
+
+# 4c. a rig declared in two projects fails loudly, by name, naming both
+#     projects.
+cat > "$DESCRIPTORS_DIR/zz-fixture-project-c.json" <<'EOF'
+{
+  "contract": "agent-factory-project-descriptor/v1",
+  "project_id": "zz-fixture-project-c",
+  "display_name": "Fixture C",
+  "rigs": ["zz-fixture-rig-a"],
+  "knowledge_repo": "zz-fixture/knowledge-c",
+  "roadmap_path": "docs/roadmap.toml",
+  "rituals_status_command": "bin/rituals-status",
+  "promotion_branch": {}
+}
+EOF
+
+coverage_err="$(project_registry_check_project_coverage "$DESCRIPTORS_DIR" "zz-fixture-rig-a" 2>&1)" && \
+  fail "check_project_coverage should have failed for a rig declared in two projects"
+printf '%s\n' "$coverage_err" | grep -q "zz-fixture-rig-a" \
+  || fail "check_project_coverage's failure did not name the doubly-declared rig: $coverage_err"
+printf '%s\n' "$coverage_err" | grep -q "zz-fixture-project-a" \
+  || fail "check_project_coverage's failure did not name one of the two projects: $coverage_err"
+printf '%s\n' "$coverage_err" | grep -q "zz-fixture-project-c" \
+  || fail "check_project_coverage's failure did not name the other of the two projects: $coverage_err"
+
+echo "OK lib/project_registry.sh: project_registry_check_project_coverage refuses a rig with no project and a rig declared in two projects"

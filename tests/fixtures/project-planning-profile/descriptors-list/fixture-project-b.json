@@ -1,0 +1,13 @@
+{
+  "contract": "agent-factory-project-descriptor/v1",
+  "project_id": "fixture-project-b",
+  "display_name": "Fixture B",
+  "rigs": ["fixture-rig-b-back", "fixture-rig-b-front"],
+  "knowledge_repo": "zz-fixture/knowledge-b",
+  "roadmap_path": "knowledge/roadmap.toml",
+  "rituals_status_command": "tools/rituals-status.sh",
+  "promotion_branch": {
+    "fixture-rig-b-back": {"from": "dev", "to": "main"},
+    "fixture-rig-b-front": {"from": "dev", "to": "main"}
+  }
+}
