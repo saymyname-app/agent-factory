@@ -280,16 +280,64 @@ def acceptance_criteria_from_description(description: str) -> list[str]:
     return items
 
 
-def escalate_reslice_refusal(convoy_id: str, reason: str) -> None:
+MAX_ESCALATION_LINE = 140
+
+
+def truncate_line(text: str, limit: int = MAX_ESCALATION_LINE) -> str:
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+def escalate_reslice_refusal(
+    convoy_id: str, ticket_key: str, ticket_bead_id: str, author: str, reason: str,
+) -> None:
     """Best-effort NEEDS BENJAMIN entry for a reslice `patch` refused because
     it would have changed acceptance criteria without a Planning Run (O09):
     a failed escalation must never look like a quietly-dropped refusal, but
     it also must not turn an already-failing patch into a crash.
+
+    T05: `escalation-door benjamin` refuses anything but a JSON object
+    carrying quoi/pourquoi/que_faire (options, each with its consequence)
+    and langue -- a bare reason string (this call's shape before T05) no
+    longer satisfies that contract.
     """
     escalation_door = os.environ.get("ESCALATION_DOOR_BIN", str(ROOT / "bin" / "escalation-door"))
+    operator_config_bin = tool_path("OPERATOR_CONFIG_BIN", "operator-config")
+    try:
+        language = operator_language(operator_config_bin)
+    except PublishError:
+        return
+    quoi = truncate_line(
+        f"Reslice refusé : {ticket_key} ({ticket_bead_id}) changerait ses critères d'acceptation"
+    )
+    pourquoi = truncate_line(
+        f"Un reslice Mayor-first (patch de {author}) ne peut pas changer des critères déjà "
+        "publiés sans un nouveau Planning Run."
+    )
+    payload = json.dumps({
+        "quoi": quoi,
+        "pourquoi": pourquoi,
+        "que_faire": [
+            {
+                "option": truncate_line("Lancer un Planning Run pour re-approuver le graphe"),
+                "consequence": truncate_line(
+                    "Les nouveaux critères sont republiés après approbation ; le patch reprend ensuite."
+                ),
+                "recommande": True,
+                "raison": truncate_line(reason),
+            },
+            {
+                "option": truncate_line("Republier le patch sans ce changement de critères"),
+                "consequence": truncate_line(f"{ticket_key} garde ses critères déjà publiés."),
+            },
+        ],
+        "langue": language,
+    }, ensure_ascii=False)
     try:
         subprocess.run(
-            [escalation_door, "benjamin", convoy_id, reason],
+            [escalation_door, "benjamin", convoy_id, payload],
             check=False, capture_output=True, text=True,
         )
     except OSError:
@@ -308,6 +356,17 @@ def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str
         artifact.get("labels") or ["approved-ticket-graph", "factory-refactor"], "artifact.labels"
     )]
     ticket_labels = [label for label in graph_labels if label != "approved-ticket-graph"]
+    convoy_metadata = {
+        "gc.graph_digest": digest,
+        "gc.plane": "delivery",
+        "gc.artifact_id": artifact["id"],
+        "gc.spec_id": spec["id"],
+        "gc.spec_digest": spec["digest"],
+        "gc.publication_validated": "true",
+    }
+    project_id = artifact.get("project_id")
+    if project_id:
+        convoy_metadata["gc.project_id"] = str(project_id)
     nodes: list[dict[str, Any]] = [
         {
             "key": "_convoy",
@@ -318,14 +377,7 @@ def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str
                 "The Mayor advances only positively eligible delivery-plane children."
             ),
             "labels": graph_labels,
-            "metadata": {
-                "gc.graph_digest": digest,
-                "gc.plane": "delivery",
-                "gc.artifact_id": artifact["id"],
-                "gc.spec_id": spec["id"],
-                "gc.spec_digest": spec["digest"],
-                "gc.publication_validated": "true",
-            },
+            "metadata": convoy_metadata,
         }
     ]
     edges: list[dict[str, str]] = []
@@ -481,11 +533,7 @@ def patch(
                 existing_ac = acceptance_criteria_from_description(member["description"])
                 new_ac = [str(item) for item in ticket["acceptance_criteria"]]
                 if existing_ac != new_ac:
-                    escalation_reason = (
-                        f"reslice patch for {key} ({member['id']}) would change acceptance criteria "
-                        f"without a Planning Run -- author={author}, reason={reason}"
-                    )
-                    escalate_reslice_refusal(convoy_id, escalation_reason)
+                    escalate_reslice_refusal(convoy_id, key, member["id"], author, reason)
                     raise PublishError(
                         f"{key} ({member['id']}) acceptance criteria changed in a reslice patch; "
                         "refused and escalated to NEEDS BENJAMIN"
@@ -724,6 +772,19 @@ def declared_human_approver(project: str, config_dir: Path, profile_bin: str) ->
     )["human_approver"]
 
 
+def operator_language(operator_config_bin: str) -> str:
+    """The Operator Language (`bin/operator-config language`), so a graph's
+    declared `language` metadata can be checked against it (T05, .6/.8)."""
+    try:
+        proc = subprocess.run([operator_config_bin, "language"], capture_output=True, text=True)
+    except OSError as exc:
+        raise PublishError(f"could not run {operator_config_bin}: {exc}") from exc
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        raise PublishError(f"{operator_config_bin} language failed: {detail}")
+    return proc.stdout.strip()
+
+
 def reservation_check(target: str | None, repo_root: Path, reservation_bin: str) -> dict[str, Any]:
     argv = [reservation_bin, "--repo-root", str(repo_root), "check"]
     if target:
@@ -787,6 +848,7 @@ def load_approved_bead_draft(
 def bead_compat_draft(
     draft_id: str, parsed: dict[str, Any], digest: str, spec_id: str, spec_digest: str,
     revises: str | None, bead: dict[str, Any],
+    display_title: str | None = None, project_id: str | None = None,
 ) -> dict[str, Any]:
     """A `graph_plan`-shaped `draft` dict built from bead data, so bead mode
     reuses `graph_plan`/`publish`/`patch` unchanged instead of a second
@@ -798,6 +860,12 @@ def bead_compat_draft(
     }
     if bead.get("title"):
         artifact["title"] = bead["title"]
+    # T05: bd-publish's display title takes precedence over the bd bead's
+    # own (often technical) title -- it is what the convoy shows Benjamin.
+    if display_title:
+        artifact["title"] = display_title
+    if project_id:
+        artifact["project_id"] = project_id
     if bead.get("labels"):
         artifact["labels"] = bead["labels"]
     if revises:
@@ -810,6 +878,7 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
     config_dir = Path(args.config_dir) if args.config_dir else repo_root / "config" / "projects"
     profile_bin = tool_path("PROJECT_PLANNING_PROFILE_BIN", "project-planning-profile")
     reservation_bin = tool_path("PLANNING_RUN_RESERVATION_BIN", "planning-run-reservation")
+    operator_config_bin = tool_path("OPERATOR_CONFIG_BIN", "operator-config")
 
     draft_id = str(args.draft)
     human_approver = declared_human_approver(args.project, config_dir, profile_bin)
@@ -822,9 +891,29 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
     spec_digest = canonical_bead_digest(spec_bead.get("description") or "")
     refuse_prototype_tickets(tickets)
 
+    # T05 (.6, .8): a graph's display title and project key are obligatory,
+    # and its declared language must be the Operator Language -- publishing
+    # never falls back to a silent English default or an unclaimed project.
+    display_title = str(metadata.get("display_title") or "").strip()
+    if not display_title:
+        raise PublishError(f"refused: draft bead {draft_id} has no display_title")
+    language = str(metadata.get("language") or "").strip()
+    expected_language = operator_language(operator_config_bin)
+    if language != expected_language:
+        raise PublishError(
+            f"refused: draft bead {draft_id} declares language {language!r}, "
+            f"the Operator Language is {expected_language!r}"
+        )
+    project_id = str((spec_bead.get("metadata") or {}).get("gc.project_id") or "").strip()
+    if not project_id:
+        raise PublishError(f"refused: source Spec {spec_id} has no project key (gc.project_id)")
+
     scope_edges = add_scope_overlap_edges(tickets)
     record_scope_overlaps(scope_edges, tickets, digest)
-    compat_draft = bead_compat_draft(draft_id, parsed, digest, spec_id, spec_digest, None, bead)
+    compat_draft = bead_compat_draft(
+        draft_id, parsed, digest, spec_id, spec_digest, None, bead,
+        display_title=display_title, project_id=project_id,
+    )
     plan = graph_plan(compat_draft, tickets)
     for node, ticket in zip((n for n in plan["nodes"] if n["key"] != "_convoy"), tickets):
         node["_blocked_by_keys"] = [str(b) for b in ticket["blocked_by"]]

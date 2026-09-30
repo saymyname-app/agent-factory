@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Fake escalation-door for ticket-graph-publish reslice-refusal tests (T05).
+
+Records the exact `benjamin <bead> <json>` call ticket-graph-publish makes
+when a `--reslice` patch is refused, so a test can assert the payload is a
+JSON object carrying quoi/pourquoi/que_faire (each option with its
+consequence) and langue -- the shape `escalation-door benjamin` requires.
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+LOG_PATH = Path(os.environ["ESCALATION_DOOR_LOG"])
+
+
+def main(argv):
+    if len(argv) >= 3 and argv[0] == "benjamin":
+        entry = {"bead": argv[1], "payload": json.loads(argv[2])}
+        existing = json.loads(LOG_PATH.read_text()) if LOG_PATH.exists() else []
+        existing.append(entry)
+        LOG_PATH.write_text(json.dumps(existing))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

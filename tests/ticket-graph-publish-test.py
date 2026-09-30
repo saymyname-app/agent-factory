@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLISHER = ROOT / "bin" / "ticket-graph-publish"
 FAKE_GC = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "gc"
 FAKE_BD_BEAD_MODE = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "bd-bead-mode"
+FAKE_ESCALATION_DOOR = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "escalation-door"
 PROJECTS_CONFIG_DIR = ROOT / "tests" / "fixtures" / "spec-approve" / "projects"
 
 SKIP_MAYOR_NOTIFY_ENV = "TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY"
@@ -70,7 +71,7 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
 
     def draft_bead(self, tickets_yaml=ONE_TICKET_YAML, spec_id="spec-1", approved_by="benjamin",
                    approved_evidence="Benjamin's exact words, 2026-09-30 Paris", digest_override=None,
-                   revises_digest=None):
+                   revises_digest=None, display_title="Effort d'exemple", language="fr"):
         description = self.draft_description(tickets_yaml)
         metadata = {
             "spec_id": spec_id,
@@ -78,6 +79,10 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
             "approved_evidence": approved_evidence,
             "approved_digest": digest_override if digest_override is not None else self.digest(description),
         }
+        if display_title is not None:
+            metadata["display_title"] = display_title
+        if language is not None:
+            metadata["language"] = language
         if revises_digest:
             metadata["revises_digest"] = revises_digest
         return {
@@ -85,11 +90,14 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
             "status": "open", "labels": [], "metadata": metadata,
         }
 
-    def spec_bead(self, description="prose spec body", target="A6b", approved=True, digest_override=None):
+    def spec_bead(self, description="prose spec body", target="A6b", approved=True, digest_override=None,
+                  project_id="acme"):
         metadata = {"planning_run_target": target}
         if approved:
             metadata["spec_state"] = "APPROVED_SPEC"
             metadata["approved_digest"] = digest_override if digest_override is not None else self.digest(description)
+        if project_id is not None:
+            metadata["gc.project_id"] = project_id
         return {
             "id": "spec-1", "title": "Spec", "description": description,
             "status": "open", "labels": [], "metadata": metadata,
@@ -214,6 +222,58 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
         self.assertIn("T2 declare kind: prototype", proc.stderr)
         self.assertIn("wayfinder:prototype", proc.stderr)
         self.assertEqual(before, self.current_state())
+
+    # --- T05: display title, language, project key -----------------------
+
+    def test_bd_publish_refuses_a_draft_with_no_display_title(self):
+        self.seed({
+            "draft-1": self.draft_bead(display_title=""), "spec-1": self.spec_bead(),
+        })
+        before = self.current_state()
+
+        proc = self.bd_publish()
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("display_title", proc.stderr)
+        self.assertEqual(before, self.current_state())
+
+    def test_bd_publish_refuses_a_draft_whose_declared_language_is_not_the_operator_language(self):
+        self.seed({
+            "draft-1": self.draft_bead(language="en"), "spec-1": self.spec_bead(),
+        })
+        before = self.current_state()
+
+        proc = self.bd_publish()
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("language", proc.stderr)
+        self.assertEqual(before, self.current_state())
+
+    def test_bd_publish_refuses_a_draft_whose_spec_has_no_project_key(self):
+        self.seed({
+            "draft-1": self.draft_bead(), "spec-1": self.spec_bead(project_id=None),
+        })
+        before = self.current_state()
+
+        proc = self.bd_publish()
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("project key", proc.stderr)
+        self.assertEqual(before, self.current_state())
+
+    def test_bd_publish_convoy_carries_the_project_key_and_display_title(self):
+        self.seed({
+            "draft-1": self.draft_bead(display_title="Effort d'exemple"),
+            "spec-1": self.spec_bead(project_id="acme-project"),
+        })
+
+        result = json.loads(self.bd_publish(check=True).stdout)
+        self.assertTrue(result["ok"])
+
+        state = self.current_state()
+        convoy = next(
+            b for b in state["beads"].values()
+            if b["metadata"].get("gc.plane") == "delivery" and "gc.ticket_id" not in b["metadata"]
+        )
+        self.assertEqual("acme-project", convoy["metadata"]["gc.project_id"])
+        self.assertEqual("Effort d'exemple", convoy["title"])
 
     # --- nominal --------------------------------------------------------------
 
@@ -355,6 +415,56 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
         result = json.loads(self.bd_patch(check=True).stdout)
         self.assertEqual(["T1"], result["patched"])
         self.assertEqual([], result["created"])
+
+    def test_bd_patch_reslice_refusal_escalates_with_quoi_pourquoi_and_consequential_options(self):
+        # T05: escalation-door benjamin now refuses anything but a JSON
+        # object carrying quoi/pourquoi/que_faire (options with
+        # consequence) and langue -- a reslice refusal must speak that
+        # contract, not a bare reason string.
+        old_digest = "sha256:" + "1" * 64
+        changed_ac = (
+            "  - id: T1\n"
+            "    title: One ticket\n"
+            "    blocked_by: []\n"
+            "    target_rigs: [fixture_city]\n"
+            "    what_it_delivers: does a thing\n"
+            "    acceptance_criteria: [does a different thing]\n"
+        )
+        self.seed({
+            "draft-1": self.draft_bead(tickets_yaml=changed_ac, revises_digest=old_digest),
+            "spec-1": self.spec_bead(),
+            "af-conv": {
+                "id": "af-conv", "status": "open", "labels": [], "title": "", "description": "",
+                "metadata": {"gc.graph_digest": old_digest},
+            },
+            "af-t1": {
+                "id": "af-t1", "status": "open", "labels": [], "title": "",
+                "description": "## Acceptance criteria\n\n- [ ] does the thing\n",
+                "metadata": {"gc.graph_digest": old_digest, "gc.ticket_id": "T1", "gc.blocked_by": ""},
+            },
+        })
+        escalation_log = self.tmp / "escalation.json"
+
+        proc = self.invoke(
+            "bd-patch", "draft-1", "--author", "Mayor", "--reason", "reslice to unblock delivery",
+            "--project", "acme", "--repo-root", str(self.repo_root),
+            "--config-dir", str(PROJECTS_CONFIG_DIR), "--reslice",
+            env={"ESCALATION_DOOR_BIN": str(FAKE_ESCALATION_DOOR), "ESCALATION_DOOR_LOG": str(escalation_log)},
+        )
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("refused and escalated", proc.stderr)
+
+        entries = json.loads(escalation_log.read_text())
+        self.assertEqual(1, len(entries))
+        self.assertEqual("af-conv", entries[0]["bead"])
+        payload = entries[0]["payload"]
+        self.assertTrue(payload["quoi"])
+        self.assertTrue(payload["pourquoi"])
+        self.assertEqual("fr", payload["langue"])
+        self.assertGreaterEqual(len(payload["que_faire"]), 1)
+        for option in payload["que_faire"]:
+            self.assertTrue(option["option"])
+            self.assertTrue(option["consequence"])
 
     def test_bd_patch_refuses_without_revises_digest(self):
         self.seed({
