@@ -1,0 +1,9 @@
+{
+  "contract": "agent-factory-project-descriptor/v1",
+  "project_id": "fixture-project-missing",
+  "display_name": "Fixture Missing",
+  "rigs": ["fixture-rig-missing"],
+  "roadmap_path": "docs/roadmap.toml",
+  "rituals_status_command": "bin/rituals-status",
+  "promotion_branch": {}
+}

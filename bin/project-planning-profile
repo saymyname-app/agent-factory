@@ -12,6 +12,12 @@ This tool is stateless: `register` is a pure function of the profile and the
 City's rig registry it is given on that call. It keeps no registry of its
 own, so registering one project can never make it a global default or leak
 state into another project's registration.
+
+The same Project Planning Profile is also the Cockpit's "descripteur de
+projet" (spec af-oohx2x .12, T04, one rig = one project): `describe` and
+`list` validate the extended descriptor shape -- project_id, display_name,
+rigs, knowledge_repo, roadmap_path, rituals_status_command, and an optional
+per-rig promotion_branch -- and never accept a production or language field.
 """
 
 from __future__ import annotations
@@ -28,7 +34,21 @@ from typing import Any
 PROGRAM = "project-planning-profile"
 PROFILE_CONTRACT = "agent-factory-project-planning-profile/v1"
 REGISTRATION_CONTRACT = "agent-factory-project-registration/v1"
+# The extended descriptor (spec af-oohx2x .12, T04): the same Project
+# Planning Profile, extended to also serve the Cockpit -- one rig belongs
+# to exactly one project, and a project's descriptor carries just what the
+# Cockpit needs to show it (display name, knowledge repo, roadmap, rituals
+# status command, optional per-rig promotion branch), never a production or
+# language field.
+DESCRIPTOR_CONTRACT = "agent-factory-project-descriptor/v1"
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+REPO_POINTER = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+
+# A project descriptor names no deployment target and no per-project
+# language -- Operator Language is one factory-wide field on operator.toml,
+# and there is no Production Step until some descriptor declares a readable
+# deploy target (spec af-oohx2x, Implementation Decisions).
+DESCRIPTOR_FORBIDDEN_KEYS = ("language", "production")
 
 # Common people/data safety principles (spec: "Universal safety principles
 # govern people and data"). A profile may add its own stricter keys, but it
@@ -229,6 +249,76 @@ def register(profile: dict[str, Any], city_registry: list[str]) -> dict[str, Any
     }
 
 
+def load_descriptor(path: Path) -> dict[str, Any]:
+    """Validate an extended project descriptor (DESCRIPTOR_CONTRACT): the
+    one object that declares a project to the Cockpit -- its rigs, display
+    name, knowledge repo, structured roadmap path, rituals status command,
+    and optional per-rig promotion branch. Unlike load_profile's sources,
+    knowledge_repo and roadmap_path may point outside this repo (e.g.
+    SayMyName's own knowledge repo), so neither is checked for existence
+    here -- only their shape."""
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProfileError(f"cannot read descriptor {path}: {exc}") from exc
+
+    descriptor = as_dict(raw, "descriptor")
+
+    contract = descriptor.get("contract")
+    if contract != DESCRIPTOR_CONTRACT:
+        raise ProfileError(
+            f"descriptor.contract must be {DESCRIPTOR_CONTRACT!r}, got {contract!r}"
+        )
+
+    for key in DESCRIPTOR_FORBIDDEN_KEYS:
+        if key in descriptor:
+            raise ProfileError(
+                f"descriptor.{key} is not a permitted field: a project "
+                "descriptor carries no production or language field"
+            )
+
+    project_id = safe_id(descriptor.get("project_id"), "project_id")
+    display_name = required_string(descriptor.get("display_name"), "display_name")
+    rigs = safe_id_list(descriptor.get("rigs"), "rigs")
+
+    knowledge_repo = required_string(descriptor.get("knowledge_repo"), "knowledge_repo")
+    if not REPO_POINTER.fullmatch(knowledge_repo):
+        raise ProfileError(f"knowledge_repo must look like 'owner/repo': {knowledge_repo!r}")
+
+    roadmap_path = required_string(descriptor.get("roadmap_path"), "roadmap_path")
+    rituals_status_command = required_string(
+        descriptor.get("rituals_status_command"), "rituals_status_command"
+    )
+
+    promotion_branch_raw = as_dict(
+        descriptor.get("promotion_branch", {}), "promotion_branch"
+    )
+    resolved_promotion: dict[str, Any] = {}
+    for rig, value in promotion_branch_raw.items():
+        safe_id(rig, f"promotion_branch key {rig!r}")
+        if rig not in rigs:
+            raise ProfileError(
+                f"promotion_branch names {rig!r}, which is not in rigs -- a "
+                "promotion branch must target a declared rig"
+            )
+        branch = as_dict(value, f"promotion_branch.{rig}")
+        resolved_promotion[rig] = {
+            "from": required_string(branch.get("from"), f"promotion_branch.{rig}.from"),
+            "to": required_string(branch.get("to"), f"promotion_branch.{rig}.to"),
+        }
+
+    return {
+        "contract": DESCRIPTOR_CONTRACT,
+        "project_id": project_id,
+        "display_name": display_name,
+        "rigs": rigs,
+        "knowledge_repo": knowledge_repo,
+        "roadmap_path": roadmap_path,
+        "rituals_status_command": rituals_status_command,
+        "promotion_branch": resolved_promotion,
+    }
+
+
 def repo_root_default() -> Path:
     here = Path(__file__).resolve().parent
     return here.parent
@@ -294,6 +384,36 @@ def cmd_register(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_describe(args: argparse.Namespace) -> int:
+    try:
+        descriptor = load_descriptor(Path(args.descriptor))
+    except ProfileError as exc:
+        print(json.dumps({"valid": False, "error": str(exc)}, indent=2))
+        return 1
+    print(json.dumps(descriptor, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    directory = Path(args.descriptors_dir)
+    projects = []
+    try:
+        for file in sorted(directory.glob("*.json")):
+            descriptor = load_descriptor(file)
+            projects.append(
+                {
+                    "project_id": descriptor["project_id"],
+                    "display_name": descriptor["display_name"],
+                    "rigs": descriptor["rigs"],
+                }
+            )
+    except ProfileError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(json.dumps({"ok": True, "projects": projects}, indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__)
     parser.add_argument(
@@ -324,6 +444,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory holding config/projects/*.toml files",
     )
     human_approver_parser.set_defaults(func=cmd_human_approver)
+
+    describe_parser = subparsers.add_parser(
+        "describe", help="validate an extended project descriptor and print it as JSON"
+    )
+    describe_parser.add_argument("descriptor", help="path to the descriptor JSON file")
+    describe_parser.set_defaults(func=cmd_describe)
+
+    list_parser = subparsers.add_parser(
+        "list", help="list the projects declared through config/project-descriptors/*.json"
+    )
+    list_parser.add_argument(
+        "--descriptors-dir",
+        default=str(repo_root_default() / "config" / "project-descriptors"),
+        help="directory holding config/project-descriptors/*.json files",
+    )
+    list_parser.set_defaults(func=cmd_list)
 
     return parser
 
