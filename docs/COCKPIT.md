@@ -67,3 +67,23 @@ windows are shrinkable via `COCKPIT_VALIDITY_<SOURCE>_SECONDS` env vars so
 the test doesn't wait real minutes), the "Tout est à jour" / "Périmé ou
 inconnu" headline, refusing to bind off `127.0.0.1`, surviving a simulated
 city stop, and `bin/factory-boot`'s idempotent cockpit launch.
+
+## Heartbeat (T18, af-a57xhe)
+
+`lib/cockpit/heartbeat/emitter.py` — `HeartbeatEmitter` pings an external
+"Usine muette" check (Healthchecks.io, spec af-oohx2x) every 5 min, but
+only once `ReadModel.all_fresh()` says the main sources have read fresh; a
+missing secret file or a failing ping becomes a health issue instead of a
+crash. It pauses only for `CLEANLY_STOPPED` (Clean stop, requested by
+Benjamin — spec "Heartbeat et usine muette": never at a Windows reboot),
+via a `state_provider` callable so this module does not depend on the
+Clean stop driver (T23) to be tested. `tick()`/`health_issues()` are the
+whole public interface; process wiring (secret file location, thread
+scheduling, the health zone display) is left to the tickets that build
+those.
+
+`tests/cockpit-heartbeat-test.py` drives the emitter directly with a fake
+clock and a fake pinger (no HTTP/CLI surface of its own yet), covering:
+one ping per 5 min while sources are fresh, no ping while one is not, a
+missing secret and a failing ping each showing up in `health_issues()`,
+and pausing in no state other than `CLEANLY_STOPPED`.
