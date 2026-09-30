@@ -19,6 +19,26 @@ An open condition that only the operator can move forward, because it needs a de
 _French conversational alias_: demande opérateur, ce qui t'attend
 _Avoid_: alert, todo, notification
 
+**Freshness**:
+Whether a value shown by the Cockpit may be presented as current: fresh when it was read successfully within its Validity window, stale when only an older last known value exists, which is never presented as current, and unknown when it was never read or its source is failing.
+_French conversational alias_: fraîcheur (à jour, périmée, inconnue)
+_Avoid_: live, real-time, cached
+
+**Validity window**:
+The maximum age, set per source, beyond which a value shown by the Cockpit is no longer fresh.
+_French conversational alias_: délai de validité
+_Avoid_: TTL, refresh rate
+
+**Heartbeat**:
+A content-free periodic signal the Cockpit sends to an outside watcher, whose silence reveals that the Cockpit, the Software Factory, or its host is down.
+_French conversational alias_: heartbeat, dead man's switch
+_Avoid_: health check, ping alone, keepalive
+
+**Clean stop**:
+An operator-triggered stop of the Software Factory that starts no new work and lets in-flight work reach a resume point without losing anything, so that a restart resumes the same work.
+_French conversational alias_: arrêt propre
+_Avoid_: shutdown, drain (a Gas City mechanism), pause
+
 ## Lifecycle
 
 **Intent & Design Workflow**:
