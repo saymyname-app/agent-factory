@@ -23,13 +23,45 @@
 # Usage: escalation-door <command> [arguments]
 #
 # Commands:
-#   benjamin <bead> <reason>   Straight-to-Benjamin escalation: set
-#                              gc.needs_benjamin on <bead>, append the cause
-#                              to its notes, clear any pending Mayor-first
-#                              state on it, and mail the escalation
-#                              recipient ($GC_ESCALATION_RECIPIENT, default
-#                              human) -- one atomic command, same shape as
-#                              the old campaign-pointer escalate.
+#   benjamin <bead> <json>    Straight-to-Benjamin escalation (C01 Cockpit
+#                              V2, T06): a request Benjamin can understand
+#                              without opening an agent session. <json> is a
+#                              JSON object carrying the fields a decision
+#                              needs -- the door infers nothing and refuses
+#                              the write (no partial write, the bead stays
+#                              intact) if any is missing, malformed, over
+#                              140 characters on one line, or not in the
+#                              Operator Language (bin/operator-config
+#                              language):
+#                                quoi       -- one line, what is happening.
+#                                pourquoi   -- one line, why it needs
+#                                              Benjamin.
+#                                que_faire  -- a non-empty array of options,
+#                                              each {option, consequence,
+#                                              recommande?, raison?}; every
+#                                              option needs its consequence,
+#                                              at most one option may be
+#                                              recommande=true, and that one
+#                                              needs its raison.
+#                                langue     -- must equal the Operator
+#                                              Language.
+#                                bloquant   -- optional bool (default
+#                                              false): this NEEDS BENJAMIN
+#                                              blocks a chantier.
+#                              On success the door letters the options (a,
+#                              b, c, ...), writes them with a timestamp and
+#                              the blocking flag on <bead>, clears any
+#                              pending Mayor-first state, and mails the
+#                              escalation recipient ($GC_ESCALATION_RECIPIENT,
+#                              default human).
+#   repondre <bead> <lettre>  Pure-code response: writes the chosen option
+#                              (comment + metadata: option, quand, acteur)
+#                              on <bead>, clears its NEEDS BENJAMIN and any
+#                              Mayor-first paging state, and wakes the Mayor
+#                              with "<Operator> a répondu <lettre> sur
+#                              <bead>". Refuses an option <bead> never
+#                              offered, or a <bead> with no recorded
+#                              options.
 #   mayor <bead> <reason>      Mayor-first escalation: mail mayor and stamp
 #                              gc.escalation_mayor_paged_at (only on the
 #                              first page; a repeat call re-mails mayor
@@ -37,12 +69,20 @@
 #   sweep                      Promote every Mayor-first escalation that is
 #                              still unresolved (no gc.needs_benjamin) 2
 #                              hours after its first page to a straight-to-
-#                              Benjamin escalation. Deterministic: the clock
-#                              is `date +%s`, overridable with
-#                              $ESCALATION_DOOR_NOW for tests.
-#   clear <bead>                Once the decision is resolved, clear
-#                              gc.needs_benjamin and any Mayor-first paging
-#                              state on <bead>, and note the clearance.
+#                              Benjamin escalation. Never fails on an
+#                              incomplete source: it keeps <bead>'s own
+#                              quoi/pourquoi/que_faire if escalation-door
+#                              already wrote them, otherwise it fills the
+#                              fixed repli text ("un agent n'a pas dit
+#                              pourquoi", "continuer avec un agent").
+#                              Deterministic: the clock is `date +%s`,
+#                              overridable with $ESCALATION_DOOR_NOW for
+#                              tests.
+#   clear <bead>                Once the decision is resolved without a
+#                              recorded answer, clear gc.needs_benjamin and
+#                              any Mayor-first paging state on <bead>, and
+#                              note the clearance. Prefer `repondre` when
+#                              there is an answer to record.
 #   list                       Read-only: print the NEEDS BENJAMIN list
 #                              (every open/in_progress bead carrying
 #                              gc.needs_benjamin) and the pending-proposal
@@ -54,7 +94,9 @@ PROGRAM_NAME="escalation-door"
 GC_BIN="${GC_BIN:-gc}"
 ESCALATION_RECIPIENT="${GC_ESCALATION_RECIPIENT:-human}"
 MAYOR_FIRST_GRACE_SECONDS="${ESCALATION_DOOR_MAYOR_GRACE_SECONDS:-7200}"
+MAX_LINE_LENGTH=140
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
+OPERATOR_CONFIG_BIN="${OPERATOR_CONFIG_BIN:-$ROOT/bin/operator-config}"
 # Runtime messages name the operator from config, not a hardcoded string
 # (O14, F23) -- config/operator.toml's `name`, defaulting to "Benjamin" if
 # the file is missing or unset. The `gc.needs_benjamin` field and `benjamin`
@@ -62,6 +104,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
 OPERATOR_NAME="${GC_OPERATOR_NAME:-$(sed -n 's/^name[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${OPERATOR_CONFIG_FILE:-$ROOT/config/operator.toml}" 2>/dev/null | head -n1)}"
 OPERATOR_NAME="${OPERATOR_NAME:-Benjamin}"
 BEAD_ID_RE='^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(\.[A-Za-z0-9]+)*$'
+OPTION_LETTERS="abcdefghijklmnopqrstuvwxyz"
 
 log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2; }
 die() { log "ERROR: $1"; exit 1; }
@@ -86,6 +129,13 @@ now_iso() {
   date -u -d "@$(now_epoch)" +%Y-%m-%dT%H:%M:%SZ
 }
 
+operator_language() {  # prints the Operator Language, or dies
+  local out
+  out=$("$OPERATOR_CONFIG_BIN" language 2>&1) \
+    || die "Could not read the Operator Language: $out"
+  printf '%s' "$out"
+}
+
 show_bead() {  # $1 = bead id -> prints the single-object JSON, or dies
   local id=$1 raw
   raw=$("$GC_BIN" bd show "$id" --json 2>/dev/null) \
@@ -94,26 +144,131 @@ show_bead() {  # $1 = bead id -> prints the single-object JSON, or dies
     <<<"$raw" 2>/dev/null || die "$id did not resolve to exactly one Bead."
 }
 
-cmd_benjamin() {
-  local bead=${1:-} reason=${2:-}
-  [[ -n $bead && -n $reason ]] || die "Usage: $PROGRAM_NAME benjamin <bead> <reason>"
-  [[ $reason != *$'\n'* && $reason != *$'\r'* ]] || die "reason must be a single line."
-  valid_bead_id "$bead" || die "'$bead' is not a Bead id."
-  show_bead "$bead" >/dev/null
+# field_ok validates a single-line field: present, no newline, <= 140 chars.
+field_ok() {  # $1 = label (for the diagnostic) $2 = value
+  local label=$1 value=$2
+  [[ -n $value ]] || die "requête incomplète : champ « $label » manquant."
+  [[ $value != *$'\n'* && $value != *$'\r'* ]] || die "champ « $label » doit tenir sur une seule ligne."
+  (( ${#value} <= MAX_LINE_LENGTH )) || die "champ « $label » dépasse $MAX_LINE_LENGTH caractères."
+}
+
+# validate_que_faire checks a JSON array of options (.option, .consequence,
+# optional .recommande/.raison), then prints it back with a .lettre (a, b,
+# c, ...) added to each item in order -- or dies without printing anything.
+validate_que_faire() {  # $1 = JSON array
+  local json=$1
+  jq -e 'type == "array" and length > 0' <<<"$json" >/dev/null 2>&1 \
+    || die "requête incomplète : champ « que faire » manquant ou vide."
+  local count i
+  count=$(jq 'length' <<<"$json")
+  for ((i = 0; i < count; i++)); do
+    local item option consequence recommande raison
+    item=$(jq -c ".[$i]" <<<"$json")
+    option=$(jq -r '.option // ""' <<<"$item")
+    consequence=$(jq -r '.consequence // ""' <<<"$item")
+    recommande=$(jq -r 'if (.recommande // false) == true then "true" else "false" end' <<<"$item")
+    raison=$(jq -r '.raison // ""' <<<"$item")
+    field_ok "option $((i + 1))" "$option"
+    field_ok "conséquence de l'option $((i + 1))" "$consequence"
+    if [[ $recommande == true ]]; then
+      field_ok "raison de la recommandation" "$raison"
+    fi
+  done
+  local recommended_count
+  recommended_count=$(jq '[.[] | (.recommande // false)] | map(select(. == true)) | length' <<<"$json")
+  (( recommended_count <= 1 )) || die "au plus une option « Recommandé »."
+  jq -c --arg letters "$OPTION_LETTERS" \
+    '[to_entries[] | .value + {lettre: $letters[.key:(.key + 1)]}]' <<<"$json"
+}
+
+# emit_benjamin performs the write + mail once a request has validated;
+# never called directly from a command handler -- cmd_benjamin validates
+# first, sweep's repli path always builds a request that will validate.
+emit_benjamin() {  # bead quoi pourquoi lettered_que_faire_json bloquant
+  local bead=$1 quoi=$2 pourquoi=$3 que_faire_json=$4 bloquant=$5
+  local horodatage options_summary
+  horodatage=$(now_iso)
   "$GC_BIN" bd update "$bead" \
-    --set-metadata "gc.needs_benjamin=$reason" \
+    --set-metadata "gc.needs_benjamin=$quoi" \
+    --set-metadata "gc.escalation_pourquoi=$pourquoi" \
+    --set-metadata "gc.escalation_que_faire=$que_faire_json" \
+    --set-metadata "gc.escalation_bloquant=$bloquant" \
+    --set-metadata "gc.escalation_horodatage=$horodatage" \
     --set-metadata "gc.escalation_mayor_paged_at=none" \
     --set-metadata "gc.escalation_mayor_reason=none" \
-    --append-notes "NEEDS BENJAMIN: $reason" \
+    --append-notes "NEEDS BENJAMIN: $quoi" \
     >/dev/null || die "Beads write failed for $bead."
+  options_summary=$(jq -r '
+    [.[] | "  \(.lettre)) \(.option) — \(.consequence)"
+      + (if (.recommande // false) then " [Recommandé : \(.raison)]" else "" end)]
+    | join("\n")' <<<"$que_faire_json")
   "$GC_BIN" mail send "$ESCALATION_RECIPIENT" --notify \
     -s "NEEDS BENJAMIN: $bead" \
     -m "ACTION: escalation-door escalated $bead straight to $OPERATOR_NAME
-STATE: $reason
+STATE: $quoi
+POURQUOI: $pourquoi
+QUE FAIRE:
+$options_summary
 EVIDENCE: gc bd show $bead
-NEXT: decide, then run escalation-door clear $bead" \
+NEXT: escalation-door repondre $bead <lettre>, ou escalation-door clear $bead" \
     >/dev/null || die "Could not mail $ESCALATION_RECIPIENT; gc.needs_benjamin is set but the mail was not sent -- retry rather than clearing it by hand."
-  printf 'ESCALATED (benjamin): %s — %s\n' "$bead" "$reason"
+  printf 'ESCALATED (benjamin): %s — %s\n' "$bead" "$quoi"
+}
+
+cmd_benjamin() {
+  local bead=${1:-} payload=${2:-}
+  [[ -n $bead && -n $payload ]] || die "Usage: $PROGRAM_NAME benjamin <bead> <json>"
+  valid_bead_id "$bead" || die "'$bead' is not a Bead id."
+  jq -e 'type == "object"' <<<"$payload" >/dev/null 2>&1 \
+    || die "requête incomplète : le corps n'est pas un objet JSON valide."
+  local quoi pourquoi langue bloquant que_faire_raw lettered expected_language
+  quoi=$(jq -r '.quoi // ""' <<<"$payload")
+  pourquoi=$(jq -r '.pourquoi // ""' <<<"$payload")
+  langue=$(jq -r '.langue // ""' <<<"$payload")
+  bloquant=$(jq -r 'if (.bloquant // false) == true then "true" else "false" end' <<<"$payload")
+  que_faire_raw=$(jq -c '.que_faire // []' <<<"$payload")
+  field_ok "quoi" "$quoi"
+  field_ok "pourquoi" "$pourquoi"
+  field_ok "langue" "$langue"
+  lettered=$(validate_que_faire "$que_faire_raw")
+  expected_language=$(operator_language)
+  [[ $langue == "$expected_language" ]] \
+    || die "la requête est dans la langue « $langue », la langue de l'opérateur est « $expected_language »."
+  show_bead "$bead" >/dev/null
+  emit_benjamin "$bead" "$quoi" "$pourquoi" "$lettered" "$bloquant"
+}
+
+cmd_repondre() {
+  local bead=${1:-} lettre=${2:-}
+  [[ -n $bead && -n $lettre ]] || die "Usage: $PROGRAM_NAME repondre <bead> <lettre>"
+  valid_bead_id "$bead" || die "'$bead' is not a Bead id."
+  local issue que_faire_raw chosen option_texte now
+  issue=$(show_bead "$bead")
+  que_faire_raw=$(jq -r '.metadata["gc.escalation_que_faire"] // ""' <<<"$issue")
+  [[ -n $que_faire_raw ]] || die "$bead ne porte aucune option enregistrée par escalation-door."
+  jq -e 'type == "array" and length > 0' <<<"$que_faire_raw" >/dev/null 2>&1 \
+    || die "$bead porte des options illisibles."
+  chosen=$(jq -c --arg l "$lettre" '[.[] | select(.lettre == $l)] | .[0] // empty' <<<"$que_faire_raw")
+  [[ -n $chosen ]] || die "'$lettre' n'est pas une option connue pour $bead."
+  option_texte=$(jq -r '.option' <<<"$chosen")
+  now=$(now_iso)
+  "$GC_BIN" bd update "$bead" \
+    --set-metadata "gc.escalation_response_option=$lettre" \
+    --set-metadata "gc.escalation_response_at=$now" \
+    --set-metadata "gc.escalation_response_actor=benjamin" \
+    --set-metadata "gc.needs_benjamin=none" \
+    --set-metadata "gc.escalation_mayor_paged_at=none" \
+    --set-metadata "gc.escalation_mayor_reason=none" \
+    --append-notes "RÉPONSE: $lettre — $option_texte" \
+    >/dev/null || die "Beads write failed for $bead."
+  "$GC_BIN" mail send mayor --notify \
+    -s "Réponse de $OPERATOR_NAME: $bead" \
+    -m "ACTION: escalation-door recorded $OPERATOR_NAME's answer
+STATE: $OPERATOR_NAME a répondu $lettre sur $bead — $option_texte
+EVIDENCE: gc bd show $bead
+NEXT: resume work using option $lettre" \
+    >/dev/null || die "Could not mail mayor; the response is recorded on $bead but the wake-up mail failed -- retry."
+  printf 'RÉPONDU: %s — %s) %s\n' "$bead" "$lettre" "$option_texte"
 }
 
 cmd_mayor() {
@@ -142,6 +297,31 @@ NEXT: resolve within 2h of $paged_at, or escalation-door sweep escalates to $OPE
   printf 'ESCALATED (mayor-first): %s — %s\n' "$bead" "$reason"
 }
 
+# sweep_payload builds a JSON payload that cmd_benjamin is guaranteed to
+# accept: <bead>'s own quoi/pourquoi/que_faire if escalation-door already
+# recorded them on it, otherwise the fixed repli text -- promoting a
+# Mayor-first escalation must never fail on an incomplete source (T06).
+sweep_payload() {  # bead issue_json reason
+  local bead=$1 issue=$2 reason=$3
+  local language quoi pourquoi que_faire existing_que_faire
+  language=$(operator_language)
+  quoi="Escalade Mayor-first non résolue après 2h : $reason"
+  if (( ${#quoi} > MAX_LINE_LENGTH )); then
+    quoi="${quoi:0:$((MAX_LINE_LENGTH - 1))}…"
+  fi
+  existing_que_faire=$(jq -r '.metadata["gc.escalation_que_faire"] // ""' <<<"$issue")
+  if [[ -n $existing_que_faire ]] && jq -e 'type == "array" and length > 0' <<<"$existing_que_faire" >/dev/null 2>&1; then
+    pourquoi=$(jq -r '.metadata["gc.escalation_pourquoi"] // empty' <<<"$issue")
+    [[ -n $pourquoi ]] || pourquoi="Un agent demande ta décision sur $bead ; il n'a pas dit pourquoi"
+    que_faire=$(jq -c '[.[] | {option, consequence, recommande, raison}]' <<<"$existing_que_faire")
+  else
+    pourquoi="Un agent demande ta décision sur $bead ; il n'a pas dit pourquoi"
+    que_faire='[{"option":"continuer avec un agent","consequence":"Un agent reprend ce sujet avec ce contexte."}]'
+  fi
+  jq -nc --arg quoi "$quoi" --arg pourquoi "$pourquoi" --arg langue "$language" --argjson que_faire "$que_faire" \
+    '{quoi: $quoi, pourquoi: $pourquoi, que_faire: $que_faire, langue: $langue, bloquant: false}'
+}
+
 cmd_sweep() {
   local now due_json
   now=$(now_epoch)
@@ -151,7 +331,7 @@ cmd_sweep() {
   local count=0
   while IFS= read -r bead; do
     [[ -n $bead ]] || continue
-    local issue paged_at needs reason paged_epoch age
+    local issue paged_at needs reason paged_epoch age payload
     issue=$(show_bead "$bead")
     paged_at=$(jq -r '.metadata["gc.escalation_mayor_paged_at"] // empty' <<<"$issue")
     [[ -n $paged_at && $paged_at != none ]] || continue
@@ -161,7 +341,8 @@ cmd_sweep() {
     paged_epoch=$(date -u -d "$paged_at" +%s 2>/dev/null) || continue
     age=$(( now - paged_epoch ))
     ((age >= MAYOR_FIRST_GRACE_SECONDS)) || continue
-    cmd_benjamin "$bead" "Mayor-first escalation unresolved after 2h: $reason" >/dev/null \
+    payload=$(sweep_payload "$bead" "$issue" "$reason")
+    cmd_benjamin "$bead" "$payload" >/dev/null \
       || die "sweep could not escalate $bead to $OPERATOR_NAME."
     printf 'SWEPT: %s promoted to %s after %ds unresolved\n' "$bead" "$OPERATOR_NAME" "$age"
     count=$((count + 1))
@@ -213,6 +394,7 @@ main() {
   case "$command" in
     -h|--help|help) usage ;;
     benjamin) cmd_benjamin "$@" ;;
+    repondre) cmd_repondre "$@" ;;
     mayor) cmd_mayor "$@" ;;
     sweep) cmd_sweep "$@" ;;
     clear) cmd_clear "$@" ;;
