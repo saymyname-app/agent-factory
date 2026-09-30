@@ -9,7 +9,11 @@
 # and the Mayor paged once; an already-closed bead in the same event is left
 # alone; the same event is never reprocessed on a second run (dedup by
 # session_id survives across runs via the on-disk state file); --check-only
-# reopens nothing.
+# reopens nothing; and (T09, af-xv706q) while the city is suspended, a
+# session stranded event is skipped entirely -- no bead is reopened, no page
+# sent, no dedup state recorded -- so a session stopped voluntarily during
+# the suspension keeps its work claimed for resume; once no longer
+# suspended, the same event is processed normally.
 
 set -Eeuo pipefail
 
@@ -30,6 +34,7 @@ mkdir -p "$TMP/bin" "$TMP/beads"
 CALLS="$TMP/calls.log"; : > "$CALLS"
 STATE_FILE="$TMP/state.json"
 EVENTS_FILE="$TMP/events.jsonl"
+SUSPENDED_FILE="$TMP/suspended"
 
 cat > "$EVENTS_FILE" <<'JSON'
 {"actor":"gc","message":"pool session terminated without clean drain","payload":{"session_id":"af-br7i","session_name":"claude-af-br7i","template":"claude","work_bead_ids":["af-stuck1","af-done1"]},"session_id":"af-br7i","type":"session.stranded","ts":"2026-09-16T21:24:33Z","ok":true}
@@ -45,6 +50,14 @@ JSON
 cat > "$TMP/bin/gc" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CALLS"
+if [[ \${1:-} == status ]]; then
+  if [[ -f "$SUSPENDED_FILE" ]]; then
+    echo '{"suspended":true}'
+  else
+    echo '{"suspended":false}'
+  fi
+  exit 0
+fi
 if [[ \${1:-} == events ]]; then
   cat "$EVENTS_FILE" 2>/dev/null
   exit 0
@@ -118,5 +131,26 @@ rm -f "$TMP/fail-update"; : > "$CALLS"
 run >/dev/null
 grep -q "af-stuck2 updated" "$TMP/updated.log" || fail "the failed reopen was not retried on the next pass"
 grep -q '"af-zz9k"' "$STATE_FILE" || fail "the retried session was not recorded as handled"
+
+# --- T09 (af-xv706q): a session stranded while the city is suspended is a --
+# --- voluntary stop, not a crash -- nothing is reopened, paged, or dedup'd -
+cat > "$EVENTS_FILE" <<'JSON'
+{"actor":"gc","message":"pool session terminated without clean drain","payload":{"session_id":"af-susp1","session_name":"claude-af-susp1","template":"claude","work_bead_ids":["af-stuck3"]},"session_id":"af-susp1","type":"session.stranded","ts":"2026-09-30T12:00:00Z","ok":true}
+JSON
+cat > "$TMP/beads/af-stuck3.json" <<'JSON'
+[{"id":"af-stuck3","status":"in_progress"}]
+JSON
+rm -f "$TMP/updated.log"; : > "$CALLS"
+touch "$SUSPENDED_FILE"
+run >/dev/null
+[ ! -f "$TMP/updated.log" ] || fail "a stranded session during a city suspension must not reopen its bead"
+grep -q "mail send mayor" "$CALLS" && fail "a stranded session during a city suspension must not page the mayor"
+grep -q '"af-susp1"' "$STATE_FILE" && fail "a stranded session during a city suspension must not be recorded as handled"
+
+# --- once the city is no longer suspended, the same event is processed -----
+rm -f "$SUSPENDED_FILE"; : > "$CALLS"
+run >/dev/null
+grep -q "af-stuck3 updated" "$TMP/updated.log" || fail "the deferred session was not reopened once the city was no longer suspended"
+grep -q '"af-susp1"' "$STATE_FILE" || fail "the deferred session was not recorded as handled once processed"
 
 echo "OK on-session-stranded reopens orphaned work, once per session"
