@@ -1,0 +1,25 @@
+# Factory-side rituals (CONTEXT.md: rituel -- proposed to Benjamin, run by
+# him, when he wants; agents never run these on their own). Read with
+# `bin/rituals-status`, which never runs a ritual -- only reports its status.
+#
+# `architecture:factory` moved here with the Factory's own roadmap
+# (`docs/roadmap.toml`, T03 af-s0qa19) out of SayMyName's `knowledge/
+# rituals.md` on origin (repo saymyname-app/Say-my-name-product); that file
+# keeps the `architecture:back` and `architecture:front` rows (SayMyName's
+# own rigs) plus the operator-level `incidents` and `alignment` rituals,
+# which are cross-project and stay there.
+#
+# kind = "pr_threshold": due once at least `threshold` PRs have merged into
+# `base_branch` of `repo` since `last_done` (an ISO 8601 UTC timestamp), or
+# the literal string "paused" -- while paused, status is always "paused"
+# until an operator edits `last_done` to a real timestamp (normal commit).
+
+[[ritual]]
+id = "architecture:factory"
+kind = "pr_threshold"
+repo = "saymyname-app/agent-factory"
+base_branch = "main"
+threshold = 20
+last_done = "paused"
+paused_reason = "deferred 2026-09-29 (decision 22): 64 PRs were A4-A6 refactor churn"
+resume_when = "A6 (docs/roadmap.toml step A6) closed: then write A6's closing date here as the new baseline"

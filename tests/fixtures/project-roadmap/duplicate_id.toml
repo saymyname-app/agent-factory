@@ -1,0 +1,15 @@
+# Steps X1 and X2 both use id "X1".
+
+[[step]]
+id = "X1"
+title = "First step"
+done_when = "the first thing is true"
+order = 1
+status = "done"
+
+[[step]]
+id = "X1"
+title = "Second step"
+done_when = "the second thing is true"
+order = 2
+status = "todo"
