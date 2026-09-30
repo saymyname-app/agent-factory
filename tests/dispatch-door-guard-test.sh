@@ -6,7 +6,10 @@
 # a door-routed bead (carries the stamp) is left alone; a formula-internal
 # step bead (gc.step_ref set) is never flagged even with no stamp; a
 # graph.v2 workflow root (gc.kind=workflow) is never flagged either; a
-# genuine raw-sling bypass is reported, and under --check-only nothing is
+# bd.dog Dolt-maintenance wisp (gc.routed_to=bd.dog, core Gas City runtime
+# that never goes through the door, af-r2y2w9) is never flagged, while a
+# wisp routed to a worker with no stamp still is; a genuine raw-sling
+# bypass is reported, and under --check-only nothing is
 # written or paged; a default run marks it reported and pages the Mayor
 # exactly once, then a repeat run does not page again; and both the HQ root
 # and every product rig from config/projects/ are scanned.
@@ -112,6 +115,28 @@ grep -q "healthy — 3 routed bead(s) checked, no dispatch-door bypass" <<<"$out
 [ -s "$UPDATE_LOG" ] && fail "touched a bead that never needed touching"
 [ "$(mail_count mayor)" = "0" ] || fail "paged the Mayor with nothing wrong"
 
+# 1b. bd.dog maintenance wisps are exempt; the exemption is by target, not
+#     by kind: a wisp routed to a worker without the stamp is still flagged
+: > "$UPDATE_LOG"; : > "$MAIL_LOG"
+bd_dog_wisp='{
+  "id": "zz-fixture-bd-dog-wisp", "status": "in_progress",
+  "metadata": {"gc.routed_to": "bd.dog", "gc.kind": "wisp", "gc.formula_name": "mol-dog-stale-db"}
+}'
+worker_wisp='{
+  "id": "zz-fixture-worker-wisp", "status": "in_progress",
+  "metadata": {"gc.routed_to": "worker", "gc.kind": "wisp"}
+}'
+jq -n --argjson a "$bd_dog_wisp" '[$a]' > "$HQ_BEADS_FILE"
+out=$(guard)
+grep -q "healthy — 1 routed bead(s) checked, no dispatch-door bypass" <<<"$out" \
+  || { echo "$out" >&2; fail "a bd.dog maintenance wisp was flagged as a dispatch-door bypass"; }
+[ ! -s "$UPDATE_LOG" ] || fail "touched a bd.dog maintenance wisp"
+[ "$(mail_count mayor)" = "0" ] || fail "paged the Mayor for a bd.dog maintenance wisp"
+jq -n --argjson a "$worker_wisp" '[$a]' > "$HQ_BEADS_FILE"
+out=$(guard --check-only)
+grep -q "zz-fixture-worker-wisp routed to 'worker' with no gc.dispatched_via=dispatch-door stamp" <<<"$out" \
+  || { echo "$out" >&2; fail "a worker-routed wisp without the stamp was not flagged"; }
+
 # 2. a genuine raw-sling bypass: --check-only reports it, writes/pages nothing
 : > "$UPDATE_LOG"; : > "$MAIL_LOG"
 jq -n --argjson d "$bypass" '[$d]' > "$HQ_BEADS_FILE"
@@ -155,4 +180,4 @@ grep -q "zz-fixture-rig-bypass routed to 'worker' with no gc.dispatched_via=disp
 grep -q "^rig=zz-fixture-rig zz-fixture-rig-bypass " "$UPDATE_LOG" \
   || fail "the stamp write did not go through --rig zz-fixture-rig: $(cat "$UPDATE_LOG")"
 
-echo "PASS: dispatch-door-guard reports raw-sling bypasses, leaves door-routed/formula-step/workflow-root beads alone, and scans every rig"
+echo "PASS: dispatch-door-guard reports raw-sling bypasses, leaves door-routed/formula-step/workflow-root/bd.dog beads alone, and scans every rig"
