@@ -142,16 +142,19 @@ class PlanningRunLifecycleTest(unittest.TestCase):
 
     def spec_bead(
         self, spec_id="spec-1", target="A6b", map_id="map-1", description="prose spec body",
-        no_fog_evidence=None,
+        no_fog_evidence=None, project_id=PROJECT,
     ) -> dict:
         metadata = {"planning_run_target": target, "planning_map": map_id or "none", "gc.plane": "planning"}
         if no_fog_evidence is not None:
             metadata["no_fog_evidence"] = no_fog_evidence
+        if project_id is not None:
+            metadata["gc.project_id"] = project_id
         return self.bead(id=spec_id, description=description, metadata=metadata)
 
     def draft_bead(
         self, draft_id="draft-1", spec_id="spec-1", tickets_yaml=ONE_TICKET_YAML,
         approved_by=HUMAN_APPROVER, approved_evidence=EVIDENCE, digest_override=None,
+        display_title="Effort d'exemple", language="fr",
     ) -> dict:
         description = draft_description(tickets_yaml)
         metadata = {
@@ -161,6 +164,10 @@ class PlanningRunLifecycleTest(unittest.TestCase):
             "approved_digest": digest_override if digest_override is not None else digest(description),
             "gc.plane": "planning",
         }
+        if display_title is not None:
+            metadata["display_title"] = display_title
+        if language is not None:
+            metadata["language"] = language
         return self.bead(id=draft_id, title="Ticket Graph Draft", description=description, metadata=metadata)
 
     # --- door invocations --------------------------------------------------

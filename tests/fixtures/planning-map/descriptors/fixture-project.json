@@ -1,0 +1,10 @@
+{
+  "contract": "agent-factory-project-descriptor/v1",
+  "project_id": "fixture-project",
+  "display_name": "Fixture project",
+  "rigs": ["fixture_city"],
+  "knowledge_repo": "fixture-org/fixture-repo",
+  "roadmap_path": "docs/roadmap.toml",
+  "rituals_status_command": "bin/rituals-status",
+  "promotion_branch": {}
+}

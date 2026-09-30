@@ -2,10 +2,16 @@
 
 ## Status and purpose
 
-`bin/planning-map` implements four of the wayfinding operations documented
+`bin/planning-map` implements six of the wayfinding operations documented
 in `docs/agents/issue-tracker.md` as one small stateless tool over `bd`, so
 they are never hand-typed differently by two sessions:
 
+- `create-map` creates the Planning Map Bead itself: labelled `wayfinder:map`,
+  metadata carrying `gc.plane: planning` and the project key (`gc.project_id`,
+  spec af-oohx2x .8/.12, T05). It refuses a `--project` that is not declared
+  by a `config/project-descriptors/*.json` file, so a map is never created
+  "sans projet" -- the Spec and Ticket Graph Draft that follow it inherit
+  this key (`spec-approve bd-approve`, `ticket-graph-publish bd-publish`).
 - `create-ticket` creates a correctly shaped child ticket of a Planning Map
   Bead: parented to the map, labels *set* (not inherited from the parent --
   `bd create --parent` inherits by default, which would tag every ticket
@@ -23,6 +29,12 @@ they are never hand-typed differently by two sessions:
   still matches what the caller last read (compare-and-set) -- plain
   `bd update --body-file` has no such check and is last-writer-wins, so a
   sibling session's decision line could otherwise be silently overwritten.
+- `backfill-project` sets the project key on every still-open Planning Map
+  Bead that has none yet (T05: maps created before this ticket). It skips
+  (and reports) a map that already carries a key, and never touches a
+  closed map. Run once per newly declared project against every still-open
+  map that predates it; see bead af-sw7hrm's close notes for the result of
+  the run against `agent-factory`.
 
 Claim, resolve, comment and blocking dependencies stay native `bd` commands
 (see `docs/agents/issue-tracker.md`); this tool does not wrap them, and
@@ -31,6 +43,10 @@ there is no pause or resume.
 ## Run it
 
 ```bash
+# Create a map, with its project key.
+bin/planning-map create-map --project agent-factory \
+  --title "<effort>" --body-file map.md
+
 # Create a child ticket of a map.
 bin/planning-map create-ticket --map af-0aiero --type research \
   --title "Which store backs the map?" --body-file question.md
@@ -49,6 +65,9 @@ bin/planning-map close --map af-0aiero --abandon \
 bin/planning-map update --map af-0aiero \
   --expected-description-file map-as-i-read-it.md \
   --body-file map-with-my-decision.md
+
+# Backfill the project key onto every still-open map that has none yet.
+bin/planning-map backfill-project --project agent-factory
 ```
 
 Every subcommand prints one JSON object with `"ok": true|false`; a refused
