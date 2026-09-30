@@ -20,6 +20,7 @@ import argparse
 import json
 import re
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -233,6 +234,40 @@ def repo_root_default() -> Path:
     return here.parent
 
 
+def declared_human_approver(project_id: str, config_dir: Path) -> str:
+    """Read the human approver a project's `config/projects/<id>.toml` file
+    declares (spec-approve's approver check, W04): this is the one place
+    each project names who may set `approved_by` on its Specs, so a wrong
+    approver is rejected mechanically instead of trusted from the caller."""
+    path = config_dir / f"{project_id}.toml"
+    if not path.is_file():
+        raise ProfileError(f"no project file for {project_id!r}: {path}")
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ProfileError(f"cannot read {path}: {exc}") from exc
+    approver = data.get("human_approver")
+    if not isinstance(approver, str) or not approver.strip():
+        raise ProfileError(f"{path} has no human_approver declared")
+    return approver
+
+
+def cmd_human_approver(args: argparse.Namespace) -> int:
+    try:
+        approver = declared_human_approver(args.project, Path(args.config_dir))
+    except ProfileError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(
+        json.dumps(
+            {"ok": True, "project_id": args.project, "human_approver": approver},
+            indent=2, sort_keys=True,
+        )
+    )
+    return 0
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     try:
         load_profile(Path(args.profile), Path(args.repo_root))
@@ -278,6 +313,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--city-registry", required=True, help="path to a JSON array of the City's registered rig ids"
     )
     register_parser.set_defaults(func=cmd_register)
+
+    human_approver_parser = subparsers.add_parser(
+        "human-approver",
+        help="report the human approver a project's config/projects/<id>.toml declares",
+    )
+    human_approver_parser.add_argument("--project", required=True, help="project id (config/projects/<id>.toml)")
+    human_approver_parser.add_argument(
+        "--config-dir", default=str(repo_root_default() / "config" / "projects"),
+        help="directory holding config/projects/*.toml files",
+    )
+    human_approver_parser.set_defaults(func=cmd_human_approver)
 
     return parser
 

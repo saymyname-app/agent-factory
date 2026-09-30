@@ -94,3 +94,20 @@ can never silently disable it.
 Not proven here: a live Gas City actually loading a registered profile into
 a running Planning Run (that is B03/B04's concern), or a schema for rig-
 local extension *content* beyond "this tool does not interpret it."
+
+## Declared human approver (A6b, W04)
+
+`human-approver --project <id> [--config-dir <dir>]` reports the human
+approver a project has declared in its own `config/projects/<id>.toml`
+file (the file `lib/project_registry.sh` already reads for rig
+protection data) -- one field, `human_approver`, added to that same file
+rather than a second registry. `bin/spec-approve bd-approve` refuses to
+record any `--approved-by` other than the value this reports, so a wrong
+approver on a Spec bead is rejected mechanically instead of trusted from
+the caller. Missing project file or missing/blank `human_approver` fails
+with an actionable diagnostic naming the exact path at fault; nothing is
+written.
+
+```bash
+./bin/project-planning-profile human-approver --project agent-factory
+```
