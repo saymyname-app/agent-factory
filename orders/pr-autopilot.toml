@@ -1,6 +1,11 @@
+# T10 (af-u61al3): condition trigger + orders-restart-stagger.sh spreads
+# this order's first post-restart firing instead of bursting with every
+# other cooldown order on the same tick; steady-state cadence (still 3m)
+# is unchanged. See orders/escalation-door-sweep.toml for the full note.
 [order]
 description = "Deterministic zero-token merge actor: arm GitHub auto-merge on PRs targeting each repo's protected branch in lib/protected_rigs.sh (the SayMyName rigs' dev, the Factory repo's main), reconcile merged PRs onto their beads, flag red builds, hold PRs whose migrations cannot be undone (ADR-0019). Never arms a PR targeting any other branch, so product dev -> main promotion stays human."
-trigger = "cooldown"
+trigger = "condition"
 interval = "3m"
+check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh pr-autopilot 180"
 exec = "/home/benja/agent-factory/bin/pr-autopilot"
 timeout = "120s"

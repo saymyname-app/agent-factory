@@ -168,21 +168,33 @@ skip = ["dolt-remotes-patrol", "nudge-mail-sweep", "prune-branches", "cross-rig-
 # dolt-health.sh only checks live server health; a 2m gap is still well
 # inside any operator's reaction window and halves the 30s health-probe
 # volume together with beads-health.
+# T10 (af-u61al3): condition trigger + orders-restart-stagger.sh spreads
+# this order's first post-restart firing instead of bursting with every
+# other cooldown order on the same tick; steady-state cadence (still 2m)
+# is unchanged. See orders/escalation-door-sweep.toml for the full note.
 name = "dolt-health"
+trigger = "condition"
 interval = "2m"
+check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh dolt-health 120"
 
 [[orders.overrides]]
 # beads-health.sh only checks provider health and self-heals; same
 # reasoning as dolt-health above.
+# T10 (af-u61al3): see the dolt-health override above.
 name = "beads-health"
+trigger = "condition"
 interval = "2m"
+check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh beads-health 120"
 
 [[orders.overrides]]
 # gc order sweep-tracking --stale-after 10m is idempotent and only prunes;
 # a 10m sweep cadence still catches everything before its own 10m staleness
 # window closes.
+# T10 (af-u61al3): see the dolt-health override above.
 name = "order-tracking-sweep"
+trigger = "condition"
 interval = "10m"
+check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh order-tracking-sweep 600"
 
 [[orders.overrides]]
 # gate-sweep.sh is a pure mechanical evaluation (no LLM) that is a no-op

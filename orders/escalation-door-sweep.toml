@@ -1,6 +1,7 @@
 [order]
-description = "Promote every Mayor-first escalation still unresolved 2 hours after its first page to a straight-to-Benjamin escalation (O06 routing rule)"
-trigger = "cooldown"
+description = "Promote every Mayor-first escalation still unresolved 2 hours after its first page to a straight-to-Benjamin escalation (O06 routing rule). T10 (af-u61al3): condition trigger delegates to orders-restart-stagger.sh so a restart after a pause spreads this order's first firing instead of bursting with every other cooldown order on the same tick; steady-state cadence is unchanged (still fires every 15m)."
+trigger = "condition"
 interval = "15m"
+check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh escalation-door-sweep 900"
 exec = "/home/benja/agent-factory/bin/escalation-door sweep"
 timeout = "60s"

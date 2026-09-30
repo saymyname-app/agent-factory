@@ -77,7 +77,8 @@ jq -e --arg source "$ROOT/orders/factory-orphan-sweep.toml" \
       --arg exec "$ROOT/bin/factory-orphan-sweep" '
   .ok == true and
   .order.type == "exec" and
-  .order.trigger == "cooldown" and
+  .order.trigger == "condition" and
+  .order.interval == "5m" and
   .order.exec == $exec and
   .order.enabled == true and
   .order.source == $source

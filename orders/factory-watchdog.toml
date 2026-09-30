@@ -1,6 +1,11 @@
+# T10 (af-u61al3): condition trigger + orders-restart-stagger.sh spreads
+# this order's first post-restart firing instead of bursting with every
+# other cooldown order on the same tick; steady-state cadence (still 5m)
+# is unchanged. See orders/escalation-door-sweep.toml for the full note.
 [order]
 description = "Deterministic zero-token paging: an aged 'Gate: human' issue, a Factory-repo PR that is CONFLICTING or never ran CI, a molecule/workflow bead closed with a non-pass gc.outcome, an unreachable gh auth, and a control-quarantine backlog. Observes and pages the Mayor only -- never resolves a gate, merges a PR, or reopens a workflow (ADR-0016 section 7)."
-trigger = "cooldown"
+trigger = "condition"
 interval = "5m"
+check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh factory-watchdog 300"
 exec = "/home/benja/agent-factory/bin/factory-watchdog --quiet"
 timeout = "180s"
