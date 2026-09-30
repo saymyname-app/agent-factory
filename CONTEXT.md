@@ -14,6 +14,11 @@ The operator interface for observing and steering the Software Factory across pr
 _French conversational alias_: cockpit, interface de pilotage
 _Avoid_: control plane, orchestrator, Product Cockpit, Factory Cockpit
 
+**Operator Request**:
+An open condition that only the operator can move forward, because it needs a decision at the operator's tier or a physical action on the operator's side; it is not information. A problem the Factory handles itself (such as a Mayor-first escalation not yet promoted) is not an Operator Request. A notification is only the delivery of a request to the operator's phone.
+_French conversational alias_: demande opérateur, ce qui t'attend
+_Avoid_: alert, todo, notification
+
 ## Lifecycle
 
 **Intent & Design Workflow**:
