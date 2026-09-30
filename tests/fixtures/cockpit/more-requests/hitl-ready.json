@@ -1,0 +1,10 @@
+[
+  {
+    "id": "af-hitl1",
+    "title": "Carte HITL — décision produit",
+    "status": "open",
+    "created_at": "2026-09-30T08:00:00Z",
+    "assignee": "",
+    "metadata": {"gc.ticket_kind": "hitl_card"}
+  }
+]

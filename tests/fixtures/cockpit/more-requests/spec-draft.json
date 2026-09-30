@@ -1,0 +1,10 @@
+[
+  {
+    "id": "af-spec1",
+    "title": "Spec — projet exemple",
+    "status": "in_progress",
+    "created_at": "2026-09-30T08:00:00Z",
+    "labels": [],
+    "metadata": {"spec_state": "DRAFT_SPEC"}
+  }
+]

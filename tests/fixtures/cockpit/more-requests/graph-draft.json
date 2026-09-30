@@ -1,0 +1,10 @@
+[
+  {
+    "id": "af-graph1",
+    "title": "Graphe de tickets — projet exemple",
+    "status": "open",
+    "created_at": "2026-09-30T08:00:00Z",
+    "labels": ["ticket-graph-draft"],
+    "metadata": {}
+  }
+]
