@@ -118,6 +118,28 @@ grep -q "closed=0 skipped=2 failed=0" <<<"$out" || { echo "$out" >&2; fail "a re
 [ "$(close_count zz-fixture-draft-1)" = "0" ] || fail "re-closed an already-closed Draft bead"
 
 # =============================================================================
+# 2b. Spec handoff: the Spec bead was claimed for /to-tickets and is still
+#     in_progress and assigned when its convoy closes -- it closes like an
+#     open one.
+# =============================================================================
+
+jq -n '{
+  "zz-fixture-spec-claimed": {"id": "zz-fixture-spec-claimed", "status": "in_progress",
+    "assignee": "po-agent/zz-fixture-session",
+    "metadata": {"wayfinder.offered_by": "po-agent/zz-fixture-offerer"}},
+  "zz-fixture-draft-3": {"id": "zz-fixture-draft-3", "status": "open"}
+}' > "$SHOW_FILE"
+jq -n '[{
+  "id": "zz-fixture-convoy-3", "title": "Fixture Convoy Three", "status": "closed",
+  "metadata": {"gc.artifact_id": "zz-fixture-draft-3", "gc.spec_id": "zz-fixture-spec-claimed"}
+}]' > "$CONVOYS_FILE"
+: > "$CLOSE_LOG"
+
+out=$(run_tool)
+grep -q "closed=2 skipped=0 failed=0" <<<"$out" || { echo "$out" >&2; fail "expected the claimed Spec and its Draft to close"; }
+[ "$(bead_status zz-fixture-spec-claimed)" = "closed" ] || fail "a claimed (in_progress, assigned) Spec bead did not close with its convoy"
+
+# =============================================================================
 # 3. Convoy closed, file-draft mode: gc.artifact_id/gc.spec_id are plain
 #    identifier strings from a draft YAML, not bead ids -- `bd show` never
 #    resolves them, so the convoy is left untouched, without error.
@@ -139,4 +161,4 @@ out=$(run_tool) || rc=$?
 grep -q "closed=0 skipped=0 failed=0" <<<"$out" || { echo "$out" >&2; fail "a file-draft convoy's artifact/spec ids must be left untouched"; }
 [ -s "$CLOSE_LOG" ] && fail "attempted to close a file-draft artifact/spec id"
 
-echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, file-draft mode untouched without error)"
+echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error)"
