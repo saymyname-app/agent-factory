@@ -169,8 +169,9 @@ an A5 input.
 | `docs/PLANNING_ALLOCATION_PROTOTYPE.md` | kernel | CONTEXT_INDEX | P02 doc |
 | `docs/PLANNING_EXCEPTION.md` | kernel | CONTEXT_INDEX, planning-exception guard | B08 doc |
 | `docs/PLANNING_MAP_CONCURRENCY_PROTOTYPE.md` | kernel | CONTEXT_INDEX, ADAPTATION_REGISTER | P03 doc |
+| `docs/PLANNING_RUN.md` | kernel | CONTEXT_INDEX, GETTING_STARTED, issue-tracker | A6b, W09: the wired chain (`/wayfinder`, `/to-spec`, `spec-approve`, `/to-tickets`, `ticket-graph-publish`), No-fog exit, overflow rule |
 | `docs/PLANNING_RUN_RESUME_PROTOTYPE.md` | kernel | CONTEXT_INDEX | FIXED (P19, af-5l657): Cockpit V1/`bin/factory-cockpit` cited only as retired to `legacy/` (Cockpit V2 is Planning Run C01); no dangling AGENTS.md assertion remains |
-| `docs/PLANNING_RUN_ROUTER.md` | kernel | CONTEXT_INDEX, GETTING_STARTED | consistent with bin/planning-run-router (reservation sequence) |
+| `docs/PLANNING_RUN_ROUTER.md` | kernel | PLANNING_RUN | A6b, W09: reduced to a one-line pointer to PLANNING_RUN.md; retiring in W10 |
 | `docs/PLANNING_RUN_TO_SPEC_PROTOTYPE.md` | kernel | CONTEXT_INDEX | B03 doc |
 | `docs/PROJECT_ISOLATION_PROTOTYPE.md` | kernel | CONTEXT_INDEX | P05 doc |
 | `docs/PROJECT_PLANNING_PROFILE.md` | kernel | CONTEXT_INDEX, GETTING_STARTED, OPERATOR_BRIDGE | B02 doc; SayMyName mentions are the rejection rule |
@@ -179,7 +180,7 @@ an A5 input.
 | `docs/RUNBOOK_STOP_AND_RESTART.md` | ops | AGENTS.md, bin/factory-boot, CONTEXT_INDEX | commands verified; minor hardcoded SayMyName rig loop (:42) |
 | `docs/SECURITY.md` | ops | CONTEXT_INDEX, OPERATOR_BRIDGE | generic trust boundaries |
 | `docs/SPEC_APPROVE.md` | kernel | CONTEXT_INDEX | B05 doc; subcommands match |
-| `docs/WAYFINDING_RUN.md` | kernel | CONTEXT_INDEX, GETTING_STARTED | B04 doc; subcommands match |
+| `docs/WAYFINDING_RUN.md` | kernel | PLANNING_RUN | A6b, W09: reduced to a one-line pointer to PLANNING_RUN.md; retiring in W11 |
 | `docs/decisions/ADR-0025-approved-graph-bootstrap-scope.md` | kernel | CONTEXT_INDEX | amended 2026-09-26 for campaign removal |
 | `docs/decisions/ADR-0026-structural-delivery-completion-gate.md` | to-redo | CONTEXT_INDEX | point 5 and reversal still rely on mayor-campaign scoped readiness (legacy); no amendment |
 | `docs/decisions/ADR-0027-legacy-planning-and-cockpit-v1-quarantine.md` | kernel | CONTEXT_INDEX, B12 note | quarantine fence; legacy paths intentional |

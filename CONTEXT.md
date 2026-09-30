@@ -37,14 +37,24 @@ _French conversational alias_: spécification approuvée
 _Avoid_: Release Contract, approved summary
 
 **Planning Run**:
-A bounded, independently resumable instance of the Intent & Design Workflow. A simple run may use one conversation; a Wayfinding Run spans disposable decision sessions whose continuity is anchored by a Planning Graph.
+A bounded, independently resumable instance of the Intent & Design Workflow, chartered by `/wayfinder`. Charting that finds no fog takes the No-fog exit and finishes in the same session; charting that finds fog, or that outgrows one session, continues as a Wayfinding Run spanning disposable decision sessions whose continuity is anchored by a Planning Graph.
 _French conversational alias_: session de cadrage, parcours de planification
 _Avoid_: Mayor, campaign, delivery run, chat when durability is implied
 
 **Planning Session**:
-One agent conversation used within a Planning Run, either for a simple run or to resolve a particular Wayfinding decision. Its end does not end the Planning Run.
+One agent conversation used within a Planning Run, either to charter it, to resolve a particular Wayfinding decision, or to reach the No-fog exit. Its end does not end the Planning Run.
 _French conversational alias_: conversation de planification
 _Avoid_: Planning Run, Planning Graph
+
+**No-fog exit**:
+The way a Planning Run ends when `/wayfinder`'s charting finds no fog: Benjamin's exact words and the date (Paris time) are recorded as evidence in place of a Planning Graph, and the run finishes in the same session as an Unmapped Planning Run.
+_French conversational alias_: sortie sans brouillard
+_Avoid_: self-declared flag, skipping the map
+
+**Unmapped Planning Run**:
+A Planning Run that reached its Destination through the No-fog exit instead of a Planning Graph; its Spec carries the No-fog exit's evidence in place of a linked Planning Map Bead. If it later surfaces fog or outgrows one session, it resumes `/wayfinder` at map creation rather than spanning several sessions unmapped.
+_French conversational alias_: cadrage sans carte
+_Avoid_: Wayfinding Run
 
 **Planning Run Reservation**:
 The human's commitment that the next Planning Run to be approved and published is a named one; any other Planning Run is refused at Spec approval while the reservation is active. A reservation may name a following one, which becomes active once the first is published.

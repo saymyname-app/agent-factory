@@ -26,9 +26,11 @@ operator session, see Claim) when the operator session writes. Never create a se
 
 ## When a skill says "publish to the issue tracker"
 
-Create a planning-plane bead as above. Specs and Ticket Graphs for delivery
-go through the Planning Run router (`docs/PLANNING_RUN_ROUTER.md`), not
-through `bd create`.
+Create a planning-plane bead as above. A Spec is published as a
+planning-plane Spec bead (`bin/spec-approve bd-approve` approves it) and a
+Ticket Graph Draft as a planning-plane bead linked to its Spec bead
+(`bin/ticket-graph-publish bd-publish` publishes it) — see
+`docs/PLANNING_RUN.md` for the whole chain.
 
 ## When a skill says "fetch the relevant ticket"
 
@@ -45,4 +47,6 @@ Used by `/wayfinder`. The **map** is one bead (the Planning Map Bead) with
 - **Frontier query**: `bd ready --parent <map> --unassigned --json` (ready already drops blocked and in-progress beads); first by creation order wins.
 - **Claim**: `bd --actor po-agent/<session-id> update <id> --claim`, the session's first write. Only `--claim` is atomic, and only between distinct actors: exit 1 ("already claimed") means take the next frontier ticket. Never claim with `--assignee` (last writer wins silently). Research: branch `research/a6b-beads-claim`, af-0aiero.2.
 - **Resolve**: `bd comments add <id> -f answer.md`, then `bd close <id> --reason "<gist>"`, then append a context pointer (name + id + gist) to the map's Decisions so far. `bd update --body-file` replaces the whole description (last writer wins, no compare-and-set): re-read the map immediately before writing and keep one writer at a time on it.
-- **Research assets**: the research subagent writes its cited file on a throwaway `research/<name>` branch of this repo (in a worktree, never in the live root) and the ticket's resolution comment links it.
+- **Research assets**: the research subagent writes its cited file on a pushed, never-merged `research/<map>-<topic>` branch of the planned project's repo (in a worktree, never in the live root) and the ticket's resolution comment links it.
+- **Prototype assets**: pushed, never-merged `prototype/<map>-<topic>` branch, shown to Benjamin as a private Artifact page — the page is only a view, never where the decision lives. Benjamin chooses the variant in the live chat; that choice is recorded verbatim in the ticket's resolution comment.
+- **Worktree cleanup**: the local worktree for a research or prototype ticket is removed when the ticket closes.

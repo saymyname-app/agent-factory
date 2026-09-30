@@ -149,22 +149,18 @@ Factory internals:
 gc mail send mayor -s "New project" -m "Register your-project and help me plan <the outcome you want>."
 ```
 
-The Mayor drives Shared Understanding and, for anything beyond a single
-session, promotes the work into a durable Wayfinding Run before producing an
-approved Spec and a Ticket Graph Draft — see
-[`WAYFINDING_RUN.md`](WAYFINDING_RUN.md) for how that promotion and its
-Planning Map work. You approve the Spec and the resulting Ticket Graph
+`/wayfinder` charts the run with Benjamin and, for anything beyond a single
+session, promotes the work into a durable Wayfinding Run before `/to-spec`
+produces an approved Spec and `/to-tickets` a Ticket Graph Draft — see
+[`PLANNING_RUN.md`](PLANNING_RUN.md) for the whole chain, the No-fog exit
+and the overflow rule. You approve the Spec and the resulting Ticket Graph
 before any delivery work is published.
 
-Under the hood, every new Planning Run — simple or Wayfinding — runs through
-one door, `bin/planning-run-router run <request.json>`
-([`PLANNING_RUN_ROUTER.md`](PLANNING_RUN_ROUTER.md)): there is no other
-coded path, and no flag reactivates a manual, tool-by-tool sequence. While a
-reservation is active (`.gc/runtime/planning-run-reservation.json`, seeded
-from the tracked `config/planning-run-reservation.json`: first
+While a reservation is active (`.gc/runtime/planning-run-reservation.json`,
+seeded from the tracked `config/planning-run-reservation.json`: first
 `factory-operations-v2`, then C01 Cockpit V2, promoted when the previous one
-publishes), the router blocks any other new Planning Run until the reserved
-run has published.
+publishes), Spec approval blocks any other new Planning Run until the
+reserved run has published.
 
 ## 6. Observe without spending tokens
 
