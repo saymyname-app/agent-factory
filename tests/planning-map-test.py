@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin" / "planning-map"
 FAKE_BD = ROOT / "tests" / "fixtures" / "planning-map" / "bd"
+DESCRIPTORS_DIR = ROOT / "tests" / "fixtures" / "planning-map" / "descriptors"
 
 
 class PlanningMapTest(unittest.TestCase):
@@ -45,6 +46,80 @@ class PlanningMapTest(unittest.TestCase):
 
     def current_state(self):
         return json.loads(self.state_path.read_text())
+
+    # --- create-map --------------------------------------------------------
+
+    def test_create_map_carries_project_key_and_planning_plane(self):
+        self.seed({})
+
+        result = self.invoke(
+            "create-map", "--project", "fixture-project", "--title", "A new effort",
+            "--descriptors-dir", str(DESCRIPTORS_DIR), "--body", "## Destination\n",
+            check=True,
+        )
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        new_id = payload["id"]
+
+        state = self.current_state()
+        created = state["beads"][new_id]
+        self.assertEqual(created["labels"], ["wayfinder:map"])
+        self.assertEqual(
+            created["metadata"],
+            {"gc.plane": "planning", "gc.project_id": "fixture-project"},
+        )
+        self.assertEqual(created["description"], "## Destination\n")
+
+    def test_create_map_refuses_a_project_not_declared_by_any_descriptor(self):
+        self.seed({})
+
+        result = self.invoke(
+            "create-map", "--project", "not-a-declared-project", "--title", "A new effort",
+            "--descriptors-dir", str(DESCRIPTORS_DIR), "--body", "## Destination\n",
+        )
+        self.assertNotEqual(0, result.returncode)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("not declared", payload["error"])
+        self.assertEqual({}, self.current_state()["beads"])
+
+    # --- backfill-project ---------------------------------------------------
+
+    def test_backfill_project_sets_the_key_on_open_maps_only_and_skips_already_keyed(self):
+        self.seed({
+            "map-open-1": self.bead(id="map-open-1", labels=["wayfinder:map"], status="open"),
+            "map-open-2": self.bead(
+                id="map-open-2", labels=["wayfinder:map"], status="open",
+                metadata={"gc.project_id": "already-set"},
+            ),
+            "map-closed": self.bead(id="map-closed", labels=["wayfinder:map"], status="closed"),
+        })
+
+        result = self.invoke(
+            "backfill-project", "--project", "fixture-project",
+            "--descriptors-dir", str(DESCRIPTORS_DIR), check=True,
+        )
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(["map-open-1"], payload["updated"])
+        self.assertEqual(["map-open-2"], payload["already_keyed"])
+
+        state = self.current_state()
+        self.assertEqual("fixture-project", state["beads"]["map-open-1"]["metadata"]["gc.project_id"])
+        self.assertEqual("already-set", state["beads"]["map-open-2"]["metadata"]["gc.project_id"])
+        self.assertNotIn("gc.project_id", state["beads"]["map-closed"]["metadata"])
+
+    def test_backfill_project_refuses_an_undeclared_project(self):
+        self.seed({"map-open-1": self.bead(id="map-open-1", labels=["wayfinder:map"], status="open")})
+
+        result = self.invoke(
+            "backfill-project", "--project", "not-a-declared-project",
+            "--descriptors-dir", str(DESCRIPTORS_DIR),
+        )
+        self.assertNotEqual(0, result.returncode)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("not declared", payload["error"])
 
     # --- create-ticket ---------------------------------------------------
 

@@ -41,6 +41,7 @@ APPROVED_SPEC = "APPROVED_SPEC"
 
 BD_BIN = os.environ.get("BD_BIN", "bd")
 NO_MAP_VALUES = (None, "", "none")
+PROJECT_METADATA_KEY = "gc.project_id"
 
 
 class SpecApproveError(RuntimeError):
@@ -170,12 +171,21 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
             )
 
         planning_map = metadata.get("planning_map")
+        project_id = None
         if planning_map not in NO_MAP_VALUES:
             check = map_check(planning_map, map_bin)
             if not check.get("finished", False):
                 raise SpecApproveError(
                     f"refused: map {planning_map} is not finished (open_children={check.get('open_children')}, "
                     f"malformed={check.get('malformed')}, labelled_map={check.get('labelled_map')})"
+                )
+            map_bead = bd_show(planning_map)
+            project_id = (map_bead.get("metadata") or {}).get(PROJECT_METADATA_KEY)
+            spec_project_id = metadata.get(PROJECT_METADATA_KEY)
+            if project_id and spec_project_id and spec_project_id != project_id:
+                raise SpecApproveError(
+                    f"refused: Spec's project key {spec_project_id!r} contradicts its map "
+                    f"{planning_map}'s project key {project_id!r}"
                 )
         else:
             planning_map = None
@@ -196,13 +206,16 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
 
         digest = canonical_bead_digest(spec_bead.get("description") or "")
 
-        run_bd([
+        update_args = [
             "update", args.spec,
             "--set-metadata", "spec_state=" + APPROVED_SPEC,
             "--set-metadata", f"approved_by={approved_by}",
             "--set-metadata", f"approved_evidence={evidence}",
             "--set-metadata", f"approved_digest={digest}",
-        ])
+        ]
+        if project_id and metadata.get(PROJECT_METADATA_KEY) != project_id:
+            update_args += ["--set-metadata", f"{PROJECT_METADATA_KEY}={project_id}"]
+        run_bd(update_args)
 
         map_closed = False
         if planning_map is not None:

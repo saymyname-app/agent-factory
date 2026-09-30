@@ -190,6 +190,55 @@ class SpecApproveBeadModeTest(unittest.TestCase):
         state = self.current_state()
         self.assertEqual("APPROVED_SPEC", state["beads"]["spec-1"]["metadata"]["spec_state"])
 
+    # --- project key: map to Spec (T05) --------------------------------------
+
+    def test_bd_approve_sets_spec_project_key_from_its_map(self):
+        beads = self.mapped_spec_beads()
+        beads["map-1"]["metadata"]["gc.project_id"] = "fixture-project"
+        self.seed(beads)
+
+        proc = self.bd_approve("spec-1", check=True)
+        result = json.loads(proc.stdout)
+        self.assertTrue(result["ok"])
+
+        state = self.current_state()
+        self.assertEqual("fixture-project", state["beads"]["spec-1"]["metadata"]["gc.project_id"])
+
+    def test_bd_approve_refuses_a_spec_whose_project_key_contradicts_its_map(self):
+        beads = self.mapped_spec_beads()
+        beads["map-1"]["metadata"]["gc.project_id"] = "fixture-project"
+        beads["spec-1"]["metadata"]["gc.project_id"] = "another-project"
+        self.seed(beads)
+
+        proc = self.bd_approve("spec-1")
+        self.assertNotEqual(0, proc.returncode)
+        error = json.loads(proc.stdout)
+        self.assertFalse(error["ok"])
+        self.assertIn("contradicts", error["error"])
+
+        state = self.current_state()
+        self.assertNotIn("spec_state", state["beads"]["spec-1"]["metadata"])
+
+    def test_bd_approve_keeps_an_unmapped_specs_own_project_key(self):
+        self.seed({
+            "spec-1": self.bead(
+                id="spec-1",
+                metadata={
+                    "planning_run_target": "A6b", "planning_map": "none",
+                    "no_fog_evidence": "« pas de brouillard » (Benjamin, 2026-09-30 Paris)",
+                    "gc.project_id": "its-own-project",
+                },
+                description="prose spec body",
+            ),
+        })
+
+        proc = self.bd_approve("spec-1", check=True)
+        result = json.loads(proc.stdout)
+        self.assertTrue(result["ok"])
+
+        state = self.current_state()
+        self.assertEqual("its-own-project", state["beads"]["spec-1"]["metadata"]["gc.project_id"])
+
     # --- status: an edit after approval voids it -----------------------------
 
     def test_bd_status_reports_void_after_spec_edited_post_approval(self):

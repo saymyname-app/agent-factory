@@ -6,6 +6,11 @@ A small stateless tool over `bd` for the wayfinding conventions in
 finished-shape check, a map close/abandon, and a description update are
 never hand-typed differently by two sessions:
 
+- `create-map` creates a Planning Map Bead itself, carrying the planning
+  plane and the project key (spec af-oohx2x .8/.12, T05) -- it refuses a
+  `--project` that is not declared in a project descriptor
+  (`config/project-descriptors/*.json`), so a map can never be created
+  "sans projet".
 - `create-ticket` shapes a child ticket exactly: parented to the map, labels
   set (never inherited) to a single `wayfinder:<type>` label, and metadata
   carrying the planning plane.
@@ -39,6 +44,36 @@ PLANE_METADATA_KEY = "gc.plane"
 PLANNING_PLANE = "planning"
 MAP_LABEL = "wayfinder:map"
 WAYFINDER_LABEL_PREFIX = "wayfinder:"
+PROJECT_METADATA_KEY = "gc.project_id"
+MAP_TYPE = "epic"
+
+
+def repo_root_default() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def default_descriptors_dir() -> Path:
+    return repo_root_default() / "config" / "project-descriptors"
+
+
+def declared_project_ids(descriptors_dir: Path) -> set[str]:
+    """Every `project_id` declared by a `config/project-descriptors/*.json`
+    file (T04's extended descriptor, af-xqgvat), so `create-map` can refuse
+    a project that is not declared to the Factory instead of silently
+    creating a map with no way to ever be shown to the Cockpit."""
+    ids: set[str] = set()
+    if not descriptors_dir.is_dir():
+        return ids
+    for file in sorted(descriptors_dir.glob("*.json")):
+        try:
+            data = json.loads(file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict):
+            project_id = data.get("project_id")
+            if isinstance(project_id, str) and project_id:
+                ids.add(project_id)
+    return ids
 
 
 class PlanningMapError(RuntimeError):
@@ -106,6 +141,95 @@ def wayfinder_label(labels: list[Any]) -> str | None:
 
 def is_planning_plane(metadata: dict[str, Any]) -> bool:
     return metadata.get(PLANE_METADATA_KEY) == PLANNING_PLANE
+
+
+# --- create-map -----------------------------------------------------------
+
+
+def cmd_create_map(args: argparse.Namespace) -> int:
+    try:
+        descriptors_dir = Path(args.descriptors_dir)
+        declared = declared_project_ids(descriptors_dir)
+        if args.project not in declared:
+            raise PlanningMapError(
+                f"project {args.project!r} is not declared in {descriptors_dir} "
+                f"(declared projects: {sorted(declared)!r}) -- a map always gets "
+                "its project key at creation, never 'sans projet'"
+            )
+        body = read_body(args.body, args.body_file)
+        with_body = Path(args.body_file) if args.body_file and args.body_file != "-" else None
+        metadata = {PLANE_METADATA_KEY: PLANNING_PLANE, PROJECT_METADATA_KEY: args.project}
+        create_args = [
+            "create",
+            "--type", MAP_TYPE,
+            "--title", args.title,
+            "--labels", MAP_LABEL,
+            "--metadata", json.dumps(metadata),
+            "--silent",
+        ]
+        if with_body is not None:
+            create_args += ["--body-file", str(with_body)]
+            new_id = run_bd(create_args).strip()
+        else:
+            create_args += ["--body-file", "-"]
+            new_id = run_bd(create_args, input_text=body).strip()
+        if not new_id:
+            raise PlanningMapError("bd create returned no issue id")
+    except PlanningMapError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(json.dumps({
+        "ok": True,
+        "id": new_id,
+        "project": args.project,
+        "label": MAP_LABEL,
+        "metadata": metadata,
+    }, indent=2, sort_keys=True))
+    return 0
+
+
+# --- backfill-project -------------------------------------------------------
+
+
+def cmd_backfill_project(args: argparse.Namespace) -> int:
+    try:
+        descriptors_dir = Path(args.descriptors_dir)
+        declared = declared_project_ids(descriptors_dir)
+        if args.project not in declared:
+            raise PlanningMapError(
+                f"project {args.project!r} is not declared in {descriptors_dir} "
+                f"(declared projects: {sorted(declared)!r})"
+            )
+        out = run_bd(["list", "--status", "open", "--label", MAP_LABEL, "--json"])
+        try:
+            maps = json.loads(out)
+        except json.JSONDecodeError as exc:
+            raise PlanningMapError(f"bd list returned invalid JSON: {exc}") from exc
+        if not isinstance(maps, list):
+            raise PlanningMapError("bd list returned an unexpected shape")
+
+        updated: list[str] = []
+        already_keyed: list[str] = []
+        for map_bead in maps:
+            if not isinstance(map_bead, dict):
+                continue
+            map_id = map_bead.get("id")
+            metadata = map_bead.get("metadata") or {}
+            if metadata.get(PROJECT_METADATA_KEY):
+                already_keyed.append(map_id)
+                continue
+            run_bd(["update", map_id, "--set-metadata", f"{PROJECT_METADATA_KEY}={args.project}"])
+            updated.append(map_id)
+    except PlanningMapError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(json.dumps({
+        "ok": True,
+        "project": args.project,
+        "updated": updated,
+        "already_keyed": already_keyed,
+    }, indent=2, sort_keys=True))
+    return 0
 
 
 # --- create-ticket -------------------------------------------------------
@@ -269,6 +393,37 @@ def cmd_update(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    create_map = subparsers.add_parser(
+        "create-map", help="create a Planning Map Bead, carrying its project key"
+    )
+    create_map.add_argument("--title", required=True)
+    create_map.add_argument(
+        "--project", required=True,
+        help="project id declared by a config/project-descriptors/*.json file",
+    )
+    create_map.add_argument(
+        "--descriptors-dir", default=str(default_descriptors_dir()),
+        help="directory holding config/project-descriptors/*.json files",
+    )
+    create_map_body = create_map.add_mutually_exclusive_group(required=True)
+    create_map_body.add_argument("--body", help="map description text")
+    create_map_body.add_argument("--body-file", help="file to read the description from (- for stdin)")
+    create_map.set_defaults(func=cmd_create_map)
+
+    backfill_project = subparsers.add_parser(
+        "backfill-project",
+        help="set the project key on every still-open Planning Map Bead that has none yet",
+    )
+    backfill_project.add_argument(
+        "--project", required=True,
+        help="project id declared by a config/project-descriptors/*.json file",
+    )
+    backfill_project.add_argument(
+        "--descriptors-dir", default=str(default_descriptors_dir()),
+        help="directory holding config/project-descriptors/*.json files",
+    )
+    backfill_project.set_defaults(func=cmd_backfill_project)
 
     create_ticket = subparsers.add_parser(
         "create-ticket", help="create a correctly shaped child ticket of a map"

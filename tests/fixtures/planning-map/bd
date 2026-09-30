@@ -17,8 +17,9 @@ STATE_PATH = Path(os.environ["PLANNING_MAP_BD_STATE"])
 BOOLEAN_FLAGS = {"--no-inherit-labels", "--silent", "--json"}
 VALUE_FLAGS = {
     "--parent", "--type", "--title", "--labels", "--metadata", "--body-file",
-    "--reason",
+    "--reason", "--status", "--label",
 }
+REPEATABLE_VALUE_FLAGS = {"--set-metadata"}
 
 
 def load_state():
@@ -33,6 +34,7 @@ def save_state(state):
 
 def parse_flags(args):
     flags = {}
+    repeated = {}
     positionals = []
     i = 0
     while i < len(args):
@@ -40,13 +42,16 @@ def parse_flags(args):
         if arg in BOOLEAN_FLAGS:
             flags[arg] = True
             i += 1
+        elif arg in REPEATABLE_VALUE_FLAGS:
+            repeated.setdefault(arg, []).append(args[i + 1])
+            i += 2
         elif arg in VALUE_FLAGS:
             flags[arg] = args[i + 1]
             i += 2
         else:
             positionals.append(arg)
             i += 1
-    return flags, positionals
+    return flags, repeated, positionals
 
 
 def read_body(body_file):
@@ -124,7 +129,7 @@ def cmd_children(flags, positionals):
     print(json.dumps(children))
 
 
-def cmd_update(flags, positionals):
+def cmd_update(flags, repeated, positionals):
     state = load_state()
     if not positionals:
         fail("update requires an issue id")
@@ -134,8 +139,24 @@ def cmd_update(flags, positionals):
         fail(f"issue not found: {issue_id}")
     if "--body-file" in flags:
         bead["description"] = read_body(flags["--body-file"])
+    for entry in repeated.get("--set-metadata", []):
+        key, _, value = entry.partition("=")
+        bead.setdefault("metadata", {})[key] = value
     save_state(state)
     print(json.dumps(public_view(bead)))
+
+
+def cmd_list(flags):
+    state = load_state()
+    status = flags.get("--status")
+    label = flags.get("--label")
+    beads = [
+        public_view(bead)
+        for bead in state["beads"].values()
+        if (status is None or bead["status"] == status)
+        and (label is None or label in bead.get("labels", []))
+    ]
+    print(json.dumps(beads))
 
 
 def cmd_close(flags, positionals):
@@ -156,15 +177,17 @@ def main(argv):
     if not argv:
         fail("no command given")
     command, rest = argv[0], argv[1:]
-    flags, positionals = parse_flags(rest)
+    flags, repeated, positionals = parse_flags(rest)
     if command == "create":
         cmd_create(flags)
     elif command == "show":
         cmd_show(flags, positionals)
     elif command == "children":
         cmd_children(flags, positionals)
+    elif command == "list":
+        cmd_list(flags)
     elif command == "update":
-        cmd_update(flags, positionals)
+        cmd_update(flags, repeated, positionals)
     elif command == "close":
         cmd_close(flags, positionals)
     else:
