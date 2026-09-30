@@ -238,8 +238,11 @@ gc.work_outcome=...`. Choose the outcome from what actually happened:
   `--commit <sha>` and `--branch <branch>`.
 - `no-op` — the bead needed no change (already satisfied / duplicate); no
   `--commit`/`--branch`.
-- `blocked` / `abandoned` — you could not complete it. Also mail the escalation
-  recipient (see step 3b) — never leave a blocked bead silent.
+- `blocked` — you cannot complete it until someone answers or unblocks it.
+  `deliver-close` parks the bead (status `blocked`, not closed): its
+  dependents stay gated. Also mail the escalation recipient (see step 3b) —
+  never leave a blocked bead silent.
+- `abandoned` — nobody is expected to unblock it; the bead is closed.
 - delivered on another ticket's branch — the fix for this bead is the same
   logical unit as another ticket already in flight, so you committed it there
   instead of opening a branch/PR of your own for this bead (see 3c below).
@@ -307,6 +310,16 @@ NEXT: <what unblocking looks like>"
 
 Use `--outcome abandoned` instead of `blocked` if nobody is expected to
 unblock it (out of scope, superseded, etc.) — mail the same way regardless.
+
+**Waiting on the operator's decision** (af-1al0t1: e.g. a prototype ticket
+whose operator must pick a variant): post the question with
+`"$FACTORY_ROOT/bin/escalation-door" benjamin "$WORK_BEAD_ID" '<json>'` (it
+mails the operator itself), then park with `--outcome blocked
+--classification repair` as above. Never try to close the bead while its
+NEEDS BENJAMIN is active — `deliver-close` refuses every closing form until
+the question is answered. `escalation-door repondre` records the answer and
+reopens the bead (`clear` reopens it too); the next worker resumes on the same branch and delivers
+through the normal PR path.
 
 **3c. Delivered on another ticket's branch** (P07, af-87f9u): the repair this
 bead needs is the same logical unit as another ticket's change, so you

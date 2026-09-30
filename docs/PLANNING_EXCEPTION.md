@@ -101,7 +101,9 @@ created an ad-hoc, self-authorized redecomposition bead instead (AR-003's
 - `bin/deliver-close --outcome blocked|abandoned` requires
   `--classification repair|semantic|topology` (af-cphvt: leaving it optional
   let a worker skip the triage question entirely by just never passing the
-  flag). `repair` writes `gc.blocked_classification` and closes as before.
+  flag). `repair` writes `gc.blocked_classification`; `blocked` then parks
+  the bead (status `blocked`, never closed -- af-1al0t1) and `abandoned`
+  closes it.
   `semantic`/`topology` requires `--planning-exception-id <decision-id>`
   naming the decision an earlier `raise` actually produced for this bead --
   without it the close is refused outright, before any Beads write. A

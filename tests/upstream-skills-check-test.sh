@@ -63,11 +63,14 @@ run_check "$NO_TAGS_FILE" >/dev/null || fail "check with no tags should exit 0"
 # 3. A faked remote tag list with a new tag files exactly one proposal naming the tag.
 : >"$GC_CALLS_LOG"
 run_check "$ONE_TAG_FILE" >/dev/null || fail "check with a new tag should exit 0"
+# proposal-door (T07) makes two gc calls per proposal: `bd create` then
+# `bd update` to record the required fields as metadata.
 CALLS=$(grep -c -- '--- call:' "$GC_CALLS_LOG" || true)
-[ "$CALLS" = "1" ] || fail "expected exactly one gc call, got $CALLS: $(cat "$GC_CALLS_LOG")"
+[ "$CALLS" = "2" ] || fail "expected exactly two gc calls (create + update via proposal-door), got $CALLS: $(cat "$GC_CALLS_LOG")"
 grep -q 'bd create' "$GC_CALLS_LOG" || fail "expected a bd create call, got: $(cat "$GC_CALLS_LOG")"
 grep -q -- '-l proposal' "$GC_CALLS_LOG" || fail "expected the bead to be labelled proposal, got: $(cat "$GC_CALLS_LOG")"
 grep -q 'v1.2.3' "$GC_CALLS_LOG" || fail "expected the proposal to name the new tag v1.2.3, got: $(cat "$GC_CALLS_LOG")"
+grep -q 'gc.proposal_state=ouverte' "$GC_CALLS_LOG" || fail "expected proposal-door to record gc.proposal_state=ouverte, got: $(cat "$GC_CALLS_LOG")"
 [ -f "$STATE_FILE" ] || fail "expected a state file recording the flagged tag"
 [ "$(jq -r '.last_flagged_tag' "$STATE_FILE")" = "v1.2.3" ] || fail "expected state to record v1.2.3, got $(cat "$STATE_FILE")"
 

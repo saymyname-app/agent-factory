@@ -62,7 +62,7 @@ out=$(pilot)
 # PR 1 (first stuck pass): labelled, not yet filed.
 grep -q "^label create autopilot-stuck --repo saymyname-app/Say-my-name-back" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "stuck label was not created"; }
-grep -q "^pr edit 1 --repo saymyname-app/Say-my-name-back --add-label autopilot-stuck" "$TMP/gh.log" \
+grep -q "^api -X POST repos/saymyname-app/Say-my-name-back/issues/1/labels -f labels\[\]=autopilot-stuck" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "PR #1 (DIRTY, first pass) was not marked stuck"; }
 grep -q "^bd create \[autopilot\] PR #1" "$TMP/gc.log" && fail "PR #1 filed a bead on its first stuck pass"
 
@@ -73,18 +73,18 @@ grep -q "^pr comment 2 --repo saymyname-app/Say-my-name-back" "$TMP/gh.log" \
   || fail "PR #2 was not commented on when filed"
 
 # PR 3 (healthy again, was labelled) -> label removed, nothing filed.
-grep -q "^pr edit 3 --repo saymyname-app/Say-my-name-back --remove-label autopilot-stuck" "$TMP/gh.log" \
+grep -q "^api -X DELETE repos/saymyname-app/Say-my-name-back/issues/3/labels/autopilot-stuck" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "PR #3 (recovered) did not shed the stuck label"; }
 grep -qF "PR #3" "$TMP/gc.log" && fail "PR #3 (recovered) should never reach gc bd/mail"
 
 # PR 4 (BLOCKED, check still running): waiting its turn, never marked or filed.
-grep -q "^pr edit 4 .*--add-label autopilot-stuck" "$TMP/gh.log" \
+grep -q "^api -X POST repos/[^ ]*/issues/4/labels -f labels\[\]=autopilot-stuck" "$TMP/gh.log" \
   && { echo "$out" >&2; fail "PR #4 (BLOCKED on a pending check) was marked stuck"; }
 grep -qF "PR #4" "$TMP/gc.log" && fail "PR #4 (BLOCKED on a pending check) filed a bead"
 grep -q "^pr merge 4 --repo saymyname-app/Say-my-name-back --auto --squash" "$TMP/gh.log" \
   || fail "PR #4 (BLOCKED on a pending check) was not armed"
 # PR 5 (same, labelled earlier): the pending check un-sticks it.
-grep -q "^pr edit 5 --repo saymyname-app/Say-my-name-back --remove-label autopilot-stuck" "$TMP/gh.log" \
+grep -q "^api -X DELETE repos/saymyname-app/Say-my-name-back/issues/5/labels/autopilot-stuck" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "PR #5 (check pending again) did not shed the stuck label"; }
 
 # --- a second run on the same (still-labelled, still-stuck) PR #2 does not duplicate ---

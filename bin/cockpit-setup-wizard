@@ -1,0 +1,343 @@
+#!/usr/bin/env python3
+"""cockpit-setup-wizard — guided iPhone access setup (T25, af-tzk0s4;
+spec af-oohx2x §"Étapes à la main de Benjamin", §"Notifications iPhone",
+§"Heartbeat et usine muette", §"Accès et sécurité").
+
+Walks Benjamin, step by step, through the parts of C01's setup that
+cannot be done by the cockpit itself:
+
+  pushover-secrets    write the Pushover app token/user key/E2E key to
+                       the single out-of-repo secrets file
+                       cockpit.notify.secrets already knows how to read.
+  heartbeat-secret     write the Healthchecks.io ping URL to the
+                       out-of-repo file cockpit.heartbeat.emitter already
+                       knows how to read.
+  healthchecks-check   verify the "Usine muette" check's locally-knowable
+                       parameters (period, grace, up-notification) and
+                       note the 2h-repeat/priority-1 capability as a
+                       defect, never a blocker, when it cannot be proven
+                       without a live Healthchecks.io account (spec:
+                       "sinon c'est un défaut noté, pas un blocage").
+  serve                configure Tailscale Serve to the cockpit's own
+                       port, refusing outright (not just discouraging in
+                       prose) any attempt that uses Funnel or targets the
+                       gc supervisor's port.
+  focus-check          record whether a real time-sensitive push broke
+                       through an allowed Focus mode on the iPhone — a
+                       human-only check, recorded as a defect (never a
+                       blocker) when not yet confirmed.
+  run                  drive every step above from one JSON answers file,
+                       non-interactively (tests/cockpit-setup-wizard-test.sh's
+                       seam) — stops at the first hard refusal, continues
+                       past every soft defect.
+
+No step ever prints a secret value to stdout or stderr, or writes one
+anywhere but the single path the caller names for it. Pushover and
+Healthchecks.io secrets are read from stdin (a line, or a JSON object),
+never from argv, so they never show up in a process listing either.
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "lib"))
+
+from cockpit.notify.secrets import REQUIRED_KEYS as PUSHOVER_REQUIRED_KEYS  # noqa: E402
+
+REQUIRED_CHECK_NAME = "Usine muette"
+REQUIRED_PERIOD_MINUTES = 5
+REQUIRED_GRACE_MINUTES = 10
+
+
+class WizardError(Exception):
+    """A hard refusal: printed as a French error, non-zero exit, nothing
+    written."""
+
+
+def _refuse_outside_repo(path):
+    """The one thing every secret-writing step must refuse: a path that
+    lands inside this git repository, however Benjamin points it there --
+    the spec (.98) is explicit that a secret never belongs in git."""
+    if not path:
+        raise WizardError("chemin manquant pour le fichier de secret")
+    resolved = os.path.realpath(path)
+    repo_root = os.path.realpath(ROOT)
+    if resolved == repo_root or resolved.startswith(repo_root + os.sep):
+        raise WizardError(
+            "refus : %s est à l'intérieur du dépôt git — le secret doit vivre "
+            "hors dépôt, côté Windows (accessible depuis WSL via /mnt/c)" % path
+        )
+
+
+def _write_secret_file(path, content, mode=0o600):
+    _refuse_outside_repo(path)
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(content)
+    finally:
+        pass
+
+
+# ---------------------------------------------------------------------
+# pushover-secrets
+# ---------------------------------------------------------------------
+def cmd_pushover_secrets(args):
+    """Reads {"token", "user_key", "e2e_key"} as one JSON object from
+    stdin and writes exactly those three keys to ``args.path`` — the
+    exact shape cockpit.notify.secrets.read_secrets_from_file expects, so
+    the notify engine can read it back unchanged. Never echoes a value."""
+    raw = sys.stdin.read()
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise WizardError("entrée invalide : un objet JSON {token, user_key, e2e_key} est attendu sur stdin")
+    if not isinstance(data, dict):
+        raise WizardError("entrée invalide : un objet JSON est attendu, pas une liste ou une valeur seule")
+    missing = [key for key in PUSHOVER_REQUIRED_KEYS if not data.get(key)]
+    if missing:
+        raise WizardError("champ(s) manquant(s) dans l'entrée : %s" % ", ".join(missing))
+    secrets = {key: data[key] for key in PUSHOVER_REQUIRED_KEYS}
+    _write_secret_file(args.path, json.dumps(secrets) + "\n")
+    print("cockpit-setup-wizard : secrets Pushover écrits (jeton, clé utilisateur, clé E2E) — chemin : %s" % args.path)
+    return 0
+
+
+# ---------------------------------------------------------------------
+# heartbeat-secret
+# ---------------------------------------------------------------------
+def cmd_heartbeat_secret(args):
+    """Reads one line (the Healthchecks.io ping URL) from stdin and
+    writes it to ``args.path`` — the exact shape
+    cockpit.heartbeat.emitter.read_url_from_file expects."""
+    url = sys.stdin.readline().strip()
+    if not url:
+        raise WizardError("entrée invalide : l'URL de ping Healthchecks.io est attendue sur stdin")
+    if not url.startswith("https://"):
+        raise WizardError("refus : l'URL de ping doit être en HTTPS")
+    _write_secret_file(args.path, url + "\n")
+    print("cockpit-setup-wizard : URL de heartbeat écrite — chemin : %s" % args.path)
+    return 0
+
+
+# ---------------------------------------------------------------------
+# healthchecks-check
+# ---------------------------------------------------------------------
+def cmd_healthchecks_check(args):
+    if args.name != REQUIRED_CHECK_NAME:
+        raise WizardError(
+            "refus : le check doit s'appeler « %s » (texte lisible sans IA) — reçu %r"
+            % (REQUIRED_CHECK_NAME, args.name)
+        )
+    if args.period_minutes != REQUIRED_PERIOD_MINUTES:
+        raise WizardError(
+            "refus : période attendue %d min, reçue %s" % (REQUIRED_PERIOD_MINUTES, args.period_minutes)
+        )
+    if args.grace_minutes != REQUIRED_GRACE_MINUTES:
+        raise WizardError(
+            "refus : grâce attendue %d min, reçue %s" % (REQUIRED_GRACE_MINUTES, args.grace_minutes)
+        )
+    if args.up_notifications != "off":
+        raise WizardError("refus : la notification « up » doit être désactivée")
+
+    print(
+        "cockpit-setup-wizard : check « %s » conforme (période %dmin, grâce %dmin, "
+        "notification « up » désactivée)" % (REQUIRED_CHECK_NAME, REQUIRED_PERIOD_MINUTES, REQUIRED_GRACE_MINUTES)
+    )
+
+    defects = []
+    if args.repeat_2h != "yes":
+        defects.append("répétition de l'alerte toutes les 2 h non confirmée sur Healthchecks.io")
+    if args.priority1 != "yes":
+        defects.append("priorité Pushover 1 sur l'intégration non confirmée sur Healthchecks.io")
+    for defect in defects:
+        print("cockpit-setup-wizard : défaut noté (non bloquant) — %s" % defect)
+    return 0
+
+
+# ---------------------------------------------------------------------
+# serve
+# ---------------------------------------------------------------------
+def _run_tailscale(tailscale_bin, args_list):
+    try:
+        return subprocess.run(
+            [tailscale_bin] + args_list, capture_output=True, text=True, timeout=15
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise WizardError("échec en appelant %s : %s" % (tailscale_bin, exc))
+
+
+def cmd_serve(args):
+    """Configures Tailscale Serve (HTTPS) to the cockpit's own port.
+    Refuses outright, before ever calling ``tailscale``, a request that
+    uses Funnel or targets the gc supervisor's port (spec .94, .95:
+    Funnel forbidden, the gc API never exposed)."""
+    if args.funnel:
+        raise WizardError(
+            "refus : Tailscale Funnel est interdit pour le cockpit (spec .94) — "
+            "utilise Tailscale Serve seul, jamais Funnel"
+        )
+    if args.target_port == args.gc_port:
+        raise WizardError(
+            "refus : le port visé (%d) est celui de l'API gc — l'API gc n'est jamais "
+            "exposée (spec .95)" % args.target_port
+        )
+
+    target_url = "http://127.0.0.1:%d" % args.target_port
+    result = _run_tailscale(args.tailscale_bin, ["serve", "--bg", "--yes", target_url])
+    if result.returncode != 0:
+        raise WizardError("échec de « tailscale serve » : %s" % (result.stderr or result.stdout).strip())
+
+    funnel_result = _run_tailscale(args.tailscale_bin, ["funnel", "status"])
+    funnel_output = (funnel_result.stdout or "") + (funnel_result.stderr or "")
+    if "(Funnel on)" in funnel_output:
+        raise WizardError(
+            "refus : Tailscale signale Funnel actif après configuration — "
+            "corrige avant de continuer (spec .94)"
+        )
+
+    print("cockpit-setup-wizard : Tailscale Serve HTTPS configuré vers %s (Funnel : désactivé)" % target_url)
+    return 0
+
+
+# ---------------------------------------------------------------------
+# focus-check
+# ---------------------------------------------------------------------
+def cmd_focus_check(args):
+    if args.confirmed != "yes":
+        print(
+            "cockpit-setup-wizard : défaut noté (non bloquant) — vérification manuelle non "
+            "confirmée : un push time-sensitive Pushover doit percer un Focus autorisé sur l'iPhone"
+        )
+        return 0
+    print("cockpit-setup-wizard : vérification confirmée — le push time-sensitive perce le Focus autorisé")
+    return 0
+
+
+# ---------------------------------------------------------------------
+# run — non-interactive orchestrator driven by one JSON answers file
+# ---------------------------------------------------------------------
+STEP_ORDER = (
+    "pushover_secrets",
+    "heartbeat_secret",
+    "healthchecks_check",
+    "serve",
+    "focus_check",
+)
+
+
+def _dict_to_namespace(d):
+    return argparse.Namespace(**d)
+
+
+def cmd_run(args):
+    with open(args.answers) as fh:
+        answers = json.load(fh)
+
+    steps_run = []
+    for step in STEP_ORDER:
+        if step not in answers:
+            continue
+        step_args = dict(answers[step])
+        if step == "pushover_secrets":
+            _push_secret_stdin(step_args)
+            rc = cmd_pushover_secrets(_dict_to_namespace({"path": step_args["path"]}))
+        elif step == "heartbeat_secret":
+            _push_secret_stdin_line(step_args.pop("url"))
+            rc = cmd_heartbeat_secret(_dict_to_namespace({"path": step_args["path"]}))
+        elif step == "healthchecks_check":
+            rc = cmd_healthchecks_check(_dict_to_namespace(step_args))
+        elif step == "serve":
+            rc = cmd_serve(_dict_to_namespace(step_args))
+        elif step == "focus_check":
+            rc = cmd_focus_check(_dict_to_namespace(step_args))
+        else:  # pragma: no cover - STEP_ORDER is exhaustive
+            continue
+        steps_run.append(step)
+        if rc != 0:
+            return rc
+    print("cockpit-setup-wizard : étapes exécutées — %s" % ", ".join(steps_run))
+    return 0
+
+
+def _push_secret_stdin(step_args):
+    secret = step_args.pop("secret")
+    sys.stdin = _StringInput(json.dumps(secret))
+
+
+def _push_secret_stdin_line(url):
+    sys.stdin = _StringInput(url + "\n")
+
+
+class _StringInput:
+    """A minimal stand-in for ``sys.stdin`` fed from the answers file
+    instead of a real pipe, so ``run`` can drive every step's stdin-based
+    secret input from one JSON file without spawning subprocesses."""
+
+    def __init__(self, text):
+        self._text = text
+
+    def read(self):
+        return self._text
+
+    def readline(self):
+        return self._text
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="cockpit-setup-wizard", description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("pushover-secrets", help="write the Pushover secrets file")
+    p.add_argument("--path", required=True)
+    p.set_defaults(handler=cmd_pushover_secrets)
+
+    p = sub.add_parser("heartbeat-secret", help="write the Healthchecks.io ping URL file")
+    p.add_argument("--path", required=True)
+    p.set_defaults(handler=cmd_heartbeat_secret)
+
+    p = sub.add_parser("healthchecks-check", help="verify the Usine muette check's parameters")
+    p.add_argument("--name", default=REQUIRED_CHECK_NAME)
+    p.add_argument("--period-minutes", type=int, required=True)
+    p.add_argument("--grace-minutes", type=int, required=True)
+    p.add_argument("--up-notifications", choices=["on", "off"], required=True)
+    p.add_argument("--repeat-2h", choices=["yes", "no", "unknown"], default="unknown")
+    p.add_argument("--priority1", choices=["yes", "no", "unknown"], default="unknown")
+    p.set_defaults(handler=cmd_healthchecks_check)
+
+    p = sub.add_parser("serve", help="configure Tailscale Serve to the cockpit's port")
+    p.add_argument("--tailscale-bin", default="tailscale")
+    p.add_argument("--target-port", type=int, required=True)
+    p.add_argument("--gc-port", type=int, required=True)
+    p.add_argument("--funnel", action="store_true", help="never do this — present only so the wizard can refuse it")
+    p.set_defaults(handler=cmd_serve)
+
+    p = sub.add_parser("focus-check", help="record the real-device Focus-mode push check")
+    p.add_argument("--confirmed", choices=["yes", "no"], default="no")
+    p.set_defaults(handler=cmd_focus_check)
+
+    p = sub.add_parser("run", help="drive every step from one JSON answers file")
+    p.add_argument("--answers", required=True)
+    p.set_defaults(handler=cmd_run)
+
+    return parser
+
+
+def main(argv):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.handler(args)
+    except WizardError as exc:
+        print("cockpit-setup-wizard : %s" % exc, file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

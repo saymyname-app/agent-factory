@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""A fake `bd`, scoped to the cockpit-core seam test (af-0b6ffa).
+
+Refuses every call it wasn't told to answer, loudly, like the other fakes
+in tests/fixtures/ (P10, af-ygibh) — a test that stops driving this should
+see a clear failure, not a false green from a silent no-op.
+"""
+import json
+import sys
+
+if sys.argv[1:] == ["list", "--json"]:
+    print(json.dumps([{"id": "af-fake1", "status": "open", "title": "fixture bead"}]))
+    sys.exit(0)
+
+sys.stderr.write(
+    "fake bd (cockpit-core): no canned response for: bd %s\n" % " ".join(sys.argv[1:])
+)
+sys.exit(1)

@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""A controllable fake `factory-session-loop-guard` for the T14
+(af-peh3yy) Operator Actions seam test. Understands
+`resume <session-id> [--reason ...]` -- the only command cockpit.actions
+.registry's `relancer` handler ever calls for a session target. Logs the
+call and exits 0 (loosely mirroring the real script's stdout, which
+prints whatever `gc session wake` reported); exits 1 if
+$FAKE_LOOP_GUARD_FAIL_FLAG_FILE exists, so a test can prove a failed
+relaunch is reported and traces nothing.
+
+Every invocation is appended, one JSON line per call, to
+$FAKE_LOOP_GUARD_CALLS_FILE.
+"""
+import json
+import os
+import sys
+
+
+def _log_call(args):
+    log_path = os.environ.get("FAKE_LOOP_GUARD_CALLS_FILE")
+    if not log_path:
+        return
+    with open(log_path, "a") as fh:
+        fh.write(json.dumps(args) + "\n")
+
+
+def _fail_if_flagged():
+    fail_flag = os.environ.get("FAKE_LOOP_GUARD_FAIL_FLAG_FILE")
+    if fail_flag and os.path.exists(fail_flag):
+        sys.stderr.write("fake factory-session-loop-guard: forced failure\n")
+        sys.exit(1)
+
+
+def cmd_resume(args):
+    if not args:
+        sys.stderr.write("usage: fake factory-session-loop-guard resume <session-id> [--reason ...]\n")
+        sys.exit(2)
+    session_id = args[0]
+    sys.stdout.write("session wake %s: ok\n" % session_id)
+    sys.exit(0)
+
+
+def main():
+    argv = sys.argv[1:]
+    _log_call(argv)
+    _fail_if_flagged()
+    if not argv:
+        sys.exit(2)
+    command, rest = argv[0], argv[1:]
+    if command == "resume":
+        cmd_resume(rest)
+    else:
+        sys.stderr.write("fake factory-session-loop-guard: unsupported command %s\n" % command)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

@@ -140,6 +140,30 @@ def validate_tickets(raw_tickets: list[Any]) -> list[dict[str, Any]]:
     return tickets
 
 
+def refuse_prototype_tickets(
+    tickets: list[dict[str, Any]], already_published: frozenset[str] = frozenset(),
+) -> None:
+    """A prototype answers a planning question, so it is built while the map
+    is charted -- a `wayfinder:prototype` map ticket, before `/to-spec` --
+    never handed to a delivery worker (Benjamin, 2026-09-30: "la prochaine
+    fois c'est la planning run qui le fait"). Checked before any write. A
+    ticket already published under the graph a patch revises is left as it
+    is: a patch never rewrites what an earlier approval published (C01's
+    T21, convoy af-f71cgu).
+    """
+    offending = [
+        str(ticket["id"]) for ticket in tickets
+        if str(ticket.get("kind") or "").strip().lower() == "prototype"
+        and str(ticket["id"]) not in already_published
+    ]
+    if offending:
+        raise PublishError(
+            f"refused: {', '.join(offending)} declare kind: prototype -- a prototype is planning "
+            "work: build it while charting the map (a wayfinder:prototype map ticket, before "
+            "/to-spec), then slice only its outcome into delivery tickets"
+        )
+
+
 def scopes_overlap(a_paths: list[str], b_paths: list[str]) -> bool:
     """Two glob lists overlap if any pattern from one could match a path the
     other pattern could also match. Cross-matching each pattern against the
@@ -796,6 +820,7 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
         raise PublishError("refused: draft bead has no spec_id")
     spec_bead = load_approved_spec_bead(spec_id)
     spec_digest = canonical_bead_digest(spec_bead.get("description") or "")
+    refuse_prototype_tickets(tickets)
 
     scope_edges = add_scope_overlap_edges(tickets)
     record_scope_overlaps(scope_edges, tickets, digest)
@@ -846,6 +871,7 @@ def cmd_bd_patch(args: argparse.Namespace) -> int:
     revises = str(metadata.get("revises_digest") or "").strip()
     if not revises:
         raise PublishError("refused: draft bead metadata.revises_digest must be a non-empty string")
+    refuse_prototype_tickets(tickets, frozenset(graph_members(revises)))
 
     scope_edges = add_scope_overlap_edges(tickets)
     record_scope_overlaps(scope_edges, tickets, digest)

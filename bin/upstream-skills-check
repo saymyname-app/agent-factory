@@ -27,6 +27,8 @@ set -Eeuo pipefail
 PROGRAM_NAME="upstream-skills-check"
 GC_BIN="${GC_BIN:-gc}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
+PROPOSAL_DOOR_BIN="${PROPOSAL_DOOR_BIN:-$ROOT/bin/proposal-door}"
+OPERATOR_CONFIG_BIN="${OPERATOR_CONFIG_BIN:-$ROOT/bin/operator-config}"
 
 REPO_URL="${UPSTREAM_SKILLS_CHECK_REPO_URL:-https://github.com/mattpocock/skills}"
 BASELINE_FILE="${UPSTREAM_SKILLS_CHECK_BASELINE_FILE:-$ROOT/docs/UPSTREAM_SKILLS.md}"
@@ -88,26 +90,33 @@ if [ "$latest_tag" = "$previous_tag" ]; then
   exit 0
 fi
 
+# proposal-door (T07) requires the same fields an escalation-door request
+# needs, in the Operator Language -- no bare `gc bd create -l proposal` any
+# more.
+quoi="mattpocock/skills a publié $latest_tag, au-delà de la référence Method Baseline"
+if [ "${#quoi}" -gt 140 ]; then
+  quoi="${quoi:0:139}…"
+fi
+pourquoi="Référence épinglée à ${baseline_commit:0:12} dans $BASELINE_FILE"
+if [ "${#pourquoi}" -gt 140 ]; then
+  pourquoi="${pourquoi:0:139}…"
+fi
+langue=$("$OPERATOR_CONFIG_BIN" language) || die "could not read the Operator Language"
+que_faire=$(jq -n '[
+  {option: "Adopter la mise à jour", consequence: "Réépingle la référence Method Baseline et réécrit ses usages (docs/UPSTREAM_SKILLS.md)."},
+  {option: "Ne pas adopter pour l'"'"'instant", consequence: "La référence reste inchangée ; le prochain tag sera à nouveau signalé."}
+]')
 title="Upstream mattpocock/skills published $latest_tag (Method Baseline pinned at $baseline_commit)"
-body=$(cat <<EOF
-Daily upstream release check (W13, A6b, af-hxc8ra) found mattpocock/skills tag
-'$latest_tag' at $REPO_URL, past the Method Baseline pinned at commit
-$baseline_commit in $BASELINE_FILE.
-
-This is a surfaced decision only: nothing here updates a pin, a skill file,
-or any config. Follow the update procedure in docs/UPSTREAM_SKILLS.md if
-this update is adopted, which re-pins the baseline and rewrites every pin
-reference in the same change.
-EOF
-)
+payload=$(jq -n --arg quoi "$quoi" --arg pourquoi "$pourquoi" --arg langue "$langue" --argjson que_faire "$que_faire" \
+  '{quoi: $quoi, pourquoi: $pourquoi, que_faire: $que_faire, langue: $langue}')
 
 if [ "$DRY_RUN" = 1 ]; then
   log "DRY-RUN: would file proposal bead: $title"
   exit 0
 fi
 
-create_output=$("$GC_BIN" bd create "$title" -l proposal -t task -p 3 -d "$body" 2>&1) \
-  || die "gc bd create failed: $create_output"
+create_output=$("$PROPOSAL_DOOR_BIN" create "$payload" 2>&1) \
+  || die "proposal-door create failed: $create_output"
 bead_id=$(printf '%s\n' "$create_output" | grep -oE '[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+' | head -n1)
 bead_id="${bead_id:-unknown}"
 
