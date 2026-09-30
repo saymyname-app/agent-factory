@@ -303,14 +303,20 @@ test "$(grep -c '^mail send mayor --notify' "$TMP/gc.log" || true)" = "1" || fai
 grep -q "ACTION: pr-autopilot reconciled af-work10 from merged PR #10" "$TMP/gc.log" || fail "active-waiter wake lacks its ACTION"
 rm -f "$TMP/backend-merged.json" "$TMP/beads.json"
 
-# --- O3: an exhausted tick budget stops cleanly, recorded, not SIGKILLed -----------------
+# --- O3: an exhausted run budget stops cleanly, reported, not SIGKILLed ------------------
 # The order (orders/pr-autopilot.toml) hard-kills the whole run at 120s with no
-# trace at all (context deadline exceeded, 9 in 24h, live). A zero budget must
-# make the very first repo iteration report and stop instead of proceeding.
+# trace at all (context deadline exceeded). A zero budget must make the very
+# first repo report "not checked" and stop instead of proceeding -- and exit 0:
+# skipped work is retried next tick, it is not an order failure
+# (tests/pr-autopilot-time-budget-test.sh covers hung calls).
 : > "$TMP/gh.log"
-out=$(PR_AUTOPILOT_TICK_DEADLINE_SECONDS=0 "$AUTOPILOT" 2>&1) && rc=0 || rc=$?
-grep -q "^TICK_TIMEOUT:" <<<"$out" || { echo "$out" >&2; fail "exhausted tick budget was not reported"; }
-[ "$rc" -ne 0 ] || { echo "$out" >&2; fail "exhausted tick budget did not exit non-zero"; }
-[ -z "$(cat "$TMP/gh.log")" ] || fail "an exhausted tick budget must stop before touching any repo"
+out=$(PR_AUTOPILOT_BUDGET_SECONDS=0 "$AUTOPILOT" 2>&1) && rc=0 || rc=$?
+grep -q "and any repo after it — not checked (time budget exhausted" <<<"$out" \
+  || { echo "$out" >&2; fail "exhausted run budget was not reported"; }
+[ "$rc" -eq 0 ] || { echo "$out" >&2; fail "exhausted run budget failed the order instead of reporting and exiting 0"; }
+[ -z "$(cat "$TMP/gh.log")" ] || fail "an exhausted run budget must stop before touching any repo"
+# The former variable name is still honoured.
+out=$(PR_AUTOPILOT_TICK_DEADLINE_SECONDS=0 "$AUTOPILOT" 2>&1) || true
+grep -q "not checked (time budget exhausted" <<<"$out" || fail "PR_AUTOPILOT_TICK_DEADLINE_SECONDS is no longer honoured"
 
 echo "OK pr-autopilot holds what cannot be undone"

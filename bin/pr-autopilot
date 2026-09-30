@@ -83,7 +83,7 @@ unset _pc_rig_dir _pc_repo _pc_branch _pc_ci _pc_name
 # two agree, once per rig per tick, and never mutates anything.
 verify_required_check_live() {  # repo branch required-check -> 0 ok, 1 mismatch, 2 unknown
   local repo=$1 branch=$2 required=$3 actual
-  actual=$(gh api "repos/$repo/rules/branches/$branch" --jq '
+  actual=$(bounded "$AP_READ_CAP" gh api "repos/$repo/rules/branches/$branch" --jq '
     [.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[]?.context]
     | unique' 2>/dev/null) || return 2
   [ -n "$actual" ] || return 2
@@ -93,7 +93,7 @@ verify_required_check_live() {  # repo branch required-check -> 0 ok, 1 mismatch
 
 log()  { printf '%s\n' "$*"; }
 vlog() { [ "$VERBOSE" = "1" ] && printf '  %s\n' "$*"; return 0; }
-run()  { if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: $*"; return 0; fi; "$@"; }
+run()  { if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: $*"; return 0; fi; bounded "$AP_WRITE_CAP" "$@"; }
 
 finalize_delivery() {  # rig-path bead repo pr required-workflow
   local rig_path=$1 bead=$2 repo=$3 pr=$4 workflow=$5
@@ -103,7 +103,7 @@ finalize_delivery() {  # rig-path bead repo pr required-workflow
   fi
   (
     cd "$rig_path" || exit 1
-    "$DELIVER_CLOSE_BIN" "$bead" --repo "$repo" --pr "$pr" \
+    bounded "$AP_DOOR_CAP" "$DELIVER_CLOSE_BIN" "$bead" --repo "$repo" --pr "$pr" \
       --required-workflow "$workflow" \
       --reason "Merged PR #$pr after required workflow '$workflow' succeeded on the exact PR head."
   )
@@ -120,11 +120,13 @@ finalize_delivery() {  # rig-path bead repo pr required-workflow
 # bead + PR comment on the next), so one transient 422/5xx must not turn the
 # whole order into order.failed every 3 minutes.
 update_branch() {  # repo num head_sha -> 0 requested, 1 failed (logged)
-  local repo=$1 num=$2 sha=$3 err
+  local repo=$1 num=$2 sha=$3 err rc
   local -a args=(api -X PUT "repos/$repo/pulls/$num/update-branch")
   [ -n "$sha" ] && args+=(-f "expected_head_sha=$sha")
   if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: gh ${args[*]}"; return 0; fi
-  if err=$(gh "${args[@]}" 2>&1 >/dev/null); then return 0; fi
+  err=$(bounded "$AP_WRITE_CAP" gh "${args[@]}" 2>&1 >/dev/null); rc=$?
+  [ "$rc" = 0 ] && return 0
+  if timed_out "$rc"; then log "    branch update timed out -- outcome unknown, re-read next tick"; return 1; fi
   err=$(printf '%s
 ' "$err" | sed -n '/[^[:space:]]/{p;q}')
   log "    branch update failed: ${err:-gh exited non-zero with no stderr}"
@@ -145,14 +147,61 @@ ARMED=0; RECONCILED=0; FLAGGED=0; SKIPPED=0; ERRORS=0; HELD=0
 BEHIND_UPDATED_THIS_TICK=0
 TMPDIR_AP=$(mktemp -d); trap 'rm -rf "$TMPDIR_AP"' EXIT
 
-# O3: the order (orders/pr-autopilot.toml) hard-kills the whole run at 120s
-# with no trace at all -- the same gap as C8/mayor-campaign, seen here in
-# `context deadline exceeded` events (9 in 24h, live). A stuck `gh` call on
-# one repo used to be able to burn the whole budget silently. $SECONDS is
-# bash's own elapsed-time counter since the script started; checked once per
-# repo, leaving margin below the order's hard kill to still report and exit
-# cleanly instead of being SIGKILLed.
-TICK_DEADLINE_SECONDS="${PR_AUTOPILOT_TICK_DEADLINE_SECONDS:-100}"
+# --- run budget (2026-09-30, same shape as bin/factory-guard's, PR #283) ----
+# O3: the order (orders/pr-autopilot.toml) hard-kills the whole run at 120 s
+# with no trace at all ("context deadline exceeded" -> order.failed). A
+# deadline checked once per repo did not prevent it: on 2026-09-29 23:58 and
+# 2026-09-30 00:05 (Paris), with many PRs open during an overnight delivery,
+# one repo's PR loop -- or one hung gh/gc call inside it -- ran past 120 s
+# between two checks. So now:
+#  - every gh/gc call and sub-door goes through bounded() (its own cap, never
+#    past the hard stop). A cut call is "unknown": never a green answer, never
+#    a reason to arm, merge, flag, reject or close -- the PR is re-read on the
+#    next tick (3 min later);
+#  - no repo and no PR is started once the budget is spent; each one left is
+#    logged "not checked (time budget exhausted)" and the run exits 0 with its
+#    report. Real errors (ERRORS) still fail the order exactly as before;
+#  - a run past PR_AUTOPILOT_SLOW_SECONDS, or one that skipped or cut anything,
+#    prints per-repo timings and the host loadavg, to tell a saturated host
+#    (every repo slower) from one hung call (a "timed out" line).
+# PR_AUTOPILOT_TICK_DEADLINE_SECONDS is the former name, still honoured.
+AP_BUDGET="${PR_AUTOPILOT_BUDGET_SECONDS:-${PR_AUTOPILOT_TICK_DEADLINE_SECONDS:-90}}"  # nothing new starts after this
+AP_GRACE="${PR_AUTOPILOT_GRACE_SECONDS:-15}"   # budget+grace (+5 s kill) stays under the order's 120 s
+AP_SLOW="${PR_AUTOPILOT_SLOW_SECONDS:-60}"     # print timings past this
+for _v in "$AP_BUDGET" "$AP_GRACE" "$AP_SLOW"; do
+  case "$_v" in *[!0-9]*|'') log "invalid pr-autopilot time budget: '$_v'"; exit 2 ;; esac
+done
+AP_HARD=$((AP_BUDGET + AP_GRACE))              # no bounded call outlives this
+AP_READ_CAP=20; AP_WRITE_CAP=30; AP_DOOR_CAP=60
+AP_TMO="$TMPDIR_AP/timeouts"; : > "$AP_TMO"
+AP_REPO="-"; AP_REPO_T0=0; AP_TIMINGS=(); AP_NOT_CHECKED=()
+
+timed_out()   { [ "$1" = 124 ] || [ "$1" = 137 ]; }
+over_budget() { [ "$SECONDS" -ge "$AP_BUDGET" ]; }
+not_checked() {
+  AP_NOT_CHECKED+=("$1")
+  log "  $1 — not checked (time budget exhausted: ${SECONDS}s of ${AP_BUDGET}s), retried next tick"
+}
+
+# bounded <cap-seconds> <cmd...>: timeout(1) capped by what is left before the
+# hard stop. A cut call returns 124/137 and is logged for the timing report
+# (from subshells and pipelines too: it is a file); callers treat it as unknown.
+bounded() {
+  local cap=$1 left=$((AP_HARD - SECONDS)) rc; shift
+  [ "$left" -lt 1 ] && left=1
+  [ "$cap" -gt "$left" ] && cap=$left
+  timeout -k 5 "$cap" "$@"; rc=$?
+  timed_out "$rc" && printf '%s: %.80s — cut at %ss\n' "$AP_REPO" "${*:1:4}" "$cap" >> "$AP_TMO"
+  return "$rc"
+}
+# For a pipeline or command substitution whose exit status is not bounded's:
+# mark=$(tmo_mark) before, cut_since "$mark" after.
+tmo_mark()  { wc -l < "$AP_TMO"; }
+cut_since() { [ "$(wc -l < "$AP_TMO")" -gt "$1" ]; }
+repo_done() {
+  [ "$AP_REPO" != "-" ] && AP_TIMINGS+=("$AP_REPO $((SECONDS - AP_REPO_T0))s")
+  AP_REPO="-"
+}
 
 # af-i3k3f (B02): PR #209's fix made the RECONCILE loop re-verify every
 # already-terminal merged PR with a live `gc bd show` before trusting the
@@ -215,10 +264,14 @@ HOLD_LABELS="reversibility-declaration-needed irreversible-change"
 
 reversibility_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
   local repo=$1 num=$2 sha=$3 labels=" $4 " armed=$5
-  local key="$repo#$num@$sha" rc label color
+  local key="$repo#$num@$sha" rc label color c_rc
   rc=$(grep -F "${key}"$'\t' "$REV_CACHE" 2>/dev/null | tail -1 | cut -f2)
   if [ -z "$rc" ]; then
-    "$REV_CHECK" --pr "$num" --repo "$repo" --json >/dev/null 2>&1; rc=$?
+    bounded "$AP_WRITE_CAP" "$REV_CHECK" --pr "$num" --repo "$repo" --json >/dev/null 2>&1; rc=$?
+    if timed_out "$rc"; then   # unknown: never cached, never armed on
+      log "  PR #$num: reversibility check timed out -> unknown, not arming this pass (retried next tick)"
+      return 1
+    fi
     if [ "$rc" != "2" ]; then
       mkdir -p "$(dirname "$REV_CACHE")"
       printf '%s\t%s\n' "$key" "$rc" >> "$REV_CACHE"
@@ -244,7 +297,12 @@ reversibility_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
         *" $label "*) vlog "PR #$num: held ($label), already explained on the PR" ;;
         *)
           log "  PR #$num: HELD -> $label"
-          "$REV_CHECK" --pr "$num" --repo "$repo" --comment > "$TMPDIR_AP/comment.md" 2>/dev/null
+          bounded "$AP_WRITE_CAP" "$REV_CHECK" --pr "$num" --repo "$repo" --comment > "$TMPDIR_AP/comment.md" 2>/dev/null; c_rc=$?
+          if timed_out "$c_rc"; then
+            # No label without its explanation: the next pass explains and labels it.
+            log "    explanation timed out -> labelled and explained next pass"
+            HELD=$((HELD+1)); return 1
+          fi
           run gh label create "$label" --repo "$repo" --color "$color" --force \
             --description "pr-autopilot reversibility gate (ADR-0019)" >/dev/null 2>&1
           run gh pr comment "$num" --repo "$repo" --body-file "$TMPDIR_AP/comment.md" >/dev/null 2>&1
@@ -360,17 +418,21 @@ Not armable as-is; needs a human/Mayor look (resolve conflicts, push a commit to
 # comment naming the exact head SHA, not a label -- a label survives a new
 # push and would silently skip the retry on a commit that was never
 # actually retried.
-retry_ci_failure() {  # repo num sha workflow -> 0 retried this pass, 1 flag as before
-  local repo=$1 num=$2 sha=$3 workflow=$4 marker run_id
+retry_ci_failure() {  # repo num sha workflow -> 0 retried this pass, 1 flag as before, 2 unknown (a call timed out)
+  local repo=$1 num=$2 sha=$3 workflow=$4 marker run_id comments rc
   marker="pr-autopilot: retried CI once for ${sha:0:12}"
-  gh pr view "$num" --repo "$repo" --json comments --jq '.comments[].body' 2>/dev/null \
-    | grep -qF "$marker" && return 1
-  run_id=$(gh run list --repo "$repo" --commit "$sha" --json databaseId,name,conclusion \
+  comments=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json comments --jq '.comments[].body' 2>/dev/null); rc=$?
+  timed_out "$rc" && return 2
+  grep -qF "$marker" <<<"$comments" && return 1
+  run_id=$(bounded "$AP_READ_CAP" gh run list --repo "$repo" --commit "$sha" --json databaseId,name,conclusion \
     --jq --arg wf "$workflow" \
-    '[.[]|select(.name==$wf and .conclusion=="failure")][0].databaseId // empty' 2>/dev/null)
+    '[.[]|select(.name==$wf and .conclusion=="failure")][0].databaseId // empty' 2>/dev/null); rc=$?
+  timed_out "$rc" && return 2
   [ -n "$run_id" ] || return 1
   log "  PR #$num: required check failed -> retrying once (run $run_id)"
-  run gh run rerun "$run_id" --repo "$repo" --failed >/dev/null 2>&1 || return 1
+  run gh run rerun "$run_id" --repo "$repo" --failed >/dev/null 2>&1; rc=$?
+  timed_out "$rc" && return 2
+  [ "$rc" = 0 ] || return 1
   run gh pr comment "$num" --repo "$repo" --body "$marker" >/dev/null 2>&1
   return 0
 }
@@ -391,28 +453,60 @@ retry_ci_failure() {  # repo num sha workflow -> 0 retried this pass, 1 flag as 
 # falls through to the pre-existing stuck/CI-failure flagging unchanged.
 ensure_rig_all_beads() {  # fetch $RIG_ALL_BEADS_JSON once per rig, lazily
   [ "$RIG_ALL_BEADS_FETCHED" = "1" ] && return 0
-  RIG_ALL_BEADS_JSON=$(cd "$rig_path" && gc bd list --all --limit 0 --json 2>/dev/null)
+  local rc
+  RIG_ALL_BEADS_JSON=$(cd "$rig_path" && bounded "$AP_WRITE_CAP" gc bd list --all --limit 0 --json 2>/dev/null); rc=$?
+  # A cut read is not "no beads": callers must not act on it (RIG_ALL_BEADS_UNKNOWN).
+  timed_out "$rc" && RIG_ALL_BEADS_UNKNOWN=1
   [ -n "$RIG_ALL_BEADS_JSON" ] || RIG_ALL_BEADS_JSON='[]'
   RIG_ALL_BEADS_FETCHED=1
 }
 
+# Same exclusions RECONCILE below relies on: never a bead pr-autopilot itself
+# filed, never a step-tracking wisp, never a latch/tracking bead (af-6xs2n,
+# af-q7r0d/B04) -- and prefer a still-open candidate over an already-closed
+# one on any remaining duplicate match. One definition, used both per PR
+# (reject_ticket) and for a whole merged-PR window in one pass (index_merged).
+LINKED_WORK_JQ='def linked($b; $n):
+  [.[]|select((.metadata.source//"")!="pr-autopilot")
+      |select((.metadata["gc.step_ref"]//"")=="")
+      |select((.metadata["gc.kind"]//"") as $k
+              | ["workflow","scope","check","fanout","scope-check","workflow-finalize"]
+                | index($k) | not)
+      |select((.metadata["gc.work_branch"]//"")==$b
+             or (.metadata.pr_number|tostring)==$n)]
+  | sort_by(if .status=="closed" then 1 else 0 end)
+  | .[0] // empty;'
+
 linked_work_candidate_for() {  # branch num -> json of the linked work bead, or empty
-  # Same exclusions RECONCILE below relies on: never a bead pr-autopilot itself
-  # filed, never a step-tracking wisp, never a latch/tracking bead (af-6xs2n,
-  # af-q7r0d/B04) -- and prefer a still-open candidate over an already-closed
-  # one on any remaining duplicate match.
   printf '%s' "$RIG_ALL_BEADS_JSON" \
-    | jq -r --arg b "$1" --arg n "$2" \
-      '[.[]|select((.metadata.source//"")!="pr-autopilot")
-            |select((.metadata["gc.step_ref"]//"")=="")
-            |select((.metadata["gc.kind"]//"") as $k
-                    | ["workflow","scope","check","fanout","scope-check","workflow-finalize"]
-                      | index($k) | not)
-            |select((.metadata["gc.work_branch"]//"")==$b
-                   or (.metadata.pr_number|tostring)==$n)]
-       | sort_by(if .status=="closed" then 1 else 0 end)
-       | .[0] // empty
-       | @json' 2>/dev/null
+    | jq -r --arg b "$1" --arg n "$2" "$LINKED_WORK_JQ"' linked($b; $n) | @json' 2>/dev/null
+}
+
+# 2026-09-30: RECONCILE used to call linked_work_candidate_for and
+# delivered_via_pr_candidates_for once per merged PR -- 2 full parses of the
+# rig's whole bead history (every closed bead, tens of MB) per PR, x30 merged
+# PRs, x3 repos. Measured live that day: ~96 s of a 120 s order for a tick
+# with nothing to do. index_merged parses it once per rig and answers every
+# merged PR of the window from LINKED_FOR / VIA_FOR, with the same filters.
+declare -A LINKED_FOR=() VIA_FOR=()
+index_merged() {  # merged-TSV -> fills LINKED_FOR[num]=candidate-json, VIA_FOR[num]=ids
+  local pairs n v
+  LINKED_FOR=(); VIA_FOR=()
+  [ -n "$1" ] || return 0
+  pairs=$(printf '%s\n' "$1" | jq -Rn '[inputs|split("\t")|select(length>=2 and .[1]!="")|{n:.[0],b:.[1]}]' 2>/dev/null)
+  [ -n "$pairs" ] || pairs='[]'
+  while IFS=$'\t' read -r n v; do
+    [ -n "$n" ] && LINKED_FOR[$n]=$v
+  done < <(printf '%s' "$RIG_ALL_BEADS_JSON" | jq -r --argjson pairs "$pairs" "$LINKED_WORK_JQ"'
+    . as $all | $pairs[] | . as $p | ($all | linked($p.b; $p.n)) as $c
+    | "\($p.n)\t\($c|tojson)"' 2>/dev/null)
+  while IFS=$'\t' read -r n v; do
+    [ -n "$n" ] && VIA_FOR[$n]+="$v"$'\n'
+  done < <(printf '%s' "$RIG_ALL_BEADS_JSON" | jq -r '
+    .[]|(.metadata["gc.delivered_via_pr"]|tostring) as $v
+    |select($v!="null")
+    |select(.status=="open" or .status=="in_progress")
+    |"\($v)\t\(.id)"' 2>/dev/null)
 }
 
 # ---------- P07 (af-87f9u): a ticket fixed through another ticket's PR ----------
@@ -424,17 +518,13 @@ linked_work_candidate_for() {  # branch num -> json of the linked work bead, or 
 # gc.work_branch/pr_number, can never find it. This closes that ticket
 # directly, through the same deliver-close merge+CI proof, once the *named*
 # PR (not its own) merges.
-delivered_via_pr_candidates_for() {  # num -> newline-separated still-open bead ids naming it
-  printf '%s' "$RIG_ALL_BEADS_JSON" \
-    | jq -r --arg n "$1" \
-      '.[]|select((.metadata["gc.delivered_via_pr"]|tostring)==$n)
-          |select(.status=="open" or .status=="in_progress")
-          |.id' 2>/dev/null
+delivered_via_pr_candidates_for() {  # num -> newline-separated still-open bead ids naming it (from index_merged)
+  printf '%s' "${VIA_FOR[$1]:-}"
 }
 
 ensure_base_sha() {  # sets $BASE_SHA (cached per rig per tick) for the "conflict with <base>@<sha>" reason
   [ -n "$BASE_SHA" ] && return 0
-  BASE_SHA=$(gh api "repos/$repo/commits/$dev" --jq '.sha' 2>/dev/null)
+  BASE_SHA=$(bounded "$AP_READ_CAP" gh api "repos/$repo/commits/$dev" --jq '.sha' 2>/dev/null)
   [ -n "$BASE_SHA" ] || BASE_SHA="unknown"
 }
 
@@ -481,16 +571,18 @@ record_pr_conflict() {  # candidate_json sha rig_name
     --sha "$sha" --rig "$rig_name" >/dev/null 2>&1
 }
 
-reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR), 1 not ticket-owned
+reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR), 1 not ticket-owned, 2 unknown (a read timed out)
   local repo=$1 rig_path=$2 num=$3 sha=$4 reason=$5
-  local branch candidate bead status marker count
+  local branch candidate bead status marker count comments rc
 
   REJECT_TICKET_CANDIDATE_JSON=""
   REJECT_TICKET_FRESH=0
 
-  branch=$(gh pr view "$num" --repo "$repo" --json headRefName --jq .headRefName 2>/dev/null)
+  branch=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json headRefName --jq .headRefName 2>/dev/null); rc=$?
+  timed_out "$rc" && return 2
   [ -n "$branch" ] || return 1
   ensure_rig_all_beads
+  [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ] && return 2
   candidate=$(linked_work_candidate_for "$branch" "$num")
   [ -n "$candidate" ] || return 1
   bead=$(printf '%s' "$candidate" | jq -r '.id // empty' 2>/dev/null)
@@ -506,8 +598,9 @@ reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR)
   # rejection is never counted (or re-mailed) twice while nobody has pushed a
   # fix for it yet -- the ticket just waits in the pool until it does.
   marker="pr-autopilot: rejected $bead for ${sha:0:12}"
-  if gh pr view "$num" --repo "$repo" --json comments --jq '.comments[].body' 2>/dev/null \
-    | grep -qF "$marker"; then
+  comments=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json comments --jq '.comments[].body' 2>/dev/null); rc=$?
+  timed_out "$rc" && return 2
+  if grep -qF "$marker" <<<"$comments"; then
     vlog "PR #$num: already rejected for this head ($bead)"
     return 0
   fi
@@ -531,12 +624,13 @@ reject_ticket() {  # repo rig_path num sha reason -> 0 handled (ticket-owned PR)
 }
 
 for entry in "${RIGS[@]}"; do
-  if [ "$SECONDS" -ge "$TICK_DEADLINE_SECONDS" ]; then
-    log "TICK_TIMEOUT: ${SECONDS}s elapsed (budget ${TICK_DEADLINE_SECONDS}s) -- stopping before $entry, remaining repos wait for the next run"
-    ERRORS=$((ERRORS+1))
+  IFS='|' read -r rig_dir repo dev required_workflow <<<"$entry"
+  repo_done
+  if over_budget; then
+    not_checked "$repo and any repo after it"
     break
   fi
-  IFS='|' read -r rig_dir repo dev required_workflow <<<"$entry"
+  AP_REPO=$repo; AP_REPO_T0=$SECONDS
   log "=== $repo (base: $dev) ==="
   rig_path="$FACTORY/$rig_dir"
   [ -d "$rig_path" ] || { log "  SKIP: $rig_path missing"; ERRORS=$((ERRORS+1)); continue; }
@@ -563,27 +657,37 @@ for entry in "${RIGS[@]}"; do
   # Stale-within-a-tick is fine: a bead this script itself closes/creates for
   # PR N is never looked up again for that same N within the same pass, and a
   # PR cannot be both "open" and "merged" in the same `gh pr list` snapshot.
-  RIG_OPEN_BEADS_JSON=$(cd "$rig_path" && gc bd list --status open --json 2>/dev/null)
+  RIG_OPEN_BEADS_JSON=$(cd "$rig_path" && bounded "$AP_READ_CAP" gc bd list --status open --json 2>/dev/null); rc=$?
+  if timed_out "$rc"; then
+    # "No open bead" would re-file every stuck/CI flag already filed: skip the repo.
+    log "  open beads unknown (gc bd list timed out) -- $repo not processed this tick"
+    continue
+  fi
   [ -n "$RIG_OPEN_BEADS_JSON" ] || RIG_OPEN_BEADS_JSON='[]'
   # Lazily fetched by ensure_rig_all_beads only when reject_ticket or the
   # RECONCILE loop below actually needs it (a DIRTY/red PR, or a merge).
   RIG_ALL_BEADS_JSON='[]'
   RIG_ALL_BEADS_FETCHED=0
+  RIG_ALL_BEADS_UNKNOWN=0
   BASE_SHA=""
 
   # ---------- 1. ARM open PRs targeting dev ----------
-  open_prs=$(gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
+  mark=$(tmo_mark)
+  open_prs=$(bounded "$AP_READ_CAP" gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
     --json number,isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid,labels 2>/dev/null)
   # A fine-grained token cannot read check runs; rebuild them from Actions runs.
-  [ -n "$open_prs" ] || open_prs=$(gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
+  [ -n "$open_prs" ] || cut_since "$mark" || open_prs=$(bounded "$AP_READ_CAP" gh pr list --repo "$repo" --state open --base "$dev" --limit 50 \
     --json number,isDraft,autoMergeRequest,mergeStateStatus,headRefOid,labels 2>/dev/null \
-    | "$(dirname "${BASH_SOURCE[0]}")/factory-gh-rollup" "$repo" 2>/dev/null)
-  if [ -z "$open_prs" ]; then
+    | bounded "$AP_WRITE_CAP" "$(dirname "${BASH_SOURCE[0]}")/factory-gh-rollup" "$repo" 2>/dev/null)
+  if cut_since "$mark"; then
+    log "  open PRs unknown (a gh call timed out) -- nothing armed or flagged for $repo this tick"; open_prs='[]'
+  elif [ -z "$open_prs" ]; then
     log "  (could not list open PRs)"; ERRORS=$((ERRORS+1)); open_prs='[]'
   fi
 
   while IFS=$'\t' read -r num draft armed state checks sha labels; do
     [ -z "${num:-}" ] && continue
+    if over_budget; then not_checked "$repo open PR #$num and any open PR after it"; break; fi
     if [ "$draft" = "true" ]; then
       vlog "PR #$num: draft, not arming"; SKIPPED=$((SKIPPED+1)); continue
     fi
@@ -612,14 +716,22 @@ for entry in "${RIGS[@]}"; do
 
     # Red required check -> retry once (maybe transient), else flag as work.
     if [ "$checks" = "FAILURE" ]; then
-      if retry_ci_failure "$repo" "$num" "$sha" "$required_workflow"; then
+      retry_ci_failure "$repo" "$num" "$sha" "$required_workflow"; rc=$?
+      if [ "$rc" = 0 ]; then
         vlog "PR #$num: retried once, re-checking next pass"
+        continue
+      elif [ "$rc" = 2 ]; then
+        log "  PR #$num: required check failed, retry state unknown (a call timed out) -> nothing decided this pass"
         continue
       fi
       # P06: a ticket-owned PR still red after the single retry goes straight
       # back to the pool with a rejection reason instead of a side bead.
-      if reject_ticket "$repo" "$rig_path" "$num" "$sha" \
-          "required check '$required_check' failed after one retry"; then
+      reject_ticket "$repo" "$rig_path" "$num" "$sha" \
+          "required check '$required_check' failed after one retry"; rc=$?
+      if [ "$rc" = 0 ]; then
+        continue
+      elif [ "$rc" = 2 ]; then
+        log "  PR #$num: required check failed, ticket link unknown (a read timed out) -> not flagging this pass"
         continue
       fi
       log "  PR #$num: required checks FAILED -> flagging"
@@ -644,10 +756,14 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     # two-pass stuck flow below. A non-ticket PR falls through unchanged.
     if [ "$state" = "DIRTY" ]; then
       ensure_base_sha
-      if reject_ticket "$repo" "$rig_path" "$num" "$sha" "conflict with $dev@${BASE_SHA:0:12}"; then
+      reject_ticket "$repo" "$rig_path" "$num" "$sha" "conflict with $dev@${BASE_SHA:0:12}"; rc=$?
+      if [ "$rc" = 0 ]; then
         if [ "$REJECT_TICKET_FRESH" = "1" ]; then
           record_pr_conflict "$REJECT_TICKET_CANDIDATE_JSON" "$sha" "$repo"
         fi
+        continue
+      elif [ "$rc" = 2 ]; then
+        log "  PR #$num: DIRTY, ticket link unknown (a read timed out) -> nothing decided this pass"
         continue
       fi
     fi
@@ -693,14 +809,21 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
       log "  DRY-RUN: gh pr merge $num --repo $repo --auto --squash --delete-branch"
       ARMED=$((ARMED+1))
     else
-      if gh pr merge "$num" --repo "$repo" --auto --squash --delete-branch >/dev/null 2>&1; then
+      bounded "$AP_WRITE_CAP" gh pr merge "$num" --repo "$repo" --auto --squash --delete-branch >/dev/null 2>&1; rc=$?
+      if [ "$rc" = 0 ]; then
         ARMED=$((ARMED+1))
+      elif timed_out "$rc"; then
+        # Unknown, not failed: no re-read and no direct merge on a guess -- the
+        # next tick reads autoMergeRequest from the server like any other PR.
+        log "    arm request timed out -- outcome unknown, re-read next tick"
       else
         # Hard rule (gastown land-and-deploy): never retry `gh pr merge` after a
         # non-zero exit. Re-read authoritative server state instead.
-        after=$(gh pr view "$num" --repo "$repo" --json state,autoMergeRequest \
-          --jq '[.state,(.autoMergeRequest!=null)]|@tsv' 2>/dev/null)
+        after=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json state,autoMergeRequest \
+          --jq '[.state,(.autoMergeRequest!=null)]|@tsv' 2>/dev/null); rc=$?
+        timed_out "$rc" && after="TIMEOUT"
         case "$after" in
+          TIMEOUT) log "    state re-read timed out -- unknown, not merging this pass" ;;
           MERGED*) log "    already merged server-side"; ARMED=$((ARMED+1)) ;;
           *true)   log "    auto-merge is armed server-side"; ARMED=$((ARMED+1)) ;;
           *)
@@ -710,7 +833,8 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
             # green, which is the same gate auto-merge would have waited for.
             if [ "$checks" = "OK" ] && [ "$state" = "CLEAN" ]; then
               log "    auto-merge unavailable; checks green -> direct squash merge"
-              if gh pr merge "$num" --repo "$repo" --squash --delete-branch >/dev/null 2>&1; then
+              bounded "$AP_WRITE_CAP" gh pr merge "$num" --repo "$repo" --squash --delete-branch >/dev/null 2>&1; rc=$?
+              if [ "$rc" = 0 ]; then
                 log "    merged"; ARMED=$((ARMED+1))
               else
                 # A non-zero exit here does NOT mean the merge failed. gh also
@@ -718,11 +842,14 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
                 # local branch -- which is what happens whenever a leftover
                 # worktree still pins it. Same rule as above: never retry, ask
                 # the server what actually happened.
-                final=$(gh pr view "$num" --repo "$repo" --json state \
-                  --jq .state 2>/dev/null)
+                d_rc=$rc
+                final=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json state \
+                  --jq .state 2>/dev/null); rc=$?
                 if [ "$final" = "MERGED" ]; then
                   log "    merged (local cleanup failed; see factory-guard worktrees)"
                   ARMED=$((ARMED+1))
+                elif timed_out "$d_rc" || timed_out "$rc"; then
+                  log "    direct merge outcome unknown (a gh call timed out) -- re-read next tick"
                 else
                   log "    direct merge failed — left for a human"; ERRORS=$((ERRORS+1))
                 fi
@@ -760,9 +887,15 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
   # This pack's publisher does NOT write pr_number metadata (that was the
   # un-imported refinery's convention). The reliable link here is the branch:
   # bead metadata `gc.work_branch` == PR headRefName.
-  merged=$(gh pr list --repo "$repo" --state merged --base "$dev" --limit 30 \
+  if over_budget; then not_checked "$repo merged-PR reconciliation"; continue; fi
+  mark=$(tmo_mark)
+  merged=$(bounded "$AP_READ_CAP" gh pr list --repo "$repo" --state merged --base "$dev" --limit 30 \
     --json number,headRefName,mergeCommit,mergedAt 2>/dev/null \
     | jq -r '.[]|[.number,.headRefName,(.mergeCommit.oid//""),(.mergedAt//"")]|@tsv' 2>/dev/null)
+  if cut_since "$mark"; then
+    log "  merged PRs unknown (gh pr list timed out) -- reconciliation retried next tick"
+    continue
+  fi
 
   # The work bead now remains in_progress while its PR is under review. Keep
   # the full-history lookup for pre-gate false-close records and historical
@@ -770,10 +903,16 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
   # ensure_rig_all_beads reuses the same fetch reject_ticket already paid for
   # above, on any tick that also had a DIRTY/red-after-retry PR this rig.
   [ -n "$merged" ] && ensure_rig_all_beads
+  if [ "$RIG_ALL_BEADS_UNKNOWN" = "1" ]; then
+    log "  beads unknown (gc bd list timed out) -- reconciliation retried next tick"
+    continue
+  fi
+  index_merged "$merged"
 
   while IFS=$'\t' read -r num branch sha merged_at; do
     [ -z "${num:-}" ] && continue
     [ -z "${branch:-}" ] && continue
+    if over_budget; then not_checked "$repo merged PR #$num and any merged PR after it"; break; fi
 
     # The flag beads filed above ("[ci] ... failed", "[autopilot] ... stuck")
     # carry pr_number too; they are about the PR, not the work it delivers, and
@@ -807,7 +946,7 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     # open when this loop runs, so preferring it over an already-closed
     # match can only ever recover the wrong-pick failure mode, never cause
     # one -- a correctly-closed candidate with no open sibling is unaffected.
-    candidate=$(linked_work_candidate_for "$branch" "$num")
+    candidate="${LINKED_FOR[$num]:-}"
     [ -z "$candidate" ] && { vlog "PR #$num ($branch): no linked work bead"; continue; }
     bead=$(printf '%s' "$candidate" | jq -r '.id // empty' 2>/dev/null)
     [ -z "$bead" ] && { vlog "PR #$num ($branch): linked bead has no id"; continue; }
@@ -840,7 +979,12 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
         vlog "PR #$num ($branch): delivery already terminal and proven (cached, no live re-check)"
         continue
       fi
-      live_status=$(cd "$rig_path" && gc bd show "$bead" --json 2>/dev/null | jq -r '.[0].status // empty' 2>/dev/null)
+      mark=$(tmo_mark)
+      live_status=$(cd "$rig_path" && bounded "$AP_READ_CAP" gc bd show "$bead" --json 2>/dev/null | jq -r '.[0].status // empty' 2>/dev/null)
+      if cut_since "$mark"; then
+        log "  PR #$num ($branch): live status of $bead unknown (gc bd show timed out) -- retried next tick"
+        continue
+      fi
       if [ "$live_status" = "closed" ]; then
         vlog "PR #$num ($branch): delivery already terminal and proven"
         mkdir -p "$(dirname "$RECONCILE_CACHE")"
@@ -857,7 +1001,10 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     elif [ -n "$waiters" ]; then
       wake_reason="active waiter(s): $waiters"
     fi
-    if finalize_delivery "$rig_path" "$bead" "$repo" "$num" "$required_workflow"; then
+    finalize_delivery "$rig_path" "$bead" "$repo" "$num" "$required_workflow"; rc=$?
+    if timed_out "$rc"; then
+      log "    delivery door timed out for bead $bead -- outcome unknown, re-checked next tick"
+    elif [ "$rc" = 0 ]; then
       # Exact merge+CI proof is now the completion edge. Only after the door
       # succeeds may a former CI-failure finding close or a dependent wake.
       close_ci_failure_beads "$repo" "$rig_path" "$num" "merged at ${sha:0:8} with exact-head CI success"
@@ -897,10 +1044,15 @@ NEXT: Mayor advances or finalizes work waiting on $bead.' >/dev/null 2>&1"; then
   # a ticket naming one of those simply stays open with nothing further to do.
   while IFS=$'\t' read -r num branch sha merged_at; do
     [ -z "${num:-}" ] && continue
+    [ -n "${VIA_FOR[$num]:-}" ] || continue
+    if over_budget; then not_checked "$repo delivered_via_pr for merged PR #$num and after it"; break; fi
     while IFS= read -r via_bead; do
       [ -z "$via_bead" ] && continue
       log "  PR #$num merged at ${sha:0:8} -> delivered_via_pr reconciles $via_bead"
-      if finalize_delivery "$rig_path" "$via_bead" "$repo" "$num" "$required_workflow"; then
+      finalize_delivery "$rig_path" "$via_bead" "$repo" "$num" "$required_workflow"; rc=$?
+      if timed_out "$rc"; then
+        log "    delivery door timed out for bead $via_bead -- outcome unknown, re-checked next tick"
+      elif [ "$rc" = 0 ]; then
         via_waiters=$(active_waiters_for "$via_bead")
         via_wake_reason=""
         if merge_is_recent "$merged_at"; then
@@ -926,7 +1078,16 @@ NEXT: Mayor advances or finalizes work waiting on $via_bead.' >/dev/null 2>&1"; 
   done <<<"$merged"
 done
 
+repo_done
 log ""
 log "armed=$ARMED reconciled=$RECONCILED flagged=$FLAGGED held=$HELD skipped=$SKIPPED errors=$ERRORS"
+# Slow, cut short or partly timed out: what each repo cost and the host load.
+if [ "$SECONDS" -ge "$AP_SLOW" ] || [ "${#AP_NOT_CHECKED[@]}" -gt 0 ] || [ -s "$AP_TMO" ]; then
+  log "timing: ${SECONDS}s of a ${AP_BUDGET}s budget — loadavg $(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
+  [ "${#AP_TIMINGS[@]}" -gt 0 ] && log "  repos: $(printf '%s · ' "${AP_TIMINGS[@]}" | sed 's/ · $//')"
+  [ -s "$AP_TMO" ] && sed 's/^/  timed out: /' "$AP_TMO"
+  [ "${#AP_NOT_CHECKED[@]}" -gt 0 ] && printf '  not checked (time budget exhausted): %s\n' "${AP_NOT_CHECKED[@]}"
+fi
+# Skipped or timed-out work is retried next tick (3 min): only real errors fail the order.
 [ "$ERRORS" -gt 0 ] && exit 1
 exit 0
