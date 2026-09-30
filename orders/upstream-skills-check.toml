@@ -1,0 +1,13 @@
+# New order (W13, A6b, af-hxc8ra): a daily, read-only check of whether
+# mattpocock/skills has published a release tag newer than the Method
+# Baseline pinned in docs/UPSTREAM_SKILLS.md. It never updates a pin, a
+# skill file, or any config -- it only files one proposal bead (never
+# built without Benjamin) the first time a new tag appears, so the
+# decision surfaces at the next session start via
+# `./bin/escalation-door list`'s pending-proposal count.
+[order]
+description = "Daily, read-only check for a mattpocock/skills release tag newer than the pinned Method Baseline; files one proposal bead on drift, never updates anything (W13, A6b)."
+trigger = "cron"
+schedule = "0 4 * * *"
+exec = "./bin/upstream-skills-check"
+timeout = "60s"
