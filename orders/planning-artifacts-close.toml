@@ -1,0 +1,16 @@
+# W06 (A6b): a convoy's Spec bead and the Ticket Graph Draft bead it was
+# published from must both stay open and readable for the whole delivery,
+# but neither is closed automatically when its convoy finally is -- nothing
+# else notices that the Planning Run's own artifacts outlived the work they
+# authorized. `bead.closed` fires whenever a convoy itself closes (the same
+# event convoy-parent-sweep already reacts to), so this order re-derives and
+# closes any now-stale Spec/Draft beads on the same trigger, with a reason
+# naming the convoy. A convoy published from a file draft (earlier graphs,
+# where the artifact/spec ids are plain strings, not bead ids) is left
+# untouched without error.
+[order]
+description = "Closes the Spec bead and Ticket Graph Draft bead a convoy was published from, with a reason naming the convoy, once that convoy closes (W06, A6b)."
+trigger = "event"
+on = "bead.closed"
+exec = "/home/benja/agent-factory/bin/planning-artifacts-close"
+timeout = "60s"
