@@ -16,6 +16,7 @@ FAKE_GC = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "gc"
 FAKE_ESCALATION_DOOR = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "escalation-door"
 
 SPEC_DIGEST = "sha256:" + "0" * 64
+SKIP_MAYOR_NOTIFY_ENV = "TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY"
 
 
 def scoped_digest(raw: bytes) -> str:
@@ -58,8 +59,14 @@ def build_draft(tickets_yaml: str, revises: str | None = None) -> tuple[bytes, s
 
 class TicketGraphPublishTest(unittest.TestCase):
     def invoke(self, *args, env=None, check=True, cwd=ROOT):
+        # W02 (af-jrn464): production now wakes the Mayor by default on a
+        # successful publish/patch, so every test that does not care about the
+        # wake-up must not risk invoking a real `gc`. Default the wake-up off
+        # here; a test that wants to exercise it overrides this key with a
+        # falsy value ("") and supplies a fake GC_BIN.
+        full_env = {**os.environ, SKIP_MAYOR_NOTIFY_ENV: "1", **(env or {})}
         return subprocess.run(
-            (str(PUBLISHER), *args), cwd=cwd, env={**os.environ, **(env or {})},
+            (str(PUBLISHER), *args), cwd=cwd, env=full_env,
             text=True, capture_output=True, check=check,
         )
 
@@ -210,7 +217,7 @@ class TicketGraphPublishTest(unittest.TestCase):
                 "publish", str(DRAFT), env={
                     "BD_BIN": str(FAKE_BD),
                     "GC_BIN": str(FAKE_GC),
-                    "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR": "1",
+                    "TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY": "",
                     "TICKET_GRAPH_CAPTURE": str(root / "graph.json"),
                     "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
                     "TICKET_GRAPH_GC_LOG": str(gc_log),
@@ -242,7 +249,7 @@ class TicketGraphPublishTest(unittest.TestCase):
                     "BD_BIN": str(FAKE_BD),
                     "GC_BIN": str(FAKE_GC),
                     "FACTORY_ROOT": str(city),
-                    "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR": "1",
+                    "TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY": "",
                     "TICKET_GRAPH_CAPTURE": str(root / "graph.json"),
                     "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
                     "TICKET_GRAPH_GC_LOG": str(gc_log),
@@ -269,7 +276,7 @@ class TicketGraphPublishTest(unittest.TestCase):
                     "publish", str(DRAFT), cwd=root, env={
                         "BD_BIN": str(FAKE_BD),
                         "FACTORY_ROOT": str(root),
-                        "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR": "1",
+                        "TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY": "",
                         "TICKET_GRAPH_CAPTURE": str(root / "graph.json"),
                         "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
                         "TICKET_GRAPH_GC_LOG": str(root / "gc.log"),
@@ -285,7 +292,7 @@ class TicketGraphPublishTest(unittest.TestCase):
                 self.assertIn("WARNING", proc.stderr)
                 self.assertIn("Mayor was NOT woken", proc.stderr)
 
-    def test_publish_does_not_wake_the_mayor_unless_notify_is_explicitly_enabled(self):
+    def test_publish_does_not_wake_the_mayor_when_explicitly_disabled(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             gc_log = root / "gc.log"
@@ -301,6 +308,66 @@ class TicketGraphPublishTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertFalse(gc_log.exists())
         self.assertIsNone(result["mayor_notified"])
+
+    def test_publish_wakes_the_mayor_by_default_when_the_flag_is_not_set(self):
+        # W02 (af-jrn464): production wakes the Mayor by default -- approved
+        # work must never wait for a manual nudge. This bypasses the shared
+        # invoke() helper's test-safety default (which disables the wake-up
+        # so unrelated tests never risk a real `gc`) to prove the *production*
+        # default really is to notify, while still pointing GC_BIN at the
+        # fake so no real mail can leave.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gc_log = root / "gc.log"
+            env = {**os.environ}
+            env.pop(SKIP_MAYOR_NOTIFY_ENV, None)
+            env.update({
+                "BD_BIN": str(FAKE_BD),
+                "GC_BIN": str(FAKE_GC),
+                "TICKET_GRAPH_CAPTURE": str(root / "graph.json"),
+                "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+                "TICKET_GRAPH_GC_LOG": str(gc_log),
+            })
+            proc = subprocess.run(
+                (str(PUBLISHER), "publish", str(DRAFT)), cwd=ROOT, env=env,
+                text=True, capture_output=True, check=True,
+            )
+            result = json.loads(proc.stdout)
+            calls = [json.loads(line) for line in gc_log.read_text(encoding="utf-8").splitlines()]
+        self.assertTrue(result["ok"])
+        self.assertEqual(1, len(calls))
+        self.assertIs(True, result["mayor_notified"])
+
+    def test_a_test_that_forgets_to_disable_the_wake_up_fails_loudly_not_silently(self):
+        # W02 (af-jrn464): the safety net for CI -- a test invocation that
+        # forgets to opt out of the Mayor wake-up must fail visibly rather
+        # than silently send mail through whatever `gc` happens to be on
+        # PATH. Simulate "forgotten" by clearing the skip flag (bypassing the
+        # shared helper's safe default) while leaving GC_BIN unset; a
+        # nonexistent/uncontrolled `gc` must surface as a loud, reported
+        # failure (mayor_notified: false + mayor_notify_error), never as a
+        # quiet success that could mean real mail left.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**os.environ}
+            env.pop(SKIP_MAYOR_NOTIFY_ENV, None)
+            env.update({
+                "BD_BIN": str(FAKE_BD),
+                "GC_BIN": "/nonexistent/gc",
+                "FACTORY_ROOT": str(root),
+                "TICKET_GRAPH_CAPTURE": str(root / "graph.json"),
+                "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
+            })
+            proc = subprocess.run(
+                (str(PUBLISHER), "publish", str(DRAFT)), cwd=ROOT, env=env,
+                text=True, capture_output=True, check=True,
+            )
+            result = json.loads(proc.stdout)
+        self.assertTrue(result["ok"])
+        self.assertIs(False, result["mayor_notified"])
+        self.assertIn("could not run gc mail send", result["mayor_notify_error"])
+        self.assertIn("WARNING", proc.stderr)
+        self.assertIn("Mayor was NOT woken", proc.stderr)
 
     def test_publish_does_not_wake_the_mayor_when_the_graph_transaction_fails(self):
         broken_bd = (
@@ -353,7 +420,7 @@ class TicketGraphPublishTest(unittest.TestCase):
                 "patch", str(draft_path), "--author", "Test", "--reason", "test patch", env={
                     "BD_BIN": str(FAKE_BD),
                     "GC_BIN": str(FAKE_GC),
-                    "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR": "1",
+                    "TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY": "",
                     "TICKET_GRAPH_BD_LOG": str(root / "bd.log"),
                     "TICKET_GRAPH_EXISTING": json.dumps(existing),
                     "TICKET_GRAPH_GC_LOG": str(gc_log),

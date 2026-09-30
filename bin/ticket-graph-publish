@@ -23,7 +23,7 @@ BD_BIN = os.environ.get("BD_BIN", "bd")
 BD_WORKSPACE = Path(os.environ.get("TICKET_GRAPH_BD_WORKSPACE", str(ROOT)))
 GC_BIN = os.environ.get("GC_BIN", "gc")
 CONTENT_BOUNDARY = b"legacy_boundary:"
-NOTIFY_MAYOR_ENV = "TICKET_GRAPH_PUBLISH_NOTIFY_MAYOR"
+SKIP_MAYOR_NOTIFY_ENV = "TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY"
 MAYOR_NOTIFY_TIMEOUT_SECONDS = 60
 
 
@@ -617,12 +617,13 @@ def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> dict
     The mail targets the live city explicitly (`gc --city <mayor_city()>`,
     run from that directory), whatever the caller's cwd.
 
-    No-op unless NOTIFY_MAYOR_ENV is set: only the live planning-run-router
-    sets it when invoking this tool, so a default or test invocation (which
-    leaves it unset) never wakes the real Mayor (af-l46o6). Then
-    `mayor_notified` is null: not attempted.
+    Runs by default (O02, W02): approved work must never wait for a manual
+    nudge, so a successful publish or patch wakes the Mayor unless the caller
+    switches it off explicitly with SKIP_MAYOR_NOTIFY_ENV. Only tests set that
+    flag; a default invocation notifies. When skipped, `mayor_notified` is
+    null: not attempted.
     """
-    if not os.environ.get(NOTIFY_MAYOR_ENV):
+    if os.environ.get(SKIP_MAYOR_NOTIFY_ENV):
         return {"mayor_notified": None}
     city = mayor_city()
     subject = f"ticket-graph-{command}: {graph_digest}"
