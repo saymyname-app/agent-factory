@@ -1,0 +1,575 @@
+{
+  "map": {
+    "id": "af-0aiero",
+    "title": "A6b — wire the upstream wayfinder into the Planning Run",
+    "description": "## Destination\n\nAn Approved Spec for A6b plus its published Ticket Graph, whose delivery makes the Factory Planning Run follow the upstream chain as written: `/wayfinder` (map and tickets in Beads) → `/to-spec` from the map → `/to-tickets` → router publication, driven from the operator session by Claude and Codex, for any project, with no hand-written planning session file.\n\n## Notes\n\n- Intent (Benjamin, his words, 2026-09-29, live chat): answer 2A « first a Planning Run \"wayfinder wiring\" for the Factory, itself run with the real wayfinder, then C01 »; destination answers Q1 A, Q2 A, Q3 A (Claude and Codex); « Le planning run n'est pas uniquement pour cockpit C01 ».\n- Mechanism (agent interpretation): this map is charted with upstream `wayfinder` (mattpocock/skills c55ee46) as written; tracker = Beads per `docs/agents/issue-tracker.md`; every bead here carries `gc.plane=planning`.\n- Rule: follow the upstream skills exactly. Where Factory tooling cannot do what a skill says, the gap is a ticket on this map, never a quiet adaptation.\n- Skills: grilling tickets → `grilling` + `domain-modeling`; research tickets → a subagent calling `research`; prototype tickets → `prototype`, published as a private Artifact page (Benjamin works from his phone); `codebase-design` for router/wayfinding-run seams; `writing-for-agents` for skill/AGENTS.md edits.\n- Driver: the operator session (PO agent, `po-agent`) with Benjamin; the Mayor only executes approved graphs (Benjamin, 3A). Benjamin reads French, plain language, Paris time.\n- Hand-off at the end of this map: `/to-spec`, `/to-tickets`, then the router's current path, recorded as \"last run through the old path\".\n- Inputs (facts, not decisions): Factory branch `po/c01-cockpit` `docs/planning/c01-cockpit/wayfinder-gap.md` (gap table, D1-D11); proposal bead af-0xoj26.\n\n## Decisions so far\n\n- [Codex can run the Matt Pocock skills](af-0aiero.1): yes, Codex reads ~/.agents/skills natively; it ignores disable-model-invocation and honours agents/openai.yaml allow_implicit_invocation:false (install must keep those files; upstream ships one for all four A6b skills, see User-only to-spec and to-tickets on Codex).\n- [Two sessions claiming the same Beads ticket](af-0aiero.2): only `bd update --claim` is atomic, and only between distinct actors; `--assignee` and map `--body-file` rewrites are last-writer-wins (upstream mattpocock/skills#476 describes both). Claim with a per-session actor; one writer at a time on the map description.\n- [Planning beads never reach a worker](af-0aiero.3): no code path routes, wakes or counts gc.plane=planning beads; latent gap R1 — dispatch-door had no plane gate, only Mayor prose (fixed by a plane gate in dispatch-door, see the PR).\n- [Where the map lives: Beads or wayfinding-run](af-0aiero.4): Beads only; `wayfinding-run` and its JSON contracts retired (A5 map kept as archive); a small stateless check tool (create child, check map, close on Spec approval, safe map update); no pause/resume, abandon = close map and open tickets with a reason.\n- [From the map to the Spec](af-0aiero.5): upstream `/to-spec` prose Spec, published as a planning bead (not a map child); `spec-approve` checks map finished + digest frozen at approval; approval only from Benjamin live, `approved_by` restricted to the declared human; no `unverified_fact` signal (af-0xoj26 covered).\n- [User-only to-spec and to-tickets on Codex](af-0aiero.11): premise false, upstream c55ee46 ships agents/openai.yaml for to-spec/to-tickets; installed as-is (no divergence), so all four A6b skills are user-only on Claude and Codex; installs must copy agents/.\n- [Which upstream version the Factory follows](af-0aiero.10): Method Baseline stays mattpocock/skills c55ee46 (A6b skills identical at main); next = v1.3 release tag, tags only, pinned vendoring in ~/.agents (full dirs, LF, agents/), one change rewrites every pin reference, a read-only check signals new tags; CONTEXT.md → GLOSSARY.md renamed in the same change as that bump; resolving-merge-conflicts removed with it.\n- [From /to-tickets to the published graph](af-0aiero.6): upstream /to-tickets; its publish step = Ticket Graph Draft (a planning bead linked to the Spec) through the atomic ticket-graph-publish door; one live approval of the exact published text; publisher checks the Spec bead digest; Spec and draft closed when the convoy closes.\n- [Where research and prototype results are kept](af-0aiero.7): in the planned project's repo (never the Factory for project content), pushed never-merged `research/<map>-<topic>` and `prototype/<map>-<topic>` branches, kept forever as archives of why (not truth after delivery), worktree removed at close; the private Artifact is only a view of the prototype branch; Benjamin's variant choice is made live and recorded verbatim in the ticket comment; prototypes are planning tickets blocking /to-spec (C01 K00 workaround retired).\n- [When a Planning Run uses a map](af-0aiero.8): every run starts with /wayfinder charting; no fog = no-fog exit, Spec carries planning_map: none + Benjamin's words, else a finished map; complexity/wayfinder_ceremony_invoked/interview_rounds, planning-session.json and the to-spec oracle retired; overflow resumes /wayfinder at step 3; glossary: No-fog exit, Unmapped Planning Run (drop \"simple run\").\n- [What silently cleared a ticket claim](af-0aiero.12): Gas City core order `orphan-sweep` (5 min) reopens in_progress beads whose assignee gc does not know, so every `po-agent/*` claim drops within 5-10 min, silently (not a sibling session); the claim rule of Two sessions claiming the same Beads ticket holds only for the first minutes; fix to specify: Factory-owned sweep that treats `po-agent/*` / planning-plane beads as known, upstream script hash pinned by a test.\n- [Who runs research tickets](af-0aiero.13): operator-session subagent calling research (upstream as written), not a Factory worker; plane gate unchanged; tokens = driving session's provider and model, no tier pinned; session death = claim drops, ticket back on frontier, rerun.\n- [Fate of the P02 planner allocation prototype](af-0aiero.14): retired (bin, config, test, doc deleted; Git 576ddf2 is the archive); AR-001 replaced by the operator-session allocation (upstream skills as written, Beads, Factory doors, Mayor executes only); sibling prototypes P03/resume oracle/P06 = new ticket af-0aiero.15.\n- [What the router still does](af-0aiero.9): router retired in the A6b delivery (after A6b's own graph is published through it); /to-spec and /to-tickets call spec-approve and ticket-graph-publish directly; legacy_path fence becomes structural (ADR-0027 amended); reservation checked by spec-approve (planning_run_target) and advanced by ticket-graph-publish; publication wakes the Mayor by default; glossary: Planning Run Reservation (agent-factory#324).\n- [Fate of the sibling planning prototypes (P03, resume oracle, P06)](af-0aiero.15): all three retired (bin, config, test, doc deleted; Git history is the archive); context-index entries 0370/0380/0390 removed, comments repointed, approved refactor graph draft kept; ships with the A6b ticket graph.\n\n## Not yet specified\n\n\n## Out of scope\n\n- A Factory agent (Mayor or planning agent) charting a map without the operator session: contradicts Benjamin's 3A.\n- Showing the map in a cockpit: belongs to C01 (Cockpit V2), a separate Planning Run.\n\n\n\n\n",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "epic",
+    "created_at": "2026-09-29T18:47:26Z",
+    "created_by": "po-agent",
+    "updated_at": "2026-09-30T00:41:41Z",
+    "closed_at": "2026-09-30T00:41:41Z",
+    "close_reason": "Spec approved by Benjamin (2026-09-30 02:41 Paris): af-3s8prq",
+    "metadata": {
+      "gc.plane": "planning"
+    },
+    "labels": [
+      "wayfinder:map"
+    ],
+    "dependent_count": 16,
+    "dependency_count": 0,
+    "comment_count": 1
+  },
+  "children": [
+    {
+      "id": "af-0aiero.15",
+      "title": "Fate of the sibling planning prototypes (P03, resume oracle, P06)",
+      "description": "## Question\n\nWhat happens to the other planning prototypes that shared P02's scope — P03 `planning-map-concurrency-prototype`, `planning-run-resume-oracle` (pause/resume, retired by af-0aiero.4), and P06 `role-qualification-oracle` — now that P02 is retired (af-0aiero.14) and this map fixed the planning allocation (operator session, upstream skills, Beads only)? Retire, keep as archive, or rewrite each; does anything read them at runtime today?",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "assignee": "po-agent/b620d0b4",
+      "created_at": "2026-09-30T00:13:08Z",
+      "created_by": "po-agent/7f2f81e3",
+      "updated_at": "2026-09-30T00:27:57Z",
+      "started_at": "2026-09-30T00:24:46Z",
+      "closed_at": "2026-09-30T00:27:57Z",
+      "close_reason": "Retire P03, P04 resume oracle and P06 (Git history = archive), drop their index entries, keep the approved graph draft; ships with the A6b ticket graph",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:grilling"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.15",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-30T02:13:07Z",
+          "created_by": "po-agent/7f2f81e3",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 0,
+      "dependent_count": 0,
+      "comment_count": 1,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.14",
+      "title": "Fate of the P02 planner allocation prototype",
+      "description": "## Question\n\nWhat happens to the P02 `skill-loaded-planner` allocation prototype (`config/planning-allocation-prototype.json`, from the approved refactor ticket graph P02, 2026-09-23), whose required skills omit wayfinder, research, prototype and domain-modeling? Given this map's decisions (the operator session drives the map with the upstream skills; Beads only; wayfinding-run retired), is it retired, kept as archive, or rewritten, and does anything read it today?\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "assignee": "po-agent/7f2f81e3",
+      "created_at": "2026-09-29T23:39:11Z",
+      "created_by": "po-agent/2dd241a3",
+      "updated_at": "2026-09-30T00:13:07Z",
+      "started_at": "2026-09-30T00:08:36Z",
+      "closed_at": "2026-09-30T00:13:07Z",
+      "close_reason": "Retire P02 (history = archive), replace AR-001 with the operator-session allocation, sibling prototypes = new ticket",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:grilling"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.14",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-30T01:39:11Z",
+          "created_by": "po-agent/2dd241a3",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 0,
+      "dependent_count": 0,
+      "comment_count": 1,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.13",
+      "title": "Who runs research tickets",
+      "description": "## Question\n\nResearch tickets are resolved today by a subagent of the operator session (upstream wayfinder: \"a subagent that calls the Skill tool with research\"). Should they instead run as Factory workers? Settled inputs: the map and its tickets live in Beads only (\"Where the map lives\"); planning beads never reach a worker, by a plane gate in dispatch-door (\"Planning beads never reach a worker\"); research assets go on a pushed `research/<map>-<topic>` branch of the planned project's repo (\"Where research and prototype results are kept\"). Decide: operator-session subagent (upstream as written) vs Factory worker vs both, who pays the tokens (provider/tier), and what would have to change in the plane gate if workers took them.\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "assignee": "po-agent/3713a1d0",
+      "created_at": "2026-09-29T23:39:10Z",
+      "created_by": "po-agent/2dd241a3",
+      "updated_at": "2026-09-30T00:11:30Z",
+      "started_at": "2026-09-30T00:08:35Z",
+      "closed_at": "2026-09-30T00:11:30Z",
+      "close_reason": "Operator-session subagent calling research (upstream as written); plane gate unchanged; tokens = driving session's provider/model, no tier; session death = ticket back on frontier, rerun",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:grilling"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.13",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-30T01:39:10Z",
+          "created_by": "po-agent/2dd241a3",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 0,
+      "dependent_count": 0,
+      "comment_count": 1,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.12",
+      "title": "What silently cleared a ticket claim",
+      "description": "## Question\n\nDuring the session that resolved \"Where research and prototype results are kept\" (2026-09-30, Paris night), its `bd --actor po-agent/2dd241a3 update --claim` was undone: the ticket went back to open with no assignee, and carried no note or metadata (so neither `on-session-stranded` nor `factory-dispatch-guard`, which both annotate). What can clear a Beads claim silently (another session's write, a map `--body-file`, Dolt sync/merge, a `bd` default), and does it break the claim rule decided in \"Two sessions claiming the same Beads ticket\"?\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "assignee": "po-agent/2dd241a3",
+      "created_at": "2026-09-29T23:08:00Z",
+      "created_by": "po-agent/2dd241a3",
+      "updated_at": "2026-09-29T23:25:42Z",
+      "started_at": "2026-09-29T23:11:26Z",
+      "closed_at": "2026-09-29T23:25:42Z",
+      "close_reason": "gc core order orphan-sweep releases claims of actors gc does not know (po-agent/*) within 5-10 min; claim rule incomplete; fix = Factory-owned sweep guarding po-agent/* or planning plane",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:research"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.12",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-30T01:08:00Z",
+          "created_by": "po-agent/2dd241a3",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 0,
+      "dependent_count": 0,
+      "comment_count": 3,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.11",
+      "title": "User-only to-spec and to-tickets on Codex",
+      "description": "## Question\n\nUpstream ships `agents/openai.yaml` (`allow_implicit_invocation: false`) for `wayfinder` and `setup-matt-pocock-skills` only; `to-spec` and `to-tickets` carry only `disable-model-invocation: true`, which Codex ignores (research af-0aiero.1). So on Codex the model can invoke `to-spec` and `to-tickets` without the human asking, while on Claude it cannot. Do we add an `openai.yaml` for them (a registered divergence from upstream), accept the difference, or classify it UPSTREAM and move on?\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "created_at": "2026-09-29T18:51:52Z",
+      "created_by": "po-agent",
+      "updated_at": "2026-09-29T22:53:49Z",
+      "started_at": "2026-09-29T22:48:00Z",
+      "closed_at": "2026-09-29T22:53:49Z",
+      "close_reason": "Premise false: upstream c55ee46 ships openai.yaml for to-spec/to-tickets; installed as-is (agent-instructions 7806f67)",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:grilling"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.11",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-29T20:51:52Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 0,
+      "dependent_count": 0,
+      "comment_count": 1,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.10",
+      "title": "Which upstream version the Factory follows",
+      "description": "## Question\n\nOperator skills are pinned to mattpocock/skills c55ee46. Upstream main (d81f3a1, 2026-09-29) is 21 commits ahead: wayfinder is byte-identical, but domain-modeling, setup-matt-pocock-skills, to-spec and to-tickets now use `GLOSSARY.md` instead of `CONTEXT.md`. Which commit is the Method Baseline, how is it updated later, and is the glossary renamed to follow?\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "created_at": "2026-09-29T18:47:30Z",
+      "created_by": "po-agent",
+      "updated_at": "2026-09-29T23:02:54Z",
+      "started_at": "2026-09-29T22:47:56Z",
+      "closed_at": "2026-09-29T23:02:54Z",
+      "close_reason": "Baseline stays c55ee46; next = v1.3 tag via pinned vendoring; glossary rename atomic with that bump; resolving-merge-conflicts removed",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:grilling"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.10",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-29T20:47:29Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 0,
+      "dependent_count": 0,
+      "comment_count": 2,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.7",
+      "title": "Where research and prototype results are kept",
+      "description": "## Question\n\nUpstream: a research subagent writes a cited file on a throwaway `research/<name>` branch; a prototype lives on a throwaway `prototype/<name>` branch; the ticket links the asset and the human picks the prototype variant. For the Factory (which repo, branch vs `docs/planning/<run>/`, pushed or local, how long kept) and for Benjamin on his phone (private Artifact pages), where do these assets live and where is Benjamin's choice recorded? (gaps D5, D6)\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "assignee": "po-agent/2dd241a3",
+      "created_at": "2026-09-29T18:47:29Z",
+      "created_by": "po-agent",
+      "updated_at": "2026-09-29T23:07:59Z",
+      "started_at": "2026-09-29T22:49:48Z",
+      "closed_at": "2026-09-29T23:07:59Z",
+      "close_reason": "Assets in the planned project's repo on pushed never-merged research/ and prototype/ branches, kept as archives of why; Artifact = view only; choice recorded verbatim in the ticket comment; prototypes are planning tickets blocking /to-spec",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:grilling"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.7",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-29T20:47:28Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 0,
+      "dependent_count": 0,
+      "comment_count": 1,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.8",
+      "title": "When a Planning Run uses a map",
+      "description": "## Question\n\nUpstream: `grill-with-docs` when planning fits one session, `/wayfinder` when it does not, and charting itself exits without a map when breadth-first grilling surfaces no fog. The Factory router instead trusts self-declared `complexity`, `wayfinder_ceremony_invoked` and `interview_rounds` fields. What is the entry rule, and what evidence (a map bead id, a recorded no-fog exit) replaces the self-declared fields? (gap D8)\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "assignee": "po-agent/c0936b96",
+      "created_at": "2026-09-29T18:47:29Z",
+      "created_by": "po-agent",
+      "updated_at": "2026-09-29T23:12:45Z",
+      "started_at": "2026-09-29T22:47:48Z",
+      "closed_at": "2026-09-29T23:12:45Z",
+      "close_reason": "every run starts with /wayfinder; no-fog exit = Benjamin's words on the Spec (planning_map: none) or a finished map; self-declared fields, planning-session.json and oracle retired",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:grilling"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.8",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-29T20:47:29Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 0,
+      "dependent_count": 0,
+      "comment_count": 1,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.9",
+      "title": "What the router still does",
+      "description": "## Question\n\nThe router's pre-resolved decisions mode is moot: it drove `wayfinding-run` (retired by \"Where the map lives\") and `planning-run-to-spec-oracle` (retired by \"When a Planning Run uses a map\"). What is left in `bin/planning-run-router` is the reservation gate (`planning_run_target`), the fail-closed `legacy_path` refusal, and sequencing Spec approval -> Ticket Graph publication. Is the router kept as a thin wrapper over those, or removed in favour of calling `spec-approve` / `ticket-graph-publish` directly (with the reservation and `legacy_path` checks moving into those doors)? Must fit \"From /to-tickets to the published graph\" and the Destination's \"router publication\" hand-off.\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "assignee": "po-agent/717dc4a5",
+      "created_at": "2026-09-29T18:47:29Z",
+      "created_by": "po-agent",
+      "updated_at": "2026-09-30T00:17:19Z",
+      "started_at": "2026-09-30T00:09:31Z",
+      "closed_at": "2026-09-30T00:17:19Z",
+      "close_reason": "resolved: see answer comment",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:grilling"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.9",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-29T20:47:29Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 0,
+      "dependent_count": 0,
+      "comment_count": 1,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.5",
+      "title": "From the map to the Spec",
+      "description": "## Question\n\nUpstream `/to-spec` synthesizes the Spec from the conversation and the cleared map, checks test seams with the user, and publishes it. The Factory router's to-spec oracle instead reads a hand-written `planning-session.json` and checks declared context, ceremony flags and 7 topics. What does the Planning Run keep as a deterministic check once the Spec comes from `/to-spec` over the map, where is the Spec stored and approved, and does af-0xoj26's `unverified_fact` signal belong here? (gap D7)\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "created_at": "2026-09-29T18:47:28Z",
+      "created_by": "po-agent",
+      "updated_at": "2026-09-29T22:31:32Z",
+      "started_at": "2026-09-29T21:54:12Z",
+      "closed_at": "2026-09-29T22:31:32Z",
+      "close_reason": "upstream prose Spec as a planning bead; spec-approve checks map finished + frozen digest; human-only approval; no unverified_fact signal",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:grilling"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.5",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-29T20:47:28Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        },
+        {
+          "issue_id": "af-0aiero.5",
+          "depends_on_id": "af-0aiero.4",
+          "type": "blocks",
+          "created_at": "2026-09-29T20:47:30Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 1,
+      "dependent_count": 1,
+      "comment_count": 1,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.6",
+      "title": "From /to-tickets to the published graph",
+      "description": "## Question\n\nUpstream `/to-tickets` quizzes the user on tracer-bullet slices and publishes them with native blocking edges. The Factory publishes delivery beads only through `bin/ticket-graph-publish` from an approved Ticket Graph Draft (YAML, digest, `gc.plane=delivery`). How does `/to-tickets` output become that draft and get approved, without a second decomposition?\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "created_at": "2026-09-29T18:47:28Z",
+      "created_by": "po-agent",
+      "updated_at": "2026-09-29T23:07:07Z",
+      "started_at": "2026-09-29T22:45:54Z",
+      "closed_at": "2026-09-29T23:07:07Z",
+      "close_reason": "to-tickets step 5 = draft + atomic publish door; one live approval; publisher checks Spec bead digest; draft is a planning bead; Spec+draft closed with the convoy",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:grilling"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.6",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-29T20:47:28Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        },
+        {
+          "issue_id": "af-0aiero.6",
+          "depends_on_id": "af-0aiero.5",
+          "type": "blocks",
+          "created_at": "2026-09-29T20:47:30Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 1,
+      "dependent_count": 0,
+      "comment_count": 3,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.2",
+      "title": "Two sessions claiming the same Beads ticket",
+      "description": "## Question\n\nWith bd 1.2.2 (the Factory's Beads, Dolt-backed), what happens when two operator sessions claim the same planning bead at the same time (`bd update --assignee` as the first write, or `bd update --claim`)? Is one write rejected, or does last-writer-win silently? What does upstream wayfinder expect (it defines the write order but no lock; the Factory cites upstream issue #476 about a lost map update — verify it)? Primary sources: Beads source/docs for the installed version, mattpocock/skills repo and issue #476.\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "created_at": "2026-09-29T18:47:27Z",
+      "created_by": "po-agent",
+      "updated_at": "2026-09-29T18:54:26Z",
+      "started_at": "2026-09-29T18:48:16Z",
+      "closed_at": "2026-09-29T18:54:26Z",
+      "close_reason": "bd --claim is an atomic CAS but only between distinct actors; --assignee and --body-file are silent last-writer-wins: claim with --claim + per-session actor, map decisions as comments",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:research"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.2",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-29T20:47:26Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 0,
+      "dependent_count": 1,
+      "comment_count": 1,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.3",
+      "title": "Planning beads never reach a worker",
+      "description": "## Question\n\nVerify in the Factory code (local resource) that no order, formula, Mayor selector, guard or wake path can route, dispatch, wake a worker for, or count as delivery work a bead carrying `gc.plane=planning` (or a `wayfinder:*` label, type epic/task, parent-child edges), including `bd ready` consumers such as `bin/factory-guard` and `bin/idle-ready-work-wake`. List every consumer of ready/open beads with file:line and whether it positively requires `gc.plane=delivery`.\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "created_at": "2026-09-29T18:47:27Z",
+      "created_by": "po-agent",
+      "updated_at": "2026-09-29T18:55:21Z",
+      "started_at": "2026-09-29T18:48:30Z",
+      "closed_at": "2026-09-29T18:55:21Z",
+      "close_reason": "No code path routes/wakes/counts gc.plane=planning beads; latent R1: dispatch-door has no plane gate, only Mayor prose keeps planning beads from dispatch",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:research"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.3",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-29T20:47:27Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 0,
+      "dependent_count": 1,
+      "comment_count": 1,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.4",
+      "title": "Where the map lives: Beads or wayfinding-run",
+      "description": "## Question\n\nUpstream wayfinder keeps the map and its tickets on the repo's issue tracker (here Beads, per `docs/agents/issue-tracker.md`). The Factory already has `bin/wayfinding-run`, a JSON-file registry with a file lock, claim/resolve, pause/resume/abandon, but no ticket types, blocking edges, fog, out of scope or adding tickets after promotion. Does the Beads map replace `wayfinding-run`, does `wayfinding-run` become a thin check or derived view over the Beads map, or do both stay? (gap D4)\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "created_at": "2026-09-29T18:47:27Z",
+      "created_by": "po-agent",
+      "updated_at": "2026-09-29T21:41:24Z",
+      "started_at": "2026-09-29T19:39:33Z",
+      "closed_at": "2026-09-29T21:41:24Z",
+      "close_reason": "Beads is the only map home; wayfinding-run retired; small stateless check tool (create child, check map, close on approval, safe map update); no pause/resume",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:grilling"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.4",
+          "depends_on_id": "af-0aiero.2",
+          "type": "blocks",
+          "created_at": "2026-09-29T20:47:29Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        },
+        {
+          "issue_id": "af-0aiero.4",
+          "depends_on_id": "af-0aiero.3",
+          "type": "blocks",
+          "created_at": "2026-09-29T20:47:30Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        },
+        {
+          "issue_id": "af-0aiero.4",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-29T20:47:27Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 2,
+      "dependent_count": 1,
+      "comment_count": 1,
+      "parent": "af-0aiero"
+    },
+    {
+      "id": "af-0aiero.1",
+      "title": "Codex can run the Matt Pocock skills",
+      "description": "## Question\n\nCan Codex (the operator's other provider, Windows desktop/CLI) load skills from `~/.agents/skills` (where wayfinder, to-spec, to-tickets, setup-matt-pocock-skills, grilling, domain-modeling, research, prototype are installed, with junctions in `~/.claude/skills`)? If not, what is Codex's documented skills location and loading mechanism, and does it honour `disable-model-invocation` / `allow_implicit_invocation: false` (user-only invocation)? Fact observed 2026-09-29: `~/.codex/skills` holds only `.system`. Primary sources: OpenAI Codex official docs and source.\n",
+      "status": "closed",
+      "priority": 2,
+      "issue_type": "task",
+      "created_at": "2026-09-29T18:47:26Z",
+      "created_by": "po-agent",
+      "updated_at": "2026-09-29T18:50:54Z",
+      "started_at": "2026-09-29T18:48:01Z",
+      "closed_at": "2026-09-29T18:50:54Z",
+      "close_reason": "Codex loads ~/.agents/skills natively (user scope); ignores disable-model-invocation, honours openai.yaml allow_implicit_invocation:false; installed copies lack openai.yaml",
+      "metadata": {
+        "gc.plane": "planning"
+      },
+      "labels": [
+        "wayfinder:research"
+      ],
+      "dependencies": [
+        {
+          "issue_id": "af-0aiero.1",
+          "depends_on_id": "af-0aiero",
+          "type": "parent-child",
+          "created_at": "2026-09-29T20:47:26Z",
+          "created_by": "po-agent",
+          "metadata": "{}"
+        }
+      ],
+      "dependency_count": 0,
+      "dependent_count": 0,
+      "comment_count": 2,
+      "parent": "af-0aiero"
+    }
+  ]
+}

@@ -1,0 +1,436 @@
+artifact:
+  id: ticket-graph-draft-a6b-wayfinder-wiring
+  title: Wayfinder wiring (A6b)
+  labels:
+  - approved-ticket-graph
+  - wayfinder-wiring
+  state: APPROVED_TICKET_GRAPH_DRAFT
+  approved_by: Benjamin
+  content_digest: sha256:f54867f95dbdb0f9e309819fd5a3b2b5e77f20b0a4f413ed583f84bf46b1bbed
+  digest_scope: UTF-8 bytes from the legacy_boundary key through end of file, with LF line endings
+  revises: sha256:c3ee1fbb0634ec8a7b180ea6e8faeece609247302a313aec5a590647349a668c
+  patch_note: >-
+    Patch 1 changes only the citation criterion of W10, W11 and W12: accepted ADRs count as archives
+    and are not rewritten (Benjamin, approved with the graph and asked as a patch). Every other ticket
+    is carried unchanged because the door needs each ticket's blockers inside the patch.
+  source_spec:
+    id: spec-a6b-wayfinder-wiring-2026-09-30
+    state: APPROVED_SPEC
+    digest: sha256:69c05164dc5f93617d500063e29e8a4a4430f4f97b100d03ca8a6670c9bc27a4
+    bead: af-3s8prq
+  method_baseline:
+    skill: Matt Pocock /to-tickets (mattpocock/skills c55ee46), published through the old router path
+  publication_authorized: true
+  publication_authorized_by: Benjamin
+  approval_evidence: "live chat 2026-09-30 03:10 Paris « fais le patch W10-W12 pour mettre ADR = archives »"
+  record: last run through the old path
+
+legacy_boundary:
+  quarantine_read_only_evidence:
+  - Everything under legacy/ stays read-only evidence; no trusted code may reference it (tests/legacy-isolation-test.sh).
+target_rigs:
+  agent-factory:
+    purpose: Factory code, orders, formulas, prompts, config and docs.
+    status: existing Factory repository
+global_execution_contract:
+  context: Each ticket receives a fresh implementation context and the exact Approved Spec trace it needs
+    (Spec bead af-3s8prq, read with `bd show af-3s8prq`; planning records in docs/planning/a6b-wayfinder-wiring/).
+  test_method: Small red then green cycles at a public-behavior seam; a test drives a door through its
+    command line against the fake bd and asserts on its output and the beads it leaves. The Factory battery
+    runs in CI on every slice.
+  review: One independent reviewer checks Spec fidelity and design quality for every slice.
+  readiness: A blocker clears only after its checks and review pass and its code is merged on main.
+  declared_scope: Each ticket declares the files it expects to touch in its scope paths (metadata, not
+    ticket text). Touching a file outside them is allowed only when recorded in the ticket notes with the reason.
+  repair: Technical repair stays inside the ticket; behaviour or topology change raises a Planning Exception.
+  safety: No production, real sending, external publication, spend, unrecoverable destruction or wider
+    personal-data access without explicit human authority; nothing edited in the live root; no test
+    may reach the live city; SayMyName repos' GitHub settings and worker counts are not changed.
+tickets:
+- id: W01
+  kind: prefactor
+  title: Planning Run Reservation readable and advanceable outside the router
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/planning-run-router
+    - bin/planning-run-reservation
+    - tests/planning-run-router-test.py
+    - tests/planning-run-reservation-test.py
+  what_it_delivers: >-
+    The Planning Run Reservation (read-only seed in config, runtime copy under .gc/runtime, same
+    contract and nesting of next) is read, checked and advanced by one shared Factory tool instead of
+    code inside the Planning Run router. The router uses that tool and behaves exactly as before, so
+    spec-approve and ticket-graph-publish can take over the check and the advance.
+  acceptance_criteria:
+  - The router's existing reservation tests pass unchanged.
+  - A test drives the shared tool directly; a matching target is accepted, a different target is refused
+    while a reservation is active, advancing promotes next or clears the reservation, and the tracked
+    seed is never written.
+  - CI is green.
+- id: W02
+  kind: prefactor
+  title: ticket-graph-publish wakes the Mayor by default, from any directory
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/ticket-graph-publish
+    - tests/ticket-graph-publish-test.py
+  what_it_delivers: >-
+    A successful publish or patch wakes the Mayor unless the caller switches the wake-up off
+    explicitly; today it wakes only when the router turns it on. The door resolves the Factory root
+    the same way the other Factory tools do and makes no assumption about the caller's working
+    directory (the po/* worktree assumption goes). Tests switch the wake-up off explicitly.
+  acceptance_criteria:
+  - A test run from an unrelated directory publishes against the right Factory root and records the
+    wake-up attempt against a fake gc.
+  - A test that does not switch the wake-up off fails in CI before any real mail can leave.
+  - The result still reports mayor_notified and any wake-up error.
+  - CI is green.
+- id: W03
+  kind: vertical_slice
+  title: 'Planning map tool: create a ticket, check, close and safely update a map'
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/planning-map
+    - tests/planning-map-test.py
+    - docs/PLANNING_MAP.md
+  what_it_delivers: >-
+    A small stateless command-line tool over Beads (proposed name planning-map) with four functions.
+    Create a correctly shaped child ticket of a Planning Map Bead (parent set, no inherited labels,
+    label wayfinder:<type>, planning plane). Check a map (exists, labelled wayfinder:map, children
+    shaped as wayfinder tickets on the planning plane, count of open children, finished or not).
+    Close a map, also on abandon with the reason given, closing its open tickets. Update the map
+    description safely, refusing when it changed since the caller's read. Claim, resolve, comment
+    and blocking stay native bd commands; there is no pause or resume.
+  acceptance_criteria:
+  - A test over fake bd shows a created ticket carries the parent, only its wayfinder:<type> label and
+    the planning plane.
+  - A test shows check reports a map finished only when it is correctly shaped with zero open children,
+    and names each wrongly shaped ticket otherwise.
+  - A test shows close closes the map, and abandon closes the map and its open tickets with the given reason.
+  - A test shows the safe update refuses when the description changed since the caller's read and
+    writes otherwise.
+  - CI is green.
+- id: W04
+  kind: vertical_slice
+  title: spec-approve approves a Spec bead, with or without a map
+  blocked_by:
+  - W01
+  - W03
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/spec-approve
+    - tests/spec-approve-test.py
+    - tests/fixtures/spec-approve/**
+    - bin/project-planning-profile
+    - tests/project-planning-profile-test.py
+    - config/projects/*.toml
+    - docs/SPEC_APPROVE.md
+    - docs/PROJECT_PLANNING_PROFILE.md
+  what_it_delivers: >-
+    Each project's Project Planning Profile declares its human approver. spec-approve approves a
+    planning-plane Spec bead by id. Before any write it refuses unless the Spec's Planning Run target
+    equals the active Planning Run Reservation (when one is active), the map it names is finished per
+    the planning map tool (or it names no map and carries the No-fog exit evidence, Benjamin's exact
+    words and date in Paris time), the approver is the project's declared human approver, and the
+    evidence is not empty. On success it records the approval, the approver, the evidence and the
+    digest of the Spec's current content, then closes the map. When the Spec's content changes after
+    approval, status reports the approval void. The file-Spec mode stays only for the router until
+    W10 retires both.
+  acceptance_criteria:
+  - A test per refusal (wrong target while reserved, unfinished map, wrong approver, empty evidence,
+    no map and no No-fog evidence) shows the Spec bead and the map left untouched.
+  - A test shows a valid mapped Spec approved, its digest recorded and its map closed.
+  - A test shows a valid unmapped Spec approved with its No-fog evidence.
+  - A test shows a Spec edited after approval reported void by status.
+  - CI is green.
+- id: W05
+  kind: vertical_slice
+  title: ticket-graph-publish publishes a Ticket Graph Draft bead bound to the approved Spec bead
+  blocked_by:
+  - W01
+  - W02
+  - W04
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/ticket-graph-publish
+    - tests/ticket-graph-publish-test.py
+    - tests/fixtures/ticket-graph-publish/**
+  what_it_delivers: >-
+    publish and patch read the Ticket Graph Draft from a planning-plane bead linked to the Spec bead
+    (structured tickets in its description; target rigs, optional scope paths, approval and digest in
+    its metadata). One approval (the project's declared human approver and his exact words and date)
+    authorizes publication and replaces the approved state plus the separate publication flag. The
+    door opens the Spec bead named by the draft and refuses unless it is approved and its current
+    digest equals the approved one. The graph digest covers the tickets' content; the legacy boundary
+    marker goes. On success, in the same door, delivery beads and convoy are created atomically (one
+    approved ticket becomes exactly one delivery bead), the reservation advances (to next, or cleared)
+    when the Spec's target is the active one, and the Mayor is woken. Direct creation of delivery beads
+    stays forbidden. The file-draft mode stays only for the router until W10 retires both.
+  acceptance_criteria:
+  - 'Test, refusal with nothing created: the Spec bead is not approved.'
+  - "Test, refusal with nothing created: the Spec bead's current digest differs from its approved digest."
+  - "Test, refusal with nothing created: the draft's approver is not the project's declared human approver."
+  - "Test, refusal with nothing created: the draft's approval evidence is empty."
+  - 'Test, refusal with nothing created: the draft''s tickets changed after its approval.'
+  - 'Test, refusal with nothing created: a ticket has no target rig.'
+  - 'Test, nominal: an approved draft of N tickets bound to an approved Spec creates exactly N delivery
+    beads and one convoy with the approved blocking edges and scope paths in metadata, advances the
+    reservation to next, and records the Mayor wake-up.'
+  - 'Test, nominal: patch reads its draft from the bead and keeps its current rules.'
+  - CI is green.
+- id: W06
+  kind: vertical_slice
+  title: Spec and draft beads close with their convoy
+  blocked_by:
+  - W05
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - orders/planning-artifacts-close.toml
+    - bin/planning-artifacts-close
+    - tests/planning-artifacts-close-test.sh
+  what_it_delivers: >-
+    When a convoy closes, the Factory closes the Spec bead and the Ticket Graph Draft bead it was
+    published from, with a reason naming the convoy. Both stay open and readable during delivery.
+  acceptance_criteria:
+  - A test over fixture beads shows both stay open while the convoy is open.
+  - A test shows both close with a reason naming the convoy when it closes.
+  - A test shows a convoy published from a file draft (earlier graphs) is left untouched without error.
+  - The order loads through gc's own order validation.
+  - CI is green.
+- id: W07
+  kind: verification
+  title: One test proves the whole Planning Run path
+  blocked_by:
+  - W05
+  - W06
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - tests/planning-run-lifecycle-test.py
+    - tests/fixtures/planning-run-lifecycle/**
+  what_it_delivers: >-
+    One test module drives the Planning Run lifecycle over fake bd through the doors' command lines,
+    from a finished map and a Spec bead to a published convoy, and covers every refusal. It replaces
+    the router's end-to-end tests as the proof of the whole path.
+  acceptance_criteria:
+  - 'Nominal: spec-approve then ticket-graph-publish reach a published convoy; the map is closed, the
+    reservation advanced and the Mayor wake-up recorded.'
+  - 'Refusals: unfinished map, wrong target while reserved, wrong approver, Spec edited after approval
+    (approval void and publication refused), unmapped Spec without No-fog evidence.'
+  - A valid unmapped run is published.
+  - No planning bead is ever dispatched, woken for or counted as delivery.
+  - The module asserts only on command output and on the beads left; CI is green.
+- id: W08
+  kind: vertical_slice
+  title: Factory-owned orphan sweep keeps operator claims
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - city.toml
+    - orders/factory-orphan-sweep.toml
+    - bin/factory-orphan-sweep
+    - tests/factory-orphan-sweep-order-test.sh
+  what_it_delivers: >-
+    Gas City's core orphan-sweep order is skipped in the city configuration and replaced by a Factory
+    order running a copy of the upstream sweep script plus one guard: beads claimed by po-agent/*
+    actors and planning-plane beads are treated as owned, so an operator session's claim holds until
+    it is released or closed. Genuinely orphaned delivery claims are still released.
+  acceptance_criteria:
+  - An order test over fixture beads shows a po-agent/* claim and a planning bead survive the sweep.
+  - The same test shows a claim by an unknown delivery actor is released.
+  - A test pins the hash of the upstream script the copy was taken from, so a gc upgrade that changes it fails CI.
+  - The order loads through gc's own order validation.
+  - CI is green.
+- id: W09
+  kind: vertical_slice
+  title: One Planning Run doc, tracker instructions and glossary for the wired flow
+  blocked_by:
+  - W07
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - docs/PLANNING_RUN.md
+    - docs/PLANNING_RUN_ROUTER.md
+    - docs/WAYFINDING_RUN.md
+    - docs/GETTING_STARTED.md
+    - docs/OPERATOR_BRIDGE.md
+    - docs/agents/issue-tracker.md
+    - docs/context-index/**
+    - CONTEXT.md
+    - AGENTS.md
+  what_it_delivers: >-
+    One Planning Run doc describes the chain /wayfinder, /to-spec, spec-approve, /to-tickets,
+    ticket-graph-publish, with the No-fog exit and the overflow rule; getting started points to it.
+    The router doc and the wayfinding-run doc are each reduced to a one-line pointer to it. The
+    tracker instructions say that Specs and drafts are published as planning beads, that research
+    and prototype assets go on pushed, never-merged research/ and prototype/ branches of the planned
+    project's repo, that the Artifact page is only a view, that a ticket's worktree is removed when
+    it closes, and that a variant choice is recorded verbatim in the resolution comment. The glossary
+    adds No-fog exit (fr. sortie sans brouillard) and Unmapped Planning Run (fr. cadrage sans carte),
+    drops "simple run", and says "the publication door (ticket-graph-publish)" instead of "router
+    publication".
+  acceptance_criteria:
+  - No document links to the router doc or the wayfinding-run doc any more, except their one-line pointers.
+  - The glossary has no "simple run" and defines No-fog exit and Unmapped Planning Run.
+  - CI is green.
+- id: W10
+  kind: vertical_slice
+  title: 'Retire the router, the to-spec oracle and planning-session.json'
+  blocked_by:
+  - W09
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/planning-run-router
+    - bin/planning-run-to-spec-oracle
+    - bin/spec-approve
+    - bin/ticket-graph-publish
+    - tests/planning-run-router-test.py
+    - tests/planning-run-to-spec-oracle-test.py
+    - tests/spec-approve-test.py
+    - tests/ticket-graph-publish-test.py
+    - tests/fixtures/planning-run-router/**
+    - tests/fixtures/spec-approve/**
+    - config/planning-run-reservation.json
+    - docs/PLANNING_RUN_ROUTER.md
+    - docs/PLANNING_RUN_TO_SPEC_PROTOTYPE.md
+    - docs/SPEC_APPROVE.md
+    - docs/ADAPTATION_REGISTER.md
+    - docs/INVENTORY.md
+    - docs/decisions/ADR-0027*
+    - docs/context-index/**
+  what_it_delivers: >-
+    The Planning Run router, the to-spec oracle, the planning-session.json contract, the ceremony
+    check and the self-declared request fields (complexity, wayfinder_ceremony_invoked,
+    interview_rounds) are deleted with their tests, fixtures and docs, along with the file-Spec and
+    file-draft modes of spec-approve and ticket-graph-publish. Historical router-request.json files
+    stay as archives. In the Adaptation Register, AR-001 is marked replaced by the operator-session
+    allocation (upstream skills as written, Beads, the Factory doors spec-approve, ticket-graph-publish
+    and the planning map tool, the Mayor executes only), its review row goes with it, and this
+    retirement is recorded. No legacy_path selector remains; ADR-0027 gets a one-line amendment saying
+    the fence is now structural.
+  acceptance_criteria:
+  - CI is green after the deletions.
+  - No file in bin, lib, tests, config or docs cites the router or the to-spec oracle any more, except
+    archives (planning records and accepted ADRs; ADRs are not rewritten apart from ADR-0027's
+    one-line amendment), the Adaptation Register and pointers to Git commits.
+  - AR-001 is marked replaced and this retirement is recorded in the Adaptation Register.
+  - ADR-0027 carries the one-line amendment.
+- id: W11
+  kind: vertical_slice
+  title: Retire wayfinding-run
+  blocked_by:
+  - W10
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/wayfinding-run
+    - bin/planning-exception
+    - bin/spec-approve
+    - tests/wayfinding-run-test.py
+    - tests/planning-exception-test.py
+    - tests/fixtures/wayfinding-run/**
+    - docs/WAYFINDING_RUN.md
+    - docs/PLANNING_EXCEPTION.md
+    - docs/ADAPTATION_REGISTER.md
+    - docs/INVENTORY.md
+    - docs/context-index/**
+  what_it_delivers: >-
+    wayfinding-run is deleted with its test, fixtures and JSON map and request contracts; planning-
+    exception and spec-approve no longer depend on it or cite it. Its doc stays as a one-line pointer
+    to the Planning Run doc. The A5 planning-map.json stays as an archive, without migration. The
+    retirement is recorded in the Adaptation Register.
+  acceptance_criteria:
+  - CI is green after the deletions.
+  - No file in bin, lib, tests, config or docs cites wayfinding-run any more, except archives (planning
+    records and accepted ADRs, which are not rewritten), the Adaptation Register, the one-line pointer
+    and pointers to Git commits.
+  - The retirement is recorded in the Adaptation Register.
+- id: W12
+  kind: vertical_slice
+  title: 'Retire the planning prototypes P02, P03, P04 resume oracle and P06'
+  blocked_by:
+  - W11
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/planning-allocation-prototype
+    - bin/planning-map-concurrency-prototype
+    - bin/planning-run-resume-oracle
+    - bin/role-qualification-oracle
+    - config/planning-allocation-prototype.json
+    - config/planning-map-concurrency-prototype.json
+    - config/planning-run-resume-prototype.json
+    - config/role-qualification-prototype.json
+    - tests/planning-allocation-prototype-test.py
+    - tests/planning-map-concurrency-prototype-test.py
+    - tests/planning-run-resume-oracle-test.py
+    - tests/role-qualification-oracle-test.py
+    - docs/PLANNING_ALLOCATION_PROTOTYPE.md
+    - docs/PLANNING_MAP_CONCURRENCY_PROTOTYPE.md
+    - docs/PLANNING_RUN_RESUME_PROTOTYPE.md
+    - docs/ROLE_QUALIFICATION_PROTOTYPE.md
+    - docs/ADAPTATION_REGISTER.md
+    - docs/INVENTORY.md
+    - docs/context-index/**
+  what_it_delivers: >-
+    The planning prototypes P02 (planning allocation), P03 (map concurrency), P04 (resume oracle) and
+    P06 (role qualification) are deleted with their tools, config, tests and docs; context-index
+    entries 0360, 0370, 0380 and 0390 and their index and inventory lines are removed; code comments
+    that cite them point to the Git commits instead. The approved refactor ticket graph draft stays
+    intact, and other graphs' P03 and P06 identifiers are untouched. The retirement is recorded in the
+    Adaptation Register.
+  acceptance_criteria:
+  - CI is green after the deletions.
+  - No file in bin, lib, tests, config or docs cites any of the four prototypes any more, except
+    archives (planning records and accepted ADRs, which are not rewritten), the Adaptation Register
+    and pointers to Git commits.
+  - The approved refactor ticket graph draft is byte-identical.
+  - The retirement is recorded in the Adaptation Register.
+- id: W13
+  kind: vertical_slice
+  title: Daily upstream release check and a documented update procedure
+  blocked_by: []
+  target_rigs:
+  - agent-factory
+  scope:
+    paths:
+    - bin/upstream-skills-check
+    - orders/upstream-skills-check.toml
+    - tests/upstream-skills-check-test.sh
+    - docs/UPSTREAM_SKILLS.md
+  what_it_delivers: >-
+    A daily order checks, read-only, whether mattpocock/skills has published a release tag newer than
+    the Method Baseline (c55ee46) and, if so, files one proposal through escalation-door so Benjamin
+    sees it at session start. It never updates anything. A documented update procedure covers release
+    tags only, full skill directories with LF line endings and their agents/ folders, and every pin
+    reference rewritten in the same change.
+  acceptance_criteria:
+  - A test with a faked remote tag list shows a new tag files exactly one proposal naming the tag.
+  - A test shows the same tag seen again on a later day files no second proposal.
+  - A test shows no new tag files nothing.
+  - A test shows the order changes no skill file, pin, branch or config, whatever the tag list.
+  - The order loads through gc's own order validation.
+  - The update procedure is documented; CI is green.
