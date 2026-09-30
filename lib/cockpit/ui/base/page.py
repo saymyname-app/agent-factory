@@ -101,7 +101,14 @@ DISCONNECT_SCRIPT = """
 """ % (DISCONNECT_AFTER_SECONDS, BANNER_ID, GREYED_CLASS, GREYED_CLASS)
 
 
-def render_home(headline_text, stale_rows, requests_section_html="", disconnected_since=None):
+def render_home(
+    headline_text,
+    stale_rows,
+    requests_section_html="",
+    disconnected_since=None,
+    extra_sections_html="",
+    extra_css="",
+):
     """``stale_rows``: the same names :meth:`ReadModel.stale_or_unknown`
     returns, each resolved to its display name and freshness state.
     ``requests_section_html`` (T12, af-is5e97): the pre-rendered "Ce qui
@@ -110,7 +117,9 @@ def render_home(headline_text, stale_rows, requests_section_html="", disconnecte
     ``disconnected_since`` (T25, af-tzk0s4): rendered above everything —
     the default ``None`` keeps every existing caller unchanged, showing a
     hidden placeholder banner that the inline :data:`DISCONNECT_SCRIPT`
-    takes over client-side."""
+    takes over client-side.
+    ``extra_sections_html``/``extra_css`` let later tickets (T16's health
+    zone) append their own section without this module knowing about them."""
     all_fresh = not stale_rows
     items = "".join(
         '<li data-freshness="%s">%s</li>'
@@ -128,7 +137,7 @@ def render_home(headline_text, stale_rows, requests_section_html="", disconnecte
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         "<title>Cockpit</title>\n"
-        "<style>%s</style>\n"
+        "<style>%s%s</style>\n"
         "</head>\n"
         '<body id="cockpit-body">\n'
         "%s"
@@ -140,10 +149,11 @@ def render_home(headline_text, stale_rows, requests_section_html="", disconnecte
         "</html>\n"
     ) % (
         CSS,
+        extra_css,
         banner,
         "true" if all_fresh else "false",
         html.escape(headline_text),
         stale_list,
-        requests_section_html,
+        requests_section_html + extra_sections_html,
         DISCONNECT_SCRIPT,
     )

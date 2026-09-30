@@ -11,9 +11,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from cockpit.access.guard import session_cookie_header
 from cockpit.actions.registry import ActionError
 from cockpit.core.freshness import UNKNOWN
+from cockpit.health import collectors
+from cockpit.health.engine import (
+    FACTORY_STALLED_AFTER_SECONDS,
+    SUPERVISOR_UNREACHABLE_AFTER_SECONDS,
+    compute_health,
+)
 from cockpit.requests.builder import build_requests
 from cockpit.requests.defects import DefectCounter
 from cockpit.ui.base.page import render_home
+from cockpit.ui.health.page import render_health_zone
+from cockpit.ui.health.tokens import CSS as HEALTH_CSS
 from cockpit.ui.home.page import render_requests_section
 
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
@@ -33,6 +41,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/api/requests":
             self._send_json(self._requests_payload(read_model.snapshot()))
             return
+        if self.path == "/api/health":
+            self._send_json(self._compute_health(read_model))
+            return
         if self.path.startswith("/api/actions/"):
             # T13, af-cx20q9 AC1: an action in GET is refused the same
             # way as any other guard failure, not a bare 404 — the guard
@@ -48,7 +59,16 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 for name in stale_names
             ]
             requests_section_html = self._render_requests_section(snapshot)
-            body = render_home(read_model.headline(), stale_rows, requests_section_html).encode("utf-8")
+            health = self._compute_health(read_model)
+            checked_at = _latest_read_at(snapshot, ("beads", "git"))
+            health_html = render_health_zone(health, checked_at=checked_at)
+            body = render_home(
+                read_model.headline(),
+                stale_rows,
+                requests_section_html=requests_section_html,
+                extra_sections_html=health_html,
+                extra_css=HEALTH_CSS,
+            ).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -67,6 +87,16 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         """Operator Actions (T13, af-cx20q9; spec af-oohx2x §"Actions
         opérateur"). Every write goes through the access guard first —
         refused, nothing downstream (Beads included) is ever touched."""
+        if self.path == "/api/health/recheck":
+            for poller in getattr(self.server, "pollers", ()):
+                poll_now = getattr(poller, "poll_now", None)
+                if poll_now is not None:
+                    poll_now()
+            self.send_response(303)
+            self.send_header("Location", "/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if not self.path.startswith("/api/actions/"):
             self.send_response(404)
             self.end_headers()
@@ -145,6 +175,26 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             "defect_count": self.server.defect_counter.count,
         }
 
+    def _compute_health(self, read_model):
+        now = read_model.now()
+        snapshot = read_model.snapshot()
+        beads = (snapshot.get("beads") or {}).get("value") or []
+        gc_row = snapshot.get("gc") or {}
+        gc_value = gc_row.get("value") or {}
+        return compute_health(
+            now,
+            commits_behind=(snapshot.get("git") or {}).get("value"),
+            supervisor_unreachable_since=gc_row.get("read_at"),
+            last_progress_at=gc_value.get("last_progress_at"),
+            delivery_ready=bool(gc_value.get("delivery_ready")),
+            mayor_first_since=collectors.mayor_first_since_list(beads),
+            loops=collectors.loop_items(beads),
+            order_failures=collectors.order_failure_items(beads),
+            red_ci=collectors.red_ci_items(beads),
+            supervisor_unreachable_after_seconds=self.server.supervisor_unreachable_after_seconds,
+            factory_stalled_after_seconds=self.server.factory_stalled_after_seconds,
+        )
+
     def _send_json(self, payload, status=200):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -154,7 +204,22 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def make_server(read_model, host="127.0.0.1", port=0, action_guard=None, action_handlers=None, session_token=""):
+def _latest_read_at(snapshot, names):
+    read_ats = [snapshot[name]["read_at"] for name in names if snapshot.get(name) and snapshot[name]["read_at"] is not None]
+    return max(read_ats) if read_ats else None
+
+
+def make_server(
+    read_model,
+    host="127.0.0.1",
+    port=0,
+    action_guard=None,
+    action_handlers=None,
+    session_token="",
+    pollers=None,
+    supervisor_unreachable_after_seconds=None,
+    factory_stalled_after_seconds=None,
+):
     if host not in ALLOWED_HOSTS:
         raise ValueError(
             "cockpit refuses to listen on %r — only 127.0.0.1/localhost "
@@ -176,6 +241,17 @@ def make_server(read_model, host="127.0.0.1", port=0, action_guard=None, action_
     server.action_guard = action_guard or _AlwaysRefuseGuard()
     server.action_handlers = action_handlers or {}
     server.session_token = session_token
+    server.pollers = pollers or ()
+    server.supervisor_unreachable_after_seconds = (
+        SUPERVISOR_UNREACHABLE_AFTER_SECONDS
+        if supervisor_unreachable_after_seconds is None
+        else supervisor_unreachable_after_seconds
+    )
+    server.factory_stalled_after_seconds = (
+        FACTORY_STALLED_AFTER_SECONDS
+        if factory_stalled_after_seconds is None
+        else factory_stalled_after_seconds
+    )
     return server
 
 
