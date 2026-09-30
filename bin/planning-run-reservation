@@ -5,10 +5,10 @@ The Planning Run Reservation is the single mechanism that lets a Planning
 Run be reserved for one named target (e.g. `C01`) ahead of every other
 request: while a reservation is active, only a request that declares the
 matching target is allowed through. This was originally logic private to
-`planning-run-router`; it is now a standalone Factory tool so any caller
-(the router, and eventually `spec-approve` and `ticket-graph-publish`
-directly) can check and advance the same reservation state without
-duplicating the read/write contract.
+the now-retired Planning Run router (A6b, W10); it is a standalone Factory
+tool so any caller (`spec-approve bd-approve` checks it, `ticket-graph-
+publish bd-publish` advances it) can share the same reservation state
+without duplicating the read/write contract.
 
 State lives in two places:
 

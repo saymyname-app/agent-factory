@@ -83,3 +83,13 @@ contract for a new Planning Run or its future Cockpit V2.
   with this ADR; the three legacy artifacts (`planning-base`,
   `product_release.py`, Cockpit V1) are otherwise untouched and remain in the
   tree as evidence.
+
+## Amendments
+
+*Amendment 2026-09-30 (A6b, W10):* the fence is now structural. The Planning
+Run router that used to translate a request's `legacy_path` selector before
+the real Planning Run kernel existed is retired along with the to-spec
+oracle and `planning-session.json` (`docs/ADAPTATION_REGISTER.md` records
+the retirement); no `legacy_path` selector remains anywhere in the codebase
+outside `bin/fixture-city-oracle` and its fixtures, which this ADR's
+Decision 4 and Consequences already name as the proof of the quarantine.

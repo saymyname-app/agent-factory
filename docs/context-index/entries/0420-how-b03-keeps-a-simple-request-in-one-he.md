@@ -1,2 +1,0 @@
-Need: How B03 keeps a simple request in one healthy Planning Session and synthesizes one Spec with a stable identity and reproducible digest, why it loads only the declared Project Planning Profile context, and why a real contradiction/missing trace/undecided behavior/new test seam returns to planning instead of being invented
-Read: `PLANNING_RUN_TO_SPEC_PROTOTYPE.md`, `./bin/planning-run-to-spec-oracle`, `tests/planning-run-to-spec-oracle-test.py`

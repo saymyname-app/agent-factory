@@ -33,7 +33,7 @@ For a change:
 ## Codex bridge contract
 
 - Desktop Codex, CLI Codex, and Codex Remote are operator surfaces for the same local Factory.
-- New work enters through the Planning Run flow (`bin/planning-run-router`);
+- New work enters through the Planning Run flow (`docs/PLANNING_RUN.md`);
   the Mayor executes approved ticket graphs. The pre-refactor product queue is
   retired to `legacy/`.
 - A remote/mobile session has the same authority as its request, not broader authority because the host is reachable.
