@@ -61,7 +61,11 @@
 #                              with "<Operator> a répondu <lettre> sur
 #                              <bead>". Refuses an option <bead> never
 #                              offered, or a <bead> with no recorded
-#                              options.
+#                              options. A <bead> parked as blocked (status
+#                              blocked or closed, gc.work_outcome=blocked --
+#                              deliver-close --outcome blocked) is reopened
+#                              in the same write so the work resumes
+#                              (af-1al0t1).
 #   mayor <bead> <reason>      Mayor-first escalation: mail mayor and stamp
 #                              gc.escalation_mayor_paged_at (only on the
 #                              first page; a repeat call re-mails mayor
@@ -82,10 +86,13 @@
 #                              recorded answer, clear gc.needs_benjamin and
 #                              any Mayor-first paging state on <bead>, and
 #                              note the clearance. Prefer `repondre` when
-#                              there is an answer to record.
+#                              there is an answer to record. Reopens a
+#                              parked-blocked <bead> like `repondre`.
 #   list                       Read-only: print the NEEDS BENJAMIN list
-#                              (every open/in_progress bead carrying
-#                              gc.needs_benjamin) and the pending-proposal
+#                              (every bead, whatever its status, carrying
+#                              an active gc.needs_benjamin; closed ones in
+#                              their own section -- af-1al0t1: a close
+#                              never answers the question) and the pending-proposal
 #                              count (open beads labelled `proposal`). Safe
 #                              for the operator session to run at startup.
 set -Eeuo pipefail
@@ -239,11 +246,26 @@ cmd_benjamin() {
   emit_benjamin "$bead" "$quoi" "$pourquoi" "$lettered" "$bloquant"
 }
 
+# af-1al0t1: work parked by `deliver-close --outcome blocked` (status
+# blocked) -- or closed as blocked before that fix -- waits on its NEEDS
+# BENJAMIN. Answering (repondre) or clearing it reopens the bead in the same
+# write, so it returns to the ready pool instead of staying parked forever,
+# and its dependents stay gated until it is actually delivered.
+REOPEN_ARGS=(--status open --unset-metadata gc.outcome
+  --unset-metadata gc.work_outcome --unset-metadata gc.blocked_classification)
+
+is_parked_blocked() {  # $1 = bead JSON
+  jq -e '(.metadata["gc.work_outcome"] // "") == "blocked"
+         and ((.status // "") == "blocked" or (.status // "") == "closed")' \
+    <<<"$1" >/dev/null
+}
+
 cmd_repondre() {
   local bead=${1:-} lettre=${2:-}
   [[ -n $bead && -n $lettre ]] || die "Usage: $PROGRAM_NAME repondre <bead> <lettre>"
   valid_bead_id "$bead" || die "'$bead' is not a Bead id."
-  local issue que_faire_raw chosen option_texte now
+  local issue que_faire_raw chosen option_texte now reopen_note=""
+  local -a reopen_args=()
   issue=$(show_bead "$bead")
   que_faire_raw=$(jq -r '.metadata["gc.escalation_que_faire"] // ""' <<<"$issue")
   [[ -n $que_faire_raw ]] || die "$bead ne porte aucune option enregistrée par escalation-door."
@@ -253,6 +275,10 @@ cmd_repondre() {
   [[ -n $chosen ]] || die "'$lettre' n'est pas une option connue pour $bead."
   option_texte=$(jq -r '.option' <<<"$chosen")
   now=$(now_iso)
+  if is_parked_blocked "$issue"; then
+    reopen_args=("${REOPEN_ARGS[@]}")
+    reopen_note=" ; $bead rouvert (était bloqué en attente de cette réponse)"
+  fi
   "$GC_BIN" bd update "$bead" \
     --set-metadata "gc.escalation_response_option=$lettre" \
     --set-metadata "gc.escalation_response_at=$now" \
@@ -260,12 +286,13 @@ cmd_repondre() {
     --set-metadata "gc.needs_benjamin=none" \
     --set-metadata "gc.escalation_mayor_paged_at=none" \
     --set-metadata "gc.escalation_mayor_reason=none" \
-    --append-notes "RÉPONSE: $lettre — $option_texte" \
+    "${reopen_args[@]}" \
+    --append-notes "RÉPONSE: $lettre — $option_texte$reopen_note" \
     >/dev/null || die "Beads write failed for $bead."
   "$GC_BIN" mail send mayor --notify \
     -s "Réponse de $OPERATOR_NAME: $bead" \
     -m "ACTION: escalation-door recorded $OPERATOR_NAME's answer
-STATE: $OPERATOR_NAME a répondu $lettre sur $bead — $option_texte
+STATE: $OPERATOR_NAME a répondu $lettre sur $bead — $option_texte$reopen_note
 EVIDENCE: gc bd show $bead
 NEXT: resume work using option $lettre" \
     >/dev/null || die "Could not mail mayor; the response is recorded on $bead but the wake-up mail failed -- retry."
@@ -355,31 +382,52 @@ cmd_clear() {
   local bead=${1:-}
   [[ -n $bead ]] || die "Usage: $PROGRAM_NAME clear <bead>"
   valid_bead_id "$bead" || die "'$bead' is not a Bead id."
-  show_bead "$bead" >/dev/null
+  local issue reopen_note=""
+  local -a reopen_args=()
+  issue=$(show_bead "$bead")
+  if is_parked_blocked "$issue"; then
+    reopen_args=("${REOPEN_ARGS[@]}")
+    reopen_note=" ; bead rouvert (était bloqué)"
+  fi
   "$GC_BIN" bd update "$bead" \
     --set-metadata "gc.needs_benjamin=none" \
     --set-metadata "gc.escalation_mayor_paged_at=none" \
     --set-metadata "gc.escalation_mayor_reason=none" \
-    --append-notes "DECISION CLEARED: escalation reset to none" \
+    "${reopen_args[@]}" \
+    --append-notes "DECISION CLEARED: escalation reset to none$reopen_note" \
     >/dev/null || die "Beads write failed for $bead."
-  printf 'CLEARED: decision on %s\n' "$bead"
+  printf 'CLEARED: decision on %s%s\n' "$bead" "$reopen_note"
 }
 
 cmd_list() {
-  local needs_json needs_count proposals_count
-  needs_json=$("$GC_BIN" bd list --status open,in_progress --has-metadata-key gc.needs_benjamin --json 2>/dev/null) \
+  local needs_json needs_count closed_count proposals_count
+  # af-1al0t1: every status, not only open/in_progress -- a question on a
+  # parked (blocked), deferred or even closed bead is still unanswered.
+  needs_json=$("$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.needs_benjamin --json 2>/dev/null) \
     || die "Could not list NEEDS BENJAMIN beads."
   [[ -n $needs_json ]] || needs_json='[]'
 
   printf 'NEEDS BENJAMIN:\n'
   needs_count=0
-  while IFS=$'\t' read -r id reason; do
+  closed_count=0
+  local closed_lines=""
+  while IFS=$'\t' read -r id status reason; do
     [[ -n $id ]] || continue
     [[ -n $reason && $reason != none ]] || continue
+    if [[ $status == closed ]]; then
+      closed_lines+="  $id — $reason"$'\n'
+      closed_count=$((closed_count + 1))
+      continue
+    fi
     printf '  %s — %s\n' "$id" "$reason"
     needs_count=$((needs_count + 1))
-  done < <(jq -r '(if type == "array" then . else [.] end)[] | [.id, (.metadata["gc.needs_benjamin"] // "")] | @tsv' <<<"$needs_json")
+  done < <(jq -r '(if type == "array" then . else [.] end)[]
+    | [.id, (.status // "open"), (.metadata["gc.needs_benjamin"] // "" | tostring)] | @tsv' <<<"$needs_json")
   ((needs_count > 0)) || printf '  (none)\n'
+  if ((closed_count > 0)); then
+    printf 'NEEDS BENJAMIN sur un bead fermé (la fermeture n'"'"'a pas répondu ; repondre ou clear) :\n'
+    printf '%s' "$closed_lines"
+  fi
 
   # Pending proposals is counted by proposal-door itself (T07) -- it
   # excludes proposals already accepted or rejected; a legacy proposal
