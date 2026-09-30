@@ -1,0 +1,88 @@
+"""Wires the read model, the sources, and the HTTP server into one process.
+
+``run_foreground`` is what ``bin/cockpit run`` calls: it blocks until
+SIGTERM/SIGINT, then shuts every poller and the HTTP server down and
+returns cleanly. A source going quiet (gc suspended, city stopped) never
+raises out of here — see the individual pollers.
+"""
+import signal
+import sys
+import threading
+
+from cockpit.core.beads_source import read_beads_json
+from cockpit.core.clock import SystemClock
+from cockpit.core.gc_client import GcSsePoller
+from cockpit.core.polling_source import PollingSource
+from cockpit.core.readmodel import ReadModel
+from cockpit.core.server import make_server
+
+# github/rituals sources are in the Validity window table (spec .3) for the
+# tickets that will wire up their producers; T11 builds the seam and wires
+# only the two sources it has fakes for (gc, beads) so headline/AC3 can
+# reach "tout est à jour" without depending on unbuilt producers.
+SOURCE_DISPLAY_NAMES = {
+    "gc": "usine (gc)",
+    "beads": "Beads",
+}
+
+
+def build(config, clock=None):
+    """Returns (server, pollers) — nothing is started yet."""
+    clock = clock or SystemClock()
+    read_model = ReadModel(clock, validity_seconds=config.validity_seconds)
+    for name, display_name in SOURCE_DISPLAY_NAMES.items():
+        read_model.register(name, display_name=display_name)
+
+    pollers = [GcSsePoller(read_model, config.gc_base_url)]
+    if config.bd_bin:
+        pollers.append(
+            PollingSource(
+                read_model,
+                "beads",
+                lambda: read_beads_json(["list"], bd_bin=config.bd_bin),
+                config.beads_poll_seconds,
+            )
+        )
+    server = make_server(read_model, host=config.host, port=config.port)
+    return server, pollers
+
+
+def run_foreground(config, clock=None, ready_callback=None):
+    server, pollers = build(config, clock=clock)
+    for poller in pollers:
+        poller.start()
+
+    stop_requested = []
+
+    def _handle_stop(signum, frame):
+        # server.shutdown() blocks until serve_forever()'s loop notices and
+        # exits — calling it from this handler, which runs on the same
+        # thread serve_forever() is blocked in, would deadlock. Run it on
+        # its own thread instead.
+        stop_requested.append(signum)
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    previous_term = signal.signal(signal.SIGTERM, _handle_stop)
+    previous_int = signal.signal(signal.SIGINT, _handle_stop)
+    try:
+        if ready_callback:
+            ready_callback(server)
+        server.serve_forever(poll_interval=0.2)
+    finally:
+        signal.signal(signal.SIGTERM, previous_term)
+        signal.signal(signal.SIGINT, previous_int)
+        for poller in pollers:
+            poller.stop()
+        server.server_close()
+    return 0
+
+
+def main(argv=None):
+    from cockpit.core.config import Config
+
+    config = Config()
+    return run_foreground(config)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

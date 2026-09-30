@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""cockpit — the Cockpit V2 process (af-0b6ffa).
+
+A pure-code process, separate from gc, that survives a suspended or
+stopped city (spec .9, .13). Binds 127.0.0.1 only; refuses any other host.
+
+Usage:
+  cockpit run             run in the foreground until SIGTERM/SIGINT
+  cockpit start           start in the background if not already running
+  cockpit stop            stop a background instance
+  cockpit status          exit 0 if a background instance is running
+
+Config is read from the environment — see lib/cockpit/core/config.py.
+"""
+import os
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "lib"))
+
+from cockpit.core.config import Config  # noqa: E402
+from cockpit.core.process import run_foreground  # noqa: E402
+
+START_WAIT_SECONDS = 10
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except (OSError, ProcessLookupError):
+        return False
+    return True
+
+
+def _read_pid(pid_file):
+    try:
+        with open(pid_file) as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def cmd_status(config):
+    pid = _read_pid(config.pid_file)
+    if pid is not None and _pid_alive(pid):
+        print("cockpit: running (pid %d)" % pid)
+        return 0
+    print("cockpit: not running")
+    return 1
+
+
+def cmd_start(config):
+    if cmd_status(config) == 0:
+        return 0  # already running — never a second process (af-0b6ffa AC5)
+
+    os.makedirs(os.path.dirname(config.pid_file), exist_ok=True)
+    log_path = os.environ.get(
+        "COCKPIT_LOG_FILE", os.path.join(os.path.dirname(config.pid_file), "cockpit.log")
+    )
+    log_fh = open(log_path, "ab")
+    proc = subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "run"],
+        stdout=log_fh,
+        stderr=log_fh,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        env=os.environ.copy(),
+    )
+    with open(config.pid_file, "w") as fh:
+        fh.write(str(proc.pid))
+
+    deadline = time.time() + START_WAIT_SECONDS
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            try:
+                os.remove(config.pid_file)
+            except OSError:
+                pass
+            print("cockpit: failed to start — see %s" % log_path, file=sys.stderr)
+            return proc.returncode or 1
+        try:
+            with socket.create_connection((config.host, config.port), timeout=0.2):
+                print("cockpit: started (pid %d) on %s:%d" % (proc.pid, config.host, config.port))
+                return 0
+        except OSError:
+            time.sleep(0.1)
+    print("cockpit: did not confirm it was listening within %ss" % START_WAIT_SECONDS, file=sys.stderr)
+    return 1
+
+
+def cmd_stop(config):
+    pid = _read_pid(config.pid_file)
+    if pid is None or not _pid_alive(pid):
+        try:
+            os.remove(config.pid_file)
+        except OSError:
+            pass
+        print("cockpit: not running")
+        return 0
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.time() + START_WAIT_SECONDS
+    while time.time() < deadline and _pid_alive(pid):
+        time.sleep(0.1)
+    try:
+        os.remove(config.pid_file)
+    except OSError:
+        pass
+    if _pid_alive(pid):
+        print("cockpit: pid %d did not stop in time" % pid, file=sys.stderr)
+        return 1
+    print("cockpit: stopped")
+    return 0
+
+
+def cmd_run(config):
+    try:
+        return run_foreground(config)
+    except ValueError as exc:
+        print("cockpit: %s" % exc, file=sys.stderr)
+        return 2
+
+
+def main(argv):
+    if len(argv) != 2:
+        print(__doc__, file=sys.stderr)
+        return 2
+    command = argv[1]
+    config = Config()
+    handlers = {
+        "run": cmd_run,
+        "start": cmd_start,
+        "stop": cmd_stop,
+        "status": cmd_status,
+    }
+    handler = handlers.get(command)
+    if handler is None:
+        print("cockpit: unknown command %r" % command, file=sys.stderr)
+        return 2
+    return handler(config)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
