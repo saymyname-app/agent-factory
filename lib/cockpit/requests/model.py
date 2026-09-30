@@ -31,6 +31,14 @@ class OperatorRequest:
     incomplete: bool = False
     missing_fields: list = field(default_factory=list)
     recommande_absent: bool = False
+    # Out-of-scope touch (T13, af-cx20q9): Acquitter/Reporter (declared
+    # scope lib/cockpit/actions/**) only mean anything if "Ce qui
+    # t'attend" reflects them -- an acquitted Urgent still lists, a
+    # deferred À faire hides until due, a deferred Urgent stays visible
+    # greyed (spec .21-23). See requests/builder.py for where these are
+    # set from bead metadata.
+    acquittee: bool = False
+    reportee: bool = False
 
     def sort_key(self):
         # None (never timestamped) sorts after every real timestamp within

@@ -46,4 +46,35 @@ body {
   font-size: var(--fs-s);
 }
 time.cockpit-time { font-family: "Atkinson Hyperlegible Next Mono", ui-monospace, monospace; }
+/* Out-of-scope touch (T13, af-cx20q9 -- declared scope lib/cockpit/ui/actions/**):
+   Operator Action controls and the greyed "reportee" state (spec .23). */
+li.cockpit-request[data-reportee="true"] { opacity: 0.55; }
+.cockpit-actions { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cockpit-action {
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  border-radius: var(--r);
+  padding: 6px 10px;
+  font-size: var(--fs-s);
+  cursor: pointer;
+}
+.cockpit-action-tokens { color: var(--normal); }
+.cockpit-actions-explication { font-size: var(--fs-xs); color: var(--muted); margin: 4px 0 0; }
+.cockpit-undo-toast {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--bg);
+  border-radius: var(--r);
+  padding: 8px 12px;
+  font-size: var(--fs-s);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  z-index: 10;
+}
+.cockpit-undo-toast button { background: transparent; color: var(--accent-soft); border: none; cursor: pointer; }
 """

@@ -9,6 +9,8 @@ import signal
 import sys
 import threading
 
+from cockpit.access.guard import ActionGuard, new_session_token
+from cockpit.actions.registry import build_action_handlers
 from cockpit.core.beads_source import read_beads_json
 from cockpit.core.clock import SystemClock
 from cockpit.core.gc_client import GcSsePoller
@@ -43,7 +45,21 @@ def build(config, clock=None):
                 config.beads_poll_seconds,
             )
         )
-    server = make_server(read_model, host=config.host, port=config.port)
+    # Out-of-scope touch (T13, af-cx20q9 -- declared scope
+    # lib/cockpit/actions/**, lib/cockpit/access/**): the actions and
+    # the guard that gates them only reach the HTTP surface once wired
+    # in here, next to every other source.
+    session_token = new_session_token()
+    action_guard = ActionGuard(config.benjamin_login, config.allowed_origin, session_token)
+    action_handlers = build_action_handlers(config.bd_bin, clock)
+    server = make_server(
+        read_model,
+        host=config.host,
+        port=config.port,
+        action_guard=action_guard,
+        action_handlers=action_handlers,
+        session_token=session_token,
+    )
     return server, pollers
 
 

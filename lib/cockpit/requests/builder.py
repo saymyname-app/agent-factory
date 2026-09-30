@@ -187,12 +187,31 @@ def _build_one(bead, verifie_a, defects):
     return request, defect_key
 
 
+def _parse_ack_and_defer(bead):
+    """Out-of-scope touch (T13, af-cx20q9 — declared scope lib/cockpit/
+    actions/**): reads the trace Acquitter/Reporter leave on the bead
+    (cockpit.actions.trace) so the list reflects them — the cockpit keeps
+    no copy of its own (spec: "aucune copie locale de l'état des
+    actions")."""
+    metadata = bead.get("metadata") or {}
+    acquittee = str(metadata.get("gc.cockpit_ack", "")).lower() == "true"
+    defer_until = _parse_iso(metadata.get("gc.cockpit_defer_until"))
+    return acquittee, defer_until
+
+
 def build_requests(beads, verifie_a=None, defects=None):
     """``beads``: the raw list the beads source last read (spec .3's read
     model value for "beads"). ``defects`` is optional — pass a
     :class:`~cockpit.requests.defects.DefectCounter` to count producer
     defects; omitted, a throwaway counter is used so callers that only
-    want the list are not forced to wire one up."""
+    want the list are not forced to wire one up.
+
+    A request deferred by Reporter (T13) is hidden until its deadline,
+    except an Urgent one, which stays listed and flagged ``reportee``
+    (rendered greyed — spec .23 "une Urgent reportée reste visible
+    grisée"). ``verifie_a`` doubles as "now" for this comparison: it is
+    already the read model's own clock-derived read time, refreshed on
+    every poll, so no separate clock needs threading through here."""
     from cockpit.requests.defects import DefectCounter
 
     defects = defects if defects is not None else DefectCounter()
@@ -204,6 +223,14 @@ def build_requests(beads, verifie_a=None, defects=None):
             continue
         if _is_escalation(bead) or _is_open_proposal(bead):
             request, defect_key = _build_one(bead, verifie_a, defects)
+            acquittee, defer_until = _parse_ack_and_defer(bead)
+            request.acquittee = acquittee
+            still_deferred = (
+                defer_until is not None and verifie_a is not None and defer_until > verifie_a
+            )
+            if still_deferred and request.niveau != URGENT:
+                continue
+            request.reportee = bool(still_deferred and request.niveau == URGENT)
             requests.append(request)
             if defect_key is not None:
                 live_defect_keys.append(defect_key)
