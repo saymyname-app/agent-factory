@@ -222,6 +222,13 @@ details.more[open] summary::before{content:"▾"}
   .vc.sheet .list{display:block}
   .vc .back,.vc.sheet .back{display:none}
 }
+/* ================= VARIANTE D — Mélange choisi (liste de C + Projets de A) ================= */
+.vd .va{max-width:none}
+.vd .va .zone{margin-top:22px}
+.chip.go{border:0;cursor:pointer;font:inherit;font-size:var(--fs-xs);font-weight:600}
+.chip.go::after{content:" →"}
+.chip.go:hover{filter:brightness(.95);text-decoration:underline}
+.accpanel{grid-column:1 / -1;display:grid;gap:8px;background:var(--accent-soft);border-radius:8px;padding:10px 12px;font-size:var(--fs-s)}
 @media (prefers-reduced-motion: no-preference){ .toast{animation:up .18s ease-out} @keyframes up{from{opacity:0;transform:translate(-50%,6px)}} }
 </style>
 
@@ -299,12 +306,12 @@ const staleItem = {id:"d7", lvl:"normal", proj:"Usine", since:"14:15",
 
 const projects = [
   {name:"SayMyName", step:"Roadmap : Bêta privée", promo:"dev a 14 commits d'avance sur main : promotion à ta main.", protectedMain:false, chantiers:[
-    {name:"Export des listes", st:3, s:"5/9 tickets mergés · 2 en cours · 1 en PR", state:"probleme"},
-    {name:"Page d'accueil publique", st:4, s:"Livré le 29/09 : à accepter", state:"atoi"},
+    {name:"Export des listes", st:3, s:"5/9 tickets mergés · 2 en cours · 1 en PR", state:"probleme", go:{item:"d1"}},
+    {name:"Page d'accueil publique", st:4, s:"Livré le 29/09 : à accepter", state:"atoi", go:{accept:"acc1"}},
     {name:"Invitations par lien", st:1, s:"Spec en rédaction", state:null}]},
   {name:"Usine", step:"Roadmap : A7 · Cockpit V2", promo:null, protectedMain:true, chantiers:[
-    {name:"Cockpit V2", st:0, s:"Carte de planification : 9/15 décisions", state:"atoi"},
-    {name:"Rappels de rituels", st:1, s:"Spec prête : à approuver", state:"atoi"},
+    {name:"Cockpit V2", st:0, s:"Carte de planification : 9/15 décisions", state:"atoi", go:{item:"d5"}},
+    {name:"Rappels de rituels", st:1, s:"Spec prête : à approuver", state:"atoi", go:{item:"d2"}},
     {name:"Fiabilité des tâches planifiées", st:3, s:"11/13 tickets mergés · 1 en cours · 1 en PR", state:null}]}
 ];
 const STATE_LBL = {atoi:"À toi de jouer", probleme:"Problème remonté", bloque:"Bloqué"};
@@ -329,9 +336,10 @@ const sources = (sc) => [
 const VARIANTS = [
   {k:"a", name:"Fil"},
   {k:"b", name:"Poste de pilotage"},
-  {k:"c", name:"Boîte de réception"}
+  {k:"c", name:"Boîte de réception"},
+  {k:"d", name:"Mélange choisi"}
 ];
-const st = {v:0, sc:"normal", theme:"system", framed:false, local:{}, sel:null, sheet:false, tab:"todo", confirm:null, snoozeOpen:null, refuseOpen:null};
+const st = {v:3, accOpen:null, sc:"normal", theme:"system", framed:false, local:{}, sel:null, sheet:false, tab:"todo", confirm:null, snoozeOpen:null, refuseOpen:null};
 try{ const h=(location.hash||"").replace("#",""); const i=VARIANTS.findIndex(x=>x.k===h); if(i>=0) st.v=i; }catch(e){}
 try{ const s=JSON.parse(localStorage.getItem("c01proto")||"{}"); if(s.sc) st.sc=s.sc; if(s.theme) st.theme=s.theme; }catch(e){}
 const save=()=>{ try{ localStorage.setItem("c01proto", JSON.stringify({sc:st.sc, theme:st.theme})); }catch(e){} };
@@ -530,6 +538,60 @@ function renderC(){
     </section></div>`;
 }
 
+/* ================= VARIANTE D ================= */
+function goChip(c){
+  if(!c.state) return "";
+  if(!c.go || offline()) return stateChip(c);
+  const d = c.go.item ? `data-id="${c.go.item}"` : `data-acc="${c.go.accept}"`;
+  return `<button class="chip go ${c.state}" data-a="goto" ${d} title="Aller là où tu dois agir">${STATE_LBL[c.state]}</button>`;
+}
+function renderD(){
+  const it = visible();
+  if(!st.sel || !it.find(x=>x.id===st.sel)) st.sel = it[0] ? it[0].id : null;
+  const cur = it.find(x=>x.id===st.sel);
+  const list = `<div class="list" id="inbox-list"><h2><span>Ce qui t'attend</span><span class="mono muted">${it.length}</span></h2>
+    <div class="zone-body">${it.length ? it.map(x=>`<button class="li" data-a="sel" data-id="${x.id}" aria-current="${x.id===st.sel}">
+      ${lvl(x.lvl).replace(LVL[x.lvl],"")}<span><div class="q">${esc(x.quoi)}</div><div class="p">${esc(x.proj)}${x.incomplete?' · <span class="incomplete">incomplète</span>':""}</div></span><time>${x.since}</time></button>`).join("") : `<div style="padding:14px">${emptyBox()}</div>`}
+    ${snoozedLine()?`<div style="padding:0 14px 10px">${snoozedLine()}</div>`:""}</div></div>`;
+  const detail = cur ? `<div class="detail zone-body" id="inbox-detail">
+      <button class="btn ghost back" data-a="back">← Retour à la liste</button>
+      ${lvl(cur.lvl)}
+      <div class="quoi">${esc(cur.quoi)}</div>
+      <div class="sec"><span class="lbl">Pourquoi ça t'attend</span><div class="why">${why(cur)}</div></div>
+      <div class="sec"><span class="lbl">Que faire</span><div class="todo">${esc(cur.faire)}</div></div>
+      ${actions(cur)}
+      ${meta(cur)}
+      ${details(cur)}
+    </div>` : `<div class="detail"><p class="muted">Rien à afficher.</p></div>`;
+  const proj = projects.map(p=>`
+    <div class="proj">
+      <div class="proj-h"><h3>${p.name}</h3><span class="muted" style="font-size:var(--fs-s)">${p.step} · <a href="#d" data-a="projpage" style="color:var(--accent)">Page projet</a></span></div>
+      ${p.chantiers.map(c=>{
+        const accepted = c.go && c.go.accept && st.local[c.go.accept] && st.local[c.go.accept].done;
+        const cc = accepted ? {...c, st:5, s:"Accepté à "+NOW, state:null} : c;
+        const panel = (c.go && c.go.accept && st.accOpen===c.go.accept && !accepted) ? `<div class="accpanel">
+            <div><b>Accepter la livraison « ${c.name} » ?</b> Tu as vérifié le résultat ; l'usine passe le chantier en Accepté.</div>
+            <div class="acts"><button class="btn primary" data-a="accdo" data-acc="${c.go.accept}">Accepter</button>
+            <button class="btn" data-a="accko">Pas bon → agent</button>
+            <button class="btn ghost" data-a="accsite">Voir le résultat</button>
+            <button class="btn ghost" data-a="cancel">Annuler</button></div></div>` : "";
+        return `<div class="ch" id="ch-${c.go&&c.go.accept?c.go.accept:""}"><div><div class="n">${cc.name}</div><div class="s">${STAGES[cc.st]} · ${cc.s}</div></div><div>${goChip(cc)}</div>${stepper(p,cc)}${panel}</div>`;
+      }).join("")}
+      ${p.promo?`<div class="s muted" style="font-size:var(--fs-s);padding-top:6px">${p.promo}</div>`:""}
+    </div>`).join("");
+  return `<div class="vd ${offline()?"offline":""}">
+    <div class="vc ${st.sheet?"sheet":""}">
+      <header class="topbar"><div class="brand"><h1>Cockpit</h1><span class="who">usine + projets</span></div></header>
+      ${banners()}
+      <div class="status">${healthOne()}<span class="sep"></span>${fresh()}</div>
+      <div class="inbox">${list}${detail}</div>
+    </div>
+    <div class="va">
+      <section class="zone"><div class="zone-h"><h2>Projets</h2>${projStale()?'<span class="muted" style="font-size:var(--fs-xs)">tickets vus à 14:15</span>':""}</div>
+        <div class="zone-body ${projStale()?"stale-val":""}"><div class="projects">${proj}</div></div></section>
+    </div></div>`;
+}
+
 /* ---------- rendu + barre ---------- */
 function applyTheme(){
   const r=document.documentElement;
@@ -538,7 +600,7 @@ function applyTheme(){
 }
 function render(){
   const v = VARIANTS[st.v];
-  document.getElementById("app").innerHTML = [renderA,renderB,renderC][st.v]();
+  document.getElementById("app").innerHTML = [renderA,renderB,renderC,renderD][st.v]();
   document.getElementById("vlabel").textContent = `${v.k.toUpperCase()} · ${v.name}`;
   document.getElementById("scen").value = st.sc;
   document.body.classList.toggle("framed", st.framed);
@@ -565,7 +627,15 @@ document.addEventListener("click", e=>{
     case "back": st.sheet=false; break;
     case "opt": st.confirm={id, t}; break;
     case "doconfirm": L(id).done=true; toast(`Choix envoyé : « ${st.confirm.t} ». La demande sort quand l'usine l'a traité.`); st.confirm=null; st.sheet=false; break;
-    case "cancel": st.confirm=null; st.snoozeOpen=null; st.refuseOpen=null; break;
+    case "cancel": st.confirm=null; st.snoozeOpen=null; st.refuseOpen=null; st.accOpen=null; break;
+    case "goto":
+      if(b.dataset.acc){ st.accOpen=b.dataset.acc; render(); const el=document.getElementById("ch-"+b.dataset.acc); if(el) el.scrollIntoView({block:"center"}); return; }
+      if(visible().find(y=>y.id===id)){ st.sel=id; st.sheet=true; st.confirm=null; render(); const el=document.getElementById("app"); if(el) el.scrollIntoView({block:"start"}); return; }
+      toast("Cette demande est reportée ou déjà traitée."); break;
+    case "accdo": L(b.dataset.acc).done=true; st.accOpen=null; toast("Livraison acceptée (tracé : benjamin/cockpit)."); break;
+    case "accko": toast("Prompt « pas bon » copié : décris ce qui ne va pas à l'agent (prototype)."); break;
+    case "accsite": toast("Ouverture du résultat livré (prototype : lien factice)."); break;
+    case "projpage": e.preventDefault(); toast("Page projet : prochain prototype (tableau des chantiers par étape de C)."); break;
     case "ack": L(id).ack=true; toast("Acquittée : plus de rappel, elle reste dans la liste."); break;
     case "snoozeopen": st.snoozeOpen=id; st.refuseOpen=null; break;
     case "snooze": L(id).snooze=t; st.snoozeOpen=null; st.sheet=false; toast(`Reportée jusqu'à ${t}.`); break;
