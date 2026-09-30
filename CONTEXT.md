@@ -6,7 +6,7 @@ This context defines the language used to describe the project-agnostic system t
 
 **Software Factory**:
 The complete socio-technical system that shapes intent, manages and orchestrates work, executes changes, verifies outcomes, and exposes operator interfaces.
-_French conversational alias_: usine logicielle agentique, la Factory
+_French conversational alias_: usine logicielle agentique, la Factory; **usine** (visible dans le cockpit)
 _Avoid_: City, Gas City, orchestrator, harness
 
 **Cockpit**:
@@ -18,6 +18,21 @@ _Avoid_: control plane, orchestrator, Product Cockpit, Factory Cockpit
 An open condition that only the operator can move forward, because it needs a decision at the operator's tier or a physical action on the operator's side; it is not information. A problem the Factory handles itself (such as a Mayor-first escalation not yet promoted) is not an Operator Request. A notification is only the delivery of a request to the operator's phone.
 _French conversational alias_: demande opérateur, ce qui t'attend
 _Avoid_: alert, todo, notification
+
+**Operator Language**:
+The single natural language, set once in `config/operator.toml`'s `language` field for every project, in which all Cockpit-facing and pushed text must be written; read through `bin/operator-config language` rather than re-parsed by callers.
+_French conversational alias_: langue de l'opérateur
+_Avoid_: locale, i18n, per-project UI language
+
+**Cockpit Lexicon**:
+The fixed starting set of domain words the Cockpit may show at the interface without translation, held as this glossary's own conversational aliases (each marked "visible dans le cockpit" where its canonical term is defined above or below) rather than as a second list anywhere else in code or docs; growing it is a pull request on this file. Starting lexicon: usine, projet, agent, ticket, PR, tests automatiques (CI), Spec, carte de planification, graphe de tickets, proposition, rituel, décision.
+_French conversational alias_: lexique du cockpit
+_Avoid_: UI copy list, second glossary, translation table
+
+**Operator Action**:
+A pure-code, traced gesture Benjamin performs from the Cockpit without spending agent tokens -- acknowledging or deferring an Operator Request, answering a NEEDS BENJAMIN with a prepared option, accepting or rejecting a proposal, and the like -- always recorded on the source Bead so the Factory, the PC, and the iPhone agree on what happened.
+_French conversational alias_: action opérateur (visible dans le cockpit)
+_Avoid_: agent action, API call, unrecorded Bead update
 
 **Freshness**:
 Whether a value shown by the Cockpit may be presented as current: fresh when it was read successfully within its Validity window, stale when only an older last known value exists, which is never presented as current, and unknown when it was never read or its source is failing.
@@ -53,7 +68,7 @@ _Avoid_: spec, PRD, Release Contract
 
 **Spec**:
 The temporary canonical coordination artifact synthesized from resolved planning decisions for one bounded multi-session outcome, including its intended behavior, boundaries, material decisions, and acceptance evidence. It is stored as a readable Planning Artifact with stable identity and content digest, frozen during delivery, and may expire after the convoy closes; durable domain and architecture knowledge belongs in the glossary and ADRs, while delivered behavior belongs in code and tests.
-_French conversational alias_: spécification
+_French conversational alias_: spécification; **Spec** (visible dans le cockpit)
 _Avoid_: permanent system documentation, SDD source of truth, Release Contract
 
 **Approved Spec**:
@@ -93,7 +108,7 @@ _Avoid_: Delivery Work Graph, implementation convoy, session tree
 
 **Planning Map Bead**:
 The root and low-resolution index of a Wayfinding Run: its Destination, standing notes, a pointer to each decision made, the fog not yet specified, and what is ruled out of scope, without restating any decision's detail.
-_French conversational alias_: Bead carte Wayfinder
+_French conversational alias_: Bead carte Wayfinder; **carte de planification** (visible dans le cockpit)
 _Avoid_: Spec, implementation epic, conversation transcript
 
 **Destination**:
@@ -113,7 +128,7 @@ _Avoid_: implementation ticket, Vertical Slice, agent session
 
 **Ticket Graph Draft**:
 The temporary, non-executable, structured Planning Artifact containing proposed Vertical Slices, acceptance criteria, target rigs, and blocking edges that `to-tickets` presents for approval before atomic publication. It stays frozen with the Spec during delivery and is closed with it when the convoy closes.
-_French conversational alias_: brouillon du graphe de tickets
+_French conversational alias_: brouillon du graphe de tickets; **graphe de tickets** (visible dans le cockpit)
 _Avoid_: delivery Bead, convoy, Delivery Work Graph, second decomposition
 
 **Planning Artifact**:
@@ -144,6 +159,7 @@ _Avoid_: Factory Knowledge, City-wide defaults
 **Project Planning Profile**:
 The project-scoped configuration that binds a planning methodology to its authoritative domain sources, Work Graph, participating rigs, and genuine rig-local extensions.
 _French conversational alias_: profil de planification du projet
+_Alias_: descripteur de projet
 _Avoid_: repository-wide duplicate, City-wide global defaults, product specification
 
 **Delivery Workflow**:
@@ -165,6 +181,11 @@ _Avoid_: merely merged code, Delivered Outcome
 A bounded increment that crosses the layers necessary to produce independently demonstrable or verifiable behavior.
 _French conversational alias_: tranche verticale
 _Avoid_: layer task, frontend ticket, backend ticket
+
+**Chantier**:
+The canonical term for Outcome: one Planning Run and the Delivery Work Graph convoy it produced, tracked as a single unit from Cadrage through Spec, Graphe, Livraison, Livré, Accepté, and (where applicable) Promu. Delivered Outcome and Accepted Outcome name two of its states.
+_French conversational alias_: chantier (visible dans le cockpit)
+_Avoid_: Project (a Rig grouping), ticket, convoy alone
 
 ## Durable work
 
@@ -195,7 +216,7 @@ _Avoid_: ticket, task, issue when referring to a persisted Bead
 
 **Decision Bead**:
 A Bead whose resolution is a durable decision needed by other planning work; ordinary questions inside one grilling session are not Decision Beads.
-_French conversational alias_: Bead de décision
+_French conversational alias_: Bead de décision; **décision** (visible dans le cockpit)
 _Avoid_: implementation ticket, every question
 
 **Planning Exception**:
@@ -224,6 +245,21 @@ _Avoid_: Software Factory, repository, project
 A project directory registered with a City as a target for agent work.
 _French conversational alias_: projet enregistré, rig
 _Avoid_: repository when registration is not implied, Software Factory
+
+**Rig file**:
+The existing per-Rig registration file under `config/projects/` that declares one Rig's connection to the City; distinct from a Project Planning Profile, which one or more Rig files point to.
+_French conversational alias_: fichier de rig
+_Avoid_: Project Planning Profile, project descriptor
+
+**Project**:
+The unit a Software Factory operator plans and ships toward, identified by a `project_id` and declared once by a Project Planning Profile; exactly one Project owns each Rig.
+_French conversational alias_: projet (visible dans le cockpit)
+_Avoid_: Rig alone, City
+
+**Roadmap Step**:
+One entry of a Project's structured roadmap file (id, title, "done when" condition, order, and to-do / in-progress / done status), referenced by `planning_run_target` when a Planning Run targets it.
+_French conversational alias_: étape de roadmap
+_Avoid_: milestone, Planning Run, Chantier
 
 **Fixture City Oracle**:
 The hermetic public-behavior harness that starts from synthetic project intent

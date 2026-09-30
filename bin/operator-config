@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""operator-config — read the Operator Language from config/operator.toml.
+
+T01 (C01 Cockpit V2): the Cockpit and every producer that writes Cockpit-
+facing or pushed text need one single Operator Language, so this is the one
+place that field is read from instead of every caller re-parsing
+config/operator.toml by hand. A missing or empty `language` fails loudly here
+-- the alternative (a caller silently defaulting to English, or English text
+leaking through) is exactly the "Compréhensible sans IA" contract the Spec
+sets: a repli that never happens is worse than one that is impossible to
+ignore.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import tomllib
+from pathlib import Path
+
+
+PROGRAM = "operator-config"
+
+
+class OperatorConfigError(RuntimeError):
+    """An actionable diagnostic about config/operator.toml."""
+
+
+def repo_root_default() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def load_config(path: Path) -> dict:
+    try:
+        with path.open("rb") as handle:
+            return tomllib.load(handle)
+    except OSError as exc:
+        raise OperatorConfigError(f"cannot read {path}: {exc}") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise OperatorConfigError(f"cannot parse {path}: {exc}") from exc
+
+
+def operator_language(config: dict, path: Path) -> str:
+    value = config.get("language")
+    if not isinstance(value, str) or not value.strip():
+        raise OperatorConfigError(
+            f'{path} has no language set; add language = "fr" (or the '
+            "Operator Language in force) at the top level -- every Cockpit-"
+            "facing and pushed text needs one single language for every "
+            "project"
+        )
+    return value
+
+
+def cmd_language(args: argparse.Namespace) -> int:
+    path = Path(args.config)
+    try:
+        config = load_config(path)
+        language = operator_language(config, path)
+    except OperatorConfigError as exc:
+        print(f"{PROGRAM}: {exc}", file=sys.stderr)
+        return 1
+    print(language)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__)
+    parser.add_argument(
+        "--config",
+        default=str(repo_root_default() / "config" / "operator.toml"),
+        help="path to operator.toml (default: config/operator.toml)",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    language_parser = subparsers.add_parser(
+        "language", help="print the Operator Language (operator.toml's language field)"
+    )
+    language_parser.set_defaults(func=cmd_language)
+
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
