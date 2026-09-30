@@ -7,21 +7,42 @@ reads its bead list from a JSON file the test controls
 answers between polls/rechecks without restarting the cockpit process —
 exactly what proving a health line appears then disappears "at the return
 to normal" (Testing Decisions) requires.
+
+Answers the two read shapes cockpit.core.beads_source.read_operator_beads
+issues (af-1al0t1): plain `list` hides closed beads, `list --all --limit 0
+--has-metadata-key K` returns every bead carrying K whatever its status.
+This fixture's tests only ever set open beads with no gc.needs_benjamin
+key, so the second shape always answers empty -- but it must still be
+answered, not refused: a refusal makes read_operator_beads raise, and that
+exception is swallowed silently by PollingSource._poll_once (by design,
+one bad source read never takes the cockpit down), which starves every
+beads-derived health line for the rest of the process's life, not just one
+poll (see tests/fixtures/cockpit/requests/fake-bd for the same contract).
 """
 import json
 import os
 import sys
 
-if sys.argv[1:] == ["list", "--json"]:
+
+def _beads():
     state_file = os.environ.get("COCKPIT_TEST_BD_STATE_FILE")
     if not state_file or not os.path.exists(state_file):
-        print("[]")
-        sys.exit(0)
+        return []
     with open(state_file) as f:
-        print(f.read())
+        return json.load(f)
+
+
+args = sys.argv[1:]
+if args == ["list", "--json"]:
+    print(json.dumps([b for b in _beads() if b.get("status") != "closed"]))
+    sys.exit(0)
+
+if len(args) == 7 and args[:5] == ["list", "--all", "--limit", "0", "--has-metadata-key"] and args[6] == "--json":
+    key = args[5]
+    print(json.dumps([b for b in _beads() if key in (b.get("metadata") or {})]))
     sys.exit(0)
 
 sys.stderr.write(
-    "fake bd (cockpit-health): no canned response for: bd %s\n" % " ".join(sys.argv[1:])
+    "fake bd (cockpit-health): no canned response for: bd %s\n" % " ".join(args)
 )
 sys.exit(1)
