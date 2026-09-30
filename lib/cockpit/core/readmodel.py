@@ -36,6 +36,12 @@ class ReadModel:
             dict(VALIDITY_WINDOWS_SECONDS) if validity_seconds is None else dict(validity_seconds)
         )
 
+    def now(self):
+        """The cockpit's clock, exposed so a caller building on the model
+        (T12, af-is5e97: the requests section) never reaches for a second
+        clock of its own."""
+        return self._clock.now()
+
     def register(self, name, display_name=None):
         with self._lock:
             if name not in self._sources:
