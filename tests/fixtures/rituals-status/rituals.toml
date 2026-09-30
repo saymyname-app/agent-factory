@@ -1,0 +1,28 @@
+# Fixture rituals file for tests/rituals-status-test.py: one paused ritual,
+# two pr_threshold rituals driven against a fake gh (one due, one not yet).
+
+[[ritual]]
+id = "architecture:factory"
+kind = "pr_threshold"
+repo = "example-org/example-repo"
+base_branch = "main"
+threshold = 20
+last_done = "paused"
+paused_reason = "deferred: recent PRs were refactor churn"
+resume_when = "some later event"
+
+[[ritual]]
+id = "architecture:widgets"
+kind = "pr_threshold"
+repo = "example-org/widgets"
+base_branch = "main"
+threshold = 5
+last_done = "2026-01-01T00:00:00Z"
+
+[[ritual]]
+id = "architecture:gadgets"
+kind = "pr_threshold"
+repo = "example-org/gadgets"
+base_branch = "main"
+threshold = 5
+last_done = "2026-01-01T00:00:00Z"

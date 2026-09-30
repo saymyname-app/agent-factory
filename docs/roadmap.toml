@@ -1,0 +1,68 @@
+# The Software Factory's own Roadmap (CONTEXT.md: Project, Roadmap Step).
+#
+# Structured so the Cockpit and any tool read the current step without
+# interpreting prose -- validate with `bin/project-roadmap validate` and
+# resolve a `planning_run_target` with `bin/project-roadmap check-target`.
+# Status changes by normal commit. `docs/ROADMAP.md` keeps the human-readable
+# intent and cites these same ids.
+#
+# Migrated 2026-09-30 (T03, af-s0qa19) from SayMyName's own roadmap
+# (`knowledge/roadmap.md` / `knowledge/state.md` on origin, repo
+# saymyname-app/Say-my-name-product): steps A1-A6 and the step SayMyName's
+# roadmap called A7 -- "Planning Run C01 'Cockpit V2'" -- which keeps its
+# real id here, C01, because that is the id every Spec, ticket and convoy
+# already uses as `planning_run_target`. A1-A7 leave the SayMyName roadmap;
+# SayMyName's roadmap.md keeps only "B1 attend l'étape usine X" (out of this
+# ticket's graph -- a SayMyName-side operator step after T03 merges).
+#
+# Statuses below are the real statuses as of 2026-09-30, read from
+# knowledge/state.md on origin (the "Roadmap position" section).
+
+[[step]]
+id = "A1"
+title = "Legacy isolation (5 PRs)"
+done_when = "PR 5 (ADR-0001..0024, pre-refactor docs, docs/products/) merged; living ops docs cite no retired command"
+order = 1
+status = "done"
+
+[[step]]
+id = "A2"
+title = "Project-agnostic Mayor"
+done_when = "agent-factory#246, Say-my-name-front#61, Say-my-name-back#59 merged"
+order = 2
+status = "done"
+
+[[step]]
+id = "A3"
+title = "factory-guard inside its 180 s budget"
+done_when = "no guard order.failed over 24 h, with margin (not \"sometimes\")"
+order = 3
+status = "done"
+
+[[step]]
+id = "A4"
+title = "\"Nothing forgotten\" inventory (every Factory file gets a verdict; agent-architecture-audit; rig checkouts; host-local runtime state)"
+done_when = "inventory versioned in the Factory; zero reference from trusted code to legacy/; every finding fixed, decided, or a ticket for A5"
+order = 4
+status = "done"
+
+[[step]]
+id = "A5"
+title = "Planning Run \"Factory operations v2\" (orders, Mayor wake, orphan signals, campaign-pointer, exhaustion parking, ADR-0028 amendment, maintenance scripts, proposals flow)"
+done_when = "its graph delivered and closed"
+order = 5
+status = "in_progress"
+
+[[step]]
+id = "A6"
+title = "Planning Run \"Parallel delivery\" (worktree per dispatch, declared file scope, hot-file leases, test isolation, up-to-date-before-merge, conflict-repair loop; first 2 workers on the Factory)"
+done_when = "its graph delivered and closed; 2 Factory workers ran a day with no broken main and no live-state collision"
+order = 6
+status = "in_progress"
+
+[[step]]
+id = "C01"
+title = "Planning Run C01 \"Cockpit V2\" (cockpit + notifications + ritual reminders; called A7 in the SayMyName roadmap this step was migrated from)"
+done_when = "its graph delivered and closed"
+order = 7
+status = "in_progress"

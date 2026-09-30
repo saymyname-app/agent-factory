@@ -1,0 +1,22 @@
+# Minimal valid fixture roadmap for tests/project-roadmap-test.py.
+
+[[step]]
+id = "X1"
+title = "First step"
+done_when = "the first thing is true"
+order = 1
+status = "done"
+
+[[step]]
+id = "X2"
+title = "Second step"
+done_when = "the second thing is true"
+order = 2
+status = "in_progress"
+
+[[step]]
+id = "X3"
+title = "Third step"
+done_when = "the third thing is true"
+order = 3
+status = "todo"

@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Report the status of the Factory's own rituals, in JSON. Read-only.
+
+A ritual (CONTEXT.md: rituel) is proposed to Benjamin and run by him; this
+tool never runs one, it only measures whether its trigger has fired --
+`due` (its threshold is met), `ok` (not yet), or `paused` (deferred until a
+named event, per `docs/rituals.toml`). The only kind implemented today,
+`pr_threshold`, counts PRs merged into a repo's base branch since the
+ritual's last-done date, through `gh`, so it can be driven against a fake
+`gh` in tests exactly like the rest of the Factory's tool-contract tests.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+from typing import Any
+
+
+PROGRAM = "rituals-status"
+
+
+class RitualsError(RuntimeError):
+    """An actionable diagnostic about the rituals file or a ritual id."""
+
+
+def load_rituals(path: Path) -> list[dict[str, Any]]:
+    try:
+        data = tomllib.loads(path.read_text())
+    except OSError as exc:
+        raise RitualsError(f"cannot read rituals {path}: {exc}") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise RitualsError(f"{path} is not valid TOML: {exc}") from exc
+
+    rituals = data.get("ritual")
+    if not isinstance(rituals, list) or not rituals:
+        raise RitualsError(f"{path} must declare at least one [[ritual]]")
+    return rituals
+
+
+def find_ritual(rituals: list[dict[str, Any]], ritual_id: str) -> dict[str, Any]:
+    for ritual in rituals:
+        if ritual.get("id") == ritual_id:
+            return ritual
+    raise RitualsError(f"no ritual {ritual_id!r} in this rituals file")
+
+
+def merged_pr_count(repo: str, base_branch: str, since: str) -> int:
+    proc = subprocess.run(
+        (
+            "gh", "pr", "list", "-R", repo, "--state", "merged", "--base", base_branch,
+            "--limit", "500", "--json", "mergedAt",
+            "--jq", f'[.[] | select(.mergedAt >= "{since}")] | length',
+        ),
+        text=True,
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        raise RitualsError(f"gh pr list failed for {repo}: {proc.stderr.strip()}")
+    try:
+        return int(proc.stdout.strip())
+    except ValueError as exc:
+        raise RitualsError(f"gh pr list returned a non-integer count for {repo}: {proc.stdout!r}") from exc
+
+
+def pr_threshold_status(ritual: dict[str, Any]) -> dict[str, Any]:
+    ritual_id = ritual["id"]
+    last_done = ritual.get("last_done")
+
+    if last_done == "paused":
+        return {
+            "id": ritual_id,
+            "status": "paused",
+            "reason": ritual.get("paused_reason", ""),
+            "resume_when": ritual.get("resume_when", ""),
+        }
+
+    repo = ritual.get("repo")
+    base_branch = ritual.get("base_branch")
+    threshold = ritual.get("threshold")
+    if not repo or not base_branch or not isinstance(threshold, int):
+        raise RitualsError(f"ritual {ritual_id!r} needs repo, base_branch and an integer threshold")
+
+    merged = merged_pr_count(repo, base_branch, last_done)
+    status = "due" if merged >= threshold else "ok"
+    return {
+        "id": ritual_id,
+        "status": status,
+        "merged_since": merged,
+        "threshold": threshold,
+        "last_done": last_done,
+    }
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    try:
+        rituals = load_rituals(Path(args.rituals))
+        ritual = find_ritual(rituals, args.ritual)
+        kind = ritual.get("kind")
+        if kind == "pr_threshold":
+            result = pr_threshold_status(ritual)
+        else:
+            raise RitualsError(f"ritual {args.ritual!r} has unknown kind {kind!r}")
+    except RitualsError as exc:
+        print(json.dumps({"status": "error", "error": str(exc)}, indent=2))
+        return 1
+
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    status_parser = subparsers.add_parser("status", help="report one ritual's status as JSON")
+    status_parser.add_argument("rituals", help="path to the rituals TOML file")
+    status_parser.add_argument("ritual", help="the ritual id to report on")
+    status_parser.set_defaults(func=cmd_status)
+
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
