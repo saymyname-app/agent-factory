@@ -8,9 +8,12 @@ import html
 from cockpit.ui.base.tokens import CSS
 
 
-def render_home(headline_text, stale_rows):
+def render_home(headline_text, stale_rows, requests_section_html=""):
     """``stale_rows``: the same names :meth:`ReadModel.stale_or_unknown`
-    returns, each resolved to its display name and freshness state."""
+    returns, each resolved to its display name and freshness state.
+    ``requests_section_html`` (T12, af-is5e97): the pre-rendered "Ce qui
+    t'attend" section HTML, injected below the freshness headline; the
+    empty default keeps every caller that predates it unchanged."""
     all_fresh = not stale_rows
     items = "".join(
         '<li data-freshness="%s">%s</li>'
@@ -32,6 +35,7 @@ def render_home(headline_text, stale_rows):
         "<body>\n"
         '<header class="cockpit-headline" data-ok="%s">%s</header>\n'
         "%s\n"
+        "%s\n"
         "</body>\n"
         "</html>\n"
     ) % (
@@ -39,4 +43,5 @@ def render_home(headline_text, stale_rows):
         "true" if all_fresh else "false",
         html.escape(headline_text),
         stale_list,
+        requests_section_html,
     )
