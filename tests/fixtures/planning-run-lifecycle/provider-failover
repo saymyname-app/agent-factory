@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Fake `provider-failover` for the dispatch-door refusal check in
+# planning-run-lifecycle-test.py: always reports providers available, so
+# O08's exhaustion gate never depends on this host's live provider state.
+printf '%s\n' '{"total_exhaustion":{"active":false}}'

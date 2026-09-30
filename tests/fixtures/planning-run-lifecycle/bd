@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Stateful fake `bd` for the Planning Run lifecycle end-to-end test (W07).
+
+Backs a tiny bead store in the JSON file named by PLANNING_RUN_LIFECYCLE_BD_STATE
+so one test module can drive the real command lines of `bin/planning-map`,
+`bin/spec-approve` (bd-approve/bd-status) and `bin/ticket-graph-publish`
+(bd-publish/bd-patch) against a single consistent store, the same way the
+run actually happens: a Planning Map Bead and its Planning Decision Bead
+children, a Spec bead, a Ticket Graph Draft bead, and the delivery beads a
+publish creates.
+
+This merges the two existing fake-bd protocols this run's doors already
+have fixtures for (tests/fixtures/spec-approve/bd's parent/children/show/
+update/close, and tests/fixtures/ticket-graph-publish/bd-bead-mode's
+list/create --graph) instead of inventing a third one -- only the subset of
+`bd` either tool needs is implemented; anything else fails loudly.
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_PATH = Path(os.environ["PLANNING_RUN_LIFECYCLE_BD_STATE"])
+
+BOOLEAN_FLAGS = {"--no-inherit-labels", "--silent", "--json", "--all"}
+VALUE_FLAGS = {
+    "--parent", "--type", "--title", "--labels", "--metadata", "--body-file",
+    "--reason", "--limit", "--description", "--deps", "--graph", "--priority",
+}
+REPEATABLE_VALUE_FLAGS = {"--set-metadata", "--append-notes"}
+
+
+def load_state():
+    if STATE_PATH.exists():
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    return {"beads": {}, "next_id": 1}
+
+
+def save_state(state):
+    STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def parse_flags(args):
+    flags = {}
+    repeated = {}
+    positionals = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in BOOLEAN_FLAGS:
+            flags[arg] = True
+            i += 1
+        elif arg in REPEATABLE_VALUE_FLAGS:
+            repeated.setdefault(arg, []).append(args[i + 1])
+            i += 2
+        elif arg in VALUE_FLAGS:
+            flags[arg] = args[i + 1]
+            i += 2
+        else:
+            positionals.append(arg)
+            i += 1
+    return flags, repeated, positionals
+
+
+def read_body(body_file):
+    if body_file is None:
+        return None
+    if body_file == "-":
+        return sys.stdin.read()
+    return Path(body_file).read_text(encoding="utf-8")
+
+
+def public_view(bead):
+    return {
+        "id": bead["id"],
+        "title": bead.get("title", ""),
+        "description": bead.get("description", ""),
+        "status": bead.get("status", "open"),
+        "labels": bead.get("labels", []),
+        "metadata": bead.get("metadata", {}),
+        "parent": bead.get("parent"),
+    }
+
+
+def fail(message):
+    sys.stderr.write(f"fake bd: {message}\n")
+    raise SystemExit(1)
+
+
+def cmd_create(flags, repeated, positionals):
+    state = load_state()
+    if "--graph" in flags:
+        plan = json.loads(Path(flags["--graph"]).read_text(encoding="utf-8"))
+        ids = {}
+        for node in plan["nodes"]:
+            n = state["next_id"]
+            state["next_id"] = n + 1
+            new_id = f"af-{n:03d}"
+            ids[node["key"]] = new_id
+            state["beads"][new_id] = {
+                "id": new_id, "title": node["title"], "description": node["description"],
+                "status": "open", "labels": node["labels"], "metadata": node["metadata"],
+                "parent": None,
+            }
+        save_state(state)
+        print(json.dumps({"schema_version": 1, "ids": ids}))
+        return
+    n = state["next_id"]
+    state["next_id"] = n + 1
+    parent = flags.get("--parent")
+    new_id = f"{parent}.{n}" if parent else f"fk-{n}"
+    labels = flags.get("--labels", "")
+    labels_list = [label for label in labels.split(",") if label]
+    metadata = json.loads(flags["--metadata"]) if "--metadata" in flags else {}
+    for entry in repeated.get("--set-metadata", []):
+        key, _, value = entry.partition("=")
+        metadata[key] = value
+    description = read_body(flags.get("--body-file")) or flags.get("--description", "") or ""
+    bead = {
+        "id": new_id,
+        "title": flags.get("--title", ""),
+        "description": description,
+        "status": "open",
+        "labels": labels_list,
+        "metadata": metadata,
+        "parent": parent,
+    }
+    state["beads"][new_id] = bead
+    save_state(state)
+    if flags.get("--silent"):
+        print(new_id)
+    else:
+        print(json.dumps(public_view(bead)))
+
+
+def cmd_show(positionals):
+    state = load_state()
+    if not positionals:
+        fail("show requires an issue id")
+    issue_id = positionals[0]
+    bead = state["beads"].get(issue_id)
+    if bead is None:
+        fail(f"issue not found: {issue_id}")
+    print(json.dumps([public_view(bead)]))
+
+
+def cmd_children(positionals):
+    state = load_state()
+    if not positionals:
+        fail("children requires a parent id")
+    parent_id = positionals[0]
+    children = [
+        public_view(bead)
+        for bead in state["beads"].values()
+        if bead.get("parent") == parent_id
+    ]
+    print(json.dumps(children))
+
+
+def cmd_list(flags):
+    state = load_state()
+    print(json.dumps([public_view(b) for b in state["beads"].values()]))
+
+
+def cmd_update(flags, repeated, positionals):
+    state = load_state()
+    if not positionals:
+        fail("update requires an issue id")
+    issue_id = positionals[0]
+    bead = state["beads"].setdefault(
+        issue_id, {"id": issue_id, "metadata": {}, "labels": [], "status": "open", "parent": None}
+    )
+    if "--body-file" in flags:
+        bead["description"] = read_body(flags["--body-file"]) or ""
+    if "--description" in flags:
+        bead["description"] = flags["--description"]
+    if "--title" in flags:
+        bead["title"] = flags["--title"]
+    for entry in repeated.get("--set-metadata", []):
+        key, _, value = entry.partition("=")
+        bead.setdefault("metadata", {})[key] = value
+    save_state(state)
+    print(json.dumps(public_view(bead)))
+
+
+def cmd_close(flags, positionals):
+    state = load_state()
+    if not positionals:
+        fail("close requires an issue id")
+    issue_id = positionals[0]
+    bead = state["beads"].get(issue_id)
+    if bead is None:
+        fail(f"issue not found: {issue_id}")
+    bead["status"] = "closed"
+    bead["close_reason"] = flags.get("--reason", "")
+    save_state(state)
+    print(json.dumps(public_view(bead)))
+
+
+def main(argv):
+    if len(argv) >= 2 and argv[0] == "-C":
+        argv = argv[2:]
+    if not argv:
+        fail("no command given")
+    command, rest = argv[0], argv[1:]
+    flags, repeated, positionals = parse_flags(rest)
+    if command == "create":
+        cmd_create(flags, repeated, positionals)
+    elif command == "show":
+        cmd_show(positionals)
+    elif command == "children":
+        cmd_children(positionals)
+    elif command == "list":
+        cmd_list(flags)
+    elif command == "update":
+        cmd_update(flags, repeated, positionals)
+    elif command == "close":
+        cmd_close(flags, positionals)
+    elif command == "dep":
+        pass
+    else:
+        fail(f"no canned response configured for: bd {' '.join(argv)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

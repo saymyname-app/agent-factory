@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Fake `gc` used only to drive the real `bin/dispatch-door` against a bead
+already left behind by this test's lifecycle run (a Planning Map / Spec /
+Ticket Graph Draft bead, all `gc.plane=planning`), so the "no planning bead
+is ever dispatched" acceptance criterion is proved against the actual
+dispatch gate instead of only against the beads' own metadata.
+
+Every invocation is appended, one line per call, to
+PLANNING_RUN_LIFECYCLE_DISPATCH_LOG. `bd show <id> --json` answers from the
+same PLANNING_RUN_LIFECYCLE_BD_STATE store the lifecycle fake `bd` uses, so
+this is the bead the lifecycle run actually produced, not a hand-typed
+stand-in. `sling` and `bd update` (the effects dispatch-door only reaches
+after its checks pass) always succeed, so a wrongly-permitted dispatch would
+show up as a call recorded in the log instead of a crash.
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+STATE_PATH = Path(os.environ["PLANNING_RUN_LIFECYCLE_BD_STATE"])
+LOG_PATH = Path(os.environ["PLANNING_RUN_LIFECYCLE_DISPATCH_LOG"])
+
+args = sys.argv[1:]
+with LOG_PATH.open("a", encoding="utf-8") as handle:
+    handle.write(" ".join(args) + "\n")
+
+command = args[2:] if args[:1] == ["--city"] else args
+
+if command[:2] == ["bd", "show"]:
+    issue_id = command[2]
+    state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    bead = state["beads"].get(issue_id)
+    if bead is None:
+        print(f"fake dispatch-gc: issue not found: {issue_id}", file=sys.stderr)
+        raise SystemExit(1)
+    print(json.dumps([{
+        "id": bead["id"],
+        "labels": bead.get("labels", []),
+        "metadata": bead.get("metadata", {}),
+    }]))
+    raise SystemExit(0)
+
+if command[:1] == ["sling"] or command[:2] == ["bd", "update"]:
+    print('{"ok":true}')
+    raise SystemExit(0)
+
+print(f"unexpected fake dispatch-gc arguments: {args}", file=sys.stderr)
+raise SystemExit(2)

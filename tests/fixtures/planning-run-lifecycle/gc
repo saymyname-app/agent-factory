@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""Fake `gc` used by planning-run-lifecycle-test.py to observe Mayor wake
+calls (ticket-graph-publish's notify_mayor) without a live Gas City. Every
+invocation is appended, one JSON array per line, to
+PLANNING_RUN_LIFECYCLE_GC_LOG. Identical protocol to
+tests/fixtures/ticket-graph-publish/gc, reused here so the lifecycle test
+does not invent a second one."""
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+log = Path(os.environ["PLANNING_RUN_LIFECYCLE_GC_LOG"])
+with log.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(args) + "\n")
+
+command = args[2:] if args[:1] == ["--city"] else args
+if command[:3] == ["mail", "send", "mayor"]:
+    raise SystemExit(0)
+
+print(f"unexpected fake gc arguments: {args}", file=sys.stderr)
+raise SystemExit(2)
