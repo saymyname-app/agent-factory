@@ -1,25 +1,15 @@
 {
   "cleared_at": null,
   "contract": "agent-factory-planning-run-reservation/v1",
-  "note": "A6b -- wire Matt Pocock's upstream wayfinder into the Planning Run, charted and run with the real wayfinder skill. WHY: C01 was reserved with requirements but no purpose about method, so its first attempt was planned with plain grilling (copied from A6) instead of wayfinder's decision map (research, prototype, grilling and task tickets); Benjamin set it aside. A6b makes the Planning Run carry that method so C01 can run through it. Intent (Benjamin, 2026-09-29, live chat, answer 2A): first a Planning Run 'wayfinder wiring' for the Factory, itself run with the real wayfinder, then C01. Source: SayMyName knowledge/decisions.md decision 24, roadmap row A6b.",
+  "note": "Cockpit V2 -- the next real non-critical Planning Run after the one-way cutover (af-mav0b AC#5, af-4a44k B12 AC#5, docs/planning/B12-redecomposition-planning-run-router.md Slice 4). Deferred behind A6b on 2026-09-29 (SayMyName decision 24): C01 restarts from zero as the first run through the wired wayfinder flow.",
+  "promoted_after": "A6b",
+  "promoted_at": "2026-09-30T01:06:12.992864+00:00",
   "requirements": [
-    "The Planning Run is charted and worked with the upstream wayfinder skill as written (map, typed decision tickets, fog, out of scope); where Factory tooling cannot do what the skill says, the gap is a ticket on the map, not a silent adaptation.",
-    "This run is the last one through the old router path (to-spec oracle reads planning-session.json); its record says so explicitly.",
-    "C01 (Cockpit V2) stays reserved next, restarting from zero with the wired flow."
+    "Phone notifications via ntfy (implementation retired with Cockpit V1 on 2026-09-26; the need stays -- Benjamin, 2026-09-25).",
+    "Ritual reminders (architecture / incident reviews) surfaced as notifications (Benjamin, 2026-09-25).",
+    "Move the NEEDS BENJAMIN list and the pending-proposal count from the operator session start into the cockpit, then remove them from session start (interim display decided in A5 -- Benjamin, 2026-09-28)."
   ],
-  "reserved_at": "2026-09-29",
-  "reserved_by": "SayMyName decision 24",
-  "reserved_for": "A6b",
-  "next": {
-    "cleared_at": null,
-    "note": "Cockpit V2 -- the next real non-critical Planning Run after the one-way cutover (af-mav0b AC#5, af-4a44k B12 AC#5, docs/planning/B12-redecomposition-planning-run-router.md Slice 4). Deferred behind A6b on 2026-09-29 (SayMyName decision 24): C01 restarts from zero as the first run through the wired wayfinder flow.",
-    "requirements": [
-      "Phone notifications via ntfy (implementation retired with Cockpit V1 on 2026-09-26; the need stays -- Benjamin, 2026-09-25).",
-      "Ritual reminders (architecture / incident reviews) surfaced as notifications (Benjamin, 2026-09-25).",
-      "Move the NEEDS BENJAMIN list and the pending-proposal count from the operator session start into the cockpit, then remove them from session start (interim display decided in A5 -- Benjamin, 2026-09-28)."
-    ],
-    "reserved_at": "2026-09-24",
-    "reserved_by": "af-mav0b",
-    "reserved_for": "C01"
-  }
+  "reserved_at": "2026-09-24",
+  "reserved_by": "af-mav0b",
+  "reserved_for": "C01"
 }
