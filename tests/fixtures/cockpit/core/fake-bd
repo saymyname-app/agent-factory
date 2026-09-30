@@ -12,6 +12,12 @@ if sys.argv[1:] == ["list", "--json"]:
     print(json.dumps([{"id": "af-fake1", "status": "open", "title": "fixture bead"}]))
     sys.exit(0)
 
+# The beads source's second read (af-1al0t1): beads still carrying a
+# NEEDS BENJAMIN whatever their status — none in this fixture.
+if sys.argv[1:] == ["list", "--all", "--limit", "0", "--has-metadata-key", "gc.needs_benjamin", "--json"]:
+    print(json.dumps([]))
+    sys.exit(0)
+
 sys.stderr.write(
     "fake bd (cockpit-core): no canned response for: bd %s\n" % " ".join(sys.argv[1:])
 )

@@ -2,8 +2,10 @@
 des Demandes opérateur", §"Demandes opérateur : types, niveaux, sortie").
 
 Only two kinds of bead ever become a request here:
-  * an open/in_progress bead carrying ``gc.needs_benjamin`` (not "none") —
-    an escalation-door NEEDS BENJAMIN (T06). Its level is Urgent when
+  * a bead carrying ``gc.needs_benjamin`` (not "none"), whatever its
+    status — a closed bead's question is still open until answered
+    (af-1al0t1; the beads source reads those too) — an escalation-door
+    NEEDS BENJAMIN (T06). Its level is Urgent when
     ``gc.escalation_bloquant`` is "true", otherwise À faire (spec .5).
   * an open bead labelled ``proposal`` whose ``gc.proposal_state`` is not
     yet ``a_planifier``/``rejetee`` — an open proposal-door proposal (T07),
