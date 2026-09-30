@@ -49,7 +49,7 @@ only when verified in the code; live checks for runtime state.
 | F15 | low | `formulas/mol-scoped-work`, `formulas/mol-polecat-commit`, `agents/claude-reviewer`, `bin/factory-observe`, `bin/factory-resources`, `bin/goal-delivery-pairs`, 5 prototype/oracle scripts | no runtime caller (only tests/docs); `mol-polecat-commit` refuses base `main` so cannot run on the Factory repo | RESOLVED per-item (O14, af-8l3ea): `mol-scoped-work`/`mol-polecat-commit` are wired — `bin/dispatch-door` validates and routes both against `config/projects/saymyname-{backend,frontend}.toml`'s `formulas` list (O03, af-ui0ua landed after this finding was written; nothing dispatches them yet, but the door accepts them for the theme that needs worktree isolation on those rigs). `claude-reviewer` retired — no prompt or formula ever dispatched it, and the dispatch door has no path for an ad-hoc named reviewer session outside a rig's fixed `sling_target`; moved to `legacy/agents/`. `factory-observe`, `factory-resources`, `goal-delivery-pairs` and the 5 prototype/oracle scripts keep their existing `kernel`/`ops` verdicts unchanged: each is a deliberate, documented capability (B09 kernel foundation; manual operator tools; one-time Planning Run proofs) whose lack of a runtime caller is by design, not drift |
 | F16 | low | Mayor prompt, `bin/factory-work-dispatch` | GUARDED Factory work goes to `build-basic` but no target is named, and `factory-work-dispatch` accepts only `mol-do-work` | FIXED (O03, af-ui0ua): `bin/dispatch-door` resolves target and validates formula for every rig (`build-basic` included) from `config/projects/*.toml`; `factory-work-dispatch` wraps it; `bin/dispatch-door-guard` reports any dispatch that bypasses it |
 | F17 | med | `.githooks/`, `docs/GETTING_STARTED.md` | a fresh clone runs without PII guard, main gate or live-root hooks: `core.hooksPath` is only in the live `.git/config` | FIXED (O14, af-8l3ea): `bin/factory-setup` runs `git config core.hooksPath .githooks` (idempotent) so a fresh clone plus the setup script has the hooks active |
-| F18 | med | `bin/planning-run-router:130-149` | `clear_reservation` rewrites tracked `config/planning-run-reservation.json` in the live root (dirty tree, guard snapshots, drift from `main`) | OPEN, tracked: `clear_reservation`/`set_reservation` still `Path.write_text` the tracked file directly (verified live 2026-09-28); no O-ticket touched this write path. Follow-up bead af-1hvva |
+| F18 | med | `bin/planning-run-router:130-149` (deleted, A6b W10) | `clear_reservation` rewrites tracked `config/planning-run-reservation.json` in the live root (dirty tree, guard snapshots, drift from `main`) | OPEN, tracked: `clear_reservation`/`set_reservation` still `Path.write_text` the tracked file directly (verified live 2026-09-28); no O-ticket touched this write path. Follow-up bead af-1hvva. Addendum (A6b, W10, 2026-09-30): the cited router is deleted; `config/planning-run-reservation.json` is now read by `bin/spec-approve bd-approve` and advanced by `bin/ticket-graph-publish bd-publish` (`bin/planning-run-reservation` itself), neither of which reproduces this direct-write pattern -- af-1hvva should be re-checked for continued relevance against the current writers |
 | F19 | low | `bin/factory-guard:138`, `city.toml`, provider policy, model catalog | `claude-fable` defined in `city.toml`, checked nowhere, absent from policy and catalog | FIXED (O14, af-8l3ea): no agent, order or formula ever names `claude-fable`, so it is commented out of `city.toml` (same treatment as the unused `claude-opus` tier already there) instead of checked by the guard |
 | F20 | low | `config/factory-observe*.schema.json` | no code loads either schema (validation hand-written); the doc says the policy is validated against it | FIXED (O14, af-8l3ea): both schema files moved to `legacy/config/` (neither had a reader); `docs/FACTORY_OBSERVE.md`, `docs/CONTEXT_INDEX.md` and `bin/factory-observe`'s docstring now point at the hand-written validators (`lib/factory_observe.py`, `lib/factory_measures.py`) instead of a schema file nothing loads |
 | F21 | low | `tests/build-basic-fail-fast-runtime-test.sh`, `tests/factory-watchdog-order-test.sh` | local-only tests run nowhere automatically; the second hardcodes `/home/benja/agent-factory` | PARTIALLY FIXED (O13): new `local-only-tests` order (`orders/local-only-tests.toml`, `bin/local-only-tests`) runs both nightly and pages the Mayor on failure. The hardcoded path in `factory-watchdog-order-test.sh` is untouched -- it matches the live root by design, which is what this order runs against. |
@@ -135,17 +135,15 @@ an A5 input.
 | `bin/planning-exception` | kernel | mayor prompt, deliver-close, factory-guard, planning-exception-guard, CI | ADR-0028 Planning Exception register; subcommands match docs |
 | `bin/planning-map-concurrency-prototype` | kernel | CI test, wayfinding-run (docstring), docs | Synthetic concurrency proof; no runtime caller |
 | `bin/planning-run-resume-oracle` | kernel | CI test, docs | P04 resume oracle; no runtime caller |
-| `bin/planning-run-router` | kernel | AGENTS.md, docs/GETTING_STARTED.md, CI test | Planning Run entry point; legacy paths only as fence names |
-| `bin/planning-run-to-spec-oracle` | kernel | planning-run-router, spec-approve, CI test | Session -> Spec stage |
 | `bin/pr-autopilot` | ops | orders/pr-autopilot.toml (3m), CI tests | Arms/finalizes PRs from lib/protected_rigs.sh; header "for the SayMyName rigs" stale |
 | `bin/project-isolation-oracle` | kernel | CI test, docs | Project isolation oracle |
 | `bin/project-planning-profile` | kernel | docs/GETTING_STARTED.md, CI test | Per-project planning profile validator (rejects SayMyName-specific fields by design) |
 | `bin/provider-failover` | ops | orders provider-failover + model-staleness-check, factory-boot, factory-guard | FIXED (P20, af-r48pb): help/status/set text names no cockpit or campaign; live failover unchanged |
 | `bin/reversibility-check` | ops | pr-autopilot, factory-watchdog, CI test | ADR-0019 reversibility gate CLI |
 | `bin/role-qualification-oracle` | kernel | CI test, docs | P06 role qualification oracle; no runtime caller |
-| `bin/spec-approve` | kernel | planning-run-router, CI test | Spec approval stage |
-| `bin/ticket-graph-publish` | kernel | mayor prompt (patch), planning-run-router, planning-exception, CI | validate/publish/patch; `patch` exists as the prompt says |
-| `bin/wayfinding-run` | kernel | planning-run-router, spec-approve, planning-exception, CI | Wayfinding stage |
+| `bin/spec-approve` | kernel | CI test | Spec approval stage; bead mode only (`bd-approve`/`bd-status`) since A6b W10 retired the file-Spec mode with the router |
+| `bin/ticket-graph-publish` | kernel | mayor prompt (bd-patch), planning-exception, CI | `bd-publish`/`bd-patch` only since A6b W10 retired the file-draft mode with the router |
+| `bin/wayfinding-run` | kernel | spec-approve, planning-exception, CI | Wayfinding stage; retires in W11 |
 | `city.toml` | to-redo | gc; factory-guard; provider-failover; build-gates | live, but comments route provider changes via retired cockpit; SayMyName rigs/patches + /home/benja paths |
 | `config/factory-observe-policy.json` | kernel | bin/factory-observe, lib/factory_observe.py, test | B09 policy |
 | `config/fixture-city-bwrap.apparmor` | kernel | ci.yml, bin/project-isolation-oracle, test | P05 sandbox profile for CI |
@@ -153,7 +151,7 @@ an A5 input.
 | `config/operator.toml` | ops | bin/escalation-door | NEW (O14, F23): operator display name for runtime messages, read instead of a hardcoded string; `GC_OPERATOR_NAME` overrides |
 | `config/planning-allocation-prototype.json` | kernel | bin/planning-allocation-prototype, test (CI) | P02 oracle input |
 | `config/planning-map-concurrency-prototype.json` | kernel | bin/planning-map-concurrency-prototype, test (CI) | P03 oracle input |
-| `config/planning-run-reservation.json` | kernel | bin/planning-run-router (reads AND rewrites) | B12 AC#5 reservation: factory-operations-v2 then C01 |
+| `config/planning-run-reservation.json` | kernel | bin/spec-approve bd-approve (checks), bin/ticket-graph-publish bd-publish (advances) | B12 AC#5 reservation: factory-operations-v2 then C01 |
 | `config/planning-run-resume-prototype.json` | kernel | bin/planning-run-resume-oracle, test (CI) | P04 synthetic input (names a factory-cockpit surface) |
 | `config/provider-policy.json` | ops | bin/provider-failover, lib/provider_failover.py | FIXED (P20, af-r48pb): chains live and correct; description points to `bin/provider-failover set`, not the retired cockpit |
 | `config/role-qualification-prototype.json` | kernel | bin/role-qualification-oracle, test (CI) | P06 oracle input |
@@ -185,7 +183,7 @@ an A5 input.
 | `docs/decisions/ADR-0026-structural-delivery-completion-gate.md` | to-redo | CONTEXT_INDEX | point 5 and reversal still rely on mayor-campaign scoped readiness (legacy); no amendment |
 | `docs/decisions/ADR-0027-legacy-planning-and-cockpit-v1-quarantine.md` | kernel | CONTEXT_INDEX, B12 note | quarantine fence; legacy paths intentional |
 | `docs/decisions/ADR-0028-planning-exception-routing.md` | kernel | CONTEXT_INDEX | B08 ADR |
-| `docs/planning/B12-redecomposition-planning-run-router.md` | kernel | CONTEXT_INDEX, reservation config, router doc | status updated; activation-switch paths explicitly not built |
+| `docs/planning/B12-redecomposition-planning-run-router.md` | kernel | CONTEXT_INDEX, reservation config | status updated; activation-switch paths explicitly not built; the router it named is deleted (A6b, W10) -- archived planning record, not rewritten |
 | `docs/planning/agent-factory-project-agnostic-refactor-spec.md` | kernel | ADR-0027 | approved refactor Spec |
 | `docs/planning/agent-factory-project-agnostic-refactor-ticket-graph-draft.yaml` | kernel | tests/ticket-graph-publish-test.py, B12 note | refactor ticket graph; test input |
 | `docs/research/2026-09-22-agent-factory-refactor-grilling-checkpoint.md` | kernel | ADR-0028 | dated refactor design checkpoint |
@@ -257,14 +255,12 @@ an A5 input.
 | `tests/fixtures/escalation-door` | ops | escalation-door-test.sh | fake gc for the live escalation door |
 | `tests/fixtures/fixture-city` | kernel | fixture-city-oracle-test.py | synthetic fixture-* rigs; legacy-*.json are fail-closed probes |
 | `tests/fixtures/planning-exception` | kernel | planning-exception-test.py | graph + fake ticket-graph-publish |
-| `tests/fixtures/planning-run-router` | kernel | planning-run-router-test.py | RE-VERDICTED (P23): `confirmed_by` already reads `"Operator-1"` in every session fixture (fixed by O16/af-dqhwo); no real operator name found — stale row |
-| `tests/fixtures/planning-run-to-spec` | kernel | planning-run-to-spec-oracle-test.py | RE-VERDICTED (P23): `confirmed_by` already reads `"Operator-1"` in every session fixture (fixed by O16/af-dqhwo); no real operator name found — stale row |
 | `tests/fixtures/project-isolation` | kernel | project-isolation-oracle-test.py | synthetic project-a/b secrets and scenarios |
 | `tests/fixtures/project-planning-profile` | kernel | project-planning-profile-test.py | invalid-saymyname.json is a deliberate negative case (SMN-42 fake key) |
 | `tests/fixtures/pr-autopilot-projects` | ops | the six `tests/pr-autopilot-*-test.sh` files, via `PROTECTED_RIGS_CONFIG_DIR` | new (P23): synthetic `config/projects/*.toml`-shaped rows (`example-backend`/`example-frontend`) so pr-autopilot tests exercise the real project-registry loading path without asserting on the real SayMyName rig names |
 | `tests/fixtures/shared-drain` | ops | factory-shared-drain-workspace-test.sh | fake gc/gh |
 | `tests/fixtures/spec-approve` | kernel | spec-approve-test.py | synthetic spec drafts |
-| `tests/fixtures/ticket-graph-publish` | kernel | ticket-graph-publish-test.py, planning-run-router-test.py, planning-exception-test.py | fake bd |
+| `tests/fixtures/ticket-graph-publish` | kernel | ticket-graph-publish-test.py, planning-exception-test.py | fake bd |
 | `tests/fixtures/wayfinding-run` | kernel | wayfinding-run-test.py | synthetic requests |
 | `tests/goal-delivery-pairs-test.sh` | ops | bin/goal-delivery-pairs | in CI (ci.yml:194) |
 | `tests/on-order-failed-test.sh` | ops | bin/on-order-failed | in CI (ci.yml:221); comment cites legacy factory-cockpit-chaos-test.py |
@@ -274,8 +270,6 @@ an A5 input.
 | `tests/planning-exception-test.py` | kernel | planning-exception; fixtures planning-exception + ticket-graph-publish | in CI (ci.yml:50) |
 | `tests/planning-map-concurrency-prototype-test.py` | kernel | planning map concurrency prototype | in CI (ci.yml:90) |
 | `tests/planning-run-resume-oracle-test.py` | kernel | Planning Run resume oracle | in CI (ci.yml:81) |
-| `tests/planning-run-router-test.py` | kernel | planning-run-router; fixtures planning-run-router + ticket-graph-publish | in CI (ci.yml:53); legacy_path rejection + "ntfy" as C01 reservation requirement are intended |
-| `tests/planning-run-to-spec-oracle-test.py` | kernel | Planning Run to Spec oracle; fixture planning-run-to-spec | in CI (ci.yml:84) |
 | `tests/pr-autopilot-candidate-duplicate-test.sh` | kernel | bin/pr-autopilot | FIXED (P23): drives pr-autopilot with `PROTECTED_RIGS_CONFIG_DIR` pointed at the new `tests/fixtures/pr-autopilot-projects/` synthetic project fixture (rigs `example-backend`/`example-frontend`, repo `example-corp/example-backend`) instead of the real SayMyName rigs; in CI (ci.yml:182) |
 | `tests/pr-autopilot-ci-failure-test.sh` | kernel | bin/pr-autopilot | FIXED (P23): same synthetic project fixture as candidate-duplicate; in CI (ci.yml:167) |
 | `tests/pr-autopilot-reconcile-cache-test.sh` | kernel | bin/pr-autopilot | FIXED (P23): same synthetic project fixture; asserts `example-corp/example-backend#61` instead of the real repo |

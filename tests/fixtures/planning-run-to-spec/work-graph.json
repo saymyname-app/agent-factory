@@ -1,6 +1,0 @@
-{
-  "nodes": [
-    {"id": "add-csv-flag", "kind": "implementation"},
-    {"id": "csv-header-row", "kind": "implementation"}
-  ]
-}

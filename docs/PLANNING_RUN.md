@@ -101,10 +101,10 @@ the Factory is currently reserving all new capacity for; `bin/spec-approve
 bd-approve` checks it, `bin/ticket-graph-publish bd-publish` advances it.
 It applies to mapped and Unmapped Planning Runs alike.
 
-## Retiring paths
+## Retired paths
 
-`bin/planning-run-router`, `bin/planning-run-to-spec-oracle`, the file
-modes of `bin/spec-approve` and `bin/ticket-graph-publish`, and
-`bin/wayfinding-run` are retired in W10/W11; each retirement is recorded
-in `docs/ADAPTATION_REGISTER.md`. A6b's own Ticket Graph Draft was the
-last one published through the old router path.
+`bin/planning-run-router`, `bin/planning-run-to-spec-oracle` and the file
+modes of `bin/spec-approve` and `bin/ticket-graph-publish` were retired in
+W10; `bin/wayfinding-run` retires in W11. Each retirement is recorded in
+`docs/ADAPTATION_REGISTER.md`. A6b's own Ticket Graph Draft was the last
+one published through the old router path.

@@ -105,7 +105,8 @@ live Beads/GitHub state, then answers in plain language:
 
 Raw issues, agents, sessions, Formula steps, logs, and infrastructure details
 stay hidden unless requested or needed to explain a verified risk. New work
-enters through the Planning Run flow (`bin/planning-run-router`); the Mayor
+enters through the Planning Run flow (`docs/PLANNING_RUN.md`: `/wayfinder`,
+`/to-spec`, `spec-approve`, `/to-tickets`, `ticket-graph-publish`); the Mayor
 executes approved ticket graphs.
 
 ## How Codex resolves context

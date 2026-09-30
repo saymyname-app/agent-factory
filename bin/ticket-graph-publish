@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Validate and atomically publish one approved Ticket Graph Draft to Beads.
+"""Atomically publish one approved Ticket Graph Draft bead to Beads (A6b,
+W05/W10).
 
 `bd-publish` and `bd-patch` are the live Beads-backed mode (A6b, W05): a
 Ticket Graph Draft is a planning-plane Beads bead linked to a Spec bead, not
@@ -7,18 +8,21 @@ a YAML file -- its structured tickets live in the description as YAML
 (`global_execution_contract`, `tickets`), and its approval and digest live in
 metadata (`approved_by`, `approved_evidence`, `approved_digest`, `spec_id`).
 One approval fact (the project's declared human approver plus his exact
-evidence) replaces the old file mode's separate `APPROVED_TICKET_GRAPH_DRAFT`
-state and `publication_authorized` flag, and there is no `legacy_boundary`
-digest marker to scope around: the digest simply covers the whole
+evidence) is the sole authorization; the digest simply covers the whole
 description, the same formula `spec-approve`'s bead mode uses for a Spec
 bead. `bd-publish` opens the Spec bead the draft names and refuses unless it
 is approved and its current digest still equals its approved digest, then
-reuses the same `graph_plan`/`publish` machinery the file mode uses to create
-delivery beads and a convoy atomically, advancing the Planning Run
-Reservation when the Spec's target is the one currently active. `bd-patch`
-reads its revised draft from a bead the same way and reuses `patch`'s
-existing merge/supersede/reslice rules unchanged. The file mode above stays
-only for the router until W10 retires both.
+uses `graph_plan`/`publish` to create delivery beads and a convoy atomically,
+advancing the Planning Run Reservation when the Spec's target is the one
+currently active. `bd-patch` reads its revised draft from a bead the same
+way and reuses `patch`'s merge/supersede/reslice rules.
+
+The file-draft mode (`validate`/`publish`/`patch` over a YAML Ticket Graph
+Draft file carrying the `APPROVED_TICKET_GRAPH_DRAFT` state and a
+`legacy_boundary` digest marker) served only the now-retired Planning Run
+router and was retired with it (A6b, W10): this tool is bead-mode only.
+Historical draft files under `docs/planning/**` stay as archives; they are
+simply no longer fed to this tool.
 """
 
 from __future__ import annotations
@@ -42,7 +46,6 @@ ROOT = Path(__file__).resolve().parents[1]
 BD_BIN = os.environ.get("BD_BIN", "bd")
 BD_WORKSPACE = Path(os.environ.get("TICKET_GRAPH_BD_WORKSPACE", str(ROOT)))
 GC_BIN = os.environ.get("GC_BIN", "gc")
-CONTENT_BOUNDARY = b"legacy_boundary:"
 SKIP_MAYOR_NOTIFY_ENV = "TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY"
 MAYOR_NOTIFY_TIMEOUT_SECONDS = 60
 
@@ -62,16 +65,6 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
         raise PublishError(detail) from exc
-
-
-def scoped_digest(raw: bytes) -> str:
-    raw = raw.replace(b"\r\n", b"\n")
-    marker = b"\n" + CONTENT_BOUNDARY
-    try:
-        start = raw.index(marker) + 1
-    except ValueError as exc:
-        raise PublishError("draft has no legacy_boundary digest marker") from exc
-    return "sha256:" + hashlib.sha256(raw[start:]).hexdigest()
 
 
 def as_dict(value: Any, where: str) -> dict[str, Any]:
@@ -100,10 +93,8 @@ def ticket_scope_paths(ticket: dict[str, Any], ticket_id: str) -> list[str]:
 
 
 def validate_tickets(raw_tickets: list[Any]) -> list[dict[str, Any]]:
-    """Ticket-level validation shared by the file-mode draft and the
-    bead-mode draft (W05): both carry the identical `tickets:` shape, just
-    wrapped in a different envelope (a YAML artifact header versus bead
-    metadata), so the per-ticket rules live in exactly one place."""
+    """Ticket-level validation for the bead-mode draft (W05): the
+    `tickets:` shape lives in the bead description as YAML."""
     tickets = [as_dict(item, f"tickets[{index}]") for index, item in enumerate(raw_tickets)]
     if not tickets:
         raise PublishError("draft has no publishable tickets")
@@ -147,34 +138,6 @@ def validate_tickets(raw_tickets: list[Any]) -> list[dict[str, Any]]:
     for ticket_id in ids:
         visit(ticket_id)
     return tickets
-
-
-def validate_draft(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    raw = path.read_bytes()
-    try:
-        value = yaml.safe_load(raw.decode("utf-8"))
-    except (UnicodeDecodeError, yaml.YAMLError) as exc:
-        raise PublishError(f"invalid UTF-8 YAML: {exc}") from exc
-    draft = as_dict(value, "draft")
-    artifact = as_dict(draft.get("artifact"), "artifact")
-    if artifact.get("state") != "APPROVED_TICKET_GRAPH_DRAFT":
-        raise PublishError("draft is not APPROVED_TICKET_GRAPH_DRAFT")
-    if artifact.get("publication_authorized") is not True:
-        raise PublishError("draft publication_authorized is not true")
-    actual_digest = scoped_digest(raw)
-    if artifact.get("content_digest") != actual_digest:
-        raise PublishError(
-            f"draft digest mismatch: declared {artifact.get('content_digest')!r}, actual {actual_digest}"
-        )
-    source_spec = as_dict(artifact.get("source_spec"), "artifact.source_spec")
-    if source_spec.get("state") != "APPROVED_SPEC":
-        raise PublishError("source Spec is not APPROVED_SPEC")
-    spec_digest = str(source_spec.get("digest") or "")
-    if not spec_digest.startswith("sha256:") or len(spec_digest) != 71:
-        raise PublishError("source Spec digest is invalid")
-
-    tickets = validate_tickets(as_list(draft.get("tickets"), "tickets"))
-    return draft, tickets
 
 
 def scopes_overlap(a_paths: list[str], b_paths: list[str]) -> bool:
@@ -626,9 +589,10 @@ def mayor_city() -> Path:
     """The city whose Mayor is woken: FACTORY_ROOT if set, else this tool's
     own repository root -- the same resolution every other Factory tool uses
     (bin/provider-failover, bin/factory-observe, the bash guards). Never the
-    caller's cwd: planning-run-router runs on a `po/*` worktree by design
-    (F18), where `gc` walking up from cwd finds no running city, and the Mayor
-    silently stayed asleep after the A6 publish (2026-09-29)."""
+    caller's cwd: the now-retired Planning Run router ran on a `po/*`
+    worktree by design (F18), where `gc` walking up from cwd finds no
+    running city, and the Mayor silently stayed asleep after the A6 publish
+    (2026-09-29)."""
     return Path(os.environ.get("FACTORY_ROOT") or ROOT)
 
 
@@ -905,24 +869,21 @@ def cmd_bd_patch(args: argparse.Namespace) -> int:
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(prog=PROGRAM)
-    value.add_argument("command", choices=("validate", "publish", "patch", "bd-publish", "bd-patch"))
-    value.add_argument(
-        "draft",
-        help="path to a draft YAML file, or (bd-publish/bd-patch) a Ticket Graph Draft bead id",
-    )
-    value.add_argument("--author", help="who authored this patch (required for patch/bd-patch)")
-    value.add_argument("--reason", help="why this patch was applied (required for patch/bd-patch)")
+    value.add_argument("command", choices=("bd-publish", "bd-patch"))
+    value.add_argument("draft", help="Ticket Graph Draft bead id")
+    value.add_argument("--author", help="who authored this patch (required for bd-patch)")
+    value.add_argument("--reason", help="why this patch was applied (required for bd-patch)")
     value.add_argument(
         "--reslice", action="store_true",
         help="Mayor reslice without a fresh Planning Run: refuse and escalate any acceptance-criteria change",
     )
     value.add_argument(
         "--project",
-        help="project id whose config/projects/<id>.toml declares the human approver (bd-publish/bd-patch)",
+        help="project id whose config/projects/<id>.toml declares the human approver",
     )
     value.add_argument(
         "--repo-root", default=str(ROOT),
-        help="repository root config/projects and the reservation live under (bd-publish/bd-patch)",
+        help="repository root config/projects and the reservation live under",
     )
     value.add_argument(
         "--config-dir", default=None,
@@ -936,51 +897,7 @@ def main() -> int:
         args = parser().parse_args()
         if args.command == "bd-publish":
             return cmd_bd_publish(args)
-        if args.command == "bd-patch":
-            return cmd_bd_patch(args)
-        draft, tickets = validate_draft(Path(args.draft))
-        scope_edges = add_scope_overlap_edges(tickets)
-        if args.command != "validate":
-            record_scope_overlaps(scope_edges, tickets, draft["artifact"]["content_digest"])
-        plan = graph_plan(draft, tickets)
-        for node, ticket in zip((n for n in plan["nodes"] if n["key"] != "_convoy"), tickets):
-            node["_blocked_by_keys"] = [str(b) for b in ticket["blocked_by"]]
-        if args.command == "validate":
-            print(json.dumps({
-                "ok": True,
-                "graph_digest": draft["artifact"]["content_digest"],
-                "ticket_count": len(tickets),
-                "node_count": len(plan["nodes"]),
-                "edge_count": len(plan["edges"]),
-                "scope_edges": scope_edges,
-            }, ensure_ascii=False, sort_keys=True))
-            return 0
-        if args.command == "patch":
-            if not (args.author or "").strip() or not (args.reason or "").strip():
-                raise PublishError("--author and --reason are required for patch")
-            result = patch(draft, plan, tickets, args.author, args.reason, args.reslice)
-            graph_digest = draft["artifact"]["content_digest"]
-            notice = notify_mayor("patch", graph_digest, result["ids"].get("_convoy"))
-            print(json.dumps({
-                "ok": True,
-                "graph_digest": graph_digest,
-                "revises": draft["artifact"]["revises"],
-                "scope_edges": scope_edges,
-                **result,
-                **notice,
-            }, ensure_ascii=False, sort_keys=True))
-            return 0
-        graph_digest = draft["artifact"]["content_digest"]
-        mapping = publish(plan, graph_digest, len(tickets))
-        notice = notify_mayor("publish", graph_digest, mapping.get("_convoy"))
-        print(json.dumps({
-            "ok": True,
-            "graph_digest": graph_digest,
-            "ids": mapping,
-            "scope_edges": scope_edges,
-            **notice,
-        }, ensure_ascii=False, sort_keys=True))
-        return 0
+        return cmd_bd_patch(args)
     except (OSError, PublishError, json.JSONDecodeError) as exc:
         print(f"{PROGRAM}: {exc}", file=sys.stderr)
         return 1

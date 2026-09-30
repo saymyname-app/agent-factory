@@ -12,11 +12,11 @@ Planning Run Reservation, a wrong approver, a Spec edited after approval
 (approval void, publication refused), and an unmapped Spec with no No-fog
 exit evidence -- plus the positive unmapped path with valid evidence.
 
-This is the proof of the whole wired path; it replaces
-tests/planning-run-router-test.py in that role without retiring the router
-itself (other tickets' job). Every assertion is against the doors' stdout/
-stderr/exit code and the beads the fake `bd` store is left holding -- never
-against the doors' internal Python functions.
+This is the proof of the whole wired path; it replaced
+tests/planning-run-router-test.py in that role, which W10 (A6b) later
+deleted along with the router itself. Every assertion is against the
+doors' stdout/stderr/exit code and the beads the fake `bd` store is left
+holding -- never against the doors' internal Python functions.
 """
 from __future__ import annotations
 
