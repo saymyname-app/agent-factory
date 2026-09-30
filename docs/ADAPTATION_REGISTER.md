@@ -79,3 +79,17 @@ silencieusement l'architecture de production.
 | Réversibilité bornée | Aucune : c'est un retrait, pas un candidat réversible. L'historique Git conserve le code et les tests retirés pour consultation ; les fixtures `router-request.json` archivées sous `docs/planning/**` restent lisibles. |
 | Point de revue | Sans objet — la question tranchée par AR-001 est close par ce retrait. |
 | Règle conserver / remplacer / supprimer | Supprimé. Un nouveau routeur ou oracle de synthèse ne doit pas être réintroduit sans une nouvelle Planning Exception approuvée. |
+
+## AR-006 — Retrait de wayfinding-run (A6b, W11)
+
+| Champ | Enregistrement |
+| --- | --- |
+| Statut | **Retiré** (A6b, W11, 2026-09-30). Ce retrait suit celui de AR-005 (W10) sur le même chemin de retrait progressif du router pré-refactor. |
+| Baseline | `bin/wayfinding-run` (B04) implémentait le cycle de vie d'un Wayfinding Run durable (`promote`/`claim`/`resolve`/`pause`/`resume`/`abandon`/`status`/`route-check`) directement contre un fichier map JSON verrouillé, avec son propre contrat `agent-factory-wayfinding-run-request/v1`. Depuis W10 (AR-005), la charte, la résolution et la publication d'un Planning Run passent par les skills upstream de Matt Pocock (`/wayfinder`, `/to-spec`, `/to-tickets`) et les portes `spec-approve`/`ticket-graph-publish` en mode bead ; aucun appelant en production n'invoquait plus le cycle de vie fichier de `wayfinding-run`. |
+| But | Supprimer le dernier mécanisme de map-file fichier concurrent avec l'allocation opérateur-session déjà en place, sans perdre la preuve synthétique de verrouillage `fcntl.flock` qu'il démontrait. |
+| Adaptation sélectionnée | Aucune adaptation de remplacement : le cycle de vie map-file n'a pas de successeur, la charte et la résolution d'un Wayfinding Run vivent désormais entièrement dans la session opérateur et les Beads (AR-005). Le patron de verrouillage `fcntl.flock` que `wayfinding-run` démontrait reste prouvé par `bin/planning-map-concurrency-prototype` (P03) et cité directement par `bin/planning-exception`, qui applique le même patron read-modify-write à son registre. |
+| Retiré | `bin/wayfinding-run`, le contrat `agent-factory-wayfinding-run/v1` et `agent-factory-wayfinding-run-request/v1`, avec son test (`tests/wayfinding-run-test.py`) et ses fixtures (`tests/fixtures/wayfinding-run/**`). `docs/WAYFINDING_RUN.md` reste comme pointeur d'une ligne vers `docs/PLANNING_RUN.md`, marqué retiré plutôt que supprimé. La citation de `wayfinding-run` dans le docstring de `bin/planning-exception` et dans `docs/PLANNING_EXCEPTION.md` est reformulée pour citer directement `planning-map-concurrency-prototype` au lieu de l'outil retiré. La `planning-map.json` d'A5 reste comme archive, sans migration. |
+| Preuves | `bin/ci-run-tests` (découverte automatique de tous les fichiers `tests/*.py`/`*.sh`) confirme qu'aucun test restant ne référence `bin/wayfinding-run` ; la suite complète reste verte après le retrait. |
+| Réversibilité bornée | Aucune : c'est un retrait, pas un candidat réversible. L'historique Git conserve le code et le test retirés pour consultation. |
+| Point de revue | Sans objet — le chemin map-file fichier est clos par ce retrait, dans la continuité de AR-005. |
+| Règle conserver / remplacer / supprimer | Supprimé. Un nouveau mécanisme de map-file fichier ne doit pas être réintroduit sans une nouvelle Planning Exception approuvée. |

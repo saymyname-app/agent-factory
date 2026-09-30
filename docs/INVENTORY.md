@@ -133,7 +133,7 @@ an A5 input.
 | `bin/on-session-stranded` | ops | orders/on-session-stranded.toml, CI test | Reopens orphaned beads + pages; FIXED (O06, af-sau1a): no longer writes the reader-less signal file |
 | `bin/planning-allocation-prototype` | kernel | CI test, config/planning-allocation-prototype.json, docs | P02 synthetic allocation proof; no runtime caller (prototype evidence) |
 | `bin/planning-exception` | kernel | mayor prompt, deliver-close, factory-guard, planning-exception-guard, CI | ADR-0028 Planning Exception register; subcommands match docs |
-| `bin/planning-map-concurrency-prototype` | kernel | CI test, wayfinding-run (docstring), docs | Synthetic concurrency proof; no runtime caller |
+| `bin/planning-map-concurrency-prototype` | kernel | CI test, planning-exception (docstring), docs | Synthetic concurrency proof; no runtime caller |
 | `bin/planning-run-resume-oracle` | kernel | CI test, docs | P04 resume oracle; no runtime caller |
 | `bin/pr-autopilot` | ops | orders/pr-autopilot.toml (3m), CI tests | Arms/finalizes PRs from lib/protected_rigs.sh; header "for the SayMyName rigs" stale |
 | `bin/project-isolation-oracle` | kernel | CI test, docs | Project isolation oracle |
@@ -143,7 +143,6 @@ an A5 input.
 | `bin/role-qualification-oracle` | kernel | CI test, docs | P06 role qualification oracle; no runtime caller |
 | `bin/spec-approve` | kernel | CI test | Spec approval stage; bead mode only (`bd-approve`/`bd-status`) since A6b W10 retired the file-Spec mode with the router |
 | `bin/ticket-graph-publish` | kernel | mayor prompt (bd-patch), planning-exception, CI | `bd-publish`/`bd-patch` only since A6b W10 retired the file-draft mode with the router |
-| `bin/wayfinding-run` | kernel | spec-approve, planning-exception, CI | Wayfinding stage; retires in W11 |
 | `city.toml` | to-redo | gc; factory-guard; provider-failover; build-gates | live, but comments route provider changes via retired cockpit; SayMyName rigs/patches + /home/benja paths |
 | `config/factory-observe-policy.json` | kernel | bin/factory-observe, lib/factory_observe.py, test | B09 policy |
 | `config/fixture-city-bwrap.apparmor` | kernel | ci.yml, bin/project-isolation-oracle, test | P05 sandbox profile for CI |
@@ -178,7 +177,7 @@ an A5 input.
 | `docs/RUNBOOK_STOP_AND_RESTART.md` | ops | AGENTS.md, bin/factory-boot, CONTEXT_INDEX | commands verified; minor hardcoded SayMyName rig loop (:42) |
 | `docs/SECURITY.md` | ops | CONTEXT_INDEX, OPERATOR_BRIDGE | generic trust boundaries |
 | `docs/SPEC_APPROVE.md` | kernel | CONTEXT_INDEX | B05 doc; subcommands match |
-| `docs/WAYFINDING_RUN.md` | kernel | PLANNING_RUN | A6b, W09: reduced to a one-line pointer to PLANNING_RUN.md; retiring in W11 |
+| `docs/WAYFINDING_RUN.md` | kernel | PLANNING_RUN | A6b, W09: reduced to a one-line pointer to PLANNING_RUN.md; retired in W11 |
 | `docs/decisions/ADR-0025-approved-graph-bootstrap-scope.md` | kernel | CONTEXT_INDEX | amended 2026-09-26 for campaign removal |
 | `docs/decisions/ADR-0026-structural-delivery-completion-gate.md` | to-redo | CONTEXT_INDEX | point 5 and reversal still rely on mayor-campaign scoped readiness (legacy); no amendment |
 | `docs/decisions/ADR-0027-legacy-planning-and-cockpit-v1-quarantine.md` | kernel | CONTEXT_INDEX, B12 note | quarantine fence; legacy paths intentional |
@@ -261,7 +260,6 @@ an A5 input.
 | `tests/fixtures/shared-drain` | ops | factory-shared-drain-workspace-test.sh | fake gc/gh |
 | `tests/fixtures/spec-approve` | kernel | spec-approve-test.py | synthetic spec drafts |
 | `tests/fixtures/ticket-graph-publish` | kernel | ticket-graph-publish-test.py, planning-exception-test.py | fake bd |
-| `tests/fixtures/wayfinding-run` | kernel | wayfinding-run-test.py | synthetic requests |
 | `tests/goal-delivery-pairs-test.sh` | ops | bin/goal-delivery-pairs | in CI (ci.yml:194) |
 | `tests/on-order-failed-test.sh` | ops | bin/on-order-failed | in CI (ci.yml:221); comment cites legacy factory-cockpit-chaos-test.py |
 | `tests/on-session-stranded-test.sh` | ops | bin/on-session-stranded | in CI (ci.yml:224); comment cites legacy factory-cockpit-chaos-test.py |
@@ -286,7 +284,6 @@ an A5 input.
 | `tests/role-qualification-oracle-test.py` | kernel | role qualification oracle | in CI (ci.yml:87) |
 | `tests/spec-approve-test.py` | kernel | spec-approve; fixture spec-approve | in CI (ci.yml:47) |
 | `tests/ticket-graph-publish-test.py` | kernel | ticket-graph-publish; fixture ticket-graph-publish | in CI (ci.yml:38) |
-| `tests/wayfinding-run-test.py` | kernel | wayfinding-run; fixture wayfinding-run | in CI (ci.yml:44) |
 
 ## O16 closeout — orders, Mayor manual operations, 24 h clean (added 2026-09-29, af-dqhwo)
 
