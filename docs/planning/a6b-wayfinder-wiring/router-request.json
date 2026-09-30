@@ -1,0 +1,15 @@
+{
+  "contract": "agent-factory-planning-run-router-request/v1",
+  "legacy_path": "none",
+  "session": "docs/planning/a6b-wayfinder-wiring/planning-session.json",
+  "city_registry": "docs/planning/a6b-wayfinder-wiring/city-registry.json",
+  "spec_out": "docs/planning/a6b-wayfinder-wiring/spec",
+  "planning_run_target": "A6b",
+  "approval": {
+    "approved_by": "Benjamin",
+    "evidence": "« J'approuve la Spec, OK pour le dernier passage par le router » (Benjamin, live chat, 2026-09-30 02:41 Paris) on Spec bead af-3s8prq digest sha256:086e9b4926c49f5697d49ced1bb8f18bcb4d4b956f4bfd2b46a204ab0bf480eb"
+  },
+  "publish": {
+    "draft": "docs/planning/a6b-wayfinder-wiring/ticket-graph-draft.yaml"
+  }
+}

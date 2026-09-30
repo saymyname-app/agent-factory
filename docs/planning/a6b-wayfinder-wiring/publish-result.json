@@ -1,0 +1,29 @@
+{
+  "contract": "agent-factory-planning-run-router-result/v1",
+  "convoy_id": "af-59qjgh",
+  "graph_digest": "sha256:c3ee1fbb0634ec8a7b180ea6e8faeece609247302a313aec5a590647349a668c",
+  "ids": {
+    "W01": "af-jlxbek",
+    "W02": "af-jrn464",
+    "W03": "af-fan2sg",
+    "W04": "af-6g35l7",
+    "W05": "af-gkon0b",
+    "W06": "af-me5r8x",
+    "W07": "af-scwme1",
+    "W08": "af-x2vdsx",
+    "W09": "af-mag2wa",
+    "W10": "af-ry4yaw",
+    "W11": "af-gw7nls",
+    "W12": "af-eyxetw",
+    "W13": "af-hxc8ra",
+    "_convoy": "af-59qjgh"
+  },
+  "mayor_notified": true,
+  "ok": true,
+  "result": "published",
+  "resumed_from": [
+    "spec_approval"
+  ],
+  "spec_digest": "sha256:69c05164dc5f93617d500063e29e8a4a4430f4f97b100d03ca8a6670c9bc27a4",
+  "spec_id": "spec-a6b-wayfinder-wiring-2026-09-30"
+}
