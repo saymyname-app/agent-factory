@@ -19,6 +19,21 @@ artifact stays recoverable while its convoy is open and is eligible to
 expire only after the convoy closes; it is never the artifact of durable
 truth, which belongs in code, tests, the domain glossary and qualifying
 ADRs.
+
+`bd-approve` and `bd-status` are the live Beads-backed mode (A6b, W04): a
+Spec is a planning-plane Beads bead published by `/to-spec`, not a JSON
+file, and its Planning Map (if any) is a Beads bead too. `bd-approve` reads
+the Spec bead by id, refuses unless the Spec's `planning_run_target` equals
+the active Planning Run Reservation (`bin/planning-run-reservation`), its
+named map is finished (`bin/planning-map check`) or it names no map and
+carries non-empty No-fog exit evidence, and `--approved-by` is the project's
+declared human approver (`bin/project-planning-profile human-approver`).
+On success it records the approval, approver, evidence and digest of the
+Spec's current content as bead metadata, then closes the map. `bd-status`
+reports whether a later edit to the Spec's description has voided the
+approval -- its content digest no longer matches the one recorded at
+approval. The file-Spec mode above stays only for the router until W10
+retires both.
 """
 
 from __future__ import annotations
@@ -28,6 +43,7 @@ import fcntl
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import time
 from contextlib import contextmanager
@@ -44,6 +60,9 @@ APPROVED_SPEC = "APPROVED_SPEC"
 
 MAP_TO_SPEC_READY = "to_spec_ready"
 MAP_CLOSED = "closed"
+
+BD_BIN = os.environ.get("BD_BIN", "bd")
+NO_MAP_VALUES = (None, "", "none")
 
 REQUIRED_SECTIONS = (
     "behavior",
@@ -373,6 +392,208 @@ def cmd_expire_check(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- bd-approve / bd-status (A6b, W04: live Beads-backed Spec mode) ------
+
+
+def repo_root_default() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def tool_path(env_var: str, name: str) -> str:
+    override = os.environ.get(env_var)
+    if override:
+        return override
+    return str(Path(__file__).resolve().parent / name)
+
+
+def run_bd(args: list[str]) -> str:
+    try:
+        proc = subprocess.run([BD_BIN, *args], capture_output=True, text=True)
+    except OSError as exc:
+        raise SpecApproveError(f"could not run {BD_BIN}: {exc}") from exc
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        raise SpecApproveError(f"bd {' '.join(args)} failed: {detail}")
+    return proc.stdout
+
+
+def bd_show(issue_id: str) -> dict[str, Any]:
+    out = run_bd(["show", issue_id, "--json"])
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise SpecApproveError(f"bd show {issue_id} returned invalid JSON: {exc}") from exc
+    if isinstance(data, list):
+        if not data:
+            raise SpecApproveError(f"issue not found: {issue_id}")
+        data = data[0]
+    if not isinstance(data, dict):
+        raise SpecApproveError(f"bd show {issue_id} returned an unexpected shape")
+    return data
+
+
+def canonical_bead_digest(description: str) -> str:
+    """Identical digest formula to the one live approvals were recorded
+    with before this tool existed (af-3s8prq): sha256 of the raw
+    description text, so approving through this tool never changes a
+    digest that already lives on an approved Spec bead."""
+    return "sha256:" + hashlib.sha256(description.encode("utf-8")).hexdigest()
+
+
+def run_subtool(argv: list[str]) -> dict[str, Any]:
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, env=os.environ.copy())
+    except OSError as exc:
+        raise SpecApproveError(f"could not run {argv[0]}: {exc}") from exc
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        detail = proc.stderr.strip() or proc.stdout.strip()
+        raise SpecApproveError(f"{' '.join(argv)} returned invalid JSON: {detail or exc}") from exc
+    if proc.returncode != 0 or not payload.get("ok", False):
+        raise SpecApproveError(payload.get("error", f"{' '.join(argv)} failed"))
+    return payload
+
+
+def reservation_check(target: str | None, repo_root: Path, reservation_bin: str) -> dict[str, Any]:
+    argv = [reservation_bin, "--repo-root", str(repo_root), "check"]
+    if target:
+        argv += ["--target", target]
+    return run_subtool(argv)
+
+
+def map_check(map_id: str, map_bin: str) -> dict[str, Any]:
+    return run_subtool([map_bin, "check", "--map", map_id])
+
+
+def map_close(map_id: str, reason: str, map_bin: str) -> dict[str, Any]:
+    return run_subtool([map_bin, "close", "--map", map_id, "--reason", reason])
+
+
+def declared_human_approver(project: str, config_dir: Path, profile_bin: str) -> str:
+    return run_subtool(
+        [profile_bin, "human-approver", "--project", project, "--config-dir", str(config_dir)]
+    )["human_approver"]
+
+
+def cmd_bd_approve(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root)
+    config_dir = Path(args.config_dir) if args.config_dir else repo_root / "config" / "projects"
+    map_bin = tool_path("PLANNING_MAP_BIN", "planning-map")
+    reservation_bin = tool_path("PLANNING_RUN_RESERVATION_BIN", "planning-run-reservation")
+    profile_bin = tool_path("PROJECT_PLANNING_PROFILE_BIN", "project-planning-profile")
+
+    try:
+        spec_bead = bd_show(args.spec)
+        metadata = spec_bead.get("metadata") or {}
+        if metadata.get("spec_state") == APPROVED_SPEC:
+            raise SpecApproveError(
+                f"cannot approve state={APPROVED_SPEC!r}: only a DRAFT_SPEC can be approved -- an "
+                "APPROVED_SPEC is already approved once and approval never creates a duplicate approved document"
+            )
+
+        target = metadata.get("planning_run_target")
+        reservation = reservation_check(target, repo_root, reservation_bin)
+        if not reservation.get("allowed", False):
+            raise SpecApproveError(
+                "refused: " + reservation.get(
+                    "reason",
+                    f"the Spec's planning_run_target {target!r} is not the active Planning Run Reservation",
+                )
+            )
+
+        planning_map = metadata.get("planning_map")
+        if planning_map not in NO_MAP_VALUES:
+            check = map_check(planning_map, map_bin)
+            if not check.get("finished", False):
+                raise SpecApproveError(
+                    f"refused: map {planning_map} is not finished (open_children={check.get('open_children')}, "
+                    f"malformed={check.get('malformed')}, labelled_map={check.get('labelled_map')})"
+                )
+        else:
+            planning_map = None
+            no_fog_evidence = metadata.get("no_fog_evidence")
+            if not (isinstance(no_fog_evidence, str) and no_fog_evidence.strip()):
+                raise SpecApproveError(
+                    "refused: the Spec names no map and carries no No-fog exit evidence"
+                )
+
+        human_approver = declared_human_approver(args.project, config_dir, profile_bin)
+        approved_by = required_string(args.approved_by, "--approved-by")
+        if approved_by != human_approver:
+            raise SpecApproveError(
+                f"refused: --approved-by {approved_by!r} is not the project's declared human "
+                f"approver {human_approver!r}"
+            )
+        evidence = required_string(args.evidence, "--evidence")
+
+        digest = canonical_bead_digest(spec_bead.get("description") or "")
+
+        run_bd([
+            "update", args.spec,
+            "--set-metadata", "spec_state=" + APPROVED_SPEC,
+            "--set-metadata", f"approved_by={approved_by}",
+            "--set-metadata", f"approved_evidence={evidence}",
+            "--set-metadata", f"approved_digest={digest}",
+        ])
+
+        map_closed = False
+        if planning_map is not None:
+            map_close(planning_map, f"Spec approved by {approved_by}: {args.spec}", map_bin)
+            map_closed = True
+    except SpecApproveError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "spec": args.spec,
+                "state": APPROVED_SPEC,
+                "digest": digest,
+                "approved_by": approved_by,
+                "map": planning_map,
+                "map_closed": map_closed,
+            },
+            indent=2, sort_keys=True,
+        )
+    )
+    return 0
+
+
+def cmd_bd_status(args: argparse.Namespace) -> int:
+    try:
+        spec_bead = bd_show(args.spec)
+    except SpecApproveError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+
+    metadata = spec_bead.get("metadata") or {}
+    state = metadata.get("spec_state", DRAFT_SPEC)
+    actual_digest = canonical_bead_digest(spec_bead.get("description") or "")
+    approved_digest = metadata.get("approved_digest")
+    void = state == APPROVED_SPEC and approved_digest is not None and approved_digest != actual_digest
+
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "spec": args.spec,
+                "state": state,
+                "content_digest": actual_digest,
+                "approved_by": metadata.get("approved_by"),
+                "approved_evidence": metadata.get("approved_evidence"),
+                "approved_digest": approved_digest,
+                "planning_map": metadata.get("planning_map"),
+                "planning_run_target": metadata.get("planning_run_target"),
+                "void": void,
+            },
+            indent=2, sort_keys=True,
+        )
+    )
+    return 0
+
+
 # --- status ----------------------------------------------------------------------
 
 
@@ -440,6 +661,29 @@ def build_parser() -> argparse.ArgumentParser:
     status = subparsers.add_parser("status", help="report the Spec's state, digest and approval")
     status.add_argument("spec", help="path to the Spec JSON file")
     status.set_defaults(func=cmd_status)
+
+    bd_approve = subparsers.add_parser(
+        "bd-approve", help="approve a planning-plane Spec bead by id, with or without a map"
+    )
+    bd_approve.add_argument("--spec", required=True, help="Spec bead id")
+    bd_approve.add_argument("--approved-by", required=True)
+    bd_approve.add_argument("--evidence", required=True)
+    bd_approve.add_argument(
+        "--project", required=True, help="project id whose config/projects/<id>.toml declares the human approver"
+    )
+    bd_approve.add_argument(
+        "--repo-root", default=str(repo_root_default()), help="repository root config/projects and the reservation live under"
+    )
+    bd_approve.add_argument(
+        "--config-dir", default=None, help="directory holding config/projects/*.toml files (default: <repo-root>/config/projects)"
+    )
+    bd_approve.set_defaults(func=cmd_bd_approve)
+
+    bd_status = subparsers.add_parser(
+        "bd-status", help="report a Spec bead's state, digest, approval and whether it is void"
+    )
+    bd_status.add_argument("--spec", required=True, help="Spec bead id")
+    bd_status.set_defaults(func=cmd_bd_status)
 
     return parser
 

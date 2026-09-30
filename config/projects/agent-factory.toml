@@ -23,3 +23,7 @@ required_ci = "Factory CI"
 required_check = "Tests"
 sling_target = "factory-worker"
 formulas = "mol-do-work"
+# human_approver (A6b W04) is this project's declared human approver:
+# bin/spec-approve refuses to approve a Spec bead whose --approved-by is
+# anyone else, read via `bin/project-planning-profile human-approver`.
+human_approver = "benjamin-hurand"

@@ -11,6 +11,7 @@ TOOL = ROOT / "bin" / "project-planning-profile"
 FIXTURES = ROOT / "tests" / "fixtures" / "project-planning-profile"
 PROFILES = FIXTURES / "profiles"
 CITY_REGISTRY = FIXTURES / "city-registry.json"
+PROJECTS_CONFIG_DIR = FIXTURES / "projects"
 
 
 class ProjectPlanningProfileTest(unittest.TestCase):
@@ -128,6 +129,34 @@ class ProjectPlanningProfileTest(unittest.TestCase):
         for result in (first, second):
             self.assertNotIn("default", result)
             self.assertNotIn("is_default", result)
+
+    # --- human-approver (W04: spec-approve's approver check) ----------------
+
+    def human_approver(self, project, config_dir=PROJECTS_CONFIG_DIR, check=False):
+        return subprocess.run(
+            (str(TOOL), "human-approver", "--project", project, "--config-dir", str(config_dir)),
+            cwd=ROOT, text=True, capture_output=True, check=check,
+        )
+
+    def test_human_approver_reports_the_declared_project_approver(self):
+        result = json.loads(self.human_approver("project-a", check=True).stdout)
+        self.assertTrue(result["ok"])
+        self.assertEqual("project-a", result["project_id"])
+        self.assertEqual("benjamin", result["human_approver"])
+
+    def test_human_approver_fails_with_actionable_diagnostic_when_undeclared(self):
+        proc = self.human_approver("project-without-approver")
+        self.assertNotEqual(0, proc.returncode)
+        error = json.loads(proc.stdout)
+        self.assertFalse(error["ok"])
+        self.assertIn("human_approver", error["error"])
+
+    def test_human_approver_fails_with_actionable_diagnostic_when_no_project_file(self):
+        proc = self.human_approver("no-such-project")
+        self.assertNotEqual(0, proc.returncode)
+        error = json.loads(proc.stdout)
+        self.assertFalse(error["ok"])
+        self.assertIn("no-such-project", error["error"])
 
 
 if __name__ == "__main__":
