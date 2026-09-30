@@ -26,14 +26,13 @@ existing to-tickets and publication doors.
 
 This is the only Planning Run entry point (af-mav0b): there is no flag, env
 var, or code branch that falls back to a legacy planning path. Right after
-`legacy_path` translation, a reservation recorded in
-`.gc/runtime/planning-run-reservation.json` (B12 AC#5; untracked runtime
-state per F18 -- seeded once from the tracked, read-only
-`config/planning-run-reservation.json`) is checked, also before any Planning
-Run identity is created: while a reservation is active, only a request that
+`legacy_path` translation, the Planning Run Reservation (B12 AC#5; W01 --
+read, checked and advanced by the shared `planning-run-reservation` tool,
+not by code in this router) is checked, also before any Planning Run
+identity is created: while a reservation is active, only a request that
 declares a matching `planning_run_target` proceeds -- every other request is
 rejected the same identity-free way as a `legacy_path` selector. Publishing
-through as the reserved target clears the reservation for every request
+through as the reserved target advances the reservation for every request
 after it.
 """
 
@@ -44,7 +43,6 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +50,6 @@ from typing import Any
 PROGRAM = "planning-run-router"
 REQUEST_CONTRACT = "agent-factory-planning-run-router-request/v1"
 RESULT_CONTRACT = "agent-factory-planning-run-router-result/v1"
-RESERVATION_CONTRACT = "agent-factory-planning-run-reservation/v1"
 
 MAP_STATUS_CLOSED = "closed"
 SPEC_STATE_APPROVED = "APPROVED_SPEC"
@@ -62,6 +59,7 @@ TO_SPEC_ORACLE = BIN_DIR / "planning-run-to-spec-oracle"
 WAYFINDING_RUN = BIN_DIR / "wayfinding-run"
 SPEC_APPROVE = BIN_DIR / "spec-approve"
 TICKET_GRAPH_PUBLISH = BIN_DIR / "ticket-graph-publish"
+PLANNING_RUN_RESERVATION = BIN_DIR / "planning-run-reservation"
 
 # ADR-0027's exact legacy_path vocabulary and the quarantined artifact each
 # selector names -- rejecting one of these before any Planning Run identity
@@ -107,72 +105,6 @@ def resolve_path(value: str, repo_root: Path) -> Path:
     return path if path.is_absolute() else repo_root / path
 
 
-def reservation_seed_path(repo_root: Path) -> Path:
-    """The git-tracked path a reservation used to live and mutate at before
-    F18. Read-only from here on: it seeds the untracked runtime copy the
-    first time a repo checkout sees this reservation, so the C01 reservation
-    already committed there is not lost by the move."""
-    return repo_root / "config" / "planning-run-reservation.json"
-
-
-def reservation_path(repo_root: Path) -> Path:
-    """The untracked runtime location a reservation reads and writes from
-    (F18): `.gc/` is Host-local Gas City/runtime state (gitignored), so a
-    router run that clears or promotes a reservation no longer dirties the
-    repo root's git status."""
-    return repo_root / ".gc" / "runtime" / "planning-run-reservation.json"
-
-
-def load_reservation(repo_root: Path) -> dict[str, Any] | None:
-    """Read the active Planning Run reservation, if any (B12 AC#5).
-
-    Returns None when there is no reservation file, it is malformed as
-    "no reservation" (missing/blank `reserved_for`), or it has already been
-    cleared -- in every one of those cases the router proceeds unreserved.
-    """
-    path = reservation_path(repo_root)
-    if not path.exists():
-        seed = reservation_seed_path(repo_root)
-        if not seed.exists():
-            return None
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(seed.read_text(encoding="utf-8"), encoding="utf-8")
-    try:
-        reservation = as_dict(json.loads(path.read_text(encoding="utf-8")), "reservation")
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RouterError(f"cannot read reservation {path}: {exc}") from exc
-    if reservation.get("cleared_at") is not None:
-        return None
-    target = reservation.get("reserved_for")
-    if not isinstance(target, str) or not target.strip():
-        return None
-    return reservation
-
-
-def clear_reservation(repo_root: Path, reservation: dict[str, Any]) -> None:
-    """Close the active reservation once its target publishes.
-
-    When the reservation carries a `next` reservation with a non-blank
-    `reserved_for`, that one becomes active instead, so an ordered sequence
-    of Planning Runs is enforced one at a time. Otherwise `cleared_at` is
-    stamped and the router runs unreserved from then on.
-    """
-    path = reservation_path(repo_root)
-    now = datetime.now(timezone.utc).isoformat()
-    following = reservation.get("next")
-    if isinstance(following, dict) and str(following.get("reserved_for") or "").strip():
-        promoted = dict(following)
-        promoted.setdefault("contract", reservation.get("contract", RESERVATION_CONTRACT))
-        promoted["cleared_at"] = None
-        promoted["promoted_at"] = now
-        promoted["promoted_after"] = reservation.get("reserved_for")
-        path.write_text(json.dumps(promoted, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        return
-    cleared = dict(reservation)
-    cleared["cleared_at"] = now
-    path.write_text(json.dumps(cleared, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
 def load_request(path: Path) -> dict[str, Any]:
     try:
         request = as_dict(json.loads(path.read_text(encoding="utf-8")), "request")
@@ -201,7 +133,24 @@ def invoke(*argv: str) -> tuple[int, dict[str, Any]]:
     return result.returncode, payload
 
 
-# --- step wrappers over the four existing tools -----------------------------
+# --- step wrappers over the five existing tools ------------------------------
+
+
+def reservation_check(repo_root: Path, target: str | None) -> dict[str, Any]:
+    argv = [str(PLANNING_RUN_RESERVATION), "--repo-root", str(repo_root), "check"]
+    if target is not None:
+        argv += ["--target", target]
+    returncode, payload = invoke(*argv)
+    if returncode != 0 or not payload.get("ok"):
+        raise RouterError(f"Reservation check failed: {payload.get('error')}")
+    return payload
+
+
+def reservation_advance(repo_root: Path) -> dict[str, Any]:
+    returncode, payload = invoke(str(PLANNING_RUN_RESERVATION), "--repo-root", str(repo_root), "advance")
+    if returncode != 0 or not payload.get("ok"):
+        raise RouterError(f"Reservation advance failed: {payload.get('error')}")
+    return payload
 
 
 def to_spec_run(session_path: Path, city_registry_path: Path) -> dict[str, Any]:
@@ -353,22 +302,15 @@ def run_router(request_path: Path, repo_root: Path) -> dict[str, Any]:
             ),
         }
 
-    reservation = load_reservation(repo_root)
-    if reservation is not None:
-        reserved_for = reservation["reserved_for"]
-        if request.get("planning_run_target") != reserved_for:
-            return {
-                "contract": RESULT_CONTRACT,
-                "ok": True,
-                "result": "reservation_blocked",
-                "reserved_for": reserved_for,
-                "reason": (
-                    f"the next Planning Run is reserved for {reserved_for} -- "
-                    f"declare request.planning_run_target={reserved_for!r} once "
-                    "that work starts, or wait until it does -- no Planning Run "
-                    "identity, Spec, map or convoy was created"
-                ),
-            }
+    reservation_state = reservation_check(repo_root, request.get("planning_run_target"))
+    if not reservation_state["allowed"]:
+        return {
+            "contract": RESULT_CONTRACT,
+            "ok": True,
+            "result": "reservation_blocked",
+            "reserved_for": reservation_state["reserved_for"],
+            "reason": reservation_state["reason"],
+        }
 
     session_path = resolve_path(required_string(request.get("session"), "session"), repo_root)
     city_registry_path = resolve_path(
@@ -467,8 +409,8 @@ def run_router(request_path: Path, repo_root: Path) -> dict[str, Any]:
     publish_result = ticket_graph_publish(draft_path)
     ids = as_dict(publish_result.get("ids"), "publish result.ids")
 
-    if reservation is not None:
-        clear_reservation(repo_root, reservation)
+    if reservation_state["active"]:
+        reservation_advance(repo_root)
 
     result = {
         "contract": RESULT_CONTRACT,

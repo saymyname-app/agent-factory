@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Read, check and advance the Planning Run Reservation (A6b, W01).
+
+The Planning Run Reservation is the single mechanism that lets a Planning
+Run be reserved for one named target (e.g. `C01`) ahead of every other
+request: while a reservation is active, only a request that declares the
+matching target is allowed through. This was originally logic private to
+`planning-run-router`; it is now a standalone Factory tool so any caller
+(the router, and eventually `spec-approve` and `ticket-graph-publish`
+directly) can check and advance the same reservation state without
+duplicating the read/write contract.
+
+State lives in two places:
+
+* `config/planning-run-reservation.json` -- the git-tracked, read-only seed.
+  It is never written by this tool; it exists only to seed the runtime copy
+  the first time a checkout reads the reservation (F18).
+* `.gc/runtime/planning-run-reservation.json` -- the untracked runtime copy
+  this tool reads and writes. `.gc/` is Host-local Gas City/runtime state
+  (gitignored), so checking or advancing a reservation never dirties the
+  repo root's git status.
+
+`check` reports whether a request naming `--target` (or no target at all)
+is allowed through right now. `advance` closes the active reservation once
+its target has published: when the reservation carries a `next` reservation
+with a non-blank `reserved_for`, that one becomes active instead, so an
+ordered sequence of Planning Runs is enforced one at a time; otherwise the
+reservation is cleared and every request proceeds unreserved.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+PROGRAM = "planning-run-reservation"
+RESERVATION_CONTRACT = "agent-factory-planning-run-reservation/v1"
+CHECK_CONTRACT = "agent-factory-planning-run-reservation-check/v1"
+ADVANCE_CONTRACT = "agent-factory-planning-run-reservation-advance/v1"
+
+
+class ReservationError(RuntimeError):
+    """An actionable diagnostic about the Planning Run Reservation."""
+
+
+def as_dict(value: Any, name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ReservationError(f"{name} must be an object")
+    return value
+
+
+def reservation_seed_path(repo_root: Path) -> Path:
+    """The git-tracked path a reservation used to live and mutate at before
+    F18. Read-only from here on: it seeds the untracked runtime copy the
+    first time a repo checkout sees this reservation, so a reservation
+    already committed there is not lost by the move. This tool never writes
+    to this path."""
+    return repo_root / "config" / "planning-run-reservation.json"
+
+
+def reservation_path(repo_root: Path) -> Path:
+    """The untracked runtime location a reservation reads and writes from
+    (F18): `.gc/` is Host-local Gas City/runtime state (gitignored), so
+    checking or advancing a reservation never dirties the repo root's git
+    status."""
+    return repo_root / ".gc" / "runtime" / "planning-run-reservation.json"
+
+
+def load_reservation(repo_root: Path) -> dict[str, Any] | None:
+    """Read the active Planning Run reservation, if any (B12 AC#5).
+
+    Returns None when there is no reservation file, it is malformed as
+    "no reservation" (missing/blank `reserved_for`), or it has already been
+    cleared -- in every one of those cases callers proceed unreserved.
+    """
+    path = reservation_path(repo_root)
+    if not path.exists():
+        seed = reservation_seed_path(repo_root)
+        if not seed.exists():
+            return None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(seed.read_text(encoding="utf-8"), encoding="utf-8")
+    try:
+        reservation = as_dict(json.loads(path.read_text(encoding="utf-8")), "reservation")
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReservationError(f"cannot read reservation {path}: {exc}") from exc
+    if reservation.get("cleared_at") is not None:
+        return None
+    target = reservation.get("reserved_for")
+    if not isinstance(target, str) or not target.strip():
+        return None
+    return reservation
+
+
+def clear_reservation(repo_root: Path, reservation: dict[str, Any]) -> dict[str, Any]:
+    """Close the active reservation once its target publishes.
+
+    When the reservation carries a `next` reservation with a non-blank
+    `reserved_for`, that one becomes active instead, so an ordered sequence
+    of Planning Runs is enforced one at a time. Otherwise `cleared_at` is
+    stamped and callers proceed unreserved from then on. Returns the record
+    actually written.
+    """
+    path = reservation_path(repo_root)
+    now = datetime.now(timezone.utc).isoformat()
+    following = reservation.get("next")
+    if isinstance(following, dict) and str(following.get("reserved_for") or "").strip():
+        promoted = dict(following)
+        promoted.setdefault("contract", reservation.get("contract", RESERVATION_CONTRACT))
+        promoted["cleared_at"] = None
+        promoted["promoted_at"] = now
+        promoted["promoted_after"] = reservation.get("reserved_for")
+        path.write_text(json.dumps(promoted, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return promoted
+    cleared = dict(reservation)
+    cleared["cleared_at"] = now
+    path.write_text(json.dumps(cleared, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return cleared
+
+
+# --- CLI -----------------------------------------------------------------
+
+
+def repo_root_default() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root)
+    try:
+        reservation = load_reservation(repo_root)
+    except ReservationError as exc:
+        print(json.dumps({"contract": CHECK_CONTRACT, "ok": False, "error": str(exc)}, indent=2))
+        return 1
+    if reservation is None:
+        print(
+            json.dumps(
+                {"contract": CHECK_CONTRACT, "ok": True, "active": False, "allowed": True, "reserved_for": None},
+                indent=2, sort_keys=True,
+            )
+        )
+        return 0
+    reserved_for = reservation["reserved_for"]
+    allowed = args.target == reserved_for
+    result: dict[str, Any] = {
+        "contract": CHECK_CONTRACT,
+        "ok": True,
+        "active": True,
+        "allowed": allowed,
+        "reserved_for": reserved_for,
+    }
+    if not allowed:
+        result["reason"] = (
+            f"the next Planning Run is reserved for {reserved_for} -- "
+            f"declare a target of {reserved_for!r} once that work starts, or wait "
+            "until it does -- no reservation-gated action was taken"
+        )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_advance(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root)
+    try:
+        reservation = load_reservation(repo_root)
+        if reservation is None:
+            print(
+                json.dumps(
+                    {"contract": ADVANCE_CONTRACT, "ok": True, "advanced": False, "result": "no_reservation", "reserved_for": None},
+                    indent=2, sort_keys=True,
+                )
+            )
+            return 0
+        after = clear_reservation(repo_root, reservation)
+    except ReservationError as exc:
+        print(json.dumps({"contract": ADVANCE_CONTRACT, "ok": False, "error": str(exc)}, indent=2))
+        return 1
+    promoted = after.get("cleared_at") is None
+    print(
+        json.dumps(
+            {
+                "contract": ADVANCE_CONTRACT,
+                "ok": True,
+                "advanced": True,
+                "result": "promoted" if promoted else "cleared",
+                "reserved_for": after.get("reserved_for") if promoted else None,
+            },
+            indent=2, sort_keys=True,
+        )
+    )
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__)
+    parser.add_argument(
+        "--repo-root", default=str(repo_root_default()), help="repository root the reservation files live under"
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    check = subparsers.add_parser(
+        "check", help="report whether a request naming --target is allowed through right now"
+    )
+    check.add_argument("--target", default=None, help="the planning_run_target the caller declares, if any")
+    check.set_defaults(func=cmd_check)
+
+    advance = subparsers.add_parser(
+        "advance", help="close the active reservation, promoting its next reservation or clearing it"
+    )
+    advance.set_defaults(func=cmd_advance)
+
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
