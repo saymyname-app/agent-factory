@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""A controllable fake `proposal-door` for the T14 (af-peh3yy) Operator
+Actions seam test. Understands `accepter <bead> <acteur>`,
+`rejeter <bead> <raison> <acteur>` (refuses -- exit non-zero, no write --
+without a reason, mirroring the real door's `field_ok`), and
+`reporter <bead> <heure> <acteur>`. Writes the SAME metadata field names
+the real bin/proposal-door writes, onto the SAME $FAKE_BD_STATE_FILE the
+fake `bd` in this directory manages.
+
+Every invocation is appended, one JSON line per call, to
+$FAKE_PROPOSAL_DOOR_CALLS_FILE. Forced failure via
+$FAKE_PROPOSAL_DOOR_FAIL_FLAG_FILE. Deterministic clock: $FAKE_DOOR_NOW.
+"""
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+
+def _state_path():
+    return os.environ["FAKE_BD_STATE_FILE"]
+
+
+def _load():
+    path = _state_path()
+    if not os.path.exists(path):
+        return []
+    with open(path) as fh:
+        raw = fh.read().strip()
+    return json.loads(raw) if raw else []
+
+
+def _save(beads):
+    with open(_state_path(), "w") as fh:
+        json.dump(beads, fh)
+
+
+def _log_call(args):
+    log_path = os.environ.get("FAKE_PROPOSAL_DOOR_CALLS_FILE")
+    if not log_path:
+        return
+    with open(log_path, "a") as fh:
+        fh.write(json.dumps(args) + "\n")
+
+
+def _fail_if_flagged():
+    fail_flag = os.environ.get("FAKE_PROPOSAL_DOOR_FAIL_FLAG_FILE")
+    if fail_flag and os.path.exists(fail_flag):
+        sys.stderr.write("fake proposal-door: forced failure\n")
+        sys.exit(1)
+
+
+def _now_iso():
+    forced = os.environ.get("FAKE_DOOR_NOW")
+    if forced:
+        return forced
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _find(bead_id):
+    beads = _load()
+    bead = next((b for b in beads if b.get("id") == bead_id), None)
+    if bead is None:
+        sys.stderr.write("fake proposal-door: %s is unavailable.\n" % bead_id)
+        sys.exit(1)
+    return beads, bead
+
+
+def cmd_accepter(args):
+    if len(args) != 2:
+        sys.stderr.write("usage: fake proposal-door accepter <bead> <acteur>\n")
+        sys.exit(2)
+    bead_id, acteur = args
+    beads, bead = _find(bead_id)
+    metadata = bead.setdefault("metadata", {})
+    metadata["gc.proposal_state"] = "a_planifier"
+    metadata["gc.proposal_response_at"] = _now_iso()
+    metadata["gc.proposal_response_actor"] = acteur
+    note = "PROPOSITION ACCEPTÉE par %s — passe à planifier" % acteur
+    notes = bead.get("notes", "")
+    bead["notes"] = (notes + "\n" + note) if notes else note
+    _save(beads)
+    sys.stdout.write("ACCEPTÉE: %s — à planifier\n" % bead_id)
+    sys.exit(0)
+
+
+def cmd_rejeter(args):
+    if len(args) != 3:
+        sys.stderr.write("usage: fake proposal-door rejeter <bead> <raison> <acteur>\n")
+        sys.exit(2)
+    bead_id, raison, acteur = args
+    if not raison:
+        sys.stderr.write("fake proposal-door: champ « raison » manquant.\n")
+        sys.exit(1)
+    beads, bead = _find(bead_id)
+    metadata = bead.setdefault("metadata", {})
+    metadata["gc.proposal_state"] = "rejetee"
+    metadata["gc.proposal_reject_reason"] = raison
+    metadata["gc.proposal_response_at"] = _now_iso()
+    metadata["gc.proposal_response_actor"] = acteur
+    note = "PROPOSITION REJETÉE par %s — %s" % (acteur, raison)
+    notes = bead.get("notes", "")
+    bead["notes"] = (notes + "\n" + note) if notes else note
+    _save(beads)
+    sys.stdout.write("REJETÉE: %s — %s\n" % (bead_id, raison))
+    sys.exit(0)
+
+
+def cmd_reporter(args):
+    if len(args) != 3:
+        sys.stderr.write("usage: fake proposal-door reporter <bead> <heure> <acteur>\n")
+        sys.exit(2)
+    bead_id, heure, acteur = args
+    if not heure:
+        sys.stderr.write("fake proposal-door: champ « heure » manquant.\n")
+        sys.exit(1)
+    beads, bead = _find(bead_id)
+    metadata = bead.setdefault("metadata", {})
+    metadata["gc.proposal_report_until"] = heure
+    metadata["gc.proposal_response_at"] = _now_iso()
+    metadata["gc.proposal_response_actor"] = acteur
+    note = "PROPOSITION REPORTÉE par %s — jusqu'à %s" % (acteur, heure)
+    notes = bead.get("notes", "")
+    bead["notes"] = (notes + "\n" + note) if notes else note
+    _save(beads)
+    sys.stdout.write("REPORTÉE: %s — jusqu'à %s\n" % (bead_id, heure))
+    sys.exit(0)
+
+
+def main():
+    argv = sys.argv[1:]
+    _log_call(argv)
+    _fail_if_flagged()
+    if not argv:
+        sys.exit(2)
+    command, rest = argv[0], argv[1:]
+    if command == "accepter":
+        cmd_accepter(rest)
+    elif command == "rejeter":
+        cmd_rejeter(rest)
+    elif command == "reporter":
+        cmd_reporter(rest)
+    else:
+        sys.stderr.write("fake proposal-door: unsupported command %s\n" % command)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

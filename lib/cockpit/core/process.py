@@ -51,7 +51,19 @@ def build(config, clock=None):
     # in here, next to every other source.
     session_token = new_session_token()
     action_guard = ActionGuard(config.benjamin_login, config.allowed_origin, session_token)
-    action_handlers = build_action_handlers(config.bd_bin, clock)
+    # Out-of-scope touch (T14, af-peh3yy -- declared scope
+    # lib/cockpit/actions/**, lib/cockpit/ui/actions/**): répondre,
+    # accepter/rejeter/reporter une proposition, and relancer need the
+    # escalation-door/proposal-door/loop-guard/gc binaries wired through
+    # from config, the same as bd_bin already is.
+    action_handlers = build_action_handlers(
+        config.bd_bin,
+        clock,
+        escalation_door_bin=config.escalation_door_bin,
+        proposal_door_bin=config.proposal_door_bin,
+        loop_guard_bin=config.loop_guard_bin,
+        gc_bin=config.gc_bin,
+    )
     server = make_server(
         read_model,
         host=config.host,
