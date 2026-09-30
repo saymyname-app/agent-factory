@@ -105,6 +105,6 @@ It applies to mapped and Unmapped Planning Runs alike.
 
 `bin/planning-run-router`, `bin/planning-run-to-spec-oracle` and the file
 modes of `bin/spec-approve` and `bin/ticket-graph-publish` were retired in
-W10; `bin/wayfinding-run` retires in W11. Each retirement is recorded in
+W10; `bin/wayfinding-run` was retired in W11. Each retirement is recorded in
 `docs/ADAPTATION_REGISTER.md`. A6b's own Ticket Graph Draft was the last
 one published through the old router path.

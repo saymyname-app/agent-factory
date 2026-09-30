@@ -1,5 +1,0 @@
-{
-  "time_sensitive_facts": {
-    "rig_availability": "factory_workspace, fixture_city both green as of resume"
-  }
-}

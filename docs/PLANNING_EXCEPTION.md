@@ -27,8 +27,8 @@ scope. If the patch fails, `resolve` fails too and the decision stays open,
 still parked.
 
 This is a deterministic synthetic prototype operating on a caller-supplied
-JSON register and graph snapshot, the same fixture-bound scope B04's
-`wayfinding-run` declared -- it does not itself read or write live Beads.
+JSON register and graph snapshot, the same fixture-bound scope B04
+declared -- it does not itself read or write live Beads.
 
 ## Run it
 
