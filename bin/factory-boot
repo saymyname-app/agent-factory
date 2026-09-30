@@ -56,6 +56,19 @@ fi
 # workflow after a reboot, rig re-clone, or pack re-pin.
 step "build gate materialisation" ./bin/factory-build-gates
 
+# 2b. Cockpit — a process separate from gc that must keep reading and
+# showing status through a suspended or stopped city (af-0b6ffa, spec .9,
+# .13), so it starts here unconditionally, ahead of the suspended-city
+# early exit below. Idempotent: `cockpit start` is itself a no-op if an
+# instance is already running, but the status check keeps that visible in
+# the boot log instead of silent.
+COCKPIT_BIN="${COCKPIT_BIN:-./bin/cockpit}"
+if "$COCKPIT_BIN" status >/dev/null 2>&1; then
+  say "OK     cockpit already running"
+else
+  step "cockpit start" "$COCKPIT_BIN" start
+fi
+
 # 3. Controller. A suspended city is an operator's decision: leave it alone.
 city_json() { timeout 30 "$GC_BIN" status --json 2>/dev/null; }
 STATUS_JSON=$(city_json || true)
