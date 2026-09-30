@@ -6,6 +6,10 @@ at fake sources and shrunk Validity windows without writing a temp file.
 import os
 
 from cockpit.core.freshness import VALIDITY_WINDOWS_SECONDS
+from cockpit.health.engine import (
+    FACTORY_STALLED_AFTER_SECONDS,
+    SUPERVISOR_UNREACHABLE_AFTER_SECONDS,
+)
 
 DEFAULT_PORT = 8173
 DEFAULT_GC_BASE_URL = "http://127.0.0.1:8372"
@@ -59,6 +63,32 @@ class Config:
             override = env.get("COCKPIT_VALIDITY_%s_SECONDS" % source.upper())
             if override is not None:
                 self.validity_seconds[source] = float(override)
+
+        # Health zone (spec .66-.69, T16): reading how far the live root is
+        # behind its promotion branch, and the two fixed alert thresholds.
+        self.git_bin = env.get("COCKPIT_GIT_BIN", "git")
+        # Opt-in, unlike the other sources: an unset COCKPIT_REPO_DIR means
+        # "no version-behind polling" rather than defaulting to the live
+        # root, which would make every process (tests included) reach the
+        # real origin remote over the network (Testing Decisions: "la CI
+        # n'a ni ... ni GitHub" — T11's same "only wire sources we have
+        # fakes for" precedent).
+        self.repo_dir = env.get("COCKPIT_REPO_DIR")
+        self.git_remote = env.get("COCKPIT_GIT_REMOTE", "origin")
+        self.git_branch = env.get("COCKPIT_GIT_BRANCH", "main")
+        self.git_poll_seconds = float(env.get("COCKPIT_GIT_POLL_SECONDS", "60"))
+        self.supervisor_unreachable_after_seconds = float(
+            env.get(
+                "COCKPIT_HEALTH_SUPERVISOR_UNREACHABLE_SECONDS",
+                str(SUPERVISOR_UNREACHABLE_AFTER_SECONDS),
+            )
+        )
+        self.factory_stalled_after_seconds = float(
+            env.get(
+                "COCKPIT_HEALTH_FACTORY_STALLED_SECONDS",
+                str(FACTORY_STALLED_AFTER_SECONDS),
+            )
+        )
 
 
 def _default_pid_file(env):
