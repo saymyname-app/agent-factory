@@ -1,5 +1,25 @@
 #!/usr/bin/env python3
-"""Validate and atomically publish one approved Ticket Graph Draft to Beads."""
+"""Validate and atomically publish one approved Ticket Graph Draft to Beads.
+
+`bd-publish` and `bd-patch` are the live Beads-backed mode (A6b, W05): a
+Ticket Graph Draft is a planning-plane Beads bead linked to a Spec bead, not
+a YAML file -- its structured tickets live in the description as YAML
+(`global_execution_contract`, `tickets`), and its approval and digest live in
+metadata (`approved_by`, `approved_evidence`, `approved_digest`, `spec_id`).
+One approval fact (the project's declared human approver plus his exact
+evidence) replaces the old file mode's separate `APPROVED_TICKET_GRAPH_DRAFT`
+state and `publication_authorized` flag, and there is no `legacy_boundary`
+digest marker to scope around: the digest simply covers the whole
+description, the same formula `spec-approve`'s bead mode uses for a Spec
+bead. `bd-publish` opens the Spec bead the draft names and refuses unless it
+is approved and its current digest still equals its approved digest, then
+reuses the same `graph_plan`/`publish` machinery the file mode uses to create
+delivery beads and a convoy atomically, advancing the Planning Run
+Reservation when the Spec's target is the one currently active. `bd-patch`
+reads its revised draft from a bead the same way and reuses `patch`'s
+existing merge/supersede/reslice rules unchanged. The file mode above stays
+only for the router until W10 retires both.
+"""
 
 from __future__ import annotations
 
@@ -79,31 +99,11 @@ def ticket_scope_paths(ticket: dict[str, Any], ticket_id: str) -> list[str]:
     return [str(item) for item in paths]
 
 
-def validate_draft(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    raw = path.read_bytes()
-    try:
-        value = yaml.safe_load(raw.decode("utf-8"))
-    except (UnicodeDecodeError, yaml.YAMLError) as exc:
-        raise PublishError(f"invalid UTF-8 YAML: {exc}") from exc
-    draft = as_dict(value, "draft")
-    artifact = as_dict(draft.get("artifact"), "artifact")
-    if artifact.get("state") != "APPROVED_TICKET_GRAPH_DRAFT":
-        raise PublishError("draft is not APPROVED_TICKET_GRAPH_DRAFT")
-    if artifact.get("publication_authorized") is not True:
-        raise PublishError("draft publication_authorized is not true")
-    actual_digest = scoped_digest(raw)
-    if artifact.get("content_digest") != actual_digest:
-        raise PublishError(
-            f"draft digest mismatch: declared {artifact.get('content_digest')!r}, actual {actual_digest}"
-        )
-    source_spec = as_dict(artifact.get("source_spec"), "artifact.source_spec")
-    if source_spec.get("state") != "APPROVED_SPEC":
-        raise PublishError("source Spec is not APPROVED_SPEC")
-    spec_digest = str(source_spec.get("digest") or "")
-    if not spec_digest.startswith("sha256:") or len(spec_digest) != 71:
-        raise PublishError("source Spec digest is invalid")
-
-    raw_tickets = as_list(draft.get("tickets"), "tickets")
+def validate_tickets(raw_tickets: list[Any]) -> list[dict[str, Any]]:
+    """Ticket-level validation shared by the file-mode draft and the
+    bead-mode draft (W05): both carry the identical `tickets:` shape, just
+    wrapped in a different envelope (a YAML artifact header versus bead
+    metadata), so the per-ticket rules live in exactly one place."""
     tickets = [as_dict(item, f"tickets[{index}]") for index, item in enumerate(raw_tickets)]
     if not tickets:
         raise PublishError("draft has no publishable tickets")
@@ -146,6 +146,34 @@ def validate_draft(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
 
     for ticket_id in ids:
         visit(ticket_id)
+    return tickets
+
+
+def validate_draft(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    raw = path.read_bytes()
+    try:
+        value = yaml.safe_load(raw.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise PublishError(f"invalid UTF-8 YAML: {exc}") from exc
+    draft = as_dict(value, "draft")
+    artifact = as_dict(draft.get("artifact"), "artifact")
+    if artifact.get("state") != "APPROVED_TICKET_GRAPH_DRAFT":
+        raise PublishError("draft is not APPROVED_TICKET_GRAPH_DRAFT")
+    if artifact.get("publication_authorized") is not True:
+        raise PublishError("draft publication_authorized is not true")
+    actual_digest = scoped_digest(raw)
+    if artifact.get("content_digest") != actual_digest:
+        raise PublishError(
+            f"draft digest mismatch: declared {artifact.get('content_digest')!r}, actual {actual_digest}"
+        )
+    source_spec = as_dict(artifact.get("source_spec"), "artifact.source_spec")
+    if source_spec.get("state") != "APPROVED_SPEC":
+        raise PublishError("source Spec is not APPROVED_SPEC")
+    spec_digest = str(source_spec.get("digest") or "")
+    if not spec_digest.startswith("sha256:") or len(spec_digest) != 71:
+        raise PublishError("source Spec digest is invalid")
+
+    tickets = validate_tickets(as_list(draft.get("tickets"), "tickets"))
     return draft, tickets
 
 
@@ -656,15 +684,249 @@ def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> dict
     return {"mayor_notified": False, "mayor_notify_error": error, "mayor_city": str(city)}
 
 
+# --- bd-publish / bd-patch (A6b, W05: live Beads-backed Ticket Graph Draft) -
+
+
+def canonical_bead_digest(description: str) -> str:
+    """Identical digest formula to spec-approve's bead-mode Spec digest
+    (W04): sha256 of the raw description text. The file mode's
+    `legacy_boundary` scoping marker has no bead-mode equivalent -- the
+    Spec text says the marker itself goes for this mode."""
+    return "sha256:" + hashlib.sha256(description.encode("utf-8")).hexdigest()
+
+
+def bd_show(issue_id: str) -> dict[str, Any]:
+    out = run("show", issue_id, "--json").stdout
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise PublishError(f"bd show {issue_id} returned invalid JSON: {exc}") from exc
+    if isinstance(data, list):
+        if not data:
+            raise PublishError(f"issue not found: {issue_id}")
+        data = data[0]
+    return as_dict(data, f"bd show {issue_id}")
+
+
+def tool_path(env_var: str, name: str) -> str:
+    override = os.environ.get(env_var)
+    if override:
+        return override
+    return str(Path(__file__).resolve().parent / name)
+
+
+def run_subtool(argv: list[str]) -> dict[str, Any]:
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, env=os.environ.copy())
+    except OSError as exc:
+        raise PublishError(f"could not run {argv[0]}: {exc}") from exc
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        detail = proc.stderr.strip() or proc.stdout.strip()
+        raise PublishError(f"{' '.join(argv)} returned invalid JSON: {detail or exc}") from exc
+    if proc.returncode != 0 or not payload.get("ok", False):
+        raise PublishError(payload.get("error", f"{' '.join(argv)} failed"))
+    return payload
+
+
+def declared_human_approver(project: str, config_dir: Path, profile_bin: str) -> str:
+    return run_subtool(
+        [profile_bin, "human-approver", "--project", project, "--config-dir", str(config_dir)]
+    )["human_approver"]
+
+
+def reservation_check(target: str | None, repo_root: Path, reservation_bin: str) -> dict[str, Any]:
+    argv = [reservation_bin, "--repo-root", str(repo_root), "check"]
+    if target:
+        argv += ["--target", target]
+    return run_subtool(argv)
+
+
+def reservation_advance(repo_root: Path, reservation_bin: str) -> dict[str, Any]:
+    return run_subtool([reservation_bin, "--repo-root", str(repo_root), "advance"])
+
+
+def load_approved_spec_bead(spec_id: str) -> dict[str, Any]:
+    spec_bead = bd_show(spec_id)
+    metadata = spec_bead.get("metadata") or {}
+    if metadata.get("spec_state") != "APPROVED_SPEC":
+        raise PublishError(
+            f"refused: source Spec {spec_id} is not approved (spec_state={metadata.get('spec_state')!r})"
+        )
+    actual_digest = canonical_bead_digest(spec_bead.get("description") or "")
+    approved_digest = metadata.get("approved_digest")
+    if approved_digest != actual_digest:
+        raise PublishError(
+            f"refused: source Spec {spec_id} digest differs from its approved digest "
+            f"(approved {approved_digest!r}, current {actual_digest!r})"
+        )
+    return spec_bead
+
+
+def load_approved_bead_draft(
+    draft_id: str, human_approver: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], str]:
+    bead = bd_show(draft_id)
+    metadata = bead.get("metadata") or {}
+    description = str(bead.get("description") or "")
+    digest = canonical_bead_digest(description)
+
+    approved_by = str(metadata.get("approved_by") or "").strip()
+    if approved_by != human_approver:
+        raise PublishError(
+            f"refused: draft approver {approved_by!r} is not the project's declared "
+            f"human approver {human_approver!r}"
+        )
+    if not str(metadata.get("approved_evidence") or "").strip():
+        raise PublishError("refused: draft has no approval evidence")
+    approved_digest = metadata.get("approved_digest")
+    if approved_digest != digest:
+        raise PublishError(
+            f"refused: draft tickets changed after approval (approved digest {approved_digest!r}, "
+            f"current digest {digest!r})"
+        )
+
+    try:
+        parsed = yaml.safe_load(description) or {}
+    except yaml.YAMLError as exc:
+        raise PublishError(f"draft bead {draft_id} description is not valid YAML: {exc}") from exc
+    parsed = as_dict(parsed, f"draft bead {draft_id} description")
+    tickets = validate_tickets(as_list(parsed.get("tickets"), "tickets"))
+    return bead, tickets, parsed, digest
+
+
+def bead_compat_draft(
+    draft_id: str, parsed: dict[str, Any], digest: str, spec_id: str, spec_digest: str,
+    revises: str | None, bead: dict[str, Any],
+) -> dict[str, Any]:
+    """A `graph_plan`-shaped `draft` dict built from bead data, so bead mode
+    reuses `graph_plan`/`publish`/`patch` unchanged instead of a second
+    decomposition mechanism."""
+    artifact: dict[str, Any] = {
+        "id": draft_id,
+        "content_digest": digest,
+        "source_spec": {"id": spec_id, "state": "APPROVED_SPEC", "digest": spec_digest},
+    }
+    if bead.get("title"):
+        artifact["title"] = bead["title"]
+    if bead.get("labels"):
+        artifact["labels"] = bead["labels"]
+    if revises:
+        artifact["revises"] = revises
+    return {"artifact": artifact, "global_execution_contract": parsed.get("global_execution_contract") or {}}
+
+
+def cmd_bd_publish(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root)
+    config_dir = Path(args.config_dir) if args.config_dir else repo_root / "config" / "projects"
+    profile_bin = tool_path("PROJECT_PLANNING_PROFILE_BIN", "project-planning-profile")
+    reservation_bin = tool_path("PLANNING_RUN_RESERVATION_BIN", "planning-run-reservation")
+
+    draft_id = str(args.draft)
+    human_approver = declared_human_approver(args.project, config_dir, profile_bin)
+    bead, tickets, parsed, digest = load_approved_bead_draft(draft_id, human_approver)
+    metadata = bead.get("metadata") or {}
+    spec_id = str(metadata.get("spec_id") or "").strip()
+    if not spec_id:
+        raise PublishError("refused: draft bead has no spec_id")
+    spec_bead = load_approved_spec_bead(spec_id)
+    spec_digest = canonical_bead_digest(spec_bead.get("description") or "")
+
+    scope_edges = add_scope_overlap_edges(tickets)
+    record_scope_overlaps(scope_edges, tickets, digest)
+    compat_draft = bead_compat_draft(draft_id, parsed, digest, spec_id, spec_digest, None, bead)
+    plan = graph_plan(compat_draft, tickets)
+    for node, ticket in zip((n for n in plan["nodes"] if n["key"] != "_convoy"), tickets):
+        node["_blocked_by_keys"] = [str(b) for b in ticket["blocked_by"]]
+
+    mapping = publish(plan, digest, len(tickets))
+
+    target = str((spec_bead.get("metadata") or {}).get("planning_run_target") or "").strip() or None
+    reservation_advanced = None
+    try:
+        check = reservation_check(target, repo_root, reservation_bin)
+        if check.get("active") and check.get("allowed"):
+            reservation_advanced = reservation_advance(repo_root, reservation_bin)
+    except PublishError as exc:
+        reservation_advanced = {"ok": False, "error": str(exc)}
+
+    notice = notify_mayor("publish", digest, mapping.get("_convoy"))
+    print(json.dumps({
+        "ok": True,
+        "graph_digest": digest,
+        "ids": mapping,
+        "scope_edges": scope_edges,
+        "reservation_advanced": reservation_advanced,
+        **notice,
+    }, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+def cmd_bd_patch(args: argparse.Namespace) -> int:
+    if not (args.author or "").strip() or not (args.reason or "").strip():
+        raise PublishError("--author and --reason are required for patch")
+    repo_root = Path(args.repo_root)
+    config_dir = Path(args.config_dir) if args.config_dir else repo_root / "config" / "projects"
+    profile_bin = tool_path("PROJECT_PLANNING_PROFILE_BIN", "project-planning-profile")
+
+    draft_id = str(args.draft)
+    human_approver = declared_human_approver(args.project, config_dir, profile_bin)
+    bead, tickets, parsed, digest = load_approved_bead_draft(draft_id, human_approver)
+    metadata = bead.get("metadata") or {}
+    spec_id = str(metadata.get("spec_id") or "").strip()
+    if not spec_id:
+        raise PublishError("refused: draft bead has no spec_id")
+    spec_bead = load_approved_spec_bead(spec_id)
+    spec_digest = canonical_bead_digest(spec_bead.get("description") or "")
+    revises = str(metadata.get("revises_digest") or "").strip()
+    if not revises:
+        raise PublishError("refused: draft bead metadata.revises_digest must be a non-empty string")
+
+    scope_edges = add_scope_overlap_edges(tickets)
+    record_scope_overlaps(scope_edges, tickets, digest)
+    compat_draft = bead_compat_draft(draft_id, parsed, digest, spec_id, spec_digest, revises, bead)
+    plan = graph_plan(compat_draft, tickets)
+    for node, ticket in zip((n for n in plan["nodes"] if n["key"] != "_convoy"), tickets):
+        node["_blocked_by_keys"] = [str(b) for b in ticket["blocked_by"]]
+
+    result = patch(compat_draft, plan, tickets, args.author, args.reason, args.reslice)
+    notice = notify_mayor("patch", digest, result["ids"].get("_convoy"))
+    print(json.dumps({
+        "ok": True,
+        "graph_digest": digest,
+        "revises": revises,
+        "scope_edges": scope_edges,
+        **result,
+        **notice,
+    }, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(prog=PROGRAM)
-    value.add_argument("command", choices=("validate", "publish", "patch"))
-    value.add_argument("draft", type=Path)
-    value.add_argument("--author", help="who authored this patch (required for patch)")
-    value.add_argument("--reason", help="why this patch was applied (required for patch)")
+    value.add_argument("command", choices=("validate", "publish", "patch", "bd-publish", "bd-patch"))
+    value.add_argument(
+        "draft",
+        help="path to a draft YAML file, or (bd-publish/bd-patch) a Ticket Graph Draft bead id",
+    )
+    value.add_argument("--author", help="who authored this patch (required for patch/bd-patch)")
+    value.add_argument("--reason", help="why this patch was applied (required for patch/bd-patch)")
     value.add_argument(
         "--reslice", action="store_true",
         help="Mayor reslice without a fresh Planning Run: refuse and escalate any acceptance-criteria change",
+    )
+    value.add_argument(
+        "--project",
+        help="project id whose config/projects/<id>.toml declares the human approver (bd-publish/bd-patch)",
+    )
+    value.add_argument(
+        "--repo-root", default=str(ROOT),
+        help="repository root config/projects and the reservation live under (bd-publish/bd-patch)",
+    )
+    value.add_argument(
+        "--config-dir", default=None,
+        help="directory holding config/projects/*.toml files (default: <repo-root>/config/projects)",
     )
     return value
 
@@ -672,7 +934,11 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     try:
         args = parser().parse_args()
-        draft, tickets = validate_draft(args.draft)
+        if args.command == "bd-publish":
+            return cmd_bd_publish(args)
+        if args.command == "bd-patch":
+            return cmd_bd_patch(args)
+        draft, tickets = validate_draft(Path(args.draft))
         scope_edges = add_scope_overlap_edges(tickets)
         if args.command != "validate":
             record_scope_overlaps(scope_edges, tickets, draft["artifact"]["content_digest"])
