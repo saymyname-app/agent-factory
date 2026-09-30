@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# planning-artifacts-close — closes the Spec bead and the Ticket Graph Draft
+# bead a convoy was published from, when that convoy itself closes (W06,
+# A6b).
+#
+# ticket-graph-publish's bead mode (W05) reads the Ticket Graph Draft from a
+# planning-plane bead bound to an approved Spec bead, and stamps the convoy
+# (and every ticket) with gc.artifact_id (the Draft bead's own id) and
+# gc.spec_id (the Spec bead's id) -- real Beads ids `bd show` resolves. The
+# older file-draft mode stamps the same two metadata keys with artifact/spec
+# identifier STRINGS from a draft YAML file (e.g.
+# "ticket-graph-draft-a6b-wayfinder-wiring"), which never resolve to a bead.
+#
+# Both the Spec bead and the Draft bead stay open and readable for the whole
+# delivery -- an in-flight worker or reviewer reads them for Spec fidelity.
+# Only a genuinely closed convoy closes them, with a reason naming the
+# convoy, and the close is idempotent (an already-closed target is skipped).
+#
+# A convoy published from a file draft is left untouched, without error:
+# `bd show` on its artifact/spec id does not resolve to that id, so this
+# script skips it silently.
+#
+# Usage: planning-artifacts-close [--check-only]
+set -uo pipefail
+
+PROGRAM_NAME="planning-artifacts-close"
+ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+GC_BIN="${GC_BIN:-gc}"
+CHECK_ONLY=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check-only) CHECK_ONLY=1 ;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "$PROGRAM_NAME: unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || { echo "$PROGRAM_NAME: required command unavailable: $1" >&2; exit 2; }
+}
+require_command "$GC_BIN"
+require_command jq
+
+say() { printf '%s\n' "$*"; }
+
+CLOSED=0
+SKIPPED=0
+FAILED=0
+
+resolve_and_close() {  # id convoy_id convoy_title
+  local id=$1 convoy_id=$2 convoy_title=$3
+  [ -n "$id" ] || return 0
+
+  local show_json
+  show_json=$(cd "$ROOT" && "$GC_BIN" bd show "$id" --json 2>/dev/null)
+  if ! jq -e . >/dev/null 2>&1 <<<"$show_json"; then
+    say "  · $id does not resolve to a bead (file-draft artifact/spec id) -- left untouched"
+    return 0
+  fi
+
+  local resolved_id status
+  resolved_id=$(jq -r '(if type=="array" then .[0] else . end).id // empty' <<<"$show_json")
+  status=$(jq -r '(if type=="array" then .[0] else . end).status // empty' <<<"$show_json")
+  if [ "$resolved_id" != "$id" ]; then
+    say "  · $id does not resolve to a bead (file-draft artifact/spec id) -- left untouched"
+    return 0
+  fi
+
+  if [ "$status" = "closed" ]; then
+    SKIPPED=$((SKIPPED + 1))
+    return 0
+  fi
+
+  if [ "$CHECK_ONLY" = "1" ]; then
+    say "  would close $id (status=$status) -- convoy $convoy_id ($convoy_title) closed"
+    return 0
+  fi
+
+  if (cd "$ROOT" && "$GC_BIN" bd close "$id" --reason "Convoy $convoy_id ($convoy_title) closed" >/dev/null 2>&1); then
+    CLOSED=$((CLOSED + 1))
+    say "  closed $id -- convoy $convoy_id ($convoy_title) closed"
+  else
+    FAILED=$((FAILED + 1))
+    say "  ! $id could not be closed"
+  fi
+}
+
+convoys=$(cd "$ROOT" && "$GC_BIN" bd list --all --type convoy --status closed --has-metadata-key gc.artifact_id --limit 0 --json 2>/dev/null)
+jq -e . >/dev/null 2>&1 <<<"$convoys" || convoys='[]'
+
+rows=$(jq -r '
+  .[] | [.id, .title, (.metadata["gc.artifact_id"] // ""), (.metadata["gc.spec_id"] // "")] | @tsv
+' <<<"$convoys")
+
+while IFS=$'\t' read -r convoy_id convoy_title artifact_id spec_id; do
+  [ -z "$convoy_id" ] && continue
+  resolve_and_close "$artifact_id" "$convoy_id" "$convoy_title"
+  resolve_and_close "$spec_id" "$convoy_id" "$convoy_title"
+done <<<"$rows"
+
+say ""
+say "$PROGRAM_NAME: closed=$CLOSED skipped=$SKIPPED failed=$FAILED"
+[ "$FAILED" -eq 0 ]
