@@ -38,6 +38,9 @@ Planning Run starts.
    map, so the map can reach zero open children. Its metadata carries
    `planning_run_target`, `planning_map` (the map bead id, or `"none"`),
    and `no_fog_evidence` when unmapped.
+   The session that closes a map's last ticket offers `/to-spec` as a
+   launch chip after reserving the map, so exactly one session starts it
+   (`docs/agents/issue-tracker.md`, "Map handoff").
 4. **Benjamin approves the Spec live**, through `bin/spec-approve
    bd-approve` (`docs/SPEC_APPROVE.md`, "Bead mode"). Before any write the
    door refuses unless, in order: the Spec is not already approved; its
