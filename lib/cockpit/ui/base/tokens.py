@@ -77,4 +77,21 @@ li.cockpit-request[data-reportee="true"] { opacity: 0.55; }
   z-index: 10;
 }
 .cockpit-undo-toast button { background: transparent; color: var(--accent-soft); border: none; cursor: pointer; }
+/* T25 (af-tzk0s4, spec .69): "Déconnecté du cockpit depuis HH:MM" above
+   everything, all values greyed -- see lib/cockpit/ui/base/page.py. */
+.cockpit-disconnected-banner {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 10px 16px;
+  background: var(--urgent);
+  color: var(--surface);
+  font-size: var(--fs-s);
+  font-weight: 600;
+  text-align: center;
+}
+body.cockpit-greyed > *:not(.cockpit-disconnected-banner) {
+  opacity: 0.4;
+  filter: grayscale(60%);
+}
 """
