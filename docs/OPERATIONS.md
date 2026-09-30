@@ -265,6 +265,73 @@ around a failure by enabling Funnel or a non-loopback listener.
 - **OBSERVED:** `/`, `/health`, and the city-scoped `/health`, `/agents`, `/beads`, `/runs/census`, `/events?limit=5`, `/workflow/smf-xir`, and current Mayor session transcript endpoints under `/v0/city/agent-factory` all returned HTTP `200`. The API reported six agents, 75 beads, five requested recent events, and a conversation-format Codex Mayor transcript with 1,597 turns at the instant of verification. The root response set `Cache-Control: no-store`, a same-origin `Content-Security-Policy` with `frame-ancestors 'none'`, `X-Frame-Options: DENY`, and `X-Content-Type-Options: nosniff`.
 - **PROVEN:** City health returned `status=ok`, `version=1.4.1`, and `city=agent-factory`. The existing SayMyName frontend workflow `smf-xir` resolved from `rig:saymyname-frontend` with nine beads and `partial=false`. Windows PowerShell `Invoke-WebRequest` to the same localhost URL returned HTTP `200`. These checks prove current reachability and API/UI coverage, not durable availability; rerun them after supervisor or WSL recovery.
 
+## Cockpit V2 operator access (Tailscale Serve)
+
+Cockpit V2 (`bin/cockpit`, spec af-oohx2x, C01) is the approved operator
+surface for the factory's day-to-day state — NEEDS BENJAMIN, proposals,
+project/chantier status, Operator Actions. It listens on
+`127.0.0.1:8173` (default; `COCKPIT_PORT`) inside WSL and refuses any
+other bind address outright (`lib/cockpit/core/server.py`). The Gas City
+dashboard on port `8372` (`gc`'s own API/UI, see "Detailed Gas City
+dashboard" above) is a separate, engineering-only surface and is **never**
+exposed to the tailnet: only the cockpit's own port gets a Tailscale Serve
+entry.
+
+Exposure follows the exact same pattern already proven for the dashboard
+above, pointed at the cockpit's port instead:
+
+```bash
+TAILSCALE_EXE='/mnt/c/Program Files/Tailscale/tailscale.exe'
+"$TAILSCALE_EXE" serve --bg --yes http://127.0.0.1:8173
+"$TAILSCALE_EXE" serve status --json | jq .
+FUNNEL_STATUS=$("$TAILSCALE_EXE" funnel status)
+case "$FUNNEL_STATUS" in
+  *'(Funnel on)'*) echo 'ERROR: public Funnel exposure is enabled' >&2; exit 1 ;;
+  *'(tailnet only)'*) ;;
+  *) echo 'ERROR: could not prove that Funnel is disabled' >&2; exit 1 ;;
+esac
+```
+
+Hard rules (spec .94, .95 — enforced by `bin/cockpit-setup-wizard serve`,
+not only documented here):
+
+- **Tailscale Funnel is prohibited** for the cockpit, same as for the
+  dashboard — Serve only, tailnet-only.
+- **The gc supervisor's API/port (`8372`) is never given a Serve entry.**
+  The only Serve route on this host is the cockpit's own port; any
+  previous `443`/`8443` Serve entries pointed at the gc API have been
+  removed by Benjamin.
+- A request reaches the cockpit's write actions only with the
+  `Tailscale-User-Login` header equal to Benjamin's configured login
+  (`COCKPIT_BENJAMIN_LOGIN`); without it, or with any other login, the
+  request is refused outright (`lib/cockpit/access/guard.py`) — never
+  silently downgraded.
+- Secrets (Pushover app token/user key/E2E key, the Healthchecks.io
+  heartbeat ping URL) live in files outside this repository, on the
+  Windows side, read by the cockpit through `/mnt/c` — never in git, never
+  echoed in chat or logs. A missing or invalid secret file shows up in the
+  cockpit's own health zone instead of failing silently
+  (`lib/cockpit/notify/secrets.py`, `lib/cockpit/heartbeat/emitter.py`).
+
+### First-time setup
+
+`bin/cockpit-setup-wizard` walks through the parts of this setup that the
+cockpit cannot do for itself: writing the Pushover secrets file, writing
+the Healthchecks.io heartbeat ping-URL file, checking the "Usine muette"
+Healthchecks.io check's parameters (period 5 min, grace 10 min, "up"
+notification disabled), configuring Tailscale Serve to the cockpit's port
+(refusing Funnel or the gc port outright), and recording the real-device
+check that a time-sensitive Pushover push breaks through an allowed Focus
+mode. Run each step with `--help` for its exact flags; `tests/cockpit-setup-wizard-test.sh`
+is the executable spec for what it refuses and what it never prints.
+
+### Tailscale key expiry
+
+The cockpit reads the Tailscale node key's expiry date from `tailscale
+status --json` (`lib/cockpit/access/tailscale.py`) and raises an "À
+faire" Operator Request 14 days before it (J-14), so renewal never
+happens as an emergency after the tailnet has already gone dark.
+
 ## Secondary provider qualification
 
 Gas City `v1.4.1` supplies both `builtin:claude` and `builtin:opencode`; use
