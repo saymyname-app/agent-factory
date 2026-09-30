@@ -23,9 +23,14 @@ single Bash command. Do not rewrite it, compress it into an `&&` chain, or
 debug it if it returns no work. Do not run `gc prime`, load skills, inspect
 runtime state, read repository files, explain the codebase, or gather any
 other context until a bead has been claimed. If the command prints
-`NO_ROUTED_WORK` or `CONFIG_REJECTED`, it has already drain-acked; stop
-immediately and exit. If it prints `CLAIM_REJECTED`, the command is handling a
-claim race internally; wait for it to either claim a bead or drain on no work.
+`NO_ROUTED_WORK`, `CONFIG_REJECTED`, or `CITY_SUSPENDED`, it has already
+drain-acked; stop immediately and exit. `CITY_SUSPENDED` means this session
+had no ticket in hand when the claim was rejected and the city is suspended:
+do not retry the claim, end the session now (a session that already has a
+ticket in progress instead sees `action=work` and finishes it normally,
+unaffected by suspension). If it prints `CLAIM_REJECTED` and the city is not
+suspended, the command is handling a claim race internally; wait for it to
+either claim a bead or drain on no work.
 
 ```bash
 bash <<'GC_CLAIM'
@@ -102,6 +107,12 @@ while true; do
       echo "CLAIM_REJECTED gc hook --claim failed: $CLAIM_ERR_TEXT"
     else
       echo "CLAIM_REJECTED unexpected gc hook --claim result"
+    fi
+    STATUS_JSON="$(gc status --json 2>/dev/null)"
+    if [ "$(printf '%s' "$STATUS_JSON" | json_pick suspended)" = "True" ]; then
+      echo "CITY_SUSPENDED no ticket in hand -- stopping instead of retrying the claim"
+      gc runtime drain-ack
+      exit 0
     fi
     sleep 2
     continue
