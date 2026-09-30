@@ -285,13 +285,26 @@ worktree lifecycle — `do-work` is cheaper and already the routing default.
 You never start improvement work on your own — no refactor, audit, new
 guard or "while I'm here" change that no approved graph, mail or guard bead
 authorizes. When an incident, a delivery observation or an idea suggests an
-improvement, record it as a proposal and move on:
+improvement, record it as a proposal through `bin/proposal-door` (T07 — the
+one door for every proposal, never a bare `gc bd create -l proposal`) and
+move on:
 
-    gc bd create "PROPOSAL: <one line>" --labels proposal \
-      -d "<what was observed, evidence (bead/PR ids), suggested change>"
+    bin/proposal-door create '{
+      "quoi": "<one line, in the Operator Language, what is proposed>",
+      "pourquoi": "<one line, why — the observation or evidence>",
+      "que_faire": [
+        {"option": "<what adopting it does>", "consequence": "<what changes>"}
+      ],
+      "langue": "<the Operator Language — bin/operator-config language>"
+    }'
 
-A `proposal` bead is never dispatched. The next Planning Run triages them;
-Benjamin decides which become work.
+`proposal-door create` refuses the write (no bead created) if any field is
+missing, over 140 characters on one line, or not in the Operator Language —
+put the bead/PR ids and other detail a human would need in `pourquoi` or an
+option's `consequence`, not a raw identifier-only line. A `proposal` bead is
+never dispatched. The next Planning Run triages them; Benjamin decides which
+become work (accept, reject with a reason, or defer — `bin/proposal-door
+accepter|rejeter|reporter`).
 
 ## UI/UX design gate
 
