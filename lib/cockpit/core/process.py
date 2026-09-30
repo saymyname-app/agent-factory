@@ -17,11 +17,14 @@ from cockpit.core.gc_client import GcSsePoller
 from cockpit.core.polling_source import PollingSource
 from cockpit.core.readmodel import ReadModel
 from cockpit.core.server import make_server
+from cockpit.health.git_source import count_commits_behind
 
 # github/rituals sources are in the Validity window table (spec .3) for the
 # tickets that will wire up their producers; T11 builds the seam and wires
 # only the two sources it has fakes for (gc, beads) so headline/AC3 can
-# reach "tout est à jour" without depending on unbuilt producers.
+# reach "tout est à jour" without depending on unbuilt producers. T16 adds
+# "git" for the health zone's version-behind signal (spec .66) the same
+# way, opt-in via config.repo_dir (see Config.repo_dir).
 SOURCE_DISPLAY_NAMES = {
     "gc": "usine (gc)",
     "beads": "Beads",
@@ -43,6 +46,21 @@ def build(config, clock=None):
                 "beads",
                 lambda: read_beads_json(["list"], bd_bin=config.bd_bin),
                 config.beads_poll_seconds,
+            )
+        )
+    if config.repo_dir:
+        read_model.register("git", display_name="dépôt (git)")
+        pollers.append(
+            PollingSource(
+                read_model,
+                "git",
+                lambda: count_commits_behind(
+                    config.repo_dir,
+                    remote=config.git_remote,
+                    branch=config.git_branch,
+                    git_bin=config.git_bin,
+                ),
+                config.git_poll_seconds,
             )
         )
     # Out-of-scope touch (T13, af-cx20q9 -- declared scope
@@ -71,6 +89,9 @@ def build(config, clock=None):
         action_guard=action_guard,
         action_handlers=action_handlers,
         session_token=session_token,
+        pollers=pollers,
+        supervisor_unreachable_after_seconds=config.supervisor_unreachable_after_seconds,
+        factory_stalled_after_seconds=config.factory_stalled_after_seconds,
     )
     return server, pollers
 

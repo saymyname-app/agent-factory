@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""A fake `bd`, scoped to the cockpit-health seam test (T16).
+
+Unlike tests/fixtures/cockpit/core/fake-bd (a fixed canned bead), this one
+reads its bead list from a JSON file the test controls
+(COCKPIT_TEST_BD_STATE_FILE), so a test can change what "bd list --json"
+answers between polls/rechecks without restarting the cockpit process —
+exactly what proving a health line appears then disappears "at the return
+to normal" (Testing Decisions) requires.
+"""
+import json
+import os
+import sys
+
+if sys.argv[1:] == ["list", "--json"]:
+    state_file = os.environ.get("COCKPIT_TEST_BD_STATE_FILE")
+    if not state_file or not os.path.exists(state_file):
+        print("[]")
+        sys.exit(0)
+    with open(state_file) as f:
+        print(f.read())
+    sys.exit(0)
+
+sys.stderr.write(
+    "fake bd (cockpit-health): no canned response for: bd %s\n" % " ".join(sys.argv[1:])
+)
+sys.exit(1)

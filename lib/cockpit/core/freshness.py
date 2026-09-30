@@ -16,6 +16,7 @@ VALIDITY_WINDOWS_SECONDS = {
     "beads": 300,
     "github": 600,
     "rituals": 3600,
+    "git": 600,
 }
 
 
