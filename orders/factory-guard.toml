@@ -1,6 +1,11 @@
+# T10 (af-u61al3): condition trigger + orders-restart-stagger.sh spreads
+# this order's first post-restart firing instead of bursting with every
+# other cooldown order on the same tick; steady-state cadence (still 5m)
+# is unchanged. See orders/escalation-door-sweep.toml for the full note.
 [order]
 description = "Deterministic zero-token protection for the live Factory: pins the live-root branch and self-heals a checkout that broke live config, verifies runtime files and provider/permission invariants, materialises resolved formula check scripts inside every rig, backs up any commit that exists only on this machine, and reports a rig holding ready work with no dispatcher."
-trigger = "cooldown"
+trigger = "condition"
 interval = "5m"
+check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh factory-guard 300"
 exec = "/home/benja/agent-factory/bin/factory-guard --quiet"
 timeout = "180s"

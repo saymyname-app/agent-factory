@@ -1,6 +1,11 @@
+# T10 (af-u61al3): condition trigger + orders-restart-stagger.sh spreads
+# this order's first post-restart firing instead of bursting with every
+# other cooldown order on the same tick; steady-state cadence (still 5m)
+# is unchanged. See orders/escalation-door-sweep.toml for the full note.
 [order]
 description = "Deterministic zero-token safety net: a session that wakes and stops more than 10 times in a rolling hour, whatever the cause, is paged through escalation-door's Mayor-first class and suspended (reversible via 'factory-session-loop-guard resume <session-id>'). af-6675l safety net, complementing P13's fix of the one known cause."
-trigger = "cooldown"
+trigger = "condition"
 interval = "5m"
+check = "/home/benja/agent-factory/orders/lib/orders-restart-stagger.sh factory-session-loop-guard 300"
 exec = "/home/benja/agent-factory/bin/factory-session-loop-guard --quiet"
 timeout = "180s"
