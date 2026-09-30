@@ -154,7 +154,15 @@ version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
 # cross-rig-deps: 934 runs since 2026-09-21 (5m cooldown) produced zero
 # "bead"-type cross-rig gates -- this city measures zero cross-rig
 # dependencies for the order to convert.
-skip = ["dolt-remotes-patrol", "nudge-mail-sweep", "prune-branches", "cross-rig-deps"]
+# orphan-sweep: replaced by orders/factory-orphan-sweep.toml (W08, A6b,
+# Spec af-3s8prq). The core sweep drops any in_progress claim held by an
+# assignee it doesn't recognize, including a po-agent/* operator session's
+# claim on a planning ticket -- a parallel session can then take the same
+# ticket minutes later. The Factory order runs bin/factory-orphan-sweep, a
+# copy of the same upstream script plus a guard that treats po-agent/*
+# claims and planning-plane beads as owned; every other orphaned claim is
+# still released.
+skip = ["dolt-remotes-patrol", "nudge-mail-sweep", "prune-branches", "cross-rig-deps", "orphan-sweep"]
 
 [[orders.overrides]]
 # dolt-health.sh only checks live server health; a 2m gap is still well

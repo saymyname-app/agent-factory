@@ -1,0 +1,5 @@
+[order]
+description = "Factory-owned replacement for gc's core orphan-sweep: resets beads assigned to dead agents, but never a po-agent/* operator claim or a planning-plane bead (W08, A6b)"
+trigger = "cooldown"
+interval = "5m"
+exec = "/home/benja/agent-factory/bin/factory-orphan-sweep"
