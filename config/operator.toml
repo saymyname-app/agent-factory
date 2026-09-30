@@ -17,3 +17,10 @@ name = "Benjamin"
 # intent, not Benjamin himself, and the Mayor prompt treats every mail as an
 # agent's request regardless of its displayed sender (P15).
 mail_alias = "po-agent"
+
+# Operator Language (C01 Cockpit V2, T01): the single natural language every
+# Cockpit-facing and pushed text must be written in, for every project. Read
+# through bin/operator-config language rather than re-parsed by hand -- that
+# tool fails loudly if this field is missing or empty instead of letting a
+# caller default silently to English.
+language = "fr"
