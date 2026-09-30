@@ -8,7 +8,7 @@ order=$(gc order show factory-session-loop-guard --city "$ROOT" --json)
 jq -e --arg source "$ROOT/orders/factory-session-loop-guard.toml" --arg exec "$ROOT/bin/factory-session-loop-guard --quiet" '
   .ok == true and
   .order.type == "exec" and
-  .order.trigger == "cooldown" and
+  .order.trigger == "condition" and
   .order.interval == "5m" and
   .order.timeout == "180s" and
   .order.exec == $exec and
