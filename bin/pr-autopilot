@@ -322,6 +322,59 @@ reversibility_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
   esac
 }
 
+# ---------- project declaration gate (af-1epwsn) ----------
+# A PR that adds or retires a project descriptor (config/project-descriptors/)
+# is never merged by pr-autopilot itself, by exception to the "factory
+# maintenance" auto-merge authorization (Spec af-oohx2x .101): declaring or
+# retiring a project is $OPERATOR_NAME's decision, same as an irreversible
+# migration. A PR that only modifies an existing descriptor, or touches none
+# at all, is unaffected and follows the normal path.
+PROJECT_DESCRIPTOR_DIR="config/project-descriptors/"
+PROJECT_HOLD_LABEL="project-declaration-needs-benjamin"
+
+project_descriptor_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
+  local repo=$1 num=$2 labels=" $3 " armed=$4
+  local rows rc added removed
+  rows=$(bounded "$AP_READ_CAP" gh api "repos/$repo/pulls/$num/files" --paginate --jq \
+    '.[] | select(.filename | startswith("'"$PROJECT_DESCRIPTOR_DIR"'")) | [.filename,.status] | @tsv' 2>/dev/null); rc=$?
+  if timed_out "$rc"; then
+    log "  PR #$num: project descriptor check timed out -> not arming this pass (retried next tick)"
+    return 1
+  fi
+  added=$(printf '%s\n' "$rows" | awk -F'\t' '$2=="added"{print $1}')
+  removed=$(printf '%s\n' "$rows" | awk -F'\t' '$2=="removed"{print $1}')
+  if [ -z "$added" ] && [ -z "$removed" ]; then
+    case "$labels" in *" $PROJECT_HOLD_LABEL "*)
+      log "  PR #$num: no longer adds/removes a project descriptor -> removing '$PROJECT_HOLD_LABEL'"
+      run gh pr edit "$num" --repo "$repo" --remove-label "$PROJECT_HOLD_LABEL" >/dev/null 2>&1 ;;
+    esac
+    return 0
+  fi
+  if [ "$armed" != "null" ] && [ -n "$armed" ]; then
+    log "  PR #$num: disarming auto-merge (project descriptor add/remove)"
+    run gh pr merge "$num" --repo "$repo" --disable-auto >/dev/null 2>&1
+  fi
+  case "$labels" in
+    *" $PROJECT_HOLD_LABEL "*) vlog "PR #$num: held ($PROJECT_HOLD_LABEL), already explained on the PR" ;;
+    *)
+      log "  PR #$num: HELD -> $PROJECT_HOLD_LABEL"
+      {
+        printf '### Décision projet requise\n\n'
+        printf 'Cette PR ajoute ou retire un descripteur de projet (dossier `%s`) :\n\n' "$PROJECT_DESCRIPTOR_DIR"
+        [ -n "$added" ] && printf '%s\n' "$added" | sed 's/^/- ajouté : `/; s/$/`/'
+        [ -n "$removed" ] && printf '%s\n' "$removed" | sed 's/^/- retiré : `/; s/$/`/'
+        printf '\nAjouter ou retirer un projet reste la décision de %s, par exception à la fusion automatique de la maintenance usine : pr-autopilot ne fusionne jamais cette PR seul. %s la fusionne lui-même une fois relue.\n' "$OPERATOR_NAME" "$OPERATOR_NAME"
+      } > "$TMPDIR_AP/project-hold.md"
+      run gh label create "$PROJECT_HOLD_LABEL" --repo "$repo" --color 5319E7 --force \
+        --description "pr-autopilot: ajout/retrait de projet, fusion réservée à $OPERATOR_NAME" >/dev/null 2>&1
+      run gh pr comment "$num" --repo "$repo" --body-file "$TMPDIR_AP/project-hold.md" >/dev/null 2>&1
+      run gh pr edit "$num" --repo "$repo" --add-label "$PROJECT_HOLD_LABEL" >/dev/null 2>&1
+      ;;
+  esac
+  HELD=$((HELD+1))
+  return 1
+}
+
 # af-grln2: a draft, DIRTY, BEHIND, BLOCKED, or zero-check PR used to get one
 # identical log line every pass, forever -- indistinguishable from one
 # quietly waiting its natural turn. This acts directly on data the loop
@@ -778,6 +831,7 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     # migration to a PR that was armed while it was harmless. (The labels field
     # is never empty -- jq writes "-" -- because read would swallow it.)
     reversibility_gate "$repo" "$num" "$sha" "${labels//,/ }" "$armed" || continue
+    project_descriptor_gate "$repo" "$num" "${labels//,/ }" "$armed" || continue
 
     # af-s6lef (P04): BEHIND is never armable -- GitHub would happily arm
     # auto-merge and, on a non-strict ruleset, merge without the base's
