@@ -40,7 +40,11 @@ Planning Run starts.
    and `no_fog_evidence` when unmapped.
    The session that closes a map's last ticket offers `/to-spec` as a
    launch chip after reserving the map, so exactly one session starts it
-   (`docs/agents/issue-tracker.md`, "Map handoff").
+   (`docs/agents/issue-tracker.md`, "Map handoff"). `/wayfinder`,
+   `/to-spec` and `/to-tickets` are Benjamin-invoked only
+   (`disable-model-invocation: true`): the chip prepares the session, then
+   Benjamin types the command; an agent never calls them through the Skill
+   tool ("Benjamin-invoked skills").
 4. **Benjamin approves the Spec live**, through `bin/spec-approve
    bd-approve` (`docs/SPEC_APPROVE.md`, "Bead mode"). Before any write the
    door refuses unless, in order: the Spec is not already approved; its
@@ -54,7 +58,10 @@ Planning Run starts.
    criteria, target rig, scope paths if any -- exactly as it will be
    published. The approved breakdown is published as a Ticket Graph Draft
    bead linked to the Spec bead; target rigs and scope paths live in its
-   metadata, never in ticket text.
+   metadata, never in ticket text. A session that hands `/to-tickets` to
+   another session reserves the Spec bead first and offers one launch chip
+   (`docs/agents/issue-tracker.md`, "Spec handoff"); the Spec stays
+   claimed until its convoy closes.
 6. **The publication door (`ticket-graph-publish`)** publishes the draft
    through `bin/ticket-graph-publish bd-publish` (or `bd-patch` to revise
    an already-published graph). It refuses unless the named Spec bead is

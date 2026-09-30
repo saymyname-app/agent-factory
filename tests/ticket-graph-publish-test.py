@@ -240,6 +240,24 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
         )
         self.assertIsNotNone(reservation_after["cleared_at"])
 
+    def test_bd_publish_accepts_a_spec_claimed_by_a_to_tickets_session(self):
+        # Spec handoff (docs/agents/issue-tracker.md): the Spec offered for
+        # /to-tickets stays claimed -- in_progress, assigned, maybe still
+        # carrying wayfinder.offered_by -- when its draft is published.
+        spec = self.spec_bead(target="A6b")
+        spec["status"] = "in_progress"
+        spec["assignee"] = "po-agent/zz-fixture-session"
+        spec["metadata"]["wayfinder.offered_by"] = "po-agent/zz-fixture-offerer"
+        self.seed({"draft-1": self.draft_bead(), "spec-1": spec})
+        self.write_reservation(reserved_for="A6b")
+
+        result = json.loads(self.bd_publish(check=True).stdout)
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, len(result["ids"]))  # _convoy, T1
+        state = self.current_state()
+        self.assertEqual("in_progress", state["beads"]["spec-1"]["status"])
+        self.assertEqual("po-agent/zz-fixture-session", state["beads"]["spec-1"]["assignee"])
+
     def test_bd_publish_does_not_advance_a_reservation_for_a_different_target(self):
         self.seed({"draft-1": self.draft_bead(), "spec-1": self.spec_bead(target="A6b")})
         self.write_reservation(reserved_for="C01")
