@@ -175,6 +175,69 @@ grep -Fq "af-blocker — Irreversible production change" <<<"$out" \
 grep -Fq "Pending proposals: 2" <<<"$out" \
   || { echo "$out" >&2; fail "list did not print the pending-proposal count"; }
 
+# af-1al0t1: a NEEDS BENJAMIN stays visible whatever the bead's status -- a
+# parked (blocked) or deferred bead in the main list, a closed bead in its
+# own section (the close did not answer the question). A cleared one never.
+TESTS_RUN=$((TESTS_RUN + 1))
+reset_beads
+seed af-parked '{"id":"af-parked","status":"blocked","metadata":{"gc.needs_benjamin":"Choisir une variante"},"notes":"","labels":[]}'
+seed af-later '{"id":"af-later","status":"deferred","metadata":{"gc.needs_benjamin":"Question reportée"},"notes":"","labels":[]}'
+seed af-shut '{"id":"af-shut","status":"closed","metadata":{"gc.needs_benjamin":"Question jamais montrée","gc.work_outcome":"blocked"},"notes":"","labels":[]}'
+seed af-done '{"id":"af-done","status":"closed","metadata":{"gc.needs_benjamin":"none"},"notes":"","labels":[]}'
+out=$(door list) || fail "list should succeed"
+grep -Fq "af-parked — Choisir une variante" <<<"$out" \
+  || { echo "$out" >&2; fail "list did not show a NEEDS BENJAMIN on a parked (blocked) bead"; }
+grep -Fq "af-later — Question reportée" <<<"$out" \
+  || { echo "$out" >&2; fail "list did not show a NEEDS BENJAMIN on a deferred bead"; }
+grep -Fq "af-shut — Question jamais montrée" <<<"$out" \
+  || { echo "$out" >&2; fail "list did not show an active NEEDS BENJAMIN on a closed bead"; }
+closed_section=$(sed -n '/sur un bead fermé/,$p' <<<"$out")
+grep -Fq "af-shut" <<<"$closed_section" \
+  || { echo "$out" >&2; fail "list did not put the closed bead in its own section"; }
+grep -Fq "af-parked" <<<"$closed_section" \
+  && { echo "$out" >&2; fail "list put an unclosed bead in the closed section"; }
+grep -Fq "af-done" <<<"$out" && { echo "$out" >&2; fail "list showed a cleared (none) NEEDS BENJAMIN"; }
+
+# --- repondre reopens work parked (or closed) as blocked --------------------
+# af-1al0t1: an answered NEEDS BENJAMIN on a ticket deliver-close parked
+# (status blocked, gc.work_outcome=blocked) -- or closed as blocked before
+# that fix -- puts it back in the ready pool, so a worker resumes it and its
+# dependents stay gated until it is delivered.
+ANSWERABLE_QUE_FAIRE='[{"option":"Variante B","consequence":"T22 suit B.","lettre":"b"}]'
+for status in blocked closed; do
+  TESTS_RUN=$((TESTS_RUN + 1))
+  reset_beads
+  seed af-t21 "$(jq -nc --arg s "$status" --arg q "$ANSWERABLE_QUE_FAIRE" '
+    {id: "af-t21", status: $s,
+     metadata: {"gc.needs_benjamin": "Choisir une variante", "gc.escalation_que_faire": $q,
+                "gc.outcome": (if $s == "closed" then "pass" else "blocked" end),
+                "gc.work_outcome": "blocked", "gc.blocked_classification": "repair"},
+     notes: "", labels: []}')"
+  door repondre af-t21 b >/dev/null || fail "repondre on a $status-blocked ticket should succeed"
+  written=$(bead af-t21)
+  [[ $(jq -r '.status' <<<"$written") == open ]] \
+    || fail "repondre did not reopen a $status ticket with gc.work_outcome=blocked: $written"
+  [[ $(jq -r '.metadata | has("gc.work_outcome") or has("gc.outcome") or has("gc.blocked_classification")' <<<"$written") == false ]] \
+    || fail "repondre left a stale blocked outcome on the reopened $status ticket: $written"
+  [[ $(jq -r '.metadata["gc.needs_benjamin"]' <<<"$written") == none ]] \
+    || fail "repondre did not clear NEEDS BENJAMIN on the $status ticket"
+  grep -Fq "rouvert" "$TEST_TMP/calls.log" \
+    || fail "repondre's Mayor mail did not say the $status ticket was reopened"
+done
+
+# A bead that was not blocked keeps its status: repondre is not a reopen door.
+TESTS_RUN=$((TESTS_RUN + 1))
+reset_beads
+seed af-shipped "$(jq -nc --arg q "$ANSWERABLE_QUE_FAIRE" '
+  {id: "af-shipped", status: "closed",
+   metadata: {"gc.needs_benjamin": "Vieille question", "gc.escalation_que_faire": $q,
+              "gc.work_outcome": "shipped"}, notes: "", labels: []}')"
+door repondre af-shipped b >/dev/null || fail "repondre on a shipped bead should succeed"
+[[ $(jq -r '.status' "$TEST_TMP/beads/af-shipped.json") == closed ]] \
+  || fail "repondre reopened a bead that was delivered, not blocked"
+[[ $(jq -r '.metadata["gc.work_outcome"]' "$TEST_TMP/beads/af-shipped.json") == shipped ]] \
+  || fail "repondre touched the outcome of a delivered bead"
+
 TESTS_RUN=$((TESTS_RUN + 1))
 reset_beads
 out=$(door list) || fail "list on an empty city should succeed"
@@ -263,6 +326,17 @@ door clear af-blocker >/dev/null || fail "clear should succeed"
   || fail "clear did not clear gc.needs_benjamin"
 [[ $(jq -r '.notes' "$TEST_TMP/beads/af-blocker.json") == *"DECISION CLEARED"* ]] \
   || fail "clear did not trace the clearance in the bead's notes"
+
+# af-1al0t1: clearing the question of parked-blocked work reopens it too --
+# otherwise it would stay parked with nobody left to answer.
+TESTS_RUN=$((TESTS_RUN + 1))
+reset_beads
+seed af-parked '{"id":"af-parked","status":"blocked","metadata":{"gc.needs_benjamin":"Cause","gc.outcome":"blocked","gc.work_outcome":"blocked","gc.blocked_classification":"repair"},"notes":"","labels":[]}'
+door clear af-parked >/dev/null || fail "clear on a parked bead should succeed"
+[[ $(jq -r '.status' "$TEST_TMP/beads/af-parked.json") == open ]] \
+  || fail "clear did not reopen a parked-blocked bead"
+[[ $(jq -r '.metadata | has("gc.work_outcome")' "$TEST_TMP/beads/af-parked.json") == false ]] \
+  || fail "clear left gc.work_outcome=blocked on the reopened bead"
 
 TESTS_RUN=$((TESTS_RUN + 1))
 if door clear af-does-not-exist >/dev/null 2>&1; then
