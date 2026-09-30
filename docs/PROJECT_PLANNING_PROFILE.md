@@ -111,3 +111,57 @@ written.
 ```bash
 ./bin/project-planning-profile human-approver --project agent-factory
 ```
+
+## Extended descriptor (T04, af-xqgvat: "descripteur de projet", un rig = un projet)
+
+Spec af-oohx2x .12 extends the same Project Planning Profile so it also
+serves the Cockpit: every project declared to the Factory — today `usine`
+and `saymyname` — has one descriptor under `config/project-descriptors/`
+(contract `agent-factory-project-descriptor/v1`), distinct from
+`config/projects/*.toml` (which describes rigs, not projects — see
+`lib/project_registry.sh`). One rig belongs to exactly one project.
+
+| Field | Meaning |
+| --- | --- |
+| `project_id` | Safe identifier for the project (the project key: `agent-factory`, `saymyname`). |
+| `display_name` | The project's name in the Operator Language. |
+| `rigs` | The rigs this project spans. |
+| `knowledge_repo` | `owner/repo` pointer to the project's knowledge repository — may be a different repo than this one (SayMyName's knowledge lives in `saymyname-app/Say-my-name-product`), so it is checked for shape only, never for local existence. |
+| `roadmap_path` | Path to the project's structured roadmap (e.g. `docs/roadmap.toml`), inside `knowledge_repo` — also not checked for local existence, for the same reason. |
+| `rituals_status_command` | The command that reports this project's rituals status (e.g. `bin/rituals-status` for the Factory itself, `tools/rituals-status.sh` for SayMyName). |
+| `promotion_branch` | Optional, per rig: `{from, to}`. Absent for a rig means it has no Promotion Step. Every key must already be in `rigs`, or the descriptor is rejected as internally contradictory. |
+
+A descriptor carries no production/deployment field and no language field
+(Operator Language is one Factory-wide field on `operator.toml`) —
+`describe` rejects a `production` or `language` key outright.
+
+```bash
+./bin/project-planning-profile describe config/project-descriptors/agent-factory.json
+./bin/project-planning-profile describe config/project-descriptors/saymyname.json
+./bin/project-planning-profile list
+```
+
+`describe` validates one descriptor and prints it as JSON, or
+`{"valid": false, "error": "..."}` naming the exact field at fault.
+`list` validates every `config/project-descriptors/*.json` file (or
+`--descriptors-dir`) and prints the declared projects — `project_id`,
+`display_name`, `rigs` — as JSON.
+
+`lib/project_registry.sh`'s `project_registry_check_project_coverage
+<descriptors_dir> <rig...>` is the CI-run check that a rig belongs to
+exactly one project: it fails loudly, naming the rig, if a rig Gas City
+has registered belongs to no descriptor's `rigs` or to more than one
+(`tests/project-registry-test.sh`). Adding a project is a new
+`config/project-descriptors/*.json` file plus a PR; per `AGENTS.md`, a PR
+that adds or removes a project does not merge itself — `pr-autopilot`
+holds it for Benjamin.
+
+### Real descriptors
+
+- `config/project-descriptors/agent-factory.json`: rig `agent-factory`, no
+  `promotion_branch` (the Factory has no Promotion Step), roadmap and
+  rituals status from T03 (`docs/roadmap.toml`, `bin/rituals-status`).
+- `config/project-descriptors/saymyname.json`: rigs `saymyname-backend`
+  and `saymyname-frontend`, each promoting `dev` → `main`, knowledge repo
+  `saymyname-app/Say-my-name-product`, roadmap `knowledge/roadmap.toml`,
+  rituals status `tools/rituals-status.sh`.

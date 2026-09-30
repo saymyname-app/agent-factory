@@ -1,0 +1,12 @@
+{
+  "contract": "agent-factory-project-descriptor/v1",
+  "project_id": "fixture-project-bad-promotion",
+  "display_name": "Fixture Bad Promotion",
+  "rigs": ["fixture-rig-a"],
+  "knowledge_repo": "zz-fixture/knowledge-a",
+  "roadmap_path": "docs/roadmap.toml",
+  "rituals_status_command": "bin/rituals-status",
+  "promotion_branch": {
+    "fixture-rig-undeclared": {"from": "dev", "to": "main"}
+  }
+}
