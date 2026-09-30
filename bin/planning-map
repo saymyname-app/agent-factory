@@ -1,0 +1,328 @@
+#!/usr/bin/env python3
+"""Create, check, close, and safely update a Planning Map Bead (A6b, W03).
+
+A small stateless tool over `bd` for the wayfinding conventions in
+`docs/agents/issue-tracker.md`, so a created child ticket, a map's
+finished-shape check, a map close/abandon, and a description update are
+never hand-typed differently by two sessions:
+
+- `create-ticket` shapes a child ticket exactly: parented to the map, labels
+  set (never inherited) to a single `wayfinder:<type>` label, and metadata
+  carrying the planning plane.
+- `check` reports whether the map is labelled `wayfinder:map`, whether every
+  child is shaped the same way, and how many children are still open. The
+  map is "finished" only when both hold and no child is open.
+- `close` closes the map; `close --abandon` also closes every still-open
+  child with the same reason, so abandoning a map needs no separate command.
+- `update` is compare-and-set: it refuses to write a new description when the
+  map's current description no longer matches what the caller read, so a
+  sibling session's decision line is never silently overwritten (there is no
+  compare-and-set in plain `bd update --body-file`).
+
+Claim, resolve, comment and blocking stay native `bd` commands (see the doc
+above); this tool does not wrap them, and there is no pause or resume.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+PROGRAM = "planning-map"
+BD_BIN = os.environ.get("BD_BIN", "bd")
+PLANE_METADATA_KEY = "gc.plane"
+PLANNING_PLANE = "planning"
+MAP_LABEL = "wayfinder:map"
+WAYFINDER_LABEL_PREFIX = "wayfinder:"
+
+
+class PlanningMapError(RuntimeError):
+    """An actionable diagnostic about a Planning Map operation."""
+
+
+def run_bd(args: list[str], input_text: str | None = None) -> str:
+    try:
+        proc = subprocess.run(
+            [BD_BIN, *args],
+            input=input_text,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise PlanningMapError(f"could not run {BD_BIN}: {exc}") from exc
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        raise PlanningMapError(f"bd {' '.join(args)} failed: {detail}")
+    return proc.stdout
+
+
+def bd_show(issue_id: str) -> dict[str, Any]:
+    out = run_bd(["show", issue_id, "--json"])
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise PlanningMapError(f"bd show {issue_id} returned invalid JSON: {exc}") from exc
+    if isinstance(data, list):
+        if not data:
+            raise PlanningMapError(f"issue not found: {issue_id}")
+        data = data[0]
+    if not isinstance(data, dict):
+        raise PlanningMapError(f"bd show {issue_id} returned an unexpected shape")
+    return data
+
+
+def bd_children(map_id: str) -> list[dict[str, Any]]:
+    out = run_bd(["children", map_id, "--json"])
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise PlanningMapError(f"bd children {map_id} returned invalid JSON: {exc}") from exc
+    if not isinstance(data, list):
+        raise PlanningMapError(f"bd children {map_id} returned an unexpected shape")
+    return data
+
+
+def read_body(body: str | None, body_file: str | None) -> str:
+    if body_file is not None:
+        if body_file == "-":
+            return sys.stdin.read()
+        return Path(body_file).read_text(encoding="utf-8")
+    if body is not None:
+        return body
+    raise PlanningMapError("a description is required (--body or --body-file)")
+
+
+def wayfinder_label(labels: list[Any]) -> str | None:
+    for label in labels:
+        if isinstance(label, str) and label.startswith(WAYFINDER_LABEL_PREFIX):
+            return label
+    return None
+
+
+def is_planning_plane(metadata: dict[str, Any]) -> bool:
+    return metadata.get(PLANE_METADATA_KEY) == PLANNING_PLANE
+
+
+# --- create-ticket -------------------------------------------------------
+
+
+def cmd_create_ticket(args: argparse.Namespace) -> int:
+    try:
+        ticket_type = args.type
+        label = f"{WAYFINDER_LABEL_PREFIX}{ticket_type}"
+        body = read_body(args.body, args.body_file)
+        with_body = Path(args.body_file) if args.body_file and args.body_file != "-" else None
+        create_args = [
+            "create",
+            "--parent",
+            args.map,
+            "--no-inherit-labels",
+            "--type",
+            "task",
+            "--title",
+            args.title,
+            "--labels",
+            label,
+            "--metadata",
+            json.dumps({PLANE_METADATA_KEY: PLANNING_PLANE}),
+            "--silent",
+        ]
+        if with_body is not None:
+            create_args += ["--body-file", str(with_body)]
+            new_id = run_bd(create_args).strip()
+        else:
+            create_args += ["--body-file", "-"]
+            new_id = run_bd(create_args, input_text=body).strip()
+        if not new_id:
+            raise PlanningMapError("bd create returned no issue id")
+    except PlanningMapError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(json.dumps({
+        "ok": True,
+        "id": new_id,
+        "parent": args.map,
+        "label": label,
+        "metadata": {PLANE_METADATA_KEY: PLANNING_PLANE},
+    }, indent=2, sort_keys=True))
+    return 0
+
+
+# --- check -----------------------------------------------------------------
+
+
+def shape_problems(child: dict[str, Any], map_id: str) -> list[str]:
+    problems = []
+    parent = child.get("parent")
+    if parent is not None and parent != map_id:
+        problems.append(f"parent is {parent!r}, not {map_id!r}")
+    labels = child.get("labels") or []
+    if wayfinder_label(labels) is None:
+        problems.append(f"no {WAYFINDER_LABEL_PREFIX}<type> label (labels: {labels!r})")
+    metadata = child.get("metadata") or {}
+    if not is_planning_plane(metadata):
+        problems.append(f"metadata {PLANE_METADATA_KEY} is not {PLANNING_PLANE!r}")
+    return problems
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    try:
+        map_bead = bd_show(args.map)
+        children = bd_children(args.map)
+    except PlanningMapError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+
+    map_labels = map_bead.get("labels") or []
+    map_labelled = MAP_LABEL in map_labels
+
+    malformed: list[dict[str, Any]] = []
+    open_children: list[str] = []
+    for child in children:
+        child_id = child.get("id", "<unknown>")
+        problems = shape_problems(child, args.map)
+        if problems:
+            malformed.append({"id": child_id, "problems": problems})
+        if child.get("status") != "closed":
+            open_children.append(child_id)
+
+    finished = map_labelled and not malformed and not open_children
+
+    result = {
+        "ok": True,
+        "map": args.map,
+        "labelled_map": map_labelled,
+        "child_count": len(children),
+        "open_children": open_children,
+        "malformed": malformed,
+        "finished": finished,
+    }
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+# --- close -------------------------------------------------------------
+
+
+def cmd_close(args: argparse.Namespace) -> int:
+    try:
+        closed: list[str] = []
+        if args.abandon:
+            children = bd_children(args.map)
+            for child in children:
+                if child.get("status") != "closed":
+                    run_bd(["close", child["id"], "--reason", args.reason])
+                    closed.append(child["id"])
+        run_bd(["close", args.map, "--reason", args.reason])
+    except PlanningMapError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(json.dumps({
+        "ok": True,
+        "map": args.map,
+        "abandoned": bool(args.abandon),
+        "closed_children": closed,
+        "reason": args.reason,
+    }, indent=2, sort_keys=True))
+    return 0
+
+
+# --- update (compare-and-set) -------------------------------------------
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    try:
+        expected = read_body(args.expected_description, args.expected_description_file)
+        new_body = read_body(args.body, args.body_file)
+        current = bd_show(args.map)
+    except PlanningMapError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+
+    current_description = current.get("description") or ""
+    if current_description != expected:
+        print(json.dumps({
+            "ok": False,
+            "error": "refused: map description changed since the caller's read",
+            "map": args.map,
+        }, indent=2, sort_keys=True))
+        return 1
+
+    try:
+        run_bd(["update", args.map, "--body-file", "-"], input_text=new_body)
+    except PlanningMapError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+
+    print(json.dumps({"ok": True, "map": args.map}, indent=2, sort_keys=True))
+    return 0
+
+
+# --- CLI ---------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    create_ticket = subparsers.add_parser(
+        "create-ticket", help="create a correctly shaped child ticket of a map"
+    )
+    create_ticket.add_argument("--map", required=True, help="Planning Map Bead id")
+    create_ticket.add_argument(
+        "--type", required=True,
+        choices=["research", "prototype", "grilling", "task"],
+        help="wayfinder ticket type (labelled wayfinder:<type>)",
+    )
+    create_ticket.add_argument("--title", required=True)
+    body_group = create_ticket.add_mutually_exclusive_group(required=True)
+    body_group.add_argument("--body", help="ticket description text")
+    body_group.add_argument("--body-file", help="file to read the description from (- for stdin)")
+    create_ticket.set_defaults(func=cmd_create_ticket)
+
+    check = subparsers.add_parser("check", help="check a map's shape and completion")
+    check.add_argument("--map", required=True, help="Planning Map Bead id")
+    check.set_defaults(func=cmd_check)
+
+    close = subparsers.add_parser("close", help="close a map, optionally abandoning its open children")
+    close.add_argument("--map", required=True, help="Planning Map Bead id")
+    close.add_argument("--reason", required=True)
+    close.add_argument(
+        "--abandon", action="store_true",
+        help="also close every still-open child ticket with the same reason",
+    )
+    close.set_defaults(func=cmd_close)
+
+    update = subparsers.add_parser(
+        "update", help="safely replace a map's description (compare-and-set)"
+    )
+    update.add_argument("--map", required=True, help="Planning Map Bead id")
+    expected_group = update.add_mutually_exclusive_group(required=True)
+    expected_group.add_argument(
+        "--expected-description", help="the description text the caller last read"
+    )
+    expected_group.add_argument(
+        "--expected-description-file",
+        help="file holding the description text the caller last read (- for stdin)",
+    )
+    body_group2 = update.add_mutually_exclusive_group(required=True)
+    body_group2.add_argument("--body", help="new description text")
+    body_group2.add_argument("--body-file", help="file to read the new description from (- for stdin)")
+    update.set_defaults(func=cmd_update)
+
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
