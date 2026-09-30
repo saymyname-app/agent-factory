@@ -46,6 +46,11 @@ One agent conversation used within a Planning Run, either for a simple run or to
 _French conversational alias_: conversation de planification
 _Avoid_: Planning Run, Planning Graph
 
+**Planning Run Reservation**:
+The human's commitment that the next Planning Run to be approved and published is a named one; any other Planning Run is refused at Spec approval while the reservation is active. A reservation may name a following one, which becomes active once the first is published.
+_French conversational alias_: réservation de cadrage
+_Avoid_: lock, queue, priority
+
 **Planning Graph**:
 The non-executable graph of a Planning Map Bead, its Planning Decision Beads, and their dependency edges that anchors a multi-session Wayfinding Run.
 _French conversational alias_: graphe de planification
