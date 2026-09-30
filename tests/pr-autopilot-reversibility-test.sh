@@ -149,10 +149,10 @@ grep -q "^pr merge 1 --repo example-corp/example-backend --auto --squash" "$TMP/
 grep -q "^pr merge 2 " "$TMP/gh.log" && fail "undeclared destructive PR was armed"
 grep -q "^label create reversibility-declaration-needed" "$TMP/gh.log" || fail "hold label not created"
 grep -q "^pr comment 2 " "$TMP/gh.log" || fail "hold not explained on PR 2"
-grep -q "^pr edit 2 .*--add-label reversibility-declaration-needed" "$TMP/gh.log" || fail "PR 2 not labelled"
+grep -q "^api -X POST repos/[^ ]*/issues/2/labels -f labels\[\]=reversibility-declaration-needed" "$TMP/gh.log" || fail "PR 2 not labelled"
 # 3: declared irreversible and already armed -> disarmed, labelled, escalated
 grep -q "^pr merge 3 --repo example-corp/example-backend --disable-auto" "$TMP/gh.log" || fail "armed irreversible PR not disarmed"
-grep -q "^pr edit 3 .*--add-label irreversible-change" "$TMP/gh.log" || fail "PR 3 not labelled irreversible"
+grep -q "^api -X POST repos/[^ ]*/issues/3/labels -f labels\[\]=irreversible-change" "$TMP/gh.log" || fail "PR 3 not labelled irreversible"
 grep -q "mail send mayor" "$TMP/gc.log" || fail "irreversible PR not escalated to the Mayor"
 grep -q "ESCALADE test 4" "$TMP/gc.log" || fail "escalation does not name test 4"
 grep -q "pas operator-1" "$TMP/gc.log" || fail "escalation does not state its author"
@@ -176,7 +176,7 @@ jq '(.[]|select(.number==2)).headRefOid="bbb2"' "$TMP/backend-open.json" > "$TMP
 printf '0' > "$TMP/verdicts/bbb2"
 : > "$TMP/gh.log"
 out=$(pilot)
-grep -q "^pr edit 2 .*--remove-label reversibility-declaration-needed" "$TMP/gh.log" || { echo "$out" >&2; fail "fixed PR kept its hold label"; }
+grep -q "^api -X DELETE repos/[^ ]*/issues/2/labels/reversibility-declaration-needed" "$TMP/gh.log" || { echo "$out" >&2; fail "fixed PR kept its hold label"; }
 grep -q "^pr merge 2 .*--auto" "$TMP/gh.log" || fail "fixed PR was not armed"
 grep -q "^pr merge 3 .*--auto" "$TMP/gh.log" && fail "irreversible PR was armed"
 

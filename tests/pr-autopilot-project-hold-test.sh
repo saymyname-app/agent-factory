@@ -44,6 +44,19 @@ printf 'bin/some-tool\tmodified\n' > "$TMP/files-4.tsv"
 cat > "$TMP/bin/gh" <<STUB
 #!/usr/bin/env bash
 echo "\$*" >> "$TMP/gh.log"
+# The host's gh 2.45 fails every "pr edit" on GitHub's retired Projects
+# (classic) field -- the real cause of PR #356's repeated explanation.
+if [[ \$1 == pr && \$2 == edit ]]; then
+  echo 'GraphQL: Projects (classic) is being deprecated (repository.pullRequest.projectCards)' >&2; exit 1
+fi
+if [[ \$1 == pr && \$2 == comment ]]; then
+  prev=; for a in "\$@"; do [[ \$prev == --body-file ]] && cat "\$a" >> "$TMP/comments-\$3.md"; prev=\$a; done
+  exit 0
+fi
+if [[ \$1 == pr && \$2 == view && "\$*" == *"--json comments"* ]]; then cat "$TMP/comments-\$3.md" 2>/dev/null; exit 0; fi
+if [[ \$1 == api && \$3 == POST && -e "$TMP/label-fails-once" ]]; then
+  rm -f "$TMP/label-fails-once"; echo 'HTTP 502: Bad Gateway' >&2; exit 1
+fi
 if [[ \$1 == pr && \$2 == list ]]; then
   if [[ "\$*" == *"--state open"* && "\$*" == *"example-backend"* ]]; then cat "$TMP/backend-open.json"
   else echo '[]'; fi
@@ -94,7 +107,7 @@ pilot() { "$AUTOPILOT" "$@" 2>&1 || true; }
 out=$(pilot --dry-run)
 grep -q "PR #1: HELD -> project-declaration-needs-benjamin" <<<"$out" || { echo "$out" >&2; fail "dry-run did not report the hold for the added descriptor"; }
 grep -q "PR #2: HELD -> project-declaration-needs-benjamin" <<<"$out" || { echo "$out" >&2; fail "dry-run did not report the hold for the removed descriptor"; }
-grep -qE '^(pr (merge|comment|edit)|label create)' "$TMP/gh.log" && fail "--dry-run mutated GitHub"
+grep -qE '^(pr (merge|comment|edit)|label create|api -X)' "$TMP/gh.log" && fail "--dry-run mutated GitHub"
 
 # --- the real pass -------------------------------------------------------------------
 : > "$TMP/gh.log"
@@ -104,13 +117,13 @@ out=$(pilot)
 grep -q "^pr merge 1 " "$TMP/gh.log" && fail "PR adding a project descriptor was merged/armed"
 grep -q "^label create project-declaration-needs-benjamin" "$TMP/gh.log" || fail "hold label not created for the added descriptor"
 grep -q "^pr comment 1 " "$TMP/gh.log" || fail "hold not explained on PR 1 (added descriptor)"
-grep -q "^pr edit 1 .*--add-label project-declaration-needs-benjamin" "$TMP/gh.log" || fail "PR 1 not labelled"
+grep -q "^api -X POST repos/[^ ]*/issues/1/labels -f labels\[\]=project-declaration-needs-benjamin" "$TMP/gh.log" || fail "PR 1 not labelled"
 
 # 2: removes a descriptor, was already armed -> disarmed, labelled, explained, never merged
 grep -q "^pr merge 2 --repo example-corp/example-backend --disable-auto" "$TMP/gh.log" || fail "already-armed PR removing a descriptor was not disarmed"
 grep -q "^pr merge 2 --repo example-corp/example-backend --auto" "$TMP/gh.log" && fail "PR removing a project descriptor was (re)armed"
 grep -q "^pr comment 2 " "$TMP/gh.log" || fail "hold not explained on PR 2 (removed descriptor)"
-grep -q "^pr edit 2 .*--add-label project-declaration-needs-benjamin" "$TMP/gh.log" || fail "PR 2 not labelled"
+grep -q "^api -X POST repos/[^ ]*/issues/2/labels -f labels\[\]=project-declaration-needs-benjamin" "$TMP/gh.log" || fail "PR 2 not labelled"
 
 # 3: only modifies an existing descriptor -> normal path, armed
 grep -q "^pr merge 3 --repo example-corp/example-backend --auto --squash" "$TMP/gh.log" \
@@ -138,9 +151,31 @@ grep -q "^pr merge 2 .*--auto" "$TMP/gh.log" && fail "held PR 2 was rearmed on a
 printf 'config/project-descriptors/newproj.toml\tmodified\n' > "$TMP/files-1.tsv"
 : > "$TMP/gh.log"
 out=$(pilot)
-grep -q "^pr edit 1 .*--remove-label project-declaration-needs-benjamin" "$TMP/gh.log" \
+grep -q "^api -X DELETE repos/[^ ]*/issues/1/labels/project-declaration-needs-benjamin" "$TMP/gh.log" \
   || { echo "$out" >&2; fail "PR 1 kept its hold label after the descriptor add was reverted"; }
 grep -q "^pr merge 1 --repo example-corp/example-backend --auto --squash" "$TMP/gh.log" \
   || fail "PR 1 was not armed once it no longer added a descriptor"
+
+# --- PR #356 regression: the label does not stick -> still explained once -----------
+# A pass whose label call fails leaves the PR unlabelled; the next pass must
+# find its own explanation (hidden marker) instead of posting it again.
+printf 'config/project-descriptors/fifth.json\tadded\n' > "$TMP/files-5.tsv"
+cat > "$TMP/backend-open.json" <<'JSON'
+[{"number":5,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"eee1","labels":[]}]
+JSON
+: > "$TMP/label-fails-once"
+: > "$TMP/gh.log"
+out=$(pilot)
+grep -q "^pr comment 5 " "$TMP/gh.log" || { echo "$out" >&2; fail "PR 5's hold was not explained"; }
+grep -q "could not add label 'project-declaration-needs-benjamin'" <<<"$out" \
+  || { echo "$out" >&2; fail "a failed label call was not reported"; }
+: > "$TMP/gh.log"
+out=$(pilot)   # labels still [] on GitHub: the first label call failed
+grep -q "^pr comment 5 " "$TMP/gh.log" && { echo "$out" >&2; fail "PR 5's hold was explained twice after a failed label call (PR #356)"; }
+grep -q "^api -X POST repos/example-corp/example-backend/issues/5/labels -f labels\[\]=project-declaration-needs-benjamin" "$TMP/gh.log" \
+  || { echo "$out" >&2; fail "PR 5's label was not retried on the next pass"; }
+[ "$(grep -c '<!-- pr-autopilot:project-declaration-needs-benjamin -->' "$TMP/comments-5.md")" = 1 ] \
+  || fail "PR 5 does not carry exactly one explanation"
+grep -q "^pr merge 5 .*--auto" "$TMP/gh.log" && fail "PR 5 was armed while its label was missing"
 
 echo "OK pr-autopilot never merges a project descriptor add/remove by itself"
