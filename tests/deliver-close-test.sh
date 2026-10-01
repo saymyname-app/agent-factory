@@ -94,6 +94,32 @@ if run merged af-outcome --repo owner/repo >/dev/null 2>&1; then
   fail_test "missing --pr should be rejected"
 fi
 
+# P07 (mol-do-work step 3c): a bead fixed inside another ticket's PR names it
+# with gc.delivered_via_pr. It still carries the gc.work_branch its own
+# dispatch stamped, which is by definition not that PR's head -- the close
+# must go through (2026-10-01: af-3hmxgn/af-6c0xm9 named merged PR #372 and
+# were refused on every pr-autopilot tick, failing the order each time).
+TESTS_RUN=$((TESTS_RUN + 1))
+DELIVER_CLOSE_BEAD_METADATA='{"gc.work_branch":"do-work/af-fixed","gc.work_base_branch":"main","gc.delivered_via_pr":42}' \
+  run merged af-fixed --repo owner/repo --pr 42 >/dev/null \
+  || fail_test "a bead naming PR 42 in gc.delivered_via_pr should close on PR 42 despite its own gc.work_branch"
+call=$(<"$CALL_LOG")
+[[ $call == *"--status=closed"* && $call == *"gc.pr_number=42"* ]] \
+  || fail_test "delivered_via_pr close did not write the delivery proof: $call"
+
+# The branch guard still holds for a bead that does not name this PR: with no
+# gc.delivered_via_pr at all, or with one naming another PR.
+TESTS_RUN=$((TESTS_RUN + 1))
+for metadata in '{"gc.work_branch":"do-work/af-other"}' \
+  '{"gc.work_branch":"do-work/af-other","gc.delivered_via_pr":41}'; do
+  if output=$(DELIVER_CLOSE_BEAD_METADATA="$metadata" run merged af-other --repo owner/repo --pr 42 2>&1); then
+    fail_test "a bead on another branch that does not name PR 42 must be refused ($metadata)"
+  fi
+  [[ $output == *"records gc.work_branch=do-work/af-other but PR 42 head is do-work/af-work"* ]] \
+    || fail_test "branch-mismatch refusal did not report the expected reason: $output"
+  [[ -z $(<"$CALL_LOG") ]] || fail_test "branch-mismatch refusal made a Beads write"
+done
+
 # ADR-0023: the --outcome form is the door mol-do-work uses instead of a raw
 # `gc bd update --set-metadata gc.work_outcome=...`. No GitHub verification.
 TESTS_RUN=$((TESTS_RUN + 1))
