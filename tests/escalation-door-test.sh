@@ -317,6 +317,46 @@ ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should s
   || fail "a resolved Mayor-first escalation must not be swept to Benjamin"
 grep -Fq 'mail send human' "$TEST_TMP/calls.log" && fail "sweep mailed Benjamin for a resolved escalation"
 
+# A page about the bead's own PR is resolved by that PR's verified merge: the
+# sweep clears it instead of promoting it (af-53v22s, 2026-10-01: PR #360
+# merged at 00:16 Paris, its "rejected 3 times" page reached Benjamin at
+# 01:22 on a ticket already delivered).
+reset_beads
+MERGED_REASON="PR #360 rejected 3 times: required check 'Tests' failed after one retry"
+seed af-shipped "$(jq -nc --arg reason "$MERGED_REASON" '
+  {id: "af-shipped", status: "closed",
+   metadata: {"gc.escalation_mayor_paged_at": "2026-09-01T00:00:00Z",
+              "gc.escalation_mayor_reason": $reason,
+              "gc.delivery_status": "merged", "gc.pr_number": 360},
+   notes: "", labels: []}')"
+# Same page on a merged ticket, but about another PR: not resolved by this merge.
+seed af-otherpr "$(jq -nc '
+  {id: "af-otherpr", status: "closed",
+   metadata: {"gc.escalation_mayor_paged_at": "2026-09-01T00:00:00Z",
+              "gc.escalation_mayor_reason": "PR #361 rejected 3 times: conflict",
+              "gc.delivery_status": "merged", "gc.pr_number": 360},
+   notes: "", labels: []}')"
+# Same page, PR still open: not resolved.
+seed af-stillred "$(jq -nc --arg reason "$MERGED_REASON" '
+  {id: "af-stillred", status: "open",
+   metadata: {"gc.escalation_mayor_paged_at": "2026-09-01T00:00:00Z",
+              "gc.escalation_mayor_reason": $reason, "gc.pr_number": 360},
+   notes: "", labels: []}')"
+TESTS_RUN=$((TESTS_RUN + 1))
+: >"$TEST_TMP/calls.log"
+ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should succeed on a page resolved by a merge"
+written=$(bead af-shipped)
+[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' <<<"$written") == none ]] \
+  || fail "a page about a PR that merged must not be promoted to Benjamin"
+[[ $(jq -r '.metadata["gc.escalation_mayor_paged_at"]' <<<"$written") == none ]] \
+  || fail "a page resolved by its merged PR must be cleared, not left to be swept again"
+[[ $(jq -r '.notes' <<<"$written") == *"MAYOR FIRST RESOLVED"* ]] \
+  || fail "clearing a page resolved by a merge must be traced in the bead's notes"
+[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-otherpr.json") == *"non résolue après 2h"* ]] \
+  || fail "a page about another PR than the merged one must still be promoted"
+[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-stillred.json") == *"non résolue après 2h"* ]] \
+  || fail "a page about a PR that is not merged must still be promoted"
+
 # --- clear -------------------------------------------------------------------
 reset_beads
 seed af-blocker '{"id":"af-blocker","status":"open","metadata":{"gc.needs_benjamin":"Cause"},"notes":"","labels":[]}'
