@@ -1,0 +1,10 @@
+[
+  {
+    "id": "af-spec01",
+    "title": "Spec — Rappels de rituels",
+    "status": "open",
+    "issue_type": "task",
+    "labels": [],
+    "metadata": {"gc.project_id": "agent-factory", "spec_state": "DRAFT_SPEC", "gc.plane": "planning"}
+  }
+]

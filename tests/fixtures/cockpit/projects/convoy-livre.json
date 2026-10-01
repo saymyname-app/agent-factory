@@ -1,0 +1,26 @@
+[
+  {
+    "id": "af-convoy02",
+    "title": "Graphe de tickets — Page d'accueil publique",
+    "status": "closed",
+    "issue_type": "convoy",
+    "labels": ["approved-ticket-graph"],
+    "metadata": {"gc.project_id": "saymyname", "gc.graph_digest": "sha256:bbb"}
+  },
+  {
+    "id": "af-tk10",
+    "title": "T10 — Bandeau d'accueil",
+    "status": "closed",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:bbb"}
+  },
+  {
+    "id": "af-tk11",
+    "title": "T11 — Pied de page",
+    "status": "closed",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:bbb"}
+  }
+]
