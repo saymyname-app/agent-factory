@@ -746,7 +746,11 @@ for entry in "${RIGS[@]}"; do
   # Stale-within-a-tick is fine: a bead this script itself closes/creates for
   # PR N is never looked up again for that same N within the same pass, and a
   # PR cannot be both "open" and "merged" in the same `gh pr list` snapshot.
-  RIG_OPEN_BEADS_JSON=$(cd "$rig_path" && bounded "$AP_READ_CAP" gc bd list --status open --json 2>/dev/null); rc=$?
+  # "Open" here means not closed: a flag bead a worker has claimed is
+  # in_progress, and `--status open` alone does not return it -- each new red
+  # head of PR #372 was filed again (3 beads, 3 workers, 2026-10-01) and a
+  # claimed bead would never have been closed on recovery.
+  RIG_OPEN_BEADS_JSON=$(cd "$rig_path" && bounded "$AP_READ_CAP" gc bd list --status open,in_progress --json 2>/dev/null); rc=$?
   if timed_out "$rc"; then
     # "No open bead" would re-file every stuck/CI flag already filed: skip the repo.
     log "  open beads unknown (gc bd list timed out) -- $repo not processed this tick"
