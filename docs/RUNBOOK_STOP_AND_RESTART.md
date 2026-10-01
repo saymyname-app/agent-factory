@@ -29,6 +29,31 @@ pour ce qui suit :
 
 Groupez tout ce qui exige l'arrêt dans **une seule** fenêtre.
 
+**Rien de tout ça ci-dessus ne passe par le cockpit** : un arrêt complet
+(WSL, Dolt, la VM) reste une procédure de ce runbook, jamais un geste
+cockpit (spec af-oohx2x §"Arrêt propre et redémarrage" : « gc stop complet
+reste au runbook seulement »). Le cockpit couvre un cas plus étroit : mettre
+l'usine en pause (`gc suspend` / `gc resume`, rien d'autre) sans rien couper
+côté PC, WSL ou Dolt, pour éteindre le PC ou jouer sans perdre de travail
+(T23 af-s5e3yo, T24 af-j2mkpa — `lib/cockpit/stop/driver.py`).
+
+- **Bouton « Arrêter proprement l'usine »** : suspend la cité (jamais `gc
+  stop`, jamais `gc stop --force`), suit l'arrêt jusqu'à « Arrêtée
+  proprement à HH:MM » avec un bilan de 0 perte, et propose « Forcer l'arrêt
+  » seulement après 30 min sans aucune progression (jamais de bascule
+  automatique).
+- **Bouton « Redémarrer »** : appelle `gc resume`, rien d'autre, puis prouve
+  la reprise — « Reprise vérifiée à HH:MM » quand chaque travail d'avant
+  l'arrêt est repris sans réattribution, sinon « Reprise avec écarts » avec
+  la liste (demande À faire dans « Ce qui t'attend »).
+- Le bouton d'arrêt s'affiche d'abord en **mode essai** (texte : « ceci est
+  l'essai réel de l'arrêt propre ») ; il ne devient un bouton normal qu'après
+  une trace persistée d'un essai réel réussi (un arrêt propre suivi d'une
+  reprise vérifiée), déclenché par Benjamin depuis le cockpit.
+- Les deux boutons ne remplacent la §2/§3 ci-dessous que pour ce cas précis
+  (pause sans toucher WSL/Dolt/la VM) ; tout le reste de ce runbook — GC Dolt,
+  arrêt de la VM, redémarrage complet, preuve d'intégrité — reste manuel.
+
 ---
 
 ## 1. Avant de couper — capturer la preuve « avant »
