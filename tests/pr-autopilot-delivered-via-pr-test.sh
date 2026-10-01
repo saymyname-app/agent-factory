@@ -39,7 +39,7 @@ JSON
 cat > "$TMP/all-beads.json" <<'JSON'
 [
  {"id":"af-owner","status":"in_progress","metadata":{"gc.work_branch":"do-work/af-owner"}},
- {"id":"af-fixed-1","status":"in_progress","metadata":{"gc.delivered_via_pr":"90"}},
+ {"id":"af-fixed-1","status":"in_progress","metadata":{"gc.delivered_via_pr":"90","gc.work_branch":"do-work/af-fixed-1"}},
  {"id":"af-fixed-2","status":"in_progress","metadata":{"gc.delivered_via_pr":"91"}},
  {"id":"af-fixed-closed","status":"closed","metadata":{"gc.delivered_via_pr":"90"}}
 ]

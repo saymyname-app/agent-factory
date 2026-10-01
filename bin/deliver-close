@@ -196,7 +196,7 @@ requires_pr_contract() {
 # coherent.  No Beads write occurs in this function.
 verify_pr_delivery() {  # bead-id bead-json repo pr-number required-workflow
   local bead_id=$1 bead_json=$2 repo=$3 pr_number=$4 required_workflow=$5
-  local actions_response ci_run linked_url linked_branch linked_base parsed
+  local actions_response ci_run linked_url linked_branch linked_base linked_via parsed
 
   require_command "$GH_BIN"
   capture_json PR_RESPONSE "GitHub PR $pr_number" "$GH_BIN" pr view "$pr_number" \
@@ -229,7 +229,12 @@ verify_pr_delivery() {  # bead-id bead-json repo pr-number required-workflow
     [[ ${parsed%$'\t'*} == "$repo" && ${parsed#*$'\t'} == "$pr_number" ]] \
       || die "$bead_id links $linked_url, not $repo#$pr_number; refusing mismatched delivery evidence."
   fi
-  [[ -z $linked_branch || $linked_branch == "$PR_HEAD_BRANCH" ]] \
+  # P07 (mol-do-work step 3c): a bead fixed inside another ticket's PR names
+  # that PR with gc.delivered_via_pr. Its own gc.work_branch, stamped at
+  # dispatch on every routed bead, is by definition not that PR's head: the
+  # PR number is the link there, the branch is not evidence.
+  linked_via=$(metadata_value "$bead_json" "gc.delivered_via_pr")
+  [[ -z $linked_branch || $linked_branch == "$PR_HEAD_BRANCH" || $linked_via == "$pr_number" ]] \
     || die "$bead_id records gc.work_branch=$linked_branch but PR $pr_number head is $PR_HEAD_BRANCH."
   [[ -z $linked_base || $linked_base == "$MERGED_TARGET" ]] \
     || die "$bead_id records gc.work_base_branch=$linked_base but PR $pr_number target is $MERGED_TARGET."
