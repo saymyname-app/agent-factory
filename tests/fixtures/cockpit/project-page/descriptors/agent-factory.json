@@ -1,0 +1,10 @@
+{
+  "contract": "agent-factory-project-descriptor/v1",
+  "project_id": "agent-factory",
+  "display_name": "Usine",
+  "rigs": ["agent-factory"],
+  "knowledge_repo": "saymyname-app/agent-factory",
+  "roadmap_path": "docs/roadmap.toml",
+  "rituals_status_command": "bin/rituals-status",
+  "promotion_branch": {}
+}

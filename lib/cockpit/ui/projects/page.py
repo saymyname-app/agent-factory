@@ -13,6 +13,11 @@ a Livré-non-Accepté chantier -- rendered as ``data-action`` targets only,
 the same deferred-wiring precedent T13's :mod:`cockpit.ui.actions.render`
 set (server/home wiring is a later ticket's job, out of this one's
 declared scope).
+
+T22 adds: the "Page projet" link on every project card
+(:func:`_render_page_projet_link`, spec .49) pointing at
+:func:`cockpit.ui.projects.project_page.project_page_url` --
+:mod:`cockpit.ui.projects.project_page` is this link's destination page.
 """
 import html
 from datetime import datetime
@@ -82,16 +87,34 @@ def _render_ecart(project):
     return "".join(spans)
 
 
+PAGE_PROJET_LINK_TEXT = "Page projet →"
+
+
+def _render_page_projet_link(project):
+    """spec .49: "un lien « Page projet » depuis chaque projet, qui
+    montre ses chantiers par étape, afin d'avoir le détail sans
+    surcharger l'accueil" (T22, af-9tfjsc). A plain ``<a href>`` -- the
+    route itself is wired by a later ticket, the same deferred-wiring
+    precedent T20's Accepter/« Pas bon -> agent » buttons set."""
+    from cockpit.ui.projects.project_page import project_page_url
+
+    return '<a class="cockpit-project-page-link" href="%s">%s</a>' % (
+        html.escape(project_page_url(project.project_id)),
+        html.escape(PAGE_PROJET_LINK_TEXT),
+    )
+
+
 def _render_project(project):
     roadmap_html = _render_roadmap(project)
     ecart_html = _render_ecart(project)
+    page_projet_html = _render_page_projet_link(project)
     if project.chantiers:
         chantiers_html = "".join(_render_chantier(c) for c in project.chantiers)
     else:
         chantiers_html = '<p class="cockpit-project-empty">%s</p>' % html.escape(NO_CHANTIER_TEXT)
     return (
         '<div class="cockpit-project" data-project="%s">'
-        '<div class="cockpit-project-h"><h3>%s</h3>%s%s</div>'
+        '<div class="cockpit-project-h"><h3>%s</h3>%s%s%s</div>'
         '<div class="cockpit-project-chantiers">%s</div>'
         "</div>"
     ) % (
@@ -99,6 +122,7 @@ def _render_project(project):
         html.escape(project.display_name),
         roadmap_html,
         ecart_html,
+        page_projet_html,
         chantiers_html,
     )
 

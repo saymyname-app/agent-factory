@@ -1,0 +1,86 @@
+[
+  {
+    "id": "af-map01",
+    "title": "Carte — Nettoyage des branches anciennes",
+    "status": "open",
+    "issue_type": "task",
+    "labels": ["wayfinder:map"],
+    "metadata": {"gc.project_id": "agent-factory"}
+  },
+  {
+    "id": "af-spec01",
+    "title": "Spec — Invitations par lien",
+    "status": "open",
+    "issue_type": "task",
+    "labels": [],
+    "metadata": {"gc.project_id": "agent-factory", "spec_state": "DRAFT_SPEC"}
+  },
+  {
+    "id": "af-convoy01",
+    "title": "Graphe de tickets — Cockpit V2",
+    "status": "open",
+    "issue_type": "convoy",
+    "labels": ["approved-ticket-graph"],
+    "metadata": {"gc.project_id": "agent-factory", "gc.graph_digest": "sha256:pp01"}
+  },
+  {
+    "id": "af-tk01",
+    "title": "T22 — Page projet",
+    "status": "in_progress",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:pp01"}
+  },
+  {
+    "id": "af-bug01",
+    "title": "Bug — le bouton Recommencer ne répond plus",
+    "status": "open",
+    "issue_type": "bug",
+    "labels": [],
+    "metadata": {"gc.project_id": "agent-factory"}
+  },
+  {
+    "id": "af-prop01",
+    "title": "Proposition — regrouper les deux pages de réglages",
+    "status": "open",
+    "issue_type": "task",
+    "labels": ["proposal"],
+    "metadata": {"gc.project_id": "agent-factory", "gc.proposal_state": "ouverte"}
+  },
+  {
+    "id": "af-corr01",
+    "title": "Correctif direct — faute de frappe sur l'accueil",
+    "status": "open",
+    "issue_type": "task",
+    "labels": ["correctif-direct"],
+    "metadata": {"gc.project_id": "agent-factory"}
+  },
+  {
+    "id": "af-bug-closed",
+    "title": "Bug déjà corrigé",
+    "status": "closed",
+    "issue_type": "bug",
+    "labels": [],
+    "metadata": {"gc.project_id": "agent-factory"}
+  },
+  {
+    "id": "af-convoy-done",
+    "title": "Graphe de tickets — Export CSV",
+    "status": "closed",
+    "issue_type": "convoy",
+    "labels": ["approved-ticket-graph"],
+    "metadata": {
+      "gc.project_id": "agent-factory",
+      "gc.graph_digest": "sha256:done01",
+      "gc.cockpit_chantier_accepted": "true"
+    }
+  },
+  {
+    "id": "af-tk-done",
+    "title": "Ticket Export CSV",
+    "status": "closed",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:done01", "gc.merge_commit": "aaa0001"}
+  }
+]
