@@ -358,14 +358,22 @@ class ActionsSeamTest(unittest.TestCase):
         self.start_cockpit()
         self.wait_for_requests(lambda p: len(p["requests"]) == 1)
 
-        status, _ = self.post_action("reporter", {"bead_id": "af-hhhh", "option": "libre", "custom_epoch": time.time() + 1.0})
+        # No wall-clock window: the deadline is stored truncated to the
+        # second (trace.iso_from_epoch), so "now + 1.0" hid the request for
+        # anywhere between 0 and 1 s. Whenever the action's own write
+        # outlasted that, "0 requests" was never observable, whatever the
+        # timeout or the polling (PR #360, #372, #373). The deadline is
+        # first far away, so hidden is a stable state; then the stored
+        # deadline is moved to an instant already passed.
+        status, _ = self.post_action("reporter", {"bead_id": "af-hhhh", "option": "libre", "custom_epoch": time.time() + 3600})
         self.assertEqual(200, status)
-
-        # Each poll re-spawns the fake-bd subprocess fixture; under a loaded
-        # CI runner that occasionally takes long enough to blow the default
-        # 5s wait even though the 1s deferral itself is short (observed:
-        # PR #372 CI run 36788068757).
         self.wait_for_requests(lambda p: len(p["requests"]) == 0, timeout=15)
+
+        beads = self.read_beads()
+        bead = next(b for b in beads if b["id"] == "af-hhhh")
+        self.assertIn("gc.cockpit_defer_until", bead["metadata"])
+        bead["metadata"]["gc.cockpit_defer_until"] = "2026-09-30T08:00:01Z"
+        self.write_beads(beads)
         self.wait_for_requests(lambda p: len(p["requests"]) == 1, timeout=15)
 
     def test_urgent_reported_stays_visible_greyed(self):
