@@ -808,7 +808,12 @@ for entry in "${RIGS[@]}"; do
     [ "$checks" = "FAILURE" ] || close_ci_failure_beads "$repo" "$rig_path" "$num" "checks are now '$checks' (no longer FAILURE)"
 
     # Red required check -> retry once (maybe transient), else flag as work.
-    if [ "$checks" = "FAILURE" ]; then
+    # Not when the PR is also BEHIND: that red belongs to a head the BEHIND
+    # update below is about to replace, and the new head gets a fresh
+    # required run. Deciding on the stale head first left PR #373 stuck
+    # (2026-10-01): already rejected for that head, nothing for the worker to
+    # push, and this branch `continue`d before the update was ever reached.
+    if [ "$checks" = "FAILURE" ] && [ "$state" != "BEHIND" ]; then
       retry_ci_failure "$repo" "$num" "$sha" "$required_workflow"; rc=$?
       if [ "$rc" = 0 ]; then
         vlog "PR #$num: retried once, re-checking next pass"

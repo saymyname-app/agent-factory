@@ -13,7 +13,11 @@
 # and `bd list --status open` does not return it -- so every new red head
 # filed one more "[ci] PR #372 failed" bead (three in 46 minutes, each waking
 # its own worker on the same PR), and nothing would ever have closed the
-# claimed ones. The gc stub below filters on --status like the real bd, and
+# claimed ones. Same night, PR #373: red on a flaky test, rejected for that
+# head, then BEHIND once #372 merged -- the red-check branch `continue`d
+# before the BEHIND update, the worker had nothing to push, and the PR sat
+# there with the Mayor waiting on pr-autopilot. PR 97 (red and BEHIND) must
+# be brought up to date, not flagged: a new head gets a fresh required run. The gc stub below filters on --status like the real bd, and
 # the beads of PR 47 and PR 99 are in_progress: PR 99 must not be filed a
 # second time, PR 47's bead must still close on recovery, and PR 98 (red, no
 # bead yet) proves the filing path is still reached.
@@ -32,11 +36,13 @@ mkdir -p "$TMP/factory/rigs/example-backend" "$TMP/factory/rigs/example-frontend
 # PR 47: checks recovered to OK, still open (not merged yet).
 # PR 99: still FAILURE, open -- its bead must be left alone, and not doubled.
 # PR 98: FAILURE, open, no bead yet -- must be filed.
+# PR 97: FAILURE and BEHIND, no bead -- must be updated, not filed.
 cat > "$TMP/open.json" <<'JSON'
 [
  {"number":47,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"fff1","labels":[]},
  {"number":99,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"conclusion":"FAILURE"}],"headRefOid":"ggg1","labels":[]},
- {"number":98,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"conclusion":"FAILURE"}],"headRefOid":"hhh1","labels":[]}
+ {"number":98,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","statusCheckRollup":[{"conclusion":"FAILURE"}],"headRefOid":"hhh1","labels":[]},
+ {"number":97,"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"BEHIND","statusCheckRollup":[{"conclusion":"FAILURE"}],"headRefOid":"iii1","labels":[]}
 ]
 JSON
 # PR 45: merged, never seen green while open (this pass's first look is
@@ -117,6 +123,12 @@ grep -qF "bd create [ci] PR #99 failed required checks" "$TMP/gc.log" \
 # PR 98: FAILURE with no bead yet -> filed (the filing path is reached).
 grep -qF "bd create [ci] PR #98 failed required checks" "$TMP/gc.log" \
   || { echo "$out" >&2; fail "PR #98 (red, no bead yet) was not flagged"; }
+
+# PR 97: red and BEHIND -> branch update requested, no bead for the stale head.
+grep -q "pulls/97/update-branch" "$TMP/gh.log" \
+  || { echo "$out" >&2; fail "PR #97 (red and BEHIND) was not brought up to date"; }
+grep -qF "bd create [ci] PR #97 failed required checks" "$TMP/gc.log" \
+  && { echo "$out" >&2; fail "PR #97 (red and BEHIND) was flagged for a head about to be replaced"; }
 
 # PR 45: merged (first seen already merged, never green while open) -> closes too.
 grep -q "^bd update af-ci45 --status closed" "$TMP/gc.log" \
