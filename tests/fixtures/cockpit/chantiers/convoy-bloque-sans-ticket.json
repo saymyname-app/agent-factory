@@ -1,0 +1,18 @@
+[
+  {
+    "id": "af-convoy23",
+    "title": "Graphe de tickets — Rapport mensuel",
+    "status": "open",
+    "issue_type": "convoy",
+    "labels": ["approved-ticket-graph"],
+    "metadata": {"gc.project_id": "saymyname", "gc.graph_digest": "sha256:ccc23"}
+  },
+  {
+    "id": "af-tk23",
+    "title": "T23 — Rapport mensuel",
+    "status": "closed",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:ccc23", "gc.merge_commit": "ddd0001"}
+  }
+]

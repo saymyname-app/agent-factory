@@ -1,0 +1,26 @@
+[
+  {
+    "id": "af-convoy50",
+    "title": "Graphe de tickets — Export iCal",
+    "status": "closed",
+    "issue_type": "convoy",
+    "labels": ["approved-ticket-graph"],
+    "metadata": {"gc.project_id": "saymyname", "gc.graph_digest": "sha256:ccc50"}
+  },
+  {
+    "id": "af-tk50a",
+    "title": "T50a — Export iCal, étape 1",
+    "status": "closed",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:ccc50"}
+  },
+  {
+    "id": "af-tk50b",
+    "title": "T50b — Export iCal, étape 2",
+    "status": "open",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:ccc50"}
+  }
+]

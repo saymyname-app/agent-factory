@@ -1,0 +1,13 @@
+[
+  {
+    "id": "af-map40",
+    "title": "Carte — Export GPX",
+    "status": "closed",
+    "issue_type": "task",
+    "labels": ["wayfinder:map"],
+    "metadata": {
+      "gc.project_id": "agent-factory",
+      "gc.chantier_abandon_reason": "Besoin disparu : GPX plus demandé par personne"
+    }
+  }
+]

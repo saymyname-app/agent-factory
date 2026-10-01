@@ -1,0 +1,22 @@
+[
+  {
+    "id": "af-convoy22",
+    "title": "Graphe de tickets — Export PDF",
+    "status": "closed",
+    "issue_type": "convoy",
+    "labels": ["approved-ticket-graph"],
+    "metadata": {
+      "gc.project_id": "saymyname",
+      "gc.graph_digest": "sha256:ccc22",
+      "gc.cockpit_chantier_accepted": "true"
+    }
+  },
+  {
+    "id": "af-tk22",
+    "title": "T22 — Export PDF",
+    "status": "closed",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:ccc22", "gc.merge_commit": "ccc0001", "gc.dispatch_rig": "saymyname-backend"}
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "id": "af-convoy21",
+    "title": "Graphe de tickets — Journal des envois",
+    "status": "closed",
+    "issue_type": "convoy",
+    "labels": ["approved-ticket-graph"],
+    "metadata": {
+      "gc.project_id": "agent-factory",
+      "gc.graph_digest": "sha256:ccc21",
+      "gc.cockpit_chantier_accepted": "true"
+    }
+  },
+  {
+    "id": "af-tk21",
+    "title": "T21 — Journal des envois",
+    "status": "closed",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:ccc21", "gc.merge_commit": "bbb0001"}
+  }
+]
