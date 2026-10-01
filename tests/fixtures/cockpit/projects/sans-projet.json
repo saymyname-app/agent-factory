@@ -1,0 +1,10 @@
+[
+  {
+    "id": "af-map99",
+    "title": "Carte de planification : Nettoyage des branches anciennes",
+    "status": "open",
+    "issue_type": "epic",
+    "labels": ["wayfinder:map"],
+    "metadata": {"gc.plane": "planning"}
+  }
+]

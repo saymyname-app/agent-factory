@@ -1,0 +1,13 @@
+{
+  "contract": "agent-factory-project-descriptor/v1",
+  "project_id": "saymyname",
+  "display_name": "SayMyName",
+  "rigs": ["saymyname-backend", "saymyname-frontend"],
+  "knowledge_repo": "saymyname-app/Say-my-name-product",
+  "roadmap_path": "knowledge/roadmap.toml",
+  "rituals_status_command": "tools/rituals-status.sh",
+  "promotion_branch": {
+    "saymyname-backend": {"from": "dev", "to": "main"},
+    "saymyname-frontend": {"from": "dev", "to": "main"}
+  }
+}

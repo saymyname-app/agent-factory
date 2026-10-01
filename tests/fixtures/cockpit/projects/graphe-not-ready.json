@@ -1,0 +1,18 @@
+[
+  {
+    "id": "af-spec03",
+    "title": "Spec — Encore en rédaction",
+    "status": "open",
+    "issue_type": "task",
+    "labels": [],
+    "metadata": {"gc.project_id": "agent-factory", "spec_state": "DRAFT_SPEC", "gc.plane": "planning"}
+  },
+  {
+    "id": "af-draft02",
+    "title": "Graphe de tickets — Encore en rédaction",
+    "status": "open",
+    "issue_type": "task",
+    "labels": ["ticket-graph-draft"],
+    "metadata": {"gc.project_id": "agent-factory", "spec_id": "af-spec03", "gc.plane": "planning"}
+  }
+]
