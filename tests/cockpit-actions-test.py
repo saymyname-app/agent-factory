@@ -173,10 +173,24 @@ class ActionsSeamTest(unittest.TestCase):
         with urllib.request.urlopen(req, timeout=3) as resp:
             return resp.read().decode("utf-8")
 
+    def force_recheck(self):
+        """Forces every poller to re-read now (the health zone's
+        "revérifier maintenant", spec .65) instead of waiting on its own
+        background interval — a wait_for_requests check that races a
+        polling interval under a loaded CI runner's subprocess-spawn
+        latency is what made this flaky (observed: PR #372 CI runs
+        36788068757, 36795195349)."""
+        req = urllib.request.Request(
+            "http://127.0.0.1:%d/api/health/recheck" % self.port, method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            resp.read()
+
     def wait_for_requests(self, predicate, timeout=5):
         return wait_until(lambda: self._try(predicate), timeout=timeout)
 
     def _try(self, predicate):
+        self.force_recheck()
         payload = self.requests_payload()
         return payload if predicate(payload) else None
 
