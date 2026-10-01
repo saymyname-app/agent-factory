@@ -1,0 +1,10 @@
+[
+  {
+    "id": "af-map01",
+    "title": "Carte de planification : Fiabilité des tâches planifiées",
+    "status": "open",
+    "issue_type": "epic",
+    "labels": ["wayfinder:map"],
+    "metadata": {"gc.project_id": "agent-factory", "gc.plane": "planning"}
+  }
+]
