@@ -1,0 +1,14 @@
+[
+  {
+    "id": "af-spec41",
+    "title": "Spec — Export KML",
+    "status": "closed",
+    "issue_type": "task",
+    "labels": [],
+    "metadata": {
+      "gc.project_id": "agent-factory",
+      "spec_state": "DRAFT_SPEC",
+      "gc.chantier_abandon_reason": "Superseded by af-spec41b"
+    }
+  }
+]

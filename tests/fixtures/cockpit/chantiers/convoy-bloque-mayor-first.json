@@ -1,0 +1,18 @@
+[
+  {
+    "id": "af-convoy24",
+    "title": "Graphe de tickets — Export ICS",
+    "status": "open",
+    "issue_type": "convoy",
+    "labels": ["approved-ticket-graph"],
+    "metadata": {"gc.project_id": "saymyname", "gc.graph_digest": "sha256:ccc24"}
+  },
+  {
+    "id": "af-tk24",
+    "title": "T24 — Export ICS",
+    "status": "in_progress",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:ccc24", "gc.mayor_first_since": "1700000000"}
+  }
+]

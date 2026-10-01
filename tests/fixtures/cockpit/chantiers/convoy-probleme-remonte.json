@@ -1,0 +1,18 @@
+[
+  {
+    "id": "af-convoy25",
+    "title": "Graphe de tickets — Export vCard",
+    "status": "open",
+    "issue_type": "convoy",
+    "labels": ["approved-ticket-graph"],
+    "metadata": {"gc.project_id": "saymyname", "gc.graph_digest": "sha256:ccc25"}
+  },
+  {
+    "id": "af-tk25",
+    "title": "T25 — Export vCard",
+    "status": "in_progress",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:ccc25", "gc.needs_benjamin": "bloquant"}
+  }
+]

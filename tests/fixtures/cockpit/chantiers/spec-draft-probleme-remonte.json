@@ -1,0 +1,10 @@
+[
+  {
+    "id": "af-spec31",
+    "title": "Spec — Export OFX v2",
+    "status": "open",
+    "issue_type": "task",
+    "labels": [],
+    "metadata": {"gc.project_id": "agent-factory", "spec_state": "DRAFT_SPEC", "gc.needs_benjamin": "a_faire"}
+  }
+]
