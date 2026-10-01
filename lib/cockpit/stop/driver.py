@@ -17,6 +17,14 @@ the exact value the heartbeat pauses on), ``redemarrage``,
 ``reprise_verifiee``, ``reprise_avec_ecarts``, ``arret_force``,
 ``arret_interrompu``.
 
+``essai_reussi()`` (T24, af-j2mkpa -- spec "Bouton masqué tant que ... qu'un
+essai réel déclenché par Benjamin n'a pas réussi") is the persisted trace
+the stop button's render checks to switch from "essai" mode to a normal
+button: it flips to ``True`` the first time a resume reaches
+``reprise_verifiee`` and, like every other field here, is carried by
+``state_store`` so a cockpit restart never forgets a trial already proven
+successful.
+
 State is persisted through ``state_store`` (same
 :class:`~cockpit.notify.state_store.JsonFileStateStore` /
 ``InMemoryStateStore`` seam as the notify engine) after every transition,
@@ -130,6 +138,7 @@ class StopDriver:
         self._no_progress_flagged = saved.get("no_progress_flagged", False)
         self._perdu = saved.get("perdu", [])
         self._ecarts = saved.get("ecarts", [])
+        self._essai_reussi = saved.get("essai_reussi", False)
         # Only the very first tick after a process restart can discover an
         # "Arrêt interrompu" -- every later tick behaves exactly like an
         # uninterrupted arret_en_cours.
@@ -150,6 +159,7 @@ class StopDriver:
                 "no_progress_flagged": self._no_progress_flagged,
                 "perdu": self._perdu,
                 "ecarts": self._ecarts,
+                "essai_reussi": self._essai_reussi,
             }
         )
 
@@ -163,6 +173,11 @@ class StopDriver:
 
     def ecarts(self):
         return list(self._ecarts)
+
+    def essai_reussi(self):
+        """spec: le bouton d'arrêt devient normal seulement quand une trace
+        d'essai réel réussi (arrêt propre puis reprise vérifiée) existe."""
+        return self._essai_reussi
 
     def label(self):
         if self._state == EN_MARCHE:
@@ -308,4 +323,5 @@ class StopDriver:
         else:
             self._ecarts = []
             self._state = REPRISE_VERIFIEE
+            self._essai_reussi = True
         self._save()
