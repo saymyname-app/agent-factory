@@ -173,10 +173,24 @@ class ActionsSeamTest(unittest.TestCase):
         with urllib.request.urlopen(req, timeout=3) as resp:
             return resp.read().decode("utf-8")
 
+    def force_recheck(self):
+        """Forces every poller to re-read now (the health zone's
+        "revérifier maintenant", spec .65) instead of waiting on its own
+        background interval — a wait_for_requests check that races a
+        polling interval under a loaded CI runner's subprocess-spawn
+        latency is what made this flaky (observed: PR #372 CI runs
+        36788068757, 36795195349)."""
+        req = urllib.request.Request(
+            "http://127.0.0.1:%d/api/health/recheck" % self.port, method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            resp.read()
+
     def wait_for_requests(self, predicate, timeout=5):
         return wait_until(lambda: self._try(predicate), timeout=timeout)
 
     def _try(self, predicate):
+        self.force_recheck()
         payload = self.requests_payload()
         return payload if predicate(payload) else None
 
@@ -347,8 +361,12 @@ class ActionsSeamTest(unittest.TestCase):
         status, _ = self.post_action("reporter", {"bead_id": "af-hhhh", "option": "libre", "custom_epoch": time.time() + 1.0})
         self.assertEqual(200, status)
 
-        self.wait_for_requests(lambda p: len(p["requests"]) == 0)
-        self.wait_for_requests(lambda p: len(p["requests"]) == 1, timeout=5)
+        # Each poll re-spawns the fake-bd subprocess fixture; under a loaded
+        # CI runner that occasionally takes long enough to blow the default
+        # 5s wait even though the 1s deferral itself is short (observed:
+        # PR #372 CI run 36788068757).
+        self.wait_for_requests(lambda p: len(p["requests"]) == 0, timeout=15)
+        self.wait_for_requests(lambda p: len(p["requests"]) == 1, timeout=15)
 
     def test_urgent_reported_stays_visible_greyed(self):
         self.write_beads([escalation_bead("af-iiii", "l'usine est muette", "rien ne répond", SOME_OPTIONS, "2026-09-30T08:00:00Z", bloquant=True)])
