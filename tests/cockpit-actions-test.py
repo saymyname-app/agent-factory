@@ -347,8 +347,12 @@ class ActionsSeamTest(unittest.TestCase):
         status, _ = self.post_action("reporter", {"bead_id": "af-hhhh", "option": "libre", "custom_epoch": time.time() + 1.0})
         self.assertEqual(200, status)
 
-        self.wait_for_requests(lambda p: len(p["requests"]) == 0)
-        self.wait_for_requests(lambda p: len(p["requests"]) == 1, timeout=5)
+        # Each poll re-spawns the fake-bd subprocess fixture; under a loaded
+        # CI runner that occasionally takes long enough to blow the default
+        # 5s wait even though the 1s deferral itself is short (observed:
+        # PR #372 CI run 36788068757).
+        self.wait_for_requests(lambda p: len(p["requests"]) == 0, timeout=15)
+        self.wait_for_requests(lambda p: len(p["requests"]) == 1, timeout=15)
 
     def test_urgent_reported_stays_visible_greyed(self):
         self.write_beads([escalation_bead("af-iiii", "l'usine est muette", "rien ne répond", SOME_OPTIONS, "2026-09-30T08:00:00Z", bloquant=True)])
