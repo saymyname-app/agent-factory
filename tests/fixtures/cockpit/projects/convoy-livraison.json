@@ -1,0 +1,42 @@
+[
+  {
+    "id": "af-convoy01",
+    "title": "Graphe de tickets — Export des listes",
+    "status": "open",
+    "issue_type": "convoy",
+    "labels": ["approved-ticket-graph"],
+    "metadata": {"gc.project_id": "saymyname", "gc.graph_digest": "sha256:aaa"}
+  },
+  {
+    "id": "af-tk01",
+    "title": "T01 — Export CSV",
+    "status": "closed",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:aaa"}
+  },
+  {
+    "id": "af-tk02",
+    "title": "T02 — Export JSON",
+    "status": "in_progress",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:aaa", "gc.delivery_status": "waiting"}
+  },
+  {
+    "id": "af-tk03",
+    "title": "T03 — Export PDF",
+    "status": "in_progress",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:aaa"}
+  },
+  {
+    "id": "af-tk04",
+    "title": "T04 — Export XML",
+    "status": "open",
+    "issue_type": "task",
+    "labels": ["approved-ticket-graph", "delivery-plane"],
+    "metadata": {"gc.graph_digest": "sha256:aaa"}
+  }
+]

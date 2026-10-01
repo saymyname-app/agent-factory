@@ -1,0 +1,18 @@
+[
+  {
+    "id": "af-spec02",
+    "title": "Spec — Fiabilité des tâches planifiées",
+    "status": "open",
+    "issue_type": "task",
+    "labels": [],
+    "metadata": {"gc.project_id": "agent-factory", "spec_state": "APPROVED_SPEC", "gc.plane": "planning"}
+  },
+  {
+    "id": "af-draft01",
+    "title": "Graphe de tickets — Fiabilité des tâches planifiées",
+    "status": "open",
+    "issue_type": "task",
+    "labels": ["ticket-graph-draft"],
+    "metadata": {"gc.project_id": "agent-factory", "spec_id": "af-spec02", "gc.plane": "planning"}
+  }
+]
