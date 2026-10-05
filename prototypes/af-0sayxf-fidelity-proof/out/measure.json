@@ -1,0 +1,1199 @@
+{
+ "viewports": {
+  "pc": {
+   "anchors": [
+    {
+     "anchor": "page",
+     "verdict": "5 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "line-height",
+       "proto": "23.2px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "padding",
+       "proto": "0px 16px 110px",
+       "deliv": "0px"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": null,
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "1264 x 1458",
+       "deliv": "1280 x 1433"
+      }
+     ]
+    },
+    {
+     "anchor": "entete",
+     "verdict": "9 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "font-size",
+       "proto": "16px",
+       "deliv": "19px"
+      },
+      {
+       "prop": "line-height",
+       "proto": "23.2px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "color",
+       "proto": "rgb(21, 27, 38)",
+       "deliv": "rgb(31, 123, 75)"
+      },
+      {
+       "prop": "background-color",
+       "proto": "rgba(0, 0, 0, 0)",
+       "deliv": "rgb(255, 255, 255)"
+      },
+      {
+       "prop": "padding",
+       "proto": "18px 0px 10px",
+       "deliv": "12px 16px"
+      },
+      {
+       "prop": "display",
+       "proto": "flex",
+       "deliv": "block"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": null,
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "1232 x 56",
+       "deliv": "1280 x 47"
+      }
+     ]
+    },
+    {
+     "anchor": "marque (h1)",
+     "verdict": "ABSENT DU LIVRE"
+    },
+    {
+     "anchor": "ligne d'etat",
+     "verdict": "9 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "font-size",
+       "proto": "14px",
+       "deliv": "19px"
+      },
+      {
+       "prop": "line-height",
+       "proto": "20.3px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "color",
+       "proto": "rgb(21, 27, 38)",
+       "deliv": "rgb(31, 123, 75)"
+      },
+      {
+       "prop": "border-radius",
+       "proto": "10px",
+       "deliv": "0px"
+      },
+      {
+       "prop": "padding",
+       "proto": "10px 14px",
+       "deliv": "12px 16px"
+      },
+      {
+       "prop": "display",
+       "proto": "flex",
+       "deliv": "block"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": "Atkinson Hyperlegible Next",
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "1232 x 46",
+       "deliv": "1280 x 47"
+      }
+     ]
+    },
+    {
+     "anchor": "boite de reception",
+     "verdict": "5 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "line-height",
+       "proto": "23.2px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "display",
+       "proto": "grid",
+       "deliv": "block"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": null,
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "1232 x 614",
+       "deliv": "1280 x 1224"
+      }
+     ]
+    },
+    {
+     "anchor": "titre Ce qui t'attend",
+     "verdict": "7 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "font-size",
+       "proto": "16px",
+       "deliv": "24px"
+      },
+      {
+       "prop": "line-height",
+       "proto": "23.2px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "padding",
+       "proto": "12px 14px",
+       "deliv": "0px"
+      },
+      {
+       "prop": "display",
+       "proto": "flex",
+       "deliv": "block"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": "Atkinson Hyperlegible Next",
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "496 x 48",
+       "deliv": "1280 x 28"
+      }
+     ]
+    },
+    {
+     "anchor": "ligne de demande",
+     "verdict": "8 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "font-size",
+       "proto": "14px",
+       "deliv": "16px"
+      },
+      {
+       "prop": "line-height",
+       "proto": "20.3px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "background-color",
+       "proto": "rgb(227, 232, 250)",
+       "deliv": "rgba(0, 0, 0, 0)"
+      },
+      {
+       "prop": "padding",
+       "proto": "11px 14px",
+       "deliv": "0px"
+      },
+      {
+       "prop": "display",
+       "proto": "grid",
+       "deliv": "list-item"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": "Atkinson Hyperlegible Mono ExtraLight",
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "496 x 80",
+       "deliv": "1240 x 294"
+      }
+     ]
+    },
+    {
+     "anchor": "demande : quoi",
+     "verdict": "6 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "font-size",
+       "proto": "14px",
+       "deliv": "16px"
+      },
+      {
+       "prop": "font-weight",
+       "proto": "600",
+       "deliv": "400"
+      },
+      {
+       "prop": "line-height",
+       "proto": "18.9px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": "Atkinson Hyperlegible Next",
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "398 x 38",
+       "deliv": "1240 x 19"
+      }
+     ]
+    },
+    {
+     "anchor": "demande : niveau",
+     "verdict": "8 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "font-size",
+       "proto": "12.5px",
+       "deliv": "16px"
+      },
+      {
+       "prop": "font-weight",
+       "proto": "600",
+       "deliv": "400"
+      },
+      {
+       "prop": "line-height",
+       "proto": "18.125px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "color",
+       "proto": "rgb(194, 45, 37)",
+       "deliv": "rgb(21, 27, 38)"
+      },
+      {
+       "prop": "display",
+       "proto": "flex",
+       "deliv": "inline"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": "Atkinson Hyperlegible Next",
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "678 x 18",
+       "deliv": "54 x 19"
+      }
+     ]
+    },
+    {
+     "anchor": "panneau de detail",
+     "verdict": "ABSENT DU LIVRE"
+    },
+    {
+     "anchor": "bouton d'action",
+     "verdict": "9 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "Arial"
+      },
+      {
+       "prop": "font-weight",
+       "proto": "600",
+       "deliv": "400"
+      },
+      {
+       "prop": "line-height",
+       "proto": "20.3px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "background-color",
+       "proto": "rgb(255, 255, 255)",
+       "deliv": "rgb(234, 238, 244)"
+      },
+      {
+       "prop": "border-radius",
+       "proto": "8px",
+       "deliv": "10px"
+      },
+      {
+       "prop": "padding",
+       "proto": "7px 12px",
+       "deliv": "6px 10px"
+      },
+      {
+       "prop": "display",
+       "proto": "flex",
+       "deliv": "block"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": "Atkinson Hyperlegible Mono ExtraLight",
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "678 x 102",
+       "deliv": "87 x 30"
+      }
+     ]
+    },
+    {
+     "anchor": "heure",
+     "verdict": "ABSENT DU LIVRE"
+    },
+    {
+     "anchor": "zone Projets",
+     "verdict": "ABSENT DU LIVRE"
+    },
+    {
+     "anchor": "carte projet",
+     "verdict": "ABSENT DU LIVRE"
+    },
+    {
+     "anchor": "bascule de theme",
+     "verdict": "ABSENT DU LIVRE"
+    }
+   ],
+   "fontsLoaded": {
+    "proto": [
+     "Atkinson Hyperlegible Mono 400",
+     "Atkinson Hyperlegible Mono 600",
+     "Atkinson Hyperlegible Next 400",
+     "Atkinson Hyperlegible Next 600",
+     "Atkinson Hyperlegible Next 700"
+    ],
+    "deliv": []
+   },
+   "overflowX": {
+    "proto": false,
+    "deliv": false
+   },
+   "aria": {
+    "proto": "- banner:\n  - heading \"Cockpit\" [level=1]\n  - text: usine + projets\n- text: En marche 2 agents au travail · l'usine corrige seule 1 problème · version en retard de 3 commits Tout est à jour à\n- time: 14:32\n- text: (Paris)\n- button \"Revérifier\"\n- heading \"Ce qui t'attend 6\" [level=2]\n- button \"Les tests automatiques échouent pour la 3e fois sur la PR « Export des listes ». SayMyName 13:10\":\n  - text: Les tests automatiques échouent pour la 3e fois sur la PR « Export des listes ». SayMyName\n  - time: 13:10\n- button \"La Spec « Rappels de rituels » est prête et attend ton approbation. Usine 12:47\":\n  - text: La Spec « Rappels de rituels » est prête et attend ton approbation. Usine\n  - time: 12:47\n- button \"Un agent demande ta décision sur « Nettoyage des branches anciennes ». SayMyName · incomplète 09:55\":\n  - text: Un agent demande ta décision sur « Nettoyage des branches anciennes ». SayMyName · incomplète\n  - time: 09:55\n- 'button \"Proposition : regrouper en une seule les alertes en double des tests automatiques. Usine hier 18:20\"':\n  - text: \"Proposition : regrouper en une seule les alertes en double des tests automatiques. Usine\"\n  - time: hier 18:20\n- 'button \"Ticket prêt à lancer : « Prototype de la page projet » (carte Cockpit V2). Usine 11:21\"':\n  - text: \"Ticket prêt à lancer : « Prototype de la page projet » (carte Cockpit V2). Usine\"\n  - time: 11:21\n- 'button \"Rituel dû : revue hebdomadaire des décisions. SayMyName 08:00\"':\n  - text: \"Rituel dû : revue hebdomadaire des décisions. SayMyName\"\n  - time: 08:00\n- text: \"Urgent Les tests automatiques échouent pour la 3e fois sur la PR « Export des listes ». Pourquoi ça t'attend L'usine a essayé de corriger seule pendant 2 h ; la suite demande un choix de ton niveau. Que faire Choisis la suite :\"\n- 'button \"a Relancer avec un délai de test doublé Recommandé Le ticket reste dans le graphe ; si l''export est seulement lent, la PR passe. Environ 20 min de tests en plus. Pourquoi recommandé : Les 3 échecs sont des dépassements de délai, pas des erreurs.\"'\n- 'button \"b Retirer ce ticket du graphe et continuer Le chantier se termine sans l''export des listes. Rien d''autre n''en dépend : rien ne casse. L''export devra revenir comme nouveau travail.\"'\n- button \"Autre → agent\"\n- button \"Acquitter\"\n- button \"Reporter\"\n- paragraph: \"Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu'à l'heure choisie, puis elle revient. Aucun des deux ne change rien dans l'usine.\"\n- text: SayMyName depuis\n- time: 13:10\n- text: vérifié\n- time: 14:32\n- group: ▸ Détails\n- heading \"Projets\" [level=2]\n- heading \"SayMyName\" [level=3]\n- text: \"Roadmap : Bêta privée ·\"\n- link \"Page projet\":\n  - /url: \"#d\"\n- text: Export des listes Livraison · 5/9 tickets mergés · 2 en cours · 1 en PR\n- button \"Problème remonté →\"\n- text: \"Page d'accueil publique Livré · Livré le 29/09 : à accepter\"\n- button \"À toi de jouer →\"\n- text: \"Invitations par lien Spec · Spec en rédaction dev a 14 commits d'avance sur main : promotion à ta main.\"\n- heading \"Usine\" [level=3]\n- text: \"Roadmap : A7 · Cockpit V2 ·\"\n- link \"Page projet\":\n  - /url: \"#d\"\n- text: \"Cockpit V2 Cadrage · Carte de planification : 9/15 décisions\"\n- button \"À toi de jouer →\"\n- text: \"Rappels de rituels Spec · Spec prête : à approuver\"\n- button \"À toi de jouer →\"\n- text: Fiabilité des tâches planifiées Livraison · 11/13 tickets mergés · 1 en cours · 1 en PR",
+    "deliv": "- banner: Tout est à jour à 14:26 (Paris)\n- heading \"Ce qui t'attend\" [level=2]\n- list:\n  - listitem:\n    - text: Urgent\n    - paragraph: l'usine est muette\n    - paragraph: plus rien ne repond depuis 20 minutes\n    - paragraph: Approuver — le graphe est publie et la livraison demarre Recommandé — la Spec est approuvee et le graphe la couvre\n    - paragraph: Renvoyer en planification — rien ne demarre, la carte est rouverte\n    - paragraph: usine · depuis 11:00 · vérifié 14:26\n    - group: Détails\n    - button \"Acquitter\"\n    - combobox:\n      - option \"Dans 1 h\" [selected]\n      - option \"Dans 4 h\"\n      - option \"Demain 09:00\"\n      - option \"Heure libre\"\n    - button \"Reporter\"\n    - button \"Continuer avec un agent (utilise un agent — consomme des tokens)\"\n    - paragraph: \"Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu'à l'heure choisie, puis elle revient. Aucun des deux ne change rien dans l'usine.\"\n  - listitem:\n    - text: À faire\n    - paragraph: une Spec attend ton accord\n    - paragraph: elle change la portee du travail livre\n    - paragraph: Approuver — le graphe est publie et la livraison demarre Recommandé — la Spec est approuvee et le graphe la couvre\n    - paragraph: Renvoyer en planification — rien ne demarre, la carte est rouverte\n    - paragraph: agent-factory · depuis 10:00 · vérifié 14:26\n    - group: Détails\n    - combobox:\n      - option \"Dans 1 h\" [selected]\n      - option \"Dans 4 h\"\n      - option \"Demain 09:00\"\n      - option \"Heure libre\"\n    - button \"Reporter\"\n    - button \"Continuer avec un agent (utilise un agent — consomme des tokens)\"\n    - paragraph: \"Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu'à l'heure choisie, puis elle revient. Aucun des deux ne change rien dans l'usine.\"\n  - listitem:\n    - text: À faire\n    - paragraph: un graphe de tickets attend ton accord\n    - paragraph: 12 tickets, 3 vagues\n    - paragraph: Approuver — le graphe est publie et la livraison demarre Recommandé — la Spec est approuvee et le graphe la couvre\n    - paragraph: Renvoyer en planification — rien ne demarre, la carte est rouverte\n    - paragraph: saymyname · depuis 10:30 · vérifié 14:26\n    - group: Détails\n    - combobox:\n      - option \"Dans 1 h\" [selected]\n      - option \"Dans 4 h\"\n      - option \"Demain 09:00\"\n      - option \"Heure libre\"\n    - button \"Reporter\"\n    - button \"Continuer avec un agent (utilise un agent — consomme des tokens)\"\n    - paragraph: \"Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu'à l'heure choisie, puis elle revient. Aucun des deux ne change rien dans l'usine.\"\n  - listitem:\n    - text: Quand tu veux\n    - paragraph: regrouper deux rituels\n    - paragraph: ils se recoupent\n    - paragraph: Approuver — le graphe est publie et la livraison demarre Recommandé — la Spec est approuvee et le graphe la couvre\n    - paragraph: Renvoyer en planification — rien ne demarre, la carte est rouverte\n    - paragraph: usine · depuis 09:00 · vérifié 14:26\n    - group: Détails\n    - combobox:\n      - option \"Dans 1 h\" [selected]\n      - option \"Dans 4 h\"\n      - option \"Demain 09:00\"\n      - option \"Heure libre\"\n    - button \"Reporter\"\n    - button \"Continuer avec un agent (utilise un agent — consomme des tokens)\"\n    - paragraph: \"Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu'à l'heure choisie, puis elle revient. Aucun des deux ne change rien dans l'usine.\"\n- heading \"Zone santé de l'usine\" [level=2]\n- paragraph: Aucun problème détecté.\n- paragraph: Vérifié à 14:26\n- button \"Revérifier maintenant\"",
+    "roleCounts": {
+     "proto": {
+      "banner:": 1,
+      "heading \"\" [level=1]": 1,
+      "text": 20,
+      "time": 9,
+      "button \"\"": 8,
+      "heading \"\" [level=2]": 2,
+      "button \"\":": 3,
+      "'button \"\"':": 3,
+      "'button \"\"'": 2,
+      "paragraph": 1,
+      "group": 1,
+      "heading \"\" [level=3]": 2,
+      "link \"\":": 2,
+      "/url": 2
+     },
+     "deliv": {
+      "banner": 1,
+      "heading \"\" [level=2]": 2,
+      "list:": 1,
+      "listitem:": 4,
+      "text": 4,
+      "paragraph": 26,
+      "group": 4,
+      "button \"\"": 10,
+      "combobox:": 4,
+      "option \"\" [selected]": 4,
+      "option \"\"": 12
+     }
+    }
+   }
+  },
+  "phone": {
+   "anchors": [
+    {
+     "anchor": "page",
+     "verdict": "5 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "line-height",
+       "proto": "23.2px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "padding",
+       "proto": "0px 16px 110px",
+       "deliv": "0px"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": null,
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "374 x 1702",
+       "deliv": "390 x 1997"
+      }
+     ]
+    },
+    {
+     "anchor": "entete",
+     "verdict": "9 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "font-size",
+       "proto": "16px",
+       "deliv": "19px"
+      },
+      {
+       "prop": "line-height",
+       "proto": "23.2px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "color",
+       "proto": "rgb(21, 27, 38)",
+       "deliv": "rgb(31, 123, 75)"
+      },
+      {
+       "prop": "background-color",
+       "proto": "rgba(0, 0, 0, 0)",
+       "deliv": "rgb(255, 255, 255)"
+      },
+      {
+       "prop": "padding",
+       "proto": "18px 0px 10px",
+       "deliv": "12px 16px"
+      },
+      {
+       "prop": "display",
+       "proto": "flex",
+       "deliv": "block"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": null,
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "342 x 56",
+       "deliv": "390 x 47"
+      }
+     ]
+    },
+    {
+     "anchor": "marque (h1)",
+     "verdict": "ABSENT DU LIVRE"
+    },
+    {
+     "anchor": "ligne d'etat",
+     "verdict": "9 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "font-size",
+       "proto": "14px",
+       "deliv": "19px"
+      },
+      {
+       "prop": "line-height",
+       "proto": "20.3px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "color",
+       "proto": "rgb(21, 27, 38)",
+       "deliv": "rgb(31, 123, 75)"
+      },
+      {
+       "prop": "border-radius",
+       "proto": "10px",
+       "deliv": "0px"
+      },
+      {
+       "prop": "padding",
+       "proto": "10px 14px",
+       "deliv": "12px 16px"
+      },
+      {
+       "prop": "display",
+       "proto": "flex",
+       "deliv": "block"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": "Atkinson Hyperlegible Next",
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "342 x 139",
+       "deliv": "390 x 47"
+      }
+     ]
+    },
+    {
+     "anchor": "boite de reception",
+     "verdict": "5 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "line-height",
+       "proto": "23.2px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "display",
+       "proto": "grid",
+       "deliv": "block"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": null,
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "342 x 593",
+       "deliv": "390 x 1788"
+      }
+     ]
+    },
+    {
+     "anchor": "titre Ce qui t'attend",
+     "verdict": "7 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "font-size",
+       "proto": "16px",
+       "deliv": "24px"
+      },
+      {
+       "prop": "line-height",
+       "proto": "23.2px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "padding",
+       "proto": "12px 14px",
+       "deliv": "0px"
+      },
+      {
+       "prop": "display",
+       "proto": "flex",
+       "deliv": "block"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": "Atkinson Hyperlegible Next",
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "340 x 48",
+       "deliv": "390 x 28"
+      }
+     ]
+    },
+    {
+     "anchor": "ligne de demande",
+     "verdict": "8 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "font-size",
+       "proto": "14px",
+       "deliv": "16px"
+      },
+      {
+       "prop": "line-height",
+       "proto": "20.3px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "background-color",
+       "proto": "rgb(227, 232, 250)",
+       "deliv": "rgba(0, 0, 0, 0)"
+      },
+      {
+       "prop": "padding",
+       "proto": "11px 14px",
+       "deliv": "0px"
+      },
+      {
+       "prop": "display",
+       "proto": "grid",
+       "deliv": "list-item"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": "Atkinson Hyperlegible Mono ExtraLight",
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "340 x 99",
+       "deliv": "350 x 435"
+      }
+     ]
+    },
+    {
+     "anchor": "demande : quoi",
+     "verdict": "6 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "font-size",
+       "proto": "14px",
+       "deliv": "16px"
+      },
+      {
+       "prop": "font-weight",
+       "proto": "600",
+       "deliv": "400"
+      },
+      {
+       "prop": "line-height",
+       "proto": "18.9px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": "Atkinson Hyperlegible Next",
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "242 x 57",
+       "deliv": "350 x 19"
+      }
+     ]
+    },
+    {
+     "anchor": "demande : niveau",
+     "verdict": "8 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "\"Atkinson Hyperlegible Next\", \"Atkinson Hyperlegible\", system-ui, sans-serif"
+      },
+      {
+       "prop": "font-size",
+       "proto": "12.5px",
+       "deliv": "16px"
+      },
+      {
+       "prop": "font-weight",
+       "proto": "600",
+       "deliv": "400"
+      },
+      {
+       "prop": "line-height",
+       "proto": "18.125px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "color",
+       "proto": "rgb(194, 45, 37)",
+       "deliv": "rgb(21, 27, 38)"
+      },
+      {
+       "prop": "display",
+       "proto": "inline-flex",
+       "deliv": "inline"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": null,
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "0 x 0",
+       "deliv": "54 x 19"
+      }
+     ]
+    },
+    {
+     "anchor": "panneau de detail",
+     "verdict": "ABSENT DU LIVRE"
+    },
+    {
+     "anchor": "bouton d'action",
+     "verdict": "9 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-family",
+       "proto": "\"Atkinson Hyperlegible Next\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+       "deliv": "Arial"
+      },
+      {
+       "prop": "font-weight",
+       "proto": "600",
+       "deliv": "400"
+      },
+      {
+       "prop": "line-height",
+       "proto": "20.3px",
+       "deliv": "normal"
+      },
+      {
+       "prop": "background-color",
+       "proto": "rgb(255, 255, 255)",
+       "deliv": "rgb(234, 238, 244)"
+      },
+      {
+       "prop": "border-radius",
+       "proto": "8px",
+       "deliv": "10px"
+      },
+      {
+       "prop": "padding",
+       "proto": "7px 12px",
+       "deliv": "6px 10px"
+      },
+      {
+       "prop": "display",
+       "proto": "flex",
+       "deliv": "block"
+      },
+      {
+       "prop": "renderedFont",
+       "proto": null,
+       "deliv": "DejaVu Sans"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "0 x 0",
+       "deliv": "87 x 30"
+      }
+     ]
+    },
+    {
+     "anchor": "heure",
+     "verdict": "ABSENT DU LIVRE"
+    },
+    {
+     "anchor": "zone Projets",
+     "verdict": "ABSENT DU LIVRE"
+    },
+    {
+     "anchor": "carte projet",
+     "verdict": "ABSENT DU LIVRE"
+    },
+    {
+     "anchor": "bascule de theme",
+     "verdict": "ABSENT DU LIVRE"
+    }
+   ],
+   "fontsLoaded": {
+    "proto": [
+     "Atkinson Hyperlegible Mono 400",
+     "Atkinson Hyperlegible Mono 600",
+     "Atkinson Hyperlegible Next 400",
+     "Atkinson Hyperlegible Next 600",
+     "Atkinson Hyperlegible Next 700"
+    ],
+    "deliv": []
+   },
+   "overflowX": {
+    "proto": false,
+    "deliv": false
+   },
+   "aria": {
+    "proto": "- banner:\n  - heading \"Cockpit\" [level=1]\n  - text: usine + projets\n- text: En marche 2 agents au travail · l'usine corrige seule 1 problème · version en retard de 3 commits Tout est à jour à\n- time: 14:32\n- text: (Paris)\n- button \"Revérifier\"\n- heading \"Ce qui t'attend 6\" [level=2]\n- button \"Les tests automatiques échouent pour la 3e fois sur la PR « Export des listes ». SayMyName 13:10\":\n  - text: Les tests automatiques échouent pour la 3e fois sur la PR « Export des listes ». SayMyName\n  - time: 13:10\n- button \"La Spec « Rappels de rituels » est prête et attend ton approbation. Usine 12:47\":\n  - text: La Spec « Rappels de rituels » est prête et attend ton approbation. Usine\n  - time: 12:47\n- button \"Un agent demande ta décision sur « Nettoyage des branches anciennes ». SayMyName · incomplète 09:55\":\n  - text: Un agent demande ta décision sur « Nettoyage des branches anciennes ». SayMyName · incomplète\n  - time: 09:55\n- 'button \"Proposition : regrouper en une seule les alertes en double des tests automatiques. Usine hier 18:20\"':\n  - text: \"Proposition : regrouper en une seule les alertes en double des tests automatiques. Usine\"\n  - time: hier 18:20\n- 'button \"Ticket prêt à lancer : « Prototype de la page projet » (carte Cockpit V2). Usine 11:21\"':\n  - text: \"Ticket prêt à lancer : « Prototype de la page projet » (carte Cockpit V2). Usine\"\n  - time: 11:21\n- 'button \"Rituel dû : revue hebdomadaire des décisions. SayMyName 08:00\"':\n  - text: \"Rituel dû : revue hebdomadaire des décisions. SayMyName\"\n  - time: 08:00\n- heading \"Projets\" [level=2]\n- heading \"SayMyName\" [level=3]\n- text: \"Roadmap : Bêta privée ·\"\n- link \"Page projet\":\n  - /url: \"#d\"\n- text: Export des listes Livraison · 5/9 tickets mergés · 2 en cours · 1 en PR\n- button \"Problème remonté →\"\n- text: \"Page d'accueil publique Livré · Livré le 29/09 : à accepter\"\n- button \"À toi de jouer →\"\n- text: \"Invitations par lien Spec · Spec en rédaction dev a 14 commits d'avance sur main : promotion à ta main.\"\n- heading \"Usine\" [level=3]\n- text: \"Roadmap : A7 · Cockpit V2 ·\"\n- link \"Page projet\":\n  - /url: \"#d\"\n- text: \"Cockpit V2 Cadrage · Carte de planification : 9/15 décisions\"\n- button \"À toi de jouer →\"\n- text: \"Rappels de rituels Spec · Spec prête : à approuver\"\n- button \"À toi de jouer →\"\n- text: Fiabilité des tâches planifiées Livraison · 11/13 tickets mergés · 1 en cours · 1 en PR",
+    "deliv": "- banner: Tout est à jour à 14:26 (Paris)\n- heading \"Ce qui t'attend\" [level=2]\n- list:\n  - listitem:\n    - text: Urgent\n    - paragraph: l'usine est muette\n    - paragraph: plus rien ne repond depuis 20 minutes\n    - paragraph: Approuver — le graphe est publie et la livraison demarre Recommandé — la Spec est approuvee et le graphe la couvre\n    - paragraph: Renvoyer en planification — rien ne demarre, la carte est rouverte\n    - paragraph: usine · depuis 11:00 · vérifié 14:26\n    - group: Détails\n    - button \"Acquitter\"\n    - combobox:\n      - option \"Dans 1 h\" [selected]\n      - option \"Dans 4 h\"\n      - option \"Demain 09:00\"\n      - option \"Heure libre\"\n    - button \"Reporter\"\n    - button \"Continuer avec un agent (utilise un agent — consomme des tokens)\"\n    - paragraph: \"Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu'à l'heure choisie, puis elle revient. Aucun des deux ne change rien dans l'usine.\"\n  - listitem:\n    - text: À faire\n    - paragraph: une Spec attend ton accord\n    - paragraph: elle change la portee du travail livre\n    - paragraph: Approuver — le graphe est publie et la livraison demarre Recommandé — la Spec est approuvee et le graphe la couvre\n    - paragraph: Renvoyer en planification — rien ne demarre, la carte est rouverte\n    - paragraph: agent-factory · depuis 10:00 · vérifié 14:26\n    - group: Détails\n    - combobox:\n      - option \"Dans 1 h\" [selected]\n      - option \"Dans 4 h\"\n      - option \"Demain 09:00\"\n      - option \"Heure libre\"\n    - button \"Reporter\"\n    - button \"Continuer avec un agent (utilise un agent — consomme des tokens)\"\n    - paragraph: \"Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu'à l'heure choisie, puis elle revient. Aucun des deux ne change rien dans l'usine.\"\n  - listitem:\n    - text: À faire\n    - paragraph: un graphe de tickets attend ton accord\n    - paragraph: 12 tickets, 3 vagues\n    - paragraph: Approuver — le graphe est publie et la livraison demarre Recommandé — la Spec est approuvee et le graphe la couvre\n    - paragraph: Renvoyer en planification — rien ne demarre, la carte est rouverte\n    - paragraph: saymyname · depuis 10:30 · vérifié 14:26\n    - group: Détails\n    - combobox:\n      - option \"Dans 1 h\" [selected]\n      - option \"Dans 4 h\"\n      - option \"Demain 09:00\"\n      - option \"Heure libre\"\n    - button \"Reporter\"\n    - button \"Continuer avec un agent (utilise un agent — consomme des tokens)\"\n    - paragraph: \"Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu'à l'heure choisie, puis elle revient. Aucun des deux ne change rien dans l'usine.\"\n  - listitem:\n    - text: Quand tu veux\n    - paragraph: regrouper deux rituels\n    - paragraph: ils se recoupent\n    - paragraph: Approuver — le graphe est publie et la livraison demarre Recommandé — la Spec est approuvee et le graphe la couvre\n    - paragraph: Renvoyer en planification — rien ne demarre, la carte est rouverte\n    - paragraph: usine · depuis 09:00 · vérifié 14:26\n    - group: Détails\n    - combobox:\n      - option \"Dans 1 h\" [selected]\n      - option \"Dans 4 h\"\n      - option \"Demain 09:00\"\n      - option \"Heure libre\"\n    - button \"Reporter\"\n    - button \"Continuer avec un agent (utilise un agent — consomme des tokens)\"\n    - paragraph: \"Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu'à l'heure choisie, puis elle revient. Aucun des deux ne change rien dans l'usine.\"\n- heading \"Zone santé de l'usine\" [level=2]\n- paragraph: Aucun problème détecté.\n- paragraph: Vérifié à 14:26\n- button \"Revérifier maintenant\"",
+    "roleCounts": {
+     "proto": {
+      "banner:": 1,
+      "heading \"\" [level=1]": 1,
+      "text": 17,
+      "time": 7,
+      "button \"\"": 5,
+      "heading \"\" [level=2]": 2,
+      "button \"\":": 3,
+      "'button \"\"':": 3,
+      "heading \"\" [level=3]": 2,
+      "link \"\":": 2,
+      "/url": 2
+     },
+     "deliv": {
+      "banner": 1,
+      "heading \"\" [level=2]": 2,
+      "list:": 1,
+      "listitem:": 4,
+      "text": 4,
+      "paragraph": 26,
+      "group": 4,
+      "button \"\"": 10,
+      "combobox:": 4,
+      "option \"\" [selected]": 4,
+      "option \"\"": 12
+     }
+    }
+   }
+  }
+ },
+ "pixel": {
+  "pc": {
+   "prototype vs livre": 12.2,
+   "temoin : prototype vs prototype (meme page, 2 captures)": 0,
+   "temoin : prototype vs prototype, autre scenario de donnees": 12.46
+  },
+  "phone": {
+   "prototype vs livre": 21.14,
+   "temoin : prototype vs prototype (meme page, 2 captures)": 0,
+   "temoin : prototype vs prototype, autre scenario de donnees": 19.74
+  }
+ },
+ "mutant": {
+  "pc": {
+   "anchors": [
+    {
+     "anchor": "page",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "entete",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "marque (h1)",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "ligne d'etat",
+     "verdict": "1 ecart(s)",
+     "deltas": [
+      {
+       "prop": "border-radius",
+       "proto": "10px",
+       "deliv": "6px"
+      }
+     ]
+    },
+    {
+     "anchor": "boite de reception",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "titre Ce qui t'attend",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "ligne de demande",
+     "verdict": "2 ecart(s)",
+     "deltas": [
+      {
+       "prop": "padding",
+       "proto": "11px 14px",
+       "deliv": "8px 14px"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "496 x 80",
+       "deliv": "496 x 74"
+      }
+     ]
+    },
+    {
+     "anchor": "demande : quoi",
+     "verdict": "1 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-weight",
+       "proto": "600",
+       "deliv": "500"
+      }
+     ]
+    },
+    {
+     "anchor": "demande : niveau",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "panneau de detail",
+     "verdict": "1 ecart(s)",
+     "deltas": [
+      {
+       "prop": "border-radius",
+       "proto": "10px",
+       "deliv": "6px"
+      }
+     ]
+    },
+    {
+     "anchor": "bouton d'action",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "heure",
+     "verdict": "1 ecart(s)",
+     "deltas": [
+      {
+       "prop": "color",
+       "proto": "rgb(104, 114, 134)",
+       "deliv": "rgb(124, 133, 152)"
+      }
+     ]
+    },
+    {
+     "anchor": "zone Projets",
+     "verdict": "1 ecart(s)",
+     "deltas": [
+      {
+       "prop": "border-radius",
+       "proto": "10px",
+       "deliv": "6px"
+      }
+     ]
+    },
+    {
+     "anchor": "carte projet",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "bascule de theme",
+     "verdict": "identique",
+     "deltas": []
+    }
+   ],
+   "ariaOnlyInProto": [
+    "text: usine + projets"
+   ],
+   "ariaOnlyInMutant": [],
+   "pixel": 4.28
+  },
+  "phone": {
+   "anchors": [
+    {
+     "anchor": "page",
+     "verdict": "1 ecart(s)",
+     "deltas": [
+      {
+       "prop": "taille (l x h)",
+       "proto": "374 x 1702",
+       "deliv": "374 x 1647"
+      }
+     ]
+    },
+    {
+     "anchor": "entete",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "marque (h1)",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "ligne d'etat",
+     "verdict": "1 ecart(s)",
+     "deltas": [
+      {
+       "prop": "border-radius",
+       "proto": "10px",
+       "deliv": "6px"
+      }
+     ]
+    },
+    {
+     "anchor": "boite de reception",
+     "verdict": "1 ecart(s)",
+     "deltas": [
+      {
+       "prop": "taille (l x h)",
+       "proto": "342 x 593",
+       "deliv": "342 x 538"
+      }
+     ]
+    },
+    {
+     "anchor": "titre Ce qui t'attend",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "ligne de demande",
+     "verdict": "2 ecart(s)",
+     "deltas": [
+      {
+       "prop": "padding",
+       "proto": "11px 14px",
+       "deliv": "8px 14px"
+      },
+      {
+       "prop": "taille (l x h)",
+       "proto": "340 x 99",
+       "deliv": "340 x 93"
+      }
+     ]
+    },
+    {
+     "anchor": "demande : quoi",
+     "verdict": "1 ecart(s)",
+     "deltas": [
+      {
+       "prop": "font-weight",
+       "proto": "600",
+       "deliv": "500"
+      }
+     ]
+    },
+    {
+     "anchor": "demande : niveau",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "panneau de detail",
+     "verdict": "1 ecart(s)",
+     "deltas": [
+      {
+       "prop": "border-radius",
+       "proto": "10px",
+       "deliv": "6px"
+      }
+     ]
+    },
+    {
+     "anchor": "bouton d'action",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "heure",
+     "verdict": "1 ecart(s)",
+     "deltas": [
+      {
+       "prop": "color",
+       "proto": "rgb(104, 114, 134)",
+       "deliv": "rgb(124, 133, 152)"
+      }
+     ]
+    },
+    {
+     "anchor": "zone Projets",
+     "verdict": "1 ecart(s)",
+     "deltas": [
+      {
+       "prop": "border-radius",
+       "proto": "10px",
+       "deliv": "6px"
+      }
+     ]
+    },
+    {
+     "anchor": "carte projet",
+     "verdict": "identique",
+     "deltas": []
+    },
+    {
+     "anchor": "bascule de theme",
+     "verdict": "identique",
+     "deltas": []
+    }
+   ],
+   "ariaOnlyInProto": [
+    "text: usine + projets"
+   ],
+   "ariaOnlyInMutant": [],
+   "pixel": 13.19
+  }
+ }
+}

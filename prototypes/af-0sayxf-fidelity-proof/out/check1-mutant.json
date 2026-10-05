@@ -1,0 +1,99 @@
+{
+ "rule_count": {
+  "prototype_all": 177,
+  "prototype_variant_D": 149,
+  "delivered": 149
+ },
+ "tokens": {
+  "prototype": 46,
+  "delivered": 46,
+  "identical": 44,
+  "missing_in_delivered": [],
+  "different": [
+   [
+    "light --muted",
+    "#687286",
+    "#7c8598"
+   ],
+   [
+    "light --r",
+    "10px",
+    "6px"
+   ]
+  ],
+  "extra_in_delivered": []
+ },
+ "fonts": {
+  "prototype_named": [
+   "Atkinson Hyperlegible Mono",
+   "Atkinson Hyperlegible Next",
+   "Consolas",
+   "Roboto",
+   "SF Mono",
+   "Segoe UI"
+  ],
+  "prototype_loaded": [
+   "Atkinson Hyperlegible Mono",
+   "Atkinson Hyperlegible Next"
+  ],
+  "delivered_named": [
+   "Atkinson Hyperlegible Mono",
+   "Atkinson Hyperlegible Next",
+   "Consolas",
+   "Roboto",
+   "SF Mono",
+   "Segoe UI"
+  ],
+  "delivered_loaded": [
+   "Atkinson Hyperlegible Mono",
+   "Atkinson Hyperlegible Next"
+  ],
+  "delivered_named_not_loaded": [
+   "Consolas",
+   "Roboto",
+   "SF Mono",
+   "Segoe UI"
+  ]
+ },
+ "classes": {
+  "delivered_emitted": 111,
+  "delivered_unstyled": [
+   "${c.state}",
+   "${i<c.st?",
+   "${l}",
+   "${offline()?",
+   "${projStale()?",
+   "${s.st===",
+   "${st.sheet?",
+   "${st.tab===",
+   "${x.lvl}",
+   "bar",
+   "col",
+   "grid",
+   "groupl",
+   "hrow",
+   "panel",
+   "panel-h",
+   "pc",
+   "srcs",
+   "t",
+   "tabs",
+   "top",
+   "vb"
+  ]
+ },
+ "raw_literals_outside_tokens": {
+  "prototype_variant_D": {
+   "hex_colours": 7,
+   "px_values": 179
+  },
+  "delivered": {
+   "hex_colours": 7,
+   "px_values": 179
+  }
+ },
+ "same_selector_different_declarations": [
+  ".vc .li",
+  ".vc .li .q"
+ ]
+}

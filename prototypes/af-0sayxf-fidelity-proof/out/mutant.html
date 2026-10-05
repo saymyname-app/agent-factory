@@ -1,0 +1,676 @@
+﻿<title>Cockpit V2 — accueil (prototype)</title>
+<!--
+  PROTOTYPE JETABLE — af-arlph5.11 « Prototype de l'écran d'accueil » (carte C01, af-arlph5).
+  Question : à quoi ressemble l'écran d'accueil du cockpit sur PC et sur iPhone ?
+  Trois variantes (A Fil, B Poste de pilotage, C Boîte de réception) sur les mêmes données
+  synthétiques, commutables par la barre flottante (← →, ou #a #b #c dans l'URL).
+  Données 100 % synthétiques : aucun nom de personne réelle, aucun identifiant réel.
+  Aucune action n'est envoyée nulle part : tout vit en mémoire.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700&family=Atkinson+Hyperlegible+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --bg:#F2F4F8; --surface:#FFFFFF; --surface-2:#EAEEF4; --ink:#151B26; --ink-2:#465063; --muted:#7C8598;
+  --line:#D8DDE6; --accent:#2B4CC0; --accent-ink:#FFFFFF; --accent-soft:#E3E8FA;
+  --urgent:#C22D25; --urgent-soft:#FBE6E4; --normal:#AD6208; --normal-soft:#FAEDD6;
+  --info:#5A6679; --info-soft:#E8ECF2; --ok:#1F7B4B; --ok-soft:#DFF1E6;
+  --shadow:0 1px 2px rgba(20,30,50,.06),0 4px 14px rgba(20,30,50,.06);
+  --font:"Atkinson Hyperlegible Next",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"Atkinson Hyperlegible Mono",ui-monospace,"SF Mono",Consolas,monospace;
+  --r:6px; --fs-xs:12.5px; --fs-s:14px; --fs-m:16px; --fs-l:19px; --fs-xl:24px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0D1015; --surface:#161A21; --surface-2:#1D222B; --ink:#E6E9EF; --ink-2:#B6BDCA; --muted:#8A93A4;
+    --line:#2A313D; --accent:#8FA3FF; --accent-ink:#0D1015; --accent-soft:#1E2644;
+    --urgent:#FF6F63; --urgent-soft:#3A1B19; --normal:#F0A33A; --normal-soft:#35270F;
+    --info:#9BA5B7; --info-soft:#222833; --ok:#4DC48B; --ok-soft:#15301F;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 14px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0D1015; --surface:#161A21; --surface-2:#1D222B; --ink:#E6E9EF; --ink-2:#B6BDCA; --muted:#8A93A4;
+  --line:#2A313D; --accent:#8FA3FF; --accent-ink:#0D1015; --accent-soft:#1E2644;
+  --urgent:#FF6F63; --urgent-soft:#3A1B19; --normal:#F0A33A; --normal-soft:#35270F;
+  --info:#9BA5B7; --info-soft:#222833; --ok:#4DC48B; --ok-soft:#15301F;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 14px rgba(0,0,0,.25);
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:var(--fs-m);line-height:1.45;padding-inline:16px;padding-block:0 110px}
+h1,h2,h3{margin:0;text-wrap:balance;font-weight:700}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,summary:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mono,time{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.stage{max-width:1280px;margin-inline:auto}
+.app{container-type:inline-size;container-name:app}
+body.framed .stage{max-width:390px;height:780px;overflow:auto;border:1px solid var(--line);border-radius:34px;margin-block:18px;padding-inline:14px;background:var(--bg);box-shadow:var(--shadow)}
+.frame-note{display:none;text-align:center;font-size:var(--fs-xs);color:var(--muted);margin-top:14px}
+body.framed .frame-note{display:block}
+
+/* ---------- éléments partagés (petits composants, pas de mise en page) ---------- */
+.topbar{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-block:18px 10px}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand h1{font-size:var(--fs-l);letter-spacing:-.01em}
+.brand .who{font-size:var(--fs-xs);color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.fresh{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-s);color:var(--ink-2);flex-wrap:wrap}
+.fresh .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
+.fresh.warn .dot{background:var(--normal)}
+.fresh .recheck{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:2px 10px;font-size:var(--fs-xs)}
+.banner{border-radius:var(--r);padding:10px 14px;font-size:var(--fs-s);margin-block:6px 10px;display:flex;gap:10px;align-items:flex-start}
+.banner.off{background:var(--urgent);color:#fff}
+.banner.stale{background:var(--normal-soft);color:var(--ink)}
+.banner b{font-weight:700}
+.lvl{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);font-weight:600;letter-spacing:.02em;white-space:nowrap}
+.lvl i{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
+.lvl.urgent{color:var(--urgent)} .lvl.urgent i{background:var(--urgent)}
+.lvl.normal{color:var(--normal)} .lvl.normal i{background:var(--normal)}
+.lvl.info{color:var(--info)} .lvl.info i{border:2px solid var(--info)}
+.meta{font-size:var(--fs-xs);color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 10px}
+.meta b{color:var(--ink-2);font-weight:600}
+.lbl{font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600}
+.why{color:var(--ink-2)}
+.todo{font-weight:600}
+.incomplete{display:inline-block;font-size:var(--fs-xs);background:var(--normal-soft);color:var(--normal);border-radius:6px;padding:1px 7px;font-weight:600}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);border-radius:999px;padding:2px 9px;background:var(--surface-2);color:var(--ink-2);font-weight:600;white-space:nowrap}
+.chip.atoi{background:var(--accent-soft);color:var(--accent)}
+.chip.probleme{background:var(--normal-soft);color:var(--normal)}
+.chip.bloque{background:var(--urgent-soft);color:var(--urgent)}
+.chip.ack{background:var(--surface-2);color:var(--muted)}
+.acts{display:flex;flex-wrap:wrap;gap:8px}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 12px;font-size:var(--fs-s);font-weight:600;min-height:38px}
+.btn:hover{border-color:var(--ink-2)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--accent);padding-inline:6px}
+.btn.opt{text-align:left;display:flex;gap:10px;align-items:baseline;width:100%}
+.btn.opt .k{font-family:var(--mono);color:var(--accent)}
+.btn.opt .ot{display:grid;gap:3px}
+.oc{font-size:var(--fs-xs);font-weight:400;color:var(--ink-2);line-height:1.4}
+.hint{margin:0;font-size:var(--fs-xs);color:var(--muted)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.confirm{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--accent-soft);border-radius:8px;padding:8px 10px;font-size:var(--fs-s)}
+details.more{font-size:var(--fs-s)}
+details.more summary{color:var(--muted);cursor:pointer;font-size:var(--fs-xs);list-style:none;display:inline-flex;gap:6px;align-items:center}
+details.more summary::-webkit-details-marker{display:none}
+details.more summary::before{content:"▸";font-size:10px}
+details.more[open] summary::before{content:"▾"}
+.det{display:grid;gap:6px;margin-top:8px;padding:10px 12px;background:var(--surface-2);border-radius:8px;font-size:var(--fs-xs);color:var(--ink-2)}
+.det .row{display:grid;grid-template-columns:92px 1fr;gap:10px}
+.det .row span:first-child{color:var(--muted)}
+.det code{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+.snoozemenu{display:flex;flex-wrap:wrap;gap:6px}
+.stale-val{opacity:.55}
+.unknown{font-size:var(--fs-s);color:var(--normal);background:var(--normal-soft);border-radius:8px;padding:8px 12px}
+.empty{display:flex;gap:10px;align-items:center;padding:18px;border:1px dashed var(--line);border-radius:var(--r);color:var(--ink-2)}
+.empty .dot{width:10px;height:10px;border-radius:50%;background:var(--ok)}
+.offline .zone-body{filter:grayscale(1);opacity:.55}
+.stepper{display:flex;gap:3px;align-items:center}
+.stepper span{height:6px;flex:1;border-radius:3px;background:var(--line);min-width:10px}
+.stepper span.done{background:var(--ink-2)}
+.stepper span.cur{background:var(--accent)}
+.stepnames{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px}
+.toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);border-radius:10px;padding:10px 16px;font-size:var(--fs-s);max-width:min(92vw,520px);z-index:60;box-shadow:var(--shadow)}
+
+/* ---------- barre du prototype (ne fait pas partie du design) ---------- */
+.proto{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:50;display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center;
+  background:#FFE14D;color:#1a1a1a;border:2px solid #1a1a1a;border-radius:16px;padding:6px 8px;font:600 13px/1.2 system-ui,sans-serif;box-shadow:0 6px 22px rgba(0,0,0,.35);max-width:calc(100vw - 16px)}
+.proto button,.proto select{background:#fff;border:1.5px solid #1a1a1a;border-radius:9px;padding:5px 9px;font:600 13px system-ui,sans-serif;color:#1a1a1a}
+.proto .vl{min-width:150px;text-align:center}
+.proto .tag{font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.7}
+
+/* ================= VARIANTE A — Fil ================= */
+.va{max-width:760px;margin-inline:auto}
+.va .zone{margin-top:22px}
+.va .zone-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}
+.va .zone-h h2{font-size:var(--fs-l)}
+.va .zone-h .count{font-family:var(--mono);color:var(--muted);font-size:var(--fs-s)}
+.va .items{display:grid;gap:10px}
+.va .item{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;display:grid;gap:8px}
+.va .item.urgent{border-color:var(--urgent);box-shadow:0 0 0 1px var(--urgent) inset}
+.va .item .head{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.va .item .quoi{font-size:var(--fs-m);font-weight:700}
+.va .item .opts{display:grid;gap:6px}
+.va .snoozed{font-size:var(--fs-s);color:var(--muted)}
+.va .projects{display:grid;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.va .proj{padding:12px 16px;border-top:1px solid var(--line)}
+.va .proj:first-child{border-top:0}
+.va .proj-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.va .proj-h h3{font-size:var(--fs-m)}
+.va .ch{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding-block:9px;border-top:1px dashed var(--line)}
+.va .ch:first-of-type{border-top:0}
+.va .ch .n{font-weight:600}
+.va .ch .s{font-size:var(--fs-s);color:var(--ink-2)}
+.va .ch .stepper{grid-column:1 / -1}
+.va .health{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 16px}
+.va .health summary{list-style:none;cursor:pointer;display:flex;gap:10px;align-items:center;font-size:var(--fs-s)}
+.va .health summary::-webkit-details-marker{display:none}
+.va .hlist{display:grid;gap:6px;margin-top:10px;font-size:var(--fs-s)}
+.va .hl{display:flex;gap:10px;align-items:baseline}
+
+/* ================= VARIANTE B — Poste de pilotage ================= */
+.vb .tabs{display:flex;gap:4px;background:var(--surface-2);border-radius:10px;padding:4px;position:sticky;top:env(safe-area-inset-top,0px);z-index:5;margin-bottom:12px}
+.vb .tabs button{flex:1;border:0;background:transparent;border-radius:7px;padding:8px 6px;font-size:var(--fs-s);font-weight:600;color:var(--ink-2)}
+.vb .tabs button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.vb .tabs .n{font-family:var(--mono);margin-left:4px}
+.vb .grid{display:grid;gap:14px}
+.vb .col{display:none}
+.vb .col.on{display:block}
+.vb .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.vb .panel-h{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+.vb .panel-h h2{font-size:var(--fs-m)}
+.vb .row{padding:12px 14px;border-top:1px solid var(--line);display:grid;gap:6px}
+.vb .row:first-child{border-top:0}
+.vb .row .top{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start}
+.vb .row .quoi{font-weight:700;font-size:var(--fs-s)}
+.vb .row .why,.vb .row .todo{font-size:var(--fs-s)}
+.vb .row .btn{min-height:32px;padding:4px 10px;font-size:13px}
+.vb .groupl{padding:8px 14px;background:var(--surface-2);font-size:var(--fs-xs);font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}
+.vb .pc{padding:12px 14px;border-top:1px solid var(--line)}
+.vb .pc:first-child{border-top:0}
+.vb .pc h3{font-size:var(--fs-m);display:flex;justify-content:space-between;gap:8px}
+.vb .bar{display:grid;grid-template-columns:1fr auto;gap:2px 10px;margin-top:10px;font-size:var(--fs-s)}
+.vb .bar .t{height:8px;border-radius:4px;background:var(--surface-2);grid-column:1 / -1;overflow:hidden}
+.vb .bar .t b{display:block;height:100%;background:var(--accent);border-radius:4px}
+.vb .srcs{width:100%;border-collapse:collapse;font-size:var(--fs-xs)}
+.vb .srcs td{padding:6px 14px;border-top:1px solid var(--line)}
+.vb .srcs td:last-child{text-align:right}
+.vb .hrow{display:flex;gap:10px;padding:9px 14px;border-top:1px solid var(--line);font-size:var(--fs-s);align-items:baseline}
+.vb .hrow:first-child{border-top:0}
+@container app (min-width: 980px){
+  .vb .tabs{display:none}
+  .vb .grid{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr) minmax(0,.8fr);align-items:start}
+  .vb .col{display:block}
+}
+
+/* ================= VARIANTE C — Boîte de réception ================= */
+.vc .status{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 14px;font-size:var(--fs-s)}
+.vc .status .sep{width:1px;height:16px;background:var(--line)}
+.vc .inbox{display:grid;gap:14px;margin-top:14px}
+.vc .list{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.vc .list h2{font-size:var(--fs-m);padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
+.vc .li{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:start;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:transparent;padding:8px 14px;font-size:var(--fs-s)}
+.vc .li:first-of-type{border-top:0}
+.vc .li[aria-current="true"]{background:var(--accent-soft)}
+.vc .li .q{font-weight:500;line-height:1.35}
+.vc .li .p{font-size:var(--fs-xs);color:var(--muted);margin-top:2px}
+.vc .li time{font-size:var(--fs-xs);color:var(--muted)}
+.vc .detail{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;display:none;gap:14px;align-content:start}
+.vc .detail .quoi{font-size:var(--fs-xl);line-height:1.25;font-weight:700;letter-spacing:-.01em}
+.vc .detail .sec{display:grid;gap:4px}
+.vc .detail .opts{display:grid;gap:8px}
+.vc .back{display:none}
+.vc.sheet .list{display:none}
+.vc.sheet .detail{display:grid}
+.vc.sheet .back{display:inline-flex}
+.vc .pipe{margin-top:18px}
+.vc .pipe h2{font-size:var(--fs-l);margin-bottom:10px}
+.vc .pipe-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.vc .board{display:grid;grid-template-columns:120px repeat(7,minmax(118px,1fr));min-width:960px}
+.vc .board > div{padding:8px 10px;border-top:1px solid var(--line);border-left:1px solid var(--line);font-size:var(--fs-s)}
+.vc .board .bh{font-size:var(--fs-xs);color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600;border-top:0;background:var(--surface-2)}
+.vc .board .rh{border-left:0;font-weight:700}
+.vc .board .rh small{display:block;font-weight:400;color:var(--muted);font-size:var(--fs-xs)}
+.vc .board .na{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--surface-2) 6px 8px)}
+.vc .card{display:grid;gap:4px;background:var(--surface-2);border-radius:8px;padding:7px 9px;margin-bottom:6px}
+.vc .card .n{font-weight:600;font-size:var(--fs-s)}
+.vc .card .s{font-size:var(--fs-xs);color:var(--ink-2)}
+.vc .promo{font-size:var(--fs-s);color:var(--ink-2);margin-top:8px}
+@container app (min-width: 900px){
+  .vc .inbox{grid-template-columns:minmax(300px,.9fr) minmax(0,1.3fr)}
+  .vc .detail{display:grid}
+  .vc.sheet .list{display:block}
+  .vc .back,.vc.sheet .back{display:none}
+}
+/* ================= VARIANTE D — Mélange choisi (liste de C + Projets de A) ================= */
+.vd .va{max-width:none}
+.vd .va .zone{margin-top:22px}
+.chip.go{border:0;cursor:pointer;font:inherit;font-size:var(--fs-xs);font-weight:600}
+.chip.go::after{content:" →"}
+.chip.go:hover{filter:brightness(.95);text-decoration:underline}
+.accpanel{grid-column:1 / -1;display:grid;gap:8px;background:var(--accent-soft);border-radius:8px;padding:10px 12px;font-size:var(--fs-s)}
+@media (prefers-reduced-motion: no-preference){ .toast{animation:up .18s ease-out} @keyframes up{from{opacity:0;transform:translate(-50%,6px)}} }
+</style>
+
+<div class="stage"><div class="app" id="app"></div></div>
+<p class="frame-note">Cadre iPhone (390 px) : même rendu que sur le téléphone.</p>
+
+<div class="proto" id="proto" aria-label="Commandes du prototype">
+  <span class="tag">Prototype</span>
+  <button id="prev" aria-label="Variante précédente">←</button>
+  <span class="vl" id="vlabel"></span>
+  <button id="next" aria-label="Variante suivante">→</button>
+  <select id="scen" aria-label="Scénario">
+    <option value="normal">Journée normale</option>
+    <option value="empty">Rien ne t'attend</option>
+    <option value="stale">Source en panne</option>
+    <option value="offline">iPhone déconnecté</option>
+    <option value="silent">Usine silencieuse</option>
+  </select>
+  <button id="theme" aria-label="Thème"></button>
+  <button id="frame" aria-label="Cadre iPhone">iPhone</button>
+</div>
+<div id="toastwrap"></div>
+
+<script>
+/* ---------- données synthétiques ---------- */
+const NOW = "14:32";
+const STAGES = ["Cadrage","Spec","Graphe","Livraison","Livré","Accepté","Promu"];
+const LVL = {urgent:"Urgent", normal:"À faire", info:"Quand tu veux"};
+const baseItems = () => ([
+  {id:"d1", lvl:"urgent", proj:"SayMyName", since:"13:10",
+   quoi:"Les tests automatiques échouent pour la 3e fois sur la PR « Export des listes ».",
+   pourquoi:"L'usine a essayé de corriger seule pendant 2 h ; la suite demande un choix de ton niveau.",
+   faire:"Choisis la suite :",
+   options:[{k:"a",t:"Relancer avec un délai de test doublé", reco:"Les 3 échecs sont des dépassements de délai, pas des erreurs.", c:"Le ticket reste dans le graphe ; si l'export est seulement lent, la PR passe. Environ 20 min de tests en plus."},
+            {k:"b",t:"Retirer ce ticket du graphe et continuer", c:"Le chantier se termine sans l'export des listes. Rien d'autre n'en dépend : rien ne casse. L'export devra revenir comme nouveau travail."}],
+   det:{ids:"ticket af-demo7k · PR #412 · run CI 18 322 145", origine:"CI red 3x on PR #412 (export timeout in ListExportIT). Retry budget exhausted. Options: a) raise timeout b) drop from graph.", source:"porte d'escalade · lu 14:31", hist:"apparu 11:04 · remonté vers toi à 13:10"}},
+  {id:"d2", lvl:"normal", proj:"Usine", since:"12:47",
+   quoi:"La Spec « Rappels de rituels » est prête et attend ton approbation.",
+   pourquoi:"Aucun graphe de tickets ne peut être publié pour ce chantier sans ta validation.",
+   faire:"Relis la Spec, puis approuve-la avec un agent.",
+   primary:"Ouvrir la Spec",
+   det:{ids:"Spec af-demo2s (DRAFT_SPEC)", origine:"—", source:"tickets · lu 14:30", hist:"prête depuis 12:47"}},
+  {id:"d3", lvl:"normal", proj:"SayMyName", since:"09:55", incomplete:"pourquoi",
+   quoi:"Un agent demande ta décision sur « Nettoyage des branches anciennes ».",
+   pourquoi:null,
+   faire:"Continue avec un agent pour comprendre la question.",
+   det:{ids:"ticket af-demo3b", origine:"needs_benjamin=true (no reason given)", source:"porte d'escalade · lu 14:31", hist:"apparu 09:55 · défaut signalé au producteur"}},
+  {id:"d4", lvl:"info", proj:"Usine", since:"hier 18:20",
+   quoi:"Proposition : regrouper en une seule les alertes en double des tests automatiques.",
+   pourquoi:"Elle change la façon de travailler de l'usine : elle attend ton accord.",
+   faire:"Accepte-la, refuse-la avec une raison, ou garde-la pour plus tard.",
+   proposal:true,
+   det:{ids:"proposition af-demo4p", origine:"Proposal: dedupe duplicate [ci] beads per PR.", source:"tickets · lu 14:30", hist:"ouverte hier 18:20"}},
+  {id:"d5", lvl:"info", proj:"Usine", since:"11:21",
+   quoi:"Ticket prêt à lancer : « Prototype de la page projet » (carte Cockpit V2).",
+   pourquoi:"C'est un ticket de décision : il se fait avec toi, dans une session.",
+   faire:"Copie le prompt de lancement et colle-le dans une nouvelle session.",
+   primary:"Copier le prompt",
+   det:{ids:"ticket af-demo5t · carte af-demo0m", origine:"—", source:"tickets · lu 14:30", hist:"prêt depuis 11:21"}},
+  {id:"d6", lvl:"info", proj:"SayMyName", since:"08:00",
+   quoi:"Rituel dû : revue hebdomadaire des décisions.",
+   pourquoi:"Les rituels gardent la base de connaissance à jour ; tu choisis quand les faire.",
+   faire:"Lance-le avec un agent quand tu as 15 minutes.",
+   det:{ids:"rituel weekly-decisions", origine:"DUE", source:"rituels · lu 14:05", hist:"dû depuis 08:00"}}
+]);
+const silentItem = {id:"d0", lvl:"urgent", proj:"Usine", since:"14:01",
+   quoi:"L'usine ne donne plus signe de vie depuis 14:01.",
+   pourquoi:"Aucun battement depuis 31 min : si le PC est éteint ou en veille, toi seul peux le relancer.",
+   faire:"Vérifie que le PC est allumé et que ta session Windows est ouverte.",
+   det:{ids:"—", origine:"heartbeat missed (external monitor)", source:"veilleur externe · 14:32", hist:"dernier battement 14:01"}};
+const staleItem = {id:"d7", lvl:"normal", proj:"Usine", since:"14:15",
+   quoi:"Les tickets sont illisibles depuis 14:15 : l'écran ne peut plus les montrer à jour.",
+   pourquoi:"L'usine ne sait pas réparer seule sa base de tickets quand elle ne répond plus.",
+   faire:"Continue avec un agent pour diagnostiquer, ou redémarre l'usine.",
+   det:{ids:"source beads", origine:"bd: dolt server not responding (timeout 5s)", source:"cockpit · 14:32", hist:"illisible depuis 14:15"}};
+
+const projects = [
+  {name:"SayMyName", step:"Roadmap : Bêta privée", promo:"dev a 14 commits d'avance sur main : promotion à ta main.", protectedMain:false, chantiers:[
+    {name:"Export des listes", st:3, s:"5/9 tickets mergés · 2 en cours · 1 en PR", state:"probleme", go:{item:"d1"}},
+    {name:"Page d'accueil publique", st:4, s:"Livré le 29/09 : à accepter", state:"atoi", go:{accept:"acc1"}},
+    {name:"Invitations par lien", st:1, s:"Spec en rédaction", state:null}]},
+  {name:"Usine", step:"Roadmap : A7 · Cockpit V2", promo:null, protectedMain:true, chantiers:[
+    {name:"Cockpit V2", st:0, s:"Carte de planification : 9/15 décisions", state:"atoi", go:{item:"d5"}},
+    {name:"Rappels de rituels", st:1, s:"Spec prête : à approuver", state:"atoi", go:{item:"d2"}},
+    {name:"Fiabilité des tâches planifiées", st:3, s:"11/13 tickets mergés · 1 en cours · 1 en PR", state:null}]}
+];
+const STATE_LBL = {atoi:"À toi de jouer", probleme:"Problème remonté", bloque:"Bloqué"};
+const healthLines = (sc) => sc==="silent" ? [
+  {k:"bad", t:"Aucun battement de l'usine depuis 14:01 (31 min)."},
+  {k:"bad", t:"Superviseur injoignable depuis 14:03."},
+  {k:"unk", t:"Agents au travail : inconnu, superviseur injoignable."},
+] : [
+  {k:"ok", t:"Superviseur joignable · 2 agents au travail."},
+  {k:"ok", t:"Tests automatiques verts sur les 4 dernières PR."},
+  {k:"warn", t:"L'usine corrige seule 1 problème depuis 40 min."},
+  {k:"warn", t:"La version qui tourne a 3 commits de retard sur main."},
+];
+const sources = (sc) => [
+  {n:"Superviseur (temps réel)", v: sc==="silent" ? "injoignable depuis 14:03" : "à jour · 14:32", st: sc==="silent"?"unk":"ok"},
+  {n:"Tickets", v: sc==="stale" ? "inconnu depuis 14:15" : "à jour · 14:30", st: sc==="stale"?"unk":"ok"},
+  {n:"GitHub", v: sc==="stale" ? "périmé · vu il y a 23 min" : "à jour · 14:27", st: sc==="stale"?"stale":"ok"},
+  {n:"Rituels", v:"à jour · 14:05", st:"ok"},
+];
+
+/* ---------- état du prototype ---------- */
+const VARIANTS = [
+  {k:"a", name:"Fil"},
+  {k:"b", name:"Poste de pilotage"},
+  {k:"c", name:"Boîte de réception"},
+  {k:"d", name:"Mélange choisi"}
+];
+const st = {v:3, accOpen:null, sc:"normal", theme:"system", framed:false, local:{}, sel:null, sheet:false, tab:"todo", confirm:null, snoozeOpen:null, refuseOpen:null};
+try{ const h=(location.hash||"").replace("#",""); const i=VARIANTS.findIndex(x=>x.k===h); if(i>=0) st.v=i; }catch(e){}
+try{ const s=JSON.parse(localStorage.getItem("c01proto")||"{}"); if(s.sc) st.sc=s.sc; if(s.theme) st.theme=s.theme; }catch(e){}
+const save=()=>{ try{ localStorage.setItem("c01proto", JSON.stringify({sc:st.sc, theme:st.theme})); }catch(e){} };
+
+function items(){
+  let it = baseItems();
+  if(st.sc==="empty") it = [];
+  if(st.sc==="silent") it = [silentItem, ...it];
+  if(st.sc==="stale") it = [staleItem, ...it];
+  it = it.filter(x => !(st.local[x.id]&&st.local[x.id].done));
+  const order = {urgent:0, normal:1, info:2};
+  return it.sort((a,b)=>order[a.lvl]-order[b.lvl]);
+}
+const visible = () => items().filter(x => !(st.local[x.id]&&st.local[x.id].snooze));
+const snoozed = () => items().filter(x => st.local[x.id]&&st.local[x.id].snooze);
+const offline = () => st.sc==="offline";
+const esc = s => String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* ---------- petits morceaux partagés ---------- */
+function fresh(){
+  if(st.sc==="stale") return `<span class="fresh warn"><span class="dot"></span>2 sources pas à jour : GitHub (périmé), tickets (inconnu) <button class="recheck" data-a="recheck">Revérifier</button></span>`;
+  if(st.sc==="silent") return `<span class="fresh warn"><span class="dot"></span>Superviseur injoignable depuis <time>14:03</time> <button class="recheck" data-a="recheck">Revérifier</button></span>`;
+  return `<span class="fresh"><span class="dot"></span>Tout est à jour à <time>${NOW}</time> (Paris) <button class="recheck" data-a="recheck">Revérifier</button></span>`;
+}
+function banners(){
+  let h="";
+  if(offline()) h+=`<div class="banner off" role="status"><b>Déconnecté du cockpit depuis <time>14:20</time>.</b> Tout ce qui suit est la dernière valeur connue ; aucune action possible.</div>`;
+  return h;
+}
+const lvl = l => `<span class="lvl ${l}"><i></i>${LVL[l]}</span>`;
+const why = x => x.pourquoi ? esc(x.pourquoi) : `Il n'a pas dit pourquoi. <span class="incomplete">Demande incomplète : champ « pourquoi » manquant</span>`;
+const meta = x => `<div class="meta"><b>${esc(x.proj)}</b><span>depuis <time>${x.since}</time></span><span>vérifié <time>${offline()?"14:19":NOW}</time></span>${st.local[x.id]&&st.local[x.id].ack?'<span class="chip ack">Acquittée · rappels coupés</span>':''}</div>`;
+function details(x){
+  return `<details class="more"><summary>Détails</summary><div class="det">
+    <div class="row"><span>Identifiants</span><code>${esc(x.det.ids)}</code></div>
+    <div class="row"><span>Texte d'origine</span><code>${esc(x.det.origine)}</code></div>
+    <div class="row"><span>Source</span><span>${esc(x.det.source)}</span></div>
+    <div class="row"><span>Historique</span><span>${esc(x.det.hist)}</span></div></div></details>`;
+}
+function actions(x, compact){
+  const dis = offline() ? "disabled" : "";
+  if(st.confirm && st.confirm.id===x.id){
+    return `<div class="confirm">Confirmer : « ${esc(st.confirm.t)} » ?
+      <button class="btn primary" data-a="doconfirm" data-id="${x.id}" ${dis}>Confirmer</button>
+      <button class="btn" data-a="cancel">Annuler</button></div>`;
+  }
+  if(st.snoozeOpen===x.id){
+    return `<div class="snoozemenu"><span class="muted" style="font-size:var(--fs-s)">Reporter jusqu'à :</span>
+      ${["15:32 (1 h)","20:00 (ce soir)","demain 09:00"].map(t=>`<button class="btn" data-a="snooze" data-id="${x.id}" data-t="${t}">${t}</button>`).join("")}
+      <button class="btn ghost" data-a="cancel">Annuler</button></div>`;
+  }
+  if(st.refuseOpen===x.id){
+    return `<div class="snoozemenu"><span class="muted" style="font-size:var(--fs-s)">Raison du refus :</span>
+      ${["Pas prioritaire","Déjà couvert ailleurs","Mauvaise idée"].map(t=>`<button class="btn" data-a="refuse" data-id="${x.id}" data-t="${t}">${t}</button>`).join("")}
+      <button class="btn ghost" data-a="cancel">Annuler</button></div>`;
+  }
+  let main="";
+  if(x.options){
+    const hasReco = x.options.some(o=>o.reco);
+    main = `<div class="opts">${x.options.map(o=>`<button class="btn opt" data-a="opt" data-id="${x.id}" data-t="${esc(o.t)}" ${dis}><span class="k">${o.k}</span><span class="ot"><span>${esc(o.t)}</span>${o.reco?` <span class="chip atoi">Recommandé</span>`:""}
+      <span class="oc">${o.c?esc(o.c):"Conséquence non fournie par l'agent."}</span>${o.reco?`<span class="oc"><b>Pourquoi recommandé :</b> ${esc(o.reco)}</span>`:""}</span></button>`).join("")}
+      ${hasReco?"":`<span class="oc">Pas de recommandation fournie.</span>`}</div>`;
+  }
+  let row=[];
+  if(x.proposal){ row.push(`<button class="btn primary" data-a="accept" data-id="${x.id}" ${dis}>Accepter</button>`, `<button class="btn" data-a="refuseopen" data-id="${x.id}" ${dis}>Refuser…</button>`); }
+  else if(x.primary) row.push(`<button class="btn primary" data-a="primary" data-id="${x.id}" ${dis}>${esc(x.primary)}</button>`);
+  row.push(`<button class="btn" data-a="agent" data-id="${x.id}">${x.options?"Autre → agent":"Continuer avec un agent"}</button>`);
+  if(!(st.local[x.id]&&st.local[x.id].ack)) row.push(`<button class="btn ghost" data-a="ack" data-id="${x.id}" ${dis}>Acquitter</button>`);
+  row.push(`<button class="btn ghost" data-a="snoozeopen" data-id="${x.id}" ${dis}>Reporter</button>`);
+  return main + `<div class="acts">${row.join("")}</div><p class="hint">Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu'à l'heure choisie, puis elle revient. Aucun des deux ne change rien dans l'usine.</p>`;
+}
+function snoozedLine(){
+  const s = snoozed(); if(!s.length) return "";
+  return `<p class="snoozed muted" style="font-size:var(--fs-s);margin:8px 2px 0">${s.length} demande${s.length>1?"s":""} reportée${s.length>1?"s":""} · <button class="btn ghost" data-a="unsnooze">Tout réafficher</button></p>`;
+}
+function emptyBox(){
+  if(offline()) return `<div class="empty">Inconnu : cockpit injoignable depuis <time>14:20</time>.</div>`;
+  return `<div class="empty"><span class="dot"></span>Rien ne t'attend · vérifié à <time>${NOW}</time></div>`;
+}
+function stepper(p, c){
+  const n = p.protectedMain ? 6 : 7;
+  let s=""; for(let i=0;i<n;i++) s+=`<span class="${i<c.st?"done":i===c.st?"cur":""}" title="${STAGES[i]}"></span>`;
+  return `<div class="stepper" aria-label="Étape ${c.st+1} sur ${n} : ${STAGES[c.st]}">${s}</div>`;
+}
+const stateChip = c => c.state ? `<span class="chip ${c.state}">${STATE_LBL[c.state]}</span>` : "";
+const healthOne = () => {
+  if(st.sc==="silent") return `<span class="lvl urgent"><i></i>Usine silencieuse</span> <span>aucun battement depuis <time>14:01</time> · superviseur injoignable</span>`;
+  return `<span class="lvl" style="color:var(--ok)"><i style="background:var(--ok)"></i>En marche</span> <span>2 agents au travail · l'usine corrige seule 1 problème · version en retard de 3 commits</span>`;
+};
+const hIcon = k => ({ok:`<span class="lvl" style="color:var(--ok)"><i style="background:var(--ok)"></i></span>`, warn:`<span class="lvl normal"><i></i></span>`, bad:`<span class="lvl urgent"><i></i></span>`, unk:`<span class="lvl info"><i></i></span>`})[k];
+const projStale = () => st.sc==="stale";
+
+/* ================= VARIANTE A ================= */
+function renderA(){
+  const it = visible();
+  const itemsH = it.length ? it.map(x=>`
+    <article class="item ${x.lvl}">
+      <div class="head">${lvl(x.lvl)}</div>
+      <div class="quoi">${esc(x.quoi)}</div>
+      <div class="why">${why(x)}</div>
+      <div class="todo">${esc(x.faire)}</div>
+      ${actions(x)}
+      ${meta(x)}
+      ${details(x)}
+    </article>`).join("") : emptyBox();
+  const proj = projects.map(p=>`
+    <div class="proj">
+      <div class="proj-h"><h3>${p.name}</h3><span class="muted" style="font-size:var(--fs-s)">${p.step}</span></div>
+      ${p.chantiers.map(c=>`<div class="ch"><div><div class="n">${c.name}</div><div class="s">${STAGES[c.st]} · ${c.s}</div></div><div>${stateChip(c)}</div>${stepper(p,c)}</div>`).join("")}
+      ${p.promo?`<div class="s muted" style="font-size:var(--fs-s);padding-top:6px">${p.promo}</div>`:""}
+    </div>`).join("");
+  return `<div class="va ${offline()?"offline":""}">
+    <header class="topbar"><div class="brand"><h1>Cockpit</h1></div>${fresh()}</header>
+    ${banners()}
+    <section class="zone"><div class="zone-h"><h2>Ce qui t'attend</h2><span class="count">${it.length}</span></div>
+      <div class="zone-body"><div class="items">${itemsH}</div>${snoozedLine()}</div></section>
+    <section class="zone"><div class="zone-h"><h2>Projets</h2>${projStale()?'<span class="muted" style="font-size:var(--fs-xs)">tickets vus à 14:15</span>':""}</div>
+      <div class="zone-body ${projStale()?"stale-val":""}"><div class="projects">${proj}</div></div></section>
+    <section class="zone"><div class="zone-h"><h2>Santé de l'usine</h2></div>
+      <div class="zone-body"><details class="health"><summary>${healthOne()}</summary>
+        <div class="hlist">${healthLines(st.sc).map(h=>`<div class="hl">${hIcon(h.k)}<span>${h.t}</span></div>`).join("")}</div></details></div></section>
+  </div>`;
+}
+
+/* ================= VARIANTE B ================= */
+function renderB(){
+  const it = visible();
+  const groups = ["urgent","normal","info"].map(l=>{
+    const g = it.filter(x=>x.lvl===l); if(!g.length) return "";
+    return `<div class="groupl">${LVL[l]} · ${g.length}</div>` + g.map(x=>`
+      <div class="row"><div class="top">${lvl(x.lvl).replace(LVL[x.lvl],"")}<div>
+        <div class="quoi">${esc(x.quoi)}</div>
+        <div class="why">${why(x)}</div>
+        <div class="todo">${esc(x.faire)}</div></div></div>
+        ${actions(x,true)}${meta(x)}${details(x)}</div>`).join("");
+  }).join("");
+  const todo = `<div class="panel"><div class="panel-h"><h2>Ce qui t'attend</h2><span class="mono muted">${it.length}</span></div>
+    <div class="zone-body">${it.length?groups:`<div style="padding:14px">${emptyBox()}</div>`}${snoozedLine()?`<div style="padding:0 14px 10px">${snoozedLine()}</div>`:""}</div></div>`;
+  const proj = `<div class="panel"><div class="panel-h"><h2>Projets</h2>${projStale()?'<span class="chip probleme">tickets vus à 14:15</span>':""}</div>
+    <div class="zone-body ${projStale()?"stale-val":""}">${projects.map(p=>`<div class="pc"><h3><span>${p.name}</span><span class="muted" style="font-size:var(--fs-xs);font-weight:400">${p.step}</span></h3>
+      ${p.chantiers.map(c=>{const n=p.protectedMain?6:7; return `<div class="bar"><span><b>${c.name}</b> · ${STAGES[c.st]}</span><span>${stateChip(c)}</span>
+        <div class="t"><b style="width:${Math.round((c.st+1)/n*100)}%"></b></div><span class="muted" style="grid-column:1/-1;font-size:var(--fs-xs)">${c.s}</span></div>`}).join("")}
+      ${p.promo?`<p class="muted" style="font-size:var(--fs-xs);margin:10px 0 0">${p.promo}</p>`:""}</div>`).join("")}</div></div>`;
+  const health = `<div class="panel"><div class="panel-h"><h2>Santé de l'usine</h2></div>
+    <div class="zone-body">${healthLines(st.sc).map(h=>`<div class="hrow">${hIcon(h.k)}<span>${h.t}</span></div>`).join("")}
+    <div class="groupl">Sources</div>
+    <table class="srcs"><tbody>${sources(st.sc).map(s=>`<tr><td>${s.n}</td><td class="${s.st==="ok"?"muted":""}" style="${s.st!=="ok"?"color:var(--normal);font-weight:600":""}">${s.v}</td></tr>`).join("")}</tbody></table></div></div>`;
+  const hs = st.sc==="silent" ? "!" : "✓";
+  return `<div class="vb ${offline()?"offline":""}">
+    <header class="topbar"><div class="brand"><h1>Cockpit</h1><span class="who">poste de pilotage</span></div>${fresh()}</header>
+    ${banners()}
+    <div class="tabs" role="tablist">
+      <button role="tab" data-a="tab" data-t="todo" aria-selected="${st.tab==="todo"}">À faire<span class="n">${it.length}</span></button>
+      <button role="tab" data-a="tab" data-t="proj" aria-selected="${st.tab==="proj"}">Projets<span class="n">${projects.length}</span></button>
+      <button role="tab" data-a="tab" data-t="health" aria-selected="${st.tab==="health"}">Santé<span class="n">${hs}</span></button>
+    </div>
+    <div class="grid">
+      <div class="col ${st.tab==="todo"?"on":""}">${todo}</div>
+      <div class="col ${st.tab==="proj"?"on":""}">${proj}</div>
+      <div class="col ${st.tab==="health"?"on":""}">${health}</div>
+    </div></div>`;
+}
+
+/* ================= VARIANTE C ================= */
+function renderC(){
+  const it = visible();
+  if(!st.sel || !it.find(x=>x.id===st.sel)) st.sel = it[0] ? it[0].id : null;
+  const cur = it.find(x=>x.id===st.sel);
+  const list = `<div class="list"><h2><span>Ce qui t'attend</span><span class="mono muted">${it.length}</span></h2>
+    <div class="zone-body">${it.length ? it.map(x=>`<button class="li" data-a="sel" data-id="${x.id}" aria-current="${x.id===st.sel}">
+      ${lvl(x.lvl).replace(LVL[x.lvl],"")}<span><div class="q">${esc(x.quoi)}</div><div class="p">${esc(x.proj)}${x.incomplete?' · <span class="incomplete">incomplète</span>':""}</div></span><time>${x.since}</time></button>`).join("") : `<div style="padding:14px">${emptyBox()}</div>`}
+    ${snoozedLine()?`<div style="padding:0 14px 10px">${snoozedLine()}</div>`:""}</div></div>`;
+  const detail = cur ? `<div class="detail zone-body">
+      <button class="btn ghost back" data-a="back">← Retour à la liste</button>
+      ${lvl(cur.lvl)}
+      <div class="quoi">${esc(cur.quoi)}</div>
+      <div class="sec"><span class="lbl">Pourquoi ça t'attend</span><div class="why">${why(cur)}</div></div>
+      <div class="sec"><span class="lbl">Que faire</span><div class="todo">${esc(cur.faire)}</div></div>
+      ${actions(cur)}
+      ${meta(cur)}
+      ${details(cur)}
+    </div>` : `<div class="detail"><p class="muted">Rien à afficher.</p></div>`;
+  const cols = STAGES.map(s=>`<div class="bh">${s}</div>`).join("");
+  const rows = projects.map(p=>{
+    let r = `<div class="rh">${p.name}<small>${p.step}</small></div>`;
+    STAGES.forEach((s,i)=>{
+      if(p.protectedMain && i===6){ r+=`<div class="na" title="Sans objet : la branche protégée est main"></div>`; return; }
+      const cs = p.chantiers.filter(c=>c.st===i);
+      r += `<div>${cs.map(c=>`<div class="card"><span class="n">${c.name}</span><span class="s">${c.s}</span>${stateChip(c)}</div>`).join("")}</div>`;
+    });
+    return r;
+  }).join("");
+  return `<div class="vc ${st.sheet?"sheet":""} ${offline()?"offline":""}">
+    <header class="topbar"><div class="brand"><h1>Cockpit</h1><span class="who">boîte de réception</span></div></header>
+    ${banners()}
+    <div class="status">${healthOne()}<span class="sep"></span>${fresh()}</div>
+    <div class="inbox">${list}${detail}</div>
+    <section class="pipe"><h2>Chantiers par étape</h2>
+      <div class="pipe-scroll zone-body ${projStale()?"stale-val":""}"><div class="board"><div class="bh rh">Projet</div>${cols}${rows}</div></div>
+      ${projects.filter(p=>p.promo).map(p=>`<p class="promo"><b>${p.name}</b> : ${p.promo}</p>`).join("")}
+    </section></div>`;
+}
+
+/* ================= VARIANTE D ================= */
+function goChip(c){
+  if(!c.state) return "";
+  if(!c.go || offline()) return stateChip(c);
+  const d = c.go.item ? `data-id="${c.go.item}"` : `data-acc="${c.go.accept}"`;
+  return `<button class="chip go ${c.state}" data-a="goto" ${d} title="Aller là où tu dois agir">${STATE_LBL[c.state]}</button>`;
+}
+function renderD(){
+  const it = visible();
+  if(!st.sel || !it.find(x=>x.id===st.sel)) st.sel = it[0] ? it[0].id : null;
+  const cur = it.find(x=>x.id===st.sel);
+  const list = `<div class="list" id="inbox-list"><h2><span>Ce qui t'attend</span><span class="mono muted">${it.length}</span></h2>
+    <div class="zone-body">${it.length ? it.map(x=>`<button class="li" data-a="sel" data-id="${x.id}" aria-current="${x.id===st.sel}">
+      ${lvl(x.lvl).replace(LVL[x.lvl],"")}<span><div class="q">${esc(x.quoi)}</div><div class="p">${esc(x.proj)}${x.incomplete?' · <span class="incomplete">incomplète</span>':""}</div></span><time>${x.since}</time></button>`).join("") : `<div style="padding:14px">${emptyBox()}</div>`}
+    ${snoozedLine()?`<div style="padding:0 14px 10px">${snoozedLine()}</div>`:""}</div></div>`;
+  const detail = cur ? `<div class="detail zone-body" id="inbox-detail">
+      <button class="btn ghost back" data-a="back">← Retour à la liste</button>
+      ${lvl(cur.lvl)}
+      <div class="quoi">${esc(cur.quoi)}</div>
+      <div class="sec"><span class="lbl">Pourquoi ça t'attend</span><div class="why">${why(cur)}</div></div>
+      <div class="sec"><span class="lbl">Que faire</span><div class="todo">${esc(cur.faire)}</div></div>
+      ${actions(cur)}
+      ${meta(cur)}
+      ${details(cur)}
+    </div>` : `<div class="detail"><p class="muted">Rien à afficher.</p></div>`;
+  const proj = projects.map(p=>`
+    <div class="proj">
+      <div class="proj-h"><h3>${p.name}</h3><span class="muted" style="font-size:var(--fs-s)">${p.step} · <a href="#d" data-a="projpage" style="color:var(--accent)">Page projet</a></span></div>
+      ${p.chantiers.map(c=>{
+        const accepted = c.go && c.go.accept && st.local[c.go.accept] && st.local[c.go.accept].done;
+        const cc = accepted ? {...c, st:5, s:"Accepté à "+NOW, state:null} : c;
+        const panel = (c.go && c.go.accept && st.accOpen===c.go.accept && !accepted) ? `<div class="accpanel">
+            <div><b>Accepter la livraison « ${c.name} » ?</b> Tu as vérifié le résultat ; l'usine passe le chantier en Accepté.</div>
+            <div class="acts"><button class="btn primary" data-a="accdo" data-acc="${c.go.accept}">Accepter</button>
+            <button class="btn" data-a="accko">Pas bon → agent</button>
+            <button class="btn ghost" data-a="accsite">Voir le résultat</button>
+            <button class="btn ghost" data-a="cancel">Annuler</button></div></div>` : "";
+        return `<div class="ch" id="ch-${c.go&&c.go.accept?c.go.accept:""}"><div><div class="n">${cc.name}</div><div class="s">${STAGES[cc.st]} · ${cc.s}</div></div><div>${goChip(cc)}</div>${stepper(p,cc)}${panel}</div>`;
+      }).join("")}
+      ${p.promo?`<div class="s muted" style="font-size:var(--fs-s);padding-top:6px">${p.promo}</div>`:""}
+    </div>`).join("");
+  return `<div class="vd ${offline()?"offline":""}">
+    <div class="vc ${st.sheet?"sheet":""}">
+      <header class="topbar"><div class="brand"><h1>Cockpit</h1></div></header>
+      ${banners()}
+      <div class="status">${healthOne()}<span class="sep"></span>${fresh()}</div>
+      <div class="inbox">${list}${detail}</div>
+    </div>
+    <div class="va">
+      <section class="zone"><div class="zone-h"><h2>Projets</h2>${projStale()?'<span class="muted" style="font-size:var(--fs-xs)">tickets vus à 14:15</span>':""}</div>
+        <div class="zone-body ${projStale()?"stale-val":""}"><div class="projects">${proj}</div></div></section>
+    </div></div>`;
+}
+
+/* ---------- rendu + barre ---------- */
+function applyTheme(){
+  const r=document.documentElement;
+  if(st.theme==="system") r.removeAttribute("data-theme"); else r.setAttribute("data-theme", st.theme);
+  document.getElementById("theme").textContent = {system:"Thème : système", light:"Thème : clair", dark:"Thème : sombre"}[st.theme];
+}
+function render(){
+  const v = VARIANTS[st.v];
+  document.getElementById("app").innerHTML = [renderA,renderB,renderC,renderD][st.v]();
+  document.getElementById("vlabel").textContent = `${v.k.toUpperCase()} · ${v.name}`;
+  document.getElementById("scen").value = st.sc;
+  document.body.classList.toggle("framed", st.framed);
+  document.getElementById("frame").textContent = st.framed ? "Pleine largeur" : "Cadre iPhone";
+  try{ history.replaceState(null,"","#"+v.k); }catch(e){}
+}
+function toast(t){
+  const w=document.getElementById("toastwrap"); w.innerHTML=`<div class="toast" role="status">${esc(t)}</div>`;
+  clearTimeout(toast._t); toast._t=setTimeout(()=>{w.innerHTML=""},3200);
+}
+const L = id => (st.local[id] = st.local[id] || {});
+const findItem = id => items().find(x=>x.id===id);
+function promptFor(x){
+  return `Demande opérateur (cockpit, PROTOTYPE, données synthétiques)\nProjet : ${x.proj}\nQuoi : ${x.quoi}\nPourquoi : ${x.pourquoi||"(non fourni)"}\nIdentifiants : ${x.det.ids}\nAide-moi à décider et à agir.`;
+}
+document.addEventListener("click", e=>{
+  const b = e.target.closest("[data-a]"); if(!b) return;
+  const a=b.dataset.a, id=b.dataset.id, t=b.dataset.t;
+  const x = id && findItem(id);
+  switch(a){
+    case "recheck": toast(`Revérifié à ${NOW} (prototype : rien n'est lu)`); break;
+    case "tab": st.tab=t; break;
+    case "sel": st.sel=id; st.sheet=true; st.confirm=null; break;
+    case "back": st.sheet=false; break;
+    case "opt": st.confirm={id, t}; break;
+    case "doconfirm": L(id).done=true; toast(`Choix envoyé : « ${st.confirm.t} ». La demande sort quand l'usine l'a traité.`); st.confirm=null; st.sheet=false; break;
+    case "cancel": st.confirm=null; st.snoozeOpen=null; st.refuseOpen=null; st.accOpen=null; break;
+    case "goto":
+      if(b.dataset.acc){ st.accOpen=b.dataset.acc; render(); const el=document.getElementById("ch-"+b.dataset.acc); if(el) el.scrollIntoView({block:"center"}); return; }
+      if(visible().find(y=>y.id===id)){ st.sel=id; st.sheet=true; st.confirm=null; render(); const el=document.getElementById("app"); if(el) el.scrollIntoView({block:"start"}); return; }
+      toast("Cette demande est reportée ou déjà traitée."); break;
+    case "accdo": L(b.dataset.acc).done=true; st.accOpen=null; toast("Livraison acceptée (tracé : benjamin/cockpit)."); break;
+    case "accko": toast("Prompt « pas bon » copié : décris ce qui ne va pas à l'agent (prototype)."); break;
+    case "accsite": toast("Ouverture du résultat livré (prototype : lien factice)."); break;
+    case "projpage": e.preventDefault(); toast("Page projet : prochain prototype (tableau des chantiers par étape de C)."); break;
+    case "ack": L(id).ack=true; toast("Acquittée : plus de rappel, elle reste dans la liste."); break;
+    case "snoozeopen": st.snoozeOpen=id; st.refuseOpen=null; break;
+    case "snooze": L(id).snooze=t; st.snoozeOpen=null; st.sheet=false; toast(`Reportée jusqu'à ${t}.`); break;
+    case "unsnooze": Object.values(st.local).forEach(o=>delete o.snooze); break;
+    case "accept": L(id).done=true; toast("Proposition acceptée (tracé : benjamin/cockpit)."); st.sheet=false; break;
+    case "refuseopen": st.refuseOpen=id; st.snoozeOpen=null; break;
+    case "refuse": L(id).done=true; st.refuseOpen=null; st.sheet=false; toast(`Proposition refusée : « ${t} ».`); break;
+    case "primary": toast(x && x.primary==="Copier le prompt" ? "Prompt de lancement copié." : "Ouverture de la Spec (prototype : lien factice)."); break;
+    case "agent":
+      if(x){ const txt=promptFor(x);
+        try{ navigator.clipboard.writeText(txt).then(()=>toast("Prompt copié : colle-le dans une session d'agent."), ()=>toast("Copie refusée par le navigateur (prototype).")); }
+        catch(err){ toast("Copie refusée par le navigateur (prototype)."); } }
+      break;
+  }
+  render();
+});
+function go(d){ st.v=(st.v+d+VARIANTS.length)%VARIANTS.length; st.sheet=false; st.confirm=null; render(); }
+document.getElementById("prev").onclick=()=>go(-1);
+document.getElementById("next").onclick=()=>go(1);
+document.getElementById("scen").onchange=e=>{ st.sc=e.target.value; st.local={}; st.sel=null; st.sheet=false; save(); render(); };
+document.getElementById("theme").onclick=()=>{ st.theme={system:"light",light:"dark",dark:"system"}[st.theme]; save(); applyTheme(); };
+document.getElementById("frame").onclick=()=>{ st.framed=!st.framed; render(); };
+document.addEventListener("keydown", e=>{
+  const tg=e.target; if(tg.closest && tg.closest("input,textarea,select,[contenteditable]")) return;
+  if(e.key==="ArrowLeft") go(-1); if(e.key==="ArrowRight") go(1);
+});
+window.addEventListener("hashchange", ()=>{ const i=VARIANTS.findIndex(x=>"#"+x.k===location.hash); if(i>=0&&i!==st.v){ st.v=i; render(); }});
+applyTheme(); render();
+</script>

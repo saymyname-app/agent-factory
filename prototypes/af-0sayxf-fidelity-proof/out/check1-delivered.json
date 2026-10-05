@@ -1,0 +1,86 @@
+{
+ "rule_count": {
+  "prototype_all": 177,
+  "prototype_variant_D": 149,
+  "delivered": 28
+ },
+ "tokens": {
+  "prototype": 46,
+  "delivered": 32,
+  "identical": 32,
+  "missing_in_delivered": [
+   "dark --accent-ink",
+   "dark --info-soft",
+   "dark --normal-soft",
+   "dark --ok-soft",
+   "dark --shadow",
+   "dark --urgent-soft",
+   "light --accent-ink",
+   "light --font",
+   "light --info-soft",
+   "light --mono",
+   "light --normal-soft",
+   "light --ok-soft",
+   "light --shadow",
+   "light --urgent-soft"
+  ],
+  "different": [],
+  "extra_in_delivered": []
+ },
+ "fonts": {
+  "prototype_named": [
+   "Atkinson Hyperlegible Mono",
+   "Atkinson Hyperlegible Next",
+   "Consolas",
+   "Roboto",
+   "SF Mono",
+   "Segoe UI"
+  ],
+  "prototype_loaded": [
+   "Atkinson Hyperlegible Mono",
+   "Atkinson Hyperlegible Next"
+  ],
+  "delivered_named": [
+   "Atkinson Hyperlegible",
+   "Atkinson Hyperlegible Next",
+   "Atkinson Hyperlegible Next Mono"
+  ],
+  "delivered_loaded": [],
+  "delivered_named_not_loaded": [
+   "Atkinson Hyperlegible",
+   "Atkinson Hyperlegible Next",
+   "Atkinson Hyperlegible Next Mono"
+  ]
+ },
+ "classes": {
+  "delivered_emitted": 23,
+  "delivered_unstyled": [
+   "cockpit-action-report",
+   "cockpit-option",
+   "cockpit-option-recommande",
+   "cockpit-report-option",
+   "cockpit-request-details",
+   "cockpit-request-level",
+   "cockpit-request-meta",
+   "cockpit-request-pourquoi",
+   "cockpit-request-que-faire",
+   "cockpit-request-quoi",
+   "cockpit-requests",
+   "cockpit-requests-list"
+  ]
+ },
+ "raw_literals_outside_tokens": {
+  "prototype_variant_D": {
+   "hex_colours": 7,
+   "px_values": 179
+  },
+  "delivered": {
+   "hex_colours": 0,
+   "px_values": 31
+  }
+ },
+ "same_selector_different_declarations": [
+  "*",
+  "body"
+ ]
+}

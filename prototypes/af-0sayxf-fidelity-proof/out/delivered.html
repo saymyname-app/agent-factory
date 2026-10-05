@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cockpit</title>
+<style>
+:root {
+  --bg:#F2F4F8; --surface:#FFFFFF; --surface-2:#EAEEF4; --ink:#151B26; --ink-2:#465063; --muted:#687286;
+  --line:#D8DDE6; --accent:#2B4CC0; --accent-soft:#E3E8FA;
+  --urgent:#C22D25; --normal:#AD6208; --info:#5A6679; --ok:#1F7B4B;
+  --r:10px; --fs-xs:12.5px; --fs-s:14px; --fs-m:16px; --fs-l:19px; --fs-xl:24px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#0D1015; --surface:#161A21; --surface-2:#1D222B; --ink:#E6E9EF; --ink-2:#B6BDCA; --muted:#8A93A4;
+    --line:#2A313D; --accent:#8FA3FF; --accent-soft:#1E2644;
+    --urgent:#FF6F63; --normal:#F0A33A; --info:#9BA5B7; --ok:#4DC48B;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, sans-serif;
+  font-size: var(--fs-m);
+}
+.cockpit-headline {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font-size: var(--fs-l);
+}
+.cockpit-headline[data-ok="true"] { color: var(--ok); }
+.cockpit-headline[data-ok="false"] { color: var(--normal); }
+.cockpit-stale-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.cockpit-stale-list li {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: var(--fs-s);
+}
+time.cockpit-time { font-family: "Atkinson Hyperlegible Next Mono", ui-monospace, monospace; }
+/* Out-of-scope touch (T13, af-cx20q9 -- declared scope lib/cockpit/ui/actions/**):
+   Operator Action controls and the greyed "reportee" state (spec .23). */
+li.cockpit-request[data-reportee="true"] { opacity: 0.55; }
+.cockpit-actions { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cockpit-action {
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  border-radius: var(--r);
+  padding: 6px 10px;
+  font-size: var(--fs-s);
+  cursor: pointer;
+}
+.cockpit-action-tokens { color: var(--normal); }
+.cockpit-actions-explication { font-size: var(--fs-xs); color: var(--muted); margin: 4px 0 0; }
+.cockpit-undo-toast {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--bg);
+  border-radius: var(--r);
+  padding: 8px 12px;
+  font-size: var(--fs-s);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  z-index: 10;
+}
+.cockpit-undo-toast button { background: transparent; color: var(--accent-soft); border: none; cursor: pointer; }
+/* T25 (af-tzk0s4, spec .69): "Déconnecté du cockpit depuis HH:MM" above
+   everything, all values greyed -- see lib/cockpit/ui/base/page.py. */
+.cockpit-disconnected-banner {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 10px 16px;
+  background: var(--urgent);
+  color: var(--surface);
+  font-size: var(--fs-s);
+  font-weight: 600;
+  text-align: center;
+}
+body.cockpit-greyed > *:not(.cockpit-disconnected-banner) {
+  opacity: 0.4;
+  filter: grayscale(60%);
+}
+
+.cockpit-health {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  padding: 12px 16px;
+}
+.cockpit-health h2 { font-size: var(--fs-l); margin: 0 0 8px; }
+.cockpit-health-ok { color: var(--ok); font-size: var(--fs-s); margin: 0; }
+.cockpit-health ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.cockpit-health li { font-size: var(--fs-s); }
+.cockpit-health li[data-kind="bad"] { color: var(--urgent); }
+.cockpit-health li[data-kind="warn"] { color: var(--normal); }
+.cockpit-health .cockpit-health-checked {
+  font-size: var(--fs-xs); color: var(--muted); margin: 8px 0 0;
+}
+.cockpit-health .recheck {
+  border: 1px solid var(--line); background: var(--surface-2); border-radius: 999px;
+  padding: 2px 10px; font-size: var(--fs-xs); margin-top: 10px;
+}
+</style>
+</head>
+<body id="cockpit-body">
+<div id="cockpit-disconnected-banner" class="cockpit-disconnected-banner" data-state="connected" hidden></div>
+<header class="cockpit-headline" data-ok="true">Tout est à jour à 14:26 (Paris)</header>
+
+<section class="cockpit-requests" data-state="filled"><h2>Ce qui t&#x27;attend</h2><ul class="cockpit-requests-list"><li class="cockpit-request" data-level="urgent" data-incomplete="false" data-reportee="false"><span class="cockpit-request-level">Urgent</span><p class="cockpit-request-quoi">l&#x27;usine est muette</p><p class="cockpit-request-pourquoi">plus rien ne repond depuis 20 minutes</p><div class="cockpit-request-que-faire"><p class="cockpit-option">Approuver — le graphe est publie et la livraison demarre <span class="cockpit-option-recommande">Recommandé — la Spec est approuvee et le graphe la couvre</span></p><p class="cockpit-option">Renvoyer en planification — rien ne demarre, la carte est rouverte</p></div><p class="cockpit-request-meta">usine · depuis 11:00 · vérifié 14:26</p><details class="cockpit-request-details"><summary>Détails</summary><dl><dt>identifiant</dt><dd>af-demo1</dd><dt>type</dt><dd>escalation</dd></dl></details><div class="cockpit-actions"><button type="button" class="cockpit-action" data-action="acquitter" data-bead-id="af-demo1">Acquitter</button><span class="cockpit-action-report"><select class="cockpit-report-option" data-bead-id="af-demo1"><option value="1h">Dans 1 h</option><option value="4h">Dans 4 h</option><option value="demain_09h">Demain 09:00</option><option value="libre">Heure libre</option></select><button type="button" class="cockpit-action" data-action="reporter" data-bead-id="af-demo1">Reporter</button></span><button type="button" class="cockpit-action cockpit-action-tokens" data-action="continuer" data-bead-id="af-demo1" data-quoi="l&#x27;usine est muette">Continuer avec un agent (utilise un agent — consomme des tokens)</button><p class="cockpit-actions-explication">Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu&#x27;à l&#x27;heure choisie, puis elle revient. Aucun des deux ne change rien dans l&#x27;usine.</p></div></li><li class="cockpit-request" data-level="a-faire" data-incomplete="false" data-reportee="false"><span class="cockpit-request-level">À faire</span><p class="cockpit-request-quoi">une Spec attend ton accord</p><p class="cockpit-request-pourquoi">elle change la portee du travail livre</p><div class="cockpit-request-que-faire"><p class="cockpit-option">Approuver — le graphe est publie et la livraison demarre <span class="cockpit-option-recommande">Recommandé — la Spec est approuvee et le graphe la couvre</span></p><p class="cockpit-option">Renvoyer en planification — rien ne demarre, la carte est rouverte</p></div><p class="cockpit-request-meta">agent-factory · depuis 10:00 · vérifié 14:26</p><details class="cockpit-request-details"><summary>Détails</summary><dl><dt>identifiant</dt><dd>af-demo2</dd><dt>type</dt><dd>escalation</dd></dl></details><div class="cockpit-actions"><span class="cockpit-action-report"><select class="cockpit-report-option" data-bead-id="af-demo2"><option value="1h">Dans 1 h</option><option value="4h">Dans 4 h</option><option value="demain_09h">Demain 09:00</option><option value="libre">Heure libre</option></select><button type="button" class="cockpit-action" data-action="reporter" data-bead-id="af-demo2">Reporter</button></span><button type="button" class="cockpit-action cockpit-action-tokens" data-action="continuer" data-bead-id="af-demo2" data-quoi="une Spec attend ton accord">Continuer avec un agent (utilise un agent — consomme des tokens)</button><p class="cockpit-actions-explication">Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu&#x27;à l&#x27;heure choisie, puis elle revient. Aucun des deux ne change rien dans l&#x27;usine.</p></div></li><li class="cockpit-request" data-level="a-faire" data-incomplete="false" data-reportee="false"><span class="cockpit-request-level">À faire</span><p class="cockpit-request-quoi">un graphe de tickets attend ton accord</p><p class="cockpit-request-pourquoi">12 tickets, 3 vagues</p><div class="cockpit-request-que-faire"><p class="cockpit-option">Approuver — le graphe est publie et la livraison demarre <span class="cockpit-option-recommande">Recommandé — la Spec est approuvee et le graphe la couvre</span></p><p class="cockpit-option">Renvoyer en planification — rien ne demarre, la carte est rouverte</p></div><p class="cockpit-request-meta">saymyname · depuis 10:30 · vérifié 14:26</p><details class="cockpit-request-details"><summary>Détails</summary><dl><dt>identifiant</dt><dd>af-demo3</dd><dt>type</dt><dd>escalation</dd></dl></details><div class="cockpit-actions"><span class="cockpit-action-report"><select class="cockpit-report-option" data-bead-id="af-demo3"><option value="1h">Dans 1 h</option><option value="4h">Dans 4 h</option><option value="demain_09h">Demain 09:00</option><option value="libre">Heure libre</option></select><button type="button" class="cockpit-action" data-action="reporter" data-bead-id="af-demo3">Reporter</button></span><button type="button" class="cockpit-action cockpit-action-tokens" data-action="continuer" data-bead-id="af-demo3" data-quoi="un graphe de tickets attend ton accord">Continuer avec un agent (utilise un agent — consomme des tokens)</button><p class="cockpit-actions-explication">Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu&#x27;à l&#x27;heure choisie, puis elle revient. Aucun des deux ne change rien dans l&#x27;usine.</p></div></li><li class="cockpit-request" data-level="quand-tu-veux" data-incomplete="false" data-reportee="false"><span class="cockpit-request-level">Quand tu veux</span><p class="cockpit-request-quoi">regrouper deux rituels</p><p class="cockpit-request-pourquoi">ils se recoupent</p><div class="cockpit-request-que-faire"><p class="cockpit-option">Approuver — le graphe est publie et la livraison demarre <span class="cockpit-option-recommande">Recommandé — la Spec est approuvee et le graphe la couvre</span></p><p class="cockpit-option">Renvoyer en planification — rien ne demarre, la carte est rouverte</p></div><p class="cockpit-request-meta">usine · depuis 09:00 · vérifié 14:26</p><details class="cockpit-request-details"><summary>Détails</summary><dl><dt>identifiant</dt><dd>af-demo4</dd><dt>type</dt><dd>proposal</dd></dl></details><div class="cockpit-actions"><span class="cockpit-action-report"><select class="cockpit-report-option" data-bead-id="af-demo4"><option value="1h">Dans 1 h</option><option value="4h">Dans 4 h</option><option value="demain_09h">Demain 09:00</option><option value="libre">Heure libre</option></select><button type="button" class="cockpit-action" data-action="reporter" data-bead-id="af-demo4">Reporter</button></span><button type="button" class="cockpit-action cockpit-action-tokens" data-action="continuer" data-bead-id="af-demo4" data-quoi="regrouper deux rituels">Continuer avec un agent (utilise un agent — consomme des tokens)</button><p class="cockpit-actions-explication">Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu&#x27;à l&#x27;heure choisie, puis elle revient. Aucun des deux ne change rien dans l&#x27;usine.</p></div></li></ul></section>
+
+<script>
+(function () {
+  function post(action, body) {
+    return fetch('/api/actions/' + action, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify(body)
+    });
+  }
+  function withUndo(label, run) {
+    var cancelled = false;
+    var toast = document.createElement('div');
+    toast.className = 'cockpit-undo-toast';
+    toast.textContent = label + '… ';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Annuler';
+    cancelBtn.onclick = function () { cancelled = true; toast.remove(); };
+    toast.appendChild(cancelBtn);
+    document.body.appendChild(toast);
+    setTimeout(function () {
+      toast.remove();
+      if (!cancelled) { run(); }
+    }, 10000);
+  }
+  // "Deux temps" (T14, af-peh3yy): répondre, accepter/rejeter/reporter
+  // une proposition, and relancer never send confirm:true on a first
+  // click -- they only arm the control (CSS class + label change). A
+  // second click on the SAME armed control within CONFIRM_WINDOW_MS
+  // sends confirm:true; any other click disarms it first.
+  var TWO_STEP_ACTIONS = ['repondre', 'accepter_proposition', 'rejeter_proposition', 'reporter_proposition', 'relancer'];
+  var CONFIRM_WINDOW_MS = 10000;
+  var armed = null; // {el, timer}
+
+  function disarm() {
+    if (armed) {
+      armed.el.classList.remove('cockpit-armed');
+      armed.el.textContent = armed.originalLabel;
+      clearTimeout(armed.timer);
+      armed = null;
+    }
+  }
+
+  function bodyFor(action, el) {
+    var beadId = el.getAttribute('data-bead-id');
+    if (action === 'repondre') {
+      return {bead_id: beadId, lettre: el.getAttribute('data-lettre') || ''};
+    }
+    if (action === 'accepter_proposition') {
+      return {bead_id: beadId};
+    }
+    if (action === 'rejeter_proposition') {
+      var raisonEl = document.querySelector('.cockpit-rejeter-raison[data-bead-id="' + beadId + '"]');
+      return {bead_id: beadId, raison: raisonEl ? raisonEl.value : ''};
+    }
+    if (action === 'reporter_proposition') {
+      var heureEl = document.querySelector('.cockpit-reporter-heure[data-bead-id="' + beadId + '"]');
+      return {bead_id: beadId, heure: heureEl ? heureEl.value : ''};
+    }
+    if (action === 'relancer') {
+      return {
+        bead_id: beadId,
+        target_type: el.getAttribute('data-target-type') || '',
+        session_id: el.getAttribute('data-session-id') || undefined,
+        order_name: el.getAttribute('data-order-name') || undefined
+      };
+    }
+    return {bead_id: beadId};
+  }
+
+  document.addEventListener('click', function (event) {
+    var el = event.target.closest('[data-action]');
+    if (!el) { return; }
+    var action = el.getAttribute('data-action');
+
+    if (TWO_STEP_ACTIONS.indexOf(action) !== -1) {
+      if (armed && armed.el === el) {
+        var body = bodyFor(action, el);
+        body.confirm = true;
+        disarm();
+        post(action, body).then(function (resp) {
+          return resp.json();
+        }).then(function (data) {
+          // répondre's immediate feedback (spec .26: "la demande affiche
+          // « répondu b à HH:MM, en cours de traitement par l'usine »")
+          // -- a transient toast at the moment of the action, since the
+          // request itself exits the list once gc.needs_benjamin clears
+          // (builder.py: "Exit is at-source only").
+          if (data && data.display) {
+            var toast = document.createElement('div');
+            toast.className = 'cockpit-undo-toast cockpit-repondu-toast';
+            toast.textContent = data.display;
+            document.body.appendChild(toast);
+            setTimeout(function () { toast.remove(); }, 10000);
+          }
+        });
+        return;
+      }
+      disarm();
+      var originalLabel = el.textContent;
+      el.classList.add('cockpit-armed');
+      el.textContent = 'Confirmer ?';
+      armed = {
+        el: el,
+        originalLabel: originalLabel,
+        timer: setTimeout(disarm, CONFIRM_WINDOW_MS)
+      };
+      return;
+    }
+
+    disarm();
+    var beadId = el.getAttribute('data-bead-id');
+    if (action === 'acquitter') {
+      withUndo('Acquitter', function () { post('acquitter', {bead_id: beadId}); });
+    } else if (action === 'reporter') {
+      var select = document.querySelector('.cockpit-report-option[data-bead-id="' + beadId + '"]');
+      var option = select ? select.value : '1h';
+      withUndo('Reporter', function () { post('reporter', {bead_id: beadId, option: option}); });
+    } else if (action === 'continuer') {
+      var quoi = el.getAttribute('data-quoi') || '';
+      withUndo('Copier le prompt', function () {
+        post('continuer', {bead_id: beadId, quoi: quoi}).then(function (resp) {
+          return resp.json();
+        }).then(function (data) {
+          if (data.prompt && navigator.clipboard) { navigator.clipboard.writeText(data.prompt); }
+        });
+      });
+    }
+  });
+})();
+</script>
+<section class="cockpit-health" data-ok="true"><h2>Zone santé de l'usine</h2><p class="cockpit-health-ok">Aucun problème détecté.</p><p class="cockpit-health-checked">Vérifié à 14:26</p><form method="post" action="/api/health/recheck"><button class="recheck" type="submit">Revérifier maintenant</button></form></section>
+
+<script>
+(function () {
+  var AFTER_MS = 30 * 1000;
+  var lastOkAt = Date.now();
+  var banner = document.getElementById('cockpit-disconnected-banner');
+  function setDisconnected(sinceMs) {
+    if (!banner) return;
+    var d = new Date(sinceMs);
+    var hh = ("0" + d.getHours()).slice(-2);
+    var mm = ("0" + d.getMinutes()).slice(-2);
+    banner.textContent = "Déconnecté du cockpit depuis " + hh + ":" + mm;
+    banner.setAttribute("data-state", "disconnected");
+    banner.hidden = false;
+    document.body.classList.add('cockpit-greyed');
+  }
+  function setConnected() {
+    if (!banner) return;
+    banner.hidden = true;
+    banner.setAttribute("data-state", "connected");
+    document.body.classList.remove('cockpit-greyed');
+  }
+  function poll() {
+    fetch("/api/status", {cache: "no-store"})
+      .then(function (r) {
+        if (!r.ok) throw new Error("bad status");
+        lastOkAt = Date.now();
+        setConnected();
+      })
+      .catch(function () {
+        if (Date.now() - lastOkAt > AFTER_MS) setDisconnected(lastOkAt);
+      })
+      .finally(function () {
+        setTimeout(poll, 5000);
+      });
+  }
+  poll();
+})();
+</script>
+</body>
+</html>
