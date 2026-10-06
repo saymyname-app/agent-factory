@@ -466,6 +466,11 @@ class ModelStaleness(unittest.TestCase):
         self.assertEqual("gpt-5.6-sol", pf.configured_model(
             {"args_append": ["-m", "gpt-5.6-sol"]}))
 
+    def test_configured_model_from_claude_args_append_long_flag(self):
+        self.assertEqual("claude-opus-5-5", pf.configured_model(
+            {"args_append": ["--disallowedTools", "AskUserQuestion", "--model", "claude-opus-5-5"],
+             "option_defaults": {"effort": "high"}}))
+
     def test_configured_model_absent_is_none_not_an_error(self):
         self.assertIsNone(pf.configured_model({"base": "builtin:codex"}))
         self.assertIsNone(pf.configured_model({}))
