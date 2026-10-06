@@ -238,8 +238,7 @@ Two rules the real data needed:
 
 Since then: Livré-non-Accepté is a « Quand tu veux » request, and the
 roadmap step and « dev a N commits d'avance » are read (see « Project
-repositories » below). Still open: an accepted chantier is treated as
-finished for every project — Promu is not computed.
+repositories » below). Promu is computed too (« Promu » below).
 
 `tests/cockpit-home-projects-test.py` drives all of the above through the
 process's HTTP surface.
@@ -489,10 +488,34 @@ closed chantier with a ticket not merged; a roadmap step marked done while
 a chantier that targets it is still open; a chantier targeting a step
 still to do.
 
-Not wired: Promu (whether a chantier's merge commits reached the promotion
-branch) and « rituel dû » — the status command of a project's rituals is a
+Not wired: « rituel dû » — the status command of a project's rituals is a
 script of its repository, which the cockpit would have to run from a
 checkout; that is a decision of its own.
 
 `tests/cockpit-depots-test.py` covers this through HTTP against real git
 repositories made on the spot.
+
+## Promu (af-mjfvwx)
+
+T20 built the git question (`promotion.compute_promu`) and the stage
+computation that takes its answers; nothing asked the question for the
+real convoys, so an accepted chantier counted as finished for every
+project. `projects/promu.py` asks it inside the `projets` read: for each
+accepted convoy, the merge commits its tickets recorded
+(`gc.merge_commit`), checked against the promotion branch of the rig each
+ticket went to (`gc.dispatch_rig`), in the clones the `depots` source
+keeps fetched. It neither clones nor fetches.
+
+| What the clone says | Chantier | « Ce qui t'attend » |
+|---|---|---|
+| every merge commit is on the promotion branch | Promu, in the project's history | — |
+| at least one is not | Accepté : en attente de promotion, « à toi de jouer » | « … est accepté, pas encore promu. » (Quand tu veux) |
+| cannot tell (no clones directory, clone not made yet, commit unknown to the clone, no merge commit recorded) | Accepté : promotion inconnue | — |
+
+Unknown never asks anything of Benjamin (spec .62). A convoy none of whose
+tickets went to a rig with a promotion branch is untouched: Accepté is its
+last stage (spec .41).
+
+Limit: a commit counts as promoted when it is an ancestor of the promotion
+branch. A promotion made by squashing `dev` into `main` leaves the merge
+commits unreachable; such a chantier stays « en attente de promotion ».

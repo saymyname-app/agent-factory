@@ -104,6 +104,13 @@ class Origins:
         git(work, "commit", "--quiet", "-m", "commit")
         git(work, "push", "--quiet", "origin", "HEAD:refs/heads/" + branch)
 
+    def sha(self, repo, branch):
+        return git(self.path(repo), "rev-parse", "refs/heads/" + branch).strip()
+
+    def promote(self, repo, source, target):
+        """What a promotion does on origin: ``target`` moves up to ``source``."""
+        git(self.path(repo), "update-ref", "refs/heads/" + target, self.sha(repo, source))
+
     def refs(self):
         return {
             str(p.relative_to(self.root)): git(p, "for-each-ref", "--format=%(refname) %(objectname)")
@@ -289,6 +296,57 @@ class DepotsTest(unittest.TestCase):
         self.assertNotIn("Roadmap", body)
         self.assertNotIn("depots", self.get("/api/status"))
         self.assertFalse(self.clones.exists())
+
+    # ------------------------------------------------------------------
+    # Promu (spec "Calcul d'étape des chantiers", row 7)
+    def accepted_chantier(self, merge_commit):
+        """An accepted chantier of "demo" whose one ticket was merged on
+        the rig that promotes from dev to main."""
+        beads = json.loads(self.state_file.read_text())
+        beads += [
+            {"id": "af-conv2", "title": "Fiches contacts", "status": "closed", "issue_type": "convoy",
+             "labels": ["approved-ticket-graph"], "notes": "",
+             "metadata": {"gc.graph_digest": "sha256:b", "gc.project_id": "demo",
+                          "gc.cockpit_chantier_accepted": "true"}},
+            {"id": "af-tk2", "title": "t", "status": "closed", "issue_type": "task",
+             "labels": ["approved-ticket-graph", "delivery-plane"], "notes": "",
+             "metadata": {"gc.graph_digest": "sha256:b", "gc.dispatch_rig": "demo-back",
+                          "gc.merge_commit": merge_commit}},
+        ]
+        self.state_file.write_text(json.dumps(beads))
+
+    def test_accepted_chantier_waits_for_promotion_then_is_promu(self):
+        self.accepted_chantier(self.origins.sha("org/demo-back", "dev"))
+        self.start_cockpit()
+        body = wait_until(lambda: self.get("/") if "Accepté : en attente de promotion" in self.get("/") else None)
+        self.assertIn("Fiches contacts", self.project_block(body, "demo"))
+        self.assertIn("Le chantier Fiches contacts est accepté, pas encore promu.", body)
+
+        # Benjamin promotes dev to main, outside the cockpit.
+        self.origins.promote("org/demo-back", "dev", "main")
+        wait_until(lambda: "pas encore promu" not in self.get("/"))
+        body = self.get("/")
+        self.assertNotIn("en attente de promotion", body)
+        self.assertNotIn("Fiches contacts", self.project_block(body, "demo"), "a promoted chantier is finished")
+        wait_until(lambda: "dev a 0 commits d'avance" in self.get("/"))
+        page = self.get("/projet/demo")
+        self.assertGreater(page.index("Fiches contacts"), page.rindex("Historique"), "it is in the project's history")
+
+    def test_promotion_that_cannot_be_read_is_unknown_and_asks_nothing(self):
+        self.accepted_chantier("0" * 40)  # a commit the clone does not know
+        self.start_cockpit()
+        wait_until(lambda: "demo-back : dev a 3 commits d'avance" in self.get("/"))
+        time.sleep(1.0)
+        body = self.get("/")
+        self.assertIn("Accepté : promotion inconnue", self.project_block(body, "demo"))
+        self.assertNotIn("pas encore promu", body)
+        self.assertNotIn("en attente de promotion", body)
+
+    def test_without_clones_an_accepted_chantier_is_unknown_not_finished(self):
+        self.accepted_chantier(self.origins.sha("org/demo-back", "dev"))
+        self.start_cockpit(with_clones=False)
+        body = wait_until(lambda: self.get("/") if "Accepté : promotion inconnue" in self.get("/") else None)
+        self.assertNotIn("pas encore promu", body)
 
 
 if __name__ == "__main__":
