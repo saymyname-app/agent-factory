@@ -1,0 +1,9 @@
+{
+  "contract": "agent-factory-delivery-flow/v1",
+  "description": "Réglages du nouveau flux de livraison lus par bin/convoy-advance (Spec af-wf4w5r §4, T04). max_sessions est le plafond N : un seul réglage pour toute l'usine, partagé entre les Specs ; les sessions d'auteur, de relecteur et d'Evaluator comptent dedans. La valeur 2 reprend le plafond actuel et n'a pas de base mesurée (Spec, Further Notes 2). start nomme ce que la porte de dispatch reçoit pour démarrer un ticket d'un convoi marqué : la formule (null tant que la formule de l'auteur n'est pas livrée : bin/convoy-advance refuse alors de démarrer quoi que ce soit) et le rôle de livraison (config/delivery-roles.json).",
+  "max_sessions": 2,
+  "start": {
+    "formula": null,
+    "role": "author"
+  }
+}

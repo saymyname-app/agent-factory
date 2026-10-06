@@ -14,10 +14,11 @@ A convoy without the mark is not touched: `show` and every write answer
 published, dispatched, merged and closed exactly as before.
 
 ```bash
+./bin/convoy-state list                                 # the open marked convoys (bin/convoy-advance)
 ./bin/convoy-state mark af-convoy                       # publication door (T05)
 ./bin/convoy-state show af-convoy --repo rigs/product   # every reader
 ./bin/convoy-state set-branch   af-convoy af-t1 --branch ticket/af-t1
-./bin/convoy-state record-gate  af-convoy af-t1 --gate dispatch
+./bin/convoy-state record-gate  af-convoy af-t1 --gate dispatch   # bin/dispatch-door --convoy, after the sling
 ./bin/convoy-state set-exit     af-convoy af-t1 --exit finished
 ./bin/convoy-state set-verdict  af-convoy af-t1 --kind code_review --state favorable --commit <sha>
 ./bin/convoy-state bump-counter af-convoy --ticket af-t1 --counter resumes --counter correction_rounds
@@ -71,6 +72,10 @@ default `$XDG_RUNTIME_DIR` or `/tmp`), so concurrent counter bumps are all
 counted and a reviewer and an Evaluator can write the same ticket in parallel.
 
 ## What a read reports
+
+`list` answers `{"convoys": [...]}`: the ids of the convoys that carry the
+mark and are not closed. It is what `bin/convoy-advance` walks
+(`docs/CONVOY_ADVANCE.md`); an unmarked convoy never appears in it.
 
 `show` renders, per ticket: mark, tracker status, branch and its tip, Ticket
 Exit, verdicts, counters, evidence fingerprints and gate records.
