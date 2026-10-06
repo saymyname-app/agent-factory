@@ -151,6 +151,9 @@ details.more[open] summary::before{content:"\\25BE"}
 .va .health{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 16px}
 .va .hlist{display:grid;gap:6px;font-size:var(--fs-s)}
 .va .hl{display:flex;gap:10px;align-items:baseline}
+.va .hl > .lvl:empty{width:10px;flex:none}
+.va .health .hint{margin-top:8px}
+.va .health .acts{margin-top:10px}
 
 /* ---------- "Projets": one block per project, a stepper per chantier ---------- */
 .va .projects{display:grid;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}

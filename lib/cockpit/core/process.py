@@ -13,12 +13,20 @@ from cockpit.access.guard import ActionGuard, new_session_token
 from cockpit.actions.registry import build_action_handlers
 from cockpit.core.beads_source import read_operator_beads
 from cockpit.core.clock import SystemClock
+from cockpit.core.freshness import UNKNOWN
 from cockpit.core.gc_client import GcSsePoller
 from cockpit.core.polling_source import PollingSource
 from cockpit.core.readmodel import ReadModel
 from cockpit.core.server import make_server
 from cockpit.health.git_source import count_commits_behind
+from cockpit.access.tailscale import build_key_expiry_request, key_expiry_epoch, read_status
+from cockpit.notify.service import HeartbeatService, NotifyService, Ticker
+from cockpit.notify.state_store import JsonFileStateStore
+from cockpit.stop.driver import StopDriver
+from cockpit.stop.gc_city import GcCityReader
 from cockpit.projects.source import read_projects
+from cockpit.requests.assemble import assemble_from_snapshot
+from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import read_journal
 
 # github/rituals sources are in the Validity window table (spec .3) for the
@@ -123,6 +131,88 @@ def build(config, clock=None):
         factory_stalled_after_seconds=config.factory_stalled_after_seconds,
         illisible_after_seconds=config.illisible_after_seconds,
     )
+
+    # Clean stop (T23, T24) -- read side only (af-mjfvwx 7a): the driver keeps
+    # its state and its tick; the reader it is handed cannot suspend, resume
+    # or stop anything, and no stop action is registered.
+    city_reader = GcCityReader(config.gc_base_url, city=config.gc_city)
+    read_model.register("sessions", display_name="agents au travail")
+    pollers.append(PollingSource(read_model, "sessions", city_reader.status, config.sessions_poll_seconds))
+
+    def photo():
+        """The driver's « photo »: every non-closed ticket and who holds it."""
+        beads = (read_model.snapshot().get("beads") or {}).get("value") or []
+        return {
+            "beads": {
+                b["id"]: {"status": b.get("status"), "assignee": b.get("assignee")}
+                for b in beads
+                if isinstance(b, dict) and b.get("id")
+            }
+        }
+
+    stop_driver = StopDriver(city_reader, photo, clock, JsonFileStateStore(config.stop_state_file))
+    pollers.append(Ticker(stop_driver.tick, config.stop_tick_seconds))
+
+    # Access (T25): the Tailscale key's expiry, only where a client is named.
+    if config.tailscale_bin:
+        read_model.register("tailscale", display_name="accès Tailscale")
+
+        def read_tailscale():
+            status = read_status(tailscale_bin=config.tailscale_bin)
+            if status is None:
+                raise ValueError("tailscale ne répond pas")
+            return {"key_expiry": key_expiry_epoch(status), "backend_state": status.get("BackendState")}
+
+        pollers.append(PollingSource(read_model, "tailscale", read_tailscale, config.tailscale_poll_seconds))
+
+    def extra_requests(snapshot, now):
+        """Requests the cockpit's own parts raise (spec: « l'arrêt n'avance
+        plus », « reprise avec écarts », clé Tailscale à J-14)."""
+        requests = list(stop_driver.pending_requests())
+        tailscale = snapshot.get("tailscale")
+        if tailscale is not None and tailscale["value"] is not None and tailscale["freshness"] != UNKNOWN:
+            request = build_key_expiry_request(tailscale["value"]["key_expiry"], now)
+            if request is not None:
+                requests.append(request)
+        return requests
+
+    server.stop_driver = stop_driver
+    server.benjamin_login = config.benjamin_login
+    server.extra_requests = extra_requests
+
+    # Notifications and heartbeat (T17, T18): each a policy with tick() as
+    # its interface, ticked here on its own thread.
+    notify_defects = DefectCounter()  # its own: the page's count is the page's
+
+    def current_requests():
+        snapshot = read_model.snapshot()
+        now = read_model.now()
+        requests, _, beads_known = assemble_from_snapshot(
+            snapshot, now, notify_defects, config.illisible_after_seconds,
+            extra_requests=extra_requests(snapshot, now),
+        )
+        # Whole only once the projects are read too: a push names its
+        # project as the page does.
+        projets = snapshot.get("projets")
+        return requests, beads_known and (projets is None or projets["freshness"] != UNKNOWN)
+
+    notify = NotifyService(
+        config.pushover_secrets_file,
+        config.notify_state_file,
+        clock,
+        config.public_url,
+        current_requests,
+        pushover_url=config.pushover_url,
+    )
+    heartbeat = HeartbeatService(
+        read_model, clock, config.heartbeat_url_file, config.heartbeat_interval_seconds,
+        state_provider=stop_driver.state,
+    )
+    server.notify = notify
+    server.heartbeat = heartbeat
+    server.action_handlers["notifier_test"] = lambda payload: notify.send_test()
+    pollers.append(Ticker(notify.tick, config.notify_tick_seconds))
+    pollers.append(Ticker(heartbeat.tick, config.heartbeat_tick_seconds))
     return server, pollers
 
 

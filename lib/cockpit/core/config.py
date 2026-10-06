@@ -3,6 +3,7 @@
 Kept as plain env vars (no config file yet) so a test can point the process
 at fake sources and shrunk Validity windows without writing a temp file.
 """
+import json
 import os
 
 from cockpit.core.freshness import VALIDITY_WINDOWS_SECONDS
@@ -12,6 +13,7 @@ from cockpit.core.gc_client import (
     STREAM_SILENCE_SECONDS,
 )
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
+from cockpit.notify.pushover import PUSHOVER_URL
 from cockpit.health.engine import (
     FACTORY_STALLED_AFTER_SECONDS,
     SUPERVISOR_UNREACHABLE_AFTER_SECONDS,
@@ -62,14 +64,23 @@ class Config:
             env.get("COCKPIT_ILLISIBLE_SECONDS", str(ILLISIBLE_THRESHOLD_SECONDS))
         )
         self.pid_file = env.get("COCKPIT_PID_FILE") or _default_pid_file(env)
+        # What only this machine knows -- where the secret files are, the
+        # address the cockpit is reached at, Benjamin's Tailscale login --
+        # lives in one local, unversioned file beside the pid file. An
+        # environment variable still wins over it.
+        local = _read_local_config(
+            env.get("COCKPIT_LOCAL_CONFIG") or os.path.join(os.path.dirname(self.pid_file), LOCAL_CONFIG_NAME)
+        )
         # Out-of-scope touch (T13, af-cx20q9 -- declared scope
         # lib/cockpit/access/**, lib/cockpit/actions/**): the access
         # guard needs Benjamin's Tailscale login and the origin the
         # cockpit itself serves from (spec .9 "Accès et sécurité").
         # Empty by default -- with no configured login every Operator
         # Action is refused rather than silently open (fail closed).
-        self.benjamin_login = env.get("COCKPIT_BENJAMIN_LOGIN", "")
-        self.allowed_origin = env.get("COCKPIT_ALLOWED_ORIGIN") or _default_origin(self.host, self.port)
+        self.benjamin_login = env.get("COCKPIT_BENJAMIN_LOGIN") or local.get("benjamin_login", "")
+        self.allowed_origin = (
+            env.get("COCKPIT_ALLOWED_ORIGIN") or local.get("allowed_origin") or _default_origin(self.host, self.port)
+        )
         # Out-of-scope touch (T14, af-peh3yy -- declared scope
         # lib/cockpit/actions/**, lib/cockpit/ui/actions/**): répondre,
         # accepter/rejeter/reporter une proposition, and relancer each
@@ -86,6 +97,34 @@ class Config:
             "COCKPIT_LOOP_GUARD_BIN", os.path.join(_REPO_ROOT, "bin", "factory-session-loop-guard")
         )
         self.gc_bin = env.get("COCKPIT_GC_BIN", "gc")
+        # Notifications and heartbeat (spec §"Notifications", §"Heartbeat et
+        # usine muette"). Both secret files live outside the repository, on
+        # the Windows side; unset or unreadable, nothing is sent or pinged
+        # and the health zone says so (spec .98).
+        self.pushover_secrets_file = env.get("COCKPIT_PUSHOVER_SECRETS_FILE") or local.get("pushover_secrets_file", "")
+        self.pushover_url = env.get("COCKPIT_PUSHOVER_URL", PUSHOVER_URL)
+        self.notify_state_file = env.get("COCKPIT_NOTIFY_STATE_FILE") or os.path.join(
+            os.path.dirname(self.pid_file), "cockpit-notify-state.json"
+        )
+        self.notify_tick_seconds = float(env.get("COCKPIT_NOTIFY_TICK_SECONDS", "30"))
+        # The address a push links back to: the ts.net URL once Tailscale
+        # Serve exposes the cockpit; the local origin until then.
+        self.public_url = env.get("COCKPIT_PUBLIC_URL") or local.get("public_url") or self.allowed_origin
+        self.heartbeat_url_file = env.get("COCKPIT_HEARTBEAT_URL_FILE") or local.get("heartbeat_url_file", "")
+        self.heartbeat_tick_seconds = float(env.get("COCKPIT_HEARTBEAT_TICK_SECONDS", "30"))
+        self.heartbeat_interval_seconds = float(env.get("COCKPIT_HEARTBEAT_INTERVAL_SECONDS", "300"))
+        # Clean stop (spec §"Arrêt propre et redémarrage"): the driver's state
+        # survives a cockpit restart; the agents at work are read from gc.
+        self.stop_state_file = env.get("COCKPIT_STOP_STATE_FILE") or os.path.join(
+            os.path.dirname(self.pid_file), "cockpit-stop-state.json"
+        )
+        self.stop_tick_seconds = float(env.get("COCKPIT_STOP_TICK_SECONDS", "15"))
+        self.sessions_poll_seconds = float(env.get("COCKPIT_SESSIONS_POLL_SECONDS", "15"))
+        # Access (spec .71): the `tailscale` client to ask for the key's
+        # expiry -- on this host a Windows binary reached from WSL, so it is
+        # named in the local settings file; unset, Tailscale is not read.
+        self.tailscale_bin = env.get("COCKPIT_TAILSCALE_BIN") or local.get("tailscale_bin", "")
+        self.tailscale_poll_seconds = float(env.get("COCKPIT_TAILSCALE_POLL_SECONDS", "3600"))
         self.validity_seconds = dict(VALIDITY_WINDOWS_SECONDS)
         for source in list(self.validity_seconds):
             override = env.get("COCKPIT_VALIDITY_%s_SECONDS" % source.upper())
@@ -117,6 +156,30 @@ class Config:
                 str(FACTORY_STALLED_AFTER_SECONDS),
             )
         )
+
+
+LOCAL_CONFIG_NAME = "cockpit-local.json"
+LOCAL_CONFIG_KEYS = (
+    "pushover_secrets_file", "heartbeat_url_file", "public_url", "benjamin_login", "allowed_origin",
+    "tailscale_bin",
+)
+
+
+def _read_local_config(path):
+    """The local settings file as ``{key: non-empty string}``, limited to
+    :data:`LOCAL_CONFIG_KEYS`. Absent, unreadable or malformed, it is
+    empty: the cockpit then runs as if nothing were configured (no push,
+    no ping, read-only), never crashes."""
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        key: data[key] for key in LOCAL_CONFIG_KEYS if isinstance(data.get(key), str) and data[key]
+    }
 
 
 def _default_pid_file(env):

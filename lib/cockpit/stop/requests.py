@@ -17,11 +17,11 @@ def build_no_progress_request(started_at, perdu_preview=None):
     perdu_preview = perdu_preview or []
     if perdu_preview:
         consequence = (
-            "Arrête les sessions en gardant leur bead et leur travail assigné : %s."
+            "Arrête les sessions en gardant leur ticket et leur travail assigné : %s."
             % ", ".join(perdu_preview)
         )
     else:
-        consequence = "Arrête les sessions en gardant leur bead et leur travail assigné."
+        consequence = "Arrête les sessions en gardant leur ticket et leur travail assigné."
     return OperatorRequest(
         id="stop:no-progress",
         type=TYPE_ARRET_BLOQUE,
@@ -64,7 +64,7 @@ def build_ecarts_request(ecarts, at):
             {
                 "lettre": "a",
                 "option": "Voir le détail",
-                "consequence": "Affiche les beads concernés : %s." % detail,
+                "consequence": "Affiche les tickets concernés : %s." % detail,
                 "recommande": True,
                 "raison": "Comprendre l'écart avant de continuer.",
             }

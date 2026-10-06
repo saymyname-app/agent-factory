@@ -230,7 +230,10 @@ class NotificationEngine:
             )
             priority = _PRIORITY_BY_NIVEAU.get(request.niveau, PRIORITY_A_FAIRE)
         ok = self._attempt_send(title, body, priority)
-        self._record_journal(cand["req_id"], kind, priority, ok)
+        request = cand.get("request")
+        self._record_journal(
+            cand["req_id"], kind, priority, ok, extra={"quoi": request.quoi} if request is not None else None
+        )
         if ok:
             self._delivery_failed.discard(cand["req_id"])
         else:
