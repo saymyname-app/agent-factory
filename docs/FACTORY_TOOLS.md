@@ -430,9 +430,21 @@ touché : il reste avancé par le Mayor.
   démarré qu'aucune session n'a encore pris.
 - **Formule de démarrage** : `start.formula` dans le même fichier. Tant qu'elle
   vaut `null`, la commande refuse de démarrer quoi que ce soit (sortie 1).
-- **Sorties** : 0 passe faite ; 1 refus (réglage, tracker, ou porte de dispatch
-  qui refuse un ticket, nommé sous `refused`) ; 3 « état sans règle » : rien
-  n'est démarré dans ce convoi ; 4 « pas un convoi du nouveau flux ».
+- **Sorties** : 0 passe faite ; 1 refus (réglage, tracker, porte de dispatch
+  qui refuse un ticket, nommé sous `refused`, ou incident impossible à lever) ;
+  3 « état sans règle » : rien n'est démarré dans ce convoi ; 4 « pas un convoi
+  du nouveau flux ».
+- **Convoi arrêté (« état sans règle »)** : un ticket démarré ou fermé hors de
+  sa porte, une preuve sans empreinte, un compteur incohérent. La passe ne
+  démarre plus rien dans ce convoi et lève **un seul** incident d'usine : la
+  ligne « Incident d'usine : <ticket> — <raison> » apparaît dans
+  `./bin/escalation-door list`. Réparer, c'est remettre le tracker dans un état
+  valide (`./bin/convoy-state show <convoi>` dit ce qui cloche), **jamais**
+  avancer ou fermer un ticket à la main. Dès que l'état est valide, la passe
+  suivante reprend le convoi, retire l'incident et ferme son bead toute seule.
+- **Seule cette commande démarre un ticket d'un convoi marqué** :
+  `./bin/dispatch-door` le refuse sans `--convoy` et le refuse à toute session
+  d'agent, Mayor compris.
 - **Ne jamais lancer `gc convoy control <ticket>`** : le dispatcher de contrôle
   de Gas City ne démarre pas les tickets d'un convoi, il ferme le bead qu'on lui
   donne s'il n'est pas un bead de contrôle (essai du 2026-10-06, Gas City 1.4.1).

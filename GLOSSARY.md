@@ -319,7 +319,7 @@ _French conversational alias_: orchestration
 _Avoid_: work management, runtime, Cockpit
 
 **Mayor**:
-The orchestration authority that materializes and advances authorized delivery work without redefining product intent.
+The Factory's operations authority. It materializes and advances authorized delivery work of the convoys that do not carry the new-flow mark, without redefining product intent; it never advances, closes or modifies the tickets of a new-flow convoy, which code advances.
 _French conversational alias_: Maire
 _Avoid_: Product Owner, Cockpit, Gas City
 

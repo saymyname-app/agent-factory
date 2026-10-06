@@ -36,7 +36,7 @@ For the factory incident of bin/convoy-advance and for bin/escalation-door
 (T34, af-ckwina): `bd update` also takes `--unset-metadata KEY`, `--status
 VALUE` and `--append-notes TEXT`; `bd create TITLE ... --json` adds an open
 task and answers `{"id": ...}` (logged as ["create", ID, TITLE]); `bd close
-ID --reason TEXT` closes it (logged as ["close", ID]); `mail send RECIPIENT
+ID --reason TEXT [--json]` closes it (logged as ["close", ID]); `mail send RECIPIENT
 ... -s SUBJECT ...` is logged as ["mail", RECIPIENT, SUBJECT] and fails when
 CONVOY_STATE_FAKE_MAIL_FAIL is set.
 Anything else fails loudly.
@@ -194,11 +194,11 @@ def create(state, rest):
 
 
 def close(state, bead_id, rest):
-    if bead_id not in state["beads"] or len(rest) != 2 or rest[0] != "--reason":
+    if bead_id not in state["beads"] or rest[:1] != ["--reason"] or rest[2:] not in ([], ["--json"]):
         fail(f"no canned response configured for: bd close {bead_id} {' '.join(rest)}")
     state["beads"][bead_id]["status"] = "closed"
     log_write(["close", bead_id])
-    print(f"Closed issue: {bead_id}")
+    print(json.dumps([{"id": bead_id, "status": "closed"}]))
 
 
 def mail(args):
