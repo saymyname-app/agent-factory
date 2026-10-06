@@ -13,7 +13,8 @@
 # the real formula formulas/mol-ticket-author.formula.toml. The author is a
 # scripted stub (it spends nothing): it claims each step Gas City routes to
 # it, runs the real tools the step names, and closes the step. Whether the
-# next step starts is decided by Gas City running bin/ticket-author-check.
+# next step starts is decided by Gas City running the check of the formula,
+# materialised in the city root by the real bin/factory-build-gates.
 #
 # Three tickets of the fixture, three behaviours of the author:
 #   A  walks the sequence: tests first, code, demonstration, exit « terminé ».
@@ -235,17 +236,21 @@ max_active_sessions = 3
 TOML
 echo "Scripted author of the ticket-author trial." > "$CITY/agents/trial-author/prompt.template.md"
 cp "$ROOT/formulas/mol-ticket-author.formula.toml" "$CITY/formulas/"
-# The check path of the formula is read from the city root: the real check,
-# with the stores of the trial.
-cat > "$CITY/bin/ticket-author-check" <<WRAP
+# The check of the formula is the real one, materialised below by the real
+# bin/factory-build-gates. It runs `bin/ticket-author check` of the city
+# root: here the real tool, with the stores of the trial, and its refusals
+# kept for the record.
+mkdir -p "$CITY/assets/scripts/checks"
+cp "$ROOT/assets/scripts/checks/ticket-author-check.sh" "$CITY/assets/scripts/checks/"
+cat > "$CITY/bin/ticket-author" <<WRAP
 #!/bin/sh
 . "$TRIAL/env"
 echo "\$(date -u +%H:%M:%S) contrôle sur \$GC_BEAD_ID" >> "$TRIAL/checks.log"
-"$ROOT/bin/ticket-author-check" 2>"$TRIAL/check.err" >> "$TRIAL/checks.log"; rc=\$?
+"$ROOT/bin/ticket-author" "\$@" 2>"$TRIAL/check.err" >> "$TRIAL/checks.log"; rc=\$?
 cat "$TRIAL/check.err" >> "$TRIAL/checks.log"; cat "$TRIAL/check.err" >&2
 exit \$rc
 WRAP
-chmod +x "$CITY/bin/ticket-author-check"
+chmod +x "$CITY/bin/ticket-author"
 cat > "$CITY/config/projects/trial.toml" <<TOML
 rig_dir = "."
 repo = "example/trial"
@@ -318,6 +323,8 @@ gc --city "$CITY" start >/dev/null 2>&1 || true
 gc --city "$CITY" status 2>/dev/null | grep -q "Controller: supervisor-managed" || fail "the isolated city's controller did not start"
 gc order show convoy-advance --json >/dev/null 2>&1 || fail "the city does not accept orders/convoy-advance.toml"
 gc formula list 2>/dev/null | grep -q '^mol-ticket-author$' || fail "the city does not resolve formulas/mol-ticket-author.formula.toml"
+gates=$("$ROOT/bin/factory-build-gates" --root "$CITY") || fail "factory-build-gates did not materialise the check of the formula: $gates"
+[ -x "$CITY/.gc/scripts/checks/ticket-author-check.sh" ] || fail "the check of the formula is not in the city root: $gates"
 
 state mark "$CONVOY" \
   --demonstration-line "$A=La page d'accueil affiche le nombre d'éléments" \

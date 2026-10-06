@@ -14,7 +14,7 @@ one step to the next is a check run by code, never the word of the agent:
                               (--path /PATH | -- COMMAND ...)
     ticket-author gate        CONVOY TICKET --step workspace|red|code|demonstration|exit [--repo DIR]
     ticket-author release     CONVOY TICKET [--repo DIR]
-    ticket-author check       # what Gas City runs between two steps (bin/ticket-author-check)
+    ticket-author check       # what Gas City runs between two steps (assets/scripts/checks/ticket-author-check.sh)
 
 `start` gives the session its ticket: the work tree and the branch
 `ticket/<ticket>` created at the tip of the integration branch, the branch

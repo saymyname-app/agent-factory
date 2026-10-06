@@ -9,7 +9,7 @@ the integration branch of the Spec, and never opens a pull request: the
 ticket is merged by code (`bin/spec-integration`).
 
 The sequence is held by scripts. Each step below carries an exec check,
-`bin/ticket-author-check`: when the session closes the step, Gas City runs
+`.gc/scripts/checks/ticket-author-check.sh`: when the session closes the step, Gas City runs
 the gate of that step (`bin/ticket-author gate`), which reads the tracker,
 the evidence store and the tip of the ticket branch. A gate that refuses
 re-opens the step (three attempts); once they are spent the scope
@@ -109,7 +109,7 @@ max_attempts = 3
 
 [steps.check.check]
 mode = "exec"
-path = "bin/ticket-author-check"
+path = ".gc/scripts/checks/ticket-author-check.sh"
 timeout = "5m"
 
 [[steps]]
@@ -160,7 +160,7 @@ max_attempts = 3
 
 [steps.check.check]
 mode = "exec"
-path = "bin/ticket-author-check"
+path = ".gc/scripts/checks/ticket-author-check.sh"
 timeout = "5m"
 
 [[steps]]
@@ -216,7 +216,7 @@ max_attempts = 3
 
 [steps.check.check]
 mode = "exec"
-path = "bin/ticket-author-check"
+path = ".gc/scripts/checks/ticket-author-check.sh"
 timeout = "5m"
 
 [[steps]]
@@ -266,7 +266,7 @@ max_attempts = 3
 
 [steps.check.check]
 mode = "exec"
-path = "bin/ticket-author-check"
+path = ".gc/scripts/checks/ticket-author-check.sh"
 timeout = "5m"
 
 [[steps]]
@@ -307,7 +307,7 @@ max_attempts = 3
 
 [steps.check.check]
 mode = "exec"
-path = "bin/ticket-author-check"
+path = ".gc/scripts/checks/ticket-author-check.sh"
 timeout = "5m"
 
 [[steps]]

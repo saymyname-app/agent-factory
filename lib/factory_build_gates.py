@@ -25,6 +25,8 @@ from typing import Any
 
 MANAGED_PREFIX = ".gc/scripts/"
 MANIFEST_RELATIVE = ".gc/scripts/.factory-build-gates.json"
+# Name of the city root's own store in reports; a rig cannot be named so.
+CITY_STORE = "(city root)"
 MANIFEST_VERSION = 1
 
 
@@ -55,20 +57,15 @@ def configured_rigs(root: Path) -> list[tuple[str, Path]]:
     return rigs
 
 
-def resolved_formulas(root: Path, gc_bin: str, rig_name: str) -> list[tuple[str, Path]]:
+def resolved_formulas(root: Path, gc_bin: str, rig_name: str | None) -> list[tuple[str, Path]]:
     # Formula layers are resolved in rig context. Querying only at city scope
     # can silently materialise every rig from the default pack even when one
     # rig pins a different pack version or contributes rig-local formulas.
-    command = [
-        gc_bin,
-        "formula",
-        "list",
-        "--city",
-        str(root),
-        "--rig",
-        rig_name,
-        "--json",
-    ]
+    # The city scope (no rig) is queried only for the city root's own store.
+    command = [gc_bin, "formula", "list", "--city", str(root)]
+    if rig_name is not None:
+        command += ["--rig", rig_name]
+    command.append("--json")
     try:
         completed = subprocess.run(
             command,
@@ -278,15 +275,31 @@ def reconcile(root: Path, gc_bin: str, check_only: bool) -> tuple[list[str], lis
     problems: list[str] = []
     unique_paths: set[str] = set()
 
-    for rig_name, rig_root in rigs:
+    # A work bead of the city itself lives in the city root's store, and Gas
+    # City runs its exec checks from there. The city root is not a rig, so it
+    # is reconciled as one more store, for the checks the city owns
+    # (assets/scripts/ beside its formulas/) and nothing else: pack gates are
+    # for rigs.
+    city_scripts = root / "assets" / "scripts"
+    stores: list[tuple[str, Path, str | None]] = [(name, path, name) for name, path in rigs]
+    if city_scripts.is_dir():
+        stores.append((CITY_STORE, root, None))
+
+    for rig_name, rig_root, scope in stores:
         if not rig_root.is_dir():
             problems.append(f"rig '{rig_name}' root is missing: {rig_root}")
             continue
 
-        formulas = resolved_formulas(root, gc_bin, rig_name)
+        formulas = resolved_formulas(root, gc_bin, scope)
         references, direct_sources, pack_script_dirs, link_dependencies = formula_check_paths(
             formulas
         )
+        if scope is None:
+            references = {
+                check_path: names
+                for check_path, names in references.items()
+                if any(city_scripts in source.parents for source in direct_sources.get(check_path, ()))
+            }
         unique_paths.update(references)
         try:
             managed_files = _load_manifest(rig_root)

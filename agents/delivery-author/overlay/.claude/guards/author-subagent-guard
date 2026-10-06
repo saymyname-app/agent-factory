@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""PreToolUse hook of the author role: an author does not hand the writing
+to a sub-agent (T12, af-i3q5a5; Spec af-wf4w5r §5, user story 34).
+
+Claude Code runs it before each call of a tool that starts a sub-agent and
+gives it the call as JSON on stdin. A sub-agent whose type is in the closed
+list below only reads, and passes. Any other type, a call that names none
+(the default type writes), and a workflow of sub-agents are blocked: exit
+status 2, the reason on stderr, which is what the session is shown.
+
+Proven on real sessions by bin/role-adoption-trial (role `author`); the
+record is void as soon as this file changes.
+"""
+
+import json
+import sys
+
+# Sub-agent types that read and report, and are given no file-editing tool.
+READ_ONLY_TYPES = ("Explore", "Plan")
+
+
+def main() -> int:
+    try:
+        call = json.load(sys.stdin)
+    except ValueError:
+        call = None
+    if not isinstance(call, dict):
+        print("author-subagent-guard: unreadable tool call, blocked", file=sys.stderr)
+        return 2
+    tool = call.get("tool_name")
+    tool_input = call.get("tool_input") if isinstance(call.get("tool_input"), dict) else {}
+    kind = tool_input.get("subagent_type")
+    if tool in ("Agent", "Task") and kind in READ_ONLY_TYPES:
+        return 0
+    what = f"sub-agent of type {kind!r}" if tool in ("Agent", "Task") else f"tool {tool}"
+    print(
+        f"Blocked ({what}): the author of a ticket writes its code itself and never hands the writing to a "
+        f"sub-agent (Spec af-wf4w5r §5). Only read-only sub-agents are allowed: {', '.join(READ_ONLY_TYPES)}. "
+        "Do the work in this session; do not retry with another type.",
+        file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

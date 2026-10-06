@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin" / "ticket-author"
-CHECK = ROOT / "bin" / "ticket-author-check"
+CHECK = ROOT / "assets" / "scripts" / "checks" / "ticket-author-check.sh"
 STATE_TOOL = ROOT / "bin" / "convoy-state"
 TDD_TOOL = ROOT / "bin" / "tdd-step"
 EXIT_TOOL = ROOT / "bin" / "ticket-exit"
@@ -526,7 +526,7 @@ class TicketAuthorTest(unittest.TestCase):
                         "metadata": {"gc.step_id": step, "gc.root_bead_id": "fx-root", "gc.outcome": "pass"}},
         })
         self.tracker.write_text(json.dumps(state))
-        return {"GC_BEAD_ID": "fx-step"}
+        return {"GC_BEAD_ID": "fx-step", "GC_CITY_PATH": str(ROOT)}
 
     def test_check_stops_a_step_the_agent_closed_without_its_proof(self):
         self.start()
@@ -551,7 +551,7 @@ class TicketAuthorTest(unittest.TestCase):
         self.edit("fx-step", drop=["gc.step_id"])
         proc = self.run_cmd(CHECK, env=env)
         self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
-        proc = self.run_cmd(CHECK)
+        proc = self.run_cmd(CHECK, env={"GC_CITY_PATH": str(ROOT)})
         self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
         self.assertIn("GC_BEAD_ID", proc.stderr)
 
