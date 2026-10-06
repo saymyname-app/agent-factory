@@ -1,0 +1,903 @@
+#!/usr/bin/env python3
+"""Prove the TDD of a ticket of a "new flow" convoy (T10, af-j8jo02; Spec
+af-wf4w5r §5).
+
+The author writes the criterion tests and the code; these steps prove, by
+script, what was done in which order. Each step checks the ticket branch
+checked out in `--repo`, at its HEAD:
+
+    tdd-step red          CONVOY TICKET --repo DIR --profile DESCRIPTOR [--dataset NAME] --base SHA --table PATH
+    tdd-step freeze       CONVOY TICKET --repo DIR
+    tdd-step green        CONVOY TICKET --repo DIR --profile DESCRIPTOR [--dataset NAME]
+    tdd-step amend        CONVOY TICKET --repo DIR --profile DESCRIPTOR [--dataset NAME] --reason TEXT
+    tdd-step prefactoring CONVOY TICKET --repo DIR --profile DESCRIPTOR --base SHA
+
+`red`: only the test perimeter of the profile changed since the start commit
+`--base`, the criterion -> test table is complete, the product launched at the
+start commit is healthy, and every criterion test fails there by assertion
+and goes through an entry point of the product. A criterion already green
+stops the ticket. `freeze`: the fingerprints of the table, of the criterion
+test files and of the frozen harness paths go into a registry of the Spec,
+outside any work tree. `green`: the frozen files are unchanged and the frozen
+tests pass k times in a row against the product at HEAD. `amend`: the one
+change of frozen tests a ticket is allowed, with its reason, a new red and a
+new freeze, recorded with its diff. `prefactoring`: the regression command of
+the profile passes before and after, and no existing test was touched.
+
+The check of a step runs inside bin/evidence-capture, so its report is a
+sealed piece of the evidence store (tdd_red, tdd_freeze, tdd_green,
+tdd_amendment, tdd_prefactoring); the step is then written on the ticket
+through bin/convoy-state. Every answer is one JSON object on stdout. Exit
+status: 0 done; 1 refused (nothing written in the tracker or the store); 4
+the convoy does not carry the new-flow mark; 5 the ticket is stopped (the
+stop is written on the ticket, nothing else). Details: docs/TDD_STEP.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import http.client
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import urllib.parse
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, Iterator
+from xml.etree import ElementTree
+
+
+PROGRAM = "tdd-step"
+BIN = Path(__file__).resolve().parent
+STATE_TOOL = BIN / "convoy-state"
+CAPTURE_TOOL = BIN / "evidence-capture"
+LAUNCH_TOOL = BIN / "project-launch"
+PROFILE_TOOL = BIN / "project-planning-profile"
+
+PIECES = {
+    "red": "tdd_red", "freeze": "tdd_freeze", "green": "tdd_green",
+    "amend": "tdd_amendment", "prefactoring": "tdd_prefactoring",
+}
+KIND_PREFACTORING = "prefactoring"
+STOP_ALREADY_GREEN = "criterion_already_green"
+STOP_AMENDMENT_EXHAUSTED = "amendment_exhausted"
+
+EXIT_REFUSED = 1
+EXIT_NOT_NEW_FLOW = 4
+EXIT_STOPPED = 5
+
+# One run of the test command on one test, and one run of the regression command.
+COMMAND_TIMEOUT = 600
+# The whole check of one step, as bin/evidence-capture bounds it.
+DEFAULT_TIMEOUT = 3600.0
+MAX_DETAIL = 300
+# The report of a check is the output of a piece, kept whole under 1 MB by
+# bin/evidence-capture: a longer diff of an amendment keeps its beginning.
+MAX_DIFF = 400_000
+
+
+class Refusal(RuntimeError):
+    """The step is refused: nothing is written. With `stop`, the ticket is
+    stopped for that reason."""
+
+    def __init__(self, message: str, stop: str | None = None):
+        super().__init__(" ".join(message.split()))
+        self.stop = stop
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark: bin/convoy-state's answer."""
+
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+def digest_of(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def short(text: str) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= MAX_DETAIL else text[:MAX_DETAIL] + "…"
+
+
+# --- the other commands ----------------------------------------------------------
+
+
+def tool(path: Path, *args: str) -> tuple[int, dict[str, Any]]:
+    """One JSON answer of bin/convoy-state or bin/evidence-capture."""
+    try:
+        proc = subprocess.run([str(path), *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {path.name} : {exc}") from exc
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {short(detail)}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+    try:
+        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, env=env)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer git : {exc}") from exc
+
+
+def in_paths(path: str, entries: list[str]) -> bool:
+    """Whether a file of the repository sits under one of the declared paths."""
+    return any(path == entry.rstrip("/") or path.startswith(entry.rstrip("/") + "/") for entry in entries)
+
+
+# --- the recording proxy of the black-box seam ---------------------------------
+
+
+class Recorder:
+    """An HTTP proxy in front of the launched product: what a criterion test
+    asks the product is what it records. With no product behind it (the
+    slice that establishes the launch recipe), it still records and answers
+    502."""
+
+    def __init__(self, upstream: str | None):
+        self.requests: list[tuple[str, str]] = []
+        recorder = self
+        target = urllib.parse.urlsplit(upstream) if upstream else None
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args: Any) -> None:
+                pass
+
+            def forward(self) -> None:
+                recorder.requests.append((self.command.upper(), self.path.split("?", 1)[0]))
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length) if length else None
+                if target is None:
+                    self.send_error(502, "product not launched")
+                    return
+                try:
+                    upstream_connection = http.client.HTTPConnection(target.hostname, target.port, timeout=60)
+                    headers = {k: v for k, v in self.headers.items() if k.lower() not in ("host", "connection")}
+                    upstream_connection.request(self.command, self.path, body=body, headers=headers)
+                    response = upstream_connection.getresponse()
+                    payload = response.read()
+                except (OSError, http.client.HTTPException) as exc:
+                    self.send_error(502, f"product unreachable: {exc}")
+                    return
+                finally:
+                    upstream_connection.close()
+                self.send_response(response.status)
+                for name, value in response.getheaders():
+                    if name.lower() not in ("transfer-encoding", "connection", "content-length"):
+                        self.send_header(name, value)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = forward
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.address = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def take(self) -> list[tuple[str, str]]:
+        """The requests recorded since the last call."""
+        taken, self.requests[:] = list(self.requests), []
+        return taken
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+# --- one step, checked ---------------------------------------------------------
+
+
+class Check:
+    """What a check reads before it decides: the ticket branch at its HEAD,
+    the state of the ticket in the tracker, the profile of the project."""
+
+    def __init__(self, args: argparse.Namespace, work: Path):
+        self.args, self.work = args, work
+        self.repo = Path(args.repo or ".").resolve()
+        self.head = self.commit("HEAD", "HEAD")
+        status, answer = tool(STATE_TOOL, "show", args.convoy, "--repo", str(self.repo))
+        if status == EXIT_NOT_NEW_FLOW:
+            raise NotNewFlow(answer)
+        if status not in (0, 3) or "tickets" not in answer:
+            raise Refusal(refusal_text(answer))
+        ticket = next((t for t in answer["tickets"] if t.get("id") == args.ticket), None)
+        if ticket is None:
+            raise Refusal(f"le ticket {args.ticket} n'appartient pas au convoi {args.convoy}")
+        self.ticket = ticket
+        stop = ticket.get("stop")
+        if stop:
+            raise Refusal(
+                f"ticket arrêté ({stop.get('reason', 'raison illisible')} : {stop.get('detail', stop.get('unruled'))}) : "
+                "aucune étape ne s'exécute tant que l'arrêt n'est pas levé"
+            )
+        self.kind = ticket.get("kind")
+        if not isinstance(self.kind, str):
+            raise Refusal(f"état sans règle : le genre du ticket {args.ticket} est illisible ({self.kind!r})")
+        self.tdd: dict[str, dict[str, Any]] = ticket.get("tdd") or {}
+        unruled = [record["unruled"] for record in self.tdd.values() if "unruled" in record]
+        if unruled:
+            raise Refusal(f"état sans règle : {' ; '.join(unruled)}")
+        self._launch: dict[str, Any] | None = None
+        self._counter = 0
+
+    # --- git ---
+
+    def commit(self, rev: str | None, name: str) -> str:
+        if not rev:
+            raise Refusal(f"{name} absent : le SHA d'un commit est attendu")
+        proc = git(self.repo, "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}")
+        if proc.returncode != 0:
+            raise Refusal(f"{name} introuvable dans {self.repo} : {rev!r}")
+        return proc.stdout.decode().strip()
+
+    def start_commit(self, rev: str | None) -> str:
+        base = self.commit(rev, "commit de départ (--base)")
+        if git(self.repo, "merge-base", "--is-ancestor", base, self.head).returncode != 0:
+            raise Refusal(f"le commit de départ {base} n'est pas un ancêtre de HEAD ({self.head})")
+        return base
+
+    def blob(self, commit: str, path: str) -> bytes | None:
+        proc = git(self.repo, "show", f"{commit}:{path}")
+        return proc.stdout if proc.returncode == 0 else None
+
+    def changes(self, base: str, head: str) -> list[tuple[str, str]]:
+        """(status, path) of every file that differs; a rename is a deletion
+        and an addition."""
+        proc = git(self.repo, "diff", "--name-status", "--no-renames", "-z", base, head)
+        if proc.returncode != 0:
+            raise Refusal(f"git diff {base}..{head} a échoué : {short(proc.stderr.decode(errors='replace'))}")
+        fields = proc.stdout.decode(errors="surrogateescape").split("\0")
+        return [(fields[i], fields[i + 1]) for i in range(0, len(fields) - 1, 2)]
+
+    def export(self, commit: str, keep: list[str] | None = None, into: Path | None = None) -> Path:
+        """A clean tree of one commit, outside the work tree; with `keep`,
+        only the files under those paths."""
+        self._counter += 1
+        tree = into or self.work / f"tree-{self._counter}"
+        tree.mkdir(parents=True, exist_ok=True)
+        env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+        archive = subprocess.Popen(
+            ["git", "-C", str(self.repo), "archive", "--format=tar", commit],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        extract = subprocess.run(["tar", "-x", "-C", str(tree)], stdin=archive.stdout, capture_output=True)
+        archive.stdout.close()
+        error = archive.stderr.read().decode(errors="replace")
+        if archive.wait() != 0 or extract.returncode != 0:
+            raise Refusal(f"impossible d'extraire le commit {commit} : {short(error or extract.stderr.decode(errors='replace'))}")
+        if keep is not None:
+            self.prune(tree, lambda path: not in_paths(path, keep))
+        return tree
+
+    @staticmethod
+    def prune(tree: Path, unwanted: Any) -> None:
+        for path in sorted(tree.rglob("*"), reverse=True):
+            if path.is_symlink() or path.is_file():
+                if unwanted(path.relative_to(tree).as_posix()):
+                    path.unlink()
+            elif not any(path.iterdir()):
+                path.rmdir()
+
+    # --- profile and product ---
+
+    @property
+    def launch(self) -> dict[str, Any]:
+        """The launch declarations of the Project Planning Profile."""
+        if self._launch is None:
+            if not self.args.profile:
+                raise Refusal("--profile absent : le descripteur du profil de projet déclare ce que l'étape vérifie")
+            loader = importlib.machinery.SourceFileLoader("project_planning_profile", str(PROFILE_TOOL))
+            spec = importlib.util.spec_from_loader(loader.name, loader)
+            module = importlib.util.module_from_spec(spec)
+            loader.exec_module(module)
+            try:
+                descriptor = module.load_descriptor(Path(self.args.profile).resolve())
+            except module.ProfileError as exc:
+                raise Refusal(f"profil de projet illisible ({self.args.profile}) : {exc}") from exc
+            if not descriptor.get("launch"):
+                raise Refusal(f"le profil du projet {descriptor['project_id']!r} ne déclare aucun bloc launch")
+            self._launch = descriptor["launch"]
+        return self._launch
+
+    @property
+    def test_scope(self) -> list[str]:
+        """What a tree of tests holds: the test perimeter and the frozen harness."""
+        return [*self.launch["test_perimeter"], *self.launch["frozen_harness_paths"]]
+
+    def test_command(self) -> list[str]:
+        command = self.launch["test_command"]
+        if "{test}" not in command or "{report}" not in command:
+            raise Refusal(
+                f"launch.test_command doit porter {{test}} et {{report}} ({command!r}) : la commande de test "
+                "exécute un test et écrit son rapport JUnit XML, où un échec d'assertion se distingue d'une erreur"
+            )
+        return shlex.split(command)
+
+    @contextmanager
+    def product(self, commit: str) -> Iterator[tuple[str | None, str | None]]:
+        """The product launched at one commit by bin/project-launch: its
+        address, or None and why it did not become healthy."""
+        self._counter += 1
+        state = self.work / f"launch-{self._counter}.json"
+        argv = [str(LAUNCH_TOOL), "--repo-root", str(self.repo), "start", str(Path(self.args.profile).resolve()),
+                "--commit", commit, "--state-file", str(state)]
+        if self.args.dataset:
+            argv += ["--dataset", self.args.dataset]
+        proc = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        try:
+            answer = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            answer = {"error": proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"}
+        if proc.returncode != 0 or not answer.get("started"):
+            yield None, short(str(answer.get("error")))
+            return
+        try:
+            yield answer["address"], None
+        finally:
+            subprocess.run([str(LAUNCH_TOOL), "--repo-root", str(self.repo), "stop", "--state-file", str(state)],
+                           capture_output=True, stdin=subprocess.DEVNULL)
+
+    def tests_tree(self, tests_commit: str, product_commit: str) -> Path:
+        """The tree the criterion tests run in. Black box: the test perimeter
+        and the frozen harness only, so a test cannot reach the code of the
+        product. Import rule: the product too, under the tests."""
+        if self.launch["seam_mode"] == "black_box":
+            return self.export(tests_commit, keep=self.test_scope)
+        tree = self.export(product_commit)
+        self.prune(tree, lambda path: in_paths(path, self.test_scope))
+        tests = self.export(tests_commit, keep=self.test_scope)
+        shutil.copytree(tests, tree, symlinks=True, dirs_exist_ok=True)
+        return tree
+
+    def run_test(self, test_id: str, tree: Path, address: str) -> list[dict[str, str]]:
+        """One run of one test: its test cases, each `passed`, `failure`
+        (assertion), `error` (with its type) or `skipped`."""
+        self._counter += 1
+        report = self.work / f"report-{self._counter}.xml"
+        argv = [token.replace("{test}", test_id).replace("{report}", str(report)) for token in self.test_command()]
+        env = {**os.environ, "PRODUCT_ADDRESS": address, "PYTHONDONTWRITEBYTECODE": "1"}
+        try:
+            proc = subprocess.run(argv, cwd=tree, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                                  timeout=COMMAND_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            raise Refusal(f"la commande de test n'a pas fini en {COMMAND_TIMEOUT} s : {test_id}") from exc
+        except OSError as exc:
+            raise Refusal(f"commande de test impossible à exécuter : {argv[0]} ({exc.strerror or exc})") from exc
+        try:
+            root = ElementTree.parse(report).getroot()
+        except (OSError, ElementTree.ParseError) as exc:
+            output = (proc.stdout + proc.stderr).decode(errors="replace")
+            raise Refusal(
+                f"la commande de test n'a écrit aucun rapport lisible pour {test_id} "
+                f"(exit {proc.returncode}) : {short(output) or exc}"
+            ) from exc
+        cases = []
+        for case in root.iter("testcase"):
+            verdict = next((child for child in case if child.tag in ("failure", "error", "skipped")), None)
+            entry = {"outcome": "passed" if verdict is None else verdict.tag}
+            if verdict is not None and verdict.tag == "error":
+                entry["type"] = verdict.get("type") or "inconnu"
+                entry["message"] = verdict.get("message") or ""
+            cases.append(entry)
+        return cases
+
+    def entry_points(self) -> list[tuple[str, str]]:
+        declared = [(e["method"].upper(), e["path"]) for e in self.launch["entry_points"] if e["kind"] == "http"]
+        if self.launch["seam_mode"] == "black_box" and not declared:
+            raise Refusal("le profil ne déclare aucun point d'entrée http : la preuve boîte noire du seam est impossible")
+        return declared
+
+    # --- evidence ---
+
+    def sealed(self, piece: str, commit: str, what: str) -> dict[str, Any]:
+        """The report of an earlier step, read from the evidence store once
+        bin/evidence-capture has verified it against the tracker."""
+        status, answer = tool(CAPTURE_TOOL, "verify", self.args.convoy, self.args.ticket, "--piece", piece)
+        if status != 0:
+            raise Refusal(f"{what} invérifiable : {refusal_text(answer)}")
+        try:
+            record = json.loads(Path(answer["pieces"][0]["path"]).read_text(encoding="utf-8"))
+            proof = json.loads(record["output"])
+        except (OSError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise Refusal(f"{what} illisible (pièce {piece}) : {exc}") from exc
+        if record.get("commit") != commit or not isinstance(proof, dict):
+            raise Refusal(f"{what} : la pièce {piece} porte sur le commit {record.get('commit')}, et l'étape sur {commit}")
+        return proof
+
+    def registry(self) -> dict[str, Any]:
+        """The registry of fingerprints the freeze sealed."""
+        proof = self.sealed("tdd_freeze", self.tdd["freeze"]["commit"], "registre d'empreintes du gel")
+        if not isinstance(proof.get("files"), dict) or not isinstance(proof.get("criteria"), dict):
+            raise Refusal("registre d'empreintes du gel illisible (pièce tdd_freeze)")
+        return proof
+
+    def changed_frozen(self, files: dict[str, str]) -> dict[str, str]:
+        """The frozen files that are no longer at HEAD what the freeze saw."""
+        changed = {}
+        for path in sorted(files):
+            data = self.blob(self.head, path)
+            if data is None:
+                changed[path] = f"fichier gelé supprimé ou déplacé : {path}"
+            elif digest_of(data) != files[path]:
+                changed[path] = f"fichier gelé modifié : {path}"
+        return changed
+
+    def refuse_prefactoring(self, step: str) -> None:
+        if self.kind == KIND_PREFACTORING:
+            raise Refusal(
+                f"{step} ne s'applique pas à un prefactoring ({self.args.ticket}) : il ne change aucun comportement "
+                "et se prouve par tdd-step prefactoring"
+            )
+
+
+def unique_ids(criteria: dict[str, list[str]]) -> list[str]:
+    return list(dict.fromkeys(test_id for number in sorted(criteria, key=int) for test_id in criteria[number]))
+
+
+def read_table(check: Check, table_path: str | None) -> dict[str, list[str]]:
+    """The criterion -> test table at HEAD, complete against the criteria of
+    the ticket: {"criteria": {"1": [test id, ...], ...}}."""
+    perimeter = check.launch["test_perimeter"]
+    if not table_path:
+        raise Refusal("--table absent : le chemin de la table critère → test, dans le périmètre de test")
+    if not in_paths(table_path, perimeter):
+        raise Refusal(f"table critère → test hors du périmètre de test : {table_path}")
+    data = check.blob(check.head, table_path)
+    if data is None:
+        raise Refusal(f"table critère → test introuvable au commit {check.head} : {table_path}")
+    try:
+        table = json.loads(data.decode("utf-8"))["criteria"]
+        if not isinstance(table, dict):
+            raise TypeError("criteria n'est pas un objet")
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise Refusal(
+            f"table critère → test illisible ({table_path}) : {exc} "
+            '(attendu : {"criteria": {"1": ["fichier::test", ...], ...}})'
+        ) from exc
+    count = len(check.ticket.get("criteria") or [])
+    if not count:
+        raise Refusal(f"le ticket {check.args.ticket} ne porte aucun critère d'acceptation à prouver")
+    numbers = [str(number) for number in range(1, count + 1)]
+    problems = [f"critère {key} inconnu du ticket ({count} critères)" for key in table if key not in numbers]
+    for number in numbers:
+        ids = table.get(number)
+        if not isinstance(ids, list) or not ids or any(not isinstance(i, str) or not i.strip() for i in ids):
+            problems.append(f"critère {number} sans test")
+            continue
+        for test_id in ids:
+            path = test_id.partition("::")[0]
+            if not in_paths(path, perimeter):
+                problems.append(f"test hors du périmètre de test : {test_id}")
+            elif check.blob(check.head, path) is None:
+                problems.append(f"fichier de test introuvable au commit {check.head} : {path}")
+    if problems:
+        raise Refusal(" ; ".join(dict.fromkeys(problems)))
+    return {number: table[number] for number in numbers}
+
+
+def import_rule_problems(check: Check, ids: list[str], base: str) -> list[str]:
+    """Import-rule seam: a line of a test that imports the product imports
+    one of its entry points, and every criterion test imports one."""
+    rule = check.launch.get("import_rule")
+    if not rule:
+        raise Refusal("seam_mode import_rule : le profil ne déclare pas launch.import_rule (product_import, entry_point_import)")
+    product, entry_point = re.compile(rule["product_import"]), re.compile(rule["entry_point_import"])
+    criterion_files = list(dict.fromkeys(test_id.partition("::")[0] for test_id in ids))
+    touched = [path for status, path in check.changes(base, check.head)
+               if status != "D" and in_paths(path, check.launch["test_perimeter"])]
+    problems = []
+    for path in dict.fromkeys([*criterion_files, *touched]):
+        lines = (check.blob(check.head, path) or b"").decode("utf-8", errors="replace").splitlines()
+        for number, line in enumerate(lines, 1):
+            if product.search(line) and not entry_point.search(line):
+                problems.append(f"règle d'import : {path}:{number} importe le produit hors de ses points d'entrée ({line.strip()})")
+        if path in criterion_files and not any(entry_point.search(line) for line in lines):
+            problems += [f"aucun point d'entrée du produit : {test_id} (règle d'import : aucun import d'un point d'entrée)"
+                         for test_id in ids if test_id.partition("::")[0] == path]
+    return problems
+
+
+def red_proof(check: Check, base: str, table_path: str | None, amendment: bool) -> dict[str, Any]:
+    """Every criterion test fails by assertion against the product at the
+    start commit, and goes through an entry point of it."""
+    launch = check.launch
+    mode = launch["seam_mode"]
+    check.test_command()
+    declared = check.entry_points()
+    criteria = read_table(check, table_path)
+    ids = unique_ids(criteria)
+    if mode == "import_rule":
+        problems = import_rule_problems(check, ids, base)
+        if problems:
+            raise Refusal(" ; ".join(problems))
+    expects_launch_failure = check.ticket.get("establishes_launch_recipe") is True
+    tree = check.tests_tree(check.head, base)
+
+    with check.product(base) as (address, launch_error):
+        if address is None and not expects_launch_failure:
+            raise Refusal(f"le produit n'est pas en bonne santé au commit de départ {base} : {launch_error}")
+        recorder = Recorder(address)
+        try:
+            results = []
+            for test_id in ids:
+                cases = check.run_test(test_id, tree, recorder.address)
+                asked = recorder.take()
+                results.append((test_id, cases, list(dict.fromkeys(f"{m} {p}" for m, p in asked if (m, p) in declared))))
+        finally:
+            recorder.close()
+
+    allowed_errors = launch.get("red_error_types") or []
+    problems, green, tests = [], [], []
+    for test_id, cases, entry_points in results:
+        outcomes = [case["outcome"] for case in cases]
+        outcome = next((o for o in ("error", "skipped", "passed", "failure") if o in outcomes), "empty")
+        entry: dict[str, Any] = {"id": test_id, "outcome": outcome}
+        if mode == "black_box":
+            entry["entry_points"] = entry_points
+        errors = [case for case in cases if case["outcome"] == "error"]
+        if errors:
+            entry["error_types"] = sorted({case["type"] for case in errors})
+        tests.append(entry)
+        if not cases:
+            problems.append(f"test vide : {test_id} (aucun test exécuté)")
+            continue
+        if mode == "black_box" and not entry_points:
+            problems.append(f"aucun point d'entrée du produit : {test_id} (boîte noire : le test n'a rien demandé à un point d'entrée déclaré)")
+        if "skipped" in outcomes:
+            problems.append(f"test ignoré : {test_id}")
+        # Declared cases: a launch that fails is the red of the slice that
+        # establishes the launch recipe; a profile may name error types
+        # (a missing symbol on a library seam) that are a red.
+        undeclared = [case for case in errors if address is not None and case["type"] not in allowed_errors]
+        if undeclared:
+            problems.append(
+                f"test en erreur : {test_id} ({undeclared[0]['type']} : {short(undeclared[0]['message'])}) ; "
+                "un rouge valable est un échec d'assertion"
+            )
+        if "passed" in outcomes:
+            green.append(test_id)
+    if problems:
+        raise Refusal(" ; ".join(problems))
+    if green and amendment:
+        raise Refusal(" ; ".join(
+            f"test vert au commit de départ après amendement : {test_id} (un test amendé échoue encore sans le code du ticket)"
+            for test_id in green))
+    if green:
+        raise Refusal(" ; ".join(
+            f"critère {number} déjà vert : {test_id} passe au commit de départ"
+            for number in criteria for test_id in criteria[number] if test_id in green
+        ), stop=STOP_ALREADY_GREEN)
+    return {
+        "verdict": "red", "commit": check.head, "base": base, "table": table_path, "criteria": criteria,
+        "tests": tests, "seam_mode": mode, "launch": {"healthy": address is not None, "commit": base},
+        "frozen_harness_paths": launch["frozen_harness_paths"],
+    }
+
+
+def check_red(check: Check) -> dict[str, Any]:
+    check.refuse_prefactoring("l'étape rouge")
+    amendment = check.tdd.get("amendment")
+    if "freeze" in check.tdd and not (amendment and amendment["commit"] == check.head):
+        raise Refusal("les tests de critère de ce ticket sont gelés : un test gelé ne change que par l'amendement (tdd-step amend)")
+    base = check.start_commit(check.args.base)
+    outside = [path for _, path in check.changes(base, check.head) if not in_paths(path, check.launch["test_perimeter"])]
+    if outside:
+        raise Refusal(" ; ".join(f"fichier modifié hors du périmètre de test : {path}" for path in outside))
+    return {"step": "red", **red_proof(check, base, check.args.table, amendment=False)}
+
+
+def check_freeze(check: Check) -> dict[str, Any]:
+    check.refuse_prefactoring("le gel")
+    red, amendment = check.tdd.get("red"), check.tdd.get("amendment")
+    if not red or red["commit"] != check.head:
+        raise Refusal(
+            f"aucune preuve du rouge au commit {check.head} : le gel suit l'étape rouge sans commit entre les deux "
+            "(tdd-step red)"
+        )
+    amended = bool(amendment and amendment["commit"] == check.head)
+    if "freeze" in check.tdd and not amended:
+        raise Refusal("les tests de critère de ce ticket sont déjà gelés : un nouveau gel ne suit qu'un amendement")
+    # After an amendment, the red of the amended tests is its own piece.
+    proof = check.sealed("tdd_amendment" if amended else "tdd_red", check.head, "preuve du rouge")
+    try:
+        paths = [proof["table"], *(test_id.partition("::")[0] for test_id in unique_ids(proof["criteria"])),
+                 *proof["frozen_harness_paths"]]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise Refusal(f"preuve du rouge illisible : {exc}") from exc
+    files = {}
+    for path in dict.fromkeys(paths):
+        data = check.blob(check.head, path)
+        if data is None:
+            raise Refusal(f"fichier à geler absent du commit {check.head} : {path}")
+        files[path] = digest_of(data)
+    return {"step": "freeze", "verdict": "frozen", "commit": check.head, "base": proof["base"],
+            "table": proof["table"], "criteria": proof["criteria"], "files": files}
+
+
+def check_green(check: Check) -> dict[str, Any]:
+    check.refuse_prefactoring("l'étape verte")
+    if "freeze" not in check.tdd:
+        raise Refusal("aucun gel enregistré pour ce ticket : le vert se prouve sur des tests gelés (tdd-step freeze)")
+    launch = check.launch
+    check.test_command()
+    declared = check.entry_points()
+    registry = check.registry()
+    changed = check.changed_frozen(registry["files"])
+    if changed:
+        raise Refusal(" ; ".join(changed.values()) + " ; un test gelé ne change que par l'amendement (tdd-step amend)")
+    frozen_commit = check.tdd["freeze"]["commit"]
+    ids = unique_ids(registry["criteria"])
+    # The tests run as they were frozen, helpers of the test perimeter included.
+    tree = check.tests_tree(frozen_commit, check.head)
+    k = launch["k"]
+    runs: dict[str, list[str]] = {test_id: [] for test_id in ids}
+    asked: dict[str, list[str]] = {test_id: [] for test_id in ids}
+    with check.product(check.head) as (address, launch_error):
+        if address is None:
+            raise Refusal(f"le produit n'est pas en bonne santé au commit {check.head} : {launch_error}")
+        recorder = Recorder(address)
+        try:
+            for _ in range(k):
+                for test_id in ids:
+                    outcomes = [case["outcome"] for case in check.run_test(test_id, tree, recorder.address)]
+                    runs[test_id].append(
+                        next((o for o in ("error", "skipped", "failure", "passed") if o in outcomes), "empty"))
+                    asked[test_id] += [f"{m} {p}" for m, p in recorder.take() if (m, p) in declared]
+        finally:
+            recorder.close()
+    problems = []
+    for test_id in ids:
+        outcomes = set(runs[test_id])
+        if outcomes == {"passed"}:
+            continue
+        if "passed" in outcomes:
+            problems.append(f"test instable : {test_id} ({', '.join(runs[test_id])} sur {k} exécutions)")
+        elif outcomes & {"skipped", "empty"}:
+            problems.append(f"test ignoré : {test_id} (aucun test gelé n'est ignoré au vert)")
+        else:
+            problems.append(f"test en échec : {test_id} ({', '.join(runs[test_id])} sur {k} exécutions)")
+    if problems:
+        raise Refusal(" ; ".join(problems))
+    tests = [{"id": test_id, "runs": runs[test_id], "entry_points": list(dict.fromkeys(asked[test_id]))} for test_id in ids]
+    return {"step": "green", "verdict": "green", "commit": check.head, "k": k, "criteria": registry["criteria"],
+            "tests": tests, "seam_mode": launch["seam_mode"], "frozen": frozen_commit,
+            "launch": {"healthy": True, "commit": check.head}}
+
+
+def check_amend(check: Check) -> dict[str, Any]:
+    check.refuse_prefactoring("l'amendement")
+    reason = (check.args.reason or "").strip()
+    if not reason or "\n" in reason:
+        raise Refusal("raison absente : un amendement porte sa raison, écrite sur une ligne (--reason)")
+    if "freeze" not in check.tdd or "red" not in check.tdd:
+        raise Refusal("aucun gel enregistré pour ce ticket : un amendement change des tests gelés, il n'y a rien à amender")
+    if "amendment" in check.tdd:
+        raise Refusal(
+            f"un seul amendement par ticket : {check.args.ticket} a déjà amendé ses tests gelés au commit "
+            f"{check.tdd['amendment']['commit']}",
+            stop=STOP_AMENDMENT_EXHAUSTED,
+        )
+    registry = check.registry()
+    changed = check.changed_frozen(registry["files"])
+    if not changed:
+        raise Refusal("aucun fichier gelé n'a changé depuis le gel : il n'y a rien à amender")
+    proof = red_proof(check, check.tdd["red"]["base"], registry["table"], amendment=True)
+    frozen_commit = check.tdd["freeze"]["commit"]
+    paths = sorted({*registry["files"], *(test_id.partition("::")[0] for test_id in unique_ids(proof["criteria"]))})
+    diff = git(check.repo, "diff", "--no-renames", frozen_commit, check.head, "--", *paths)
+    if diff.returncode != 0:
+        raise Refusal(f"git diff du gel à HEAD a échoué : {short(diff.stderr.decode(errors='replace'))}")
+    text = diff.stdout.decode("utf-8", errors="replace")
+    return {"step": "amend", **proof, "amendment": {
+        "reason": reason, "previous_freeze": frozen_commit, "files": sorted(changed),
+        "diff": text[:MAX_DIFF], "diff_truncated": len(text) > MAX_DIFF,
+    }}
+
+
+def check_prefactoring(check: Check) -> dict[str, Any]:
+    if check.kind != KIND_PREFACTORING:
+        raise Refusal(
+            f"le régime prefactoring ne s'applique qu'à un ticket prefactoring : {check.args.ticket} est "
+            f"un ticket {check.kind}, qui passe par l'étape rouge"
+        )
+    base = check.start_commit(check.args.base)
+    scope = check.test_scope
+    touched = [path for status, path in check.changes(base, check.head) if status != "A" and in_paths(path, scope)]
+    if touched:
+        raise Refusal(" ; ".join(f"test existant modifié : {path}" for path in touched))
+    command = shlex.split(check.launch["regression_command"])
+    regression = []
+    for commit, moment in ((base, "avant"), (check.head, "après")):
+        tree = check.export(commit)
+        try:
+            proc = subprocess.run(command, cwd=tree, stdin=subprocess.DEVNULL, capture_output=True, timeout=COMMAND_TIMEOUT,
+                                  env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+        except subprocess.TimeoutExpired as exc:
+            raise Refusal(f"la commande de régression n'a pas fini en {COMMAND_TIMEOUT} s {moment} le changement") from exc
+        except OSError as exc:
+            raise Refusal(f"commande de régression impossible à exécuter : {command[0]} ({exc.strerror or exc})") from exc
+        output = (proc.stdout + proc.stderr).decode(errors="replace")
+        if proc.returncode != 0:
+            raise Refusal(
+                f"commande de régression en échec {moment} le changement (commit {commit}, exit {proc.returncode}) : "
+                f"{short(output)}"
+            )
+        regression.append({"commit": commit, "exit_code": proc.returncode, "output": short(output)})
+    return {"step": "prefactoring", "verdict": "unchanged", "commit": check.head, "base": base,
+            "command": check.launch["regression_command"], "regression": regression}
+
+
+CHECKS = {"red": check_red, "freeze": check_freeze, "green": check_green, "amend": check_amend,
+          "prefactoring": check_prefactoring}
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    """The check of one step. It writes nothing: bin/evidence-capture runs it
+    and seals its report."""
+    work = Path(tempfile.mkdtemp(prefix="tdd-step-"))
+    try:
+        proof = CHECKS[args.step](Check(args, work))
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        answer: dict[str, Any] = {"ok": False, "error": str(exc)}
+        if exc.stop:
+            answer["stop"] = exc.stop
+        print(json.dumps(answer, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    print(json.dumps(proof, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- one step, proven and recorded -------------------------------------------
+
+
+def capture(args: argparse.Namespace, step: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run the check of one step inside bin/evidence-capture: the answer of
+    the capture and the report it sealed. Nothing is filed if the check
+    refuses."""
+    check = [str(Path(__file__).resolve()), "check", step, args.convoy, args.ticket,
+             "--repo", str(Path(args.repo or ".").resolve())]
+    # The freeze takes nothing from its caller: it freezes what the red proved.
+    for option in () if step == "freeze" else ("profile", "dataset", "base", "table", "reason"):
+        value = getattr(args, option, None)
+        if value is not None:
+            check += [f"--{option}", str(Path(value).resolve()) if option == "profile" else value]
+    status, answer = tool(
+        CAPTURE_TOOL, "command", args.convoy, args.ticket, "--piece", PIECES[step], "--repo", args.repo or ".",
+        "--expect-exit", "0", "--timeout", str(args.timeout), "--", *check)
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(answer)
+    if status != 0:
+        if "output" not in answer:
+            raise Refusal(refusal_text(answer))
+        try:
+            refusal = json.loads(answer["output"])
+            raise Refusal(refusal["error"], stop=refusal.get("stop"))
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise Refusal(
+                f"le contrôle de l'étape {step} a échoué sans réponse lisible "
+                f"(exit {answer.get('exit_code')}) : {short(str(answer['output'])[-MAX_DETAIL:])}"
+            ) from exc
+    try:
+        proof = json.loads(json.loads(Path(answer["path"]).read_text(encoding="utf-8"))["output"])
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise Refusal(f"pièce {PIECES[step]} illisible après sa capture : {exc}") from exc
+    return answer, proof
+
+
+def record(args: argparse.Namespace, step: str, commit: str, *options: str) -> None:
+    status, answer = tool(STATE_TOOL, "set-tdd", args.convoy, args.ticket, "--step", step, "--commit", commit, *options)
+    if status != 0:
+        raise Refusal(f"étape {step} prouvée mais refusée par le tracker : {refusal_text(answer)}")
+
+
+def cmd_step(args: argparse.Namespace) -> int:
+    step = args.step
+    try:
+        filed, proof = capture(args, step)
+        commit = filed["commit"]
+        if step == "red":
+            record(args, "red", commit, "--base", proof["base"])
+        elif step == "prefactoring":
+            record(args, "prefactoring", commit, "--base", proof["base"])
+        elif step == "amend":
+            # The amendment, the red of the amended tests, then their freeze.
+            record(args, "amendment", commit, "--reason", proof["amendment"]["reason"])
+            record(args, "red", commit, "--base", proof["base"])
+            frozen, _ = capture(args, "freeze")
+            record(args, "freeze", commit)
+        else:
+            record(args, step, commit)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        answer: dict[str, Any] = {"ok": False, "step": step, "ticket": args.ticket, "error": f"refus : {exc}"}
+        if not exc.stop:
+            print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+            return EXIT_REFUSED
+        status, written = tool(STATE_TOOL, "stop-ticket", args.convoy, args.ticket, "--reason", exc.stop, "--detail", str(exc))
+        if status != 0:
+            answer["error"] += f" ; l'arrêt du ticket n'a pas pu être écrit : {refusal_text(written)}"
+            print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+            return EXIT_REFUSED
+        answer.update(stopped=True, stop=exc.stop)
+        print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_STOPPED
+    answer = {"ok": True, "step": step, "convoy": args.convoy, "ticket": args.ticket, "commit": commit,
+              "piece": filed["piece"], "path": filed["path"], "digest": filed["digest"]}
+    if step == "freeze":
+        answer["registry"] = filed["path"]
+    elif step == "amend":
+        answer["registry"] = frozen["path"]
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- command line ----------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="step", required=True)
+
+    # Required values are checked by the check of the step, not by argparse:
+    # a refusal is one JSON answer.
+    def options(p: argparse.ArgumentParser) -> None:
+        p.add_argument("convoy")
+        p.add_argument("ticket")
+        p.add_argument("--repo")
+        p.add_argument("--profile")
+        p.add_argument("--dataset")
+        p.add_argument("--base")
+        p.add_argument("--table")
+        p.add_argument("--reason")
+
+    for step in PIECES:
+        p = sub.add_parser(step)
+        options(p)
+        p.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
+        p.set_defaults(handler=cmd_step)
+    # What bin/evidence-capture runs; not a step an author calls.
+    p = sub.add_parser("check")
+    p.add_argument("step", choices=tuple(PIECES))
+    options(p)
+    p.set_defaults(handler=cmd_check)
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    return args.handler(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

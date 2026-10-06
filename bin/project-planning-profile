@@ -351,7 +351,7 @@ def load_launch(raw: Any, name: str) -> dict[str, Any]:
         for dataset_name, dataset_path in datasets_raw.items()
     }
 
-    return {
+    loaded = {
         "recipe": recipe,
         "entry_points": entry_points,
         "health_probe": health_probe,
@@ -363,6 +363,25 @@ def load_launch(raw: Any, name: str) -> dict[str, Any]:
         "regression_command": regression_command,
         "k": k,
     }
+
+    # Optional declarations read by bin/tdd-step (T10): the error types that
+    # are a valid red on a library seam, and the rule of the import-rule seam.
+    if "red_error_types" in launch:
+        loaded["red_error_types"] = [
+            required_string(entry, f"{name}.red_error_types[{index}]")
+            for index, entry in enumerate(as_list(launch["red_error_types"], f"{name}.red_error_types"))
+        ]
+    if "import_rule" in launch:
+        rule_raw = as_dict(launch["import_rule"], f"{name}.import_rule")
+        rule = {}
+        for field in ("product_import", "entry_point_import"):
+            rule[field] = required_string(rule_raw.get(field), f"{name}.import_rule.{field}")
+            try:
+                re.compile(rule[field])
+            except re.error as exc:
+                raise ProfileError(f"{name}.import_rule.{field} is not a regular expression: {exc}") from exc
+        loaded["import_rule"] = rule
+    return loaded
 
 
 def load_descriptor(path: Path) -> dict[str, Any]:

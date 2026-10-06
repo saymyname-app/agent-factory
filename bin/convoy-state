@@ -7,8 +7,10 @@ convoy that carries the new-flow mark: the mark of the convoy and of its
 tickets, the Spec the convoy delivers (T09, read only), a ticket's kind and
 demonstration line (T05), the user stories a
 vertical_slice covers and whether it establishes the project's launch
-recipe (T06) or is the Prototype Fold (T36), its branch and Ticket Exit, its verdicts (each tied to a
-commit), its counters, its evidence fingerprints and its gate records, and
+recipe (T06) or is the Prototype Fold (T36), its acceptance criteria (T10,
+read only), its branch and Ticket Exit, its verdicts (each tied to a
+commit), its counters, its evidence fingerprints and its gate records, the
+steps of its TDD and its stop (T10), and
 the convoy's open factory incident. No other script invents a `gc.flow.*`
 field: a missing field is added here.
 
@@ -24,6 +26,8 @@ field: a missing field is added here.
     convoy-state bump-counter CONVOY [--ticket TICKET] --counter NAME [--counter NAME]
     convoy-state add-evidence CONVOY TICKET --piece NAME --digest sha256:HEX --commit SHA
     convoy-state record-gate  CONVOY TICKET --gate GATE [--commit SHA]
+    convoy-state set-tdd      CONVOY TICKET --step STEP --commit SHA [--base SHA] [--reason TEXT]
+    convoy-state stop-ticket  CONVOY TICKET --reason REASON --detail LINE
     convoy-state record-incident CONVOY --bead BEAD [--signature sha256:HEX]
     convoy-state clear-incident  CONVOY
 
@@ -81,6 +85,8 @@ VERDICT_PREFIX = PREFIX + "verdict."
 COUNTER_PREFIX = PREFIX + "counter."
 EVIDENCE_PREFIX = PREFIX + "evidence."
 GATE_PREFIX = PREFIX + "gate."
+TDD_PREFIX = PREFIX + "tdd."
+KEY_STOP = PREFIX + "stop"
 KEY_INCIDENT = PREFIX + "incident"
 
 TICKET_KINDS = ("vertical_slice", "prefactoring", "repair")
@@ -93,6 +99,12 @@ TICKET_COUNTERS = ("resumes", "correction_rounds")
 CONVOY_COUNTERS = ("end_rounds",)
 GATES = ("dispatch", "ticket_end", "withdrawn")
 CLOSING_GATES = ("ticket_end", "withdrawn")
+# The steps bin/tdd-step proves (Spec §5), each tied to a commit.
+TDD_STEPS = ("red", "freeze", "green", "amendment", "prefactoring")
+TDD_STEPS_WITH_BASE = ("red", "prefactoring")
+KIND_WITHOUT_RED = "prefactoring"
+STOP_REASONS = ("criterion_already_green", "amendment_exhausted")
+ACCEPTANCE_HEADING = "## acceptance criteria"
 
 EXIT_REFUSED = 1
 EXIT_UNRULED = 3
@@ -110,6 +122,7 @@ BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")
 # A user story is named by its number in the Spec ("1. As a ...").
 STORY_RE = re.compile(r"^[1-9][0-9]*$")
 BEAD_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$")
+CRITERION_RE = re.compile(r"^\s*-\s+\[[ xX]\]\s+(.*\S)\s*$")
 
 
 class Refusal(RuntimeError):
@@ -330,6 +343,52 @@ def stored_record(raw: Any, required: tuple[str, ...], optional: tuple[str, ...]
     return record
 
 
+def acceptance_criteria(description: Any) -> list[str]:
+    """The acceptance criteria of a ticket, in order: the checkbox lines
+    under "## Acceptance criteria" of its description. The criterion -> test
+    table of bin/tdd-step numbers them from 1."""
+    criteria, inside = [], False
+    for line in description.splitlines() if isinstance(description, str) else []:
+        if line.startswith("## "):
+            inside = line.strip().lower() == ACCEPTANCE_HEADING
+            continue
+        match = CRITERION_RE.match(line)
+        if inside and match:
+            criteria.append(match.group(1))
+    return criteria
+
+
+def single_line(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value.strip() or "\n" in value:
+        raise Refusal(f"{name} absente ou mal formée : {value!r} (attendu : une ligne non vide)")
+    return value.strip()
+
+
+def tdd_record(step: str, raw: Any) -> dict[str, Any]:
+    """One proven step of a ticket's TDD: the commit it was proven at, the
+    start commit of a red or a prefactoring, the reason of an amendment."""
+    one_of(step, TDD_STEPS, "étape du TDD")
+    record = stored_record(raw, ("commit", "at"), ("base", "reason"))
+    valid_commit(record["commit"])
+    if (step in TDD_STEPS_WITH_BASE) != ("base" in record):
+        raise Refusal(f"étape {step} : commit de départ {'absent' if step in TDD_STEPS_WITH_BASE else 'inattendu'}")
+    if "base" in record:
+        valid_commit(record["base"], "commit de départ")
+    if (step == "amendment") != ("reason" in record):
+        raise Refusal(f"étape {step} : raison {'absente' if step == 'amendment' else 'inattendue'}")
+    if "reason" in record:
+        single_line(record["reason"], "raison de l'amendement")
+    return record
+
+
+def stop_record(raw: Any) -> dict[str, Any]:
+    """Why a script stopped the ticket (Spec §5): its work does not go on."""
+    record = stored_record(raw, ("reason", "detail", "at"))
+    one_of(record["reason"], STOP_REASONS, "raison d'arrêt")
+    single_line(record["detail"], "précision de l'arrêt")
+    return record
+
+
 def incident_record(raw: Any) -> dict[str, Any]:
     """The convoy's open factory incident: the bead that carries it and, once
     it reached the escalation door, the signature of the anomalies it names."""
@@ -456,6 +515,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     # write is never rendered as stories.
     stories = None
     out["user_stories"] = None
+    out["criteria"] = acceptance_criteria(ticket.get("description"))
     for key, name, _, _ in SLICE_FLAGS:
         out[name] = metadata.get(key) is True
     if KEY_USER_STORIES in metadata:
@@ -510,10 +570,12 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     verdicts: dict[str, Any] = {}
     evidence: dict[str, Any] = {}
     gates: dict[str, Any] = {}
-    groups = ((VERDICT_PREFIX, verdicts), (EVIDENCE_PREFIX, evidence), (GATE_PREFIX, gates))
+    tdd: dict[str, Any] = {}
+    groups = ((VERDICT_PREFIX, verdicts), (EVIDENCE_PREFIX, evidence), (GATE_PREFIX, gates), (TDD_PREFIX, tdd))
     for key in sorted(metadata):
         if not key.startswith(PREFIX) or key in (
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
+            KEY_STOP,
         ):
             continue
         raw = metadata[key]
@@ -542,6 +604,8 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
                 if "commit" in record or name == "ticket_end":
                     valid_commit(record.get("commit"))
                 gates[name] = record
+            elif group is tdd:
+                tdd[name] = tdd_record(name, raw)
             elif key.startswith(COUNTER_PREFIX):
                 one_of(key[len(COUNTER_PREFIX):], TICKET_COUNTERS, "compteur de ticket")
             else:
@@ -555,6 +619,15 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     out["counters"] = render_counters(metadata, TICKET_COUNTERS, unruled)
     out["evidence"] = evidence
     out["gates"] = gates
+    out["tdd"] = tdd
+    out["stop"] = None
+    if KEY_STOP in metadata:
+        try:
+            out["stop"] = stop_record(metadata[KEY_STOP])
+        except Refusal as exc:
+            # Still a stop: an unreadable one is never rendered as no stop.
+            out["stop"] = {"unruled": f"{KEY_STOP} : {exc}", "raw": metadata[KEY_STOP]}
+            flag(KEY_STOP, out["stop"]["unruled"])
 
     def has_gate(name: str) -> bool:
         return "at" in gates.get(name, {})
@@ -868,6 +941,61 @@ def cmd_record_gate(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, values)
 
 
+def cmd_set_tdd(args: argparse.Namespace) -> int:
+    """Record one proven step of a ticket's TDD. The order of the steps is
+    held here, under the lock: bin/tdd-step proves a step, this refuses one
+    that does not follow."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    step = one_of(args.step, TDD_STEPS, "étape du TDD")
+    commit = valid_commit(args.commit, f"commit de l'étape {step}")
+    if KEY_STOP in metadata:
+        raise Refusal(f"ticket arrêté : aucune étape ne s'enregistre sur {args.ticket} tant que l'arrêt n'est pas levé")
+    kind = valid_kind(metadata.get(KEY_KIND))
+    if (step == "prefactoring") != (kind == KIND_WITHOUT_RED):
+        raise Refusal(f"l'étape {step} ne s'enregistre pas sur un ticket {kind}")
+    known = {name: tdd_record(name, metadata[TDD_PREFIX + name]) for name in TDD_STEPS if TDD_PREFIX + name in metadata}
+    record: dict[str, Any] = {"commit": commit, "at": now()}
+    if step in TDD_STEPS_WITH_BASE:
+        record["base"] = valid_commit(args.base, f"commit de départ de l'étape {step}")
+    elif args.base is not None:
+        raise Refusal(f"--base n'a pas de sens pour l'étape {step}")
+    if step == "amendment":
+        record["reason"] = single_line(args.reason, "raison de l'amendement")
+    elif args.reason is not None:
+        raise Refusal(f"--reason n'a pas de sens pour l'étape {step}")
+
+    amended_at = known.get("amendment", {}).get("commit")
+    if step == "freeze" and known.get("red", {}).get("commit") != commit:
+        raise Refusal(f"gel sans preuve du rouge au même commit ({commit}) : le gel suit l'étape rouge")
+    if step in ("red", "freeze") and "freeze" in known and amended_at != commit:
+        raise Refusal(
+            f"les tests de {args.ticket} sont gelés : un nouveau {'rouge' if step == 'red' else 'gel'} "
+            "ne s'enregistre qu'au commit de l'amendement"
+        )
+    if step == "amendment":
+        if "freeze" not in known:
+            raise Refusal("amendement sans gel : il n'y a aucun test gelé à amender")
+        if "amendment" in known:
+            raise Refusal(f"un seul amendement par ticket : {args.ticket} en porte déjà un (commit {amended_at})")
+    if step == "green" and "freeze" not in known:
+        raise Refusal("vert sans gel : le vert se prouve sur des tests gelés")
+    values = {TDD_PREFIX + step: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_stop_ticket(args: argparse.Namespace) -> int:
+    ticket = marked_ticket(args.convoy, args.ticket)
+    if KEY_STOP in metadata_of(ticket):
+        raise Refusal(f"le ticket {args.ticket} est déjà arrêté")
+    record = {"reason": one_of(args.reason, STOP_REASONS, "raison d'arrêt"),
+              "detail": single_line(args.detail, "précision de l'arrêt"), "at": now()}
+    values = {KEY_STOP: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
 def convoy_with_a_mark(convoy_id: str) -> dict[str, Any]:
     """An incident is recorded on any convoy that carries a mark, an unknown
     one included: an unknown mark is itself an "état sans règle" to report."""
@@ -939,6 +1067,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("record-gate", cmd_record_gate)
     p.add_argument("--gate")
     p.add_argument("--commit")
+    p = command("set-tdd", cmd_set_tdd)
+    p.add_argument("--step")
+    p.add_argument("--commit")
+    p.add_argument("--base")
+    p.add_argument("--reason")
+    p = command("stop-ticket", cmd_stop_ticket)
+    p.add_argument("--reason")
+    p.add_argument("--detail")
     p = command("record-incident", cmd_record_incident, ticket=False)
     p.add_argument("--bead")
     p.add_argument("--signature")

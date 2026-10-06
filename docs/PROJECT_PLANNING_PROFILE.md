@@ -188,10 +188,12 @@ declaring `launch` at all requires every one of these sub-fields, or
 | `datasets` | named synthetic dataset files (fixed `generated_at` time included) a launch can select with `--dataset`. |
 | `test_perimeter` | paths a ticket's red step may write criterion tests under. |
 | `frozen_harness_paths` | test harness/config paths frozen at the ticket's freeze step. |
-| `test_command` | runs one criterion test with a per-test exit code. |
+| `test_command` | runs one criterion test and writes its per-test report: it carries `{test}` (the test id) and `{report}` (the JUnit XML file to write, where an assertion `failure` is distinct from an `error` and from `skipped`); read by `bin/tdd-step` (`docs/TDD_STEP.md`). |
 | `seam_mode` | `black_box` or `import_rule` — how a criterion test is proven to go through a real entry point. |
 | `regression_command` | the `prefactoring` regime's before/after command. |
 | `k` | consecutive green runs required at the ticket's green step. |
+| `red_error_types` | optional — error types (e.g. `AttributeError`) that are a valid red on a library seam, where a missing symbol is the red. Absent: only an assertion failure is a red. |
+| `import_rule` | optional, required by `bin/tdd-step` when `seam_mode` is `import_rule` — `{product_import, entry_point_import}`, two regular expressions applied to each line of a test: a line that imports the product must import one of its entry points. |
 
 A descriptor with no `launch` block at all (e.g. the Factory's own
 `agent-factory.json`) is unaffected — `describe` reports `launch: null`,
@@ -204,6 +206,11 @@ missing declaration, before anything is spawned.
     --commit HEAD --dataset content --state-file /tmp/launch.json
 ./bin/project-launch stop --state-file /tmp/launch.json
 ```
+
+`--repo-root <dir>` (before `start`) names the repository of the product
+when it is not the Factory's own; the profile tool is always the one next
+to the launcher (T10: `bin/tdd-step` launches the product of a ticket
+worktree this way).
 
 `start` resolves `--commit` to an exact SHA and checks it out into a fresh
 `git worktree` — never the caller's current working tree, so an

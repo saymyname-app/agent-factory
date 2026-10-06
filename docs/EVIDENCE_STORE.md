@@ -40,6 +40,13 @@ Every answer is one JSON object on stdout.
 The exit code of the captured command is data, recorded in the piece: a
 command that fails is captured and the tool exits 0.
 
+`command --expect-exit <code>` files the piece only if the command exits
+with that code. Any other exit is a refusal (exit 1) whose answer carries
+`exit_code` and `output`, and nothing is written. It is what a script that
+proves a step uses, so that only its passing report becomes a piece:
+`bin/tdd-step` runs each of its checks this way (`docs/TDD_STEP.md`, pieces
+`tdd_red`, `tdd_freeze`, `tdd_green`, `tdd_amendment`, `tdd_prefactoring`).
+
 ## The store
 
 ```
@@ -97,8 +104,9 @@ untracked files are ignored); a launch record that is not the file written by
 
 `command` never takes its output from the caller: no option carries one (an
 unknown option is an argparse error, exit 2), and the command runs with no
-standard input. A command that cannot be started, or that does not finish
-within `--timeout` seconds (default 600), leaves no piece.
+standard input. A command that cannot be started, that does not finish
+within `--timeout` seconds (default 600), or that does not exit with the
+code given by `--expect-exit`, leaves no piece.
 
 `screenshot` captures an address of the launched product only: `--path` is a
 path under the address of the launch record, never another host. It is
