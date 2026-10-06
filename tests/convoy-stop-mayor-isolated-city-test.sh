@@ -242,9 +242,10 @@ state() {
   out=$("$CITY/bin/convoy-state" "$@") || fail "convoy-state $* did not pass: $out"
 }
 # A ticket as the publication door leaves it: approved graph, delivery plane.
+# A ticket is marked with its kind (T05); a prefactoring needs no demonstration line.
 new_ticket() {
   gc bd create --title "$1" --type task --silent --labels approved-ticket-graph,delivery-plane \
-    --metadata '{"gc.plane":"delivery","gc.publication_validated":"true","gc.ticket_kind":"vertical_slice","gc.spec_id":"trial-spec"}' \
+    --metadata '{"gc.plane":"delivery","gc.publication_validated":"true","gc.ticket_kind":"prefactoring","gc.spec_id":"trial-spec"}' \
     --description $'## What to build\n\nessai\n\n## Target rigs\n\ntrial\n\n## Autonomous execution contract\n\n- none' 2>/dev/null
 }
 
