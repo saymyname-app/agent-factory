@@ -194,8 +194,11 @@ Sources are named in the operator's words: « superviseur », « tickets »,
 tickets (inconnu), superviseur (périmé) ».
 
 Known gaps against the prototype, for later slices of af-mjfvwx: the
-« Projets » zone, « Reporter » as a menu rather than a select, the theme
-switch (the page follows the system theme).
+« Projets » zone, the theme switch (the page follows the system theme).
+« Reporter » opens a menu in place of the action row, as in the
+prototype: 1 h, 4 h, demain 09:00, or a free date and time (sent as
+`custom_epoch`; the earlier select offered « heure libre » without any
+way to give the hour, so the server refused it).
 
 `tests/cockpit-requests-test.py` (`test_home_is_the_variant_d_inbox`,
 `test_status_line_never_guesses_the_factory_state`) checks the page

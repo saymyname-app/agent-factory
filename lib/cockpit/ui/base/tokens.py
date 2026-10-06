@@ -104,6 +104,8 @@ details.more[open] summary::before{content:"\\25BE"}
 .det .row{display:grid;grid-template-columns:92px 1fr;gap:10px}
 .det .row span:first-child{color:var(--muted)}
 .det code{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+.snoozemenu{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:var(--fs-s)}
+[hidden]{display:none !important}
 .stale-val{opacity:.55}
 .unknown{font-size:var(--fs-s);color:var(--normal);background:var(--normal-soft);border-radius:8px;padding:8px 12px}
 .empty{display:flex;gap:10px;align-items:center;padding:18px;border:1px dashed var(--line);border-radius:var(--r);color:var(--ink-2)}
