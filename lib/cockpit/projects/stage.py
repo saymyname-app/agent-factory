@@ -1,5 +1,5 @@
 """Pure computation of a Chantier's stage from Beads (spec af-oohx2x
-"Calcul d'étape des chantiers" / "Étapes d'un chantier"; CONTEXT.md:
+"Calcul d'étape des chantiers" / "Étapes d'un chantier"; GLOSSARY.md:
 Chantier). No I/O -- every function here takes an already-read bead list
 (:mod:`cockpit.projects.beads`) and returns
 :class:`cockpit.projects.model.Chantier` rows.

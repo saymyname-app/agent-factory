@@ -6,7 +6,7 @@ lines. Nothing here does I/O or reads a source directly — see
 turning gc/beads/git reads into the plain inputs these take. Each per-signal
 function returns ``None`` (nothing to show) or a health line
 ``{"kind": "ok"|"warn"|"bad", "text": ...}``. Text is a fixed phrase per
-CONTEXT.md's Cockpit Lexicon: no bead id, no PR number, the Mayor is never
+GLOSSARY.md's Cockpit Lexicon: no bead id, no PR number, the Mayor is never
 named (AGENTS.md: "l'usine essaie de corriger seule depuis ...").
 """
 from datetime import datetime

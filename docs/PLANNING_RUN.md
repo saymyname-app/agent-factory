@@ -4,8 +4,9 @@
 
 Every Planning Run, for any project, is driven from the operator session
 (Claude or Codex, the PO agent) with Benjamin, using the upstream Matt
-Pocock skills (`mattpocock/skills`, pinned to `c55ee46` -- the Method
-Baseline) as written, with Beads as the only tracker. This doc is the one
+Pocock skills (`mattpocock/skills`, pinned to tag `v1.3.1` -- the Method
+Baseline, see `docs/UPSTREAM_SKILLS.md`) as written, with Beads as the only
+tracker. This doc is the one
 place that describes the chain end to end; `docs/agents/issue-tracker.md`
 gives the exact `bd` commands each step uses.
 

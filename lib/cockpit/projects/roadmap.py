@@ -1,7 +1,7 @@
 """Reads a project's current Roadmap Step from its structured roadmap
 (spec af-oohx2x .12, .39: "l'étape de roadmap en cours (lue sur origin via
 un clone que le cockpit possède, en lecture seule, avec l'âge de lecture
-affiché)"; CONTEXT.md: Roadmap Step; ``bin/project-roadmap`` validates the
+affiché)"; GLOSSARY.md: Roadmap Step; ``bin/project-roadmap`` validates the
 same file shape).
 
 The clone this reads is one the cockpit owns for this purpose alone -- never
