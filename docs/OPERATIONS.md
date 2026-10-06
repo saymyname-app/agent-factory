@@ -338,15 +338,15 @@ Gas City `v1.4.1` supplies both `builtin:claude` and `builtin:opencode`; use
 provider inheritance rather than an adapter. The workspace default remains
 `codex`/`gpt-5.6-sol`.
 
-The host-local Claude provider uses pinned CLI `2.1.236`, the existing
-Claude.ai Pro subscription, `claude-sonnet-5`, and plan mode. Its authentication
+The host-local Claude provider uses CLI `2.1.290` (Opus 5.5 needs `2.1.280`
+or newer), the existing Claude.ai subscription, `claude-opus-5-5`, and plan mode. Its authentication
 configuration path is intentionally machine-local and contains no token in Git.
 Verify configuration and subscription without repository writes:
 
 ```bash
 gc config explain --provider claude --json
 CLAUDE_CONFIG_DIR=/home/benja/.claude DISABLE_AUTOUPDATER=1 \
-  /home/benja/.local/bin/claude -p --model claude-sonnet-5 \
+  /home/benja/.local/bin/claude -p --model claude-opus-5-5 \
   --permission-mode plan --output-format json \
   'Do not use tools. Reply exactly CLAUDE_SUBSCRIPTION_CANARY_OK'
 ```

@@ -670,9 +670,10 @@ def validate_catalog(catalog: Any) -> dict[str, Any]:
 def configured_model(provider_config: dict[str, Any]) -> str | None:
     """The model id one [providers.<name>] block in city.toml actually runs.
 
-    Claude profiles set it as option_defaults.model; Codex profiles pass it as
-    `-m <id>` inside args_append. Both shapes are read here so callers don't
-    need to know which family a provider belongs to.
+    A profile sets it as option_defaults.model, or passes it as `-m <id>` /
+    `--model <id>` inside args_append (Codex, and Claude ids the gc validator
+    does not list). All shapes are read here so callers don't need to know
+    which family a provider belongs to.
     """
     if not isinstance(provider_config, dict):
         return None
@@ -682,7 +683,7 @@ def configured_model(provider_config: dict[str, Any]) -> str | None:
     args = provider_config.get("args_append")
     if isinstance(args, list):
         for index, arg in enumerate(args):
-            if arg == "-m" and index + 1 < len(args):
+            if arg in ("-m", "--model") and index + 1 < len(args):
                 return str(args[index + 1])
     return None
 
