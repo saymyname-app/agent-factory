@@ -10,9 +10,11 @@ import threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from cockpit.core.freshness import FRESH, VALIDITY_WINDOWS_SECONDS, classify
+from cockpit.core.freshness import FRESH, STALE, UNKNOWN, VALIDITY_WINDOWS_SECONDS, classify
 
 PARIS = ZoneInfo("Europe/Paris")
+
+_STATE_LABELS = {STALE: "périmé", UNKNOWN: "inconnu"}
 
 
 class _Source:
@@ -93,7 +95,7 @@ class ReadModel:
         )
 
     def headline(self, now=None):
-        """"Tout est à jour à HH:MM (Paris)", or the stale/unknown sections."""
+        """"Tout est à jour à HH:MM (Paris)", or the sources that are not."""
         now = self._clock.now() if now is None else now
         snap = self.snapshot(now)
         stale = [
@@ -104,5 +106,8 @@ class ReadModel:
         when = datetime.fromtimestamp(now, tz=PARIS).strftime("%H:%M")
         if not stale:
             return "Tout est à jour à %s (Paris)" % when
-        names = ", ".join(snap[name]["display_name"] for name in stale)
-        return "Périmé ou inconnu : %s (vérifié %s)" % (names, when)
+        names = ", ".join(
+            "%s (%s)" % (snap[name]["display_name"], _STATE_LABELS[snap[name]["freshness"]])
+            for name in stale
+        )
+        return "%d source%s pas à jour : %s" % (len(stale), "s" if len(stale) > 1 else "", names)
