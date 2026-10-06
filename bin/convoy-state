@@ -21,6 +21,7 @@ other script invents a `gc.flow.*` field: a missing field is added here.
     convoy-state mark CONVOY [--demonstration-line TICKET=LINE ...] [--user-stories TICKET=N,N ...]
                              [--establishes-launch-recipe TICKET] [--prototype-fold TICKET]
     convoy-state set-branch   CONVOY TICKET --branch NAME
+    convoy-state set-session  CONVOY TICKET --session NAME
     convoy-state set-exit     CONVOY TICKET --exit EXIT
     convoy-state set-verdict  CONVOY TICKET --kind KIND --state STATE --commit SHA
     convoy-state set-counter  CONVOY [--ticket TICKET] --counter NAME --value N
@@ -104,6 +105,9 @@ KEY_PARK = PREFIX + "park"
 KEY_INCIDENT = PREFIX + "incident"
 KEY_INTEGRATION = PREFIX + "integration"
 KEY_MERGE = PREFIX + "merge"
+KEY_SESSION = PREFIX + "session"
+# The key Gas City and bin/ticket-exit read the session of a bead under.
+KEY_SESSION_NAME = "gc.session_name"
 
 TICKET_KINDS = ("vertical_slice", "prefactoring", "repair")
 KINDS_WITH_DEMONSTRATION = ("vertical_slice", "repair")
@@ -516,6 +520,13 @@ def merge_record(raw: Any) -> dict[str, Any]:
     return record
 
 
+def session_record(raw: Any) -> dict[str, Any]:
+    """The author session that took the ticket (T12)."""
+    record = stored_record(raw, ("name", "at"))
+    single_line(record["name"], "session")
+    return record
+
+
 def verdict_record(raw: Any) -> dict[str, Any]:
     """A verdict: its state and the commit it judged; and, once a commit was
     added after it, the tip that made it invalid (Spec §8)."""
@@ -718,7 +729,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     for key in sorted(metadata):
         if not key.startswith(PREFIX) or key in (
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
-            KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE,
+            KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION,
         ):
             continue
         raw = metadata[key]
@@ -771,12 +782,13 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             # Still a stop: an unreadable one is never rendered as no stop.
             out["stop"] = {"unruled": f"{KEY_STOP} : {exc}", "raw": metadata[KEY_STOP]}
             flag(KEY_STOP, out["stop"]["unruled"])
-    # The Ticket Handoff, the parking and the merge, each None when the
-    # ticket has none; an unreadable one is never rendered as none.
+    # The Ticket Handoff, the parking, the merge and the author session,
+    # each None when the ticket has none; an unreadable one is never rendered as none.
     for name, key, read in (
         ("handoff", KEY_HANDOFF, handoff_record),
         ("park", KEY_PARK, park_record),
         ("merge", KEY_MERGE, merge_record),
+        ("session", KEY_SESSION, session_record),
     ):
         out[name] = None
         if key in metadata:
@@ -891,6 +903,10 @@ def marked_ticket(convoy_id: str, ticket_id: str | None) -> dict[str, Any]:
     """The named ticket of a marked convoy; refuses anything else."""
     convoy, tickets = load_convoy(convoy_id)
     require_marked(convoy)
+    return marked_ticket_among(tickets, convoy_id, ticket_id)
+
+
+def marked_ticket_among(tickets: list[dict[str, Any]], convoy_id: str, ticket_id: str | None) -> dict[str, Any]:
     if not ticket_id:
         raise Refusal("ticket absent : cette écriture porte sur un ticket du convoi")
     for ticket in tickets:
@@ -1020,6 +1036,44 @@ def cmd_set_branch(args: argparse.Namespace) -> int:
     values = {KEY_BRANCH: args.branch}
     write_metadata(args.ticket, values)
     return done(args.convoy, args.ticket, values)
+
+
+def cmd_set_session(args: argparse.Namespace) -> int:
+    """The author session that takes a ticket (T12): one session works one
+    ticket. The same write puts the ticket in progress under that session."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    ticket = marked_ticket_among(tickets, args.convoy, args.ticket)
+    name = single_line(args.session, "session")
+    metadata = metadata_of(ticket)
+    if ticket.get("status") == "closed" or any(GATE_PREFIX + gate in metadata for gate in CLOSING_GATES):
+        raise Refusal(f"le ticket {args.ticket} est fermé : aucune session ne le prend")
+    if GATE_PREFIX + "dispatch" not in metadata:
+        raise Refusal(f"le ticket {args.ticket} n'a pas été démarré par la porte de dispatch : aucune session ne le prend")
+    for other in tickets:
+        if other.get("id") == args.ticket or KEY_SESSION not in metadata_of(other):
+            continue
+        try:
+            taken = session_record(metadata_of(other)[KEY_SESSION])["name"]
+        except Refusal:
+            continue
+        if taken == name:
+            raise Refusal(
+                f"la session {name} a déjà pris le ticket {other.get('id')} : une session neuve par ticket")
+    current = None
+    if KEY_SESSION in metadata:
+        try:
+            current = session_record(metadata[KEY_SESSION])
+        except Refusal:
+            current = None
+    if current and current["name"] == name and ticket.get("status") == "in_progress":
+        return done(args.convoy, args.ticket, {})
+    values = {KEY_SESSION: encode({"name": name, "at": now()}), KEY_SESSION_NAME: name}
+    update = ["bd", "update", args.ticket, "--status", "in_progress"]
+    for key, value in values.items():
+        update += ["--set-metadata", f"{key}={value}"]
+    run_gc(update)
+    return done(args.convoy, args.ticket, {**values, "status": "in_progress"})
 
 
 def cmd_set_exit(args: argparse.Namespace) -> int:
@@ -1359,6 +1413,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--establishes-launch-recipe", action="append", default=[])
     p.add_argument("--prototype-fold", action="append", default=[])
     command("set-branch", cmd_set_branch).add_argument("--branch")
+    command("set-session", cmd_set_session).add_argument("--session")
     command("set-exit", cmd_set_exit).add_argument("--exit")
     p = command("set-verdict", cmd_set_verdict)
     p.add_argument("--kind")

@@ -35,7 +35,7 @@ Ce qu'il contrôle :
 | `work-backup` | **pousse** toute branche qui n'existe que sur cette machine |
 | `work-tree` | **sauvegarde** l'arbre de travail modifié ou non suivi (voir plus bas) |
 | `rig:*` | un rig suspendu bloque la livraison ; un dispatcher au repos, non |
-| `build-gates` | (af-uxz57) lit, rig par rig, le catalogue de formules réellement résolu, déduplique leurs contrôles `exec`, puis vérifie que chaque chemin existe et est exécutable dans le rig concerné. Gas City refuse un lien symbolique `exec` sortant du confinement du rig : `bin/factory-build-gates` crée donc des copies régulières pour les contrôles et garde le validateur Python comme dépendance liée au pack afin qu'il résolve ses schémas voisins. Tous ces artefacts sont suivis par `.gc/scripts/.factory-build-gates.json` et actualisés depuis le pack épinglé pour ce rig ; `--check-only` nomme une seule fois chaque couple rig/chemin manquant ou périmé sans écrire. Le démarrage l'exécute avant le contrôleur, et le garde le répare ensuite après un re-clone de rig ou un re-pin du pack. Il ne crée jamais de faux script « toujours vrai » et refuse d'écraser un fichier propre au rig ou un artefact géré modifié hors de l'outil. |
+| `build-gates` | (af-uxz57) lit, rig par rig, le catalogue de formules réellement résolu, déduplique leurs contrôles `exec`, puis vérifie que chaque chemin existe et est exécutable dans le rig concerné. Gas City refuse un lien symbolique `exec` sortant du confinement du rig : `bin/factory-build-gates` crée donc des copies régulières pour les contrôles et garde le validateur Python comme dépendance liée au pack afin qu'il résolve ses schémas voisins. Tous ces artefacts sont suivis par `.gc/scripts/.factory-build-gates.json` et actualisés depuis le pack épinglé pour ce rig ; `--check-only` nomme une seule fois chaque couple rig/chemin manquant ou périmé sans écrire. Le démarrage l'exécute avant le contrôleur, et le garde le répare ensuite après un re-clone de rig ou un re-pin du pack. La racine de la cité est réconciliée comme un magasin de plus (`(city root)`) pour les seuls contrôles que la cité possède sous `assets/scripts/` (T12 : le contrôle de la formule de l'auteur). Il ne crée jamais de faux script « toujours vrai » et refuse d'écraser un fichier propre au rig ou un artefact géré modifié hors de l'outil. |
 | `worktrees` | nomme les worktrees qui épinglent encore une branche fusionnée |
 | `provider overlay` | **régénère** `city.provider.toml` s'il a disparu (sans lui, la config de la cité ne charge plus) |
 | `mayor-session` | (af-9ur0s) la session nommée du Mayor endormie ou en quarantaine depuis plus de 10 min est signalée directement à `${GC_ESCALATION_RECIPIENT:-human}` — elle ne peut pas lire un mail qui lui serait adressé —, une seule fois par épisode ; règle dans `lib/factory_session_boot.py` |
@@ -428,8 +428,9 @@ touché : il reste avancé par le Mayor.
   réglage pour toute l'usine, partagé entre les Specs. Comptent : chaque session
   vivante d'un rôle de livraison (auteur, relecteur, Evaluator) et chaque ticket
   démarré qu'aucune session n'a encore pris.
-- **Formule de démarrage** : `start.formula` dans le même fichier. Tant qu'elle
-  vaut `null`, la commande refuse de démarrer quoi que ce soit (sortie 1).
+- **Formule de démarrage** : `start.formula` dans le même fichier, aujourd'hui
+  `mol-ticket-author` (la formule de l'auteur, `docs/TICKET_AUTHOR.md`). À
+  `null`, la commande refuse de démarrer quoi que ce soit (sortie 1).
 - **Sorties** : 0 passe faite ; 1 refus (réglage, tracker, porte de dispatch
   qui refuse un ticket, nommé sous `refused`, ou incident impossible à lever) ;
   3 « état sans règle » : rien n'est démarré dans ce convoi ; 4 « pas un convoi
@@ -604,7 +605,9 @@ sortie a une destination fixée par du code, et le compte rendu du ticket
 ./bin/ticket-exit deferral <convoi> <ticket> --repo <worktree>
 ```
 
-- **Terminé** : refusé sans les quatre rubriques du compte rendu (Fait,
+- **Terminé** : refusé, pour un `vertical_slice` ou un `repair`, sans la
+  preuve de démonstration capturée sur le produit lancé au commit de tête
+  (`./bin/ticket-author demonstrate`) ; refusé sans les quatre rubriques du compte rendu (Fait,
   Écarts, Non fait, Constats hors ticket), chacune avec du contenu ou
   « aucun » ; refusé aussi tant que le diff du ticket porte un marqueur de
   report (TODO, FIXME, « not wired », « à brancher ») qu'aucun « non fait »
@@ -666,3 +669,45 @@ Détail : `docs/SPEC_INTEGRATION.md`.
 
 ---
 
+## `./bin/ticket-author` — qui tient la séquence d'un ticket du nouveau flux ?
+
+Des scripts, jamais la parole de l'agent (Spec af-wf4w5r §0 règle 4, §4, §5,
+T12). Un ticket d'un convoi qui porte la **marque du nouveau flux** est
+travaillé par une session auteur neuve, dans son worktree, sur une branche
+partie de la branche d'intégration de la Spec. La formule
+`mol-ticket-author` enchaîne cinq étapes ; à chaque fermeture d'étape, Gas
+City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
+
+```bash
+./bin/ticket-author locate <ticket>
+./bin/ticket-author start <convoi> <ticket>
+./bin/ticket-author demonstrate <convoi> <ticket> --repo <worktree> --profile <profil> --dataset <jeu> -- <commande>
+./bin/ticket-author gate <convoi> <ticket> --step workspace|red|code|demonstration|exit
+./bin/ticket-author release <convoi> <ticket>
+```
+
+- **Personne ne lance la formule à la main** : `./bin/convoy-advance` démarre
+  chaque ticket prêt (`start.formula` dans `config/delivery-flow.json`).
+- **Étapes et contrôles** : prise du ticket (worktree, branche, session) ;
+  rouge prouvé et tests gelés ; tests verts à la pointe de la branche ; ligne
+  de démonstration capturée sur le produit lancé, au commit de tête ; sortie
+  de ticket enregistrée.
+- **Contrôle refusé** : l'étape revient à la session avec le motif. Au bout
+  de trois refus, la séquence échoue et les étapes restantes sont sautées :
+  le code ne démarre jamais sans rouge prouvé.
+- **Démonstration** : `demonstrate` lance le produit par son vrai point
+  d'entrée et capture ce que l'auteur demande ; un commit de plus demande une
+  nouvelle capture. Sans cette preuve, la sortie « terminé » est refusée.
+- **Scope** : le Declared Scope ne borne rien. Un fichier touché hors scope
+  est inscrit par du code dans les relevés du compte rendu.
+- **Sous-agents** : une session auteur ne peut lancer que des sous-agents de
+  lecture (`Explore`, `Plan`) ; tout autre lancement est bloqué par un hook.
+  `./bin/role-adoption-trial run --role author` le prouve sur une session
+  réelle. Limite : un sous-agent de lecture garde un shell.
+- **Sorties** : 0 fait ou étape prouvée ; 1 refus ; 4 « pas un convoi du
+  nouveau flux ».
+- **Pas ici** : relecture des tests entre rouge et gel (T13), revue et
+  évaluation (T14, T15), porte de fin de ticket (T19), reprise d'un ticket
+  (T20).
+
+Détail : `docs/TICKET_AUTHOR.md`.

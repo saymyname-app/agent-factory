@@ -4,7 +4,7 @@
   "trials": {
     "author/claude-standard": {
       "agent": "delivery-author",
-      "digest": "sha256:34330a99fcc496a0c60ae7f094a3cb3d021c50b31af558f5634f59beb6eec4a8",
+      "digest": "sha256:0f978bfb1376f62d43fd4075b55e102ebbd3c51b536245a91f6930134da560d2",
       "expected_skills": [
         "codebase-design",
         "tdd"
@@ -14,7 +14,7 @@
         "codebase-design",
         "tdd"
       ],
-      "observed_at": "2026-10-06T03:50:00Z",
+      "observed_at": "2026-10-06T21:18:11Z",
       "passed": true,
       "provider": "claude-standard",
       "review_launch": {
@@ -40,7 +40,22 @@
       "review_skills_listed": [],
       "role": "author",
       "session_provider": "claude-standard",
-      "skills_listed": 25,
+      "skills_listed": 10,
+      "subagents": {
+        "file_written": false,
+        "launches": [
+          {
+            "refused": true,
+            "result": "PreToolUse:Agent hook error: [\"$CLAUDE_PROJECT_DIR\"/.claude/guards/author-subagent-guard]: Blocked (sub-agent of type 'general-purpose'): the author of a ticket",
+            "subagent_type": "general-purpose"
+          },
+          {
+            "refused": false,
+            "result": "Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing",
+            "subagent_type": "Explore"
+          }
+        ]
+      },
       "versions": {
         "bwrap": "bubblewrap 0.9.0",
         "claude": "2.1.290 (Claude Code)",

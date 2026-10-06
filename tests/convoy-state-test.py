@@ -1072,6 +1072,56 @@ class ConvoyStateTest(unittest.TestCase):
         self.ok("set-integration", CONVOY, "--branch", "integration/fx-spec", "--protected", "main", "--base", base)
         return tip, base
 
+    # --- the author session of a ticket (T12) ---------------------------------
+
+    def test_set_session_puts_the_started_ticket_in_progress_under_its_session(self):
+        self.marked_slice()
+        self.ok("record-gate", CONVOY, T1, "--gate", "dispatch")
+
+        self.ok("set-session", CONVOY, T1, "--session", "delivery-author-fx-1")
+
+        ticket = self.ticket(self.show(), T1)
+        self.assertEqual("delivery-author-fx-1", ticket["session"]["name"])
+        self.assertEqual("in_progress", ticket["status"])
+        self.assertEqual("delivery-author-fx-1", self.tracker_state()["beads"][T1]["metadata"]["gc.session_name"])
+
+    def test_set_session_refuses_a_session_that_already_took_another_ticket(self):
+        self.marked_slice()
+        for ticket in (T1, T2):
+            self.ok("record-gate", CONVOY, ticket, "--gate", "dispatch")
+        self.ok("set-session", CONVOY, T1, "--session", "delivery-author-fx-1")
+
+        self.assert_refused_and_nothing_written(
+            "set-session", CONVOY, T2, "--session", "delivery-author-fx-1", mention="une session neuve par ticket")
+
+    def test_set_session_refuses_a_ticket_not_started_by_the_door_a_closed_one_and_no_name(self):
+        self.marked_slice()
+        self.assert_refused_and_nothing_written(
+            "set-session", CONVOY, T1, "--session", "delivery-author-fx-1", mention="porte de dispatch")
+        self.ok("record-gate", CONVOY, T1, "--gate", "dispatch")
+        self.assert_refused_and_nothing_written("set-session", CONVOY, T1, mention="session absente")
+        self.edit_tracker(T1, status="closed")
+        self.assert_refused_and_nothing_written(
+            "set-session", CONVOY, T1, "--session", "delivery-author-fx-1", mention="fermé")
+
+    def test_set_session_again_by_the_same_session_writes_nothing(self):
+        self.marked_slice()
+        self.ok("record-gate", CONVOY, T1, "--gate", "dispatch")
+        self.ok("set-session", CONVOY, T1, "--session", "delivery-author-fx-1")
+        before = self.tracker.read_text()
+
+        self.assertEqual({}, self.ok("set-session", CONVOY, T1, "--session", "delivery-author-fx-1")["written"])
+
+        self.assertEqual(before, self.tracker.read_text())
+
+    def test_session_written_outside_the_command_is_a_state_without_rule(self):
+        self.marked_slice()
+        self.edit_tracker(T1, **{"gc.flow.session": "à la main"})
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+
+        self.assertIn("unruled", ticket["session"])
+
     def test_set_integration_records_the_branch_of_the_spec_on_the_convoy(self):
         self.ok("mark", CONVOY)
         self.assertIsNone(self.show()["convoy"]["integration"])

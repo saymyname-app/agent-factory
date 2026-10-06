@@ -119,7 +119,7 @@ test, no merge. A pass with no ready ticket does not read the profile.
   1 to 5 and 7 to 9 are not met.
 - **Starting the fresh author session of a returned ticket is not in this
   command.** The return is recorded (`merge` on the ticket, listed by the
-  pass); resuming a ticket is T20's, and no start formula exists before T12.
+  pass); resuming a ticket is T20's, and the start formula is T12's (`docs/TICKET_AUTHOR.md`).
 - **The tests on a merged result are the profile's regression command**, the
   one whole-suite command a profile declares. The frozen criterion tests of
   the merged tickets are replayed only as far as that command runs them.

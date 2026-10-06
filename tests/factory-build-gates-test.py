@@ -345,6 +345,64 @@ class BuildGateWiring(unittest.TestCase):
         self.assertIn(f"cannot resolve pack source for {CHECK_PATH}", result.stdout)
         self.assertFalse(self._target("backend").exists())
 
+    # The city root's own store (T12, af-i3q5a5): a check the city owns,
+    # beside its formulas, is materialised in the city root too.
+
+    def _city_check(self, body: str = "echo city-check") -> tuple[Path, Path, str]:
+        check_path = ".gc/scripts/checks/own-check.sh"
+        formulas = self.city / "formulas"
+        checks = self.city / "assets" / "scripts" / "checks"
+        formulas.mkdir(parents=True, exist_ok=True)
+        checks.mkdir(parents=True, exist_ok=True)
+        formula = formulas / "own.formula.toml"
+        formula.write_text(
+            f'formula = "own"\nversion = 1\n\n[[steps]]\nid = "one"\n'
+            f'[steps.check.check]\nmode = "exec"\npath = "{check_path}"\n',
+            encoding="utf-8",
+        )
+        source = checks / "own-check.sh"
+        source.write_text(f"#!/usr/bin/env bash\n{body}\n", encoding="utf-8")
+        source.chmod(0o755)
+        return formula, source, check_path
+
+    def test_check_only_names_a_city_owned_check_missing_in_the_city_root(self):
+        formula, _source, check_path = self._city_check()
+        self._select(formula)
+
+        result = self._run("--check-only")
+
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(1, result.stdout.count(f"rig '(city root)' missing {check_path}"), result.stdout)
+        self.assertFalse((self.city / check_path).exists(), "check-only must not write")
+
+    def test_repair_materialises_a_city_owned_check_in_the_city_root_and_each_rig(self):
+        formula, source, check_path = self._city_check("echo city-check-v1")
+        self._select(formula)
+
+        repaired = self._run()
+
+        self.assertEqual(0, repaired.returncode, repaired.stdout + repaired.stderr)
+        for store in (self.city, self.city / "rigs" / "backend", self.city / "rigs" / "frontend"):
+            target = store / check_path
+            self.assertTrue(target.is_file() and not target.is_symlink(), target)
+            self.assertEqual(source.read_bytes(), target.read_bytes())
+            executed = subprocess.run([str(target)], check=False, capture_output=True, text=True, cwd=store)
+            self.assertEqual("city-check-v1", executed.stdout.strip(), executed.stderr)
+        clean = self._run("--check-only")
+        self.assertEqual(0, clean.returncode, clean.stdout + clean.stderr)
+
+    def test_the_city_root_receives_no_pack_gate(self):
+        own, _source, check_path = self._city_check()
+        pack, _gate = self._pack("pack-v1")
+        self._select(own, pack)
+
+        repaired = self._run()
+
+        self.assertEqual(0, repaired.returncode, repaired.stdout + repaired.stderr)
+        self.assertTrue((self.city / check_path).is_file())
+        self.assertFalse((self.city / CHECK_PATH).exists(), "a pack gate is for rigs, not for the city root")
+        self.assertTrue(self._target("backend").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

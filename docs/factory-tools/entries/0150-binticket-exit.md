@@ -15,7 +15,9 @@ sortie a une destination fixée par du code, et le compte rendu du ticket
 ./bin/ticket-exit deferral <convoi> <ticket> --repo <worktree>
 ```
 
-- **Terminé** : refusé sans les quatre rubriques du compte rendu (Fait,
+- **Terminé** : refusé, pour un `vertical_slice` ou un `repair`, sans la
+  preuve de démonstration capturée sur le produit lancé au commit de tête
+  (`./bin/ticket-author demonstrate`) ; refusé sans les quatre rubriques du compte rendu (Fait,
   Écarts, Non fait, Constats hors ticket), chacune avec du contenu ou
   « aucun » ; refusé aussi tant que le diff du ticket porte un marqueur de
   report (TODO, FIXME, « not wired », « à brancher ») qu'aucun « non fait »

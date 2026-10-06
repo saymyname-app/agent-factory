@@ -25,6 +25,7 @@ TOOL = ROOT / "bin" / "ticket-exit"
 STATE_TOOL = ROOT / "bin" / "convoy-state"
 ADVANCE_TOOL = ROOT / "bin" / "convoy-advance"
 CAPTURE_TOOL = ROOT / "bin" / "evidence-capture"
+LAUNCH_TOOL = ROOT / "bin" / "project-launch"
 ESCALATION_TOOL = ROOT / "bin" / "escalation-door"
 FIXTURE = Path("tests") / "fixtures" / "delivery-fixture-city"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
@@ -171,11 +172,32 @@ class TicketExitTest(unittest.TestCase):
         self.git("commit", "-q", "--allow-empty", "-m", message)
         return self.git("rev-parse", "HEAD")
 
-    def code(self, extra=""):
-        """The code of T2: the product, and a file outside its Declared Scope."""
+    def code(self, extra="", demonstrated=True, ticket=T2):
+        """The code of T2: the product, and a file outside its Declared
+        Scope; then, as its author does before leaving, the proof of the
+        demonstration line on the product launched at that commit."""
         app = (self.repo / APP).read_text()
-        return self.commit("la liste des éléments", {APP: app + "\n# la liste des éléments\n" + extra,
+        head = self.commit("la liste des éléments", {APP: app + "\n# la liste des éléments\n" + extra,
                                                      README: "Le produit de la fixture.\n"})
+        if demonstrated:
+            self.demonstrate(ticket)
+        return head
+
+    def demonstrate(self, ticket=T2):
+        """The piece `demonstration`, captured for real on the product
+        launched for real at HEAD."""
+        launch = self.tmp / "launch.json"
+        proc = self.run_cmd(LAUNCH_TOOL, "--repo-root", self.repo, "start", ROOT / FIXTURE / "descriptor.json",
+                            "--commit", self.git("rev-parse", "HEAD"), "--dataset", "content", "--state-file", launch)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        try:
+            address = json.loads(launch.read_text())["address"]
+            proc = self.run_cmd(CAPTURE_TOOL, "command", CONVOY, ticket, "--piece", "demonstration",
+                                "--launch-state", launch, "--", "curl", "-sf", address + "/")
+            self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        finally:
+            self.run_cmd(LAUNCH_TOOL, "stop", "--state-file", launch)
+        self.write_log.write_text("")
 
     def run_cmd(self, tool, *args):
         return subprocess.run((str(tool), *[str(a) for a in args]), env=self.env, text=True, capture_output=True)
@@ -386,6 +408,41 @@ class TicketExitTest(unittest.TestCase):
             lambda: self.exit("--exit", "finished", "--repo", self.repo, "--handoff", self.handoff(), ticket=T4))
         self.assertIn("preuve du rouge", json.loads(proc.stdout)["error"])
 
+    # --- T12: « terminé » needs the proof of the demonstration line at HEAD ----
+
+    def test_finished_is_refused_without_a_demonstration_proof(self):
+        self.code(demonstrated=False)
+        self.assert_refused_and_nothing_written(
+            lambda: self.finish(self.handoff()), "aucune preuve de démonstration", "ticket-author demonstrate")
+
+    def test_finished_is_refused_when_the_demonstration_was_captured_before_the_head_commit(self):
+        self.code()
+        head = self.commit("un dernier commit", {README: "Le produit de la fixture, relu.\n"})
+        self.assert_refused_and_nothing_written(lambda: self.finish(self.handoff()), "commit de tête", head)
+
+    def test_finished_is_refused_when_the_demonstration_was_not_captured_on_the_launched_product(self):
+        self.code(demonstrated=False)
+        proc = self.run_cmd(CAPTURE_TOOL, "command", CONVOY, T2, "--piece", "demonstration", "--repo", self.repo,
+                            "--", "echo", "la page affiche les trois éléments")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assert_refused_and_nothing_written(lambda: self.finish(self.handoff()), "produit lancé")
+
+    def test_finished_is_refused_when_the_demonstration_fingerprint_was_written_by_hand(self):
+        head = self.code(demonstrated=False)
+        self.state("add-evidence", CONVOY, T2, "--piece", "demonstration", "--digest", RED_DIGEST, "--commit", head)
+        self.assert_refused_and_nothing_written(lambda: self.finish(self.handoff()), "magasin de preuves")
+
+    def test_records_carry_the_demonstration_proof(self):
+        head = self.code()
+
+        self.exited("--exit", "finished", "--repo", self.repo, "--handoff", self.handoff())
+
+        ticket = self.shown()
+        proof = ticket["handoff"]["records"]["demonstration_proof"]
+        self.assertEqual(("demonstration", head, ticket["evidence"]["demonstration"]["digest"]),
+                         (proof["piece"], proof["commit"], proof["digest"]))
+        self.assertTrue(proof["address"].startswith("http://127.0.0.1:"))
+
     # --- AC4: the deferral detector -------------------------------------------
 
     MARKED_LINES = {
@@ -440,12 +497,13 @@ class TicketExitTest(unittest.TestCase):
                                 if k != "gc.flow.tdd.red"})
         self.state("set-tdd", CONVOY, T2, "--step", "red", "--commit", red, "--base", base)
         self.commit("le README est écrit", {README: "Le produit de la fixture.\n"})
+        self.demonstrate()
 
         self.exited("--exit", "finished", "--repo", self.repo, "--handoff", self.handoff())
         self.assertEqual([], self.shown()["handoff"]["records"]["deferral_markers"])
 
     def test_the_detector_alone_refuses_and_passes_and_writes_nothing(self):
-        self.code(self.MARKED_LINES["TODO"] + "\n")
+        self.code(self.MARKED_LINES["TODO"] + "\n", demonstrated=False)
         proc = self.assert_refused_and_nothing_written(
             lambda: self.run_cmd(TOOL, "deferral", CONVOY, T2, "--repo", self.repo), status=EXIT_REFUSED)
         answer = json.loads(proc.stdout)
