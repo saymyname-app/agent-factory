@@ -26,7 +26,9 @@ from cockpit.requests.journal import entries_from_value as journal_entries_from_
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.ui.base.page import render_document, render_fresh, render_home
 from cockpit.ui.health.page import render_health_zone, render_status_line
+from cockpit.ui.access.page import render_access_zone
 from cockpit.ui.home.page import render_requests_section
+from cockpit.ui.stop.render import render_stop_section
 from cockpit.ui.journal.render import CSS as JOURNAL_CSS
 from cockpit.ui.journal.render import render_journal_page, render_journal_section, render_journal_unknown
 from cockpit.ui.notify.render import render_envois_section
@@ -102,7 +104,12 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 read_model.headline(),
                 stale_rows,
                 requests_section_html=requests_section_html,
-                extra_sections_html=self._render_projects_zone(snapshot) + health_html,
+                extra_sections_html=(
+                    self._render_projects_zone(snapshot)
+                    + self._render_stop_zone(snapshot)
+                    + render_access_zone(self.server.benjamin_login, snapshot.get("tailscale"), read_model.now())
+                    + health_html
+                ),
                 status_html=render_status_line(snapshot.get("gc"), health),
             ).encode("utf-8")
             self.send_response(200)
@@ -171,7 +178,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         request, built only from what the read model already holds -- no
         direct read of any source here."""
         return assemble_from_snapshot(
-            snapshot, now, self.server.defect_counter, self.server.illisible_after_seconds
+            snapshot, now, self.server.defect_counter, self.server.illisible_after_seconds,
+            extra_requests=self.server.extra_requests(snapshot, now),
         )
 
     def _undelivered(self):
@@ -222,6 +230,38 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if beads_known:
             payload["verified_at"] = beads_row["read_at"]
         return payload
+
+    def _render_stop_zone(self, snapshot):
+        """« Arrêt propre de l'usine »: the driver's state and the work a
+        stop would wait for (spec .81, .82). No stop control is rendered:
+        nothing in the cockpit can stop the factory until Benjamin's real
+        trial (spec .91)."""
+        driver = self.server.stop_driver
+        if driver is None:
+            return ""
+        row = snapshot.get("sessions")
+        known = row is not None and row["value"] is not None and row["freshness"] != UNKNOWN
+        titles = {
+            bead.get("id"): bead.get("title")
+            for bead in ((snapshot.get("beads") or {}).get("value") or [])
+            if isinstance(bead, dict)
+        }
+        work = {
+            "known": known,
+            "sessions": [
+                {"titre": titles.get(s.get("bead_id")), "last_event_at": s.get("last_event_at")}
+                for s in (row["value"]["sessions"] if known else [])
+            ],
+        }
+        gc_row = snapshot.get("gc") or {}
+        gc_value = gc_row.get("value")
+        if not gc_value or gc_row.get("freshness") == UNKNOWN:
+            factory = ("info", "État de l'usine inconnu — le superviseur ne répond pas")
+        elif gc_value.get("suspended"):
+            factory = ("normal", "Suspendue, sans arrêt demandé depuis le cockpit")
+        else:
+            factory = ("ok", "En marche")
+        return render_stop_section(driver, enabled=False, work=work, factory=factory)
 
     def _render_projects_zone(self, snapshot):
         """"Projets", from the read model's own "projets" value -- absent
@@ -400,6 +440,9 @@ def make_server(
     # without them (a narrow test) simply has no notifications to show.
     server.notify = None
     server.heartbeat = None
+    server.stop_driver = None
+    server.benjamin_login = ""
+    server.extra_requests = lambda snapshot, now: []
     server.illisible_after_seconds = (
         ILLISIBLE_THRESHOLD_SECONDS if illisible_after_seconds is None else illisible_after_seconds
     )

@@ -392,3 +392,68 @@ Pushover or Healthchecks.io by default.
 documents and decrypts with the documented scheme;
 `tests/cockpit-notifications-test.py` runs the real process with its real
 adapter and emitter against it.
+
+## Local settings file (af-mjfvwx)
+
+Intent (Benjamin, his words, 2026-10-06): « ok pour l'emplacement ».
+Mechanism (agent interpretation): the two secret files live under his
+Windows profile, in `C:\Users\<lui>\.agent-factory-cockpit\`, and one
+local, unversioned JSON file tells the cockpit where — it does NOT hold a
+secret itself, and nothing in the repository names his profile.
+
+`cockpit-local.json`, beside the pid file (`.gc/runtime/` on the live
+root; `COCKPIT_LOCAL_CONFIG` to put it elsewhere):
+
+```json
+{
+  "pushover_secrets_file": "/mnt/c/Users/<lui>/.agent-factory-cockpit/pushover.json",
+  "heartbeat_url_file": "/mnt/c/Users/<lui>/.agent-factory-cockpit/heartbeat-url.txt",
+  "public_url": "https://<machine>.<tailnet>.ts.net",
+  "benjamin_login": "<login Tailscale>",
+  "allowed_origin": "https://<machine>.<tailnet>.ts.net"
+}
+```
+
+Every key is optional; an environment variable of the same meaning
+(`COCKPIT_PUSHOVER_SECRETS_FILE`, …) wins. Absent or malformed, the file is
+ignored: no push, no ping, read-only. A test never sees the live one: each
+gives the process its own pid file, so its own (absent) settings file.
+
+## Stop zone, read-only, and access zone (af-mjfvwx, slice 7a)
+
+Intent (Benjamin, his words, 2026-10-06): « ok pour les deux temps, ok
+tailscale ». Mechanism (agent interpretation): the Clean stop goes in two
+steps. **7a, this one: nothing in the cockpit can stop the factory.** 7b —
+suspending, resuming, the button in « mode essai » and his real trial —
+waits for his word, at a time no delivery is running. It does NOT mean the
+stop path is delivered.
+
+What was found: `stop/driver.py` (T23/T24) had only ever run against a
+Python object, and the shape it expects is not the one gc serves.
+
+- `stop/gc_city.py` `GcCityReader` gives the driver that shape from gc's
+  real `/v0/city/<city>/status` and `/sessions` (an agent counts as work in
+  flight while it is `running` with an `active_bead`). Its `suspend`,
+  `resume` and `force_stop_sessions` raise `StopUnavailable`. Which of gc's
+  `session/<id>/stop|kill|suspend` keeps the work assigned (« arrêt forcé »)
+  is not documented and has not been identified.
+- `core/process.py` runs the driver (state kept in
+  `COCKPIT_STOP_STATE_FILE`, tick every 15 s) and reads the agents at work
+  as the read model's `sessions` source. **No stop action is registered.**
+- `GET /` shows « Arrêt propre de l'usine »: the state, the work a stop
+  would wait for (ticket title, last sign of life — spec .81, .82), and
+  « L'arrêt depuis le cockpit n'est pas encore disponible : il attend ton
+  essai réel. » `ui/stop/render.py` renders the controls only with
+  `enabled=True`, which nothing passes yet.
+- The heartbeat pauses only while the driver's state is
+  `arretee_proprement` (spec .88).
+- The driver's own requests (« l'arrêt n'avance plus », « reprise avec
+  écarts ») and the Tailscale key at J-14 enter « Ce qui t'attend » as
+  `extra_requests` of `requests/assemble.py`.
+- « Accès »: who may act (`benjamin_login`, else « Lecture seule ») and
+  until when the Tailscale key is valid (`access/tailscale.py`, read hourly
+  as the `tailscale` source). Tailscale is read only where
+  `tailscale_bin` is set (local settings file, or `COCKPIT_TAILSCALE_BIN`).
+
+`tests/cockpit-stop-access-test.py` covers this through HTTP, including
+that every plausible stop action answers 404.

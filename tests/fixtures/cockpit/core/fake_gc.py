@@ -39,6 +39,7 @@ class FakeGc:
             "mail": {"unread": 0, "total": 0},
         }
         self._ready = []
+        self._sessions = []
         self._subscribers = []
         self._down = False
         self._stream_muted = False
@@ -84,6 +85,11 @@ class FakeGc:
                     if rest == "beads/ready":
                         with gc._lock:
                             items = list(gc._ready)
+                        self._send_json({"items": items, "total": len(items)})
+                        return
+                    if rest == "sessions":
+                        with gc._lock:
+                            items = list(gc._sessions)
                         self._send_json({"items": items, "total": len(items)})
                         return
                     if rest == "events/stream":
@@ -188,6 +194,13 @@ class FakeGc:
         with self._lock:
             self._ready = list(items)
             self._status["work"]["ready"] = len(self._ready)
+
+    def set_sessions(self, items):
+        """``items``: agent sessions as ``/sessions`` lists them (id,
+        template, session_name, running, last_active, and active_bead for
+        the ones on a ticket)."""
+        with self._lock:
+            self._sessions = list(items)
 
     def emit(self, event_type, subject="", payload=None):
         """Send one city event to every open stream, e.g. ``bead.closed``."""

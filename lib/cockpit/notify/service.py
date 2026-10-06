@@ -141,12 +141,19 @@ class _MainSources:
 
 
 class HeartbeatService:
-    def __init__(self, read_model, clock, url_file, interval_seconds, main_sources=("gc", "beads")):
+    def __init__(
+        self, read_model, clock, url_file, interval_seconds, main_sources=("gc", "beads"),
+        state_provider=lambda: None,
+    ):
+        """``state_provider``: the Clean stop driver's state -- the emitter
+        pauses only while it says the factory was stopped cleanly from the
+        cockpit, never for a Windows shutdown (spec .88)."""
         self._url_loader = lambda: read_url_from_file(url_file)
         self._emitter = HeartbeatEmitter(
             _MainSources(read_model, main_sources),
             clock,
             self._url_loader,
+            state_provider=state_provider,
             interval_seconds=interval_seconds,
         )
 

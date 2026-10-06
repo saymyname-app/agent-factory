@@ -133,6 +133,24 @@ class FakeGcAnswersLikeTheRealOne(unittest.TestCase):
         if real["items"]:
             self.assertIn("metadata", real["items"][0])
 
+    def test_sessions(self):
+        self.fake.set_sessions([{
+            "id": "af-s1", "kind": "agent", "template": "factory-worker", "state": "active", "title": "t",
+            "session_name": "factory-worker", "running": True, "last_active": "2026-10-06T15:07:21+02:00",
+            "active_bead": "af-b1",
+        }])
+        try:
+            real, fake = (json.loads(b) for b in self.both("/v0/city/%s/sessions"))
+        finally:
+            self.fake.set_sessions([])
+        self.assertEqual({"items", "total"}, set(real))
+        self.assertEqual({"items", "total"}, set(fake))
+        # Every field the cockpit reads exists on a real session; active_bead
+        # only on the ones holding a ticket.
+        for item in real["items"]:
+            self.assertLessEqual({"id", "template", "running", "last_active"}, set(item))
+        self.assertLessEqual(set(fake["items"][0]) - {"active_bead"}, set(real["items"][0]) | {"session_name"})
+
     def test_city_event_stream_framing(self):
         real = first_frames(REAL_BASE_URL, "/v0/city/%s/events/stream" % self.real_city, {"heartbeat"})
         self.fake.emit("bead.closed", subject="af-fake")  # nobody listening yet: harmless
