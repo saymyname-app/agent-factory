@@ -687,7 +687,8 @@ class EndToEnd(unittest.TestCase):
         self.run_tool("tick")  # the snapshot of live sessions comes from a tick
         status = json.loads(self.run_tool("status", "--json").stdout)
         self.assertEqual("agent-factory-provider-status/v1", status["contract"])
-        self.assertEqual({"workspace", "mayor", "ux-reviewer"}, set(status["targets"]))
+        self.assertEqual({"workspace", "mayor", "ux-reviewer",
+                          "delivery-author", "delivery-reviewer", "delivery-evaluator"}, set(status["targets"]))
         self.assertIn("manual:mark", [h["event"] for h in status["history"]])
         self.assertEqual({"af-w1", "af-m"}, {s["id"] for s in status["sessions"]})
 

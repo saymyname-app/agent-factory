@@ -1,0 +1,12 @@
+description = "Delivery role: ticket author (tdd, codebase-design; reads implement). Skills per config/delivery-roles.json"
+scope = "city"
+work_dir = ".gc/agents/delivery-author"
+min_active_sessions = 0
+max_active_sessions = 1
+idle_timeout = "2h"
+
+# Claude Code ships its own code-review/security-review/simplify skills; a
+# permission deny rule leaves them listed. This switch removes them, so an
+# author session has no way to launch a review (role-adoption-trial proves it).
+[env]
+CLAUDE_CODE_DISABLE_BUNDLED_SKILLS = "1"

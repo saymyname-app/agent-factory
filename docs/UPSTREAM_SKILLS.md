@@ -27,6 +27,18 @@ directory at the pinned tag) instead of only into `~/.agents/skills` on
 the host. `./bin/upstream-skills-check compare` is the mechanical proof
 that this copy is unchanged.
 
+## Role copies (T03)
+
+Delivery roles do not read `skills/` directly: each role agent holds plain
+copies of its own skills under `agents/<agent>/skills/` (Gas City ignores a
+symlinked skill directory), as listed in `config/delivery-roles.json`.
+`./bin/role-adoption-trial verify-distribution` (run in CI by
+`tests/dispatch-door-role-test.sh`) fails when a copy differs from
+`skills/` or when a role holds a skill outside its distribution. After any
+pin change, recopy them and re-run `./bin/role-adoption-trial run`: the
+recorded trials are void as soon as a role's files change, and
+`bin/dispatch-door --role` refuses until the new trial passes.
+
 ## Daily check (read-only)
 
 `./bin/upstream-skills-check`, run daily by the `upstream-skills-check`
