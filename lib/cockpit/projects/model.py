@@ -51,6 +51,9 @@ class Chantier:
     etat: str = "normal"
     etat_cible: str = None
     promu_masque: bool = False
+    # Accepté, and whether it is promoted could not be established: shown
+    # as such, never as a promotion Benjamin is asked for.
+    promu_inconnu: bool = False
     termine: bool = False
     abandonne: bool = False
     raison_abandon: str = None

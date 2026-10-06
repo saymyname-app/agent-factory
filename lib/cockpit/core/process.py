@@ -74,7 +74,13 @@ def build(config, clock=None):
             PollingSource(
                 read_model,
                 "projets",
-                lambda: read_projects(config.descriptors_dir, bd_bin=config.bd_bin),
+                lambda: read_projects(
+                    config.descriptors_dir,
+                    bd_bin=config.bd_bin,
+                    clones_dir=config.clones_dir,
+                    rig_repos=read_rig_repos(config.rig_files_dir),
+                    git_bin=config.git_bin,
+                ),
                 config.projects_poll_seconds,
             )
         )
