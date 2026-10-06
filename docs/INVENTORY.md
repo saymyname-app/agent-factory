@@ -84,7 +84,7 @@ an A5 input.
 | `.gitignore` | ops | git; factory-guard work-tree check | coherent (city.provider.toml, *.before-*) |
 | `AGENTS.md` | to-redo | all agents (CLAUDE.md, mayor prompt, operator-context test) | invariants still cite campaign liveness, cockpit, SayMyName runner, preview |
 | `CLAUDE.md` | ops | Claude Code | @AGENTS.md include |
-| `CONTEXT.md` | kernel | ADR-0028, refactor spec | project-agnostic domain glossary |
+| `GLOSSARY.md` | kernel | ADR-0028, refactor spec | project-agnostic domain glossary |
 | `README.md` | ops | entry point | FIXED (A4 wording fixes, #254): "Current status" separates what is configured from what is retired (product status/preview); no longer contradicts itself |
 | `agents/factory-worker/agent.toml` | kernel | bin/factory-work-dispatch, city.toml, mayor prompt, tests/factory-work-dispatch-test.sh | The HQ implementation role every approved-graph af-* bead goes to |
 | `agents/factory-worker/prompt.template.md` | kernel | factory-worker sessions | Generic graph.v2 claim/close protocol; no drift found vs gc hook/bd usage |

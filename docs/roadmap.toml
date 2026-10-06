@@ -1,4 +1,4 @@
-# The Software Factory's own Roadmap (CONTEXT.md: Project, Roadmap Step).
+# The Software Factory's own Roadmap (GLOSSARY.md: Project, Roadmap Step).
 #
 # Structured so the Cockpit and any tool read the current step without
 # interpreting prose -- validate with `bin/project-roadmap validate` and

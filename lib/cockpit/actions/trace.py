@@ -1,5 +1,5 @@
 """Traces an Operator Action at its source (spec af-oohx2x §"Actions
-opérateur", CONTEXT.md "Operator Action"; T13 AC2, AC6).
+opérateur", GLOSSARY.md "Operator Action"; T13 AC2, AC6).
 
 Every Operator Action writes a comment plus the same fields as metadata
 on the bead it acted on -- so the Factory, the PC, and the iPhone read

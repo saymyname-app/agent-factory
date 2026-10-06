@@ -6,7 +6,7 @@ ticket builds its core read-model seam: the process itself, the Freshness
 model, and the startup wiring. The screens built on this base (Accueil,
 "Ce qui t'attend", page projet, …) are other C01 tickets.
 
-See CONTEXT.md for the canonical definitions of **Cockpit**, **Freshness**,
+See GLOSSARY.md for the canonical definitions of **Cockpit**, **Freshness**,
 and **Validity window**.
 
 ## Layout
@@ -47,7 +47,7 @@ and **Validity window**.
 
 A source unread for longer than its Validity window plus another full
 window is considered **failing** and reported `unknown`, same as a source
-that was never read (CONTEXT.md Freshness: "never read, or its source is
+that was never read (GLOSSARY.md Freshness: "never read, or its source is
 failing") — this is the fresh → stale → unknown progression a single
 source goes through as it stops responding.
 

@@ -13,7 +13,7 @@ Only two kinds of bead ever become a request here:
 
 A bead with only ``gc.escalation_mayor_paged_at`` set (a Mayor-first
 escalation not yet promoted) carries no ``gc.needs_benjamin`` and is never
-looked at here — CONTEXT.md's Operator Request definition excludes it by
+looked at here — GLOSSARY.md's Operator Request definition excludes it by
 construction, not by a special case (spec .9).
 
 Exit is at-source only: a request appears here exactly when its condition

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validate a Project's structured Roadmap and check a Roadmap Step id.
 
-A Roadmap (CONTEXT.md: Roadmap Step) is a TOML file of `[[step]]` tables,
+A Roadmap (GLOSSARY.md: Roadmap Step) is a TOML file of `[[step]]` tables,
 each with an id, a title, a "done when" condition, an order, and a status
 (to-do / in-progress / done), so the Cockpit and any tool can read the
 current step without interpreting prose. `roadmap.md` in the same project
@@ -10,7 +10,7 @@ reads the structured file.
 
 Status changes by normal commit -- this tool never writes the roadmap, it
 only validates it and answers whether a given id names one of its steps
-(the check a Spec's `planning_run_target` needs, CONTEXT.md: Roadmap Step).
+(the check a Spec's `planning_run_target` needs, GLOSSARY.md: Roadmap Step).
 """
 
 from __future__ import annotations
