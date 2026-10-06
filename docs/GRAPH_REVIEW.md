@@ -163,3 +163,11 @@ door and the reviewer session. `tests/graph-review-isolated-city-test.sh`
 `gc`/`bd` in a disposable city and, with `GRAPH_REVIEW_TRIAL_SESSION=1`, has
 one real reviewer session review the fixture draft in which a ticket is not
 demonstrable alone (`tests/fixtures/graph-review/not-demonstrable-draft.yaml`).
+
+That real session is what showed that a read-only role could not run any
+`gc` command: `gc` takes a lock in its pack cache
+(`$GC_HOME/cache/repos/.packman-cache.lock`) before it reads the city, and
+`bin/delivery-role-sandbox` mounted it read-only. The sandbox now leaves
+that one file writable; the cached packs beside it stay read-only. Trial
+record of 2026-10-06 (Gas City 1.4.1): the session claimed the routed step,
+recorded its answers itself, and refused T2 as not demonstrable alone.
