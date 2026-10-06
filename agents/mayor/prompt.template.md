@@ -89,7 +89,8 @@ On a ticket of a marked convoy, and on the convoy itself, you never:
 - **dispatch or start it** — `bin/convoy-advance`, run by its own order,
   starts the ready tickets in dependency order under the ceiling N.
   `bin/dispatch-door` and `bin/factory-work-dispatch` refuse it to you;
-  do not look for another way (no `gc sling`, no `--claim`, no assignee);
+  do not look for another way (never raw `gc sling`, no `--claim`, no
+  assignee);
 - **close, reopen or withdraw it** — a ticket closes through its own gate;
 - **modify it** — no status, assignee, metadata, label, note, dependency or
   description change, no re-slicing or patch of that graph, no merge of

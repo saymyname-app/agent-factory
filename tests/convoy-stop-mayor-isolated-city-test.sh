@@ -23,8 +23,8 @@
 #   - the Mayor acted on the order failure (reply, or the failure's bead).
 #
 # Part 2 — the demonstration line, with only the city's controller acting:
-# the order orders/convoy-advance.toml starts the first ticket (N=1); the
-# trial closes it by hand; the convoy starts nothing more, and one factory
+# the order orders/convoy-advance.toml starts one of the two ready tickets
+# (N=1); the trial closes it by hand; the convoy starts nothing more, and one factory
 # incident naming the ticket appears in `bin/escalation-door list`, once,
 # whatever the number of passes; once the trial has restored a valid state,
 # the same order resumes the convoy and withdraws the incident by itself.
@@ -375,42 +375,48 @@ operator_mails() { gc bd list --all --type message --json 2>/dev/null | jq '[.[]
 flow_started() { gc bd show "$1" --json | jq -e '.[0].metadata["gc.flow.gate.dispatch"] != null' >/dev/null 2>&1; }
 
 [ "$(passes)" = 0 ] || fail "the order ran a pass during part 1"
+# The Mayor may have escalated the order failure to the operator itself.
+mails_before_stop=$(operator_mails)
 touch "$TRIAL/advance.on"
 echo "$(stamp) l'essai ouvre l'ordre convoy-advance de la cité (N=$CEILING)"
-t1_started() { flow_started "$T1"; }
-wait_for 300 t1_started || fail "T1 was not started by the order within 300s"
+# T1 and T2 are both ready: which one takes the single place is the order's
+# choice. The trial calls it FIRST and the other one SECOND.
+one_started() { flow_started "$T1" || flow_started "$T2"; }
+wait_for 300 one_started || fail "neither T1 nor T2 was started by the order within 300s"
 wait_passes 1
-flow_started "$T2" && fail "T2 was started above the ceiling"
+if flow_started "$T1"; then FIRST=$T1 SECOND=$T2; else FIRST=$T2 SECOND=$T1; fi
+F=${NAME[$FIRST]} S=${NAME[$SECOND]}
+flow_started "$SECOND" && fail "$S was started above the ceiling"
 [ -s "$TRIAL/order-identity" ] && fail "the order's command runs with an agent session identity: $(cat "$TRIAL/order-identity")"
-echo "$(stamp) l'ordre a démarré T1 par la porte (sans identité de session d'agent) ; T2 attend sa place"
+echo "$(stamp) l'ordre a démarré $F par la porte (sans identité de session d'agent) ; $S attend sa place"
 
-gc bd close "$T1" --reason "fermé à la main par l'essai" >/dev/null 2>&1 || fail "the trial could not close T1"
-echo "$(stamp) l'essai ferme T1 à la main dans le tracker (aucun relevé de porte)"
+gc bd close "$FIRST" --reason "fermé à la main par l'essai" >/dev/null 2>&1 || fail "the trial could not close $F"
+echo "$(stamp) l'essai ferme $F ($FIRST) à la main dans le tracker (aucun relevé de porte)"
 incident_listed() { [ -n "$(incident_lines)" ]; }
 wait_for 300 incident_listed || fail "no factory incident appeared in the escalation door's list within 300s"
 wait_passes 3
-flow_started "$T2" && fail "T2 was started although the convoy is stopped"
+flow_started "$SECOND" && fail "$S was started although the convoy is stopped"
 flow_started "$T3" && fail "T3 was started although the convoy is stopped"
 lines=$(incident_lines)
 [ "$(printf '%s\n' "$lines" | grep -c .)" = 1 ] || fail "expected one incident line, got: $lines"
-printf '%s' "$lines" | grep -q "$T1" || fail "the incident line does not name the ticket $T1: $lines"
+printf '%s' "$lines" | grep -q "$FIRST" || fail "the incident line does not name the ticket $FIRST: $lines"
 printf '%s' "$lines" | grep -q "fermé hors porte" || fail "the incident line does not give the reason: $lines"
 [ "$(incident_beads | wc -w)" = 1 ] || fail "expected one incident bead, got: $(incident_beads)"
-mails_after_stop=$(operator_mails)
-[ "$mails_after_stop" = 1 ] || fail "expected one mail to the operator, got $mails_after_stop"
-echo "$(stamp) convoi arrêté : T2 et T3 non démarrés après 3 passes de plus ; liste de la porte d'escalade :"
+mails_after_stop=$(( $(operator_mails) - mails_before_stop ))
+[ "$mails_after_stop" = 1 ] || fail "expected one mail to the operator for the incident, got $mails_after_stop"
+echo "$(stamp) convoi arrêté : $S et T3 non démarrés après 3 passes de plus ; liste de la porte d'escalade :"
 printf '%s\n' "$lines" | sed 's/^/    | /'
 echo "$(stamp) un seul incident : bead $(incident_beads), $mails_after_stop courrier à l'opérateur, $(jq -s '[.[] | select(.convoys[]?.incident.raised == true)] | length' "$PASSES") passe l'a levé sur $(passes)"
 
-state record-gate "$MARKED" "$T1" --gate ticket_end --commit "$COMMIT"
-echo "$(stamp) maintenance de l'usine simulée : l'essai enregistre le relevé de la porte de fin de ticket de T1 (aucun ticket avancé ni fermé à la main)"
-t2_started() { flow_started "$T2"; }
-wait_for 300 t2_started || fail "the convoy did not resume: T2 was not started within 300s of the repair"
+state record-gate "$MARKED" "$FIRST" --gate ticket_end --commit "$COMMIT"
+echo "$(stamp) maintenance de l'usine simulée : l'essai enregistre le relevé de la porte de fin de ticket de $F (aucun ticket avancé ni fermé à la main)"
+second_started() { flow_started "$SECOND"; }
+wait_for 300 second_started || fail "the convoy did not resume: $S was not started within 300s of the repair"
 wait_passes 1
 [ -z "$(incident_lines)" ] || fail "the incident is still in the escalation door's list after the resume: $(incident_lines)"
 incident_beads | grep -q "=closed" || fail "the incident bead was not closed by the resume: $(incident_beads)"
-grep -E "$T2" "$DOOR_LOG" | awk -F'\t' '$3 == 0 && $2 == "aucune session" { found = 1 } END { exit !found }' \
-  || fail "T2 was not started by the order's own call of the dispatch door"
-echo "$(stamp) reprise par le code : T2 démarré par l'ordre, incident retiré de la liste, bead $(incident_beads)"
+grep -E "$SECOND" "$DOOR_LOG" | awk -F'\t' '$3 == 0 && $2 == "aucune session" { found = 1 } END { exit !found }' \
+  || fail "$S was not started by the order's own call of the dispatch door"
+echo "$(stamp) reprise par le code : $S démarré par l'ordre, incident retiré de la liste, bead $(incident_beads)"
 echo "passes de l'ordre : $(passes), sorties : $(jq -s -c '[.[].rc] | group_by(.) | map({(.[0] | tostring): length}) | add' "$PASSES")"
 echo "PASS: a real Mayor left the marked convoy untouched and handled the order failure; a ticket closed by hand stopped the convoy with one factory incident, and code resumed it"
