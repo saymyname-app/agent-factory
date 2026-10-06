@@ -227,9 +227,12 @@ class RequestsSeamTest(unittest.TestCase):
         self.assertIsNotNone(urgent["verifie_a"])
 
         a_faire = requests[1]
-        self.assertEqual("agent-factory", a_faire["projet"])
+        # A request shows its project's displayed name, not its key (spec .73).
+        wait_until(lambda: self.requests_payload()["requests"][1]["projet"] == "Usine")
         proposal = requests[2]
-        self.assertEqual("usine", proposal["projet"], "unknown project falls back to usine")
+        self.assertEqual(
+            "Usine", self.requests_payload()["requests"][2]["projet"], "no project named: the factory's own"
+        )
         self.assertEqual("proposal", proposal["type"])
 
         body = self.home_body()
