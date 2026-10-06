@@ -56,6 +56,7 @@ class Config:
             "COCKPIT_DESCRIPTORS_DIR", os.path.join(_REPO_ROOT, "config", "project-descriptors")
         )
         self.projects_poll_seconds = float(env.get("COCKPIT_PROJECTS_POLL_SECONDS", "30"))
+        self.journal_poll_seconds = float(env.get("COCKPIT_JOURNAL_POLL_SECONDS", "60"))
         # spec .17: a source unreadable for longer than this is itself a request.
         self.illisible_after_seconds = float(
             env.get("COCKPIT_ILLISIBLE_SECONDS", str(ILLISIBLE_THRESHOLD_SECONDS))

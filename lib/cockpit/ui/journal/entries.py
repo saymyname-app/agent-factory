@@ -3,6 +3,10 @@
 voie)" ; "qu'une demande qui revient après résolution soit une nouvelle
 demande").
 
+Where the traces really are (af-mjfvwx): see :func:`journal_from_beads`
+at the end of this module — the doors append them to the bead's notes;
+the comment-reading described just below was never what they wrote.
+
 "Relu depuis les traces": the journal keeps no state of its own — it is
 rebuilt every time from the resolution comments the doors and Operator
 Actions already write on the bead they resolved (spec: "aucune copie
@@ -63,6 +67,9 @@ class JournalEntry:
     quand: str
     par: str
     voie: str
+    # The request this resolved, in its producer's words (spec .18
+    # "quoi"): the journal says what was asked, not only what was done.
+    demande: str = ""
 
 
 def _field(comment, *names):
@@ -160,3 +167,82 @@ def build_journal(comments_by_bead):
             if entry is not None:
                 entries.append(entry)
     return entries
+
+
+# ---------------------------------------------------------------------
+# What the tracker really holds (af-mjfvwx, checked 2026-10-06): the doors
+# and :mod:`cockpit.actions.trace` leave their trace with ``bd update
+# --append-notes`` -- lines of the bead's ``notes`` field, not Beads
+# comments (``bd comments`` is empty on a bead Benjamin answered). A note
+# line carries no date or author of its own; the doors stamp the date of
+# the *latest* answer in metadata, and ``escalation-door clear`` stamps
+# none at all.
+# ---------------------------------------------------------------------
+NEEDS_BENJAMIN_RE = re.compile(r"^NEEDS BENJAMIN: (?P<quoi>.*)$")
+PROPOSITION_RE = re.compile(r"^PROPOSITION: (?P<quoi>.*)$")
+DECISION_CLEARED_RE = re.compile(r"^DECISION CLEARED: ")
+
+VOIE_CLEAR = "clear"
+CLEARED_TEXT = "Effacée sans réponse enregistrée"
+
+# What a cockpit action reads as in the journal -- never its internal name.
+COCKPIT_ACTION_TEXT = {"relancer": "Relance demandée", "accepter_chantier": "Chantier accepté"}
+RESOLVING_COCKPIT_ACTIONS.update(COCKPIT_ACTION_TEXT)
+
+
+def _entries_of(bead):
+    bead_id = bead.get("id") or ""
+    metadata = bead.get("metadata") or {}
+    entries = []
+    # The request a resolution answers is the last one asked before it; a
+    # trace on a bead that never bore a question (a chantier accepted) is
+    # about the bead itself.
+    demande = metadata.get("gc.proposal_quoi") or ""
+    last_reponse = last_proposal = last_cleared = None
+    for line in (bead.get("notes") or "").split("\n"):
+        line = line.strip()
+        asked = NEEDS_BENJAMIN_RE.match(line) or PROPOSITION_RE.match(line)
+        if asked:
+            demande = asked.group("quoi")
+            continue
+        if DECISION_CLEARED_RE.match(line):
+            entry = JournalEntry(bead_id=bead_id, quoi=CLEARED_TEXT, quand="", par="", voie=VOIE_CLEAR)
+        else:
+            entry = parse_trace_note(bead_id, line)
+            if entry is None:
+                continue
+            cockpit = COCKPIT_TRACE_RE.match(line)
+            if cockpit:
+                entry.quoi = COCKPIT_ACTION_TEXT.get(cockpit.group("quoi"), entry.quoi)
+        entry.demande = demande or (bead.get("title") or "")
+        if entry.voie == "escalation-door":
+            last_reponse = entry
+        elif entry.voie == "proposal-door":
+            last_proposal = entry
+        elif entry.voie == VOIE_CLEAR:
+            last_cleared = entry
+        entries.append(entry)
+    # ``escalation-door clear`` dates its latest clearance since af-mjfvwx;
+    # the ones cleared before that carry no date at all.
+    if last_cleared is not None:
+        last_cleared.quand = metadata.get("gc.escalation_cleared_at") or ""
+    if last_reponse is not None:
+        last_reponse.quand = metadata.get("gc.escalation_response_at") or ""
+        last_reponse.par = metadata.get("gc.escalation_response_actor") or last_reponse.par
+    # proposal-door's "reporter" overwrites the same response date: with a
+    # report recorded, that date is no longer the decision's.
+    if last_proposal is not None and not metadata.get("gc.proposal_report_until"):
+        last_proposal.quand = metadata.get("gc.proposal_response_at") or ""
+    return entries
+
+
+def journal_from_beads(beads):
+    """Every resolution the notes of ``beads`` record, newest first; the
+    ones no trace dates come last, in the order given. A bead resolved
+    twice yields two entries (spec .19)."""
+    entries = []
+    for bead in beads or []:
+        if isinstance(bead, dict):
+            entries.extend(_entries_of(bead))
+    dated = sorted((e for e in entries if e.quand), key=lambda e: e.quand, reverse=True)
+    return dated + [e for e in entries if not e.quand]

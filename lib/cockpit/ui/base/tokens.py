@@ -126,6 +126,8 @@ details.more[open] summary::before{content:"\\25BE"}
 .vc .li .q{font-weight:600;line-height:1.35}
 .vc .li .p{font-size:var(--fs-xs);color:var(--muted);margin-top:2px}
 .vc .li time{font-size:var(--fs-xs);color:var(--muted)}
+.vc .list-foot{padding:10px 14px;border-top:1px solid var(--line);font-size:var(--fs-xs)}
+.vc .list-foot a{color:var(--accent);text-decoration:none}
 .vc .detail{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;display:none;gap:14px;align-content:start}
 .vc .detail .quoi{font-size:var(--fs-xl);line-height:1.25;font-weight:700;letter-spacing:-.01em}
 .vc .detail .sec{display:grid;gap:4px}
