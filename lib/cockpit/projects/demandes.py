@@ -88,7 +88,7 @@ def chantier_demandes(chantiers, verifie_a=None):
             continue
         if chantier.stage == LIVRE:
             out.append(_livre_non_accepte(chantier, verifie_a))
-        elif chantier.stage == ACCEPTE and not chantier.promu_masque:
+        elif chantier.stage == ACCEPTE and not chantier.promu_masque and not chantier.promu_inconnu:
             out.append(_accepte_non_promu(chantier, verifie_a))
     out.sort(key=lambda r: r.sort_key())
     return out

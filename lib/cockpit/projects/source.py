@@ -15,12 +15,16 @@ from cockpit.projects.builder import build_historique_par_projet, build_projects
 from cockpit.projects.descriptors import load_descriptors
 from cockpit.projects.hors_chantier import HorsChantierItem, hors_chantier_par_projet
 from cockpit.projects.model import Chantier, Project, RoadmapStep
+from cockpit.projects.promu import read_promotion_results
 from cockpit.projects.stage import MAP_LABEL
 
 
-def read_projects(descriptors_dir, bd_bin="bd", timeout=20):
+def read_projects(descriptors_dir, bd_bin="bd", timeout=20, clones_dir="", rig_repos=None, git_bin="git"):
     """One complete read. Raises on any failed ``bd`` call: a partial view
-    would show a project with chantiers missing as if it were whole."""
+    would show a project with chantiers missing as if it were whole.
+    ``clones_dir`` / ``rig_repos``: where the promotion of an accepted
+    chantier is read (:mod:`cockpit.projects.promu`); without them it is
+    unknown, said so, never taken for done."""
     descriptors = load_descriptors(descriptors_dir)
     by_id = {}
     for bead in read_beads_json(["list"], bd_bin=bd_bin, timeout=timeout) + read_convoy_beads(
@@ -34,8 +38,11 @@ def read_projects(descriptors_dir, bd_bin="bd", timeout=20):
         for bead in beads
         if MAP_LABEL in (bead.get("labels") or []) and bead.get("status") != "closed"
     }
-    projects, sans_projet = build_projects(descriptors, beads, children_by_map_id)
-    historique_projects, _ = build_historique_par_projet(descriptors, beads)
+    promotion_results = read_promotion_results(descriptors, beads, rig_repos, clones_dir, git_bin=git_bin)
+    projects, sans_projet = build_projects(
+        descriptors, beads, children_by_map_id, promotion_results=promotion_results
+    )
+    historique_projects, _ = build_historique_par_projet(descriptors, beads, promotion_results)
     value = to_value(
         projects,
         sans_projet,

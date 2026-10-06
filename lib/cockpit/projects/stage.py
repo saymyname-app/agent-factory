@@ -222,6 +222,7 @@ def _convoy_chantiers_all(beads, promotion_results=None):
         pret = sum(1 for t in tickets if t.get("status") == "open")
 
         promu_masque = False
+        promu_inconnu = False
         termine = False
         if bead.get("status") != "closed":
             detail = "%d/%d tickets mergés · %d en cours · %d en PR" % (merged, total, en_cours, en_pr)
@@ -253,9 +254,16 @@ def _convoy_chantiers_all(beads, promotion_results=None):
                     detail = "Promu"
                     termine = True
                     etat_val, cible = _etat_for(bead, extra_beads=tickets)
+                elif promu_val is None:
+                    # Unknown is not "not promoted" (spec .62): nothing is
+                    # asked of Benjamin on a fact the cockpit could not read.
+                    stage = ACCEPTE
+                    detail = "Accepté : promotion inconnue"
+                    promu_inconnu = True
+                    etat_val, cible = _etat_for(bead, extra_beads=tickets)
                 else:
                     stage = ACCEPTE
-                    detail = "Accepté : promotion inconnue" if promu_val is None else "Accepté : en attente de promotion"
+                    detail = "Accepté : en attente de promotion"
                     etat_val, cible = _etat_for(bead, extra_beads=tickets, a_toi_de_jouer=True, cible=bead_id)
 
         out.append(
@@ -268,6 +276,7 @@ def _convoy_chantiers_all(beads, promotion_results=None):
                 etat=etat_val,
                 etat_cible=cible,
                 promu_masque=promu_masque,
+                promu_inconnu=promu_inconnu,
                 termine=termine,
                 planning_run_target=(bead.get("metadata") or {}).get("planning_run_target"),
                 rig=rigs.pop() if len(rigs) == 1 else None,
