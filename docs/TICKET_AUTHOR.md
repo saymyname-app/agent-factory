@@ -15,9 +15,9 @@ Only `bin/convoy-advance` starts the formula (`config/delivery-flow.json`,
 `start.formula`), through `bin/dispatch-door --role author --convoy`. Nobody
 slings it by hand.
 
-Not in this ticket: the review of the tests between red and freeze (T13),
-the code review and the evaluation (T14, T15), the ticket-end gate (T19),
-the resume of a parked, blocked or interrupted ticket (T20).
+Not in this ticket: the code review and the evaluation (T14, T15), the
+ticket-end gate (T19), the resume of a parked, blocked or interrupted ticket
+(T20).
 
 ## The pieces
 
@@ -28,6 +28,7 @@ the resume of a parked, blocked or interrupted ticket (T20).
 | `bin/ticket-author` | `start`, `demonstrate`, `gate`, `check`, `release`, `locate` |
 | `bin/convoy-state set-session` | records which session took the ticket (`docs/CONVOY_STATE.md`) |
 | `bin/ticket-exit` | the exit; « terminé » now needs the demonstration proof (`docs/TICKET_EXIT.md`) |
+| `bin/test-review review` | inside the red step, between the red proof and the freeze: the criterion tests are read by a session of the reviewer role (T13, `docs/TEST_REVIEW.md`) |
 | `agents/delivery-author/agent.toml`, `work_query` | Gas City's default work query with one difference: a session that has ever been assigned a bead is offered, of the unassigned work, only that of its own workflow, so a session that holds a ticket never takes the first step of another one |
 | `agents/delivery-author/overlay/.claude/` | the settings and the guard that stop an author from handing the writing to a sub-agent, and the local settings that keep the operator's account plugins out of the session |
 
@@ -94,7 +95,7 @@ through `bin/evidence-capture verify`, and the tip of the ticket branch.
 | Step | Proven when |
 |---|---|
 | `workspace` | the session and the branch are recorded on the ticket, the work tree is on that branch, the branch leaves from the integration branch |
-| `red` | the red is proven and the criterion tests frozen (`bin/tdd-step`); nothing asked of a `prefactoring` |
+| `red` | the red is proven and the criterion tests frozen (`bin/tdd-step`), which the freeze refuses until the test reviewer passed every one of them (`bin/test-review`); nothing asked of a `prefactoring` |
 | `code` | the criterion tests are green at the tip; for a `prefactoring`, its regression at the tip |
 | `demonstration` | the piece `demonstration` verifies, was captured on the launched product, and is at the tip; nothing asked of a `prefactoring` |
 | `exit` | a Ticket Exit is recorded; « terminé » is at the tip, with its Handoff |
@@ -103,6 +104,13 @@ Once a Ticket Exit other than « terminé » is recorded after the session took
 the ticket, the gates of the steps that remain pass: the session closes
 them and leaves. The destination of that exit is fixed by `bin/ticket-exit`
 (parking, repair, push), and such a ticket is never merged.
+
+A **stopped** ticket (`bin/convoy-state`, `stop`: a criterion already green,
+a second amendment, a second refusal of the test review, a test review
+without result) is refused by every gate: the step comes back, its attempts
+are spent, and the sequence ends failed with the remaining steps skipped.
+The code that stopped the ticket is what raises it to the operator
+(`docs/TEST_REVIEW.md` for the test review).
 
 ## What bounds the author
 

@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, T11, T18, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, T13, T18, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -32,6 +32,10 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state record-gate  af-convoy af-t1 --gate ticket_end --commit <sha>
 ./bin/convoy-state set-tdd      af-convoy af-t1 --step red --commit <sha> --base <start sha>   # bin/tdd-step, once a step is proven
 ./bin/convoy-state stop-ticket  af-convoy af-t1 --reason criterion_already_green --detail "critère 2 déjà vert : …"   # bin/tdd-step
+./bin/convoy-state open-test-review   af-convoy af-t1 --commit <sha> --file request.json   # bin/test-review review
+./bin/convoy-state launch-test-review af-convoy af-t1 --bead af-review                     # bin/test-review, once the reviewer is sent
+./bin/convoy-state record-test-review af-convoy af-t1 --file verdict.json                  # bin/test-review record
+./bin/convoy-state stop-raised af-convoy af-t1                                              # once the escalation door accepted the stop
 ./bin/convoy-state set-handoff af-convoy af-t1 --file handoff.json                                   # bin/ticket-exit
 ./bin/convoy-state park        af-convoy af-t1 --cause planning_exception --detail "La Spec fixe X, …"  # bin/ticket-exit
 ./bin/convoy-state set-integration af-convoy --branch integration/af-spec --protected main --base <sha>   # bin/spec-integration open
@@ -70,7 +74,8 @@ Every answer is one JSON object on stdout.
 | Evidence fingerprint | `gc.flow.evidence.<piece>` | ticket | `sha256:<64 hex>` and the commit of the piece |
 | Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (commit required), `withdrawn` (removed from the graph by a resolved Planning Exception) |
 | TDD step | `gc.flow.tdd.<step>` | ticket | step: `red`, `freeze`, `green`, `amendment`, `prefactoring`; always with the full commit SHA it was proven at; `red` and `prefactoring` with their start commit (`base`), `amendment` with its one-line reason |
-| Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`; with a one-line detail |
+| Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_refused`, `test_review_no_result`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
+| Test review | `gc.flow.test_review` | ticket (`vertical_slice`, `repair`) | `rounds`: each recorded pass (`commit`, `files`: path → `sha256:`, `verdict`: `favorable` / `unfavorable`, `tests`: test id → `state` and, when unfavorable, `reason`, `recorded_by`, `at`); `request` while a review is open (`commit`, `files`, `criteria`: the criterion → test table, `launches`: at most two `{bead, at}`, `at`) |
 | Ticket Handoff | `gc.flow.handoff` | ticket | `sections` (`done`, `deviations`, `not_done`, `out_of_ticket`: each `aucun` or a non-empty list of one-line items; an item of `not_done` may be `{what, paths}`), `partial`, the full commit SHA it was taken at, and the `records` written by code |
 | Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`; the ticket whose Ticket Exit parked it (`origin`); a one-line detail |
 | Integration branch | `gc.flow.integration` | convoy | `branch`, the `protected` branch it takes up, and `base`, the full commit SHA of the protected branch it left from; written once |
@@ -124,6 +129,38 @@ writes why a script stopped the ticket (Spec §5: a criterion already green,
 a second amendment); a stopped ticket takes no further step, and a second
 stop is refused. Nothing here lifts a stop.
 
+`open-test-review`, `launch-test-review` and `record-test-review` are called
+by `bin/test-review` (T13, `docs/TEST_REVIEW.md`), which holds the review of
+a ticket's criterion tests between red and freeze. `open-test-review` opens
+a review of the tests proven red at `--commit`, with the fingerprints the
+freeze will seal and the criterion → test table (`--file`, a JSON object
+`{files, criteria}`); the same request again writes nothing, another one
+replaces the request that was open. It refuses a `prefactoring`, a ticket
+already frozen, a commit that is not the one of the `red` step, a request
+without fingerprints or with a test whose file has none, tests a pass
+refused and that did not change, and tests already reviewed favorably at
+that commit. `launch-test-review` records each reviewer bead sent for the
+open request: the first, then one relaunch; a third is refused.
+`record-test-review` takes the answers of the reviewer (`--file`: `commit`,
+`files`, `tests`, `recorded_by`) and refuses, with every reason listed, a
+verdict when no review is open, on another commit or other fingerprints
+than the request, with a test left out or unknown, a state outside the
+closed list, or a refusal without a reason. The verdict is computed here:
+`unfavorable` as soon as one test is. The pass is appended and the request
+closed in one tracker write; a **second** unfavorable pass writes the stop
+(`test_review_refused`) in that same write (Spec §8: one return to the
+author). `set-tdd --step freeze` is refused unless the last pass is
+favorable, was given at the commit being frozen, and no review is open; the
+freeze that ends an amendment is exempt (Spec §6: the code review reads an
+amended test). `stop-raised` records that the stop of a ticket reached the
+operator, so the code that stopped it raises it once; it refuses a ticket
+that is not stopped, and the same record again writes nothing.
+
+The verdict of the test review is not a `gc.flow.verdict.test_review`: a
+verdict of that family holds only while its commit is the tip of the branch,
+and this one holds for the frozen tests. The kind stays in the closed list
+of `set-verdict`, unused by the flow.
+
 `set-handoff` is called by `bin/ticket-exit` (T11, `docs/TICKET_EXIT.md`)
 with the Handoff it built, as a JSON file: the sections of the author and
 the records it sealed. It refuses a section that is absent or empty (a
@@ -173,7 +210,10 @@ Ticket Handoff, a parking, an integration branch, a merge or an invalidation
 as described above; a
 `ticket_end` gate record without a commit; a TDD step outside its closed
 list, without a full commit SHA, out of order, or on a stopped ticket; a
-stop whose reason is outside its closed list or that has no detail; a ticket
+freeze without a favorable test review at the same commit; a request, a
+launch or a verdict of the test review as described above, or on a stopped
+ticket; a stop whose reason is outside its closed list or that has no
+detail; a ticket
 that is not tracked by the convoy, or that does not carry the mark.
 
 Writes on one convoy are serialised by a lock (`CONVOY_STATE_LOCK_DIR`,
@@ -194,7 +234,8 @@ branch and its tip, Ticket Exit, verdicts, counters, evidence fingerprints
 and gate records, its acceptance criteria (`criteria`, the lines of its
 description, numbered from 1 by `bin/tdd-step`), the proven steps of its
 TDD (`tdd`, `{step: {commit, at, base?, reason?}}`), its stop (`stop`,
-`null` when it is not stopped), its Ticket Handoff (`handoff`), its parking
+`null` when it is not stopped), the review of its criterion tests
+(`test_review`, `null` before the first request), its Ticket Handoff (`handoff`), its parking
 (`park`) and its Declared Scope (`declared_scope`, a list of paths), each
 `null` when the ticket has none, and what the merge command did of it
 (`merge`, `null` while it did nothing); and for the convoy the Spec it

@@ -834,6 +834,84 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertEqual(before, self.git("rev-parse", self.INTEGRATION))
         self.assertIsNone(self.bead(T1)["metadata"].get("gc.flow.merge"))
 
+    # --- review of the criterion tests left without result (T13) ---------------
+
+    REVIEWED = "fx-review"
+    R1 = "fx-r1"
+    RED = "2" * 40
+
+    def review_open(self, launches=1):
+        """A marked convoy whose one slice, started through the door, has
+        its criterion tests proven red and under review: `launches` reviewer
+        sessions were sent and none answered. No author session is alive."""
+        state = self.tracker_state()
+        slice_ = ticket(self.R1)
+        slice_["metadata"] = {"gc.ticket_kind": "vertical_slice"}
+        state["beads"][self.REVIEWED] = {"title": "convoi en relecture", "status": "open", "issue_type": "convoy",
+                                         "metadata": {"gc.spec_id": "fx-spec-4"}, "tracks": [self.R1]}
+        state["beads"][self.R1] = slice_
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "mark", self.REVIEWED, "--demonstration-line", f"{self.R1}=La page affiche 3",
+                    "--user-stories", f"{self.R1}=1")
+        self.run_ok(STATE, "record-gate", self.REVIEWED, self.R1, "--gate", "dispatch")
+        self.edit(self.R1, status="in_progress")
+        self.run_ok(STATE, "set-tdd", self.REVIEWED, self.R1, "--step", "red", "--commit", self.RED, "--base", COMMIT)
+        request = self.tmp / "request.json"
+        request.write_text(json.dumps({"files": {"tests/test_count.py": "sha256:" + "c1" * 32},
+                                       "criteria": {"1": ["tests/test_count.py::CountTest.test_count"]}}))
+        self.run_ok(STATE, "open-test-review", self.REVIEWED, self.R1, "--commit", self.RED, "--file", request)
+        for number in range(launches):
+            self.run_ok(STATE, "launch-test-review", self.REVIEWED, self.R1, "--bead", f"fx-old{number + 1}")
+        # The reviewer never answers, and a launch is over at once.
+        (self.tmp / "plan.json").write_text(json.dumps(["silent"]))
+        self.env.update({
+            "TEST_REVIEW_DISPATCH_DOOR_BIN": str(ROOT / "tests" / "fixtures" / "test-review" / "reviewer"),
+            "TEST_REVIEW_FAKE_LOG": str(self.tmp / "review-door.log"),
+            "TEST_REVIEW_FAKE_PLAN": str(self.tmp / "plan.json"),
+            "TEST_REVIEW_FAKE_REPO": str(self.tmp),
+        })
+        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
+        settings["test_review"] = {"formula": "mol-test-review", "role": "reviewer", "rig": "fx-rig", "timeout_seconds": 0}
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+        self.write_log.write_text("")
+
+    def review_of(self, answer):
+        return next(c for c in answer["convoys"] if c["id"] == self.REVIEWED).get("test_review")
+
+    def review_launches(self):
+        log = self.tmp / "review-door.log"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def test_a_pass_launches_once_more_a_test_review_left_without_result(self):
+        self.review_open(launches=1)
+
+        answer = self.advance(self.REVIEWED)
+
+        self.assertEqual([self.R1], [entry["ticket"] for entry in self.review_of(answer)["relaunched"]])
+        (call,) = self.review_launches()
+        self.assertEqual(["--rig", "fx-rig", "--formula", "mol-test-review", "--role", "reviewer"], call[1:])
+        self.assertNotIn("gc.flow.stop", self.bead(self.R1)["metadata"])
+
+    def test_a_pass_stops_a_ticket_whose_test_review_gave_no_result_twice_and_raises_it_once(self):
+        self.review_open(launches=2)
+
+        first = self.advance(self.REVIEWED)
+        second = self.advance(self.REVIEWED)
+
+        self.assertEqual([self.R1], [entry["ticket"] for entry in self.review_of(first)["stopped"]])
+        self.assertIsNone(self.review_of(second))
+        self.assertEqual([], self.review_launches())
+        stop = json.loads(self.bead(self.R1)["metadata"]["gc.flow.stop"])
+        self.assertEqual("test_review_no_result", stop["reason"])
+        needs = [line for line in self.run_ok(ESCALATION, "list").stdout.splitlines() if self.R1 in line]
+        self.assertEqual(1, len(needs), needs)
+        self.assertEqual(1, len(self.log("mail")))
+
+    def test_a_pass_runs_no_test_review_settlement_when_none_is_due(self):
+        answer = self.advance(CONVOY)
+
+        self.assertNotIn("test_review", next(c for c in answer["convoys"] if c["id"] == CONVOY))
+
 
 if __name__ == "__main__":
     unittest.main()

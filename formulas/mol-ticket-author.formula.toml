@@ -33,7 +33,7 @@ its attempts (same trial).
 | Step | Its gate asks for |
 |---|---|
 | `workspace` | the session and the branch recorded on the ticket, the work tree on that branch, the branch left from the integration branch |
-| `red` | the red proven and the criterion tests frozen (`bin/tdd-step`); nothing for a `prefactoring` |
+| `red` | the red proven (`bin/tdd-step`), the criterion tests read by the test reviewer (`bin/test-review`), then frozen; nothing for a `prefactoring` |
 | `code` | the criterion tests green at the tip of the branch; for a `prefactoring`, its regression at the tip |
 | `demonstration` | the demonstration line captured on the launched product at the tip (`bin/ticket-author demonstrate`); nothing for a `prefactoring` |
 | `exit` | a Ticket Exit recorded by `bin/ticket-exit`; « terminé » at the tip, with its Handoff |
@@ -129,7 +129,7 @@ timeout = "5m"
 
 [[steps]]
 id = "red"
-title = "Red step: every criterion test first, proven red, then frozen"
+title = "Red step: every criterion test first, proven red, reviewed, then frozen"
 needs = ["workspace"]
 metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope", "gc.continuation_group" = "ticket", "gc.session_affinity" = "require" }
 description = """
@@ -151,17 +151,40 @@ then close this step.
 criterion test of the ticket first, before any code of the product. Change
 only the test perimeter the profile declares (`launch.test_perimeter`), and
 write the criterion → test table (docs/TDD_STEP.md). Commit, then have the
-red proven and the tests frozen:
+red proven:
 
 ```bash
 "$FACTORY_ROOT/bin/tdd-step" red "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" \\
   --dataset <a dataset of the profile> --base "$BASE" --table <the table>
-"$FACTORY_ROOT/bin/tdd-step" freeze "$CONVOY" "$TICKET" --repo "$WORKTREE"
 ```
 
 A refusal names what is wrong: fix the tests, commit, run the step again.
 A criterion already green stops the ticket (exit status 5): take the Ticket
 Exit `planning_exception`.
+
+**Then have the tests read by the test reviewer, and frozen.** A reviewer in
+a fresh context, not you, answers for each criterion test whether it
+observes its criterion and would fail on the observation that makes it
+false (docs/TEST_REVIEW.md). You do not review your own tests and you do not
+write the verdict:
+
+```bash
+"$FACTORY_ROOT/bin/test-review" review "$CONVOY" "$TICKET" --repo "$WORKTREE"; echo "exit status $?"
+```
+
+- exit status 0 — every test passed the review: freeze them,
+  `"$FACTORY_ROOT/bin/tdd-step" freeze "$CONVOY" "$TICKET" --repo "$WORKTREE"`.
+- exit status 6 — no verdict yet: run the same command again, it resumes
+  the same review.
+- exit status 2 — the reviewer refused at least one test and says why
+  (`refused`). This is your one return: correct those tests so that they
+  observe their criterion, commit, run `tdd-step red` again, then
+  `test-review review` again. A second refusal stops the ticket.
+- exit status 5 — the ticket is stopped (second refusal, or a review that
+  gave no result twice) and code has already raised it to the operator. Do
+  not write any code and do not change the tests again: close this step.
+  Its gate refuses a stopped ticket, which ends the sequence; nothing of the
+  ticket is merged.
 
 **Close this step:**
 

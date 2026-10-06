@@ -443,6 +443,10 @@ touché : il reste avancé par le Mayor.
   valide (`./bin/convoy-state show <convoi>` dit ce qui cloche), **jamais**
   avancer ou fermer un ticket à la main. Dès que l'état est valide, la passe
   suivante reprend le convoi, retire l'incident et ferme son bead toute seule.
+- **Relecture des tests restée sans résultat** : la même passe la relance une
+  fois, puis arrête le ticket et le fait remonter dans
+  `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune
+  session d'auteur ait à vivre.
 - **Seule cette commande démarre un ticket d'un convoi marqué** :
   `./bin/dispatch-door` le refuse sans `--convoy` et le refuse à toute session
   d'agent, Mayor compris.
@@ -568,8 +572,10 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   refusé et nommé.
 - **Critère déjà vert** : le ticket est arrêté (sortie 5), le critère est
   nommé, l'arrêt est écrit dans le tracker.
-- **Gel** : les empreintes des tests, de la table et du harnais vont dans le
-  magasin de preuves, hors de tout dépôt Git.
+- **Gel** : refusé tant que le relecteur de tests n'a pas passé chaque test
+  de critère, au même commit et sur les mêmes empreintes
+  (`./bin/test-review`) ; ensuite les empreintes des tests, de la table et
+  du harnais vont dans le magasin de preuves, hors de tout dépôt Git.
 - **Vert** : refus si un fichier gelé a été modifié, supprimé ou déplacé ;
   sinon les tests gelés passent k fois de suite. Un résultat mixte nomme le
   test instable.
@@ -581,8 +587,9 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
 - **Sorties** : 0 étape prouvée ; 1 refus, rien n'est écrit ; 4 « pas un
   convoi du nouveau flux » ; 5 ticket arrêté.
 - **Limite** : le script prouve l'ordre et les résultats, pas qu'un test
-  observe bien son critère (c'est la question du relecteur de tests). Lever
-  un arrêt n'est pas dans cette commande.
+  observe bien son critère : c'est la question du relecteur de tests, posée
+  entre le rouge et le gel (`./bin/test-review`). Lever un arrêt n'est pas
+  dans cette commande.
 
 Détail : `docs/TDD_STEP.md`.
 
@@ -689,7 +696,8 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
 - **Personne ne lance la formule à la main** : `./bin/convoy-advance` démarre
   chaque ticket prêt (`start.formula` dans `config/delivery-flow.json`).
 - **Étapes et contrôles** : prise du ticket (worktree, branche, session) ;
-  rouge prouvé et tests gelés ; tests verts à la pointe de la branche ; ligne
+  rouge prouvé, tests relus par le relecteur de tests (`./bin/test-review`)
+  puis gelés ; tests verts à la pointe de la branche ; ligne
   de démonstration capturée sur le produit lancé, au commit de tête ; sortie
   de ticket enregistrée.
 - **Contrôle refusé** : l'étape revient à la session avec le motif. Au bout
@@ -706,8 +714,58 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
   réelle. Limite : un sous-agent de lecture garde un shell.
 - **Sorties** : 0 fait ou étape prouvée ; 1 refus ; 4 « pas un convoi du
   nouveau flux ».
-- **Pas ici** : relecture des tests entre rouge et gel (T13), revue et
-  évaluation (T14, T15), porte de fin de ticket (T19), reprise d'un ticket
-  (T20).
+- **Ticket arrêté** (critère déjà vert, second refus de la relecture des
+  tests, relecture sans résultat) : chaque contrôle le refuse, la séquence
+  échoue et rien n'en est fusionné.
+- **Pas ici** : revue et évaluation (T14, T15), porte de fin de ticket
+  (T19), reprise d'un ticket (T20).
 
 Détail : `docs/TICKET_AUTHOR.md`.
+
+---
+## `./bin/test-review` — un test de critère observe-t-il vraiment son critère ?
+
+Un **relecteur**, pas l'auteur, répond (Spec af-wf4w5r §5 « Relecture avant
+gel », §8, T13). Entre le rouge prouvé et le gel, une session neuve du rôle
+relecteur, en lecture seule, répond à une seule question par test de
+critère : observe-t-il son critère, et échouerait-il sur l'observation qui
+le rend faux ? Un test qui ne vérifie qu'un statut 200 est refusé. Ne
+concerne qu'un ticket d'un convoi qui porte la **marque du nouveau flux**.
+
+```bash
+./bin/test-review review <convoi> <ticket> --repo <worktree>      # l'auteur, après tdd-step red
+./bin/test-review show <convoi> <ticket>                          # les passes, la demande ouverte, l'arrêt
+./bin/test-review settle <convoi>                                 # lancé par ./bin/convoy-advance à chaque passe
+./bin/test-review brief <convoi> <ticket>                         # la session relecteur (formule mol-test-review)
+./bin/test-review record <convoi> <ticket> --verdict-file <f>     # la session relecteur
+```
+
+- **Sans verdict favorable, pas de gel** : `./bin/tdd-step freeze` refuse
+  tant que chaque test de critère n'a pas passé la relecture, au même commit
+  et sur les mêmes empreintes de fichiers. Sans gel, le code ne commence pas.
+- **Un refus** : le relecteur donne une raison par test refusé. Le ticket
+  retourne **une fois** à son auteur, qui corrige ses tests, les fait
+  reprouver rouges et redemande la relecture.
+- **Second refus** : le ticket est arrêté. Il apparaît **une seule fois**
+  dans `./bin/escalation-door list`, avec le test et la raison.
+- **Relecture plantée ou sans sortie** : elle n'est pas passée. Une relance,
+  puis le ticket est arrêté et remonte de la même façon. Le délai d'un
+  lancement est `test_review.timeout_seconds` dans
+  `config/delivery-flow.json` (1800 s, valeur sans base mesurée).
+- **Le verdict est calculé par du code** : le relecteur donne un état par
+  test (`favorable` ou `unfavorable` avec sa raison), jamais un verdict
+  global. Il ne reçoit que les critères du ticket et les tests ; rien
+  d'autre de l'auteur.
+- **Sans session d'auteur** : la relance, l'arrêt et la remontée sont aussi
+  faits par `./bin/convoy-advance`, à partir du tracker seul.
+- **Ne jamais dispatcher `mol-test-review` à la main** ni écrire
+  `gc.flow.test_review` : seul `./bin/test-review` le fait, par
+  `./bin/dispatch-door` et `./bin/convoy-state`.
+- **Sorties de `review`** : 0 tests relus favorablement ; 2 refus, retour à
+  l'auteur ; 5 ticket arrêté ; 6 pas encore de verdict, relancer la même
+  commande ; 1 refus ou échec ; 4 « pas un convoi du nouveau flux ».
+- **Limites** : rien ne lève encore un arrêt. Un test amendé après le gel
+  n'est pas relu ici : c'est à la revue de code du ticket de le relire
+  (T14, pas encore livrée).
+
+Détail : `docs/TEST_REVIEW.md`.

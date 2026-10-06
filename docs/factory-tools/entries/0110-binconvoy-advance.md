@@ -35,6 +35,10 @@ touché : il reste avancé par le Mayor.
   valide (`./bin/convoy-state show <convoi>` dit ce qui cloche), **jamais**
   avancer ou fermer un ticket à la main. Dès que l'état est valide, la passe
   suivante reprend le convoi, retire l'incident et ferme son bead toute seule.
+- **Relecture des tests restée sans résultat** : la même passe la relance une
+  fois, puis arrête le ticket et le fait remonter dans
+  `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune
+  session d'auteur ait à vivre.
 - **Seule cette commande démarre un ticket d'un convoi marqué** :
   `./bin/dispatch-door` le refuse sans `--convoy` et le refuse à toute session
   d'agent, Mayor compris.

@@ -99,6 +99,22 @@ The settings file also names what the door receives for a start:
 and the role `author` (`docs/TICKET_AUTHOR.md`). With no formula the
 command refuses and starts nothing.
 
+## Test reviews left without result (T13)
+
+Once the starts and the merge are made, the pass hands each convoy that has
+a review of criterion tests open, or a ticket that review stopped and that
+did not reach the operator yet, to `bin/test-review settle`
+(`docs/TEST_REVIEW.md`): a review whose launch gave no result in
+`test_review.timeout_seconds` is launched once more, the ticket is stopped
+when the relaunch gave none either, and the stop is raised through
+`bin/escalation-door`. No author session has to be alive for that. The
+convoy's entry then carries `test_review` (`launched`, `relaunched`,
+`pending`, `stopped`, `escalated`, `deferred`, `refused`); a launch the
+door deferred is retried by the next pass, while a settlement that could
+not run, or a launch the door refused, fails the pass (exit 1). A
+convoy with nothing due is not handed over, and a stopped convoy (« état
+sans règle ») is settled no more than it is started.
+
 ## Answers
 
 Every answer is one JSON object on stdout: the ceiling, the sessions counted
@@ -106,13 +122,14 @@ per role, the tickets awaiting a session, and per convoy the tickets
 `started`, `waiting` (with the reason: blocker ids, or the ceiling),
 `deferred` (the door deferred: low memory, hot path held — retried on the
 next pass) and `refused` (the door refused, with its reason), plus
-`integration` when the pass ran a merge. A stopped convoy carries `signal`,
+`integration` when the pass ran a merge and `test_review` when it settled
+reviews of criterion tests. A stopped convoy carries `signal`,
 `unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass could not run |
+| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass or the settlement of the test reviews could not run |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
