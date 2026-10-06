@@ -113,6 +113,14 @@ fi
 if [[ ${1:-} == mail && ${2:-} == send ]]; then
   recipient=$3
   [[ ,${ED_MAIL_FAIL:-}, != *,"$recipient",* ]] || { printf 'mail unavailable\n' >&2; exit 42; }
+  # The real `gc mail send --notify` leaves a detached `gc nudge poll`
+  # behind. ED_MAIL_POLLER_PID_FILE makes this fixture do the same: a
+  # long-lived child that outlives the call and inherits whatever file
+  # descriptors the caller left open (af-wnj692).
+  if [[ -n ${ED_MAIL_POLLER_PID_FILE:-} && " $* " == *" --notify "* ]]; then
+    setsid sleep 300 </dev/null >/dev/null 2>&1 &
+    printf '%s\n' "$!" >>"$ED_MAIL_POLLER_PID_FILE"
+  fi
   printf '{"ok":true}\n'
   exit 0
 fi

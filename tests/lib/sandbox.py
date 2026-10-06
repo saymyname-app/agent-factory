@@ -71,6 +71,8 @@ class Sandbox:
         env["GC_CITY"] = str(self.city)
         env["GC_CITY_PATH"] = str(self.city)
         env["GC_BEADS_SCOPE_ROOT"] = str(self.city)
+        # Never the host's own escalation-door lock (af-wnj692; see sandbox.sh).
+        env["ESCALATION_DOOR_LOCK_FILE"] = str(self.dir / "escalation-door.lock")
         env["PATH"] = str(self.stub_bin) + os.pathsep + env.get("PATH", "")
         if not real_gc:
             env["GC_BIN"] = str(self.stub_bin / "gc")

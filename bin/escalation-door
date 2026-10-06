@@ -476,4 +476,9 @@ require_command flock
 LOCK_FILE="${ESCALATION_DOOR_LOCK_FILE:-${XDG_RUNTIME_DIR:-/tmp}/agent-factory-escalation-door.lock}"
 exec 9>"$LOCK_FILE"
 flock -w 10 9 || die "Could not acquire the escalation-door lock."
-main "$@"
+# The lock belongs to this process alone (af-wnj692). `9>&-` closes fd 9 for
+# everything main runs; bash keeps the lock on a close-on-exec copy, so it is
+# held until this script exits but no child can inherit it. Without this, the
+# detached `gc nudge poll` a `gc mail send --notify` leaves behind kept the
+# flock for as long as it lived and every later escalation failed on it.
+main "$@" 9>&-

@@ -76,6 +76,9 @@ chmod +x "$TMP/bin/gc"
 export PATH="$TMP/bin:$PATH"
 export GC_BIN="$TMP/bin/gc"
 export CAMPAIGN_LOCK_FILE="$TMP/campaign-pointer.lock"
+# factory-guard escalates through bin/escalation-door: never on the host's
+# own lock (af-wnj692).
+export ESCALATION_DOOR_LOCK_FILE="$TMP/escalation-door.lock"
 export FACTORY_GUARD_NOW=$NOW
 
 # session_event <identity> <state> <age-seconds> [extra-metadata-json]

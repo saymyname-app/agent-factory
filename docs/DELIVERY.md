@@ -293,6 +293,14 @@ The gate runs `bin/ci-run-tests` — the same discovery CI itself runs (every
 never drift from CI's own list, and neither has to be hand-edited when a
 test file is added (ADR-0017, `tests/ci-registration-test.sh`).
 
+The runner also keeps tests off the host's escalation lock (af-wnj692): each
+test runs with a throwaway `XDG_RUNTIME_DIR`, and one that still reaches
+`bin/escalation-door`'s default lock file fails the run. A test that calls
+the door — directly or through a script that escalates — sets
+`ESCALATION_DOOR_LOCK_FILE` to a path it owns; `tests/lib/sandbox.sh` and
+`tests/lib/sandbox.py` do it for every test built on them
+(`tests/ci-run-tests-host-lock-test.sh`).
+
 **It does not touch the automated delivery loop.** `bin/pr-autopilot` lands
 merges with `gh pr merge` — a GitHub-side API call, never a local `git push`
 — so this hook never runs on that path. Rig PRs into `dev` are unaffected;
