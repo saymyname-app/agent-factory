@@ -27,6 +27,12 @@ A pass decides from the tracker alone, so a second pass on the same state
 starts nothing more. Passes are serialised by a lock: two of them never
 count the same free place.
 
+A pass also merges (T18, af-gmz9s1; Spec §4): once the starts are made, it
+hands each convoy that has a finished ticket to bin/spec-integration, which
+merges one ticket into the integration branch of the Spec, runs the tests on
+the merged result, and returns a ticket in conflict or red to its author. No
+agent decides when a ticket is merged.
+
 A convoy in an "état sans règle" (bin/convoy-state: a ticket started or
 closed outside its door, evidence or a counter that cannot be read) is
 stopped (T34, af-ckwina; Spec §0 rule 5): the pass starts none of its
@@ -39,10 +45,11 @@ its bead and starts the ready tickets: no agent resumes the convoy.
 
 Every answer is one JSON object on stdout. Exit status: 0 the pass is done
 (what it started is listed, possibly nothing); 1 refused or could not run,
-the dispatch door refused a ticket (named under `refused`), or an incident
-could not be raised or withdrawn; 3 a convoy is in an "état sans règle":
-nothing of it is started (0 with --stopped-ok once its incident is raised:
-what the order runs, so that a stopped convoy is not also an order failure);
+the dispatch door refused a ticket (named under `refused`), an incident
+could not be raised or withdrawn, or the merge pass could not run; 3 a
+convoy is in an "état sans règle": nothing of it is started (0 with
+--stopped-ok once its incident is raised: what the order runs, so that a
+stopped convoy is not also an order failure);
 4 the convoy does not carry the mark: nothing is started, nothing is written.
 Settings, reads and the order that runs it: docs/CONVOY_ADVANCE.md.
 """
@@ -70,15 +77,20 @@ GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_BIN = BIN / "convoy-state"
 DOOR_BIN = BIN / "dispatch-door"
 ESCALATION_BIN = BIN / "escalation-door"
+INTEGRATION_BIN = BIN / "spec-integration"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
 SETTINGS = ROOT / "config" / "delivery-flow.json"
 ROLES = ROOT / "config" / "delivery-roles.json"
 PROJECTS = ROOT / "config" / "projects"
+DESCRIPTORS = ROOT / "config" / "project-descriptors"
 
 EXIT_REFUSED = 1
 EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
 DOOR_DEFERRED = 75
+# One ticket is merged per pass and per convoy: the merges stay serial, and a
+# pass stays short however many tickets finished at once.
+MERGES_PER_PASS = 1
 
 UNRULED = "état sans règle"
 # bin/escalation-door refuses a field longer than this, or on several lines.
@@ -172,7 +184,8 @@ class Convoy:
         # Ticket branches live in the repository of the convoy's project;
         # convoy-state ties each verdict to its branch tip there.
         known = {rig for rig in self.rigs.values() if rig}
-        repo = rig_repository(next(iter(known))) if len(known) == 1 else ROOT
+        self.rig: str | None = next(iter(known)) if len(known) == 1 else None
+        repo = self.repo = rig_repository(self.rig) if self.rig else ROOT
         proc = run([str(STATE_BIN), "show", convoy_id, "--repo", str(repo)])
         answer = parsed(proc, f"convoy-state show {convoy_id}")
         if proc.returncode == EXIT_NOT_NEW_FLOW:
@@ -180,6 +193,7 @@ class Convoy:
         if proc.returncode not in (0, EXIT_UNRULED) or not isinstance(answer.get("tickets"), list):
             raise Refusal(f"convoy-state show {convoy_id} a échoué : {answer.get('error', proc.returncode)}")
         self.tickets: list[dict[str, Any]] = answer["tickets"]
+        self.integration: dict[str, Any] | None = answer["convoy"].get("integration")
         incident = answer["convoy"].get("incident")
         # An unreadable record is one of the anomalies below, not a known incident.
         self.incident: dict[str, Any] | None = incident if isinstance(incident, dict) and "bead" in incident else None
@@ -194,6 +208,15 @@ class Convoy:
 
     def not_started(self) -> list[dict[str, Any]]:
         return [t for t in self.tickets if t.get("status") == "open" and not t.get("gates") and not t.get("exit")]
+
+    def finished_unmerged(self) -> list[str]:
+        """Tickets whose author has finished and that are not merged yet:
+        what makes a merge pass worth running."""
+        return [
+            t["id"] for t in self.tickets
+            if t.get("status") != "closed" and (t.get("exit") or {}).get("exit") == "finished"
+            and (t.get("merge") or {}).get("outcome") != "merged"
+        ]
 
 
 def started(ticket: dict[str, Any]) -> bool:
@@ -421,6 +444,41 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int) -> dict[
     return out
 
 
+def rig_profile(rig: str) -> Path:
+    """The profile of the project that spans this rig: it declares the tests
+    run on a merged result."""
+    for path in sorted(DESCRIPTORS.glob("*.json")):
+        try:
+            rigs = json.loads(path.read_text(encoding="utf-8")).get("rigs")
+        except (OSError, json.JSONDecodeError, AttributeError):
+            continue
+        if isinstance(rigs, list) and rig in rigs:
+            return path
+    raise Refusal(f"aucun profil de projet de config/project-descriptors ne couvre le rig {rig} : "
+                  "les tests à exécuter sur un résultat fusionné ne sont déclarés nulle part")
+
+
+def merge_finished(convoy: Convoy) -> dict[str, Any] | None:
+    """Spec §4: code merges the finished tickets of the convoy into the
+    integration branch of its Spec, one at a time, through
+    bin/spec-integration. None when the convoy has nothing to merge."""
+    if not convoy.integration or not convoy.finished_unmerged():
+        return None
+    try:
+        if not convoy.rig:
+            raise Refusal(f"les tickets du convoi {convoy.id} ne nomment pas un seul projet connu de config/projects : "
+                          "le dépôt de sa branche d'intégration est inconnu")
+        proc = run([str(INTEGRATION_BIN), "merge", convoy.id, "--repo", str(convoy.repo),
+                    "--profile", str(rig_profile(convoy.rig)), "--limit", str(MERGES_PER_PASS)])
+        answer = parsed(proc, f"spec-integration merge {convoy.id}")
+    except Refusal as exc:
+        return {"error": f"refus : {exc}"}
+    if not isinstance(answer, dict):
+        return {"error": f"refus : spec-integration merge {convoy.id} a rendu une réponse illisible"}
+    kept = ("branch", "integration", "takeover", "merged", "returned", "refused", "waiting", "error", "message", "unruled")
+    return {name: answer[name] for name in kept if name in answer}
+
+
 def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     """`targets` None: every open marked convoy."""
     with advance_lock():
@@ -440,8 +498,21 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
             free -= len(result["started"])
             results.append(result)
 
+    # Outside the lock of the starts: the tests on a merged result take the
+    # time they take, and bin/spec-integration holds its own lock per convoy.
+    for result in results:
+        merge = None if "unruled" in result else merge_finished(convoys[result["id"]])
+        if merge is not None:
+            result["integration"] = merge
+
     unruled = any("unruled" in result for result in results)
-    refused = any(result["refused"] or "error" in result.get("incident", {}) for result in results)
+    # A ticket returned or refused by the merge is an outcome of the pass; a
+    # merge pass that could not run is a failure of it.
+    refused = any(
+        result["refused"] or "error" in result.get("incident", {})
+        or any(key in result.get("integration", {}) for key in ("error", "message"))
+        for result in results
+    )
     answer: dict[str, Any] = {
         "ok": not (unruled or refused), "ceiling": settings["ceiling"], "sessions": sessions,
         "awaiting_a_session": awaiting, "occupied": occupied, "convoys": results,

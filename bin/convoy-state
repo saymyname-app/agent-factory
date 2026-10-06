@@ -11,8 +11,9 @@ recipe (T06) or is the Prototype Fold (T36), its acceptance criteria (T10,
 read only), its branch and Ticket Exit, its verdicts (each tied to a
 commit), its counters, its evidence fingerprints and its gate records, the
 steps of its TDD and its stop (T10), its Ticket Handoff and its parking
-(T11), and the convoy's open factory incident. No other script invents a `gc.flow.*`
-field: a missing field is added here.
+(T11), the integration branch of the convoy's Spec and what the merge
+command did of a ticket (T18), and the convoy's open factory incident. No
+other script invents a `gc.flow.*` field: a missing field is added here.
 
     convoy-state list
     convoy-state show CONVOY [--repo DIR]
@@ -30,6 +31,9 @@ field: a missing field is added here.
     convoy-state stop-ticket  CONVOY TICKET --reason REASON --detail LINE
     convoy-state set-handoff  CONVOY TICKET --file PATH
     convoy-state park         CONVOY TICKET --cause CAUSE --detail LINE
+    convoy-state set-integration CONVOY --branch NAME --protected NAME --base SHA
+    convoy-state set-merge    CONVOY TICKET --outcome OUTCOME --ticket-commit SHA --integration SHA [--commit SHA]
+    convoy-state invalidate-verdicts CONVOY TICKET --tip SHA --kind KIND [--kind KIND]
     convoy-state record-incident CONVOY --bead BEAD [--signature sha256:HEX]
     convoy-state clear-incident  CONVOY
 
@@ -47,7 +51,9 @@ reading the tracker again (what bin/dispatch-door does before a dispatch).
 A verdict is valid only while its commit is the tip of the ticket's branch
 in `--repo` (default: the current directory): a commit added after it makes
 it invalid, a commit that is not on the branch at all is an "état sans
-règle". Closed lists and stored keys: docs/CONVOY_STATE.md.
+règle". `invalidate-verdicts` writes that on the verdicts the merge command
+found outdated, and counts one resume for it. Closed lists and stored keys:
+docs/CONVOY_STATE.md.
 """
 
 from __future__ import annotations
@@ -96,6 +102,8 @@ KEY_STOP = PREFIX + "stop"
 KEY_HANDOFF = PREFIX + "handoff"
 KEY_PARK = PREFIX + "park"
 KEY_INCIDENT = PREFIX + "incident"
+KEY_INTEGRATION = PREFIX + "integration"
+KEY_MERGE = PREFIX + "merge"
 
 TICKET_KINDS = ("vertical_slice", "prefactoring", "repair")
 KINDS_WITH_DEMONSTRATION = ("vertical_slice", "repair")
@@ -121,6 +129,11 @@ HANDOFF_NOTHING = "aucun"
 HANDOFF_RECORDS_PIECE = "handoff_records"
 # Why a ticket and its descendants are parked (Spec §5, Ticket Exit).
 PARK_CAUSES = ("planning_exception", "operator_request")
+# What bin/spec-integration did of a ticket (Spec §4): merged into the
+# integration branch, or returned to its author by a conflict or by red tests
+# on the merged result. A merge and a red name the commit that was tested.
+MERGE_OUTCOMES = ("merged", "conflict", "red")
+MERGE_OUTCOMES_WITH_COMMIT = ("merged", "red")
 
 EXIT_REFUSED = 1
 EXIT_UNRULED = 3
@@ -470,6 +483,53 @@ def park_record(raw: Any) -> dict[str, Any]:
     return record
 
 
+def valid_branch(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not BRANCH_RE.match(value):
+        raise Refusal(f"{name} absente ou mal formée : {value!r}")
+    return value
+
+
+def integration_record(raw: Any) -> dict[str, Any]:
+    """The integration branch of the convoy's Spec (Spec §4): its name, the
+    protected branch it takes up, and the commit of that branch it left from."""
+    record = stored_record(raw, ("branch", "protected", "base", "at"))
+    valid_branch(record["branch"], "branche d'intégration")
+    valid_branch(record["protected"], "branche protégée")
+    valid_commit(record["base"], "commit de départ de la branche d'intégration")
+    return record
+
+
+def merge_record(raw: Any) -> dict[str, Any]:
+    """What the merge command did of a ticket: the tip of the ticket it took,
+    the tip of the integration branch it merged it on, and the commit of the
+    merged result when there is one."""
+    record = stored_record(raw, ("outcome", "ticket_commit", "integration", "at"), ("commit",))
+    outcome = one_of(record["outcome"], MERGE_OUTCOMES, "issue de fusion")
+    valid_commit(record["ticket_commit"], "pointe du ticket")
+    valid_commit(record["integration"], "pointe de la branche d'intégration")
+    if (outcome in MERGE_OUTCOMES_WITH_COMMIT) != ("commit" in record):
+        raise Refusal(
+            f"issue {outcome} : commit du résultat fusionné "
+            f"{'absent' if outcome in MERGE_OUTCOMES_WITH_COMMIT else 'inattendu'}")
+    if "commit" in record:
+        valid_commit(record["commit"], "commit du résultat fusionné")
+    return record
+
+
+def verdict_record(raw: Any) -> dict[str, Any]:
+    """A verdict: its state and the commit it judged; and, once a commit was
+    added after it, the tip that made it invalid (Spec §8)."""
+    record = stored_record(raw, ("state", "commit", "at"), ("invalidated",))
+    one_of(record["state"], VERDICT_STATES, "état de verdict")
+    valid_commit(record["commit"])
+    if "invalidated" in record:
+        invalidated = record["invalidated"]
+        if not isinstance(invalidated, dict) or set(invalidated) != {"tip", "at"}:
+            raise Refusal(f"invalidation mal formée : {invalidated!r}")
+        valid_commit(invalidated["tip"], "pointe qui invalide le verdict")
+    return record
+
+
 def incident_record(raw: Any) -> dict[str, Any]:
     """The convoy's open factory incident: the bead that carries it and, once
     it reached the escalation door, the signature of the anomalies it names."""
@@ -658,7 +718,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     for key in sorted(metadata):
         if not key.startswith(PREFIX) or key in (
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
-            KEY_STOP, KEY_HANDOFF, KEY_PARK,
+            KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE,
         ):
             continue
         raw = metadata[key]
@@ -666,11 +726,11 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         try:
             if group is verdicts:
                 one_of(name, VERDICT_KINDS, "genre de verdict")
-                record = stored_record(raw, ("state", "commit", "at"))
-                one_of(record["state"], VERDICT_STATES, "état de verdict")
-                valid_commit(record["commit"])
+                record = verdict_record(raw)
                 try:
-                    record["valid"] = verdict_is_valid(name, record["commit"], branch, tip, repo)
+                    # An invalidated verdict stays invalid until it is replayed.
+                    record["valid"] = (
+                        verdict_is_valid(name, record["commit"], branch, tip, repo) and "invalidated" not in record)
                 except Refusal as exc:
                     # No default: neither valid nor invalid, the reason instead.
                     record["unruled"] = f"{key} : {exc}"
@@ -711,11 +771,12 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             # Still a stop: an unreadable one is never rendered as no stop.
             out["stop"] = {"unruled": f"{KEY_STOP} : {exc}", "raw": metadata[KEY_STOP]}
             flag(KEY_STOP, out["stop"]["unruled"])
-    # The Ticket Handoff and the parking, each None when the ticket has none;
-    # an unreadable one is never rendered as none.
+    # The Ticket Handoff, the parking and the merge, each None when the
+    # ticket has none; an unreadable one is never rendered as none.
     for name, key, read in (
         ("handoff", KEY_HANDOFF, handoff_record),
         ("park", KEY_PARK, park_record),
+        ("merge", KEY_MERGE, merge_record),
     ):
         out[name] = None
         if key in metadata:
@@ -756,8 +817,15 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             incident = {"unruled": f"{KEY_INCIDENT} : {exc}", "raw": metadata[KEY_INCIDENT]}
             convoy_unruled.append({"field": KEY_INCIDENT, "reason": incident["unruled"]})
+    integration: dict[str, Any] | None = None
+    if KEY_INTEGRATION in metadata:
+        try:
+            integration = integration_record(metadata[KEY_INTEGRATION])
+        except Refusal as exc:
+            integration = {"unruled": f"{KEY_INTEGRATION} : {exc}", "raw": metadata[KEY_INTEGRATION]}
+            convoy_unruled.append({"field": KEY_INTEGRATION, "reason": integration["unruled"]})
     for key in sorted(metadata):
-        known = (KEY_MARK, KEY_INCIDENT, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
+        known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(PREFIX) and key not in known:
             convoy_unruled.append({"field": key, "reason": f"{key} : champ inconnu de la commande d'état, écrit hors d'elle"})
     spec = metadata.get(KEY_SPEC)
@@ -766,6 +834,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         "spec": spec if isinstance(spec, str) and spec else None,
         "counters": render_counters(metadata, CONVOY_COUNTERS, convoy_unruled),
         "incident": incident,
+        "integration": integration,
         "unruled": convoy_unruled,
     }
     if convoy_unruled:
@@ -1164,6 +1233,80 @@ def cmd_park(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set_integration(args: argparse.Namespace) -> int:
+    """Record the integration branch of the convoy's Spec, once: the branch
+    bin/spec-integration opened, the protected branch and the commit it left
+    from. The same record again writes nothing; another one is refused."""
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    given = {
+        "branch": valid_branch(args.branch, "branche d'intégration"),
+        "protected": valid_branch(args.protected, "branche protégée"),
+        "base": valid_commit(args.base, "commit de départ de la branche d'intégration"),
+    }
+    stored = metadata_of(convoy).get(KEY_INTEGRATION)
+    if stored is not None:
+        known = integration_record(stored)
+        if {name: known[name] for name in given} != given:
+            raise Refusal(
+                f"le convoi {args.convoy} porte déjà sa branche d'intégration ({known['branch']}, partie de "
+                f"{known['base']} sur {known['protected']}) : elle ne se réécrit pas")
+        return done(args.convoy, args.convoy, {})
+    values = {KEY_INTEGRATION: encode({**given, "at": now()})}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_set_merge(args: argparse.Namespace) -> int:
+    """Record what bin/spec-integration did of a ticket."""
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    ticket = marked_ticket(args.convoy, args.ticket)
+    if KEY_INTEGRATION not in metadata_of(convoy):
+        raise Refusal(f"le convoi {args.convoy} n'a pas de branche d'intégration enregistrée : rien ne s'y fusionne")
+    if ticket.get("status") == "closed":
+        raise Refusal(f"le ticket {args.ticket} est fermé : rien ne s'en fusionne plus")
+    record: dict[str, Any] = {
+        "outcome": args.outcome, "ticket_commit": args.ticket_commit, "integration": args.integration, "at": now()}
+    if args.commit is not None:
+        record["commit"] = args.commit
+    values = {KEY_MERGE: encode(merge_record(encode(record)))}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_invalidate_verdicts(args: argparse.Namespace) -> int:
+    """Spec §8, « commit après verdict »: write on the named verdicts that
+    the tip `--tip`, added after them, made them invalid, and count one
+    resume for it, in one tracker write. A verdict already invalidated is
+    left as it is and counts nothing more."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    tip = valid_commit(args.tip, "pointe de la branche du ticket")
+    if not args.kind:
+        raise Refusal("genre de verdict absent : --kind nomme chaque verdict à invalider")
+    values: dict[str, Any] = {}
+    for kind in dict.fromkeys(args.kind):
+        one_of(kind, VERDICT_KINDS, "genre de verdict")
+        key = VERDICT_PREFIX + kind
+        if key not in metadata:
+            raise Refusal(f"le ticket {args.ticket} ne porte pas de verdict {kind} : rien à invalider")
+        record = verdict_record(metadata[key])
+        if record["commit"] == tip:
+            raise Refusal(f"le verdict {kind} porte sur la pointe {tip} : aucun commit ne lui a été ajouté")
+        if "invalidated" not in record:
+            values[key] = encode({**record, "invalidated": {"tip": tip, "at": now()}})
+    invalidated = [key[len(VERDICT_PREFIX):] for key in values]
+    if values:
+        # It counts as a resume (K), not as the correction round.
+        resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
+        values[COUNTER_PREFIX + "resumes"] = resumes + 1
+        write_metadata(args.ticket, values)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "invalidated": invalidated,
+                      "written": values}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 def convoy_with_a_mark(convoy_id: str) -> dict[str, Any]:
     """An incident is recorded on any convoy that carries a mark, an unknown
     one included: an unknown mark is itself an "état sans règle" to report."""
@@ -1247,6 +1390,18 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("park", cmd_park)
     p.add_argument("--cause")
     p.add_argument("--detail")
+    p = command("set-integration", cmd_set_integration, ticket=False)
+    p.add_argument("--branch")
+    p.add_argument("--protected")
+    p.add_argument("--base")
+    p = command("set-merge", cmd_set_merge)
+    p.add_argument("--outcome")
+    p.add_argument("--ticket-commit")
+    p.add_argument("--integration")
+    p.add_argument("--commit")
+    p = command("invalidate-verdicts", cmd_invalidate_verdicts)
+    p.add_argument("--tip")
+    p.add_argument("--kind", action="append", default=[])
     p = command("record-incident", cmd_record_incident, ticket=False)
     p.add_argument("--bead")
     p.add_argument("--signature")

@@ -238,6 +238,34 @@ shown=$("$TOOL" show "$CONVOY" --repo "$REPO") || fail "show after a new commit 
 jq -e --arg t1 "$T1" '.tickets[] | select(.id == $t1) | .verdicts.code_review.valid == false' <<<"$shown" >/dev/null \
   || fail "verdict still valid after the branch tip moved: $shown"
 
+# --- the integration branch, a verdict made invalid, a merge (T18, af-gmz9s1) --
+NEW_TIP=$(git -C "$REPO" rev-parse HEAD)
+BASE=$(git -C "$REPO" rev-parse main)
+state set-integration "$CONVOY" --branch integration/essai --protected main --base "$BASE"
+state invalidate-verdicts "$CONVOY" "$T1" --tip "$NEW_TIP" --kind code_review --kind evaluation
+# a second time: already invalid, nothing more is counted
+state invalidate-verdicts "$CONVOY" "$T1" --tip "$NEW_TIP" --kind code_review
+state set-merge "$CONVOY" "$T1" --outcome red --ticket-commit "$NEW_TIP" --integration "$BASE" --commit "$TIP"
+
+shown=$("$TOOL" show "$CONVOY" --repo "$REPO") || fail "show after the integration records failed: $shown"
+jq -e --arg t1 "$T1" --arg tip "$TIP" --arg new "$NEW_TIP" --arg base "$BASE" '
+  .unruled == false
+  and (.convoy.integration | del(.at)) == {branch: "integration/essai", protected: "main", base: $base}
+  and (.tickets[] | select(.id == $t1)
+       | .verdicts.code_review.valid == false and .verdicts.code_review.invalidated.tip == $new
+         and .verdicts.code_review.commit == $tip and .verdicts.code_review.state == "favorable"
+         and .verdicts.evaluation.invalidated.tip == $new
+         and .counters == {resumes: 2, correction_rounds: 1}
+         and (.merge | del(.at)) == {outcome: "red", ticket_commit: $new, integration: $base, commit: $tip})
+' <<<"$shown" >/dev/null || fail "integration branch, invalidated verdicts or merge not read back from the real tracker: $shown"
+
+before=$(gc bd show "$CONVOY" --json)
+set +e
+"$TOOL" set-integration "$CONVOY" --branch integration/autre --protected main --base "$BASE" >/dev/null; rc=$?
+set -e
+[ "$rc" = 1 ] || fail "recording another integration branch exited $rc, want 1"
+[ "$before" = "$(gc bd show "$CONVOY" --json)" ] || fail "a refused integration record changed the tracker"
+
 # --- a ticket closed outside the gate is an "état sans règle" ----------------
 gc bd close "$T1" --reason "fermé à la main pour l'essai" >/dev/null
 set +e

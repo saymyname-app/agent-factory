@@ -102,6 +102,11 @@ export GC_HOME="$TRIAL/h" XDG_RUNTIME_DIR="$TRIAL/r" GC_DISABLE_USAGE_METRICS=1
 unset DBUS_SESSION_BUS_ADDRESS
 export PATH="/usr/local/bin:$HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 mkdir -p "$GC_HOME" "$TRIAL/repo" "$TRIAL/locks"
+# The repository of the project: the door opens the integration branch of the
+# Spec there, at the tip of its protected branch (T18, af-gmz9s1).
+git init -q -b main "$TRIAL/repo"
+git -C "$TRIAL/repo" -c user.name="graph-review trial" -c user.email=trial@example.invalid \
+  commit -q --allow-empty -m base
 mkdir -m 700 "$XDG_RUNTIME_DIR"
 printf '[supervisor]\nport = %s\n' "$PORT" > "$GC_HOME/supervisor.toml"
 

@@ -1,0 +1,5 @@
+# Fixture project file for the rig the Fixture City's graph targets (T18,
+# af-gmz9s1): the publication door opens the integration branch of a
+# new-flow Spec in this rig's repository, at the tip of its protected branch.
+rig_dir = "."
+protected_branch = "main"

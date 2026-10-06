@@ -69,6 +69,10 @@ dolt config --global --add user.name "entry-contract trial" >/dev/null
 dolt config --global --add user.email "trial@example.invalid" >/dev/null
 git config --global user.name "entry-contract trial"
 git config --global user.email "trial@example.invalid"
+# The repository of the project: the door opens the integration branch of the
+# Spec there, at the tip of its protected branch (T18, af-gmz9s1).
+git init -q -b main "$TRIAL/repo"
+git -C "$TRIAL/repo" commit -q --allow-empty -m base
 
 gc init --template minimal --default-provider codex --skip-provider-readiness \
   --no-start --yes --name af-c8n7ep-entry-contract "$TEST_CITY" >/dev/null 2>&1 \
@@ -203,8 +207,18 @@ T4=$(jq -r '.ids.T4' <<<"$result")
 jq -e '.flow_contract == "new-flow/v1" and (.marked | length) == 5 and .mayor_notified == null' <<<"$result" >/dev/null \
   || fail "unexpected publication result: $result"
 
+# T18: the integration branch of the Spec exists in the repository, left from
+# the tip of the protected branch, and is recorded on the convoy.
+PROTECTED_TIP=$(git -C "$TRIAL/repo" rev-parse main)
+INTEGRATION=$(jq -r '.integration.branch' <<<"$result")
+jq -e --arg tip "$PROTECTED_TIP" '.integration | .created == true and .protected == "main" and .base == $tip
+  and (.branch | startswith("integration/"))' <<<"$result" >/dev/null || fail "no integration branch in the publication result: $result"
+[ "$(git -C "$TRIAL/repo" rev-parse --verify --quiet "refs/heads/$INTEGRATION")" = "$PROTECTED_TIP" ] \
+  || fail "the integration branch $INTEGRATION is not at the tip of the protected branch"
+
 shown=$("$STATE" show "$CONVOY" --repo "$TRIAL/repo") || fail "convoy-state show found the published convoy incoherent: $shown"
 jq -e --arg t1 "$T1" --arg t2 "$T2" --arg t3 "$T3" --arg t4 "$T4" '
+  (.convoy.integration | .branch == "'"$INTEGRATION"'" and .base == "'"$PROTECTED_TIP"'") and
   .unruled == false and .convoy.mark == "new-flow/v1"
   and (.tickets | map(.id) | sort) == ([$t1, $t2, $t3, $t4] | sort)
   and (.tickets[] | select(.id == $t2) | .user_stories == ["1", "2"])
@@ -447,9 +461,13 @@ tickets:
   target_rigs: [fixture_city]
   what_it_delivers: fait une chose
   acceptance_criteria: [Un test montre que la chose est faite]")
+branches_before=$(git -C "$TRIAL/repo" for-each-ref refs/heads)
 result=$(publish "$LEGACY") || fail "a draft that does not declare the contract was refused"
 PLAIN=$(jq -r '.ids._convoy' <<<"$result")
 jq -e 'has("flow_contract") | not' <<<"$result" >/dev/null || fail "an undeclared draft was published as new flow"
+jq -e 'has("integration") | not' <<<"$result" >/dev/null || fail "an undeclared draft got an integration branch: $result"
+[ "$branches_before" = "$(git -C "$TRIAL/repo" for-each-ref refs/heads)" ] \
+  || fail "publishing an undeclared draft changed the branches of the repository"
 gc bd list --all --limit 0 --json | jq -e --arg d "$(jq -r .graph_digest <<<"$result")" '
   map(select(.metadata["gc.graph_digest"] == $d)) | length == 2
   and all((.metadata | keys | map(select(startswith("gc.flow."))) | length) == 0)' >/dev/null \
