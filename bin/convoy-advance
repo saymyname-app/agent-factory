@@ -1,0 +1,337 @@
+#!/usr/bin/env python3
+"""Start the ready tickets of a "new flow" convoy (T04, af-gfyj6k).
+
+Spec af-wf4w5r §0 rule 3 and §4, user story 82: code, not the Mayor, starts
+the ready tickets of a convoy that carries the new-flow mark, in dependency
+order and under the ceiling N, through bin/dispatch-door, which records each
+start. A convoy without the mark is not touched: the Mayor advances it as
+before.
+
+    convoy-advance CONVOY        one pass on that convoy
+    convoy-advance --all         one pass on every open marked convoy
+    convoy-advance --check-only  exit 0 if an open marked convoy exists, else 1
+
+One pass starts every ticket of the convoy that is open, not yet started
+through the door, and whose blockers are all closed, while a place is free
+under N. N (`max_sessions` in config/delivery-flow.json) is one setting for
+the whole Factory, shared between the Specs. A place is taken by:
+
+  - each live session of a delivery role agent (author, reviewer, Evaluator:
+    config/delivery-roles.json), whatever the convoy;
+  - each ticket of a marked convoy started through the door that no session
+    has picked yet (still open): its author session is on its way.
+
+A pass decides from the tracker alone, so a second pass on the same state
+starts nothing more. Passes are serialised by a lock: two of them never
+count the same free place.
+
+Every answer is one JSON object on stdout. Exit status: 0 the pass is done
+(what it started is listed, possibly nothing); 1 refused or could not run,
+or the dispatch door refused a ticket (named under `refused`); 3 a convoy is
+in an "état sans règle" (bin/convoy-state): nothing of it is started; 4 the
+convoy does not carry the mark: nothing is started, nothing is written.
+Settings, reads and the order that runs it: docs/CONVOY_ADVANCE.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import tomllib
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterator
+
+
+PROGRAM = "convoy-advance"
+BIN = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
+GC_BIN = os.environ.get("GC_BIN", "gc")
+STATE_BIN = BIN / "convoy-state"
+DOOR_BIN = BIN / "dispatch-door"
+SETTINGS = ROOT / "config" / "delivery-flow.json"
+ROLES = ROOT / "config" / "delivery-roles.json"
+PROJECTS = ROOT / "config" / "projects"
+
+EXIT_REFUSED = 1
+EXIT_UNRULED = 3
+EXIT_NOT_NEW_FLOW = 4
+DOOR_DEFERRED = 75
+
+UNRULED = "état sans règle"
+CLOSING_GATES = ("ticket_end", "withdrawn")
+RIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# The publication door renders a ticket's rigs under this heading.
+RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
+
+
+class Refusal(RuntimeError):
+    """The pass cannot be made: nothing is started."""
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark; carries convoy-state's answer."""
+
+
+# --- reads -------------------------------------------------------------------
+
+
+def run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, cwd=ROOT)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {argv[0]} : {exc}") from exc
+
+
+def parsed(proc: subprocess.CompletedProcess[str], what: str) -> Any:
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        raise Refusal(f"{what} a rendu une réponse illisible : {detail[-300:]}") from exc
+
+
+def gc_json(*args: str) -> Any:
+    proc = run([GC_BIN, "--city", str(ROOT), *args])
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        raise Refusal(f"gc {' '.join(args[:3])} a échoué : {detail[-300:]}")
+    return parsed(proc, f"gc {' '.join(args[:3])}")
+
+
+def read_bead(bead_id: str) -> dict[str, Any]:
+    data = gc_json("bd", "show", bead_id, "--json")
+    if isinstance(data, list):
+        data = data[0] if data else None
+    if not isinstance(data, dict):
+        raise Refusal(f"bead introuvable : {bead_id}")
+    return data
+
+
+def marked_convoys() -> list[str]:
+    proc = run([str(STATE_BIN), "list"])
+    answer = parsed(proc, "convoy-state list")
+    if proc.returncode != 0 or not isinstance(answer.get("convoys"), list):
+        raise Refusal(f"convoy-state list a échoué : {answer.get('error', proc.returncode)}")
+    return answer["convoys"]
+
+
+def ticket_rig(description: Any) -> str | None:
+    """The single project a ticket targets, or None when it names none or several."""
+    match = RIGS_SECTION_RE.search(description if isinstance(description, str) else "")
+    rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
+    if len(rigs) != 1 or not RIG_RE.match(rigs[0]) or not (PROJECTS / f"{rigs[0]}.toml").is_file():
+        return None
+    return rigs[0]
+
+
+def rig_repository(rig: str) -> Path:
+    try:
+        rig_dir = tomllib.loads((PROJECTS / f"{rig}.toml").read_text(encoding="utf-8")).get("rig_dir")
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise Refusal(f"config/projects/{rig}.toml illisible : {exc}") from exc
+    if not isinstance(rig_dir, str) or not rig_dir:
+        raise Refusal(f"config/projects/{rig}.toml ne déclare pas rig_dir")
+    return ROOT / rig_dir
+
+
+class Convoy:
+    """A marked convoy as bin/convoy-state renders it, plus each ticket's rig."""
+
+    def __init__(self, convoy_id: str) -> None:
+        self.id = convoy_id
+        tracked = [
+            dep for dep in read_bead(convoy_id).get("dependencies") or []
+            if isinstance(dep, dict) and dep.get("dependency_type") == "tracks"
+        ]
+        self.rigs = {dep.get("id"): ticket_rig(dep.get("description")) for dep in tracked}
+        # Ticket branches live in the repository of the convoy's project;
+        # convoy-state ties each verdict to its branch tip there.
+        known = {rig for rig in self.rigs.values() if rig}
+        repo = rig_repository(next(iter(known))) if len(known) == 1 else ROOT
+        proc = run([str(STATE_BIN), "show", convoy_id, "--repo", str(repo)])
+        answer = parsed(proc, f"convoy-state show {convoy_id}")
+        if proc.returncode == EXIT_NOT_NEW_FLOW:
+            raise NotNewFlow(json.dumps(answer))
+        if proc.returncode not in (0, EXIT_UNRULED) or not isinstance(answer.get("tickets"), list):
+            raise Refusal(f"convoy-state show {convoy_id} a échoué : {answer.get('error', proc.returncode)}")
+        self.tickets: list[dict[str, Any]] = answer["tickets"]
+        self.unruled: list[dict[str, Any]] = [
+            *answer["convoy"].get("unruled", []),
+            *({"ticket": ticket["id"], **anomaly} for ticket in self.tickets for anomaly in ticket.get("unruled", [])),
+        ]
+
+    def awaiting_a_session(self) -> list[str]:
+        """Tickets started through the door that no session has picked yet."""
+        return [t["id"] for t in self.tickets if started(t) and t.get("status") == "open" and not t.get("exit")]
+
+    def not_started(self) -> list[dict[str, Any]]:
+        return [t for t in self.tickets if t.get("status") == "open" and not t.get("gates") and not t.get("exit")]
+
+
+def started(ticket: dict[str, Any]) -> bool:
+    gates = ticket.get("gates") or {}
+    return "dispatch" in gates and not any(gate in gates for gate in CLOSING_GATES)
+
+
+def open_blockers(ticket_id: str) -> list[str]:
+    return [
+        dep.get("id") for dep in read_bead(ticket_id).get("dependencies") or []
+        if isinstance(dep, dict) and dep.get("dependency_type") == "blocks" and dep.get("status") != "closed"
+    ]
+
+
+def role_sessions() -> dict[str, int]:
+    """Live sessions per delivery role, every convoy and Spec together."""
+    try:
+        roles = json.loads(ROLES.read_text(encoding="utf-8"))["roles"]
+        agents = {role: entry["agent"] for role, entry in roles.items()}
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
+        raise Refusal(f"config/delivery-roles.json illisible : {exc!r}") from exc
+    answer = gc_json("session", "list", "--json")
+    sessions = answer.get("sessions") if isinstance(answer, dict) else None
+    if not isinstance(sessions, list):
+        raise Refusal("gc session list n'a pas rendu de liste de sessions : le plafond ne peut pas être compté")
+    counts = dict.fromkeys(agents, 0)
+    for entry in sessions:
+        if not isinstance(entry, dict) or entry.get("closed") or entry.get("state") == "closed":
+            continue
+        template = str(entry.get("template", "")).rsplit("/", 1)[-1]
+        for role, agent in agents.items():
+            if template == agent:
+                counts[role] += 1
+    return counts
+
+
+# --- settings ----------------------------------------------------------------
+
+
+def load_settings() -> dict[str, Any]:
+    try:
+        data = json.loads(SETTINGS.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise Refusal(f"config/delivery-flow.json illisible : {exc}") from exc
+    ceiling = data.get("max_sessions") if isinstance(data, dict) else None
+    if isinstance(ceiling, bool) or not isinstance(ceiling, int) or ceiling < 1:
+        raise Refusal(f"max_sessions (plafond N) absent ou invalide dans config/delivery-flow.json : {ceiling!r} "
+                      "(attendu : un entier d'au moins 1)")
+    start = data.get("start") if isinstance(data.get("start"), dict) else {}
+    formula, role = start.get("formula"), start.get("role")
+    if not isinstance(formula, str) or not formula:
+        raise Refusal("aucune formule de démarrage (start.formula) dans config/delivery-flow.json : "
+                      "aucun ticket d'un convoi marqué n'est démarré tant qu'elle n'est pas réglée")
+    if role is not None and (not isinstance(role, str) or not role):
+        raise Refusal(f"start.role invalide dans config/delivery-flow.json : {role!r}")
+    return {"ceiling": ceiling, "formula": formula, "role": role}
+
+
+# --- the pass ----------------------------------------------------------------
+
+
+@contextmanager
+def advance_lock() -> Iterator[None]:
+    """One pass at a time, Factory-wide: N is shared between the convoys."""
+    lock_dir = Path(os.environ.get("CONVOY_ADVANCE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with (lock_dir / "agent-factory-convoy-advance.lock").open("w") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def dispatch(convoy: Convoy, ticket_id: str, rig: str, settings: dict[str, Any]) -> subprocess.CompletedProcess[str]:
+    argv = [str(DOOR_BIN), ticket_id, "--rig", rig, "--formula", settings["formula"], "--convoy", convoy.id]
+    if settings["role"]:
+        argv += ["--role", settings["role"]]
+    return run(argv)
+
+
+def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int) -> dict[str, Any]:
+    out: dict[str, Any] = {"id": convoy.id, "started": [], "waiting": [], "deferred": [], "refused": []}
+    if convoy.unruled:
+        out["signal"] = UNRULED
+        out["unruled"] = convoy.unruled
+        return out
+    for ticket in convoy.not_started():
+        ticket_id = ticket["id"]
+        if len(out["started"]) >= free:
+            out["waiting"].append({"id": ticket_id, "reason": f"plafond N={settings['ceiling']} atteint"})
+            continue
+        blockers = open_blockers(ticket_id)
+        if blockers:
+            out["waiting"].append({"id": ticket_id, "reason": "bloqué par " + ", ".join(blockers)})
+            continue
+        rig = convoy.rigs.get(ticket_id)
+        if not rig:
+            out["refused"].append({"id": ticket_id, "reason": "le ticket ne nomme pas un seul projet connu de "
+                                                              "config/projects sous « Target rigs »"})
+            continue
+        proc = dispatch(convoy, ticket_id, rig, settings)
+        if proc.returncode == 0:
+            out["started"].append(ticket_id)
+        else:
+            reason = (proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}").splitlines()[-1]
+            out["deferred" if proc.returncode == DOOR_DEFERRED else "refused"].append({"id": ticket_id, "reason": reason})
+    return out
+
+
+def one_pass(targets: list[str] | None) -> int:
+    """`targets` None: every open marked convoy."""
+    with advance_lock():
+        convoys = {convoy_id: Convoy(convoy_id) for convoy_id in targets or []}
+        settings = load_settings()
+        for convoy_id in marked_convoys():
+            if convoy_id not in convoys:
+                convoys[convoy_id] = Convoy(convoy_id)
+        sessions = role_sessions()
+        awaiting = sorted(ticket for convoy in convoys.values() for ticket in convoy.awaiting_a_session())
+        occupied = sum(sessions.values()) + len(awaiting)
+        free = max(0, settings["ceiling"] - occupied)
+
+        results = []
+        for convoy_id in targets if targets is not None else sorted(convoys):
+            result = advance_convoy(convoys[convoy_id], settings, free)
+            free -= len(result["started"])
+            results.append(result)
+
+    unruled = any("unruled" in result for result in results)
+    refused = any(result["refused"] for result in results)
+    answer: dict[str, Any] = {
+        "ok": not (unruled or refused), "ceiling": settings["ceiling"], "sessions": sessions,
+        "awaiting_a_session": awaiting, "occupied": occupied, "convoys": results,
+    }
+    if unruled:
+        answer["message"] = f"{UNRULED} : rien n'est démarré dans le convoi concerné"
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return EXIT_UNRULED if unruled else EXIT_REFUSED if refused else 0
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("convoy", nargs="?")
+    parser.add_argument("--all", action="store_true", help="one pass on every open marked convoy")
+    parser.add_argument("--check-only", action="store_true", help="exit 0 if an open marked convoy exists, else 1")
+    args = parser.parse_args(argv)
+    if sum((bool(args.convoy), args.all, args.check_only)) != 1:
+        parser.error("exactly one of CONVOY, --all or --check-only is required")
+    try:
+        if args.check_only:
+            return 0 if marked_convoys() else 1
+        return one_pass(None if args.all else [args.convoy])
+    except NotNewFlow as exc:
+        print(json.dumps(json.loads(str(exc)), indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "error": f"refus : {exc}"}, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

@@ -65,6 +65,15 @@
 # without its skills. A project whose sling_target is itself a role agent is
 # held to the same rule without --role.
 #
+# With `--convoy <convoy>` the door starts a ticket of a convoy that carries
+# the new-flow mark (T04, af-gfyj6k, Spec af-wf4w5r §0 rule 3): this is how
+# bin/convoy-advance starts the ready tickets of such a convoy. The door
+# asks bin/convoy-state, before anything is dispatched, that the convoy is
+# marked and tracks the ticket, and once the ticket is routed it records the
+# start there (the `dispatch` gate record). A ticket of a marked convoy seen
+# in progress without that record was started outside the door, which
+# bin/convoy-state reports as an « état sans règle ».
+#
 # Both deferrals are transient: nothing here stops a running session, and a deferred
 # dispatch is simply retried the next time the Mayor dispatches. `fail`
 # below exits 2 for a permanent refusal; `defer` exits 75 (EX_TEMPFAIL) so a
@@ -81,6 +90,7 @@ GC_BIN="${GC_BIN:-gc}"
 CONFIG_DIR="${DISPATCH_DOOR_CONFIG_DIR:-$ROOT/config/projects}"
 PROVIDER_FAILOVER_BIN="${DISPATCH_DOOR_PROVIDER_FAILOVER_BIN:-$ROOT/bin/provider-failover}"
 ROLE_TRIAL_BIN="${DISPATCH_DOOR_ROLE_TRIAL_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/role-adoption-trial}"
+CONVOY_STATE_BIN="${DISPATCH_DOOR_CONVOY_STATE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/convoy-state}"
 HOT_PATHS_FILE="${DISPATCH_DOOR_HOT_PATHS_FILE:-$ROOT/config/hot-paths.json}"
 MEMINFO_FILE="${DISPATCH_DOOR_MEMINFO_FILE:-/proc/meminfo}"
 MEM_MIN_KIB="${DISPATCH_DOOR_MEM_MIN_KIB:-1572864}"  # 1.5 GiB
@@ -91,7 +101,7 @@ SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 usage() {
   cat >&2 <<'USAGE'
-usage: dispatch-door <bead-id> --rig <project-name> --formula <formula> [--role <role>] [--dry-run]
+usage: dispatch-door <bead-id> --rig <project-name> --formula <formula> [--role <role>] [--convoy <convoy>] [--dry-run]
 
 The one door for every dispatch: validates <project-name> against
 config/projects/<project-name>.toml, validates <formula> against that
@@ -105,9 +115,14 @@ a raw `gc sling` that bypassed this door.
 when bin/role-adoption-trial holds a passing trial for the role on the
 provider it would run on.
 
+--convoy <convoy> starts a ticket of a convoy that carries the new-flow mark
+(what bin/convoy-advance does): refused unless bin/convoy-state says the
+convoy is marked and tracks the ticket, and the start is recorded there.
+
 Exits 2 on a permanent refusal (invalid rig/formula, a planning-plane bead, a proposal-labelled
 bead, total provider exhaustion, a delivery role on a provider with no
-passing adoption trial). Exits 75 on a deferral -- low guest
+passing adoption trial, a --convoy that is not marked or does not track the
+bead). Exits 75 on a deferral -- low guest
 memory, or the bead's scope touching a hot path an in-progress ticket
 already holds -- which is transient and safe to retry on the next dispatch.
 USAGE
@@ -129,6 +144,11 @@ meminfo_kib() {
 
 gib() {
   awk -v kib="$1" 'BEGIN { printf "%.1f", kib / 1048576 }'
+}
+
+# bin/convoy-state finds the city from its working directory.
+convoy_state() {
+  (cd "$ROOT" && GC_BIN="$GC_BIN" "$CONVOY_STATE_BIN" "$@")
 }
 
 # Two glob patterns overlap using the same cheap, exact-for-plain-paths
@@ -154,6 +174,7 @@ shift
 RIG=""
 FORMULA=""
 ROLE=""
+CONVOY=""
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
@@ -171,6 +192,11 @@ while [ $# -gt 0 ]; do
     --role)
       [ $# -ge 2 ] || fail "--role requires a delivery role name"
       ROLE=$2
+      shift 2
+      ;;
+    --convoy)
+      [ $# -ge 2 ] || fail "--convoy requires a convoy id"
+      CONVOY=$2
       shift 2
       ;;
     --dry-run)
@@ -310,6 +336,20 @@ if [ -n "$target_scope" ] && [ -f "$HOT_PATHS_FILE" ]; then
   fi
 fi
 
+if [ -n "$CONVOY" ]; then
+  # Exit 3 is a convoy in an « état sans règle »: its tickets are still
+  # listed, and stopping such a convoy is the advance command's decision.
+  convoy_rc=0
+  convoy_json=$(convoy_state show "$CONVOY" 2>/dev/null) || convoy_rc=$?
+  case "$convoy_rc" in
+    0|3) ;;
+    4) fail "$BEAD_ID dispatch refused: $CONVOY -- pas un convoi du nouveau flux, rien n'est dispatché" ;;
+    *) fail "$BEAD_ID dispatch refused: could not read convoy $CONVOY through convoy-state: $(printf '%s' "$convoy_json" | jq -r '.error // empty' 2>/dev/null)" ;;
+  esac
+  printf '%s' "$convoy_json" | jq -e --arg id "$BEAD_ID" '.convoy.mark as $mark | [.tickets[] | select(.id == $id and .mark == $mark)] | length == 1' >/dev/null 2>&1 \
+    || fail "$BEAD_ID dispatch refused: it is not a marked ticket of convoy $CONVOY"
+fi
+
 "${CMD[@]}" || fail "gc sling failed routing $BEAD_ID to $qualified_target"
 
 "$GC_BIN" --city "$ROOT" bd update "$BEAD_ID" \
@@ -319,3 +359,8 @@ fi
   --set-metadata "gc.dispatch_rig=$RIG" \
   >/dev/null \
   || fail "$BEAD_ID was dispatched to $qualified_target but the door stamp write failed -- dispatch-door-guard will report it as bypassed until this is retried"
+
+if [ -n "$CONVOY" ]; then
+  gate_out=$(convoy_state record-gate "$CONVOY" "$BEAD_ID" --gate dispatch 2>&1) \
+    || fail "$BEAD_ID was dispatched to $qualified_target but its start was not recorded on convoy $CONVOY ($(printf '%s' "$gate_out" | jq -r '.error // empty' 2>/dev/null)) -- convoy-state will report it as started outside the door"
+fi
