@@ -1,0 +1,11 @@
+description = "Delivery role: code reviewer (code-review), read-only. Skills per config/delivery-roles.json"
+scope = "city"
+work_dir = ".gc/agents/delivery-reviewer"
+min_active_sessions = 0
+max_active_sessions = 1
+idle_timeout = "2h"
+
+# Fallback only: the effective provider comes from city.provider.toml
+# (bin/provider-failover, target delivery-reviewer). A read-only role must
+# never fall back to the workspace provider, which can write.
+provider = "claude-readonly"
