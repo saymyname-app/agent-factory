@@ -238,6 +238,10 @@ scope = "city"
 min_active_sessions = 0
 max_active_sessions = 3
 TOML
+# The work query is the one of the real author agent: it is what keeps a
+# session that holds a ticket from taking the first step of another one.
+query=$(grep '^work_query = ' "$ROOT/agents/delivery-author/agent.toml") || fail "the author agent declares no work_query"
+printf '%s\n' "${query//-- delivery-author/-- trial-author}" >> "$CITY/agents/trial-author/agent.toml"
 echo "Scripted author of the ticket-author trial." > "$CITY/agents/trial-author/prompt.template.md"
 cp "$ROOT/formulas/mol-ticket-author.formula.toml" "$CITY/formulas/"
 # The check of the formula is the real one, materialised below by the real
@@ -417,8 +421,11 @@ c=$(ticket "$C")
 [ "$(printf '%s' "$c" | jq -r '.park.cause')" = planning_exception ] || fail "C is not parked"
 [ "$(printf '%s' "$c" | jq -r '.tip')" = "$INTEGRATION" ] || fail "the branch of C holds a commit"
 [ "$(printf '%s' "$c" | jq -r '.merge')" = null ] || fail "C was merged"
-"$ROOT/bin/escalation-door" list 2>/dev/null | grep -q "Planning Exception (semantic) sur $C" \
-  || fail "the Planning Exception of C is not on the operator's list"
+# Read whole, then searched: `grep -q` leaving at the first match would
+# break the pipe of the list and fail the line under pipefail.
+operator_list=$("$ROOT/bin/escalation-door" list 2>&1) || fail "escalation-door list did not pass: $operator_list"
+grep -q "Planning Exception (semantic) sur $C" <<<"$operator_list" \
+  || fail "the Planning Exception of C is not on the operator's list: $operator_list"
 echo "$(date -u +%H:%M:%S) C : sortie « Planning Exception » à l'étape rouge ; ticket parqué ; demande sur la liste de l'opérateur ; sa branche ne porte aucun commit, rien n'est fusionné"
 
 # --- one fresh session per ticket -------------------------------------------------

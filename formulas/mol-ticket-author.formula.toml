@@ -22,6 +22,14 @@ hands each step to whichever author session asks first (seen in the
 isolated-city trial of 2026-10-06), and `bin/ticket-author start` refuses a
 session that is not the one that took the ticket.
 
+One ticket per session: the first step of a ticket has no session yet, so
+the author agent declares its own `work_query`
+(`agents/delivery-author/agent.toml`): a session that has ever been assigned
+a bead is offered, of the unassigned work, only that of its own workflow (a
+step given back after a refused check). Under Gas City's default query a
+session that held a ticket took the first step of the next one and spent
+its attempts (same trial).
+
 | Step | Its gate asks for |
 |---|---|
 | `workspace` | the session and the branch recorded on the ticket, the work tree on that branch, the branch left from the integration branch |
@@ -53,7 +61,8 @@ formula_compiler = ">=2.0.0"
 [[steps]]
 id = "ticket-sequence"
 title = "Sequence of one ticket"
-metadata = { "gc.kind" = "scope", "gc.scope_ref" = "ticket-sequence" }
+needs = ["workspace", "red", "code", "demonstration", "exit"]
+metadata = { "gc.kind" = "scope", "gc.scope_name" = "ticket", "gc.scope_role" = "body" }
 
 [[steps]]
 id = "workspace"
@@ -319,7 +328,7 @@ timeout = "5m"
 [[steps]]
 id = "drain"
 title = "Release the work tree and end the session"
-needs = ["exit"]
+needs = ["ticket-sequence"]
 metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "teardown", "gc.continuation_group" = "ticket", "gc.session_affinity" = "require" }
 description = """
 The sequence is over. Release your work tree (the branch stays; a refusal
