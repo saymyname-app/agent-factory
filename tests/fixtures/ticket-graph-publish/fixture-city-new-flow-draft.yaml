@@ -1,7 +1,10 @@
 # Brouillon de graphe conforme au contrat du nouveau flux (Spec af-wf4w5r §2),
 # sur le produit synthétique de la Fixture City : une page servie et une API.
-# Entrée de tests/ticket-graph-publish-entry-contract-test.py et de l'essai
-# sur le vrai tracker (tests/ticket-graph-publish-new-flow-real-tracker-test.sh).
+# Ses tranches couvrent les trois user stories de la Spec de la fixture
+# (tests/fixtures/delivery-fixture-city/spec.md).
+# Entrée de tests/ticket-graph-publish-entry-contract-test.py, de
+# tests/ticket-graph-publish-coverage-test.py et de l'essai sur le vrai
+# tracker (tests/ticket-graph-publish-new-flow-real-tracker-test.sh).
 flow_contract: new-flow/v1
 tickets:
 - id: T1
@@ -27,6 +30,7 @@ tickets:
   demonstration_line: >-
     Sur le produit lancé avec le jeu de données « contenu », la page d'accueil
     (GET /) affiche les trois éléments « Alpha », « Bêta » et « Gamma ».
+  user_stories: [1, 2]
   acceptance_criteria:
   - entry_point: "GET / sur le produit lancé avec le jeu de données « contenu »"
     observable: "la région « liste » contient trois lignes, libellées « Alpha », « Bêta », « Gamma »"
@@ -51,3 +55,17 @@ tickets:
   - entry_point: "GET /api/items sur le produit lancé avec le jeu de données « contenu »"
     observable: "chaque élément de la réponse JSON porte un champ « label » non vide"
     false_if: "un élément n'a pas de champ « label », ou le champ est vide"
+- id: T4
+  kind: vertical_slice
+  title: La sonde de santé répond
+  blocked_by: []
+  target_rigs: [fixture_city]
+  what_it_delivers: >-
+    Le produit répond à une sonde de santé.
+  demonstration_line: >-
+    Sur le produit lancé, GET /health répond 200 avec le statut « ok ».
+  user_stories: [3]
+  acceptance_criteria:
+  - entry_point: "GET /health sur le produit lancé"
+    observable: "la réponse a le statut 200 et son champ « status » vaut « ok »"
+    false_if: "le statut n'est pas 200, ou le champ « status » est absent"

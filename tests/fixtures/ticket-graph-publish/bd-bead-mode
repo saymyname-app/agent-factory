@@ -17,7 +17,8 @@ from pathlib import Path
 STATE_PATH = Path(os.environ["TICKET_GRAPH_BD_STATE"])
 
 BOOLEAN_FLAGS = {"--all", "--json", "--silent"}
-VALUE_FLAGS = {"--limit", "--title", "--description", "--type", "--priority", "--labels", "--metadata", "--deps", "--graph"}
+VALUE_FLAGS = {"--limit", "--title", "--description", "--type", "--priority", "--labels", "--metadata", "--deps", "--graph",
+               "--status"}
 REPEATABLE_VALUE_FLAGS = {"--set-metadata", "--append-notes"}
 
 
@@ -94,6 +95,8 @@ def cmd_update(flags, repeated, positionals):
         bead["title"] = flags["--title"]
     if "--description" in flags:
         bead["description"] = flags["--description"]
+    if "--status" in flags:
+        bead["status"] = flags["--status"]
     for entry in repeated.get("--set-metadata", []):
         key, _, value = entry.partition("=")
         bead.setdefault("metadata", {})[key] = value
@@ -154,7 +157,13 @@ def main(argv):
     elif command == "create":
         cmd_create(flags, positionals)
     elif command == "dep":
-        pass
+        # `dep add <convoy> <ticket> --type tracks`: the convoy tracks the
+        # ticket, as the `tracks` edges of the graph transaction do. Any
+        # other edge is accepted and not stored.
+        if positionals[:1] == ["add"] and flags.get("--type") == "tracks":
+            state = load_state()
+            state["beads"][positionals[1]].setdefault("tracks", []).append(positionals[2])
+            save_state(state)
     else:
         fail(f"no canned response configured for: bd {' '.join(argv)}")
     return 0

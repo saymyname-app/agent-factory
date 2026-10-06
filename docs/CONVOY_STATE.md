@@ -16,7 +16,9 @@ published, dispatched, merged and closed exactly as before.
 ```bash
 ./bin/convoy-state list                                 # the open marked convoys (bin/convoy-advance)
 ./bin/convoy-state mark af-convoy \
-  --demonstration-line af-t1="Sur le produit lancé, …"  # publication door (T05)
+  --demonstration-line af-t1="Sur le produit lancé, …" \
+  --user-stories af-t1=4,12 \
+  --establishes-launch-recipe af-t1                     # publication door (T05, T06)
 ./bin/convoy-state show af-convoy --repo rigs/product   # every reader
 ./bin/convoy-state set-branch   af-convoy af-t1 --branch ticket/af-t1
 ./bin/convoy-state record-gate  af-convoy af-t1 --gate dispatch   # bin/dispatch-door --convoy, after the sling
@@ -47,6 +49,8 @@ Every answer is one JSON object on stdout.
 | Mark | `gc.flow.mark` | convoy, ticket | `new-flow/v1` |
 | Kind | `gc.ticket_kind` (read only: written by the publication door) | ticket | `vertical_slice`, `prefactoring`, `repair` |
 | Demonstration line | `gc.flow.demonstration_line` | ticket (`vertical_slice`, `repair`) | one non-empty line, written once by `mark` |
+| Covered user stories | `gc.flow.user_stories` | ticket (`vertical_slice`) | the numbers of the Spec's user stories the slice covers, at least one, each once; written once by `mark` |
+| Launch recipe established here | `gc.flow.establishes_launch_recipe` | ticket (`vertical_slice`, at most one per convoy) | `true`, written with the mark; absent otherwise |
 | Ticket branch | `gc.flow.branch` | ticket | branch name |
 | Ticket Exit | `gc.flow.exit` | ticket | `finished`, `planning_exception`, `operator_request`, `technically_blocked`, `interrupted` |
 | Verdict | `gc.flow.verdict.<kind>` | ticket | kind: `test_review`, `code_review`, `evaluation`, `fidelity`; state: `favorable`, `unfavorable`; always with the full commit SHA it judged |
@@ -68,6 +72,16 @@ kind is absent or outside the closed list (no default kind), a
 `prefactoring`, a line for a ticket the convoy does not track, and a line
 that differs from the one already written: it is frozen with the approved
 graph.
+
+The same holds for the user stories a `vertical_slice` covers (T06),
+written from `--user-stories <ticket>=<n>,<n>` (repeatable): `mark` refuses
+a `vertical_slice` without any, a list on a `prefactoring` or a `repair`
+(neither covers a story), anything that is not a list of story numbers each
+given once, and a list that differs from the one already written.
+`--establishes-launch-recipe <ticket>` (repeatable) names the slice that
+establishes the project's launch recipe: refused on anything but a
+`vertical_slice`, on more than one ticket of the convoy, and on a ticket
+that already carries the mark without it.
 
 A piece name is made of letters, digits, `_` and `.` only: the tracker
 refuses any metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*` (observed on bd
@@ -94,7 +108,9 @@ counted and a reviewer and an Evaluator can write the same ticket in parallel.
 mark and are not closed. It is what `bin/convoy-advance` walks
 (`docs/CONVOY_ADVANCE.md`); an unmarked convoy never appears in it.
 
-`show` renders, per ticket: mark, kind, demonstration line, tracker status,
+`show` renders, per ticket: mark, kind, demonstration line, covered user
+stories (`user_stories`, a list of numbers or `null`), whether it
+establishes the launch recipe (`establishes_launch_recipe`), tracker status,
 branch and its tip, Ticket Exit, verdicts, counters, evidence fingerprints
 and gate records; and for the convoy its counters and its open factory
 incident (`incident`, `null` when there is none).
@@ -130,6 +146,8 @@ key), never as a default value:
 - a kind that is absent or outside the closed list (never rendered as a
   kind), a `vertical_slice` or a `repair` without a demonstration line, a
   demonstration line on a `prefactoring`;
+- a `vertical_slice` without covered user stories, covered user stories or
+  a launch recipe established on another kind;
 - any stored value this command would have refused to write, and any
   `gc.flow.*` key it does not know (a field invented outside the command).
 

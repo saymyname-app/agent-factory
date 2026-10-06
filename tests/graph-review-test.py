@@ -26,6 +26,18 @@ PUBLISH_FIXTURES = ROOT / "tests" / "fixtures" / "ticket-graph-publish"
 PROJECTS_CONFIG_DIR = ROOT / "tests" / "fixtures" / "spec-approve" / "projects"
 
 NOT_DEMONSTRABLE_DRAFT = FIXTURES / "not-demonstrable-draft.yaml"
+FIXTURE_CITY = ROOT / "tests" / "fixtures" / "delivery-fixture-city"
+# The Spec the draft slices: the publication door holds the graph to its
+# numbered user stories (T06) before it asks for the graph review.
+SPEC_TEXT = """Spec synthétique de la Fixture City : une page d'accueil servie par le produit.
+
+## User Stories
+
+1. As a visiteur, I want la page d'accueil lister les éléments servis par l'API, so that je voie ce que le produit contient.
+2. As a visiteur, I want voir le total des éléments sur la page d'accueil, so that je sache combien il y en a sans les compter.
+
+Aucune story ne décrit une interface prototypée : il n'y a pas de Validated Prototype.
+"""
 REVIEWER_MODEL = "modele-relecteur"
 AUTHOR_MODEL = "modele-auteur"
 NOT_DEMONSTRABLE = {"T2": {"demonstrable_alone": "GET / n'affiche « Total : 3 » qu'une fois T3 livré"}}
@@ -44,6 +56,10 @@ class GraphReviewTest(unittest.TestCase):
         self.refusals_path = self.tmp / "refusals.json"
         self.repo_root = self.tmp / "repo"
         self.repo_root.mkdir()
+        # The project's profile, with its launch recipe (T06).
+        self.descriptors = self.tmp / "descriptors"
+        self.descriptors.mkdir()
+        shutil.copy(FIXTURE_CITY / "descriptor.json", self.descriptors / "delivery-fixture-city.json")
         # The Factory the command reads its reviewer role from: one role, one
         # provider profile, one model.
         factory = self.tmp / "factory"
@@ -85,7 +101,7 @@ class GraphReviewTest(unittest.TestCase):
     def seed(self, draft):
         """A Ticket Graph Draft bead approved at its current digest, bound to
         an approved Spec bead: only the graph review is left to decide."""
-        description, spec_text = self.text(draft), "spec de la fixture"
+        description, spec_text = self.text(draft), SPEC_TEXT
         self.state_path.write_text(json.dumps({"next_id": 1, "beads": {
             "draft-1": {"id": "draft-1", "title": "Draft", "description": description, "status": "open",
                         "labels": [], "metadata": {
@@ -141,7 +157,7 @@ class GraphReviewTest(unittest.TestCase):
     def publish(self):
         return subprocess.run(
             (str(PUBLISHER), "bd-publish", "draft-1", "--project", "acme", "--repo-root", str(self.repo_root),
-             "--config-dir", str(PROJECTS_CONFIG_DIR)),
+             "--config-dir", str(PROJECTS_CONFIG_DIR), "--descriptors-dir", str(self.descriptors)),
             env=self.env, text=True, capture_output=True,
         )
 

@@ -8,6 +8,7 @@ flow_contract: new-flow/v1
 tickets:
 - id: T1
   kind: vertical_slice
+  user_stories: [1]
   title: La page d'accueil liste les éléments
   blocked_by: []
   target_rigs: [fixture_city]
@@ -22,6 +23,7 @@ tickets:
     false_if: "une ligne manque, ou la région « liste » est absente de la page"
 - id: T2
   kind: vertical_slice
+  user_stories: [2]
   title: Le chargeur calcule le total des éléments
   blocked_by: [T1]
   target_rigs: [fixture_city]
@@ -37,6 +39,7 @@ tickets:
     false_if: "la région « total » est absente, ou affiche un autre nombre"
 - id: T3
   kind: vertical_slice
+  user_stories: [2]
   title: La page d'accueil affiche le total
   blocked_by: [T2]
   target_rigs: [fixture_city]

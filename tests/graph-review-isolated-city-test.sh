@@ -170,6 +170,10 @@ digest_of() {
   printf 'sha256:%s' "$(printf '%s' "$1" | sha256sum | cut -d' ' -f1)"
 }
 
+# The project's profile, with its launch recipe (T06).
+mkdir -p "$TRIAL/descriptors"
+cp "$ROOT/tests/fixtures/delivery-fixture-city/descriptor.json" "$TRIAL/descriptors/delivery-fixture-city.json"
+
 SPEC_TEXT=$(cat <<'SPEC'
 Spec synthétique de la Fixture City : une page d'accueil servie par le produit.
 
@@ -200,7 +204,8 @@ draft() {
   printf '%s' "$id"
 }
 publish() {
-  "$DOOR" bd-publish "$1" --project acme --repo-root "$TRIAL/repo" --config-dir "$PROJECTS"
+  "$DOOR" bd-publish "$1" --project acme --repo-root "$TRIAL/repo" --config-dir "$PROJECTS" \
+    --descriptors-dir "$TRIAL/descriptors"
 }
 tracker() {
   gc bd list --all --limit 0 --json | jq -S 'map({id, status, title, description, metadata}) | sort_by(.id)'
