@@ -52,8 +52,12 @@ Planning Run starts.
    Planning Run target is allowed through by the active Planning Run
    Reservation; its named map is finished (or it names no map and carries
    non-empty No-fog evidence); the approver is the project's declared
-   human approver; the evidence is non-empty. On success it freezes the
-   Spec's exact content digest and closes the map in the same call.
+   human approver; the evidence is non-empty; the Spec has numbered user
+   stories and, when a story is tagged `[interface]`, a complete Validated
+   Prototype reference, a state inventory and a conformant Validated
+   Prototype on the remote repository (`docs/SPEC_APPROVE.md`, "Entry
+   contract"). On success it freezes the Spec's exact content digest and
+   closes the map in the same call.
 5. **`/to-tickets` slices the approved Spec.** Benjamin approves the exact
    breakdown once -- title, blocked-by, what it delivers, acceptance
    criteria, target rig, scope paths if any -- exactly as it will be
@@ -96,7 +100,12 @@ other map ticket.
   `prototype/<map>-<topic>` branch, shown to Benjamin as a private
   Artifact page -- the page is only a view, never where the decision
   lives. Benjamin chooses the variant in the live chat, and that choice is
-  recorded verbatim in the ticket's resolution comment.
+  recorded verbatim in the ticket's resolution comment. The session then
+  produces the frozen version of the chosen variant on that branch -- the
+  Validated Prototype -- and runs `bin/prototype-conformance check` on it
+  before showing it to Benjamin, who confirms it once
+  (`docs/VALIDATED_PROTOTYPE.md`); the Spec names it by branch, commit,
+  path and states.
 - Either way, the local worktree for the ticket is removed when the ticket
   closes, so finished planning leaves no worktree behind.
 - A prototype is never a delivery ticket (Benjamin, 2026-09-30): a design

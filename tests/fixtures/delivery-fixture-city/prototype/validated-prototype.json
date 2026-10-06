@@ -1,0 +1,16 @@
+{
+  "contract": "agent-factory-validated-prototype/v1",
+  "variant": "A",
+  "encoding": "utf-8",
+  "anchor_attribute": "data-anchor",
+  "fixed_time_field": "generated_at",
+  "viewports": [
+    {"name": "desktop", "width": 1280, "height": 800},
+    {"name": "narrow", "width": 390, "height": 844}
+  ],
+  "themes": ["light"],
+  "states": [
+    {"id": "empty", "address": "states/empty.html", "dataset": "data/empty.json"},
+    {"id": "content", "address": "states/content.html", "dataset": "data/content.json"}
+  ]
+}
