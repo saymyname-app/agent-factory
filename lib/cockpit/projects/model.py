@@ -55,6 +55,10 @@ class Chantier:
     abandonne: bool = False
     raison_abandon: str = None
     planning_run_target: str = None
+    # The one rig this chantier's delivery tickets are dispatched to, when
+    # they agree on one: places a convoy that carries no project key
+    # (spec "Données de projet": "projet déduit du rig").
+    rig: str = None
 
     @property
     def stage_index(self):

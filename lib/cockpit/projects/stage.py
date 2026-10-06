@@ -31,6 +31,7 @@ CONVOY_ISSUE_TYPE = "convoy"
 PROJECT_KEY = "gc.project_id"
 GRAPH_DIGEST_KEY = "gc.graph_digest"
 DELIVERY_STATUS_KEY = "gc.delivery_status"
+DISPATCH_RIG_KEY = "gc.dispatch_rig"
 DELIVERY_STATUS_WAITING = "waiting"
 DRAFT_SPEC = "DRAFT_SPEC"
 APPROVED_SPEC = "APPROVED_SPEC"
@@ -203,7 +204,12 @@ def _convoy_chantiers_all(beads, promotion_results=None):
             continue
         bead_id = bead.get("id") or ""
         digest = (bead.get("metadata") or {}).get(GRAPH_DIGEST_KEY)
+        if not digest:
+            # gc's own "input convoy" beads are convoys too; a chantier's
+            # convoy is one a published ticket graph created.
+            continue
         tickets = [b for b in beads if _is_delivery_ticket(b, digest)]
+        rigs = {(t.get("metadata") or {}).get(DISPATCH_RIG_KEY) for t in tickets} - {None, ""}
         total = len(tickets)
         merged = sum(1 for t in tickets if t.get("status") == "closed")
         en_pr = sum(
@@ -264,6 +270,7 @@ def _convoy_chantiers_all(beads, promotion_results=None):
                 promu_masque=promu_masque,
                 termine=termine,
                 planning_run_target=(bead.get("metadata") or {}).get("planning_run_target"),
+                rig=rigs.pop() if len(rigs) == 1 else None,
             )
         )
     return out

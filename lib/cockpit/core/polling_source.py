@@ -8,6 +8,11 @@ sources (af-0b6ffa AC4).
 """
 import threading
 
+# A source whose read just failed is asked again after at most this long:
+# with a 30 s or 60 s rhythm, one bad first read would otherwise leave the
+# value unknown for that whole interval.
+RETRY_SECONDS = 2.0
+
 
 class PollingSource:
     def __init__(self, read_model, source, read_fn, interval_seconds):
@@ -30,8 +35,8 @@ class PollingSource:
 
     def _run(self):
         while not self._stop.is_set():
-            self._poll_once()
-            self._stop.wait(self._interval)
+            ok = self._poll_once()
+            self._stop.wait(self._interval if ok else min(self._interval, RETRY_SECONDS))
 
     def poll_now(self):
         """Force an immediate read, bypassing the interval wait (spec .65:
@@ -42,5 +47,6 @@ class PollingSource:
         try:
             value = self._read_fn()
         except Exception:
-            return
+            return False
         self._read_model.ingest(self._source, value)
+        return True

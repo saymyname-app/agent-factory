@@ -18,6 +18,7 @@ from cockpit.core.polling_source import PollingSource
 from cockpit.core.readmodel import ReadModel
 from cockpit.core.server import make_server
 from cockpit.health.git_source import count_commits_behind
+from cockpit.projects.source import read_projects
 
 # github/rituals sources are in the Validity window table (spec .3) for the
 # tickets that will wire up their producers; T11 builds the seam and wires
@@ -55,6 +56,15 @@ def build(config, clock=None):
                 "beads",
                 lambda: read_operator_beads(bd_bin=config.bd_bin),
                 config.beads_poll_seconds,
+            )
+        )
+        read_model.register("projets", display_name="projets")
+        pollers.append(
+            PollingSource(
+                read_model,
+                "projets",
+                lambda: read_projects(config.descriptors_dir, bd_bin=config.bd_bin),
+                config.projects_poll_seconds,
             )
         )
     if config.repo_dir:

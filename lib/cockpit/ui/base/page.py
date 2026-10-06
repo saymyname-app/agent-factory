@@ -22,7 +22,9 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from cockpit.ui.actions.render import SCRIPT as ACTIONS_SCRIPT
 from cockpit.ui.base.tokens import CSS, FONTS_HEAD
+from cockpit.ui.projects.page import PROJECTS_SCRIPT
 
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -168,5 +170,5 @@ def render_home(
         fresh,
         requests_section_html,
         extra_sections_html,
-        DISCONNECT_SCRIPT,
+        DISCONNECT_SCRIPT + ACTIONS_SCRIPT + PROJECTS_SCRIPT,
     )

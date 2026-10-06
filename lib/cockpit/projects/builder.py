@@ -32,6 +32,25 @@ def _new_projects(descriptors, roadmap_reads=None, ecart_reads=None):
     return projects, projects_by_id
 
 
+def _place(chantier, descriptors, projects_by_id):
+    """The project a chantier belongs to: its own project key, else the
+    project declaring the rig its tickets are dispatched to (spec
+    "Données de projet"); ``None`` means "Sans projet"."""
+    if chantier.projet:
+        matches = [d for d in descriptors if d["project_id"] == chantier.projet]
+    else:
+        matches = [d for d in descriptors if chantier.rig and chantier.rig in (d.get("rigs") or [])]
+    if not matches:
+        return None
+    descriptor = matches[0]
+    chantier.projet = descriptor["project_id"]
+    if not descriptor.get("promotion_branch"):
+        # spec .41: no promotion branch declared -- Promu never applies,
+        # at any stage, so the stepper never shows it.
+        chantier.promu_masque = True
+    return projects_by_id[chantier.projet]
+
+
 def build_projects(
     descriptors, beads, children_by_map_id=None, roadmap_reads=None, promotion_results=None, defects=None,
 ):
@@ -54,7 +73,7 @@ def build_projects(
 
     sans_projet = []
     for chantier in build_chantiers(beads, children_by_map_id, promotion_results):
-        project = projects_by_id.get(chantier.projet) if chantier.projet else None
+        project = _place(chantier, descriptors, projects_by_id)
         if project is None:
             sans_projet.append(chantier)
             if defects is not None:
@@ -76,7 +95,7 @@ def build_historique_par_projet(descriptors, beads, promotion_results=None, defe
 
     sans_projet = []
     for chantier in build_historique(beads, promotion_results):
-        project = projects_by_id.get(chantier.projet) if chantier.projet else None
+        project = _place(chantier, descriptors, projects_by_id)
         if project is None:
             sans_projet.append(chantier)
             if defects is not None:

@@ -92,7 +92,10 @@ def _render_report_menu(bead_id):
 # disarms it -- so a single tap never writes anything
 # (cockpit.actions.registry also refuses a POST missing `confirm: true`
 # server-side, so this is a defence in depth, not the only guard).
-TWO_STEP_ACTIONS = ("repondre", "accepter_proposition", "rejeter_proposition", "reporter_proposition", "relancer")
+TWO_STEP_ACTIONS = (
+    "repondre", "accepter_proposition", "rejeter_proposition", "reporter_proposition", "relancer",
+    "accepter_chantier",
+)
 
 SCRIPT = """
 <script>
@@ -133,7 +136,8 @@ SCRIPT = """
   // click -- they only arm the control (CSS class + label change). A
   // second click on the SAME armed control within CONFIRM_WINDOW_MS
   // sends confirm:true; any other click disarms it first.
-  var TWO_STEP_ACTIONS = ['repondre', 'accepter_proposition', 'rejeter_proposition', 'reporter_proposition', 'relancer'];
+  var TWO_STEP_ACTIONS = ['repondre', 'accepter_proposition', 'rejeter_proposition', 'reporter_proposition', 'relancer',
+                          'accepter_chantier'];
   var CONFIRM_WINDOW_MS = 10000;
   var armed = null; // {el, timer}
 
@@ -241,6 +245,15 @@ SCRIPT = """
       }
       showReportMenu(beadId, false);
       withUndo('Reporter', function () { post('reporter', body); });
+    } else if (action === 'pas_bon_vers_agent') {
+      var titre = el.getAttribute('data-titre') || '';
+      withUndo('Copier le prompt', function () {
+        post('pas_bon_vers_agent', {bead_id: beadId, titre: titre}).then(function (resp) {
+          return resp.json();
+        }).then(function (data) {
+          if (data.prompt && navigator.clipboard) { navigator.clipboard.writeText(data.prompt); }
+        });
+      });
     } else if (action === 'continuer') {
       var quoi = el.getAttribute('data-quoi') || '';
       withUndo('Copier le prompt', function () {

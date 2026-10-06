@@ -25,6 +25,7 @@ from cockpit.actions import relancer, trace
 from cockpit.actions.continuer import build_prompt
 from cockpit.actions.defer import compute_defer_until
 from cockpit.core.readmodel import PARIS
+from cockpit.projects.actions import AccepterError, accepter_chantier, pas_bon_vers_agent
 
 DEFAULT_ACTOR = "benjamin"
 DOOR_TIMEOUT_SECONDS = 15
@@ -261,7 +262,29 @@ def build_action_handlers(
             raise ActionError(str(exc))
         return {"ok": True, "bead_id": target_id, "target_type": target_type, "target": label}
 
+    def handle_accepter_chantier(payload):
+        """Accepter un chantier Livré (spec .30), two-step like every
+        gesture that changes the factory's state: the trace on the convoy
+        is what the next stage read turns into Accepté."""
+        bead_id = _require(payload, "bead_id")
+        try:
+            result = accepter_chantier(
+                bd_bin, bead_id, clock, acteur=acteur, confirm=payload.get("confirm") is True
+            )
+        except AccepterError as exc:
+            raise ActionError(str(exc))
+        result["display"] = "Chantier accepté à %s" % (_hhmm_paris(result["quand"]) or "--:--")
+        return result
+
+    def handle_pas_bon_vers_agent(payload):
+        """« Pas bon → agent » (spec .31): a prompt to copy, nothing
+        written, the frozen graph untouched."""
+        bead_id = _require(payload, "bead_id")
+        return {"ok": True, "prompt": pas_bon_vers_agent(bead_id, payload.get("titre") or "")}
+
     return {
+        "accepter_chantier": handle_accepter_chantier,
+        "pas_bon_vers_agent": handle_pas_bon_vers_agent,
         "acquitter": handle_acquitter,
         "reporter": handle_reporter,
         "continuer": handle_continuer,

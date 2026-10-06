@@ -18,6 +18,12 @@ if sys.argv[1:] == ["list", "--all", "--limit", "0", "--has-metadata-key", "gc.n
     print(json.dumps([]))
     sys.exit(0)
 
+# The "Projets" zone's read: every convoy and delivery ticket, open or
+# closed -- none in this fixture.
+if sys.argv[1:] == ["list", "--all", "--limit", "0", "--has-metadata-key", "gc.graph_digest", "--json"]:
+    print(json.dumps([]))
+    sys.exit(0)
+
 sys.stderr.write(
     "fake bd (cockpit-core): no canned response for: bd %s\n" % " ".join(sys.argv[1:])
 )

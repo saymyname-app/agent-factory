@@ -1,0 +1,311 @@
+"""Home screen "Projets" zone, through the running process (af-mjfvwx).
+
+T19/T20 built the projects and chantiers modules and tested their pure
+functions; nothing served them. This test starts the real ``bin/cockpit``
+on faked sources (fake gc, the controllable fake bd of the actions seam
+test) and reads only what a browser gets: ``GET /``, ``GET /api/projects``,
+``POST /api/actions/*``, and what the fake bd recorded.
+"""
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+CORE_FIXTURES = ROOT / "tests" / "fixtures" / "cockpit" / "core"
+ACTIONS_FIXTURES = ROOT / "tests" / "fixtures" / "cockpit" / "actions"
+DESCRIPTORS = ROOT / "tests" / "fixtures" / "cockpit" / "projects" / "descriptors"
+COCKPIT_BIN = ROOT / "bin" / "cockpit"
+
+sys.path.insert(0, str(CORE_FIXTURES))
+
+from fake_gc import FakeGc  # noqa: E402
+
+BENJAMIN_LOGIN = "benjamin@example.ts.net"
+WAIT_SECONDS = 30  # CI runners spawn the fake bd slowly; see cockpit-health-test.py
+
+
+def free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def wait_for_port(host, port, timeout=10):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.05)
+    raise TimeoutError("nothing listening on %s:%d after %ss" % (host, port, timeout))
+
+
+def wait_until(predicate, timeout=WAIT_SECONDS, interval=0.1):
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        last = predicate()
+        if last:
+            return last
+        time.sleep(interval)
+    raise AssertionError("condition not met within %ss (last=%r)" % (timeout, last))
+
+
+def convoy(bead_id, title, status, digest=None, project=None):
+    metadata = {}
+    if digest:
+        metadata["gc.graph_digest"] = digest
+    if project:
+        metadata["gc.project_id"] = project
+    return {
+        "id": bead_id, "title": title, "status": status, "issue_type": "convoy",
+        "labels": ["approved-ticket-graph"] if digest else [], "notes": "", "metadata": metadata,
+    }
+
+
+def ticket(bead_id, digest, status, rig="agent-factory", **metadata):
+    metadata["gc.graph_digest"] = digest
+    if rig:
+        metadata["gc.dispatch_rig"] = rig
+    return {
+        "id": bead_id, "title": "ticket " + bead_id, "status": status, "issue_type": "task",
+        "labels": ["approved-ticket-graph", "delivery-plane"], "notes": "", "metadata": metadata,
+    }
+
+
+def beads():
+    question = {
+        "gc.needs_benjamin": "les tests automatiques échouent pour la troisième fois",
+        "gc.escalation_pourquoi": "l'usine a essayé seule pendant deux heures",
+        "gc.escalation_que_faire": json.dumps([
+            {"lettre": "a", "option": "relancer", "consequence": "le ticket reste dans le graphe"},
+            {"lettre": "b", "option": "retirer ce ticket", "consequence": "le chantier se termine sans lui"},
+        ]),
+        "gc.escalation_bloquant": "true",
+        "gc.escalation_horodatage": "2026-09-30T08:00:00Z",
+    }
+    return [
+        # SayMyName, by its project key: in delivery, one ticket asks Benjamin.
+        convoy("af-conv-a", "Export des listes", "open", "sha256:a", project="saymyname"),
+        ticket("af-tk-a1", "sha256:a", "closed", rig="saymyname-backend"),
+        ticket("af-tk-a2", "sha256:a", "in_progress", rig="saymyname-backend"),
+        ticket("af-tk-a3", "sha256:a", "in_progress", rig="saymyname-backend", **{"gc.delivery_status": "waiting"}),
+        ticket("af-tk-a4", "sha256:a", "open", rig="saymyname-backend", **question),
+        # No project key: the rig of its tickets places it under Usine. Delivered, not accepted.
+        convoy("af-conv-b", "Page d'accueil publique", "closed", "sha256:b"),
+        ticket("af-tk-b1", "sha256:b", "closed"),
+        ticket("af-tk-b2", "sha256:b", "closed"),
+        # gc's own input convoy: a convoy bead, never a chantier.
+        convoy("af-conv-c", "input convoy for af-zzzz", "open"),
+        # Neither key nor rig: "Sans projet", a counted producer defect.
+        convoy("af-conv-d", "Ancien chantier sans rattachement", "closed", "sha256:d"),
+        ticket("af-tk-d1", "sha256:d", "closed", rig=None),
+    ]
+
+
+class HomeProjectsZoneTest(unittest.TestCase):
+    def setUp(self):
+        self.fake_gc = FakeGc().start()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state_file = os.path.join(self.tmp.name, "beads.json")
+        self.calls_file = os.path.join(self.tmp.name, "calls.jsonl")
+        self.fail_flag_file = os.path.join(self.tmp.name, "fail")
+        self.port = free_port()
+        self.origin = "http://127.0.0.1:%d" % self.port
+        self.proc = None
+        self.write_beads(beads())
+
+    def tearDown(self):
+        if self.proc is not None:
+            if self.proc.poll() is None:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+                    self.proc.wait(timeout=5)
+            self.proc.stdout.close()
+            self.proc.stderr.close()
+        self.fake_gc.stop()
+        self.tmp.cleanup()
+
+    def write_beads(self, value):
+        tmp = self.state_file + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(value, fh)
+        os.replace(tmp, self.state_file)
+
+    def read_beads(self):
+        with open(self.state_file) as fh:
+            return {bead["id"]: bead for bead in json.load(fh)}
+
+    def start_cockpit(self):
+        env = dict(os.environ)
+        env.update(
+            {
+                "COCKPIT_HOST": "127.0.0.1",
+                "COCKPIT_PORT": str(self.port),
+                "COCKPIT_GC_BASE_URL": self.fake_gc.base_url,
+                "COCKPIT_GC_STATUS_POLL_SECONDS": "0.1",
+                "COCKPIT_GC_RECONNECT_SECONDS": "0.1",
+                "COCKPIT_BD_BIN": str(ACTIONS_FIXTURES / "fake-bd"),
+                "COCKPIT_PID_FILE": os.path.join(self.tmp.name, "cockpit.pid"),
+                "COCKPIT_BEADS_POLL_SECONDS": "0.2",
+                "COCKPIT_PROJECTS_POLL_SECONDS": "0.2",
+                "COCKPIT_DESCRIPTORS_DIR": str(DESCRIPTORS),
+                "COCKPIT_BENJAMIN_LOGIN": BENJAMIN_LOGIN,
+                "COCKPIT_ALLOWED_ORIGIN": self.origin,
+                "FAKE_BD_STATE_FILE": self.state_file,
+                "FAKE_BD_CALLS_FILE": self.calls_file,
+                "FAKE_BD_FAIL_FLAG_FILE": self.fail_flag_file,
+            }
+        )
+        self.proc = subprocess.Popen(
+            [sys.executable, str(COCKPIT_BIN), "run"],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        wait_for_port("127.0.0.1", self.port)
+        with urllib.request.urlopen("http://127.0.0.1:%d/" % self.port, timeout=5) as resp:
+            resp.read()
+            self.session_cookie = resp.headers.get("Set-Cookie", "").split(";", 1)[0]
+
+    def get(self, path):
+        with urllib.request.urlopen("http://127.0.0.1:%d%s" % (self.port, path), timeout=5) as resp:
+            raw = resp.read().decode("utf-8")
+            if resp.headers.get("Content-Type", "").startswith("application/json"):
+                return json.loads(raw)
+            return raw
+
+    def post_action(self, action, body, login=BENJAMIN_LOGIN):
+        headers = {"Content-Type": "application/json", "Origin": self.origin, "Cookie": self.session_cookie}
+        if login:
+            headers["Tailscale-User-Login"] = login
+        req = urllib.request.Request(
+            "http://127.0.0.1:%d/api/actions/%s" % (self.port, action),
+            data=json.dumps(body).encode("utf-8"), headers=headers, method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read().decode("utf-8"))
+
+    def projects(self):
+        payload = self.get("/api/projects")
+        return payload if payload["state"] == "filled" else None
+
+    def chantiers(self, payload, project_id):
+        project = next(p for p in payload["projects"] if p["project_id"] == project_id)
+        return {c["id"]: c for c in project["chantiers"]}
+
+    # ------------------------------------------------------------------
+    def test_declared_projects_and_their_chantiers_are_served(self):
+        self.start_cockpit()
+        payload = wait_until(self.projects)
+
+        self.assertEqual(["agent-factory", "saymyname"], [p["project_id"] for p in payload["projects"]])
+        saymyname = self.chantiers(payload, "saymyname")
+        self.assertEqual(["af-conv-a"], list(saymyname))
+        self.assertEqual("Livraison", saymyname["af-conv-a"]["stage"])
+        self.assertEqual("1/4 tickets mergés · 1 en cours · 1 en PR", saymyname["af-conv-a"]["detail"])
+        self.assertEqual("probleme_remonte", saymyname["af-conv-a"]["etat"])
+        self.assertEqual("af-tk-a4", saymyname["af-conv-a"]["etat_cible"])
+
+        usine = self.chantiers(payload, "agent-factory")
+        self.assertEqual(["af-conv-b"], list(usine), "a convoy with no project key follows its tickets' rig")
+        self.assertEqual("Livré", usine["af-conv-b"]["stage"])
+        self.assertEqual("a_toi_de_jouer", usine["af-conv-b"]["etat"])
+
+        self.assertEqual(["af-conv-d"], [c["id"] for c in payload["sans_projet"]])
+        everything = json.dumps(payload)
+        self.assertNotIn("af-conv-c", everything, "gc's input convoy is not a chantier")
+
+        body = wait_until(lambda: self.get("/") if 'id="d-af-tk-a4"' in self.get("/") else None)
+        self.assertIn('<section class="zone cockpit-projects" data-state="filled">', body)
+        self.assertIn("<h3>SayMyName</h3>", body)
+        self.assertIn("<h3>Usine</h3>", body)
+        self.assertIn("Livraison · 1/4 tickets mergés · 1 en cours · 1 en PR", body)
+        self.assertIn("Livré : 2/2 tickets mergés", body)
+        self.assertIn('class="stepper cockpit-stepper"', body)
+        # "Problème remonté" leads in one click to the request that carries the question.
+        self.assertIn('href="#d-af-tk-a4" data-goto="af-tk-a4"', body)
+        self.assertIn("Problème remonté</a>", body)
+        self.assertIn('<a class="li" href="#d-af-tk-a4" data-id="af-tk-a4"', body)
+        # "À toi de jouer" on a delivered chantier opens its acceptance panel in place.
+        self.assertIn('data-acc-open="af-conv-b"', body)
+        self.assertIn('<div class="accpanel cockpit-chantier-actions" id="acc-af-conv-b" hidden>', body)
+        self.assertIn('data-action="accepter_chantier" data-bead-id="af-conv-b"', body)
+        self.assertIn('data-action="pas_bon_vers_agent" data-bead-id="af-conv-b"', body)
+        self.assertIn("Sans projet", body)
+        self.assertIn("1 défaut producteur", body)
+        # No link to a page this process does not serve.
+        self.assertNotIn('href="/projet/', body)
+        self.assertIn("Tout est à jour à", body)
+
+    # ------------------------------------------------------------------
+    def test_accepting_a_delivered_chantier_takes_two_steps_and_is_traced(self):
+        self.start_cockpit()
+        wait_until(self.projects)
+
+        status, payload = self.post_action("accepter_chantier", {"bead_id": "af-conv-b", "confirm": True}, login=None)
+        self.assertEqual(403, status)
+        status, payload = self.post_action("accepter_chantier", {"bead_id": "af-conv-b"})
+        self.assertEqual(400, status)
+        self.assertEqual("confirmation requise", payload["error"])
+        self.assertNotIn("gc.cockpit_chantier_accepted", self.read_beads()["af-conv-b"]["metadata"])
+
+        status, payload = self.post_action("accepter_chantier", {"bead_id": "af-conv-b", "confirm": True})
+        self.assertEqual(200, status, payload)
+        self.assertIn("Chantier accepté à ", payload["display"])
+        accepted = self.read_beads()["af-conv-b"]
+        self.assertEqual("true", accepted["metadata"]["gc.cockpit_chantier_accepted"])
+        self.assertEqual("benjamin", accepted["metadata"]["gc.cockpit_action_acteur"])
+        self.assertIn("Cockpit: accepter_chantier", accepted["notes"])
+
+        # Accepted is this chantier's last stage (no promotion branch): it leaves the active list.
+        wait_until(lambda: self.projects() and "af-conv-b" not in self.chantiers(self.projects(), "agent-factory"))
+        self.assertNotIn('id="ch-af-conv-b"', self.get("/"))
+
+    def test_pas_bon_gives_a_prompt_and_writes_nothing(self):
+        self.start_cockpit()
+        wait_until(self.projects)
+        before = self.read_beads()
+        status, payload = self.post_action(
+            "pas_bon_vers_agent", {"bead_id": "af-conv-b", "titre": "Page d'accueil publique"}
+        )
+        self.assertEqual(200, status, payload)
+        self.assertIn("af-conv-b", payload["prompt"])
+        self.assertIn("Page d'accueil publique", payload["prompt"])
+        self.assertIn("consomme des tokens", payload["prompt"])
+        self.assertEqual(before, self.read_beads())
+
+    # ------------------------------------------------------------------
+    def test_unreadable_projects_are_unknown_never_an_empty_list(self):
+        Path(self.fail_flag_file).write_text("fail")
+        self.start_cockpit()
+        payload = self.get("/api/projects")
+        self.assertEqual("unknown", payload["state"])
+        self.assertEqual([], payload["projects"])
+        body = self.get("/")
+        self.assertIn('<section class="zone cockpit-projects" data-state="unknown">', body)
+        self.assertIn("Inconnu : projets illisibles", body)
+        self.assertNotIn("Aucun chantier actif", body)
+        self.assertNotIn("Tout est à jour à", body)
+        self.assertIn("projets (inconnu)", body)
+
+        os.remove(self.fail_flag_file)
+        wait_until(self.projects)
+        wait_until(lambda: "Tout est à jour à" in self.get("/"))
+
+
+if __name__ == "__main__":
+    unittest.main()

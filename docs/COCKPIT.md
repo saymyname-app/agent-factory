@@ -205,3 +205,41 @@ way to give the hour, so the server refused it).
 through the process's HTTP surface. Fidelity itself is judged by Benjamin
 on captures (PC 1440 px and iPhone 390 px, light and dark) taken from the
 real process on the real sources, next to the prototype's.
+
+## « Projets » on the home screen (af-mjfvwx)
+
+T19/T20 built `lib/cockpit/projects/**` and `ui/projects/page.py` and tested
+their pure functions; no process imported them. They now have a running
+caller:
+
+- `projects/source.py` `read_projects` is the read model's `projets`
+  source (every `COCKPIT_PROJECTS_POLL_SECONDS`, 30 s; Validity window
+  5 min, like Beads): descriptors from `COCKPIT_DESCRIPTORS_DIR`
+  (`config/project-descriptors/`), non-closed beads, every bead carrying
+  `gc.graph_digest`, and the children of each open map. A failed `bd` call
+  fails the whole read: the zone then says « Inconnu : projets illisibles »,
+  never an empty list.
+- `GET /` shows the zone under the inbox (`ui/projects/page.py`, the
+  prototype's markup); `GET /api/projects` is its JSON twin.
+- « Problème remonté » and « À toi de jouer » are one click from where
+  Benjamin acts: the request carrying the question, or — on a Livré
+  chantier — its acceptance panel in place, with « Accepter »
+  (`POST /api/actions/accepter_chantier`, two-step, traced on the convoy)
+  and « Pas bon → agent » (`pas_bon_vers_agent`, a prompt to copy).
+
+Two rules the real data needed:
+
+- A convoy bead without `gc.graph_digest` is gc's own "input convoy", not
+  a chantier.
+- A convoy without `gc.project_id` is placed under the project declaring
+  the rig its tickets are dispatched to (`gc.dispatch_rig`; spec « Données
+  de projet » : « projet déduit du rig »). With neither, it is listed under
+  « Sans projet ».
+
+Not wired yet (later slices of af-mjfvwx): the roadmap step and « dev a N
+commits d'avance » (they need the cockpit's own clones; until then Promu
+is treated as masked for every project), the « Page projet » link, and
+Livré-non-Accepté as a « Quand tu veux » request (`projects/demandes.py`).
+
+`tests/cockpit-home-projects-test.py` drives all of the above through the
+process's HTTP surface.

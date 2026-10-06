@@ -49,6 +49,12 @@ class Config:
         )
         self.bd_bin = env.get("COCKPIT_BD_BIN", "bd")
         self.beads_poll_seconds = float(env.get("COCKPIT_BEADS_POLL_SECONDS", "20"))
+        # "Projets" zone: the declared projects (one descriptor file each)
+        # and how often their chantiers are recomputed from Beads.
+        self.descriptors_dir = env.get(
+            "COCKPIT_DESCRIPTORS_DIR", os.path.join(_REPO_ROOT, "config", "project-descriptors")
+        )
+        self.projects_poll_seconds = float(env.get("COCKPIT_PROJECTS_POLL_SECONDS", "30"))
         self.pid_file = env.get("COCKPIT_PID_FILE") or _default_pid_file(env)
         # Out-of-scope touch (T13, af-cx20q9 -- declared scope
         # lib/cockpit/access/**, lib/cockpit/actions/**): the access
