@@ -173,19 +173,106 @@ _French conversational alias_: résultat livré
 _Avoid_: Accepted Outcome, closed Bead alone
 
 **Accepted Outcome**:
-A Delivered Outcome whose behavior the project owner has confirmed or whose proven work class has met predefined acceptance evidence.
+A Delivered Outcome accepted by the project owner's recorded words at a named commit and then merged, or whose proven work class has met predefined acceptance evidence. The work-class clause has no use for an Outcome born of a Planning Run: only the owner's words accept it.
 _French conversational alias_: résultat accepté
-_Avoid_: merely merged code, Delivered Outcome
+_Avoid_: merely merged code, Delivered Outcome, "refused" (the three answers to a Delivered Outcome are accepted, findings returned, abandoned)
 
 **Vertical Slice**:
-A bounded increment that crosses the layers necessary to produce independently demonstrable or verifiable behavior.
+A bounded increment that crosses the layers necessary to produce behavior demonstrable on its own on the launched product, through to the point where the product serves it.
 _French conversational alias_: tranche verticale
-_Avoid_: layer task, frontend ticket, backend ticket
+_Avoid_: layer task, frontend ticket, backend ticket, behavior verified only by a test on an internal function
 
 **Chantier**:
 The canonical term for Outcome: one Planning Run and the Delivery Work Graph convoy it produced, tracked as a single unit from Cadrage through Spec, Graphe, Livraison, Livré, Accepté, and (where applicable) Promu. Delivered Outcome and Accepted Outcome name two of its states.
 _French conversational alias_: chantier (visible dans le cockpit)
 _Avoid_: Project (a Rig grouping), ticket, convoy alone
+
+## Delivery (Spec af-wf4w5r, Planning Run D01)
+
+**Declared Scope**:
+The optional file paths a ticket declares so the publication door can put overlapping tickets in series. It never bounds what the author may touch.
+_French conversational alias_: périmètre déclaré
+_Avoid_: scope alone, "hors périmètre" (reserved for Out of Scope)
+
+**Validated Prototype**:
+The frozen version of a chosen interface prototype that the project owner confirmed, referenced by commit in the Spec, and the target of the fidelity proof until acceptance.
+_French conversational alias_: prototype validé
+_Avoid_: prototype alone, maquette, "variante D"
+
+**Prototype Fold**:
+The Vertical Slice that folds a Validated Prototype into the real code, serving all its prototyped states at the real address before any other interface ticket.
+_French conversational alias_: repli du prototype
+_Avoid_: promoting the prototype file as is
+
+**Seam**:
+A public boundary where a test observes behavior without entering the code (Matt Pocock's sense), agreed during planning.
+_French conversational alias_: seam
+_Avoid_: internal function, a boundary the author picks while writing the test
+
+**Criterion Test**:
+The executable form of one acceptance criterion of a ticket, written before the code, proven red at the start commit, then frozen.
+_French conversational alias_: test de critère
+_Avoid_: test d'acceptation, test E2E
+
+**Ticket Exit**:
+The structured, tool-called way a worker ends a ticket: finished, Planning Exception, operator request, technically blocked, or interrupted.
+_French conversational alias_: sortie de ticket
+_Avoid_: free-text status, final message
+
+**Ticket Handoff**:
+The structured record a worker leaves on its ticket in the tracker: done, deviations, not done, findings outside the ticket, plus statements computed by code.
+_French conversational alias_: compte rendu de ticket
+_Avoid_: notes, commentaire, follow-up
+
+**Evaluator**:
+A fresh, read-only session that uses the launched product and returns observations with evidence; it never reads the diff and never writes a global verdict.
+_French conversational alias_: évaluateur
+_Avoid_: QA, testeur, validateur, relecteur (reserved for who reads code or a graph)
+
+**Ticket Evaluation**:
+The Evaluator's observation of one ticket's demonstration line and criteria on the launched product, before that ticket merges.
+_French conversational alias_: évaluation de ticket
+_Avoid_: QA pass, review
+
+**Outcome Evaluation**:
+The Evaluator's observation of every numbered user story of the Spec on the assembled product, at the end of the Spec and before acceptance.
+_French conversational alias_: évaluation du résultat
+_Avoid_: final QA, acceptance
+
+**Review Finding**:
+A deviation raised by the code reviewer on one axis, with or without a cited source.
+_French conversational alias_: constat de revue
+_Avoid_: commentaire, remarque, issue, bug
+
+**Blocking Finding**:
+A Review Finding that cites a line of the Spec, of the ticket, or a written rule of the repository; it prevents the merge until it has a favorable verdict.
+_French conversational alias_: constat bloquant
+_Avoid_: commentaire, remarque, issue, bug
+
+**Evidence Record**:
+One piece of evidence recorded by the capture tool or a Factory script, tied to a commit, never written by an agent.
+_French conversational alias_: preuve
+_Avoid_: capture alone, log
+
+**Evidence Pack**:
+The document generated by code from Evidence Records, tied to a commit, that the project owner judges at acceptance.
+_French conversational alias_: dossier de preuves
+_Avoid_: rapport, résumé, description de PR
+
+**Acceptance Request**:
+The request the escalation door sends the project owner when a Delivered Outcome is ready, with the link to its Evidence Pack.
+_French conversational alias_: demande d'acceptation
+_Avoid_: notification, PR
+
+**Acceptance Session**:
+The session in which the project owner judges the launched product and its Evidence Pack.
+_French conversational alias_: session d'acceptation
+_Avoid_: revue, QA, démo
+
+**Owner Finding**:
+A finding the project owner returns at acceptance, structured and routed by code. Distinct from a worker's finding outside its ticket.
+_French conversational alias_: constat du propriétaire
+_Avoid_: retour, feedback, bug
 
 ## Durable work
 
