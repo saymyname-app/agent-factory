@@ -48,6 +48,7 @@ Every answer is one JSON object on stdout.
 | Field | Key | On | Values |
 |---|---|---|---|
 | Mark | `gc.flow.mark` | convoy, ticket | `new-flow/v1` |
+| Spec | `gc.spec_id` (read only: written by the publication door) | convoy | the id of the Spec the convoy delivers; the evidence store is filed under it (T09, `docs/EVIDENCE_STORE.md`) |
 | Kind | `gc.ticket_kind` (read only: written by the publication door) | ticket | `vertical_slice`, `prefactoring`, `repair` |
 | Demonstration line | `gc.flow.demonstration_line` | ticket (`vertical_slice`, `repair`) | one non-empty line, written once by `mark` |
 | Covered user stories | `gc.flow.user_stories` | ticket (`vertical_slice`) | the numbers of the Spec's user stories the slice covers, at least one, each once; written once by `mark` |
@@ -90,6 +91,11 @@ a ticket that already carries the mark without it. That a graph has one
 Fold, and that the interface tickets wait for it, is the publication
 door's check (`docs/ENTRY_CONTRACT.md`).
 
+`add-evidence` is called by `bin/evidence-capture` (T09), which files the
+piece in the evidence store and computes its fingerprint
+(`docs/EVIDENCE_STORE.md`); a fingerprint written by hand for a piece the
+tool did not produce is refused by `evidence-capture verify`.
+
 A piece name is made of letters, digits, `_` and `.` only: the tracker
 refuses any metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*` (observed on bd
 1.2.2), so a hyphen is refused here before it is tried.
@@ -120,8 +126,9 @@ stories (`user_stories`, a list of numbers or `null`), whether it
 establishes the launch recipe (`establishes_launch_recipe`), whether it is
 the Prototype Fold (`prototype_fold`), tracker status,
 branch and its tip, Ticket Exit, verdicts, counters, evidence fingerprints
-and gate records; and for the convoy its counters and its open factory
-incident (`incident`, `null` when there is none).
+and gate records; and for the convoy the Spec it delivers (`spec`, `null`
+when it names none), its counters and its open factory incident
+(`incident`, `null` when there is none).
 
 `ticket` answers whether one bead carries the mark, without naming its
 convoy: exit 0 and `"new_flow": true`, or exit 4 and `"new_flow": false`.
