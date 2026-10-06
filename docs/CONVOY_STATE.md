@@ -18,7 +18,8 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state mark af-convoy \
   --demonstration-line af-t1="Sur le produit lancé, …" \
   --user-stories af-t1=4,12 \
-  --establishes-launch-recipe af-t1                     # publication door (T05, T06)
+  --establishes-launch-recipe af-t1 \
+  --prototype-fold af-t1                                # publication door (T05, T06, T36)
 ./bin/convoy-state show af-convoy --repo rigs/product   # every reader
 ./bin/convoy-state set-branch   af-convoy af-t1 --branch ticket/af-t1
 ./bin/convoy-state record-gate  af-convoy af-t1 --gate dispatch   # bin/dispatch-door --convoy, after the sling
@@ -51,6 +52,7 @@ Every answer is one JSON object on stdout.
 | Demonstration line | `gc.flow.demonstration_line` | ticket (`vertical_slice`, `repair`) | one non-empty line, written once by `mark` |
 | Covered user stories | `gc.flow.user_stories` | ticket (`vertical_slice`) | the numbers of the Spec's user stories the slice covers, at least one, each once; written once by `mark` |
 | Launch recipe established here | `gc.flow.establishes_launch_recipe` | ticket (`vertical_slice`, at most one per convoy) | `true`, written with the mark; absent otherwise |
+| Prototype Fold | `gc.flow.prototype_fold` | ticket (`vertical_slice`) | `true`, written with the mark; absent otherwise |
 | Ticket branch | `gc.flow.branch` | ticket | branch name |
 | Ticket Exit | `gc.flow.exit` | ticket | `finished`, `planning_exception`, `operator_request`, `technically_blocked`, `interrupted` |
 | Verdict | `gc.flow.verdict.<kind>` | ticket | kind: `test_review`, `code_review`, `evaluation`, `fidelity`; state: `favorable`, `unfavorable`; always with the full commit SHA it judged |
@@ -81,7 +83,12 @@ given once, and a list that differs from the one already written.
 `--establishes-launch-recipe <ticket>` (repeatable) names the slice that
 establishes the project's launch recipe: refused on anything but a
 `vertical_slice`, on more than one ticket of the convoy, and on a ticket
-that already carries the mark without it.
+that already carries the mark without it. `--prototype-fold <ticket>`
+(T36) names the slice that is the Prototype Fold of the Spec's Validated
+Prototype: refused on anything but a `vertical_slice` of the convoy and on
+a ticket that already carries the mark without it. That a graph has one
+Fold, and that the interface tickets wait for it, is the publication
+door's check (`docs/ENTRY_CONTRACT.md`).
 
 A piece name is made of letters, digits, `_` and `.` only: the tracker
 refuses any metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*` (observed on bd
@@ -110,7 +117,8 @@ mark and are not closed. It is what `bin/convoy-advance` walks
 
 `show` renders, per ticket: mark, kind, demonstration line, covered user
 stories (`user_stories`, a list of numbers or `null`), whether it
-establishes the launch recipe (`establishes_launch_recipe`), tracker status,
+establishes the launch recipe (`establishes_launch_recipe`), whether it is
+the Prototype Fold (`prototype_fold`), tracker status,
 branch and its tip, Ticket Exit, verdicts, counters, evidence fingerprints
 and gate records; and for the convoy its counters and its open factory
 incident (`incident`, `null` when there is none).
@@ -147,7 +155,8 @@ key), never as a default value:
   kind), a `vertical_slice` or a `repair` without a demonstration line, a
   demonstration line on a `prefactoring`;
 - a `vertical_slice` without covered user stories, covered user stories or
-  a launch recipe established on another kind;
+  a launch recipe established on another kind, a Prototype Fold of another
+  kind;
 - any stored value this command would have refused to write, and any
   `gc.flow.*` key it does not know (a field invented outside the command).
 

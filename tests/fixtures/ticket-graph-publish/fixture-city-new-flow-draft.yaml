@@ -1,7 +1,9 @@
 # Brouillon de graphe conforme au contrat du nouveau flux (Spec af-wf4w5r §2),
 # sur le produit synthétique de la Fixture City : une page servie et une API.
 # Ses tranches couvrent les trois user stories de la Spec de la fixture
-# (tests/fixtures/delivery-fixture-city/spec.md).
+# (tests/fixtures/delivery-fixture-city/spec.md). T2 est le Prototype Fold du
+# Validated Prototype de cette Spec ; T3, qui rétablit une story d'interface,
+# l'attend.
 # Entrée de tests/ticket-graph-publish-entry-contract-test.py, de
 # tests/ticket-graph-publish-coverage-test.py et de l'essai sur le vrai
 # tracker (tests/ticket-graph-publish-new-flow-real-tracker-test.sh).
@@ -31,6 +33,7 @@ tickets:
     Sur le produit lancé avec le jeu de données « contenu », la page d'accueil
     (GET /) affiche les trois éléments « Alpha », « Bêta » et « Gamma ».
   user_stories: [1, 2]
+  prototype_fold: true
   acceptance_criteria:
   - entry_point: "GET / sur le produit lancé avec le jeu de données « contenu »"
     observable: "la région « liste » contient trois lignes, libellées « Alpha », « Bêta », « Gamma »"

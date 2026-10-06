@@ -27,7 +27,10 @@ is never re-examined.
 
 `outline` reads a Spec text on stdin and prints, with that same reader, what
 the publication door poses in each ticket (T06, af-cgauf8): the numbered
-user stories and the Testing Decisions. It reads no bead and writes nothing.
+user stories and the Testing Decisions; and (T36, af-2nmcxw) which stories
+describe an interface and the reference of the Validated Prototype, as
+written -- the remote repository is not read. It reads no bead and writes
+nothing.
 
 The file-Spec mode (`approve`/`freeze-check`/`revise`/`expire-check`/
 `status` over a JSON Spec artifact carrying the
@@ -551,10 +554,24 @@ def cmd_outline(args: argparse.Namespace) -> int:
     except SpecApproveError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
         return 1
+    # The reference as the Spec writes it; what an incomplete one misses is
+    # said, not raised: only a graph with interface tickets needs it.
+    reference, problem = None, None
+    section = subtree(found, "validated prototype")
+    if section is not None:
+        try:
+            reference = prototype_reference(section)
+        except SpecApproveError as exc:
+            problem = str(exc)
     print(json.dumps({
         "ok": True,
-        "user_stories": [{"number": number, "text": text.strip()} for number, text in stories],
+        "user_stories": [
+            {"number": number, "text": text.strip(), "interface": INTERFACE_TAG in text.lower()}
+            for number, text in stories
+        ],
         "testing_decisions": testing_decisions(found),
+        "validated_prototype": reference,
+        "validated_prototype_problem": problem,
     }, indent=2, ensure_ascii=False))
     return 0
 
@@ -594,7 +611,8 @@ def build_parser() -> argparse.ArgumentParser:
     bd_status.set_defaults(func=cmd_bd_status)
 
     outline = subparsers.add_parser(
-        "outline", help="print the numbered user stories and Testing Decisions of a Spec text read on stdin"
+        "outline",
+        help="print the numbered user stories, Testing Decisions and Validated Prototype reference of a Spec text read on stdin",
     )
     outline.set_defaults(func=cmd_outline)
 

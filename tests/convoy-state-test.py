@@ -397,6 +397,41 @@ class ConvoyStateTest(unittest.TestCase):
         t1 = self.ticket(self.show(expect=EXIT_UNRULED), T1)
         self.assertEqual("oui", t1["establishes_launch_recipe"]["raw"])
 
+    # --- T36: the slice that is the Prototype Fold -----------------------------
+
+    def test_mark_writes_the_slice_that_is_the_prototype_fold(self):
+        self.seed(kinds={T1: "vertical_slice", T2: "prefactoring"})
+        self.ok(*self.mark_slice(f"{T1}=3"), "--prototype-fold", T1)
+
+        shown = self.show()
+        self.assertFalse(shown["unruled"])
+        self.assertIs(True, self.ticket(shown, T1)["prototype_fold"])
+        self.assertIs(False, self.ticket(shown, T2)["prototype_fold"])
+        before = self.tracker.read_bytes()
+        self.ok(*self.mark_slice(f"{T1}=3"), "--prototype-fold", T1)
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_mark_refuses_a_prototype_fold_that_is_not_a_vertical_slice_of_the_convoy(self):
+        self.assert_refused_and_nothing_written("mark", CONVOY, "--prototype-fold", T1, mention="vertical_slice")
+        self.assert_refused_and_nothing_written("mark", CONVOY, "--prototype-fold", "fx-elsewhere", mention="fx-elsewhere")
+
+    def test_mark_refuses_to_change_which_slice_is_the_prototype_fold(self):
+        self.seed(kinds={T1: "vertical_slice"})
+        self.ok(*self.mark_slice(f"{T1}=3"))
+        self.assert_refused_and_nothing_written(*self.mark_slice(f"{T1}=3"), "--prototype-fold", T1, mention="déjà")
+
+    def test_prototype_fold_flag_written_outside_the_command_is_unruled(self):
+        self.ok("mark", CONVOY)
+        self.edit_tracker(T1, **{"gc.flow.prototype_fold": True})
+        t1 = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertIn("vertical_slice", json.dumps(t1["unruled"], ensure_ascii=False))
+
+        self.seed(kinds={T1: "vertical_slice"})
+        self.ok(*self.mark_slice(f"{T1}=3"))
+        self.edit_tracker(T1, **{"gc.flow.prototype_fold": "oui"})
+        t1 = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertEqual("oui", t1["prototype_fold"]["raw"])
+
     # --- AC2: a malformed write is refused and nothing is written -------------
 
     def test_verdict_without_commit_is_refused(self):
