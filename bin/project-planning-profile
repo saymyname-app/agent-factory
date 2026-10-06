@@ -18,6 +18,16 @@ projet" (spec af-oohx2x .12, T04, one rig = one project): `describe` and
 `list` validate the extended descriptor shape -- project_id, display_name,
 rigs, knowledge_repo, roadmap_path, rituals_status_command, and an optional
 per-rig promotion_branch -- and never accept a production or language field.
+
+Spec af-wf4w5r .12 (D01, T01) extends the descriptor with one more optional
+block, `launch`: the Delivery Workflow's launch recipe, entry points, health
+probe, named synthetic datasets, test perimeter, frozen harness paths,
+per-test test command, seam mode, regression command and k. A descriptor
+that declares `launch` must declare every one of those sub-fields -- a
+partial launch block fails loudly instead of launching with a silent gap.
+A descriptor with no `launch` block at all (e.g. the Factory's own
+descriptor) is unaffected: `bin/project-launch` refuses to start a project
+with no declared recipe.
 """
 
 from __future__ import annotations
@@ -49,6 +59,23 @@ REPO_POINTER = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 # and there is no Production Step until some descriptor declares a readable
 # deploy target (spec af-oohx2x, Implementation Decisions).
 DESCRIPTOR_FORBIDDEN_KEYS = ("language", "production")
+
+# Spec af-wf4w5r .12 (D01, T01): every one of these must be present when a
+# descriptor declares a `launch` block at all -- a partial recipe is a gap
+# the Delivery Workflow would otherwise discover only at launch time.
+LAUNCH_REQUIRED_FIELDS = (
+    "recipe",
+    "entry_points",
+    "health_probe",
+    "test_perimeter",
+    "frozen_harness_paths",
+    "test_command",
+    "seam_mode",
+    "regression_command",
+    "k",
+)
+
+SEAM_MODES = ("black_box", "import_rule")
 
 # Common people/data safety principles (spec: "Universal safety principles
 # govern people and data"). A profile may add its own stricter keys, but it
@@ -249,6 +276,95 @@ def register(profile: dict[str, Any], city_registry: list[str]) -> dict[str, Any
     }
 
 
+def load_launch(raw: Any, name: str) -> dict[str, Any]:
+    """Validate a descriptor's `launch` block (spec af-wf4w5r .12, T01): the
+    Delivery Workflow's launch recipe, entry points, health probe, named
+    synthetic datasets, test perimeter, frozen harness paths, per-test test
+    command, seam mode, regression command and k. Every required sub-field
+    must be present -- a missing one fails loudly instead of launching, or
+    describing, with a silent gap."""
+    launch = as_dict(raw, name)
+    missing = [field for field in LAUNCH_REQUIRED_FIELDS if field not in launch]
+    if missing:
+        raise ProfileError(
+            f"{name} is missing required declaration(s): {', '.join(missing)}"
+        )
+
+    recipe = [
+        required_string(token, f"{name}.recipe[{index}]")
+        for index, token in enumerate(as_list(launch["recipe"], f"{name}.recipe"))
+    ]
+    if not recipe:
+        raise ProfileError(f"{name}.recipe must name at least one argv token")
+
+    entry_points: list[dict[str, Any]] = []
+    for index, raw_entry in enumerate(as_list(launch["entry_points"], f"{name}.entry_points")):
+        entry = as_dict(raw_entry, f"{name}.entry_points[{index}]")
+        entry_points.append(
+            {
+                "kind": required_string(entry.get("kind"), f"{name}.entry_points[{index}].kind"),
+                "method": required_string(entry.get("method"), f"{name}.entry_points[{index}].method"),
+                "path": required_string(entry.get("path"), f"{name}.entry_points[{index}].path"),
+            }
+        )
+    if not entry_points:
+        raise ProfileError(f"{name}.entry_points must name at least one entry point")
+
+    health_probe_raw = as_dict(launch["health_probe"], f"{name}.health_probe")
+    health_probe = {
+        "path": required_string(health_probe_raw.get("path"), f"{name}.health_probe.path"),
+        "expect_status": health_probe_raw.get("expect_status", 200),
+    }
+
+    test_perimeter = [
+        required_string(entry, f"{name}.test_perimeter[{index}]")
+        for index, entry in enumerate(as_list(launch["test_perimeter"], f"{name}.test_perimeter"))
+    ]
+    if not test_perimeter:
+        raise ProfileError(f"{name}.test_perimeter must name at least one path")
+
+    frozen_harness_paths = [
+        required_string(entry, f"{name}.frozen_harness_paths[{index}]")
+        for index, entry in enumerate(
+            as_list(launch["frozen_harness_paths"], f"{name}.frozen_harness_paths")
+        )
+    ]
+    if not frozen_harness_paths:
+        raise ProfileError(f"{name}.frozen_harness_paths must name at least one path")
+
+    test_command = required_string(launch["test_command"], f"{name}.test_command")
+    regression_command = required_string(launch["regression_command"], f"{name}.regression_command")
+
+    seam_mode = required_string(launch["seam_mode"], f"{name}.seam_mode")
+    if seam_mode not in SEAM_MODES:
+        raise ProfileError(f"{name}.seam_mode must be one of {SEAM_MODES}, got {seam_mode!r}")
+
+    k = launch["k"]
+    if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+        raise ProfileError(f"{name}.k must be a positive integer, got {k!r}")
+
+    datasets_raw = as_dict(launch.get("datasets", {}), f"{name}.datasets")
+    datasets = {
+        safe_id(dataset_name, f"{name}.datasets key {dataset_name!r}"): required_string(
+            dataset_path, f"{name}.datasets.{dataset_name}"
+        )
+        for dataset_name, dataset_path in datasets_raw.items()
+    }
+
+    return {
+        "recipe": recipe,
+        "entry_points": entry_points,
+        "health_probe": health_probe,
+        "datasets": datasets,
+        "test_perimeter": test_perimeter,
+        "frozen_harness_paths": frozen_harness_paths,
+        "test_command": test_command,
+        "seam_mode": seam_mode,
+        "regression_command": regression_command,
+        "k": k,
+    }
+
+
 def load_descriptor(path: Path) -> dict[str, Any]:
     """Validate an extended project descriptor (DESCRIPTOR_CONTRACT): the
     one object that declares a project to the Cockpit -- its rigs, display
@@ -307,6 +423,9 @@ def load_descriptor(path: Path) -> dict[str, Any]:
             "to": required_string(branch.get("to"), f"promotion_branch.{rig}.to"),
         }
 
+    launch_raw = descriptor.get("launch")
+    launch = load_launch(launch_raw, "launch") if launch_raw is not None else None
+
     return {
         "contract": DESCRIPTOR_CONTRACT,
         "project_id": project_id,
@@ -316,6 +435,7 @@ def load_descriptor(path: Path) -> dict[str, Any]:
         "roadmap_path": roadmap_path,
         "rituals_status_command": rituals_status_command,
         "promotion_branch": resolved_promotion,
+        "launch": launch,
     }
 
 
