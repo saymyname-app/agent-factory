@@ -143,7 +143,22 @@ def build(config, clock=None):
     # Clean stop (T23, T24) -- read side only (af-mjfvwx 7a): the driver keeps
     # its state and its tick; the reader it is handed cannot suspend, resume
     # or stop anything, and no stop action is registered.
-    city_reader = GcCityReader(config.gc_base_url, city=config.gc_city)
+    def held_work():
+        """``{session_id: ticket id}`` as the tickets record it; ``None``
+        while the tickets are not read."""
+        row = read_model.snapshot().get("beads")
+        if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
+            return None
+        held = {}
+        for bead in row["value"]:
+            if not isinstance(bead, dict) or bead.get("status") != "in_progress":
+                continue
+            session_id = (bead.get("metadata") or {}).get("gc.session_id")
+            if session_id and bead.get("id"):
+                held[session_id] = bead["id"]
+        return held
+
+    city_reader = GcCityReader(config.gc_base_url, city=config.gc_city, held_work=held_work)
     read_model.register("sessions", display_name="agents au travail")
     pollers.append(PollingSource(read_model, "sessions", city_reader.status, config.sessions_poll_seconds))
 
@@ -152,7 +167,12 @@ def build(config, clock=None):
         beads = (read_model.snapshot().get("beads") or {}).get("value") or []
         return {
             "beads": {
-                b["id"]: {"status": b.get("status"), "assignee": b.get("assignee")}
+                # Who holds a ticket is the session the factory recorded on it;
+                # a delivery ticket has no assignee field of its own.
+                b["id"]: {
+                    "status": b.get("status"),
+                    "assignee": (b.get("metadata") or {}).get("gc.session_name") or b.get("assignee"),
+                }
                 for b in beads
                 if isinstance(b, dict) and b.get("id")
             }

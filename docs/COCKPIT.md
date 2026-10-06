@@ -519,3 +519,20 @@ last stage (spec .41).
 Limit: a commit counts as promoted when it is an ancestor of the promotion
 branch. A promotion made by squashing `dev` into `main` leaves the merge
 commits unreachable; such a chantier stays « en attente de promotion ».
+
+## Work in flight, as the factory records it (af-mjfvwx)
+
+Slice 7a read « which agent is on which ticket » from `active_bead` in
+gc's session list, and its fake supplied that field. The real list does
+not: on the live host a worker delivering a ticket had none, so the stop
+zone said « Aucun travail en vol » over a worker at work. The ticket is
+what says it — an `in_progress` bead carries `gc.session_id` and
+`gc.session_name`. `stop/gc_city.py` now joins the running sessions with
+the tickets the read model holds (`held_work`); with the tickets not read
+the work in flight is unknown, never empty. The driver's « photo » names
+the holder the same way.
+
+This is also why the write side of the Clean stop cannot be built from
+documentation alone: what gc's session list shows while a city is
+suspended, and after it resumes, has to be observed on a real suspension
+before a fake can answer like it.

@@ -8,8 +8,14 @@ serves (checked on the live host, 2026-10-06):
 
 - ``GET /v0/city/<city>/status``: ``suspended``;
 - ``GET /v0/city/<city>/sessions``: one item per agent session, with
-  ``id``, ``template``, ``session_name``, ``active_bead`` (the ticket it is
-  on, absent for the agents that hold none) and ``last_active``.
+  ``id``, ``template``, ``session_name`` and ``last_active``.
+
+Which ticket a session is on is NOT in that list: on the live host
+(2026-10-07) a worker delivering a ticket had no ``active_bead`` there.
+The ticket says it: an ``in_progress`` bead carries ``gc.session_id`` (and
+``gc.session_name``). The first version of this reader trusted
+``active_bead`` alone and showed « Aucun travail en vol » over a worker
+at work; ``held_work`` is the join that was missing.
 
 Suspending, resuming and force-stopping are NOT here. Benjamin, 2026-10-06:
 « ok pour les deux temps » -- the write side comes with his real trial,
@@ -51,7 +57,11 @@ def _epoch(iso_value):
 
 
 class GcCityReader:
-    def __init__(self, base_url, city=None, timeout=10):
+    def __init__(self, base_url, city=None, timeout=10, held_work=None):
+        """``held_work``: a callable returning ``{session_id: bead_id}``
+        from the tickets as last read, or ``None`` while they are not
+        read -- the work in flight is then unknown, never empty."""
+        self._held_work = held_work
         self._base_url = base_url.rstrip("/")
         self._city = city or None
         self._timeout = timeout
@@ -68,6 +78,11 @@ class GcCityReader:
         driver's shape. A session is listed only while it holds a ticket:
         that is the work a stop waits for. Raises when gc cannot be read --
         the caller keeps the last value and lets it age."""
+        held = {}
+        if self._held_work is not None:
+            held = self._held_work()
+            if held is None:
+                raise ValueError("tickets non lus : travail en vol inconnu")
         try:
             status = _get_json(self._base_url, self._city_path("status"), self._timeout)
             sessions = _get_json(self._base_url, self._city_path("sessions"), self._timeout)["items"]
@@ -76,12 +91,12 @@ class GcCityReader:
                 "sessions": [
                     {
                         "session_id": item["id"],
-                        "bead_id": item["active_bead"],
+                        "bead_id": held.get(item["id"]) or item["active_bead"],
                         "assignee": item.get("session_name") or item.get("template"),
                         "last_event_at": _epoch(item.get("last_active")),
                     }
                     for item in sessions
-                    if item.get("running") and item.get("active_bead")
+                    if item.get("running") and (held.get(item["id"]) or item.get("active_bead"))
                 ],
                 # gc exposes no count of closed steps; progress is read from
                 # each session's last sign of life alone.
