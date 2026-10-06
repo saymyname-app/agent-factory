@@ -538,6 +538,9 @@ class EndToEnd(unittest.TestCase):
             **os.environ,
             "PF_FIXTURE": str(self.d),
             "GC_BIN": str(self.d / "gc"),
+            # provider-failover escalates through bin/escalation-door: never
+            # on the host's own lock (af-wnj692).
+            "ESCALATION_DOOR_LOCK_FILE": str(self.d / "escalation-door.lock"),
             "PROVIDER_STATE_FILE": str(self.d / "state.json"),
             "PROVIDER_OVERLAY_FILE": str(self.d / "city.provider.toml"),
             "PROVIDER_NOW": str(NOW),
@@ -805,6 +808,7 @@ class ModelStalenessCLI(unittest.TestCase):
             **os.environ,
             "PF_FIXTURE": str(self.d),
             "GC_BIN": str(gc_path),
+            "ESCALATION_DOOR_LOCK_FILE": str(self.d / "escalation-door.lock"),
             "FACTORY_ROOT": str(self.d),
             "PROVIDER_POLICY_FILE": str(ROOT / "config" / "provider-policy.json"),
             "PROVIDER_STATE_FILE": str(self.d / "state.json"),
