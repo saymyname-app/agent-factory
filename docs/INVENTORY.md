@@ -205,12 +205,13 @@ an A5 input.
 | `tests/build-basic-fail-fast-test.py` | ops | build-basic formula fail-fast (static) | in CI (ci.yml:152) |
 | `tests/build-basic-publish-overlap-followup-test.sh` | ops | build-basic publish follow-up bead on overlapping worktree | in CI (ci.yml:105) |
 | `tests/ci-registration-test.sh` | ops | meta: every tests/*.sh\|py named in ci.yml or marked local-only | in CI (ci.yml:236); header cites retired tests (product-queue, saymyname-*) as history only |
+| `tests/ci-run-tests-host-lock-test.sh` | ops | bin/ci-run-tests | NEW (af-wnj692): auto-discovered by bin/ci-run-tests; proves the runner gives each test a throwaway `XDG_RUNTIME_DIR` and fails one that still reaches bin/escalation-door's default lock file |
 | `tests/coordination-pointer-doors-test.sh` | ops | ADR-0023 rule 6 scan of Mayor prompt, OPERATIONS.md, formulas | in CI (ci.yml:111); header/FIELDS still name legacy bin/product-queue and gc.queue_state |
 | `tests/deliver-close-test.sh` | ops | bin/deliver-close (ADR-0026 delivery proof door); fixture deliver-close | in CI (ci.yml:99) |
 | `tests/delivery-formula-contract-test.sh` | ops | mol-do-work/mol-scoped-work/mol-polecat-commit wiring to deliver-close/pr-autopilot | in CI (ci.yml:102) |
 | `tests/dispatch-door-guard-test.sh` | ops | bin/dispatch-door-guard (O03 raw-sling bypass detection) | in CI (ci.yml, "O03 dispatch-door-guard...") |
 | `tests/dispatch-door-test.sh` | ops | bin/dispatch-door (O03 dispatch door: target/formula/--reassign for every rig) | in CI (ci.yml, "O03 dispatch-door validates...") |
-| `tests/escalation-door-test.sh` | ops | bin/escalation-door (O06 escalation write door + routing rules); fixture escalation-door | in CI (ci.yml:110); replaces the retired campaign-pointer-test.sh |
+| `tests/escalation-door-test.sh` | ops | bin/escalation-door (O06 escalation write door + routing rules); fixture escalation-door | in CI (ci.yml:110); replaces the retired campaign-pointer-test.sh; af-wnj692: also proves a long-lived child left behind by one call (the nudge poller of `gc mail send --notify`) does not inherit the door's lock and cannot block the next call |
 | `tests/factory-build-gates-test.py` | ops | bin/factory-build-gates (installs .gc/scripts gates into rigs) | in CI (ci.yml:149); scripts/validate_build_artifact.py etc. are generated/copied in temp, not missing |
 | `tests/factory-delivery-guard-test.sh` | ops | bin/factory-delivery-guard | in CI (ci.yml:191) |
 | `tests/factory-delivery-proof-test.py` | ops | lib/factory_delivery_proof.py | in CI (ci.yml:188); docstring line 118 cites retired lib/factory_cockpit.py |

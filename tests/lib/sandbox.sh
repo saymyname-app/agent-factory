@@ -27,7 +27,7 @@
 #                                 # $SANDBOX_CITY -- never anything else.
 #
 # sandbox_init exports HOME, TMUX_TMPDIR, GC_CITY, GC_CITY_PATH,
-# GC_BEADS_SCOPE_ROOT and PATH, unsets the env vars that can redirect a call
+# GC_BEADS_SCOPE_ROOT, ESCALATION_DOOR_LOCK_FILE and PATH, unsets the env vars that can redirect a call
 # at the live city or session, and registers an EXIT trap that kills
 # anything the test started under $SANDBOX_DIR and removes it. Set
 # KEEP_SANDBOX=1 to preserve the directory (e.g. for debugging a failure)
@@ -75,6 +75,10 @@ sandbox_init() {
   export GC_CITY="$SANDBOX_CITY"
   export GC_CITY_PATH="$SANDBOX_CITY"
   export GC_BEADS_SCOPE_ROOT="$SANDBOX_CITY"
+  # bin/escalation-door defaults its lock to the host's runtime dir: a test
+  # left on that default waits on -- or holds -- the live Factory's own lock
+  # (af-wnj692: a test run from a worktree queued behind it at 02:37Z).
+  export ESCALATION_DOOR_LOCK_FILE="$SANDBOX_DIR/escalation-door.lock"
   export PATH="$SANDBOX_STUB_BIN:$PATH"
 
   if [ "$real_gc" -eq 1 ]; then

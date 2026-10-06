@@ -65,7 +65,20 @@ for f in "${files[@]}"; do
     *.sh) interp=bash ;;
   esac
   printf '  %-70s ' "$f"
-  if out=$("$interp" "$f" 2>&1); then
+  # Each test gets a throwaway XDG_RUNTIME_DIR, so bin/escalation-door's
+  # default lock can never be the host's own -- and a test that still
+  # reaches that default instead of setting ESCALATION_DOOR_LOCK_FILE fails
+  # here, because run by hand it would wait on (or hold) the live Factory's
+  # lock (af-wnj692).
+  runtime_dir=$(mktemp -d)
+  out=$(env -u ESCALATION_DOOR_LOCK_FILE XDG_RUNTIME_DIR="$runtime_dir" "$interp" "$f" 2>&1)
+  status=$?
+  if [ -e "$runtime_dir/agent-factory-escalation-door.lock" ]; then
+    status=1
+    out+=$'\n'"ci-run-tests: $f reached bin/escalation-door's default lock file -- set ESCALATION_DOOR_LOCK_FILE to a path the test owns (tests/lib/sandbox.sh does)"
+  fi
+  rm -rf -- "$runtime_dir"
+  if [ "$status" -eq 0 ]; then
     echo OK
   else
     echo FAIL
