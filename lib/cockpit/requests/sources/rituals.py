@@ -32,7 +32,11 @@ def build_ritual_requests(rituals, verifie_a=None):
                 type=TYPE_RITUEL_DU,
                 niveau=QUAND_TU_VEUX,
                 quoi="Un rituel est dû : %s" % titre,
-                pourquoi="Ce rituel attend d'être fait, sans urgence.",
+                pourquoi=(
+                    "Mesure du projet : %s. Ce rituel attend d'être fait, sans urgence." % ritual["detail"]
+                    if ritual.get("detail")
+                    else "Ce rituel attend d'être fait, sans urgence."
+                ),
                 que_faire=[
                     {
                         "lettre": "a",
@@ -46,6 +50,7 @@ def build_ritual_requests(rituals, verifie_a=None):
                 depuis_quand=parse_iso(ritual.get("depuis_quand")),
                 verifie_a=verifie_a,
                 lien=ritual_id,
+                reportable=bool(ritual.get("reportable", True)),
             )
         )
     requests.sort(key=lambda r: r.sort_key())

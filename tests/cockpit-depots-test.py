@@ -180,7 +180,13 @@ class DepotsTest(unittest.TestCase):
         self.fake_gc.stop()
         self.tmp.cleanup()
 
-    def start_cockpit(self, with_clones=True):
+    def set_ritual_command(self, project_id, command):
+        path = self.descriptors / (project_id + ".json")
+        descriptor = json.loads(path.read_text())
+        descriptor["rituals_status_command"] = command
+        path.write_text(json.dumps(descriptor))
+
+    def start_cockpit(self, with_clones=True, rituals=False):
         env = dict(os.environ)
         env.update(
             {
@@ -208,6 +214,14 @@ class DepotsTest(unittest.TestCase):
             env["COCKPIT_CLONES_DIR"] = str(self.clones)
         else:
             env.pop("COCKPIT_CLONES_DIR", None)
+        self.exports = self.dir / "exports"
+        self.marker = self.dir / "status-ran"
+        env["RITUALS_MARKER"] = str(self.marker)
+        env["COCKPIT_RITUALS_POLL_SECONDS"] = "0.4"
+        if rituals:
+            env["COCKPIT_RITUALS_EXPORTS_DIR"] = str(self.exports)
+        else:
+            env.pop("COCKPIT_RITUALS_EXPORTS_DIR", None)
         self.proc = subprocess.Popen(
             [sys.executable, str(COCKPIT_BIN), "run"],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -347,6 +361,75 @@ class DepotsTest(unittest.TestCase):
         self.start_cockpit(with_clones=False)
         body = wait_until(lambda: self.get("/") if "Accepté : promotion inconnue" in self.get("/") else None)
         self.assertNotIn("pas encore promu", body)
+
+    # ------------------------------------------------------------------
+    # Rituels dus (spec point ouvert 2)
+    STATUS_SH = (
+        '#!/usr/bin/env bash\n'
+        'echo ran >> "$RITUALS_MARKER"\n'
+        'echo "DUE  revue:archi — 21 PR depuis le premier"\n'
+        'echo "ok   incidents — 0/5"\n'
+        'echo "wait alignement — paused until: x"\n'
+    )
+
+    def health_texts(self):
+        return [line["text"] for line in self.get("/api/health")["lines"]]
+
+    def test_due_ritual_is_a_request_until_the_project_says_otherwise(self):
+        # "demo" prints lines, "brut" prints JSON; neither file is marked executable.
+        self.origins.commit("org/demo-knowledge", "main", {"status.sh": self.STATUS_SH})
+        self.set_ritual_command("demo", "status.sh")
+        self.origins.commit("org/brut-knowledge", "main", {"status.sh": (
+            '#!/usr/bin/env bash\n'
+            "echo '[{\"id\": \"veille\", \"status\": \"due\"}, {\"id\": \"bilan\", \"status\": \"paused\"}]'\n"
+        )})
+        self.set_ritual_command("brut", "status.sh")
+        self.start_cockpit(rituals=True)
+
+        wait_until(lambda: "Un rituel est dû : revue:archi" in self.get("/"))
+        body = wait_until(lambda: self.get("/") if "Un rituel est dû : veille" in self.get("/") else None)
+        self.assertIn("Un rituel est dû : revue:archi", body)
+        self.assertIn("Mesure du projet : 21 PR depuis le premier.", body)
+        self.assertIn("Un rituel est dû : veille", body)
+        for not_due in ("incidents", "alignement", "bilan"):
+            self.assertNotIn("Un rituel est dû : " + not_due, body)
+        wait_until(lambda: "Tout est à jour à" in self.get("/"))
+
+        # Run from an export the cockpit owns: the clones still hold nothing checked out.
+        self.assertTrue((self.exports / "org__demo-knowledge" / "status.sh").is_file())
+        for repo in ("org__demo-knowledge", "org__brut-knowledge"):
+            self.assertEqual([".git"], sorted(p.name for p in (self.clones / repo).iterdir()))
+
+        # "brut" breaks its command: said in the health zone, "demo" still read.
+        self.origins.commit("org/brut-knowledge", "main", {"status.sh": "#!/usr/bin/env bash\nexit 3\n"})
+        wait_until(lambda: "Rituels de Brut : statut illisible." in self.health_texts())
+        body = self.get("/")
+        self.assertIn("Un rituel est dû : revue:archi", body)
+        self.assertNotIn("Un rituel est dû : veille", body)
+
+        # The ritual is done: the project's own status says so, the request leaves.
+        self.origins.commit("org/demo-knowledge", "main", {"status.sh": self.STATUS_SH.replace("DUE  revue", "ok   revue")})
+        wait_until(lambda: "Un rituel est dû" not in self.get("/"))
+
+    def test_no_readable_ritual_status_is_unknown(self):
+        self.set_ritual_command("demo", "absent.sh")
+        self.start_cockpit(rituals=True)
+        wait_until(lambda: "Roadmap : Bêta privée" in self.get("/"))
+        time.sleep(1.0)
+        body = self.get("/")
+        self.assertIn("rituels (inconnu)", body)
+        self.assertNotIn("Un rituel est dû", body)
+
+    def test_without_an_exports_directory_no_project_file_is_run(self):
+        self.origins.commit("org/demo-knowledge", "main", {"status.sh": self.STATUS_SH})
+        self.set_ritual_command("demo", "status.sh")
+        self.start_cockpit()
+        wait_until(lambda: "Roadmap : Bêta privée" in self.get("/"))
+        time.sleep(1.5)
+        self.assertNotIn("Un rituel est dû", self.get("/"))
+        self.assertNotIn("rituals", self.get("/api/status"))
+        self.assertFalse(self.marker.exists(), "the status command was run")
+        self.assertFalse(self.exports.exists())
 
 
 if __name__ == "__main__":

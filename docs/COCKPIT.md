@@ -488,7 +488,7 @@ closed chantier with a ticket not merged; a roadmap step marked done while
 a chantier that targets it is still open; a chantier targeting a step
 still to do.
 
-Not wired: « rituel dû » — the status command of a project's rituals is a
+« Rituel dû » is read since (« Rituels » below). When this was written: the status command of a project's rituals is a
 script of its repository, which the cockpit would have to run from a
 checkout; that is a decision of its own.
 
@@ -519,3 +519,39 @@ last stage (spec .41).
 Limit: a commit counts as promoted when it is an ancestor of the promotion
 branch. A promotion made by squashing `dev` into `main` leaves the merge
 commits unreachable; such a chantier stays « en attente de promotion ».
+
+## Rituels (af-mjfvwx)
+
+T15 built the « rituel dû » request for a parsed status nobody produced.
+`projects/rituels.py` produces it, as the read model's `rituals` source
+(every `COCKPIT_RITUALS_POLL_SECONDS`, 30 min; valid 1 h): for each project
+whose descriptor names a `rituals_status_command`, it
+
+1. fetches the cockpit's clone of the knowledge repository,
+2. rewrites an export of its default branch — a plain directory under
+   `rituals_exports_dir`, never the clone, never a working copy,
+3. runs the command there (a file of the repository; one git does not mark
+   executable is run through its own `#!` line) and reads what it prints.
+
+A status command prints either lines `DUE <id> — <detail>` / `ok <id> …` /
+`wait <id> …`, or JSON, a list of `{"id", "status"}` with `due`, `ok` or
+`paused`. A ritual that is due is a « Quand tu veux » request, on screen
+only, until the project's own status stops saying so. The cockpit never
+runs a ritual.
+
+**Off by default, and this runs project code.** Nothing is exported or
+executed unless both `clones_dir` and `rituals_exports_dir` are named
+(local settings file, or `COCKPIT_RITUALS_EXPORTS_DIR`). Turned on, the
+cockpit executes, with its own user's rights, a file taken from the
+default branch of each knowledge repository on origin: whoever can push
+there can run code on this host.
+
+A project whose status cannot be read (command missing, non-zero exit,
+nothing recognisable printed) is a health line, « Rituels de <projet> :
+statut illisible. » — never « nothing is due ». With no project readable
+the source is unknown.
+
+Known gap: the Factory's own command, `bin/rituals-status`, needs a
+rituals file and a ritual id as arguments and reports one ritual; run as
+its descriptor names it, it exits with a usage error, so « Usine » is
+unreadable until that tool has a no-argument mode.

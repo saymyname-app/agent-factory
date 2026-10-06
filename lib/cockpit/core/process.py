@@ -26,10 +26,12 @@ from cockpit.stop.driver import StopDriver
 from cockpit.stop.gc_city import GcCityReader
 from cockpit.projects.depots import read_depots, read_rig_repos
 from cockpit.projects.descriptors import load_descriptors
+from cockpit.projects.rituels import read_rituels
 from cockpit.projects.source import read_projects
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import read_journal
+from cockpit.requests.sources.rituals import build_ritual_requests
 
 # github/rituals sources are in the Validity window table (spec .3) for the
 # tickets that will wire up their producers; T11 builds the seam and wires
@@ -180,6 +182,26 @@ def build(config, clock=None):
             )
         )
 
+    # Rituals (T15): each project's own status command, run from an export
+    # of its repository -- only where an exports directory is named.
+    if config.clones_dir and config.rituals_exports_dir:
+        read_model.register("rituals", display_name="rituels")
+        pollers.append(
+            PollingSource(
+                read_model,
+                "rituals",
+                lambda: read_rituels(
+                    load_descriptors(config.descriptors_dir),
+                    config.clones_dir,
+                    config.rituals_exports_dir,
+                    url_template=config.repo_url_template,
+                    git_bin=config.git_bin,
+                    timeout=config.rituals_timeout_seconds,
+                ),
+                config.rituals_poll_seconds,
+            )
+        )
+
     # Access (T25): the Tailscale key's expiry, only where a client is named.
     if config.tailscale_bin:
         read_model.register("tailscale", display_name="accès Tailscale")
@@ -201,6 +223,11 @@ def build(config, clock=None):
             request = build_key_expiry_request(tailscale["value"]["key_expiry"], now)
             if request is not None:
                 requests.append(request)
+        rituals = snapshot.get("rituals")
+        if rituals is not None and rituals["value"] is not None and rituals["freshness"] != UNKNOWN:
+            requests.extend(
+                build_ritual_requests(rituals["value"].get("rituels"), verifie_a=rituals.get("read_at"))
+            )
         return requests
 
     server.stop_driver = stop_driver

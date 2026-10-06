@@ -20,6 +20,7 @@ from cockpit.health.engine import (
 )
 from cockpit.projects import anomalies as project_anomalies
 from cockpit.projects.depots import apply_to_projects
+from cockpit.projects.rituels import health_lines as ritual_health_lines
 from cockpit.projects.source import from_value as projects_from_value
 from cockpit.projects.source import project_page_data
 from cockpit.requests.assemble import assemble_from_snapshot
@@ -393,6 +394,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             order_failures=collectors.order_failure_items(beads),
             red_ci=collectors.red_ci_items(beads),
             extra_lines=self._project_health_lines(snapshot)
+            + ritual_health_lines(snapshot.get("rituals"))
             + [
                 line
                 for part in (self.server.notify, self.server.heartbeat)

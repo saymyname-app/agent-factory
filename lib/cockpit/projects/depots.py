@@ -20,6 +20,7 @@ project's "inconnue", not a failure of the whole read.
 """
 import os
 import subprocess
+import threading
 import tomllib
 from pathlib import Path
 
@@ -29,6 +30,9 @@ from cockpit.projects.roadmap import RoadmapReadError, pick_current_step, read_s
 
 REPO_URL_TEMPLATE = "https://github.com/%s.git"
 CLONE_TIMEOUT_SECONDS = 180
+# The depots and rituals sources fetch the same clones from their own
+# threads; git refuses two fetches at once in one repository.
+GIT_LOCK = threading.Lock()
 
 
 def clone_path(clones_dir, repo):
@@ -80,8 +84,9 @@ def read_depots(descriptors, rig_repos, clones_dir, url_template=REPO_URL_TEMPLA
         if descriptor.get("knowledge_repo") and descriptor.get("roadmap_path"):
             attempts += 1
             try:
-                clone = ensure_clone(clones_dir, descriptor["knowledge_repo"], url_template, git_bin)
-                steps = read_steps(clone, descriptor["roadmap_path"], git_bin=git_bin)
+                with GIT_LOCK:
+                    clone = ensure_clone(clones_dir, descriptor["knowledge_repo"], url_template, git_bin)
+                    steps = read_steps(clone, descriptor["roadmap_path"], git_bin=git_bin)
                 step = pick_current_step(steps)
                 roadmaps[project_id] = {
                     "ok": True,
@@ -98,8 +103,9 @@ def read_depots(descriptors, rig_repos, clones_dir, url_template=REPO_URL_TEMPLA
             attempts += 1
             n = None
             try:
-                clone = ensure_clone(clones_dir, rig_repos[rig], url_template, git_bin)
-                promotion.fetch(clone, git_bin=git_bin)
+                with GIT_LOCK:
+                    clone = ensure_clone(clones_dir, rig_repos[rig], url_template, git_bin)
+                    promotion.fetch(clone, git_bin=git_bin)
                 n = promotion.commits_ahead(
                     clone, "origin/%s" % branches["from"], "origin/%s" % branches["to"], git_bin=git_bin
                 )

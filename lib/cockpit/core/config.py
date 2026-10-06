@@ -136,6 +136,14 @@ class Config:
             "COCKPIT_RIG_FILES_DIR", os.path.join(_REPO_ROOT, "config", "projects")
         )
         self.depots_poll_seconds = float(env.get("COCKPIT_DEPOTS_POLL_SECONDS", "600"))
+        # Rituals: where each project's repository is exported so its ritual
+        # status command can be run. Unset (or with no clones directory), no
+        # project file is ever executed and no ritual is claimed.
+        self.rituals_exports_dir = (
+            env.get("COCKPIT_RITUALS_EXPORTS_DIR") or local.get("rituals_exports_dir", "")
+        )
+        self.rituals_poll_seconds = float(env.get("COCKPIT_RITUALS_POLL_SECONDS", "1800"))
+        self.rituals_timeout_seconds = float(env.get("COCKPIT_RITUALS_TIMEOUT_SECONDS", "180"))
         self.validity_seconds = dict(VALIDITY_WINDOWS_SECONDS)
         for source in list(self.validity_seconds):
             override = env.get("COCKPIT_VALIDITY_%s_SECONDS" % source.upper())
@@ -172,7 +180,7 @@ class Config:
 LOCAL_CONFIG_NAME = "cockpit-local.json"
 LOCAL_CONFIG_KEYS = (
     "pushover_secrets_file", "heartbeat_url_file", "public_url", "benjamin_login", "allowed_origin",
-    "tailscale_bin", "clones_dir",
+    "tailscale_bin", "clones_dir", "rituals_exports_dir",
 )
 
 
