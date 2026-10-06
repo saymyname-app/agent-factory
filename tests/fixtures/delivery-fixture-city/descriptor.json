@@ -1,0 +1,34 @@
+{
+  "contract": "agent-factory-project-descriptor/v1",
+  "project_id": "delivery-fixture-city",
+  "display_name": "Delivery Fixture City",
+  "rigs": ["delivery-fixture-city"],
+  "knowledge_repo": "agent-factory/agent-factory",
+  "roadmap_path": "docs/roadmap.toml",
+  "rituals_status_command": "true",
+  "launch": {
+    "recipe": [
+      "{python}",
+      "tests/fixtures/delivery-fixture-city/app.py",
+      "--port",
+      "{port}",
+      "--dataset",
+      "{dataset}"
+    ],
+    "entry_points": [
+      {"kind": "http", "method": "GET", "path": "/"},
+      {"kind": "http", "method": "GET", "path": "/health"}
+    ],
+    "health_probe": {"path": "/health", "expect_status": 200},
+    "datasets": {
+      "empty": "tests/fixtures/delivery-fixture-city/datasets/empty.json",
+      "content": "tests/fixtures/delivery-fixture-city/datasets/content.json"
+    },
+    "test_perimeter": ["tests/fixtures/delivery-fixture-city/tests/"],
+    "frozen_harness_paths": ["tests/fixtures/delivery-fixture-city/tests/conftest.py"],
+    "test_command": "python3 {test} -q",
+    "seam_mode": "black_box",
+    "regression_command": "python3 tests/fixtures/delivery-fixture-city/tests/regression.py",
+    "k": 3
+  }
+}

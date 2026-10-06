@@ -12,8 +12,9 @@ The configured writer provider inherits `builtin:codex` and appends `-m gpt-5.6-
   only normal writer. Use it for Backend/Frontend implementation and keep the
   one-writer-per-rig rule.
 - **CONFIGURED secondary — Claude:** the explicit `claude` provider inherits
-  Gas City `v1.4.1`'s `builtin:claude`, pins the host CLI to `2.1.236`, selects
-  `sonnet-5`, and defaults to `permission_mode = "unrestricted"` (`city.toml`;
+  Gas City `v1.4.1`'s `builtin:claude`, needs host CLI `2.1.280` or newer
+  (`2.1.290` installed 2026-10-06), runs `claude-opus-5-5` (passed in
+  `args_append`, see the note in `city.toml`), and defaults to `permission_mode = "unrestricted"` (`city.toml`;
   `factory-guard` treats `plan` as broken: it strands unattended agents). The
   standalone `claude-reviewer` template was retired 2026-09-28 (O14, F15): no
   formula or prompt ever dispatched it, and the dispatch door has no path for

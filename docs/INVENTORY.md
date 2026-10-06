@@ -134,7 +134,8 @@ an A5 input.
 | `bin/planning-exception` | kernel | mayor prompt, deliver-close, factory-guard, planning-exception-guard, CI | ADR-0028 Planning Exception register; subcommands match docs |
 | `bin/pr-autopilot` | ops | orders/pr-autopilot.toml (3m), CI tests | Arms/finalizes PRs from lib/protected_rigs.sh; header "for the SayMyName rigs" stale |
 | `bin/project-isolation-oracle` | kernel | CI test, docs | Project isolation oracle |
-| `bin/project-planning-profile` | kernel | docs/GETTING_STARTED.md, CI test | Per-project planning profile validator (rejects SayMyName-specific fields by design) |
+| `bin/project-launch` | kernel | docs/PROJECT_PLANNING_PROFILE.md, CI test | NEW (T01, af-m8m1kc): `start`/`stop` a declared project's product at an exact commit, on an isolated port, against a named synthetic dataset -- clean `git worktree` checkout, never the caller's working tree |
+| `bin/project-planning-profile` | kernel | docs/GETTING_STARTED.md, docs/PROJECT_PLANNING_PROFILE.md, CI test | Per-project planning profile validator (rejects SayMyName-specific fields by design); `describe`'s optional `launch` block (T01, af-m8m1kc) is `bin/project-launch`'s input |
 | `bin/provider-failover` | ops | orders provider-failover + model-staleness-check, factory-boot, factory-guard | FIXED (P20, af-r48pb): help/status/set text names no cockpit or campaign; live failover unchanged |
 | `bin/reversibility-check` | ops | pr-autopilot, factory-watchdog, CI test | ADR-0019 reversibility gate CLI |
 | `bin/spec-approve` | kernel | CI test | Spec approval stage; bead mode only (`bd-approve`/`bd-status`) since A6b W10 retired the file-Spec mode with the router |
@@ -243,7 +244,8 @@ an A5 input.
 | `tests/fixtures/fixture-city` | kernel | fixture-city-oracle-test.py | synthetic fixture-* rigs; legacy-*.json are fail-closed probes |
 | `tests/fixtures/planning-exception` | kernel | planning-exception-test.py | graph + fake ticket-graph-publish |
 | `tests/fixtures/project-isolation` | kernel | project-isolation-oracle-test.py | synthetic project-a/b secrets and scenarios |
-| `tests/fixtures/project-planning-profile` | kernel | project-planning-profile-test.py | invalid-saymyname.json is a deliberate negative case (SMN-42 fake key) |
+| `tests/fixtures/delivery-fixture-city` | kernel | project-launch-test.py; descriptor.json read by project-planning-profile-test.py | NEW (T01, af-m8m1kc): the Delivery Fixture City's synthetic launchable product -- stdlib-only `app.py` (`/`, `/health`), two named datasets, a descriptor declaring the launch recipe |
+| `tests/fixtures/project-planning-profile` | kernel | project-planning-profile-test.py | invalid-saymyname.json is a deliberate negative case (SMN-42 fake key); invalid-launch-missing-field.json (T01, af-m8m1kc) is a deliberate negative case for a partial `launch` block |
 | `tests/fixtures/pr-autopilot-projects` | ops | the six `tests/pr-autopilot-*-test.sh` files, via `PROTECTED_RIGS_CONFIG_DIR` | new (P23): synthetic `config/projects/*.toml`-shaped rows (`example-backend`/`example-frontend`) so pr-autopilot tests exercise the real project-registry loading path without asserting on the real SayMyName rig names |
 | `tests/fixtures/shared-drain` | ops | factory-shared-drain-workspace-test.sh | fake gc/gh |
 | `tests/fixtures/spec-approve` | kernel | spec-approve-test.py | synthetic spec drafts |
@@ -263,7 +265,8 @@ an A5 input.
 | `tests/pr-autopilot-transient-retry-test.sh` | to-redo | bin/pr-autopilot | in CI (ci.yml:170); asserts saymyname-app/Say-my-name-back |
 | `tests/pre-push-ci-registration-test.sh` | ops | .githooks/pre-push runs ci-registration | in CI (ci.yml:212) |
 | `tests/project-isolation-oracle-test.py` | kernel | project isolation oracle; fixture project-isolation | in CI (ci.yml:93) |
-| `tests/project-planning-profile-test.py` | kernel | project-planning-profile; fixture project-planning-profile | in CI (ci.yml:41); rejects SayMyName-specific fields (correct) |
+| `tests/project-launch-test.py` | kernel | bin/project-launch; fixture delivery-fixture-city | NEW (T01, af-m8m1kc): auto-discovered by bin/ci-run-tests; covers launch-at-named-commit, clean-checkout-not-cwd, named-dataset determinism, two concurrent launches on distinct ports, and refusal with no launch recipe declared |
+| `tests/project-planning-profile-test.py` | kernel | project-planning-profile; fixture project-planning-profile | in CI (ci.yml:41); rejects SayMyName-specific fields (correct); FIXED (T01, af-m8m1kc): also covers the optional `launch` block (renders when present, null when absent, rejected when partial) |
 | `tests/provider-failover-test.py` | to-redo | bin/provider-failover | in CI (ci.yml:143); fixtures carry SayMyName backend output + saymyname-backend sessions + inert gc.campaign_* metadata |
 | `tests/reversibility-test.py` | ops | reversibility classifier (pr-autopilot) | in CI (ci.yml:158) |
 | `tests/spec-approve-test.py` | kernel | spec-approve; fixture spec-approve | in CI (ci.yml:47) |
