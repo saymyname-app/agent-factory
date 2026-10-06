@@ -261,7 +261,7 @@ class HomeProjectsZoneTest(unittest.TestCase):
         self.assertIn("1 défaut producteur", body)
         self.assertIn('href="/projet/agent-factory"', body)
         self.assertIn('href="/projet/saymyname"', body)
-        self.assertIn("Tout est à jour à", body)
+        wait_until(lambda: "Tout est à jour à" in self.get("/"))
 
     # ------------------------------------------------------------------
     def test_accepting_a_delivered_chantier_takes_two_steps_and_is_traced(self):

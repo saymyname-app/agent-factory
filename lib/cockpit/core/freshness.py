@@ -19,6 +19,7 @@ VALIDITY_WINDOWS_SECONDS = {
     "git": 600,
     # Computed from Beads: same window as Beads itself.
     "projets": 300,
+    "journal": 300,
 }
 
 

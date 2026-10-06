@@ -301,8 +301,44 @@ served:
 
 Not wired yet: « rituel dû » (each project's status command lives in its
 own repository — the slice that gives the cockpit its clones),
-`requests/sources/unknown_signal.py` (no source hands the cockpit an
-unrecognised signal today), and the journal of resolved requests.
+and `requests/sources/unknown_signal.py` (no source hands the cockpit an
+unrecognised signal today).
 
 `tests/cockpit-other-requests-test.py` covers all of the above through the
 process's HTTP surface.
+
+## Journal of resolved requests (af-mjfvwx)
+
+`GET /journal` (linked under « Ce qui t'attend ») and `GET /api/journal`
+serve `ui/journal/` (T15, until now imported only by its test). Each entry
+says what was asked, how it was resolved, when (Paris time), by whom, and
+by which way (spec .18); a bead resolved twice has two entries (spec .19).
+The cockpit keeps no copy: `requests/journal.py` `read_journal` is the
+read model's `journal` source (every `COCKPIT_JOURNAL_POLL_SECONDS`, 60 s)
+and re-reads the traces.
+
+What the tracker really holds, checked 2026-10-06 — T15 had assumed Beads
+comments, which are empty on a bead Benjamin answered:
+
+| Trace | Written by | In the bead's notes | Dated by |
+|---|---|---|---|
+| answer to a NEEDS BENJAMIN | `bin/escalation-door repondre` | `RÉPONSE: <lettre> — <option>` | `gc.escalation_response_at` (latest answer only) |
+| decision cleared without an answer | `bin/escalation-door clear` | `DECISION CLEARED: …` | `gc.escalation_cleared_at` (latest clearance; absent before 2026-10-06) |
+| proposal accepted / rejected | `bin/proposal-door` | `PROPOSITION ACCEPTÉE par …` / `PROPOSITION REJETÉE par … — <raison>` | `gc.proposal_response_at` |
+| relance, chantier accepté | `cockpit.actions.trace` | `Cockpit: <quoi> sur <cible> (…) — <quand>, par <acteur>` | the note itself |
+
+The question an entry answers is the `NEEDS BENJAMIN: …` / `PROPOSITION: …`
+note before it. An entry no trace dates shows « date inconnue » and comes
+after the dated ones.
+
+Intent (Benjamin, his words, 2026-10-06): « affiche tel quel ». Mechanism
+(agent interpretation): the journal shows each text exactly as its
+producer wrote it, without the main-text control (`text/validate.py`) the
+inbox applies — a record of what happened, where that control hid nearly
+every entry written before it existed. It does not loosen the inbox.
+
+Known gap: an answer older than the bead's latest one, and a clearance
+made before the door dated it, carry no date.
+
+`tests/cockpit-journal-test.py` covers the page through HTTP, with beads
+carrying notes and metadata as the doors leave them.

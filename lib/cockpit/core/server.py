@@ -22,10 +22,13 @@ from cockpit.projects.source import from_value as projects_from_value
 from cockpit.projects.source import project_page_data
 from cockpit.requests.assemble import assemble_requests
 from cockpit.requests.defects import DefectCounter
+from cockpit.requests.journal import entries_from_value as journal_entries_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.ui.base.page import render_document, render_fresh, render_home
 from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.home.page import render_requests_section
+from cockpit.ui.journal.render import CSS as JOURNAL_CSS
+from cockpit.ui.journal.render import render_journal_page, render_journal_section, render_journal_unknown
 from cockpit.ui.projects.page import (
     render_historique_section,
     render_projects_section,
@@ -50,6 +53,12 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/requests":
             self._send_json(self._requests_payload(read_model.snapshot(), read_model.now()))
+            return
+        if self.path == "/api/journal":
+            self._send_json(self._journal_payload(read_model.snapshot()))
+            return
+        if self.path == "/journal":
+            self._send_journal_page(read_model)
             return
         if self.path == "/api/projects":
             self._send_json(self._projects_payload(read_model.snapshot()))
@@ -112,7 +121,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             # project's page.
             referer_path = urllib.parse.urlsplit(self.headers.get("Referer") or "").path
             location = "/"
-            if referer_path.startswith("/projet/"):
+            if referer_path.startswith("/projet/") or referer_path == "/journal":
                 location = urllib.parse.quote(urllib.parse.unquote(referer_path), safe="/-_.~")
             self.send_response(303)
             self.send_header("Location", location)
@@ -259,6 +268,31 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_journal_page(self, read_model):
+        """GET /journal (spec .18): the resolved requests, re-read from the
+        traces on the beads -- the cockpit keeps no copy of its own."""
+        fresh_html = render_fresh(read_model.headline(), not read_model.stale_or_unknown())
+        row = read_model.snapshot().get("journal")
+        if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
+            section = render_journal_unknown(row["read_at"] if row else None)
+        else:
+            section = render_journal_section(journal_entries_from_value(row["value"]))
+        body = render_document(
+            render_journal_page(section, fresh_html=fresh_html), extra_css=PROJECT_PAGE_CSS + JOURNAL_CSS
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _journal_payload(self, snapshot):
+        """JSON twin of the journal page, for tests."""
+        row = snapshot.get("journal")
+        if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
+            return {"state": "unknown", "entries": []}
+        return {"state": "filled", "verified_at": row["read_at"], "entries": row["value"]["entries"]}
 
     def _projects_payload(self, snapshot):
         """JSON twin of :meth:`_render_projects_zone`, for tests."""

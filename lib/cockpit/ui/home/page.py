@@ -17,6 +17,10 @@ from cockpit.text.fallback import FALLBACK_NO_RECOMMENDATION, incomplete_label
 from cockpit.ui.actions.render import render_actions
 
 SECTION_TITLE = "Ce qui t'attend"
+# Under the list in every state: where what no longer waits went.
+JOURNAL_LINK = (
+    '<div class="list-foot"><a href="/journal">Journal des demandes résolues →</a></div>'
+)
 EMPTY_TEXT = "Rien ne t'attend — vérifié à %s"
 UNKNOWN_TEXT = "Inconnu : illisible depuis %s"
 UNKNOWN_TEXT_NO_TIME = "Inconnu : illisible depuis toujours"
@@ -122,8 +126,8 @@ def render_requests_section(requests, verified_at=None, source_unknown=False, la
         return (
             '<div class="inbox solo cockpit-requests" data-state="unknown">'
             '<div class="list" id="inbox-list"><h2><span>%s</span></h2>'
-            '<div style="padding:14px"><div class="unknown">%s</div></div></div></div>\n'
-        ) % (title, body)
+            '<div style="padding:14px"><div class="unknown">%s</div></div>%s</div></div>\n'
+        ) % (title, body, JOURNAL_LINK)
 
     if not requests:
         when = _hhmm(verified_at) or "??:??"
@@ -131,17 +135,17 @@ def render_requests_section(requests, verified_at=None, source_unknown=False, la
         return (
             '<div class="inbox solo cockpit-requests" data-state="empty">'
             '<div class="list" id="inbox-list"><h2><span>%s</span><span class="mono muted">0</span></h2>'
-            '<div style="padding:14px"><div class="empty"><span class="dot"></span>%s</div></div></div></div>\n'
-        ) % (title, body)
+            '<div style="padding:14px"><div class="empty"><span class="dot"></span>%s</div></div>%s</div></div>\n'
+        ) % (title, body, JOURNAL_LINK)
 
     first_id = requests[0].id
     rows = "".join(_render_list_item(r, verified_at, r.id == first_id) for r in requests)
     details = "".join(_render_detail(r, verified_at, r.id == first_id) for r in requests)
     return (
         '<div class="inbox cockpit-requests" data-state="filled">'
-        '<div class="list" id="inbox-list"><h2><span>%s</span><span class="mono muted">%d</span></h2>%s</div>'
+        '<div class="list" id="inbox-list"><h2><span>%s</span><span class="mono muted">%d</span></h2>%s%s</div>'
         "%s</div>\n%s"
-    ) % (title, len(requests), notice + rows, details, INBOX_SCRIPT)
+    ) % (title, len(requests), notice + rows, JOURNAL_LINK, details, INBOX_SCRIPT)
 
 
 def _render_list_item(r, now, selected):

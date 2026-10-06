@@ -215,7 +215,7 @@ class JournalTest(unittest.TestCase):
         entry = JournalEntry(bead_id="af-1", quoi="répondu a — ok", quand="2026-09-30T10:00:00Z", par="benjamin", voie="escalation-door")
         html_out = render_journal_section([entry])
         self.assertIn("répondu a — ok", html_out)
-        self.assertIn("2026-09-30T10:00:00Z", html_out)
+        self.assertIn("<time>30/09 12:00</time>", html_out)
         self.assertIn("benjamin", html_out)
 
 
