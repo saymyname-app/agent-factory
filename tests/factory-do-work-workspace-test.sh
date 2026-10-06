@@ -294,4 +294,139 @@ grep -q "." "$TMP/hook-fail.err" || fail "enter gave no readable reason for the 
 [ -d "$HOME/.local/share/agent-factory-runtime-worktrees/af-hook-failure-test" ] \
   && fail "enter left behind a worktree with no working auto-push hook after a forced install failure"
 
+# ---------------------------------------------------------------------------
+# 13. D01 (af-wtjo2x, T01's PR #384 merged with the body "Closes af-m8m1kc."
+#     and nothing else): a ticket whose description demands the PR sections
+#     « Non fait », « Écarts », « Constats hors ticket » cannot get them into
+#     the PR while `finish` writes a fixed body. `finish` now takes the body
+#     from <worktree git dir>/PR_BODY.md, and refuses (exit 3, nothing
+#     pushed away, worktree kept, no PR) when such a ticket has no body
+#     carrying the three sections. A ticket that does not demand them keeps
+#     the old behaviour.
+# ---------------------------------------------------------------------------
+FAKE_BD_DIR="$TMP/fake-bd-bin"
+mkdir -p "$FAKE_BD_DIR"
+cat > "$FAKE_BD_DIR/bd" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "show" ]; then
+  case "$2" in
+    af-sections-*)
+      printf '[{"id":"%s","description":"no_silent_deferral: écrit dans la PR sous « Non fait », « Écarts », « Constats hors ticket »"}]\n' "$2"
+      ;;
+    *)
+      printf '[{"id":"%s","description":"a plain ticket"}]\n' "$2"
+      ;;
+  esac
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$FAKE_BD_DIR/bd"
+
+export GH_FAKE_DIR="$TMP/fake-gh-state"
+FAKE_GH2_DIR="$TMP/fake-gh2-bin"
+mkdir -p "$GH_FAKE_DIR" "$FAKE_GH2_DIR"
+cat > "$FAKE_GH2_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+D="$GH_FAKE_DIR"
+sub="$1 $2"; shift 2
+branch=""; body=""; want=""
+case "$sub" in "pr view"|"pr edit") branch="$1"; shift ;; esac
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --head) branch="$2"; shift 2 ;;
+    --body-file) body="$2"; shift 2 ;;
+    --json) want="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+key=$(printf '%s' "$branch" | tr '/' '_')
+case "$sub" in
+  "pr create")
+    if [ -f "$D/$key.url" ]; then echo "a pull request for branch already exists" >&2; exit 1; fi
+    [ -n "$body" ] && [ -f "$body" ] || { echo "fake gh: pr create without --body-file" >&2; exit 1; }
+    cp "$body" "$D/$key.body"
+    echo "https://github.com/example/example/pull/$key" | tee "$D/$key.url"
+    exit 0 ;;
+  "pr view")
+    [ -f "$D/$key.url" ] || exit 1
+    if [ "$want" = "body" ]; then cat "$D/$key.body"; else cat "$D/$key.url"; fi
+    exit 0 ;;
+  "pr edit")
+    [ -f "$D/$key.url" ] || exit 1
+    cp "$body" "$D/$key.body"; echo edited >> "$D/$key.edits"
+    exit 0 ;;
+esac
+exit 1
+EOF
+chmod +x "$FAKE_GH2_DIR/gh"
+export PATH="$FAKE_BD_DIR:$FAKE_GH2_DIR:$PATH"
+
+pr_body_path() { printf '%s/PR_BODY.md' "$(git -C "$1" rev-parse --absolute-git-dir)"; }
+
+# 13a. sections demanded, no body file: refused, nothing opened, worktree kept
+WT13=$("$SCRIPT" enter af-sections-a)
+echo work > "$WT13/s"
+git -C "$WT13" add s
+git -C "$WT13" commit -qm "sections work"
+rc=0
+"$SCRIPT" finish af-sections-a "$WT13" do-work/af-sections-a main >"$TMP/s13a.out" 2>"$TMP/s13a.err" || rc=$?
+[ "$rc" = "3" ] || fail "finish on a ticket that demands the PR sections, with no PR_BODY.md, exited $rc (expected 3)"
+[ -d "$WT13" ] || fail "a refused finish must leave the worktree in place"
+[ -f "$GH_FAKE_DIR/do-work_af-sections-a.url" ] && fail "a refused finish must not open a PR"
+for s in "Non fait" "Écarts" "Constats hors ticket"; do
+  grep -qF -- "$s" "$TMP/s13a.err" || fail "the refusal does not name the missing section '$s'"
+done
+grep -qF -- "$(pr_body_path "$WT13")" "$TMP/s13a.err" || fail "the refusal does not name the file to write"
+
+# 13b. two sections out of three: still refused, names only the missing one
+printf '## Non fait\naucun\n\n## Écarts\naucun\n' > "$(pr_body_path "$WT13")"
+rc=0
+"$SCRIPT" finish af-sections-a "$WT13" do-work/af-sections-a main >"$TMP/s13b.out" 2>"$TMP/s13b.err" || rc=$?
+[ "$rc" = "3" ] || fail "finish with a PR_BODY.md missing one section exited $rc (expected 3)"
+grep -F -- "Missing:" "$TMP/s13b.err" | grep -qF -- "« Constats hors ticket »" \
+  || fail "the refusal does not list the one missing section"
+grep -F -- "Missing:" "$TMP/s13b.err" | grep -qF -- "« Non fait »" \
+  && fail "the refusal lists as missing a section that is present"
+
+# 13c. the three sections: PR opened with them in its body, worktree removed
+printf '## Non fait\naucun\n\n## Écarts\nle port est choisi par le système\n\n## Constats hors ticket\naucun\n' > "$(pr_body_path "$WT13")"
+PR_URL_13=$("$SCRIPT" finish af-sections-a "$WT13" do-work/af-sections-a main 2>"$TMP/s13c.err") \
+  || { cat "$TMP/s13c.err" >&2; fail "finish with the three sections exited non-zero"; }
+[ -n "$PR_URL_13" ] || fail "finish with the three sections did not report a PR"
+[ -d "$WT13" ] && fail "finish with the three sections did not remove the worktree"
+B13="$GH_FAKE_DIR/do-work_af-sections-a.body"
+grep -qF -- "Closes af-sections-a." "$B13" || fail "the PR body lost its 'Closes <bead>.' line"
+grep -qF -- "le port est choisi par le système" "$B13" || fail "the PR body does not carry PR_BODY.md"
+
+# 13d. re-dispatch, no new body file: the open PR already carries the
+#      sections, so finish passes and leaves the PR body alone
+WT13d=$("$SCRIPT" enter af-sections-a)
+echo more > "$WT13d/s2"
+git -C "$WT13d" add s2
+git -C "$WT13d" commit -qm "more"
+"$SCRIPT" finish af-sections-a "$WT13d" do-work/af-sections-a main >/dev/null 2>"$TMP/s13d.err" \
+  || { cat "$TMP/s13d.err" >&2; fail "re-dispatch finish was refused although the open PR already carries the sections"; }
+[ -f "$GH_FAKE_DIR/do-work_af-sections-a.edits" ] && fail "re-dispatch finish with no new PR_BODY.md rewrote the PR body"
+
+# 13e. re-dispatch with a new body file: the open PR's body is replaced
+WT13e=$("$SCRIPT" enter af-sections-a)
+echo again > "$WT13e/s3"
+git -C "$WT13e" add s3
+git -C "$WT13e" commit -qm "again"
+printf '## Non fait\nla sonde\n\n## Écarts\naucun\n\n## Constats hors ticket\naucun\n' > "$(pr_body_path "$WT13e")"
+"$SCRIPT" finish af-sections-a "$WT13e" do-work/af-sections-a main >/dev/null 2>"$TMP/s13e.err" \
+  || { cat "$TMP/s13e.err" >&2; fail "re-dispatch finish with a new PR_BODY.md exited non-zero"; }
+grep -qF -- "la sonde" "$B13" || fail "re-dispatch finish did not update the open PR's body from the new PR_BODY.md"
+
+# 13f. a ticket that does not demand the sections: no file needed, old body
+WT13f=$("$SCRIPT" enter af-plain-ticket)
+echo plain > "$WT13f/p"
+git -C "$WT13f" add p
+git -C "$WT13f" commit -qm "plain"
+"$SCRIPT" finish af-plain-ticket "$WT13f" do-work/af-plain-ticket main >/dev/null 2>"$TMP/s13f.err" \
+  || { cat "$TMP/s13f.err" >&2; fail "finish on a ticket that does not demand the sections was refused"; }
+[ "$(cat "$GH_FAKE_DIR/do-work_af-plain-ticket.body")" = "Closes af-plain-ticket." ] \
+  || fail "a plain ticket's PR body is no longer exactly 'Closes <bead>.'"
+
 echo "OK bin/factory-do-work-workspace isolates HQ dispatches AND protected product-rig branches in a worktree, pushes and cleans up on finish, and is a no-op elsewhere"
