@@ -293,6 +293,15 @@ class RequestsSeamTest(unittest.TestCase):
         # The fixed fallback option is never an answer button.
         self.assertNotIn('data-action="repondre"', detail("af-dddd"))
         self.assertIn("incomplète : champ pourquoi manquant", detail("af-dddd"))
+        # Reporter opens a menu: one button per fixed delay, then a free date and time.
+        self.assertNotIn("<select", body)
+        self.assertIn('data-action="reporter_ouvrir" data-bead-id="af-aaaa"', detail("af-aaaa"))
+        self.assertIn('class="snoozemenu cockpit-report-menu" data-bead-id="af-aaaa" hidden', detail("af-aaaa"))
+        for option in ("1h", "4h", "demain_09h", "libre"):
+            self.assertIn(
+                'data-action="reporter" data-bead-id="af-aaaa" data-option="%s"' % option, detail("af-aaaa")
+            )
+        self.assertIn('type="datetime-local" class="field cockpit-report-libre"', detail("af-aaaa"))
         for bead_id in ("af-aaaa", "af-cccc", "af-dddd"):
             self.assertIn('data-action="continuer"', detail(bead_id))
             self.assertIn("utilise un agent (consomme des tokens)", detail(bead_id))

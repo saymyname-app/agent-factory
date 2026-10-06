@@ -19,6 +19,7 @@ REPORT_OPTIONS = (
     ("demain_09h", "Demain 09:00"),
     ("libre", "Heure libre"),
 )
+FREE_TIME_OPTION = "libre"
 
 
 def render_actions(request):
@@ -41,22 +42,40 @@ def render_actions(request):
             'data-bead-id="%s">Acquitter</button>' % bead_id
         )
 
-    report_options_html = "".join(
-        '<option value="%s">%s</option>' % (html.escape(value), html.escape(label))
-        for value, label in REPORT_OPTIONS
-    )
     buttons.append(
-        '<span class="inline cockpit-action-report">'
-        '<select class="field cockpit-report-option" data-bead-id="%s" aria-label="Reporter jusqu\'à">%s</select>'
-        '<button type="button" class="btn ghost cockpit-action" data-action="reporter" '
-        'data-bead-id="%s">Reporter</button>'
-        "</span>" % (bead_id, report_options_html, bead_id)
+        '<button type="button" class="btn ghost cockpit-action" data-action="reporter_ouvrir" '
+        'data-bead-id="%s">Reporter</button>' % bead_id
     )
 
     return (
         '<div class="acts cockpit-actions">%s</div>'
+        "%s"
         '<p class="hint cockpit-actions-explication">%s</p>'
-    ) % ("".join(buttons), html.escape(FIXED_EXPLANATION))
+    ) % ("".join(buttons), _render_report_menu(bead_id), html.escape(FIXED_EXPLANATION))
+
+
+def _render_report_menu(bead_id):
+    """"Reporter jusqu'à :" -- takes the action row's place while open
+    (prototype variant D). One button per fixed delay (spec .22); "heure
+    libre" is a date-and-time field plus its own button."""
+    fixed = "".join(
+        '<button type="button" class="btn" data-action="reporter" data-bead-id="%s" '
+        'data-option="%s">%s</button>' % (bead_id, html.escape(value), html.escape(label))
+        for value, label in REPORT_OPTIONS
+        if value != FREE_TIME_OPTION
+    )
+    return (
+        '<div class="snoozemenu cockpit-report-menu" data-bead-id="%s" hidden>'
+        '<span class="muted">Reporter jusqu\'à :</span>%s'
+        '<span class="inline">'
+        '<input type="datetime-local" class="field cockpit-report-libre" data-bead-id="%s" '
+        'aria-label="Heure libre">'
+        '<button type="button" class="btn" data-action="reporter" data-bead-id="%s" '
+        'data-option="%s">À cette heure</button></span>'
+        '<button type="button" class="btn ghost" data-action="reporter_fermer" '
+        'data-bead-id="%s">Annuler</button>'
+        "</div>"
+    ) % (bead_id, fixed, bead_id, bead_id, FREE_TIME_OPTION, bead_id)
 
 
 # One tap, then an "Annuler" window of 10 s before the POST actually goes
@@ -85,6 +104,13 @@ SCRIPT = """
       credentials: 'same-origin',
       body: JSON.stringify(body)
     });
+  }
+  // The report menu takes the action row's place while it is open.
+  function showReportMenu(beadId, open) {
+    var menu = document.querySelector('.cockpit-report-menu[data-bead-id="' + beadId + '"]');
+    if (!menu) { return; }
+    menu.hidden = !open;
+    if (menu.previousElementSibling) { menu.previousElementSibling.hidden = open; }
   }
   function withUndo(label, run) {
     var cancelled = false;
@@ -199,10 +225,22 @@ SCRIPT = """
     var beadId = el.getAttribute('data-bead-id');
     if (action === 'acquitter') {
       withUndo('Acquitter', function () { post('acquitter', {bead_id: beadId}); });
+    } else if (action === 'reporter_ouvrir' || action === 'reporter_fermer') {
+      showReportMenu(beadId, action === 'reporter_ouvrir');
     } else if (action === 'reporter') {
-      var select = document.querySelector('.cockpit-report-option[data-bead-id="' + beadId + '"]');
-      var option = select ? select.value : '1h';
-      withUndo('Reporter', function () { post('reporter', {bead_id: beadId, option: option}); });
+      var body = {bead_id: beadId, option: el.getAttribute('data-option') || '1h'};
+      if (body.option === 'libre') {
+        // "Heure libre": the field's local date and time, sent as an epoch.
+        var input = document.querySelector('.cockpit-report-libre[data-bead-id="' + beadId + '"]');
+        var when = input && input.value ? new Date(input.value).getTime() / 1000 : 0;
+        if (!when || when <= Date.now() / 1000) {
+          if (input) { input.focus(); }
+          return;
+        }
+        body.custom_epoch = when;
+      }
+      showReportMenu(beadId, false);
+      withUndo('Reporter', function () { post('reporter', body); });
     } else if (action === 'continuer') {
       var quoi = el.getAttribute('data-quoi') || '';
       withUndo('Copier le prompt', function () {
