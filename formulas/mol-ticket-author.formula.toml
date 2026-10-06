@@ -1,0 +1,334 @@
+description = """
+Author formula — one fresh author session works one ticket of a convoy that
+carries the new-flow mark (T12, af-i3q5a5; Spec af-wf4w5r §0 rule 4, §4, §5).
+
+Only `bin/convoy-advance` starts it, through `bin/dispatch-door --role
+author --convoy <convoy>` (`config/delivery-flow.json`, `start.formula`).
+The session works in a work tree of its own, on a branch that leaves from
+the integration branch of the Spec, and never opens a pull request: the
+ticket is merged by code (`bin/spec-integration`).
+
+The sequence is held by scripts. Each step below carries an exec check,
+`bin/ticket-author-check`: when the session closes the step, Gas City runs
+the gate of that step (`bin/ticket-author gate`), which reads the tracker,
+the evidence store and the tip of the ticket branch. A gate that refuses
+re-opens the step (three attempts); once they are spent the scope
+`ticket-sequence` fails and the remaining steps are skipped
+(`gc.on_fail=abort_scope`). What the session says closes nothing.
+
+| Step | Its gate asks for |
+|---|---|
+| `workspace` | the session and the branch recorded on the ticket, the work tree on that branch, the branch left from the integration branch |
+| `red` | the red proven and the criterion tests frozen (`bin/tdd-step`); nothing for a `prefactoring` |
+| `code` | the criterion tests green at the tip of the branch; for a `prefactoring`, its regression at the tip |
+| `demonstration` | the demonstration line captured on the launched product at the tip (`bin/ticket-author demonstrate`); nothing for a `prefactoring` |
+| `exit` | a Ticket Exit recorded by `bin/ticket-exit`; « terminé » at the tip, with its Handoff |
+
+A Ticket Exit other than « terminé » (Planning Exception, operator request,
+technically blocked, interrupted) closes the sequence: its destination is
+fixed by `bin/ticket-exit`, and the gates of the steps that remain pass so
+the session can close them and leave. Such a ticket is never merged.
+
+Details: docs/TICKET_AUTHOR.md.
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|--------------|
+| convoy_id | runtime | Input convoy tracking the single ticket |
+"""
+formula = "mol-ticket-author"
+version = 1
+contract = "graph.v2"
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "ticket-sequence"
+title = "Sequence of one ticket"
+metadata = { "gc.kind" = "scope", "gc.scope_ref" = "ticket-sequence" }
+
+[[steps]]
+id = "workspace"
+title = "Take the ticket: work tree and branch from the integration branch"
+metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+description = """
+You are the author of one ticket. This step gives you the ticket, its work
+tree and its branch.
+
+**1. Take the ticket:**
+
+```bash
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+TICKET=$(gc convoy status {{convoy_id}} --json | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+[ -n "$TICKET" ] || { echo "mol-ticket-author requires an input convoy with exactly one tracked ticket" >&2; exit 1; }
+CONVOY=$("$FACTORY_ROOT/bin/ticket-author" locate "$TICKET" | jq -r '.convoy')
+"$FACTORY_ROOT/bin/ticket-author" start "$CONVOY" "$TICKET"
+```
+
+The answer names your work tree (`worktree`), your branch, the commit you
+start from (`base`), the project profile (`profile`) and the demonstration
+line of the ticket. `start` can be run again at any step to read them
+again: it changes nothing. If it refuses, stop: do not create a work tree
+or a branch by hand.
+
+**2. Read the ticket as its author receives it:**
+
+```bash
+"$FACTORY_ROOT/bin/ticket-exit" read "$CONVOY" "$TICKET"
+gc bd show "$TICKET" --json | jq -r '.[0].description'
+```
+
+It carries the text of the ticket, its criteria, its demonstration line and
+the Ticket Handoff of each of its direct blockers. Read the Spec it names
+in full (`gc bd show <spec> --json | jq -r '.[0].description'`).
+
+From here on, work only in your work tree (`cd` there). Never check out or
+edit anything in the Factory root or in the repository of the project.
+
+**3. Close this step** — Gas City then runs its gate; a refusal brings the
+step back to you with the reason:
+
+```bash
+"$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step workspace
+gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Ticket $TICKET pris."
+```
+
+**If at any step you cannot go on**, never end in free text. Take the Ticket
+Exit that fits through `bin/ticket-exit exit` (docs/TICKET_EXIT.md):
+`planning_exception` when the demonstration line would need a behaviour the
+Spec or another ticket fixes; `operator_request` when only the operator can
+answer; `technically_blocked` when a defect outside your ticket stops you;
+`interrupted` when you must stop before the end. Then close each remaining
+step as it comes to you, without doing its work: its gate passes once the
+exit is recorded."""
+
+[steps.check]
+max_attempts = 3
+
+[steps.check.check]
+mode = "exec"
+path = "bin/ticket-author-check"
+timeout = "5m"
+
+[[steps]]
+id = "red"
+title = "Red step: every criterion test first, proven red, then frozen"
+needs = ["workspace"]
+metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+description = """
+```bash
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+TICKET=$(gc convoy status {{convoy_id}} --json | jq -r '.children[0].id')
+CONVOY=$("$FACTORY_ROOT/bin/ticket-author" locate "$TICKET" | jq -r '.convoy')
+START=$("$FACTORY_ROOT/bin/ticket-author" start "$CONVOY" "$TICKET")
+WORKTREE=$(printf '%s' "$START" | jq -r '.worktree'); BASE=$(printf '%s' "$START" | jq -r '.base')
+PROFILE=$(printf '%s' "$START" | jq -r '.profile')
+cd "$WORKTREE"
+```
+
+**A `prefactoring` has no red step.** If no test covers the behaviour you
+are about to move, write the characterization tests now and commit them;
+then close this step.
+
+**A `vertical_slice` or a `repair`:** call the `tdd` skill and write every
+criterion test of the ticket first, before any code of the product. Change
+only the test perimeter the profile declares (`launch.test_perimeter`), and
+write the criterion → test table (docs/TDD_STEP.md). Commit, then have the
+red proven and the tests frozen:
+
+```bash
+"$FACTORY_ROOT/bin/tdd-step" red "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" \\
+  --dataset <a dataset of the profile> --base "$BASE" --table <the table>
+"$FACTORY_ROOT/bin/tdd-step" freeze "$CONVOY" "$TICKET" --repo "$WORKTREE"
+```
+
+A refusal names what is wrong: fix the tests, commit, run the step again.
+A criterion already green stops the ticket (exit status 5): take the Ticket
+Exit `planning_exception`.
+
+**Close this step:**
+
+```bash
+"$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step red
+gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Rouge prouvé et gelé."
+```"""
+
+[steps.check]
+max_attempts = 3
+
+[steps.check.check]
+mode = "exec"
+path = "bin/ticket-author-check"
+timeout = "5m"
+
+[[steps]]
+id = "code"
+title = "Code: make the frozen tests pass and wire the demonstration line"
+needs = ["red"]
+metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+description = """
+```bash
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+TICKET=$(gc convoy status {{convoy_id}} --json | jq -r '.children[0].id')
+CONVOY=$("$FACTORY_ROOT/bin/ticket-author" locate "$TICKET" | jq -r '.convoy')
+START=$("$FACTORY_ROOT/bin/ticket-author" start "$CONVOY" "$TICKET")
+WORKTREE=$(printf '%s' "$START" | jq -r '.worktree'); BASE=$(printf '%s' "$START" | jq -r '.base')
+PROFILE=$(printf '%s' "$START" | jq -r '.profile')
+cd "$WORKTREE"
+```
+
+Write the code of the ticket, following the `tdd` and `codebase-design`
+skills and `skills/engineering/implement/SKILL.md` of the Factory root.
+
+- **Your limit is the approved intent, never a list of files.** Wire
+  everything the demonstration line needs — routes, registrations, entry
+  points — even outside the Declared Scope of the ticket: the scope orders
+  tickets and bounds nothing. A module nothing calls is not a delivery.
+- **A behaviour the Spec or another ticket fixes is not yours to change.**
+  If the demonstration line needs it changed, commit nothing that changes
+  it and take the Ticket Exit `planning_exception`.
+- **You write the code yourself.** Do not hand any writing to a sub-agent;
+  sub-agents that only read are allowed.
+- A frozen test is changed by one path only, once: `bin/tdd-step amend`.
+- A defect seen elsewhere goes in your Handoff (« Constats hors ticket »),
+  untouched.
+
+Commit, then have the code proven at the tip of your branch:
+
+```bash
+# vertical_slice, repair
+"$FACTORY_ROOT/bin/tdd-step" green "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" --dataset <a dataset of the profile>
+# prefactoring
+"$FACTORY_ROOT/bin/tdd-step" prefactoring "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" --base "$BASE"
+```
+
+**Close this step:**
+
+```bash
+"$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step code
+gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Code prouvé à la pointe."
+```"""
+
+[steps.check]
+max_attempts = 3
+
+[steps.check.check]
+mode = "exec"
+path = "bin/ticket-author-check"
+timeout = "5m"
+
+[[steps]]
+id = "demonstration"
+title = "Launch the product and capture the demonstration line"
+needs = ["code"]
+metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+description = """
+```bash
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+TICKET=$(gc convoy status {{convoy_id}} --json | jq -r '.children[0].id')
+CONVOY=$("$FACTORY_ROOT/bin/ticket-author" locate "$TICKET" | jq -r '.convoy')
+START=$("$FACTORY_ROOT/bin/ticket-author" start "$CONVOY" "$TICKET")
+WORKTREE=$(printf '%s' "$START" | jq -r '.worktree'); PROFILE=$(printf '%s' "$START" | jq -r '.profile')
+printf '%s' "$START" | jq -r '.demonstration_line'
+```
+
+A `prefactoring` has no demonstration line: close this step.
+
+Otherwise, see the demonstration line of your ticket on the launched
+product yourself. The tool launches the product at the head commit of your
+branch, through the real entry point, and captures what you ask for — a
+command that observes the line and exits 0 only when it holds (it receives
+the address of the product in `PRODUCT_ADDRESS`), or a screenshot of a path:
+
+```bash
+"$FACTORY_ROOT/bin/ticket-author" demonstrate "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" \\
+  --dataset <a dataset of the profile> -- <command that observes the line>
+"$FACTORY_ROOT/bin/ticket-author" demonstrate "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" \\
+  --dataset <a dataset of the profile> --path /<path of the page>
+```
+
+If the line is not observed, the ticket is not done: go back to the code,
+commit, prove it green again (`bin/tdd-step green`), and demonstrate again.
+The proof is tied to the head commit: any commit after it means a new
+capture.
+
+**Close this step:**
+
+```bash
+"$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step demonstration
+gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Ligne de démonstration capturée."
+```"""
+
+[steps.check]
+max_attempts = 3
+
+[steps.check.check]
+mode = "exec"
+path = "bin/ticket-author-check"
+timeout = "5m"
+
+[[steps]]
+id = "exit"
+title = "Ticket Exit: hand the ticket over by a structured exit"
+needs = ["demonstration"]
+metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+description = """
+```bash
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+TICKET=$(gc convoy status {{convoy_id}} --json | jq -r '.children[0].id')
+CONVOY=$("$FACTORY_ROOT/bin/ticket-author" locate "$TICKET" | jq -r '.convoy')
+WORKTREE=$("$FACTORY_ROOT/bin/ticket-author" start "$CONVOY" "$TICKET" | jq -r '.worktree')
+```
+
+Write your Ticket Handoff — the four sections, each with content or
+`"aucun"` (docs/TICKET_EXIT.md) — in a JSON file outside the work tree, then
+leave by the exit « terminé »:
+
+```bash
+"$FACTORY_ROOT/bin/ticket-exit" exit "$CONVOY" "$TICKET" --exit finished --repo "$WORKTREE" --handoff <handoff.json>
+```
+
+It is refused without the red proof, without the demonstration proof at the
+head commit, and on a deferral marker you did not declare. You do not close
+the ticket, open a pull request or merge anything: review, evaluation and
+the merge into the integration branch follow, by code.
+
+**Close this step:**
+
+```bash
+"$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step exit
+gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Sortie de ticket enregistrée."
+```"""
+
+[steps.check]
+max_attempts = 3
+
+[steps.check.check]
+mode = "exec"
+path = "bin/ticket-author-check"
+timeout = "5m"
+
+[[steps]]
+id = "drain"
+title = "Release the work tree and end the session"
+needs = ["exit"]
+metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "teardown" }
+description = """
+The sequence is over. Release your work tree (the branch stays; a refusal
+here is not yours to fix), close this step and end the session: one session
+works one ticket.
+
+```bash
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+TICKET=$(gc convoy status {{convoy_id}} --json | jq -r '.children[0].id')
+CONVOY=$("$FACTORY_ROOT/bin/ticket-author" locate "$TICKET" | jq -r '.convoy')
+"$FACTORY_ROOT/bin/ticket-author" release "$CONVOY" "$TICKET" || true
+if [ -n "${GC_BEAD_ID:-}" ]; then
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Drain acknowledged."
+fi
+gc runtime drain-ack
+```
+
+Run exactly these commands and nothing else."""
