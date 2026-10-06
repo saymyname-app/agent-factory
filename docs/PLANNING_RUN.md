@@ -75,6 +75,11 @@ Planning Run starts.
    through `bin/ticket-graph-publish bd-publish` (or `bd-patch` to revise
    an already-published graph). It refuses unless the named Spec bead is
    still approved and its current digest still equals the approved one.
+   A draft that declares the new-flow contract (`flow_contract:
+   new-flow/v1`) is also held to the entry contract of the Delivery
+   Workflow -- declared kind, demonstration line, observable criteria --
+   and its convoy is published with the new-flow mark; a draft that does
+   not declare it is published as before (`docs/ENTRY_CONTRACT.md`).
    On success, in the same door: delivery beads and the convoy are created
    atomically (one approved ticket becomes exactly one delivery bead), the
    Planning Run Reservation advances (to `next`, or clears) when the

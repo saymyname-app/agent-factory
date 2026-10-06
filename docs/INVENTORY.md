@@ -140,7 +140,7 @@ an A5 input.
 | `bin/provider-failover` | ops | orders provider-failover + model-staleness-check, factory-boot, factory-guard | FIXED (P20, af-r48pb): help/status/set text names no cockpit or campaign; live failover unchanged |
 | `bin/reversibility-check` | ops | pr-autopilot, factory-watchdog, CI test | ADR-0019 reversibility gate CLI |
 | `bin/spec-approve` | kernel | CI test | Spec approval stage; bead mode only (`bd-approve`/`bd-status`) since A6b W10 retired the file-Spec mode with the router; FIXED (T07, af-tvda3w): also refuses a Spec without numbered user stories, or with an interface story and no complete reference, state inventory or conformant Validated Prototype on the remote repository |
-| `bin/ticket-graph-publish` | kernel | mayor prompt (bd-patch), planning-exception, CI | `bd-publish`/`bd-patch` only since A6b W10 retired the file-draft mode with the router |
+| `bin/ticket-graph-publish` | kernel | mayor prompt (bd-patch), planning-exception, CI | `bd-publish`/`bd-patch` only since A6b W10 retired the file-draft mode with the router; T05 (af-c8n7ep): a draft declaring `flow_contract: new-flow/v1` is held to the entry contract and its convoy marked through bin/convoy-state (`docs/ENTRY_CONTRACT.md`) |
 | `city.toml` | to-redo | gc; factory-guard; provider-failover; build-gates | live, but comments route provider changes via retired cockpit; SayMyName rigs/patches + /home/benja paths |
 | `config/factory-observe-policy.json` | kernel | bin/factory-observe, lib/factory_observe.py, test | B09 policy |
 | `config/fixture-city-bwrap.apparmor` | kernel | ci.yml, bin/project-isolation-oracle, test | P05 sandbox profile for CI |
@@ -251,7 +251,7 @@ an A5 input.
 | `tests/fixtures/pr-autopilot-projects` | ops | the six `tests/pr-autopilot-*-test.sh` files, via `PROTECTED_RIGS_CONFIG_DIR` | new (P23): synthetic `config/projects/*.toml`-shaped rows (`example-backend`/`example-frontend`) so pr-autopilot tests exercise the real project-registry loading path without asserting on the real SayMyName rig names |
 | `tests/fixtures/shared-drain` | ops | factory-shared-drain-workspace-test.sh | fake gc/gh |
 | `tests/fixtures/spec-approve` | kernel | spec-approve-test.py | synthetic spec drafts |
-| `tests/fixtures/ticket-graph-publish` | kernel | ticket-graph-publish-test.py, planning-exception-test.py | fake bd |
+| `tests/fixtures/ticket-graph-publish` | kernel | ticket-graph-publish-test.py, ticket-graph-publish-entry-contract-test.py, planning-exception-test.py | fake bd; fake gc (Mayor mail, and the tracker calls of bin/convoy-state on the same store); T05: conformant Fixture City draft, frozen copy of the Cockpit V2 draft (af-i67vl0), golden of a publication before T05 |
 | `tests/goal-delivery-pairs-test.sh` | ops | bin/goal-delivery-pairs | in CI (ci.yml:194) |
 | `tests/on-order-failed-test.sh` | ops | bin/on-order-failed | in CI (ci.yml:221); comment cites legacy factory-cockpit-chaos-test.py |
 | `tests/on-session-stranded-test.sh` | ops | bin/on-session-stranded | in CI (ci.yml:224); comment cites legacy factory-cockpit-chaos-test.py |
@@ -274,6 +274,8 @@ an A5 input.
 | `tests/reversibility-test.py` | ops | reversibility classifier (pr-autopilot) | in CI (ci.yml:158) |
 | `tests/spec-approve-test.py` | kernel | spec-approve; fixtures spec-approve, delivery-fixture-city; tests/lib/fixture_prototype.py | in CI (ci.yml:47); FIXED (T07, af-tvda3w): entry-contract refusals and passages against a local bare remote carrying the fixture's prototype branch |
 | `tests/ticket-graph-publish-test.py` | kernel | ticket-graph-publish; fixture ticket-graph-publish | in CI (ci.yml:38) |
+| `tests/ticket-graph-publish-entry-contract-test.py` | kernel | ticket-graph-publish, convoy-state; fixture ticket-graph-publish | NEW (T05, af-c8n7ep): auto-discovered by bin/ci-run-tests; one test per refusal and per pass of the new-flow entry contract, each refusal re-reading the tracker |
+| `tests/ticket-graph-publish-new-flow-real-tracker-test.sh` | kernel | ticket-graph-publish, convoy-state; real gc/bd in a disposable city | NEW (T05, af-c8n7ep): local-only adoption trial of the same contract on the real tracker |
 
 ## O16 closeout — orders, Mayor manual operations, 24 h clean (added 2026-09-29, af-dqhwo)
 

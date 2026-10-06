@@ -114,7 +114,14 @@ def cmd_create(flags, positionals):
             state["beads"][new_id] = {
                 "id": new_id, "title": node["title"], "description": node["description"],
                 "status": "open", "labels": node["labels"], "metadata": node["metadata"],
+                "issue_type": node.get("type", "task"),
             }
+        # The real graph transaction stores each `tracks` edge on the convoy:
+        # `bd show <convoy> --json` then lists the tracked tickets, which is
+        # what bin/convoy-state reads (see the fake `gc` beside this file).
+        for edge in plan.get("edges", []):
+            if edge.get("type") == "tracks":
+                state["beads"][ids[edge["from_key"]]].setdefault("tracks", []).append(ids[edge["to_key"]])
         save_state(state)
         print(json.dumps({"schema_version": 1, "ids": ids}))
         return
