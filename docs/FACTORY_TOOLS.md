@@ -764,7 +764,8 @@ concerne qu'un ticket d'un convoi qui porte la **marque du nouveau flux**.
 - **Sorties de `review`** : 0 tests relus favorablement ; 2 refus, retour à
   l'auteur ; 5 ticket arrêté ; 6 pas encore de verdict, relancer la même
   commande ; 1 refus ou échec ; 4 « pas un convoi du nouveau flux ».
-- **Limites** : rien ne lève encore un arrêt ; un test amendé après le gel
-  est relu par la revue de code, pas ici.
+- **Limites** : rien ne lève encore un arrêt. Un test amendé après le gel
+  n'est pas relu ici : c'est à la revue de code du ticket de le relire
+  (T14, pas encore livrée).
 
 Détail : `docs/TEST_REVIEW.md`.
