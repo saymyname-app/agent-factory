@@ -85,7 +85,9 @@
 #   clear <bead>                Once the decision is resolved without a
 #                              recorded answer, clear gc.needs_benjamin and
 #                              any Mayor-first paging state on <bead>, and
-#                              note the clearance. Prefer `repondre` when
+#                              note the clearance with its time
+                             (gc.escalation_cleared_at, which the Cockpit
+                             journal reads). Prefer `repondre` when
 #                              there is an answer to record. Reopens a
 #                              parked-blocked <bead> like `repondre`.
 #   list                       Read-only: print the NEEDS BENJAMIN list
@@ -410,6 +412,7 @@ cmd_clear() {
     --set-metadata "gc.needs_benjamin=none" \
     --set-metadata "gc.escalation_mayor_paged_at=none" \
     --set-metadata "gc.escalation_mayor_reason=none" \
+    --set-metadata "gc.escalation_cleared_at=$(now_iso)" \
     "${reopen_args[@]}" \
     --append-notes "DECISION CLEARED: escalation reset to none$reopen_note" \
     >/dev/null || die "Beads write failed for $bead."
