@@ -31,6 +31,14 @@ filters by `--type`, `--status`, `--has-metadata-key` and `--metadata-field`;
 bead open, unassigned and without new metadata. Every sling is appended to
 the write log as ["sling", TARGET, BEAD, FORMULA]; a bead id listed in
 CONVOY_STATE_FAKE_SLING_FAIL (comma-separated) makes its sling fail.
+
+For the factory incident of bin/convoy-advance and for bin/escalation-door
+(T34, af-ckwina): `bd update` also takes `--unset-metadata KEY`, `--status
+VALUE` and `--append-notes TEXT`; `bd create TITLE ... --json` adds an open
+task and answers `{"id": ...}` (logged as ["create", ID, TITLE]); `bd close
+ID --reason TEXT [--json]` closes it (logged as ["close", ID]); `mail send RECIPIENT
+... -s SUBJECT ...` is logged as ["mail", RECIPIENT, SUBJECT] and fails when
+CONVOY_STATE_FAKE_MAIL_FAIL is set.
 Anything else fails loudly.
 """
 import fcntl
@@ -98,6 +106,12 @@ def update(state, bead_id, rest):
                 fail(f'metadata edit failed for {bead_id}: invalid metadata key "{key}": '
                      "must match [a-zA-Z_][a-zA-Z0-9_.]*")
             metadata[key] = coerce(value)
+        elif flag == "--unset-metadata" and i + 1 < len(rest):
+            metadata.pop(rest[i + 1], None)
+        elif flag == "--status" and i + 1 < len(rest):
+            bead["status"] = rest[i + 1]
+        elif flag == "--append-notes" and i + 1 < len(rest):
+            bead["notes"] = (bead.get("notes", "") + "\n" + rest[i + 1]).strip()
         else:
             fail(f"no canned response configured for: bd update {bead_id} {' '.join(rest)}")
         i += 2
@@ -155,6 +169,47 @@ def list_beads(beads, rest):
     print(json.dumps(out))
 
 
+def create(state, rest):
+    if not rest or "--json" not in rest:
+        fail(f"no canned response configured for: bd create {' '.join(rest)}")
+    title, options = rest[0], rest[1:]
+    bead = {"title": title, "status": "open", "issue_type": "task", "metadata": {}}
+    i = 0
+    while i < len(options):
+        flag = options[i]
+        if flag == "--json":
+            i += 1
+            continue
+        if flag not in ("-p", "-t", "-d") or i + 1 >= len(options):
+            fail(f"no canned response configured for: bd create {' '.join(rest)}")
+        if flag == "-t":
+            bead["issue_type"] = options[i + 1]
+        elif flag == "-d":
+            bead["description"] = options[i + 1]
+        i += 2
+    bead_id = f"fx-new{sum(1 for known in state['beads'] if known.startswith('fx-new')) + 1}"
+    state["beads"][bead_id] = bead
+    log_write(["create", bead_id, title])
+    print(json.dumps({"id": bead_id, "title": title, "status": "open"}))
+
+
+def close(state, bead_id, rest):
+    if bead_id not in state["beads"] or rest[:1] != ["--reason"] or rest[2:] not in ([], ["--json"]):
+        fail(f"no canned response configured for: bd close {bead_id} {' '.join(rest)}")
+    state["beads"][bead_id]["status"] = "closed"
+    log_write(["close", bead_id])
+    print(json.dumps([{"id": bead_id, "status": "closed"}]))
+
+
+def mail(args):
+    if len(args) < 2 or args[0] != "send" or "-s" not in args:
+        fail(f"no canned response configured for: mail {' '.join(args)}")
+    if os.environ.get("CONVOY_STATE_FAKE_MAIL_FAIL"):
+        fail("mail refused")
+    log_write(["mail", args[1], args[args.index("-s") + 1]])
+    print("Sent")
+
+
 def sling(args):
     if len(args) != 5 or args[2] != "--on" or args[4] != "--reassign":
         fail(f"no canned response configured for: sling {' '.join(args)}")
@@ -185,13 +240,21 @@ def main(args):
         state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
         show(state["beads"], args[2])
         return 0
-    if args[:2] == ["bd", "update"] and len(args) >= 3:
-        # One real `bd update` is one transaction: hold the file for the
-        # whole read-modify-write so two fake updates never tear each other.
+    if args[:1] == ["mail"]:
+        mail(args[1:])
+        return 0
+    if args[:2] in (["bd", "update"], ["bd", "create"], ["bd", "close"]) and len(args) >= 3:
+        # One real `bd` write is one transaction: hold the file for the
+        # whole read-modify-write so two fake writes never tear each other.
         with STATE_PATH.open("r+", encoding="utf-8") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             state = json.loads(handle.read())
-            update(state, args[2], args[3:])
+            if args[1] == "update":
+                update(state, args[2], args[3:])
+            elif args[1] == "create":
+                create(state, args[2:])
+            else:
+                close(state, args[2], args[3:])
             handle.seek(0)
             handle.truncate()
             handle.write(json.dumps(state, indent=2, sort_keys=True))

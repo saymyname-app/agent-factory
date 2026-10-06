@@ -625,5 +625,97 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertIs(False, t1["verdicts"]["evaluation"]["valid"])
 
 
+    # --- the mark of one ticket, the convoy's factory incident (T34) -------------
+
+    def test_ticket_says_a_marked_ticket_is_of_the_new_flow(self):
+        self.ok("mark", CONVOY)
+
+        answer = self.ok("ticket", T1)
+
+        self.assertTrue(answer["new_flow"])
+        self.assertEqual(T1, answer["ticket"])
+
+    def test_ticket_says_an_unmarked_ticket_is_not_of_the_new_flow_and_writes_nothing(self):
+        before = self.tracker.read_text()
+
+        proc = self.run_tool("ticket", T1)
+
+        self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+        self.assertFalse(json.loads(proc.stdout)["new_flow"])
+        self.assertEqual(before, self.tracker.read_text())
+
+    def test_ticket_reads_a_bead_already_read_from_the_tracker(self):
+        self.ok("mark", CONVOY)
+        bead = [{"id": T1, "status": "open", "metadata": self.tracker_state()["beads"][T1]["metadata"]}]
+        env = {**self.env, "GC_BIN": "/nonexistent/gc"}  # the tracker is not read again
+
+        proc = subprocess.run((str(TOOL), "ticket", T1, "--bead-json", "-"), env=env, text=True,
+                              capture_output=True, input=json.dumps(bead))
+
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertTrue(json.loads(proc.stdout)["new_flow"])
+
+    def test_ticket_with_an_unknown_mark_is_a_state_without_rule(self):
+        self.edit_tracker(T1, **{"gc.flow.mark": "new-flow/v0"})
+
+        proc = self.run_tool("ticket", T1)
+
+        self.assertEqual(EXIT_UNRULED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("état sans règle", proc.stdout)
+
+    def test_record_incident_is_read_back_by_show(self):
+        self.ok("mark", CONVOY)
+
+        self.ok("record-incident", CONVOY, "--bead", "fx-incident")
+        self.assertEqual("fx-incident", self.show()["convoy"]["incident"]["bead"])
+        self.assertNotIn("signature", self.show()["convoy"]["incident"])
+
+        self.ok("record-incident", CONVOY, "--bead", "fx-incident", "--signature", DIGEST)
+        incident = self.show()["convoy"]["incident"]
+        self.assertEqual(DIGEST, incident["signature"])
+        self.assertIn("at", incident)
+
+    def test_a_convoy_without_incident_shows_none(self):
+        self.ok("mark", CONVOY)
+
+        self.assertIsNone(self.show()["convoy"]["incident"])
+
+    def test_clear_incident_removes_it(self):
+        self.ok("mark", CONVOY)
+        self.ok("record-incident", CONVOY, "--bead", "fx-incident", "--signature", DIGEST)
+
+        self.ok("clear-incident", CONVOY)
+
+        self.assertIsNone(self.show()["convoy"]["incident"])
+        self.assertNotIn("gc.flow.incident", self.tracker_state()["beads"][CONVOY]["metadata"])
+
+    def test_record_incident_refuses_a_malformed_signature_or_bead_and_writes_nothing(self):
+        self.ok("mark", CONVOY)
+        before = self.tracker.read_text()
+
+        for args in (("--bead", "fx-incident", "--signature", "abc"), ("--bead", "not a bead id"), ()):
+            with self.subTest(args=args):
+                proc = self.run_tool("record-incident", CONVOY, *args)
+                self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+                self.assertEqual(before, self.tracker.read_text())
+
+    def test_record_incident_refuses_an_unmarked_convoy_and_writes_nothing(self):
+        before = self.tracker.read_text()
+
+        for command in (("record-incident", CONVOY, "--bead", "fx-incident"), ("clear-incident", CONVOY)):
+            with self.subTest(command=command):
+                proc = self.run_tool(*command)
+                self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+                self.assertEqual(before, self.tracker.read_text())
+
+    def test_an_incident_record_written_outside_the_command_is_a_state_without_rule(self):
+        self.ok("mark", CONVOY)
+        self.edit_tracker(CONVOY, **{"gc.flow.incident": "à la main"})
+
+        shown = self.show(expect=EXIT_UNRULED)
+
+        self.assertIn("unruled", shown["convoy"]["incident"])
+        self.assertEqual("gc.flow.incident", shown["convoy"]["unruled"][0]["field"])
+
 if __name__ == "__main__":
     unittest.main()

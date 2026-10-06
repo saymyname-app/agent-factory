@@ -6,7 +6,13 @@ The advance command starts the ready tickets of a convoy that carries the
 new-flow mark, through the real bin/dispatch-door, under the factory-wide
 ceiling N. One test per pass and per refusal; a refusal re-reads the tracker
 to prove nothing was written. Only command lines are exercised: the tracker
-is tests/fixtures/convoy-state/gc, the Factory root is a synthetic one."""
+is tests/fixtures/convoy-state/gc, the Factory root is a synthetic one.
+
+T34 (af-ckwina; §0 rules 3 and 5, user stories 83 and 84): a state without
+rule stops the convoy and raises one factory incident through the real
+bin/escalation-door, read back from its list; the pass resumes by itself
+once the state is valid again; the dispatch door refuses a ticket of a
+marked convoy to an agent session."""
 
 import json
 import os
@@ -21,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin" / "convoy-advance"
 STATE = ROOT / "bin" / "convoy-state"
 DOOR = ROOT / "bin" / "dispatch-door"
+ESCALATION = ROOT / "bin" / "escalation-door"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
 
 CONVOY = "fx-convoy"
@@ -35,6 +42,13 @@ EXIT_NOT_NEW_FLOW = 4
 
 DOOR_STAMP = "gc.dispatched_via"
 DISPATCH_GATE = "gc.flow.gate.dispatch"
+INCIDENT = "Incident d'usine"
+STARTED_OUTSIDE = "démarré hors porte"
+CLOSED_OUTSIDE = "fermé hors porte"
+# What Gas City exports into every agent session, the Mayor's included.
+SESSION_IDENTITY = ("GC_AGENT", "GC_ALIAS", "GC_SESSION_NAME", "GC_SESSION_ID", "GC_TEMPLATE")
+MAYOR_SESSION = {"GC_AGENT": "mayor", "GC_ALIAS": "mayor", "GC_SESSION_NAME": "mayor",
+                 "GC_SESSION_ID": "fx-mayor", "GC_TEMPLATE": "mayor"}
 
 
 def ticket(ticket_id, blocks=(), rig="fx-rig"):
@@ -63,6 +77,9 @@ class ConvoyAdvanceTest(unittest.TestCase):
         provider_failover = self.tmp / "provider-failover"
         provider_failover.write_text("#!/bin/sh\nprintf '{}\\n'\n")
         provider_failover.chmod(0o755)
+        proposal_door = self.tmp / "proposal-door"
+        proposal_door.write_text("#!/bin/sh\necho 0\n")
+        proposal_door.chmod(0o755)
         self.env = {
             **os.environ,
             "GC_BIN": str(FAKE_GC),
@@ -73,10 +90,16 @@ class ConvoyAdvanceTest(unittest.TestCase):
             "CONVOY_ADVANCE_LOCK_DIR": str(self.tmp / "locks"),
             "DISPATCH_DOOR_PROVIDER_FAILOVER_BIN": str(provider_failover),
             "DISPATCH_DOOR_MEMINFO_FILE": str(self.tmp / "no-meminfo"),
+            "ESCALATION_DOOR_LOCK_FILE": str(self.tmp / "escalation-door.lock"),
+            "PROPOSAL_DOOR_BIN": str(proposal_door),
+            "GC_ESCALATION_RECIPIENT": "human",
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_SYSTEM": os.devnull,
         }
-        self.env.pop("CONVOY_STATE_FAKE_SLING_FAIL", None)
+        # The tests run the advance command as the controller's order does:
+        # outside any agent session, even when an agent runs the suite.
+        for name in ("CONVOY_STATE_FAKE_SLING_FAIL", "CONVOY_STATE_FAKE_MAIL_FAIL", *SESSION_IDENTITY):
+            self.env.pop(name, None)
         self.settings(ceiling=5)
         self.seed()
 
@@ -149,6 +172,18 @@ class ConvoyAdvanceTest(unittest.TestCase):
         """What the trial does in place of the flow's own ticket end (not in T04)."""
         self.run_ok(STATE, "record-gate", convoy, ticket_id, "--gate", "ticket_end", "--commit", COMMIT)
         self.edit(ticket_id, status="closed")
+
+    def log(self, kind):
+        lines = [json.loads(line) for line in self.write_log.read_text().splitlines() if line]
+        return [entry for entry in lines if entry[0] == kind]
+
+    def escalation_list(self):
+        """The lines of bin/escalation-door list that carry a factory incident."""
+        out = self.run_ok(ESCALATION, "list").stdout
+        return [line.strip() for line in out.splitlines() if INCIDENT in line]
+
+    def tickets_snapshot(self, *ticket_ids):
+        return {ticket_id: self.bead(ticket_id) for ticket_id in ticket_ids or (T1, T2, T3)}
 
     def assert_started_through_door(self, ticket_id):
         metadata = self.bead(ticket_id)["metadata"]
@@ -336,14 +371,14 @@ class ConvoyAdvanceTest(unittest.TestCase):
 
     def test_a_convoy_in_a_state_without_rule_starts_nothing(self):
         self.edit(T1, status="in_progress")  # started outside the dispatch door
-        before = self.tracker.read_text()
+        before = self.tickets_snapshot()
 
         answer = self.advance(CONVOY, expect=EXIT_UNRULED)
 
         self.assertEqual([], self.started(answer))
         self.assertIn("état sans règle", json.dumps(answer, ensure_ascii=False))
-        self.assertEqual(before, self.tracker.read_text())
-        self.assertEqual("", self.write_log.read_text())
+        self.assertEqual(before, self.tickets_snapshot())
+        self.assertEqual([], self.slung())
 
     def test_no_start_formula_in_the_settings_refuses_and_writes_nothing(self):
         self.settings(formula=None)
@@ -402,6 +437,208 @@ class ConvoyAdvanceTest(unittest.TestCase):
 
         self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual("", self.write_log.read_text())
+
+    # --- état sans règle: the convoy stops, one factory incident (T34) ----------
+
+    def test_a_ticket_started_outside_the_dispatch_door_stops_the_convoy_and_raises_a_factory_incident(self):
+        self.edit(T1, status="in_progress")
+
+        answer = self.advance(CONVOY, expect=EXIT_UNRULED)
+
+        self.assertEqual([], self.started(answer))
+        self.assert_not_started(T2)
+        self.assertEqual([], self.slung())
+        incidents = self.escalation_list()
+        self.assertEqual(1, len(incidents), incidents)
+        self.assertIn(T1, incidents[0])
+        self.assertIn(STARTED_OUTSIDE, incidents[0])
+
+    def test_a_ticket_closed_outside_a_gate_stops_the_convoy_and_raises_a_factory_incident(self):
+        self.edit(T1, status="closed")  # closed by hand: no ticket_end, no withdrawn record
+
+        answer = self.advance(CONVOY, expect=EXIT_UNRULED)
+
+        self.assertEqual([], self.started(answer))
+        self.assert_not_started(T2)
+        self.assert_not_started(T3)
+        incidents = self.escalation_list()
+        self.assertEqual(1, len(incidents), incidents)
+        self.assertIn(T1, incidents[0])
+        self.assertIn(CLOSED_OUTSIDE, incidents[0])
+
+    def test_an_incoherent_counter_stops_the_convoy_and_raises_a_factory_incident(self):
+        state = self.tracker_state()
+        state["beads"][T2]["metadata"]["gc.flow.counter.resumes"] = -1
+        self.tracker.write_text(json.dumps(state))
+
+        answer = self.advance(CONVOY, expect=EXIT_UNRULED)
+
+        self.assertEqual([], self.started(answer))
+        self.assert_not_started(T1)
+        incidents = self.escalation_list()
+        self.assertEqual(1, len(incidents), incidents)
+        self.assertIn(T2, incidents[0])
+
+    def test_the_incident_reaches_the_operator_once(self):
+        self.edit(T1, status="closed")
+
+        self.advance(CONVOY, expect=EXIT_UNRULED)
+
+        mails = self.log("mail")
+        self.assertEqual(1, len(mails), mails)
+        self.assertEqual("human", mails[0][1])
+
+    def test_the_same_anomaly_seen_on_several_passes_raises_one_incident(self):
+        self.edit(T1, status="closed")
+
+        for _ in range(3):
+            answer = self.advance(CONVOY, expect=EXIT_UNRULED)
+            self.assertEqual([], self.started(answer))
+
+        self.assertEqual(1, len(self.escalation_list()))
+        self.assertEqual(1, len(self.log("mail")))
+        self.assertEqual(1, len(self.log("create")))
+        self.assertEqual([], self.slung())
+
+    def test_a_second_anomaly_updates_the_one_incident_line(self):
+        self.edit(T1, status="closed")
+        self.advance(CONVOY, expect=EXIT_UNRULED)
+        self.edit(T2, status="in_progress")
+
+        self.advance(CONVOY, expect=EXIT_UNRULED)
+
+        incidents = self.escalation_list()
+        self.assertEqual(1, len(incidents), incidents)
+        self.assertEqual(1, len(self.log("create")))
+        self.assertEqual(2, len(self.log("mail")))
+
+    def test_the_tickets_of_a_stopped_convoy_are_not_written(self):
+        self.edit(T1, status="closed")
+        before = self.tickets_snapshot()
+
+        self.advance(CONVOY, expect=EXIT_UNRULED)
+        self.advance(CONVOY, expect=EXIT_UNRULED)
+
+        self.assertEqual(before, self.tickets_snapshot())
+
+    def test_another_marked_convoy_keeps_advancing_while_one_is_stopped(self):
+        self.edit(T1, status="closed")
+
+        answer = self.advance("--all", expect=EXIT_UNRULED)
+
+        self.assertEqual([], self.started(answer))
+        self.assertEqual(["fx-o1"], self.started(answer, OTHER))
+        self.assertEqual(["fx-o1"], self.slung())
+
+    def test_the_convoy_resumes_by_itself_once_the_state_is_valid_again(self):
+        self.edit(T1, status="closed")
+        self.advance(CONVOY, expect=EXIT_UNRULED)
+        self.assertEqual(1, len(self.escalation_list()))
+        self.edit(T1, status="open")  # factory maintenance restored a valid state
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([T1, T2], self.started(answer))
+        self.assert_started_through_door(T1)
+        self.assertEqual([], self.escalation_list())
+
+    def test_a_resumed_convoy_that_stops_again_raises_a_new_incident(self):
+        self.edit(T1, status="closed")
+        self.advance(CONVOY, expect=EXIT_UNRULED)
+        self.edit(T1, status="open")
+        self.advance(CONVOY)
+        self.edit(T3, status="closed")
+
+        self.advance(CONVOY, expect=EXIT_UNRULED)
+
+        incidents = self.escalation_list()
+        self.assertEqual(1, len(incidents), incidents)
+        self.assertIn(T3, incidents[0])
+
+    def test_the_order_run_does_not_fail_on_a_stopped_convoy_whose_incident_is_raised(self):
+        self.edit(T1, status="closed")
+
+        first = self.advance("--all", "--stopped-ok")
+        second = self.advance("--all", "--stopped-ok")
+
+        for answer in (first, second):
+            self.assertEqual([], self.started(answer))
+            self.assertIn("état sans règle", json.dumps(answer, ensure_ascii=False))
+        self.assertEqual(1, len(self.escalation_list()))
+
+    def test_an_incident_that_could_not_be_raised_fails_the_pass_and_is_raised_by_the_next(self):
+        self.edit(T1, status="closed")
+        env = {**self.env, "CONVOY_STATE_FAKE_MAIL_FAIL": "1"}
+
+        proc = self.run_cmd(TOOL, "--all", "--stopped-ok", env=env)
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual([], [t for t in self.slung() if t in (T1, T2, T3)])
+        self.assertEqual([], self.log("mail"))
+
+        self.advance("--all", "--stopped-ok")
+
+        self.assertEqual(1, len(self.escalation_list()))
+        self.assertEqual(1, len(self.log("mail")))
+        self.assertEqual(1, len(self.log("create")))
+
+    # --- the dispatch door and the Mayor (T34) -----------------------------------
+
+    def test_the_door_refuses_the_mayor_on_a_ticket_of_a_marked_convoy(self):
+        before = self.tracker.read_text()
+        env = {**self.env, **MAYOR_SESSION}
+
+        proc = self.run_cmd(DOOR, T1, "--rig", "fx-rig", "--formula", "fx-start", env=env)
+
+        self.assertEqual(2, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("convoy-advance", proc.stderr)
+        self.assertEqual(before, self.tracker.read_text())
+        self.assertEqual("", self.write_log.read_text())
+
+    def test_the_door_refuses_the_mayor_even_when_it_names_the_convoy(self):
+        before = self.tracker.read_text()
+        env = {**self.env, **MAYOR_SESSION}
+
+        proc = self.run_cmd(DOOR, T1, "--rig", "fx-rig", "--formula", "fx-start", "--convoy", CONVOY, env=env)
+
+        self.assertEqual(2, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("mayor", proc.stderr)
+        self.assertEqual(before, self.tracker.read_text())
+        self.assertEqual("", self.write_log.read_text())
+
+    def test_the_door_refuses_a_marked_ticket_dispatched_without_its_convoy(self):
+        before = self.tracker.read_text()
+
+        proc = self.run_cmd(DOOR, T1, "--rig", "fx-rig", "--formula", "fx-start")
+
+        self.assertEqual(2, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(before, self.tracker.read_text())
+        self.assertEqual("", self.write_log.read_text())
+
+    def test_the_door_lets_the_advance_command_start_the_ticket(self):
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([T1, T2], self.started(answer))
+        self.assert_started_through_door(T1)
+
+    def test_the_advance_command_run_from_an_agent_session_starts_nothing(self):
+        before = self.tickets_snapshot()
+        env = {**self.env, **MAYOR_SESSION}
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED, env=env)
+
+        self.assertEqual([], self.started(answer))
+        self.assertEqual({T1, T2}, {r["id"] for r in answer["convoys"][0]["refused"]})
+        self.assertEqual(before, self.tickets_snapshot())
+        self.assertEqual([], self.slung())
+
+    def test_the_door_still_dispatches_an_unmarked_ticket_for_the_mayor(self):
+        env = {**self.env, **MAYOR_SESSION}
+
+        proc = self.run_cmd(DOOR, "fx-p1", "--rig", "fx-rig", "--formula", "fx-start", env=env)
+
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(["fx-p1"], self.slung())
 
     # --- the order's cheap check -------------------------------------------------
 
