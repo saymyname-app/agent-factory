@@ -20,7 +20,7 @@ from cockpit.health.engine import (
 )
 from cockpit.projects.source import from_value as projects_from_value
 from cockpit.projects.source import project_page_data
-from cockpit.requests.assemble import assemble_requests
+from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import entries_from_value as journal_entries_from_value
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
@@ -29,6 +29,7 @@ from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.home.page import render_requests_section
 from cockpit.ui.journal.render import CSS as JOURNAL_CSS
 from cockpit.ui.journal.render import render_journal_page, render_journal_section, render_journal_unknown
+from cockpit.ui.notify.render import render_envois_section
 from cockpit.ui.projects.page import (
     render_historique_section,
     render_projects_section,
@@ -53,6 +54,16 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/requests":
             self._send_json(self._requests_payload(read_model.snapshot(), read_model.now()))
+            return
+        if self.path == "/api/notifications":
+            notify = self.server.notify
+            self._send_json(
+                {
+                    "configured": bool(notify and notify.configured()),
+                    "entries": notify.journal_entries() if notify else [],
+                    "undelivered": sorted(self._undelivered()),
+                }
+            )
             return
         if self.path == "/api/journal":
             self._send_json(self._journal_payload(read_model.snapshot()))
@@ -158,38 +169,27 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
     def _assemble_requests(self, snapshot, now):
         """"Ce qui t'attend" (spec §"Demandes opérateur"): every kind of
         request, built only from what the read model already holds -- no
-        direct read of any source here. Returns ``(requests, beads_row,
-        beads_known)``; with Beads unknown the list holds only what does
-        not come from Beads, and the caller says the list is incomplete."""
-        beads_row = snapshot.get("beads")
-        beads_known = beads_row is not None and beads_row["freshness"] != UNKNOWN
-        projets_row = snapshot.get("projets")
-        projets_known = projets_row is not None and projets_row["freshness"] != UNKNOWN
-        requests = assemble_requests(
-            beads_row["value"] if beads_known else None,
-            verifie_a=beads_row["read_at"] if beads_known else now,
-            defects=self.server.defect_counter,
-            projets_value=projets_row["value"] if projets_known else None,
-            sources=[
-                {
-                    "name": name,
-                    "display_name": row["display_name"],
-                    "last_good_read_at": row["read_at"] if row["read_at"] is not None else row["registered_at"],
-                }
-                for name, row in snapshot.items()
-                if row["freshness"] != FRESH
-            ],
-            now=now,
-            illisible_after_seconds=self.server.illisible_after_seconds,
+        direct read of any source here."""
+        return assemble_from_snapshot(
+            snapshot, now, self.server.defect_counter, self.server.illisible_after_seconds
         )
-        return requests, beads_row, beads_known
+
+    def _undelivered(self):
+        """Ids whose push could not be delivered yet (spec .59)."""
+        notify = self.server.notify
+        return notify.undelivered() if notify is not None else set()
 
     def _render_requests_section(self, snapshot, now):
         requests, beads_row, beads_known = self._assemble_requests(snapshot, now)
         if not beads_known:
             last_known_at = beads_row["read_at"] if beads_row else None
-            return render_requests_section(requests, verified_at=now, source_unknown=True, last_known_at=last_known_at)
-        return render_requests_section(requests, verified_at=beads_row["read_at"])
+            return render_requests_section(
+                requests, verified_at=now, source_unknown=True, last_known_at=last_known_at,
+                undelivered=self._undelivered(),
+            )
+        return render_requests_section(
+            requests, verified_at=beads_row["read_at"], undelivered=self._undelivered()
+        )
 
     def _requests_payload(self, snapshot, now):
         """JSON twin of :meth:`_render_requests_section` (T12, af-is5e97):
@@ -278,6 +278,10 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             section = render_journal_unknown(row["read_at"] if row else None)
         else:
             section = render_journal_section(journal_entries_from_value(row["value"]))
+        notify = self.server.notify
+        if notify is not None:
+            # Journal des envois and the test notification (spec .60).
+            section += render_envois_section(notify.journal_entries(), notify.configured())
         body = render_document(
             render_journal_page(section, fresh_html=fresh_html), extra_css=PROJECT_PAGE_CSS + JOURNAL_CSS
         ).encode("utf-8")
@@ -324,6 +328,12 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             loops=collectors.loop_items(beads),
             order_failures=collectors.order_failure_items(beads),
             red_ci=collectors.red_ci_items(beads),
+            extra_lines=[
+                line
+                for part in (self.server.notify, self.server.heartbeat)
+                if part is not None
+                for line in part.health_lines()
+            ],
             supervisor_unreachable_after_seconds=self.server.supervisor_unreachable_after_seconds,
             factory_stalled_after_seconds=self.server.factory_stalled_after_seconds,
         )
@@ -386,6 +396,10 @@ def make_server(
         if factory_stalled_after_seconds is None
         else factory_stalled_after_seconds
     )
+    # Set by cockpit.core.process once the services exist; a server built
+    # without them (a narrow test) simply has no notifications to show.
+    server.notify = None
+    server.heartbeat = None
     server.illisible_after_seconds = (
         ILLISIBLE_THRESHOLD_SECONDS if illisible_after_seconds is None else illisible_after_seconds
     )

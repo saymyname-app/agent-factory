@@ -13,12 +13,16 @@ from cockpit.access.guard import ActionGuard, new_session_token
 from cockpit.actions.registry import build_action_handlers
 from cockpit.core.beads_source import read_operator_beads
 from cockpit.core.clock import SystemClock
+from cockpit.core.freshness import UNKNOWN
 from cockpit.core.gc_client import GcSsePoller
 from cockpit.core.polling_source import PollingSource
 from cockpit.core.readmodel import ReadModel
 from cockpit.core.server import make_server
 from cockpit.health.git_source import count_commits_behind
+from cockpit.notify.service import HeartbeatService, NotifyService, Ticker
 from cockpit.projects.source import read_projects
+from cockpit.requests.assemble import assemble_from_snapshot
+from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import read_journal
 
 # github/rituals sources are in the Validity window table (spec .3) for the
@@ -123,6 +127,37 @@ def build(config, clock=None):
         factory_stalled_after_seconds=config.factory_stalled_after_seconds,
         illisible_after_seconds=config.illisible_after_seconds,
     )
+
+    # Notifications and heartbeat (T17, T18): each a policy with tick() as
+    # its interface, ticked here on its own thread.
+    notify_defects = DefectCounter()  # its own: the page's count is the page's
+
+    def current_requests():
+        snapshot = read_model.snapshot()
+        requests, _, beads_known = assemble_from_snapshot(
+            snapshot, read_model.now(), notify_defects, config.illisible_after_seconds
+        )
+        # Whole only once the projects are read too: a push names its
+        # project as the page does.
+        projets = snapshot.get("projets")
+        return requests, beads_known and (projets is None or projets["freshness"] != UNKNOWN)
+
+    notify = NotifyService(
+        config.pushover_secrets_file,
+        config.notify_state_file,
+        clock,
+        config.public_url,
+        current_requests,
+        pushover_url=config.pushover_url,
+    )
+    heartbeat = HeartbeatService(
+        read_model, clock, config.heartbeat_url_file, config.heartbeat_interval_seconds
+    )
+    server.notify = notify
+    server.heartbeat = heartbeat
+    server.action_handlers["notifier_test"] = lambda payload: notify.send_test()
+    pollers.append(Ticker(notify.tick, config.notify_tick_seconds))
+    pollers.append(Ticker(heartbeat.tick, config.heartbeat_tick_seconds))
     return server, pollers
 
 

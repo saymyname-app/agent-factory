@@ -12,6 +12,7 @@ from cockpit.core.gc_client import (
     STREAM_SILENCE_SECONDS,
 )
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
+from cockpit.notify.pushover import PUSHOVER_URL
 from cockpit.health.engine import (
     FACTORY_STALLED_AFTER_SECONDS,
     SUPERVISOR_UNREACHABLE_AFTER_SECONDS,
@@ -86,6 +87,22 @@ class Config:
             "COCKPIT_LOOP_GUARD_BIN", os.path.join(_REPO_ROOT, "bin", "factory-session-loop-guard")
         )
         self.gc_bin = env.get("COCKPIT_GC_BIN", "gc")
+        # Notifications and heartbeat (spec §"Notifications", §"Heartbeat et
+        # usine muette"). Both secret files live outside the repository, on
+        # the Windows side; unset or unreadable, nothing is sent or pinged
+        # and the health zone says so (spec .98).
+        self.pushover_secrets_file = env.get("COCKPIT_PUSHOVER_SECRETS_FILE", "")
+        self.pushover_url = env.get("COCKPIT_PUSHOVER_URL", PUSHOVER_URL)
+        self.notify_state_file = env.get("COCKPIT_NOTIFY_STATE_FILE") or os.path.join(
+            os.path.dirname(self.pid_file), "cockpit-notify-state.json"
+        )
+        self.notify_tick_seconds = float(env.get("COCKPIT_NOTIFY_TICK_SECONDS", "30"))
+        # The address a push links back to: the ts.net URL once Tailscale
+        # Serve exposes the cockpit; the local origin until then.
+        self.public_url = env.get("COCKPIT_PUBLIC_URL") or self.allowed_origin
+        self.heartbeat_url_file = env.get("COCKPIT_HEARTBEAT_URL_FILE", "")
+        self.heartbeat_tick_seconds = float(env.get("COCKPIT_HEARTBEAT_TICK_SECONDS", "30"))
+        self.heartbeat_interval_seconds = float(env.get("COCKPIT_HEARTBEAT_INTERVAL_SECONDS", "300"))
         self.validity_seconds = dict(VALIDITY_WINDOWS_SECONDS)
         for source in list(self.validity_seconds):
             override = env.get("COCKPIT_VALIDITY_%s_SECONDS" % source.upper())
