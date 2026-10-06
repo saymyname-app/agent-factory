@@ -237,9 +237,40 @@ Two rules the real data needed:
   « Sans projet ».
 
 Not wired yet (later slices of af-mjfvwx): the roadmap step and « dev a N
-commits d'avance » (they need the cockpit's own clones; until then Promu
-is treated as masked for every project), the « Page projet » link, and
+commits d'avance » (they need the cockpit's own clones; until then an
+accepted chantier is treated as finished for every project), and
 Livré-non-Accepté as a « Quand tu veux » request (`projects/demandes.py`).
 
 `tests/cockpit-home-projects-test.py` drives all of the above through the
 process's HTTP surface.
+
+## Project page (af-mjfvwx)
+
+`GET /projet/<project_id>` serves `ui/projects/project_page.py` (T22, until
+now imported only by its test), in the markup of
+`origin/prototype/c01-project-page`. Benjamin's choice (af-1al0t1,
+2026-09-30): a selector between « Tableau » (variante 1, one column per
+stage) and « Bande » (variante 3, one list, a stepper per chantier). Both
+are in the page; the selector flips which one shows and the device
+remembers it. Agent choices, reversible: Tableau first, Bande first under
+900 px.
+
+- Top bar: « ← Accueil », the project's name, the freshness headline with
+  « Revérifier » (which returns to this page). Then « N chantiers actifs ·
+  N à toi de jouer · … · Historique du projet → ».
+- A project with no promotion branch has no Promu column and no Promu step
+  (spec .41).
+- Chips lead to the home screen: `/#d-<id>` opens the request, `/#acc-<id>`
+  opens the acceptance panel of a Livré chantier.
+- « Travail hors chantier » (`projects/hors_chantier.py`) and
+  « Historique » (terminé, abandonné) come from the same `projets` read
+  (`projects/source.py` `project_page_data`).
+- An id no descriptor declares is a 404 saying « Projet inconnu ». An
+  unreadable `projets` source says « Inconnu : projets illisibles ».
+
+Known gap against the prototype: a chantier's age (« depuis 3 j ») is not
+shown — no bead field dates the entry into a stage.
+
+`ui/base/page.py` `render_document` is the skeleton both pages share
+(stylesheet, font, « Déconnecté » banner, scripts).
+`tests/cockpit-home-projects-test.py` covers the page through HTTP.

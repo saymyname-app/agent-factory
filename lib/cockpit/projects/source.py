@@ -10,8 +10,9 @@ from dataclasses import asdict
 
 from cockpit.core.beads_source import read_beads_json
 from cockpit.projects.beads import read_convoy_beads, read_map_children
-from cockpit.projects.builder import build_projects
+from cockpit.projects.builder import build_historique_par_projet, build_projects
 from cockpit.projects.descriptors import load_descriptors
+from cockpit.projects.hors_chantier import HorsChantierItem, hors_chantier_par_projet
 from cockpit.projects.model import Chantier, Project, RoadmapStep
 from cockpit.projects.stage import MAP_LABEL
 
@@ -33,13 +34,23 @@ def read_projects(descriptors_dir, bd_bin="bd", timeout=20):
         if MAP_LABEL in (bead.get("labels") or []) and bead.get("status") != "closed"
     }
     projects, sans_projet = build_projects(descriptors, beads, children_by_map_id)
-    return to_value(projects, sans_projet)
+    historique_projects, _ = build_historique_par_projet(descriptors, beads)
+    return to_value(
+        projects,
+        sans_projet,
+        historique={p.project_id: p.chantiers for p in historique_projects},
+        hors_chantier=hors_chantier_par_projet(beads),
+    )
 
 
-def to_value(projects, sans_projet):
+def to_value(projects, sans_projet, historique=None, hors_chantier=None):
+    """``historique`` / ``hors_chantier``: per project id, what only the
+    project page shows (spec .46, .49)."""
     return {
         "projects": [asdict(project) for project in projects],
         "sans_projet": [asdict(chantier) for chantier in sans_projet],
+        "historique": {pid: [asdict(c) for c in rows] for pid, rows in (historique or {}).items()},
+        "hors_chantier": {pid: [asdict(i) for i in rows] for pid, rows in (hors_chantier or {}).items()},
     }
 
 
@@ -54,3 +65,22 @@ def from_value(value):
         projects.append(Project(**raw))
     sans_projet = [Chantier(**chantier) for chantier in (value or {}).get("sans_projet") or []]
     return projects, sans_projet
+
+
+def project_page_data(value, project_id):
+    """``(project, hors_chantier, historique)`` for one project's page, or
+    ``None`` when no declared project has this id. ``historique`` is a
+    :class:`~cockpit.projects.model.Project` holding only the terminé and
+    abandonné chantiers, the shape
+    :func:`cockpit.ui.projects.page.render_historique_section` takes."""
+    projects, _ = from_value(value)
+    project = next((p for p in projects if p.project_id == project_id), None)
+    if project is None:
+        return None
+    hors_chantier = [HorsChantierItem(**raw) for raw in (value.get("hors_chantier") or {}).get(project_id) or []]
+    historique = Project(
+        project_id=project.project_id,
+        display_name=project.display_name,
+        chantiers=[Chantier(**raw) for raw in (value.get("historique") or {}).get(project_id) or []],
+    )
+    return project, hors_chantier, historique

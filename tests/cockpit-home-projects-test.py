@@ -109,6 +109,11 @@ def beads():
         # Neither key nor rig: "Sans projet", a counted producer defect.
         convoy("af-conv-d", "Ancien chantier sans rattachement", "closed", "sha256:d"),
         ticket("af-tk-d1", "sha256:d", "closed", rig=None),
+        # Work outside any chantier: no stage, shown on the project's page only.
+        {
+            "id": "af-bug1", "title": "Le bouton Recommencer ne répond plus", "status": "open",
+            "issue_type": "bug", "labels": [], "notes": "", "metadata": {"gc.project_id": "agent-factory"},
+        },
     ]
 
 
@@ -199,6 +204,13 @@ class HomeProjectsZoneTest(unittest.TestCase):
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read().decode("utf-8"))
 
+    def get_status(self, path):
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:%d%s" % (self.port, path), timeout=5) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8")
+
     def projects(self):
         payload = self.get("/api/projects")
         return payload if payload["state"] == "filled" else None
@@ -247,8 +259,8 @@ class HomeProjectsZoneTest(unittest.TestCase):
         self.assertIn('data-action="pas_bon_vers_agent" data-bead-id="af-conv-b"', body)
         self.assertIn("Sans projet", body)
         self.assertIn("1 défaut producteur", body)
-        # No link to a page this process does not serve.
-        self.assertNotIn('href="/projet/', body)
+        self.assertIn('href="/projet/agent-factory"', body)
+        self.assertIn('href="/projet/saymyname"', body)
         self.assertIn("Tout est à jour à", body)
 
     # ------------------------------------------------------------------
@@ -289,6 +301,91 @@ class HomeProjectsZoneTest(unittest.TestCase):
         self.assertEqual(before, self.read_beads())
 
     # ------------------------------------------------------------------
+    # The project page (spec .49): Benjamin chose a selector between the
+    # prototype's "Tableau" and "Bande" (af-1al0t1, 2026-09-30).
+    # ------------------------------------------------------------------
+    def test_project_page_is_served_with_both_views(self):
+        self.start_cockpit()
+        wait_until(self.projects)
+
+        status, page = self.get_status("/projet/saymyname")
+        self.assertEqual(200, status)
+        self.assertIn("Atkinson+Hyperlegible+Next", page)
+        self.assertIn('<a class="back cockpit-pp-back" href="/">← Accueil</a><h1>SayMyName</h1>', page)
+        self.assertIn("<b>1</b> chantier actif</span>", page)
+        self.assertIn('<span class="chip probleme">1 problème remonté</span>', page)
+        self.assertIn('href="#cockpit-pp-historique">Historique du projet →</a>', page)
+        # Both views are in the page; the selector only picks which one shows.
+        self.assertIn('data-view-choice="tableau">Tableau</button>', page)
+        self.assertIn('data-view-choice="bande">Bande</button>', page)
+        self.assertIn('<div class="cockpit-pp-view cockpit-pp-view-tableau"><div class="v1">', page)
+        self.assertIn('<div class="cockpit-pp-view cockpit-pp-view-bande"><div class="v3">', page)
+        # Tableau: one column per stage, Promu included for a project with a promotion branch.
+        self.assertIn('style="--n:7"', page)
+        self.assertIn('<div class="bh cockpit-pp-col-h" data-stage="Promu">', page)
+        self.assertIn('<div class="card cockpit-pp-card" data-chantier="af-conv-a">', page)
+        # Bande: the chantier with its own stepper and stage names.
+        self.assertIn('<div class="s-item cockpit-pp-strip-item" data-chantier="af-conv-a" data-stage="Livraison">', page)
+        self.assertIn('<span class="on">Livraison</span>', page)
+        # A chip leads to the home screen, where the request lives.
+        self.assertIn('href="/#d-af-tk-a4"', page)
+        wait_until(lambda: "Tout est à jour à" in self.get("/projet/saymyname"))
+
+        status, usine = self.get_status("/projet/agent-factory")
+        self.assertEqual(200, status)
+        self.assertIn('style="--n:6"', usine)
+        self.assertNotIn('data-stage="Promu"', usine, "no Promu for a project with no promotion branch")
+        self.assertNotIn(">Promu</span>", usine)
+        self.assertIn('href="/#acc-af-conv-b"', usine)
+        self.assertIn("Travail hors chantier", usine)
+        self.assertIn('data-kind="Bug" data-chantier="af-bug1" data-stage=""', usine)
+        self.assertIn("Le bouton Recommencer ne répond plus", usine)
+        self.assertIn("Aucun chantier terminé ou abandonné.", usine)
+        self.assertNotIn("af-conv-a", usine, "another project's chantier never shows here")
+
+    def test_accepted_chantier_moves_to_its_project_history(self):
+        self.start_cockpit()
+        wait_until(self.projects)
+        status, payload = self.post_action("accepter_chantier", {"bead_id": "af-conv-b", "confirm": True})
+        self.assertEqual(200, status, payload)
+        page = wait_until(
+            lambda: self.get("/projet/agent-factory")
+            if 'class="cockpit-historique-row"' in self.get("/projet/agent-factory")
+            else None
+        )
+        self.assertIn('data-kind="termine" data-stage="Accepté"', page)
+        self.assertIn("Page d&#x27;accueil publique", page)
+        self.assertIn("<b>0</b> chantier actif</span>", page)
+
+    def test_unknown_project_is_a_404_that_says_so(self):
+        self.start_cockpit()
+        wait_until(self.projects)
+        status, page = self.get_status("/projet/nimporte-quoi")
+        self.assertEqual(404, status)
+        self.assertIn("Projet inconnu", page)
+        self.assertIn('href="/">← Accueil</a>', page)
+
+    def test_recheck_from_a_project_page_returns_to_it(self):
+        self.start_cockpit()
+        wait_until(self.projects)
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs):
+                return None
+
+        opener = urllib.request.build_opener(NoRedirect)
+        req = urllib.request.Request(
+            "http://127.0.0.1:%d/api/health/recheck" % self.port, data=b"", method="POST",
+            headers={"Referer": self.origin + "/projet/saymyname"},
+        )
+        try:
+            opener.open(req, timeout=20)
+            self.fail("expected a 303")
+        except urllib.error.HTTPError as exc:
+            self.assertEqual(303, exc.code)
+            self.assertEqual("/projet/saymyname", exc.headers["Location"])
+
+    # ------------------------------------------------------------------
     def test_unreadable_projects_are_unknown_never_an_empty_list(self):
         Path(self.fail_flag_file).write_text("fail")
         self.start_cockpit()
@@ -301,6 +398,10 @@ class HomeProjectsZoneTest(unittest.TestCase):
         self.assertNotIn("Aucun chantier actif", body)
         self.assertNotIn("Tout est à jour à", body)
         self.assertIn("projets (inconnu)", body)
+        status, page = self.get_status("/projet/saymyname")
+        self.assertEqual(200, status)
+        self.assertIn("Inconnu : projets illisibles", page)
+        self.assertNotIn("Projet inconnu", page, "an unreadable source is not an unknown project")
 
         os.remove(self.fail_flag_file)
         wait_until(self.projects)
