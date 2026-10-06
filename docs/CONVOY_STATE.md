@@ -1,4 +1,4 @@
-# Convoy State (T33, Spec af-wf4w5r §0 rule 2)
+# Convoy State (T33, T34, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -26,6 +26,9 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-counter  af-convoy --counter end_rounds --value 0
 ./bin/convoy-state add-evidence af-convoy af-t1 --piece red_proof --digest sha256:<hex> --commit <sha>
 ./bin/convoy-state record-gate  af-convoy af-t1 --gate ticket_end --commit <sha>
+./bin/convoy-state ticket af-t1                         # does this bead carry the mark? (bin/dispatch-door, the Mayor)
+./bin/convoy-state record-incident af-convoy --bead af-incident [--signature sha256:<hex>]   # bin/convoy-advance
+./bin/convoy-state clear-incident  af-convoy            # bin/convoy-advance, once the state is valid again
 ```
 
 Every answer is one JSON object on stdout.
@@ -34,8 +37,8 @@ Every answer is one JSON object on stdout.
 |---|---|
 | 0 | done |
 | 1 | refused, or could not run: nothing was written (`{"ok": false, "error": "refus : …"}`) |
-| 3 | `show` found an « état sans règle »: the state is printed, with the reason |
-| 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
+| 3 | `show` or `ticket` found an « état sans règle »: the state is printed, with the reason |
+| 4 | the convoy, or the ticket asked by `ticket`, does not carry the mark: « pas un convoi du nouveau flux » |
 
 ## Stored fields and closed lists
 
@@ -50,6 +53,7 @@ Every answer is one JSON object on stdout.
 | Counter | `gc.flow.counter.<name>` | ticket: `resumes`, `correction_rounds`; convoy: `end_rounds` | integer ≥ 0 |
 | Evidence fingerprint | `gc.flow.evidence.<piece>` | ticket | `sha256:<64 hex>` and the commit of the piece |
 | Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (commit required), `withdrawn` (removed from the graph by a resolved Planning Exception) |
+| Factory incident | `gc.flow.incident` | convoy | the bead that carries the open incident of a stopped convoy and, once it reached the escalation door, the `sha256:` signature of the anomalies it names |
 
 `mark` is idempotent: it marks the tickets first and the convoy last, sets
 each counter to an explicit `0`, and on a later run marks only the tickets
@@ -92,7 +96,15 @@ mark and are not closed. It is what `bin/convoy-advance` walks
 
 `show` renders, per ticket: mark, kind, demonstration line, tracker status,
 branch and its tip, Ticket Exit, verdicts, counters, evidence fingerprints
-and gate records.
+and gate records; and for the convoy its counters and its open factory
+incident (`incident`, `null` when there is none).
+
+`ticket` answers whether one bead carries the mark, without naming its
+convoy: exit 0 and `"new_flow": true`, or exit 4 and `"new_flow": false`.
+With `--bead-json -` it reads the bead from stdin, as `gc bd show --json`
+printed it, instead of reading the tracker again: `bin/dispatch-door` asks
+it that way on every dispatch, so a bead without the mark costs no further
+tracker read and is dispatched exactly as before.
 
 **Verdict validity** (Spec §8, « commit après verdict »). A verdict carries
 `"valid": true` only while its commit is the tip of the ticket's branch in
@@ -121,8 +133,14 @@ key), never as a default value:
 - any stored value this command would have refused to write, and any
   `gc.flow.*` key it does not know (a field invented outside the command).
 
-`convoy-state` only signals. Stopping the convoy and raising the factory
-incident on exit 3 is T34's.
+`convoy-state` only signals. `bin/convoy-advance` stops the convoy and
+raises the factory incident (`docs/CONVOY_ADVANCE.md`); it records that
+incident here with `record-incident` (first the bead alone, then the
+signature once the escalation door accepted it) and removes it with
+`clear-incident` when the state is valid again. Both are accepted on a
+convoy whose mark is unknown, which is itself an « état sans règle » to
+report. An incident record that this command would not have written is one
+more anomaly of the convoy.
 
 ## Proof
 

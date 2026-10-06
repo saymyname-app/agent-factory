@@ -6,11 +6,12 @@ in a session. This command is the only reader and writer of that state for a
 convoy that carries the new-flow mark: the mark of the convoy and of its
 tickets, a ticket's kind and demonstration line (T05), its branch and Ticket
 Exit, its verdicts (each tied to a commit), its counters, its evidence
-fingerprints and its gate records. No other script invents a `gc.flow.*`
-field: a missing field is added here.
+fingerprints and its gate records, and the convoy's open factory incident.
+No other script invents a `gc.flow.*` field: a missing field is added here.
 
     convoy-state list
     convoy-state show CONVOY [--repo DIR]
+    convoy-state ticket TICKET [--bead-json -]
     convoy-state mark CONVOY [--demonstration-line TICKET=LINE ...]
     convoy-state set-branch   CONVOY TICKET --branch NAME
     convoy-state set-exit     CONVOY TICKET --exit EXIT
@@ -19,12 +20,19 @@ field: a missing field is added here.
     convoy-state bump-counter CONVOY [--ticket TICKET] --counter NAME [--counter NAME]
     convoy-state add-evidence CONVOY TICKET --piece NAME --digest sha256:HEX --commit SHA
     convoy-state record-gate  CONVOY TICKET --gate GATE [--commit SHA]
+    convoy-state record-incident CONVOY --bead BEAD [--signature sha256:HEX]
+    convoy-state clear-incident  CONVOY
 
 Every answer is one JSON object on stdout. Exit status: 0 done; 1 refused or
-could not run (nothing written); 3 `show` found an "état sans règle" (the
-state is still printed, the incoherent field never as a default value);
-4 the convoy does not carry the mark ("pas un convoi du nouveau flux":
-nothing is read further, nothing is written).
+could not run (nothing written); 3 `show` or `ticket` found an "état sans
+règle" (the state is still printed, the incoherent field never as a default
+value); 4 the convoy, or the ticket asked by `ticket`, does not carry the
+mark ("pas un convoi du nouveau flux": nothing is read further, nothing is
+written).
+
+`ticket` says whether one ticket carries the mark; with `--bead-json -` it
+reads the bead from stdin, as `gc bd show --json` printed it, instead of
+reading the tracker again (what bin/dispatch-door does before a dispatch).
 
 A verdict is valid only while its commit is the tip of the ticket's branch
 in `--repo` (default: the current directory): a commit added after it makes
@@ -63,6 +71,7 @@ VERDICT_PREFIX = PREFIX + "verdict."
 COUNTER_PREFIX = PREFIX + "counter."
 EVIDENCE_PREFIX = PREFIX + "evidence."
 GATE_PREFIX = PREFIX + "gate."
+KEY_INCIDENT = PREFIX + "incident"
 
 TICKET_KINDS = ("vertical_slice", "prefactoring", "repair")
 KINDS_WITH_DEMONSTRATION = ("vertical_slice", "repair")
@@ -87,6 +96,7 @@ DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 # [a-zA-Z_][a-zA-Z0-9_.]* (observed on bd 1.2.2): no hyphen.
 PIECE_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$")
 BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")
+BEAD_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$")
 
 
 class Refusal(RuntimeError):
@@ -248,6 +258,17 @@ def stored_record(raw: Any, required: tuple[str, ...], optional: tuple[str, ...]
     unknown = [field for field in record if field not in required + optional]
     if missing or unknown:
         raise Refusal(f"champs manquants {missing} ou inconnus {unknown} dans {raw!r}")
+    return record
+
+
+def incident_record(raw: Any) -> dict[str, Any]:
+    """The convoy's open factory incident: the bead that carries it and, once
+    it reached the escalation door, the signature of the anomalies it names."""
+    record = stored_record(raw, ("bead", "at"), ("signature",))
+    if not isinstance(record["bead"], str) or not BEAD_ID_RE.match(record["bead"]):
+        raise Refusal(f"bead d'incident absent ou mal formé : {record['bead']!r}")
+    if "signature" in record:
+        valid_digest(record["signature"])
     return record
 
 
@@ -465,13 +486,21 @@ def cmd_show(args: argparse.Namespace) -> int:
     convoy_unruled: list[dict[str, str]] = []
     if mark != MARK:
         convoy_unruled.append({"field": KEY_MARK, "reason": f"marque inconnue : {mark!r}"})
+    incident: dict[str, Any] | None = None
+    if KEY_INCIDENT in metadata:
+        try:
+            incident = incident_record(metadata[KEY_INCIDENT])
+        except Refusal as exc:
+            incident = {"unruled": f"{KEY_INCIDENT} : {exc}", "raw": metadata[KEY_INCIDENT]}
+            convoy_unruled.append({"field": KEY_INCIDENT, "reason": incident["unruled"]})
     for key in sorted(metadata):
-        known = (KEY_MARK, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
+        known = (KEY_MARK, KEY_INCIDENT, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(PREFIX) and key not in known:
             convoy_unruled.append({"field": key, "reason": f"{key} : champ inconnu de la commande d'état, écrit hors d'elle"})
     convoy_out: dict[str, Any] = {
         "id": convoy["id"], "title": convoy.get("title"), "status": convoy.get("status"), "mark": mark,
         "counters": render_counters(metadata, CONVOY_COUNTERS, convoy_unruled),
+        "incident": incident,
         "unruled": convoy_unruled,
     }
     if convoy_unruled:
@@ -485,6 +514,34 @@ def cmd_show(args: argparse.Namespace) -> int:
         answer["message"] = UNRULED
     print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
     return EXIT_UNRULED if unruled else 0
+
+
+def cmd_ticket(args: argparse.Namespace) -> int:
+    """Whether one ticket carries the mark, without naming its convoy."""
+    if args.bead_json not in (None, "-"):
+        raise Refusal(f"--bead-json n'accepte que « - » (le bead lu sur l'entrée standard) : {args.bead_json!r}")
+    out = sys.stdin.read() if args.bead_json == "-" else run_gc(["bd", "show", args.ticket, "--json"])
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"bead {args.ticket} illisible : {exc}") from exc
+    if isinstance(data, list):
+        data = data[0] if data else None
+    if not isinstance(data, dict) or data.get("id") not in (None, args.ticket):
+        raise Refusal(f"bead introuvable : {args.ticket}")
+    mark = metadata_of(data).get(KEY_MARK)
+    answer: dict[str, Any] = {"ok": mark is not None, "new_flow": mark is not None, "ticket": args.ticket}
+    status = 0
+    if mark is None:
+        answer["message"] = f"{args.ticket} : pas un ticket du nouveau flux"
+        status = EXIT_NOT_NEW_FLOW
+    else:
+        answer["mark"] = mark
+        if mark != MARK:
+            answer.update(unruled=True, message=f"{UNRULED} : marque inconnue : {mark!r}")
+            status = EXIT_UNRULED
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return status
 
 
 # --- writes ------------------------------------------------------------------
@@ -660,6 +717,31 @@ def cmd_record_gate(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, values)
 
 
+def convoy_with_a_mark(convoy_id: str) -> dict[str, Any]:
+    """An incident is recorded on any convoy that carries a mark, an unknown
+    one included: an unknown mark is itself an "état sans règle" to report."""
+    convoy, _ = load_convoy(convoy_id)
+    if KEY_MARK not in metadata_of(convoy):
+        raise NotNewFlow(convoy_id)
+    return convoy
+
+
+def cmd_record_incident(args: argparse.Namespace) -> int:
+    convoy_with_a_mark(args.convoy)
+    record: dict[str, Any] = {"bead": args.bead, "at": now()}
+    if args.signature is not None:
+        record["signature"] = args.signature
+    values = {KEY_INCIDENT: encode(incident_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_clear_incident(args: argparse.Namespace) -> int:
+    convoy_with_a_mark(args.convoy)
+    run_gc(["bd", "update", args.convoy, "--unset-metadata", KEY_INCIDENT])
+    return done(args.convoy, args.convoy, {KEY_INCIDENT: None})
+
+
 # --- command line ------------------------------------------------------------
 
 
@@ -702,13 +784,21 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("record-gate", cmd_record_gate)
     p.add_argument("--gate")
     p.add_argument("--commit")
+    p = command("record-incident", cmd_record_incident, ticket=False)
+    p.add_argument("--bead")
+    p.add_argument("--signature")
+    command("clear-incident", cmd_clear_incident, ticket=False)
+    p = sub.add_parser("ticket")
+    p.add_argument("ticket")
+    p.add_argument("--bead-json")
+    p.set_defaults(handler=cmd_ticket)
     return parser
 
 
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if args.handler in (cmd_list, cmd_show):
+        if args.handler in (cmd_list, cmd_show, cmd_ticket):
             return args.handler(args)
         with convoy_lock(args.convoy):
             return args.handler(args)

@@ -74,6 +74,17 @@
 # in progress without that record was started outside the door, which
 # bin/convoy-state reports as an « état sans règle ».
 #
+# A ticket that carries the new-flow mark is started by that command and by
+# nothing else (T34, af-ckwina, Spec af-wf4w5r §0 rules 1 and 3): the door
+# refuses it without `--convoy`, which is how the Mayor dispatches
+# (bin/factory-work-dispatch included), and refuses it to any agent session,
+# the Mayor's first, whatever the arguments -- no agent decides which ticket
+# starts. Gas City exports the session's identity (GC_AGENT, GC_SESSION_NAME,
+# GC_SESSION_ID) into every agent session and into none of the controller's
+# orders, which is where bin/convoy-advance runs. The mark is read by
+# bin/convoy-state from the bead this door has already read, so a bead
+# without the mark is dispatched exactly as before, with no further read.
+#
 # Both deferrals are transient: nothing here stops a running session, and a deferred
 # dispatch is simply retried the next time the Mayor dispatches. `fail`
 # below exits 2 for a permanent refusal; `defer` exits 75 (EX_TEMPFAIL) so a
@@ -118,11 +129,15 @@ provider it would run on.
 --convoy <convoy> starts a ticket of a convoy that carries the new-flow mark
 (what bin/convoy-advance does): refused unless bin/convoy-state says the
 convoy is marked and tracks the ticket, and the start is recorded there.
+A ticket that carries the mark is refused without --convoy, and refused to
+any agent session (the Mayor included): only bin/convoy-advance, run by the
+controller's order, starts it.
 
 Exits 2 on a permanent refusal (invalid rig/formula, a planning-plane bead, a proposal-labelled
 bead, total provider exhaustion, a delivery role on a provider with no
 passing adoption trial, a --convoy that is not marked or does not track the
-bead). Exits 75 on a deferral -- low guest
+bead, a ticket of a marked convoy dispatched without --convoy or from an
+agent session). Exits 75 on a deferral -- low guest
 memory, or the bead's scope touching a hot path an in-progress ticket
 already holds -- which is transient and safe to retry on the next dispatch.
 USAGE
@@ -301,6 +316,21 @@ fi
 if printf '%s' "$bead_json" | jq -e '(.[0].metadata["gc.plane"] // "") == "planning"' >/dev/null 2>&1; then
   fail "$BEAD_ID is a planning-plane bead (gc.plane=planning) -- Planning Map/Decision Beads are worked in the operator session, never dispatched"
 fi
+
+# A ticket of the new flow: only bin/convoy-advance starts it.
+flow_rc=0
+flow_json=$(printf '%s' "$bead_json" | convoy_state ticket "$BEAD_ID" --bead-json - 2>/dev/null) || flow_rc=$?
+case "$flow_rc" in
+  4) ;;
+  0|3)
+    [ -n "$CONVOY" ] \
+      || fail "$BEAD_ID dispatch refused: ticket d'un convoi du nouveau flux -- seul bin/convoy-advance le démarre (Spec af-wf4w5r §0 règle 3), rien n'est dispatché"
+    caller="${GC_AGENT:-${GC_SESSION_NAME:-${GC_SESSION_ID:-}}}"
+    [ -z "$caller" ] \
+      || fail "$BEAD_ID dispatch refused: ticket d'un convoi du nouveau flux demandé par la session d'agent '$caller' -- aucun agent ne démarre un ticket d'un convoi marqué, seul bin/convoy-advance lancé par son ordre le fait (Spec af-wf4w5r §0 règles 1 et 3), rien n'est dispatché"
+    ;;
+  *) fail "$BEAD_ID dispatch refused: could not tell through convoy-state whether it is a ticket of a new-flow convoy: $(printf '%s' "$flow_json" | jq -r '.error // empty' 2>/dev/null)" ;;
+esac
 
 target_scope=$(printf '%s' "$bead_json" | jq -r '(.[0].metadata["gc.scope_paths"] // "")' 2>/dev/null) || target_scope=""
 if [ -n "$target_scope" ] && [ -f "$HOT_PATHS_FILE" ]; then

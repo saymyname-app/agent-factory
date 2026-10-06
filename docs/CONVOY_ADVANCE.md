@@ -1,4 +1,4 @@
-# Convoy Advance (T04, Spec af-wf4w5r §0 rule 3, §4)
+# Convoy Advance (T04, T34, Spec af-wf4w5r §0 rules 3 and 5, §4)
 
 ## Status and purpose
 
@@ -15,12 +15,14 @@ Mayor advances such a convoy as before.
 ./bin/convoy-advance af-convoy      # one pass on that convoy
 ./bin/convoy-advance --all          # one pass on every open marked convoy
 ./bin/convoy-advance --check-only   # exit 0 if an open marked convoy exists, else 1
+./bin/convoy-advance --all --stopped-ok   # what the order runs (see « État sans règle »)
 ```
 
 The Factory runs it by itself: the controller evaluates
 `orders/convoy-advance.toml` on each of its ticks (every 20 to 30 seconds
 observed on Gas City 1.4.1: a `condition` order is paced by its check, not
-by its `interval`) and runs `--all` only while `--check-only` passes. The
+by its `interval`) and runs `--all --stopped-ok` only while `--check-only`
+passes. The
 order costs one tracker read and runs nothing while no marked convoy is
 open.
 
@@ -76,18 +78,73 @@ Every answer is one JSON object on stdout: the ceiling, the sessions counted
 per role, the tickets awaiting a session, and per convoy the tickets
 `started`, `waiting` (with the reason: blocker ids, or the ceiling),
 `deferred` (the door deferred: low memory, hot path held — retried on the
-next pass) and `refused` (the door refused, with its reason).
+next pass) and `refused` (the door refused, with its reason). A stopped
+convoy carries `signal`, `unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, tracker), or the door refused a ticket |
-| 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed |
+| 1 | refused or could not run (settings, tracker), the door refused a ticket, or an incident could not be raised or withdrawn |
+| 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
-On an « état sans règle » (`bin/convoy-state show`, exit 3) the pass starts
-nothing in that convoy and names the anomalies. Raising the factory incident
-and the automatic resume are T34's.
+## « État sans règle »: the convoy stops, one factory incident (T34)
+
+Spec §0 rule 5: when the code meets a state it has no rule for, it does not
+improvise. `bin/convoy-state show` names those states (exit 3): a ticket in
+progress without the dispatch door's record (started outside the door), a
+ticket closed without a `ticket_end` or `withdrawn` record (closed outside
+its gate), evidence without a fingerprint, an incoherent counter, an unknown
+mark or field. On such a convoy the pass:
+
+1. **starts nothing** of that convoy and writes none of its tickets. The
+   other marked convoys keep advancing in the same pass.
+2. **raises one factory incident.** It files one bead, « Incident d'usine :
+   convoi … arrêté », and sends it through `bin/escalation-door benjamin`:
+   the line `Incident d'usine : <ticket> — <reason>` appears in
+   `bin/escalation-door list` and the operator is mailed once. The incident
+   is recorded on the convoy (`bin/convoy-state record-incident`) with a
+   signature of the anomalies: the next passes on the same anomalies raise
+   nothing. If the anomalies change, the same bead and the same line are
+   updated. If the escalation door fails, the pass exits 1 and the next
+   pass retries on the same bead.
+3. **resumes by itself.** Once `bin/convoy-state show` reports a valid
+   state again, the next pass withdraws the incident (`bin/escalation-door
+   clear`), closes its bead, removes the record and starts the ready
+   tickets. No agent advances or closes a ticket to resume the convoy.
+
+The repair is Factory maintenance: bring the tracker back to a state the
+command has a rule for (`bin/convoy-state show <convoy>` lists what is
+wrong). It never consists in advancing or closing the convoy's tickets by
+hand.
+
+`--stopped-ok` makes the pass exit 0 instead of 3 for a stopped convoy whose
+incident is raised. The order runs it that way: without it the order would
+fail on every tick while a convoy is stopped, and `bin/on-order-failed`
+would page the Mayor about a convoy it must not touch — a second incident
+for the same anomaly.
+
+## Who may start a ticket of a marked convoy (T34)
+
+Only this command, run by its order. `bin/dispatch-door` asks
+`bin/convoy-state ticket` whether the bead it is about to dispatch carries
+the mark, and then refuses it (exit 2, nothing dispatched, nothing written):
+
+- without `--convoy` — the way the Mayor dispatches, `bin/factory-work-dispatch`
+  included;
+- to any agent session, whatever the arguments: Gas City exports
+  `GC_AGENT`, `GC_SESSION_NAME` and `GC_SESSION_ID` into every agent
+  session, the Mayor's included, and into none of the controller's orders
+  (observed on Gas City 1.4.1, isolated city and live supervisor,
+  2026-10-06).
+
+The refusal is a guard on the honest path, not a lock: an agent with a shell
+can still call `gc sling` or `gc bd close`. That is what the stop above is
+for — a ticket started or closed outside its door stops the whole convoy and
+puts an incident on the operator's list. The Mayor's prompt
+(`agents/mayor/prompt.template.md`, « New-flow convoys: hands off ») says
+what it must not do and what it keeps doing: failing orders, stuck sessions,
+quotas, guard-filed beads.
 
 ## Why not Gas City's control dispatcher
 
@@ -116,3 +173,15 @@ prove nothing was written. `tests/convoy-advance-isolated-city-test.sh`
 supervisor and no Mayor, the city's own order starts a marked convoy's three
 tickets in dependency order under N, the third only after the trial closed
 the two others in the tracker.
+
+T34: the same `tests/convoy-advance-test.py` covers the stop (one test per
+kind of anomaly), the single incident read back from the real
+`bin/escalation-door list`, the resume, and each refusal and passage of the
+dispatch door. `tests/convoy-stop-mayor-isolated-city-test.sh` (local-only)
+is the adoption trial: a disposable city with the Factory's real Mayor on a
+real provider, a ready marked convoy, a ready unmarked ticket as control and
+a really failing order. The Mayor dispatches the unmarked ticket, acts on
+the order failure, and leaves every ticket of the marked convoy untouched;
+then a ticket closed by hand stops the convoy, one incident naming it
+appears in the escalation door's list, and the city's own order resumes the
+convoy once the state is valid again.
