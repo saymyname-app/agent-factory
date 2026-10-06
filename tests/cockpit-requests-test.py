@@ -150,6 +150,8 @@ class RequestsSeamTest(unittest.TestCase):
                 "COCKPIT_HOST": "127.0.0.1",
                 "COCKPIT_PORT": str(self.port),
                 "COCKPIT_GC_BASE_URL": self.fake_gc.base_url,
+                "COCKPIT_GC_STATUS_POLL_SECONDS": "0.1",
+                "COCKPIT_GC_RECONNECT_SECONDS": "0.1",
                 "COCKPIT_BD_BIN": str(REQUESTS_FIXTURES / "fake-bd"),
                 "COCKPIT_PID_FILE": self.pid_file,
                 "COCKPIT_BEADS_POLL_SECONDS": "0.1",
@@ -233,6 +235,81 @@ class RequestsSeamTest(unittest.TestCase):
         self.assertIn("Ce qui t&#x27;attend", body)
         self.assertIn("usine est muette", body)
         self.assertIn("Recommandé", body)
+
+    # ------------------------------------------------------------------
+    # af-mjfvwx — the home screen is the validated variant D: one status
+    # line, a short list, one detail per request, and the answer /
+    # accept / refuse controls where the prototype puts them.
+    # ------------------------------------------------------------------
+    def test_home_is_the_variant_d_inbox(self):
+        lettered = [dict(option, lettre=lettre) for option, lettre in zip(SOME_OPTIONS, "ab")]
+        self.fake_gc.set_status(agents_running=2)
+        self.start_cockpit()
+        self.write_beads(
+            [
+                escalation_bead(
+                    "af-aaaa", "une Spec attend ton accord", "elle change la portée du travail livré",
+                    lettered, "2026-09-30T08:00:00Z",
+                ),
+                proposal_bead(
+                    "af-cccc", "regrouper deux rituels", "ils se recoupent",
+                    lettered, "2026-09-30T07:00:00Z",
+                ),
+                {"id": "af-dddd", "status": "open", "labels": [], "notes": "",
+                 "metadata": {"gc.needs_benjamin": "une décision attend"}},
+            ]
+        )
+        self.wait_for_requests(lambda p: len(p["requests"]) == 3)
+        body = wait_until(lambda: self.home_body() if "2 agents au travail" in self.home_body() else None)
+
+        self.assertIn("Atkinson+Hyperlegible+Next", body)  # the prototype's font is loaded, not only named
+        self.assertIn('<span class="lvl ok"><i></i>En marche</span>', body)
+        self.assertIn("Tout est à jour à <time>", body)
+        self.assertIn('action="/api/health/recheck"', body)
+
+        # One list row and one detail per request; the first is selected.
+        self.assertEqual(3, body.count('<a class="li"'))
+        self.assertEqual(3, body.count('<article class="detail'))
+        self.assertEqual(1, body.count('<article class="detail zone-body cockpit-request on"'))
+        self.assertIn('href="#d-af-aaaa" data-id="af-aaaa" aria-current="true"', body)
+        self.assertIn("Retour à la liste", body)
+        # A request from another day never shows a bare hour.
+        self.assertIn("<time>30/09 ", body)
+
+        def detail(bead_id):
+            start = body.index('id="d-%s"' % bead_id)
+            return body[start:body.index("</article>", start)]
+
+        # A NEEDS BENJAMIN with prepared options: each option is the answer button.
+        self.assertIn('data-action="repondre" data-bead-id="af-aaaa" data-lettre="a"', detail("af-aaaa"))
+        self.assertIn('data-action="repondre" data-bead-id="af-aaaa" data-lettre="b"', detail("af-aaaa"))
+        self.assertIn("Pourquoi recommandé :", detail("af-aaaa"))
+        self.assertNotIn("accepter_proposition", detail("af-aaaa"))
+        # A proposal: accept, or refuse with a reason; its options are read-only.
+        self.assertIn('data-action="accepter_proposition" data-bead-id="af-cccc"', detail("af-cccc"))
+        self.assertIn('data-action="rejeter_proposition" data-bead-id="af-cccc"', detail("af-cccc"))
+        self.assertIn('class="field cockpit-rejeter-raison" data-bead-id="af-cccc"', detail("af-cccc"))
+        self.assertNotIn('data-action="repondre"', detail("af-cccc"))
+        # The fixed fallback option is never an answer button.
+        self.assertNotIn('data-action="repondre"', detail("af-dddd"))
+        self.assertIn("incomplète : champ pourquoi manquant", detail("af-dddd"))
+        for bead_id in ("af-aaaa", "af-cccc", "af-dddd"):
+            self.assertIn('data-action="continuer"', detail(bead_id))
+            self.assertIn("utilise un agent (consomme des tokens)", detail(bead_id))
+
+    def test_status_line_never_guesses_the_factory_state(self):
+        self.fake_gc.go_down()
+        self.start_cockpit()
+        body = self.home_body()
+        self.assertIn("État de l'usine inconnu", body)
+        self.assertNotIn("En marche", body)
+        self.assertNotIn("agent au travail", body)
+        self.assertIn("pas à jour", body)
+
+        self.fake_gc.go_up()
+        self.fake_gc.set_status(suspended=True)
+        body = wait_until(lambda: self.home_body() if "Suspendue" in self.home_body() else None, timeout=10)
+        self.assertNotIn("En marche", body)
 
     # ------------------------------------------------------------------
     # AC2 — a request missing a field: "incomplète : champ X manquant",

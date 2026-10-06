@@ -26,8 +26,8 @@ from cockpit.health.git_source import count_commits_behind
 # "git" for the health zone's version-behind signal (spec .66) the same
 # way, opt-in via config.repo_dir (see Config.repo_dir).
 SOURCE_DISPLAY_NAMES = {
-    "gc": "usine (gc)",
-    "beads": "Beads",
+    "gc": "superviseur",
+    "beads": "tickets",
 }
 
 
@@ -58,7 +58,7 @@ def build(config, clock=None):
             )
         )
     if config.repo_dir:
-        read_model.register("git", display_name="dépôt (git)")
+        read_model.register("git", display_name="version de l'usine")
         pollers.append(
             PollingSource(
                 read_model,

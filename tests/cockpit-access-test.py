@@ -159,7 +159,7 @@ class DisconnectedBannerTest(unittest.TestCase):
         # The banner markup appears before the freshness headline — "above
         # everything" (spec .69).
         banner_pos = html_out.index('id="cockpit-disconnected-banner"')
-        headline_pos = html_out.index('<header class="cockpit-headline"')
+        headline_pos = html_out.index('class="fresh cockpit-headline"')
         self.assertLess(banner_pos, headline_pos)
 
 

@@ -18,10 +18,11 @@ the pure, testable half of that same decision, used directly by a server
 that already knows it has gone quiet for some other reason.
 """
 import html
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from cockpit.ui.base.tokens import CSS
+from cockpit.ui.base.tokens import CSS, FONTS_HEAD
 
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -33,6 +34,8 @@ DISCONNECT_AFTER_SECONDS = 30
 
 BANNER_ID = "cockpit-disconnected-banner"
 GREYED_CLASS = "cockpit-greyed"
+
+_HHMM = re.compile(r"\b\d{2}:\d{2}\b")
 
 
 def render_disconnected_banner(disconnected_since=None):
@@ -108,27 +111,29 @@ def render_home(
     disconnected_since=None,
     extra_sections_html="",
     extra_css="",
+    status_html="",
 ):
-    """``stale_rows``: the same names :meth:`ReadModel.stale_or_unknown`
-    returns, each resolved to its display name and freshness state.
-    ``requests_section_html`` (T12, af-is5e97): the pre-rendered "Ce qui
-    t'attend" section HTML, injected below the freshness headline; the
-    empty default keeps every caller that predates it unchanged.
+    """The home screen skeleton of variant D: brand, one status line
+    (factory state, then the freshness headline with "Revérifier"), the
+    inbox, then the zones below it.
+
+    ``stale_rows``: the names :meth:`ReadModel.stale_or_unknown` returns;
+    empty means every source is fresh (``headline_text`` already names the
+    ones that are not). ``status_html``: the factory's one-line state
+    (:func:`cockpit.ui.health.page.render_status_line`).
+    ``requests_section_html``: the pre-rendered "Ce qui t'attend" inbox.
     ``disconnected_since`` (T25, af-tzk0s4): rendered above everything —
-    the default ``None`` keeps every existing caller unchanged, showing a
-    hidden placeholder banner that the inline :data:`DISCONNECT_SCRIPT`
-    takes over client-side.
-    ``extra_sections_html``/``extra_css`` let later tickets (T16's health
-    zone) append their own section without this module knowing about them."""
+    the default ``None`` shows a hidden placeholder banner that the inline
+    :data:`DISCONNECT_SCRIPT` takes over client-side.
+    ``extra_sections_html``/``extra_css``: zones under the inbox."""
     all_fresh = not stale_rows
-    items = "".join(
-        '<li data-freshness="%s">%s</li>'
-        % (html.escape(row["freshness"]), html.escape(row["display_name"]))
-        for row in stale_rows
-    )
-    stale_list = (
-        '<ul class="cockpit-stale-list">%s</ul>' % items if stale_rows else ""
-    )
+    headline_html = _HHMM.sub(lambda m: "<time>%s</time>" % m.group(0), html.escape(headline_text))
+    fresh = (
+        '<span class="fresh cockpit-headline%s" data-ok="%s"><span class="dot"></span>%s '
+        '<form method="post" action="/api/health/recheck">'
+        '<button class="recheck" type="submit">Revérifier</button></form></span>'
+    ) % ("" if all_fresh else " warn", "true" if all_fresh else "false", headline_html)
+    status = (status_html + '<span class="sep"></span>') if status_html else ""
     banner = render_disconnected_banner(disconnected_since)
     return (
         "<!doctype html>\n"
@@ -137,23 +142,31 @@ def render_home(
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         "<title>Cockpit</title>\n"
+        "%s"
         "<style>%s%s</style>\n"
         "</head>\n"
         '<body id="cockpit-body">\n'
         "%s"
-        '<header class="cockpit-headline" data-ok="%s">%s</header>\n'
+        '<div class="stage"><div class="app"><div class="vd">\n'
+        '<div class="vc" id="inbox">\n'
+        '<header class="topbar"><div class="brand"><h1>Cockpit</h1>'
+        '<span class="who">usine + projets</span></div></header>\n'
+        '<div class="status">%s%s</div>\n'
         "%s\n"
-        "%s\n"
+        "</div>\n"
+        '<div class="va">%s</div>\n'
+        "</div></div></div>\n"
         "%s"
         "</body>\n"
         "</html>\n"
     ) % (
+        FONTS_HEAD,
         CSS,
         extra_css,
         banner,
-        "true" if all_fresh else "false",
-        html.escape(headline_text),
-        stale_list,
-        requests_section_html + extra_sections_html,
+        status,
+        fresh,
+        requests_section_html,
+        extra_sections_html,
         DISCONNECT_SCRIPT,
     )

@@ -20,8 +20,7 @@ from cockpit.health.engine import (
 from cockpit.requests.builder import build_requests
 from cockpit.requests.defects import DefectCounter
 from cockpit.ui.base.page import render_home
-from cockpit.ui.health.page import render_health_zone
-from cockpit.ui.health.tokens import CSS as HEALTH_CSS
+from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.home.page import render_requests_section
 
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
@@ -67,7 +66,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 stale_rows,
                 requests_section_html=requests_section_html,
                 extra_sections_html=health_html,
-                extra_css=HEALTH_CSS,
+                status_html=render_status_line(snapshot.get("gc"), health),
             ).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
