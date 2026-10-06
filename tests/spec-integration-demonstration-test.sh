@@ -80,6 +80,9 @@ gc init --template minimal --default-provider codex --skip-provider-readiness \
 # --- the product of the fixture, its remote, its protected branch -------------
 mkdir -p "$REPO/$(dirname "$FIXTURE")"
 cp -r "$ROOT/$FIXTURE" "$REPO/$FIXTURE"
+# A bytecode cache left by an earlier test would be committed, then rewritten
+# by the merged tests: the work tree would match no commit.
+find "$REPO/$FIXTURE" -type d -name __pycache__ -prune -exec rm -rf {} +
 PROFILE="$REPO/$FIXTURE/descriptor.json"
 git init -q -b main "$REPO"
 git -C "$REPO" add -A

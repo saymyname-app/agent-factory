@@ -119,7 +119,10 @@ class SpecIntegrationTest(unittest.TestCase):
 
     def seed_repo(self):
         """The product and its remote, the protected branch pushed."""
-        shutil.copytree(ROOT / FIXTURE, self.repo / FIXTURE)
+        # An earlier test of the same run may have imported the fixture: its
+        # bytecode cache, once committed, is rewritten by the merged tests and
+        # the work tree no longer matches any commit.
+        shutil.copytree(ROOT / FIXTURE, self.repo / FIXTURE, ignore=shutil.ignore_patterns("__pycache__"))
         (self.repo / README).write_text("Le produit de la fixture.\n")
         self.git("init", "-q", "-b", PROTECTED)
         self.git("add", "-A")
