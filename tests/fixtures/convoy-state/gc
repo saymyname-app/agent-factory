@@ -9,7 +9,11 @@ Backs a tiny tracker in the JSON file named by CONVOY_STATE_FAKE_TRACKER:
                         "tracks": ["<ticket id>", ...],     # convoy only
                         "blocks": ["<other id>", ...]}}}    # optional
 
-Only the two shapes bin/convoy-state uses are implemented, with the behavior
+A top-level "sessions" list, when present, is what `session list --json`
+answers (T04).
+
+Only the shapes bin/convoy-state, bin/convoy-advance and bin/dispatch-door
+use are implemented, with the behavior
 observed on the real bd 1.2.2 in an isolated city (2026-10-06): `bd show
 <id> --json` returns a one-element list whose `dependencies` carry each
 tracked ticket's status and metadata (`metadata` is null when empty, and
@@ -17,8 +21,17 @@ tracked ticket's status and metadata (`metadata` is null when empty, and
 --set-metadata k=v` stores an integer-looking value as a
 number and `true`/`false` as a boolean, anything else as a string, and
 refuses a metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*`. Every
-update is appended to CONVOY_STATE_FAKE_WRITE_LOG when set. Anything else
-fails loudly.
+update is appended to CONVOY_STATE_FAKE_WRITE_LOG when set.
+
+For bin/convoy-advance (T04, af-gfyj6k), observed on gc 1.4.1 in an isolated
+city (2026-10-06): a leading `--city DIR` is accepted; `bd list --json`
+filters by `--type`, `--status`, `--has-metadata-key` and `--metadata-field`;
+`session list --json` answers `{"sessions": [{"template", "state", ...}]}`;
+`sling TARGET BEAD --on FORMULA --reassign` attaches a workflow and leaves the
+bead open, unassigned and without new metadata. Every sling is appended to
+the write log as ["sling", TARGET, BEAD, FORMULA]; a bead id listed in
+CONVOY_STATE_FAKE_SLING_FAIL (comma-separated) makes its sling fail.
+Anything else fails loudly.
 """
 import fcntl
 import json
@@ -44,7 +57,9 @@ def coerce(value):
 
 
 def view(bead_id, bead):
+    extra = {key: bead[key] for key in ("description", "labels") if key in bead}
     return {
+        **extra,
         "id": bead_id,
         "title": bead.get("title", ""),
         "status": bead.get("status", "open"),
@@ -87,14 +102,85 @@ def update(state, bead_id, rest):
             fail(f"no canned response configured for: bd update {bead_id} {' '.join(rest)}")
         i += 2
     bead["metadata"] = metadata
-    log = os.environ.get("CONVOY_STATE_FAKE_WRITE_LOG")
-    if log:
-        with open(log, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps([bead_id, *rest]) + "\n")
+    log_write([bead_id, *rest])
     print(f"Updated issue: {bead_id}")
 
 
+def log_write(entry):
+    log = os.environ.get("CONVOY_STATE_FAKE_WRITE_LOG")
+    if log:
+        with open(log, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry) + "\n")
+
+
+def list_beads(beads, rest):
+    wanted = {"type": None, "status": None, "keys": [], "fields": []}
+    i = 0
+    while i < len(rest):
+        flag = rest[i]
+        if flag in ("--all", "--json"):
+            i += 1
+            continue
+        if i + 1 >= len(rest):
+            fail(f"no canned response configured for: bd list {' '.join(rest)}")
+        value = rest[i + 1]
+        if flag == "--type":
+            wanted["type"] = value
+        elif flag == "--status":
+            wanted["status"] = value.split(",")
+        elif flag == "--has-metadata-key":
+            wanted["keys"].append(value)
+        elif flag == "--metadata-field":
+            wanted["fields"].append(value.partition("=")[::2])
+        elif flag != "--limit":
+            fail(f"no canned response configured for: bd list {' '.join(rest)}")
+        i += 2
+    if "--json" not in rest:
+        fail("bd list is only canned with --json")
+    out = []
+    for bead_id in sorted(beads):
+        shown = view(bead_id, beads[bead_id])
+        metadata = shown["metadata"] or {}
+        if wanted["type"] and shown["issue_type"] != wanted["type"]:
+            continue
+        if wanted["status"] and shown["status"] not in wanted["status"]:
+            continue
+        if not wanted["status"] and "--all" not in rest and shown["status"] == "closed":
+            continue
+        if any(key not in metadata for key in wanted["keys"]):
+            continue
+        if any(str(metadata.get(key)) != value for key, value in wanted["fields"]):
+            continue
+        out.append(shown)
+    print(json.dumps(out))
+
+
+def sling(args):
+    if len(args) != 5 or args[2] != "--on" or args[4] != "--reassign":
+        fail(f"no canned response configured for: sling {' '.join(args)}")
+    target, bead_id, formula = args[0], args[1], args[3]
+    state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    if bead_id not in state["beads"]:
+        fail(f"issue not found: {bead_id}")
+    if bead_id in os.environ.get("CONVOY_STATE_FAKE_SLING_FAIL", "").split(","):
+        fail(f"sling refused for {bead_id}")
+    log_write(["sling", target, bead_id, formula])
+    print(f'Attached workflow wf-{bead_id} (formula "{formula}") to wf-{bead_id}')
+
+
 def main(args):
+    if args[:1] == ["--city"] and len(args) >= 2:
+        args = args[2:]
+    if args[:2] == ["bd", "list"]:
+        list_beads(json.loads(STATE_PATH.read_text(encoding="utf-8"))["beads"], args[2:])
+        return 0
+    if args == ["session", "list", "--json"]:
+        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        print(json.dumps({"ok": True, "schema_version": "1", "sessions": state.get("sessions", [])}))
+        return 0
+    if args[:1] == ["sling"]:
+        sling(args[1:])
+        return 0
     if args[:2] == ["bd", "show"] and len(args) == 4 and args[3] == "--json":
         state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
         show(state["beads"], args[2])

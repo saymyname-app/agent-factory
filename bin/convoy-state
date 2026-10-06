@@ -8,6 +8,7 @@ tickets, a ticket's branch and Ticket Exit, its verdicts (each tied to a
 commit), its counters, its evidence fingerprints and its gate records. No
 other script invents a `gc.flow.*` field: a missing field is added here.
 
+    convoy-state list
     convoy-state show CONVOY [--repo DIR]
     convoy-state mark CONVOY
     convoy-state set-branch   CONVOY TICKET --branch NAME
@@ -218,6 +219,26 @@ def stored_record(raw: Any, required: tuple[str, ...], optional: tuple[str, ...]
     if missing or unknown:
         raise Refusal(f"champs manquants {missing} ou inconnus {unknown} dans {raw!r}")
     return record
+
+
+# --- list --------------------------------------------------------------------
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    """The open convoys that carry the mark: what the advance command walks."""
+    out = run_gc(["bd", "list", "--type", "convoy", "--has-metadata-key", KEY_MARK, "--limit", "0", "--json"])
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc bd list a rendu un JSON illisible : {exc}") from exc
+    if not isinstance(data, list):
+        raise Refusal(f"gc bd list a rendu autre chose qu'une liste : {data!r}")
+    convoys = sorted(
+        bead["id"] for bead in data
+        if isinstance(bead, dict) and bead.get("status") != "closed" and KEY_MARK in metadata_of(bead)
+    )
+    print(json.dumps({"ok": True, "convoys": convoys}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
 
 
 # --- show --------------------------------------------------------------------
@@ -576,6 +597,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Closed lists and required values are checked by the handlers, not by
     # argparse: a refusal is one JSON answer, and it is made under the lock,
     # after the mark has been read.
+    sub.add_parser("list").set_defaults(handler=cmd_list)
     p = command("show", cmd_show, ticket=False)
     p.add_argument("--repo", default=".")
     command("mark", cmd_mark, ticket=False)
@@ -605,8 +627,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if args.handler is cmd_show:
-            return cmd_show(args)
+        if args.handler in (cmd_list, cmd_show):
+            return args.handler(args)
         with convoy_lock(args.convoy):
             return args.handler(args)
     except NotNewFlow as exc:
