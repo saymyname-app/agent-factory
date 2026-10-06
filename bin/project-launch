@@ -22,6 +22,7 @@ running.
 from __future__ import annotations
 
 import argparse
+import importlib.machinery
 import importlib.util
 import json
 import os
@@ -42,10 +43,10 @@ def repo_root_default() -> Path:
 
 def load_profile_module(repo_root: Path) -> ModuleType:
     tool_path = repo_root / "bin" / "project-planning-profile"
-    spec = importlib.util.spec_from_file_location("project_planning_profile", tool_path)
+    loader = importlib.machinery.SourceFileLoader("project_planning_profile", str(tool_path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
+    loader.exec_module(module)
     return module
 
 
