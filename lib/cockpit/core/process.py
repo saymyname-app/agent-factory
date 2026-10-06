@@ -24,6 +24,8 @@ from cockpit.notify.service import HeartbeatService, NotifyService, Ticker
 from cockpit.notify.state_store import JsonFileStateStore
 from cockpit.stop.driver import StopDriver
 from cockpit.stop.gc_city import GcCityReader
+from cockpit.projects.depots import read_depots, read_rig_repos
+from cockpit.projects.descriptors import load_descriptors
 from cockpit.projects.source import read_projects
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
@@ -152,6 +154,25 @@ def build(config, clock=None):
 
     stop_driver = StopDriver(city_reader, photo, clock, JsonFileStateStore(config.stop_state_file))
     pollers.append(Ticker(stop_driver.tick, config.stop_tick_seconds))
+
+    # Project repositories (T19, T20): roadmap step and commits ahead, read in
+    # clones the cockpit owns -- only where a clones directory is named.
+    if config.clones_dir:
+        read_model.register("depots", display_name="dépôts des projets")
+        pollers.append(
+            PollingSource(
+                read_model,
+                "depots",
+                lambda: read_depots(
+                    load_descriptors(config.descriptors_dir),
+                    read_rig_repos(config.rig_files_dir),
+                    config.clones_dir,
+                    url_template=config.repo_url_template,
+                    git_bin=config.git_bin,
+                ),
+                config.depots_poll_seconds,
+            )
+        )
 
     # Access (T25): the Tailscale key's expiry, only where a client is named.
     if config.tailscale_bin:
