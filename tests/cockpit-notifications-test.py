@@ -159,7 +159,11 @@ class NotificationsTest(unittest.TestCase):
                 "FAKE_BD_FAIL_FLAG_FILE": str(self.dir / "fail"),
             }
         )
-        env.update(extra_env or {})
+        for name, value in (extra_env or {}).items():
+            if value is None:
+                env.pop(name, None)
+            else:
+                env[name] = value
         self.proc = subprocess.Popen(
             [sys.executable, str(COCKPIT_BIN), "run"],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -320,6 +324,37 @@ class NotificationsTest(unittest.TestCase):
         self.assertEqual(1, len(sent))
         self.assertEqual("Notification de test", sent[0]["title"])
         self.assertEqual(0, sent[0]["priority"])
+
+    def test_secret_locations_come_from_the_local_settings_file(self):
+        """Benjamin, 2026-10-06: the secret files live under his Windows
+        profile and a local, unversioned file tells the cockpit where."""
+        (self.dir / "cockpit-local.json").write_text(json.dumps({
+            "pushover_secrets_file": str(self.secrets_file),
+            "heartbeat_url_file": str(self.heartbeat_file),
+            "public_url": "https://cockpit.from-local-file.ts.net",
+            "benjamin_login": BENJAMIN_LOGIN,
+            "une_cle_inconnue": "ignorée",
+        }))
+        self.start_cockpit({
+            "COCKPIT_PUSHOVER_SECRETS_FILE": None, "COCKPIT_HEARTBEAT_URL_FILE": None,
+            "COCKPIT_PUBLIC_URL": None, "COCKPIT_BENJAMIN_LOGIN": None,
+        })
+        wait_until(lambda: len(self.pushover.sent()) >= 2)
+        wait_until(lambda: self.pushover.ping_count() >= 1)
+        self.assertTrue(any("https://cockpit.from-local-file.ts.net/#d-af-urg1" in m["message"] for m in self.pushover.sent()))
+        self.assertEqual([], [t for t in self.health_texts() if "inactive" in t])
+        # The login in the file is the identity an action needs.
+        status, payload = self.post_action("notifier_test", {})
+        self.assertEqual(200, status, payload)
+
+    def test_a_malformed_local_settings_file_leaves_everything_inactive(self):
+        (self.dir / "cockpit-local.json").write_text("{ pas du JSON")
+        self.start_cockpit({"COCKPIT_PUSHOVER_SECRETS_FILE": None, "COCKPIT_HEARTBEAT_URL_FILE": None})
+        wait_until(lambda: self.get("/api/requests")["state"] == "filled")
+        self.settle()
+        self.assertEqual([], self.pushover.sent())
+        self.assertEqual(0, self.pushover.ping_count())
+        self.assertEqual(2, len([t for t in self.health_texts() if "inactive" in t]))
 
     # ------------------------------------------------------------------
     def test_heartbeat_pings_only_while_the_main_sources_are_read(self):

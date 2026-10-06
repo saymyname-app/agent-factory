@@ -392,3 +392,29 @@ Pushover or Healthchecks.io by default.
 documents and decrypts with the documented scheme;
 `tests/cockpit-notifications-test.py` runs the real process with its real
 adapter and emitter against it.
+
+## Local settings file (af-mjfvwx)
+
+Intent (Benjamin, his words, 2026-10-06): « ok pour l'emplacement ».
+Mechanism (agent interpretation): the two secret files live under his
+Windows profile, in `C:\Users\<lui>\.agent-factory-cockpit\`, and one
+local, unversioned JSON file tells the cockpit where — it does NOT hold a
+secret itself, and nothing in the repository names his profile.
+
+`cockpit-local.json`, beside the pid file (`.gc/runtime/` on the live
+root; `COCKPIT_LOCAL_CONFIG` to put it elsewhere):
+
+```json
+{
+  "pushover_secrets_file": "/mnt/c/Users/<lui>/.agent-factory-cockpit/pushover.json",
+  "heartbeat_url_file": "/mnt/c/Users/<lui>/.agent-factory-cockpit/heartbeat-url.txt",
+  "public_url": "https://<machine>.<tailnet>.ts.net",
+  "benjamin_login": "<login Tailscale>",
+  "allowed_origin": "https://<machine>.<tailnet>.ts.net"
+}
+```
+
+Every key is optional; an environment variable of the same meaning
+(`COCKPIT_PUSHOVER_SECRETS_FILE`, …) wins. Absent or malformed, the file is
+ignored: no push, no ping, read-only. A test never sees the live one: each
+gives the process its own pid file, so its own (absent) settings file.
