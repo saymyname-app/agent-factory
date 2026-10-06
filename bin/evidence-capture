@@ -1,0 +1,638 @@
+#!/usr/bin/env python3
+"""Capture an Evidence Record into the Factory's evidence store (T09,
+af-pvcg6t; Spec af-wf4w5r §9).
+
+An Evidence Record is never written by an agent: this tool runs the command,
+or drives the browser, itself, and records what it got with the time and the
+commit. The piece goes into the evidence store, outside any Git history,
+filed by Spec and by ticket; its fingerprint goes on the ticket in the
+tracker through bin/convoy-state. A piece this tool did not produce is
+refused by `verify`.
+
+    evidence-capture command    CONVOY TICKET --piece NAME [--repo DIR | --launch-state FILE]
+                                              [--timeout SECONDS] -- COMMAND [ARG ...]
+    evidence-capture screenshot CONVOY TICKET --piece NAME --launch-state FILE [--path /PATH]
+                                              [--window-size WIDTHxHEIGHT]
+    evidence-capture verify     CONVOY TICKET [--piece NAME]
+    evidence-capture purge      --spec SPEC
+
+`command` runs COMMAND with no input and records its argv, its real output
+(stdout and stderr together), its exit code, the time and the commit: HEAD of
+`--repo` (default: the current directory), refused when tracked files differ
+from it, or the commit of the product launched by `bin/project-launch start
+--state-file FILE`, whose address is then recorded too. No option carries an
+output. `screenshot` records an image of one address of that launched
+product. `verify` fails if a piece of the store no longer matches the
+fingerprint of the tracker, or was not produced by this tool. `purge` removes
+the pieces of one Spec and no other.
+
+Every answer is one JSON object on stdout. Exit status: 0 done; 1 refused
+(nothing written, nothing left in the store); 4 the convoy does not carry the
+new-flow mark ("pas un convoi du nouveau flux": nothing is run or written).
+Store layout, record fields and limits: docs/EVIDENCE_STORE.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import hmac
+import json
+import os
+import re
+import secrets
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+import uuid
+from pathlib import Path
+from typing import Any
+
+
+PROGRAM = "evidence-capture"
+STATE_TOOL = Path(__file__).resolve().parent / "convoy-state"
+CONTRACT = "agent-factory-evidence-record/v1"
+MARK = "new-flow/v1"
+SEAL_KEY_FILE = ".seal-key"
+SEAL_PREFIX = "hmac-sha256:"
+
+EXIT_REFUSED = 1
+EXIT_NOT_NEW_FLOW = 4
+
+# The piece name ends a tracker metadata key: same alphabet as bin/convoy-state.
+PIECE_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$")
+BEAD_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$")
+COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+# What bin/project-launch writes as the address of a launched product.
+ADDRESS_RE = re.compile(r"^http://(?:127\.0\.0\.1|localhost):[0-9]+$")
+WINDOW_RE = re.compile(r"^([1-9][0-9]{1,4})x([1-9][0-9]{1,4})$")
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+DEFAULT_TIMEOUT = 600.0
+BROWSER_TIMEOUT = 60
+# A longer output keeps its two ends; its full fingerprint is recorded.
+MAX_OUTPUT_BYTES = 1_000_000
+
+# chrome-headless-shell first: it is the Chromium built to be scripted. Tried
+# on Chromium 1243 under WSL (2026-10-06): it writes the image and exits,
+# while the full `chrome --headless` never exits on a fresh profile.
+BROWSER_NAMES = ("chrome-headless-shell", "chromium", "chromium-browser", "google-chrome", "google-chrome-stable")
+BROWSER_CACHE_GLOBS = ("chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell", "chromium-*/chrome-linux*/chrome")
+
+
+class Refusal(RuntimeError):
+    """Nothing is written, nothing is left in the store."""
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark: bin/convoy-state's answer."""
+
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+def now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def digest_of(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, env=env)
+
+
+# --- evidence store ------------------------------------------------------------
+
+
+def store_dir() -> Path:
+    configured = os.environ.get("EVIDENCE_STORE_DIR")
+    # ~/.local/state is what bin/delivery-role-sandbox leaves writable to a
+    # read-only role: the Evaluator captures its evidence there too.
+    return Path(configured) if configured else Path.home() / ".local" / "state" / "agent-factory-evidence"
+
+
+def usable_store() -> Path:
+    """The store, refused where a capture could reach a Git history."""
+    store = store_dir().absolute()
+    existing = store
+    while not existing.exists():
+        existing = existing.parent
+    try:
+        inside = git(existing, "rev-parse", "--is-inside-work-tree", "--is-inside-git-dir")
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer git : {exc}") from exc
+    if inside.returncode == 0 and "true" in inside.stdout.split():
+        raise Refusal(
+            f"le magasin de preuves ({store}) est dans un dépôt Git : une pièce n'entre dans aucun "
+            "historique Git ; régler EVIDENCE_STORE_DIR hors de tout dépôt"
+        )
+    return store
+
+
+def seal_key(store: Path, create: bool) -> bytes | None:
+    """The key that seals every record of this store. It never leaves it."""
+    path = store / SEAL_KEY_FILE
+    if create:
+        store.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            with os.fdopen(fd, "w", encoding="ascii") as handle:
+                handle.write(secrets.token_hex(32) + "\n")
+    try:
+        key = path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return key.encode("ascii") if key else None
+
+
+def seal_of(record: dict[str, Any], key: bytes) -> str:
+    body = {field: value for field, value in record.items() if field != "seal"}
+    canonical = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return SEAL_PREFIX + hmac.new(key, canonical, hashlib.sha256).hexdigest()
+
+
+def valid_piece(name: Any) -> str:
+    if not isinstance(name, str) or not PIECE_RE.match(name):
+        raise Refusal(f"nom de pièce absent ou mal formé : {name!r} (lettres, chiffres, _ et . seulement)")
+    return name
+
+
+# --- tracker, through bin/convoy-state -------------------------------------------
+
+
+def convoy_state(*args: str) -> tuple[int, dict[str, Any]]:
+    try:
+        proc = subprocess.run([str(STATE_TOOL), *args], capture_output=True, text=True)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {STATE_TOOL.name} : {exc}") from exc
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        raise Refusal(f"{STATE_TOOL.name} {args[0]} a rendu une réponse illisible : {detail}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"{STATE_TOOL.name} {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def read_ticket(convoy_id: str, ticket_id: str) -> tuple[str, dict[str, Any]]:
+    """The Spec the convoy delivers and the state of one of its marked tickets."""
+    status, answer = convoy_state("show", convoy_id)
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(answer)
+    # 3 is an "état sans règle": the state is still rendered, and evidence is
+    # still captured and verified on a stopped convoy.
+    if status not in (0, 3) or "tickets" not in answer:
+        raise Refusal(refusal_text(answer))
+    spec = answer["convoy"].get("spec")
+    if not isinstance(spec, str) or not BEAD_ID_RE.match(spec):
+        raise Refusal(f"le convoi {convoy_id} ne nomme pas sa Spec ({spec!r}) : le magasin est rangé par Spec")
+    for ticket in answer["tickets"]:
+        if ticket.get("id") == ticket_id:
+            if ticket.get("mark") != MARK or not BEAD_ID_RE.match(ticket_id):
+                raise Refusal(f"le ticket {ticket_id} ne porte pas la marque du nouveau flux")
+            return spec, ticket
+    raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {convoy_id}")
+
+
+# --- what a piece is tied to -----------------------------------------------------
+
+
+def head_of_clean_repo(repo: Path) -> str:
+    """HEAD of the repository the command runs against, refused when tracked
+    files differ from it: the output would be tied to no commit."""
+    try:
+        head = git(repo, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer git : {exc}") from exc
+    commit = head.stdout.strip()
+    if head.returncode != 0 or not COMMIT_RE.match(commit):
+        raise Refusal(f"commit introuvable : {repo} n'est pas un dépôt Git avec un commit")
+    status = git(repo, "status", "--porcelain", "--untracked-files=no")
+    if status.returncode != 0:
+        raise Refusal(f"git status a échoué dans {repo} : {status.stderr.strip()}")
+    if status.stdout.strip():
+        raise Refusal(
+            f"l'arbre de travail de {repo} a des modifications non commitées : "
+            f"la pièce ne serait liée à aucun commit ({status.stdout.strip().splitlines()[0].strip()})"
+        )
+    return commit
+
+
+def launched_product(state_file: str) -> tuple[str, str]:
+    """Address and commit of a product launched by bin/project-launch."""
+    try:
+        state = json.loads(Path(state_file).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise Refusal(f"relevé de lancement illisible ({state_file}) : {exc}") from exc
+    address, commit = (state.get("address"), state.get("commit")) if isinstance(state, dict) else (None, None)
+    if not isinstance(address, str) or not ADDRESS_RE.match(address) or not isinstance(commit, str) or not COMMIT_RE.match(commit):
+        raise Refusal(
+            f"relevé de lancement mal formé ({state_file}) : adresse {address!r}, commit {commit!r} "
+            "(attendu : le fichier écrit par bin/project-launch start --state-file)"
+        )
+    return address, commit
+
+
+# --- captures --------------------------------------------------------------------
+
+
+def run_command(argv: list[str], timeout: float) -> tuple[bytes, int]:
+    """Run the command with no input; its stdout and stderr, and its exit code."""
+    try:
+        proc = subprocess.Popen(
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
+        )
+    except OSError as exc:
+        raise Refusal(f"commande impossible à exécuter : {argv[0]} ({exc.strerror or exc})") from exc
+    try:
+        output, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
+        raise Refusal(f"la commande n'a pas fini en {timeout:g} s : aucune pièce enregistrée") from exc
+    return output, proc.returncode
+
+
+def find_browser() -> str:
+    configured = os.environ.get("EVIDENCE_CAPTURE_BROWSER")
+    if configured:
+        if not (os.path.isfile(configured) and os.access(configured, os.X_OK)):
+            raise Refusal(f"navigateur introuvable ou non exécutable : {configured} (EVIDENCE_CAPTURE_BROWSER)")
+        return configured
+    cache = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or Path.home() / ".cache" / "ms-playwright")
+    for names, pattern in ((BROWSER_NAMES[:1], BROWSER_CACHE_GLOBS[0]), (BROWSER_NAMES[1:], BROWSER_CACHE_GLOBS[1])):
+        for name in names:
+            found = shutil.which(name)
+            if found:
+                return found
+        for candidate in sorted(cache.glob(pattern), reverse=True):
+            if os.access(candidate, os.X_OK):
+                return str(candidate)
+    raise Refusal(
+        "aucun navigateur Chromium trouvé pour la capture d'écran "
+        f"({', '.join(BROWSER_NAMES)} ou {cache}) ; en nommer un par EVIDENCE_CAPTURE_BROWSER"
+    )
+
+
+def http_status_of(url: str) -> int:
+    """The product must answer before the browser is driven: a browser
+    pointed at a stopped product renders its own error page."""
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+    except (urllib.error.URLError, OSError) as exc:
+        raise Refusal(f"le produit lancé ne répond pas à {url} : {getattr(exc, 'reason', exc)}") from exc
+
+
+def take_screenshot(browser: str, url: str, width: str, height: str) -> bytes:
+    work = tempfile.mkdtemp(prefix="evidence-capture-")
+    image = Path(work) / "capture.png"
+    argv = [
+        browser, "--headless", "--disable-gpu", "--hide-scrollbars", f"--user-data-dir={work}/profile",
+        f"--window-size={width},{height}", f"--screenshot={image}", url,
+    ]
+    proc = None
+    try:
+        try:
+            # Its messages go to a file, not a pipe: a helper process that
+            # outlives the browser would keep a pipe open.
+            with open(Path(work) / "browser.log", "wb") as log:
+                proc = subprocess.Popen(
+                    argv, cwd=work, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
+                )
+            proc.wait(timeout=BROWSER_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            raise Refusal(
+                f"le navigateur ({browser}) n'a rendu aucune image en {BROWSER_TIMEOUT} s ; "
+                "chrome-headless-shell est le Chromium attendu (EVIDENCE_CAPTURE_BROWSER)"
+            ) from exc
+        except OSError as exc:
+            raise Refusal(f"navigateur impossible à lancer : {browser} ({exc.strerror or exc})") from exc
+        try:
+            data = image.read_bytes()
+        except OSError:
+            data = b""
+        if proc.returncode != 0 or not data.startswith(PNG_MAGIC):
+            messages = (Path(work) / "browser.log").read_text(encoding="utf-8", errors="replace").strip().splitlines()
+            detail = messages[-1:] or [f"exit {proc.returncode}"]
+            raise Refusal(f"le navigateur n'a pas produit d'image PNG de {url} : {detail[0]}")
+        return data
+    finally:
+        # A Chromium exits before its helper processes have let go of the
+        # profile: none of them outlives the capture.
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+        for _ in range(20):
+            shutil.rmtree(work, ignore_errors=True)
+            if not os.path.exists(work):
+                break
+            time.sleep(0.1)
+
+
+def file_piece(
+    store: Path, convoy_id: str, ticket_id: str, spec: str, record: dict[str, Any], image: bytes | None,
+) -> dict[str, Any]:
+    """Seal the record, write the piece in the store and its fingerprint in
+    the tracker. If the tracker refuses, the store keeps what it had."""
+    piece = record["piece"]
+    key = seal_key(store, create=True)
+    if key is None:
+        raise Refusal(f"clé de scellement illisible dans le magasin ({store / SEAL_KEY_FILE})")
+    record["seal"] = seal_of(record, key)
+    data = (json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
+    digest = digest_of(data)
+
+    ticket_dir = store / spec / ticket_id
+    ticket_dir.mkdir(parents=True, exist_ok=True)
+    final = {ticket_dir / f"{piece}.json": data}
+    if image is not None:
+        final[ticket_dir / record["image"]] = image
+    pending = {ticket_dir / f".tmp-{uuid.uuid4().hex}": (path, content) for path, content in final.items()}
+    try:
+        for tmp, (_, content) in pending.items():
+            tmp.write_bytes(content)
+        status, answer = convoy_state(
+            "add-evidence", convoy_id, ticket_id, "--piece", piece, "--digest", digest, "--commit", record["commit"],
+        )
+        if status != 0:
+            raise Refusal(f"empreinte refusée par le tracker : {refusal_text(answer)}")
+        for tmp, (path, _) in pending.items():
+            os.replace(tmp, path)
+        if image is None:
+            # A command piece that replaces a screenshot piece leaves no image.
+            (ticket_dir / f"{piece}.png").unlink(missing_ok=True)
+    finally:
+        for tmp in pending:
+            tmp.unlink(missing_ok=True)
+        for directory in (ticket_dir, ticket_dir.parent):
+            try:
+                directory.rmdir()
+            except OSError:
+                break
+    out = {
+        "ok": True, "kind": record["kind"], "spec": spec, "convoy": convoy_id, "ticket": ticket_id, "piece": piece,
+        "path": str(ticket_dir / f"{piece}.json"), "digest": digest, "commit": record["commit"], "at": record["at"],
+    }
+    if image is not None:
+        out["image"] = str(ticket_dir / record["image"])
+    return out
+
+
+def new_record(kind: str, spec: str, convoy_id: str, ticket_id: str, piece: str, commit: str, address: str | None) -> dict[str, Any]:
+    return {
+        "contract": CONTRACT, "kind": kind, "spec": spec, "convoy": convoy_id, "ticket": ticket_id, "piece": piece,
+        "at": now(), "commit": commit, "address": address,
+    }
+
+
+def cmd_command(args: argparse.Namespace) -> int:
+    piece = valid_piece(args.piece)
+    if not args.argv:
+        raise Refusal("commande absente : la commande à exécuter suit « -- » (aucune sortie ne se fournit autrement)")
+    if args.repo is not None and args.launch_state is not None:
+        raise Refusal("--repo et --launch-state s'excluent : la pièce est liée à un seul commit")
+    try:
+        timeout = float(args.timeout)
+    except (TypeError, ValueError) as exc:
+        raise Refusal(f"--timeout mal formé : {args.timeout!r}") from exc
+    if not 0 < timeout < float("inf"):
+        raise Refusal(f"--timeout mal formé : {args.timeout!r}")
+    store = usable_store()
+    spec, _ = read_ticket(args.convoy, args.ticket)
+    if args.launch_state is not None:
+        address, commit = launched_product(args.launch_state)
+    else:
+        address, commit = None, head_of_clean_repo(Path(args.repo or "."))
+
+    output, exit_code = run_command(args.argv, timeout)
+
+    record = new_record("command", spec, args.convoy, args.ticket, piece, commit, address)
+    kept = output if len(output) <= MAX_OUTPUT_BYTES else output[: MAX_OUTPUT_BYTES // 2] + output[-MAX_OUTPUT_BYTES // 2:]
+    record.update(
+        command=args.argv, exit_code=exit_code, output=kept.decode("utf-8", errors="replace"),
+        output_digest=digest_of(output), output_bytes=len(output), output_truncated=kept is not output,
+    )
+    answer = file_piece(store, args.convoy, args.ticket, spec, record, None)
+    answer["exit_code"] = exit_code
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_screenshot(args: argparse.Namespace) -> int:
+    piece = valid_piece(args.piece)
+    if args.launch_state is None:
+        raise Refusal("--launch-state absent : une capture d'écran porte sur une adresse du produit lancé par bin/project-launch")
+    window = WINDOW_RE.match(args.window_size or "")
+    if not window:
+        raise Refusal(f"--window-size mal formé : {args.window_size!r} (attendu : LARGEURxHAUTEUR)")
+    if not isinstance(args.path, str) or not args.path.startswith("/") or args.path.startswith("//") or re.search(r"\s", args.path):
+        raise Refusal(f"--path mal formé : {args.path!r} (attendu : un chemin du produit lancé, qui commence par /)")
+    store = usable_store()
+    spec, _ = read_ticket(args.convoy, args.ticket)
+    address, commit = launched_product(args.launch_state)
+    url = address + args.path
+    browser = find_browser()
+    http_status = http_status_of(url)
+
+    image = take_screenshot(browser, url, window.group(1), window.group(2))
+
+    record = new_record("screenshot", spec, args.convoy, args.ticket, piece, commit, url)
+    record.update(
+        image=f"{piece}.png", image_digest=digest_of(image), http_status=http_status,
+        window_size=f"{window.group(1)}x{window.group(2)}",
+    )
+    print(json.dumps(file_piece(store, args.convoy, args.ticket, spec, record, image),
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- verify ----------------------------------------------------------------------
+
+
+def check_piece(
+    store: Path, spec: str, convoy_id: str, ticket_id: str, piece: str, fingerprint: Any, key: bytes | None,
+) -> dict[str, Any]:
+    """One piece against the tracker's fingerprint; refuses with the reason."""
+    ticket_dir = store / spec / ticket_id
+    path = ticket_dir / f"{piece}.json"
+    if not isinstance(fingerprint, dict) or "unruled" in fingerprint or "digest" not in fingerprint:
+        raise Refusal(f"pièce {piece} : aucune empreinte lisible dans le tracker pour le ticket {ticket_id}")
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise Refusal(f"pièce {piece} : absente du magasin ({path})") from exc
+    if digest_of(data) != fingerprint["digest"]:
+        raise Refusal(
+            f"pièce {piece} : le fichier du magasin ne correspond plus à l'empreinte du tracker "
+            f"({digest_of(data)} au lieu de {fingerprint['digest']})"
+        )
+    not_captured = f"pièce {piece} : elle n'a pas été produite par l'outil de capture"
+    try:
+        record = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise Refusal(f"{not_captured} (fichier illisible)") from exc
+    if not isinstance(record, dict) or record.get("contract") != CONTRACT or not isinstance(record.get("seal"), str):
+        raise Refusal(f"{not_captured} (aucun scellé)")
+    if key is None or not hmac.compare_digest(record["seal"], seal_of(record, key)):
+        raise Refusal(f"{not_captured} (scellé invalide)")
+    filed = (spec, convoy_id, ticket_id, piece)
+    sealed = tuple(record.get(field) for field in ("spec", "convoy", "ticket", "piece"))
+    if sealed != filed:
+        raise Refusal(
+            f"pièce {piece} : capturée pour la Spec {sealed[0]}, le convoi {sealed[1]}, le ticket {sealed[2]}, "
+            f"la pièce {sealed[3]}, et rangée sous {spec}, {convoy_id}, {ticket_id}"
+        )
+    if record.get("commit") != fingerprint.get("commit"):
+        raise Refusal(
+            f"pièce {piece} : capturée au commit {record.get('commit')}, "
+            f"enregistrée dans le tracker au commit {fingerprint.get('commit')}"
+        )
+    out = {"piece": piece, "kind": record.get("kind"), "digest": fingerprint["digest"], "commit": record["commit"],
+           "at": record.get("at"), "path": str(path)}
+    if record.get("kind") == "screenshot":
+        image = ticket_dir / f"{piece}.png"
+        try:
+            image_digest = digest_of(image.read_bytes())
+        except OSError as exc:
+            raise Refusal(f"pièce {piece} : image absente du magasin ({image})") from exc
+        if record.get("image") != image.name or image_digest != record.get("image_digest"):
+            raise Refusal(f"pièce {piece} : l'image du magasin ne correspond plus à celle de la capture ({image})")
+        out["image"] = str(image)
+    return out
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    if args.piece is not None:
+        valid_piece(args.piece)
+    spec, ticket = read_ticket(args.convoy, args.ticket)
+    store = store_dir().absolute()
+    key = seal_key(store, create=False)
+    fingerprints = ticket.get("evidence") or {}
+    ticket_dir = store / spec / args.ticket
+    stored = sorted(path.name for path in ticket_dir.iterdir()) if ticket_dir.is_dir() else []
+
+    if args.piece is not None:
+        pieces = [args.piece]
+    else:
+        pieces = sorted(set(fingerprints) | {name[: -len(".json")] for name in stored if name.endswith(".json")})
+    verified, problems = [], []
+    for piece in pieces:
+        try:
+            verified.append(check_piece(store, spec, args.convoy, args.ticket, piece, fingerprints.get(piece), key))
+        except Refusal as exc:
+            problems.append(str(exc))
+    if args.piece is None:
+        # Whatever else sits in the ticket's folder was not filed by a capture.
+        known = {f"{piece}.json" for piece in pieces} | {Path(entry["image"]).name for entry in verified if "image" in entry}
+        problems += [f"fichier sans empreinte dans le magasin : {ticket_dir / name}" for name in stored if name not in known]
+    if problems:
+        raise Refusal(" ; ".join(problems))
+    print(json.dumps({"ok": True, "spec": spec, "convoy": args.convoy, "ticket": args.ticket, "pieces": verified},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- purge -----------------------------------------------------------------------
+
+
+def cmd_purge(args: argparse.Namespace) -> int:
+    if not isinstance(args.spec, str) or not BEAD_ID_RE.match(args.spec):
+        raise Refusal(f"--spec absent ou mal formé : {args.spec!r} (attendu : l'identifiant de la Spec à purger)")
+    store = store_dir().absolute()
+    spec_dir = store / args.spec
+    if spec_dir.is_symlink():
+        raise Refusal(f"{spec_dir} est un lien : le dossier d'une Spec du magasin n'en est jamais un")
+    removed = 0
+    if spec_dir.is_dir():
+        removed = sum(1 for path in spec_dir.glob("*/*.json") if path.is_file())
+        try:
+            shutil.rmtree(spec_dir)
+        except OSError as exc:
+            raise Refusal(f"purge de la Spec {args.spec} impossible : {exc}") from exc
+    print(json.dumps({"ok": True, "spec": args.spec, "removed": removed, "store": str(store)},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- command line ----------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="mode", required=True)
+
+    def mode(name: str, handler: Any) -> argparse.ArgumentParser:
+        p = sub.add_parser(name)
+        p.add_argument("convoy")
+        p.add_argument("ticket")
+        p.add_argument("--piece")
+        p.set_defaults(handler=handler)
+        return p
+
+    # Required values are checked by the handlers, not by argparse: a refusal
+    # is one JSON answer. An option that does not exist stays an argparse error.
+    p = mode("command", cmd_command)
+    p.add_argument("--repo")
+    p.add_argument("--launch-state")
+    p.add_argument("--timeout", default=DEFAULT_TIMEOUT)
+    p = mode("screenshot", cmd_screenshot)
+    p.add_argument("--launch-state")
+    p.add_argument("--path", default="/")
+    p.add_argument("--window-size", default="1280x800")
+    mode("verify", cmd_verify)
+    p = sub.add_parser("purge")
+    p.add_argument("--spec")
+    p.set_defaults(handler=cmd_purge)
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    # The command to run is everything after the first « -- »: it is never
+    # parsed as an option of this tool.
+    own, separator, command = argv, False, []
+    if "--" in argv:
+        cut = argv.index("--")
+        own, separator, command = argv[:cut], True, argv[cut + 1:]
+    args = build_parser().parse_args(own)
+    args.argv = command
+    try:
+        if separator and args.handler is not cmd_command:
+            raise Refusal(f"« -- » n'a de sens qu'en mode command : {args.mode} n'exécute aucune commande")
+        return args.handler(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "error": f"refus : {exc}"}, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
