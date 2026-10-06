@@ -201,6 +201,11 @@ def _parse_ack_and_defer(bead):
     return acquittee, defer_until
 
 
+# The same trace hides a deferred request of any bead-borne kind
+# (:mod:`cockpit.requests.assemble`).
+parse_ack_and_defer = _parse_ack_and_defer
+
+
 def build_requests(beads, verifie_a=None, defects=None):
     """``beads``: the raw list the beads source last read (spec .3's read
     model value for "beads"). ``defects`` is optional — pass a

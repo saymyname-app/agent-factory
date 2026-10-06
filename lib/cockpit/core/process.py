@@ -111,6 +111,7 @@ def build(config, clock=None):
         pollers=pollers,
         supervisor_unreachable_after_seconds=config.supervisor_unreachable_after_seconds,
         factory_stalled_after_seconds=config.factory_stalled_after_seconds,
+        illisible_after_seconds=config.illisible_after_seconds,
     )
     return server, pollers
 

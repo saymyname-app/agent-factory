@@ -10,7 +10,9 @@ import html
 from datetime import datetime
 
 from cockpit.core.readmodel import PARIS
+from cockpit.projects.demandes import TYPE_LIVRE_NON_ACCEPTE
 from cockpit.requests.model import A_FAIRE, TYPE_ESCALATION, TYPE_PROPOSAL, URGENT
+from cockpit.requests.sources.readability import TYPE_SOURCE_ILLISIBLE
 from cockpit.text.fallback import FALLBACK_NO_RECOMMENDATION, incomplete_label
 from cockpit.ui.actions.render import render_actions
 
@@ -82,6 +84,16 @@ def _since(epoch, now):
     return when.strftime("%d/%m ") + hhmm
 
 
+def _since_html(r, now):
+    """When the request started waiting; empty when its kind carries no
+    date at all -- "??:??" is kept for a date its producer owed and left
+    out (spec .14)."""
+    since = _since(r.depuis_quand, now)
+    if since is None and "depuis_quand" not in r.missing_fields:
+        return ""
+    return _time(since)
+
+
 def _time(text):
     return "<time>%s</time>" % html.escape(text or "??:??")
 
@@ -99,9 +111,14 @@ def render_requests_section(requests, verified_at=None, source_unknown=False, la
     "unknown" (spec .16) — the whole section then shows the illisible
     message instead of any list, stale or not."""
     title = html.escape(SECTION_TITLE)
+    notice = ""
     if source_unknown:
         since = _hhmm(last_known_at)
         body = html.escape(UNKNOWN_TEXT % since if since else UNKNOWN_TEXT_NO_TIME)
+        # With requests that do not come from Beads still to show, the
+        # notice heads the list: what follows is not the whole list.
+        notice = '<div style="padding:14px 14px 0"><div class="unknown">%s</div></div>' % body
+    if source_unknown and not requests:
         return (
             '<div class="inbox solo cockpit-requests" data-state="unknown">'
             '<div class="list" id="inbox-list"><h2><span>%s</span></h2>'
@@ -124,7 +141,7 @@ def render_requests_section(requests, verified_at=None, source_unknown=False, la
         '<div class="inbox cockpit-requests" data-state="filled">'
         '<div class="list" id="inbox-list"><h2><span>%s</span><span class="mono muted">%d</span></h2>%s</div>'
         "%s</div>\n%s"
-    ) % (title, len(requests), rows, details, INBOX_SCRIPT)
+    ) % (title, len(requests), notice + rows, details, INBOX_SCRIPT)
 
 
 def _render_list_item(r, now, selected):
@@ -141,7 +158,7 @@ def _render_list_item(r, now, selected):
         html.escape(r.quoi),
         html.escape(r.projet),
         incomplete,
-        _time(_since(r.depuis_quand, now)),
+        _since_html(r, now),
     )
 
 
@@ -155,17 +172,20 @@ def _render_detail(r, now, selected):
             incomplete_label(other_missing[0])
         )
 
-    actionable = r.type == TYPE_ESCALATION and "que_faire" not in r.missing_fields
-    options_html = "".join(_render_option(r, o, actionable) for o in r.que_faire)
+    options_html = "".join(_render_option(r, o) for o in r.que_faire)
     if r.recommande_absent:
         options_html += '<span class="oc cockpit-request-no-recommendation">%s</span>' % html.escape(
             FALLBACK_NO_RECOMMENDATION
         )
 
     acquittee = '<span class="chip ack">Acquittée · rappels coupés</span>' if r.acquittee else ""
-    meta = (
-        '<div class="meta cockpit-request-meta"><b>%s</b><span>depuis %s</span><span>vérifié %s</span>%s</div>'
-    ) % (html.escape(r.projet), _time(_since(r.depuis_quand, now)), _time(_hhmm(r.verifie_a)), acquittee)
+    since_html = _since_html(r, now)
+    meta = '<div class="meta cockpit-request-meta"><b>%s</b>%s<span>vérifié %s</span>%s</div>' % (
+        html.escape(r.projet),
+        "<span>depuis %s</span>" % since_html if since_html else "",
+        _time(_hhmm(r.verifie_a)),
+        acquittee,
+    )
 
     details = (
         '<details class="more cockpit-request-details"><summary>Détails</summary><div class="det">'
@@ -204,11 +224,26 @@ def _render_detail(r, now, selected):
     )
 
 
-def _render_option(r, option, actionable):
-    """One prepared option with its consequence (spec .12, .13). On a
-    NEEDS BENJAMIN whose options came from the producer it is the answer
-    button itself (two-step, spec .34); on anything else — a proposal, or
-    the fixed fallback — it is read-only."""
+def _option_control(r, lettre):
+    """The attributes that make one option the control itself, or ``None``
+    when the option is read-only: the answer to a NEEDS BENJAMIN whose
+    options came from its producer (two-step, spec .34), « Accepter » /
+    « Pas bon → agent » on a delivered chantier (spec .30, .31). Approving
+    a Spec or a graph never gets one (spec .37)."""
+    bead_id = html.escape(r.id)
+    if r.type == TYPE_ESCALATION and "que_faire" not in r.missing_fields and lettre:
+        return 'data-action="repondre" data-bead-id="%s" data-lettre="%s"' % (bead_id, html.escape(lettre))
+    if r.type == TYPE_LIVRE_NON_ACCEPTE and lettre == "a":
+        return 'data-action="accepter_chantier" data-bead-id="%s"' % bead_id
+    if r.type == TYPE_LIVRE_NON_ACCEPTE and lettre == "b":
+        return 'data-action="pas_bon_vers_agent" data-bead-id="%s" data-titre="%s"' % (
+            bead_id, html.escape(r.titre),
+        )
+    return None
+
+
+def _render_option(r, option):
+    """One prepared option with its consequence (spec .12, .13)."""
     lettre = option.get("lettre") or ""
     recommande = ""
     raison = ""
@@ -226,11 +261,15 @@ def _render_option(r, option, actionable):
         html.escape(option.get("consequence") or ""),
         raison,
     )
-    if actionable and lettre:
+    control = _option_control(r, lettre)
+    if control:
+        return '<button type="button" class="btn opt cockpit-option" %s>%s</button>' % (control, inner)
+    if r.type == TYPE_SOURCE_ILLISIBLE:
+        # "Revérifier maintenant" is the page's own recheck (spec .65).
         return (
-            '<button type="button" class="btn opt cockpit-option" data-action="repondre" '
-            'data-bead-id="%s" data-lettre="%s">%s</button>'
-        ) % (html.escape(r.id), html.escape(lettre), inner)
+            '<form method="post" action="/api/health/recheck" style="margin:0">'
+            '<button type="submit" class="btn opt cockpit-option">%s</button></form>'
+        ) % inner
     return '<div class="btn opt cockpit-option">%s</div>' % inner
 
 

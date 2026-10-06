@@ -42,6 +42,10 @@ def render_actions(request):
             'data-bead-id="%s">Acquitter</button>' % bead_id
         )
 
+    if not request.reportable:
+        # Nothing on a bead could hide this request until later: no
+        # Reporter, and no sentence explaining a control that is not there.
+        return '<div class="acts cockpit-actions">%s</div>' % "".join(buttons)
     buttons.append(
         '<button type="button" class="btn ghost cockpit-action" data-action="reporter_ouvrir" '
         'data-bead-id="%s">Reporter</button>' % bead_id
@@ -179,7 +183,7 @@ SCRIPT = """
 
   document.addEventListener('click', function (event) {
     var el = event.target.closest('[data-action]');
-    if (!el) { return; }
+    if (!el) { disarm(); return; }
     var action = el.getAttribute('data-action');
 
     if (TWO_STEP_ACTIONS.indexOf(action) !== -1) {

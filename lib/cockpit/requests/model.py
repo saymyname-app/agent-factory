@@ -39,6 +39,13 @@ class OperatorRequest:
     # set from bead metadata.
     acquittee: bool = False
     reportee: bool = False
+    # False when no trace on a bead could hide the request until later
+    # (a source with no bead, a chantier): Reporter is then not offered
+    # rather than offered and without effect.
+    reportable: bool = True
+    # The bare title of what the request is about, when its "quoi" is a
+    # fixed phrase around it (a chantier's name for « Pas bon → agent »).
+    titre: str = ""
 
     def sort_key(self):
         # None (never timestamped) sorts after every real timestamp within

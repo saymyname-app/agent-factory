@@ -27,7 +27,7 @@ def _livre_non_accepte(chantier, verifie_a):
         type=TYPE_LIVRE_NON_ACCEPTE,
         niveau=QUAND_TU_VEUX,
         quoi="Le chantier %s est livré, non accepté." % chantier.titre,
-        pourquoi="Benjamin doit accepter ce chantier livré, ou le corriger.",
+        pourquoi="Toi seul peux accepter ce chantier livré, ou demander sa correction.",
         que_faire=[
             {
                 "lettre": "a",
@@ -38,7 +38,7 @@ def _livre_non_accepte(chantier, verifie_a):
             },
             {
                 "lettre": "b",
-                "option": "Pas bon -> agent",
+                "option": "Pas bon → agent",
                 "consequence": "Copie un prompt de correction, sans rouvrir le graphe gelé.",
                 "recommande": False,
                 "raison": "",
@@ -47,6 +47,8 @@ def _livre_non_accepte(chantier, verifie_a):
         projet=chantier.projet or DEFAULT_PROJECT,
         verifie_a=verifie_a,
         lien=chantier.id,
+        reportable=False,
+        titre=chantier.titre,
     )
 
 
@@ -69,6 +71,8 @@ def _accepte_non_promu(chantier, verifie_a):
         projet=chantier.projet or DEFAULT_PROJECT,
         verifie_a=verifie_a,
         lien=chantier.id,
+        reportable=False,
+        titre=chantier.titre,
     )
 
 

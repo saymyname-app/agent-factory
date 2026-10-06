@@ -197,7 +197,7 @@ class AccepteStageTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Accepter / "Pas bon -> agent" (spec "Actions opérateur")
+# Accepter / "Pas bon → agent" (spec "Actions opérateur")
 
 
 class FakeClock:
