@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report the status of the Factory's own rituals, in JSON. Read-only.
 
-A ritual (CONTEXT.md: rituel) is proposed to Benjamin and run by him; this
+A ritual (GLOSSARY.md: rituel) is proposed to Benjamin and run by him; this
 tool never runs one, it only measures whether its trigger has fired --
 `due` (its threshold is met), `ok` (not yet), or `paused` (deferred until a
 named event, per `docs/rituals.toml`). The only kind implemented today,

@@ -1,5 +1,5 @@
 """Reads project descriptors (spec af-oohx2x .12, T04/T05 -- the cockpit's
-alias for the extended Project Planning Profile, CONTEXT.md: Projet). Pure
+alias for the extended Project Planning Profile, GLOSSARY.md: Projet). Pure
 JSON reads over ``config/project-descriptors/*.json``, one project per file,
 so a new project appears to the cockpit the moment its descriptor is
 committed -- no cockpit code names a project (AC1).

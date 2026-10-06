@@ -186,7 +186,7 @@ class CockpitSeamTest(unittest.TestCase):
         )
 
         # Long enough without a complete read: the source is failing, not
-        # merely stale — unknown (CONTEXT.md Freshness: "or its source is
+        # merely stale — unknown (GLOSSARY.md Freshness: "or its source is
         # failing").
         time.sleep(0.6)
         snapshot = self.snapshot()

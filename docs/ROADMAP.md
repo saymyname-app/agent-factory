@@ -1,7 +1,7 @@
 # Factory Roadmap
 
 Intent in prose; the current step and its status live in `docs/roadmap.toml`
-(CONTEXT.md: Roadmap Step), validated by `bin/project-roadmap validate` and
+(GLOSSARY.md: Roadmap Step), validated by `bin/project-roadmap validate` and
 resolved by `bin/project-roadmap check-target` for a given
 `planning_run_target`. Rewrite this file's prose in place when intent
 changes; change status by editing `roadmap.toml` with a normal commit.

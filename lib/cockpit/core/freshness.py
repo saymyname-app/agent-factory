@@ -1,4 +1,4 @@
-"""Freshness and Validity window (CONTEXT.md), the cockpit's trust model.
+"""Freshness and Validity window (GLOSSARY.md), the cockpit's trust model.
 
 A value the cockpit shows is FRESH (read within its source's Validity
 window), STALE (an older last-known value exists, never presented as
@@ -41,7 +41,7 @@ def classify(read_at, now, validity_seconds, complete=True, failing_after_second
     A source unread for longer than its Validity window plus
     ``failing_after_seconds`` (default: another full Validity window) is
     considered failing and reported UNKNOWN, same as never having been read
-    (CONTEXT.md Freshness: "unknown ... or its source is failing") — the
+    (GLOSSARY.md Freshness: "unknown ... or its source is failing") — the
     fresh -> stale -> unknown progression a single source goes through as
     it stops responding.
     """

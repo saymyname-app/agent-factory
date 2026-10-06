@@ -1,7 +1,8 @@
 # Issue tracker: Beads (Other)
 
-Written by `setup-matt-pocock-skills` (upstream `mattpocock/skills` c55ee46)
-for Planning Run A6b. Its `## Agent skills` pointer is in `AGENTS.md`, not
+Written by `setup-matt-pocock-skills` (upstream `mattpocock/skills`, pinned
+at tag `v1.3.1`/commit `24fe0ef`, see `docs/UPSTREAM_SKILLS.md`) for
+Planning Run A6b. Its `## Agent skills` pointer is in `AGENTS.md`, not
 `CLAUDE.md` as the skill says, so Codex reads it too (Benjamin, 2026-09-29).
 
 Issues for this repo live as **Beads** in the Factory's HQ Beads database
@@ -11,7 +12,7 @@ operator session, see Claim) when the operator session writes. Never create a se
 
 ## Conventions
 
-- **Work Plane is mandatory** (see `CONTEXT.md`, "Work Plane"). Every bead a
+- **Work Plane is mandatory** (see `GLOSSARY.md`, "Work Plane"). Every bead a
   skill creates here carries `gc.plane=planning` metadata. Delivery selectors
   (Mayor, `idle-ready-work-wake`, `deliver-close`) positively require
   `gc.plane=delivery`, so planning beads are never dispatched to workers.
