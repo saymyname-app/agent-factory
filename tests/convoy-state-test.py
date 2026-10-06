@@ -765,5 +765,153 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertIn("unruled", shown["convoy"]["incident"])
         self.assertEqual("gc.flow.incident", shown["convoy"]["unruled"][0]["field"])
 
+
+    # --- T10: acceptance criteria, steps of the TDD, stop of a ticket ---------
+
+    BASE = "1" * 40
+    RED = "2" * 40
+    AMENDED = "3" * 40
+
+    def marked_slice(self):
+        self.seed(kinds={T1: "vertical_slice"})
+        self.edit_bead(T1, description=(
+            "## What to build\n\n- [ ] pas un critère\n\n## Acceptance criteria\n\n"
+            "- [ ] Le nombre s'affiche\n- [x] La sonde nomme le jeu\n\n## Target rigs\n\n- [ ] ni celui-ci\n"))
+        self.ok("mark", CONVOY, "--demonstration-line", f"{T1}=La page affiche 3", "--user-stories", f"{T1}=1")
+
+    def edit_bead(self, bead_id, **fields):
+        state = self.tracker_state()
+        state["beads"][bead_id].update(fields)
+        self.tracker.write_text(json.dumps(state))
+
+    def set_tdd(self, step, commit, *options, ticket=T1):
+        return self.ok("set-tdd", CONVOY, ticket, "--step", step, "--commit", commit, *options)
+
+    def frozen_slice(self):
+        self.marked_slice()
+        self.set_tdd("red", self.RED, "--base", self.BASE)
+        self.set_tdd("freeze", self.RED)
+
+    def test_show_renders_the_acceptance_criteria_of_a_ticket_in_order(self):
+        self.marked_slice()
+
+        shown = self.show()
+
+        self.assertEqual(["Le nombre s'affiche", "La sonde nomme le jeu"], self.ticket(shown, T1)["criteria"])
+        self.assertEqual([], self.ticket(shown, T2)["criteria"])
+
+    def test_tdd_steps_are_read_back_by_show_each_with_its_commit(self):
+        self.frozen_slice()
+        self.set_tdd("green", self.AMENDED)
+
+        tdd = self.ticket(self.show(), T1)["tdd"]
+
+        self.assertEqual((self.RED, self.BASE), (tdd["red"]["commit"], tdd["red"]["base"]))
+        self.assertEqual(self.RED, tdd["freeze"]["commit"])
+        self.assertEqual(self.AMENDED, tdd["green"]["commit"])
+        self.assertEqual({}, self.ticket(self.show(), T2)["tdd"])
+        self.assertIsNone(self.ticket(self.show(), T1)["stop"])
+
+    def test_red_is_refused_without_its_start_commit_or_with_a_malformed_commit(self):
+        self.marked_slice()
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "red", "--commit", self.RED, mention="commit de départ")
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "red", "--commit", "abc", "--base", self.BASE, mention="commit")
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "bleu", "--commit", self.RED, mention="étape du TDD")
+
+    def test_freeze_is_refused_without_a_red_at_the_same_commit(self):
+        self.marked_slice()
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.RED, mention="rouge")
+        self.set_tdd("red", self.RED, "--base", self.BASE)
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.AMENDED, mention="rouge")
+
+    def test_green_and_amendment_are_refused_without_a_freeze(self):
+        self.marked_slice()
+        self.set_tdd("red", self.RED, "--base", self.BASE)
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "green", "--commit", self.RED, mention="gel")
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "amendment", "--commit", self.RED, "--reason", "r", mention="gel")
+
+    def test_a_frozen_ticket_takes_a_new_red_or_freeze_only_at_the_commit_of_its_amendment(self):
+        self.frozen_slice()
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "red", "--commit", self.AMENDED, "--base", self.BASE, mention="gelés")
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "freeze", "--commit", self.RED, mention="gelés")
+
+        self.set_tdd("amendment", self.AMENDED, "--reason", "le champ change de nom")
+        self.set_tdd("red", self.AMENDED, "--base", self.BASE)
+        self.set_tdd("freeze", self.AMENDED)
+
+        tdd = self.ticket(self.show(), T1)["tdd"]
+        self.assertEqual("le champ change de nom", tdd["amendment"]["reason"])
+        self.assertEqual((self.AMENDED, self.AMENDED), (tdd["red"]["commit"], tdd["freeze"]["commit"]))
+
+    def test_a_second_amendment_or_an_amendment_without_reason_is_refused(self):
+        self.frozen_slice()
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "amendment", "--commit", self.AMENDED, mention="raison")
+        self.set_tdd("amendment", self.AMENDED, "--reason", "le champ change de nom")
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "amendment", "--commit", self.AMENDED, "--reason", "encore",
+            mention="un seul amendement par ticket")
+
+    def test_the_prefactoring_step_and_the_red_step_each_have_their_kind_of_ticket(self):
+        self.marked_slice()
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "prefactoring", "--commit", self.RED, "--base", self.BASE,
+            mention="vertical_slice")
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T2, "--step", "red", "--commit", self.RED, "--base", self.BASE, mention="prefactoring")
+
+        self.set_tdd("prefactoring", self.RED, "--base", self.BASE, ticket=T2)
+
+        self.assertEqual(self.BASE, self.ticket(self.show(), T2)["tdd"]["prefactoring"]["base"])
+
+    def test_stop_ticket_is_read_back_by_show_and_refuses_every_later_step(self):
+        self.marked_slice()
+
+        self.ok("stop-ticket", CONVOY, T1, "--reason", "criterion_already_green", "--detail", "critère 2 déjà vert")
+
+        stop = self.ticket(self.show(), T1)["stop"]
+        self.assertEqual(("criterion_already_green", "critère 2 déjà vert"), (stop["reason"], stop["detail"]))
+        self.assert_refused_and_nothing_written(
+            "set-tdd", CONVOY, T1, "--step", "red", "--commit", self.RED, "--base", self.BASE, mention="ticket arrêté")
+        self.assert_refused_and_nothing_written(
+            "stop-ticket", CONVOY, T1, "--reason", "amendment_exhausted", "--detail", "encore", mention="déjà arrêté")
+
+    def test_stop_ticket_refuses_a_reason_outside_the_closed_list_or_no_detail(self):
+        self.marked_slice()
+        self.assert_refused_and_nothing_written(
+            "stop-ticket", CONVOY, T1, "--reason", "fatigue", "--detail", "x", mention="raison d'arrêt")
+        self.assert_refused_and_nothing_written(
+            "stop-ticket", CONVOY, T1, "--reason", "amendment_exhausted", mention="précision")
+
+    def test_tdd_step_or_stop_written_outside_the_command_is_a_state_without_rule(self):
+        self.marked_slice()
+        self.edit_tracker(T1, **{"gc.flow.tdd.red": json.dumps({"commit": self.RED, "at": "x"}),
+                                 "gc.flow.tdd.bleu": "x", "gc.flow.stop": "à la main"})
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+
+        self.assertIn("unruled", ticket["tdd"]["red"])
+        self.assertIn("unruled", ticket["tdd"]["bleu"])
+        self.assertIn("unruled", ticket["stop"])
+        self.assertEqual({"gc.flow.stop", "gc.flow.tdd.bleu", "gc.flow.tdd.red"},
+                         {entry["field"] for entry in ticket["unruled"]})
+
+    def test_tdd_step_and_stop_on_an_unmarked_convoy_write_nothing(self):
+        before = self.tracker.read_text()
+        for command in (("set-tdd", CONVOY, T1, "--step", "red", "--commit", self.RED, "--base", self.BASE),
+                        ("stop-ticket", CONVOY, T1, "--reason", "amendment_exhausted", "--detail", "x")):
+            proc = self.run_tool(*command)
+            self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+            self.assertEqual(before, self.tracker.read_text())
+
 if __name__ == "__main__":
     unittest.main()

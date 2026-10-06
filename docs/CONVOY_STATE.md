@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -29,6 +29,8 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-counter  af-convoy --counter end_rounds --value 0
 ./bin/convoy-state add-evidence af-convoy af-t1 --piece red_proof --digest sha256:<hex> --commit <sha>
 ./bin/convoy-state record-gate  af-convoy af-t1 --gate ticket_end --commit <sha>
+./bin/convoy-state set-tdd      af-convoy af-t1 --step red --commit <sha> --base <start sha>   # bin/tdd-step, once a step is proven
+./bin/convoy-state stop-ticket  af-convoy af-t1 --reason criterion_already_green --detail "critère 2 déjà vert : …"   # bin/tdd-step
 ./bin/convoy-state ticket af-t1                         # does this bead carry the mark? (bin/dispatch-door, the Mayor)
 ./bin/convoy-state record-incident af-convoy --bead af-incident [--signature sha256:<hex>]   # bin/convoy-advance
 ./bin/convoy-state clear-incident  af-convoy            # bin/convoy-advance, once the state is valid again
@@ -60,6 +62,9 @@ Every answer is one JSON object on stdout.
 | Counter | `gc.flow.counter.<name>` | ticket: `resumes`, `correction_rounds`; convoy: `end_rounds` | integer ≥ 0 |
 | Evidence fingerprint | `gc.flow.evidence.<piece>` | ticket | `sha256:<64 hex>` and the commit of the piece |
 | Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (commit required), `withdrawn` (removed from the graph by a resolved Planning Exception) |
+| TDD step | `gc.flow.tdd.<step>` | ticket | step: `red`, `freeze`, `green`, `amendment`, `prefactoring`; always with the full commit SHA it was proven at; `red` and `prefactoring` with their start commit (`base`), `amendment` with its one-line reason |
+| Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`; with a one-line detail |
+| Acceptance criteria | the bead's description (read only) | ticket | the checkbox lines under `## Acceptance criteria`, in order |
 | Factory incident | `gc.flow.incident` | convoy | the bead that carries the open incident of a stopped convoy and, once it reached the escalation door, the `sha256:` signature of the anomalies it names |
 
 `mark` is idempotent: it marks the tickets first and the convoy last, sets
@@ -96,6 +101,17 @@ piece in the evidence store and computes its fingerprint
 (`docs/EVIDENCE_STORE.md`); a fingerprint written by hand for a piece the
 tool did not produce is refused by `evidence-capture verify`.
 
+`set-tdd` is called by `bin/tdd-step` (T10, `docs/TDD_STEP.md`) once the
+check of a step has passed and its report is a piece of the evidence store.
+The order of the steps is held here, under the lock: `freeze` needs a `red`
+at the same commit; once frozen, a new `red` or `freeze` is accepted only at
+the commit of the ticket's `amendment`; `amendment` needs a freeze and is
+written once per ticket; `green` needs a freeze; `prefactoring` is the only
+step of a `prefactoring` ticket and is refused on another kind. `stop-ticket`
+writes why a script stopped the ticket (Spec §5: a criterion already green,
+a second amendment); a stopped ticket takes no further step, and a second
+stop is refused. Nothing here lifts a stop.
+
 A piece name is made of letters, digits, `_` and `.` only: the tracker
 refuses any metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*` (observed on bd
 1.2.2), so a hyphen is refused here before it is tried.
@@ -108,8 +124,10 @@ a negative or non-integer counter; a ticket counter on the convoy or the
 reverse; a counter write after which `correction_rounds` would exceed
 `resumes` (a correction round counts among the resumes, Spec §8); an
 evidence fingerprint without a `sha256:` digest or without a commit; a
-`ticket_end` gate record without a commit; a ticket that is not tracked by
-the convoy, or that does not carry the mark.
+`ticket_end` gate record without a commit; a TDD step outside its closed
+list, without a full commit SHA, out of order, or on a stopped ticket; a
+stop whose reason is outside its closed list or that has no detail; a ticket
+that is not tracked by the convoy, or that does not carry the mark.
 
 Writes on one convoy are serialised by a lock (`CONVOY_STATE_LOCK_DIR`,
 default `$XDG_RUNTIME_DIR` or `/tmp`), so concurrent counter bumps are all
@@ -126,7 +144,10 @@ stories (`user_stories`, a list of numbers or `null`), whether it
 establishes the launch recipe (`establishes_launch_recipe`), whether it is
 the Prototype Fold (`prototype_fold`), tracker status,
 branch and its tip, Ticket Exit, verdicts, counters, evidence fingerprints
-and gate records; and for the convoy the Spec it delivers (`spec`, `null`
+and gate records, its acceptance criteria (`criteria`, the lines of its
+description, numbered from 1 by `bin/tdd-step`), the proven steps of its
+TDD (`tdd`, `{step: {commit, at, base?, reason?}}`) and its stop (`stop`,
+`null` when it is not stopped); and for the convoy the Spec it delivers (`spec`, `null`
 when it names none), its counters and its open factory incident
 (`incident`, `null` when there is none).
 

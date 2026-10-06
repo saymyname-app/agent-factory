@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -220,6 +221,46 @@ class ProjectPlanningProfileTest(unittest.TestCase):
         self.assertFalse(error["valid"])
         self.assertIn("launch", error["error"])
         self.assertIn("k", error["error"])
+
+
+    # --- optional launch declarations read by bin/tdd-step (T10, af-j8jo02) --
+
+    def describe_launch(self, **launch):
+        """The fixture descriptor with other launch declarations."""
+        descriptor = json.loads(self.LAUNCH_FIXTURE_DESCRIPTOR.read_text())
+        descriptor["launch"].update(launch)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "descriptor.json"
+            path.write_text(json.dumps(descriptor))
+            proc = self.describe(path)
+        return proc.returncode, json.loads(proc.stdout)
+
+    def test_describe_renders_the_declared_red_error_types_and_import_rule(self):
+        rule = {"product_import": r"^import app\b", "entry_point_import": r"^import app$"}
+
+        status, result = self.describe_launch(red_error_types=["AttributeError"], import_rule=rule)
+
+        self.assertEqual(0, status)
+        self.assertEqual(["AttributeError"], result["launch"]["red_error_types"])
+        self.assertEqual(rule, result["launch"]["import_rule"])
+
+    def test_launch_block_without_the_optional_declarations_renders_none_of_them(self):
+        launch = json.loads(self.describe(self.LAUNCH_FIXTURE_DESCRIPTOR, check=True).stdout)["launch"]
+
+        self.assertNotIn("red_error_types", launch)
+        self.assertNotIn("import_rule", launch)
+
+    def test_malformed_optional_launch_declarations_are_rejected(self):
+        for launch, named in (
+            ({"red_error_types": "AttributeError"}, "red_error_types"),
+            ({"import_rule": {"product_import": r"^import app"}}, "import_rule.entry_point_import"),
+            ({"import_rule": {"product_import": "(", "entry_point_import": "x"}}, "import_rule.product_import"),
+        ):
+            with self.subTest(launch=launch):
+                status, error = self.describe_launch(**launch)
+                self.assertNotEqual(0, status)
+                self.assertFalse(error["valid"])
+                self.assertIn(named, error["error"])
 
     def test_promotion_branch_naming_an_undeclared_rig_is_rejected(self):
         proc = self.describe(DESCRIPTORS / "invalid-promotion-undeclared-rig.json")

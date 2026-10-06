@@ -118,6 +118,32 @@ class ProjectLaunchTest(unittest.TestCase):
         finally:
             MUTATED_DATASET.write_text(original)
 
+    def test_start_launches_a_product_that_lives_in_another_repository(self):
+        """`--repo-root` names the repository of the product; the profile
+        tool stays the Factory's (T10, af-j8jo02)."""
+        import os
+        import shutil
+
+        fixture = Path("tests") / "fixtures" / "delivery-fixture-city"
+        product = Path(tempfile.mkdtemp(prefix="project-launch-product-"))
+        self.addCleanup(shutil.rmtree, product, ignore_errors=True)
+        shutil.copytree(ROOT / fixture, product / fixture)
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+        for args in (("init", "-q", "-b", "main"), ("add", "-A"),
+                     ("-c", "user.name=essai", "-c", "user.email=essai@example.invalid", "commit", "-q", "-m", "produit")):
+            subprocess.run(("git", "-C", str(product), *args), env=env, check=True, capture_output=True)
+        state_file = self.new_state_file()
+
+        result = subprocess.run(
+            (str(TOOL), "--repo-root", str(product), "start", str(DESCRIPTOR), "--dataset", "content",
+             "--state-file", str(state_file)),
+            cwd=product, env=env, text=True, capture_output=True)
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        record = json.loads(result.stdout)
+        self.assertEqual(str(product.resolve()), record["repo_root"])
+        self.assertEqual(200, _fetch(record["address"] + "/health")[0])
+
     # AC2 -------------------------------------------------------------------
 
     def test_named_dataset_renders_and_two_launches_render_identically(self):

@@ -73,8 +73,23 @@ T3=$(gc bd create --title "ticket d'un convoi sans marque" --type task --silent 
 for ticket in "$T1" "$T2" "$T3"; do
   gc bd update "$ticket" --set-metadata gc.ticket_kind=prefactoring >/dev/null
 done
+# A slice with acceptance criteria in its description (T10, af-j8jo02).
+T4=$(gc bd create --title "tranche d'essai" --type task --silent 2>/dev/null)
+gc bd update "$T4" --set-metadata gc.ticket_kind=vertical_slice --description "## What to build
+
+- [ ] pas un critère
+
+## Acceptance criteria
+
+- [ ] Le nombre d'éléments s'affiche
+- [ ] La sonde nomme le jeu de données
+
+## Target rigs
+
+agent-factory" >/dev/null
 gc bd dep add "$CONVOY" "$T1" --type tracks >/dev/null
 gc bd dep add "$CONVOY" "$T2" --type tracks >/dev/null
+gc bd dep add "$CONVOY" "$T4" --type tracks >/dev/null
 gc bd dep add "$PLAIN" "$T3" --type tracks >/dev/null
 
 git init -q -b main "$REPO"
@@ -98,7 +113,7 @@ set -e
 [ "$before" = "$(gc bd show "$PLAIN" --json)" ] || fail "an unmarked convoy was written"
 
 # --- the whole state, written then read back ---------------------------------
-state mark "$CONVOY"
+state mark "$CONVOY" --demonstration-line "$T4=La page d'accueil affiche 3" --user-stories "$T4=1"
 state set-branch "$CONVOY" "$T1" --branch ticket/t1
 state record-gate "$CONVOY" "$T1" --gate dispatch
 gc bd update "$T1" --status in_progress >/dev/null
@@ -111,10 +126,10 @@ state add-evidence "$CONVOY" "$T1" --piece red_proof \
   --digest "sha256:$(printf essai | sha256sum | cut -d' ' -f1)" --commit "$TIP"
 
 shown=$("$TOOL" show "$CONVOY" --repo "$REPO") || fail "show of a coherent convoy failed: $shown"
-jq -e --arg t1 "$T1" --arg t2 "$T2" --arg tip "$TIP" '
+jq -e --arg t1 "$T1" --arg t2 "$T2" --arg t4 "$T4" --arg tip "$TIP" '
   .unruled == false
   and .convoy.mark == "new-flow/v1" and .convoy.counters == {end_rounds: 1}
-  and (.tickets | map(.id) | sort) == ([$t1, $t2] | sort)
+  and (.tickets | map(.id) | sort) == ([$t1, $t2, $t4] | sort)
   and (.tickets[] | select(.id == $t1)
        | .mark == "new-flow/v1" and .status == "in_progress" and .tip == $tip
          and .exit.exit == "finished"
@@ -126,12 +141,38 @@ jq -e --arg t1 "$T1" --arg t2 "$T2" --arg tip "$TIP" '
   and (.tickets[] | select(.id == $t2) | .counters == {resumes: 0, correction_rounds: 0} and .unruled == [])
 ' <<<"$shown" >/dev/null || fail "state read back from the real tracker is not what was written: $shown"
 
+# --- acceptance criteria, steps of the TDD and stop of a ticket (T10) ---------
+BASE=$(git -C "$REPO" rev-parse main)
+state set-tdd "$CONVOY" "$T4" --step red --commit "$TIP" --base "$BASE"
+state set-tdd "$CONVOY" "$T4" --step freeze --commit "$TIP"
+state set-tdd "$CONVOY" "$T4" --step amendment --commit "$TIP" --reason "le champ s'appelle « dataset_name » dans la Spec"
+state set-tdd "$CONVOY" "$T4" --step green --commit "$TIP"
+state set-tdd "$CONVOY" "$T2" --step prefactoring --commit "$TIP" --base "$BASE"
+state stop-ticket "$CONVOY" "$T2" --reason amendment_exhausted --detail "un seul amendement par ticket : essai"
+
+shown=$("$TOOL" show "$CONVOY" --repo "$REPO") || fail "show after the TDD steps failed: $shown"
+jq -e --arg t2 "$T2" --arg t4 "$T4" --arg tip "$TIP" --arg base "$BASE" '
+  .unruled == false
+  and (.tickets[] | select(.id == $t4)
+       | .criteria == ["Le nombre d\u0027éléments s\u0027affiche", "La sonde nomme le jeu de données"]
+         and (.tdd | keys) == ["amendment", "freeze", "green", "red"]
+         and .tdd.red.commit == $tip and .tdd.red.base == $base and .tdd.freeze.commit == $tip
+         and .tdd.amendment.reason == "le champ s\u0027appelle « dataset_name » dans la Spec"
+         and .stop == null)
+  and (.tickets[] | select(.id == $t2)
+       | .criteria == [] and .tdd.prefactoring.base == $base
+         and .stop.reason == "amendment_exhausted" and .stop.detail == "un seul amendement par ticket : essai")
+' <<<"$shown" >/dev/null || fail "criteria, TDD steps or stop not read back from the real tracker: $shown"
+
 # --- a refused write leaves the real tracker untouched ------------------------
 before=$(gc bd show "$CONVOY" --json)
 for refused in \
   "set-verdict $CONVOY $T1 --kind code_review --state favorable" \
   "set-verdict $CONVOY $T1 --kind code_review --state approved --commit $TIP" \
-  "set-counter $CONVOY --ticket $T1 --counter resumes --value -1"; do
+  "set-counter $CONVOY --ticket $T1 --counter resumes --value -1" \
+  "set-tdd $CONVOY $T4 --step amendment --commit $TIP --reason encore" \
+  "set-tdd $CONVOY $T4 --step red --commit $BASE --base $BASE" \
+  "set-tdd $CONVOY $T2 --step prefactoring --commit $TIP --base $BASE"; do
   set +e
   # shellcheck disable=SC2086
   "$TOOL" $refused >/dev/null; rc=$?

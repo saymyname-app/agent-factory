@@ -11,8 +11,11 @@ named synthetic dataset, and polls the declared health probe until the
 product answers or the timeout expires. `stop` tears the process and its
 worktree down and frees the port.
 
-    ./bin/project-launch start <descriptor.json> --commit <sha> --dataset <name>
+    ./bin/project-launch [--repo-root <product repo>] start <descriptor.json> --commit <sha> --dataset <name>
     ./bin/project-launch stop --state-file <path>
+
+`--repo-root` is the repository of the product (default: the Factory's own);
+the profile tool is always the one next to this launcher.
 
 A project whose descriptor declares no `launch` block is refused: exit
 non-zero, a message naming the missing declaration, and no process left
@@ -41,8 +44,10 @@ def repo_root_default() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def load_profile_module(repo_root: Path) -> ModuleType:
-    tool_path = repo_root / "bin" / "project-planning-profile"
+def load_profile_module() -> ModuleType:
+    # The profile tool is the Factory's, next to this launcher: `--repo-root`
+    # names the repository of the product, which may be another one.
+    tool_path = Path(__file__).resolve().parent / "project-planning-profile"
     loader = importlib.machinery.SourceFileLoader("project_planning_profile", str(tool_path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
@@ -116,7 +121,7 @@ def remove_worktree(repo_root: str, worktree: str) -> None:
 def cmd_start(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
     descriptor_path = Path(args.descriptor).resolve()
-    ppp = load_profile_module(repo_root)
+    ppp = load_profile_module()
 
     try:
         descriptor = ppp.load_descriptor(descriptor_path)

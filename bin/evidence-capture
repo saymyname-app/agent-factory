@@ -10,7 +10,7 @@ tracker through bin/convoy-state. A piece this tool did not produce is
 refused by `verify`.
 
     evidence-capture command    CONVOY TICKET --piece NAME [--repo DIR | --launch-state FILE]
-                                              [--timeout SECONDS] -- COMMAND [ARG ...]
+                                              [--timeout SECONDS] [--expect-exit CODE] -- COMMAND [ARG ...]
     evidence-capture screenshot CONVOY TICKET --piece NAME --launch-state FILE [--path /PATH]
                                               [--window-size WIDTHxHEIGHT]
     evidence-capture verify     CONVOY TICKET [--piece NAME]
@@ -21,7 +21,10 @@ refused by `verify`.
 `--repo` (default: the current directory), refused when tracked files differ
 from it, or the commit of the product launched by `bin/project-launch start
 --state-file FILE`, whose address is then recorded too. No option carries an
-output. `screenshot` records an image of one address of that launched
+output. With `--expect-exit CODE`, the piece is filed only if COMMAND exits
+with that code: any other exit is a refusal that carries the exit code and
+the output, and files nothing (what a script that proves a step uses, so
+that only its passing report becomes a piece). `screenshot` records an image of one address of that launched
 product. `verify` fails if a piece of the store no longer matches the
 fingerprint of the tracker, or was not produced by this tool. `purge` removes
 the pieces of one Spec and no other.
@@ -86,7 +89,12 @@ BROWSER_CACHE_GLOBS = ("chromium_headless_shell-*/chrome-headless-shell-*/chrome
 
 
 class Refusal(RuntimeError):
-    """Nothing is written, nothing is left in the store."""
+    """Nothing is written, nothing is left in the store. `extra` is added to
+    the answer."""
+
+    def __init__(self, message: str, **extra: Any):
+        super().__init__(message)
+        self.extra = extra
 
 
 class NotNewFlow(RuntimeError):
@@ -424,6 +432,11 @@ def cmd_command(args: argparse.Namespace) -> int:
         raise Refusal(f"--timeout mal formé : {args.timeout!r}") from exc
     if not 0 < timeout < float("inf"):
         raise Refusal(f"--timeout mal formé : {args.timeout!r}")
+    expected = None
+    if args.expect_exit is not None:
+        if not re.fullmatch(r"[0-9]{1,3}", str(args.expect_exit)) or int(args.expect_exit) > 255:
+            raise Refusal(f"--expect-exit mal formé : {args.expect_exit!r} (attendu : un code de sortie, de 0 à 255)")
+        expected = int(args.expect_exit)
     store = usable_store()
     spec, _ = read_ticket(args.convoy, args.ticket)
     if args.launch_state is not None:
@@ -432,6 +445,11 @@ def cmd_command(args: argparse.Namespace) -> int:
         address, commit = None, head_of_clean_repo(Path(args.repo or "."))
 
     output, exit_code = run_command(args.argv, timeout)
+    if expected is not None and exit_code != expected:
+        raise Refusal(
+            f"la commande a rendu le code de sortie {exit_code} et non {expected} (--expect-exit) : aucune pièce enregistrée",
+            exit_code=exit_code, output=output[-MAX_OUTPUT_BYTES:].decode("utf-8", errors="replace"),
+        )
 
     record = new_record("command", spec, args.convoy, args.ticket, piece, commit, address)
     kept = output if len(output) <= MAX_OUTPUT_BYTES else output[: MAX_OUTPUT_BYTES // 2] + output[-MAX_OUTPUT_BYTES // 2:]
@@ -602,6 +620,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--repo")
     p.add_argument("--launch-state")
     p.add_argument("--timeout", default=DEFAULT_TIMEOUT)
+    p.add_argument("--expect-exit")
     p = mode("screenshot", cmd_screenshot)
     p.add_argument("--launch-state")
     p.add_argument("--path", default="/")
@@ -630,7 +649,7 @@ def main(argv: list[str]) -> int:
         print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
         return EXIT_NOT_NEW_FLOW
     except Refusal as exc:
-        print(json.dumps({"ok": False, "error": f"refus : {exc}"}, indent=2, sort_keys=True, ensure_ascii=False))
+        print(json.dumps({**exc.extra, "ok": False, "error": f"refus : {exc}"}, indent=2, sort_keys=True, ensure_ascii=False))
         return EXIT_REFUSED
 
 

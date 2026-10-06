@@ -211,6 +211,35 @@ class EvidenceCaptureTest(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual("fin\n", self.record("p")["output"])
 
+    def test_expected_exit_code_files_the_piece_when_the_command_exits_with_it(self):
+        self.ok("command", CONVOY, T1, "--piece", "p", "--repo", self.repo, "--expect-exit", "3",
+                "--", "sh", "-c", "echo trois; exit 3")
+
+        self.assertEqual((3, "trois\n"), (self.record("p")["exit_code"], self.record("p")["output"]))
+
+    def test_another_exit_code_than_the_expected_one_is_refused_with_code_and_output(self):
+        tracker_before, store_before = self.tracker.read_text(), self.store_files()
+
+        proc = self.run_tool("command", CONVOY, T1, "--piece", "p", "--repo", self.repo, "--expect-exit", "0",
+                             "--", "sh", "-c", "echo pourquoi; exit 7")
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        answer = json.loads(proc.stdout)
+        self.assertFalse(answer["ok"])
+        self.assertIn("code de sortie 7", answer["error"])
+        self.assertEqual((7, "pourquoi\n"), (answer["exit_code"], answer["output"]))
+        self.assertEqual(tracker_before, self.tracker.read_text())
+        self.assertEqual(store_before, self.store_files())
+
+    def test_malformed_expected_exit_code_is_refused_before_running(self):
+        marker = self.tmp / "exécutée"
+
+        error = self.refused("command", CONVOY, T1, "--piece", "p", "--repo", self.repo, "--expect-exit", "zéro",
+                             "--", "touch", marker)
+
+        self.assertIn("--expect-exit", error)
+        self.assertFalse(marker.exists())
+
     def test_command_refused_without_a_command_to_run(self):
         error = self.refused("command", CONVOY, T1, "--piece", "p", "--repo", self.repo)
         self.assertIn("commande", error)
