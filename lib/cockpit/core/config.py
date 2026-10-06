@@ -6,6 +6,11 @@ at fake sources and shrunk Validity windows without writing a temp file.
 import os
 
 from cockpit.core.freshness import VALIDITY_WINDOWS_SECONDS
+from cockpit.core.gc_client import (
+    RECONNECT_SECONDS,
+    STATUS_POLL_SECONDS,
+    STREAM_SILENCE_SECONDS,
+)
 from cockpit.health.engine import (
     FACTORY_STALLED_AFTER_SECONDS,
     SUPERVISOR_UNREACHABLE_AFTER_SECONDS,
@@ -31,6 +36,17 @@ class Config:
         self.host = env.get("COCKPIT_HOST", "127.0.0.1")
         self.port = int(env.get("COCKPIT_PORT", DEFAULT_PORT))
         self.gc_base_url = env.get("COCKPIT_GC_BASE_URL", DEFAULT_GC_BASE_URL)
+        # Unset: the supervisor's own city list names it (gc_client).
+        self.gc_city = env.get("COCKPIT_GC_CITY") or None
+        self.gc_status_poll_seconds = float(
+            env.get("COCKPIT_GC_STATUS_POLL_SECONDS", str(STATUS_POLL_SECONDS))
+        )
+        self.gc_stream_silence_seconds = float(
+            env.get("COCKPIT_GC_STREAM_SILENCE_SECONDS", str(STREAM_SILENCE_SECONDS))
+        )
+        self.gc_reconnect_seconds = float(
+            env.get("COCKPIT_GC_RECONNECT_SECONDS", str(RECONNECT_SECONDS))
+        )
         self.bd_bin = env.get("COCKPIT_BD_BIN", "bd")
         self.beads_poll_seconds = float(env.get("COCKPIT_BEADS_POLL_SECONDS", "20"))
         self.pid_file = env.get("COCKPIT_PID_FILE") or _default_pid_file(env)

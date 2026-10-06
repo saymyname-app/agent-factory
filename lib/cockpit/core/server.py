@@ -185,6 +185,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             now,
             commits_behind=(snapshot.get("git") or {}).get("value"),
             supervisor_unreachable_since=gc_row.get("read_at"),
+            supervisor_partial_errors=gc_value.get("partial_errors"),
             last_progress_at=gc_value.get("last_progress_at"),
             delivery_ready=bool(gc_value.get("delivery_ready")),
             mayor_first_since=collectors.mayor_first_since_list(beads),

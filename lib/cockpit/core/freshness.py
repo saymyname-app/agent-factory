@@ -33,10 +33,10 @@ def validity_window_for(source):
 def classify(read_at, now, validity_seconds, complete=True, failing_after_seconds=None):
     """Classify a reading taken at ``read_at`` (epoch seconds, or None).
 
-    ``complete`` is False for a gc response carrying ``partial: true``: a
-    read that happened but did not cover the whole source, so it never
-    counts as a fresh, trustworthy snapshot (spec .14) — it classifies as
-    STALE even though a read just happened.
+    ``complete`` is False for a read that happened but cannot be trusted as
+    current (gc's status answered while its event stream was silent): it
+    never counts as a fresh snapshot — it classifies as STALE even though
+    a read just happened.
 
     A source unread for longer than its Validity window plus
     ``failing_after_seconds`` (default: another full Validity window) is
