@@ -6,6 +6,7 @@ threat model), but the cockpit is still not allowed to become reachable
 from the tailnet or LAN by an operator mistake in a config file.
 """
 import json
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cockpit.access.guard import session_cookie_header
@@ -18,12 +19,19 @@ from cockpit.health.engine import (
     compute_health,
 )
 from cockpit.projects.source import from_value as projects_from_value
+from cockpit.projects.source import project_page_data
 from cockpit.requests.builder import build_requests
 from cockpit.requests.defects import DefectCounter
-from cockpit.ui.base.page import render_home
+from cockpit.ui.base.page import render_document, render_fresh, render_home
 from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.home.page import render_requests_section
-from cockpit.ui.projects.page import render_projects_section, render_projects_unknown
+from cockpit.ui.projects.page import (
+    render_historique_section,
+    render_projects_section,
+    render_projects_unknown,
+)
+from cockpit.ui.projects.project_page import render_project_page, render_project_unknown
+from cockpit.ui.projects.tokens import CSS as PROJECT_PAGE_CSS
 
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 
@@ -54,6 +62,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             # itself rejects on method before anything else is checked.
             guard_result = self.server.action_guard.check("GET", self.headers)
             self._send_json({"error": guard_result.reason}, status=403)
+            return
+        if self.path.startswith("/projet/"):
+            self._send_project_page(read_model)
             return
         if self.path == "/":
             snapshot = read_model.snapshot()
@@ -96,8 +107,14 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 poll_now = getattr(poller, "poll_now", None)
                 if poll_now is not None:
                     poll_now()
+            # Back to the page the button was on: the home screen, or a
+            # project's page.
+            referer_path = urllib.parse.urlsplit(self.headers.get("Referer") or "").path
+            location = "/"
+            if referer_path.startswith("/projet/"):
+                location = urllib.parse.quote(urllib.parse.unquote(referer_path), safe="/-_.~")
             self.send_response(303)
-            self.send_header("Location", "/")
+            self.send_header("Location", location)
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -192,10 +209,38 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         return render_projects_section(
             projects,
             sans_projet,
-            # No /projet/<id> page is served yet: no link to nowhere.
-            with_page_link=False,
             stale_since=None if row["freshness"] == FRESH else row["read_at"],
         )
+
+    def _send_project_page(self, read_model):
+        """GET /projet/<id> (spec .49): one declared project's chantiers by
+        stage, its travail hors chantier and its historique. An id no
+        descriptor declares is a 404 that says so."""
+        project_id = urllib.parse.unquote(self.path.split("?", 1)[0][len("/projet/"):])
+        fresh_html = render_fresh(read_model.headline(), not read_model.stale_or_unknown())
+        row = read_model.snapshot().get("projets")
+        status = 200
+        if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
+            inner = render_project_unknown(fresh_html) + render_projects_unknown(row["read_at"] if row else None)
+        else:
+            data = project_page_data(row["value"], project_id)
+            if data is None:
+                status = 404
+                inner = render_project_unknown(fresh_html, unknown_project=True)
+            else:
+                project, hors_chantier, historique = data
+                inner = render_project_page(
+                    project,
+                    hors_chantier=hors_chantier,
+                    historique_html=render_historique_section([historique]),
+                    fresh_html=fresh_html,
+                )
+        body = render_document(inner, extra_css=PROJECT_PAGE_CSS).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _projects_payload(self, snapshot):
         """JSON twin of :meth:`_render_projects_zone`, for tests."""
