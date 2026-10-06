@@ -225,6 +225,10 @@ provider = "stub"
 [providers.stub]
 base = "builtin:claude"
 command = "$TRIAL/stub-author"
+# The stub is a shell script: without its process name Gas City finds no
+# `claude` process in the session, reaps it as a zombie every thirty seconds
+# and hands the ticket to another session.
+process_names = ["stub-author", "bash"]
 ready_delay_ms = 0
 TOML
 mkdir -p "$CITY/agents/trial-author" "$CITY/formulas" "$CITY/orders" "$CITY/config/projects" "$CITY/config/project-descriptors" "$CITY/bin"

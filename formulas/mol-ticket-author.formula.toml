@@ -16,6 +16,12 @@ re-opens the step (three attempts); once they are spent the scope
 `ticket-sequence` fails and the remaining steps are skipped
 (`gc.on_fail=abort_scope`). What the session says closes nothing.
 
+One session holds the whole sequence of its ticket: every step carries
+`gc.session_affinity=require` in one continuation group. Without it Gas City
+hands each step to whichever author session asks first (seen in the
+isolated-city trial of 2026-10-06), and `bin/ticket-author start` refuses a
+session that is not the one that took the ticket.
+
 | Step | Its gate asks for |
 |---|---|
 | `workspace` | the session and the branch recorded on the ticket, the work tree on that branch, the branch left from the integration branch |
@@ -52,7 +58,7 @@ metadata = { "gc.kind" = "scope", "gc.scope_ref" = "ticket-sequence" }
 [[steps]]
 id = "workspace"
 title = "Take the ticket: work tree and branch from the integration branch"
-metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope", "gc.continuation_group" = "ticket", "gc.session_affinity" = "require" }
 description = """
 You are the author of one ticket. This step gives you the ticket, its work
 tree and its branch.
@@ -116,7 +122,7 @@ timeout = "5m"
 id = "red"
 title = "Red step: every criterion test first, proven red, then frozen"
 needs = ["workspace"]
-metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope", "gc.continuation_group" = "ticket", "gc.session_affinity" = "require" }
 description = """
 ```bash
 FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
@@ -167,7 +173,7 @@ timeout = "5m"
 id = "code"
 title = "Code: make the frozen tests pass and wire the demonstration line"
 needs = ["red"]
-metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope", "gc.continuation_group" = "ticket", "gc.session_affinity" = "require" }
 description = """
 ```bash
 FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
@@ -223,7 +229,7 @@ timeout = "5m"
 id = "demonstration"
 title = "Launch the product and capture the demonstration line"
 needs = ["code"]
-metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope", "gc.continuation_group" = "ticket", "gc.session_affinity" = "require" }
 description = """
 ```bash
 FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
@@ -273,7 +279,7 @@ timeout = "5m"
 id = "exit"
 title = "Ticket Exit: hand the ticket over by a structured exit"
 needs = ["demonstration"]
-metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope" }
+metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope", "gc.continuation_group" = "ticket", "gc.session_affinity" = "require" }
 description = """
 ```bash
 FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
@@ -314,7 +320,7 @@ timeout = "5m"
 id = "drain"
 title = "Release the work tree and end the session"
 needs = ["exit"]
-metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "teardown" }
+metadata = { "gc.scope_ref" = "ticket-sequence", "gc.scope_role" = "teardown", "gc.continuation_group" = "ticket", "gc.session_affinity" = "require" }
 description = """
 The sequence is over. Release your work tree (the branch stays; a refusal
 here is not yours to fix), close this step and end the session: one session
