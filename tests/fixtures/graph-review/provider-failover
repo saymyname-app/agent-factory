@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+"""Fake `provider-failover status --json` for tests/graph-review-test.py: the
+reviewer role's agent runs on the provider named by
+GRAPH_REVIEW_FAKE_PROVIDER (default `reviewer-profile`); an empty value
+reports a target with no provider."""
+import json
+import os
+
+provider = os.environ.get("GRAPH_REVIEW_FAKE_PROVIDER", "reviewer-profile")
+print(json.dumps({"targets": {"delivery-reviewer": {"effective": provider or None}}}))

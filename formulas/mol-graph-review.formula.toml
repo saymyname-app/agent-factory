@@ -1,0 +1,121 @@
+description = """
+Graph review — one reviewer session reads one Ticket Graph Draft and hands
+its answers to `bin/graph-review record` (T08, af-n575g4; Spec af-wf4w5r §2,
+« Relecteur de graphe »).
+
+Only `bin/graph-review review` dispatches this formula, through
+`bin/dispatch-door --role reviewer`: the session is new, runs on the
+read-only reviewer role, and knows nothing of the session that wrote the
+graph. The step asks closed questions; the verdict of each ticket and of
+the graph is computed by `bin/graph-review`, never written by the reviewer.
+The questions, the stored state and the publication gate are in
+docs/GRAPH_REVIEW.md.
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|--------------|
+| convoy_id | runtime | Input convoy tracking the single graph-review bead |
+"""
+formula = "mol-graph-review"
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "review"
+title = "Review the Ticket Graph Draft and record the answers"
+description = """
+You are the graph reviewer of a Ticket Graph Draft, before its owner
+approves it. You did not write this graph. Judge only what is written in
+the draft and in its Spec: do not look for the author's session, notes or
+mail, and do not modify the draft, the Spec or any file of a repository.
+
+**1. Read what you are given:**
+
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+REVIEW_BEAD=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+[ -n "$REVIEW_BEAD" ] || { echo "mol-graph-review requires an input convoy with exactly one tracked member" >&2; exit 1; }
+DRAFT=$(gc bd show "$REVIEW_BEAD" --json | jq -r '.[0].description' | sed -n 's/^draft: //p')
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+"$FACTORY_ROOT/bin/graph-review" brief "$DRAFT" > graph-review-brief.json
+jq -r '.draft_text' graph-review-brief.json
+SPEC=$(jq -r '.spec_id' graph-review-brief.json)
+gc bd show "$SPEC" --json | jq -r '.[0].description'
+```
+
+Read the draft and the Spec in full (`gc bd show` without `--json`
+truncates). `graph-review-brief.json` lists, per ticket (`.tickets`) and for
+the graph (`.graph_checks`), exactly the questions you must answer, and the
+digest your answers are bound to.
+
+**2. Answer every question, one ticket at a time:**
+
+Per ticket:
+
+- `demonstrable_alone` — once this ticket and the tickets it is blocked by
+  are merged, and nothing later, can its demonstration line be observed on
+  the launched product through the real entry point (served route, command,
+  public API)? A ticket whose observation needs a later ticket, or that
+  delivers a module nothing calls, is unfavorable. A `prefactoring` has no
+  demonstration line: judge whether its criteria can be observed once it
+  alone is merged.
+- `criteria_observable_falsifiable` — is every criterion an observation
+  through a public interface, naming its entry point and its observable,
+  with a concrete observation that would make it false? A criterion a
+  product that serves nothing could satisfy is unfavorable.
+- `size_tenable` — can one author session deliver it: one slice, not
+  several features or screens under one title?
+- `same_surface_ordered` — is every other ticket that works on the same
+  surface (same route, screen, command or files) ordered against this one
+  by `blocked_by`, directly or through other tickets?
+- `declared_scope_includes_wiring` (asked only of a ticket that declares
+  `scope.paths`) — do the declared paths include the files where the slice
+  is wired into the product (routes, registrations, entry points), not only
+  the new module?
+
+On the graph:
+
+- `no_orphan_story` — is every numbered user story of the Spec covered by
+  at least one ticket?
+- `assembly_point_not_confiscated` — when several slices pass through the
+  same assembly points, is the ticket that establishes them ordered first?
+  A last « integration » ticket that keeps the wiring for itself and leaves
+  the others undemonstrable is unfavorable.
+- `prototype_fold_present_and_first` — when the Spec names a Validated
+  Prototype, is there a slice that folds it into the real code (Prototype
+  Fold), and does every other interface ticket depend on it?
+  `not_applicable`, with the reason, when the graph has no interface ticket.
+
+Each answer is `favorable` or `unfavorable`. An unfavorable answer carries a
+`reason` that quotes what the ticket or the Spec says. You give no overall
+verdict and no advice on whether to approve: code computes the verdicts.
+
+**3. Write and record your answers:**
+
+Write `graph-review-verdict.json` in the current directory, in the shape
+`.verdict_shape` of the brief shows (`digest`, `tickets.<id>.checks`,
+`graph.checks`), then:
+
+```bash
+"$FACTORY_ROOT/bin/graph-review" record "$DRAFT" --verdict-file graph-review-verdict.json
+```
+
+If it refuses, it lists what is missing or outside its closed lists: fix the
+file and run it again. Do not write the review state any other way.
+
+**4. Close:**
+
+```bash
+gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Graph review of $DRAFT recorded."
+if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$REVIEW_BEAD" ]; then
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Graph review of $DRAFT recorded."
+fi
+```
+
+If you could not record a verdict, close both with `gc.outcome=fail` and the
+reason in the notes instead: a review without a result is not a passed one.
+
+**Exit criteria:** `bin/graph-review record` accepted your answers, and the
+review bead and this step are closed."""
