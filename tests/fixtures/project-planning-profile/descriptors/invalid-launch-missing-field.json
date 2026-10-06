@@ -1,0 +1,20 @@
+{
+  "contract": "agent-factory-project-descriptor/v1",
+  "project_id": "fixture-project-a",
+  "display_name": "Fixture A",
+  "rigs": ["fixture-rig-a"],
+  "knowledge_repo": "zz-fixture/knowledge-a",
+  "roadmap_path": "docs/roadmap.toml",
+  "rituals_status_command": "bin/rituals-status",
+  "promotion_branch": {},
+  "launch": {
+    "recipe": ["{python}", "app.py", "--port", "{port}"],
+    "entry_points": [{"kind": "http", "method": "GET", "path": "/"}],
+    "health_probe": {"path": "/health"},
+    "test_perimeter": ["tests/"],
+    "frozen_harness_paths": ["tests/conftest.py"],
+    "test_command": "python3 {test} -q",
+    "seam_mode": "black_box",
+    "regression_command": "python3 tests/regression.py"
+  }
+}

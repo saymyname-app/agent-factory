@@ -1,27 +1,42 @@
 #!/usr/bin/env bash
-# upstream-skills-check — daily, read-only upstream release check (W13,
-# A6b, spec-a6b-wayfinder-wiring-2026-09-30 user story 48, af-hxc8ra).
+# upstream-skills-check — daily upstream release check, plus a CI-facing
+# byte-for-byte comparison of the vendored copy (W13/A6b af-hxc8ra; D01
+# T02, Spec af-wf4w5r user story 74, AR-008).
 #
-# Compares the tags mattpocock/skills has published against the Method
-# Baseline pinned in docs/UPSTREAM_SKILLS.md. It never updates a pin, a
-# skill file, or any config -- switching the baseline stays a deliberate,
-# by-hand change (docs/UPSTREAM_SKILLS.md's update procedure). When a tag
-# newer than the last one this order flagged appears, it files exactly one
-# `proposal`-labelled bead (never built without Benjamin, same discipline
-# as bin/overlap-conflict-log's lease proposal) so it surfaces at the next
-# session start via `./bin/escalation-door list`'s pending-proposal count.
-# Seeing the same tag again on a later run never files a second proposal.
+# Default mode (no subcommand): compares the tags mattpocock/skills has
+# published against the Method Baseline pinned in docs/UPSTREAM_SKILLS.md.
+# It never updates a pin, a skill file, or any config -- switching the
+# baseline stays a deliberate, by-hand change (docs/UPSTREAM_SKILLS.md's
+# update procedure). When a tag newer than the last one this order flagged
+# appears, it files exactly one `proposal`-labelled bead (never built
+# without Benjamin, same discipline as bin/overlap-conflict-log's lease
+# proposal) so it surfaces at the next session start via
+# `./bin/escalation-door list`'s pending-proposal count. Seeing the same
+# tag again on a later run never files a second proposal.
+#
+# `compare` mode: diffs the vendored skills/ directory, file for file,
+# against the pinned tag's skills/ subtree fetched fresh from
+# mattpocock/skills (AR-008). Exits 0 and names the tag when the copy is
+# byte-identical. Exits non-zero and names the offending file on any
+# modified, added, or removed file. Also exits non-zero when
+# docs/ADAPTATION_REGISTER.md carries no entry naming the pinned tag: the
+# comparison is itself one of the "contrôles ajoutés" that entry records.
 #
 # Usage: upstream-skills-check [--dry-run]
+#        upstream-skills-check compare
 #
 # Test/override points (never set these in production):
-#   GC_BIN                              -- bd/gc binary (default: gc)
-#   UPSTREAM_SKILLS_CHECK_REPO_URL      -- upstream repo to query
-#   UPSTREAM_SKILLS_CHECK_BASELINE_FILE -- where the pinned baseline lives
-#   UPSTREAM_SKILLS_CHECK_STATE_FILE    -- where the last-flagged tag is recorded
-#   UPSTREAM_SKILLS_CHECK_TAGS_FILE     -- a file of `git ls-remote --tags`
-#                                          output to read instead of the network
-#   UPSTREAM_SKILLS_CHECK_NOW           -- epoch seconds to stamp the state file with
+#   GC_BIN                                  -- bd/gc binary (default: gc)
+#   UPSTREAM_SKILLS_CHECK_REPO_URL          -- upstream repo to query
+#   UPSTREAM_SKILLS_CHECK_BASELINE_FILE     -- where the pinned baseline lives
+#   UPSTREAM_SKILLS_CHECK_STATE_FILE        -- where the last-flagged tag is recorded
+#   UPSTREAM_SKILLS_CHECK_TAGS_FILE         -- a file of `git ls-remote --tags`
+#                                              output to read instead of the network
+#   UPSTREAM_SKILLS_CHECK_NOW               -- epoch seconds to stamp the state file with
+#   UPSTREAM_SKILLS_CHECK_LOCAL_SKILLS_DIR  -- vendored skills/ directory to check (compare mode)
+#   UPSTREAM_SKILLS_CHECK_REF_DIR           -- a local checkout of the upstream repo at the
+#                                              pinned tag, to read instead of cloning (compare mode)
+#   UPSTREAM_SKILLS_CHECK_ADAPTATION_REGISTER_FILE -- where the Adaptation Register lives (compare mode)
 set -Eeuo pipefail
 
 PROGRAM_NAME="upstream-skills-check"
@@ -35,6 +50,93 @@ BASELINE_FILE="${UPSTREAM_SKILLS_CHECK_BASELINE_FILE:-$ROOT/docs/UPSTREAM_SKILLS
 STATE_FILE="${UPSTREAM_SKILLS_CHECK_STATE_FILE:-$ROOT/.gc/runtime/upstream-skills-check-state.json}"
 TAGS_FILE="${UPSTREAM_SKILLS_CHECK_TAGS_FILE:-}"
 NOW="${UPSTREAM_SKILLS_CHECK_NOW:-$(date +%s)}"
+LOCAL_SKILLS_DIR="${UPSTREAM_SKILLS_CHECK_LOCAL_SKILLS_DIR:-$ROOT/skills}"
+REF_DIR="${UPSTREAM_SKILLS_CHECK_REF_DIR:-}"
+ADAPTATION_REGISTER_FILE="${UPSTREAM_SKILLS_CHECK_ADAPTATION_REGISTER_FILE:-$ROOT/docs/ADAPTATION_REGISTER.md}"
+
+log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*"; }
+die() { printf '%s: ERROR: %s\n' "$PROGRAM_NAME" "$*" >&2; exit 1; }
+
+[ -f "$BASELINE_FILE" ] || die "no pinned baseline file at $BASELINE_FILE"
+
+baseline_commit=$(sed -n 's/^Pinned baseline commit: `\{0,1\}\([0-9a-f]\{7,40\}\)`\{0,1\}.*/\1/p' "$BASELINE_FILE" | head -n1)
+[ -n "$baseline_commit" ] || die "no 'Pinned baseline commit: <sha>' line found in $BASELINE_FILE"
+
+if [ "${1:-}" = "compare" ]; then
+  shift
+  baseline_tag=$(sed -n 's/^Pinned baseline tag: `\{0,1\}\([^`]*\)`\{0,1\}.*/\1/p' "$BASELINE_FILE" | head -n1)
+  [ -n "$baseline_tag" ] && [ "$baseline_tag" != "none" ] \
+    || die "no 'Pinned baseline tag: <tag>' line found in $BASELINE_FILE"
+
+  [ -d "$LOCAL_SKILLS_DIR" ] || die "no vendored skills directory at $LOCAL_SKILLS_DIR"
+
+  [ -f "$ADAPTATION_REGISTER_FILE" ] || die "no Adaptation Register at $ADAPTATION_REGISTER_FILE"
+  grep -qE "AR-[0-9]{3}.*${baseline_tag//./\\.}" "$ADAPTATION_REGISTER_FILE" \
+    || die "$ADAPTATION_REGISTER_FILE carries no AR-NNN entry naming the pinned tag $baseline_tag -- record its reason there first"
+
+  cleanup_ref_dir=""
+  if [ -n "$REF_DIR" ]; then
+    [ -d "$REF_DIR/skills" ] || die "reference directory $REF_DIR has no skills/ subtree"
+  else
+    REF_DIR=$(mktemp -d) || die "could not create a temp dir for the reference checkout"
+    cleanup_ref_dir="$REF_DIR"
+    trap '[ -n "$cleanup_ref_dir" ] && rm -rf -- "$cleanup_ref_dir"' EXIT
+    if ! git clone --quiet --depth 1 --branch "$baseline_tag" "$REPO_URL" "$REF_DIR" >/dev/null 2>&1; then
+      die "could not fetch tag $baseline_tag from $REPO_URL"
+    fi
+  fi
+
+  mismatches=$(mktemp) || die "could not create a temp file"
+  trap '[ -n "$cleanup_ref_dir" ] && rm -rf -- "$cleanup_ref_dir"; rm -f -- "$mismatches"' EXIT
+
+  while IFS= read -r diff_line; do
+    case "$diff_line" in
+      "Files "*" and "*" differ")
+        rel="${diff_line#Files $LOCAL_SKILLS_DIR/}"
+        rel="${rel%% and *}"
+        printf 'modified: skills/%s\n' "$rel" >>"$mismatches"
+        ;;
+      "Only in $LOCAL_SKILLS_DIR"*)
+        rest="${diff_line#Only in $LOCAL_SKILLS_DIR}"
+        rest="${rest#: }"
+        dir_part="${rest%%: *}"
+        file_part="${rest#*: }"
+        if [ -n "$dir_part" ]; then
+          printf 'added: skills%s/%s\n' "${dir_part#:}" "$file_part" >>"$mismatches"
+        else
+          printf 'added: skills/%s\n' "$file_part" >>"$mismatches"
+        fi
+        ;;
+      "Only in $REF_DIR/skills"*)
+        rest="${diff_line#Only in $REF_DIR/skills}"
+        rest="${rest#: }"
+        dir_part="${rest%%: *}"
+        file_part="${rest#*: }"
+        if [ -n "$dir_part" ]; then
+          printf 'removed: skills%s/%s\n' "${dir_part#:}" "$file_part" >>"$mismatches"
+        else
+          printf 'removed: skills/%s\n' "$file_part" >>"$mismatches"
+        fi
+        ;;
+      "")
+        ;;
+      *)
+        printf 'diff: %s\n' "$diff_line" >>"$mismatches"
+        ;;
+    esac
+  done < <(diff -rq "$LOCAL_SKILLS_DIR" "$REF_DIR/skills" 2>&1 || true)
+
+  if [ -s "$mismatches" ]; then
+    log "vendored skills/ differs from mattpocock/skills $baseline_tag:"
+    while IFS= read -r line; do
+      log "  $line"
+    done <"$mismatches"
+    exit 1
+  fi
+
+  log "vendored skills/ is byte-identical to mattpocock/skills $baseline_tag"
+  exit 0
+fi
 
 DRY_RUN=0
 for arg in "$@"; do
@@ -50,14 +152,6 @@ for arg in "$@"; do
       ;;
   esac
 done
-
-log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*"; }
-die() { printf '%s: ERROR: %s\n' "$PROGRAM_NAME" "$*" >&2; exit 1; }
-
-[ -f "$BASELINE_FILE" ] || die "no pinned baseline file at $BASELINE_FILE"
-
-baseline_commit=$(sed -n 's/^Pinned baseline commit: `\{0,1\}\([0-9a-f]\{7,40\}\)`\{0,1\}.*/\1/p' "$BASELINE_FILE" | head -n1)
-[ -n "$baseline_commit" ] || die "no 'Pinned baseline commit: <sha>' line found in $BASELINE_FILE"
 
 if [ -n "$TAGS_FILE" ]; then
   [ -f "$TAGS_FILE" ] || die "tags file not found: $TAGS_FILE"

@@ -1,5 +1,5 @@
 """Chantier/Project shapes (spec af-oohx2x §"Suivre les projets", T19/T20;
-CONTEXT.md: Chantier, Projet, Roadmap Step).
+GLOSSARY.md: Chantier, Projet, Roadmap Step).
 
 T19 ("de Cadrage à Livré") named the first five stages. T20 ("Chantiers
 acceptés et promus") adds Accepté and Promu, the overlaid état (à toi de

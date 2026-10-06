@@ -9,7 +9,7 @@ this is the cockpit's own, independent check on display).
 What it refuses:
   * an identifier (af-xxxxx, #300 — spec .73) — a human reading the
     Operator Language screen must never need to decode one;
-  * an internal term outside the Cockpit Lexicon (CONTEXT.md) — the fixed
+  * an internal term outside the Cockpit Lexicon (GLOSSARY.md) — the fixed
     list below is drawn from the "_Avoid_" lines of the terms a cockpit
     screen is built from (bead, convoy/convoi, order, molecule, wisp, rig,
     Mayor/Maire — spec .73, .74);
@@ -32,10 +32,10 @@ _IDENTIFIER_PATTERNS = (
     re.compile(r"#\d+\b"),
 )
 
-# CONTEXT.md's Cockpit Lexicon is the only place domain words may be added
+# GLOSSARY.md's Cockpit Lexicon is the only place domain words may be added
 # ("growing it is a pull request on this file"); this is not a second
 # glossary, only the small set of internal English/organisational terms a
-# screen must never show (spec .73, .74), taken from CONTEXT.md's own
+# screen must never show (spec .73, .74), taken from GLOSSARY.md's own
 # "_Avoid_" lines for the canonical terms the cockpit is built from.
 BANNED_INTERNAL_TERMS = frozenset(
     {

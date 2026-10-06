@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""Launch and stop a project's product at an exact commit (spec af-wf4w5r
+.12, T01, af-m8m1kc).
+
+This is the launcher that an author, the Evaluator and the Acceptance
+Session all use: it reads a project's launch recipe from its Project
+Planning Profile descriptor (`bin/project-planning-profile describe`), runs
+it from a clean `git worktree` checkout of the exact commit requested (never
+the caller's current working tree), on a freshly chosen free port, against a
+named synthetic dataset, and polls the declared health probe until the
+product answers or the timeout expires. `stop` tears the process and its
+worktree down and frees the port.
+
+    ./bin/project-launch start <descriptor.json> --commit <sha> --dataset <name>
+    ./bin/project-launch stop --state-file <path>
+
+A project whose descriptor declares no `launch` block is refused: exit
+non-zero, a message naming the missing declaration, and no process left
+running.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import os
+import signal
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from types import ModuleType
+
+
+def repo_root_default() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def load_profile_module(repo_root: Path) -> ModuleType:
+    tool_path = repo_root / "bin" / "project-planning-profile"
+    loader = importlib.machinery.SourceFileLoader("project_planning_profile", str(tool_path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def pick_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def terminate(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def resolve_commit(repo_root: Path, commit: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", commit],
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"cannot resolve commit {commit!r}: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def add_worktree(repo_root: Path, commit: str) -> str:
+    import tempfile
+
+    worktree = tempfile.mkdtemp(prefix="project-launch-")
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), "worktree", "add", "--detach", worktree, commit],
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        import shutil
+
+        shutil.rmtree(worktree, ignore_errors=True)
+        raise RuntimeError(f"cannot check out {commit}: {result.stderr.strip()}")
+    return worktree
+
+
+def remove_worktree(repo_root: str, worktree: str) -> None:
+    import shutil
+
+    shutil.rmtree(worktree, ignore_errors=True)
+    subprocess.run(
+        ["git", "-C", repo_root, "worktree", "prune"],
+        capture_output=True,
+        text=True,
+    )
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root).resolve()
+    descriptor_path = Path(args.descriptor).resolve()
+    ppp = load_profile_module(repo_root)
+
+    try:
+        descriptor = ppp.load_descriptor(descriptor_path)
+    except ppp.ProfileError as exc:
+        print(json.dumps({"started": False, "error": str(exc)}, sort_keys=True))
+        return 1
+
+    launch = descriptor.get("launch")
+    if not launch:
+        print(
+            json.dumps(
+                {
+                    "started": False,
+                    "error": (
+                        f"project {descriptor['project_id']!r} declares no "
+                        "launch recipe in its profile"
+                    ),
+                },
+                sort_keys=True,
+            )
+        )
+        return 1
+
+    dataset_rel = None
+    if args.dataset is not None:
+        if args.dataset not in launch["datasets"]:
+            print(
+                json.dumps(
+                    {
+                        "started": False,
+                        "error": (
+                            f"unknown dataset {args.dataset!r}; declared "
+                            f"datasets: {sorted(launch['datasets'])}"
+                        ),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 1
+        dataset_rel = launch["datasets"][args.dataset]
+    elif any("{dataset}" in token for token in launch["recipe"]):
+        print(
+            json.dumps(
+                {"started": False, "error": "launch.recipe requires --dataset"},
+                sort_keys=True,
+            )
+        )
+        return 1
+
+    try:
+        resolved_commit = resolve_commit(repo_root, args.commit)
+        worktree = add_worktree(repo_root, resolved_commit)
+    except RuntimeError as exc:
+        print(json.dumps({"started": False, "error": str(exc)}, sort_keys=True))
+        return 1
+
+    port = pick_free_port()
+    dataset_abs = str(Path(worktree) / dataset_rel) if dataset_rel else ""
+    argv = [
+        token.format(python=sys.executable, port=str(port), dataset=dataset_abs)
+        for token in launch["recipe"]
+    ]
+
+    log_file = open(Path(worktree) / "launch.log", "w")
+    proc = subprocess.Popen(argv, cwd=worktree, stdout=log_file, stderr=subprocess.STDOUT)
+
+    address = f"http://127.0.0.1:{port}"
+    probe_url = address + launch["health_probe"]["path"]
+    expect_status = launch["health_probe"].get("expect_status", 200)
+
+    deadline = time.monotonic() + args.timeout
+    ready = False
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            break
+        try:
+            with urllib.request.urlopen(probe_url, timeout=1) as response:
+                if response.status == expect_status:
+                    ready = True
+                    break
+        except (urllib.error.URLError, ConnectionError, OSError):
+            pass
+        time.sleep(0.1)
+
+    if not ready:
+        terminate(proc.pid)
+        remove_worktree(str(repo_root), worktree)
+        print(
+            json.dumps(
+                {
+                    "started": False,
+                    "error": f"product did not become healthy within {args.timeout}s",
+                },
+                sort_keys=True,
+            )
+        )
+        return 1
+
+    record = {
+        "started": True,
+        "address": address,
+        "port": port,
+        "pid": proc.pid,
+        "worktree": worktree,
+        "repo_root": str(repo_root),
+        "commit": resolved_commit,
+        "dataset": args.dataset,
+    }
+    if args.state_file:
+        Path(args.state_file).write_text(json.dumps(record, sort_keys=True))
+    print(json.dumps(record, sort_keys=True))
+    return 0
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    if args.state_file:
+        try:
+            record = json.loads(Path(args.state_file).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            print(json.dumps({"stopped": False, "error": str(exc)}, sort_keys=True))
+            return 1
+    else:
+        record = {"pid": args.pid, "worktree": args.worktree, "repo_root": args.repo_root}
+
+    pid = record.get("pid")
+    worktree = record.get("worktree")
+    repo_root = record.get("repo_root") or str(repo_root_default())
+
+    if pid:
+        terminate(int(pid))
+    if worktree:
+        remove_worktree(repo_root, worktree)
+    if args.state_file:
+        try:
+            Path(args.state_file).unlink()
+        except FileNotFoundError:
+            pass
+
+    print(json.dumps({"stopped": True}, sort_keys=True))
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="project-launch", description=__doc__)
+    parser.add_argument("--repo-root", default=str(repo_root_default()))
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    start = subparsers.add_parser("start", help="launch a project's product at an exact commit")
+    start.add_argument("descriptor", help="path to the project's descriptor JSON file")
+    start.add_argument("--commit", default="HEAD", help="exact commit to check out and launch")
+    start.add_argument("--dataset", default=None, help="named synthetic dataset to launch on")
+    start.add_argument("--timeout", type=float, default=15.0, help="seconds to wait for the health probe")
+    start.add_argument("--state-file", default=None, help="where to write the launch record for `stop`")
+    start.set_defaults(func=cmd_start)
+
+    stop = subparsers.add_parser("stop", help="stop a launched product and release its port")
+    stop.add_argument("--state-file", default=None, help="launch record written by `start --state-file`")
+    stop.add_argument("--pid", type=int, default=None, help="process id, if not using --state-file")
+    stop.add_argument("--worktree", default=None, help="worktree path, if not using --state-file")
+    stop.set_defaults(func=cmd_stop)
+
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

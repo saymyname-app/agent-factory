@@ -188,6 +188,39 @@ class ProjectPlanningProfileTest(unittest.TestCase):
         self.assertFalse(error["valid"])
         self.assertIn("knowledge_repo", error["error"])
 
+    # --- launch declarations (spec af-wf4w5r .12, T01, af-m8m1kc) ----------
+
+    LAUNCH_FIXTURE_DESCRIPTOR = (
+        ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "descriptor.json"
+    )
+
+    def test_describe_renders_every_required_launch_declaration(self):
+        result = json.loads(self.describe(self.LAUNCH_FIXTURE_DESCRIPTOR, check=True).stdout)
+        launch = result["launch"]
+        self.assertTrue(launch["recipe"])
+        self.assertTrue(launch["entry_points"])
+        self.assertEqual("/health", launch["health_probe"]["path"])
+        self.assertTrue(launch["test_perimeter"])
+        self.assertTrue(launch["frozen_harness_paths"])
+        self.assertTrue(launch["test_command"])
+        self.assertIn(launch["seam_mode"], ("black_box", "import_rule"))
+        self.assertTrue(launch["regression_command"])
+        self.assertGreaterEqual(launch["k"], 1)
+
+    def test_descriptor_with_no_launch_block_describes_with_launch_null(self):
+        result = json.loads(
+            self.describe(REAL_DESCRIPTORS_DIR / "agent-factory.json", check=True).stdout
+        )
+        self.assertIsNone(result["launch"])
+
+    def test_launch_block_missing_a_required_declaration_is_rejected(self):
+        proc = self.describe(DESCRIPTORS / "invalid-launch-missing-field.json")
+        self.assertNotEqual(0, proc.returncode)
+        error = json.loads(proc.stdout)
+        self.assertFalse(error["valid"])
+        self.assertIn("launch", error["error"])
+        self.assertIn("k", error["error"])
+
     def test_promotion_branch_naming_an_undeclared_rig_is_rejected(self):
         proc = self.describe(DESCRIPTORS / "invalid-promotion-undeclared-rig.json")
         self.assertNotEqual(0, proc.returncode)

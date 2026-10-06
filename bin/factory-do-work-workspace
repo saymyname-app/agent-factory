@@ -54,6 +54,16 @@
 #       stdout line either way), then removes the worktree from whichever
 #       repo it was created against.
 #
+#       PR body (D01 watch, 2026-10-06): the body is "Closes <bead-id>."
+#       followed by the content of <worktree git dir>/PR_BODY.md when the
+#       author wrote one (`git rev-parse --absolute-git-dir` inside the
+#       worktree; the file is never committed and goes away with the
+#       worktree). On a resumed PR the body is replaced only when that file
+#       exists. A ticket whose description demands the sections « Non
+#       fait », « Écarts », « Constats hors ticket » is refused with exit 3
+#       -- before anything is pushed or opened, worktree left as is -- until
+#       that file (or the already-open PR's body) carries all three.
+#
 #   factory-do-work-workspace restart <bead-id> <worktree-path> <branch> <reason>
 #       O04: "starting over requires a written reason." The one supported
 #       way to discard an existing do-work branch/worktree instead of
@@ -164,6 +174,34 @@ with_repo_lock() {
   )
 }
 
+# D01 watch 2026-10-06 (convoy af-wtjo2x): T01's PR #384 merged with the body
+# "Closes af-m8m1kc." and nothing else, although its ticket demands that what
+# is missing, what differs and what was seen elsewhere be written in the PR
+# description under three sections. The author never opens the PR -- `finish`
+# does, with a fixed body -- so a rule written only in the ticket could not
+# be followed. The rule is now held here.
+PR_SECTION_NAMES=("Non fait" "Écarts" "Constats hors ticket")
+PR_SECTION_PATTERNS=("Non fait" "Écarts|Ecarts" "Constats hors ticket")
+
+# bead_requires_pr_sections <bead-id> — true when the ticket's description
+# names the « Constats hors ticket » section. Fails open (false) when the
+# tracker cannot be read: a tracker outage must not block a push.
+bead_requires_pr_sections() {
+  command -v bd >/dev/null 2>&1 || return 1
+  (cd "$ROOT" 2>/dev/null && timeout 30 bd show "$1" --json 2>/dev/null) \
+    | grep -q 'Constats hors ticket'
+}
+
+# missing_pr_sections <file> — prints the demanded sections <file> lacks.
+missing_pr_sections() {
+  local file="$1" i out=""
+  for i in "${!PR_SECTION_NAMES[@]}"; do
+    grep -qE -- "${PR_SECTION_PATTERNS[$i]}" "$file" 2>/dev/null \
+      || out="${out:+$out, }« ${PR_SECTION_NAMES[$i]} »"
+  done
+  printf '%s' "$out"
+}
+
 case "$CMD" in
   enter)
     BEAD_ID="${1:-}"
@@ -260,6 +298,42 @@ case "$CMD" in
       exit 0
     }
 
+    WT_GIT_DIR=$(git -C "$WT" rev-parse --absolute-git-dir 2>/dev/null || true)
+    PR_BODY_SRC="${WT_GIT_DIR:+$WT_GIT_DIR/PR_BODY.md}"
+    PR_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/factory-do-work-workspace.pr-body.XXXXXX")
+    printf 'Closes %s.\n' "$BEAD_ID" > "$PR_BODY_FILE"
+    HAVE_PR_BODY=0
+    if [ -n "$PR_BODY_SRC" ] && [ -s "$PR_BODY_SRC" ]; then
+      { printf '\n'; cat "$PR_BODY_SRC"; } >> "$PR_BODY_FILE"
+      HAVE_PR_BODY=1
+    fi
+    if bead_requires_pr_sections "$BEAD_ID"; then
+      CHECK_FILE="$PR_BODY_FILE"
+      EXISTING_BODY=""
+      if [ "$HAVE_PR_BODY" = "0" ] && command -v gh >/dev/null 2>&1; then
+        # a re-dispatch resuming an open PR that already carries the sections
+        EXISTING_BODY=$(mktemp "${TMPDIR:-/tmp}/factory-do-work-workspace.pr-existing.XXXXXX")
+        if ! (cd "$WT" && gh pr view "$BRANCH" --json body -q .body) >"$EXISTING_BODY" 2>/dev/null; then
+          : > "$EXISTING_BODY"   # no open PR for this branch yet: judge the file alone
+        fi
+        [ -s "$EXISTING_BODY" ] && CHECK_FILE="$EXISTING_BODY"
+      fi
+      MISSING=$(missing_pr_sections "$CHECK_FILE")
+      [ -n "$EXISTING_BODY" ] && rm -f "$EXISTING_BODY"
+      if [ -n "$MISSING" ]; then
+        rm -f "$PR_BODY_FILE"
+        cat >&2 <<MSG
+factory-do-work-workspace: finish of $BEAD_ID refused -- this is NOT a push failure, do not escalate it.
+The ticket demands that the PR description carry the sections « Non fait », « Écarts », « Constats hors ticket » (write "aucun" under one that is empty).
+Missing: $MISSING
+Write them, as Markdown headings each followed by its content, in this file (it is not committed):
+  $PR_BODY_SRC
+then run the same finish command again. Nothing was pushed, opened or removed by this call.
+MSG
+        exit 3
+      fi
+    fi
+
     (
       cd "$WT" || exit 1
       if [ -n "$(git status --porcelain)" ]; then
@@ -288,7 +362,7 @@ case "$CMD" in
       # failed `gh pr create`/`gh pr view` (auth expired, rate-limited,
       # network) is logged instead of silently leaving PR_URL empty.
       CREATE_ERR=$(cd "$WT" && gh pr create --base "$BASE_BRANCH" --head "$BRANCH" \
-        --title "do-work: $BEAD_ID" --body "Closes $BEAD_ID." 2>&1 1>"$GH_ERR_FILE.out") || true
+        --title "do-work: $BEAD_ID" --body-file "$PR_BODY_FILE" 2>&1 1>"$GH_ERR_FILE.out") || true
       PR_URL=$(cat "$GH_ERR_FILE.out" 2>/dev/null || true)
       if [ -z "$PR_URL" ]; then
         # O04: a re-dispatch resuming an existing branch that already has an
@@ -298,10 +372,15 @@ case "$CMD" in
         PR_URL=$(cat "$GH_ERR_FILE.out" 2>/dev/null || true)
         if [ -z "$PR_URL" ]; then
           echo "factory-do-work-workspace: could not create or resume a PR for $BRANCH: create: ${CREATE_ERR:-<no output>}; view: ${VIEW_ERR:-<no output>}" >&2
+        elif [ "$HAVE_PR_BODY" = "1" ]; then
+          # resumed PR and the author wrote a new body: replace the old one
+          (cd "$WT" && gh pr edit "$BRANCH" --body-file "$PR_BODY_FILE") >/dev/null 2>&1 \
+            || echo "factory-do-work-workspace: could not update the body of the open PR for $BRANCH from $PR_BODY_SRC" >&2
         fi
       fi
       rm -f "$GH_ERR_FILE.out" "$GH_ERR_FILE"
     fi
+    rm -f "$PR_BODY_FILE"
 
     # af-09hxz: the worktree's origin repo is no longer always $ROOT (a
     # product rig's own checkout can be the origin too) -- resolve it from
