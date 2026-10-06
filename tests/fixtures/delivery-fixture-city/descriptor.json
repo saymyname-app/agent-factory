@@ -25,8 +25,11 @@
       "content": "tests/fixtures/delivery-fixture-city/datasets/content.json"
     },
     "test_perimeter": ["tests/fixtures/delivery-fixture-city/tests/"],
-    "frozen_harness_paths": ["tests/fixtures/delivery-fixture-city/tests/conftest.py"],
-    "test_command": "python3 {test} -q",
+    "frozen_harness_paths": [
+      "tests/fixtures/delivery-fixture-city/tests/conftest.py",
+      "tests/fixtures/delivery-fixture-city/tests/harness.py"
+    ],
+    "test_command": "python3 tests/fixtures/delivery-fixture-city/tests/harness.py {test} {report}",
     "seam_mode": "black_box",
     "regression_command": "python3 tests/fixtures/delivery-fixture-city/tests/regression.py",
     "k": 3
