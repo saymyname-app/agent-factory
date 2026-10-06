@@ -533,6 +533,15 @@ sort non-zéro en nommant chaque couple rig/chemin une seule fois. Un fichier
 réel déjà présent, ou un artefact géré modifié hors de l'outil, n'est jamais
 écrasé silencieusement.
 
+La racine de la cité n'est pas un rig, mais un ticket de la cité elle-même vit
+dans son magasin et Gas City y lance les contrôles `exec` depuis cette racine.
+Quand la cité possède ses propres contrôles (`assets/scripts/` à côté de ses
+`formulas/`), `bin/factory-build-gates` réconcilie donc la racine comme un
+magasin de plus, nommé `(city root)` dans les rapports, pour ces contrôles-là
+seulement : les contrôles du pack restent ceux des rigs. Le premier est
+`.gc/scripts/checks/ticket-author-check.sh`, le contrôle de la formule de
+l'auteur (`docs/TICKET_AUTHOR.md`).
+
 Preuve attendue avant de considérer une réparation comme livrée : un build
 trivial complet se termine avec `gc.outcome=pass` dans chaque rig, et un
 artefact volontairement invalide est refusé avec les erreurs structurées du

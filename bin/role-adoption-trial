@@ -390,7 +390,9 @@ class ClaudeTranscript:
             attachment = entry.get("attachment") if entry.get("type") == "attachment" else None
             if not isinstance(attachment, dict) or attachment.get("type") != "skill_listing":
                 continue
-            names += re.findall(r"^- ([^\s:][^:\n]*?):", str(attachment.get("content", "")), flags=re.M)
+            # A plugin skill is listed under its namespace (`engineering:code-review`):
+            # the name runs to the colon that opens the description, not to the first one.
+            names += re.findall(r"^- ([^\s:][^\n]*?)(?:: |:?$)", str(attachment.get("content", "")), flags=re.M)
         return names
 
     def tool_calls(self) -> list[dict[str, Any]]:

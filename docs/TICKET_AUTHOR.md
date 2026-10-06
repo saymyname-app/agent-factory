@@ -28,7 +28,7 @@ the resume of a parked, blocked or interrupted ticket (T20).
 | `bin/ticket-author` | `start`, `demonstrate`, `gate`, `check`, `release`, `locate` |
 | `bin/convoy-state set-session` | records which session took the ticket (`docs/CONVOY_STATE.md`) |
 | `bin/ticket-exit` | the exit; « terminé » now needs the demonstration proof (`docs/TICKET_EXIT.md`) |
-| `agents/delivery-author/overlay/.claude/` | the settings and the guard that stop an author from handing the writing to a sub-agent |
+| `agents/delivery-author/overlay/.claude/` | the settings and the guard that stop an author from handing the writing to a sub-agent, and the local settings that keep the operator's account plugins out of the session |
 
 ## How Gas City holds a step (tried on 1.4.1, isolated city, 2026-10-06)
 
@@ -120,6 +120,14 @@ them and leaves. The destination of that exit is fixed by `bin/ticket-exit`
   `bin/dispatch-door` refuses the author role without a passing trial for
   the current distribution. Limit: a read-only sub-agent still has a shell.
   The guard covers the tool the session is given, not every way to write.
+- **Only the skills of its role.** The plugins and skills the operator
+  enabled on their Claude account are synced into every Claude Code session
+  of the machine; one of them brings a `code-review` skill.
+  `agents/delivery-author/overlay/.claude/settings.local.json` turns that
+  sync off for the author's work directory (`syncClaudeAiPlugins`,
+  `syncClaudeAiSkills`: Claude Code reads them from a local settings file,
+  not from `settings.json`). The same adoption trial asks the session to
+  launch a review and fails if one is listed or launched.
 
 ## Tests
 
