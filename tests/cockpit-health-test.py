@@ -136,6 +136,14 @@ class GitFixture:
         run_git(self.clone_dir, "reset", "--hard", "origin/main")
 
 
+def _ready_bead(bead_id, plane):
+    """One item as gc's ``/beads/ready`` lists it."""
+    return {
+        "id": bead_id, "title": "t", "status": "open", "issue_type": "task",
+        "priority": 2, "labels": [], "metadata": {"gc.plane": plane},
+    }
+
+
 class CockpitHealthZoneTest(unittest.TestCase):
     def setUp(self):
         self.fake_gc = FakeGc().start()
@@ -179,6 +187,8 @@ class CockpitHealthZoneTest(unittest.TestCase):
             "COCKPIT_HOST": "127.0.0.1",
             "COCKPIT_PORT": str(self.port),
             "COCKPIT_GC_BASE_URL": self.fake_gc.base_url,
+            "COCKPIT_GC_STATUS_POLL_SECONDS": "0.1",
+            "COCKPIT_GC_RECONNECT_SECONDS": "0.1",
             "COCKPIT_BD_BIN": str(HEALTH_FIXTURES / "fake-bd-health"),
             "COCKPIT_TEST_BD_STATE_FILE": str(self.bd_state_file),
             "COCKPIT_PID_FILE": self.pid_file,
@@ -200,6 +210,9 @@ class CockpitHealthZoneTest(unittest.TestCase):
         wait_for_port("127.0.0.1", self.port)
         return proc
 
+    def gc_value(self):
+        return http_get(self.port, "/api/status")[1]["gc"]["value"] or {}
+
     def health(self):
         return http_get(self.port, "/api/health")[1]
 
@@ -216,7 +229,6 @@ class CockpitHealthZoneTest(unittest.TestCase):
     def test_no_problem_detected_when_everything_is_quiet(self):
         self.set_beads([])
         self.start_cockpit()
-        self.fake_gc.push_event({"running": True, "partial": False})
         health = wait_until(lambda: self.health() if self.health()["lines"] == [] else None)
         self.assertTrue(health["ok"])
         self.assertIn("Aucun problème détecté", self.home())
@@ -225,7 +237,6 @@ class CockpitHealthZoneTest(unittest.TestCase):
     def test_version_behind_appears_and_disappears_without_push(self):
         self.set_beads([])
         self.start_cockpit()
-        self.fake_gc.push_event({"running": True, "partial": False})
 
         self.git.advance_origin_by(3)
         line = self.wait_for_line_containing("retard de 3 commit")
@@ -244,7 +255,6 @@ class CockpitHealthZoneTest(unittest.TestCase):
     def test_supervisor_unreachable_appears_and_disappears(self):
         self.set_beads([])
         self.start_cockpit()
-        self.fake_gc.push_event({"running": True, "partial": False})
         # Wait for the first successful read to land before judging
         # anything "unreachable" -- with no read yet there is nothing to
         # measure the outage from.
@@ -260,7 +270,6 @@ class CockpitHealthZoneTest(unittest.TestCase):
         self.assertEqual("bad", line["kind"])
 
         self.fake_gc.go_up()
-        self.fake_gc.push_event({"running": True, "partial": False})
         wait_until(lambda: True if not any(
             "Superviseur injoignable" in l["text"] for l in self.health()["lines"]
         ) else None)
@@ -268,23 +277,34 @@ class CockpitHealthZoneTest(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_factory_stalled_appears_when_delivery_work_is_ready(self):
         self.set_beads([])
+        # Ready planning work alone is never "delivery work is ready".
+        self.fake_gc.set_ready([_ready_bead("af-fakepl", "planning")])
         self.start_cockpit()
-        stalled_since = time.time() - 10  # already old enough given the 3s test threshold
-        self.fake_gc.push_event({
-            "running": True, "partial": False,
-            "last_progress_at": stalled_since, "delivery_ready": True,
-        })
+        wait_until(lambda: self.gc_value().get("delivery_ready") is False)
+        time.sleep(3.5)  # past the 3s test threshold since the cockpit started watching
+        self.assertFalse(any("Usine à l'arrêt" in l["text"] for l in self.health()["lines"]))
+
+        self.fake_gc.set_ready([_ready_bead("af-fakepl", "planning"), _ready_bead("af-fakedl", "delivery")])
         line = self.wait_for_line_containing("Usine à l'arrêt ?")
         self.assertEqual("warn", line["kind"])
 
         # Progress resumes -- the line must clear.
-        self.fake_gc.push_event({
-            "running": True, "partial": False,
-            "last_progress_at": time.time(), "delivery_ready": True,
-        })
+        self.fake_gc.emit("bead.closed", subject="af-fakedl")
         wait_until(lambda: True if not any(
             "Usine à l'arrêt" in l["text"] for l in self.health()["lines"]
         ) else None)
+
+    # ------------------------------------------------------------------
+    def test_partial_supervisor_read_is_said_not_hidden(self):
+        self.set_beads([])
+        self.fake_gc.set_status(partial_errors=["store health: list timed out"])
+        self.start_cockpit()
+        line = self.wait_for_line_containing("une partie de son état est illisible")
+        self.assertEqual("warn", line["kind"])
+        self.assertNotIn("store health", self.home())  # gc's raw text never reaches the page
+
+        self.fake_gc.set_status(partial_errors=[])
+        wait_until(lambda: self.health() if self.health()["lines"] == [] else None)
 
     # ------------------------------------------------------------------
     def test_mayor_first_escalation_not_promoted(self):
@@ -294,7 +314,6 @@ class CockpitHealthZoneTest(unittest.TestCase):
             "metadata": {"gc.mayor_first_since": started},
         }])
         self.start_cockpit()
-        self.fake_gc.push_event({"running": True, "partial": False})
         line = self.wait_for_line_containing("corriger seule")
         self.assertEqual("warn", line["kind"])
         self.assertNotIn("af-fakemf", line["text"])  # never a bead id on screen
@@ -319,7 +338,6 @@ class CockpitHealthZoneTest(unittest.TestCase):
             {"id": "af-ci1", "status": "open", "metadata": {"gc.ci_status": "red", "gc.ci_red_since": now}},
         ])
         self.start_cockpit()
-        self.fake_gc.push_event({"running": True, "partial": False})
         wait_until(lambda: self.health() if len(self.health()["lines"]) >= 3 else None)
         health = self.health()
         texts = " ".join(l["text"] for l in health["lines"])
@@ -339,7 +357,6 @@ class CockpitHealthZoneTest(unittest.TestCase):
             "COCKPIT_BEADS_POLL_SECONDS": "300",
             "COCKPIT_GIT_POLL_SECONDS": "300",
         })
-        self.fake_gc.push_event({"running": True, "partial": False})
         wait_until(lambda: self.health() if self.health()["lines"] == [] else None)
 
         self.set_beads([{

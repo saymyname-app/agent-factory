@@ -16,11 +16,12 @@ and **Validity window**.
     instead of calling `time.time()` directly.
   - `freshness.py` — `classify()`: fresh / stale / unknown given a read
     time, now, a source's Validity window, and whether the last read was
-    complete (a gc `partial: true` response never counts as complete).
+    complete (a gc status read while its event stream is silent never counts as
+    complete).
   - `readmodel.py` — `ReadModel`: the one held-up-to-date copy. The page
     only ever reads this, never a source directly.
   - `gc_client.py` — subscribes to the gc supervisor's SSE stream
-    (`127.0.0.1:8372/events`); reconnects with backoff, never crashes the
+    (`127.0.0.1:8372/v0/city/<city>/events/stream`); reconnects with backoff, never crashes the
     process.
   - `beads_source.py`, `polling_source.py` — Beads (and future GitHub/
     rituals) sources, each read on its own rhythm.
@@ -59,7 +60,8 @@ build their producers.
 
 `tests/cockpit-core-test.py` is the seam: it starts the real `bin/cockpit`
 process against a fake gc (`tests/fixtures/cockpit/core/fake_gc.py` — HTTP
-`/status` + SSE `/events`) and a fake `bd`
+`/v0/cities`, `/v0/city/<city>/status`, `.../beads/ready`, SSE
+`.../events/stream`) and a fake `bd`
 (`tests/fixtures/cockpit/core/fake-bd`), then drives it over plain HTTP —
 never an internal function. It covers: serving what the page receives,
 the fresh → stale → unknown progression over real elapsed time (Validity
@@ -131,3 +133,32 @@ never calls `stop`/`stop_force` and only ever touches the city; and both
 resume outcomes (`reprise_verifiee` / `reprise_avec_ecarts`). Process
 wiring (poller thread, the button's hidden condition, the "Ce qui
 t'attend" feed) is left to a later ticket, same precedent as T17/T18.
+
+## gc source, as the real supervisor answers (af-mjfvwx)
+
+The cockpit first subscribed to `/events`, which on the real supervisor is
+the HTML dashboard: the `gc` source was never read, the headline could
+never say "Tout est à jour", and the reconnect loop left one
+`supervisor.request` event per second in gc's event log. The test fake
+answered an API the real gc does not have, so the tests were green.
+
+`lib/cockpit/core/gc_client.py` now reads what gc 1.4.1 serves:
+
+| Read | Endpoint | Gives |
+|---|---|---|
+| city name | `/v0/cities` (or `COCKPIT_GC_CITY`) | which city to read |
+| liveness, progress | `/v0/city/<city>/events/stream` (SSE, heartbeat ~15 s) | stream alive; `last_progress_at` on `bead.closed` / `session.*` |
+| values | `/v0/city/<city>/status`, every `COCKPIT_GC_STATUS_POLL_SECONDS` (30) and after a session/city event | `suspended`, `agents_running`, `work`, `partial_errors` |
+| delivery work ready | `/v0/city/<city>/beads/ready` | `delivery_ready`: a ready bead with `gc.plane=delivery` |
+
+A read is complete only while the stream was heard within
+`COCKPIT_GC_STREAM_SILENCE_SECONDS` (45). A `partial: true` status keeps the
+fields it delivered and adds the health line « L'usine répond, mais une
+partie de son état est illisible. » (agent interpretation of spec .14, not
+a decision of Benjamin's: before, any partial read made the whole source
+unknown).
+
+`tests/fixtures/cockpit/core/fake_gc.py` answers like the real one (HTML on
+`/events` and `/status` included). `tests/cockpit-fake-gc-contract-test.py`
+(local-only) compares the fake with the installed supervisor, endpoint by
+endpoint; run it before changing either side.

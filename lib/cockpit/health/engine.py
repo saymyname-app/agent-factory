@@ -60,6 +60,15 @@ def supervisor_unreachable(unreachable_since, now, after_seconds=SUPERVISOR_UNRE
     }
 
 
+def supervisor_partial(partial_errors):
+    """Spec .14: gc answered, but reported part of its own state unreadable
+    (``partial: true``). The values it did deliver are shown; this line
+    says the read was not whole."""
+    if not partial_errors:
+        return None
+    return {"kind": WARN, "text": "L'usine répond, mais une partie de son état est illisible."}
+
+
 def factory_stalled(last_progress_at, now, delivery_ready, after_seconds=FACTORY_STALLED_AFTER_SECONDS):
     """Spec .68: "usine à l'arrêt ?" after 60 min without progress while
     delivery work is ready — the silence-only case is never a blocker for a
@@ -117,6 +126,7 @@ def compute_health(
     now,
     commits_behind=None,
     supervisor_unreachable_since=None,
+    supervisor_partial_errors=(),
     last_progress_at=None,
     delivery_ready=False,
     mayor_first_since=(),
@@ -136,6 +146,7 @@ def compute_health(
     for line in (
         version_behind(commits_behind),
         supervisor_unreachable(supervisor_unreachable_since, now, supervisor_unreachable_after_seconds),
+        supervisor_partial(supervisor_partial_errors),
         factory_stalled(last_progress_at, now, delivery_ready, factory_stalled_after_seconds),
     ):
         if line is not None:

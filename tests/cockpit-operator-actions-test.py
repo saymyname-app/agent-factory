@@ -198,7 +198,6 @@ class OperatorActionsSeamTest(unittest.TestCase):
         )
         self.proc = proc
         wait_for_port("127.0.0.1", self.port)
-        self.fake_gc.push_event({"running": True, "partial": False})
         self._capture_session_cookie()
         return proc
 
