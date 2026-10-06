@@ -29,6 +29,8 @@ from cockpit.projects.model import LIVRE, SANS_PROJET, STAGES
 SECTION_TITLE = "Projets"
 EMPTY_TEXT = "Aucun projet déclaré."
 NO_CHANTIER_TEXT = "Aucun chantier actif."
+UNKNOWN_TEXT = "Inconnu : projets illisibles depuis %s"
+UNKNOWN_TEXT_NO_TIME = "Inconnu : projets illisibles depuis toujours"
 
 
 def _hhmm(epoch):
@@ -37,25 +39,48 @@ def _hhmm(epoch):
     return datetime.fromtimestamp(epoch, tz=PARIS).strftime("%H:%M")
 
 
-def render_projects_section(projects, sans_projet=None):
+def render_projects_section(projects, sans_projet=None, with_page_link=True, stale_since=None):
     """``projects``: list of :class:`cockpit.projects.model.Project`.
     ``sans_projet``: list of orphan :class:`cockpit.projects.model.Chantier`
-    (spec .50)."""
+    (spec .50). ``with_page_link``: the "Page projet" link, off while the
+    caller serves no such page. ``stale_since``: when the read behind this
+    is no longer fresh, the hour it was taken — the zone is then greyed
+    and says so (spec .63)."""
     projects = projects or []
     sans_projet = sans_projet or []
+    title = html.escape(SECTION_TITLE)
     if not projects and not sans_projet:
         return (
-            '<section class="cockpit-projects" data-state="empty">'
-            "<h2>%s</h2><p class=\"cockpit-projects-status\">%s</p></section>\n"
-        ) % (html.escape(SECTION_TITLE), html.escape(EMPTY_TEXT))
+            '<section class="zone cockpit-projects" data-state="empty">'
+            '<div class="zone-h"><h2>%s</h2></div>'
+            '<p class="muted cockpit-projects-status">%s</p></section>\n'
+        ) % (title, html.escape(EMPTY_TEXT))
 
-    body = "".join(_render_project(p) for p in projects)
+    body = "".join(_render_project(p, with_page_link) for p in projects)
     if sans_projet:
         body += _render_sans_projet(sans_projet)
+    stale_note = ""
+    if stale_since is not None:
+        stale_note = '<span class="muted" style="font-size:var(--fs-xs)">vu à <time>%s</time></span>' % _hhmm(
+            stale_since
+        )
     return (
-        '<section class="cockpit-projects" data-state="filled">'
-        '<h2>%s</h2><div class="cockpit-projects-list">%s</div></section>\n'
-    ) % (html.escape(SECTION_TITLE), body)
+        '<section class="zone cockpit-projects" data-state="filled">'
+        '<div class="zone-h"><h2>%s</h2>%s</div>'
+        '<div class="zone-body%s"><div class="projects cockpit-projects-list">%s</div></div></section>\n'
+    ) % (title, stale_note, " stale-val" if stale_since is not None else "", body)
+
+
+def render_projects_unknown(last_known_at=None):
+    """The whole zone when its read never succeeded or is failing: never an
+    empty project list passed off as "no chantier" (spec .16, .63)."""
+    since = _hhmm(last_known_at)
+    text = UNKNOWN_TEXT % since if since else UNKNOWN_TEXT_NO_TIME
+    return (
+        '<section class="zone cockpit-projects" data-state="unknown">'
+        '<div class="zone-h"><h2>%s</h2></div>'
+        '<div class="unknown">%s</div></section>\n'
+    ) % (html.escape(SECTION_TITLE), html.escape(text))
 
 
 def _render_roadmap(project):
@@ -84,46 +109,45 @@ def _render_ecart(project):
                 '<span class="cockpit-project-ecart" data-state="known">%s : dev a %d commit%s d\'avance</span>'
                 % (html.escape(rig), n, "s" if n != 1 else "")
             )
-    return "".join(spans)
+    return '<div class="s muted" style="font-size:var(--fs-s);padding-top:6px">%s</div>' % " · ".join(spans)
 
 
-PAGE_PROJET_LINK_TEXT = "Page projet →"
+PAGE_PROJET_LINK_TEXT = "Page projet"
 
 
 def _render_page_projet_link(project):
     """spec .49: "un lien « Page projet » depuis chaque projet, qui
     montre ses chantiers par étape, afin d'avoir le détail sans
-    surcharger l'accueil" (T22, af-9tfjsc). A plain ``<a href>`` -- the
-    route itself is wired by a later ticket, the same deferred-wiring
-    precedent T20's Accepter/« Pas bon -> agent » buttons set."""
+    surcharger l'accueil" (T22, af-9tfjsc)."""
     from cockpit.ui.projects.project_page import project_page_url
 
-    return '<a class="cockpit-project-page-link" href="%s">%s</a>' % (
+    return '<a class="cockpit-project-page-link" href="%s" style="color:var(--accent)">%s</a>' % (
         html.escape(project_page_url(project.project_id)),
         html.escape(PAGE_PROJET_LINK_TEXT),
     )
 
 
-def _render_project(project):
-    roadmap_html = _render_roadmap(project)
-    ecart_html = _render_ecart(project)
-    page_projet_html = _render_page_projet_link(project)
+def _render_project(project, with_page_link=True):
+    beside_name = [part for part in (_render_roadmap(project),) if part]
+    if with_page_link:
+        beside_name.append(_render_page_projet_link(project))
     if project.chantiers:
         chantiers_html = "".join(_render_chantier(c) for c in project.chantiers)
     else:
-        chantiers_html = '<p class="cockpit-project-empty">%s</p>' % html.escape(NO_CHANTIER_TEXT)
+        chantiers_html = '<p class="s muted cockpit-project-empty">%s</p>' % html.escape(NO_CHANTIER_TEXT)
     return (
-        '<div class="cockpit-project" data-project="%s">'
-        '<div class="cockpit-project-h"><h3>%s</h3>%s%s%s</div>'
+        '<div class="proj cockpit-project" data-project="%s">'
+        '<div class="proj-h cockpit-project-h"><h3>%s</h3>'
+        '<span class="muted" style="font-size:var(--fs-s)">%s</span></div>'
         '<div class="cockpit-project-chantiers">%s</div>'
+        "%s"
         "</div>"
     ) % (
         html.escape(project.project_id),
         html.escape(project.display_name),
-        roadmap_html,
-        ecart_html,
-        page_projet_html,
+        " · ".join(beside_name),
         chantiers_html,
+        _render_ecart(project),
     )
 
 
@@ -138,49 +162,125 @@ def _stepper(stage_index, promu_masque):
         if not (promu_masque and STAGES[i] == "Promu")
     )
     label = "Étape %d sur %d : %s" % (stage_index + 1, n, STAGES[stage_index])
-    return '<div class="cockpit-stepper" aria-label="%s">%s</div>' % (html.escape(label), dots)
+    return '<div class="stepper cockpit-stepper" aria-label="%s">%s</div>' % (html.escape(label), dots)
+
+
+_CHIP_CLASS = {
+    etat_mod.A_TOI_DE_JOUER: "atoi",
+    etat_mod.PROBLEME_REMONTE: "probleme",
+    etat_mod.BLOQUE: "bloque",
+}
 
 
 def _render_etat(chantier):
+    """The état chip. "À toi de jouer" and "Problème remonté" lead in one
+    click to where Benjamin acts (spec .43): the acceptance panel of a
+    Livré chantier, otherwise the request carrying the question. An état
+    that claims a target and has none shows as a defect (spec .45)."""
     texte = etat_mod.label(chantier.etat, chantier.etat_cible)
-    return '<span class="cockpit-chantier-etat" data-etat="%s" data-cible="%s">%s</span>' % (
-        html.escape(chantier.etat),
-        html.escape(chantier.etat_cible or ""),
-        html.escape(texte),
+    attrs = 'data-etat="%s" data-cible="%s"' % (html.escape(chantier.etat), html.escape(chantier.etat_cible or ""))
+    if chantier.etat == etat_mod.NORMAL:
+        return '<span class="cockpit-chantier-etat" %s hidden>%s</span>' % (attrs, html.escape(texte))
+    label = html.escape(texte[:1].upper() + texte[1:])
+    if texte == etat_mod.DEFAUT_LABEL or chantier.etat == etat_mod.BLOQUE:
+        return '<span class="chip bloque cockpit-chantier-etat" %s>%s</span>' % (attrs, label)
+    chip = "chip go %s cockpit-chantier-etat" % _CHIP_CLASS[chantier.etat]
+    if chantier.etat == etat_mod.A_TOI_DE_JOUER and chantier.stage == LIVRE:
+        return (
+            '<button type="button" class="%s" %s data-acc-open="%s" '
+            'title="Aller là où tu dois agir">%s</button>'
+        ) % (chip, attrs, html.escape(chantier.id), label)
+    cible = html.escape(chantier.etat_cible)
+    return '<a class="%s" %s href="#d-%s" data-goto="%s" title="Aller là où tu dois agir">%s</a>' % (
+        chip, attrs, cible, cible, label,
     )
 
 
 def _render_chantier_actions(chantier):
+    """The acceptance panel of a Livré chantier (spec .30, .31), closed
+    until its "À toi de jouer" chip opens it in place."""
     if chantier.stage != LIVRE:
         return ""
+    bead_id = html.escape(chantier.id)
     return (
-        '<div class="cockpit-chantier-actions">'
-        '<button type="button" class="cockpit-action" data-action="accepter_chantier" data-bead-id="%s">Accepter</button>'
-        '<button type="button" class="cockpit-action cockpit-action-tokens" data-action="pas_bon_vers_agent" '
-        'data-bead-id="%s">Pas bon → agent (utilise un agent — consomme des tokens)</button>'
-        "</div>"
-    ) % (html.escape(chantier.id), html.escape(chantier.id))
+        '<div class="accpanel cockpit-chantier-actions" id="acc-%s" hidden>'
+        "<div><b>Accepter la livraison « %s » ?</b> "
+        "Tu as vérifié le résultat ; l'usine passe le chantier en Accepté.</div>"
+        '<div class="acts">'
+        '<button type="button" class="btn primary cockpit-action" data-action="accepter_chantier" '
+        'data-bead-id="%s">Accepter</button>'
+        '<button type="button" class="btn cockpit-action cockpit-action-tokens" data-action="pas_bon_vers_agent" '
+        'data-bead-id="%s" data-titre="%s">Pas bon → agent '
+        "<small>utilise un agent (consomme des tokens)</small></button>"
+        '<button type="button" class="btn ghost" data-acc-close>Annuler</button>'
+        "</div></div>"
+    ) % (bead_id, html.escape(chantier.titre), bead_id, bead_id, html.escape(chantier.titre))
 
 
 def _render_chantier(chantier):
+    # "Livraison · 5/9 tickets mergés"; a detail that already starts with
+    # its stage ("Livré : 4/4 tickets mergés") is not prefixed twice.
+    if chantier.detail.startswith(chantier.stage):
+        sous_titre = chantier.detail
+    else:
+        sous_titre = "%s · %s" % (chantier.stage, chantier.detail)
     return (
-        '<div class="cockpit-chantier" data-stage="%s" data-termine="%s" data-abandonne="%s">'
-        '<div class="cockpit-chantier-n">%s</div>'
-        '<div class="cockpit-chantier-s">%s</div>'
-        "%s"
+        '<div class="ch cockpit-chantier" id="ch-%s" data-stage="%s" data-termine="%s" data-abandonne="%s">'
+        '<div><div class="n cockpit-chantier-n">%s</div>'
+        '<div class="s cockpit-chantier-s">%s</div></div>'
+        "<div>%s</div>"
         "%s"
         "%s"
         "</div>"
     ) % (
+        html.escape(chantier.id),
         html.escape(chantier.stage),
         "true" if chantier.termine else "false",
         "true" if chantier.abandonne else "false",
         html.escape(chantier.titre),
-        html.escape(chantier.detail),
+        html.escape(sous_titre),
         _render_etat(chantier),
         _stepper(chantier.stage_index, chantier.promu_masque),
         _render_chantier_actions(chantier),
     )
+
+
+# Chips and the acceptance panel. A "goto" chip opens the request it names
+# in the inbox (the list row's own click does the selecting); one naming a
+# request the inbox no longer holds says so instead of doing nothing.
+PROJECTS_SCRIPT = """
+<script>
+(function () {
+  function toast(text) {
+    var el = document.createElement('div');
+    el.className = 'toast';
+    el.setAttribute('role', 'status');
+    el.textContent = text;
+    document.body.appendChild(el);
+    setTimeout(function () { el.remove(); }, 3200);
+  }
+  document.addEventListener('click', function (event) {
+    var go = event.target.closest('[data-goto]');
+    if (go) {
+      event.preventDefault();
+      var row = document.querySelector('.li[data-id="' + go.getAttribute('data-goto') + '"]');
+      if (!row) { toast("Cette demande n'est pas dans la liste."); return; }
+      row.click();
+      document.getElementById('inbox').scrollIntoView({block: 'start'});
+      return;
+    }
+    var open = event.target.closest('[data-acc-open]');
+    if (open) {
+      var panel = document.getElementById('acc-' + open.getAttribute('data-acc-open'));
+      if (panel) { panel.hidden = false; panel.scrollIntoView({block: 'center'}); }
+      return;
+    }
+    var close = event.target.closest('[data-acc-close]');
+    if (close) { close.closest('.accpanel').hidden = true; }
+  });
+})();
+</script>
+"""
 
 
 HISTORIQUE_TITLE = "Historique"
@@ -220,8 +320,9 @@ def _render_sans_projet(chantiers):
     items = "".join(_render_chantier(c) for c in chantiers)
     defect_note = "%d défaut producteur" % len(chantiers) if len(chantiers) == 1 else "%d défauts producteur" % len(chantiers)
     return (
-        '<div class="cockpit-project cockpit-project-sans" data-project="sans-projet">'
-        '<div class="cockpit-project-h"><h3>%s</h3><span class="cockpit-project-defect">%s</span></div>'
-        '<div class="cockpit-project-chantiers">%s</div>'
+        '<div class="proj cockpit-project cockpit-project-sans" data-project="sans-projet">'
+        '<div class="proj-h cockpit-project-h"><h3>%s</h3>'
+        '<span class="cockpit-project-defect" style="font-size:var(--fs-xs);color:var(--urgent)">%s</span></div>'
+        "%s"
         "</div>"
     ) % (html.escape(SANS_PROJET), html.escape(defect_note), items)

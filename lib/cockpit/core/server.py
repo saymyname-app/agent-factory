@@ -10,18 +10,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cockpit.access.guard import session_cookie_header
 from cockpit.actions.registry import ActionError
-from cockpit.core.freshness import UNKNOWN
+from cockpit.core.freshness import FRESH, UNKNOWN
 from cockpit.health import collectors
 from cockpit.health.engine import (
     FACTORY_STALLED_AFTER_SECONDS,
     SUPERVISOR_UNREACHABLE_AFTER_SECONDS,
     compute_health,
 )
+from cockpit.projects.source import from_value as projects_from_value
 from cockpit.requests.builder import build_requests
 from cockpit.requests.defects import DefectCounter
 from cockpit.ui.base.page import render_home
 from cockpit.ui.health.page import render_health_zone, render_status_line
 from cockpit.ui.home.page import render_requests_section
+from cockpit.ui.projects.page import render_projects_section, render_projects_unknown
 
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 
@@ -39,6 +41,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/requests":
             self._send_json(self._requests_payload(read_model.snapshot()))
+            return
+        if self.path == "/api/projects":
+            self._send_json(self._projects_payload(read_model.snapshot()))
             return
         if self.path == "/api/health":
             self._send_json(self._compute_health(read_model))
@@ -65,7 +70,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 read_model.headline(),
                 stale_rows,
                 requests_section_html=requests_section_html,
-                extra_sections_html=health_html,
+                extra_sections_html=self._render_projects_zone(snapshot) + health_html,
                 status_html=render_status_line(snapshot.get("gc"), health),
             ).encode("utf-8")
             self.send_response(200)
@@ -172,6 +177,37 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 for r in requests
             ],
             "defect_count": self.server.defect_counter.count,
+        }
+
+    def _render_projects_zone(self, snapshot):
+        """"Projets", from the read model's own "projets" value -- absent
+        when the process reads no Beads at all, unknown (never an empty
+        list) when its read never succeeded or is failing."""
+        row = snapshot.get("projets")
+        if row is None:
+            return ""
+        if row["value"] is None or row["freshness"] == UNKNOWN:
+            return render_projects_unknown(row["read_at"])
+        projects, sans_projet = projects_from_value(row["value"])
+        return render_projects_section(
+            projects,
+            sans_projet,
+            # No /projet/<id> page is served yet: no link to nowhere.
+            with_page_link=False,
+            stale_since=None if row["freshness"] == FRESH else row["read_at"],
+        )
+
+    def _projects_payload(self, snapshot):
+        """JSON twin of :meth:`_render_projects_zone`, for tests."""
+        row = snapshot.get("projets")
+        if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
+            return {"state": "unknown", "projects": [], "sans_projet": []}
+        return {
+            "state": "filled",
+            "freshness": row["freshness"],
+            "verified_at": row["read_at"],
+            "projects": row["value"]["projects"],
+            "sans_projet": row["value"]["sans_projet"],
         }
 
     def _compute_health(self, read_model):

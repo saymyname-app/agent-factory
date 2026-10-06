@@ -152,6 +152,7 @@ class RequestsSeamTest(unittest.TestCase):
                 "COCKPIT_GC_BASE_URL": self.fake_gc.base_url,
                 "COCKPIT_GC_STATUS_POLL_SECONDS": "0.1",
                 "COCKPIT_GC_RECONNECT_SECONDS": "0.1",
+                "COCKPIT_PROJECTS_POLL_SECONDS": "0.2",
                 "COCKPIT_BD_BIN": str(REQUESTS_FIXTURES / "fake-bd"),
                 "COCKPIT_PID_FILE": self.pid_file,
                 "COCKPIT_BEADS_POLL_SECONDS": "0.1",
@@ -264,7 +265,7 @@ class RequestsSeamTest(unittest.TestCase):
 
         self.assertIn("Atkinson+Hyperlegible+Next", body)  # the prototype's font is loaded, not only named
         self.assertIn('<span class="lvl ok"><i></i>En marche</span>', body)
-        self.assertIn("Tout est à jour à <time>", body)
+        body = wait_until(lambda: self.home_body() if "Tout est à jour à <time>" in self.home_body() else None)
         self.assertIn('action="/api/health/recheck"', body)
 
         # One list row and one detail per request; the first is selected.

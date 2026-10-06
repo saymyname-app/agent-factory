@@ -150,6 +150,27 @@ details.more[open] summary::before{content:"\\25BE"}
 .va .hlist{display:grid;gap:6px;font-size:var(--fs-s)}
 .va .hl{display:flex;gap:10px;align-items:baseline}
 
+/* ---------- "Projets": one block per project, a stepper per chantier ---------- */
+.va .projects{display:grid;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.va .proj{padding:12px 16px;border-top:1px solid var(--line)}
+.va .proj:first-child{border-top:0}
+.va .proj-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.va .proj-h h3{font-size:var(--fs-m)}
+.va .ch{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding-block:9px;border-top:1px dashed var(--line)}
+.va .ch .n{font-weight:600}
+.va .ch .s,.va .proj > .s{font-size:var(--fs-s);color:var(--ink-2)}
+.va .proj > p.s{padding-block:9px;border-top:1px dashed var(--line);color:var(--muted)}
+.va .ch .stepper{grid-column:1 / -1}
+.stepper{display:flex;gap:3px;align-items:center}
+.stepper span{height:6px;flex:1;border-radius:3px;background:var(--line);min-width:10px}
+.stepper span.done{background:var(--ink-2)}
+.stepper span.cur{background:var(--accent)}
+.chip.go{border:0;cursor:pointer;font:inherit;font-size:var(--fs-xs);font-weight:600;text-decoration:none}
+.chip.go::after{content:" \\2192"}
+.chip.go:hover{filter:brightness(.95);text-decoration:underline}
+.accpanel{grid-column:1 / -1;display:grid;gap:8px;background:var(--accent-soft);border-radius:8px;padding:10px 12px;font-size:var(--fs-s)}
+.cockpit-project-sans h3{color:var(--urgent)}
+
 /* ---------- "Déconnecté du cockpit depuis HH:MM" (spec .69) ---------- */
 .cockpit-disconnected-banner{position:sticky;top:0;z-index:20;margin-inline:-16px;padding:10px 16px;background:var(--urgent);color:#fff;font-size:var(--fs-s);font-weight:700;text-align:center}
 body.cockpit-greyed > *:not(.cockpit-disconnected-banner){opacity:.55;filter:grayscale(1)}

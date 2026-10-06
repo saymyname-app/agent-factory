@@ -12,7 +12,6 @@ from datetime import datetime
 from cockpit.core.readmodel import PARIS
 from cockpit.requests.model import A_FAIRE, TYPE_ESCALATION, TYPE_PROPOSAL, URGENT
 from cockpit.text.fallback import FALLBACK_NO_RECOMMENDATION, incomplete_label
-from cockpit.ui.actions.render import SCRIPT as ACTIONS_SCRIPT
 from cockpit.ui.actions.render import render_actions
 
 SECTION_TITLE = "Ce qui t'attend"
@@ -124,8 +123,8 @@ def render_requests_section(requests, verified_at=None, source_unknown=False, la
     return (
         '<div class="inbox cockpit-requests" data-state="filled">'
         '<div class="list" id="inbox-list"><h2><span>%s</span><span class="mono muted">%d</span></h2>%s</div>'
-        "%s</div>\n%s%s"
-    ) % (title, len(requests), rows, details, INBOX_SCRIPT, ACTIONS_SCRIPT)
+        "%s</div>\n%s"
+    ) % (title, len(requests), rows, details, INBOX_SCRIPT)
 
 
 def _render_list_item(r, now, selected):

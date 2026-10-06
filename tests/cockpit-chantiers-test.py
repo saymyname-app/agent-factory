@@ -521,7 +521,7 @@ class RenderStepperTest(unittest.TestCase):
         descriptors = load_descriptors(DESCRIPTORS)
         projects, sans_projet = build_projects(descriptors, beads)
         html_out = render_projects_section(projects, sans_projet)
-        self.assertIn("à toi de jouer", html_out)
+        self.assertIn("À toi de jouer", html_out)
         self.assertIn('data-etat="a_toi_de_jouer"', html_out)
 
     def test_accepter_and_pas_bon_buttons_on_livre_chantier(self):
