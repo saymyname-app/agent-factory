@@ -165,3 +165,55 @@ holds it for Benjamin.
   and `saymyname-frontend`, each promoting `dev` → `main`, knowledge repo
   `saymyname-app/Say-my-name-product`, roadmap `knowledge/roadmap.toml`,
   rituals status `tools/rituals-status.sh`.
+
+## Launch declarations and `bin/project-launch` (T01, af-m8m1kc)
+
+Spec af-wf4w5r .12 (D01) requires a project's launch recipe and entry
+points to live in its profile so the Delivery Workflow can launch any
+project the same way: an author proving a demonstration line, an Evaluator
+judging a ticket, and an Acceptance Session judging a Delivered Outcome all
+launch the product through the same `bin/project-launch`, never a
+hand-typed command.
+
+A descriptor's optional `launch` block is validated by the same `describe`
+command, and -- unlike every other descriptor field -- is all-or-nothing:
+declaring `launch` at all requires every one of these sub-fields, or
+`describe`/`validate` fails loudly naming exactly which is missing:
+
+| Field | Meaning |
+| --- | --- |
+| `recipe` | argv tokens to launch the product; `{python}`, `{port}`, `{dataset}` are substituted by `project-launch`. |
+| `entry_points` | the product's public interfaces (`kind`, `method`, `path`), named so an Evaluator or criterion test knows where to look. |
+| `health_probe` | `{path, expect_status}` — polled by `project-launch start` until it answers or the timeout expires. |
+| `datasets` | named synthetic dataset files (fixed `generated_at` time included) a launch can select with `--dataset`. |
+| `test_perimeter` | paths a ticket's red step may write criterion tests under. |
+| `frozen_harness_paths` | test harness/config paths frozen at the ticket's freeze step. |
+| `test_command` | runs one criterion test with a per-test exit code. |
+| `seam_mode` | `black_box` or `import_rule` — how a criterion test is proven to go through a real entry point. |
+| `regression_command` | the `prefactoring` regime's before/after command. |
+| `k` | consecutive green runs required at the ticket's green step. |
+
+A descriptor with no `launch` block at all (e.g. the Factory's own
+`agent-factory.json`) is unaffected — `describe` reports `launch: null`,
+and `bin/project-launch start` refuses that project outright, naming the
+missing declaration, before anything is spawned.
+
+```bash
+./bin/project-planning-profile describe tests/fixtures/delivery-fixture-city/descriptor.json
+./bin/project-launch start tests/fixtures/delivery-fixture-city/descriptor.json \
+    --commit HEAD --dataset content --state-file /tmp/launch.json
+./bin/project-launch stop --state-file /tmp/launch.json
+```
+
+`start` resolves `--commit` to an exact SHA and checks it out into a fresh
+`git worktree` — never the caller's current working tree, so an
+uncommitted local change is never what gets served — picks a free
+127.0.0.1 port, substitutes it (and the chosen dataset's absolute path)
+into `recipe`, and polls `health_probe` until it answers or `--timeout`
+(default 15s) expires, printing one JSON record (`address`, `port`, `pid`,
+`worktree`, `commit`, `dataset`). `stop` reads that record back from
+`--state-file`, terminates the process, removes the worktree, and frees
+the port. Two concurrent launches each get their own port and worktree and
+do not disturb each other; stopping one leaves the other answering.
+`tests/project-launch-test.py` and `tests/fixtures/delivery-fixture-city/`
+are the fixture project and its proof.

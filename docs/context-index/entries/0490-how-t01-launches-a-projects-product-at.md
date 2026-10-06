@@ -1,0 +1,2 @@
+Need: How the Delivery Workflow launches any project's product at an exact commit on an isolated port against a named synthetic dataset, and why a project with no declared launch recipe is refused instead of launched from the caller's working tree (spec af-wf4w5r .12, T01)
+Read: `PROJECT_PLANNING_PROFILE.md` ("Launch declarations and `bin/project-launch`"), `./bin/project-launch`, `tests/fixtures/delivery-fixture-city/`, `tests/project-launch-test.py`
