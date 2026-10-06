@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Stand-in for the dispatch door and the reviewer session it starts, for
+tests/graph-review-test.py: no agent runs in CI, only what goes in and out
+of the command (Spec af-wf4w5r, Testing Decisions).
+
+Called as bin/dispatch-door is (`<bead> --rig R --formula F --role ROLE`),
+it logs its arguments to GRAPH_REVIEW_FAKE_LOG, then does what a reviewer
+session does with the routed bead: read the draft it names, ask
+`graph-review brief`, answer every question, hand the verdict to
+`graph-review record` from a read-only role session. Every answer is
+favorable except those named, per pass, in the JSON file
+GRAPH_REVIEW_FAKE_REFUSALS: {"<pass>": {"<ticket>|graphe": {"<check>": "<reason>"}}}.
+
+GRAPH_REVIEW_FAKE_MODE=silent: the session starts and never answers.
+GRAPH_REVIEW_FAKE_MODE=door-refuses: the door refuses the dispatch."""
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+TOOL = str(ROOT / "bin" / "graph-review")
+
+with open(os.environ["GRAPH_REVIEW_FAKE_LOG"], "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(sys.argv[1:]) + "\n")
+mode = os.environ.get("GRAPH_REVIEW_FAKE_MODE", "")
+if mode == "door-refuses":
+    print("dispatch-door: dispatch refused: no passing adoption trial for role 'reviewer'", file=sys.stderr)
+    raise SystemExit(1)
+if mode == "silent":
+    raise SystemExit(0)
+
+bead = json.loads(subprocess.run(
+    [os.environ["BD_BIN"], "show", sys.argv[1], "--json"], capture_output=True, text=True, check=True,
+).stdout)[0]
+draft = re.search(r"^draft: (\S+)$", bead["description"], re.MULTILINE).group(1)
+brief = json.loads(subprocess.run([TOOL, "brief", draft], capture_output=True, text=True, check=True).stdout)
+refusals = {}
+if os.environ.get("GRAPH_REVIEW_FAKE_REFUSALS"):
+    refusals = json.loads(Path(os.environ["GRAPH_REVIEW_FAKE_REFUSALS"]).read_text()).get(str(brief["pass"]), {})
+
+
+def answers(target, checks):
+    refused = refusals.get(target, {})
+    out = {}
+    for name in checks:
+        if name in refused:
+            out[name] = {"state": "unfavorable", "reason": refused[name]}
+        elif name == "prototype_fold_present_and_first":
+            out[name] = {"state": "not_applicable", "reason": "le graphe n'a aucun ticket d'interface prototypée"}
+        else:
+            out[name] = {"state": "favorable"}
+    return {"checks": out}
+
+
+verdict = {
+    "digest": brief["digest"],
+    "tickets": {ticket["id"]: answers(ticket["id"], ticket["checks"]) for ticket in brief["tickets"]},
+    "graph": answers("graphe", brief["graph_checks"]),
+}
+with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+    json.dump(verdict, handle, ensure_ascii=False)
+proc = subprocess.run(
+    [TOOL, "record", draft, "--verdict-file", handle.name],
+    env={**os.environ, "DELIVERY_ROLE_READ_ONLY": "1", "GC_SESSION_NAME": "delivery-reviewer-fixture"},
+    capture_output=True, text=True,
+)
+os.unlink(handle.name)
+sys.stderr.write(proc.stderr)
+raise SystemExit(0)

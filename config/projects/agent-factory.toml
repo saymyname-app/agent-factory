@@ -22,7 +22,10 @@ required_ci = "Factory CI"
 # "Tests", the job bin/../.github/workflows/ci.yml names inside "Factory CI".
 required_check = "Tests"
 sling_target = "factory-worker"
-formulas = "mol-do-work"
+# mol-graph-review (T08, af-n575g4) is not a delivery formula: only
+# bin/graph-review dispatches it, with --role reviewer, to have a Ticket
+# Graph Draft read before Benjamin approves it (docs/GRAPH_REVIEW.md).
+formulas = "mol-do-work,mol-graph-review"
 # human_approver (A6b W04) is this project's declared human approver:
 # bin/spec-approve refuses to approve a Spec bead whose --approved-by is
 # anyone else, read via `bin/project-planning-profile human-approver`.

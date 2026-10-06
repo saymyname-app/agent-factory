@@ -29,8 +29,11 @@ launch recipe or its first slice establishes it, and the door itself poses
 the pointers in each ticket (Spec and digest, user stories, sibling tickets
 with their demonstration line, seams). `bd-patch` applies all of it to the
 graph that results from the patch, tickets added or withdrawn included, and
-publishes without a new approval a patch that only adds `repair` tickets. A
-draft that does not declare the contract is published exactly as before.
+publishes without a new approval a patch that only adds `repair` tickets.
+A first publication is also refused without a graph review that holds for
+the draft's current digest (T08, `bin/graph-review check`,
+docs/GRAPH_REVIEW.md). A draft that does not declare the contract is
+published exactly as before.
 docs/ENTRY_CONTRACT.md has the fields and the refusals.
 
 The file-draft mode (`validate`/`publish`/`patch` over a YAML Ticket Graph
@@ -795,6 +798,25 @@ def repointed(description: str, sections: dict[str, str]) -> str:
     return own + "\n\n" + render_sections(current)
 
 
+def graph_review_of(draft_id: str) -> dict[str, Any]:
+    """The graph review that holds for the draft's current digest (T08, Spec
+    §2 « Relecteur de graphe »), asked of the command that owns that state.
+    No review for this digest, a refusal left without Benjamin's decision:
+    the door refuses, in the words of that command."""
+    argv = [tool_path("GRAPH_REVIEW_BIN", "graph-review"), "check", draft_id]
+    env = {**os.environ, "BD_BIN": BD_BIN, "GRAPH_REVIEW_BD_WORKSPACE": str(BD_WORKSPACE)}
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, env=env)
+        payload = json.loads(proc.stdout)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PublishError(
+            f"refus : la relecture de graphe du brouillon {draft_id} n'a pas pu être lue ({exc}) ; rien n'est écrit"
+        ) from exc
+    if proc.returncode != 0 or not payload.get("ok", False):
+        raise PublishError(str(payload.get("error") or f"{' '.join(argv)} failed"))
+    return {key: payload[key] for key in ("pass", "digest", "same_model", "model_independence", "decisions")}
+
+
 def new_flow_ticket_description(ticket: dict[str, Any]) -> str:
     """The text of a ticket of the new flow: what the approved draft says,
     and no copied execution contract (Spec §2, prose de procédé)."""
@@ -1545,6 +1567,7 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
     new_flow = flow_contract(parsed, draft_id) == NEW_FLOW
     spec_bead = load_approved_spec_bead(spec_id)
     spec_digest = canonical_bead_digest(spec_bead.get("description") or "")
+    graph_review: dict[str, Any] = {}
     if not new_flow:
         refuse_prototype_tickets(tickets)
 
@@ -1578,6 +1601,7 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
         graph = [graph_ticket(ticket, spec["stories"]) for ticket in tickets]
         refusals += graph_refusals(graph, spec, launch, project_id, descriptor)
         refuse_unless_contract_met(draft_id, refusals)
+        graph_review = {"graph_review": graph_review_of(draft_id)}
         describe = new_flow_describe(graph, spec, launch)
 
     scope_edges = add_scope_overlap_edges(tickets)
@@ -1614,6 +1638,7 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
         "scope_edges": scope_edges,
         "reservation_advanced": reservation_advanced,
         **new_flow_result,
+        **graph_review,
         **notice,
     }, ensure_ascii=False, sort_keys=True))
     return 0

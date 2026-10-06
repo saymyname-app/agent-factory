@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLISHER = ROOT / "bin" / "ticket-graph-publish"
 CONVOY_STATE = ROOT / "bin" / "convoy-state"
 PLANNING_EXCEPTION = ROOT / "bin" / "planning-exception"
+GRAPH_REVIEW = ROOT / "bin" / "graph-review"
 FIXTURES = ROOT / "tests" / "fixtures" / "ticket-graph-publish"
 FAKE_BD = FIXTURES / "bd-bead-mode"
 FAKE_GC = FIXTURES / "gc"
@@ -71,6 +72,16 @@ class Harness(unittest.TestCase):
             "TICKET_GRAPH_GC_LOG": str(self.gc_log),
             "CONVOY_STATE_LOCK_DIR": str(self.tmp / "locks"),
         }
+        # The reviewer role the graph review (T08) reads: one provider, one model.
+        factory = self.tmp / "factory"
+        (factory / "config").mkdir(parents=True)
+        (factory / "config" / "delivery-roles.json").write_text(
+            json.dumps({"roles": {"reviewer": {"agent": "delivery-reviewer"}}}))
+        (factory / "city.toml").write_text('[providers.reviewer-profile]\nargs_append = ["--model", "modele-relecteur"]\n')
+        self.review_env = {
+            **self.env, "FACTORY_ROOT": str(factory), "DELIVERY_ROLE_READ_ONLY": "1",
+            "GRAPH_REVIEW_PROVIDER_FAILOVER_BIN": str(ROOT / "tests" / "fixtures" / "graph-review" / "provider-failover"),
+        }
 
     # --- tracker state --------------------------------------------------------
 
@@ -110,6 +121,26 @@ class Harness(unittest.TestCase):
             "draft-1": {"id": "draft-1", **self.draft_bead(description)},
             "spec-1": self.spec_bead(),
         }}))
+        self.review_graph()
+
+    def review_graph(self):
+        """Every seeded draft of the new flow comes with a favorable graph
+        review of its digest (T08, tests/graph-review-test.py): what these
+        tests observe is the entry contract, checked before it."""
+        def review(*argv):
+            return subprocess.run((str(GRAPH_REVIEW), *argv), env=self.review_env, text=True, capture_output=True)
+
+        if review("request", "draft-1", "--author-model", "modele-auteur").returncode != 0:
+            return
+        brief = json.loads(review("brief", "draft-1").stdout)
+        answers = lambda checks: {"checks": {
+            name: {"state": "not_applicable", "reason": "aucun ticket d'interface"}
+            if name == "prototype_fold_present_and_first" else {"state": "favorable"} for name in checks}}
+        verdict = self.tmp / "graph-verdict.json"
+        verdict.write_text(json.dumps({
+            "digest": brief["digest"], "graph": answers(brief["graph_checks"]),
+            "tickets": {ticket["id"]: answers(ticket["checks"]) for ticket in brief["tickets"]}}))
+        self.assertEqual(0, review("record", "draft-1", "--verdict-file", str(verdict)).returncode)
 
     def add_draft(self, draft_id, draft, **kwargs):
         state = self.state()

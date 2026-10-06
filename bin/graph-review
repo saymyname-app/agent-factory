@@ -1,0 +1,639 @@
+#!/usr/bin/env python3
+"""graph-review — the graph reviewer of a Ticket Graph Draft, before Benjamin approves it.
+
+T08 (af-n575g4, Spec af-wf4w5r §2 « Relecteur de graphe », user stories 7 and
+8). A draft that declares the new-flow contract (`flow_contract: new-flow/v1`,
+docs/ENTRY_CONTRACT.md) is read by a reviewer in a fresh context -- a session
+of the read-only reviewer role, started as routed work through
+bin/dispatch-door -- before Benjamin approves it. The reviewer answers closed
+questions per ticket and on the graph; code computes each verdict and binds
+all of them to the digest of the draft they were given on. One pass,
+corrections, one single second pass; what is still refused after it is
+listed for Benjamin, who rules ticket by ticket, his words recorded.
+bin/ticket-graph-publish asks `check` and refuses a draft without a review
+that holds for its current digest.
+
+This command is the only reader and writer of the review state, kept on the
+draft bead under `gc.graph_review.*` (docs/GRAPH_REVIEW.md). A draft that
+does not declare the contract is not touched (exit 4).
+
+usage:
+  graph-review review  <draft> --author-model M [--timeout S]
+  graph-review request <draft> --author-model M
+  graph-review brief   <draft>
+  graph-review record  <draft> --verdict-file F
+  graph-review remaining <draft> [--text]
+  graph-review decide  <draft> (--ticket T | --graph) --decision publish|rework
+                       --approved-by WHO --words "..." --project P
+  graph-review check   <draft>
+  graph-review show    <draft>
+
+Every answer is one JSON object on stdout (`remaining --text` prints the
+list Benjamin reads). Exit 0 done; 1 refused or could not run, nothing
+written; 4 not a draft of the new flow; 5 a third pass was asked.
+
+Environment (tests and non-default layouts):
+  FACTORY_ROOT                         repository whose roles and providers are read
+  BD_BIN, GRAPH_REVIEW_BD_WORKSPACE    tracker binary and its directory
+  GRAPH_REVIEW_DISPATCH_DOOR_BIN       door that routes the review to the reviewer
+  GRAPH_REVIEW_PROVIDER_FAILOVER_BIN   reports the reviewer role's provider
+  PROJECT_PLANNING_PROFILE_BIN         names the project's human approver
+  GRAPH_REVIEW_POLL_SECONDS            how often `review` re-reads the tracker
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import tomllib
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+PROGRAM = "graph-review"
+SELF_DIR = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("FACTORY_ROOT") or SELF_DIR.parent)
+BD_BIN = os.environ.get("BD_BIN", "bd")
+BD_WORKSPACE = Path(os.environ.get("GRAPH_REVIEW_BD_WORKSPACE") or ROOT)
+
+FLOW_CONTRACT_KEY = "flow_contract"
+NEW_FLOW = "new-flow/v1"
+REVIEWER_ROLE = "reviewer"
+REVIEW_FORMULA = "mol-graph-review"
+REVIEW_RIG = "agent-factory"
+MAX_PASSES = 2
+
+KEY_REQUEST = "gc.graph_review.request"
+KEY_PASS = "gc.graph_review.pass."
+KEY_DECISIONS = "gc.graph_review.decisions"
+
+FAVORABLE, UNFAVORABLE, NOT_APPLICABLE = "favorable", "unfavorable", "not_applicable"
+SCOPE_CHECK = "declared_scope_includes_wiring"
+FOLD_CHECK = "prototype_fold_present_and_first"
+# The closed questions of Spec §2, with what each one asks.
+TICKET_CHECKS = {
+    "demonstrable_alone": "démontrable seul",
+    "criteria_observable_falsifiable": "critères observables et falsifiables",
+    "size_tenable": "taille tenable",
+    "same_surface_ordered": "tickets de même surface ordonnés",
+    SCOPE_CHECK: "Declared Scope qui inclut les fichiers de branchement",
+}
+GRAPH_CHECKS = {
+    "no_orphan_story": "aucune story orpheline",
+    "assembly_point_not_confiscated": "point d'assemblage non confisqué",
+    FOLD_CHECK: "Prototype Fold présent et premier parmi les tickets d'interface",
+}
+GRAPH_TARGET = "graphe"
+DECISIONS = {"publish": "publier tel quel", "rework": "à reprendre"}
+
+EXIT_REFUSED, EXIT_NOT_NEW_FLOW, EXIT_THIRD_PASS = 1, 4, 5
+
+
+class Refusal(Exception):
+    def __init__(self, message: str, code: int = EXIT_REFUSED, **extra: Any):
+        super().__init__(message)
+        self.code = code
+        self.extra = extra
+
+
+# --- tracker -----------------------------------------------------------------
+
+
+def bd(*args: str) -> str:
+    try:
+        proc = subprocess.run([BD_BIN, "-C", str(BD_WORKSPACE), *args], capture_output=True, text=True)
+    except OSError as exc:
+        raise Refusal(f"le tracker n'a pas pu être lu ({BD_BIN} : {exc})") from exc
+    if proc.returncode != 0:
+        raise Refusal(f"le tracker a refusé « bd {' '.join(args[:2])} » : {(proc.stderr or proc.stdout).strip()[-300:]}")
+    return proc.stdout
+
+
+def digest_of(description: str) -> str:
+    """The digest the publication door freezes: sha256 of the raw description."""
+    return "sha256:" + hashlib.sha256(description.encode("utf-8")).hexdigest()
+
+
+def stored(metadata: dict[str, Any], key: str) -> Any:
+    """A JSON value of the review state; the tracker may hand it back as text."""
+    value = metadata.get(key)
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError as exc:
+            raise Refusal(f"{key} n'est pas lisible sur le brouillon ({exc}) : état écrit hors de {PROGRAM}") from exc
+    return value
+
+
+class Draft:
+    def __init__(self, draft_id: str):
+        try:
+            data = json.loads(bd("show", draft_id, "--json"))
+        except ValueError as exc:
+            raise Refusal(f"bd show {draft_id} n'a pas rendu de JSON : {exc}") from exc
+        bead = data[0] if isinstance(data, list) and data else data
+        if not isinstance(bead, dict) or not bead:
+            raise Refusal(f"brouillon introuvable : {draft_id}")
+        self.id = draft_id
+        self.metadata: dict[str, Any] = bead.get("metadata") or {}
+        description = str(bead.get("description") or "")
+        self.description = description
+        self.digest = digest_of(description)
+        try:
+            parsed = yaml.safe_load(description) or {}
+        except yaml.YAMLError as exc:
+            raise Refusal(f"la description du brouillon {draft_id} n'est pas du YAML valide : {exc}") from exc
+        if not isinstance(parsed, dict) or parsed.get(FLOW_CONTRACT_KEY) != NEW_FLOW:
+            raise Refusal(
+                f"pas un brouillon du nouveau flux : {draft_id} ne déclare pas {FLOW_CONTRACT_KEY}: {NEW_FLOW} ; "
+                "rien n'est écrit", EXIT_NOT_NEW_FLOW,
+            )
+        tickets = parsed.get("tickets")
+        if not isinstance(tickets, list) or not tickets or not all(isinstance(t, dict) for t in tickets):
+            raise Refusal(f"le brouillon {draft_id} n'a pas de tickets à relire")
+        ids = [str(t.get("id") or "").strip() for t in tickets]
+        if any(not i for i in ids) or len(set(ids)) != len(ids) or GRAPH_TARGET in ids:
+            raise Refusal(f"le brouillon {draft_id} a des identifiants de ticket vides, en double ou réservés")
+        self.tickets: dict[str, dict[str, Any]] = dict(zip(ids, tickets))
+        self.passes: dict[int, dict[str, Any]] = {}
+        for number in range(1, MAX_PASSES + 1):
+            record = stored(self.metadata, f"{KEY_PASS}{number}")
+            if record is not None:
+                self.passes[number] = record
+        self.request: dict[str, Any] | None = stored(self.metadata, KEY_REQUEST)
+        self.decisions: dict[str, Any] = stored(self.metadata, KEY_DECISIONS) or {}
+
+    def write(self, key: str, value: Any) -> None:
+        bd("update", self.id, "--set-metadata", f"{key}={json.dumps(value, ensure_ascii=False, sort_keys=True)}")
+
+    def declares_scope(self, ticket_id: str) -> bool:
+        scope = self.tickets[ticket_id].get("scope")
+        return isinstance(scope, dict) and bool(scope.get("paths"))
+
+    def ticket_checks(self, ticket_id: str) -> list[str]:
+        """The questions asked of one ticket: the Declared Scope one only
+        when the ticket declares a scope (Spec §2: « quand il est déclaré »)."""
+        return [name for name in TICKET_CHECKS if name != SCOPE_CHECK or self.declares_scope(ticket_id)]
+
+    @property
+    def last(self) -> dict[str, Any] | None:
+        return self.passes[max(self.passes)] if self.passes else None
+
+
+# --- verdicts ----------------------------------------------------------------
+
+
+def refusals_of(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """What a pass refused, in the order of the draft, the graph last."""
+    found = []
+    for target, entry in [*record["tickets"].items(), (GRAPH_TARGET, record["graph"])]:
+        reasons = [
+            {"check": name, "question": {**TICKET_CHECKS, **GRAPH_CHECKS}[name], "reason": check["reason"]}
+            for name, check in entry["checks"].items() if check["state"] == UNFAVORABLE
+        ]
+        if reasons:
+            found.append({"target": target, "reasons": reasons})
+    return found
+
+
+def independence(record: dict[str, Any]) -> str | None:
+    """Never silent (Spec §2): a reviewer of the author's model is said so
+    wherever the verdict is read."""
+    if not record.get("same_model"):
+        return None
+    return (
+        f"relecture non indépendante : le relecteur a tourné sur le même modèle que l'auteur du graphe "
+        f"({record['reviewer_model']})"
+    )
+
+
+def remaining(draft: Draft) -> dict[str, Any]:
+    """The refusals Benjamin rules on: those of the second pass, while its
+    verdicts hold for the draft's digest."""
+    last = draft.last
+    holds = last is not None and last["digest"] == draft.digest
+    items = []
+    if holds and last["pass"] == MAX_PASSES:
+        for refusal in refusals_of(last):
+            decision = draft.decisions.get(refusal["target"])
+            if decision and decision.get("digest") != draft.digest:
+                decision = None
+            items.append({**refusal, "decision": decision})
+    return {
+        "draft": draft.id, "digest": draft.digest, "passes": len(draft.passes),
+        "reviewed_digest": last["digest"] if last else None, "holds": holds,
+        "remaining": items, "model_independence": independence(last) if last else None,
+    }
+
+
+def remaining_text(state: dict[str, Any]) -> str:
+    lines = [f"Brouillon {state['draft']} — refus restants après la seconde passe du relecteur de graphe :"]
+    if not state["holds"]:
+        lines.append("  (aucune relecture ne vaut pour le digest courant du brouillon)")
+    elif state["passes"] < MAX_PASSES:
+        lines.append("  (la seconde passe n'a pas eu lieu : rien à trancher)")
+    elif not state["remaining"]:
+        lines.append("  aucun")
+    for item in state["remaining"]:
+        decision = item["decision"]
+        ruled = (
+            f"tranché par {decision['by']} : {DECISIONS[decision['decision']]} — « {decision['words']} »"
+            if decision else "à trancher par Benjamin"
+        )
+        lines.append(f"- {item['target']} — {ruled}")
+        lines += [f"    · {reason['question']} : {reason['reason']}" for reason in item["reasons"]]
+    if state["model_independence"]:
+        lines.append(f"Attention — {state['model_independence']}.")
+    return "\n".join(lines)
+
+
+def gate(draft: Draft) -> dict[str, Any]:
+    """Does a review hold for the draft's current digest? Raises the refusal
+    the publication door prints."""
+    last = draft.last
+    if last is None:
+        raise Refusal(
+            f"refus : le brouillon {draft.id} n'a pas de relecture de graphe ; la demander avant l'approbation "
+            f"({PROGRAM} review {draft.id}) ; rien n'est écrit"
+        )
+    exhausted = (
+        f" ; ses {MAX_PASSES} passes sont faites : un graphe corrigé est un nouveau brouillon, avec sa propre relecture"
+        if last["pass"] == MAX_PASSES else f" ; demander la relecture du brouillon corrigé ({PROGRAM} review {draft.id})"
+    )
+    if last["digest"] != draft.digest:
+        raise Refusal(
+            f"refus : le brouillon {draft.id} a changé depuis sa relecture de graphe : les verdicts valent pour le "
+            f"digest {last['digest']}, pas pour le digest courant {draft.digest}{exhausted} ; rien n'est écrit"
+        )
+    refused = refusals_of(last)
+    if refused and last["pass"] < MAX_PASSES:
+        names = ", ".join(item["target"] for item in refused)
+        raise Refusal(
+            f"refus : la première passe du relecteur de graphe refuse {names} sur le brouillon {draft.id} ; "
+            f"corriger avec Benjamin puis demander la seconde passe ({PROGRAM} review {draft.id}) ; rien n'est écrit"
+        )
+    state = remaining(draft)
+    undecided = [item["target"] for item in state["remaining"] if not item["decision"]]
+    if undecided:
+        raise Refusal(
+            f"refus : {len(undecided)} refus restant(s) du relecteur de graphe sans décision de Benjamin sur le "
+            f"brouillon {draft.id} ({', '.join(undecided)}) ; il tranche ticket par ticket "
+            f"({PROGRAM} decide) ; rien n'est écrit"
+        )
+    rework = [item["target"] for item in state["remaining"] if item["decision"]["decision"] == "rework"]
+    if rework:
+        raise Refusal(
+            f"refus : Benjamin a tranché « {DECISIONS['rework']} » pour {', '.join(rework)} sur le brouillon "
+            f"{draft.id}{exhausted} ; rien n'est écrit"
+        )
+    return {
+        "ok": True, "draft": draft.id, "digest": draft.digest, "pass": last["pass"],
+        "same_model": bool(last.get("same_model")), "model_independence": state["model_independence"],
+        "decisions": {item["target"]: item["decision"] for item in state["remaining"]},
+    }
+
+
+# --- reviewer identity -------------------------------------------------------
+
+
+def normalized_model(model: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", model.lower())
+
+
+def reviewer_identity() -> tuple[str, str, str]:
+    """The agent, provider and model the reviewer role runs on right now, as
+    configured: the role's agent (config/delivery-roles.json), the provider
+    bin/provider-failover gives that agent, the model of that provider's
+    profile in city.toml (else config/model-catalog.json)."""
+    try:
+        agent = json.loads((ROOT / "config" / "delivery-roles.json").read_text())["roles"][REVIEWER_ROLE]["agent"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise Refusal(f"le rôle relecteur n'est pas lisible dans config/delivery-roles.json ({exc})") from exc
+    failover = os.environ.get("GRAPH_REVIEW_PROVIDER_FAILOVER_BIN") or str(ROOT / "bin" / "provider-failover")
+    try:
+        target = json.loads(subprocess.run([failover, "status", "--json"], capture_output=True, text=True).stdout)
+        target = target["targets"][agent]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise Refusal(f"le fournisseur du rôle relecteur ({agent}) est inconnu de {failover} ({exc})") from exc
+    provider = str(target.get("effective") or target.get("provider") or "").strip()
+    if not provider:
+        raise Refusal(f"aucun fournisseur n'est donné au rôle relecteur ({agent})")
+    model = ""
+    try:
+        profile = (tomllib.loads((ROOT / "city.toml").read_text()).get("providers") or {}).get(provider) or {}
+        args = [str(item) for item in profile.get("args_append") or []]
+        if "--model" in args[:-1]:
+            model = args[args.index("--model") + 1]
+    except (OSError, ValueError):
+        pass
+    if not model:
+        try:
+            catalog = json.loads((ROOT / "config" / "model-catalog.json").read_text())
+            model = str((catalog["providers"][provider]["recommended"] or [""])[0])
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
+            pass
+    if not model.strip():
+        raise Refusal(
+            f"le modèle du fournisseur {provider} du rôle relecteur est inconnu (city.toml, config/model-catalog.json) : "
+            "sans lui, rien ne dit si le relecteur diffère de l'auteur du graphe ; rien n'est écrit"
+        )
+    return agent, provider, model.strip()
+
+
+# --- commands ----------------------------------------------------------------
+
+
+def now() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def open_request(draft: Draft, author_model: str) -> dict[str, Any]:
+    author_model = (author_model or "").strip()
+    if not author_model:
+        raise Refusal(
+            "--author-model est requis : le modèle de la session qui a écrit le graphe, sans lequel rien ne dit "
+            "si le relecteur en diffère ; rien n'est écrit"
+        )
+    if len(draft.passes) >= MAX_PASSES:
+        state = remaining(draft)
+        raise Refusal(
+            f"refus : le brouillon {draft.id} a déjà eu ses {MAX_PASSES} passes de relecture de graphe ; il n'y a pas "
+            "de troisième passe, Benjamin tranche les refus restants ticket par ticket ; rien n'est écrit\n"
+            + remaining_text(state),
+            EXIT_THIRD_PASS, **{k: state[k] for k in ("remaining", "holds", "model_independence")},
+        )
+    agent, provider, model = reviewer_identity()
+    request = {
+        "pass": len(draft.passes) + 1, "digest": draft.digest, "requested_at": now(),
+        "author_model": author_model, "reviewer_agent": agent, "reviewer_provider": provider,
+        "reviewer_model": model, "same_model": normalized_model(author_model) == normalized_model(model),
+    }
+    draft.write(KEY_REQUEST, request)
+    return request
+
+
+def cmd_request(args: argparse.Namespace) -> dict[str, Any]:
+    request = open_request(Draft(args.draft), args.author_model)
+    return {"ok": True, "draft": args.draft, "request": request, "model_independence": independence(request)}
+
+
+def pending_request(draft: Draft) -> dict[str, Any]:
+    request = draft.request
+    if not request or request.get("pass") != len(draft.passes) + 1:
+        raise Refusal(
+            f"refus : aucune relecture de graphe n'est demandée sur le brouillon {draft.id} ; un verdict ne "
+            f"s'enregistre que pour une passe ouverte par {PROGRAM} review ; rien n'est écrit"
+        )
+    if request["digest"] != draft.digest:
+        raise Refusal(
+            f"refus : le brouillon {draft.id} a changé depuis la demande de relecture (digest demandé "
+            f"{request['digest']}, digest courant {draft.digest}) ; redemander la relecture ; rien n'est écrit"
+        )
+    return request
+
+
+def cmd_brief(args: argparse.Namespace) -> dict[str, Any]:
+    """What the reviewer is given: the draft as it stands, its digest, the
+    closed questions, and the shape of the verdict it hands to `record`."""
+    draft = Draft(args.draft)
+    request = pending_request(draft)
+    return {
+        "ok": True, "draft": draft.id, "pass": request["pass"], "digest": draft.digest,
+        "spec_id": draft.metadata.get("spec_id"),
+        "states": [FAVORABLE, UNFAVORABLE, NOT_APPLICABLE],
+        "tickets": [
+            {"id": ticket_id, "checks": {name: TICKET_CHECKS[name] for name in draft.ticket_checks(ticket_id)}}
+            for ticket_id in draft.tickets
+        ],
+        "graph_checks": GRAPH_CHECKS,
+        "verdict_shape": {
+            "digest": draft.digest,
+            "tickets": {"<id>": {"checks": {"<check>": {"state": "favorable|unfavorable", "reason": "<required when unfavorable>"}}}},
+            "graph": {"checks": {"<check>": {"state": f"favorable|unfavorable ({FOLD_CHECK}: or not_applicable, with a reason, when the graph has no interface ticket)", "reason": "..."}}},
+        },
+        "draft_text": draft.description,
+    }
+
+
+def judged(where: str, given: Any, expected: list[str], problems: list[str]) -> dict[str, Any]:
+    """One target's answers, checked against its closed list of questions;
+    the verdict is computed here, never given by the reviewer."""
+    checks = given.get("checks") if isinstance(given, dict) else None
+    if not isinstance(checks, dict):
+        problems.append(f"{where} : pas de réponses (checks)")
+        return {}
+    for name in sorted(set(checks) - set(expected)):
+        problems.append(f"{where} : question hors liste ({name})")
+    out: dict[str, Any] = {}
+    for name in expected:
+        answer = checks.get(name)
+        state = answer.get("state") if isinstance(answer, dict) else None
+        reason = " ".join(str(answer.get("reason") or "").split()) if isinstance(answer, dict) else ""
+        allowed = (FAVORABLE, UNFAVORABLE, NOT_APPLICABLE) if name == FOLD_CHECK else (FAVORABLE, UNFAVORABLE)
+        if answer is None:
+            problems.append(f"{where} : pas de réponse à « {name} »")
+        elif state not in allowed:
+            problems.append(f"{where} : état hors liste pour « {name} » ({state!r} ; attendu : {', '.join(allowed)})")
+        elif state != FAVORABLE and not reason:
+            problems.append(f"{where} : « {name} » est {state} sans raison")
+        else:
+            out[name] = {"state": state, "reason": reason}
+    verdict = UNFAVORABLE if any(c["state"] == UNFAVORABLE for c in out.values()) else FAVORABLE
+    return {"verdict": verdict, "checks": out}
+
+
+def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
+    draft = Draft(args.draft)
+    request = pending_request(draft)
+    if os.environ.get("DELIVERY_ROLE_READ_ONLY") != "1":
+        raise Refusal(
+            "refus : un verdict de relecture de graphe ne s'enregistre que depuis une session du rôle relecteur, "
+            "en lecture seule (bin/delivery-role-sandbox) ; rien n'est écrit"
+        )
+    try:
+        verdict = json.loads(Path(args.verdict_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise Refusal(f"refus : le verdict {args.verdict_file} n'est pas lisible ({exc}) ; rien n'est écrit") from exc
+    if not isinstance(verdict, dict):
+        raise Refusal("refus : le verdict n'est pas un objet ; rien n'est écrit")
+    if verdict.get("digest") != draft.digest:
+        raise Refusal(
+            f"refus : le verdict porte sur le digest {verdict.get('digest')!r}, le brouillon {draft.id} est au "
+            f"digest {draft.digest} ; rien n'est écrit"
+        )
+    problems: list[str] = []
+    given = verdict.get("tickets") if isinstance(verdict.get("tickets"), dict) else {}
+    for ticket_id in sorted(set(given) - set(draft.tickets)):
+        problems.append(f"{ticket_id} : ticket inconnu du brouillon")
+    tickets = {}
+    for ticket_id in draft.tickets:
+        if ticket_id not in given:
+            problems.append(f"{ticket_id} : pas de verdict")
+            continue
+        tickets[ticket_id] = judged(ticket_id, given[ticket_id], draft.ticket_checks(ticket_id), problems)
+        if tickets[ticket_id] and not draft.declares_scope(ticket_id):
+            tickets[ticket_id]["checks"][SCOPE_CHECK] = {"state": NOT_APPLICABLE, "reason": "aucun Declared Scope déclaré"}
+    graph = judged(GRAPH_TARGET, verdict.get("graph"), list(GRAPH_CHECKS), problems)
+    if problems:
+        raise Refusal(
+            f"refus : le verdict du relecteur de graphe sur le brouillon {draft.id} est incomplet ou hors contrat "
+            f"({len(problems)} raison(s)) ; rien n'est écrit\n" + "\n".join(f"- {p}" for p in problems)
+        )
+    record = {
+        **request, "recorded_at": now(),
+        "recorded_by": os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_AGENT") or "",
+        "tickets": tickets, "graph": graph,
+    }
+    draft.write(f"{KEY_PASS}{request['pass']}", record)
+    return result_of(draft.id, record)
+
+
+def result_of(draft_id: str, record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": True, "draft": draft_id, "pass": record["pass"], "digest": record["digest"],
+        "reviewer_model": record["reviewer_model"], "author_model": record["author_model"],
+        "same_model": record["same_model"], "model_independence": independence(record),
+        "tickets": record["tickets"], "graph": record["graph"], "refusals": refusals_of(record),
+    }
+
+
+def cmd_review(args: argparse.Namespace) -> dict[str, Any]:
+    draft = Draft(args.draft)
+    request = open_request(draft, args.author_model)
+    number = request["pass"]
+    bead = bd(
+        "create", "--title", f"Relecture de graphe — {draft.id} (passe {number})",
+        "--description",
+        f"Graph review of Ticket Graph Draft {draft.id}, pass {number}, digest {draft.digest}.\n\ndraft: {draft.id}\n",
+        "--type", "task", "--priority", "1", "--labels", "graph-review", "--silent",
+    ).strip()
+    door = os.environ.get("GRAPH_REVIEW_DISPATCH_DOOR_BIN") or str(SELF_DIR / "dispatch-door")
+    try:
+        proc = subprocess.run(
+            [door, bead, "--rig", REVIEW_RIG, "--formula", REVIEW_FORMULA, "--role", REVIEWER_ROLE],
+            capture_output=True, text=True,
+        )
+    except OSError as exc:
+        raise Refusal(f"la relecture de graphe n'a pas pu être routée ({door} : {exc})") from exc
+    if proc.returncode != 0:
+        raise Refusal(
+            f"refus : la relecture de graphe du brouillon {draft.id} n'a pas été routée vers le rôle relecteur : "
+            f"{(proc.stderr or proc.stdout).strip()[-400:]} ; aucune passe n'est comptée"
+        )
+    deadline = time.time() + args.timeout
+    poll = float(os.environ.get("GRAPH_REVIEW_POLL_SECONDS", "10"))
+    while True:
+        record = Draft(args.draft).passes.get(number)
+        if record is not None:
+            return {**result_of(draft.id, record), "review_bead": bead}
+        if time.time() >= deadline:
+            raise Refusal(
+                f"refus : la relecture de graphe du brouillon {draft.id} n'a rendu aucun verdict en {args.timeout} s "
+                f"(ticket de relecture {bead}) ; une relecture sans résultat n'est pas passée et aucune passe n'est comptée"
+            )
+        time.sleep(poll)
+
+
+def cmd_remaining(args: argparse.Namespace) -> dict[str, Any]:
+    state = remaining(Draft(args.draft))
+    if args.text:
+        print(remaining_text(state))
+        raise SystemExit(0)
+    return {"ok": True, **state}
+
+
+def cmd_decide(args: argparse.Namespace) -> dict[str, Any]:
+    draft = Draft(args.draft)
+    target = GRAPH_TARGET if args.graph else str(args.ticket or "").strip()
+    if not target:
+        raise Refusal("--ticket <id> ou --graph est requis : Benjamin tranche ticket par ticket ; rien n'est écrit")
+    words = (args.words or "").strip()
+    if not words:
+        raise Refusal(
+            "refus : une décision sur un refus restant s'enregistre avec les mots de Benjamin (--words) ; "
+            "rien n'est écrit"
+        )
+    profile = os.environ.get("PROJECT_PLANNING_PROFILE_BIN") or str(SELF_DIR / "project-planning-profile")
+    argv = [profile, "human-approver", "--project", args.project]
+    if args.config_dir:
+        argv += ["--config-dir", args.config_dir]
+    try:
+        approver = json.loads(subprocess.run(argv, capture_output=True, text=True).stdout)["human_approver"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise Refusal(f"l'approbateur humain du projet {args.project} est inconnu ({exc}) ; rien n'est écrit") from exc
+    if args.approved_by != approver:
+        raise Refusal(
+            f"refus : {args.approved_by!r} n'est pas l'approbateur humain déclaré du projet ({approver!r}) ; "
+            "seul Benjamin tranche un refus restant ; rien n'est écrit"
+        )
+    state = remaining(draft)
+    item = next((i for i in state["remaining"] if i["target"] == target), None)
+    if item is None:
+        raise Refusal(
+            f"refus : {target} n'est pas un refus restant du brouillon {draft.id} (une décision ne porte que sur un "
+            f"refus de la seconde passe, valable pour le digest courant) ; rien n'est écrit\n" + remaining_text(state)
+        )
+    if item["decision"]:
+        raise Refusal(f"refus : {target} est déjà tranché sur le brouillon {draft.id} ; rien n'est écrit")
+    decision = {"decision": args.decision, "words": words, "by": approver, "at": now(), "digest": draft.digest}
+    draft.write(KEY_DECISIONS, {**draft.decisions, target: decision})
+    return {"ok": True, "draft": draft.id, "target": target, "decision": decision}
+
+
+def cmd_check(args: argparse.Namespace) -> dict[str, Any]:
+    return gate(Draft(args.draft))
+
+
+def cmd_show(args: argparse.Namespace) -> dict[str, Any]:
+    draft = Draft(args.draft)
+    return {
+        "ok": True, "draft": draft.id, "digest": draft.digest, "request": draft.request,
+        "passes": [draft.passes[n] for n in sorted(draft.passes)], "decisions": draft.decisions,
+    }
+
+
+def parser() -> argparse.ArgumentParser:
+    value = argparse.ArgumentParser(prog=PROGRAM)
+    sub = value.add_subparsers(dest="command", required=True)
+    for name in ("review", "request", "brief", "record", "remaining", "decide", "check", "show"):
+        command = sub.add_parser(name)
+        command.add_argument("draft", help="Ticket Graph Draft bead id")
+        if name in ("review", "request"):
+            command.add_argument("--author-model", default="", help="model of the session that wrote the graph")
+        if name == "review":
+            command.add_argument("--timeout", type=int, default=1800, help="seconds to wait for the verdict")
+        if name == "record":
+            command.add_argument("--verdict-file", required=True)
+        if name == "remaining":
+            command.add_argument("--text", action="store_true", help="the list as Benjamin reads it")
+        if name == "decide":
+            command.add_argument("--ticket")
+            command.add_argument("--graph", action="store_true", help="the refusal on the graph itself")
+            command.add_argument("--decision", required=True, choices=sorted(DECISIONS))
+            command.add_argument("--approved-by", required=True)
+            command.add_argument("--words", default="", help="Benjamin's exact words")
+            command.add_argument("--project", required=True)
+            command.add_argument("--config-dir", default=None)
+    return value
+
+
+def main() -> int:
+    args = parser().parse_args()
+    try:
+        print(json.dumps(globals()[f"cmd_{args.command}"](args), ensure_ascii=False, sort_keys=True))
+        return 0
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "error": str(exc), **exc.extra}, ensure_ascii=False, sort_keys=True))
+        print(f"{PROGRAM}: {exc}", file=sys.stderr)
+        return exc.code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

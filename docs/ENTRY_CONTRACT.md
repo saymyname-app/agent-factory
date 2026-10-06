@@ -26,7 +26,9 @@ T05 holds each ticket to the contract; T06 holds the graph to the Spec it
 slices and to its project (coverage of the user stories, operator needs,
 launch recipe), poses the pointers in each ticket, and applies all of it to
 `bd-patch`. The Validated Prototype reference and the Prototype Fold are
-T36; the graph reviewer is T08.
+T36. The graph reviewer (T08) is delivered: once the entry contract is
+met, `bd-publish` also refuses a draft that declares the contract without a
+graph review that holds for its current digest (`docs/GRAPH_REVIEW.md`).
 
 ```bash
 ./bin/ticket-graph-publish bd-publish af-draft --project agent-factory

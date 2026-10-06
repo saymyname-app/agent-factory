@@ -165,8 +165,30 @@ for n in $(seq -w 1 25); do
 done
 [ "$before" = "$(tracker)" ] || fail "a refused publication wrote to the real tracker"
 
+# A draft of the new flow is published only with a graph review that holds
+# for its digest (T08, tests/graph-review-isolated-city-test.sh): this one
+# answers every question of the brief favorably, as a reviewer session would.
+mkdir -p "$TRIAL/factory/config"
+echo '{"roles": {"reviewer": {"agent": "delivery-reviewer"}}}' > "$TRIAL/factory/config/delivery-roles.json"
+printf '[providers.reviewer-profile]\nargs_append = ["--model", "modele-relecteur"]\n' > "$TRIAL/factory/city.toml"
+review() {
+  FACTORY_ROOT="$TRIAL/factory" GRAPH_REVIEW_BD_WORKSPACE="$TEST_CITY" DELIVERY_ROLE_READ_ONLY=1 \
+    GRAPH_REVIEW_PROVIDER_FAILOVER_BIN="$ROOT/tests/fixtures/graph-review/provider-failover" "$ROOT/bin/graph-review" "$@"
+}
+review_favorably() {
+  review request "$1" --author-model modele-auteur >/dev/null || fail "graph review request refused for $1"
+  review brief "$1" | jq '
+    def answers($checks): {checks: ($checks | with_entries(.value = (
+      if .key == "prototype_fold_present_and_first" then {state: "not_applicable", reason: "aucun ticket d'"'"'interface"}
+      else {state: "favorable"} end)))};
+    {digest, tickets: (.tickets | map({key: .id, value: answers(.checks)}) | from_entries), graph: answers(.graph_checks)}
+  ' > "$TRIAL/graph-verdict.json"
+  review record "$1" --verdict-file "$TRIAL/graph-verdict.json" >/dev/null || fail "graph review verdict refused for $1"
+}
+
 # --- a conformant draft of the fixture is published and marked ---------------
 CONFORMANT=$(draft "$(cat "$FIXTURES/fixture-city-new-flow-draft.yaml")")
+review_favorably "$CONFORMANT"
 result=$(publish "$CONFORMANT") || fail "the conformant draft was refused"
 CONVOY=$(jq -r '.ids._convoy' <<<"$result")
 T1=$(jq -r '.ids.T1' <<<"$result"); T2=$(jq -r '.ids.T2' <<<"$result"); T3=$(jq -r '.ids.T3' <<<"$result")
@@ -237,6 +259,7 @@ grep -qF -- "besoin opérateur non levé : cle_api_meteo (secret)" <<<"$refusal"
   >/dev/null 2>&1 && fail "someone else than the declared human approver lifted a need"
 "$DOOR" lift-need "$NEEDY" --need cle_api_meteo --by benjamin --evidence "« la clé est au coffre »" --project acme \
   --config-dir "$PROJECTS" >/dev/null || fail "the declared human approver could not lift the need"
+review_favorably "$NEEDY"
 publish "$NEEDY" >/dev/null || fail "the draft was refused after its operator need was lifted"
 
 # --- T06: a patch that only adds a repair needs no approval -------------------
