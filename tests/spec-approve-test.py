@@ -528,6 +528,31 @@ class SpecOutlineTest(unittest.TestCase):
         )
         self.assertEqual(["Fixture City Oracle et ligne de commande des portes."], outline["testing_decisions"])
 
+    def test_outline_says_which_stories_describe_an_interface_and_gives_the_prototype_reference(self):
+        # T36 (af-2nmcxw): what the publication door poses in an interface ticket.
+        outline = json.loads(self.outline(FIXTURE_SPEC).stdout)
+        self.assertEqual([True, True, False], [story["interface"] for story in outline["user_stories"]])
+        self.assertEqual({
+            "branch": "prototype/delivery-fixture-city",
+            "commit": "dfdd34f50623661f6644524b6489342cdbbdee19",
+            "path": "tests/fixtures/delivery-fixture-city/prototype",
+            "states": ["empty", "content"],
+        }, outline["validated_prototype"])
+        self.assertIsNone(outline["validated_prototype_problem"])
+
+    def test_outline_of_a_spec_without_validated_prototype_gives_no_reference(self):
+        text = FIXTURE_SPEC.split("## Validated Prototype")[0] + "## Testing Decisions\n\nAucune.\n"
+        outline = json.loads(self.outline(text).stdout)
+        self.assertIsNone(outline["validated_prototype"])
+        self.assertIsNone(outline["validated_prototype_problem"])
+
+    def test_outline_says_what_an_incomplete_prototype_reference_misses(self):
+        proc = self.outline(FIXTURE_SPEC.replace("- commit : `dfdd34f50623661f6644524b6489342cdbbdee19`\n", ""))
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        outline = json.loads(proc.stdout)
+        self.assertIsNone(outline["validated_prototype"])
+        self.assertIn("commit", outline["validated_prototype_problem"])
+
     def test_outline_lists_numbered_testing_decisions_one_per_seam(self):
         text = SPEC_BODY + (
             "\n## Testing Decisions\n\nSeams confirmés :\n\n"

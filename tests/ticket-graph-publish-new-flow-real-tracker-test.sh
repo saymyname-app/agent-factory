@@ -13,6 +13,10 @@
 # the pointers the door poses; an operator need blocks until it is lifted; a
 # patch that only adds a repair is published without approval, tracked by the
 # convoy and marked; a ticket is withdrawn behind its gate record.
+# T36 (af-2nmcxw): an interface graph without Prototype Fold, or with an
+# interface ticket that does not wait for it, is refused; published, each
+# interface ticket shows the Validated Prototype reference and `bd ready`
+# gives the Fold alone among the interface tickets until it is closed.
 
 set -Eeuo pipefail
 
@@ -235,6 +239,66 @@ again=$(publish "$CONFORMANT") || fail "the second publication of the same draft
 [ "$(jq -S .ids <<<"$result")" = "$(jq -S .ids <<<"$again")" ] || fail "the second publication created other beads"
 [ "$before" = "$(tracker)" ] || fail "the second publication wrote to the real tracker"
 
+# --- T36: the Validated Prototype reference and the Prototype Fold ------------
+# T2 is the Prototype Fold of the fixture: the state command keeps it, and
+# every interface ticket shows the reference frozen in the Spec.
+jq -e --arg t2 "$T2" '[.tickets[] | select(.prototype_fold == true) | .id] == [$t2]' <<<"$shown" >/dev/null \
+  || fail "the Prototype Fold is not read back from the real tracker: $shown"
+for ticket in "$T2" "$T3"; do
+  text=$(gc bd show "$ticket" --json | jq -r '.[0].description')
+  for line in "## Validated Prototype" "- branche : prototype/delivery-fixture-city" \
+    "- commit : dfdd34f50623661f6644524b6489342cdbbdee19" "- chemin : tests/fixtures/delivery-fixture-city/prototype" \
+    "- états : empty, content"; do
+    grep -qxF -- "$line" <<<"$text" || fail "interface ticket $ticket does not show '$line': $text"
+  done
+done
+gc bd show "$T4" --json | jq -r '.[0].description' | grep -qF "## Validated Prototype" \
+  && fail "a ticket that is not an interface ticket shows a prototype reference"
+grep -qF "dfdd34f50623661f6644524b6489342cdbbdee19" "$FIXTURES/fixture-city-new-flow-draft.yaml" \
+  && fail "the prototype reference is written in the draft"
+
+# Without its Prototype Fold, the interface graph is refused, nothing written.
+UNFOLDED=$(draft "$(edited 'del t["T2"]["prototype_fold"]')")
+before=$(tracker)
+set +e
+refusal=$(publish "$UNFOLDED" 2>&1 >/dev/null); rc=$?
+set -e
+[ "$rc" != 0 ] || fail "an interface graph without Prototype Fold was published"
+grep -qF -- "- graphe : le Validated Prototype tests/fixtures/delivery-fixture-city/prototype (branche prototype/delivery-fixture-city, commit dfdd34f50623661f6644524b6489342cdbbdee19) n'a pas de Prototype Fold" <<<"$refusal" \
+  || fail "the refusal does not name the Validated Prototype left without a Fold: $refusal"
+[ "$before" = "$(tracker)" ] || fail "a refused publication (no Prototype Fold) wrote to the real tracker"
+
+# An interface ticket that does not wait for the Fold is refused by name.
+AHEAD=$(draft "$(edited 't["T3"]["blocked_by"] = []')")
+before=$(tracker)
+set +e
+refusal=$(publish "$AHEAD" 2>&1 >/dev/null); rc=$?
+set -e
+[ "$rc" != 0 ] || fail "an interface ticket that does not wait for the Prototype Fold was published"
+grep -qF -- "- T3 : ticket d'interface qui n'attend pas le Prototype Fold T2" <<<"$refusal" \
+  || fail "the refusal does not name the interface ticket: $refusal"
+[ "$before" = "$(tracker)" ] || fail "a refused publication (ticket ahead of the Fold) wrote to the real tracker"
+
+# With a Fold nothing blocks, it is the only interface ticket `bd ready`
+# gives at the start; the others become ready once it is closed.
+FOLDED=$(draft "$(edited 't["T1"]["unblocks"] = "T4"; t["T4"]["blocked_by"] = ["T1"]; t["T2"]["blocked_by"] = []
+d["tickets"].append({**{k: v for k, v in t["T2"].items() if k != "prototype_fold"}, "id": "T5",
+  "title": "La page affiche l'"'"'état du jeu de données", "blocked_by": ["T3"], "user_stories": [1]})')")
+review_favorably "$FOLDED"
+folded=$(publish "$FOLDED") || fail "the interface graph with its Prototype Fold was refused"
+F2=$(jq -r '.ids.T2' <<<"$folded"); F3=$(jq -r '.ids.T3' <<<"$folded"); F5=$(jq -r '.ids.T5' <<<"$folded")
+ready_interface() {
+  gc bd ready --json --limit 0 | jq -c --arg f2 "$F2" --arg f3 "$F3" --arg f5 "$F5" \
+    '[.[].id | select(. == $f2 or . == $f3 or . == $f5)] | sort'
+}
+[ "$(ready_interface)" = "$(jq -cn --arg f2 "$F2" '[$f2]')" ] \
+  || fail "the Prototype Fold is not the only interface ticket ready at the start: $(ready_interface)"
+gc bd show "$F5" --json | jq -r '.[0].description' | grep -qxF -- "- Prototype Fold : T2 — La page d'accueil liste les éléments" \
+  || fail "an interface ticket does not name its Prototype Fold"
+gc bd update "$F2" --status closed >/dev/null
+[ "$(ready_interface)" = "$(jq -cn --arg f3 "$F3" '[$f3]')" ] \
+  || fail "the interface ticket that waits for the Fold is not ready once the Fold is closed: $(ready_interface)"
+
 # --- T06: a graph with an orphan user story is refused with its number -------
 ORPHAN=$(draft "$(edited 't["T2"]["user_stories"] = [1]')")
 before=$(tracker)
@@ -305,7 +369,9 @@ printf '{"beads": {"%s": {"blocked_by": []}}}' "$T4" >"$TRIAL/graph.json"
 "$ROOT/bin/planning-exception" init --run essai --out "$REGISTER" >/dev/null
 "$ROOT/bin/planning-exception" raise "$REGISTER" --graph "$TRIAL/graph.json" --bead "$T4" --kind topology --run essai \
   --decision-id pd-1 --summary "la sonde n'est plus voulue" --raised-by essai >/dev/null
-WITHDRAWAL=$(revision "$(edited 'd["tickets"] = [t["T1"], t["T2"]]; t["T2"]["blocked_by"] = ["T1"]; d["withdrawn"] = [{"ticket": "T4", "planning_exception": "pd-1"}]')" \
+# T2, the Prototype Fold, keeps waiting for the repair R1 (T36: an interface
+# repair is before the Fold or after it, never beside it).
+WITHDRAWAL=$(revision "$(edited 'd["tickets"] = [t["T1"], t["T2"], repair]; t["T2"]["blocked_by"] = ["T1", "R1"]; d["withdrawn"] = [{"ticket": "T4", "planning_exception": "pd-1"}]')" \
   "$(jq -r .graph_digest <<<"$patched")" approved)
 before=$(tracker)
 set +e
@@ -350,4 +416,4 @@ set +e
 set -e
 [ "$rc" = 4 ] || fail "convoy-state show on the undeclared convoy exited $rc, want 4 (pas un convoi du nouveau flux)"
 
-echo "PASS: on the real tracker, the door refuses the redeclared Cockpit V2 draft without writing, publishes and marks a conformant draft with its pointers, refuses an orphan user story and an open operator need, adds a repair by patch without approval, withdraws a ticket behind its gate record, and publishes an undeclared draft as before"
+echo "PASS: on the real tracker, the door refuses the redeclared Cockpit V2 draft without writing, publishes and marks a conformant draft with its pointers, refuses an orphan user story and an open operator need, refuses an interface graph without its Prototype Fold and gives the Fold alone as ready among the interface tickets, adds a repair by patch without approval, withdraws a ticket behind its gate record, and publishes an undeclared draft as before"

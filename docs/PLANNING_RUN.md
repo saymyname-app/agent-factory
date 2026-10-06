@@ -87,12 +87,15 @@ Planning Run starts.
    Workflow -- declared kind, demonstration line, observable criteria,
    every numbered user story of the Spec covered by a slice, every
    declared operator need lifted (`lift-need`), a launch recipe in the
-   project profile or established by the first slice -- and refused
+   project profile or established by the first slice, and, when the Spec
+   names a Validated Prototype, one Prototype Fold (`prototype_fold: true`)
+   that every other interface ticket waits for -- and refused
    without a graph review that holds for its current digest and leaves
    no refusal without Benjamin's decision (`docs/GRAPH_REVIEW.md`); the
    door poses
    the pointers in each ticket (Spec and digest, user stories, sibling
-   tickets, seams), and its convoy is published with the new-flow mark;
+   tickets, seams, and the Validated Prototype reference in an interface
+   ticket), and its convoy is published with the new-flow mark;
    `bd-patch` applies the same contract to the graph that results from a
    revision, publishes without a new approval a revision that only adds
    `repair` tickets, and withdraws a ticket only on a resolved Planning

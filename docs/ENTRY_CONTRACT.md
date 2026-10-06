@@ -1,4 +1,4 @@
-# Entry contract of the new flow (T05, T06, Spec af-wf4w5r §2)
+# Entry contract of the new flow (T05, T06, T36, Spec af-wf4w5r §2 and §3)
 
 ## Status and purpose
 
@@ -25,8 +25,9 @@ project declares it until the new flow is complete (Spec §14).
 T05 holds each ticket to the contract; T06 holds the graph to the Spec it
 slices and to its project (coverage of the user stories, operator needs,
 launch recipe), poses the pointers in each ticket, and applies all of it to
-`bd-patch`. The Validated Prototype reference and the Prototype Fold are
-T36. The graph reviewer (T08) is delivered: once the entry contract is
+`bd-patch`. T36 holds an interface graph to its Prototype Fold and poses
+the Validated Prototype reference in each interface ticket ("Interface
+tickets and the Prototype Fold"). The graph reviewer (T08) is delivered: once the entry contract is
 met, `bd-publish` also refuses a draft that declares the contract without a
 graph review that holds for its current digest (`docs/GRAPH_REVIEW.md`).
 
@@ -54,6 +55,7 @@ A ticket carries only fields the door knows; any other field is refused.
 | `acceptance_criteria` | all | a list of criteria, each `{entry_point, observable, false_if}` |
 | `user_stories` | `vertical_slice` | required: the numbers of the Spec's numbered user stories the slice covers, each once, each present in the Spec. Refused on a `prefactoring` (it names the slice it unblocks) and on a `repair` (it names what it restores): neither covers a story |
 | `establishes_launch_recipe` | `vertical_slice` | optional, `true` only: this slice establishes the project's launch recipe (see "Launch recipe") |
+| `prototype_fold` | `vertical_slice` | optional, `true` only: this slice is the Prototype Fold of the Spec's Validated Prototype (see "Interface tickets and the Prototype Fold") |
 
 A `repair` is also held to what the door can read in the approved Spec:
 `restores.kind: user_story` must cite the number of exactly one story of
@@ -120,20 +122,61 @@ tickets.
 `scope.paths` overlap are put in series, as before the contract; the added
 edges are listed under `scope_edges`.
 
-## Pointers posed by the door (T06)
+## Interface tickets and the Prototype Fold (T36)
+
+The door reads in the approved Spec, through `bin/spec-approve outline`,
+which user stories describe an interface (the `[interface]` tag
+`spec-approve` already reads) and the reference of its Validated Prototype
+(branch, commit, path, states). An **interface ticket** is:
+
+- a `vertical_slice` that covers an interface story;
+- a `repair` that restores an interface story or an anchor;
+- the Prototype Fold itself.
+
+When the Spec names a Validated Prototype, the door refuses, before any
+write:
+
+- a graph with at least one interface ticket and no `vertical_slice` that
+  declares `prototype_fold: true` -- the refusal, on `graphe`, names the
+  Validated Prototype left without a Fold (path, branch, commit) and the
+  interface tickets;
+- more than one Prototype Fold: there is one per Validated Prototype, and a
+  Spec names one;
+- an interface ticket that does not wait for the Prototype Fold
+  (`blocked_by`, directly or through other tickets) -- the refusal names the
+  ticket. So among the interface tickets `bd ready` gives the Fold alone
+  until it is closed.
+
+Two cases need no edge to the Fold: a `repair` the Fold itself waits for
+(code blocks a ticket behind the repair that unblocks it, so that repair
+comes first by construction), and, on a patch, any ticket once the Fold is
+closed -- a repair written at the end of the Spec has nothing left to wait
+for.
+
+`prototype_fold` is refused on a `prefactoring` or a `repair`, with any
+value but `true`, and on a graph whose Spec names no Validated Prototype. A
+Spec without interface is sliced without Prototype Fold; so is a Spec whose
+interface stories have no Validated Prototype (all their states « non
+prototypés »). The door does not check that the Fold's own criteria serve
+every prototyped state: that is observed on the launched product, at the
+end of the ticket.
+
+## Pointers posed by the door (T06, T36)
 
 The text of a published ticket is what the approved draft says of it, then
-four sections the door writes itself -- none is ever written in the draft:
+the sections the door writes itself -- none is ever written in the draft:
 
 | Section | Content | Source |
 |---|---|---|
 | `## Spec` | the Spec bead id and its digest | the approved Spec bead |
 | `## User stories` | number and text of the stories a slice covers, or of the story a repair restores | `user_stories` / `restores`, and the Spec text |
 | `## Sibling tickets` | every other ticket of the graph: id, kind, title, demonstration line | the graph |
+| `## Validated Prototype` | in an interface ticket only: `branche`, `commit`, `chemin`, `états` of the Validated Prototype, then which ticket is the Prototype Fold (« ce ticket », or its id and title) | the approved Spec text (`spec-approve outline`), the graph |
 | `## Seams` | the entry points of the project profile, and the Spec's « Testing Decisions » (its numbered items, or its lines when none is numbered) | the profile, the Spec text |
 
 After a patch, the tickets the revision does not carry keep their own text
-and get these sections again, so a ticket names the siblings added since.
+and get these sections again, so a ticket names the siblings added since,
+and an interface ticket the reference of a Spec amended and approved again.
 
 ## What a refusal looks like
 
@@ -159,10 +202,11 @@ ticket-graph-publish: refus : le brouillon af-… déclare le contrat du nouveau
 | Demonstration line | `gc.flow.demonstration_line` on each slice and repair | `bin/convoy-state mark --demonstration-line` |
 | Covered user stories | `gc.flow.user_stories` on each slice | `bin/convoy-state mark --user-stories` |
 | Launch recipe established here | `gc.flow.establishes_launch_recipe` on at most one slice | `bin/convoy-state mark --establishes-launch-recipe` |
+| Prototype Fold | `gc.flow.prototype_fold` on the slice that is the Fold | `bin/convoy-state mark --prototype-fold` |
 
 Code reads them back with `bin/convoy-state show <convoy>`
 (`docs/CONVOY_STATE.md`): `kind`, `mark`, `demonstration_line`,
-`user_stories` and `establishes_launch_recipe` per ticket.
+`user_stories`, `establishes_launch_recipe` and `prototype_fold` per ticket.
 The ticket text shows the same demonstration line, what a prefactoring
 unblocks, what a repair restores, and each criterion as « Point d'entrée —
 Observable — Faux si ».
@@ -180,7 +224,7 @@ convoy: code starts its tickets, not the Mayor (Spec §0 rule 3).
 under it. A revised draft carries the unfinished tickets it changes or
 needs as blockers, and the tickets it adds; it never carries a closed
 ticket. Everything above applies as it is to what the revision carries,
-and the graph checks (coverage, launch recipe) to the graph that results:
+and the graph checks (coverage, launch recipe, Prototype Fold) to the graph that results:
 what the convoy tracks -- whatever digest each ticket was last published
 under -- less what is withdrawn, with the revision on top. Before any
 write it also refuses:
@@ -192,8 +236,8 @@ write it also refuses:
   added to a marked convoy is never weaker than an original one;
 - `--reslice`: it is the Mayor's gesture, and the Mayor does not modify the
   tickets of a marked convoy (Spec §0 rule 3);
-- a published ticket whose kind, demonstration line, covered user stories
-  or `establishes_launch_recipe` differ from what `bin/convoy-state` holds:
+- a published ticket whose kind, demonstration line, covered user stories,
+  `establishes_launch_recipe` or `prototype_fold` differ from what `bin/convoy-state` holds:
   they are frozen with the approved graph, another one is another ticket.
 
 **Repair without approval.** A revised draft that carries no approval
@@ -248,7 +292,13 @@ both doors: coverage, operator needs and `lift-need`, launch recipe,
 pointers read on the published ticket, a patch that adds, changes or
 withdraws tickets, with and without approval, the Planning Exception
 register being written by the real `bin/planning-exception`.
+`tests/ticket-graph-publish-prototype-fold-test.py` does the same for T36:
+an interface graph without Prototype Fold, an interface ticket that does
+not wait for it, the reference read on each published interface ticket, a
+Spec without interface, and the same rules on a patch.
 `tests/ticket-graph-publish-new-flow-real-tracker-test.sh` (local-only)
 replays refusal, publication, marking, pointers, an orphan story, an
-operator need, a repair added by patch without approval, a withdrawal and
+operator need, the Prototype Fold (refusals, reference shown by `gc bd
+show`, the Fold alone given by `bd ready` among the interface tickets until
+it is closed), a repair added by patch without approval, a withdrawal and
 the undeclared case on the real `gc`/`bd` in a disposable city.

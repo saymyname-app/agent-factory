@@ -866,7 +866,8 @@ class PatchDoorTest(Harness):
         self.propose(self.revision(self.SLICE, keep=("T1", "T2")))
         first = self.patched()
 
-        second = self.revision(self.SLICE, self.REPAIR)
+        # R1 restores an interface story: it waits for the Prototype Fold, T2 (T36).
+        second = self.revision(self.SLICE, {**self.REPAIR, "blocked_by": ["T2"]})
         self.ticket(second, "T4")["blocked_by"] = ["R1"]
         self.propose(second, draft_id="draft-3", revises=first["graph_digest"])
         result = self.patched("draft-3")

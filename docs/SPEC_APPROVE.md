@@ -19,12 +19,18 @@ now-retired Planning Run router and was retired with it (A6b, W10).
 ```
 
 `outline` (T06, af-cgauf8) reads a Spec text on stdin and prints as JSON
-its numbered user stories (`user_stories`: `number`, `text`) and its
+its numbered user stories (`user_stories`: `number`, `text`, and
+`interface`, true for a story tagged `[interface]`) and its
 « Testing Decisions » (`testing_decisions`: the numbered items of that
-section, or its lines when none is numbered). It reads no bead and writes
-nothing; it exits 1 on a text without numbered user stories. The
-publication door calls it on the approved Spec, so the unit of coverage has
-one reader (`docs/ENTRY_CONTRACT.md`).
+section, or its lines when none is numbered). For the interface tickets
+(T36, af-2nmcxw) it also prints the reference of the Validated Prototype as
+the Spec writes it (`validated_prototype`: `branch`, `commit`, `path`,
+`states`; `null` without a « Validated Prototype » section), and in
+`validated_prototype_problem` what an incomplete reference misses -- it does
+not read the remote repository: `bd-approve` did. It reads no bead and
+writes nothing; it exits 1 on a text without numbered user stories. The
+publication door calls it on the approved Spec, so the unit of coverage and
+the prototype reference have one reader (`docs/ENTRY_CONTRACT.md`).
 
 Before any write, `bd-approve` refuses unless, in order:
 
