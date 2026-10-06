@@ -138,7 +138,7 @@ BEAD_LABELS_JSON='[{"labels":[]}]'
 
 # ---------------------------------------------------------------------------
 # 4b. A planning-plane bead (gc.plane=planning: a wayfinder map or decision
-#     ticket, Work Plane in CONTEXT.md) is refused the same way, before any
+#     ticket, Work Plane in GLOSSARY.md) is refused the same way, before any
 #     sling or stamp call. Research af-0aiero.3 (A6b) found the door had no
 #     plane gate: only Mayor prompt prose kept planning beads from dispatch.
 # ---------------------------------------------------------------------------

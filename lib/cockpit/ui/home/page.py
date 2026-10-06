@@ -1,5 +1,5 @@
 """Renders "Ce qui t'attend" (spec af-oohx2x §"Accueil", §"Demandes
-opérateur"; CONTEXT.md "Operator Request"). Pure function of a list of
+opérateur"; GLOSSARY.md "Operator Request"). Pure function of a list of
 :class:`~cockpit.requests.model.OperatorRequest` plus the beads source's
 own freshness — no I/O, exercised directly as well as through the HTTP
 seam (ui/base/page.py's ``render_home`` embeds this section's HTML).

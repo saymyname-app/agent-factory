@@ -9,7 +9,7 @@ valeurs grisées, afin de ne pas lire un écran figé comme actuel." The
 cockpit's HTTP handler always answers when reached — a client that stops
 receiving updates has lost the connection itself (Wi-Fi, tailnet, PC off),
 not a single source, so this is the page's own liveness, built on top of
-the same Freshness/staleness concept as every other value (CONTEXT.md),
+the same Freshness/staleness concept as every other value (GLOSSARY.md),
 never a new parallel one: it is driven client-side by :data:`DISCONNECT_SCRIPT`
 polling ``/api/status`` and comparing the elapsed time since the last
 success against :data:`DISCONNECT_AFTER_SECONDS`, exactly the way a

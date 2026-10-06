@@ -62,7 +62,7 @@ publié.
 3. **Optimisation** — la mise en pause scoped évite d'arrêter toute la
    frontière éligible pour une question qui ne concerne qu'un sous-graphe.
 4. **Documentation** — cette ADR, `docs/ADAPTATION_REGISTER.md` (AR-003) et
-   `CONTEXT.md` (glossaire *Planning Exception*) décrivent le mécanisme.
+   `GLOSSARY.md` (glossaire *Planning Exception*) décrivent le mécanisme.
 
 ## Amendement — décision 8 (t6-planning-doors, 2026-09-28)
 

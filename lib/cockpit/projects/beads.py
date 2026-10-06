@@ -1,6 +1,6 @@
 """The extra Beads reads a Chantier's stage needs beyond the cockpit's
 normal open-beads-only source (spec af-oohx2x "Calcul d'étape des
-chantiers"; CONTEXT.md: Chantier).
+chantiers"; GLOSSARY.md: Chantier).
 
 ``cockpit.core.beads_source.read_operator_beads`` only ever returns open
 beads (plus anything still carrying ``gc.needs_benjamin``) -- a closed
