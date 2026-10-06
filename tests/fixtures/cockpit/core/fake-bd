@@ -24,6 +24,13 @@ if sys.argv[1:] == ["list", "--all", "--limit", "0", "--has-metadata-key", "gc.g
     print(json.dumps([]))
     sys.exit(0)
 
+# The journal's reads: every bead that ever bore a proposal or a cockpit
+# action trace -- none in this fixture.
+for _key in ("gc.proposal_state", "gc.cockpit_action_quoi"):
+    if sys.argv[1:] == ["list", "--all", "--limit", "0", "--has-metadata-key", _key, "--json"]:
+        print(json.dumps([]))
+        sys.exit(0)
+
 sys.stderr.write(
     "fake bd (cockpit-core): no canned response for: bd %s\n" % " ".join(sys.argv[1:])
 )
