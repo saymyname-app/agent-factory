@@ -1,4 +1,4 @@
-# Convoy Advance (T04, T34, Spec af-wf4w5r §0 rules 3 and 5, §4)
+# Convoy Advance (T04, T34, T18, Spec af-wf4w5r §0 rules 3 and 5, §4)
 
 ## Status and purpose
 
@@ -57,6 +57,27 @@ record. Passes are serialised Factory-wide by a lock
 (`CONVOY_ADVANCE_LOCK_DIR`, default `$XDG_RUNTIME_DIR` or `/tmp`), so two of
 them never count the same free place.
 
+## Finished tickets are merged by the pass (T18)
+
+Once the starts are made, and outside their lock, the pass hands each convoy
+that has an integration branch and a finished ticket not merged yet to
+`bin/spec-integration merge <convoy> --repo <project repository> --profile
+<project profile> --limit 1` (`docs/SPEC_INTEGRATION.md`): one ticket per
+pass and per convoy is merged into the integration branch of the Spec, with
+tests on the merged result. The repository is the one of the single project
+the convoy's tickets name; the profile is the file of
+`config/project-descriptors` whose `rigs` lists that project. A convoy with
+no finished ticket runs no merge and asks nothing of the profile; a stopped
+convoy merges nothing.
+
+What the merge did is reported under the convoy's `integration`: `merged`,
+`returned` (a conflict or red tests: the ticket is back with its author),
+`refused` (a verdict outdated by a newer commit) and `waiting`. Those are
+outcomes of the pass, not failures. A merge pass that could not run (no
+profile for the project, a takeover of the protected branch in conflict or
+red, a tracker or a repository that cannot be read) carries `error`, and the
+pass exits 1.
+
 ## The ceiling N
 
 N is `max_sessions` in `config/delivery-flow.json`: one setting for the
@@ -83,13 +104,14 @@ Every answer is one JSON object on stdout: the ceiling, the sessions counted
 per role, the tickets awaiting a session, and per convoy the tickets
 `started`, `waiting` (with the reason: blocker ids, or the ceiling),
 `deferred` (the door deferred: low memory, hot path held — retried on the
-next pass) and `refused` (the door refused, with its reason). A stopped
-convoy carries `signal`, `unruled` (the anomalies) and `incident`.
+next pass) and `refused` (the door refused, with its reason), plus
+`integration` when the pass ran a merge. A stopped convoy carries `signal`,
+`unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, tracker), the door refused a ticket, or an incident could not be raised or withdrawn |
+| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass could not run |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
@@ -178,6 +200,11 @@ prove nothing was written. `tests/convoy-advance-isolated-city-test.sh`
 supervisor and no Mayor, the city's own order starts a marked convoy's three
 tickets in dependency order under N, the third only after the trial closed
 the two others in the tracker.
+
+T18: the same file covers the pass that merges, through the real
+`bin/spec-integration` on a throwaway repository: one finished ticket merged
+per pass, a ticket returned by red tests, a merge pass that cannot run, a
+stopped convoy that merges nothing.
 
 T34: the same `tests/convoy-advance-test.py` covers the stop (one test per
 kind of anomaly), the single incident read back from the real

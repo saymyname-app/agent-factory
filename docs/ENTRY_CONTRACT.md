@@ -203,6 +203,7 @@ ticket-graph-publish: refus : le brouillon af-… déclare le contrat du nouveau
 | Covered user stories | `gc.flow.user_stories` on each slice | `bin/convoy-state mark --user-stories` |
 | Launch recipe established here | `gc.flow.establishes_launch_recipe` on at most one slice | `bin/convoy-state mark --establishes-launch-recipe` |
 | Prototype Fold | `gc.flow.prototype_fold` on the slice that is the Fold | `bin/convoy-state mark --prototype-fold` |
+| Integration branch of the Spec | `gc.flow.integration` on the convoy, and the branch `integration/<spec id>` in the project's repository | `bin/spec-integration open` |
 
 Code reads them back with `bin/convoy-state show <convoy>`
 (`docs/CONVOY_STATE.md`): `kind`, `mark`, `demonstration_line`,
@@ -217,6 +218,20 @@ says the convoy is published but not marked; until then it reads as a
 convoy of the old flow. Running the same command again resumes at the
 marking and changes nothing else. The Mayor is not woken for a marked
 convoy: code starts its tickets, not the Mayor (Spec §0 rule 3).
+
+**The integration branch of the Spec (T18).** Once the convoy is marked, the
+door opens the branch its tickets are merged into, `integration/<spec id>`,
+at the tip of the protected branch, through `bin/spec-integration open`
+(`docs/SPEC_INTEGRATION.md`); the result carries it under `integration`.
+Where: the repository of the one rig the graph targets (`rig_dir` of
+`<config-dir>/<rig>.toml`, under `--repo-root`) and its `protected_branch`.
+This is checked before any write: a new-flow graph that targets several
+rigs, a rig without such a project file, or a rig whose directory is not a
+Git repository, is refused and nothing is written. If the branch cannot be
+opened after the marking, the door exits non-zero and says so; the same
+command again resumes there. Publishing again opens nothing more. A convoy
+without the mark gets no branch and none of these checks. The patch door
+opens nothing: the branch exists since the publication.
 
 ## The patch door (T06)
 

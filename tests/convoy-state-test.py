@@ -1063,5 +1063,170 @@ class ConvoyStateTest(unittest.TestCase):
             self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
             self.assertEqual(before, self.tracker.read_text())
 
+    # --- the integration branch, the merge of a ticket, a verdict made invalid (T18) ---
+
+    def integrated(self):
+        """A started ticket in a convoy whose integration branch is recorded."""
+        tip = self.started_ticket()
+        base = self.git("rev-parse", "main")
+        self.ok("set-integration", CONVOY, "--branch", "integration/fx-spec", "--protected", "main", "--base", base)
+        return tip, base
+
+    def test_set_integration_records_the_branch_of_the_spec_on_the_convoy(self):
+        self.ok("mark", CONVOY)
+        self.assertIsNone(self.show()["convoy"]["integration"])
+
+        self.ok("set-integration", CONVOY, "--branch", "integration/fx-spec", "--protected", "main",
+                "--base", ABSENT_COMMIT)
+        integration = self.show()["convoy"]["integration"]
+        self.assertEqual(("integration/fx-spec", "main", ABSENT_COMMIT),
+                         (integration["branch"], integration["protected"], integration["base"]))
+
+    def test_set_integration_again_writes_nothing_and_another_branch_is_refused(self):
+        self.ok("mark", CONVOY)
+        record = ("set-integration", CONVOY, "--branch", "integration/fx-spec", "--protected", "main",
+                  "--base", ABSENT_COMMIT)
+        self.ok(*record)
+        before = self.tracker.read_bytes()
+
+        self.assertEqual({}, self.ok(*record)["written"])
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assert_refused_and_nothing_written(
+            "set-integration", CONVOY, "--branch", "integration/autre", "--protected", "main",
+            "--base", ABSENT_COMMIT, mention="ne se réécrit pas")
+
+    def test_set_integration_refuses_a_malformed_record(self):
+        self.ok("mark", CONVOY)
+        for args, mention in (
+            (("--protected", "main", "--base", ABSENT_COMMIT), "branche d'intégration"),
+            (("--branch", "integration/fx spec", "--protected", "main", "--base", ABSENT_COMMIT), "branche d'intégration"),
+            (("--branch", "integration/fx-spec", "--base", ABSENT_COMMIT), "branche protégée"),
+            (("--branch", "integration/fx-spec", "--protected", "main", "--base", "HEAD"), "commit de départ"),
+        ):
+            with self.subTest(args=args):
+                self.assert_refused_and_nothing_written("set-integration", CONVOY, *args, mention=mention)
+
+    def test_set_merge_records_what_was_done_of_the_ticket(self):
+        tip, base = self.integrated()
+        self.assertIsNone(self.ticket(self.show(), T1)["merge"])
+
+        self.ok("set-merge", CONVOY, T1, "--outcome", "merged", "--ticket-commit", tip, "--integration", base,
+                "--commit", ABSENT_COMMIT)
+        merge = self.ticket(self.show(), T1)["merge"]
+        self.assertEqual(("merged", tip, base, ABSENT_COMMIT),
+                         (merge["outcome"], merge["ticket_commit"], merge["integration"], merge["commit"]))
+
+        self.ok("set-merge", CONVOY, T1, "--outcome", "conflict", "--ticket-commit", tip, "--integration", base)
+        merge = self.ticket(self.show(), T1)["merge"]
+        self.assertEqual("conflict", merge["outcome"])
+        self.assertNotIn("commit", merge)
+
+    def test_set_merge_refuses_a_malformed_record(self):
+        tip, base = self.integrated()
+        for args, mention in (
+            (("--outcome", "rebased", "--ticket-commit", tip, "--integration", base), "issue de fusion"),
+            (("--ticket-commit", tip, "--integration", base), "issue de fusion"),
+            (("--outcome", "merged", "--ticket-commit", tip, "--integration", base), "commit du résultat fusionné absent"),
+            (("--outcome", "red", "--ticket-commit", tip, "--integration", base), "commit du résultat fusionné absent"),
+            (("--outcome", "conflict", "--ticket-commit", tip, "--integration", base, "--commit", ABSENT_COMMIT),
+             "inattendu"),
+            (("--outcome", "conflict", "--ticket-commit", "abc", "--integration", base), "pointe du ticket"),
+            (("--outcome", "conflict", "--ticket-commit", tip), "pointe de la branche d'intégration"),
+        ):
+            with self.subTest(args=args):
+                self.assert_refused_and_nothing_written("set-merge", CONVOY, T1, *args, mention=mention)
+
+    def test_set_merge_refuses_a_convoy_without_integration_branch_and_a_closed_ticket(self):
+        tip = self.started_ticket()
+        record = ("set-merge", CONVOY, T1, "--outcome", "conflict", "--ticket-commit", tip, "--integration", tip)
+        self.assert_refused_and_nothing_written(*record, mention="branche d'intégration")
+
+        self.ok("set-integration", CONVOY, "--branch", "integration/fx-spec", "--protected", "main", "--base", tip)
+        self.ok("record-gate", CONVOY, T1, "--gate", "ticket_end", "--commit", tip)
+        self.edit_tracker(T1, status="closed")
+        self.assert_refused_and_nothing_written(*record, mention="fermé")
+
+    def test_invalidate_verdicts_marks_them_invalid_and_counts_one_resume(self):
+        judged = self.started_ticket()
+        for kind in ("code_review", "evaluation"):
+            self.ok("set-verdict", CONVOY, T1, "--kind", kind, "--state", "favorable", "--commit", judged)
+        tip = self.commit_on("ticket/t1")
+
+        answer = self.ok("invalidate-verdicts", CONVOY, T1, "--tip", tip, "--kind", "code_review", "--kind", "evaluation")
+        self.assertEqual(["code_review", "evaluation"], answer["invalidated"])
+        t1 = self.ticket(self.show(), T1)
+        for kind in ("code_review", "evaluation"):
+            self.assertEqual((judged, "favorable", False),
+                             (t1["verdicts"][kind]["commit"], t1["verdicts"][kind]["state"], t1["verdicts"][kind]["valid"]))
+            self.assertEqual(tip, t1["verdicts"][kind]["invalidated"]["tip"])
+        self.assertEqual({"resumes": 1, "correction_rounds": 0}, t1["counters"])
+        self.assertEqual([], t1["unruled"])
+
+    def test_invalidate_verdicts_again_counts_nothing_more(self):
+        judged = self.started_ticket()
+        self.ok("set-verdict", CONVOY, T1, "--kind", "code_review", "--state", "favorable", "--commit", judged)
+        tip = self.commit_on("ticket/t1")
+        self.ok("invalidate-verdicts", CONVOY, T1, "--tip", tip, "--kind", "code_review")
+        before = self.tracker.read_bytes()
+
+        answer = self.ok("invalidate-verdicts", CONVOY, T1, "--tip", self.commit_on("ticket/t1"), "--kind", "code_review")
+        self.assertEqual(([], {}), (answer["invalidated"], answer["written"]))
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertEqual(1, self.ticket(self.show(), T1)["counters"]["resumes"])
+
+    def test_an_invalidated_verdict_stays_invalid_until_it_is_replayed(self):
+        judged = self.started_ticket()
+        self.ok("set-verdict", CONVOY, T1, "--kind", "evaluation", "--state", "favorable", "--commit", judged)
+        tip = self.commit_on("ticket/t1")
+        self.ok("invalidate-verdicts", CONVOY, T1, "--tip", tip, "--kind", "evaluation")
+
+        self.ok("set-verdict", CONVOY, T1, "--kind", "evaluation", "--state", "favorable", "--commit", tip)
+        verdict = self.ticket(self.show(), T1)["verdicts"]["evaluation"]
+        self.assertIs(True, verdict["valid"])
+        self.assertNotIn("invalidated", verdict)
+        self.assertEqual(1, self.ticket(self.show(), T1)["counters"]["resumes"])
+
+    def test_invalidate_verdicts_refuses_what_is_not_an_outdated_verdict(self):
+        tip = self.started_ticket()
+        self.ok("set-verdict", CONVOY, T1, "--kind", "code_review", "--state", "favorable", "--commit", tip)
+        for args, mention in (
+            (("--tip", tip), "genre de verdict absent"),
+            (("--tip", tip, "--kind", "vibes"), "genre de verdict"),
+            (("--tip", tip, "--kind", "evaluation"), "ne porte pas de verdict evaluation"),
+            (("--tip", "HEAD", "--kind", "code_review"), "pointe de la branche du ticket"),
+            (("--kind", "code_review"), "pointe de la branche du ticket"),
+            # the verdict judged that very tip: no commit was added after it
+            (("--tip", tip, "--kind", "code_review"), "aucun commit ne lui a été ajouté"),
+        ):
+            with self.subTest(args=args):
+                self.assert_refused_and_nothing_written("invalidate-verdicts", CONVOY, T1, *args, mention=mention)
+
+    def test_integration_or_merge_written_outside_the_command_is_a_state_without_rule(self):
+        self.started_ticket()
+        self.edit_tracker(CONVOY, **{"gc.flow.integration": json.dumps({"branch": "integration/fx-spec"})})
+        self.edit_tracker(T1, **{"gc.flow.merge": json.dumps({"outcome": "squashed", "at": "x"}),
+                                 "gc.flow.verdict.fidelity": json.dumps(
+                                     {"state": "favorable", "commit": ABSENT_COMMIT, "at": "x", "invalidated": "oui"})})
+
+        shown = self.show(expect=EXIT_UNRULED)
+        self.assertIn("unruled", shown["convoy"]["integration"])
+        self.assertEqual(["gc.flow.integration"], [entry["field"] for entry in shown["convoy"]["unruled"]])
+        ticket = self.ticket(shown, T1)
+        self.assertIn("unruled", ticket["merge"])
+        self.assertEqual({"gc.flow.merge", "gc.flow.verdict.fidelity"}, {entry["field"] for entry in ticket["unruled"]})
+
+    def test_integration_merge_and_invalidation_on_an_unmarked_convoy_write_nothing(self):
+        before = self.tracker.read_text()
+        for command in (
+            ("set-integration", CONVOY, "--branch", "integration/fx-spec", "--protected", "main", "--base", ABSENT_COMMIT),
+            ("set-merge", CONVOY, T1, "--outcome", "conflict", "--ticket-commit", ABSENT_COMMIT,
+             "--integration", ABSENT_COMMIT),
+            ("invalidate-verdicts", CONVOY, T1, "--tip", ABSENT_COMMIT, "--kind", "code_review"),
+        ):
+            proc = self.run_tool(*command)
+            self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+            self.assertEqual(before, self.tracker.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

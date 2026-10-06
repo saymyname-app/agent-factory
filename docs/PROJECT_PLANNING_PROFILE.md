@@ -190,7 +190,7 @@ declaring `launch` at all requires every one of these sub-fields, or
 | `frozen_harness_paths` | test harness/config paths frozen at the ticket's freeze step. |
 | `test_command` | runs one criterion test and writes its per-test report: it carries `{test}` (the test id) and `{report}` (the JUnit XML file to write, where an assertion `failure` is distinct from an `error` and from `skipped`); read by `bin/tdd-step` (`docs/TDD_STEP.md`). |
 | `seam_mode` | `black_box` or `import_rule` — how a criterion test is proven to go through a real entry point. |
-| `regression_command` | the `prefactoring` regime's before/after command. |
+| `regression_command` | the `prefactoring` regime's before/after command; also the tests `bin/spec-integration` runs on each merged result of the integration branch (T18, `docs/SPEC_INTEGRATION.md`): it runs from the root of a clean tree and exits 0 when green. |
 | `k` | consecutive green runs required at the ticket's green step. |
 | `red_error_types` | optional — error types (e.g. `AttributeError`) that are a valid red on a library seam, where a missing symbol is the red. Absent: only an assertion failure is a red. |
 | `import_rule` | optional, required by `bin/tdd-step` when `seam_mode` is `import_rule` — `{product_import, entry_point_import}`, two regular expressions applied to each line of a test: a line that imports the product must import one of its entry points. |

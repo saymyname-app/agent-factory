@@ -60,6 +60,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -995,6 +996,67 @@ def mark_new_flow_convoy(draft_id: str, tickets: list[dict[str, Any]], mapping: 
         ) from exc
 
 
+# --- integration branch of the Spec (T18, Spec af-wf4w5r §4) -----------------
+
+RIG_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def integration_target(draft_id: str, tickets: list[dict[str, Any]], config_dir: Path, repo_root: Path) -> dict[str, Any]:
+    """Where the integration branch of the Spec is opened: the repository of
+    the one rig the graph targets, and its protected branch, both read in
+    that rig's project file. Checked before any write: a marked convoy is
+    never published without the branch its tickets are merged into."""
+    def refuse(reason: str) -> PublishError:
+        return PublishError(
+            f"refus : le brouillon {draft_id} déclare le contrat du nouveau flux ({NEW_FLOW}) et la branche "
+            f"d'intégration de sa Spec ne peut pas être ouverte : {reason} ; rien n'est écrit")
+
+    rigs = sorted({str(rig) for ticket in tickets for rig in ticket.get("target_rigs") or []})
+    if len(rigs) != 1:
+        raise refuse(
+            f"le graphe cible {len(rigs)} rigs ({', '.join(rigs) or 'aucun'}), or une Spec se livre sur une "
+            "seule branche d'intégration, dans le dépôt d'un seul rig")
+    rig = rigs[0]
+    path = config_dir / f"{rig}.toml"
+    if not RIG_NAME.match(rig) or not path.is_file():
+        raise refuse(f"le rig {rig} n'a pas de fichier de projet ({path})")
+    try:
+        project = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise refuse(f"le fichier de projet du rig {rig} ({path}) est illisible : {exc}") from exc
+    rig_dir, protected = project.get("rig_dir"), project.get("protected_branch")
+    if not isinstance(rig_dir, str) or not rig_dir or not isinstance(protected, str) or not protected:
+        raise refuse(f"le fichier de projet du rig {rig} ({path}) ne déclare pas rig_dir et protected_branch")
+    repo = repo_root / rig_dir
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--git-dir"], capture_output=True, text=True)
+    except OSError as exc:
+        raise refuse(f"impossible de lancer git : {exc}") from exc
+    if proc.returncode != 0:
+        raise refuse(f"le dépôt du rig {rig} ({repo}) n'est pas un dépôt Git")
+    return {"rig": rig, "repo": repo, "protected": protected}
+
+
+def open_integration_branch(draft_id: str, convoy_id: str, target: dict[str, Any]) -> dict[str, Any]:
+    """Open the integration branch of the Spec the convoy delivers, at the
+    tip of the protected branch, through bin/spec-integration, which records
+    it on the convoy. Opening it again changes nothing."""
+    argv = [
+        tool_path("SPEC_INTEGRATION_BIN", "spec-integration"), "open", convoy_id,
+        "--repo", str(target["repo"]), "--protected", target["protected"],
+    ]
+    try:
+        opened = run_subtool(argv, cwd=BD_WORKSPACE)
+    except PublishError as exc:
+        raise PublishError(
+            f"le brouillon {draft_id} est publié et marqué (convoi {convoy_id}) mais la branche d'intégration "
+            f"de sa Spec n'a pas pu être ouverte : {exc}. Rien d'autre n'a été fait (réservation et Mayor "
+            "intouchés) : relancer la même commande, elle reprend à l'ouverture de la branche."
+        ) from exc
+    return {name: opened[name] for name in ("branch", "protected", "base", "created")}
+
+
 def ticket_description(ticket: dict[str, Any], execution: dict[str, Any]) -> str:
     criteria = "\n".join(f"- [ ] {item}" for item in ticket["acceptance_criteria"])
     rigs = ", ".join(str(item) for item in ticket["target_rigs"])
@@ -1732,6 +1794,7 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
         graph = [graph_ticket(ticket, spec["stories"]) for ticket in tickets]
         refusals += graph_refusals(graph, spec, launch, project_id, descriptor)
         refuse_unless_contract_met(draft_id, refusals)
+        integration = integration_target(draft_id, tickets, config_dir, repo_root)
         graph_review = {"graph_review": graph_review_of(draft_id)}
         describe = new_flow_describe(graph, spec, launch)
 
@@ -1749,6 +1812,9 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
     new_flow_result: dict[str, Any] = {}
     if new_flow:
         new_flow_result = {FLOW_CONTRACT_KEY: NEW_FLOW, "marked": mark_new_flow_convoy(draft_id, tickets, mapping)}
+        # Spec §4: one integration branch per Spec, opened when its convoy is
+        # published; a convoy without the mark gets none.
+        new_flow_result["integration"] = open_integration_branch(draft_id, mapping["_convoy"], integration)
 
     target = str((spec_bead.get("metadata") or {}).get("planning_run_target") or "").strip() or None
     reservation_advanced = None

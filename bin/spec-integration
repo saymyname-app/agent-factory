@@ -1,0 +1,629 @@
+#!/usr/bin/env python3
+"""Open the integration branch of a Spec and merge its tickets into it, one
+at a time (T18, af-gmz9s1; Spec af-wf4w5r §4 and §8).
+
+A convoy that carries the new-flow mark delivers its Spec on one integration
+branch; no ticket opens a pull request toward the protected branch.
+
+    spec-integration open  CONVOY --repo DIR --protected BRANCH
+    spec-integration merge CONVOY --repo DIR --profile DESCRIPTOR [--limit N] [--timeout SECONDS]
+
+`open`: the branch `integration/<spec id>` is created in the repository of
+the project, at the tip of the protected branch, and recorded on the convoy.
+The publication door calls it once the convoy is marked.
+
+`merge`: every ticket whose author has finished at the tip of its branch is
+merged, in the convoy's order, never two at once. Before the first merge the
+integration branch takes up the protected branch. Each merge is made in a
+work tree of its own; the regression command of the project's profile is run
+on the merged result by bin/evidence-capture (piece `merged_tests`, tied to
+the commit of that result), and the integration branch only moves to a green
+result. A conflict, or red tests on the merged result, return the ticket to
+its author: nothing of it is merged and nothing here resolves it. A ticket
+whose branch has a commit newer than the commit its code review or its
+Ticket Evaluation judged is refused: those verdicts are written invalid and
+one resume is counted, through bin/convoy-state.
+
+With a remote `origin`, the protected and the integration branches are read
+there (after a fetch) and the integration branch is pushed there; without
+one, the local branches are used. What was done of a ticket is written
+through bin/convoy-state. Every answer is one JSON object on stdout. Exit
+status: 0 done (what was merged or returned is listed, possibly nothing); 1
+refused, or a ticket was refused (named under `refused`); 3 the convoy is in
+an "état sans règle": nothing is merged; 4 the convoy does not carry the
+new-flow mark. Details: docs/SPEC_INTEGRATION.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
+from typing import Any, Iterator
+
+
+PROGRAM = "spec-integration"
+BIN = Path(__file__).resolve().parent
+STATE_TOOL = BIN / "convoy-state"
+CAPTURE_TOOL = BIN / "evidence-capture"
+PROFILE_TOOL = BIN / "project-planning-profile"
+
+REMOTE = "origin"
+BRANCH_PREFIX = "integration/"
+# The verdicts a commit added to the ticket branch makes replay (Spec §8).
+MERGE_VERDICTS = ("code_review", "evaluation")
+TESTS_PIECE = "merged_tests"
+# The merges are made by code: their author is the Factory, whoever runs it.
+IDENTITY = ("-c", "user.name=Agent Factory", "-c", "user.email=agent-factory@noreply.invalid")
+RETURN_CAUSES = {"conflict": "conflit", "red": "tests rouges sur le résultat fusionné"}
+
+EXIT_REFUSED = 1
+EXIT_UNRULED = 3
+EXIT_NOT_NEW_FLOW = 4
+
+UNRULED = "état sans règle"
+DEFAULT_TIMEOUT = 600
+MAX_DETAIL = 300
+BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")
+
+
+class Refusal(RuntimeError):
+    """The call is refused. `done` carries what the pass had already written
+    when the refusal came after a first write."""
+
+    def __init__(self, message: str, done: dict[str, Any] | None = None):
+        super().__init__(" ".join(message.split()))
+        self.done = done or {}
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark: bin/convoy-state's answer."""
+
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+class Unruled(RuntimeError):
+    """The convoy is in an "état sans règle": carries the anomalies."""
+
+    def __init__(self, anomalies: list[dict[str, Any]]):
+        super().__init__(UNRULED)
+        self.anomalies = anomalies
+
+
+def short(text: str, limit: int = MAX_DETAIL) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+# --- the other commands ----------------------------------------------------------
+
+
+def run(argv: list[str], cwd: Path | None = None, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            argv, capture_output=True, text=True, errors="replace", stdin=subprocess.DEVNULL, cwd=cwd, timeout=timeout)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+
+
+def detail_of(proc: subprocess.CompletedProcess[str]) -> str:
+    return short(proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}")
+
+
+def tool(path: Path, *args: str, cwd: Path | None = None) -> tuple[int, dict[str, Any]]:
+    """One JSON answer of bin/convoy-state or bin/evidence-capture."""
+    proc = run([str(path), *args], cwd=cwd)
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {detail_of(proc)}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def state_write(*args: str) -> dict[str, Any]:
+    status, answer = tool(STATE_TOOL, *args)
+    if status != 0:
+        raise Refusal(f"{args[0]} refusé par la commande d'état : {refusal_text(answer)}")
+    return answer
+
+
+def read_state(convoy_id: str, repo: "Repo") -> dict[str, Any]:
+    """The convoy as bin/convoy-state renders it, its anomalies included."""
+    status, answer = tool(STATE_TOOL, "show", convoy_id, "--repo", str(repo.path))
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(answer)
+    if status not in (0, EXIT_UNRULED) or not isinstance(answer.get("tickets"), list):
+        raise Refusal(f"lecture de l'état du convoi {convoy_id} impossible : {refusal_text(answer)}")
+    return answer
+
+
+def anomalies_of(state: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        *state["convoy"].get("unruled", []),
+        *({"ticket": ticket["id"], **anomaly} for ticket in state["tickets"] for anomaly in ticket.get("unruled", [])),
+    ]
+
+
+def regression_command(profile: str | None) -> list[str]:
+    """The tests run on a merged result: the regression command the
+    project's profile declares, the one command that runs its whole suite."""
+    if not profile:
+        raise Refusal("--profile absent : le profil du projet déclare les tests à exécuter sur le résultat fusionné")
+    proc = run([str(PROFILE_TOOL), "describe", profile])
+    try:
+        described = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"profil du projet illisible ({profile}) : {detail_of(proc)}") from exc
+    if proc.returncode != 0 or not isinstance(described, dict) or described.get("valid") is False:
+        reason = described.get("error") if isinstance(described, dict) else None
+        raise Refusal(f"profil du projet invalide ({profile}) : {reason or detail_of(proc)}")
+    launch = described.get("launch")
+    command = launch.get("regression_command") if isinstance(launch, dict) else None
+    if not isinstance(command, str) or not command.strip():
+        raise Refusal(
+            f"le profil du projet ({profile}) ne déclare pas launch.regression_command : "
+            "aucun test à exécuter sur le résultat fusionné, rien n'est fusionné")
+    return shlex.split(command)
+
+
+# --- the repository --------------------------------------------------------------
+
+
+class Repo:
+    """The repository of the project: where the protected, the integration
+    and the ticket branches live."""
+
+    def __init__(self, path: str | None):
+        if not path:
+            raise Refusal("--repo absent : le dépôt du projet porte la branche d'intégration")
+        self.path = Path(path).resolve()
+        if not self.path.is_dir() or self.git("rev-parse", "--git-dir").returncode != 0:
+            raise Refusal(f"--repo {path} n'est pas un dépôt Git")
+        self.remote = REMOTE if REMOTE in self.git("remote").stdout.split() else None
+
+    def git(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+        env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+        try:
+            return subprocess.run(
+                ["git", "-C", str(cwd or self.path), "-c", "core.quotepath=off", *IDENTITY, *args],
+                capture_output=True, text=True, errors="replace", env=env, stdin=subprocess.DEVNULL)
+        except OSError as exc:
+            raise Refusal(f"impossible de lancer git : {exc}") from exc
+
+    def fetch(self) -> None:
+        if self.remote:
+            proc = self.git("fetch", "--quiet", "--prune", self.remote)
+            if proc.returncode != 0:
+                raise Refusal(f"git fetch {self.remote} a échoué : {detail_of(proc)}")
+
+    def tip(self, branch: str) -> str | None:
+        """The tip of the protected or of the integration branch: on the
+        remote when the repository has one."""
+        ref = f"refs/remotes/{self.remote}/{branch}" if self.remote else f"refs/heads/{branch}"
+        proc = self.git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        return proc.stdout.strip() if proc.returncode == 0 else None
+
+    def is_ancestor(self, commit: str, tip: str) -> bool:
+        return self.git("merge-base", "--is-ancestor", commit, tip).returncode == 0
+
+    def move(self, branch: str, new: str, old: str | None) -> None:
+        """Move the integration branch from `old` (None: it does not exist
+        yet) to `new`, and only from there."""
+        if self.remote:
+            proc = self.git(
+                "push", "--quiet", f"--force-with-lease=refs/heads/{branch}:{old or ''}",
+                self.remote, f"{new}:refs/heads/{branch}")
+        else:
+            proc = self.git("update-ref", f"refs/heads/{branch}", new, old or "0" * 40)
+        if proc.returncode != 0:
+            raise Refusal(f"la branche {branch} n'a pas pu être déplacée vers {new} : {detail_of(proc)}")
+
+
+def valid_branch(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not BRANCH_RE.match(value):
+        raise Refusal(f"{name} absente ou mal formée : {value!r}")
+    return value
+
+
+def lock_dir() -> Path:
+    return Path(os.environ.get("SPEC_INTEGRATION_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+
+
+def safe(convoy_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "_", convoy_id)
+
+
+@contextmanager
+def integration_lock(convoy_id: str) -> Iterator[None]:
+    """One merge at a time on the integration branch of a convoy."""
+    directory = lock_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / f"agent-factory-spec-integration-{safe(convoy_id)}.lock").open("w") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def discard_work_tree(repo: Repo, path: Path) -> None:
+    if path.exists():
+        repo.git("worktree", "remove", "--force", str(path))
+        shutil.rmtree(path, ignore_errors=True)
+    repo.git("worktree", "prune")
+
+
+@contextmanager
+def work_tree(repo: Repo, convoy_id: str, commit: str) -> Iterator[Path]:
+    """A work tree of its own for the merges of one pass, detached at
+    `commit`: nothing is checked out in the repository itself. One left by
+    an interrupted pass is removed first."""
+    base = Path(os.environ.get("SPEC_INTEGRATION_WORK_DIR") or lock_dir() / "agent-factory-spec-integration")
+    path = base / safe(convoy_id)
+    discard_work_tree(repo, path)
+    base.mkdir(parents=True, exist_ok=True)
+    proc = repo.git("worktree", "add", "--quiet", "--detach", str(path), commit)
+    if proc.returncode != 0:
+        raise Refusal(f"arbre de travail de fusion impossible à créer : {detail_of(proc)}")
+    try:
+        yield path
+    finally:
+        discard_work_tree(repo, path)
+
+
+# --- open ------------------------------------------------------------------------
+
+
+def cmd_open(args: argparse.Namespace) -> int:
+    repo = Repo(args.repo)
+    protected = valid_branch(args.protected, "branche protégée (--protected)")
+    state = read_state(args.convoy, repo)
+    spec = state["convoy"].get("spec")
+    if not spec:
+        raise Refusal(f"le convoi {args.convoy} ne nomme aucune Spec : sa branche d'intégration porte son identifiant")
+    branch = valid_branch(BRANCH_PREFIX + spec, "branche d'intégration")
+    recorded = state["convoy"].get("integration")
+    repo.fetch()
+    base = repo.tip(protected)
+    if base is None:
+        raise Refusal(f"branche protégée introuvable dans le dépôt {repo.path} : {protected}")
+    existing = repo.tip(branch)
+    created = False
+    if recorded:
+        if (recorded.get("branch"), recorded.get("protected")) != (branch, protected):
+            raise Refusal(
+                f"le convoi {args.convoy} porte une autre branche d'intégration "
+                f"({recorded.get('branch')} sur {recorded.get('protected')}) : elle ne se réécrit pas")
+        if existing is None:
+            raise Refusal(f"la branche d'intégration {branch} est enregistrée sur le convoi mais introuvable dans le dépôt")
+        base = recorded["base"]
+    else:
+        if existing is None:
+            repo.move(branch, base, None)
+            created = True
+        elif not repo.is_ancestor(existing, base):
+            # A branch left by an interrupted `open` holds nothing of its own.
+            raise Refusal(
+                f"la branche {branch} existe déjà dans le dépôt et porte des commits que {protected} n'a pas : "
+                "elle n'a pas été ouverte par cette commande")
+        else:
+            base = existing
+        state_write("set-integration", args.convoy, "--branch", branch, "--protected", protected, "--base", base)
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy, "spec": spec, "branch": branch, "protected": protected, "base": base,
+        "created": created, "remote": repo.remote,
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- merge -----------------------------------------------------------------------
+
+
+def disposition(ticket: dict[str, Any]) -> tuple[str, Any]:
+    """What a pass does of one ticket: `skip` (nothing to say), `waiting`
+    (with the reason), `stale` (with the verdicts a newer commit made
+    invalid), or `ready` (to merge)."""
+    exit_record = ticket.get("exit") or {}
+    if ticket.get("status") == "closed" or exit_record.get("exit") != "finished":
+        return "skip", None
+    park, stop = ticket.get("park"), ticket.get("stop")
+    if park:
+        return "waiting", f"parqué ({park.get('cause')}, par {park.get('origin')})"
+    if stop:
+        return "waiting", f"arrêté ({stop.get('reason')})"
+    tip = ticket.get("tip")
+    if not ticket.get("branch") or not tip:
+        return "waiting", "branche du ticket introuvable dans le dépôt"
+    merge = ticket.get("merge")
+    if merge and merge.get("outcome") == "merged":
+        if merge.get("ticket_commit") == tip:
+            return "skip", None
+        return "waiting", f"déjà fusionné à {merge['ticket_commit'][:12]} ; un commit a été ajouté depuis ({tip[:12]})"
+    verdicts = {kind: ticket["verdicts"][kind] for kind in MERGE_VERDICTS if kind in (ticket.get("verdicts") or {})}
+    stale = [kind for kind, verdict in verdicts.items() if verdict.get("valid") is False and "invalidated" not in verdict]
+    if stale:
+        return "stale", stale
+    invalidated = [kind for kind, verdict in verdicts.items() if "invalidated" in verdict]
+    if invalidated:
+        return "waiting", (f"verdict invalidé par un commit plus récent ({', '.join(invalidated)}) : "
+                           f"à rejouer sur la pointe {tip[:12]}")
+    unfavorable = [kind for kind, verdict in verdicts.items() if verdict.get("state") != "favorable"]
+    if unfavorable:
+        return "waiting", f"verdict défavorable ({', '.join(unfavorable)})"
+    handoff = ticket.get("handoff") or {}
+    if handoff.get("partial") is not False or handoff.get("commit") != tip:
+        return "waiting", f"le ticket n'est pas terminé à la pointe de sa branche ({tip[:12]}) : son auteur y travaille"
+    if merge and merge.get("ticket_commit") == tip:
+        return "waiting", (f"retourné à son auteur ({RETURN_CAUSES.get(merge.get('outcome'), merge.get('outcome'))}) : "
+                           "attend un nouveau commit sur sa branche")
+    return "ready", None
+
+
+def invalidate(convoy_id: str, ticket: dict[str, Any], kinds: list[str]) -> dict[str, Any]:
+    """Spec §8: a commit added after a verdict makes it replay in full on
+    the new tip, and counts as one resume."""
+    tip = ticket["tip"]
+    answer = state_write("invalidate-verdicts", convoy_id, ticket["id"], "--tip", tip,
+                         *(arg for kind in kinds for arg in ("--kind", kind)))
+    judged = sorted({ticket["verdicts"][kind]["commit"][:12] for kind in kinds})
+    return {
+        "id": ticket["id"], "tip": tip, "invalidated": answer.get("invalidated", kinds),
+        "resumes": answer.get("written", {}).get("gc.flow.counter.resumes"),
+        "reason": (f"la branche du ticket porte un commit ({tip[:12]}) plus récent que le commit jugé "
+                   f"({', '.join(judged)}) : verdict invalidé ({', '.join(kinds)}), à rejouer en entier sur la "
+                   "nouvelle pointe ; une reprise est comptée, rien n'est fusionné"),
+    }
+
+
+class Pass:
+    """The merges of one pass, in one work tree that follows the integration
+    branch: it only ever holds a tested, green tip, or the result being tested."""
+
+    def __init__(self, repo: Repo, convoy_id: str, branch: str, protected: str, tip: str, tree: Path,
+                 command: list[str], timeout: float):
+        self.repo, self.convoy_id, self.branch, self.protected = repo, convoy_id, branch, protected
+        self.tip, self.tree, self.command, self.timeout = tip, tree, command, timeout
+
+    def git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return self.repo.git(*args, cwd=self.tree)
+
+    def head(self) -> str:
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def try_merge(self, commit: str, message: str) -> list[str] | None:
+        """Merge `commit` into the work tree. None: merged. Otherwise the
+        files in conflict, the work tree back where it was."""
+        proc = self.git("merge", "--quiet", "--no-ff", "--no-edit", "-m", message, commit)
+        if proc.returncode == 0:
+            return None
+        files = self.git("diff", "--name-only", "--diff-filter=U").stdout.split("\n")
+        files = [name for name in files if name]
+        self.git("merge", "--abort")
+        self.git("reset", "--quiet", "--hard", self.tip)
+        if not files:
+            raise Refusal(f"git merge de {commit[:12]} dans {self.branch} a échoué : {detail_of(proc)}")
+        return files
+
+    def take_up_protected(self, protected_tip: str) -> dict[str, Any] | None:
+        """Spec §4: the integration branch takes up the protected branch
+        before a ticket is merged. A conflict or a red there belongs to no
+        ticket: nothing is pushed, no ticket is merged."""
+        if self.repo.is_ancestor(protected_tip, self.tip):
+            return None
+        files = self.try_merge(protected_tip, f"Reprise de {self.protected} dans {self.branch}")
+        if files is not None:
+            raise Refusal(
+                f"la reprise de la branche protégée {self.protected} dans {self.branch} est en conflit "
+                f"({', '.join(files)}) : aucun ticket n'est fusionné")
+        result = self.head()
+        try:
+            proc = run(self.command, cwd=self.tree, timeout=self.timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise Refusal(
+                f"la commande de régression n'a pas fini en {self.timeout:g} s après la reprise de la branche "
+                f"protégée {self.protected} : rien n'est poussé") from exc
+        if proc.returncode != 0:
+            raise Refusal(
+                f"branche d'intégration rouge après la reprise de la branche protégée {self.protected} "
+                f"(commande de régression : code {proc.returncode}) : rien n'est poussé, aucun ticket n'est fusionné")
+        self.repo.move(self.branch, result, self.tip)
+        self.tip = result
+        return {"commit": result, "protected": protected_tip}
+
+    def tests(self, ticket_id: str) -> dict[str, Any]:
+        """Run the tests on the merged result checked out in the work tree,
+        by the capture tool: the record is tied to the commit of that result."""
+        # The capture tool runs from here, where the tracker is reached; the
+        # tests themselves run in the work tree (`tests`, below).
+        status, answer = tool(
+            CAPTURE_TOOL, "command", self.convoy_id, ticket_id, "--piece", TESTS_PIECE, "--repo", str(self.tree),
+            "--timeout", f"{self.timeout:g}", "--", str(BIN / PROGRAM), "tests", "--tree", str(self.tree),
+            "--", *self.command)
+        if status != 0 or not isinstance(answer.get("exit_code"), int):
+            raise Refusal(f"tests sur le résultat fusionné de {ticket_id} non enregistrés : {refusal_text(answer)}")
+        return {"piece": TESTS_PIECE, "exit_code": answer["exit_code"],
+                **{name: answer[name] for name in ("digest", "commit") if name in answer}}
+
+    def merge(self, ticket: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        """Merge one ticket. Returns `merged` or `returned`, and its entry."""
+        ticket_id, ticket_tip, before = ticket["id"], ticket["tip"], self.tip
+        entry: dict[str, Any] = {"id": ticket_id, "ticket_commit": ticket_tip, "integration": before}
+        record = ["set-merge", self.convoy_id, ticket_id, "--ticket-commit", ticket_tip, "--integration", before]
+        files = self.try_merge(ticket_tip, f"Fusion de {ticket_id} ({ticket['branch']}) dans {self.branch}")
+        if files is not None:
+            state_write(*record, "--outcome", "conflict")
+            return "returned", {
+                **entry, "cause": "conflict", "files": files,
+                "reason": (f"conflit avec la branche d'intégration ({', '.join(files)}) : rien n'est fusionné, le "
+                           "ticket retourne à son auteur, qui reprend la pointe d'intégration dans une session neuve"),
+            }
+        result = self.head()
+        try:
+            tests = self.tests(ticket_id)
+        except Refusal:
+            self.git("reset", "--quiet", "--hard", before)
+            raise
+        entry.update(commit=result, tests=tests)
+        if tests["exit_code"] != 0:
+            # Not pushed: the integration branch stays on its green tip.
+            self.git("reset", "--quiet", "--hard", before)
+            state_write(*record, "--outcome", "red", "--commit", result)
+            return "returned", {
+                **entry, "cause": "red",
+                "reason": (f"tests rouges sur le résultat fusionné (code {tests['exit_code']}) : la fusion n'est pas "
+                           "poussée, le rouge appartient à ce ticket, qui retourne à son auteur"),
+            }
+        self.repo.move(self.branch, result, before)
+        self.tip = result
+        state_write(*record, "--outcome", "merged", "--commit", result)
+        return "merged", entry
+
+
+def cmd_merge(args: argparse.Namespace) -> int:
+    repo = Repo(args.repo)
+    limit = None
+    if args.limit is not None:
+        if not re.fullmatch(r"[1-9][0-9]*", str(args.limit)):
+            raise Refusal(f"--limit mal formé : {args.limit!r} (attendu : un entier d'au moins 1)")
+        limit = int(args.limit)
+    try:
+        timeout = float(args.timeout)
+    except (TypeError, ValueError) as exc:
+        raise Refusal(f"--timeout mal formé : {args.timeout!r}") from exc
+    if not 0 < timeout < float("inf"):
+        raise Refusal(f"--timeout mal formé : {args.timeout!r}")
+
+    with integration_lock(args.convoy), ExitStack() as stack:
+        integration = read_state(args.convoy, repo)["convoy"].get("integration")
+        if not integration:
+            raise Refusal(
+                f"le convoi {args.convoy} n'a pas de branche d'intégration : elle s'ouvre à la publication "
+                f"({PROGRAM} open)")
+        repo.fetch()
+        # Read again once the remote is fetched: the tips are the current ones.
+        state = read_state(args.convoy, repo)
+        anomalies = anomalies_of(state)
+        if anomalies:
+            raise Unruled(anomalies)
+        branch, protected = integration["branch"], integration["protected"]
+        tip, protected_tip = repo.tip(branch), repo.tip(protected)
+        if tip is None:
+            raise Refusal(f"branche d'intégration {branch} introuvable dans le dépôt {repo.path}")
+        if protected_tip is None:
+            raise Refusal(f"branche protégée introuvable dans le dépôt {repo.path} : {protected}")
+
+        out: dict[str, Any] = {"merged": [], "returned": [], "refused": [], "waiting": []}
+        ready = []
+        for ticket in state["tickets"]:
+            what, detail = disposition(ticket)
+            if what == "waiting":
+                out["waiting"].append({"id": ticket["id"], "reason": detail})
+            elif what == "stale":
+                out["refused"].append(invalidate(args.convoy, ticket, detail))
+            elif what == "ready":
+                ready.append(ticket)
+
+        takeover = None
+        try:
+            if ready:
+                command = regression_command(args.profile)
+                tree = stack.enter_context(work_tree(repo, args.convoy, tip))
+                merges = Pass(repo, args.convoy, branch, protected, tip, tree, command, timeout)
+                takeover = merges.take_up_protected(protected_tip)
+                for count, ticket in enumerate(ready):
+                    if limit is not None and count >= limit:
+                        out["waiting"].append({"id": ticket["id"], "reason": f"limite de la passe atteinte ({limit})"})
+                        continue
+                    outcome, entry = merges.merge(ticket)
+                    out[outcome].append(entry)
+                tip = merges.tip
+        except Refusal as exc:
+            raise Refusal(str(exc), {name: entries for name, entries in out.items() if entries}) from exc
+
+    answer = {
+        "ok": not out["refused"], "convoy": args.convoy, "branch": branch, "protected": protected,
+        "integration": tip, "takeover": takeover, **out,
+    }
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return EXIT_REFUSED if out["refused"] else 0
+
+
+def cmd_tests(args: argparse.Namespace) -> int:
+    """What bin/evidence-capture runs for the tests on a merged result: the
+    command, from the root of the work tree. Not a command of its own."""
+    argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+    if not args.tree or not argv:
+        raise Refusal("tests : --tree et la commande à exécuter sont obligatoires")
+    try:
+        os.chdir(args.tree)
+        os.execvp(argv[0], argv)
+    except OSError as exc:
+        raise Refusal(f"commande de test impossible à exécuter : {argv[0]} ({exc.strerror or exc})") from exc
+    return 0
+
+
+# --- command line ------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    # Required values are checked by the handlers, not by argparse: a refusal
+    # is one JSON answer.
+    p = sub.add_parser("open")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.add_argument("--protected")
+    p.set_defaults(handler=cmd_open)
+    p = sub.add_parser("merge")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.add_argument("--profile")
+    p.add_argument("--limit")
+    p.add_argument("--timeout", default=DEFAULT_TIMEOUT)
+    p.set_defaults(handler=cmd_merge)
+    p = sub.add_parser("tests")
+    p.add_argument("--tree")
+    p.add_argument("argv", nargs=argparse.REMAINDER)
+    p.set_defaults(handler=cmd_tests)
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.handler(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Unruled as exc:
+        print(json.dumps({
+            "ok": False, "convoy": args.convoy, "unruled": exc.anomalies,
+            "message": f"{UNRULED} : rien n'est fusionné dans le convoi {args.convoy}",
+        }, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_UNRULED
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "error": f"refus : {exc}", **exc.done},
+                         indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

@@ -47,7 +47,10 @@ proves a step uses, so that only its passing report becomes a piece:
 `bin/tdd-step` runs each of its checks this way (`docs/TDD_STEP.md`, pieces
 `tdd_red`, `tdd_freeze`, `tdd_green`, `tdd_amendment`, `tdd_prefactoring`).
 `bin/ticket-exit` seals the records of a Ticket Handoff the same way (piece
-`handoff_records`, `docs/TICKET_EXIT.md`).
+`handoff_records`, `docs/TICKET_EXIT.md`). `bin/spec-integration` captures
+the tests it runs on a merged result without `--expect-exit` (piece
+`merged_tests`, `docs/SPEC_INTEGRATION.md`): a red run is a piece too, tied
+to the commit that was tested and never pushed.
 
 ## The store
 

@@ -28,6 +28,7 @@ TOOL = ROOT / "bin" / "convoy-advance"
 STATE = ROOT / "bin" / "convoy-state"
 DOOR = ROOT / "bin" / "dispatch-door"
 ESCALATION = ROOT / "bin" / "escalation-door"
+INTEGRATION_TOOL = ROOT / "bin" / "spec-integration"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
 
 CONVOY = "fx-convoy"
@@ -707,6 +708,131 @@ class ConvoyAdvanceTest(unittest.TestCase):
         answer = json.loads(self.run_ok(STATE, "list").stdout)
 
         self.assertEqual([CONVOY], answer["convoys"])
+
+    # --- finished tickets are merged by the pass (T18) -------------------------
+
+    INTEGRATION = "integration/fx-spec"
+
+    def git(self, *args):
+        proc = subprocess.run(
+            ("git", "-C", str(self.root), "-c", "user.name=essai", "-c", "user.email=essai@example.invalid", *args),
+            env=self.env, text=True, capture_output=True)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        return proc.stdout.strip()
+
+    def integrated(self, regression="true"):
+        """The repository and the profile of the convoy's project, and the
+        integration branch of its Spec opened as the publication door does."""
+        self.env["EVIDENCE_STORE_DIR"] = str(self.tmp / "store")
+        self.env["SPEC_INTEGRATION_LOCK_DIR"] = str(self.tmp / "locks")
+        self.env["SPEC_INTEGRATION_WORK_DIR"] = str(self.tmp / "work")
+        descriptor = json.loads((ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "descriptor.json").read_text())
+        descriptor["rigs"] = ["fx-rig"]
+        descriptor["launch"]["regression_command"] = regression
+        (self.root / "config" / "project-descriptors").mkdir()
+        (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(descriptor))
+        (self.root / ".gitignore").write_text("config/\n")
+        self.git("init", "-q", "-b", "main")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "base")
+        self.run_ok(INTEGRATION_TOOL, "open", CONVOY, "--repo", self.root, "--protected", "main")
+        return self.git("rev-parse", "main")
+
+    def finished(self, ticket_id):
+        """A ticket started by the pass, with one commit on its branch, that
+        its author has finished; returns that commit."""
+        branch = f"ticket/{ticket_id}"
+        self.git("checkout", "-q", "-b", branch, self.INTEGRATION)
+        (self.root / f"{ticket_id}.md").write_text("le travail du ticket\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", f"travail de {ticket_id}")
+        tip = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "--detach", "main")
+        self.run_ok(STATE, "set-branch", CONVOY, ticket_id, "--branch", branch)
+        self.edit(ticket_id, status="in_progress")
+        self.run_ok(STATE, "add-evidence", CONVOY, ticket_id, "--piece", "handoff_records",
+                    "--digest", "sha256:" + "ab" * 32, "--commit", tip)
+        handoff = self.tmp / f"handoff-{ticket_id}.json"
+        handoff.write_text(json.dumps({
+            "sections": dict.fromkeys(("done", "deviations", "not_done", "out_of_ticket"), "aucun"),
+            "partial": False, "commit": tip, "records": {}}))
+        self.run_ok(STATE, "set-handoff", CONVOY, ticket_id, "--file", handoff)
+        self.run_ok(STATE, "set-exit", CONVOY, ticket_id, "--exit", "finished")
+        return tip
+
+    def integration_of(self, answer, convoy=CONVOY):
+        return next(c for c in answer["convoys"] if c["id"] == convoy).get("integration")
+
+    def shown(self, ticket_id):
+        proc = self.run_ok(STATE, "show", CONVOY, "--repo", self.root)
+        return next(t for t in json.loads(proc.stdout)["tickets"] if t["id"] == ticket_id)
+
+    def test_a_pass_merges_one_finished_ticket_into_the_integration_branch(self):
+        base = self.integrated()
+        self.advance(CONVOY)
+        tip1, tip2 = self.finished(T1), self.finished(T2)
+
+        answer = self.advance(CONVOY)
+        merged = self.integration_of(answer)["merged"]
+        self.assertEqual([T1], [entry["id"] for entry in merged])
+        self.assertEqual(merged[0]["commit"], self.git("rev-parse", self.INTEGRATION))
+        self.assertEqual(f"{base} {tip1}", self.git("rev-list", "--parents", "-n", "1", merged[0]["commit"]).split(" ", 1)[1])
+        self.assertEqual("merged", self.shown(T1)["merge"]["outcome"])
+        self.assertEqual(merged[0]["commit"], self.shown(T1)["evidence"]["merged_tests"]["commit"])
+        self.assertIsNone(self.shown(T2)["merge"])
+
+        # One ticket per pass: the next pass merges the second on the first.
+        second = self.integration_of(self.advance(CONVOY))["merged"]
+        self.assertEqual([T2], [entry["id"] for entry in second])
+        self.assertEqual(f"{merged[0]['commit']} {tip2}",
+                         self.git("rev-list", "--parents", "-n", "1", second[0]["commit"]).split(" ", 1)[1])
+        self.assertEqual(base, self.git("rev-parse", "main"))
+        self.assertIsNone(self.integration_of(self.advance(CONVOY)))
+
+    def test_a_pass_with_no_finished_ticket_runs_no_merge(self):
+        self.integrated()
+        # No profile at all: a merge pass would refuse.
+        shutil.rmtree(self.root / "config" / "project-descriptors")
+
+        answer = self.advance(CONVOY)
+        self.assertEqual([T1, T2], self.started(answer))
+        self.assertIsNone(self.integration_of(answer))
+
+    def test_a_ticket_returned_by_red_tests_is_reported_and_the_pass_is_not_a_failure(self):
+        base = self.integrated(regression="false")
+        self.advance(CONVOY)
+        self.finished(T1)
+
+        answer = self.advance(CONVOY)
+        returned = self.integration_of(answer)["returned"]
+        self.assertEqual([(T1, "red")], [(entry["id"], entry["cause"]) for entry in returned])
+        self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
+        self.assertTrue(answer["ok"])
+
+    def test_a_merge_pass_that_cannot_run_fails_the_pass_and_says_why(self):
+        self.integrated()
+        self.advance(CONVOY)
+        self.finished(T1)
+        shutil.rmtree(self.root / "config" / "project-descriptors")
+        before = self.git("rev-parse", self.INTEGRATION)
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED)
+        self.assertFalse(answer["ok"])
+        self.assertIn("profil", self.integration_of(answer)["error"])
+        self.assertEqual(before, self.git("rev-parse", self.INTEGRATION))
+        self.assertIsNone(self.shown(T1)["merge"])
+
+    def test_a_stopped_convoy_merges_nothing(self):
+        self.integrated()
+        self.advance(CONVOY)
+        self.finished(T1)
+        self.edit(T2, status="closed")
+        before = self.git("rev-parse", self.INTEGRATION)
+
+        answer = self.advance(CONVOY, expect=EXIT_UNRULED)
+        self.assertIsNone(self.integration_of(answer))
+        self.assertEqual(before, self.git("rev-parse", self.INTEGRATION))
+        self.assertIsNone(self.bead(T1)["metadata"].get("gc.flow.merge"))
 
 
 if __name__ == "__main__":

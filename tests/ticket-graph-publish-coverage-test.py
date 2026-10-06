@@ -61,6 +61,13 @@ class Harness(unittest.TestCase):
         self.gc_log.write_text("")
         self.repo_root = self.tmp / "repo"
         self.repo_root.mkdir()
+        # The repository of the project: the door opens the integration
+        # branch of the Spec there, at the tip of its protected branch (T18).
+        for argv in (("init", "-q", "-b", "main"),
+                     ("-c", "user.name=essai", "-c", "user.email=essai@example.invalid",
+                      "commit", "-q", "--allow-empty", "-m", "base")):
+            subprocess.run(("git", "-C", str(self.repo_root), *argv), check=True,
+                           env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull})
         self.descriptors = self.tmp / "descriptors"
         self.descriptors.mkdir()
         shutil.copy(FIXTURE_CITY / "descriptor.json", self.descriptors / f"{PROJECT}.json")

@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, T11, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, T18, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -33,6 +33,9 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state stop-ticket  af-convoy af-t1 --reason criterion_already_green --detail "critère 2 déjà vert : …"   # bin/tdd-step
 ./bin/convoy-state set-handoff af-convoy af-t1 --file handoff.json                                   # bin/ticket-exit
 ./bin/convoy-state park        af-convoy af-t1 --cause planning_exception --detail "La Spec fixe X, …"  # bin/ticket-exit
+./bin/convoy-state set-integration af-convoy --branch integration/af-spec --protected main --base <sha>   # bin/spec-integration open
+./bin/convoy-state set-merge   af-convoy af-t1 --outcome merged --ticket-commit <sha> --integration <sha> --commit <sha>   # bin/spec-integration merge
+./bin/convoy-state invalidate-verdicts af-convoy af-t1 --tip <sha> --kind code_review --kind evaluation   # bin/spec-integration merge
 ./bin/convoy-state ticket af-t1                         # does this bead carry the mark? (bin/dispatch-door, the Mayor)
 ./bin/convoy-state record-incident af-convoy --bead af-incident [--signature sha256:<hex>]   # bin/convoy-advance
 ./bin/convoy-state clear-incident  af-convoy            # bin/convoy-advance, once the state is valid again
@@ -60,7 +63,7 @@ Every answer is one JSON object on stdout.
 | Prototype Fold | `gc.flow.prototype_fold` | ticket (`vertical_slice`) | `true`, written with the mark; absent otherwise |
 | Ticket branch | `gc.flow.branch` | ticket | branch name |
 | Ticket Exit | `gc.flow.exit` | ticket | `finished`, `planning_exception`, `operator_request`, `technically_blocked`, `interrupted` |
-| Verdict | `gc.flow.verdict.<kind>` | ticket | kind: `test_review`, `code_review`, `evaluation`, `fidelity`; state: `favorable`, `unfavorable`; always with the full commit SHA it judged |
+| Verdict | `gc.flow.verdict.<kind>` | ticket | kind: `test_review`, `code_review`, `evaluation`, `fidelity`; state: `favorable`, `unfavorable`; always with the full commit SHA it judged; `invalidated` (`tip`, `at`) once `invalidate-verdicts` wrote that a newer commit outdated it |
 | Counter | `gc.flow.counter.<name>` | ticket: `resumes`, `correction_rounds`; convoy: `end_rounds` | integer ≥ 0 |
 | Evidence fingerprint | `gc.flow.evidence.<piece>` | ticket | `sha256:<64 hex>` and the commit of the piece |
 | Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (commit required), `withdrawn` (removed from the graph by a resolved Planning Exception) |
@@ -68,6 +71,8 @@ Every answer is one JSON object on stdout.
 | Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`; with a one-line detail |
 | Ticket Handoff | `gc.flow.handoff` | ticket | `sections` (`done`, `deviations`, `not_done`, `out_of_ticket`: each `aucun` or a non-empty list of one-line items; an item of `not_done` may be `{what, paths}`), `partial`, the full commit SHA it was taken at, and the `records` written by code |
 | Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`; the ticket whose Ticket Exit parked it (`origin`); a one-line detail |
+| Integration branch | `gc.flow.integration` | convoy | `branch`, the `protected` branch it takes up, and `base`, the full commit SHA of the protected branch it left from; written once |
+| Merge | `gc.flow.merge` | ticket | outcome: `merged`, `conflict`, `red`; `ticket_commit` (the tip of the ticket that was taken), `integration` (the tip it was merged on), and `commit`, the merged result, for `merged` and `red` only |
 | Declared Scope | `gc.scope_paths` (read only: written by the publication door) | ticket | the declared paths, comma-separated; they order tickets and bound nothing |
 | Acceptance criteria | the bead's description (read only) | ticket | the checkbox lines under `## Acceptance criteria`, in order |
 | Factory incident | `gc.flow.incident` | convoy | the bead that carries the open incident of a stopped convoy and, once it reached the escalation door, the `sha256:` signature of the anomalies it names |
@@ -135,6 +140,21 @@ already parked is left as it is. It refuses a cause outside the list, a
 missing detail, a closed ticket and a ticket already parked. Nothing here
 lifts a parking.
 
+`set-integration`, `set-merge` and `invalidate-verdicts` are called by
+`bin/spec-integration` (T18, `docs/SPEC_INTEGRATION.md`). `set-integration`
+writes the integration branch of the convoy's Spec once: the same record
+again writes nothing, another branch, protected branch or start commit is
+refused. `set-merge` writes what the merge command did of a ticket; it
+refuses an outcome outside the list, a `merged` or a `red` without the
+commit of the merged result, a `conflict` with one, a convoy without a
+recorded integration branch, and a closed ticket. `invalidate-verdicts`
+(Spec §8, « commit après verdict ») writes on each named verdict the tip
+that outdated it and adds one to `resumes`, in one tracker write; a verdict
+already invalidated is left as it is and counts nothing more, so repeating
+the call is harmless. It refuses a kind outside the list, a ticket that has
+no such verdict, and a verdict that judged that very tip. `set-verdict`
+writes a fresh verdict: replaying is what lifts an invalidation.
+
 A piece name is made of letters, digits, `_` and `.` only: the tracker
 refuses any metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*` (observed on bd
 1.2.2), so a hyphen is refused here before it is tried.
@@ -147,7 +167,8 @@ a negative or non-integer counter; a ticket counter on the convoy or the
 reverse; a counter write after which `correction_rounds` would exceed
 `resumes` (a correction round counts among the resumes, Spec §8); an
 evidence fingerprint without a `sha256:` digest or without a commit; a
-Ticket Handoff or a parking as described above; a
+Ticket Handoff, a parking, an integration branch, a merge or an invalidation
+as described above; a
 `ticket_end` gate record without a commit; a TDD step outside its closed
 list, without a full commit SHA, out of order, or on a stopped ticket; a
 stop whose reason is outside its closed list or that has no detail; a ticket
@@ -173,9 +194,11 @@ description, numbered from 1 by `bin/tdd-step`), the proven steps of its
 TDD (`tdd`, `{step: {commit, at, base?, reason?}}`), its stop (`stop`,
 `null` when it is not stopped), its Ticket Handoff (`handoff`), its parking
 (`park`) and its Declared Scope (`declared_scope`, a list of paths), each
-`null` when the ticket has none; and for the convoy the Spec it delivers (`spec`, `null`
-when it names none), its counters and its open factory incident
-(`incident`, `null` when there is none).
+`null` when the ticket has none, and what the merge command did of it
+(`merge`, `null` while it did nothing); and for the convoy the Spec it
+delivers (`spec`, `null` when it names none), its counters, its open factory
+incident (`incident`, `null` when there is none) and the integration branch
+of its Spec (`integration`, `null` before it is opened).
 
 `ticket` answers whether one bead carries the mark, without naming its
 convoy: exit 0 and `"new_flow": true`, or exit 4 and `"new_flow": false`.
@@ -188,8 +211,10 @@ tracker read and is dispatched exactly as before.
 `"valid": true` only while its commit is the tip of the ticket's branch in
 `--repo` (default: the current directory; the local branch is read first,
 then `origin/<branch>`). A commit added to the branch after the verdict
-makes it `"valid": false`: nothing is rewritten in the tracker, the verdict
-simply has to be replayed on the new tip.
+makes it `"valid": false`: nothing is rewritten by a read, the verdict simply has
+to be replayed on the new tip. The merge command is what writes it
+(`invalidate-verdicts`): the verdict then carries `invalidated` and stays
+`"valid": false` until a fresh one replaces it.
 
 **« État sans règle »** (Spec §0 rule 5). A ticket in one of these states
 carries `"signal": "état sans règle"` and one `{field, reason}` per anomaly
@@ -230,4 +255,5 @@ state (`tests/fixtures/convoy-state/gc`): one test per pass and per
 refusal, each refusal re-reading the tracker to prove nothing was written.
 `tests/convoy-state-real-tracker-test.sh` (local-only) replays the same
 contract on the real `gc`/`bd` in a disposable city, a Ticket Handoff of
-20 kB and a parking along real `blocks` edges included.
+20 kB, a parking along real `blocks` edges, and the integration branch, an
+invalidated verdict and a merge (T18) included.

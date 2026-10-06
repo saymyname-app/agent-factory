@@ -56,6 +56,13 @@ class GraphReviewTest(unittest.TestCase):
         self.refusals_path = self.tmp / "refusals.json"
         self.repo_root = self.tmp / "repo"
         self.repo_root.mkdir()
+        # The repository of the project: the door opens the integration
+        # branch of the Spec there, at the tip of its protected branch (T18).
+        for argv in (("init", "-q", "-b", "main"),
+                     ("-c", "user.name=essai", "-c", "user.email=essai@example.invalid",
+                      "commit", "-q", "--allow-empty", "-m", "base")):
+            subprocess.run(("git", "-C", str(self.repo_root), *argv), check=True,
+                           env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull})
         # The project's profile, with its launch recipe (T06).
         self.descriptors = self.tmp / "descriptors"
         self.descriptors.mkdir()
