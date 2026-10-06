@@ -55,6 +55,16 @@ cleanup() {
     sleep 0.3
   done
   pkill -9 -f -- "$TRIAL/" >/dev/null 2>&1 || true
+  # Should a systemd user unit of this trial exist anyway, it is removed and
+  # the trial fails: it would restart at every login.
+  for unit in "$HOME/.local/share/systemd/user"/gascity-supervisor-*.service; do
+    [ -f "$unit" ] && grep -qF -- "$TRIAL/" "$unit" || continue
+    echo "FAIL: the trial left the systemd user unit $(basename "$unit"); removing it" >&2
+    systemctl --user disable --now "$(basename "$unit")" >/dev/null 2>&1 || true
+    rm -f -- "$unit"
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    [ "$status" != 0 ] || status=1
+  done
   if [ "${KEEP_TEST_CITY:-0}" = 1 ]; then
     echo "trial preserved at $TRIAL" >&2
   else
@@ -68,6 +78,12 @@ trap cleanup EXIT
 # Dolt, city path, session identity, GC_BIN) and its own supervisor home.
 while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_)' || true)
 export GC_HOME="$TRIAL/h" XDG_RUNTIME_DIR="$TRIAL/r" GC_DISABLE_USAGE_METRICS=1
+# No user bus: `gc start` must not install or start a systemd unit for this
+# trial's supervisor on the host. With the bus reachable (an operator's
+# login shell), the unit restarts in a loop beside the trial's own
+# supervisor: the trial fails and the unit stays enabled at login (seen
+# 2026-10-06, same recipe as tests/graph-review-isolated-city-test.sh).
+unset DBUS_SESSION_BUS_ADDRESS
 export PATH="/usr/local/bin:$HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 mkdir -p "$GC_HOME"
 mkdir -m 700 "$XDG_RUNTIME_DIR"
@@ -228,11 +244,17 @@ gc session list --json | jq -e '[.sessions[] | select(.template | test("trial-au
 observe "150 s sans marque, contrôleur actif, ordre installé (rien démarré, rien écrit)"
 
 # --- 3: marked -> the two unblocked tickets start, under the shared ceiling ---
+# The other Spec's convoy is marked only once T1 and T2 hold the two places:
+# convoy-advance fixes no order between the ready tickets of two convoys, so
+# with both marked at once O1 can take a place before T2 (read in the passes
+# of a failed run, 2026-10-06: T1 and O1 started, T2 held by the ceiling,
+# and this trial failed on a correct pass).
 state mark "$CONVOY"
-state mark "$OTHER"
-echo "$(date -u +%H:%M:%S) l'essai pose la marque sur les deux convois"
+echo "$(date -u +%H:%M:%S) l'essai pose la marque sur le convoi"
 both_started() { started "$T1" && started "$T2"; }
 wait_for 300 both_started || fail "T1 and T2 were not started within 300s of the mark"
+state mark "$OTHER"
+echo "$(date -u +%H:%M:%S) l'essai pose la marque sur le convoi de l'autre Spec"
 wait_passes 2
 started "$T3" && fail "T3 was started while its blockers are open"
 started "$O1" && fail "O1 was started above the shared ceiling"

@@ -274,3 +274,71 @@ shown — no bead field dates the entry into a stage.
 `ui/base/page.py` `render_document` is the skeleton both pages share
 (stylesheet, font, « Déconnecté » banner, scripts).
 `tests/cockpit-home-projects-test.py` covers the page through HTTP.
+
+## Every kind of request in « Ce qui t'attend » (af-mjfvwx)
+
+`requests/assemble.py` `assemble_requests` is the one list the page and
+`GET /api/requests` share. Besides NEEDS BENJAMIN and proposals
+(`requests/builder.py`) it now calls what T15 and T20 built and nothing
+served:
+
+| Kind | Level | From | In its detail |
+|---|---|---|---|
+| Spec to approve, ticket graph to approve (`requests/sources/specs_and_graphs.py`) | À faire | Beads | a prompt to copy — never an approve control (spec .37) |
+| Ready HITL card ticket (`requests/sources/hitl.py`) | Quand tu veux | Beads | read-only option |
+| Delivered chantier not accepted, accepted not promoted (`projects/demandes.py`) | Quand tu veux | `projets` | « Accepter » (two-step) and « Pas bon → agent » as the options themselves |
+| Source unreadable for more than 15 min (`requests/sources/readability.py`, `COCKPIT_ILLISIBLE_SECONDS`) | À faire | the read model's own read times | « Revérifier maintenant » |
+
+- One request per source object: a Spec carrying a NEEDS BENJAMIN is that
+  question, not a second row.
+- Reporter hides a Spec / graph / HITL request through the same trace as
+  an escalation. It is not offered on a chantier or a source request,
+  where no trace on a bead could hide anything.
+- A request shows its project's displayed name (« Usine »), not its key.
+- With Beads unknown the list still shows what does not come from Beads
+  (the unreadable-source request among them) under the « Inconnu :
+  illisible » notice, and `/api/requests` says `state: "unknown"`.
+
+Not wired yet: « rituel dû » (each project's status command lives in its
+own repository — the slice that gives the cockpit its clones),
+and `requests/sources/unknown_signal.py` (no source hands the cockpit an
+unrecognised signal today).
+
+`tests/cockpit-other-requests-test.py` covers all of the above through the
+process's HTTP surface.
+
+## Journal of resolved requests (af-mjfvwx)
+
+`GET /journal` (linked under « Ce qui t'attend ») and `GET /api/journal`
+serve `ui/journal/` (T15, until now imported only by its test). Each entry
+says what was asked, how it was resolved, when (Paris time), by whom, and
+by which way (spec .18); a bead resolved twice has two entries (spec .19).
+The cockpit keeps no copy: `requests/journal.py` `read_journal` is the
+read model's `journal` source (every `COCKPIT_JOURNAL_POLL_SECONDS`, 60 s)
+and re-reads the traces.
+
+What the tracker really holds, checked 2026-10-06 — T15 had assumed Beads
+comments, which are empty on a bead Benjamin answered:
+
+| Trace | Written by | In the bead's notes | Dated by |
+|---|---|---|---|
+| answer to a NEEDS BENJAMIN | `bin/escalation-door repondre` | `RÉPONSE: <lettre> — <option>` | `gc.escalation_response_at` (latest answer only) |
+| decision cleared without an answer | `bin/escalation-door clear` | `DECISION CLEARED: …` | `gc.escalation_cleared_at` (latest clearance; absent before 2026-10-06) |
+| proposal accepted / rejected | `bin/proposal-door` | `PROPOSITION ACCEPTÉE par …` / `PROPOSITION REJETÉE par … — <raison>` | `gc.proposal_response_at` |
+| relance, chantier accepté | `cockpit.actions.trace` | `Cockpit: <quoi> sur <cible> (…) — <quand>, par <acteur>` | the note itself |
+
+The question an entry answers is the `NEEDS BENJAMIN: …` / `PROPOSITION: …`
+note before it. An entry no trace dates shows « date inconnue » and comes
+after the dated ones.
+
+Intent (Benjamin, his words, 2026-10-06): « affiche tel quel ». Mechanism
+(agent interpretation): the journal shows each text exactly as its
+producer wrote it, without the main-text control (`text/validate.py`) the
+inbox applies — a record of what happened, where that control hid nearly
+every entry written before it existed. It does not loosen the inbox.
+
+Known gap: an answer older than the bead's latest one, and a clearance
+made before the door dated it, carry no date.
+
+`tests/cockpit-journal-test.py` covers the page through HTTP, with beads
+carrying notes and metadata as the doors leave them.

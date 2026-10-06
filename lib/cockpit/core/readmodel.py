@@ -18,10 +18,11 @@ _STATE_LABELS = {STALE: "périmé", UNKNOWN: "inconnu"}
 
 
 class _Source:
-    __slots__ = ("display_name", "value", "read_at", "last_attempt_at")
+    __slots__ = ("display_name", "value", "read_at", "last_attempt_at", "registered_at")
 
-    def __init__(self, display_name):
+    def __init__(self, display_name, registered_at=None):
         self.display_name = display_name
+        self.registered_at = registered_at
         self.value = None
         self.read_at = None
         self.last_attempt_at = None
@@ -47,13 +48,13 @@ class ReadModel:
     def register(self, name, display_name=None):
         with self._lock:
             if name not in self._sources:
-                self._sources[name] = _Source(display_name or name)
+                self._sources[name] = _Source(display_name or name, registered_at=self._clock.now())
 
     def ingest(self, name, value, at=None, complete=True):
         """Record a read. ``complete=False`` marks a gc ``partial: true``."""
         now = self._clock.now() if at is None else at
         with self._lock:
-            source = self._sources.setdefault(name, _Source(name))
+            source = self._sources.setdefault(name, _Source(name, registered_at=now))
             source.last_attempt_at = now
             if complete:
                 source.value = value
@@ -77,6 +78,9 @@ class ReadModel:
                 "display_name": source.display_name,
                 "value": source.value,
                 "read_at": source.read_at,
+                # Since when the cockpit has been trying to read it: dates a
+                # source that never answered (spec .17).
+                "registered_at": source.registered_at,
                 "freshness": classify(source.read_at, now, validity_seconds),
             }
         return out

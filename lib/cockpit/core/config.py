@@ -11,6 +11,7 @@ from cockpit.core.gc_client import (
     STATUS_POLL_SECONDS,
     STREAM_SILENCE_SECONDS,
 )
+from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.health.engine import (
     FACTORY_STALLED_AFTER_SECONDS,
     SUPERVISOR_UNREACHABLE_AFTER_SECONDS,
@@ -55,6 +56,11 @@ class Config:
             "COCKPIT_DESCRIPTORS_DIR", os.path.join(_REPO_ROOT, "config", "project-descriptors")
         )
         self.projects_poll_seconds = float(env.get("COCKPIT_PROJECTS_POLL_SECONDS", "30"))
+        self.journal_poll_seconds = float(env.get("COCKPIT_JOURNAL_POLL_SECONDS", "60"))
+        # spec .17: a source unreadable for longer than this is itself a request.
+        self.illisible_after_seconds = float(
+            env.get("COCKPIT_ILLISIBLE_SECONDS", str(ILLISIBLE_THRESHOLD_SECONDS))
+        )
         self.pid_file = env.get("COCKPIT_PID_FILE") or _default_pid_file(env)
         # Out-of-scope touch (T13, af-cx20q9 -- declared scope
         # lib/cockpit/access/**, lib/cockpit/actions/**): the access

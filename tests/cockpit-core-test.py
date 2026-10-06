@@ -157,7 +157,7 @@ class CockpitSeamTest(unittest.TestCase):
 
         status, body = http_get(self.port, "/")
         self.assertEqual(200, status)
-        self.assertIn("Tout est à jour à", body)
+        wait_until(lambda: "Tout est à jour à" in self.home_body(), timeout=10)
 
     # ------------------------------------------------------------------
     # AC2 — fresh -> stale -> unknown over the clock; never a "0" without
