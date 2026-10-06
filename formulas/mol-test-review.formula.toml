@@ -1,0 +1,110 @@
+description = """
+Test review — one reviewer session reads the criterion tests of one ticket
+before they are frozen and hands its answers to `bin/test-review record`
+(T13, af-nkpjpr; Spec af-wf4w5r §5, « Relecture avant gel »).
+
+Only `bin/test-review` dispatches this formula, through `bin/dispatch-door
+--role reviewer`: the session is new, runs on the read-only reviewer role,
+and knows nothing of the session that wrote the tests. The step asks one
+closed question per criterion test; the verdict is computed by
+`bin/convoy-state`, never written by the reviewer, and `bin/tdd-step freeze`
+refuses without a favorable one. The stored state, the bounds and the stop
+are in docs/TEST_REVIEW.md.
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|--------------|
+| convoy_id | runtime | Input convoy tracking the single test-review bead |
+"""
+formula = "mol-test-review"
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "review"
+title = "Review the criterion tests of one ticket and record the answers"
+description = """
+You are the reviewer of the criterion tests of one ticket, before they are
+frozen and before any code of the ticket is written. You did not write these
+tests. Judge only the criteria of the ticket and the tests you are given: do
+not look for the author's session, notes or mail, and do not modify the
+tests, the ticket or any file of a repository.
+
+**1. Read what you are given:**
+
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+REVIEW_BEAD=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+[ -n "$REVIEW_BEAD" ] || { echo "mol-test-review requires an input convoy with exactly one tracked member" >&2; exit 1; }
+REVIEW_TEXT=$(gc bd show "$REVIEW_BEAD" --json | jq -r '.[0].description')
+TICKET_CONVOY=$(printf '%s\n' "$REVIEW_TEXT" | sed -n 's/^convoy: //p')
+TICKET=$(printf '%s\n' "$REVIEW_TEXT" | sed -n 's/^ticket: //p')
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+"$FACTORY_ROOT/bin/test-review" brief "$TICKET_CONVOY" "$TICKET" > test-review-brief.json
+jq -r '.question' test-review-brief.json
+jq '.criteria, .tests' test-review-brief.json
+jq -r '.files | to_entries[] | "=== \\(.key)\\n\\(.value)"' test-review-brief.json
+```
+
+The brief gives the acceptance criteria of the ticket, numbered
+(`.criteria`: each names its entry point, its observable and the
+observation that would make it false), the tests that prove each of them
+(`.tests`), and the files as they were committed and proven red (`.files`).
+A test may call a helper of the test perimeter that the brief does not
+carry: read it at the same commit, `git -C "$(jq -r .repo
+test-review-brief.json)" show "$(jq -r .commit test-review-brief.json):<path>"`.
+
+**2. Answer the one question, for every test of `.tests`:**
+
+Does this test observe its criterion, and would it fail on the observation
+that makes that criterion false?
+
+- `favorable` — the assertions of the test read the observable the
+  criterion names, through the entry point it names, and a product in which
+  the criterion is false (the observation after « Faux si ») makes the test
+  fail.
+- `unfavorable` — anything else: a test that only checks a status code,
+  that a page or a field exists without reading the value the criterion
+  names, that asserts on something else than the named observable, that
+  would pass on a product that does not do what the criterion says, or that
+  does not go through the named entry point.
+
+A test that proves several criteria is judged against each of them: one
+criterion it does not observe makes it `unfavorable`. Judge nothing else:
+not the style of the test, not the criterion itself, not the code to come.
+An `unfavorable` answer carries a `reason`, one line, in the Operator
+Language (`"$FACTORY_ROOT/bin/operator-config" language`), that quotes what
+the test asserts and says what the criterion asks. You give no overall
+verdict: code computes it.
+
+**3. Write and record your answers:**
+
+Write `test-review-verdict.json` in the current directory, in the shape
+`.verdict_shape` of the brief shows — `commit` and `files` copied from the
+brief (`.commit`, `.fingerprints`), and one answer per test id:
+
+```bash
+jq '{commit, files: .fingerprints, tests: {}}' test-review-brief.json > test-review-verdict.json
+# then set .tests["<test id>"] = {"state": "favorable"} or {"state": "unfavorable", "reason": "..."} for every test
+"$FACTORY_ROOT/bin/test-review" record "$TICKET_CONVOY" "$TICKET" --verdict-file test-review-verdict.json
+```
+
+If it refuses, it lists what is missing or outside its closed lists: fix the
+file and run it again. Do not write the review state any other way.
+
+**4. Close:**
+
+```bash
+gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Test review of $TICKET recorded."
+if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$REVIEW_BEAD" ]; then
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Test review of $TICKET recorded."
+fi
+```
+
+If you could not record a verdict, close both with `gc.outcome=fail` and the
+reason in the notes instead: a review without a result is not a passed one.
+
+**Exit criteria:** `bin/test-review record` accepted your answers, and the
+review bead and this step are closed."""

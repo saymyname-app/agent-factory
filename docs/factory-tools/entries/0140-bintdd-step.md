@@ -20,8 +20,10 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   refusé et nommé.
 - **Critère déjà vert** : le ticket est arrêté (sortie 5), le critère est
   nommé, l'arrêt est écrit dans le tracker.
-- **Gel** : les empreintes des tests, de la table et du harnais vont dans le
-  magasin de preuves, hors de tout dépôt Git.
+- **Gel** : refusé tant que le relecteur de tests n'a pas passé chaque test
+  de critère, au même commit et sur les mêmes empreintes
+  (`./bin/test-review`) ; ensuite les empreintes des tests, de la table et
+  du harnais vont dans le magasin de preuves, hors de tout dépôt Git.
 - **Vert** : refus si un fichier gelé a été modifié, supprimé ou déplacé ;
   sinon les tests gelés passent k fois de suite. Un résultat mixte nomme le
   test instable.
@@ -33,8 +35,9 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
 - **Sorties** : 0 étape prouvée ; 1 refus, rien n'est écrit ; 4 « pas un
   convoi du nouveau flux » ; 5 ticket arrêté.
 - **Limite** : le script prouve l'ordre et les résultats, pas qu'un test
-  observe bien son critère (c'est la question du relecteur de tests). Lever
-  un arrêt n'est pas dans cette commande.
+  observe bien son critère : c'est la question du relecteur de tests, posée
+  entre le rouge et le gel (`./bin/test-review`). Lever un arrêt n'est pas
+  dans cette commande.
 
 Détail : `docs/TDD_STEP.md`.
 

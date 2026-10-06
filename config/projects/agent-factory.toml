@@ -28,7 +28,10 @@ sling_target = "factory-worker"
 # mol-ticket-author (T12, af-i3q5a5) is the author formula of the new flow:
 # only bin/convoy-advance dispatches it, with --role author, on a ticket of a
 # convoy that carries the new-flow mark (docs/TICKET_AUTHOR.md).
-formulas = "mol-do-work,mol-graph-review,mol-ticket-author"
+# mol-test-review (T13, af-nkpjpr) is not a delivery formula either: only
+# bin/test-review dispatches it, with --role reviewer, to have the criterion
+# tests of a ticket read before they are frozen (docs/TEST_REVIEW.md).
+formulas = "mol-do-work,mol-graph-review,mol-ticket-author,mol-test-review"
 # human_approver (A6b W04) is this project's declared human approver:
 # bin/spec-approve refuses to approve a Spec bead whose --approved-by is
 # anyone else, read via `bin/project-planning-profile human-approver`.

@@ -16,6 +16,12 @@
 # next step starts is decided by Gas City running the check of the formula,
 # materialised in the city root by the real bin/factory-build-gates.
 #
+# The review of the criterion tests between red and freeze (T13) goes through
+# the real bin/test-review; tests/fixtures/test-review/reviewer stands in for
+# the dispatch door and the reviewer session, and passes every test. The
+# reviewer role on a real controller is tried by
+# tests/test-review-isolated-city-test.sh.
+#
 # Three tickets of the fixture, three behaviours of the author:
 #   A  walks the sequence: tests first, code, demonstration, exit « terminé ».
 #   B  closes the red step without proving anything, each time it is given
@@ -79,7 +85,7 @@ trap cleanup EXIT
 
 # Nothing of the live Factory may reach this city (same recipe as
 # tests/convoy-advance-isolated-city-test.sh).
-while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_|ESCALATION_DOOR_|EVIDENCE_|TICKET_AUTHOR_|SPEC_INTEGRATION_)' || true)
+while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_|ESCALATION_DOOR_|EVIDENCE_|TICKET_AUTHOR_|SPEC_INTEGRATION_|TEST_REVIEW_)' || true)
 export GC_HOME="$TRIAL/h" XDG_RUNTIME_DIR="$TRIAL/r" GC_DISABLE_USAGE_METRICS=1
 unset DBUS_SESSION_BUS_ADDRESS
 export PATH="/usr/local/bin:$HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -95,10 +101,13 @@ export CONVOY_STATE_LOCK_DIR="$TRIAL/locks" CONVOY_ADVANCE_LOCK_DIR="$TRIAL/lock
 export SPEC_INTEGRATION_WORK_DIR="$TRIAL/merge"
 export EVIDENCE_STORE_DIR="$TRIAL/store" TICKET_AUTHOR_WORKTREES_DIR="$TRIAL/worktrees"
 export ESCALATION_DOOR_LOCK_FILE="$TRIAL/escalation-door.lock" PROPOSAL_DOOR_BIN="$TRIAL/proposal-door"
+export GC_BIN=gc TEST_REVIEW_DISPATCH_DOOR_BIN="$ROOT/tests/fixtures/test-review/reviewer" TEST_REVIEW_POLL_SECONDS=1
+export TEST_REVIEW_FAKE_LOG="$TRIAL/review-door.log" TEST_REVIEW_FAKE_PLAN="$TRIAL/review-plan.json" TEST_REVIEW_FAKE_REPO="$CITY"
 export GIT_AUTHOR_NAME=essai GIT_AUTHOR_EMAIL=essai@example.invalid GIT_COMMITTER_NAME=essai GIT_COMMITTER_EMAIL=essai@example.invalid
 ENV
 printf '#!/bin/sh\necho 0\n' > "$TRIAL/proposal-door"
 chmod +x "$TRIAL/proposal-door"
+echo '["favorable"]' > "$TRIAL/review-plan.json"
 # shellcheck disable=SC1091
 . "$TRIAL/env"
 
@@ -149,6 +158,7 @@ while true; do
         cp "$TRIAL/tests/"* "\$WT/$FIXTURE/tests/"
         git -C "\$WT" add -A; git -C "\$WT" commit -q -m "tests de critère"
         tool "\$BIN/tdd-step" red "\$CONVOY" "\$TICKET" --repo "\$WT" --profile "\$PROFILE" --dataset content --base "\$BASE" --table "$FIXTURE/tests/criteria.json"
+        tool "\$BIN/test-review" review "\$CONVOY" "\$TICKET" --repo "\$WT" --wait 60
         tool "\$BIN/tdd-step" freeze "\$CONVOY" "\$TICKET" --repo "\$WT" ;;
       red:skip-red)
         say "ferme l'étape rouge sans rien prouver" ;;
@@ -268,7 +278,8 @@ sling_target = "trial-author"
 formulas = "mol-ticket-author"
 TOML
 jq '.rigs = ["trial"]' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
-jq -n --argjson n "$CEILING" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n, start: {formula: "mol-ticket-author", role: null}}' \
+jq -n --argjson n "$CEILING" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n, start: {formula: "mol-ticket-author", role: null},
+  test_review: {formula: "mol-test-review", role: "reviewer", rig: "trial", timeout_seconds: 600}}' \
   > "$CITY/config/delivery-flow.json"
 cp "$ROOT/config/delivery-roles.json" "$CITY/config/delivery-roles.json"
 
@@ -382,6 +393,7 @@ tip=$(printf '%s' "$a" | jq -r '.tip')
 [ "$(printf '%s' "$a" | jq -r '.branch')" = "ticket/$A" ] || fail "A does not carry its ticket branch"
 git -C "$PRODUCT" merge-base --is-ancestor "$INTEGRATION" "$tip" || fail "the branch of A does not leave from the integration branch"
 [ "$(git -C "$PRODUCT" rev-parse "$tip~2")" = "$INTEGRATION" ] || fail "the branch of A does not start at the tip of the integration branch"
+[ "$(printf '%s' "$a" | jq -c '[.test_review.rounds[].verdict]')" = '["favorable"]' ] || fail "the criterion tests of A were frozen without a favorable review"
 for piece in tdd_red tdd_freeze tdd_green demonstration handoff_records; do
   printf '%s' "$a" | jq -e --arg p "$piece" '.evidence[$p].digest' >/dev/null || fail "A carries no fingerprint for the piece $piece"
   [ -f "$TRIAL/store/$SPEC/$A/$piece.json" ] || fail "the evidence store holds no piece $piece for A"

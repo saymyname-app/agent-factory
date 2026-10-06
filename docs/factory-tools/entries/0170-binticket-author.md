@@ -18,7 +18,8 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
 - **Personne ne lance la formule à la main** : `./bin/convoy-advance` démarre
   chaque ticket prêt (`start.formula` dans `config/delivery-flow.json`).
 - **Étapes et contrôles** : prise du ticket (worktree, branche, session) ;
-  rouge prouvé et tests gelés ; tests verts à la pointe de la branche ; ligne
+  rouge prouvé, tests relus par le relecteur de tests (`./bin/test-review`)
+  puis gelés ; tests verts à la pointe de la branche ; ligne
   de démonstration capturée sur le produit lancé, au commit de tête ; sortie
   de ticket enregistrée.
 - **Contrôle refusé** : l'étape revient à la session avec le motif. Au bout
@@ -35,8 +36,12 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
   réelle. Limite : un sous-agent de lecture garde un shell.
 - **Sorties** : 0 fait ou étape prouvée ; 1 refus ; 4 « pas un convoi du
   nouveau flux ».
-- **Pas ici** : relecture des tests entre rouge et gel (T13), revue et
-  évaluation (T14, T15), porte de fin de ticket (T19), reprise d'un ticket
-  (T20).
+- **Ticket arrêté** (critère déjà vert, second refus de la relecture des
+  tests, relecture sans résultat) : chaque contrôle le refuse, la séquence
+  échoue et rien n'en est fusionné.
+- **Pas ici** : revue et évaluation (T14, T15), porte de fin de ticket
+  (T19), reprise d'un ticket (T20).
 
 Détail : `docs/TICKET_AUTHOR.md`.
+
+---

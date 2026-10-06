@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Stand-in for the dispatch door and the reviewer session it starts, for
+tests/test-review-test.py: no agent runs in CI, only what goes in and out of
+the command (Spec af-wf4w5r, Testing Decisions).
+
+Called as bin/dispatch-door is (`<bead> --rig R --formula F --role ROLE`), it
+logs its arguments to TEST_REVIEW_FAKE_LOG, then does what a reviewer session
+does with the routed bead: read the convoy and the ticket it names, ask
+`test-review brief`, answer the one question for every criterion test, hand
+the verdict to `test-review record` from a read-only role session.
+
+What each call does is read from the JSON list in TEST_REVIEW_FAKE_PLAN, one
+entry per call, the last one repeated:
+
+    "favorable"                  every test observes its criterion
+    {"<test id>": "<reason>"}    those tests are refused, the others pass
+    "silent"                     the session starts and never answers
+    "closed"                     the session closes its bead without a verdict
+    "door-refuses"               the door refuses the dispatch
+    "door-defers"                the door defers the dispatch (exit 75)
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+TOOL = str(ROOT / "bin" / "test-review")
+GC = os.environ["GC_BIN"]
+
+log = Path(os.environ["TEST_REVIEW_FAKE_LOG"])
+calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+with log.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(sys.argv[1:]) + "\n")
+plan = json.loads(Path(os.environ["TEST_REVIEW_FAKE_PLAN"]).read_text(encoding="utf-8"))
+step = plan[min(len(calls), len(plan) - 1)]
+
+if step == "door-refuses":
+    print("dispatch-door: dispatch refused: no passing adoption trial for role 'reviewer'", file=sys.stderr)
+    raise SystemExit(2)
+if step == "door-defers":
+    print("dispatch-door: deferred -- guest MemAvailable is 1.0 GiB, below the 1.5 GiB floor", file=sys.stderr)
+    raise SystemExit(75)
+if step == "silent":
+    raise SystemExit(0)
+bead_id = sys.argv[1]
+if step == "closed":
+    subprocess.run([GC, "bd", "close", bead_id, "--reason", "aucun verdict"], capture_output=True, check=True)
+    raise SystemExit(0)
+
+bead = json.loads(subprocess.run([GC, "bd", "show", bead_id, "--json"], capture_output=True, text=True, check=True).stdout)[0]
+convoy = re.search(r"^convoy: (\S+)$", bead["description"], re.MULTILINE).group(1)
+ticket = re.search(r"^ticket: (\S+)$", bead["description"], re.MULTILINE).group(1)
+session = {**os.environ, "DELIVERY_ROLE_READ_ONLY": "1", "GC_SESSION_NAME": "delivery-reviewer-fixture"}
+brief = json.loads(subprocess.run(
+    [TOOL, "brief", convoy, ticket, "--repo", os.environ["TEST_REVIEW_FAKE_REPO"]],
+    env=session, capture_output=True, text=True, check=True).stdout)
+refused = step if isinstance(step, dict) else {}
+verdict = {
+    "commit": brief["commit"], "files": brief["fingerprints"],
+    "tests": {test["id"]: ({"state": "unfavorable", "reason": refused[test["id"]]} if test["id"] in refused
+                           else {"state": "favorable"}) for test in brief["tests"]},
+}
+with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+    json.dump(verdict, handle, ensure_ascii=False)
+proc = subprocess.run([TOOL, "record", convoy, ticket, "--verdict-file", handle.name],
+                      env=session, capture_output=True, text=True)
+os.unlink(handle.name)
+sys.stderr.write(proc.stdout + proc.stderr)
+subprocess.run([GC, "bd", "close", bead_id, "--reason", "relecture enregistrée"], capture_output=True)
+raise SystemExit(0)

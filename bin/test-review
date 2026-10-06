@@ -1,0 +1,737 @@
+#!/usr/bin/env python3
+"""Review of the criterion tests of a ticket before they are frozen (T13,
+af-nkpjpr; Spec af-wf4w5r §5 « Relecture avant gel », §8).
+
+Between the red proof and the freeze, a reviewer in a fresh context -- a
+session of the read-only reviewer role, started as routed work through
+bin/dispatch-door -- answers one question per criterion test: does it
+observe its criterion, and would it fail on the observation that makes the
+criterion false? Code computes the verdict and binds it to the commit and to
+the fingerprints of the files the freeze seals; bin/tdd-step freeze refuses
+without it. A refusal returns once to the author; a second one stops the
+ticket. A review that gives no result is not a passed one: it is launched
+once more, then the ticket is stopped. A stopped ticket reaches the operator
+once, through bin/escalation-door.
+
+    test-review review CONVOY TICKET --repo WORKTREE [--wait SECONDS]   the author, after tdd-step red
+    test-review settle CONVOY                                           bin/convoy-advance, at each pass
+    test-review brief  CONVOY TICKET [--repo DIR]                       the reviewer session
+    test-review record CONVOY TICKET --verdict-file FILE                the reviewer session
+    test-review show   CONVOY TICKET
+
+`review` opens the review of the tests proven red at HEAD, sends it to the
+reviewer role, and waits for the verdict up to `--wait` seconds; run again,
+it resumes the same review. `settle` does what is due on every ticket of the
+convoy without any session: the relaunch of a review left without result,
+the stop, the request to the operator.
+
+The state lives in the tracker, read and written through bin/convoy-state
+only (`test_review`, `stop`). Every answer is one JSON object on stdout.
+Exit status: 0 done (`review`: every criterion test passed the review, the
+freeze can follow); 1 refused or could not run; 2 `review`: the reviewer
+refused at least one test, which returns to the author with the reasons; 4
+the convoy does not carry the new-flow mark; 5 the ticket is stopped; 6
+`review`: no verdict yet, run it again. Details: docs/TEST_REVIEW.md.
+
+Environment (tests and non-default layouts):
+  FACTORY_ROOT                    repository whose settings and projects are read
+  TEST_REVIEW_DISPATCH_DOOR_BIN   door that routes the review to the reviewer
+  TEST_REVIEW_POLL_SECONDS        how often `review` reads the tracker again
+"""
+
+from __future__ import annotations
+
+import argparse
+import calendar
+import fcntl
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterator
+
+
+PROGRAM = "test-review"
+BIN = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
+GC_BIN = os.environ.get("GC_BIN", "gc")
+STATE_TOOL = BIN / "convoy-state"
+CAPTURE_TOOL = BIN / "evidence-capture"
+ESCALATION_TOOL = BIN / "escalation-door"
+OPERATOR_CONFIG_BIN = BIN / "operator-config"
+SETTINGS = ROOT / "config" / "delivery-flow.json"
+PROJECTS = ROOT / "config" / "projects"
+
+NEW_FLOW = "new-flow/v1"
+KIND_PREFACTORING = "prefactoring"
+RED_PIECE = "tdd_red"
+FAVORABLE, UNFAVORABLE = "favorable", "unfavorable"
+STOP_REFUSED, STOP_NO_RESULT = "test_review_refused", "test_review_no_result"
+REVIEW_STOPS = (STOP_REFUSED, STOP_NO_RESULT)
+# bin/convoy-state holds the bound (launch-test-review refuses a third
+# launch): the first launch, then one relaunch.
+MAX_LAUNCHES = 2
+QUESTION = (
+    "Pour chaque test de critère : ce test observe-t-il son critère, et échouerait-il sur l'observation qui "
+    "rend ce critère faux ?")
+
+EXIT_REFUSED = 1
+EXIT_RETURNED = 2
+EXIT_NOT_NEW_FLOW = 4
+EXIT_STOPPED = 5
+EXIT_PENDING = 6
+# What bin/dispatch-door exits with when it defers a dispatch (EX_TEMPFAIL).
+DOOR_DEFERRED = 75
+
+DEFAULT_WAIT = 540
+DEFAULT_POLL = 10.0
+MAX_DETAIL = 300
+# bin/escalation-door refuses a field longer than this, or on several lines.
+REQUEST_LINE_MAX = 140
+
+# The publication door renders a ticket's rigs under this heading.
+RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
+RIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+class Refusal(RuntimeError):
+    """The call is refused, or could not run."""
+
+    def __init__(self, message: str):
+        super().__init__(" ".join(message.split()))
+
+
+class Deferred(Refusal):
+    """The dispatch door deferred the launch (low memory, a hot path held):
+    nothing was sent, and the next call tries again."""
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark: bin/convoy-state's answer."""
+
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+def short(text: str, limit: int = MAX_DETAIL) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+# --- the other commands ----------------------------------------------------------
+
+
+def run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+
+
+def detail_of(proc: subprocess.CompletedProcess[str]) -> str:
+    return short(proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}")
+
+
+def tool(path: Path, *args: str) -> tuple[int, dict[str, Any]]:
+    """One JSON answer of bin/convoy-state or bin/evidence-capture."""
+    proc = run([str(path), *args])
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {detail_of(proc)}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def state_write(*args: str) -> dict[str, Any]:
+    status, answer = tool(STATE_TOOL, *args)
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(answer)
+    if status != 0:
+        raise Refusal(f"{args[0]} refusé par la commande d'état : {refusal_text(answer)}")
+    return answer
+
+
+def read_bead(bead_id: str) -> dict[str, Any]:
+    proc = run([GC_BIN, "bd", "show", bead_id, "--json"])
+    if proc.returncode != 0:
+        raise Refusal(f"gc bd show {bead_id} a échoué : {detail_of(proc)}")
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc bd show {bead_id} a rendu un JSON illisible : {exc}") from exc
+    bead = data[0] if isinstance(data, list) and data else data
+    if not isinstance(bead, dict):
+        raise Refusal(f"bead introuvable : {bead_id}")
+    return bead
+
+
+def git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+    try:
+        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, env=env, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer git : {exc}") from exc
+
+
+def digest_of(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+# --- settings ----------------------------------------------------------------
+
+
+def load_settings() -> dict[str, Any]:
+    """`test_review` of config/delivery-flow.json: what the dispatch door is
+    given to start the reviewer, and how long a launch may take."""
+    try:
+        data = json.loads(SETTINGS.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise Refusal(f"config/delivery-flow.json illisible : {exc}") from exc
+    block = data.get("test_review") if isinstance(data, dict) else None
+    if not isinstance(block, dict):
+        raise Refusal("aucun réglage test_review dans config/delivery-flow.json : la relecture des tests n'est pas réglée")
+    settings = {name: block.get(name) for name in ("formula", "role", "rig", "timeout_seconds")}
+    for name in ("formula", "role", "rig"):
+        if not isinstance(settings[name], str) or not settings[name]:
+            raise Refusal(f"test_review.{name} absent ou invalide dans config/delivery-flow.json : {settings[name]!r}")
+    timeout = settings["timeout_seconds"]
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 0:
+        raise Refusal(
+            f"test_review.timeout_seconds absent ou invalide dans config/delivery-flow.json : {timeout!r} "
+            "(attendu : un nombre entier de secondes)")
+    return settings
+
+
+# --- the ticket ----------------------------------------------------------------
+
+
+def show(convoy_id: str, repo: Path | None = None) -> dict[str, Any]:
+    status, answer = tool(STATE_TOOL, "show", convoy_id, *(("--repo", str(repo)) if repo else ()))
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(answer)
+    if status not in (0, 3) or not isinstance(answer.get("tickets"), list):
+        raise Refusal(refusal_text(answer))
+    return answer
+
+
+def readable(ticket: dict[str, Any]) -> dict[str, Any]:
+    """A ticket whose review and stop this command can decide from."""
+    if ticket.get("mark") != NEW_FLOW:
+        raise Refusal(f"état sans règle : le ticket {ticket.get('id')} ne porte pas la marque du nouveau flux")
+    for name in ("test_review", "stop"):
+        record = ticket.get(name)
+        if isinstance(record, dict) and "unruled" in record:
+            raise Refusal(f"état sans règle : {record['unruled']}")
+    return ticket
+
+
+def ticket_of(convoy_id: str, ticket_id: str, repo: Path | None = None) -> dict[str, Any]:
+    for ticket in show(convoy_id, repo)["tickets"]:
+        if ticket.get("id") == ticket_id:
+            return readable(ticket)
+    raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {convoy_id}")
+
+
+def rounds_of(ticket: dict[str, Any]) -> list[dict[str, Any]]:
+    return (ticket.get("test_review") or {}).get("rounds") or []
+
+
+def request_of(ticket: dict[str, Any]) -> dict[str, Any] | None:
+    return (ticket.get("test_review") or {}).get("request")
+
+
+def refusals_of(ticket: dict[str, Any]) -> int:
+    return sum(1 for round_ in rounds_of(ticket) if round_["verdict"] == UNFAVORABLE)
+
+
+def review_stop(ticket: dict[str, Any]) -> dict[str, Any] | None:
+    """The stop of the ticket, when the review of its tests is what stopped it."""
+    stop = ticket.get("stop")
+    return stop if isinstance(stop, dict) and stop.get("reason") in REVIEW_STOPS else None
+
+
+def refused_tests(round_: dict[str, Any], criteria: dict[str, list[str]] | None = None) -> list[dict[str, Any]]:
+    """What a pass refused: each test, the criteria it proves, the reason."""
+    out = []
+    for test_id, answer in round_["tests"].items():
+        if answer["state"] != UNFAVORABLE:
+            continue
+        entry: dict[str, Any] = {"test": test_id, "reason": answer["reason"]}
+        if criteria is not None:
+            entry["criteria"] = [number for number in sorted(criteria, key=int) if test_id in criteria[number]]
+        out.append(entry)
+    return out
+
+
+def rig_repository(ticket_id: str) -> Path:
+    """The repository of the single project the ticket names under « Target rigs »."""
+    description = read_bead(ticket_id).get("description")
+    match = RIGS_SECTION_RE.search(description if isinstance(description, str) else "")
+    rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
+    if len(rigs) != 1 or not RIG_RE.match(rigs[0]) or not (PROJECTS / f"{rigs[0]}.toml").is_file():
+        raise Refusal(
+            "le ticket ne nomme pas un seul projet de config/projects sous « Target rigs » : "
+            "son dépôt se donne par --repo")
+    try:
+        rig_dir = tomllib.loads((PROJECTS / f"{rigs[0]}.toml").read_text(encoding="utf-8")).get("rig_dir")
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise Refusal(f"config/projects/{rigs[0]}.toml illisible : {exc}") from exc
+    if not isinstance(rig_dir, str) or not rig_dir:
+        raise Refusal(f"config/projects/{rigs[0]}.toml ne déclare pas rig_dir")
+    return (ROOT / rig_dir).resolve()
+
+
+# --- what a review is bound to ---------------------------------------------------
+
+
+def clean_head(repo: Path) -> str:
+    proc = git(repo, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    if proc.returncode != 0:
+        raise Refusal(f"--repo {repo} n'est pas un dépôt Git avec un commit")
+    dirty = git(repo, "status", "--porcelain", "--untracked-files=no")
+    if dirty.returncode != 0 or dirty.stdout.strip():
+        raise Refusal(
+            f"des fichiers suivis diffèrent de HEAD dans {repo} : la relecture porte sur un commit "
+            f"({short((dirty.stdout or dirty.stderr).decode(errors='replace'), 120)})")
+    return proc.stdout.decode().strip()
+
+
+def blob(repo: Path, commit: str, path: str) -> bytes:
+    proc = git(repo, "show", f"{commit}:{path}")
+    if proc.returncode != 0:
+        raise Refusal(f"fichier de test absent du commit {commit} dans {repo} : {path}")
+    return proc.stdout
+
+
+def red_fileset(convoy_id: str, ticket_id: str, repo: Path, head: str) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """What bin/tdd-step freeze will seal at this commit, from the red proof
+    the evidence store vouches for: the fingerprints of the table, of each
+    criterion test file and of the frozen harness, and the criterion -> test
+    table."""
+    status, answer = tool(CAPTURE_TOOL, "verify", convoy_id, ticket_id, "--piece", RED_PIECE)
+    if status != 0:
+        raise Refusal(f"preuve du rouge invérifiable : {refusal_text(answer)}")
+    try:
+        record = json.loads(Path(answer["pieces"][0]["path"]).read_text(encoding="utf-8"))
+        proof = json.loads(record["output"])
+        criteria = proof["criteria"]
+        tests = [test_id for number in sorted(criteria, key=int) for test_id in criteria[number]]
+        paths = [proof["table"], *(test_id.partition("::")[0] for test_id in tests), *proof["frozen_harness_paths"]]
+    except (OSError, KeyError, IndexError, TypeError, ValueError) as exc:
+        raise Refusal(f"preuve du rouge illisible (pièce {RED_PIECE}) : {exc}") from exc
+    if record.get("commit") != head:
+        raise Refusal(f"la preuve du rouge porte sur le commit {record.get('commit')}, et la relecture sur {head}")
+    return {path: digest_of(blob(repo, head, path)) for path in dict.fromkeys(paths)}, criteria
+
+
+# --- launching the reviewer -------------------------------------------------------
+
+
+@contextmanager
+def ticket_lock(ticket_id: str) -> Iterator[None]:
+    """One decision at a time on the review of a ticket: the author's
+    `review` and the pass of bin/convoy-advance never launch it twice."""
+    lock_dir = Path(os.environ.get("CONVOY_STATE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = re.sub(r"[^A-Za-z0-9._-]", "_", ticket_id)
+    with (lock_dir / f"agent-factory-test-review-{safe_id}.lock").open("w") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def launch(convoy_id: str, ticket_id: str, request: dict[str, Any], settings: dict[str, Any]) -> str:
+    """Send the open review to a new reviewer session: a bead of its own,
+    routed through the dispatch door on the reviewer role."""
+    number = len(request["launches"]) + 1
+    proc = run([
+        GC_BIN, "bd", "create", f"Relecture des tests de critère — {ticket_id} (lancement {number})",
+        "-p", "1", "-t", "task", "-d",
+        f"Review of the criterion tests of ticket {ticket_id} before they are frozen, at commit "
+        f"{request['commit']} (launch {number}).\n\nconvoy: {convoy_id}\nticket: {ticket_id}\n",
+        "--json"])
+    try:
+        created = json.loads(proc.stdout)
+        created = created[0] if isinstance(created, list) and created else created
+        bead_id = created["id"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise Refusal(f"gc bd create n'a pas rendu l'identifiant du bead de relecture : {detail_of(proc)}") from exc
+    door = os.environ.get("TEST_REVIEW_DISPATCH_DOOR_BIN") or str(BIN / "dispatch-door")
+    routed = run([door, bead_id, "--rig", settings["rig"], "--formula", settings["formula"], "--role", settings["role"]])
+    if routed.returncode != 0:
+        run([GC_BIN, "bd", "close", bead_id, "--reason", "Relecture non routée par la porte de dispatch."])
+        if routed.returncode == DOOR_DEFERRED:
+            raise Deferred(
+                f"le lancement de la relecture des tests du ticket {ticket_id} est différé par la porte de dispatch : "
+                f"{detail_of(routed)} ; aucun lancement n'est compté, le prochain appel réessaie")
+        raise Refusal(
+            f"la relecture des tests du ticket {ticket_id} n'a pas été routée vers le rôle relecteur : "
+            f"{detail_of(routed)} ; aucun lancement n'est compté")
+    try:
+        state_write("launch-test-review", convoy_id, ticket_id, "--bead", bead_id)
+    except Refusal:
+        # The reviewer answered before its launch was written: its verdict
+        # closed the request, and there is nothing left to record.
+        if request_of(ticket_of(convoy_id, ticket_id)) is not None:
+            raise
+    return bead_id
+
+
+def expired(launched: dict[str, Any], timeout: int) -> bool:
+    """A launch that gave no result: its time is over, or its bead was
+    closed without a verdict (the verdict closes the request first)."""
+    try:
+        at = calendar.timegm(time.strptime(launched["at"], "%Y-%m-%dT%H:%M:%SZ"))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise Refusal(f"heure de lancement de la relecture illisible : {launched!r}") from exc
+    if time.time() >= at + timeout:
+        return True
+    try:
+        return read_bead(launched["bead"]).get("status") == "closed"
+    except Refusal:
+        return False
+
+
+def deadline_of(launched: dict[str, Any], timeout: int) -> str:
+    at = calendar.timegm(time.strptime(launched["at"], "%Y-%m-%dT%H:%M:%SZ"))
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at + timeout))
+
+
+# --- a stopped ticket reaches the operator ------------------------------------------
+
+
+def one_line(text: str) -> str:
+    return short(text, REQUEST_LINE_MAX)
+
+
+def stop_request(ticket: dict[str, Any], stop: dict[str, Any]) -> dict[str, Any]:
+    """What the operator reads on the escalation door's list."""
+    ticket_id = ticket["id"]
+    leave = {"option": "Laisser le ticket arrêté",
+             "consequence": "Rien de ce ticket ne fusionne ; les tickets qui l'attendent ne démarrent pas."}
+    if stop["reason"] == STOP_REFUSED:
+        last = rounds_of(ticket)[-1] if rounds_of(ticket) else None
+        refused = refused_tests(last)[0] if last and refused_tests(last) else None
+        why = f" ({refused['test'].rpartition('::')[2]} : {refused['reason']})" if refused else ""
+        return {
+            "quoi": one_line(f"Ticket {ticket_id} arrêté : second refus de la relecture de ses tests de critère{why}"),
+            "pourquoi": "Un test refusé ne prouve pas son critère, et le seul retour à l'auteur est épuisé.",
+            "que_faire": [
+                {"option": "Reprendre le critère ou le ticket dans le Planning Run",
+                 "consequence": "Le ticket reste arrêté jusqu'à la révision du graphe ; ceux qui l'attendent ne démarrent pas."},
+                leave,
+            ],
+        }
+    return {
+        "quoi": one_line(f"Ticket {ticket_id} arrêté : la relecture de ses tests de critère n'a rendu aucun verdict, relance comprise"),
+        "pourquoi": "Une relecture sans résultat n'est pas passée : les tests ne sont pas gelés, le code ne commence pas.",
+        "que_faire": [
+            {"option": "Faire vérifier le rôle relecteur par la maintenance de l'usine",
+             "consequence": "Le ticket reste arrêté tant que son arrêt n'est pas levé."},
+            leave,
+        ],
+    }
+
+
+def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> bool:
+    """One request per stop: the escalation door puts the ticket on the
+    operator's list, and bin/convoy-state records that it did."""
+    if "raised" in stop:
+        return False
+    language = run([str(OPERATOR_CONFIG_BIN), "language"])
+    if language.returncode != 0:
+        raise Refusal(f"la langue de l'opérateur est illisible : {detail_of(language)}")
+    payload = {**stop_request(ticket, stop), "langue": language.stdout.strip(), "bloquant": True}
+    proc = run([str(ESCALATION_TOOL), "benjamin", ticket["id"], json.dumps(payload, ensure_ascii=False)])
+    if proc.returncode != 0:
+        raise Refusal(
+            f"le ticket {ticket['id']} est arrêté ({stop['reason']}) mais la porte d'escalade a refusé sa remontée : "
+            f"{detail_of(proc)} ; {PROGRAM} settle {convoy_id} la rejoue")
+    state_write("stop-raised", convoy_id, ticket["id"])
+    return True
+
+
+# --- settle: what is due on one ticket ----------------------------------------------
+
+
+def settle_ticket(convoy_id: str, ticket_id: str, settings: dict[str, Any], repo: Path | None = None) -> dict[str, Any]:
+    """Do what is due on the review of one ticket, from the tracker alone:
+    raise a stop that did not reach the operator, launch an open review,
+    launch it once more when it gave no result, stop the ticket when the
+    relaunch gave none either. A second call on the same state does nothing."""
+    with ticket_lock(ticket_id):
+        ticket = ticket_of(convoy_id, ticket_id, repo)
+        stop = review_stop(ticket)
+        if stop:
+            return {"ticket": ticket_id, "action": "escalated" if raise_stop(convoy_id, ticket, stop) else "none"}
+        request = request_of(ticket)
+        if ticket.get("stop") or request is None:
+            return {"ticket": ticket_id, "action": "none"}
+        launches = request["launches"]
+        if launches and not expired(launches[-1], settings["timeout_seconds"]):
+            return {"ticket": ticket_id, "action": "pending", "launches": len(launches),
+                    "deadline": deadline_of(launches[-1], settings["timeout_seconds"])}
+        if len(launches) >= MAX_LAUNCHES:
+            detail = (f"la relecture des tests de critère n'a rendu aucun verdict en {len(launches)} lancements "
+                      f"({', '.join(launch_['bead'] for launch_ in launches)})")
+            state_write("stop-ticket", convoy_id, ticket_id, "--reason", STOP_NO_RESULT, "--detail", detail)
+            ticket = ticket_of(convoy_id, ticket_id, repo)
+            raise_stop(convoy_id, ticket, ticket["stop"])
+            return {"ticket": ticket_id, "action": "stopped", "stop": STOP_NO_RESULT}
+        bead_id = launch(convoy_id, ticket_id, request, settings)
+        return {"ticket": ticket_id, "action": "relaunched" if launches else "launched", "bead": bead_id,
+                "launches": len(launches) + 1}
+
+
+def cmd_settle(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    answer: dict[str, Any] = {"ok": True, "convoy": args.convoy, "launched": [], "relaunched": [], "pending": [],
+                              "stopped": [], "escalated": [], "deferred": [], "refused": []}
+    for ticket in show(args.convoy)["tickets"]:
+        try:
+            concerned = review_stop(readable(ticket)) or request_of(ticket)
+            if not concerned:
+                continue
+            done = settle_ticket(args.convoy, ticket["id"], settings)
+        except Deferred as exc:
+            answer["deferred"].append({"ticket": ticket.get("id"), "reason": str(exc)})
+            continue
+        except Refusal as exc:
+            answer["refused"].append({"ticket": ticket.get("id"), "reason": str(exc)})
+            continue
+        if done["action"] != "none":
+            answer[done.pop("action")].append(done)
+    answer["ok"] = not answer["refused"]
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0 if answer["ok"] else EXIT_REFUSED
+
+
+# --- review: the author's side ------------------------------------------------------
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    ticket = ticket_of(args.convoy, args.ticket)
+    if ticket.get("kind") == KIND_PREFACTORING:
+        raise Refusal(f"le ticket {args.ticket} est un prefactoring : il n'a pas de tests de critère à relire")
+    if not args.repo:
+        raise Refusal("--repo absent : la relecture porte sur les tests commités dans le worktree du ticket")
+    repo = Path(args.repo).resolve()
+    stop = ticket.get("stop")
+    if stop and not review_stop(ticket):
+        raise Refusal(f"le ticket {args.ticket} est arrêté ({short(str(stop.get('detail') or stop), 160)})")
+    base: dict[str, Any] = {"convoy": args.convoy, "ticket": args.ticket}
+    files: dict[str, str] = {}
+    criteria: dict[str, list[str]] = {}
+    head = None
+    if not stop:
+        tdd = ticket.get("tdd") or {}
+        if "freeze" in tdd:
+            raise Refusal(f"les tests de critère du ticket {args.ticket} sont gelés : la relecture précède le gel")
+        head = clean_head(repo)
+        if (tdd.get("red") or {}).get("commit") != head:
+            raise Refusal(
+                f"aucune preuve du rouge au commit {head} : la relecture suit l'étape rouge sans commit entre les deux "
+                "(tdd-step red)")
+        files, criteria = red_fileset(args.convoy, args.ticket, repo, head)
+        base["commit"] = head
+
+    poll = float(os.environ.get("TEST_REVIEW_POLL_SECONDS") or DEFAULT_POLL)
+    until = time.monotonic() + max(0.0, args.wait)
+    launches = 0
+    while True:
+        ticket = ticket_of(args.convoy, args.ticket)
+        stop = review_stop(ticket)
+        if stop:
+            settle_ticket(args.convoy, args.ticket, settings)
+            last = rounds_of(ticket)[-1] if rounds_of(ticket) else None
+            refused = refused_tests(last, criteria or None) if last and stop["reason"] == STOP_REFUSED else []
+            reasons = "".join(f" ; {entry['test']} : {entry['reason']}" for entry in refused)
+            print(json.dumps({
+                **base, "ok": False, "stopped": True, "stop": stop["reason"], "escalated": True, "refused": refused,
+                "refusals": refusals_of(ticket),
+                "error": f"refus : ticket arrêté : {stop['detail']}{reasons} ; il est remonté à l'opérateur par la porte "
+                         "d'escalade, et aucune étape ne s'exécute tant que l'arrêt n'est pas levé",
+            }, indent=2, sort_keys=True, ensure_ascii=False))
+            return EXIT_STOPPED
+        if ticket.get("stop"):
+            raise Refusal(f"le ticket {args.ticket} est arrêté ({short(str(ticket['stop'].get('detail')), 160)})")
+        rounds = rounds_of(ticket)
+        last = rounds[-1] if rounds and (rounds[-1]["commit"], rounds[-1]["files"]) == (head, files) else None
+        if last:
+            answer = {**base, "verdict": last["verdict"], "round": len(rounds), "refusals": refusals_of(ticket),
+                      "launches": launches, "recorded_by": last["recorded_by"]}
+            if last["verdict"] == FAVORABLE:
+                print(json.dumps({**answer, "ok": True}, indent=2, sort_keys=True, ensure_ascii=False))
+                return 0
+            refused = refused_tests(last, criteria)
+            print(json.dumps({
+                **answer, "ok": False, "returned": True, "refused": refused,
+                "error": f"refus : la relecture refuse {len(refused)} test(s) de critère : "
+                         + " ; ".join(f"{entry['test']} : {entry['reason']}" for entry in refused)
+                         + " ; corriger ces tests, commiter, rejouer tdd-step red puis test-review review ; "
+                           "un second refus arrête le ticket",
+            }, indent=2, sort_keys=True, ensure_ascii=False))
+            return EXIT_RETURNED
+        request = request_of(ticket)
+        if not request or (request["commit"], request["files"]) != (head, files):
+            request_file = Path(tempfile.mkdtemp(prefix="test-review-")) / "request.json"
+            try:
+                request_file.write_text(json.dumps({"files": files, "criteria": criteria}), encoding="utf-8")
+                state_write("open-test-review", args.convoy, args.ticket, "--commit", str(head), "--file", str(request_file))
+            finally:
+                request_file.unlink(missing_ok=True)
+                request_file.parent.rmdir()
+            request = {"launches": []}
+        launches = max(launches, len(request["launches"]))
+        done = settle_ticket(args.convoy, args.ticket, settings)
+        if done["action"] in ("launched", "relaunched"):
+            launches = done["launches"]
+        if done["action"] != "pending":
+            continue
+        if time.monotonic() >= until:
+            print(json.dumps({
+                **base, "ok": False, "pending": True, "launches": done["launches"], "deadline": done["deadline"],
+                "message": f"relecture en cours : aucun verdict encore sur les tests du ticket {args.ticket} ; "
+                           f"relancer {PROGRAM} review pour l'attendre (échéance du lancement : {done['deadline']})",
+            }, indent=2, sort_keys=True, ensure_ascii=False))
+            return EXIT_PENDING
+        time.sleep(poll)
+
+
+# --- brief and record: the reviewer's side -------------------------------------------
+
+
+def cmd_brief(args: argparse.Namespace) -> int:
+    """What the reviewer is given: the criteria of the ticket, the criterion
+    tests as they were proven red, the one question, and the shape of the
+    verdict it hands to `record`. Nothing of the author but its tests."""
+    ticket = ticket_of(args.convoy, args.ticket)
+    request = request_of(ticket)
+    if request is None:
+        raise Refusal(
+            f"aucune relecture n'est demandée sur le ticket {args.ticket} : la relecture répond à une demande "
+            f"ouverte par {PROGRAM} review")
+    repo = Path(args.repo).resolve() if args.repo else rig_repository(args.ticket)
+    commit, criteria = request["commit"], request["criteria"]
+    files = {}
+    for path, fingerprint in request["files"].items():
+        data = blob(repo, commit, path)
+        if digest_of(data) != fingerprint:
+            raise Refusal(f"le fichier {path} du commit {commit} n'a pas l'empreinte de la demande de relecture")
+        files[path] = data.decode("utf-8", errors="replace")
+    texts = ticket.get("criteria") or []
+    numbers = sorted(criteria, key=int)
+    tests = list(dict.fromkeys(test_id for number in numbers for test_id in criteria[number]))
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy, "ticket": args.ticket, "commit": commit, "repo": str(repo),
+        "question": QUESTION, "states": [FAVORABLE, UNFAVORABLE],
+        "criteria": [{"number": number, "text": texts[int(number) - 1] if int(number) <= len(texts) else None,
+                      "tests": criteria[number]} for number in numbers],
+        "tests": [{"id": test_id, "file": test_id.partition("::")[0],
+                   "criteria": [number for number in numbers if test_id in criteria[number]]} for test_id in tests],
+        "files": files, "fingerprints": request["files"],
+        "verdict_shape": {
+            "commit": commit, "files": "<the fingerprints of this brief, copied>",
+            "tests": {"<test id>": {"state": f"{FAVORABLE}|{UNFAVORABLE}", "reason": f"<required when {UNFAVORABLE}>"}},
+        },
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_record(args: argparse.Namespace) -> int:
+    ticket_of(args.convoy, args.ticket)
+    if os.environ.get("DELIVERY_ROLE_READ_ONLY") != "1":
+        raise Refusal(
+            "un verdict de relecture des tests ne s'enregistre que depuis une session du rôle relecteur, en lecture "
+            "seule (bin/delivery-role-sandbox)")
+    try:
+        verdict = json.loads(Path(args.verdict_file or "").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise Refusal(f"le verdict {args.verdict_file!r} n'est pas lisible ({exc})") from exc
+    if not isinstance(verdict, dict):
+        raise Refusal("le verdict n'est pas un objet JSON")
+    session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_AGENT") or ""
+    handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+    try:
+        with handle:
+            json.dump({**verdict, "recorded_by": session}, handle, ensure_ascii=False)
+        written = state_write("record-test-review", args.convoy, args.ticket, "--file", handle.name)
+    finally:
+        os.unlink(handle.name)
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy, "ticket": args.ticket, "verdict": written["verdict"],
+        "refused": written["refused"], "refusals": written["refusals"], "stopped": written["stopped"],
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    ticket = ticket_of(args.convoy, args.ticket)
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy, "ticket": args.ticket, "rounds": rounds_of(ticket),
+        "request": request_of(ticket), "refusals": refusals_of(ticket), "stop": ticket.get("stop"),
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- command line --------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def command(name: str, handler: Any) -> argparse.ArgumentParser:
+        p = sub.add_parser(name)
+        p.add_argument("convoy")
+        p.add_argument("ticket")
+        p.set_defaults(handler=handler)
+        return p
+
+    # Required values are checked by the handlers, not by argparse: a
+    # refusal is one JSON answer.
+    p = command("review", cmd_review)
+    p.add_argument("--repo")
+    p.add_argument("--wait", type=float, default=DEFAULT_WAIT)
+    command("brief", cmd_brief).add_argument("--repo")
+    command("record", cmd_record).add_argument("--verdict-file")
+    command("show", cmd_show)
+    p = sub.add_parser("settle")
+    p.add_argument("convoy")
+    p.set_defaults(handler=cmd_settle, ticket=None)
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.handler(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "ticket": args.ticket, "error": f"refus : {exc}"},
+                         indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
