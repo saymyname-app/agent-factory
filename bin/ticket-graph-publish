@@ -22,8 +22,11 @@ T05, Spec af-wf4w5r §2) is held to the entry contract before anything is
 written -- a declared kind with no default, a demonstration line in its own
 field, criteria that name their entry point, their observable and what
 would make them false -- and its convoy is published with the new-flow mark
-through `bin/convoy-state`. A draft that does not declare it is published
-exactly as before. docs/ENTRY_CONTRACT.md has the fields and the refusals.
+through `bin/convoy-state`. Such a draft is also refused without a graph
+review that holds for its current digest (T08, `bin/graph-review check`,
+docs/GRAPH_REVIEW.md). A draft that does not declare the contract is
+published exactly as before. docs/ENTRY_CONTRACT.md has the fields and the
+refusals.
 
 The file-draft mode (`validate`/`publish`/`patch` over a YAML Ticket Graph
 Draft file carrying the `APPROVED_TICKET_GRAPH_DRAFT` state and a
@@ -467,6 +470,25 @@ def refuse_unless_entry_contract_met(draft_id: str, parsed: dict[str, Any], tick
         f"refus : le brouillon {draft_id} déclare le contrat du nouveau flux ({NEW_FLOW}) et ne le "
         f"respecte pas ({len(refusals)} raison(s), {count} ticket(s)) ; rien n'est écrit.\n{lines}"
     )
+
+
+def graph_review_of(draft_id: str) -> dict[str, Any]:
+    """The graph review that holds for the draft's current digest (T08, Spec
+    §2 « Relecteur de graphe »), asked of the command that owns that state.
+    No review for this digest, a refusal left without Benjamin's decision:
+    the door refuses, in the words of that command."""
+    argv = [tool_path("GRAPH_REVIEW_BIN", "graph-review"), "check", draft_id]
+    env = {**os.environ, "BD_BIN": BD_BIN, "GRAPH_REVIEW_BD_WORKSPACE": str(BD_WORKSPACE)}
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, env=env)
+        payload = json.loads(proc.stdout)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PublishError(
+            f"refus : la relecture de graphe du brouillon {draft_id} n'a pas pu être lue ({exc}) ; rien n'est écrit"
+        ) from exc
+    if proc.returncode != 0 or not payload.get("ok", False):
+        raise PublishError(str(payload.get("error") or f"{' '.join(argv)} failed"))
+    return {key: payload[key] for key in ("pass", "digest", "same_model", "model_independence", "decisions")}
 
 
 def new_flow_ticket_description(ticket: dict[str, Any]) -> str:
@@ -1153,8 +1175,10 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
     new_flow = flow_contract(parsed, draft_id) == NEW_FLOW
     spec_bead = load_approved_spec_bead(spec_id)
     spec_digest = canonical_bead_digest(spec_bead.get("description") or "")
+    graph_review: dict[str, Any] = {}
     if new_flow:
         refuse_unless_entry_contract_met(draft_id, parsed, tickets)
+        graph_review = {"graph_review": graph_review_of(draft_id)}
     else:
         refuse_prototype_tickets(tickets)
 
@@ -1209,6 +1233,7 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
         "scope_edges": scope_edges,
         "reservation_advanced": reservation_advanced,
         **new_flow_result,
+        **graph_review,
         **notice,
     }, ensure_ascii=False, sort_keys=True))
     return 0

@@ -1,0 +1,53 @@
+# Brouillon de graphe au contrat du nouveau flux (Spec af-wf4w5r §2), sur le
+# produit synthétique de la Fixture City, où un ticket n'est pas démontrable
+# seul : T2 annonce une observation sur la page d'accueil que seul T3 sert.
+# La porte de publication ne le voit pas (chaque champ est présent) ; c'est le
+# relecteur de graphe qui le refuse. Entrée de tests/graph-review-test.py et
+# de l'essai tests/graph-review-isolated-city-test.sh.
+flow_contract: new-flow/v1
+tickets:
+- id: T1
+  kind: vertical_slice
+  title: La page d'accueil liste les éléments
+  blocked_by: []
+  target_rigs: [fixture_city]
+  what_it_delivers: >-
+    La page d'accueil du produit affiche la liste des éléments servis par l'API.
+  demonstration_line: >-
+    Sur le produit lancé avec le jeu de données « contenu », la page d'accueil
+    (GET /) affiche les trois éléments « Alpha », « Bêta » et « Gamma ».
+  acceptance_criteria:
+  - entry_point: "GET / sur le produit lancé avec le jeu de données « contenu »"
+    observable: "la région « liste » contient trois lignes, libellées « Alpha », « Bêta », « Gamma »"
+    false_if: "une ligne manque, ou la région « liste » est absente de la page"
+- id: T2
+  kind: vertical_slice
+  title: Le chargeur calcule le total des éléments
+  blocked_by: [T1]
+  target_rigs: [fixture_city]
+  what_it_delivers: >-
+    Le chargeur des jeux de données calcule le total des éléments. Aucune route
+    et aucune page ne le rend encore : T3 l'affichera.
+  demonstration_line: >-
+    Sur le produit lancé avec le jeu de données « contenu », la page d'accueil
+    (GET /) affiche « Total : 3 ».
+  acceptance_criteria:
+  - entry_point: "GET / sur le produit lancé avec le jeu de données « contenu »"
+    observable: "la région « total » affiche le libellé « Total : 3 »"
+    false_if: "la région « total » est absente, ou affiche un autre nombre"
+- id: T3
+  kind: vertical_slice
+  title: La page d'accueil affiche le total
+  blocked_by: [T2]
+  target_rigs: [fixture_city]
+  scope:
+    paths: ["product/templates/home.html"]
+  what_it_delivers: >-
+    La page d'accueil affiche le total des éléments calculé par le chargeur.
+  demonstration_line: >-
+    Sur le produit lancé avec le jeu de données « vide », la page d'accueil
+    (GET /) affiche « Total : 0 ».
+  acceptance_criteria:
+  - entry_point: "GET / sur le produit lancé avec le jeu de données « vide »"
+    observable: "la région « total » affiche le libellé « Total : 0 »"
+    false_if: "la région « total » est absente, ou affiche un autre nombre"

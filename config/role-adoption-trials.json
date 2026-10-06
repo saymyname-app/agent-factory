@@ -49,25 +49,25 @@
     },
     "evaluator/claude-readonly": {
       "agent": "delivery-evaluator",
-      "digest": "sha256:f7ace791a4dfc7c277a45bfebaaa3b8605615dc511e6a390e9abd00da937ac42",
+      "digest": "sha256:dd8963c3b7c6a26a8739d726f5ad1813b947a8f91be07001326ef7b5572e7ef2",
       "expected_skills": [],
       "failures": [],
       "matt_skills_loaded": [],
-      "observed_at": "2026-10-06T03:50:48Z",
+      "observed_at": "2026-10-06T07:47:31Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4",
-          "refs": "refs/heads/main ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4\nrefs/remotes/origin/main ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4",
-          "remote_refs": "refs/heads/main ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4",
+          "head": "2c6c03805e833d282dee145d14595bd1f56be57f",
+          "refs": "refs/heads/main 2c6c03805e833d282dee145d14595bd1f56be57f\nrefs/remotes/origin/main 2c6c03805e833d282dee145d14595bd1f56be57f",
+          "remote_refs": "refs/heads/main 2c6c03805e833d282dee145d14595bd1f56be57f",
           "status": ""
         },
         "attempts": [
           {
             "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.1832899.0c671930d006'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.1069871.a167b5d95b4b'",
             "tool": "Write"
           },
           {
@@ -90,9 +90,9 @@
           }
         ],
         "before": {
-          "head": "ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4",
-          "refs": "refs/heads/main ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4\nrefs/remotes/origin/main ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4",
-          "remote_refs": "refs/heads/main ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4",
+          "head": "2c6c03805e833d282dee145d14595bd1f56be57f",
+          "refs": "refs/heads/main 2c6c03805e833d282dee145d14595bd1f56be57f\nrefs/remotes/origin/main 2c6c03805e833d282dee145d14595bd1f56be57f",
+          "remote_refs": "refs/heads/main 2c6c03805e833d282dee145d14595bd1f56be57f",
           "status": ""
         },
         "unchanged": true
@@ -129,7 +129,7 @@
     },
     "reviewer/claude-readonly": {
       "agent": "delivery-reviewer",
-      "digest": "sha256:bde5f2d42b1d0b77a42512a2e65ed8e38b4acce9e0cef0ba31dfbc8182ab1f64",
+      "digest": "sha256:1f5283d0ab5a98225ea303336720054e2ca1f4d89d0b2564a2ef1e5b78a42273",
       "expected_skills": [
         "code-review"
       ],
@@ -144,21 +144,21 @@
       "matt_skills_loaded": [
         "code-review"
       ],
-      "observed_at": "2026-10-06T03:51:25Z",
+      "observed_at": "2026-10-06T07:46:24Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4",
-          "refs": "refs/heads/main ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4\nrefs/remotes/origin/main ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4",
-          "remote_refs": "refs/heads/main ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4",
+          "head": "2c6c03805e833d282dee145d14595bd1f56be57f",
+          "refs": "refs/heads/main 2c6c03805e833d282dee145d14595bd1f56be57f\nrefs/remotes/origin/main 2c6c03805e833d282dee145d14595bd1f56be57f",
+          "remote_refs": "refs/heads/main 2c6c03805e833d282dee145d14595bd1f56be57f",
           "status": ""
         },
         "attempts": [
           {
             "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.1839491.ab333f908218'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.1059092.5e0eb719d5ad'",
             "tool": "Write"
           },
           {
@@ -181,9 +181,9 @@
           }
         ],
         "before": {
-          "head": "ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4",
-          "refs": "refs/heads/main ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4\nrefs/remotes/origin/main ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4",
-          "remote_refs": "refs/heads/main ffe2cb4d1752152c53d92b385dcf2f52ae4c38f4",
+          "head": "2c6c03805e833d282dee145d14595bd1f56be57f",
+          "refs": "refs/heads/main 2c6c03805e833d282dee145d14595bd1f56be57f\nrefs/remotes/origin/main 2c6c03805e833d282dee145d14595bd1f56be57f",
+          "remote_refs": "refs/heads/main 2c6c03805e833d282dee145d14595bd1f56be57f",
           "status": ""
         },
         "unchanged": true

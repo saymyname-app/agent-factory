@@ -40,6 +40,12 @@ if [ -n "${GC_CITY:-}" ]; then
   rw "$GC_CITY/.beads"
 fi
 [ -n "${XDG_RUNTIME_DIR:-}" ] && rw "$XDG_RUNTIME_DIR"
+# Every gc command takes this lock before it reads the city's imported packs
+# (`city import "bd": opening repo cache lock file`): without it a read-only
+# role cannot claim its routed work, read a bead or record a verdict (seen on
+# a real reviewer session, T08, af-n575g4). The lock file only: the cached
+# packs beside it stay read-only.
+rw "${GC_HOME:-$HOME/.gc}/cache/repos/.packman-cache.lock"
 [ -d "$HOME/.config/gh" ] && args+=(--tmpfs "$HOME/.config/gh")
 [ -d "$HOME/.ssh" ] && args+=(--tmpfs "$HOME/.ssh")
 unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN
