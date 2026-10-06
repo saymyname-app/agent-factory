@@ -14,6 +14,7 @@ from cockpit.core.gc_client import (
 )
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
 from cockpit.notify.pushover import PUSHOVER_URL
+from cockpit.projects.depots import REPO_URL_TEMPLATE
 from cockpit.health.engine import (
     FACTORY_STALLED_AFTER_SECONDS,
     SUPERVISOR_UNREACHABLE_AFTER_SECONDS,
@@ -125,6 +126,16 @@ class Config:
         # named in the local settings file; unset, Tailscale is not read.
         self.tailscale_bin = env.get("COCKPIT_TAILSCALE_BIN") or local.get("tailscale_bin", "")
         self.tailscale_poll_seconds = float(env.get("COCKPIT_TAILSCALE_POLL_SECONDS", "3600"))
+        # Project repositories (spec §"Données de projet"): where the cockpit
+        # keeps its own fetch-only clones. Unset, no repository is cloned or
+        # fetched and no roadmap is claimed -- reaching GitHub is something
+        # only the local settings file (or the environment) turns on.
+        self.clones_dir = env.get("COCKPIT_CLONES_DIR") or local.get("clones_dir", "")
+        self.repo_url_template = env.get("COCKPIT_REPO_URL_TEMPLATE", REPO_URL_TEMPLATE)
+        self.rig_files_dir = env.get(
+            "COCKPIT_RIG_FILES_DIR", os.path.join(_REPO_ROOT, "config", "projects")
+        )
+        self.depots_poll_seconds = float(env.get("COCKPIT_DEPOTS_POLL_SECONDS", "600"))
         self.validity_seconds = dict(VALIDITY_WINDOWS_SECONDS)
         for source in list(self.validity_seconds):
             override = env.get("COCKPIT_VALIDITY_%s_SECONDS" % source.upper())
@@ -161,7 +172,7 @@ class Config:
 LOCAL_CONFIG_NAME = "cockpit-local.json"
 LOCAL_CONFIG_KEYS = (
     "pushover_secrets_file", "heartbeat_url_file", "public_url", "benjamin_login", "allowed_origin",
-    "tailscale_bin",
+    "tailscale_bin", "clones_dir",
 )
 
 

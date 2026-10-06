@@ -64,12 +64,11 @@ def pick_current_step(steps):
     return ordered[-1]
 
 
-def read_current_step(clone_dir, roadmap_path, remote="origin", git_bin="git", timeout=10):
-    """Fetch ``remote``, then read ``roadmap_path`` as it exists on the
-    remote's default branch -- never the clone's own working tree, which
-    may be stale or absent entirely. Raises :class:`RoadmapReadError` on
-    any failure (network, missing branch, unparsable TOML): the caller
-    turns that into "inconnu" with the clone's age (spec .13, .39)."""
+def read_steps(clone_dir, roadmap_path, remote="origin", git_bin="git", timeout=30):
+    """Fetch ``remote``, then return every ``[[step]]`` of ``roadmap_path``
+    as it exists on the remote's default branch -- never the clone's own
+    working tree. Raises :class:`RoadmapReadError` on any failure
+    (network, missing branch or file, unparsable TOML)."""
     _run([git_bin, "-C", str(clone_dir), "fetch", "--quiet", remote], timeout)
     branch = default_branch(clone_dir, remote=remote, git_bin=git_bin, timeout=timeout)
     raw = _run(
@@ -83,4 +82,15 @@ def read_current_step(clone_dir, roadmap_path, remote="origin", git_bin="git", t
     steps = data.get("step")
     if not isinstance(steps, list) or not steps:
         raise RoadmapReadError("%s declares no [[step]]" % roadmap_path)
-    return pick_current_step(steps)
+    return steps
+
+
+def read_current_step(clone_dir, roadmap_path, remote="origin", git_bin="git", timeout=10):
+    """Fetch ``remote``, then read ``roadmap_path`` as it exists on the
+    remote's default branch -- never the clone's own working tree, which
+    may be stale or absent entirely. Raises :class:`RoadmapReadError` on
+    any failure (network, missing branch, unparsable TOML): the caller
+    turns that into "inconnu" with the clone's age (spec .13, .39)."""
+    return pick_current_step(
+        read_steps(clone_dir, roadmap_path, remote=remote, git_bin=git_bin, timeout=timeout)
+    )

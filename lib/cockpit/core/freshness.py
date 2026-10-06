@@ -24,6 +24,9 @@ VALIDITY_WINDOWS_SECONDS = {
     "sessions": 120,
     # The Tailscale key's expiry changes once in months: read hourly.
     "tailscale": 7200,
+    # Project repositories, fetched every 10 min (spec: GitHub 10 min),
+    # stale after two missed fetches.
+    "depots": 1800,
 }
 
 

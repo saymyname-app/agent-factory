@@ -83,6 +83,9 @@ class Project:
     # read has been attempted.
     roadmap_read_at: float = None
     roadmap_unknown_since: float = None
+    # True when the roadmap was asked for and could not be read; with no
+    # hour to give (a file not written yet), roadmap_unknown_since stays None.
+    roadmap_unknown: bool = False
     chantiers: list = field(default_factory=list)
     # "dev a N commits d'avance" (spec .42, T20), one entry per rig this
     # project declares a promotion branch for; a rig absent here means its
