@@ -15,7 +15,9 @@ here, by code:
     ticket-exit deferral CONVOY TICKET --repo DIR [--handoff FILE]
 
 `finished`: refused without a valid Ticket Handoff -- its four sections, each
-with content or « aucun » -- and while the diff of the ticket carries a
+with content or « aucun » --, without the proof of the demonstration line
+captured on the launched product at the head commit (bin/ticket-author
+demonstrate; a `prefactoring` has no such line), and while the diff of the ticket carries a
 deferral marker (TODO, FIXME, « not wired », « à brancher ») that no declared
 « non fait » covers. `planning_exception` and `operator_request`: the ticket
 and every ticket that waits for it are parked, and the request reaches the
@@ -27,7 +29,7 @@ recorded. Every exit but `finished` takes `--repo` and `--handoff` too, for
 a partial Handoff.
 
 The records of a Handoff -- commits, files touched outside the Declared
-Scope, proof of the red, deferral markers -- are never given by the author:
+Scope, proof of the red, proof of the demonstration, deferral markers -- are never given by the author:
 they are computed here from the ticket branch and the tracker, inside
 bin/evidence-capture, so they are a sealed piece of the evidence store
 (`handoff_records`). The Handoff and the exit are written on the ticket
@@ -77,6 +79,8 @@ SECTION_NAMES = {"done": "Fait", "deviations": "Écarts", "not_done": "Non fait"
 NOTHING = "aucun"
 RECORDS_PIECE = "handoff_records"
 RED_PIECES = {"red": "tdd_red", "prefactoring": "tdd_prefactoring"}
+# The proof of the demonstration line, captured by bin/ticket-author demonstrate (T12).
+DEMONSTRATION_PIECE = "demonstration"
 KIND_PREFACTORING = "prefactoring"
 NEW_FLOW = "new-flow/v1"
 # What the author gives of a `repair`; the rest is set by code.
@@ -240,6 +244,29 @@ class Ticket:
                 "piece": RED_PIECES[step], "digest": sealed["digest"]}
 
 
+def demonstration_proof(ticket: Ticket, required: bool) -> dict[str, Any] | None:
+    """The piece that proves the demonstration line, as the evidence store
+    holds it: its commit, and the address of the launched product it was
+    captured on. A piece the store refuses is refused when `required`."""
+    sealed = (ticket.state.get("evidence") or {}).get(DEMONSTRATION_PIECE)
+    if not isinstance(sealed, dict) or "digest" not in sealed:
+        return None
+    try:
+        status, answer = tool(CAPTURE_TOOL, "verify", ticket.convoy_id, ticket.id, "--piece", DEMONSTRATION_PIECE)
+        if status != 0:
+            raise Refusal(f"preuve de démonstration refusée par le magasin de preuves : {refusal_text(answer)}")
+        try:
+            record = json.loads(Path(answer["pieces"][0]["path"]).read_text(encoding="utf-8"))
+        except (OSError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise Refusal(f"pièce {DEMONSTRATION_PIECE} illisible : {exc}") from exc
+    except Refusal:
+        if required:
+            raise
+        return None
+    return {"piece": DEMONSTRATION_PIECE, "digest": sealed["digest"], "commit": record.get("commit"),
+            "kind": record.get("kind"), "address": record.get("address")}
+
+
 # --- the Ticket Handoff: what the author writes ----------------------------------
 
 
@@ -382,6 +409,10 @@ def build_records(ticket: Ticket, repo: Path, exit_name: str, sections: dict[str
     records["amendment"] = (
         {"commit": amendment["commit"], "reason": amendment["reason"]}
         if isinstance(amendment, dict) and "reason" in amendment else None)
+    # A prefactoring has no demonstration line: nothing to prove on the launched product.
+    shown = ticket.kind != KIND_PREFACTORING
+    demonstration = demonstration_proof(ticket, required=finished) if shown else None
+    records["demonstration_proof"] = demonstration
     scope = ticket.state.get("declared_scope")
     records["declared_scope"] = scope
     base = red["base"] if red else None
@@ -413,6 +444,18 @@ def build_records(ticket: Ticket, repo: Path, exit_name: str, sections: dict[str
         reason = undeclared(markers)
         if finished and reason:
             raise Refusal(reason)
+    if finished and shown:
+        if demonstration is None:
+            raise Refusal(
+                f"aucune preuve de démonstration sur le ticket {ticket.id} : la ligne de démonstration se prouve sur le "
+                "produit lancé avant la sortie « terminé » (bin/ticket-author demonstrate)")
+        if not demonstration["address"]:
+            raise Refusal(
+                "la preuve de démonstration n'a pas été capturée sur le produit lancé (bin/ticket-author demonstrate)")
+        if demonstration["commit"] != head:
+            raise Refusal(
+                f"la preuve de démonstration a été capturée au commit {demonstration['commit']} et non au commit de "
+                f"tête ({head}) : elle se rejoue après le dernier commit")
     if exit_name == "interrupted":
         remote = git(repo, "ls-remote", "--exit-code", "origin", f"refs/heads/{branch}")
         pushed = remote.stdout.split()[0] if remote.returncode == 0 and remote.stdout.split() else None

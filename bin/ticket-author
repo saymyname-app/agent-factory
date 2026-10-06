@@ -1,0 +1,751 @@
+#!/usr/bin/env python3
+"""Hold the sequence of an author on a ticket of a "new flow" convoy, by
+scripts (T12, af-i3q5a5; Spec af-wf4w5r §0 rule 4, §4, §5).
+
+A ticket of a marked convoy is worked by a fresh author session, in its own
+work tree, on a branch that leaves from the integration branch of the Spec.
+The formula `mol-ticket-author` holds the sequence -- work tree, red step,
+code, demonstration on the launched product, exit -- and each passage from
+one step to the next is a check run by code, never the word of the agent:
+
+    ticket-author locate TICKET
+    ticket-author start       CONVOY TICKET [--repo DIR] [--session NAME]
+    ticket-author demonstrate CONVOY TICKET --repo WORKTREE --dataset NAME [--profile FILE]
+                              (--path /PATH | -- COMMAND ...)
+    ticket-author gate        CONVOY TICKET --step workspace|red|code|demonstration|exit [--repo DIR]
+    ticket-author release     CONVOY TICKET [--repo DIR]
+    ticket-author check       # what Gas City runs between two steps (bin/ticket-author-check)
+
+`start` gives the session its ticket: the work tree and the branch
+`ticket/<ticket>` created at the tip of the integration branch, the branch
+and the session recorded through bin/convoy-state. A session that already
+took another ticket is refused: one fresh session per ticket.
+
+`demonstrate` launches the product at the head commit of the ticket branch
+through bin/project-launch and has bin/evidence-capture capture the
+demonstration line on it -- a command that must exit 0 (it receives the
+address in PRODUCT_ADDRESS), or a screenshot of `--path`. The piece is
+`demonstration`.
+
+`gate` writes nothing. It reads the tracker through bin/convoy-state, the
+pieces through bin/evidence-capture verify and the tip of the ticket branch,
+and says whether a step is proven. `check` is the same gate, for the step
+and the ticket of the formula bead Gas City names in GC_BEAD_ID: a failed
+check re-opens the step, and when its attempts are spent the rest of the
+sequence is skipped.
+
+`release` removes the work tree of a ticket that has exited; the branch
+stays.
+
+Every answer is one JSON object on stdout (`check` also writes the refusal
+on stderr, which is what Gas City records). Exit status: 0 done or passed;
+1 refused (nothing was written, unless the answer says what was); 4 the
+convoy does not carry the new-flow mark. Details: docs/TICKET_AUTHOR.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+from typing import Any
+
+
+PROGRAM = "ticket-author"
+BIN = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
+GC_BIN = os.environ.get("GC_BIN", "gc")
+STATE_TOOL = BIN / "convoy-state"
+CAPTURE_TOOL = BIN / "evidence-capture"
+LAUNCH_TOOL = BIN / "project-launch"
+PROJECTS = ROOT / "config" / "projects"
+DESCRIPTORS = ROOT / "config" / "project-descriptors"
+
+NEW_FLOW = "new-flow/v1"
+KIND_PREFACTORING = "prefactoring"
+DEMONSTRATION_PIECE = "demonstration"
+# The steps of the formula mol-ticket-author that a gate closes, in order.
+STEPS = ("workspace", "red", "code", "demonstration", "exit")
+BRANCH_PREFIX = "ticket/"
+
+EXIT_REFUSED = 1
+EXIT_NOT_NEW_FLOW = 4
+
+MAX_DETAIL = 300
+LAUNCH_TIMEOUT = 180
+CAPTURE_TIMEOUT = 600
+
+# The publication door renders a ticket's rigs under this heading.
+RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
+RIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+class Refusal(RuntimeError):
+    """The call is refused. `written` names what was already written when
+    the refusal came after a first write."""
+
+    def __init__(self, message: str, written: list[str] | None = None):
+        super().__init__(" ".join(message.split()))
+        self.written = written or []
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark: bin/convoy-state's answer."""
+
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+def short(text: str, limit: int = MAX_DETAIL) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+# --- the other commands ----------------------------------------------------------
+
+
+def run(argv: list[str], env: dict[str, str] | None = None, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise Refusal(f"{Path(argv[0]).name} n'a pas répondu en {timeout:.0f} s") from exc
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+
+
+def detail_of(proc: subprocess.CompletedProcess[str]) -> str:
+    return short(proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}")
+
+
+def tool(path: Path, *args: str, env: dict[str, str] | None = None) -> tuple[int, dict[str, Any]]:
+    """One JSON answer of bin/convoy-state or bin/evidence-capture."""
+    proc = run([str(path), *args], env=env)
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {detail_of(proc)}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def state_write(*args: str) -> dict[str, Any]:
+    status, answer = tool(STATE_TOOL, *args)
+    if status != 0:
+        raise Refusal(f"{args[0]} refusé par la commande d'état : {refusal_text(answer)}")
+    return answer
+
+
+def read_bead(bead_id: str) -> dict[str, Any]:
+    proc = run([GC_BIN, "bd", "show", bead_id, "--json"])
+    if proc.returncode != 0:
+        raise Refusal(f"gc bd show {bead_id} a échoué : {detail_of(proc)}")
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc bd show {bead_id} a rendu un JSON illisible : {exc}") from exc
+    bead = data[0] if isinstance(data, list) and data else data
+    if not isinstance(bead, dict):
+        raise Refusal(f"bead introuvable : {bead_id}")
+    return bead
+
+
+def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), "-c", "core.quotepath=off", *args], capture_output=True, text=True,
+            errors="replace", env=env, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer git : {exc}") from exc
+
+
+def commit_of(repo: Path, ref: str) -> str | None:
+    proc = git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    return proc.stdout.strip() if proc.returncode == 0 and proc.stdout.strip() else None
+
+
+def is_ancestor(repo: Path, ancestor: str, commit: str) -> bool:
+    return git(repo, "merge-base", "--is-ancestor", ancestor, commit).returncode == 0
+
+
+# --- the ticket, its project and its work tree -------------------------------------
+
+
+def marked_convoys() -> list[str]:
+    status, answer = tool(STATE_TOOL, "list")
+    if status != 0 or not isinstance(answer.get("convoys"), list):
+        raise Refusal(f"convoy-state list a échoué : {refusal_text(answer)}")
+    return answer["convoys"]
+
+
+def show(convoy_id: str, repo: Path | None = None) -> dict[str, Any]:
+    status, answer = tool(STATE_TOOL, "show", convoy_id, *(("--repo", str(repo)) if repo else ()))
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(answer)
+    if status not in (0, 3) or not isinstance(answer.get("tickets"), list):
+        raise Refusal(refusal_text(answer))
+    return answer
+
+
+def ticket_rig(description: Any) -> str:
+    """The single project a ticket names under « Target rigs »."""
+    match = RIGS_SECTION_RE.search(description if isinstance(description, str) else "")
+    rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
+    if len(rigs) != 1 or not RIG_RE.match(rigs[0]) or not (PROJECTS / f"{rigs[0]}.toml").is_file():
+        raise Refusal(
+            "le ticket ne nomme pas un seul projet de config/projects sous « Target rigs » : "
+            "son dépôt se donne par --repo")
+    return rigs[0]
+
+
+def rig_repository(rig: str) -> Path:
+    try:
+        rig_dir = tomllib.loads((PROJECTS / f"{rig}.toml").read_text(encoding="utf-8")).get("rig_dir")
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise Refusal(f"config/projects/{rig}.toml illisible : {exc}") from exc
+    if not isinstance(rig_dir, str) or not rig_dir:
+        raise Refusal(f"config/projects/{rig}.toml ne déclare pas rig_dir")
+    return (ROOT / rig_dir).resolve()
+
+
+def rig_profile(rig: str) -> Path | None:
+    """The profile of the project that spans this rig, if one declares it."""
+    for path in sorted(DESCRIPTORS.glob("*.json")):
+        try:
+            rigs = json.loads(path.read_text(encoding="utf-8")).get("rigs")
+        except (OSError, json.JSONDecodeError, AttributeError):
+            continue
+        if isinstance(rigs, list) and rig in rigs:
+            return path
+    return None
+
+
+def worktree_of(ticket_id: str) -> Path:
+    base = os.environ.get("TICKET_AUTHOR_WORKTREES_DIR") or Path.home() / ".local/share/agent-factory-runtime-worktrees"
+    return Path(base) / ticket_id
+
+
+class Ticket:
+    """One ticket of a marked convoy, as bin/convoy-state renders it."""
+
+    def __init__(self, convoy_id: str, ticket_id: str, repo: str | None = None):
+        self.convoy_id, self.id = convoy_id, ticket_id
+        # The mark is asked first: a convoy without it is not read further.
+        answer = show(convoy_id)
+        self.given_repo = Path(repo).resolve() if repo else None
+        self._bead: dict[str, Any] | None = None
+        if self.given_repo is not None or self._names_a_project():
+            answer = show(convoy_id, self.repo)
+        self.convoy: dict[str, Any] = answer["convoy"]
+        tickets = {t.get("id"): t for t in answer["tickets"]}
+        if ticket_id not in tickets:
+            raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {convoy_id}")
+        self.state: dict[str, Any] = tickets[ticket_id]
+        if self.state.get("mark") != NEW_FLOW:
+            raise Refusal(f"état sans règle : le ticket {ticket_id} ne porte pas la marque du nouveau flux")
+        self.kind = self.state.get("kind")
+        if not isinstance(self.kind, str):
+            raise Refusal(f"état sans règle : le genre du ticket {ticket_id} est illisible ({self.kind!r})")
+
+    @property
+    def bead(self) -> dict[str, Any]:
+        if self._bead is None:
+            self._bead = read_bead(self.id)
+        return self._bead
+
+    def _names_a_project(self) -> bool:
+        try:
+            ticket_rig(self.bead.get("description"))
+        except Refusal:
+            return False
+        return True
+
+    @property
+    def rig(self) -> str:
+        return ticket_rig(self.bead.get("description"))
+
+    @property
+    def repo(self) -> Path:
+        """The repository of the project: --repo, else the one of the
+        single project the ticket names."""
+        return self.given_repo if self.given_repo is not None else rig_repository(self.rig)
+
+    def require_at_work(self) -> None:
+        gates = self.state.get("gates") or {}
+        if self.state.get("status") == "closed" or any(gate in gates for gate in ("ticket_end", "withdrawn")):
+            raise Refusal(f"le ticket {self.id} est fermé : aucun auteur n'y travaille")
+        if "dispatch" not in gates:
+            raise Refusal(
+                f"le ticket {self.id} n'a pas été démarré par la porte de dispatch : aucun auteur n'y travaille")
+        stop = self.state.get("stop")
+        if stop:
+            raise Refusal(f"le ticket {self.id} est arrêté ({short(str(stop.get('detail') or stop), 120)})")
+
+    @property
+    def shown_on_the_product(self) -> bool:
+        """A prefactoring has no demonstration line and no red step."""
+        return self.kind != KIND_PREFACTORING
+
+    def session(self) -> dict[str, Any] | None:
+        record = self.state.get("session")
+        return record if isinstance(record, dict) and "name" in record and "at" in record else None
+
+    def closing_exit(self) -> str | None:
+        """The Ticket Exit, other than « terminé », that this session took:
+        the sequence is over and the destination of the ticket was fixed by
+        bin/ticket-exit. An exit older than the session is the one of a
+        session before it."""
+        record, session = self.state.get("exit"), self.session()
+        if not isinstance(record, dict) or record.get("exit") in (None, "finished") or session is None:
+            return None
+        return record["exit"] if str(record.get("at", "")) >= str(session["at"]) else None
+
+    def tip(self) -> str:
+        branch = self.state.get("branch")
+        if not branch:
+            raise Refusal(f"aucune branche n'est enregistrée sur le ticket {self.id} (bin/ticket-author start)")
+        tip = self.state.get("tip") or commit_of(self.repo, f"refs/heads/{branch}")
+        if not tip:
+            raise Refusal(f"la branche {branch} du ticket {self.id} est introuvable dans {self.repo}")
+        return tip
+
+    def verified(self, piece: str, what: str) -> dict[str, Any]:
+        """A piece of the ticket the evidence store vouches for, with its record."""
+        status, answer = tool(CAPTURE_TOOL, "verify", self.convoy_id, self.id, "--piece", piece)
+        if status != 0:
+            raise Refusal(f"{what} refusée par le magasin de preuves : {refusal_text(answer)}")
+        try:
+            return json.loads(Path(answer["pieces"][0]["path"]).read_text(encoding="utf-8"))
+        except (OSError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise Refusal(f"pièce {piece} illisible : {exc}") from exc
+
+
+# --- locate ------------------------------------------------------------------
+
+
+def convoy_of(ticket_id: str) -> str | None:
+    for convoy_id in marked_convoys():
+        try:
+            answer = show(convoy_id)
+        except NotNewFlow:
+            continue
+        if any(t.get("id") == ticket_id and t.get("mark") == NEW_FLOW for t in answer["tickets"]):
+            return convoy_id
+    return None
+
+
+def cmd_locate(args: argparse.Namespace) -> int:
+    convoy_id = convoy_of(args.ticket)
+    if convoy_id is None:
+        raise NotNewFlow({"ok": False, "new_flow": False, "ticket": args.ticket,
+                          "message": "pas un convoi du nouveau flux"})
+    print(json.dumps({"ok": True, "ticket": args.ticket, "convoy": convoy_id}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- start -------------------------------------------------------------------
+
+
+def session_already_at_work(session: str, ticket: Ticket) -> str | None:
+    """The other ticket of a marked convoy this session already took."""
+    for convoy_id in dict.fromkeys([ticket.convoy_id, *marked_convoys()]):
+        try:
+            answer = show(convoy_id)
+        except NotNewFlow:
+            continue
+        for other in answer["tickets"]:
+            record = other.get("session")
+            if other.get("id") != ticket.id and isinstance(record, dict) and record.get("name") == session:
+                return str(other.get("id"))
+    return None
+
+
+def integration_tip(ticket: Ticket, fetch: bool) -> tuple[str, str]:
+    """The integration branch of the Spec and its tip: on `origin` when the
+    repository has that remote, else the local branch (bin/spec-integration)."""
+    record = ticket.convoy.get("integration")
+    if not isinstance(record, dict) or not record.get("branch"):
+        raise Refusal(
+            f"le convoi {ticket.convoy_id} n'a pas de branche d'intégration enregistrée (bin/spec-integration open) : "
+            "la branche du ticket ne peut partir de nulle part")
+    branch, repo = record["branch"], ticket.repo
+    if git(repo, "remote", "get-url", "origin").returncode == 0:
+        if fetch:
+            fetched = git(repo, "fetch", "--quiet", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
+            if fetched.returncode != 0:
+                raise Refusal(f"la branche d'intégration {branch} n'a pas pu être lue sur origin : {short(fetched.stderr)}")
+        tip = commit_of(repo, f"refs/remotes/origin/{branch}")
+    else:
+        tip = commit_of(repo, f"refs/heads/{branch}")
+    if not tip:
+        raise Refusal(f"la branche d'intégration {branch} est introuvable dans {repo}")
+    return branch, tip
+
+
+def worktree_branch(path: Path) -> str | None:
+    if not (path / ".git").exists():
+        return None
+    proc = git(path, "symbolic-ref", "--quiet", "--short", "HEAD")
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    ticket = Ticket(args.convoy, args.ticket, args.repo)
+    ticket.require_at_work()
+    session = (args.session or os.environ.get("GC_SESSION_NAME") or "").strip()
+    if not session:
+        raise Refusal("session absente : un ticket est pris par une session d'auteur (GC_SESSION_NAME, ou --session)")
+    taken = session_already_at_work(session, ticket)
+    if taken:
+        raise Refusal(f"la session {session} a déjà pris le ticket {taken} : une session neuve par ticket")
+    repo = ticket.repo
+    if commit_of(repo, "HEAD") is None:
+        raise Refusal(f"{repo} n'est pas un dépôt Git avec un commit")
+    integration, base = integration_tip(ticket, fetch=True)
+    branch = ticket.state.get("branch") or BRANCH_PREFIX + ticket.id
+    path = worktree_of(ticket.id)
+    profile = rig_profile(ticket.rig) if ticket.given_repo is None else None
+
+    written: list[str] = []
+    try:
+        on_path = worktree_branch(path)
+        if on_path is None:
+            if path.exists() and any(path.iterdir()):
+                raise Refusal(f"{path} existe et n'est pas le worktree du ticket {ticket.id}")
+            existing = commit_of(repo, f"refs/heads/{branch}")
+            remote = None if existing else commit_of(repo, f"refs/remotes/origin/{branch}")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if existing:
+                added = git(repo, "worktree", "add", "--quiet", str(path), branch)
+            else:
+                added = git(repo, "worktree", "add", "--quiet", "-b", branch, str(path), remote or base)
+            if added.returncode != 0:
+                raise Refusal(f"le worktree du ticket n'a pas pu être créé : {short(added.stderr)}")
+            written.append(f"worktree {path}" + ("" if existing else f", branche {branch}"))
+        elif on_path != branch:
+            raise Refusal(f"le worktree {path} est sur la branche {on_path} et non sur {branch}")
+        tip = commit_of(repo, f"refs/heads/{branch}") or ""
+        if ticket.state.get("branch") != branch:
+            state_write("set-branch", args.convoy, args.ticket, "--branch", branch)
+            written.append("branche du ticket")
+        if state_write("set-session", args.convoy, args.ticket, "--session", session).get("written"):
+            written.append("session du ticket")
+    except Refusal as exc:
+        raise Refusal(str(exc), written) from exc
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy, "ticket": args.ticket, "kind": ticket.kind, "session": session,
+        "repo": str(repo), "worktree": str(path), "branch": branch, "tip": tip,
+        "integration_branch": integration, "base": merge_base(repo, tip, base) or base,
+        "profile": str(profile) if profile else None,
+        "demonstration_line": ticket.state.get("demonstration_line"),
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def merge_base(repo: Path, one: str, other: str) -> str | None:
+    proc = git(repo, "merge-base", one, other)
+    return proc.stdout.strip() if proc.returncode == 0 and proc.stdout.strip() else None
+
+
+# --- demonstrate -------------------------------------------------------------
+
+
+def clean_head(repo: Path) -> str:
+    head = commit_of(repo, "HEAD")
+    if head is None:
+        raise Refusal(f"--repo {repo} n'est pas un dépôt Git avec un commit")
+    dirty = git(repo, "status", "--porcelain", "--untracked-files=no")
+    if dirty.returncode != 0 or dirty.stdout.strip():
+        raise Refusal(
+            f"des fichiers suivis diffèrent de HEAD dans {repo} : la démonstration porte sur un commit "
+            f"({short(dirty.stdout or dirty.stderr, 120)})")
+    return head
+
+
+def cmd_demonstrate(args: argparse.Namespace) -> int:
+    ticket = Ticket(args.convoy, args.ticket, args.repo)
+    ticket.require_at_work()
+    if not ticket.shown_on_the_product:
+        raise Refusal(f"le ticket {ticket.id} est un prefactoring : il n'a pas de ligne de démonstration")
+    command = list(args.argv)
+    if bool(command) == bool(args.path):
+        raise Refusal(
+            "la démonstration se capture par une commande (après « -- ») ou par une capture d'écran (--path /chemin), "
+            "l'une ou l'autre")
+    if not args.repo:
+        raise Refusal("--repo absent : la démonstration porte sur le worktree du ticket")
+    repo = Path(args.repo).resolve()
+    head = clean_head(repo)
+    branch = worktree_branch(repo)
+    recorded = ticket.state.get("branch")
+    if not recorded or branch != recorded:
+        raise Refusal(f"la branche extraite dans {repo} ({branch}) n'est pas celle du ticket ({recorded})")
+    profile = Path(args.profile).resolve() if args.profile else rig_profile(ticket.rig)
+    if profile is None or not profile.is_file():
+        raise Refusal("profil du projet introuvable (--profile, ou config/project-descriptors) : la recette de lancement y est déclarée")
+    if not args.dataset:
+        raise Refusal("--dataset absent : le produit se lance sur un jeu de données synthétique nommé")
+
+    with tempfile.TemporaryDirectory(prefix="ticket-author-") as scratch:
+        launch_state = Path(scratch) / "launch.json"
+        launched = run([str(LAUNCH_TOOL), "--repo-root", str(repo), "start", str(profile), "--commit", head,
+                        "--dataset", args.dataset, "--state-file", str(launch_state)], timeout=LAUNCH_TIMEOUT)
+        try:
+            if launched.returncode != 0 or not launch_state.is_file():
+                raise Refusal(f"le produit ne se lance pas au commit {head} : {detail_of(launched)}")
+            address = json.loads(launch_state.read_text(encoding="utf-8")).get("address")
+            if command:
+                status, answer = tool(
+                    CAPTURE_TOOL, "command", args.convoy, args.ticket, "--piece", DEMONSTRATION_PIECE,
+                    "--launch-state", str(launch_state), "--expect-exit", "0", "--timeout", str(CAPTURE_TIMEOUT),
+                    "--", *command, env={**os.environ, "PRODUCT_ADDRESS": str(address)})
+            else:
+                status, answer = tool(
+                    CAPTURE_TOOL, "screenshot", args.convoy, args.ticket, "--piece", DEMONSTRATION_PIECE,
+                    "--launch-state", str(launch_state), "--path", args.path)
+        finally:
+            if launch_state.is_file():
+                run([str(LAUNCH_TOOL), "stop", "--state-file", str(launch_state)], timeout=LAUNCH_TIMEOUT)
+    if status != 0:
+        observed = f" — sortie : {short(str(answer['output'])[-MAX_DETAIL:])}" if answer.get("output") else ""
+        raise Refusal(
+            f"la ligne de démonstration n'est pas observée sur le produit lancé au commit {head} : "
+            f"{refusal_text(answer)}{observed}")
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy, "ticket": args.ticket, "piece": DEMONSTRATION_PIECE, "commit": head,
+        "address": address, "digest": answer.get("digest"), "path": answer.get("path"),
+        "demonstration_line": ticket.state.get("demonstration_line"),
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- gates -------------------------------------------------------------------
+
+
+def gate_workspace(ticket: Ticket) -> str:
+    session = ticket.session()
+    if session is None:
+        raise Refusal(f"aucune session d'auteur n'a pris le ticket {ticket.id} (bin/ticket-author start)")
+    tip = ticket.tip()
+    branch = ticket.state["branch"]
+    integration, integration_at = integration_tip(ticket, fetch=False)
+    base = (ticket.convoy.get("integration") or {}).get("base")
+    fork = merge_base(ticket.repo, tip, integration_at)
+    if fork is None or (base and not is_ancestor(ticket.repo, base, fork)):
+        raise Refusal(
+            f"la branche {branch} du ticket ne part pas de la branche d'intégration {integration} de la Spec")
+    path = worktree_of(ticket.id)
+    on_path = worktree_branch(path)
+    if on_path != branch:
+        raise Refusal(f"le worktree du ticket ({path}) n'est pas sur la branche {branch}")
+    return f"session {session['name']}, worktree {path}, branche {branch} partie de {integration} ({fork})"
+
+
+def gate_red(ticket: Ticket) -> str:
+    if not ticket.shown_on_the_product:
+        return "prefactoring : pas d'étape rouge, la régression se prouve avec le code"
+    tdd = ticket.state.get("tdd") or {}
+    red = tdd.get("red")
+    if not isinstance(red, dict) or "commit" not in red:
+        raise Refusal(
+            f"l'étape rouge du ticket {ticket.id} n'est pas prouvée (bin/tdd-step red) : le code ne commence pas")
+    ticket.verified("tdd_red", "preuve du rouge")
+    freeze = tdd.get("freeze")
+    if not isinstance(freeze, dict) or "commit" not in freeze:
+        raise Refusal(
+            f"les tests de critère du ticket {ticket.id} sont rouges mais pas gelés : le gel précède le code "
+            "(bin/tdd-step freeze)")
+    ticket.verified("tdd_freeze", "registre du gel")
+    return f"rouge prouvé au commit {red['commit']}, tests gelés au commit {freeze['commit']}"
+
+
+def gate_code(ticket: Ticket) -> str:
+    tip = ticket.tip()
+    step, piece, what = (
+        ("green", "tdd_green", "le vert des tests de critère (bin/tdd-step green)") if ticket.shown_on_the_product
+        else ("prefactoring", "tdd_prefactoring", "la régression du prefactoring (bin/tdd-step prefactoring)"))
+    record = (ticket.state.get("tdd") or {}).get(step)
+    if not isinstance(record, dict) or "commit" not in record:
+        raise Refusal(f"{what} n'est pas prouvé sur le ticket {ticket.id}")
+    if record["commit"] != tip:
+        raise Refusal(
+            f"{what} est prouvé au commit {record['commit']} et non à la pointe de la branche ({tip}) : il se rejoue")
+    ticket.verified(piece, "preuve du code")
+    return f"{step} prouvé à la pointe {tip}"
+
+
+def gate_demonstration(ticket: Ticket) -> str:
+    if not ticket.shown_on_the_product:
+        return "prefactoring : pas de ligne de démonstration"
+    tip = ticket.tip()
+    sealed = (ticket.state.get("evidence") or {}).get(DEMONSTRATION_PIECE)
+    if not isinstance(sealed, dict) or "commit" not in sealed:
+        raise Refusal(
+            f"aucune preuve de démonstration sur le ticket {ticket.id} : l'auteur lance le produit et capture sa "
+            "ligne de démonstration (bin/ticket-author demonstrate)")
+    record = ticket.verified(DEMONSTRATION_PIECE, "preuve de démonstration")
+    if not record.get("address"):
+        raise Refusal("la preuve de démonstration n'a pas été capturée sur le produit lancé (bin/ticket-author demonstrate)")
+    if record.get("commit") != tip:
+        raise Refusal(
+            f"la preuve de démonstration est au commit {record.get('commit')} et non à la pointe de la branche "
+            f"({tip}) : elle se rejoue")
+    return f"ligne de démonstration capturée sur le produit lancé à la pointe {tip}"
+
+
+def gate_exit(ticket: Ticket) -> str:
+    record, session = ticket.state.get("exit"), ticket.session()
+    if not isinstance(record, dict) or session is None or str(record.get("at", "")) < str(session["at"]):
+        raise Refusal(
+            f"aucune sortie de ticket n'est enregistrée pour la session du ticket {ticket.id} : "
+            "l'auteur termine par bin/ticket-exit")
+    tip = ticket.tip()
+    handoff = ticket.state.get("handoff")
+    if not isinstance(handoff, dict) or handoff.get("partial") or handoff.get("commit") != tip:
+        at = handoff.get("commit") if isinstance(handoff, dict) else None
+        raise Refusal(
+            f"la sortie « terminé » du ticket {ticket.id} ne porte pas sur la pointe de sa branche ({tip}) : "
+            f"son Handoff est au commit {at}")
+    gate_code(ticket)
+    gate_demonstration(ticket)
+    return f"sortie « terminé » à la pointe {tip}, Handoff complet"
+
+
+GATES = {"workspace": gate_workspace, "red": gate_red, "code": gate_code,
+         "demonstration": gate_demonstration, "exit": gate_exit}
+
+
+def gate(ticket: Ticket, step: str) -> dict[str, Any]:
+    if step not in GATES:
+        raise Refusal(f"étape hors de la liste fermée : {step!r} (attendu : {', '.join(STEPS)})")
+    ticket.require_at_work()
+    answer: dict[str, Any] = {"ok": True, "convoy": ticket.convoy_id, "ticket": ticket.id, "step": step, "passed": True}
+    closed_by = ticket.closing_exit()
+    if closed_by and step != "workspace":
+        answer.update(sequence_closed_by=closed_by,
+                      proof=f"sortie « {closed_by} » enregistrée : la séquence est close, rien ne reste à prouver")
+    else:
+        answer["proof"] = GATES[step](ticket)
+    return answer
+
+
+def cmd_gate(args: argparse.Namespace) -> int:
+    print(json.dumps(gate(Ticket(args.convoy, args.ticket, args.repo), args.step),
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_check(_args: argparse.Namespace) -> int:
+    """The gate of the formula step Gas City just saw closed (GC_BEAD_ID)."""
+    bead_id = os.environ.get("GC_BEAD_ID", "").strip()
+    if not bead_id:
+        raise Refusal("GC_BEAD_ID absent : ce contrôle est lancé par Gas City entre deux étapes de la formule")
+    metadata = read_bead(bead_id).get("metadata") or {}
+    step, root_id = metadata.get("gc.step_id"), metadata.get("gc.root_bead_id")
+    if step not in STEPS or not root_id:
+        raise Refusal(f"le bead {bead_id} n'est pas une étape contrôlée de la formule de l'auteur (étape {step!r})")
+    input_convoy = (read_bead(str(root_id)).get("metadata") or {}).get("gc.input_convoy_id")
+    if not input_convoy:
+        raise Refusal(f"le workflow {root_id} ne nomme pas son convoi d'entrée")
+    tracked = [dep.get("id") for dep in read_bead(str(input_convoy)).get("dependencies") or []
+               if isinstance(dep, dict) and dep.get("dependency_type") == "tracks"]
+    if len(tracked) != 1:
+        raise Refusal(f"le convoi d'entrée {input_convoy} ne suit pas un seul ticket ({len(tracked)})")
+    ticket_id = str(tracked[0])
+    convoy_id = convoy_of(ticket_id)
+    if convoy_id is None:
+        raise Refusal(f"le ticket {ticket_id} n'appartient à aucun convoi du nouveau flux")
+    print(json.dumps(gate(Ticket(convoy_id, ticket_id), step), indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- release -----------------------------------------------------------------
+
+
+def cmd_release(args: argparse.Namespace) -> int:
+    ticket = Ticket(args.convoy, args.ticket, args.repo)
+    path = worktree_of(ticket.id)
+    answer: dict[str, Any] = {"ok": True, "convoy": args.convoy, "ticket": args.ticket}
+    if worktree_branch(path) is None:
+        print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return 0
+    if not isinstance(ticket.state.get("exit"), dict):
+        raise Refusal(f"le ticket {ticket.id} n'a pas de sortie enregistrée : son worktree reste (bin/ticket-exit)")
+    dirty = git(path, "status", "--porcelain")
+    if dirty.returncode != 0 or dirty.stdout.strip():
+        raise Refusal(f"le worktree {path} porte du travail non commité : {short(dirty.stdout or dirty.stderr, 160)}")
+    removed = git(ticket.repo, "worktree", "remove", str(path))
+    if removed.returncode != 0:
+        raise Refusal(f"le worktree {path} n'a pas pu être retiré : {short(removed.stderr)}")
+    answer["removed"] = {"worktree": str(path), "branch_kept": ticket.state.get("branch")}
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- command line --------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def command(name: str, handler: Any) -> argparse.ArgumentParser:
+        p = sub.add_parser(name)
+        p.add_argument("convoy")
+        p.add_argument("ticket")
+        p.add_argument("--repo")
+        p.set_defaults(handler=handler)
+        return p
+
+    # Closed lists and required values are checked by the handlers, not by
+    # argparse: a refusal is one JSON answer.
+    p = sub.add_parser("locate")
+    p.add_argument("ticket")
+    p.set_defaults(handler=cmd_locate)
+    command("start", cmd_start).add_argument("--session")
+    p = command("demonstrate", cmd_demonstrate)
+    p.add_argument("--profile")
+    p.add_argument("--dataset")
+    p.add_argument("--path")
+    command("gate", cmd_gate).add_argument("--step")
+    command("release", cmd_release)
+    p = sub.add_parser("check")
+    p.set_defaults(handler=cmd_check, ticket=None)
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    # What follows « -- » is the command of a demonstration, taken as it is.
+    cut = argv.index("--") if "--" in argv else len(argv)
+    args = build_parser().parse_args(argv[:cut])
+    args.argv = argv[cut + 1:]
+    try:
+        return args.handler(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        answer: dict[str, Any] = {"ok": False, "ticket": args.ticket, "error": f"refus : {exc}"}
+        if exc.written:
+            answer["written"] = exc.written
+        print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+        if args.handler is cmd_check:
+            print(answer["error"], file=sys.stderr)
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
