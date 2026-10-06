@@ -245,7 +245,12 @@ write it also refuses:
 published only if it adds nothing but `repair` tickets -- each held to the
 contract, so each naming what it restores -- to a graph it otherwise leaves
 as published: the text of a carried ticket is unchanged, and it may only
-gain an added repair among its blockers. Anything else (an added slice, a
+gain an added repair among its blockers. A blocker that is already delivered
+cannot be carried (a patch never takes a closed ticket), so leaving it out
+is not a reordering: the ticket keeps it, in `gc.blocked_by` and as a
+tracker edge, under an approved revision as well (T11: a ticket at work has
+every blocker delivered, and `bin/ticket-exit` puts the repair of a ticket
+blocked technically in front of it this way, `docs/TICKET_EXIT.md`). Anything else (an added slice, a
 changed criterion, a reordering, a withdrawal) is refused and asks for the
 approval of the revised graph. This is the mechanical reading of « tant
 qu'il reste dans l'intention approuvée » (Spec §2): the door checks the

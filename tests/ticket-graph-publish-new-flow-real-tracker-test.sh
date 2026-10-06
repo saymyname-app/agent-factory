@@ -13,6 +13,9 @@
 # the pointers the door poses; an operator need blocks until it is lifted; a
 # patch that only adds a repair is published without approval, tracked by the
 # convoy and marked; a ticket is withdrawn behind its gate record.
+# T11 (af-egkabn): a ticket at work exits « bloqué technique » through
+# bin/ticket-exit; the repair drafted by code is published by this door, the
+# ticket waits for it and keeps its delivered blockers.
 # T36 (af-2nmcxw): an interface graph without Prototype Fold, or with an
 # interface ticket that does not wait for it, is refused; published, each
 # interface ticket shows the Validated Prototype reference and `bd ready`
@@ -392,6 +395,48 @@ shown=$("$STATE" show "$CONVOY" --repo "$TRIAL/repo") || fail "the convoy is inc
 jq -e --arg t4 "$T4" '.unruled == false and (.tickets[] | select(.id == $t4) | .gates | has("withdrawn"))' <<<"$shown" >/dev/null \
   || fail "the withdrawn ticket has no gate record: $shown"
 
+# --- T11 (af-egkabn): a ticket blocked technically gets a repair by code -------
+# T1 and R1 are delivered, T2 is at work. Its author exits « bloqué technique »:
+# bin/ticket-exit drafts the revision and this same patch door publishes it.
+for delivered in "$T1" "$R1"; do
+  "$STATE" record-gate "$CONVOY" "$delivered" --gate ticket_end --commit "$(printf '0%.0s' $(seq 40))" >/dev/null \
+    || fail "gate record refused for $delivered"
+  gc bd update "$delivered" --status closed >/dev/null
+done
+"$STATE" record-gate "$CONVOY" "$T2" --gate dispatch >/dev/null || fail "dispatch gate record refused for T2"
+gc bd update "$T2" --status in_progress >/dev/null
+mkdir -p "$TRIAL/exit-root/config/projects"
+cp "$PROJECTS/delivery-fixture-city.toml" "$TRIAL/exit-root/config/projects/"
+cp -r "$TRIAL/descriptors" "$TRIAL/exit-root/config/project-descriptors"
+cat >"$TRIAL/repair.json" <<'JSON'
+{"title": "Le harnais de test relit le jeu de données",
+ "what_it_delivers": "Le harnais de test du produit charge de nouveau le jeu de données « contenu ».",
+ "restores": {"kind": "red_check", "ref": "le harnais échoue au chargement du jeu de données « contenu »"},
+ "demonstration_line": "Sur le produit lancé avec le jeu de données « contenu », GET /api/items rend trois éléments.",
+ "acceptance_criteria": [{"entry_point": "GET /api/items sur le produit lancé avec le jeu de données « contenu »",
+   "observable": "la réponse JSON liste trois éléments", "false_if": "la réponse est vide ou en erreur"}]}
+JSON
+blocked=$(FACTORY_ROOT="$TRIAL/exit-root" "$ROOT/bin/ticket-exit" exit "$CONVOY" "$T2" --exit technically_blocked \
+  --repair "$TRIAL/repair.json") || fail "the exit « bloqué technique » was refused: $blocked"
+R2=$(jq -r '.repair.id' <<<"$blocked")
+jq -e '.repair.key == "R2" and .exit == "technically_blocked"' <<<"$blocked" >/dev/null || fail "unexpected exit answer: $blocked"
+shown=$("$STATE" show "$CONVOY" --repo "$TRIAL/repo") || fail "the convoy is incoherent after the exit: $shown"
+jq -e --arg r2 "$R2" --arg t2 "$T2" --arg t3 "$T3" '.unruled == false
+  and (.tickets[] | select(.id == $r2) | .mark == "new-flow/v1" and .kind == "repair" and .status == "open" and .gates == {})
+  and (.tickets[] | select(.id == $t2) | .exit.exit == "technically_blocked" and .park == null)
+  and (.tickets[] | select(.id == $t3) | .exit == null and .park == null and .status == "open")' <<<"$shown" >/dev/null \
+  || fail "the repair is not published, or the rest of the convoy was touched: $shown"
+# T2 waits for the new repair, and keeps the delivered blockers the revision could not carry.
+gc bd show "$T2" --json | jq -e --arg r2 "$R2" --arg r1 "$R1" --arg t1 "$T1" '
+  [.[0].dependencies[] | select(.dependency_type == "blocks") | .id] | sort == ([$r2, $r1, $t1] | sort)' >/dev/null \
+  || fail "T2 is not blocked by the repair and by its delivered blockers in the real tracker"
+[ "$(gc bd ready --json --limit 0 | jq -r --arg r2 "$R2" --arg t2 "$T2" '[.[].id | select(. == $r2 or . == $t2)] | join(",")')" = "$R2" ] \
+  || fail "the repair is not ready, or the blocked ticket still is"
+# Its author will receive the Handoff of each delivered blocker (none was written here).
+"$ROOT/bin/ticket-exit" read "$CONVOY" "$T2" | jq -e --arg r1 "$R1" --arg t1 "$T1" '
+  .exit.exit == "technically_blocked" and ([.blocker_handoffs[].ticket] | sort) == ([$r1, $t1] | sort)' >/dev/null \
+  || fail "reading T2 does not join its delivered blockers"
+
 # --- a draft that does not declare the contract is published without mark ----
 LEGACY=$(draft "global_execution_contract:
   models: none
@@ -416,4 +461,4 @@ set +e
 set -e
 [ "$rc" = 4 ] || fail "convoy-state show on the undeclared convoy exited $rc, want 4 (pas un convoi du nouveau flux)"
 
-echo "PASS: on the real tracker, the door refuses the redeclared Cockpit V2 draft without writing, publishes and marks a conformant draft with its pointers, refuses an orphan user story and an open operator need, refuses an interface graph without its Prototype Fold and gives the Fold alone as ready among the interface tickets, adds a repair by patch without approval, withdraws a ticket behind its gate record, and publishes an undeclared draft as before"
+echo "PASS: on the real tracker, the door refuses the redeclared Cockpit V2 draft without writing, publishes and marks a conformant draft with its pointers, refuses an orphan user story and an open operator need, refuses an interface graph without its Prototype Fold and gives the Fold alone as ready among the interface tickets, adds a repair by patch without approval, withdraws a ticket behind its gate record, publishes the repair of a ticket blocked technically (bin/ticket-exit) in front of it, and publishes an undeclared draft as before"

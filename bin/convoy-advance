@@ -394,6 +394,12 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int) -> dict[
         return out
     for ticket in convoy.not_started():
         ticket_id = ticket["id"]
+        park = ticket.get("park")
+        if park:
+            # Parked by a Ticket Exit (bin/ticket-exit), itself or behind the
+            # ticket it waits for: not started until the parking is lifted.
+            out["waiting"].append({"id": ticket_id, "reason": f"parqué ({park.get('cause')}, par {park.get('origin')})"})
+            continue
         if len(out["started"]) >= free:
             out["waiting"].append({"id": ticket_id, "reason": f"plafond N={settings['ceiling']} atteint"})
             continue

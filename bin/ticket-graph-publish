@@ -1346,6 +1346,14 @@ def patch(
             member = old_members[key]
             wanted_blocked_by = {str(b) for b in ticket["blocked_by"]}
             previous_blocked_by = {b for b in member["blocked_by"].split(",") if b}
+            if new_flow:
+                # A revision never carries a delivered ticket, so it cannot
+                # name one among the blockers: the ticket keeps the delivered
+                # blockers it had (its author receives their Handoff, T11).
+                wanted_blocked_by |= {
+                    b for b in previous_blocked_by
+                    if b not in ticket_by_key and old_members.get(b, {}).get("status") == "closed"
+                }
             scope_metadata_args = (
                 ["--set-metadata", f"gc.scope_paths={node['metadata']['gc.scope_paths']}"]
                 if "gc.scope_paths" in node["metadata"] else []
@@ -1869,7 +1877,9 @@ def unapproved_patch_refusals(
     repair needs no new approval. Mechanically: the patch only adds repair
     tickets -- each naming what it restores, as any repair -- to a graph it
     otherwise leaves as published; a published ticket may only gain an added
-    repair among its blockers."""
+    repair among its blockers. A blocker already delivered cannot be carried
+    by a revision: leaving it out is not a reordering, the ticket keeps it
+    (a ticket blocked technically has every blocker closed, T11)."""
     refusals: list[tuple[str, str]] = []
     added = {str(ticket["id"]) for ticket in tickets if str(ticket["id"]) not in members}
     if parsed.get("withdrawn"):
@@ -1888,7 +1898,10 @@ def unapproved_patch_refusals(
             unchanged = False
         if not unchanged:
             refusals.append((key, "modifié : son texte publié diffère de celui du brouillon"))
-        published = {blocker for blocker in member["blocked_by"].split(",") if blocker}
+        published = {
+            blocker for blocker in member["blocked_by"].split(",")
+            if blocker and members.get(blocker, {}).get("status") != "closed"
+        }
         drafted = {str(blocker) for blocker in ticket["blocked_by"]}
         if not published <= drafted or not drafted - published <= added:
             refusals.append((
