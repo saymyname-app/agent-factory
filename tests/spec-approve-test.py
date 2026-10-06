@@ -6,8 +6,12 @@ import os
 import shutil
 import subprocess
 import tempfile
+import sys
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from fixture_prototype import FROZEN_COMMIT, PROTOTYPE_SOURCE, materialize  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +19,10 @@ TOOL = ROOT / "bin" / "spec-approve"
 FIXTURES = ROOT / "tests" / "fixtures" / "spec-approve"
 FAKE_BD = FIXTURES / "bd"
 PROJECTS_CONFIG_DIR = FIXTURES / "projects"
+# The smallest Spec body bd-approve accepts since T07 (af-tvda3w): numbered
+# user stories, no interface story, so no Validated Prototype reference.
+SPEC_BODY = "prose spec body\n\n## User Stories\n\n1. As an operator, I want a probe, so that I know it runs.\n"
+FIXTURE_SPEC = (ROOT / "tests" / "fixtures" / "delivery-fixture-city" / "spec.md").read_text(encoding="utf-8")
 
 
 class SpecApproveBeadModeTest(unittest.TestCase):
@@ -44,7 +52,7 @@ class SpecApproveBeadModeTest(unittest.TestCase):
     def bead(self, **kwargs):
         base = {
             "labels": [], "metadata": {}, "parent": None, "status": "open",
-            "title": "", "description": "spec body",
+            "title": "", "description": SPEC_BODY,
         }
         base.update(kwargs)
         return base
@@ -150,7 +158,7 @@ class SpecApproveBeadModeTest(unittest.TestCase):
 
     def test_bd_approve_approves_valid_mapped_spec_records_digest_and_closes_map(self):
         beads = self.mapped_spec_beads()
-        beads["spec-1"]["description"] = "prose spec body"
+        beads["spec-1"]["description"] = SPEC_BODY
         self.seed(beads)
 
         proc = self.bd_approve("spec-1", check=True)
@@ -159,7 +167,7 @@ class SpecApproveBeadModeTest(unittest.TestCase):
         self.assertTrue(result["map_closed"])
         self.assertEqual("APPROVED_SPEC", result["state"])
 
-        expected_digest = "sha256:" + hashlib.sha256(b"prose spec body").hexdigest()
+        expected_digest = "sha256:" + hashlib.sha256(SPEC_BODY.encode("utf-8")).hexdigest()
         self.assertEqual(expected_digest, result["digest"])
 
         state = self.current_state()
@@ -177,7 +185,7 @@ class SpecApproveBeadModeTest(unittest.TestCase):
                     "planning_run_target": "A6b", "planning_map": "none",
                     "no_fog_evidence": "« pas de brouillard » (Benjamin, 2026-09-30 Paris)",
                 },
-                description="prose spec body",
+                description=SPEC_BODY,
             ),
         })
 
@@ -228,7 +236,7 @@ class SpecApproveBeadModeTest(unittest.TestCase):
                     "no_fog_evidence": "« pas de brouillard » (Benjamin, 2026-09-30 Paris)",
                     "gc.project_id": "its-own-project",
                 },
-                description="prose spec body",
+                description=SPEC_BODY,
             ),
         })
 
@@ -264,6 +272,240 @@ class SpecApproveBeadModeTest(unittest.TestCase):
         result = json.loads(proc.stdout)
         self.assertTrue(result["ok"])
         self.assertFalse(result["void"])
+
+
+class SpecApproveEntryContractTest(unittest.TestCase):
+    """T07 (af-tvda3w; spec af-wf4w5r sections 2 and 3): bd-approve refuses a
+    Spec that cannot be sliced and verified -- no numbered user stories, an
+    interface story without a complete Validated Prototype reference, a
+    reference whose commit is not on the remote repository, a missing state
+    inventory, or a Validated Prototype that is not conformant. Each refusal
+    re-reads the fake tracker state to prove nothing was written."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="spec-approve-contract-test-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.state_path = self.tmp / "beads.json"
+        self.repo_root = self.tmp / "repo"
+        self.repo_root.mkdir()
+        self.remote = self.tmp / "remote.git"
+        self.frozen_commit = materialize(self.remote)
+
+    def seed_spec(self, description, metadata=None):
+        base = {
+            "planning_run_target": "D01", "planning_map": "none",
+            "no_fog_evidence": "« pas de brouillard » (Benjamin, 2026-10-06 Paris)",
+        }
+        base.update(metadata or {})
+        self.state_path.write_text(json.dumps({
+            "beads": {
+                "spec-1": {
+                    "id": "spec-1", "labels": [], "metadata": base, "parent": None, "status": "open",
+                    "title": "Spec de la Fixture City", "description": description,
+                },
+            },
+            "next_id": 1,
+        }))
+
+    def current_state(self):
+        return json.loads(self.state_path.read_text())
+
+    def invoke(self, *args):
+        env = {**os.environ, "BD_BIN": str(FAKE_BD), "SPEC_APPROVE_BD_STATE": str(self.state_path)}
+        return subprocess.run((str(TOOL), *[str(a) for a in args]), env=env, text=True, capture_output=True)
+
+    def bd_approve(self, remote=None, name_remote=True):
+        return self.invoke(
+            "bd-approve", "--spec", "spec-1", "--approved-by", "benjamin",
+            "--evidence", "« J'approuve » (Benjamin, 2026-10-06 Paris)",
+            "--project", "delivery-fixture-city", "--repo-root", self.repo_root,
+            "--config-dir", PROJECTS_CONFIG_DIR,
+            *(("--prototype-remote", remote or self.remote) if name_remote else ()),
+        )
+
+    def assert_refused_untouched(self, description, *expected, metadata=None, remote=None):
+        self.seed_spec(description, metadata)
+        before = self.current_state()
+        proc = self.bd_approve(remote)
+        self.assertNotEqual(0, proc.returncode, proc.stdout)
+        error = json.loads(proc.stdout)
+        self.assertFalse(error["ok"])
+        for fragment in expected:
+            self.assertIn(fragment, error["error"])
+        self.assertEqual(before, self.current_state())
+        return error["error"]
+
+    def assert_approved(self, description):
+        self.seed_spec(description)
+        proc = self.bd_approve()
+        self.assertEqual(0, proc.returncode, proc.stdout)
+        result = json.loads(proc.stdout)
+        self.assertTrue(result["ok"])
+        metadata = self.current_state()["beads"]["spec-1"]["metadata"]
+        self.assertEqual("APPROVED_SPEC", metadata["spec_state"])
+        self.assertEqual("sha256:" + hashlib.sha256(description.encode("utf-8")).hexdigest(), metadata["approved_digest"])
+
+    def replaced(self, old, new, spec=None):
+        spec = FIXTURE_SPEC if spec is None else spec
+        self.assertIn(old, spec)
+        return spec.replace(old, new)
+
+    def spec_on_altered_prototype(self, relative_path, old, new):
+        """The fixture Spec, re-pointed at a prototype branch whose frozen
+        files differ from the fixture's by one replacement."""
+        altered = self.tmp / "altered-prototype"
+        shutil.copytree(PROTOTYPE_SOURCE, altered)
+        page = altered / relative_path
+        text = page.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        page.write_text(text.replace(old, new), encoding="utf-8")
+        remote = self.tmp / "altered-remote.git"
+        commit = materialize(remote, altered)
+        self.assertNotEqual(self.frozen_commit, commit)
+        return self.replaced(self.frozen_commit, commit), remote
+
+    # --- passage ----------------------------------------------------------------
+
+    def test_the_fixture_spec_names_the_frozen_prototype_commit(self):
+        self.assertEqual(FROZEN_COMMIT, self.frozen_commit)
+        self.assertIn(FROZEN_COMMIT, FIXTURE_SPEC)
+
+    def test_approves_the_fixture_spec(self):
+        self.assert_approved(FIXTURE_SPEC)
+
+    def test_approves_a_spec_without_interface_and_without_prototype_reference(self):
+        self.assert_approved(
+            "## Problem Statement\n\nRien ne sonde le produit.\n\n## User Stories\n\n"
+            "1. As an exploitant, I want une sonde de santé, so that je sache que le produit répond.\n"
+            "2. As an exploitant, I want un code de sortie, so that un script puisse le lire.\n\n"
+            "## Out of Scope\n\nTout le reste.\n"
+        )
+
+    def test_reads_the_prototype_from_the_origin_remote_of_the_repo_root_by_default(self):
+        subprocess.run(("git", "init", "--quiet", str(self.repo_root)), check=True)
+        subprocess.run(("git", "-C", str(self.repo_root), "remote", "add", "origin", str(self.remote)), check=True)
+        self.seed_spec(FIXTURE_SPEC)
+        proc = self.bd_approve(name_remote=False)
+        self.assertEqual(0, proc.returncode, proc.stdout)
+        self.assertEqual("APPROVED_SPEC", self.current_state()["beads"]["spec-1"]["metadata"]["spec_state"])
+        self.assertEqual("", subprocess.run(
+            ("git", "-C", str(self.repo_root), "for-each-ref"), text=True, capture_output=True, check=True,
+        ).stdout)
+
+    def test_refuses_an_interface_spec_when_no_remote_repository_is_known(self):
+        self.seed_spec(FIXTURE_SPEC)
+        before = self.current_state()
+        proc = self.bd_approve(name_remote=False)
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("--prototype-remote", json.loads(proc.stdout)["error"])
+        self.assertEqual(before, self.current_state())
+
+    # --- refus : user stories numérotées ------------------------------------------
+
+    def test_refuses_a_spec_whose_user_stories_are_not_numbered(self):
+        spec = FIXTURE_SPEC
+        for number in ("1", "2", "3"):
+            spec = self.replaced(f"\n{number}. As a", "\n- As a", spec)
+        self.assert_refused_untouched(spec, "user stories numérotées")
+
+    def test_refuses_a_spec_without_a_user_stories_section(self):
+        self.assert_refused_untouched("prose sans section\n\n1. une liste ailleurs\n", "user stories numérotées")
+
+    def test_refuses_a_spec_whose_user_story_numbers_repeat(self):
+        self.assert_refused_untouched(self.replaced("\n2. As a", "\n1. As a"), "numéro", "1")
+
+    # --- refus : référence du Validated Prototype ---------------------------------
+
+    def test_refuses_an_interface_story_without_prototype_reference(self):
+        spec = FIXTURE_SPEC[: FIXTURE_SPEC.index("## Validated Prototype")] + "## Out of Scope\n\nTout le reste.\n"
+        error = self.assert_refused_untouched(spec, "référence du Validated Prototype")
+        self.assertIn("1", error)
+
+    def test_refuses_a_reference_without_commit(self):
+        spec = self.replaced(f"- commit : `{FROZEN_COMMIT}`\n", "")
+        self.assert_refused_untouched(spec, "référence du Validated Prototype", "commit")
+
+    def test_refuses_a_reference_without_branch_path_or_states(self):
+        for line, missing in (
+            ("- branche : `prototype/delivery-fixture-city`\n", "branche"),
+            ("- chemin : `tests/fixtures/delivery-fixture-city/prototype`\n", "chemin"),
+            ("- états : `empty`, `content`\n", "états"),
+        ):
+            with self.subTest(missing=missing):
+                self.assert_refused_untouched(self.replaced(line, ""), "référence du Validated Prototype", missing)
+
+    def test_refuses_a_reference_whose_commit_is_not_on_the_remote_repository(self):
+        absent = "1" * 40
+        self.assert_refused_untouched(self.replaced(FROZEN_COMMIT, absent), absent, "dépôt distant")
+
+    def test_refuses_a_reference_whose_branch_is_not_on_the_remote_repository(self):
+        spec = self.replaced("`prototype/delivery-fixture-city`", "`prototype/absente`")
+        self.assert_refused_untouched(spec, "prototype/absente", "dépôt distant")
+
+    def test_refuses_a_reference_whose_path_is_not_in_the_commit(self):
+        spec = self.replaced("`tests/fixtures/delivery-fixture-city/prototype`", "`ailleurs/prototype`")
+        self.assert_refused_untouched(spec, "ailleurs/prototype")
+
+    # --- refus : inventaire des états ----------------------------------------------
+
+    def test_refuses_a_spec_without_state_inventory(self):
+        spec = (
+            FIXTURE_SPEC[: FIXTURE_SPEC.index("### Écran : accueil")]
+            + FIXTURE_SPEC[FIXTURE_SPEC.index("## Implementation Decisions"):]
+        )
+        self.assert_refused_untouched(spec, "inventaire des états")
+
+    def test_refuses_an_inventory_missing_one_of_the_six_control_states(self):
+        spec = self.replaced("| erreur | non prototypé | |\n", "")
+        self.assert_refused_untouched(spec, "inventaire des états", "accueil", "erreur")
+
+    def test_refuses_a_state_that_is_neither_prototyped_nor_not_prototyped(self):
+        spec = self.replaced("| contenu long | non prototypé | |", "| contenu long | à voir | |")
+        self.assert_refused_untouched(spec, "inventaire des états", "contenu long")
+
+    def test_refuses_a_control_state_without_object_and_without_reason(self):
+        spec = self.replaced(
+            "| thème sombre | sans objet | la fixture n'a qu'un thème clair |", "| thème sombre | sans objet | |"
+        )
+        self.assert_refused_untouched(spec, "inventaire des états", "thème sombre", "raison")
+
+    def test_refuses_a_prototyped_state_that_the_reference_does_not_list(self):
+        spec = self.replaced("| vide | prototypé | empty |", "| vide | prototypé | blank |")
+        self.assert_refused_untouched(spec, "inventaire des états", "blank")
+
+    # --- refus : Validated Prototype non conforme ---------------------------------
+
+    def test_refuses_when_an_anchor_is_removed_from_the_prototype(self):
+        spec, remote = self.spec_on_altered_prototype(
+            "states/content.html", '<h1 data-anchor="fixture-state">', "<h1>"
+        )
+        self.assert_refused_untouched(spec, "non conforme", "anchors", "states/content.html", remote=remote)
+
+    def test_refuses_when_a_state_dataset_is_missing_from_the_prototype(self):
+        spec, remote = self.spec_on_altered_prototype(
+            "validated-prototype.json", '"dataset": "data/content.json"', '"dataset": "data/absent.json"'
+        )
+        self.assert_refused_untouched(spec, "non conforme", "datasets", remote=remote)
+
+    # --- les Specs déjà approuvées restent approuvées ----------------------------
+
+    def test_an_already_approved_spec_without_numbered_stories_stays_approved(self):
+        description = "prose spec body approved before T07"
+        digest = "sha256:" + hashlib.sha256(description.encode("utf-8")).hexdigest()
+        self.seed_spec(description, {
+            "spec_state": "APPROVED_SPEC", "approved_by": "benjamin",
+            "approved_evidence": "« J'approuve »", "approved_digest": digest,
+        })
+        before = self.current_state()
+
+        status = json.loads(self.invoke("bd-status", "--spec", "spec-1").stdout)
+        self.assertEqual("APPROVED_SPEC", status["state"])
+        self.assertFalse(status["void"])
+
+        proc = self.bd_approve()
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("already approved", json.loads(proc.stdout)["error"])
+        self.assertEqual(before, self.current_state())
 
 
 if __name__ == "__main__":
