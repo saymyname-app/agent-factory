@@ -107,6 +107,7 @@ an A5 input.
 | `assets/workflows/build-basic/summarize-implementation.md` | ops | formulas/build-basic.formula.toml | delivery formula step prompt; no retired/project refs |
 | `bin/deliver-close` | ops | mol-do-work, pr-autopilot, factory-delivery-guard, planning-exception-guard, CI | Live delivery door (ADR-0009/0016/0028); FIXED (O01/P24): required-workflow lookup reads config/projects/*.toml via project_registry_ci_for_repo instead of a hardcoded repo map; tests/deliver-close-test.sh covers a repo named only in a project file |
 | `bin/escalation-door` | ops | mayor prompt (`benjamin`/`mayor`), mol-scoped-work notify-failure, CI test tests/escalation-door-test.sh, coordination-pointer-doors-test.sh | O06 (af-sau1a): the one escalation door; retired `bin/campaign-pointer` (`escalate`/`start`/`finish`/`clear-decision` and its dead `af-1vr4` fields) |
+| `bin/evidence-capture` | kernel | docs/EVIDENCE_STORE.md, CI test; the gates and the author/Evaluator formulas of D01 (to come) | NEW (T09, af-pvcg6t): captures an Evidence Record (command run by the tool, or screenshot of the launched product) into the evidence store outside Git, fingerprint written through bin/convoy-state; `verify`, `purge --spec` |
 | `bin/factory-boot` | ops | Windows logon task (external), docs/RUNBOOK_STOP_AND_RESTART.md | Restart restore; one stale "campaign" log string |
 | `bin/factory-build-gates` | ops | factory-boot, factory-guard, CI test | CLI wrapper for lib/factory_build_gates.py (materialises pack check scripts) |
 | `bin/factory-delivery-guard` | ops | factory-guard, CI test | Live proof-field backfill; FIXED (O01/P24): RIGS built from project_registry_rig_names(config/projects/*.toml) instead of a hardcoded list, and the header comment's stale retired-campaign/product-status rationale is removed; tests/factory-delivery-guard-test.sh covers a rig named only in a project file |
@@ -215,6 +216,8 @@ an A5 input.
 | `tests/dispatch-door-guard-test.sh` | ops | bin/dispatch-door-guard (O03 raw-sling bypass detection) | in CI (ci.yml, "O03 dispatch-door-guard...") |
 | `tests/dispatch-door-test.sh` | ops | bin/dispatch-door (O03 dispatch door: target/formula/--reassign for every rig) | in CI (ci.yml, "O03 dispatch-door validates...") |
 | `tests/escalation-door-test.sh` | ops | bin/escalation-door (O06 escalation write door + routing rules); fixture escalation-door | in CI (ci.yml:110); replaces the retired campaign-pointer-test.sh; af-wnj692: also proves a long-lived child left behind by one call (the nudge poller of `gc mail send --notify`) does not inherit the door's lock and cannot block the next call |
+| `tests/evidence-capture-demonstration-test.sh` | kernel | evidence-capture, convoy-state, project-launch; real gc/bd in a disposable city, real Chromium | NEW (T09, af-pvcg6t): local-only; the demonstration line on the real tracker and the real browser |
+| `tests/evidence-capture-test.py` | kernel | evidence-capture, convoy-state, project-launch; fixtures convoy-state, evidence-capture, delivery-fixture-city | NEW (T09, af-pvcg6t): auto-discovered by bin/ci-run-tests; one test per pass and per refusal, each refusal re-reading the tracker and the store |
 | `tests/factory-build-gates-test.py` | ops | bin/factory-build-gates (installs .gc/scripts gates into rigs) | in CI (ci.yml:149); scripts/validate_build_artifact.py etc. are generated/copied in temp, not missing |
 | `tests/factory-delivery-guard-test.sh` | ops | bin/factory-delivery-guard | in CI (ci.yml:191) |
 | `tests/factory-delivery-proof-test.py` | ops | lib/factory_delivery_proof.py | in CI (ci.yml:188); docstring line 118 cites retired lib/factory_cockpit.py |
@@ -244,6 +247,7 @@ an A5 input.
 | `tests/fixture-city-oracle-test.py` | kernel | Fixture City oracle; fixture fixture-city | in CI (ci.yml:75); legacy-* cases assert retired paths fail closed (correct) |
 | `tests/fixtures/build-basic-fail-fast` | to-redo | build-basic-fail-fast-runtime-test.sh only | used only by a local-only test that never runs automatically |
 | `tests/fixtures/deliver-close` | ops | deliver-close-test.sh | fake gc/gh for deliver-close |
+| `tests/fixtures/evidence-capture` | kernel | evidence-capture-test.py | NEW (T09, af-pvcg6t): fake headless browser that fetches the page it is given and writes a PNG |
 | `tests/fixtures/escalation-door` | ops | escalation-door-test.sh | fake gc for the live escalation door |
 | `tests/fixtures/fixture-city` | kernel | fixture-city-oracle-test.py | synthetic fixture-* rigs; legacy-*.json are fail-closed probes |
 | `tests/fixtures/planning-exception` | kernel | planning-exception-test.py | graph + fake ticket-graph-publish |

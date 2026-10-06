@@ -138,6 +138,19 @@ class ConvoyStateTest(unittest.TestCase):
 
     # --- AC1: one read renders the whole durable state ------------------------
 
+    def test_show_names_the_spec_the_convoy_delivers(self):
+        """T09: the evidence store is filed by Spec, and the Spec of a convoy
+        is read here like the rest of its state."""
+        self.ok("mark", CONVOY)
+        self.assertEqual("fx-spec", self.show()["convoy"]["spec"])
+
+    def test_show_renders_no_spec_when_the_convoy_names_none(self):
+        self.ok("mark", CONVOY)
+        state = self.tracker_state()
+        del state["beads"][CONVOY]["metadata"]["gc.spec_id"]
+        self.tracker.write_text(json.dumps(state))
+        self.assertIsNone(self.show()["convoy"]["spec"])
+
     def test_show_renders_mark_exit_verdicts_counters_evidence_and_gate_records(self):
         tip = self.started_ticket()
         self.ok("set-exit", CONVOY, T1, "--exit", "finished")

@@ -4,7 +4,8 @@
 Spec af-wf4w5r §0 rule 2: the state of a delivery lives in the tracker, never
 in a session. This command is the only reader and writer of that state for a
 convoy that carries the new-flow mark: the mark of the convoy and of its
-tickets, a ticket's kind and demonstration line (T05), the user stories a
+tickets, the Spec the convoy delivers (T09, read only), a ticket's kind and
+demonstration line (T05), the user stories a
 vertical_slice covers and whether it establishes the project's launch
 recipe (T06) or is the Prototype Fold (T36), its branch and Ticket Exit, its verdicts (each tied to a
 commit), its counters, its evidence fingerprints and its gate records, and
@@ -71,6 +72,9 @@ KEY_PROTOTYPE_FOLD = PREFIX + "prototype_fold"
 # The kind is the one entry-contract field the publication door has always
 # written (`gc.ticket_kind`); this command reads it, and never writes it.
 KEY_KIND = "gc.ticket_kind"
+# The Spec a convoy delivers is written by the publication door too
+# (`gc.spec_id`); the evidence store is filed under it (T09). Read only.
+KEY_SPEC = "gc.spec_id"
 KEY_BRANCH = PREFIX + "branch"
 KEY_EXIT = PREFIX + "exit"
 VERDICT_PREFIX = PREFIX + "verdict."
@@ -587,8 +591,10 @@ def cmd_show(args: argparse.Namespace) -> int:
         known = (KEY_MARK, KEY_INCIDENT, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(PREFIX) and key not in known:
             convoy_unruled.append({"field": key, "reason": f"{key} : champ inconnu de la commande d'état, écrit hors d'elle"})
+    spec = metadata.get(KEY_SPEC)
     convoy_out: dict[str, Any] = {
         "id": convoy["id"], "title": convoy.get("title"), "status": convoy.get("status"), "mark": mark,
+        "spec": spec if isinstance(spec, str) and spec else None,
         "counters": render_counters(metadata, CONVOY_COUNTERS, convoy_unruled),
         "incident": incident,
         "unruled": convoy_unruled,
