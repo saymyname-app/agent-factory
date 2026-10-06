@@ -90,7 +90,7 @@ class ChantiersParEtapeTest(unittest.TestCase):
 
     def test_bande_view_renders_every_chantier_with_its_own_stepper(self):
         html_out = render_project_page(self.project, view=VIEW_BANDE)
-        self.assertIn('class="cockpit-pp-strip-item"', html_out)
+        self.assertIn('cockpit-pp-strip-item"', html_out)
         self.assertIn('data-stage="%s"' % LIVRAISON, html_out)
         self.assertIn("aria-label=\"Étape", html_out)
         # Every chantier from the fixture is present, not just one stage.

@@ -20,7 +20,11 @@ def _new_projects(descriptors, roadmap_reads=None, ecart_reads=None):
     projects_by_id = {}
     projects = []
     for descriptor in descriptors:
-        project = Project(project_id=descriptor["project_id"], display_name=descriptor["display_name"])
+        project = Project(
+            project_id=descriptor["project_id"],
+            display_name=descriptor["display_name"],
+            promu_masque=not descriptor.get("promotion_branch"),
+        )
         read = roadmap_reads.get(descriptor["project_id"])
         if read:
             project.roadmap_step = read.get("step")

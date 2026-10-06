@@ -172,11 +172,13 @@ _CHIP_CLASS = {
 }
 
 
-def _render_etat(chantier):
+def _render_etat(chantier, home=""):
     """The état chip. "À toi de jouer" and "Problème remonté" lead in one
     click to where Benjamin acts (spec .43): the acceptance panel of a
     Livré chantier, otherwise the request carrying the question. An état
-    that claims a target and has none shows as a defect (spec .45)."""
+    that claims a target and has none shows as a defect (spec .45).
+    ``home``: empty on the home screen itself, where both targets are
+    on the page; the home screen's address from any other page."""
     texte = etat_mod.label(chantier.etat, chantier.etat_cible)
     attrs = 'data-etat="%s" data-cible="%s"' % (html.escape(chantier.etat), html.escape(chantier.etat_cible or ""))
     if chantier.etat == etat_mod.NORMAL:
@@ -186,11 +188,19 @@ def _render_etat(chantier):
         return '<span class="chip bloque cockpit-chantier-etat" %s>%s</span>' % (attrs, label)
     chip = "chip go %s cockpit-chantier-etat" % _CHIP_CLASS[chantier.etat]
     if chantier.etat == etat_mod.A_TOI_DE_JOUER and chantier.stage == LIVRE:
+        if home:
+            return '<a class="%s" %s href="%s#acc-%s" title="Aller là où tu dois agir">%s</a>' % (
+                chip, attrs, html.escape(home), html.escape(chantier.id), label,
+            )
         return (
             '<button type="button" class="%s" %s data-acc-open="%s" '
             'title="Aller là où tu dois agir">%s</button>'
         ) % (chip, attrs, html.escape(chantier.id), label)
     cible = html.escape(chantier.etat_cible)
+    if home:
+        return '<a class="%s" %s href="%s#d-%s" title="Aller là où tu dois agir">%s</a>' % (
+            chip, attrs, html.escape(home), cible, label,
+        )
     return '<a class="%s" %s href="#d-%s" data-goto="%s" title="Aller là où tu dois agir">%s</a>' % (
         chip, attrs, cible, cible, label,
     )
@@ -278,6 +288,11 @@ PROJECTS_SCRIPT = """
     var close = event.target.closest('[data-acc-close]');
     if (close) { close.closest('.accpanel').hidden = true; }
   });
+  // Arriving from a project page's "À toi de jouer": open that panel.
+  if (location.hash.indexOf('#acc-') === 0) {
+    var target = document.getElementById(location.hash.slice(1));
+    if (target) { target.hidden = false; target.scrollIntoView({block: 'center'}); }
+  }
 })();
 </script>
 """

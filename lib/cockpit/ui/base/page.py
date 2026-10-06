@@ -106,37 +106,23 @@ DISCONNECT_SCRIPT = """
 """ % (DISCONNECT_AFTER_SECONDS, BANNER_ID, GREYED_CLASS, GREYED_CLASS)
 
 
-def render_home(
-    headline_text,
-    stale_rows,
-    requests_section_html="",
-    disconnected_since=None,
-    extra_sections_html="",
-    extra_css="",
-    status_html="",
-):
-    """The home screen skeleton of variant D: brand, one status line
-    (factory state, then the freshness headline with "Revérifier"), the
-    inbox, then the zones below it.
-
-    ``stale_rows``: the names :meth:`ReadModel.stale_or_unknown` returns;
-    empty means every source is fresh (``headline_text`` already names the
-    ones that are not). ``status_html``: the factory's one-line state
-    (:func:`cockpit.ui.health.page.render_status_line`).
-    ``requests_section_html``: the pre-rendered "Ce qui t'attend" inbox.
-    ``disconnected_since`` (T25, af-tzk0s4): rendered above everything —
-    the default ``None`` shows a hidden placeholder banner that the inline
-    :data:`DISCONNECT_SCRIPT` takes over client-side.
-    ``extra_sections_html``/``extra_css``: zones under the inbox."""
-    all_fresh = not stale_rows
+def render_fresh(headline_text, all_fresh):
+    """The freshness headline (spec .64) with "Revérifier" (spec .65):
+    "Tout est à jour à HH:MM (Paris)", or the sources that are not."""
     headline_html = _HHMM.sub(lambda m: "<time>%s</time>" % m.group(0), html.escape(headline_text))
-    fresh = (
+    return (
         '<span class="fresh cockpit-headline%s" data-ok="%s"><span class="dot"></span>%s '
         '<form method="post" action="/api/health/recheck">'
         '<button class="recheck" type="submit">Revérifier</button></form></span>'
     ) % ("" if all_fresh else " warn", "true" if all_fresh else "false", headline_html)
-    status = (status_html + '<span class="sep"></span>') if status_html else ""
-    banner = render_disconnected_banner(disconnected_since)
+
+
+def render_document(inner_html, disconnected_since=None, extra_css=""):
+    """One cockpit page: the variant D stylesheet and font, the
+    "Déconnecté du cockpit" banner above everything (T25, af-tzk0s4 --
+    hidden until :data:`DISCONNECT_SCRIPT` or ``disconnected_since`` says
+    otherwise), ``inner_html`` in the centred stage, and the page scripts.
+    ``extra_css``: a page's own rules, after the shared ones."""
     return (
         "<!doctype html>\n"
         '<html lang="fr">\n'
@@ -149,15 +135,9 @@ def render_home(
         "</head>\n"
         '<body id="cockpit-body">\n'
         "%s"
-        '<div class="stage"><div class="app"><div class="vd">\n'
-        '<div class="vc" id="inbox">\n'
-        '<header class="topbar"><div class="brand"><h1>Cockpit</h1>'
-        '<span class="who">usine + projets</span></div></header>\n'
-        '<div class="status">%s%s</div>\n'
-        "%s\n"
-        "</div>\n"
-        '<div class="va">%s</div>\n'
-        "</div></div></div>\n"
+        '<div class="stage"><div class="app">\n'
+        "%s"
+        "</div></div>\n"
         "%s"
         "</body>\n"
         "</html>\n"
@@ -165,10 +145,40 @@ def render_home(
         FONTS_HEAD,
         CSS,
         extra_css,
-        banner,
-        status,
-        fresh,
-        requests_section_html,
-        extra_sections_html,
+        render_disconnected_banner(disconnected_since),
+        inner_html,
         DISCONNECT_SCRIPT + ACTIONS_SCRIPT + PROJECTS_SCRIPT,
     )
+
+
+def render_home(
+    headline_text,
+    stale_rows,
+    requests_section_html="",
+    disconnected_since=None,
+    extra_sections_html="",
+    extra_css="",
+    status_html="",
+):
+    """The home screen of variant D: brand, one status line (factory
+    state, then the freshness headline), the inbox, then the zones below.
+
+    ``stale_rows``: the names :meth:`ReadModel.stale_or_unknown` returns;
+    empty means every source is fresh (``headline_text`` already names the
+    ones that are not). ``status_html``: the factory's one-line state
+    (:func:`cockpit.ui.health.page.render_status_line`).
+    ``requests_section_html``: the pre-rendered "Ce qui t'attend" inbox.
+    ``extra_sections_html``: zones under the inbox."""
+    status = (status_html + '<span class="sep"></span>') if status_html else ""
+    inner = (
+        '<div class="vd">\n'
+        '<div class="vc" id="inbox">\n'
+        '<header class="topbar"><div class="brand"><h1>Cockpit</h1>'
+        '<span class="who">usine + projets</span></div></header>\n'
+        '<div class="status">%s%s</div>\n'
+        "%s\n"
+        "</div>\n"
+        '<div class="va">%s</div>\n'
+        "</div>\n"
+    ) % (status, render_fresh(headline_text, not stale_rows), requests_section_html, extra_sections_html)
+    return render_document(inner, disconnected_since=disconnected_since, extra_css=extra_css)

@@ -88,3 +88,6 @@ class Project:
     # project declares a promotion branch for; a rig absent here means its
     # gap was never read (unknown, not zero -- spec .62).
     ecart_commits_par_rig: dict = field(default_factory=dict)
+    # spec .41: true when the project declares no promotion branch -- its
+    # page shows no Promu column, its steppers no Promu step.
+    promu_masque: bool = False
