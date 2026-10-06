@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-"""Fake `gc` used by ticket-graph-publish-test.py to observe Mayor wake
+"""Fake `gc` used by the ticket-graph-publish tests to observe Mayor wake
 calls without a live Gas City. Every invocation is appended, one JSON array
 per line, to TICKET_GRAPH_GC_LOG; its cwd, one per line, to
 TICKET_GRAPH_GC_CWD_LOG when set. TICKET_GRAPH_GC_MAIL_FAIL=1 makes the mail
-fail the way a real gc does outside a city."""
+fail the way a real gc does outside a city.
+
+It also serves the two tracker calls bin/convoy-state makes (`gc bd show <id>
+--json`, `gc bd update <id> --set-metadata k=v ...`) on the same store as the
+fake `bd` beside this file (TICKET_GRAPH_BD_STATE), so one tracker state is
+published by the door and then marked and re-read by the state command. The
+shapes are the ones observed on the real bd 1.2.2 (see
+tests/fixtures/convoy-state/gc). TICKET_GRAPH_GC_BD_UPDATE_FAIL=1 makes every
+`bd update` fail before it writes."""
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -23,6 +32,60 @@ if command[:3] == ["mail", "send", "mayor"]:
         print("gc mail send: not in a city directory (no city.toml or .gc/ found)", file=sys.stderr)
         raise SystemExit(1)
     raise SystemExit(0)
+
+
+def view(bead):
+    return {
+        "id": bead["id"],
+        "title": bead.get("title", ""),
+        "status": bead.get("status", "open"),
+        "issue_type": bead.get("issue_type", "task"),
+        "metadata": bead.get("metadata") or None,
+    }
+
+
+def coerce(value):
+    if re.fullmatch(r"-?\d+", value):
+        return int(value)
+    if value in ("true", "false"):
+        return value == "true"
+    return value
+
+
+if command[:1] == ["bd"] and os.environ.get("TICKET_GRAPH_BD_STATE"):
+    state_path = Path(os.environ["TICKET_GRAPH_BD_STATE"])
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    beads = state["beads"]
+    if command[1:2] == ["show"] and len(command) == 4 and command[3] == "--json":
+        bead = beads.get(command[2])
+        if bead is None:
+            print(f"fake gc: issue not found: {command[2]}", file=sys.stderr)
+            raise SystemExit(1)
+        out = view(bead)
+        tracked = [{**view(beads[dep_id]), "dependency_type": "tracks"} for dep_id in bead.get("tracks", [])]
+        if tracked:
+            out["dependencies"] = tracked
+        print(json.dumps([out]))
+        raise SystemExit(0)
+    if command[1:2] == ["update"] and len(command) >= 3 and command[2] in beads:
+        if os.environ.get("TICKET_GRAPH_GC_BD_UPDATE_FAIL"):
+            print("fake gc: bd update failed: tracker unavailable", file=sys.stderr)
+            raise SystemExit(1)
+        rest = command[3:]
+        metadata = dict(beads[command[2]].get("metadata") or {})
+        if len(rest) % 2 or any(flag != "--set-metadata" for flag in rest[::2]):
+            print(f"unexpected fake gc arguments: {args}", file=sys.stderr)
+            raise SystemExit(2)
+        for entry in rest[1::2]:
+            key, sep, value = entry.partition("=")
+            if not sep or not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.]*", key):
+                print(f"fake gc: invalid metadata edit: {entry}", file=sys.stderr)
+                raise SystemExit(1)
+            metadata[key] = coerce(value)
+        beads[command[2]]["metadata"] = metadata
+        state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+        print(f"Updated issue: {command[2]}")
+        raise SystemExit(0)
 
 print(f"unexpected fake gc arguments: {args}", file=sys.stderr)
 raise SystemExit(2)

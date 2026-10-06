@@ -15,7 +15,8 @@ published, dispatched, merged and closed exactly as before.
 
 ```bash
 ./bin/convoy-state list                                 # the open marked convoys (bin/convoy-advance)
-./bin/convoy-state mark af-convoy                       # publication door (T05)
+./bin/convoy-state mark af-convoy \
+  --demonstration-line af-t1="Sur le produit lancé, …"  # publication door (T05)
 ./bin/convoy-state show af-convoy --repo rigs/product   # every reader
 ./bin/convoy-state set-branch   af-convoy af-t1 --branch ticket/af-t1
 ./bin/convoy-state record-gate  af-convoy af-t1 --gate dispatch   # bin/dispatch-door --convoy, after the sling
@@ -44,6 +45,8 @@ Every answer is one JSON object on stdout.
 | Field | Key | On | Values |
 |---|---|---|---|
 | Mark | `gc.flow.mark` | convoy, ticket | `new-flow/v1` |
+| Kind | `gc.ticket_kind` (read only: written by the publication door) | ticket | `vertical_slice`, `prefactoring`, `repair` |
+| Demonstration line | `gc.flow.demonstration_line` | ticket (`vertical_slice`, `repair`) | one non-empty line, written once by `mark` |
 | Ticket branch | `gc.flow.branch` | ticket | branch name |
 | Ticket Exit | `gc.flow.exit` | ticket | `finished`, `planning_exception`, `operator_request`, `technically_blocked`, `interrupted` |
 | Verdict | `gc.flow.verdict.<kind>` | ticket | kind: `test_review`, `code_review`, `evaluation`, `fidelity`; state: `favorable`, `unfavorable`; always with the full commit SHA it judged |
@@ -55,6 +58,16 @@ Every answer is one JSON object on stdout.
 `mark` is idempotent: it marks the tickets first and the convoy last, sets
 each counter to an explicit `0`, and on a later run marks only the tickets
 added since (a patch), leaving existing counters alone.
+
+A ticket is marked with its entry fields or not at all (T05,
+`docs/ENTRY_CONTRACT.md`): `mark` writes the demonstration line of a ticket
+in the same tracker write as its mark, from `--demonstration-line
+<ticket>=<line>` (repeatable). It refuses, before any write, a ticket whose
+kind is absent or outside the closed list (no default kind), a
+`vertical_slice` or a `repair` without a demonstration line, a line on a
+`prefactoring`, a line for a ticket the convoy does not track, and a line
+that differs from the one already written: it is frozen with the approved
+graph.
 
 A piece name is made of letters, digits, `_` and `.` only: the tracker
 refuses any metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*` (observed on bd
@@ -81,10 +94,10 @@ counted and a reviewer and an Evaluator can write the same ticket in parallel.
 mark and are not closed. It is what `bin/convoy-advance` walks
 (`docs/CONVOY_ADVANCE.md`); an unmarked convoy never appears in it.
 
-`show` renders, per ticket: mark, tracker status, branch and its tip, Ticket
-Exit, verdicts, counters, evidence fingerprints and gate records; and for
-the convoy its counters and its open factory incident (`incident`, `null`
-when there is none).
+`show` renders, per ticket: mark, kind, demonstration line, tracker status,
+branch and its tip, Ticket Exit, verdicts, counters, evidence fingerprints
+and gate records; and for the convoy its counters and its open factory
+incident (`incident`, `null` when there is none).
 
 `ticket` answers whether one bead carries the mark, without naming its
 convoy: exit 0 and `"new_flow": true`, or exit 4 and `"new_flow": false`.
@@ -114,6 +127,9 @@ key), never as a default value:
 - a counter that is absent, not an integer ≥ 0, or `correction_rounds`
   above `resumes`;
 - a ticket without the mark in a marked convoy, or an unknown mark;
+- a kind that is absent or outside the closed list (never rendered as a
+  kind), a `vertical_slice` or a `repair` without a demonstration line, a
+  demonstration line on a `prefactoring`;
 - any stored value this command would have refused to write, and any
   `gc.flow.*` key it does not know (a field invented outside the command).
 

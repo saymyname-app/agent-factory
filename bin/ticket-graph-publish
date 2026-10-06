@@ -17,6 +17,14 @@ advancing the Planning Run Reservation when the Spec's target is the one
 currently active. `bd-patch` reads its revised draft from a bead the same
 way and reuses `patch`'s merge/supersede/reslice rules.
 
+A draft that declares the new-flow contract (`flow_contract: new-flow/v1`,
+T05, Spec af-wf4w5r §2) is held to the entry contract before anything is
+written -- a declared kind with no default, a demonstration line in its own
+field, criteria that name their entry point, their observable and what
+would make them false -- and its convoy is published with the new-flow mark
+through `bin/convoy-state`. A draft that does not declare it is published
+exactly as before. docs/ENTRY_CONTRACT.md has the fields and the refusals.
+
 The file-draft mode (`validate`/`publish`/`patch` over a YAML Ticket Graph
 Draft file carrying the `APPROVED_TICKET_GRAPH_DRAFT` state and a
 `legacy_boundary` digest marker) served only the now-retired Planning Run
@@ -32,6 +40,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -251,6 +260,260 @@ def record_scope_overlaps(
         )
 
 
+# --- entry contract of the new flow (T05, Spec af-wf4w5r §2) ----------------
+
+FLOW_CONTRACT_KEY = "flow_contract"
+NEW_FLOW = "new-flow/v1"
+TICKET_KINDS = ("vertical_slice", "prefactoring", "repair")
+KINDS_WITH_DEMONSTRATION = ("vertical_slice", "repair")
+RESTORES_KINDS = ("user_story", "anchor", "spec_line", "repo_rule", "red_check")
+CRITERION_FIELDS = ("entry_point", "observable", "false_if")
+CRITERION_FIELD_NAMES = {
+    "entry_point": "son point d'entrée (entry_point)",
+    "observable": "son observable (observable)",
+    "false_if": "ce qui le rendrait faux (false_if)",
+}
+# "Un ticket ne porte que des champs que la porte connaît" (Spec §2, prose de
+# procédé): a field outside this list is refused, never carried as free text.
+TICKET_FIELDS = (
+    "id", "kind", "title", "blocked_by", "target_rigs", "scope", "split_from", "what_it_delivers",
+    "demonstration_line", "unblocks", "restores", "acceptance_criteria",
+)
+MAX_QUOTED_CRITERION = 200
+
+TEST_MENTION = re.compile(r"\b(?:tests?|pytest|unittest|jest|vitest|rspec)\b", re.IGNORECASE)
+SOURCE_FILE_MENTION = re.compile(
+    r"(?<![\w/.-])[\w./-]*\w\.(?:py|pyi|js|jsx|mjs|cjs|ts|tsx|sh|bash|go|rs|rb|java|kt|swift|c|h|cc|cpp|hpp|cs"
+    r"|php|sql|toml|ya?ml|json|md|html?|css|scss|vue|svelte|lock|cfg|ini)\b(?![\w/-])"
+)
+# `name(`: a call. French "ticket(s)" / "livré(e)" is a plural, not a call.
+CALL_MENTION = re.compile(r"\b[A-Za-z_][A-Za-z0-9_.]*\((?!(?:s|e|es)\))")
+INTERNAL_FUNCTION_WORDING = re.compile(
+    r"\b(?:fonction|méthode|function|method)\s+(?:interne|privée|internal|private)\b"
+    r"|\b(?:internal|private)\s+(?:function|method)\b",
+    re.IGNORECASE,
+)
+
+
+def flow_contract(parsed: dict[str, Any], draft_id: str) -> str | None:
+    """The contract a draft declares in its approved text, or None for a
+    draft of the flow before T05. An unknown value is refused: the contract
+    is never guessed, in either direction."""
+    if FLOW_CONTRACT_KEY not in parsed:
+        return None
+    declared = parsed[FLOW_CONTRACT_KEY]
+    if declared != NEW_FLOW:
+        raise PublishError(
+            f"refus : le brouillon {draft_id} déclare un contrat inconnu ({FLOW_CONTRACT_KEY}: {declared!r}) ; "
+            f"le seul contrat connu de la porte est {NEW_FLOW!r}, et un brouillon de l'ancien flux ne "
+            "déclare rien ; rien n'est écrit"
+        )
+    return NEW_FLOW
+
+
+def one_line(value: Any) -> str:
+    return " ".join(str(value).split())
+
+
+def text_field(holder: dict[str, Any], key: str) -> str:
+    value = holder.get(key)
+    return one_line(value) if isinstance(value, str) else ""
+
+
+def forbidden_mentions(text: str, entry_point: bool = False) -> list[str]:
+    """What a criterion names that is not a public interface (Spec §2:
+    "refus mécanique d'un critère qui nomme un test, un fichier ou une
+    fonction interne"). An entry point may be a path -- a command, a route
+    -- so only a test is refused there."""
+    found: list[str] = []
+    match = TEST_MENTION.search(text)
+    if match:
+        found.append(f"nomme un test (« {match.group(0)} »)")
+    if entry_point:
+        return found
+    match = SOURCE_FILE_MENTION.search(text)
+    if match:
+        found.append(f"nomme un fichier (« {match.group(0)} »)")
+    match = CALL_MENTION.search(text) or INTERNAL_FUNCTION_WORDING.search(text)
+    if match:
+        call = text[match.start():].split(")")[0] + ")" if match.re is CALL_MENTION else match.group(0)
+        found.append(f"nomme une fonction interne (« {call} »)")
+    return found
+
+
+def criterion_reasons(criterion: Any) -> tuple[str, list[str]]:
+    """The text a refusal quotes for one criterion, and why it is refused."""
+    if isinstance(criterion, str):
+        quoted = one_line(criterion)
+        return quoted, [
+            "ne nomme pas son point d'entrée et son observable "
+            f"(attendu : les champs {', '.join(CRITERION_FIELDS)})",
+            *forbidden_mentions(quoted),
+        ]
+    if not isinstance(criterion, dict):
+        return one_line(criterion), [f"n'est pas un critère (attendu : les champs {', '.join(CRITERION_FIELDS)})"]
+    values = {field: text_field(criterion, field) for field in CRITERION_FIELDS}
+    quoted = " — ".join(value for value in values.values() if value)
+    reasons = [f"ne nomme pas {CRITERION_FIELD_NAMES[field]}" for field in CRITERION_FIELDS if not values[field]]
+    unknown = sorted(str(key) for key in criterion if key not in CRITERION_FIELDS)
+    if unknown:
+        reasons.append(f"porte un champ inconnu de la porte ({', '.join(unknown)})")
+    for field in CRITERION_FIELDS:
+        for mention in forbidden_mentions(values[field], entry_point=field == "entry_point"):
+            if mention not in reasons:
+                reasons.append(mention)
+    return quoted, reasons
+
+
+def entry_contract_refusals(parsed: dict[str, Any], tickets: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Every reason a draft that declares the new-flow contract does not meet
+    it, as (ticket id or "brouillon", reason), in the order of the draft: the
+    whole list is given at once, so a graph is corrected in one pass."""
+    refusals: list[tuple[str, str]] = []
+    if parsed.get("global_execution_contract"):
+        refusals.append((
+            "brouillon",
+            "global_execution_contract : le contrat d'exécution recopié dans chaque ticket n'existe plus "
+            "au contrat du nouveau flux ; une exigence a un mécanisme qui la vérifie, ou elle n'est pas écrite",
+        ))
+    by_id = {str(ticket["id"]): ticket for ticket in tickets}
+
+    def waits_for(ticket_id: str, blocker: str) -> bool:
+        stack, seen = [ticket_id], set()
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            blockers = [str(item) for item in by_id[current]["blocked_by"]]
+            if blocker in blockers:
+                return True
+            stack.extend(blockers)
+        return False
+
+    for ticket in tickets:
+        ticket_id = str(ticket["id"])
+
+        def refuse(reason: str) -> None:
+            refusals.append((ticket_id, reason))
+
+        unknown = sorted(str(key) for key in ticket if key not in TICKET_FIELDS)
+        if unknown:
+            refuse(
+                f"champ inconnu de la porte : {', '.join(unknown)} "
+                "(un ticket ne porte que des champs que la porte connaît)"
+            )
+
+        kind = ticket.get("kind")
+        expected = "attendu : vertical_slice, prefactoring ou repair ; aucun genre par défaut"
+        if kind is None or (isinstance(kind, str) and not kind.strip()):
+            refuse(f"genre absent ({expected})")
+        elif kind not in TICKET_KINDS:
+            refuse(f"genre inconnu « {one_line(kind)} » ({expected})")
+        else:
+            line = text_field(ticket, "demonstration_line")
+            if kind in KINDS_WITH_DEMONSTRATION and not line:
+                refuse(
+                    f"pas de ligne de démonstration : un {kind} dit, dans le champ demonstration_line, "
+                    "ce qu'on observe sur le produit lancé"
+                )
+            if kind == "prefactoring":
+                if "demonstration_line" in ticket:
+                    refuse(
+                        "ligne de démonstration sur un prefactoring : il ne change aucun comportement, "
+                        "il n'a donc rien à démontrer ; un comportement nouveau est une vertical_slice"
+                    )
+                unblocks = text_field(ticket, "unblocks")
+                if not unblocks:
+                    refuse("ne nomme pas la tranche qu'il débloque (champ unblocks : l'identifiant d'une vertical_slice)")
+                elif unblocks == ticket_id:
+                    refuse("la tranche qu'il débloque (unblocks) est lui-même")
+                elif unblocks not in by_id:
+                    refuse(f"la tranche qu'il débloque (unblocks: {unblocks}) est un ticket inconnu du graphe")
+                elif by_id[unblocks].get("kind") != "vertical_slice":
+                    refuse(f"le ticket qu'il débloque (unblocks: {unblocks}) n'est pas une vertical_slice")
+                elif not waits_for(unblocks, ticket_id):
+                    refuse(
+                        f"il ne débloque pas {unblocks} : {unblocks} ne l'attend pas "
+                        "(blocked_by, directement ou par un autre ticket)"
+                    )
+            elif "unblocks" in ticket:
+                refuse(f"champ unblocks sur un {kind} : seul un prefactoring nomme la tranche qu'il débloque")
+            if kind == "repair":
+                restores = ticket.get("restores")
+                restored = isinstance(restores, dict) and sorted(restores) == ["kind", "ref"]
+                if not restored or restores["kind"] not in RESTORES_KINDS or not text_field(restores, "ref"):
+                    refuse(
+                        "ne nomme pas ce qu'il rétablit (champ restores : kind parmi "
+                        f"{', '.join(RESTORES_KINDS)}, et ref qui le cite)"
+                    )
+            elif "restores" in ticket:
+                refuse(f"champ restores sur un {kind} : seul un repair nomme ce qu'il rétablit")
+
+        for index, criterion in enumerate(ticket["acceptance_criteria"], start=1):
+            quoted, reasons = criterion_reasons(criterion)
+            if reasons:
+                refuse(f"critère {index} « {truncate_line(quoted, MAX_QUOTED_CRITERION)} » : {' ; '.join(reasons)}")
+    return refusals
+
+
+def refuse_unless_entry_contract_met(draft_id: str, parsed: dict[str, Any], tickets: list[dict[str, Any]]) -> None:
+    refusals = entry_contract_refusals(parsed, tickets)
+    if not refusals:
+        return
+    count = len({where for where, _ in refusals if where != "brouillon"})
+    lines = "\n".join(f"- {where} : {reason}" for where, reason in refusals)
+    raise PublishError(
+        f"refus : le brouillon {draft_id} déclare le contrat du nouveau flux ({NEW_FLOW}) et ne le "
+        f"respecte pas ({len(refusals)} raison(s), {count} ticket(s)) ; rien n'est écrit.\n{lines}"
+    )
+
+
+def new_flow_ticket_description(ticket: dict[str, Any]) -> str:
+    """The text of a ticket of the new flow: what the approved draft says,
+    and no copied execution contract (Spec §2, prose de procédé)."""
+    sections = [("What to build", str(ticket["what_it_delivers"]).strip())]
+    kind = ticket["kind"]
+    if kind in KINDS_WITH_DEMONSTRATION:
+        sections.append(("Demonstration line", text_field(ticket, "demonstration_line")))
+    if kind == "prefactoring":
+        sections.append(("Unblocks", text_field(ticket, "unblocks")))
+    if kind == "repair":
+        restores = ticket["restores"]
+        sections.append(("Restores", f"{restores['kind']} : {text_field(restores, 'ref')}"))
+    sections.append(("Acceptance criteria", "\n".join(
+        f"- [ ] Point d'entrée : {text_field(criterion, 'entry_point')} — "
+        f"Observable : {text_field(criterion, 'observable')} — "
+        f"Faux si : {text_field(criterion, 'false_if')}"
+        for criterion in ticket["acceptance_criteria"]
+    )))
+    sections.append(("Target rigs", ", ".join(str(item) for item in ticket["target_rigs"])))
+    return "\n\n".join(f"## {title}\n\n{body}" for title, body in sections)
+
+
+def mark_new_flow_convoy(draft_id: str, tickets: list[dict[str, Any]], mapping: dict[str, str]) -> list[str]:
+    """Pose the new-flow mark on the convoy just published, each ticket with
+    its demonstration line, through the state command: the only writer of
+    the durable state of a marked convoy (T33). The beads it returns are the
+    ones it marked on this run."""
+    convoy_id = mapping["_convoy"]
+    argv = [tool_path("CONVOY_STATE_BIN", "convoy-state"), "mark", convoy_id]
+    for ticket in tickets:
+        if ticket["kind"] in KINDS_WITH_DEMONSTRATION:
+            argv += ["--demonstration-line", f"{mapping[str(ticket['id'])]}={text_field(ticket, 'demonstration_line')}"]
+    try:
+        # From the tracker's own directory: the state command reaches it
+        # through `gc`, which resolves its city from the working directory.
+        return [str(item) for item in run_subtool(argv, cwd=BD_WORKSPACE)["marked"]]
+    except PublishError as exc:
+        raise PublishError(
+            f"le brouillon {draft_id} est publié (convoi {convoy_id}) mais la marque du nouveau flux "
+            f"n'a pas pu être posée : {exc}. Tant qu'il n'est pas marqué, ce convoi est lu comme un "
+            "convoi de l'ancien flux. Rien d'autre n'a été fait (réservation et Mayor intouchés) : "
+            "relancer la même commande, elle reprend au marquage."
+        ) from exc
+
+
 def ticket_description(ticket: dict[str, Any], execution: dict[str, Any]) -> str:
     criteria = "\n".join(f"- [ ] {item}" for item in ticket["acceptance_criteria"])
     rigs = ", ".join(str(item) for item in ticket["target_rigs"])
@@ -344,7 +607,7 @@ def escalate_reslice_refusal(
         pass
 
 
-def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str, Any]:
+def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]], new_flow: bool = False) -> dict[str, Any]:
     artifact = draft["artifact"]
     spec = artifact["source_spec"]
     digest = artifact["content_digest"]
@@ -406,7 +669,7 @@ def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]]) -> dict[str
             "type": "task",
             "priority": 1,
             "title": f"{ticket_id} — {ticket['title']}",
-            "description": ticket_description(ticket, execution),
+            "description": new_flow_ticket_description(ticket) if new_flow else ticket_description(ticket, execution),
             "labels": ["approved-ticket-graph", "delivery-plane", *ticket_labels],
             "metadata": metadata,
         })
@@ -751,9 +1014,9 @@ def tool_path(env_var: str, name: str) -> str:
     return str(Path(__file__).resolve().parent / name)
 
 
-def run_subtool(argv: list[str]) -> dict[str, Any]:
+def run_subtool(argv: list[str], cwd: Path | None = None) -> dict[str, Any]:
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, env=os.environ.copy())
+        proc = subprocess.run(argv, capture_output=True, text=True, env=os.environ.copy(), cwd=cwd)
     except OSError as exc:
         raise PublishError(f"could not run {argv[0]}: {exc}") from exc
     try:
@@ -887,9 +1150,13 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
     spec_id = str(metadata.get("spec_id") or "").strip()
     if not spec_id:
         raise PublishError("refused: draft bead has no spec_id")
+    new_flow = flow_contract(parsed, draft_id) == NEW_FLOW
     spec_bead = load_approved_spec_bead(spec_id)
     spec_digest = canonical_bead_digest(spec_bead.get("description") or "")
-    refuse_prototype_tickets(tickets)
+    if new_flow:
+        refuse_unless_entry_contract_met(draft_id, parsed, tickets)
+    else:
+        refuse_prototype_tickets(tickets)
 
     # T05 (.6, .8): a graph's display title and project key are obligatory,
     # and its declared language must be the Operator Language -- publishing
@@ -914,11 +1181,14 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
         draft_id, parsed, digest, spec_id, spec_digest, None, bead,
         display_title=display_title, project_id=project_id,
     )
-    plan = graph_plan(compat_draft, tickets)
+    plan = graph_plan(compat_draft, tickets, new_flow=new_flow)
     for node, ticket in zip((n for n in plan["nodes"] if n["key"] != "_convoy"), tickets):
         node["_blocked_by_keys"] = [str(b) for b in ticket["blocked_by"]]
 
     mapping = publish(plan, digest, len(tickets))
+    new_flow_result: dict[str, Any] = {}
+    if new_flow:
+        new_flow_result = {FLOW_CONTRACT_KEY: NEW_FLOW, "marked": mark_new_flow_convoy(draft_id, tickets, mapping)}
 
     target = str((spec_bead.get("metadata") or {}).get("planning_run_target") or "").strip() or None
     reservation_advanced = None
@@ -929,13 +1199,16 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
     except PublishError as exc:
         reservation_advanced = {"ok": False, "error": str(exc)}
 
-    notice = notify_mayor("publish", digest, mapping.get("_convoy"))
+    # Spec §0 rule 3: code starts the tickets of a marked convoy, not the
+    # Mayor -- so the Mayor is not handed a marked convoy to dispatch.
+    notice = {"mayor_notified": None} if new_flow else notify_mayor("publish", digest, mapping.get("_convoy"))
     print(json.dumps({
         "ok": True,
         "graph_digest": digest,
         "ids": mapping,
         "scope_edges": scope_edges,
         "reservation_advanced": reservation_advanced,
+        **new_flow_result,
         **notice,
     }, ensure_ascii=False, sort_keys=True))
     return 0
@@ -951,6 +1224,12 @@ def cmd_bd_patch(args: argparse.Namespace) -> int:
     draft_id = str(args.draft)
     human_approver = declared_human_approver(args.project, config_dir, profile_bin)
     bead, tickets, parsed, digest = load_approved_bead_draft(draft_id, human_approver)
+    if flow_contract(parsed, draft_id) == NEW_FLOW:
+        raise PublishError(
+            f"refus : le brouillon {draft_id} déclare le contrat du nouveau flux ({NEW_FLOW}), que la porte "
+            "de patch n'applique pas encore : un ticket ajouté ne doit jamais être plus faible qu'un "
+            "ticket d'origine, donc rien n'est écrit"
+        )
     metadata = bead.get("metadata") or {}
     spec_id = str(metadata.get("spec_id") or "").strip()
     if not spec_id:

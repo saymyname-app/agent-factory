@@ -170,6 +170,8 @@ gc bd dep add "$OTHER" "$O1" --type tracks >/dev/null
 gc bd dep add "$T3" "$T1" >/dev/null
 gc bd dep add "$T3" "$T2" >/dev/null
 ALL=("$T1" "$T2" "$T3" "$O1")
+# A ticket is marked with its kind (T05); a prefactoring needs no demonstration line.
+for t in "${ALL[@]}"; do gc bd update "$t" --set-metadata gc.ticket_kind=prefactoring >/dev/null; done
 declare -A NAME=([$T1]=T1 [$T2]=T2 [$T3]=T3 [$O1]=O1)
 
 echo "relevé d'essai — bin/convoy-advance en cité isolée ($(gc version 2>/dev/null | head -1), N=$CEILING, aucun Mayor)"

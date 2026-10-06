@@ -52,9 +52,10 @@ MAYOR_SESSION = {"GC_AGENT": "mayor", "GC_ALIAS": "mayor", "GC_SESSION_NAME": "m
 
 
 def ticket(ticket_id, blocks=(), rig="fx-rig"):
+    # A ticket is marked with its kind (T05); a prefactoring needs no demonstration line.
     return {"title": f"ticket {ticket_id}", "status": "open", "issue_type": "task",
             "description": f"## What to build\n\nessai\n\n## Target rigs\n\n{rig}\n\n## Autonomous execution contract\n\n- none",
-            "metadata": {"gc.ticket_kind": "vertical_slice"}, "blocks": list(blocks)}
+            "metadata": {"gc.ticket_kind": "prefactoring"}, "blocks": list(blocks)}
 
 
 def session(template, state="active"):
