@@ -33,6 +33,7 @@ def assemble_requests(
     sources=(),
     now=None,
     illisible_after_seconds=ILLISIBLE_THRESHOLD_SECONDS,
+    extra_requests=(),
 ):
     """``beads``: the beads source's last value, or ``None`` when it is
     unknown — bead-derived requests are then absent, never guessed.
@@ -66,6 +67,13 @@ def assemble_requests(
             request.reportable = False
             requests.append(request)
 
+    # Raised by the cockpit's own parts, already built (the stop driver's
+    # « l'arrêt n'avance plus », the Tailscale key at J-14): no bead could
+    # hide them, they leave when their cause does.
+    for request in extra_requests:
+        request.reportable = False
+        requests.append(request)
+
     # One request per source object: a Spec that also carries a NEEDS
     # BENJAMIN is that question, not a second row.
     unique, seen = [], set()
@@ -87,7 +95,9 @@ def assemble_requests(
     return unique
 
 
-def assemble_from_snapshot(snapshot, now, defects=None, illisible_after_seconds=ILLISIBLE_THRESHOLD_SECONDS):
+def assemble_from_snapshot(
+    snapshot, now, defects=None, illisible_after_seconds=ILLISIBLE_THRESHOLD_SECONDS, extra_requests=()
+):
     """The list as the read model holds it right now. Returns ``(requests,
     beads_row, beads_known)``; with Beads unknown the list holds only what
     does not come from Beads, and the caller says the list is incomplete."""
@@ -111,5 +121,6 @@ def assemble_from_snapshot(snapshot, now, defects=None, illisible_after_seconds=
         ],
         now=now,
         illisible_after_seconds=illisible_after_seconds,
+        extra_requests=extra_requests,
     )
     return requests, beads_row, beads_known

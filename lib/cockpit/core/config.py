@@ -113,6 +113,18 @@ class Config:
         self.heartbeat_url_file = env.get("COCKPIT_HEARTBEAT_URL_FILE") or local.get("heartbeat_url_file", "")
         self.heartbeat_tick_seconds = float(env.get("COCKPIT_HEARTBEAT_TICK_SECONDS", "30"))
         self.heartbeat_interval_seconds = float(env.get("COCKPIT_HEARTBEAT_INTERVAL_SECONDS", "300"))
+        # Clean stop (spec §"Arrêt propre et redémarrage"): the driver's state
+        # survives a cockpit restart; the agents at work are read from gc.
+        self.stop_state_file = env.get("COCKPIT_STOP_STATE_FILE") or os.path.join(
+            os.path.dirname(self.pid_file), "cockpit-stop-state.json"
+        )
+        self.stop_tick_seconds = float(env.get("COCKPIT_STOP_TICK_SECONDS", "15"))
+        self.sessions_poll_seconds = float(env.get("COCKPIT_SESSIONS_POLL_SECONDS", "15"))
+        # Access (spec .71): the `tailscale` client to ask for the key's
+        # expiry -- on this host a Windows binary reached from WSL, so it is
+        # named in the local settings file; unset, Tailscale is not read.
+        self.tailscale_bin = env.get("COCKPIT_TAILSCALE_BIN") or local.get("tailscale_bin", "")
+        self.tailscale_poll_seconds = float(env.get("COCKPIT_TAILSCALE_POLL_SECONDS", "3600"))
         self.validity_seconds = dict(VALIDITY_WINDOWS_SECONDS)
         for source in list(self.validity_seconds):
             override = env.get("COCKPIT_VALIDITY_%s_SECONDS" % source.upper())
@@ -147,7 +159,10 @@ class Config:
 
 
 LOCAL_CONFIG_NAME = "cockpit-local.json"
-LOCAL_CONFIG_KEYS = ("pushover_secrets_file", "heartbeat_url_file", "public_url", "benjamin_login", "allowed_origin")
+LOCAL_CONFIG_KEYS = (
+    "pushover_secrets_file", "heartbeat_url_file", "public_url", "benjamin_login", "allowed_origin",
+    "tailscale_bin",
+)
 
 
 def _read_local_config(path):
