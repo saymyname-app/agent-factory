@@ -226,11 +226,11 @@ class CockpitSeamTest(unittest.TestCase):
         # gc dies and ages past its Validity window.
         self.fake_gc.go_down()
         body = wait_until(
-            lambda: self.home_body() if "Périmé ou inconnu" in self.home_body() else None,
+            lambda: self.home_body() if "pas à jour" in self.home_body() else None,
             timeout=5,
         )
-        self.assertIn("Périmé ou inconnu", body)
-        self.assertIn("usine (gc)", body)
+        self.assertIn("pas à jour", body)
+        self.assertIn("superviseur (", body)
 
     # ------------------------------------------------------------------
     # AC4 — refuses to listen anywhere but 127.0.0.1; survives a

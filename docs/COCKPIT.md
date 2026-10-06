@@ -28,8 +28,8 @@ and **Validity window**.
   - `server.py` — the HTTP process itself; refuses to bind anywhere but
     `127.0.0.1`.
   - `process.py`, `config.py` — wires it all together; config from env vars.
-- `lib/cockpit/ui/base/` — the variant D visual base (tokens + the
-  freshness-headline page) every later screen builds on.
+- `lib/cockpit/ui/base/` — the variant D stylesheet and page skeleton
+  every screen builds on (see "Home screen" below).
 - `bin/cockpit` — the CLI: `run` (foreground), `start`/`stop`/`status`
   (background, pidfile-tracked, idempotent — `start` is a no-op if already
   running).
@@ -162,3 +162,43 @@ unknown).
 `/events` and `/status` included). `tests/cockpit-fake-gc-contract-test.py`
 (local-only) compares the fake with the installed supervisor, endpoint by
 endpoint; run it before changing either side.
+
+## Home screen, as the validated prototype shows it (af-mjfvwx)
+
+The first delivery carried only the prototype's 12 colour tokens: the page
+served was an unstyled bullet list with every request unfolded.
+`GET /` is now variant D of `origin/prototype/c01-home-screen`
+(`prototypes/c01-home-screen/index.html`, `renderD`):
+
+- `ui/base/tokens.py` — the prototype's stylesheet (tokens, shared
+  components, variant D layout) with the prototype's own class names, and
+  the `<link>` that loads Atkinson Hyperlegible Next / Mono.
+- `ui/base/page.py` `render_home` — brand, then one status line: the
+  factory's state (`ui/health/page.py` `render_status_line`: « En marche ·
+  N agents au travail · … », « Suspendue », or « État de l'usine inconnu »
+  when the supervisor was not read) and the freshness headline with
+  « Revérifier ».
+- `ui/home/page.py` — « Ce qui t'attend » as a short list plus one detail
+  per request. On a PC the selected detail sits beside the list; under
+  900 px the detail replaces the list and « Retour à la liste » brings it
+  back. The selection lives in the URL fragment (`#d-<id>`).
+- In the detail: each prepared option of a NEEDS BENJAMIN is the two-step
+  answer button (`repondre`); a proposal gets « Accepter » and « Refuser »
+  with a reason. These controls were handled by the server and the page
+  script since T14 but rendered nowhere.
+- `ui/health/page.py` `render_health_zone` — « Santé de l'usine » under
+  the inbox.
+
+Sources are named in the operator's words: « superviseur », « tickets »,
+« version de l'usine ». A stale headline reads « 2 sources pas à jour :
+tickets (inconnu), superviseur (périmé) ».
+
+Known gaps against the prototype, for later slices of af-mjfvwx: the
+« Projets » zone, « Reporter » as a menu rather than a select, the theme
+switch (the page follows the system theme).
+
+`tests/cockpit-requests-test.py` (`test_home_is_the_variant_d_inbox`,
+`test_status_line_never_guesses_the_factory_state`) checks the page
+through the process's HTTP surface. Fidelity itself is judged by Benjamin
+on captures (PC 1440 px and iPhone 390 px, light and dark) taken from the
+real process on the real sources, next to the prototype's.

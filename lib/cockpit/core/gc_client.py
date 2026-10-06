@@ -109,6 +109,11 @@ class GcSsePoller:
                 backoff = self._reconnect_seconds
             except (urllib.error.URLError, OSError, ValueError):
                 pass
+            except AttributeError:
+                # stop() closed the response under this thread: http.client
+                # reads a file object that is gone. Anything else is a bug.
+                if not self._stop.is_set():
+                    raise
             if self._stop.is_set():
                 return
             self._stop.wait(backoff)

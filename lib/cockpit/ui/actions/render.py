@@ -22,16 +22,23 @@ REPORT_OPTIONS = (
 
 
 def render_actions(request):
-    """One action block per request: Acquitter (Urgent, not already
-    acquitted), Reporter (Urgent and À faire), and Continuer avec un
-    agent -- always offered, never gated on niveau (spec .32 offers it
-    whenever an agent is "vraiment nécessaire", which the cockpit cannot
-    judge)."""
-    buttons = []
+    """One action row per request, in the prototype's order: Continuer
+    avec un agent -- always offered, never gated on niveau (spec .32
+    offers it whenever an agent is "vraiment nécessaire", which the
+    cockpit cannot judge) --, Acquitter (Urgent, not already acquitted),
+    Reporter; then the fixed sentence saying what the last two do
+    (spec .24)."""
+    bead_id = html.escape(request.id)
+    buttons = [
+        '<button type="button" class="btn cockpit-action cockpit-action-tokens" data-action="continuer" '
+        'data-bead-id="%s" data-quoi="%s">'
+        "Continuer avec un agent <small>utilise un agent (consomme des tokens)</small></button>"
+        % (bead_id, html.escape(request.quoi))
+    ]
     if request.niveau == URGENT and not request.acquittee:
         buttons.append(
-            '<button type="button" class="cockpit-action" data-action="acquitter" '
-            'data-bead-id="%s">Acquitter</button>' % html.escape(request.id)
+            '<button type="button" class="btn ghost cockpit-action" data-action="acquitter" '
+            'data-bead-id="%s">Acquitter</button>' % bead_id
         )
 
     report_options_html = "".join(
@@ -39,24 +46,16 @@ def render_actions(request):
         for value, label in REPORT_OPTIONS
     )
     buttons.append(
-        '<span class="cockpit-action-report">'
-        '<select class="cockpit-report-option" data-bead-id="%s">%s</select>'
-        '<button type="button" class="cockpit-action" data-action="reporter" '
+        '<span class="inline cockpit-action-report">'
+        '<select class="field cockpit-report-option" data-bead-id="%s" aria-label="Reporter jusqu\'à">%s</select>'
+        '<button type="button" class="btn ghost cockpit-action" data-action="reporter" '
         'data-bead-id="%s">Reporter</button>'
-        "</span>" % (html.escape(request.id), report_options_html, html.escape(request.id))
-    )
-
-    buttons.append(
-        '<button type="button" class="cockpit-action cockpit-action-tokens" data-action="continuer" '
-        'data-bead-id="%s" data-quoi="%s">'
-        "Continuer avec un agent (utilise un agent — consomme des tokens)</button>"
-        % (html.escape(request.id), html.escape(request.quoi))
+        "</span>" % (bead_id, report_options_html, bead_id)
     )
 
     return (
-        '<div class="cockpit-actions">%s'
-        '<p class="cockpit-actions-explication">%s</p>'
-        "</div>"
+        '<div class="acts cockpit-actions">%s</div>'
+        '<p class="hint cockpit-actions-explication">%s</p>'
     ) % ("".join(buttons), html.escape(FIXED_EXPLANATION))
 
 
@@ -115,7 +114,7 @@ SCRIPT = """
   function disarm() {
     if (armed) {
       armed.el.classList.remove('cockpit-armed');
-      armed.el.textContent = armed.originalLabel;
+      armed.el.innerHTML = armed.originalHTML;
       clearTimeout(armed.timer);
       armed = null;
     }
@@ -177,12 +176,20 @@ SCRIPT = """
         return;
       }
       disarm();
-      var originalLabel = el.textContent;
+      var originalHTML = el.innerHTML;
       el.classList.add('cockpit-armed');
-      el.textContent = 'Confirmer ?';
+      if (el.classList.contains('opt')) {
+        // An option keeps its text and consequence while armed.
+        var note = document.createElement('span');
+        note.className = 'cockpit-armed-note';
+        note.textContent = 'Clique encore pour confirmer';
+        (el.querySelector('.ot') || el).appendChild(note);
+      } else {
+        el.textContent = 'Confirmer ?';
+      }
       armed = {
         el: el,
-        originalLabel: originalLabel,
+        originalHTML: originalHTML,
         timer: setTimeout(disarm, CONFIRM_WINDOW_MS)
       };
       return;
