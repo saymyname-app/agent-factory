@@ -71,6 +71,13 @@ Planning Run starts.
    another session reserves the Spec bead first and offers one launch chip
    (`docs/agents/issue-tracker.md`, "Spec handoff"); the Spec stays
    claimed until its convoy closes.
+   A draft that declares the new-flow contract is read by a **graph
+   reviewer** before Benjamin approves it: the `/to-tickets` session runs
+   `bin/graph-review review <draft> --author-model <its model>`, corrects
+   the draft with Benjamin, asks one second pass, and shows him what that
+   pass still refuses (`bin/graph-review remaining <draft> --text`); he
+   rules ticket by ticket, his words recorded by `bin/graph-review decide`
+   (`docs/GRAPH_REVIEW.md`).
 6. **The publication door (`ticket-graph-publish`)** publishes the draft
    through `bin/ticket-graph-publish bd-publish` (or `bd-patch` to revise
    an already-published graph). It refuses unless the named Spec bead is
@@ -78,8 +85,11 @@ Planning Run starts.
    A draft that declares the new-flow contract (`flow_contract:
    new-flow/v1`) is also held to the entry contract of the Delivery
    Workflow -- declared kind, demonstration line, observable criteria --
-   and its convoy is published with the new-flow mark; a draft that does
-   not declare it is published as before (`docs/ENTRY_CONTRACT.md`).
+   and refused without a graph review that holds for its current digest
+   and leaves no refusal without Benjamin's decision
+   (`docs/GRAPH_REVIEW.md`); its convoy is published with the new-flow
+   mark. A draft that does not declare it is published as before
+   (`docs/ENTRY_CONTRACT.md`).
    On success, in the same door: delivery beads and the convoy are created
    atomically (one approved ticket becomes exactly one delivery bead), the
    Planning Run Reservation advances (to `next`, or clears) when the

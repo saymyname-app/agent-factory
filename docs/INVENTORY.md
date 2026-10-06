@@ -127,6 +127,7 @@ an A5 input.
 | `bin/factory-waiting-guard` | ops | factory-guard §11, CI test | RE-JUSTIFIED (O14, F12): maintains `gc.waiting_on`, which `bin/pr-autopilot`'s `active_waiters_for` now reads live to decide whether a reconciled merge still needs to wake the Mayor |
 | `bin/factory-watchdog` | ops | orders/factory-watchdog.toml, CI tests | Live paging (§1-4,7); FIXED (O06, af-sau1a): the reader-less cockpit signal file is no longer written. FIXED (P21, af-k91yx): remaining campaign/cockpit mentions in the header are explicitly marked retired/historical (incident context, retired checks), except "blocks the campaign" which described current behavior in present tense — reworded to "halts the Factory" |
 | `bin/factory-work-dispatch` | kernel | mayor prompt, CI test | The HQ convenience wrapper (factory-worker, mol-do-work, --reassign) around bin/dispatch-door (O03) |
+| `bin/graph-review` | kernel | /to-tickets session (`review`, `remaining`, `decide`), mol-graph-review (`brief`, `record`), ticket-graph-publish (`check`), CI test | NEW (T08, af-n575g4): graph reviewer before Benjamin's approval; only reader and writer of `gc.graph_review.*` on a Ticket Graph Draft bead (`docs/GRAPH_REVIEW.md`) |
 | `bin/fixture-city-oracle` | kernel | CI test, project-isolation-oracle, docs | Fixture-city oracle (ADR-0027 legacy_path fences) |
 | `bin/goal-delivery-pairs` | ops | docs/DELIVERY.md, CI test | Read-only multi-rig delivery-pair query; no runtime caller |
 | `bin/on-order-failed` | ops | orders/on-order-failed.toml, CI test | Pages Mayor on repeated order failure; FIXED (O06, af-sau1a): no longer writes the reader-less signal file |
@@ -140,7 +141,7 @@ an A5 input.
 | `bin/provider-failover` | ops | orders provider-failover + model-staleness-check, factory-boot, factory-guard | FIXED (P20, af-r48pb): help/status/set text names no cockpit or campaign; live failover unchanged |
 | `bin/reversibility-check` | ops | pr-autopilot, factory-watchdog, CI test | ADR-0019 reversibility gate CLI |
 | `bin/spec-approve` | kernel | CI test | Spec approval stage; bead mode only (`bd-approve`/`bd-status`) since A6b W10 retired the file-Spec mode with the router; FIXED (T07, af-tvda3w): also refuses a Spec without numbered user stories, or with an interface story and no complete reference, state inventory or conformant Validated Prototype on the remote repository |
-| `bin/ticket-graph-publish` | kernel | mayor prompt (bd-patch), planning-exception, CI | `bd-publish`/`bd-patch` only since A6b W10 retired the file-draft mode with the router; T05 (af-c8n7ep): a draft declaring `flow_contract: new-flow/v1` is held to the entry contract and its convoy marked through bin/convoy-state (`docs/ENTRY_CONTRACT.md`) |
+| `bin/ticket-graph-publish` | kernel | mayor prompt (bd-patch), planning-exception, CI | `bd-publish`/`bd-patch` only since A6b W10 retired the file-draft mode with the router; T05 (af-c8n7ep): a draft declaring `flow_contract: new-flow/v1` is held to the entry contract and its convoy marked through bin/convoy-state (`docs/ENTRY_CONTRACT.md`); T08 (af-n575g4): such a draft is refused without a graph review that holds for its digest (`bin/graph-review check`, `docs/GRAPH_REVIEW.md`) |
 | `city.toml` | to-redo | gc; factory-guard; provider-failover; build-gates | live, but comments route provider changes via retired cockpit; SayMyName rigs/patches + /home/benja paths |
 | `config/factory-observe-policy.json` | kernel | bin/factory-observe, lib/factory_observe.py, test | B09 policy |
 | `config/fixture-city-bwrap.apparmor` | kernel | ci.yml, bin/project-isolation-oracle, test | P05 sandbox profile for CI |
@@ -181,6 +182,7 @@ an A5 input.
 | `formulas/build-basic-review-scoped.formula.toml` | kernel | build-basic (expand), tests/build-basic-fail-fast-test.py | GUARDED-tier review expansion (local fail-fast fork) |
 | `formulas/build-basic.formula.toml` | kernel | mayor prompt GUARDED tier, assets/workflows/build-basic, CI | Local fork overriding the pack's build-basic |
 | `formulas/mol-do-work.formula.toml` | kernel | factory-work-dispatch (only formula allowed), mayor prompt default, CI contract test | FIXED (af-jz4zb, P08): description no longer says "for demos" or cites idle ladder/campaign_progress_at — it documents the current workspace-setup/do-work/push-and-pr/drain lifecycle, including the locked, fresh-origin, fail-loud worktree isolation `bin/factory-do-work-workspace enter` now provides |
+| `formulas/mol-graph-review.formula.toml` | kernel | bin/graph-review (through `bin/dispatch-door --role reviewer`), `config/projects/agent-factory.toml` (`formulas`) | NEW (T08, af-n575g4): one step, claimed by a read-only session of the reviewer role; never dispatched by the Mayor |
 | `formulas/mol-polecat-commit.formula.toml` | ops | mayor prompt (optional), factory-delivery-guard, `config/projects/saymyname-{backend,frontend}.toml` (`formulas`), CI contract test | RE-VERDICTED (O14, F15): `bin/dispatch-door` (O03, af-ui0ua) validates and routes it for both SayMyName rigs; refuses base `main` so still unusable on HQ, which is correct since HQ's project file does not list it |
 | `formulas/mol-scoped-work.formula.toml` | ops | `config/projects/saymyname-{backend,frontend}.toml` (`formulas`), CI contract test, factory-watchdog test | RE-VERDICTED (O14, F15): `bin/dispatch-door` (O03, af-ui0ua) validates and routes it for both SayMyName rigs; "refuses base=main" but proceeds — FIXED (O06, af-sau1a): escalates through `escalation-door mayor`, `exit 1`s if it fails |
 | `lib/factory_build_gates.py` | ops | bin/factory-build-gates | Build-gate wiring check |
@@ -252,6 +254,7 @@ an A5 input.
 | `tests/fixtures/shared-drain` | ops | factory-shared-drain-workspace-test.sh | fake gc/gh |
 | `tests/fixtures/spec-approve` | kernel | spec-approve-test.py | synthetic spec drafts |
 | `tests/fixtures/ticket-graph-publish` | kernel | ticket-graph-publish-test.py, ticket-graph-publish-entry-contract-test.py, planning-exception-test.py | fake bd; fake gc (Mayor mail, and the tracker calls of bin/convoy-state on the same store); T05: conformant Fixture City draft, frozen copy of the Cockpit V2 draft (af-i67vl0), golden of a publication before T05 |
+| `tests/fixtures/graph-review` | kernel | graph-review-test.py, graph-review-isolated-city-test.sh (draft only) | NEW (T08, af-n575g4): Fixture City draft in which one ticket is not demonstrable alone; fake provider-failover; `reviewer` stands in for the dispatch door and the reviewer session |
 | `tests/goal-delivery-pairs-test.sh` | ops | bin/goal-delivery-pairs | in CI (ci.yml:194) |
 | `tests/on-order-failed-test.sh` | ops | bin/on-order-failed | in CI (ci.yml:221); comment cites legacy factory-cockpit-chaos-test.py |
 | `tests/on-session-stranded-test.sh` | ops | bin/on-session-stranded | in CI (ci.yml:224); comment cites legacy factory-cockpit-chaos-test.py |
@@ -276,6 +279,8 @@ an A5 input.
 | `tests/ticket-graph-publish-test.py` | kernel | ticket-graph-publish; fixture ticket-graph-publish | in CI (ci.yml:38) |
 | `tests/ticket-graph-publish-entry-contract-test.py` | kernel | ticket-graph-publish, convoy-state; fixture ticket-graph-publish | NEW (T05, af-c8n7ep): auto-discovered by bin/ci-run-tests; one test per refusal and per pass of the new-flow entry contract, each refusal re-reading the tracker |
 | `tests/ticket-graph-publish-new-flow-real-tracker-test.sh` | kernel | ticket-graph-publish, convoy-state; real gc/bd in a disposable city | NEW (T05, af-c8n7ep): local-only adoption trial of the same contract on the real tracker |
+| `tests/graph-review-test.py` | kernel | graph-review, ticket-graph-publish; fixtures graph-review, ticket-graph-publish | NEW (T08, af-n575g4): auto-discovered by bin/ci-run-tests; one test per pass and per refusal, each refusal re-reading the tracker |
+| `tests/graph-review-isolated-city-test.sh` | kernel | graph-review, ticket-graph-publish, dispatch-door; real gc/bd in a disposable city | NEW (T08, af-n575g4): local-only adoption trial on the real tracker; with `GRAPH_REVIEW_TRIAL_SESSION=1`, one real reviewer session |
 
 ## O16 closeout — orders, Mayor manual operations, 24 h clean (added 2026-09-29, af-dqhwo)
 

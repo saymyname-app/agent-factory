@@ -24,8 +24,10 @@ project declares it until the new flow is complete (Spec §14).
 
 This is the first part of the entry contract. Coverage of the user stories,
 pointers posed by the door, operator needs and tickets added by patch are
-T06; the Validated Prototype reference and the Prototype Fold are T36; the
-graph reviewer is T08.
+T06; the Validated Prototype reference and the Prototype Fold are T36. The
+graph reviewer (T08) is delivered: the door also refuses a draft that
+declares the contract without a graph review that holds for its current
+digest (`docs/GRAPH_REVIEW.md`).
 
 ## Ticket fields
 
