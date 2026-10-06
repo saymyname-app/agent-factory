@@ -4,8 +4,8 @@
 T15 built the journal's parsing and rendering and tested them on Beads
 comments; the doors and the cockpit write their traces in a bead's
 **notes** (``bd update --append-notes``), and no route served the journal.
-The beads here carry notes and metadata exactly as ``bin/escalation-door``,
-``bin/proposal-door`` and :mod:`cockpit.actions.trace` leave them. The test
+The beads here carry notes and metadata exactly as the escalation door,
+the proposal door and :mod:`cockpit.actions.trace` leave them. The test
 starts the real ``bin/cockpit`` on faked sources and reads only ``GET
 /journal``, ``GET /api/journal``, ``GET /`` and ``POST /api/actions/*``.
 """
