@@ -133,6 +133,7 @@ def compute_health(
     loops=(),
     order_failures=(),
     red_ci=(),
+    extra_lines=(),
     supervisor_unreachable_after_seconds=SUPERVISOR_UNREACHABLE_AFTER_SECONDS,
     factory_stalled_after_seconds=FACTORY_STALLED_AFTER_SECONDS,
 ):
@@ -155,4 +156,7 @@ def compute_health(
     lines.extend(loop_lines(loops, now))
     lines.extend(order_failure_lines(order_failures, now))
     lines.extend(red_ci_lines(red_ci, now))
+    # What the cockpit's own parts say about themselves (notifications,
+    # heartbeat: spec .59, .98), already as health lines.
+    lines.extend(extra_lines)
     return {"ok": not lines, "lines": lines}

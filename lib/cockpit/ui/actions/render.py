@@ -249,6 +249,17 @@ SCRIPT = """
       }
       showReportMenu(beadId, false);
       withUndo('Reporter', function () { post('reporter', body); });
+    } else if (action === 'notifier_test') {
+      post('notifier_test', {}).then(function (resp) {
+        return resp.json();
+      }).then(function (data) {
+        var said = document.createElement('div');
+        said.className = 'toast';
+        said.setAttribute('role', 'status');
+        said.textContent = data.display || data.error || 'Notification de test non envoyée';
+        document.body.appendChild(said);
+        setTimeout(function () { said.remove(); }, 5000);
+      });
     } else if (action === 'pas_bon_vers_agent') {
       var titre = el.getAttribute('data-titre') || '';
       withUndo('Copier le prompt', function () {

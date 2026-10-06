@@ -182,8 +182,14 @@ class CockpitHealthZoneTest(unittest.TestCase):
         tmp.replace(self.bd_state_file)
 
     def start_cockpit(self, extra_env=None):
+        heartbeat_url_file = self.tmp_path / "heartbeat-url.txt"
+        heartbeat_url_file.write_text(self.fake_gc.base_url + "/\n")
         env = dict(os.environ)
         env.update({
+            "COCKPIT_PUSHOVER_SECRETS_FILE": str(ROOT / "tests" / "fixtures" / "cockpit" / "notify" / "valid-secrets.json"),
+            "COCKPIT_PUSHOVER_URL": self.fake_gc.base_url + "/no-such-pushover",
+            "COCKPIT_NOTIFY_STATE_FILE": str(self.tmp_path / "notify-state.json"),
+            "COCKPIT_HEARTBEAT_URL_FILE": str(heartbeat_url_file),
             "COCKPIT_HOST": "127.0.0.1",
             "COCKPIT_PORT": str(self.port),
             "COCKPIT_GC_BASE_URL": self.fake_gc.base_url,

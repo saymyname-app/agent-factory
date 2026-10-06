@@ -109,7 +109,9 @@ def _level(niveau, with_label=True):
     )
 
 
-def render_requests_section(requests, verified_at=None, source_unknown=False, last_known_at=None):
+def render_requests_section(
+    requests, verified_at=None, source_unknown=False, last_known_at=None, undelivered=()
+):
     """``requests``: sorted list from :func:`cockpit.requests.builder.build_requests`.
     ``source_unknown``: True when the beads source's own Freshness is
     "unknown" (spec .16) — the whole section then shows the illisible
@@ -140,7 +142,9 @@ def render_requests_section(requests, verified_at=None, source_unknown=False, la
 
     first_id = requests[0].id
     rows = "".join(_render_list_item(r, verified_at, r.id == first_id) for r in requests)
-    details = "".join(_render_detail(r, verified_at, r.id == first_id) for r in requests)
+    details = "".join(
+        _render_detail(r, verified_at, r.id == first_id, r.id in undelivered) for r in requests
+    )
     return (
         '<div class="inbox cockpit-requests" data-state="filled">'
         '<div class="list" id="inbox-list"><h2><span>%s</span><span class="mono muted">%d</span></h2>%s%s</div>'
@@ -166,7 +170,7 @@ def _render_list_item(r, now, selected):
     )
 
 
-def _render_detail(r, now, selected):
+def _render_detail(r, now, selected, undelivered=False):
     # "quoi" missing already reads "incomplète : champ quoi manquant" as the
     # title itself; name the next missing field rather than say it twice.
     other_missing = [f for f in r.missing_fields if f != "quoi"]
@@ -183,6 +187,9 @@ def _render_detail(r, now, selected):
         )
 
     acquittee = '<span class="chip ack">Acquittée · rappels coupés</span>' if r.acquittee else ""
+    if undelivered:
+        # spec .59: never let Benjamin believe he was warned.
+        acquittee += '<span class="chip bloque">notification non livrée</span>'
     since_html = _since_html(r, now)
     meta = '<div class="meta cockpit-request-meta"><b>%s</b>%s<span>vérifié %s</span>%s</div>' % (
         html.escape(r.projet),

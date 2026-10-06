@@ -16,6 +16,7 @@ functions nothing called; this is their caller:
 
 Pure: every input is a value the read model already holds.
 """
+from cockpit.core.freshness import FRESH, UNKNOWN
 from cockpit.projects.demandes import chantier_demandes
 from cockpit.projects.source import from_value as projects_from_value
 from cockpit.requests.builder import build_requests, parse_ack_and_defer
@@ -84,3 +85,31 @@ def assemble_requests(
 
     unique.sort(key=lambda r: r.sort_key())
     return unique
+
+
+def assemble_from_snapshot(snapshot, now, defects=None, illisible_after_seconds=ILLISIBLE_THRESHOLD_SECONDS):
+    """The list as the read model holds it right now. Returns ``(requests,
+    beads_row, beads_known)``; with Beads unknown the list holds only what
+    does not come from Beads, and the caller says the list is incomplete."""
+    beads_row = snapshot.get("beads")
+    beads_known = beads_row is not None and beads_row["freshness"] != UNKNOWN
+    projets_row = snapshot.get("projets")
+    projets_known = projets_row is not None and projets_row["freshness"] != UNKNOWN
+    requests = assemble_requests(
+        beads_row["value"] if beads_known else None,
+        verifie_a=beads_row["read_at"] if beads_known else now,
+        defects=defects,
+        projets_value=projets_row["value"] if projets_known else None,
+        sources=[
+            {
+                "name": name,
+                "display_name": row["display_name"],
+                "last_good_read_at": row["read_at"] if row["read_at"] is not None else row["registered_at"],
+            }
+            for name, row in snapshot.items()
+            if row["freshness"] != FRESH
+        ],
+        now=now,
+        illisible_after_seconds=illisible_after_seconds,
+    )
+    return requests, beads_row, beads_known

@@ -342,3 +342,53 @@ made before the door dated it, carry no date.
 
 `tests/cockpit-journal-test.py` covers the page through HTTP, with beads
 carrying notes and metadata as the doors leave them.
+
+## Notifications and heartbeat, running (af-mjfvwx)
+
+T17 (`notify/`) and T18 (`heartbeat/`) each built a policy with `tick()`
+as its whole interface, tested with a fake clock, and left the thread that
+ticks it to a later ticket. `notify/service.py` is that caller:
+`Ticker` (the thread), `NotifyService`, `HeartbeatService`;
+`core/process.py` starts them.
+
+**The Pushover adapter was not the API's.** It sent AES-GCM in a
+`ciphertext` field with a base64 key; pushover.net/api ("End-to-End
+Encryption", read 2026-10-06) wants `encrypted=1` and each of `title` /
+`message` as base64(IV + AES-256-CBC(gzip(text)) + HMAC-SHA256), with the
+64-character hex key the Pushover app shows. No push could have arrived;
+its tests only ever drove a fake adapter. `notify/pushover.py` now follows
+the documented scheme (through `openssl`, as the API's own example does).
+It has not been tried against the real service: that is the manual step of
+the mobile slice.
+
+| Setting | Meaning |
+|---|---|
+| `COCKPIT_PUSHOVER_SECRETS_FILE` | JSON `{token, user_key, e2e_key}`, outside the repository (written by `bin/cockpit-setup-wizard pushover-secrets`) |
+| `COCKPIT_HEARTBEAT_URL_FILE` | the Healthchecks.io ping URL of the « Usine muette » check (`heartbeat-secret`) |
+| `COCKPIT_PUBLIC_URL` | the address a push links back to (the ts.net URL) |
+| `COCKPIT_NOTIFY_STATE_FILE` | what was already sent, kept across a restart (default: beside the pid file) |
+
+Unset or unreadable, nothing is sent and nothing is pinged, and the health
+zone says « Notifications iPhone inactives : … » / « Alerte « Usine
+muette » inactive : … » (spec .98). Nothing makes the cockpit reach
+Pushover or Healthchecks.io by default.
+
+- The notify policy runs on the same list as « Ce qui t'attend »
+  (`requests/assemble.py` `assemble_from_snapshot`), and only while that
+  list is whole: with the tickets unreadable no request is taken for
+  resolved, so no « Urgent résolue » is sent for a dead source.
+- A send the channel refuses is retried; the request shows « notification
+  non livrée » (spec .59); after 15 min the health zone says « Canal de
+  notification en panne ».
+- The heartbeat pings only while the supervisor and the tickets are read
+  fresh. It is not paused by a clean stop yet (the stop driver is not
+  wired).
+- `/journal` carries « Journal des envois » (request, level, time,
+  accepted or failed — in memory, last 200) and « Envoyer une notification
+  de test » (`POST /api/actions/notifier_test`, Benjamin's identity
+  required). `GET /api/notifications` is its JSON twin.
+
+`tests/fixtures/cockpit/notify/fake_pushover.py` answers as the API
+documents and decrypts with the documented scheme;
+`tests/cockpit-notifications-test.py` runs the real process with its real
+adapter and emitter against it.

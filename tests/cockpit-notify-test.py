@@ -379,7 +379,9 @@ class UiRenderTest(unittest.TestCase):
         self.assertIn("af-1", html_out)
         self.assertIn("accepté", html_out)
         self.assertIn("notifier_test", render.TEST_BUTTON_HTML)
-        self.assertIn("notifier_test", render.SCRIPT)
+        from cockpit.ui.actions.render import SCRIPT as page_script
+
+        self.assertIn("notifier_test", page_script)
 
 
 if __name__ == "__main__":
