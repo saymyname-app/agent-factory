@@ -22,12 +22,12 @@
       "tier": "premium"
     },
     "claude": {
-      "label": "Claude Sonnet 5 · effort élevé",
+      "label": "Claude Opus 5.5 · effort élevé",
       "pool": "anthropic",
       "tier": "premium"
     },
     "claude-standard": {
-      "label": "Claude Sonnet 5 · effort moyen",
+      "label": "Claude Opus 5.5 · effort moyen",
       "pool": "anthropic",
       "tier": "standard"
     },

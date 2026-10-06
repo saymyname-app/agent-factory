@@ -25,7 +25,21 @@ accept_startup_dialogs = true
 # human answer. Make the reasonable call and record it instead of stalling.
 # Plan mode is the same trap: ExitPlanMode ends the turn awaiting an approval
 # nobody will give (audit 2026-09-17, P7).
-args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode"]
+#
+# Intent (Benjamin, his words, 2026-10-06): « dans l'usine il faut utiliser
+# Opus 5.5 ».
+# Mechanism (agent interpretation): `claude` and `claude-standard` run
+# claude-opus-5-5; `claude-cheap` stays on Haiku and the Codex-first fallback
+# chains are untouched. The id is passed in args_append (as Codex does with
+# `-m`), NOT as option_defaults.model: gc validates that key against its own
+# closed list, which stops at opus-4-8 in the installed 1.4.1 and at opus-5
+# in upstream 1.5.0. An unknown value there fails `gc bd`'s provider cache
+# build and puts the coordination store in fail-closed (2026-09-19, PR #151).
+# builtin:claude has no default model, so this is the only --model emitted.
+# Needs host Claude CLI >= 2.1.280. bin/provider-failover check-models reads
+# the id from here.
+args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode",
+               "--model", "claude-opus-5-5"]
 
 [providers.claude.env]
 CLAUDE_CONFIG_DIR = "/home/benja/.claude"
@@ -33,7 +47,6 @@ DISABLE_AUTOUPDATER = "1"
 
 [providers.claude.option_defaults]
 permission_mode = "unrestricted"
-model = "sonnet-5"
 effort = "high"
 
 # Lower-cost profile for high-volume/routine roles (orchestration, dispatch,
@@ -45,7 +58,8 @@ effort = "high"
 base = "builtin:claude"
 command = "/home/benja/.local/bin/claude"
 accept_startup_dialogs = true
-args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode"]
+args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode",
+               "--model", "claude-opus-5-5"]
 
 [providers.claude-standard.env]
 CLAUDE_CONFIG_DIR = "/home/benja/.claude"
@@ -53,10 +67,9 @@ DISABLE_AUTOUPDATER = "1"
 
 [providers.claude-standard.option_defaults]
 permission_mode = "unrestricted"
-model = "sonnet-5"
 effort = "medium"
 
-# Cheapest Claude tier (~$1/$5 per 1M tokens vs Sonnet 5's ~$2-3/$10-15) for
+# Cheapest Claude tier (~$1/$5 per 1M tokens) for
 # genuinely low-judgment, high-volume work: classification, triage, simple
 # deterministic-ish checks. Not yet assigned to any agent — the natural
 # targets (issue-triager and similar) are defined in the imported remote
@@ -78,40 +91,13 @@ permission_mode = "unrestricted"
 model = "haiku"
 effort = "low"
 
-# DISABLED 2026-09-19: the installed `gc` binary's own model validator (not
-# the `claude` CLI's) does not recognize any Opus 5 identifier yet — its
-# highest known opus ids are claude-opus-4-7 / claude-opus-4-8 (confirmed via
-# `strings /usr/local/bin/gc`, no "opus-5"/"claude-opus-5" anywhere). The
-# PR #151 value "claude-opus-5" failed `gc bd`'s "provider cache build" at
-# startup ("not a valid choice"), which put the whole coordination store in
-# fail-closed and broke the cockpit ("Failed to fetch") after a PC-crash
-# restart surfaced it. Re-enable only once `gc` itself is upgraded to know
-# about Opus 5 (or a confirmed-valid identifier is found) — do NOT
-# reintroduce "claude-opus-5" or "opus-5" without re-verifying against the
-# installed `gc` binary's own validator, not just the `claude --help` text
-# (that check is what missed this the first time).
-# [providers.claude-opus]
-# base = "builtin:claude"
-# command = "/home/benja/.local/bin/claude"
-# accept_startup_dialogs = true
-# args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode"]
-#
-# [providers.claude-opus.env]
-# CLAUDE_CONFIG_DIR = "/home/benja/.claude"
-# DISABLE_AUTOUPDATER = "1"
-#
-# [providers.claude-opus.option_defaults]
-# permission_mode = "unrestricted"
-# model = "claude-opus-5"
-# effort = "high"
-
 # Premium tier for long-running, high-difficulty unattended work (Fable 5.1 is
 # built for multi-hour, many-tool jobs). Most expensive of the claude-* tiers
 # — gate its use behind an explicit reason (a specific hard ticket), not a
 # default for any routine role.
 # Model id corrected 2026-09-19: "claude-fable-5-1" is not recognized by the
-# installed `gc` binary's own model validator (same failure as claude-opus
-# above); "fable-5" is, confirmed via `strings /usr/local/bin/gc` and matches
+# installed `gc` binary's own model validator (the 2026-09-19 failure
+# described at [providers.claude]); "fable-5" is, confirmed via `strings /usr/local/bin/gc` and matches
 # the short-form convention already used by the other tiers (sonnet-5, haiku).
 # Removed from active config 2026-09-28 (O14, F19): no agent, order or
 # formula ever names it, and factory-guard's provider-resolution check does
