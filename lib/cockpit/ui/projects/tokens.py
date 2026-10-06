@@ -9,7 +9,7 @@ zones); the home screen's "Projets" zone is styled there too.
 CSS = """
 .brand{min-width:0}
 .brand a.back{font-size:var(--fs-s);color:var(--accent);text-decoration:none;white-space:nowrap}
-.brand h1{overflow-wrap:anywhere}
+.brand{flex-wrap:wrap}.brand h1{overflow-wrap:anywhere;flex:0 0 auto;max-width:100%}.brand .who{flex:1 1 16rem;min-width:0}
 .zone{margin-top:22px}
 .zone-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap}
 .zone-h h2{font-size:var(--fs-l)}

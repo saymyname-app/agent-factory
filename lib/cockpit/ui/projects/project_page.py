@@ -23,7 +23,7 @@ import html
 
 from cockpit.projects import etat as etat_mod
 from cockpit.projects.model import STAGES
-from cockpit.ui.projects.page import _render_etat, _stepper
+from cockpit.ui.projects.page import _render_ecart, _render_etat, _render_roadmap, _stepper
 from cockpit.ui.projects.page import render_historique_section  # noqa: F401 (re-exported for callers)
 
 VIEW_TABLEAU = "tableau"
@@ -223,9 +223,8 @@ def _view_selector():
 
 
 def _render_topbar(project, fresh_html):
-    roadmap = ""
-    if project.roadmap_step is not None:
-        roadmap = '<span class="who">Roadmap : %s</span>' % html.escape(project.roadmap_step.title)
+    roadmap_html = _render_roadmap(project)
+    roadmap = '<span class="who">%s</span>' % roadmap_html if roadmap_html else ""
     return (
         '<header class="topbar cockpit-pp-header"><div class="brand">'
         '<a class="back cockpit-pp-back" href="/">%s</a><h1>%s</h1>%s</div>%s</header>'
@@ -261,6 +260,7 @@ def render_project_page(project, hors_chantier=None, historique_html="", view=VI
         '<div class="zone-h cockpit-pp-zone-h"><h2>Chantiers par étape</h2>%s</div>'
         '<div class="cockpit-pp-view cockpit-pp-view-tableau">%s</div>'
         '<div class="cockpit-pp-view cockpit-pp-view-bande">%s</div>'
+        "%s"
         "</section>"
         "%s"
         '<div id="cockpit-pp-historique">%s</div>'
@@ -274,6 +274,7 @@ def render_project_page(project, hors_chantier=None, historique_html="", view=VI
         _view_selector(),
         tableau_html,
         bande_html,
+        _render_ecart(project),
         _render_hors_chantier(hors_chantier),
         historique_html,
         VIEW_SCRIPT,

@@ -236,10 +236,10 @@ Two rules the real data needed:
   de projet » : « projet déduit du rig »). With neither, it is listed under
   « Sans projet ».
 
-Not wired yet (later slices of af-mjfvwx): the roadmap step and « dev a N
-commits d'avance » (they need the cockpit's own clones; until then an
-accepted chantier is treated as finished for every project), and
-Livré-non-Accepté as a « Quand tu veux » request (`projects/demandes.py`).
+Since then: Livré-non-Accepté is a « Quand tu veux » request, and the
+roadmap step and « dev a N commits d'avance » are read (see « Project
+repositories » below). Still open: an accepted chantier is treated as
+finished for every project — Promu is not computed.
 
 `tests/cockpit-home-projects-test.py` drives all of the above through the
 process's HTTP surface.
@@ -457,3 +457,42 @@ Python object, and the shape it expects is not the one gc serves.
 
 `tests/cockpit-stop-access-test.py` covers this through HTTP, including
 that every plausible stop action answers 404.
+
+## Project repositories: roadmap step, commits ahead (af-mjfvwx)
+
+T19/T20 built `projects/roadmap.py` and `projects/promotion.py` against a
+clone a test had made; nothing made the cockpit's clones or called them.
+`projects/depots.py` does both, as the read model's `depots` source
+(every `COCKPIT_DEPOTS_POLL_SECONDS`, 10 min):
+
+- one clone per repository under `clones_dir`, made with
+  `git clone --no-checkout` and only ever fetched — no file of a project
+  is written anywhere, nothing is pushed (spec « lecture seule »);
+- each project's current Roadmap Step, from `roadmap_path` on the default
+  branch of its `knowledge_repo` (descriptor);
+- « <rig> : dev a N commits d'avance » for each rig with a
+  `promotion_branch`, from the rig's repository (`config/projects/<rig>.toml`,
+  `repo`).
+
+One project's roadmap being unreadable (its structured roadmap not written
+yet) shows « Roadmap inconnue » for that project only. With every
+repository unreachable the source is unknown and the headline says so.
+
+**Off by default.** No repository is cloned or fetched unless a clones
+directory is named: `clones_dir` in the local settings file, or
+`COCKPIT_CLONES_DIR`. `COCKPIT_REPO_URL_TEMPLATE` (default
+`https://github.com/%s.git`) lets a test point at throwaway local
+repositories; git's own credentials are used, the cockpit holds no token.
+
+Health zone (`projects/anomalies.py` `health_lines`, spec .47, .48): a
+closed chantier with a ticket not merged; a roadmap step marked done while
+a chantier that targets it is still open; a chantier targeting a step
+still to do.
+
+Not wired: Promu (whether a chantier's merge commits reached the promotion
+branch) and « rituel dû » — the status command of a project's rituals is a
+script of its repository, which the cockpit would have to run from a
+checkout; that is a decision of its own.
+
+`tests/cockpit-depots-test.py` covers this through HTTP against real git
+repositories made on the spot.

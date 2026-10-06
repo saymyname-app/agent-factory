@@ -40,6 +40,7 @@ def convoy_closed_with_unmerged_child(beads):
                     "convoy_id": bead.get("id") or "",
                     "titre": _title(bead),
                     "detail": "convoi fermé avec %d ticket(s) non mergé(s)" % len(unmerged),
+                    "count": len(unmerged),
                 }
             )
     return out
@@ -71,6 +72,8 @@ def roadmap_incoherences(chantiers, steps_by_project):
                     "detail": "étape %s marquée faite alors que %s est encore ouvert" % (
                         chantier.planning_run_target, chantier.id,
                     ),
+                    "kind": "fait_ouvert",
+                    "step_id": chantier.planning_run_target,
                 }
             )
         elif status == STATUT_A_FAIRE and chantier.stage in _STAGE_ACTIF_AVEC_TRAVAIL:
@@ -79,6 +82,32 @@ def roadmap_incoherences(chantiers, steps_by_project):
                     "chantier_id": chantier.id,
                     "titre": chantier.titre,
                     "detail": "%s vise l'étape %s encore à faire" % (chantier.id, chantier.planning_run_target),
+                    "kind": "vise_a_faire",
+                    "step_id": chantier.planning_run_target,
                 }
             )
     return out
+
+
+def health_lines(closed_with_unmerged, incoherences):
+    """Both kinds of anomaly as health-zone lines (spec .47, .48): fixed
+    French phrases around the chantier's title and the roadmap step's id --
+    never a bead id."""
+    lines = []
+    for item in closed_with_unmerged or []:
+        n = item.get("count", 0)
+        lines.append({
+            "kind": "warn",
+            "text": "Chantier « %s » fermé avec %d ticket%s non fusionné%s."
+            % (item.get("titre") or "sans titre", n, "s" if n > 1 else "", "s" if n > 1 else ""),
+        })
+    for item in incoherences or []:
+        titre = item.get("titre") or "sans titre"
+        if item.get("kind") == "fait_ouvert":
+            text = "Roadmap : l'étape %s est marquée faite alors que le chantier « %s » est encore ouvert." % (
+                item.get("step_id"), titre,
+            )
+        else:
+            text = "Roadmap : le chantier « %s » vise l'étape %s, encore à faire." % (titre, item.get("step_id"))
+        lines.append({"kind": "warn", "text": text})
+    return lines

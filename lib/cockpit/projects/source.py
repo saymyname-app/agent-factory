@@ -9,6 +9,7 @@ What is stored is the computed view as plain data (so ``/api/status`` and
 from dataclasses import asdict
 
 from cockpit.core.beads_source import read_beads_json
+from cockpit.projects.anomalies import convoy_closed_with_unmerged_child
 from cockpit.projects.beads import read_convoy_beads, read_map_children
 from cockpit.projects.builder import build_historique_par_projet, build_projects
 from cockpit.projects.descriptors import load_descriptors
@@ -35,12 +36,15 @@ def read_projects(descriptors_dir, bd_bin="bd", timeout=20):
     }
     projects, sans_projet = build_projects(descriptors, beads, children_by_map_id)
     historique_projects, _ = build_historique_par_projet(descriptors, beads)
-    return to_value(
+    value = to_value(
         projects,
         sans_projet,
         historique={p.project_id: p.chantiers for p in historique_projects},
         hors_chantier=hors_chantier_par_projet(beads),
     )
+    # spec .47: a closed chantier with a ticket not merged, for the health zone.
+    value["anomalies"] = convoy_closed_with_unmerged_child(beads)
+    return value
 
 
 def to_value(projects, sans_projet, historique=None, hors_chantier=None):

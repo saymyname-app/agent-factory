@@ -18,6 +18,8 @@ from cockpit.health.engine import (
     SUPERVISOR_UNREACHABLE_AFTER_SECONDS,
     compute_health,
 )
+from cockpit.projects import anomalies as project_anomalies
+from cockpit.projects.depots import apply_to_projects
 from cockpit.projects.source import from_value as projects_from_value
 from cockpit.projects.source import project_page_data
 from cockpit.requests.assemble import assemble_from_snapshot
@@ -231,6 +233,25 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             payload["verified_at"] = beads_row["read_at"]
         return payload
 
+    def _project_health_lines(self, snapshot):
+        """Chantier anomalies (spec .47, .48): a closed chantier with a
+        ticket not merged; a roadmap step marked done with a chantier still
+        open, or a chantier aiming at a step still to do. Only from values
+        that were read: an unknown source raises no anomaly."""
+        projets = snapshot.get("projets")
+        if projets is None or projets["value"] is None or projets["freshness"] == UNKNOWN:
+            return []
+        projects, sans_projet = projects_from_value(projets["value"])
+        chantiers = [c for p in projects for c in p.chantiers] + sans_projet
+        depots = snapshot.get("depots")
+        steps = {}
+        if depots is not None and depots["value"] is not None and depots["freshness"] != UNKNOWN:
+            steps = depots["value"].get("steps") or {}
+        return project_anomalies.health_lines(
+            projets["value"].get("anomalies") or [],
+            project_anomalies.roadmap_incoherences(chantiers, steps),
+        )
+
     def _render_stop_zone(self, snapshot):
         """« Arrêt propre de l'usine »: the driver's state and the work a
         stop would wait for (spec .81, .82). No stop control is rendered:
@@ -273,6 +294,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         if row["value"] is None or row["freshness"] == UNKNOWN:
             return render_projects_unknown(row["read_at"])
         projects, sans_projet = projects_from_value(row["value"])
+        apply_to_projects(projects, snapshot.get("depots"))
         return render_projects_section(
             projects,
             sans_projet,
@@ -285,7 +307,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         descriptor declares is a 404 that says so."""
         project_id = urllib.parse.unquote(self.path.split("?", 1)[0][len("/projet/"):])
         fresh_html = render_fresh(read_model.headline(), not read_model.stale_or_unknown())
-        row = read_model.snapshot().get("projets")
+        snapshot = read_model.snapshot()
+        row = snapshot.get("projets")
         status = 200
         if row is None or row["value"] is None or row["freshness"] == UNKNOWN:
             inner = render_project_unknown(fresh_html) + render_projects_unknown(row["read_at"] if row else None)
@@ -296,6 +319,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                 inner = render_project_unknown(fresh_html, unknown_project=True)
             else:
                 project, hors_chantier, historique = data
+                apply_to_projects([project], snapshot.get("depots"))
                 inner = render_project_page(
                     project,
                     hors_chantier=hors_chantier,
@@ -368,7 +392,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             loops=collectors.loop_items(beads),
             order_failures=collectors.order_failure_items(beads),
             red_ci=collectors.red_ci_items(beads),
-            extra_lines=[
+            extra_lines=self._project_health_lines(snapshot)
+            + [
                 line
                 for part in (self.server.notify, self.server.heartbeat)
                 if part is not None

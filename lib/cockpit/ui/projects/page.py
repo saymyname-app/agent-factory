@@ -84,7 +84,7 @@ def render_projects_unknown(last_known_at=None):
 
 
 def _render_roadmap(project):
-    if project.roadmap_unknown_since is not None:
+    if project.roadmap_unknown or project.roadmap_unknown_since is not None:
         since = _hhmm(project.roadmap_unknown_since)
         text = "Roadmap inconnue — illisible depuis %s" % since if since else "Roadmap inconnue — illisible"
         return '<span class="cockpit-project-roadmap" data-state="unknown">%s</span>' % html.escape(text)
