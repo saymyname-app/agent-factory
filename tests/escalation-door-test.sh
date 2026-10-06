@@ -366,6 +366,10 @@ door clear af-blocker >/dev/null || fail "clear should succeed"
   || fail "clear did not clear gc.needs_benjamin"
 [[ $(jq -r '.notes' "$TEST_TMP/beads/af-blocker.json") == *"DECISION CLEARED"* ]] \
   || fail "clear did not trace the clearance in the bead's notes"
+# af-mjfvwx: the note carries no date of its own; the Cockpit journal dates
+# a clearance from this stamp ("date inconnue" without it).
+[[ $(jq -r '.metadata["gc.escalation_cleared_at"] // ""' "$TEST_TMP/beads/af-blocker.json") =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$ ]] \
+  || fail "clear did not date the clearance (gc.escalation_cleared_at)"
 
 # af-1al0t1: clearing the question of parked-blocked work reopens it too --
 # otherwise it would stay parked with nobody left to answer.
