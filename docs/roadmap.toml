@@ -66,3 +66,10 @@ title = "Planning Run C01 \"Cockpit V2\" (cockpit + notifications + ritual remin
 done_when = "its graph delivered and closed"
 order = 7
 status = "in_progress"
+
+[[step]]
+id = "D01"
+title = "Planning Run D01 \"Delivery Workflow\" (entry contract, per-ticket TDD proof, review and evaluation, end-of-Spec gate, Evidence Pack, acceptance; map af-0sayxf, Spec af-wf4w5r)"
+done_when = "its graph delivered, its final verification against the Spec judged by Benjamin, and Cockpit V2 redelivered through the new flow"
+order = 8
+status = "in_progress"

@@ -49,6 +49,11 @@ graph.
   see "Where this roadmap came from" above for why it now carries the id
   C01 instead.
 
+- **D01** Planning Run "Delivery Workflow": the Delivery Workflow from a
+  published graph to an accepted Delivered Outcome (map af-0sayxf, Spec
+  af-wf4w5r). Delivered by today's flow; ends with a final verification
+  against its Spec, then the Cockpit V2 redelivery as validation case.
+
 Everything past C01 (SayMyName's own B1 "test the app himself", B2 release
 scope, and horizon C "deliver SayMyName to release") stays on SayMyName's
 roadmap — it is that project's work, not the Factory's.
