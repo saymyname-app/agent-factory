@@ -1,0 +1,14 @@
+description = "Delivery role: Evaluator of the launched product, read-only, no Matt Pocock skill"
+scope = "city"
+work_dir = ".gc/agents/delivery-evaluator"
+min_active_sessions = 0
+max_active_sessions = 1
+idle_timeout = "2h"
+
+# Fallback only, same reason as delivery-reviewer.
+provider = "claude-readonly"
+
+# No Matt Pocock skill for this role, and none of Claude Code's bundled
+# review skills either (one of them is also named code-review).
+[env]
+CLAUDE_CODE_DISABLE_BUNDLED_SKILLS = "1"

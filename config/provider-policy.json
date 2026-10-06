@@ -26,6 +26,11 @@
       "pool": "anthropic",
       "tier": "premium"
     },
+    "claude-readonly": {
+      "label": "Claude Opus 5.5 · effort élevé · lecture seule",
+      "pool": "anthropic",
+      "tier": "premium"
+    },
     "claude-standard": {
       "label": "Claude Opus 5.5 · effort moyen",
       "pool": "anthropic",
@@ -61,6 +66,27 @@
       "chain": [
         "codex",
         "claude"
+      ]
+    },
+    "delivery-author": {
+      "label": "Auteur de ticket (rôle de livraison)",
+      "why": "T03 (af-pbxbgj) : un rôle ne tourne que sur un fournisseur où le chargement de ses skills a été essayé (bin/role-adoption-trial) ; bin/dispatch-door refuse tout autre fournisseur. Essayé sur Claude seulement : Codex n'entre dans cette chaîne qu'après son propre essai.",
+      "chain": [
+        "claude-standard"
+      ]
+    },
+    "delivery-reviewer": {
+      "label": "Relecteur de code (rôle de livraison, lecture seule)",
+      "why": "T03 (af-pbxbgj) : même règle que delivery-author. Lecture seule : seul un profil lancé par bin/delivery-role-sandbox convient.",
+      "chain": [
+        "claude-readonly"
+      ]
+    },
+    "delivery-evaluator": {
+      "label": "Evaluator (rôle de livraison, lecture seule)",
+      "why": "T03 (af-pbxbgj) : même règle que delivery-reviewer.",
+      "chain": [
+        "claude-readonly"
       ]
     }
   }

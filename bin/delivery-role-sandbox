@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# delivery-role-sandbox — run a provider CLI with the filesystem read-only
+# (T03, af-pbxbgj, Spec af-wf4w5r §1: the reviewer and the Evaluator are
+# read-only).
+#
+# Gas City 1.4.1 has no read-only switch for an agent, and an agent-level
+# `start_command` replaces the whole provider (no args, no env, no prompt).
+# What does hold is a provider whose `command` is this wrapper and whose env
+# names the real binary in DELIVERY_ROLE_SANDBOX_EXEC: gc then launches the
+# session exactly as it would the plain provider, inside a Bubblewrap mount
+# namespace where every path is read-only except what a session cannot run
+# without -- its own work directory, the provider's state, the city runtime
+# directory and the tracker -- and where no push credential exists (the
+# GitHub CLI config that backs the git credential helper, and ~/.ssh, are
+# replaced by empty directories; token variables are dropped).
+#
+# Proven on real sessions by bin/role-adoption-trial, which is what
+# bin/dispatch-door requires before a read-only role runs on a provider.
+set -Eeuo pipefail
+
+[ -n "${DELIVERY_ROLE_SANDBOX_EXEC:-}" ] || {
+  printf 'delivery-role-sandbox: DELIVERY_ROLE_SANDBOX_EXEC is not set -- refusing to start a read-only role without its sandbox\n' >&2
+  exit 2
+}
+command -v bwrap >/dev/null 2>&1 || {
+  printf 'delivery-role-sandbox: bwrap is not installed -- refusing to start a read-only role without its sandbox\n' >&2
+  exit 2
+}
+
+args=(--ro-bind / / --dev-bind /dev /dev --proc /proc --tmpfs /tmp)
+rw() { [ -e "$1" ] && args+=(--bind "$1" "$1"); return 0; }
+rw "$PWD"
+rw "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+rw "$HOME/.claude.json"
+rw "$HOME/.codex"
+rw "$HOME/.local/state"
+rw "$HOME/.cache"
+if [ -n "${GC_CITY:-}" ]; then
+  rw "$GC_CITY/.gc"
+  rw "$GC_CITY/.beads"
+fi
+[ -n "${XDG_RUNTIME_DIR:-}" ] && rw "$XDG_RUNTIME_DIR"
+[ -d "$HOME/.config/gh" ] && args+=(--tmpfs "$HOME/.config/gh")
+[ -d "$HOME/.ssh" ] && args+=(--tmpfs "$HOME/.ssh")
+unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN
+export DELIVERY_ROLE_READ_ONLY=1
+exec bwrap "${args[@]}" -- "$DELIVERY_ROLE_SANDBOX_EXEC" "$@"

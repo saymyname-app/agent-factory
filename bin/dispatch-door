@@ -53,7 +53,19 @@
 #     other at publish time; hot-paths.json instead names files two tickets
 #     must never hold at once even when neither declared the other in scope,
 #     so this is a dispatch-time check, not a publish-time one.
-# Both are transient: nothing here stops a running session, and a deferred
+# It also refuses a delivery role -- author, reviewer, Evaluator
+# (config/delivery-roles.json) -- on a provider where the loading of that
+# role's skills was never tried (T03, af-pbxbgj, Spec af-wf4w5r §1).
+# `--role <role>` sends the bead to the role's own agent instead of the
+# project's sling_target; the door then reads the provider that agent would
+# run on right now from bin/provider-failover and asks bin/role-adoption-trial
+# for a passing record for that role, that provider and the role's current
+# distribution. No record, a failed one, or one taken on another distribution
+# is a permanent refusal: a provider switch must not send a session out
+# without its skills. A project whose sling_target is itself a role agent is
+# held to the same rule without --role.
+#
+# Both deferrals are transient: nothing here stops a running session, and a deferred
 # dispatch is simply retried the next time the Mayor dispatches. `fail`
 # below exits 2 for a permanent refusal; `defer` exits 75 (EX_TEMPFAIL) so a
 # caller can tell the two apart.
@@ -68,6 +80,7 @@ ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}
 GC_BIN="${GC_BIN:-gc}"
 CONFIG_DIR="${DISPATCH_DOOR_CONFIG_DIR:-$ROOT/config/projects}"
 PROVIDER_FAILOVER_BIN="${DISPATCH_DOOR_PROVIDER_FAILOVER_BIN:-$ROOT/bin/provider-failover}"
+ROLE_TRIAL_BIN="${DISPATCH_DOOR_ROLE_TRIAL_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/role-adoption-trial}"
 HOT_PATHS_FILE="${DISPATCH_DOOR_HOT_PATHS_FILE:-$ROOT/config/hot-paths.json}"
 MEMINFO_FILE="${DISPATCH_DOOR_MEMINFO_FILE:-/proc/meminfo}"
 MEM_MIN_KIB="${DISPATCH_DOOR_MEM_MIN_KIB:-1572864}"  # 1.5 GiB
@@ -78,7 +91,7 @@ SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 usage() {
   cat >&2 <<'USAGE'
-usage: dispatch-door <bead-id> --rig <project-name> --formula <formula> [--dry-run]
+usage: dispatch-door <bead-id> --rig <project-name> --formula <formula> [--role <role>] [--dry-run]
 
 The one door for every dispatch: validates <project-name> against
 config/projects/<project-name>.toml, validates <formula> against that
@@ -87,8 +100,14 @@ same file's `sling_target`, and dispatches with --reassign. Stamps
 gc.dispatched_via on the routed bead so bin/dispatch-door-guard can detect
 a raw `gc sling` that bypassed this door.
 
+--role author|reviewer|evaluator dispatches to that delivery role's agent
+(config/delivery-roles.json) instead of the project's sling_target, and only
+when bin/role-adoption-trial holds a passing trial for the role on the
+provider it would run on.
+
 Exits 2 on a permanent refusal (invalid rig/formula, a planning-plane bead, a proposal-labelled
-bead, total provider exhaustion). Exits 75 on a deferral -- low guest
+bead, total provider exhaustion, a delivery role on a provider with no
+passing adoption trial). Exits 75 on a deferral -- low guest
 memory, or the bead's scope touching a hot path an in-progress ticket
 already holds -- which is transient and safe to retry on the next dispatch.
 USAGE
@@ -134,6 +153,7 @@ shift
 
 RIG=""
 FORMULA=""
+ROLE=""
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
@@ -146,6 +166,11 @@ while [ $# -gt 0 ]; do
     --formula)
       [ $# -ge 2 ] || fail "--formula requires a formula name"
       FORMULA=$2
+      shift 2
+      ;;
+    --role)
+      [ $# -ge 2 ] || fail "--role requires a delivery role name"
+      ROLE=$2
       shift 2
       ;;
     --dry-run)
@@ -187,7 +212,19 @@ done
 [ "$formula_ok" -eq 1 ] \
   || fail "formula '$FORMULA' is not valid for '$RIG' (allowed: $formulas_csv)"
 
-if [ "$rig_dir" = "." ]; then
+# A delivery role names its own city-scoped agent; otherwise the role (if
+# any) is whatever the project's sling_target happens to be.
+role_agent=""
+if [ -n "$ROLE" ]; then
+  role_agent=$(jq -r --arg r "$ROLE" '.roles[$r].agent // empty' "$ROOT/config/delivery-roles.json" 2>/dev/null) || role_agent=""
+  [ -n "$role_agent" ] || fail "'$ROLE' is not a delivery role in config/delivery-roles.json"
+  target="$role_agent"
+elif [ -f "$ROOT/config/delivery-roles.json" ]; then
+  ROLE=$(jq -r --arg a "$target" '.roles | to_entries[] | select(.value.agent == $a) | .key' "$ROOT/config/delivery-roles.json" 2>/dev/null | head -n1) || ROLE=""
+  [ -n "$ROLE" ] && role_agent="$target"
+fi
+
+if [ "$rig_dir" = "." ] || [ -n "$role_agent" ]; then
   qualified_target="$target"
 else
   qualified_target="$RIG/$target"
@@ -210,6 +247,17 @@ if [ -n "$provider_status_json" ]; then
     [ -n "$bead_tracking" ] && detail="$detail (see gc bd show $bead_tracking, NEEDS BENJAMIN)"
     fail "$BEAD_ID dispatch refused: $detail"
   fi
+fi
+
+if [ -n "$role_agent" ]; then
+  role_provider=""
+  if [ -n "$provider_status_json" ]; then
+    role_provider=$(printf '%s' "$provider_status_json" | jq -r --arg t "$role_agent" '.targets[$t].effective // empty' 2>/dev/null) || role_provider=""
+  fi
+  [ -n "$role_provider" ] \
+    || fail "$BEAD_ID dispatch refused: no effective provider is known for delivery role '$ROLE' (agent $role_agent) -- bin/provider-failover reports none, so the door cannot tell where the session would run"
+  role_reason=$(FACTORY_ROOT="$ROOT" "$ROLE_TRIAL_BIN" check --role "$ROLE" --provider "$role_provider" 2>&1) \
+    || fail "$BEAD_ID dispatch refused: $role_reason -- run bin/role-adoption-trial run --role $ROLE, or keep the role on a tried provider"
 fi
 
 if [ -r "$MEMINFO_FILE" ]; then

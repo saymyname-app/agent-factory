@@ -69,6 +69,31 @@ DISABLE_AUTOUPDATER = "1"
 permission_mode = "unrestricted"
 effort = "medium"
 
+# Read-only profile for the delivery roles that must not write: the reviewer
+# and the Evaluator (T03, af-pbxbgj, Spec af-wf4w5r §1). Same account, model
+# and effort as [providers.claude]; the only difference is `command`: gc 1.4.1
+# has no read-only switch for an agent, so the session is launched through
+# bin/delivery-role-sandbox, which runs the real binary (named in
+# DELIVERY_ROLE_SANDBOX_EXEC) with every path read-only except the session's
+# own work directory, provider state, city runtime and tracker, and without a
+# push credential. bin/role-adoption-trial proves it on a real session and
+# bin/dispatch-door refuses a read-only role on a provider with no such proof.
+[providers.claude-readonly]
+base = "builtin:claude"
+command = "/home/benja/agent-factory/bin/delivery-role-sandbox"
+accept_startup_dialogs = true
+args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode",
+               "--model", "claude-opus-5-5"]
+
+[providers.claude-readonly.env]
+CLAUDE_CONFIG_DIR = "/home/benja/.claude"
+DISABLE_AUTOUPDATER = "1"
+DELIVERY_ROLE_SANDBOX_EXEC = "/home/benja/.local/bin/claude"
+
+[providers.claude-readonly.option_defaults]
+permission_mode = "unrestricted"
+effort = "high"
+
 # Cheapest Claude tier (~$1/$5 per 1M tokens) for
 # genuinely low-judgment, high-volume work: classification, triage, simple
 # deterministic-ish checks. Not yet assigned to any agent — the natural
