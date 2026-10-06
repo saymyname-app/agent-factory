@@ -86,8 +86,8 @@
 #                              recorded answer, clear gc.needs_benjamin and
 #                              any Mayor-first paging state on <bead>, and
 #                              note the clearance with its time
-                             (gc.escalation_cleared_at, which the Cockpit
-                             journal reads). Prefer `repondre` when
+#                              (gc.escalation_cleared_at, which the Cockpit
+#                              journal reads). Prefer `repondre` when
 #                              there is an answer to record. Reopens a
 #                              parked-blocked <bead> like `repondre`.
 #   list                       Read-only: print the NEEDS BENJAMIN list
