@@ -1,0 +1,2 @@
+Need: What the publication door demands of a draft that declares the new-flow contract (declared kind with no default, demonstration line in its own field, criteria that name their entry point, observable and what would make them false), how a draft declares it, what a refusal lists, and what a published new-flow convoy carries (mark, kind, demonstration line)
+Read: `ENTRY_CONTRACT.md`, `CONVOY_STATE.md`, `./bin/ticket-graph-publish`, `tests/ticket-graph-publish-entry-contract-test.py`, `tests/ticket-graph-publish-new-flow-real-tracker-test.sh` (local-only)

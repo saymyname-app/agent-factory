@@ -1,0 +1,53 @@
+# Brouillon de graphe conforme au contrat du nouveau flux (Spec af-wf4w5r §2),
+# sur le produit synthétique de la Fixture City : une page servie et une API.
+# Entrée de tests/ticket-graph-publish-entry-contract-test.py et de l'essai
+# sur le vrai tracker (tests/ticket-graph-publish-new-flow-real-tracker-test.sh).
+flow_contract: new-flow/v1
+tickets:
+- id: T1
+  kind: prefactoring
+  title: Un seul chargeur pour les jeux de données d'état
+  blocked_by: []
+  target_rigs: [fixture_city]
+  what_it_delivers: >-
+    Le produit lit ses jeux de données d'état par un seul chargeur, sans changer
+    ce qu'il sert.
+  unblocks: T2
+  acceptance_criteria:
+  - entry_point: "GET /api/items sur le produit lancé avec le jeu de données « contenu »"
+    observable: "la réponse JSON liste les mêmes éléments, dans le même ordre, qu'avant le changement"
+    false_if: "un élément manque, s'ajoute ou change de place"
+- id: T2
+  kind: vertical_slice
+  title: La page d'accueil liste les éléments
+  blocked_by: [T1]
+  target_rigs: [fixture_city]
+  what_it_delivers: >-
+    La page d'accueil du produit affiche la liste des éléments servis par l'API.
+  demonstration_line: >-
+    Sur le produit lancé avec le jeu de données « contenu », la page d'accueil
+    (GET /) affiche les trois éléments « Alpha », « Bêta » et « Gamma ».
+  acceptance_criteria:
+  - entry_point: "GET / sur le produit lancé avec le jeu de données « contenu »"
+    observable: "la région « liste » contient trois lignes, libellées « Alpha », « Bêta », « Gamma »"
+    false_if: "une ligne manque, ou la région « liste » est absente de la page"
+  - entry_point: "GET / sur le produit lancé avec le jeu de données « vide »"
+    observable: "la région « liste » affiche le libellé « Aucun élément »"
+    false_if: "la région est vide, ou la page répond par une erreur"
+- id: T3
+  kind: repair
+  title: L'API rend de nouveau le champ « label »
+  blocked_by: [T2]
+  target_rigs: [fixture_city]
+  what_it_delivers: >-
+    L'API rend de nouveau le champ « label » de chaque élément.
+  restores:
+    kind: user_story
+    ref: "user story 2"
+  demonstration_line: >-
+    Sur le produit lancé, GET /api/items rend pour chaque élément un champ
+    « label » non vide.
+  acceptance_criteria:
+  - entry_point: "GET /api/items sur le produit lancé avec le jeu de données « contenu »"
+    observable: "chaque élément de la réponse JSON porte un champ « label » non vide"
+    false_if: "un élément n'a pas de champ « label », ou le champ est vide"

@@ -69,6 +69,10 @@ T1=$(gc bd create --title "ticket d'essai 1" --type task --silent 2>/dev/null)
 T2=$(gc bd create --title "ticket d'essai 2" --type task --silent 2>/dev/null)
 PLAIN=$(gc bd create --title "convoi sans marque" --type convoy --silent 2>/dev/null)
 T3=$(gc bd create --title "ticket d'un convoi sans marque" --type task --silent 2>/dev/null)
+# A ticket is marked with its kind (T05); a prefactoring needs no demonstration line.
+for ticket in "$T1" "$T2" "$T3"; do
+  gc bd update "$ticket" --set-metadata gc.ticket_kind=prefactoring >/dev/null
+done
 gc bd dep add "$CONVOY" "$T1" --type tracks >/dev/null
 gc bd dep add "$CONVOY" "$T2" --type tracks >/dev/null
 gc bd dep add "$PLAIN" "$T3" --type tracks >/dev/null

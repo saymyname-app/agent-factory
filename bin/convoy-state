@@ -4,13 +4,14 @@
 Spec af-wf4w5r §0 rule 2: the state of a delivery lives in the tracker, never
 in a session. This command is the only reader and writer of that state for a
 convoy that carries the new-flow mark: the mark of the convoy and of its
-tickets, a ticket's branch and Ticket Exit, its verdicts (each tied to a
-commit), its counters, its evidence fingerprints and its gate records. No
-other script invents a `gc.flow.*` field: a missing field is added here.
+tickets, a ticket's kind and demonstration line (T05), its branch and Ticket
+Exit, its verdicts (each tied to a commit), its counters, its evidence
+fingerprints and its gate records. No other script invents a `gc.flow.*`
+field: a missing field is added here.
 
     convoy-state list
     convoy-state show CONVOY [--repo DIR]
-    convoy-state mark CONVOY
+    convoy-state mark CONVOY [--demonstration-line TICKET=LINE ...]
     convoy-state set-branch   CONVOY TICKET --branch NAME
     convoy-state set-exit     CONVOY TICKET --exit EXIT
     convoy-state set-verdict  CONVOY TICKET --kind KIND --state STATE --commit SHA
@@ -52,6 +53,10 @@ GC_BIN = os.environ.get("GC_BIN", "gc")
 MARK = "new-flow/v1"
 PREFIX = "gc.flow."
 KEY_MARK = PREFIX + "mark"
+KEY_DEMONSTRATION = PREFIX + "demonstration_line"
+# The kind is the one entry-contract field the publication door has always
+# written (`gc.ticket_kind`); this command reads it, and never writes it.
+KEY_KIND = "gc.ticket_kind"
 KEY_BRANCH = PREFIX + "branch"
 KEY_EXIT = PREFIX + "exit"
 VERDICT_PREFIX = PREFIX + "verdict."
@@ -59,6 +64,8 @@ COUNTER_PREFIX = PREFIX + "counter."
 EVIDENCE_PREFIX = PREFIX + "evidence."
 GATE_PREFIX = PREFIX + "gate."
 
+TICKET_KINDS = ("vertical_slice", "prefactoring", "repair")
+KINDS_WITH_DEMONSTRATION = ("vertical_slice", "repair")
 EXITS = ("finished", "planning_exception", "operator_request", "technically_blocked", "interrupted")
 VERDICT_KINDS = ("test_review", "code_review", "evaluation", "fidelity")
 VERDICT_STATES = ("favorable", "unfavorable")
@@ -204,6 +211,29 @@ def check_ticket_counters(counters: dict[str, int]) -> None:
         )
 
 
+def valid_kind(value: Any) -> str:
+    if value is None:
+        raise Refusal(f"genre absent (attendu : {', '.join(TICKET_KINDS)} ; aucun genre par défaut)")
+    return one_of(value, TICKET_KINDS, "genre")
+
+
+def valid_demonstration_line(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip() or "\n" in value:
+        raise Refusal(f"ligne de démonstration absente ou mal formée : {value!r} (attendu : une ligne non vide)")
+    return value
+
+
+def check_entry_fields(kind: str, line: Any) -> None:
+    """Spec §2: a slice and a repair carry a demonstration line; a
+    prefactoring changes no behavior, so it has nothing to demonstrate."""
+    if kind in KINDS_WITH_DEMONSTRATION:
+        if line is None:
+            raise Refusal(f"{kind} sans ligne de démonstration")
+        valid_demonstration_line(line)
+    elif line is not None:
+        raise Refusal("un prefactoring ne porte pas de ligne de démonstration : il ne change aucun comportement")
+
+
 def stored_record(raw: Any, required: tuple[str, ...], optional: tuple[str, ...] = ()) -> dict[str, Any]:
     """A record this command wrote: a JSON object with exactly the known fields."""
     if not isinstance(raw, str):
@@ -329,6 +359,23 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     elif mark != MARK:
         flag(KEY_MARK, f"marque inconnue : {mark!r}")
 
+    kind = metadata.get(KEY_KIND)
+    line = metadata.get(KEY_DEMONSTRATION)
+    out["kind"], out["demonstration_line"] = kind, line
+    try:
+        valid_kind(kind)
+    except Refusal as exc:
+        # No default: an unknown kind is not rendered as a kind.
+        out["kind"] = None if kind is None else {"unruled": str(exc), "raw": kind}
+        flag(KEY_KIND, str(exc))
+    else:
+        try:
+            check_entry_fields(kind, line)
+        except Refusal as exc:
+            if line is not None:
+                out["demonstration_line"] = {"unruled": str(exc), "raw": line}
+            flag(KEY_DEMONSTRATION, str(exc))
+
     branch = metadata.get(KEY_BRANCH)
     if branch is not None and not (isinstance(branch, str) and BRANCH_RE.match(branch)):
         flag(KEY_BRANCH, f"branche mal formée : {branch!r}")
@@ -352,7 +399,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     gates: dict[str, Any] = {}
     groups = ((VERDICT_PREFIX, verdicts), (EVIDENCE_PREFIX, evidence), (GATE_PREFIX, gates))
     for key in sorted(metadata):
-        if not key.startswith(PREFIX) or key in (KEY_MARK, KEY_BRANCH, KEY_EXIT):
+        if not key.startswith(PREFIX) or key in (KEY_MARK, KEY_DEMONSTRATION, KEY_BRANCH, KEY_EXIT):
             continue
         raw = metadata[key]
         group, name = next(((target, key[len(prefix):]) for prefix, target in groups if key.startswith(prefix)), (None, ""))
@@ -463,19 +510,53 @@ def marked_ticket(convoy_id: str, ticket_id: str | None) -> dict[str, Any]:
     raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {convoy_id}")
 
 
+def demonstration_lines(entries: list[str], tickets: list[dict[str, Any]], convoy_id: str) -> dict[str, str]:
+    """The `--demonstration-line TICKET=LINE` entries, by ticket id."""
+    tracked = {ticket.get("id") for ticket in tickets}
+    lines: dict[str, str] = {}
+    for entry in entries:
+        ticket_id, sep, line = entry.partition("=")
+        if not sep or not ticket_id:
+            raise Refusal(f"--demonstration-line mal formé : {entry!r} (attendu : TICKET=LIGNE)")
+        if ticket_id not in tracked:
+            raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {convoy_id}")
+        if ticket_id in lines:
+            raise Refusal(f"deux lignes de démonstration pour le ticket {ticket_id}")
+        lines[ticket_id] = valid_demonstration_line(line)
+    return lines
+
+
 def cmd_mark(args: argparse.Namespace) -> int:
     convoy, tickets = load_convoy(args.convoy)
+    lines = demonstration_lines(args.demonstration_line, tickets, args.convoy)
     writes: list[tuple[str, dict[str, Any]]] = []
     for bead, counters in [*((ticket, TICKET_COUNTERS) for ticket in tickets), (convoy, CONVOY_COUNTERS)]:
         metadata = metadata_of(bead)
         mark = metadata.get(KEY_MARK)
         if mark not in (None, MARK):
             raise Refusal(f"{UNRULED} : {bead['id']} porte une marque inconnue ({mark!r})")
+        values: dict[str, Any] = {}
+        if bead is not convoy:
+            # A ticket is marked with its entry fields or not at all: a marked
+            # slice without its demonstration line would be an "état sans règle".
+            stored, given = metadata.get(KEY_DEMONSTRATION), lines.get(bead["id"])
+            if stored is not None and given is not None and stored != given:
+                raise Refusal(
+                    f"le ticket {bead['id']} porte déjà une ligne de démonstration ({stored!r}) : "
+                    "elle est gelée avec le graphe approuvé et ne se réécrit pas"
+                )
+            try:
+                check_entry_fields(valid_kind(metadata.get(KEY_KIND)), stored if stored is not None else given)
+            except Refusal as exc:
+                raise Refusal(f"ticket {bead['id']} : {exc}") from exc
+            if stored is None and given is not None:
+                values[KEY_DEMONSTRATION] = given
         if mark is None:
             # Counters start at an explicit 0: a counter that is absent later
             # is an "état sans règle", never read as a default.
-            values: dict[str, Any] = {KEY_MARK: MARK}
+            values[KEY_MARK] = MARK
             values.update({COUNTER_PREFIX + name: 0 for name in counters if COUNTER_PREFIX + name not in metadata})
+        if values:
             writes.append((bead["id"], values))
     # Tickets first, the convoy last: the convoy's mark is what makes this a
     # new-flow convoy, so an interrupted marking leaves an unmarked convoy.
@@ -600,7 +681,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("list").set_defaults(handler=cmd_list)
     p = command("show", cmd_show, ticket=False)
     p.add_argument("--repo", default=".")
-    command("mark", cmd_mark, ticket=False)
+    command("mark", cmd_mark, ticket=False).add_argument("--demonstration-line", action="append", default=[])
     command("set-branch", cmd_set_branch).add_argument("--branch")
     command("set-exit", cmd_set_exit).add_argument("--exit")
     p = command("set-verdict", cmd_set_verdict)

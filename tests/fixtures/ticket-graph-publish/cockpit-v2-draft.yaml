@@ -1,0 +1,655 @@
+# Copie figée de la description du brouillon de graphe du Cockpit V2 (bead af-i67vl0,
+# digest approuvé sha256:c4edfe824110f072ddfa4af53be5bb888e880ad01008d63370c8e41346f68a88, 2026-09-30).
+# Entrée du test tests/ticket-graph-publish-entry-contract-test.py, qui la redéclare au
+# contrat du nouveau flux : la porte de publication doit la refuser ticket par ticket.
+# Brouillon de graphe de tickets — C01 : Cockpit V2 de l'usine
+# Spec approuvée af-oohx2x (carte af-arlph5), découpée par /to-tickets (mattpocock/skills c55ee46) le 2026-09-30.
+source:
+  spec: af-oohx2x
+  spec_digest: sha256:eb0208f42a0c18efe748d4283dc7f936aa2d3bebba4e542be259709a6e011637
+  planning_map: af-arlph5
+  planning_run_target: C01
+decisions_to_tickets:
+  - intent: "« les vérifications visuelles ne sont présentes que pendant la plannification lors des prototypes de wayfinder, pas lors de l'implementation qui doit être autonome » (Benjamin, chat /to-tickets, 2026-09-30)"
+    mechanism: "Aucune retenue humaine sur les PR d'écran. Le worker joint des captures PC et iPhone, le relecteur indépendant les compare à la variante D. Le jugement de Benjamin sur les captures (Spec, « hors test automatique ») se fait pendant les 7 jours d'usage réel qui clôturent C01, pas ticket par ticket. Le prototype de la page projet (T21) reste une validation par Benjamin, parce que c'est un prototype."
+  - intent: "« 1-3 ok, story 20 hors V1 » (Benjamin, chat /to-tickets, 2026-09-30)"
+    mechanism: "(1) Cinq fusions : 25 tickets. (2) La roadmap structurée du dépôt de connaissance SayMyName est faite hors graphe par une session opérateur une fois T03 fusionné ; ce dépôt n'est pas un rig. (3) Les trois corrections usine préalables à l'arrêt propre (T08, T09, T10) n'ont pas d'ordre entre elles et bloquent seulement T24. La story 20 (nouveauté d'une Spec par rapport à la carte) est hors V1."
+out_of_graph:
+  - "Session opérateur, dépôt Say-my-name-product, une fois T03 fusionné : roadmap.toml SayMyName au format de T03 (étapes B et C), roadmap.md qui cite les ids, retrait de A1–A7 (garder « B1 attend l'étape usine X »), retrait du rituel architecture:factory de rituals.md."
+  - "Benjamin, pendant la livraison : revue et fusion du PR retenu de T04 (projets réels) ; choix de variante de T21."
+  - "Benjamin, après la livraison : lancer l'assistant de T25 ; essai réel d'arrêt propre et de redémarrage (mode essai de T24)."
+  - "Clôture de C01 (Spec, point 3 et 4) : 7 jours consécutifs d'usage réel conformes, puis la session qui clôt C01 retire le paragraphe des alertes intérimaires du AGENTS.md de SayMyName."
+global_execution_contract:
+  context: "Chaque ticket reçoit un contexte neuf et la Spec approuvée af-oohx2x (bd show af-oohx2x), en particulier Implementation Decisions et Testing Decisions ; le prototype de l'accueil (variante D) est sur la branche prototype/c01-home-screen, dossier prototypes/c01-home-screen/ ; le vocabulaire vient de CONTEXT.md."
+  test_method: "Petits cycles rouge puis vert sur une interface publique : le cockpit est testé en démarrant son processus sur des sources simulées (faux gc avec API et SSE, faux bd, faux gh, faux clone git, horloge simulée, faux adaptateur Pushover qui enregistre, faux heartbeat) ; une porte est testée par sa ligne de commande contre le faux bd. Aucun test n'appelle une fonction interne ni n'atteint la cité live, Pushover ou Healthchecks.io. La batterie de l'usine tourne en CI à chaque tranche."
+  visual_check: "Tout ticket qui change un écran joint au PR des captures PC (1440 px) et iPhone (390 px), en clair et en sombre ; le relecteur indépendant les compare à la variante D (pour la page projet : à la variante choisie en T21). Aucune validation humaine pendant l'implémentation."
+  language: "Tout texte visible à l'écran ou dans un push est en français (Operator Language), sans identifiant ni terme interne hors du Cockpit Lexicon ; le Maire n'est jamais nommé à l'écran."
+  review: "Un relecteur indépendant vérifie pour chaque tranche la fidélité à la Spec et la qualité de conception."
+  readiness: "Un bloqueur n'est levé qu'une fois ses vérifications et sa revue passées et son code fusionné sur main."
+  declared_scope: "Chaque ticket déclare dans ses chemins de scope (métadonnées, pas le texte du ticket) les fichiers qu'il compte toucher. Toucher un fichier hors scope n'est permis que noté dans le ticket avec la raison."
+  repair: "La réparation technique reste dans le ticket ; un changement de comportement ou de topologie lève une Planning Exception."
+  safety: "Pas de production, d'envoi réel, de publication externe, de dépense, de destruction irrécupérable ni d'accès élargi à des données personnelles sans autorité humaine explicite ; rien n'est édité dans la racine live ; aucun test n'atteint la cité live ; aucune donnée de personne réelle dans le code, les fixtures ou les captures ; aucun secret dans git ; l'API du superviseur gc n'est jamais exposée hors de localhost ; jamais gc stop --force."
+tickets:
+- id: T01
+  kind: prefactor
+  title: Glossaire du cockpit et langue de l'opérateur
+  blocked_by: []
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - CONTEXT.md
+    - config/operator.toml
+    - bin/operator-config
+    - tests/operator-config-test.py
+  what_it_delivers: >-
+    Le glossaire de l'usine porte le vocabulaire du cockpit, et la langue de l'opérateur devient une
+    donnée lisible par le code, pour que les producteurs et le cockpit n'aient qu'un vocabulaire et
+    une langue.
+  acceptance_criteria:
+  - "CONTEXT.md définit Chantier (canonique Outcome : un Planning Run et son convoi), Operator Language, Cockpit Lexicon, Operator Action, fichier de rig, Projet (un rig appartient à un seul projet) et Roadmap Step, et ajoute l'alias « descripteur de projet » à Project Planning Profile."
+  - "Le Cockpit Lexicon liste, en alias marqués « visibles dans le cockpit », usine, projet, agent, ticket, PR, tests automatiques (CI), Spec, carte de planification, graphe de tickets, proposition, rituel, décision."
+  - "operator.toml porte language = fr ; un outil partagé pur code le lit et échoue avec un message clair si le champ manque ou est vide ; un test le pilote par sa ligne de commande."
+  - "La CI est verte."
+- id: T02
+  kind: prefactor
+  title: pr-autopilot ne fusionne jamais seul l'ajout ou le retrait d'un projet
+  blocked_by: []
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - bin/pr-autopilot
+    - tests/pr-autopilot-project-hold-test.sh
+  what_it_delivers: >-
+    Un PR qui ajoute ou retire un descripteur de projet (dossier config/project-descriptors/) reste
+    ouvert pour Benjamin, qui le fusionne lui-même, par exception à la fusion automatique de la
+    maintenance usine ; la retenue est étiquetée et expliquée une fois sur le PR, comme la retenue
+    de réversibilité existante.
+  acceptance_criteria:
+  - "Un test montre qu'un PR vert qui ajoute un descripteur de projet est retenu, étiqueté et expliqué une seule fois, et jamais fusionné."
+  - "Un test montre la même chose pour un PR qui retire un descripteur de projet."
+  - "Un test montre qu'un PR qui modifie seulement un descripteur existant, ou qui ne touche aucun descripteur, suit le chemin habituel."
+  - "Les tests existants de pr-autopilot passent sans changement."
+  - "La CI est verte."
+- id: T03
+  kind: vertical_slice
+  title: Roadmap structurée de l'usine et ses rituels
+  blocked_by: [T01]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - docs/roadmap.toml
+    - docs/ROADMAP.md
+    - docs/rituals.toml
+    - bin/project-roadmap
+    - bin/rituals-status
+    - tests/project-roadmap-test.py
+    - tests/rituals-status-test.py
+  what_it_delivers: >-
+    Une roadmap se lit sans interpréter de prose : un format structuré (id, titre, fini quand, ordre,
+    statut à faire / en cours / fait) vérifié par un outil pur code, et la première roadmap à ce
+    format, celle de l'usine, qui reprend les étapes A1–A7 aujourd'hui dans la roadmap SayMyName.
+    Les rituels de l'usine déménagent avec elle, avec un statut lisible par le code.
+  acceptance_criteria:
+  - "Un test montre que l'outil de roadmap accepte une roadmap valide et refuse un champ manquant, un id en double, un ordre en double et un statut inconnu, avec un message qui nomme l'étape fautive."
+  - "La roadmap de l'usine contient ses étapes (A1–A7 et C01 avec leur statut réel du 2026-09-30, repris de la roadmap SayMyName sur origin), et ROADMAP.md garde l'intention en citant les ids."
+  - "planning_run_target peut désigner l'id d'une Roadmap Step : l'outil le vérifie pour une valeur donnée."
+  - "Le rituel architecture:factory (seuil de PR fusionnés depuis une date de base, pause possible jusqu'à un événement) est défini côté usine ; un outil pur code sort son statut (dû, ok, en pause) en JSON ; un test le pilote contre un faux gh."
+  - "La CI est verte."
+- id: T04
+  kind: vertical_slice
+  title: Descripteur de projet étendu, un rig = un projet
+  blocked_by: [T01, T02, T03]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - bin/project-planning-profile
+    - lib/project_registry.sh
+    - config/project-descriptors/**
+    - tests/project-planning-profile-test.py
+    - tests/project-registry-test.sh
+    - tests/fixtures/project-planning-profile/**
+    - docs/PROJECT_PLANNING_PROFILE.md
+  what_it_delivers: >-
+    Tout projet est déclaré à l'usine par son descripteur (Project Planning Profile étendu) et
+    l'usine ne nomme aucun projet dans son code : project_id (clé projet), nom affiché en français,
+    rigs, pointeur vers le dépôt de connaissance, chemin de la roadmap structurée, commande de statut
+    des rituels, branche de promotion par rig (optionnelle). Les fichiers de config/projects restent
+    des fichiers de rig. Les descripteurs réels de l'usine et de SayMyName arrivent dans un PR que
+    T02 retient pour Benjamin.
+  acceptance_criteria:
+  - "Un test montre qu'un descripteur valide est accepté et qu'un champ obligatoire manquant ou une branche de promotion vers un rig non déclaré est refusé ; aucun champ de production ni de langue n'existe."
+  - "Un test montre que le contrôle du registre refuse un rig sans projet et un rig déclaré dans deux projets, et que ce contrôle tourne en CI."
+  - "L'outil liste les projets déclarés et sort un descripteur en JSON ; human-approver continue de répondre comme avant."
+  - "Descripteur agent-factory : rig agent-factory, pas de branche de promotion, sa roadmap et son statut de rituels de T03. Descripteur saymyname : rigs saymyname-backend et saymyname-frontend avec promotion dev vers main, dépôt de connaissance saymyname-app/Say-my-name-product, roadmap knowledge/roadmap.toml, rituels tools/rituals-status.sh."
+  - "La CI est verte."
+- id: T05
+  kind: vertical_slice
+  title: Clé projet de la carte au convoi, titre d'affichage du graphe
+  blocked_by: [T04, T06]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - bin/planning-map
+    - bin/spec-approve
+    - bin/ticket-graph-publish
+    - tests/planning-map-test.py
+    - tests/spec-approve-test.py
+    - tests/ticket-graph-publish-test.py
+    - tests/fixtures/planning-map/**
+    - tests/fixtures/spec-approve/**
+    - docs/agents/issue-tracker.md
+    - docs/PLANNING_MAP.md
+    - docs/PLANNING_RUN.md
+  what_it_delivers: >-
+    Chaque chantier est rattaché à un projet sans deviner : la carte reçoit la clé projet à sa
+    création (nouvelle commande de création de carte, qui refuse un projet non déclaré), la Spec et
+    le brouillon de graphe en héritent, ticket-graph-publish la propage au convoi et exige un titre
+    d'affichage dans la langue de l'opérateur. Les cartes encore ouvertes sont rétro-remplies. La
+    remontée à Benjamin d'un reslice refusé passe par les champs obligatoires de T06.
+  acceptance_criteria:
+  - "Un test montre que la création de carte pose la clé projet et refuse un projet absent des descripteurs ; la doc du tracker utilise cette commande au lieu du bd create brut."
+  - "Un test montre que spec-approve pose sur la Spec la clé de sa carte et refuse une Spec dont la clé contredit celle de sa carte ; une Spec sans carte garde sa propre clé."
+  - "Un test montre que bd-publish refuse un brouillon sans clé ou sans titre d'affichage, ou dont la langue déclarée n'est pas l'Operator Language, et que le convoi publié porte la clé projet."
+  - "Un test montre que la remontée d'un reslice refusé fournit quoi, pourquoi, que faire et des options avec conséquence."
+  - "Une commande de rétro-remplissage, testée, pose la clé sur les seules cartes ouvertes ; elle a été lancée une fois sur les cartes ouvertes et son résultat est noté dans le ticket."
+  - "La CI est verte."
+- id: T06
+  kind: vertical_slice
+  title: escalation-door refuse une demande incompréhensible et enregistre la réponse
+  blocked_by: [T01]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - bin/escalation-door
+    - tests/escalation-door-test.sh
+    - tests/fixtures/escalation-door/**
+    - bin/factory-guard
+    - bin/provider-failover
+    - agents/mayor/prompt.template.md
+  what_it_delivers: >-
+    Une demande de décision à Benjamin est compréhensible sans agent et sa réponse est enregistrée :
+    la commande benjamin refuse l'écriture sans quoi / pourquoi / que faire, sans options (chacune
+    avec sa conséquence, au plus une « Recommandé » avec sa raison), sans horodatage, sans drapeau
+    bloquant éventuel ou dans une autre langue que l'Operator Language ; une nouvelle commande
+    répondre écrit l'option choisie sur le bead, efface le NEEDS BENJAMIN et réveille le Maire avec
+    la réponse. Tous les appelants actuels fournissent ces champs.
+  acceptance_criteria:
+  - "Un test par refus (champ manquant, ligne de plus de 140 caractères, option sans conséquence, deux « Recommandé », recommandation sans raison, langue différente) montre que le bead reste intact."
+  - "Un test montre qu'une demande complète est écrite sur le bead avec ses champs, son horodatage et son drapeau bloquant, et que list l'affiche comme avant."
+  - "Un test montre que répondre écrit l'option choisie (commentaire et métadonnée : option, quand, acteur), efface le NEEDS BENJAMIN et réveille le Maire avec « Benjamin a répondu b sur … », et refuse une option inconnue."
+  - "factory-guard, provider-failover et le prompt du Maire fournissent les champs, avec des phrases fixes en français pour les événements machine ; leurs tests passent."
+  - "Une escalade Mayor-first promue par sweep garde ses champs s'ils existent ; sinon elle reste une demande incomplète, sans échec."
+  - "La CI est verte."
+- id: T07
+  kind: vertical_slice
+  title: Propositions compréhensibles, acceptées ou rejetées avec raison
+  blocked_by: [T06]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - bin/proposal-door
+    - tests/proposal-door-test.py
+    - bin/overlap-conflict-log
+    - lib/overlap_conflict_log.py
+    - tests/overlap-conflict-log-test.py
+    - bin/upstream-skills-check
+    - tests/upstream-skills-check-test.sh
+    - agents/mayor/prompt.template.md
+    - bin/escalation-door
+  what_it_delivers: >-
+    Une porte unique de proposition crée une proposition seulement avec les mêmes champs
+    obligatoires que les demandes (dans l'Operator Language), et la fait passer d'un état à l'autre :
+    accepter (vers « à planifier »), rejeter avec une raison obligatoire, reporter. Les trois
+    producteurs actuels (journal des conflits de recouvrement, contrôle des skills amont, Maire)
+    passent par elle.
+  acceptance_criteria:
+  - "Un test montre qu'une proposition sans ses champs est refusée et qu'une proposition complète est créée avec le label proposal."
+  - "Un test montre accepter (état « à planifier »), rejeter sans raison refusé, rejeter avec raison, reporter jusqu'à une heure, chacun tracé sur le bead (commentaire et métadonnée, acteur)."
+  - "Le compteur de propositions en attente ne compte plus les propositions acceptées ou rejetées."
+  - "Les trois producteurs utilisent la porte ; leurs tests passent ; les propositions existantes sans champs restent lisibles sans réécriture."
+  - "La CI est verte."
+- id: T08
+  kind: vertical_slice
+  title: Un worker s'arrête quand la cité est suspendue
+  blocked_by: []
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - agents/factory-worker/**
+    - tests/factory-worker-suspended-test.sh
+  what_it_delivers: >-
+    Quand la cité est suspendue, un worker termine son ticket en cours (PR ouverte, travail libéré)
+    puis met fin à sa session, au lieu de reboucler sur CLAIM_REJECTED ; un worker sans ticket
+    s'arrête tout de suite.
+  acceptance_criteria:
+  - "Un test montre qu'un worker sans ticket, face à une cité suspendue, met fin à sa session sans nouvelle tentative de claim."
+  - "Un test montre qu'un worker avec un ticket en cours le termine (PR ouverte) avant de s'arrêter."
+  - "Hors suspension, un refus de claim se comporte comme avant."
+  - "La CI est verte."
+- id: T09
+  kind: vertical_slice
+  title: Pas de réattribution après un arrêt volontaire
+  blocked_by: []
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - bin/on-session-stranded
+    - bin/factory-orphan-sweep
+    - tests/on-session-stranded-test.sh
+    - tests/factory-orphan-sweep-order-test.sh
+  what_it_delivers: >-
+    Le travail d'une session arrêtée pendant une suspension de la cité reste assigné à cette session :
+    ni on-session-stranded ni le balayage des orphelins ne le rouvrent ni ne le réattribuent, pour
+    qu'elle le reprenne au redémarrage.
+  acceptance_criteria:
+  - "Un test montre qu'une session échouée pendant une suspension ne fait rouvrir ni signaler aucun de ses beads."
+  - "Un test montre que le balayage des orphelins garde les claims d'une session arrêtée pendant une suspension."
+  - "Hors suspension, les deux outils se comportent comme avant."
+  - "La CI est verte."
+- id: T10
+  kind: vertical_slice
+  title: Orders étalés au redémarrage
+  blocked_by: []
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - orders/**
+    - city.toml
+    - tests/orders-validate-test.sh
+    - tests/orders-restart-stagger-test.sh
+  what_it_delivers: >-
+    Après un gc resume, les orders dus reprennent étalés dans le temps au lieu de partir en rafale,
+    sans en sauter aucun ; leur cadence normale ne change pas.
+  acceptance_criteria:
+  - "Un test montre qu'après une reprise les premières exécutions des orders dus sont étalées (pas de rafale dans la première minute) et qu'aucun n'est sauté."
+  - "Un test montre que la cadence hors reprise est inchangée."
+  - "La validation des orders passe."
+  - "La CI est verte."
+- id: T11
+  kind: vertical_slice
+  title: Cockpit, modèle de lecture et fraîcheur, démarré avec l'usine
+  blocked_by: [T01]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - bin/cockpit
+    - lib/cockpit/core/**
+    - lib/cockpit/ui/base/**
+    - tests/cockpit-core-test.py
+    - tests/fixtures/cockpit/core/**
+    - bin/factory-boot
+    - docs/COCKPIT.md
+  what_it_delivers: >-
+    Le cockpit existe : un processus pur code dans WSL, séparé de gc, qui écoute 127.0.0.1 seulement,
+    tient une copie à jour (abonnement SSE à l'API du superviseur gc, lectures Beads) où chaque valeur
+    porte sa valeur, son heure de lecture, sa source et sa Freshness (à jour, périmée, inconnue, selon
+    les Validity windows gc 2 min, Beads 5 min, GitHub 10 min, rituels 1 h). La page lit cette copie
+    et affiche en tête « Tout est à jour à HH:MM (Paris) » ou les sections périmées ou inconnues, sur
+    la base visuelle de la variante D. Le démarrage de l'usine lance le cockpit s'il ne tourne pas. Ce
+    ticket construit le seam de test principal du cockpit.
+  acceptance_criteria:
+  - "Le test démarre le processus sur un faux gc (API et SSE), un faux bd et une horloge simulée, et lit ce que la page reçoit."
+  - "Un test montre le passage à jour, périmée puis inconnue au fil de l'horloge, et qu'aucune valeur n'est affichée « 0 » sans lecture fraîche ; une réponse gc partial: true n'est pas prise pour complète."
+  - "Un test montre la ligne de tête « Tout est à jour à HH:MM (Paris) » et, quand une source ne répond plus, la liste des sections périmées ou inconnues."
+  - "Le processus refuse d'écouter ailleurs que sur 127.0.0.1 ; il survit à une suspension et à un arrêt de la cité simulés."
+  - "Un test montre que le démarrage de l'usine lance le cockpit s'il ne tourne pas, et ne lance pas un second processus s'il tourne déjà."
+  - "Captures PC et iPhone, claires et sombres, jointes au PR et comparées à la variante D par le relecteur."
+  - "La CI est verte."
+- id: T12
+  kind: vertical_slice
+  title: « Ce qui t'attend » avec les NEEDS BENJAMIN et les propositions
+  blocked_by: [T11, T06, T07]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - lib/cockpit/requests/**
+    - lib/cockpit/text/**
+    - lib/cockpit/ui/home/**
+    - tests/cockpit-requests-test.py
+    - tests/fixtures/cockpit/requests/**
+  what_it_delivers: >-
+    L'accueil montre « Ce qui t'attend » : les Demandes opérateur typées venant des NEEDS BENJAMIN (À
+    faire, ou Urgent si l'émetteur les marque bloquantes pour une livraison en cours) et des
+    propositions ouvertes (Quand tu veux), triées Urgent d'abord puis de la plus ancienne à la plus
+    récente. Chaque demande montre Quoi, Pourquoi ça t'attend, Que faire, ses options avec leur
+    conséquence et au plus une « Recommandé », son projet, depuis quand et quand elle a été vérifiée,
+    et des détails repliés. Une demande sans ses champs s'affiche avec « incomplète : champ X
+    manquant » et le repli fixe. Le texte principal est contrôlé en test et à l'exécution.
+  acceptance_criteria:
+  - "Un test montre les niveaux, le tri, les champs, le projet (inconnu donne « usine »), depuis quand et vérifié à."
+  - "Un test montre qu'une demande sans champ s'affiche avec « incomplète : champ X manquant », les phrases de repli fixes de la Spec et « continuer avec un agent », et qu'un défaut du producteur est compté ; les propositions existantes sans champs s'affichent ainsi."
+  - "Un test montre « Rien ne t'attend — vérifié à HH:MM » quand la liste est vide et « Inconnu : illisible depuis HH:MM » quand la source ne répond pas."
+  - "Un test montre qu'une demande ne sort qu'à la fermeture de sa condition à la source."
+  - "Un test montre que le contrôle du texte principal refuse un identifiant, un terme interne hors lexique, une ligne de plus de 140 caractères ou un champ absent, et qu'à l'exécution un échec donne le repli et un défaut compté."
+  - "Les escalades Mayor-first non promues n'apparaissent pas dans « Ce qui t'attend »."
+  - "Captures PC et iPhone, claires et sombres, jointes au PR et comparées à la variante D par le relecteur."
+  - "La CI est verte."
+- id: T13
+  kind: vertical_slice
+  title: Acquitter, reporter, continuer avec un agent
+  blocked_by: [T12]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - lib/cockpit/actions/**
+    - lib/cockpit/access/**
+    - lib/cockpit/ui/actions/**
+    - tests/cockpit-actions-test.py
+    - tests/fixtures/cockpit/actions/**
+  what_it_delivers: >-
+    Premières Operator Actions, avec toute la sécurité d'action : POST seulement, vérification de
+    l'Origin, cookie SameSite, et exécution seulement si l'en-tête Tailscale-User-Login égale le
+    login de Benjamin lu dans le fichier hors dépôt côté Windows (sinon lecture seule). Acquitter une
+    Urgent (plus de rappel, elle reste listée), reporter une Urgent ou une À faire (1 h, 4 h, demain
+    09:00, heure libre ; une Urgent reportée reste visible grisée), copier le prompt neutre «
+    continuer avec un agent » marqué « utilise un agent (consomme des tokens) ». Un tap et « Annuler »
+    pendant 10 s. Chaque action est tracée sur sa source (bead journal pour une source sans bead) et
+    le PC et l'iPhone lisent le même état depuis ces traces.
+  acceptance_criteria:
+  - "Un test montre qu'une action sans l'en-tête, avec un autre login, en GET ou avec une mauvaise Origin est refusée sans rien écrire, et que la page reste lisible."
+  - "Un test montre qu'acquitter et reporter laissent sur le bead source un commentaire et une métadonnée (quoi, sur quoi, option ou raison, quand, acteur benjamin/cockpit) et qu'une source sans bead reçoit un bead journal."
+  - "Un test montre qu'une demande reportée revient à l'échéance, qu'une Urgent reportée reste visible grisée, et qu'« Annuler » dans les 10 s n'écrit rien."
+  - "La phrase fixe « Acquitter : plus aucun rappel, la demande reste ici. Reporter : cachée jusqu'à l'heure choisie, puis elle revient. Aucun des deux ne change rien dans l'usine. » est affichée."
+  - "Le prompt copié contient quoi, identifiants, question, dossier et commande de départ, sans fournisseur imposé ni chiffre de coût."
+  - "Une erreur se corrige par une nouvelle action tracée ; aucune trace n'est effacée ; le cockpit ne garde aucune copie locale de l'état des actions."
+  - "Captures PC et iPhone, claires et sombres, jointes au PR et comparées à la variante D par le relecteur."
+  - "La CI est verte."
+- id: T14
+  kind: vertical_slice
+  title: Répondre, trier les propositions et relancer depuis le cockpit
+  blocked_by: [T13, T06, T07]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - lib/cockpit/actions/**
+    - lib/cockpit/ui/actions/**
+    - tests/cockpit-operator-actions-test.py
+    - tests/fixtures/cockpit/operator-actions/**
+  what_it_delivers: >-
+    Benjamin débloque l'usine sans session d'agent : il répond à un NEEDS BENJAMIN en choisissant une
+    option préparée (la demande affiche ensuite « répondu b à HH:MM, en cours de traitement par
+    l'usine »), accepte, rejette avec raison ou reporte une proposition, et relance une session ou un
+    order que l'usine a mis en pause. Chaque geste demande une confirmation en deux temps et passe par
+    la porte existante ; le cockpit n'exécute jamais le contenu d'une option.
+  acceptance_criteria:
+  - "Un test montre que répondre appelle la commande répondre d'escalation-door avec l'option choisie, puis l'affichage « répondu b à HH:MM, en cours de traitement par l'usine »."
+  - "Un test montre accepter, rejeter (raison obligatoire) et reporter une proposition via la porte de proposition."
+  - "Un test montre la relance d'une session ou d'un order mis en pause par le loop-guard."
+  - "Un test montre que chacun de ces gestes exige deux temps et qu'un seul temps n'écrit rien."
+  - "Captures PC et iPhone, claires et sombres, jointes au PR et comparées à la variante D par le relecteur."
+  - "La CI est verte."
+- id: T15
+  kind: vertical_slice
+  title: Les autres demandes et le journal des demandes résolues
+  blocked_by: [T12, T04]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - lib/cockpit/requests/sources/**
+    - lib/cockpit/ui/journal/**
+    - tests/cockpit-more-requests-test.py
+    - tests/fixtures/cockpit/more-requests/**
+  what_it_delivers: >-
+    « Ce qui t'attend » couvre les autres types de la Spec : Spec ou graphe à approuver (À faire, avec
+    l'attente, un lien et un prompt à copier, jamais l'approbation dans le cockpit), rituel dû lu par
+    la commande de statut de chaque descripteur (Quand tu veux), ticket de carte HITL prêt non lancé
+    (Quand tu veux), source illisible depuis plus de 15 min (À faire), signal de type inconnu («
+    Signal non reconnu venant de … » avec le texte brut en détails). Un journal montre les demandes
+    résolues (quoi, quand, par qui ou quelle voie) ; une demande qui revient après résolution est une
+    nouvelle demande.
+  acceptance_criteria:
+  - "Un test par type montre son niveau et sa sortie à la fermeture à la source."
+  - "Un test montre qu'aucune décision de niveau Benjamin (approuver une Spec, approuver ou publier un graphe, promouvoir, dépense, secrets, exposition, production, destructif) n'a de bouton d'exécution dans le cockpit."
+  - "Un test montre qu'une source illisible depuis plus de 15 min devient une demande À faire."
+  - "Un test montre le journal des demandes résolues relu depuis les traces, et qu'une récurrence crée une nouvelle demande."
+  - "Captures PC et iPhone, claires et sombres, jointes au PR et comparées à la variante D par le relecteur."
+  - "La CI est verte."
+- id: T16
+  kind: vertical_slice
+  title: Zone santé de l'usine
+  blocked_by: [T11]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - lib/cockpit/health/**
+    - lib/cockpit/ui/health/**
+    - tests/cockpit-health-test.py
+    - tests/fixtures/cockpit/health/**
+  what_it_delivers: >-
+    La zone santé montre ce que l'usine traite elle-même et ce qui la menace, en phrases fixes :
+    « l'usine tourne une version en retard de N commits » quand la racine live est derrière
+    origin/main, une alerte quand le superviseur gc est injoignable plus de 5 min, « usine à l'arrêt ? »
+    après 60 min sans progression alors que du travail de livraison est prêt, les escalades
+    Mayor-first non promues (« l'usine essaie de corriger seule depuis 1 h 40 »), les boucles, les
+    échecs d'order et la CI rouge. Chaque section a un bouton « revérifier maintenant ».
+  acceptance_criteria:
+  - "Un test par signal montre son affichage et sa disparition au retour à la normale, sans push."
+  - "Un test montre « revérifier maintenant » qui force une lecture de la section et met à jour son heure."
+  - "Les comptes bruyants (exécutions d'orders, taille des journaux) ne sont pas affichés tels quels ; le Maire n'est jamais nommé."
+  - "Captures PC et iPhone, claires et sombres, jointes au PR et comparées à la variante D par le relecteur."
+  - "La CI est verte."
+- id: T17
+  kind: vertical_slice
+  title: Notifications iPhone par Pushover
+  blocked_by: [T12, T13]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - lib/cockpit/notify/**
+    - lib/cockpit/ui/notify/**
+    - tests/cockpit-notify-test.py
+    - tests/fixtures/cockpit/notify/**
+  what_it_delivers: >-
+    La politique de notification de la Spec, avec un seul adaptateur d'envoi (Pushover, E2E) :
+    priorité 1 pour Urgent, 0 pour À faire, jamais pour Quand tu veux ; un seul push par demande
+    (dédoublonnage persisté qui survit au redémarrage du cockpit), un nouveau seulement sur montée de
+    niveau ou réapparition ; rappel toutes les 2 h pour une Urgent ni acquittée ni fermée ; un push à
+    l'échéance d'un report au niveau d'origine ; un push de fin pour une Urgent résolue ; contenu
+    limité à la phrase fixe du type, au projet, au lien du cockpit et au quoi tronqué ; plafond de 5
+    pushes par heure puis un seul regroupé ; réessai en cas d'échec, « notification non livrée » sur
+    la demande et « canal de notification en panne » en santé après 15 min. Secrets lus dans le
+    fichier hors dépôt côté Windows ; journal des envois et bouton « envoyer une notification de test ».
+  acceptance_criteria:
+  - "Contre le faux adaptateur qui enregistre, un test montre priorités, un seul push par demande, et aucun doublon après un redémarrage du cockpit."
+  - "Un test montre le rappel 2 h, son arrêt à l'acquittement, le push à l'échéance d'un report et le push de fin d'une Urgent."
+  - "Un test montre le plafond de 5 par heure et le push regroupé « N autres demandes — voir le cockpit »."
+  - "Un test montre réessai, « notification non livrée » et la ligne santé après 15 min d'échec."
+  - "Un test montre qu'aucun push ne contient de donnée de personne réelle, de secret, de corps de bead ni de donnée produit."
+  - "Un test montre qu'un fichier secret absent ou invalide apparaît en santé ; le journal des envois et le bouton de test fonctionnent ; aucune priorité 2 n'est jamais utilisée."
+  - "La CI est verte."
+- id: T18
+  kind: vertical_slice
+  title: Heartbeat « Usine muette »
+  blocked_by: [T11]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - lib/cockpit/heartbeat/**
+    - tests/cockpit-heartbeat-test.py
+  what_it_delivers: >-
+    Le cockpit envoie un ping vide au service externe (Healthchecks.io) toutes les 5 min, seulement
+    après avoir lu avec succès ses sources principales ; l'URL du check vient du fichier hors dépôt
+    côté Windows. Un secret absent ou un ping en échec apparaît en santé. Une pause du heartbeat
+    n'existe que pour l'état « Arrêtée proprement » (branché par T23).
+  acceptance_criteria:
+  - "Contre un faux heartbeat, un test montre un ping toutes les 5 min quand les sources principales répondent et aucun ping quand l'une échoue."
+  - "Un test montre qu'un secret absent et un ping en échec apparaissent en santé."
+  - "Un test montre que le heartbeat ne se met en pause dans aucun autre état que « Arrêtée proprement »."
+  - "La CI est verte."
+- id: T19
+  kind: vertical_slice
+  title: Projets et chantiers sur l'accueil, de Cadrage à Livré
+  blocked_by: [T03, T05, T12]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - lib/cockpit/projects/**
+    - lib/cockpit/ui/projects/**
+    - tests/cockpit-projects-test.py
+    - tests/fixtures/cockpit/projects/**
+  what_it_delivers: >-
+    La section « Projets » de l'accueil montre chaque projet déclaré par son descripteur, l'étape de
+    roadmap en cours (lue sur origin via un clone que le cockpit possède, en lecture seule, avec l'âge
+    de lecture affiché) et une ligne par chantier actif avec sa barre d'étapes, de Cadrage (décisions
+    x/y) à Spec, Graphe, Livraison (mergés x/y, en cours, en PR) et Livré. La clé projet vient de la
+    carte, de la Spec, du brouillon ou du convoi ; un ticket de livraison prend le projet de son rig ;
+    une carte sans clé va sous « Sans projet » avec un défaut producteur compté.
+  acceptance_criteria:
+  - "Un test montre qu'un nouveau descripteur fait apparaître un projet sans aucun changement de code, et que le code du cockpit ne nomme aucun projet."
+  - "Un test par étape (1 à 5) montre sa condition vraie à partir du faux bd et du faux clone git."
+  - "Un test montre l'étape de roadmap en cours lue dans la roadmap structurée du projet, et « inconnu » avec l'âge quand elle est illisible."
+  - "Un test montre « Sans projet » et le défaut compté pour une carte sans clé ; les beads issue_type=spec et le modèle produit legacy ne sont pas lus."
+  - "Le clone du cockpit n'écrit jamais dans un dépôt projet et ne touche pas la copie de travail Windows."
+  - "Captures PC et iPhone, claires et sombres, jointes au PR et comparées à la variante D par le relecteur."
+  - "La CI est verte."
+- id: T20
+  kind: vertical_slice
+  title: Chantiers acceptés et promus, états, anomalies et historique
+  blocked_by: [T19, T13]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - lib/cockpit/projects/**
+    - lib/cockpit/ui/projects/**
+    - tests/cockpit-chantiers-test.py
+    - tests/fixtures/cockpit/chantiers/**
+  what_it_delivers: >-
+    Un chantier se suit jusqu'à la production : Benjamin accepte un chantier Livré d'un clic en deux
+    temps (Operator Action tracée) ou copie « Pas bon → agent » ; l'étape Promu est vraie quand tous
+    les commits de merge du convoi sont atteignables depuis la branche de promotion, et masquée quand
+    le rig n'en a pas ; chaque projet montre « dev a N commits d'avance ». Les états superposés « à toi
+    de jouer », « problème remonté » et « bloqué » s'affichent avec leur cible d'action (un état sans
+    cible est un défaut affiché) ; Livré non Accepté et Accepté non Promu sont des demandes Quand tu
+    veux ; un convoi fermé avec un enfant non mergé et les incohérences de roadmap sont des anomalies
+    en santé ; les chantiers terminés et abandonnés (avec la raison) passent à l'historique.
+  acceptance_criteria:
+  - "Un test montre Accepter (deux temps, trace) puis l'étape Accepté, et « Pas bon → agent » qui copie un prompt prêt sans rouvrir le graphe."
+  - "Un test montre Promu vrai, faux, et masqué pour un rig sans branche de promotion ; et l'écart « dev a N commits d'avance »."
+  - "Un test montre la priorité des états superposés, « bloqué » seulement sur escalade Mayor-first ouverte ou convoi sans ticket prêt, en cours ni en PR (le silence seul n'est jamais un blocage), et le défaut d'un état sans cible."
+  - "Un test montre les demandes Livré non Accepté et Accepté non Promu, les deux anomalies en santé, et l'historique avec la raison d'abandon ; il n'existe pas d'état Refusé."
+  - "Captures PC et iPhone, claires et sombres, jointes au PR et comparées à la variante D par le relecteur."
+  - "La CI est verte."
+- id: T21
+  kind: prototype
+  title: Prototype de la page projet
+  blocked_by: []
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - docs/planning/c01-cockpit-v2/**
+  what_it_delivers: >-
+    Deux ou trois variantes jetables de la page projet (chantiers par étape, principe de la variante
+    C, sur la base visuelle D, données synthétiques) sur une branche prototype/c01-project-page
+    poussée et jamais fusionnée, avec leurs captures PC et iPhone ; Benjamin choisit par un NEEDS
+    BENJAMIN dont chaque option est une variante avec sa conséquence. Le PR fusionné n'enregistre que
+    le choix (la réponse de Benjamin mot pour mot) et les captures de la variante choisie.
+  acceptance_criteria:
+  - "La branche prototype/c01-project-page est poussée, jamais fusionnée, et ne contient aucune donnée de personne réelle."
+  - "Le NEEDS BENJAMIN présente une option par variante avec sa conséquence et au plus une « Recommandé » avec sa raison."
+  - "Le choix de Benjamin est enregistré mot pour mot avec la date (heure de Paris) et les captures PC et iPhone de la variante choisie."
+  - "La CI est verte."
+- id: T22
+  kind: vertical_slice
+  title: Page projet
+  blocked_by: [T21, T20]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - lib/cockpit/ui/project-page/**
+    - tests/cockpit-project-page-test.py
+    - tests/fixtures/cockpit/project-page/**
+  what_it_delivers: >-
+    Chaque projet de l'accueil a un lien « Page projet » qui montre ses chantiers par étape selon la
+    variante choisie en T21, le travail hors chantier (bugs, propositions, correctifs directs) et
+    l'accès à l'historique des chantiers.
+  acceptance_criteria:
+  - "Un test montre le lien depuis chaque projet et les chantiers groupés par étape."
+  - "Un test montre le travail hors chantier sans étape, et l'accès à l'historique."
+  - "Captures PC et iPhone, claires et sombres, jointes au PR et comparées à la variante choisie en T21 par le relecteur."
+  - "La CI est verte."
+- id: T23
+  kind: vertical_slice
+  title: Arrêt propre de l'usine depuis le cockpit
+  blocked_by: [T13, T15, T18]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - lib/cockpit/stop/**
+    - lib/cockpit/ui/stop/**
+    - lib/cockpit/heartbeat/**
+    - tests/cockpit-stop-test.py
+    - tests/fixtures/cockpit/stop/**
+  what_it_delivers: >-
+    Le pilote d'arrêt propre, bouton encore caché : un écran liste le travail en vol avant
+    confirmation ; au clic, photo par store des beads ouverts et en cours, claims, convois, sessions
+    et travail ; suspension de la cité par l'API gc ; suivi par session (ticket, étape, dernier signe
+    de vie ; « orders en pause ») ; « Arrêtée proprement à HH:MM » quand la cité est suspendue et
+    qu'aucune session agent ne vit, avec un bilan comparé à la photo. Après 30 min sans progression,
+    une demande À faire « l'arrêt n'avance plus » propose un arrêt forcé en listant ce qui serait
+    perdu ; l'arrêt forcé arrête les sessions en gardant leur bead et leur travail assigné. Pendant un
+    arrêt demandé, les sources s'affichent « usine arrêtée par toi à HH:MM » ; le heartbeat se met en
+    pause seulement à « Arrêtée proprement » ; un redémarrage du PC pendant l'arrêt donne « Arrêt
+    interrompu » avec les écarts.
+  acceptance_criteria:
+  - "Sur un faux gc, un test montre la suite En marche, Arrêt en cours, Arrêtée proprement avec un bilan de 0 perte, et l'état persistant après un redémarrage du cockpit."
+  - "Un test montre la demande « l'arrêt n'avance plus » après 30 min sans progression, jamais de bascule automatique vers l'arrêt forcé, et un arrêt forcé qui garde les beads assignés."
+  - "Un test montre « usine arrêtée par toi » sans fausse alerte, la pause du heartbeat seulement à « Arrêtée proprement », et « Arrêt interrompu » avec ses écarts."
+  - "Un test montre que le pilote ne lance jamais gc stop ni gc stop --force et ne touche que la cité."
+  - "Le bouton d'arrêt n'est pas affiché ; le chemin est piloté par le test."
+  - "La CI est verte."
+- id: T24
+  kind: vertical_slice
+  title: Redémarrage, preuve de reprise, bouton d'arrêt en mode essai
+  blocked_by: [T23, T08, T09, T10]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - lib/cockpit/stop/**
+    - lib/cockpit/ui/stop/**
+    - tests/cockpit-restart-test.py
+    - docs/RUNBOOK_STOP_AND_RESTART.md
+  what_it_delivers: >-
+    Un bouton « Redémarrer » relance l'usine par gc resume, rien d'autre, et prouve la reprise : «
+    Reprise vérifiée à HH:MM » quand chaque travail d'avant l'arrêt est repris sans réattribution,
+    sinon « Reprise avec écarts » avec la liste (demande À faire). Les trois corrections usine étant
+    livrées, le bouton d'arrêt apparaît en mode « essai », qui explique qu'il s'agit de l'essai réel ;
+    il devient un bouton normal seulement quand une trace d'essai réel réussi (arrêt propre puis
+    reprise vérifiée) existe.
+  acceptance_criteria:
+  - "Sur un faux gc, un test montre Redémarrage puis Reprise vérifiée, et Reprise avec écarts avec la demande À faire quand un travail est réattribué ou perdu."
+  - "Un test montre que le redémarrage n'appelle que gc resume et que le heartbeat reprend."
+  - "Un test montre le bouton d'arrêt en mode essai sans trace d'essai réussi, puis normal après cette trace, et les 7 états de la Spec."
+  - "Le runbook d'arrêt et de redémarrage décrit le chemin par le cockpit ; gc stop complet reste au runbook seulement."
+  - "Captures PC et iPhone, claires et sombres, jointes au PR et comparées à la variante D par le relecteur."
+  - "La CI est verte."
+- id: T25
+  kind: vertical_slice
+  title: Accès iPhone guidé et fiabilité de l'accès
+  blocked_by: [T17, T18, T13]
+  target_rigs: [agent-factory]
+  scope:
+    paths:
+    - bin/cockpit-setup-wizard
+    - tests/cockpit-setup-wizard-test.sh
+    - lib/cockpit/access/**
+    - lib/cockpit/ui/base/**
+    - tests/cockpit-access-test.py
+    - docs/OPERATIONS.md
+  what_it_delivers: >-
+    Benjamin met en place l'accès iPhone en suivant un assistant pas à pas qui vérifie chaque étape :
+    achat de l'app Pushover, création de l'application sur pushover.net, fichier secret hors dépôt
+    côté Windows (jamais dans git ni dans le chat), E2E ; compte Healthchecks.io, check « Usine muette
+    » (période 5 min, grâce 10 min, notification « up » désactivée) et son intégration Pushover, avec
+    la vérification de la répétition 2 h et de la priorité 1 (sinon défaut noté) ; Tailscale Serve en
+    HTTPS vers le port du cockpit, sans Funnel, l'API gc jamais exposée ; test d'un push
+    time-sensitive qui perce un Focus autorisé. Le cockpit lit la date d'expiration de la clé
+    Tailscale (demande À faire à J-14) et l'iPhone déconnecté affiche « Déconnecté du cockpit depuis
+    HH:MM » au-dessus de tout, toutes valeurs grisées.
+  acceptance_criteria:
+  - "Un test pilote l'assistant sans interaction et montre qu'il n'écrit aucun secret hors du fichier prévu ni dans sa sortie, et qu'il refuse une configuration Serve avec Funnel ou vers l'API gc."
+  - "Un test montre la demande À faire à J-14 de l'expiration de la clé Tailscale."
+  - "Un test montre le bandeau « Déconnecté du cockpit depuis HH:MM » et les valeurs grisées quand la page ne reçoit plus de mise à jour."
+  - "La doc d'exploitation décrit l'accès par Tailscale Serve vers le cockpit et plus aucune exposition de l'API gc."
+  - "Captures PC et iPhone, claires et sombres, jointes au PR et comparées à la variante D par le relecteur."
+  - "La CI est verte."
+

@@ -1,0 +1,117 @@
+{
+  "beads": {
+    "af-001": {
+      "description": "Approved delivery graph: Fixture City : liste des éléments. The Mayor advances only positively eligible delivery-plane children.",
+      "id": "af-001",
+      "issue_type": "convoy",
+      "labels": [
+        "approved-ticket-graph",
+        "factory-refactor"
+      ],
+      "metadata": {
+        "gc.artifact_id": "draft-1",
+        "gc.graph_digest": "sha256:fa515bc65757100b04ed973b61003f16943fb9d5a4494cbd9f0311993d8f63ba",
+        "gc.plane": "delivery",
+        "gc.project_id": "delivery-fixture-city",
+        "gc.publication_validated": "true",
+        "gc.spec_digest": "sha256:a80e4eae24790024774f173856ab92f28d4575b399a1f38a4406c3e83a920d9f",
+        "gc.spec_id": "spec-1"
+      },
+      "status": "open",
+      "title": "Fixture City : liste des éléments",
+      "tracks": [
+        "af-002",
+        "af-003"
+      ]
+    },
+    "af-002": {
+      "description": "## What to build\n\ndoes a thing\n\n## Acceptance criteria\n\n- [ ] Un test montre que la chose est faite\n- [ ] La CI est verte\n\n## Target rigs\n\nfixture_city\n\n## Autonomous execution contract\n\n- models: none\n- review: Un test montre que le relecteur a relu.",
+      "id": "af-002",
+      "issue_type": "task",
+      "labels": [
+        "approved-ticket-graph",
+        "delivery-plane",
+        "factory-refactor"
+      ],
+      "metadata": {
+        "gc.artifact_id": "draft-1",
+        "gc.blocked_by": "",
+        "gc.delivery_contract": "pr-ci-merged-v1",
+        "gc.graph_digest": "sha256:fa515bc65757100b04ed973b61003f16943fb9d5a4494cbd9f0311993d8f63ba",
+        "gc.plane": "delivery",
+        "gc.publication_validated": "true",
+        "gc.scope_paths": "bin/foo.py",
+        "gc.spec_digest": "sha256:a80e4eae24790024774f173856ab92f28d4575b399a1f38a4406c3e83a920d9f",
+        "gc.spec_id": "spec-1",
+        "gc.ticket_id": "T1",
+        "gc.ticket_kind": "vertical_slice"
+      },
+      "status": "open",
+      "title": "T1 — First"
+    },
+    "af-003": {
+      "description": "## What to build\n\ndoes another thing\n\n## Acceptance criteria\n\n- [ ] does the other thing\n\n## Target rigs\n\nfixture_city\n\n## Autonomous execution contract\n\n- models: none\n- review: Un test montre que le relecteur a relu.",
+      "id": "af-003",
+      "issue_type": "task",
+      "labels": [
+        "approved-ticket-graph",
+        "delivery-plane",
+        "factory-refactor"
+      ],
+      "metadata": {
+        "gc.artifact_id": "draft-1",
+        "gc.blocked_by": "T1",
+        "gc.delivery_contract": "pr-ci-merged-v1",
+        "gc.graph_digest": "sha256:fa515bc65757100b04ed973b61003f16943fb9d5a4494cbd9f0311993d8f63ba",
+        "gc.plane": "delivery",
+        "gc.publication_validated": "true",
+        "gc.spec_digest": "sha256:a80e4eae24790024774f173856ab92f28d4575b399a1f38a4406c3e83a920d9f",
+        "gc.spec_id": "spec-1",
+        "gc.ticket_id": "T2",
+        "gc.ticket_kind": "prefactor"
+      },
+      "status": "open",
+      "title": "T2 — Second"
+    },
+    "draft-1": {
+      "description": "global_execution_contract:\n  models: none\n  review: Un test montre que le relecteur a relu.\n\ntickets:\n  - id: T1\n    title: First\n    blocked_by: []\n    target_rigs: [fixture_city]\n    what_it_delivers: does a thing\n    acceptance_criteria: [Un test montre que la chose est faite, La CI est verte]\n    scope:\n      paths: [bin/foo.py]\n  - id: T2\n    kind: prefactor\n    title: Second\n    blocked_by: [T1]\n    target_rigs: [fixture_city]\n    what_it_delivers: does another thing\n    acceptance_criteria: [does the other thing]\n",
+      "id": "draft-1",
+      "labels": [],
+      "metadata": {
+        "approved_by": "benjamin",
+        "approved_digest": "sha256:fa515bc65757100b04ed973b61003f16943fb9d5a4494cbd9f0311993d8f63ba",
+        "approved_evidence": "« j'approuve le graphe » (Benjamin, fixture)",
+        "display_title": "Fixture City : liste des éléments",
+        "language": "fr",
+        "spec_id": "spec-1"
+      },
+      "status": "open",
+      "title": "Draft"
+    },
+    "spec-1": {
+      "description": "spec de la fixture",
+      "id": "spec-1",
+      "labels": [],
+      "metadata": {
+        "approved_digest": "sha256:a80e4eae24790024774f173856ab92f28d4575b399a1f38a4406c3e83a920d9f",
+        "gc.project_id": "delivery-fixture-city",
+        "planning_run_target": "F01",
+        "spec_state": "APPROVED_SPEC"
+      },
+      "status": "open",
+      "title": "Spec"
+    }
+  },
+  "result": {
+    "graph_digest": "sha256:fa515bc65757100b04ed973b61003f16943fb9d5a4494cbd9f0311993d8f63ba",
+    "ids": {
+      "T1": "af-002",
+      "T2": "af-003",
+      "_convoy": "af-001"
+    },
+    "mayor_notified": true,
+    "ok": true,
+    "reservation_advanced": null,
+    "scope_edges": []
+  }
+}

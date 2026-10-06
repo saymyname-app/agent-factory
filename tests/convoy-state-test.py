@@ -48,12 +48,16 @@ class ConvoyStateTest(unittest.TestCase):
 
     # --- harness ------------------------------------------------------------
 
-    def seed(self, tickets=(T1, T2)):
+    def seed(self, tickets=(T1, T2), kinds=None):
+        """A published, unmarked convoy. A ticket is a `prefactoring` unless
+        `kinds` says otherwise: the one kind that is marked without a
+        demonstration line (T05)."""
         beads = {CONVOY: {"title": "convoi d'essai", "status": "open", "issue_type": "convoy",
                           "metadata": {"gc.spec_id": "fx-spec"}, "tracks": list(tickets)}}
         for ticket in tickets:
+            kind = (kinds or {}).get(ticket, "prefactoring")
             beads[ticket] = {"title": f"ticket {ticket}", "status": "open", "issue_type": "task",
-                             "metadata": {"gc.ticket_kind": "vertical_slice"}}
+                             "metadata": {"gc.ticket_kind": kind} if kind else {}}
         self.tracker.write_text(json.dumps({"beads": beads}))
 
     def tracker_state(self):
@@ -185,7 +189,8 @@ class ConvoyStateTest(unittest.TestCase):
         self.ok("mark", CONVOY)
         self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
         state = self.tracker_state()
-        state["beads"]["fx-t3"] = {"title": "ajouté par patch", "status": "open", "issue_type": "task"}
+        state["beads"]["fx-t3"] = {"title": "ajouté par patch", "status": "open", "issue_type": "task",
+                                   "metadata": {"gc.ticket_kind": "prefactoring"}}
         state["beads"][CONVOY]["tracks"].append("fx-t3")
         self.tracker.write_text(json.dumps(state))
 
@@ -204,6 +209,76 @@ class ConvoyStateTest(unittest.TestCase):
             ))
         self.assertEqual([0] * 8, [p.returncode for p in procs], [p.stdout + p.stderr for p in procs])
         self.assertEqual(8, self.ticket(self.show(), T1)["counters"]["resumes"])
+
+    # --- T05: the entry contract fields a marked ticket carries ---------------
+
+    LINE = "Sur le produit lancé, la page d'accueil (GET /) affiche les trois éléments = « Alpha », « Bêta », « Gamma »."
+
+    def test_mark_writes_the_demonstration_lines_and_show_renders_kind_and_line(self):
+        self.seed(kinds={T1: "vertical_slice", T2: "prefactoring"})
+        self.ok("mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}")
+
+        shown = self.show()
+        self.assertFalse(shown["unruled"])
+        t1, t2 = self.ticket(shown, T1), self.ticket(shown, T2)
+        self.assertEqual("vertical_slice", t1["kind"])
+        self.assertEqual(self.LINE, t1["demonstration_line"])
+        self.assertEqual("prefactoring", t2["kind"])
+        self.assertIsNone(t2["demonstration_line"])
+
+    def test_marking_again_with_the_same_lines_writes_nothing(self):
+        self.seed(kinds={T1: "repair"})
+        self.ok("mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}")
+        before = self.tracker.read_bytes()
+        self.ok("mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}")
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_mark_refuses_a_slice_or_a_repair_without_demonstration_line(self):
+        for kind in ("vertical_slice", "repair"):
+            with self.subTest(kind=kind):
+                self.seed(kinds={T1: kind})
+                self.assert_refused_and_nothing_written("mark", CONVOY, mention=T1)
+                self.assert_refused_and_nothing_written(
+                    "mark", CONVOY, "--demonstration-line", f"{T1}=   ", mention="ligne de démonstration")
+
+    def test_mark_refuses_a_ticket_whose_kind_is_absent_or_outside_the_closed_list(self):
+        for kind in (None, "prefactor", "prototype"):
+            with self.subTest(kind=kind):
+                self.seed(kinds={T1: kind})
+                self.assert_refused_and_nothing_written(
+                    "mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}", mention="genre")
+
+    def test_mark_refuses_a_demonstration_line_on_a_prefactoring(self):
+        self.assert_refused_and_nothing_written(
+            "mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}", mention="prefactoring")
+
+    def test_mark_refuses_a_demonstration_line_for_a_ticket_outside_the_convoy(self):
+        self.seed(kinds={T1: "vertical_slice"})
+        self.assert_refused_and_nothing_written(
+            "mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}",
+            "--demonstration-line", f"fx-elsewhere={self.LINE}", mention="fx-elsewhere")
+
+    def test_mark_refuses_to_change_a_demonstration_line_already_written(self):
+        self.seed(kinds={T1: "vertical_slice"})
+        self.ok("mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}")
+        self.assert_refused_and_nothing_written(
+            "mark", CONVOY, "--demonstration-line", f"{T1}=Une autre observation.", mention="déjà")
+
+    def test_ticket_whose_kind_is_unknown_is_unruled_and_not_defaulted(self):
+        self.ok("mark", CONVOY)
+        self.edit_tracker(T1, **{"gc.ticket_kind": "prefactor"})
+        t1 = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertEqual("état sans règle", t1["signal"])
+        self.assertNotIsInstance(t1["kind"], str)
+        self.assertIn("prefactor", json.dumps(t1["unruled"], ensure_ascii=False))
+
+    def test_slice_without_demonstration_line_is_unruled(self):
+        self.ok("mark", CONVOY)
+        self.edit_tracker(T1, **{"gc.ticket_kind": "vertical_slice"})
+        t1 = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertEqual("état sans règle", t1["signal"])
+        self.assertIsNone(t1["demonstration_line"])
+        self.assertIn("ligne de démonstration", json.dumps(t1["unruled"], ensure_ascii=False))
 
     # --- AC2: a malformed write is refused and nothing is written -------------
 
