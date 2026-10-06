@@ -223,6 +223,17 @@ git add <files>
 git commit -m "<type>: <description>"
 ```
 
+If the bead asks for sections in the PR description (for example « Non fait »,
+« Écarts », « Constats hors ticket »), you do not open the PR yourself —
+`push-and-pr` does. Write the sections, as Markdown headings each followed by
+its content ("aucun" when empty), in this file; it is never committed and
+`push-and-pr` puts it in the PR body:
+```bash
+PR_BODY="$(git rev-parse --absolute-git-dir)/PR_BODY.md"
+```
+`push-and-pr` refuses (exit 3) a bead that asks for these sections and has
+none.
+
 Do not commit unrelated runtime metadata, local agent directories, caches, or
 bead database churn unless the bead explicitly required those files. If the
 only remaining dirty files are unrelated runtime/bead metadata, leave them
@@ -392,7 +403,12 @@ else
 fi
 ```
 
-If the push itself fails (`factory-do-work-workspace finish` exits non-zero),
+If `finish` exits 3, nothing failed: the bead asks for PR sections that are
+not written yet. Its message names the file to write; write it, then run the
+block above again. Do not mail anyone for that.
+
+If the push itself fails (`factory-do-work-workspace finish` exits with any
+other non-zero status),
 the worktree is deliberately left in place for a human/next session to
 resolve — mail the escalation recipient rather than deleting work:
 ```bash
