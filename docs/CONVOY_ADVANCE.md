@@ -95,8 +95,9 @@ ticket, that ticket counts twice. The count is therefore never below the
 real one: the ceiling can be reached early for a moment, never exceeded.
 
 The settings file also names what the door receives for a start:
-`start.formula` and `start.role`. With no formula the command refuses and
-starts nothing.
+`start.formula` and `start.role`: the author formula `mol-ticket-author`
+and the role `author` (`docs/TICKET_AUTHOR.md`). With no formula the
+command refuses and starts nothing.
 
 ## Answers
 

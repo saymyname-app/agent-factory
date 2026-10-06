@@ -22,6 +22,7 @@ published, dispatched, merged and closed exactly as before.
   --prototype-fold af-t1                                # publication door (T05, T06, T36)
 ./bin/convoy-state show af-convoy --repo rigs/product   # every reader
 ./bin/convoy-state set-branch   af-convoy af-t1 --branch ticket/af-t1
+./bin/convoy-state set-session  af-convoy af-t1 --session <session name>   # bin/ticket-author start
 ./bin/convoy-state record-gate  af-convoy af-t1 --gate dispatch   # bin/dispatch-door --convoy, after the sling
 ./bin/convoy-state set-exit     af-convoy af-t1 --exit finished
 ./bin/convoy-state set-verdict  af-convoy af-t1 --kind code_review --state favorable --commit <sha>
@@ -62,6 +63,7 @@ Every answer is one JSON object on stdout.
 | Launch recipe established here | `gc.flow.establishes_launch_recipe` | ticket (`vertical_slice`, at most one per convoy) | `true`, written with the mark; absent otherwise |
 | Prototype Fold | `gc.flow.prototype_fold` | ticket (`vertical_slice`) | `true`, written with the mark; absent otherwise |
 | Ticket branch | `gc.flow.branch` | ticket | branch name |
+| Author session | `gc.flow.session` | ticket | `name`, `at`; the same write puts the ticket `in_progress` with `gc.session_name`. Refused for a session that already took another ticket of the convoy, for a ticket the dispatch door did not start, for a closed ticket |
 | Ticket Exit | `gc.flow.exit` | ticket | `finished`, `planning_exception`, `operator_request`, `technically_blocked`, `interrupted` |
 | Verdict | `gc.flow.verdict.<kind>` | ticket | kind: `test_review`, `code_review`, `evaluation`, `fidelity`; state: `favorable`, `unfavorable`; always with the full commit SHA it judged; `invalidated` (`tip`, `at`) once `invalidate-verdicts` wrote that a newer commit outdated it |
 | Counter | `gc.flow.counter.<name>` | ticket: `resumes`, `correction_rounds`; convoy: `end_rounds` | integer ≥ 0 |

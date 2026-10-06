@@ -1,0 +1,134 @@
+# Author formula: the sequence of a ticket held by scripts (T12, Spec af-wf4w5r §0 rule 4, §4, §5)
+
+## Status and purpose
+
+A ticket of a convoy that carries the **new-flow mark** is worked by one
+fresh author session, in a work tree of its own, on a branch that leaves
+from the integration branch of the Spec (`docs/SPEC_INTEGRATION.md`). The
+formula `mol-ticket-author` holds the sequence — work tree, red step, code,
+demonstration on the launched product, Ticket Exit — and each passage from
+one step to the next is a check run by code. What the agent says closes
+nothing. A convoy without the mark is not touched: it is dispatched,
+merged and closed as before.
+
+Only `bin/convoy-advance` starts the formula (`config/delivery-flow.json`,
+`start.formula`), through `bin/dispatch-door --role author --convoy`. Nobody
+slings it by hand.
+
+Not in this ticket: the review of the tests between red and freeze (T13),
+the code review and the evaluation (T14, T15), the ticket-end gate (T19),
+the resume of a parked, blocked or interrupted ticket (T20).
+
+## The pieces
+
+| Piece | Role |
+|---|---|
+| `formulas/mol-ticket-author.formula.toml` | the five steps and the teardown; each step carries an exec check |
+| `assets/scripts/checks/ticket-author-check.sh` | the check Gas City runs when a step is closed; it only runs `bin/ticket-author check` |
+| `bin/ticket-author` | `start`, `demonstrate`, `gate`, `check`, `release`, `locate` |
+| `bin/convoy-state set-session` | records which session took the ticket (`docs/CONVOY_STATE.md`) |
+| `bin/ticket-exit` | the exit; « terminé » now needs the demonstration proof (`docs/TICKET_EXIT.md`) |
+| `agents/delivery-author/overlay/.claude/` | the settings and the guard that stop an author from handing the writing to a sub-agent |
+
+## How Gas City holds a step (tried on 1.4.1, isolated city, 2026-10-06)
+
+A step declares `[steps.check] max_attempts = 3` and `[steps.check.check]
+mode = "exec"`, `path = ".gc/scripts/checks/ticket-author-check.sh"`. What
+was observed:
+
+- The check receives **no argument** (`args` is not passed). It receives an
+  environment: `GC_BEAD_ID`, the bead of the attempt just closed (it carries
+  `gc.step_id` and `gc.root_bead_id`; the root carries `gc.input_convoy_id`),
+  and `GC_CITY_PATH`, the city root. Its working directory is the root of
+  the store the bead lives in.
+- Exit 0: the next step opens.
+- Any other exit: a new attempt of the same step goes back to the same
+  session; the stderr of the check is kept in `gc.attempt_log`.
+- After `max_attempts`, the step fails; with `gc.on_fail = "abort_scope"`
+  the scope fails, the steps that remain are closed `skipped`, and the
+  workflow ends `fail`.
+
+The path is resolved in the store of the ticket. `bin/factory-build-gates`
+(run by `bin/factory-boot` and `bin/factory-guard`) copies the check from
+`assets/scripts/checks/` into `.gc/scripts/checks/` of the city root and of
+each rig, and reports a missing or modified copy.
+
+## `bin/ticket-author`
+
+```bash
+./bin/ticket-author locate af-t1                                  # the marked convoy that tracks the ticket
+./bin/ticket-author start af-convoy af-t1                         # work tree, branch, session; run again = read again
+./bin/ticket-author demonstrate af-convoy af-t1 --repo <worktree> --profile <profile> --dataset <name> -- <command>
+./bin/ticket-author demonstrate af-convoy af-t1 --repo <worktree> --profile <profile> --dataset <name> --path /page
+./bin/ticket-author gate af-convoy af-t1 --step workspace|red|code|demonstration|exit
+./bin/ticket-author release af-convoy af-t1                       # removes the work tree of a ticket that has exited
+./bin/ticket-author check                                         # the gate of the step named by GC_BEAD_ID
+```
+
+Every answer is one JSON object on stdout; `check` also writes the refusal
+on stderr.
+
+| Exit | Meaning |
+|---|---|
+| 0 | done, or the step is proven |
+| 1 | refused (`{"ok": false, "error": "refus : …"}`); nothing was written unless the answer says what was |
+| 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
+
+**`start`** creates the work tree and the branch `ticket/<ticket>` at the tip
+of `integration/<spec>`, and records the branch (`set-branch`) and the
+session (`set-session`). It is refused for a ticket the dispatch door did
+not start, for a closed ticket, when the integration branch is not open,
+and for a session that already took another ticket of the convoy: one fresh
+session per ticket.
+
+**`demonstrate`** launches the product at the head commit of the ticket
+branch through `bin/project-launch`, captures the demonstration line on it
+through `bin/evidence-capture` (piece `demonstration`), and stops the
+product. The command must exit 0; it receives the address in
+`PRODUCT_ADDRESS`. `--path` captures a screenshot instead.
+
+**`gate`** writes nothing. It reads `bin/convoy-state show`, the pieces
+through `bin/evidence-capture verify`, and the tip of the ticket branch.
+
+| Step | Proven when |
+|---|---|
+| `workspace` | the session and the branch are recorded on the ticket, the work tree is on that branch, the branch leaves from the integration branch |
+| `red` | the red is proven and the criterion tests frozen (`bin/tdd-step`); nothing asked of a `prefactoring` |
+| `code` | the criterion tests are green at the tip; for a `prefactoring`, its regression at the tip |
+| `demonstration` | the piece `demonstration` verifies, was captured on the launched product, and is at the tip; nothing asked of a `prefactoring` |
+| `exit` | a Ticket Exit is recorded; « terminé » is at the tip, with its Handoff |
+
+Once a Ticket Exit other than « terminé » is recorded after the session took
+the ticket, the gates of the steps that remain pass: the session closes
+them and leaves. The destination of that exit is fixed by `bin/ticket-exit`
+(parking, repair, push), and such a ticket is never merged.
+
+## What bounds the author
+
+- **The approved intent, not a list of files.** The Declared Scope orders
+  tickets; no gate reads it. A file touched outside it is written in the
+  records of the Handoff (`files_outside_declared_scope`) by code.
+- **A behaviour the Spec fixes.** The author commits nothing that changes it
+  and takes the exit `planning_exception`: the ticket is parked, its branch
+  is not merged.
+- **No writing sub-agent.** `agents/delivery-author/overlay/.claude/settings.json`
+  runs `guards/author-subagent-guard` before every `Agent`, `Task` or
+  `Workflow` call. Only the types `Explore` and `Plan` pass; any other
+  type, a call with no type, and a workflow are blocked (exit 2).
+  `bin/role-adoption-trial` asks a real author session to launch a
+  sub-agent that writes and one that reads, and records what happened;
+  `bin/dispatch-door` refuses the author role without a passing trial for
+  the current distribution. Limit: a read-only sub-agent still has a shell.
+  The guard covers the tool the session is given, not every way to write.
+
+## Tests
+
+| What | Where |
+|---|---|
+| each command, one test per pass and per refusal, on a fake tracker; the state is read again after a refusal | `tests/ticket-author-test.py` |
+| the session field | `tests/convoy-state-test.py` |
+| « terminé » without the demonstration proof | `tests/ticket-exit-test.py` |
+| the guard, call by call | `tests/author-subagent-guard-test.py` |
+| the check materialised in the city root | `tests/factory-build-gates-test.py` |
+| the real formula on a real controller, started by the real order, with a scripted author (local only) | `tests/ticket-author-isolated-city-test.sh` |
+| a real author session and the guard (outside CI) | `./bin/role-adoption-trial run --role author` |

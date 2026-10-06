@@ -8,9 +8,9 @@ and seen red, that they did not change between red and green, and that they
 pass. The author writes the tests and the code; no sentence of the author is
 a proof. A convoy without the mark is not touched (exit 4).
 
-Nothing calls it yet: the author formula (T12) holds the sequence of a
-ticket, and the test reviewer (T13) reads the tests between `red` and
-`freeze`.
+The author formula calls it at its red and code steps, and its gates read
+what it proved (`docs/TICKET_AUTHOR.md`). The test reviewer (T13) reads the
+tests between `red` and `freeze`.
 
 ```bash
 ./bin/tdd-step red          af-convoy af-t1 --repo <ticket worktree> --profile <descriptor.json> --dataset content \

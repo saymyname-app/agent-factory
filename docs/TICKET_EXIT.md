@@ -9,9 +9,15 @@ is recorded on the ticket in the tracker: four sections written by the
 author, and records written by code. A convoy without the mark is not
 touched (exit 4).
 
-Nothing calls it yet: the author formula (T12) ends its sequence with it,
-the ticket-end gate (T19) reads the Handoff and the detector's result, and
+The author formula ends its sequence with it (`docs/TICKET_AUTHOR.md`).
+The ticket-end gate (T19) reads the Handoff and the detector's result, and
 the resume of a parked, blocked or interrupted ticket is T20's.
+
+« terminé » on a `vertical_slice` or a `repair` is refused without the
+demonstration proof: the piece `demonstration`, verified by the evidence
+store, captured on the launched product at the head commit of the ticket
+branch (`bin/ticket-author demonstrate`). The records of the Handoff carry
+it as `demonstration_proof`.
 
 ```bash
 ./bin/ticket-exit exit af-convoy af-t1 --exit finished --repo <ticket worktree> --handoff handoff.json

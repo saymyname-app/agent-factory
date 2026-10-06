@@ -20,8 +20,9 @@ touché : il reste avancé par le Mayor.
   réglage pour toute l'usine, partagé entre les Specs. Comptent : chaque session
   vivante d'un rôle de livraison (auteur, relecteur, Evaluator) et chaque ticket
   démarré qu'aucune session n'a encore pris.
-- **Formule de démarrage** : `start.formula` dans le même fichier. Tant qu'elle
-  vaut `null`, la commande refuse de démarrer quoi que ce soit (sortie 1).
+- **Formule de démarrage** : `start.formula` dans le même fichier, aujourd'hui
+  `mol-ticket-author` (la formule de l'auteur, `docs/TICKET_AUTHOR.md`). À
+  `null`, la commande refuse de démarrer quoi que ce soit (sortie 1).
 - **Sorties** : 0 passe faite ; 1 refus (réglage, tracker, porte de dispatch
   qui refuse un ticket, nommé sous `refused`, ou incident impossible à lever) ;
   3 « état sans règle » : rien n'est démarré dans ce convoi ; 4 « pas un convoi
