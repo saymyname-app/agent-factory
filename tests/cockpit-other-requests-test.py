@@ -224,6 +224,7 @@ class OtherRequestsTest(unittest.TestCase):
         self.assertIn('class="btn opt cockpit-option" data-action="accepter_chantier" data-bead-id="af-conv-b"', chantier)
         self.assertIn('data-action="pas_bon_vers_agent" data-bead-id="af-conv-b" data-titre="Page d&#x27;accueil publique"', chantier)
         self.assertNotIn("reporter_ouvrir", chantier, "nothing would hide it: no Reporter offered")
+        self.assertNotIn("Recommandé", chantier, "the cockpit cannot know the delivery is good")
         self.assertNotIn("??:??", chantier, "no date known is not a date missing by defect")
         self.assertNotIn("Benjamin", body, "the screen speaks to Benjamin, never about him")
 

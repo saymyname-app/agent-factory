@@ -33,8 +33,10 @@ def _livre_non_accepte(chantier, verifie_a):
                 "lettre": "a",
                 "option": "Accepter",
                 "consequence": "Trace l'acceptation ; le chantier passe à Accepté.",
-                "recommande": True,
-                "raison": "Rien ne bloque son acceptation.",
+                # Never recommended by the cockpit: only Benjamin, having
+                # looked at the result, knows whether the delivery is good.
+                "recommande": False,
+                "raison": "",
             },
             {
                 "lettre": "b",

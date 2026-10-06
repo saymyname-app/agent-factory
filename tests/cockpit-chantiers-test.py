@@ -480,7 +480,9 @@ class ChantierDemandesTest(unittest.TestCase):
         self.assertEqual(1, len(demandes))
         self.assertEqual(QUAND_TU_VEUX, demandes[0].niveau)
         self.assertEqual("af-convoy20", demandes[0].id)
-        self.assertTrue(any(o["recommande"] for o in demandes[0].que_faire))
+        # The cockpit never recommends accepting: only Benjamin, having looked
+        # at the result, knows whether the delivery is good (af-mjfvwx).
+        self.assertFalse(any(o["recommande"] for o in demandes[0].que_faire))
 
     def test_accepte_non_promu_is_a_quand_tu_veux_demande(self):
         beads = load_fixture("convoy-accepted-not-masque.json")
