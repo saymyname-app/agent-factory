@@ -22,8 +22,16 @@ T05, Spec af-wf4w5r §2) is held to the entry contract before anything is
 written -- a declared kind with no default, a demonstration line in its own
 field, criteria that name their entry point, their observable and what
 would make them false -- and its convoy is published with the new-flow mark
-through `bin/convoy-state`. A draft that does not declare it is published
-exactly as before. docs/ENTRY_CONTRACT.md has the fields and the refusals.
+through `bin/convoy-state`. The same contract holds the graph to the Spec
+it slices (T06): every numbered user story is cited by a vertical_slice,
+every declared operator need is lifted (`lift-need`), the project has a
+launch recipe or its first slice establishes it, and the door itself poses
+the pointers in each ticket (Spec and digest, user stories, sibling tickets
+with their demonstration line, seams). `bd-patch` applies all of it to the
+graph that results from the patch, tickets added or withdrawn included, and
+publishes without a new approval a patch that only adds `repair` tickets. A
+draft that does not declare the contract is published exactly as before.
+docs/ENTRY_CONTRACT.md has the fields and the refusals.
 
 The file-draft mode (`validate`/`publish`/`patch` over a YAML Ticket Graph
 Draft file carrying the `APPROVED_TICKET_GRAPH_DRAFT` state and a
@@ -44,6 +52,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -264,6 +273,10 @@ def record_scope_overlaps(
 
 FLOW_CONTRACT_KEY = "flow_contract"
 NEW_FLOW = "new-flow/v1"
+# The mark bin/convoy-state poses on a convoy of the new flow. The patch door
+# only looks for its presence, on a convoy it has already read, to refuse a
+# draft of the old flow before anything of `gc` is called for it.
+NEW_FLOW_MARK_KEY = "gc.flow.mark"
 TICKET_KINDS = ("vertical_slice", "prefactoring", "repair")
 KINDS_WITH_DEMONSTRATION = ("vertical_slice", "repair")
 RESTORES_KINDS = ("user_story", "anchor", "spec_line", "repo_rule", "red_check")
@@ -278,7 +291,20 @@ CRITERION_FIELD_NAMES = {
 TICKET_FIELDS = (
     "id", "kind", "title", "blocked_by", "target_rigs", "scope", "split_from", "what_it_delivers",
     "demonstration_line", "unblocks", "restores", "acceptance_criteria",
+    "user_stories", "establishes_launch_recipe",
 )
+KIND_COVERING_STORIES = "vertical_slice"
+OPERATOR_NEED_FIELDS = ("id", "kind", "what")
+OPERATOR_NEED_KINDS = ("secret", "access", "project_declaration", "spend")
+# A need id ends a tracker metadata key (`operator_need.<id>` on the draft bead).
+OPERATOR_NEED_ID = re.compile(r"^[a-z][a-z0-9_]*$")
+OPERATOR_NEED_KEY = "operator_need."
+WITHDRAWN_FIELDS = ("ticket", "planning_exception")
+PROJECT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# The pointers the door poses follow what the approved draft says of a
+# ticket; they start at this heading.
+POINTERS_START = "\n\n## Spec\n\n"
+WHERE_DRAFT, WHERE_GRAPH = "brouillon", "graphe"
 MAX_QUOTED_CRITERION = 200
 
 TEST_MENTION = re.compile(r"\b(?:tests?|pytest|unittest|jest|vitest|rspec)\b", re.IGNORECASE)
@@ -365,11 +391,29 @@ def criterion_reasons(criterion: Any) -> tuple[str, list[str]]:
     return quoted, reasons
 
 
-def entry_contract_refusals(parsed: dict[str, Any], tickets: list[dict[str, Any]]) -> list[tuple[str, str]]:
+def cited_user_stories(ticket: dict[str, Any]) -> list[str] | None:
+    """The numbers a ticket cites in `user_stories`, or None when the field
+    is absent or is not a list of story numbers, each given once."""
+    value = ticket.get("user_stories")
+    if not isinstance(value, list) or not value:
+        return None
+    numbers: list[str] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, str)) or not re.fullmatch(r"[1-9][0-9]*", str(item)):
+            return None
+        numbers.append(str(item))
+    return numbers if len(set(numbers)) == len(numbers) else None
+
+
+def entry_contract_refusals(
+    parsed: dict[str, Any], tickets: list[dict[str, Any]], spec: dict[str, Any],
+) -> list[tuple[str, str]]:
     """Every reason a draft that declares the new-flow contract does not meet
     it, as (ticket id or "brouillon", reason), in the order of the draft: the
-    whole list is given at once, so a graph is corrected in one pass."""
+    whole list is given at once, so a graph is corrected in one pass. `spec`
+    is the approved Spec the draft slices (`spec_view`)."""
     refusals: list[tuple[str, str]] = []
+    stories: dict[str, str] = spec["stories"]
     if parsed.get("global_execution_contract"):
         refusals.append((
             "brouillon",
@@ -447,8 +491,57 @@ def entry_contract_refusals(parsed: dict[str, Any], tickets: list[dict[str, Any]
                         "ne nomme pas ce qu'il rétablit (champ restores : kind parmi "
                         f"{', '.join(RESTORES_KINDS)}, et ref qui le cite)"
                     )
+                else:
+                    # What the door can read in the approved Spec, it checks:
+                    # a repair restores something the Spec already holds.
+                    ref = text_field(restores, "ref")
+                    quoted = truncate_line(ref, MAX_QUOTED_CRITERION)
+                    if restores["kind"] == "user_story" and restored_user_story(ticket, stories) is None:
+                        refuse(
+                            f"rétablit une user story absente de la Spec {spec['id']} (restores.ref : « {quoted} » ; "
+                            f"attendu : le numéro d'une seule user story, parmi {', '.join(stories)})"
+                        )
+                    if restores["kind"] == "spec_line" and ref not in one_line(spec["text"]):
+                        refuse(
+                            f"cite une ligne absente de la Spec {spec['id']} (restores.ref : « {quoted} ») : "
+                            "une ligne citée s'y retrouve mot pour mot"
+                        )
             elif "restores" in ticket:
                 refuse(f"champ restores sur un {kind} : seul un repair nomme ce qu'il rétablit")
+
+            if kind == KIND_COVERING_STORIES:
+                cited = cited_user_stories(ticket)
+                if ticket.get("user_stories") in (None, []):
+                    refuse(
+                        "ne couvre aucune user story : une vertical_slice cite, dans le champ user_stories, "
+                        "au moins un numéro de user story de la Spec"
+                    )
+                elif cited is None:
+                    refuse(
+                        "user_stories mal formé (attendu : une liste de numéros de user stories de la Spec, "
+                        "chacun une seule fois)"
+                    )
+                else:
+                    absent = [number for number in cited if number not in stories]
+                    if absent:
+                        refuse(
+                            f"cite la user story {', '.join(absent)}, absente de la Spec {spec['id']} "
+                            f"(user stories numérotées : {', '.join(stories)})"
+                        )
+            elif "user_stories" in ticket:
+                refuse(f"champ user_stories sur un {kind} : seule une vertical_slice couvre des user stories")
+
+            if "establishes_launch_recipe" in ticket:
+                if kind != KIND_COVERING_STORIES:
+                    refuse(
+                        f"champ establishes_launch_recipe sur un {kind} : seule une vertical_slice établit "
+                        "la recette de lancement"
+                    )
+                elif ticket["establishes_launch_recipe"] is not True:
+                    refuse(
+                        "establishes_launch_recipe mal formé (attendu : true, sur la seule tranche qui établit "
+                        "la recette de lancement)"
+                    )
 
         for index, criterion in enumerate(ticket["acceptance_criteria"], start=1):
             quoted, reasons = criterion_reasons(criterion)
@@ -457,16 +550,249 @@ def entry_contract_refusals(parsed: dict[str, Any], tickets: list[dict[str, Any]
     return refusals
 
 
-def refuse_unless_entry_contract_met(draft_id: str, parsed: dict[str, Any], tickets: list[dict[str, Any]]) -> None:
-    refusals = entry_contract_refusals(parsed, tickets)
+def restored_user_story(ticket: dict[str, Any], stories: dict[str, str]) -> str | None:
+    """The number of the Spec's user story a repair restores, when its
+    `restores` cites exactly one."""
+    restores = ticket.get("restores")
+    if not isinstance(restores, dict) or restores.get("kind") != "user_story":
+        return None
+    numbers = [str(int(number)) for number in re.findall(r"[0-9]+", text_field(restores, "ref"))]
+    return numbers[0] if len(numbers) == 1 and numbers[0] in stories else None
+
+
+def refuse_unless_contract_met(draft_id: str, refusals: list[tuple[str, str]]) -> None:
     if not refusals:
         return
-    count = len({where for where, _ in refusals if where != "brouillon"})
+    count = len({where for where, _ in refusals if where not in (WHERE_DRAFT, WHERE_GRAPH)})
     lines = "\n".join(f"- {where} : {reason}" for where, reason in refusals)
     raise PublishError(
         f"refus : le brouillon {draft_id} déclare le contrat du nouveau flux ({NEW_FLOW}) et ne le "
         f"respecte pas ({len(refusals)} raison(s), {count} ticket(s)) ; rien n'est écrit.\n{lines}"
     )
+
+
+# --- the graph against its Spec and its project (T06, Spec af-wf4w5r §2) -----
+
+
+def spec_view(spec_id: str, spec_bead: dict[str, Any]) -> dict[str, Any]:
+    """What the door reads in the approved Spec: its numbered user stories
+    and its Testing Decisions, through the reader `spec-approve` holds the
+    Spec to (`outline`), so the unit of coverage has one definition."""
+    text = str(spec_bead.get("description") or "")
+    argv = [tool_path("SPEC_APPROVE_BIN", "spec-approve"), "outline"]
+    try:
+        outline = run_subtool(argv, stdin=text)
+    except PublishError as exc:
+        raise PublishError(
+            f"refus : la Spec {spec_id} ne se prête pas au contrôle de couverture : {exc} ; rien n'est écrit"
+        ) from exc
+    return {
+        "id": spec_id,
+        "digest": canonical_bead_digest(text),
+        "text": text,
+        "stories": {str(story["number"]): one_line(story["text"]) for story in outline["user_stories"]},
+        "testing_decisions": [one_line(line) for line in outline["testing_decisions"]],
+    }
+
+
+def project_launch(project_id: str, descriptors_dir: Path, profile_bin: str) -> tuple[dict[str, Any] | None, Path]:
+    """The launch block of the project's profile (recipe, entry points), or
+    None when the profile declares none or the project has no profile."""
+    if not PROJECT_ID.match(project_id):
+        raise PublishError(f"refused: project key {project_id!r} is not a safe identifier")
+    path = descriptors_dir / f"{project_id}.json"
+    if not path.is_file():
+        return None, path
+    try:
+        proc = subprocess.run([profile_bin, "describe", str(path)], capture_output=True, text=True)
+        described = json.loads(proc.stdout)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PublishError(f"could not read the project profile {path}: {exc}") from exc
+    if proc.returncode != 0 or not isinstance(described, dict) or described.get("valid") is False:
+        detail = described.get("error") if isinstance(described, dict) else None
+        raise PublishError(f"refus : le profil du projet {project_id} ({path}) est invalide : {detail or proc.stderr.strip()}")
+    launch = described.get("launch")
+    return (launch if isinstance(launch, dict) else None), path
+
+
+def operator_need_refusals(
+    parsed: dict[str, Any], metadata: dict[str, Any], human_approver: str, draft_id: str,
+) -> list[tuple[str, str]]:
+    """Spec §2, « besoins opérateur »: every need known at planning is
+    declared in the graph, and nothing is published while one is not lifted."""
+    if "operator_needs" not in parsed:
+        return []
+    expected = (
+        f"attendu : une liste de besoins, chacun {{id, kind, what}} ; id en minuscules, chiffres et _ ; "
+        f"kind parmi {', '.join(OPERATOR_NEED_KINDS)} ; what qui dit ce qu'il faut ; aucun autre champ"
+    )
+    needs = parsed["operator_needs"]
+    if not isinstance(needs, list):
+        return [(WHERE_DRAFT, f"besoin opérateur mal formé : operator_needs n'est pas une liste ({expected})")]
+    refusals: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for need in needs:
+        well_formed = (
+            isinstance(need, dict) and sorted(need) == sorted(OPERATOR_NEED_FIELDS)
+            and isinstance(need["id"], str) and OPERATOR_NEED_ID.match(need["id"])
+            and need["kind"] in OPERATOR_NEED_KINDS and text_field(need, "what")
+        )
+        if not well_formed:
+            refusals.append((WHERE_DRAFT, f"besoin opérateur mal formé : « {truncate_line(str(need))} » ({expected})"))
+            continue
+        need_id = need["id"]
+        if need_id in seen:
+            refusals.append((WHERE_DRAFT, f"besoin opérateur déclaré deux fois : {need_id}"))
+            continue
+        seen.add(need_id)
+        if not need_is_lifted(metadata, need_id, human_approver):
+            refusals.append((
+                WHERE_DRAFT,
+                f"besoin opérateur non levé : {need_id} ({need['kind']}) — {text_field(need, 'what')} ; une fois "
+                f"levé par {human_approver}, l'enregistrer avec ses mots : bin/{PROGRAM} lift-need {draft_id} "
+                f"--need {need_id} --by {human_approver} --evidence « … » --project <projet>",
+            ))
+    return refusals
+
+
+def need_is_lifted(metadata: dict[str, Any], need_id: str, human_approver: str) -> bool:
+    try:
+        record = json.loads(metadata.get(OPERATOR_NEED_KEY + need_id) or "null")
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(record, dict) and record.get("lifted_by") == human_approver
+        and isinstance(record.get("evidence"), str) and bool(record["evidence"].strip())
+    )
+
+
+def graph_ticket(ticket: dict[str, Any], stories: dict[str, str]) -> dict[str, Any]:
+    """A ticket of the draft, as the graph checks and the pointers read it."""
+    kind = ticket.get("kind")
+    return {
+        "key": str(ticket["id"]),
+        "kind": kind if kind in TICKET_KINDS else None,
+        "title": one_line(ticket.get("title") or ""),
+        "demonstration_line": text_field(ticket, "demonstration_line") or None,
+        "user_stories": cited_user_stories(ticket),
+        "restored_story": restored_user_story(ticket, stories),
+        "establishes": ticket.get("establishes_launch_recipe") is True,
+        "blocked_by": [str(blocker) for blocker in ticket["blocked_by"]],
+    }
+
+
+def graph_refusals(
+    graph: list[dict[str, Any]], spec: dict[str, Any], launch: dict[str, Any] | None,
+    project_id: str, descriptor: Path,
+) -> list[tuple[str, str]]:
+    """What is refused of the graph as a whole -- the draft for a first
+    publication, the graph that results from the patch otherwise."""
+    refusals: list[tuple[str, str]] = []
+    covered = {
+        number for ticket in graph if ticket["kind"] not in ("prefactoring", "repair")
+        for number in ticket["user_stories"] or []
+    }
+    orphans = [number for number in spec["stories"] if number not in covered]
+    if orphans:
+        refusals.append((
+            WHERE_GRAPH,
+            f"user stories couvertes par aucun ticket : {', '.join(orphans)} (chaque user story numérotée de "
+            f"la Spec {spec['id']} est citée par au moins une vertical_slice)",
+        ))
+
+    establishing = [ticket for ticket in graph if ticket["establishes"] and ticket["kind"] == KIND_COVERING_STORIES]
+    if len(establishing) > 1:
+        names = ", ".join(ticket["key"] for ticket in establishing)
+        refusals += [(
+            ticket["key"],
+            f"establishes_launch_recipe : plusieurs tranches établissent la recette de lancement ({names}) ; "
+            "une seule l'établit, la première du graphe",
+        ) for ticket in establishing]
+    elif launch is None and not establishing:
+        missing = "" if descriptor.is_file() else ", fichier absent"
+        refusals.append((
+            WHERE_GRAPH,
+            f"le profil du projet {project_id} ne déclare pas de recette de lancement ({descriptor}{missing}) "
+            "et aucune tranche du graphe ne l'établit (champ establishes_launch_recipe: true sur la première "
+            "vertical_slice, celle que les autres tranches attendent)",
+        ))
+    elif launch is None:
+        by_key = {ticket["key"]: ticket for ticket in graph}
+        first = establishing[0]["key"]
+
+        def waits_for_first(key: str) -> bool:
+            stack, seen = [key], set()
+            while stack:
+                current = stack.pop()
+                if current in seen or current not in by_key:
+                    continue
+                seen.add(current)
+                if first in by_key[current]["blocked_by"]:
+                    return True
+                stack.extend(by_key[current]["blocked_by"])
+            return False
+
+        ahead = [
+            ticket["key"] for ticket in graph
+            if ticket["key"] != first and ticket["kind"] in KINDS_WITH_DEMONSTRATION and not waits_for_first(ticket["key"])
+        ]
+        if ahead:
+            refusals.append((
+                first,
+                "establishes_launch_recipe : ce n'est pas la première tranche du graphe ; ne l'attendent pas "
+                f"(blocked_by, directement ou par un autre ticket) : {', '.join(ahead)}",
+            ))
+    return refusals
+
+
+def pointer_sections(
+    ticket: dict[str, Any], graph: list[dict[str, Any]], spec: dict[str, Any], launch: dict[str, Any] | None,
+) -> dict[str, str]:
+    """The pointers the door poses in a ticket, never written by hand (Spec
+    §2): the Spec and its digest, the user stories the ticket covers, its
+    sibling tickets with their demonstration line, and the seams (entry
+    points of the project profile, Testing Decisions of the Spec)."""
+    numbers = ticket["user_stories"] or ([ticket["restored_story"]] if ticket["restored_story"] else [])
+    stories = [f"- {number}. {spec['stories'][number]}" for number in numbers if number in spec["stories"]]
+    siblings = [
+        f"- {other['key']} ({other['kind']}) — {other['title']} : "
+        + (other["demonstration_line"] or "pas de ligne de démonstration")
+        for other in graph if other["key"] != ticket["key"]
+    ]
+    if launch is None:
+        seams = ["- Points d'entrée du profil : aucun déclaré, la première tranche établit la recette de lancement"]
+    else:
+        seams = [
+            f"- Point d'entrée du profil : {entry.get('method')} {entry.get('path')} ({entry.get('kind')})"
+            for entry in launch.get("entry_points") or []
+        ]
+    seams += [f"- Testing Decisions de la Spec : {line}" for line in spec["testing_decisions"]] or [
+        "- Testing Decisions de la Spec : aucune"
+    ]
+    return {
+        "Spec": f"{spec['id']} — {spec['digest']}",
+        "User stories": "\n".join(stories) or "aucune",
+        "Sibling tickets": "\n".join(siblings) or "aucun",
+        "Seams": "\n".join(seams),
+    }
+
+
+def render_sections(sections: dict[str, str]) -> str:
+    return "\n\n".join(f"## {title}\n\n{body}" for title, body in sections.items())
+
+
+def repointed(description: str, sections: dict[str, str]) -> str:
+    """A published ticket text with these pointer sections replaced; what
+    the approved draft says of the ticket, before the pointers, is kept."""
+    own, start, pointers = description.partition(POINTERS_START)
+    if not start:
+        return description
+    current: dict[str, str] = {}
+    for block in (start.strip("\n") + "\n\n" + pointers).split("\n\n## "):
+        title, _, body = block.removeprefix("## ").partition("\n\n")
+        current[title] = body
+    current.update(sections)
+    return own + "\n\n" + render_sections(current)
 
 
 def new_flow_ticket_description(ticket: dict[str, Any]) -> str:
@@ -476,6 +802,11 @@ def new_flow_ticket_description(ticket: dict[str, Any]) -> str:
     kind = ticket["kind"]
     if kind in KINDS_WITH_DEMONSTRATION:
         sections.append(("Demonstration line", text_field(ticket, "demonstration_line")))
+    if ticket.get("establishes_launch_recipe") is True:
+        sections.append((
+            "Launch recipe",
+            "Cette tranche établit la recette de lancement du projet : son profil n'en déclare pas encore.",
+        ))
     if kind == "prefactoring":
         sections.append(("Unblocks", text_field(ticket, "unblocks")))
     if kind == "repair":
@@ -499,8 +830,13 @@ def mark_new_flow_convoy(draft_id: str, tickets: list[dict[str, Any]], mapping: 
     convoy_id = mapping["_convoy"]
     argv = [tool_path("CONVOY_STATE_BIN", "convoy-state"), "mark", convoy_id]
     for ticket in tickets:
+        bead_id = mapping[str(ticket["id"])]
         if ticket["kind"] in KINDS_WITH_DEMONSTRATION:
-            argv += ["--demonstration-line", f"{mapping[str(ticket['id'])]}={text_field(ticket, 'demonstration_line')}"]
+            argv += ["--demonstration-line", f"{bead_id}={text_field(ticket, 'demonstration_line')}"]
+        if ticket["kind"] == KIND_COVERING_STORIES:
+            argv += ["--user-stories", f"{bead_id}={','.join(cited_user_stories(ticket) or [])}"]
+        if ticket.get("establishes_launch_recipe") is True:
+            argv += ["--establishes-launch-recipe", bead_id]
     try:
         # From the tracker's own directory: the state command reaches it
         # through `gc`, which resolves its city from the working directory.
@@ -607,7 +943,9 @@ def escalate_reslice_refusal(
         pass
 
 
-def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]], new_flow: bool = False) -> dict[str, Any]:
+def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]], describe: Any = None) -> dict[str, Any]:
+    """`describe` renders the text of a ticket of the new flow; without it
+    the ticket carries the text of the flow before T05."""
     artifact = draft["artifact"]
     spec = artifact["source_spec"]
     digest = artifact["content_digest"]
@@ -669,7 +1007,7 @@ def graph_plan(draft: dict[str, Any], tickets: list[dict[str, Any]], new_flow: b
             "type": "task",
             "priority": 1,
             "title": f"{ticket_id} — {ticket['title']}",
-            "description": new_flow_ticket_description(ticket) if new_flow else ticket_description(ticket, execution),
+            "description": describe(ticket) if describe else ticket_description(ticket, execution),
             "labels": ["approved-ticket-graph", "delivery-plane", *ticket_labels],
             "metadata": metadata,
         })
@@ -686,22 +1024,36 @@ def graph_members(digest: str) -> dict[str, dict[str, str]]:
     up a prior graph whose ticket count differs from the revision being
     applied.
     """
+    return members_among(all_issues(), digest)
+
+
+def all_issues() -> list[dict[str, Any]]:
     payload = json.loads(run("list", "--all", "--limit", "0", "--json").stdout or "[]")
-    members: dict[str, dict[str, str]] = {}
-    for issue in payload if isinstance(payload, list) else []:
-        metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
-        if metadata.get("gc.graph_digest") != digest:
+    return [issue for issue in payload if isinstance(issue, dict)] if isinstance(payload, list) else []
+
+
+def member_entry(issue: dict[str, Any]) -> dict[str, Any]:
+    metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+    return {
+        "id": str(issue["id"]),
+        "status": str(issue.get("status") or ""),
+        "title": str(issue.get("title") or ""),
+        "description": str(issue.get("description") or ""),
+        "blocked_by": str(metadata.get("gc.blocked_by") or ""),
+        "metadata": metadata,
+    }
+
+
+def members_among(issues: list[dict[str, Any]], digest: str) -> dict[str, dict[str, Any]]:
+    members: dict[str, dict[str, Any]] = {}
+    for issue in issues:
+        entry = member_entry(issue)
+        if entry["metadata"].get("gc.graph_digest") != digest:
             continue
-        key = str(metadata.get("gc.ticket_id") or "_convoy")
+        key = str(entry["metadata"].get("gc.ticket_id") or "_convoy")
         if key in members:
             raise PublishError(f"graph {digest} has duplicate key {key}")
-        members[key] = {
-            "id": str(issue["id"]),
-            "status": str(issue.get("status") or ""),
-            "description": str(issue.get("description") or ""),
-            "blocked_by": str(metadata.get("gc.blocked_by") or ""),
-            "metadata": metadata,
-        }
+        members[key] = entry
     return members
 
 
@@ -731,9 +1083,27 @@ def publish(plan: dict[str, Any], digest: str, ticket_count: int) -> dict[str, s
     return {str(key): str(value) for key, value in mapping.items()}
 
 
+def blockers_first(keys: list[str], ticket_by_key: dict[str, dict[str, Any]]) -> list[str]:
+    """The tickets of a revision, each after the ones it waits for, and
+    otherwise in the order of the draft: a published ticket may wait for a
+    ticket the same patch adds (a repair that blocks it), which must then
+    exist first. The graph is acyclic (`validate_tickets`)."""
+    ordered: list[str] = []
+    remaining = list(keys)
+    while remaining:
+        ready = next(
+            key for key in remaining
+            if all(str(blocker) in ordered for blocker in ticket_by_key[key]["blocked_by"])
+        )
+        ordered.append(ready)
+        remaining.remove(ready)
+    return ordered
+
+
 def patch(
     draft: dict[str, Any], plan: dict[str, Any], tickets: list[dict[str, Any]],
     author: str, reason: str, reslice: bool,
+    old_members: dict[str, dict[str, Any]] | None = None, new_flow: bool = False,
 ) -> dict[str, Any]:
     """Apply an immutable revised draft to the unfinished tickets of the
     graph it revises -- the same deterministic door as `publish`, extended
@@ -754,12 +1124,18 @@ def patch(
     refused and escalated to NEEDS BENJAMIN before anything is written.
     Without `--reslice` (a draft revised and re-approved by a Planning Run)
     acceptance criteria may change freely, as before.
+
+    `old_members` is the graph being revised when the caller has already
+    read it; for a convoy of the new flow it is every ticket the convoy
+    tracks, whatever digest it was last published under, and the convoy
+    tracks each ticket the patch adds (`new_flow`).
     """
     old_digest = str(draft["artifact"].get("revises") or "").strip()
     if not old_digest:
         raise PublishError("artifact.revises must be a non-empty string")
     new_digest = draft["artifact"]["content_digest"]
-    old_members = graph_members(old_digest)
+    if old_members is None:
+        old_members = graph_members(old_digest)
     if not old_members:
         raise PublishError(f"no published graph found for revised digest {old_digest}")
 
@@ -816,6 +1192,8 @@ def patch(
 
     # Pass 2: apply. Validation above guarantees every closed-target and
     # acceptance-criteria check has already passed.
+    if new_flow:
+        ordered_ticket_keys = blockers_first(ordered_ticket_keys, ticket_by_key)
     for key in ordered_ticket_keys:
         node = by_key[key]
         ticket = ticket_by_key[key]
@@ -835,6 +1213,7 @@ def patch(
                 "--set-metadata", "gc.publication_validated=true",
                 "--set-metadata", f"gc.blocked_by={','.join(sorted(wanted_blocked_by))}",
                 *scope_metadata_args,
+                *(["--set-metadata", f"gc.spec_digest={node['metadata']['gc.spec_digest']}"] if new_flow else []),
             )
             for added in sorted(wanted_blocked_by - previous_blocked_by):
                 run("dep", "add", member["id"], resolve_id(added))
@@ -849,16 +1228,23 @@ def patch(
         else:
             edge_ids = as_list(node.get("_blocked_by_keys", []), f"{key}._blocked_by_keys")
             deps = ",".join(f"blocks:{resolve_id(str(edge_key))}" for edge_key in edge_ids)
-            deps = f"tracks:{convoy_id}" + (f",{deps}" if deps else "")
+            if not new_flow:
+                deps = f"tracks:{convoy_id}" + (f",{deps}" if deps else "")
             metadata_json = json.dumps(node["metadata"], ensure_ascii=False)
             result = run(
                 "create", "--title", node["title"], "--description", node["description"],
                 "--type", "task", "--priority", str(node.get("priority", 1)),
                 "--labels", ",".join(node["labels"]), "--metadata", metadata_json,
-                "--deps", deps, "--silent",
+                *(["--deps", deps] if deps else []), "--silent",
             )
             created[key] = result.stdout.strip()
             resulting_id = created[key]
+            if new_flow:
+                # The convoy tracks the ticket, as the `tracks` edges of the
+                # graph transaction do: `--deps tracks:<convoy>` on the new
+                # ticket is the reverse edge, which bin/convoy-state does
+                # not read (observed on bd 1.2.2).
+                run("dep", "add", convoy_id, resulting_id, "--type", "tracks")
 
         merge_targets = [str(m) for m in as_list(ticket.get("merges", []), f"{key}.merges")]
         for target_key in merge_targets:
@@ -906,6 +1292,7 @@ def patch(
             "--set-metadata", "gc.publication_validated=true",
             "--set-metadata", f"gc.patch_author={author}",
             "--set-metadata", f"gc.patch_reason={reason}",
+            *(["--set-metadata", f"gc.spec_digest={draft['artifact']['source_spec']['digest']}"] if new_flow else []),
             "--append-notes", f"PATCH by {author}: {reason}",
         )
 
@@ -1014,9 +1401,9 @@ def tool_path(env_var: str, name: str) -> str:
     return str(Path(__file__).resolve().parent / name)
 
 
-def run_subtool(argv: list[str], cwd: Path | None = None) -> dict[str, Any]:
+def run_subtool(argv: list[str], cwd: Path | None = None, stdin: str | None = None) -> dict[str, Any]:
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, env=os.environ.copy(), cwd=cwd)
+        proc = subprocess.run(argv, capture_output=True, text=True, env=os.environ.copy(), cwd=cwd, input=stdin)
     except OSError as exc:
         raise PublishError(f"could not run {argv[0]}: {exc}") from exc
     try:
@@ -1077,27 +1464,32 @@ def load_approved_spec_bead(spec_id: str) -> dict[str, Any]:
 
 
 def load_approved_bead_draft(
-    draft_id: str, human_approver: str,
+    draft_id: str, human_approver: str, bead: dict[str, Any] | None = None, require_approval: bool = True,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], str]:
-    bead = bd_show(draft_id)
+    """`require_approval` is False only for a patch of the new flow that
+    carries no approval at all: it is then held to what a patch may do
+    without one (`unapproved_patch_refusals`)."""
+    if bead is None:
+        bead = bd_show(draft_id)
     metadata = bead.get("metadata") or {}
     description = str(bead.get("description") or "")
     digest = canonical_bead_digest(description)
 
-    approved_by = str(metadata.get("approved_by") or "").strip()
-    if approved_by != human_approver:
-        raise PublishError(
-            f"refused: draft approver {approved_by!r} is not the project's declared "
-            f"human approver {human_approver!r}"
-        )
-    if not str(metadata.get("approved_evidence") or "").strip():
-        raise PublishError("refused: draft has no approval evidence")
-    approved_digest = metadata.get("approved_digest")
-    if approved_digest != digest:
-        raise PublishError(
-            f"refused: draft tickets changed after approval (approved digest {approved_digest!r}, "
-            f"current digest {digest!r})"
-        )
+    if require_approval:
+        approved_by = str(metadata.get("approved_by") or "").strip()
+        if approved_by != human_approver:
+            raise PublishError(
+                f"refused: draft approver {approved_by!r} is not the project's declared "
+                f"human approver {human_approver!r}"
+            )
+        if not str(metadata.get("approved_evidence") or "").strip():
+            raise PublishError("refused: draft has no approval evidence")
+        approved_digest = metadata.get("approved_digest")
+        if approved_digest != digest:
+            raise PublishError(
+                f"refused: draft tickets changed after approval (approved digest {approved_digest!r}, "
+                f"current digest {digest!r})"
+            )
 
     try:
         parsed = yaml.safe_load(description) or {}
@@ -1153,9 +1545,7 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
     new_flow = flow_contract(parsed, draft_id) == NEW_FLOW
     spec_bead = load_approved_spec_bead(spec_id)
     spec_digest = canonical_bead_digest(spec_bead.get("description") or "")
-    if new_flow:
-        refuse_unless_entry_contract_met(draft_id, parsed, tickets)
-    else:
+    if not new_flow:
         refuse_prototype_tickets(tickets)
 
     # T05 (.6, .8): a graph's display title and project key are obligatory,
@@ -1175,13 +1565,28 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
     if not project_id:
         raise PublishError(f"refused: source Spec {spec_id} has no project key (gc.project_id)")
 
+    describe = None
+    if new_flow:
+        # The whole entry contract, before any write: the tickets (T05), then
+        # the graph against its Spec and its project (T06).
+        spec = spec_view(spec_id, spec_bead)
+        launch, descriptor = project_launch(project_id, descriptors_dir(args, repo_root), profile_bin)
+        refusals = entry_contract_refusals(parsed, tickets, spec)
+        refusals += operator_need_refusals(parsed, metadata, human_approver, draft_id)
+        if "withdrawn" in parsed:
+            refusals.append((WHERE_DRAFT, "withdrawn : une première publication ne retire aucun ticket (porte de patch)"))
+        graph = [graph_ticket(ticket, spec["stories"]) for ticket in tickets]
+        refusals += graph_refusals(graph, spec, launch, project_id, descriptor)
+        refuse_unless_contract_met(draft_id, refusals)
+        describe = new_flow_describe(graph, spec, launch)
+
     scope_edges = add_scope_overlap_edges(tickets)
     record_scope_overlaps(scope_edges, tickets, digest)
     compat_draft = bead_compat_draft(
         draft_id, parsed, digest, spec_id, spec_digest, None, bead,
         display_title=display_title, project_id=project_id,
     )
-    plan = graph_plan(compat_draft, tickets, new_flow=new_flow)
+    plan = graph_plan(compat_draft, tickets, describe=describe)
     for node, ticket in zip((n for n in plan["nodes"] if n["key"] != "_convoy"), tickets):
         node["_blocked_by_keys"] = [str(b) for b in ticket["blocked_by"]]
 
@@ -1214,6 +1619,376 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
     return 0
 
 
+def descriptors_dir(args: argparse.Namespace, repo_root: Path) -> Path:
+    return Path(args.descriptors_dir) if args.descriptors_dir else repo_root / "config" / "project-descriptors"
+
+
+def new_flow_describe(graph: list[dict[str, Any]], spec: dict[str, Any], launch: dict[str, Any] | None) -> Any:
+    """The text of a published ticket of the new flow: what the approved
+    draft says of it, then the pointers the door poses."""
+    by_key = {ticket["key"]: ticket for ticket in graph}
+
+    def describe(ticket: dict[str, Any]) -> str:
+        pointers = pointer_sections(by_key[str(ticket["id"])], graph, spec, launch)
+        return new_flow_ticket_description(ticket) + "\n\n" + render_sections(pointers)
+
+    return describe
+
+
+def declared_contract(bead: dict[str, Any], draft_id: str) -> str | None:
+    """The contract the draft bead declares, read before anything else is
+    checked; a text that cannot be read declares none, and is refused by the
+    checks that follow."""
+    try:
+        parsed = yaml.safe_load(str(bead.get("description") or ""))
+    except yaml.YAMLError:
+        return None
+    return flow_contract(parsed, draft_id) if isinstance(parsed, dict) else None
+
+
+def convoy_state(convoy_id: str) -> dict[str, Any] | None:
+    """The durable state of a convoy as bin/convoy-state renders it, or None
+    for a convoy that does not carry the new-flow mark. An « état sans règle »
+    is still a state: what the door needs of it is read as it is."""
+    argv = [tool_path("CONVOY_STATE_BIN", "convoy-state"), "show", convoy_id]
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, env=os.environ.copy(), cwd=BD_WORKSPACE)
+        payload = json.loads(proc.stdout)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PublishError(f"could not read the state of convoy {convoy_id} ({' '.join(argv)}): {exc}") from exc
+    if proc.returncode == 4:
+        return None
+    if proc.returncode not in (0, 3) or not isinstance(payload.get("tickets"), list):
+        raise PublishError(payload.get("error") or f"{' '.join(argv)} failed")
+    return payload
+
+
+def published_ticket(member: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """A ticket the convoy already tracks, as the graph checks and the
+    pointers read it: its entry fields come from bin/convoy-state."""
+    key = str(member["metadata"].get("gc.ticket_id") or "")
+    kind = state.get("kind") if state.get("kind") in TICKET_KINDS else None
+    line = state.get("demonstration_line")
+    covered = state.get("user_stories")
+    return {
+        "key": key,
+        "kind": kind,
+        "title": member["title"].removeprefix(f"{key} — "),
+        "demonstration_line": line if isinstance(line, str) else None,
+        "user_stories": covered if isinstance(covered, list) else None,
+        "restored_story": None,
+        "establishes": state.get("establishes_launch_recipe") is True,
+        "blocked_by": [blocker for blocker in member["blocked_by"].split(",") if blocker],
+    }
+
+
+def frozen_field_refusals(ticket: dict[str, Any], state: dict[str, Any]) -> list[str]:
+    """What a revision may not change of a ticket already published: the
+    fields frozen with the approved graph and kept by bin/convoy-state."""
+    drafted = graph_ticket(ticket, {})
+    if ticket.get("kind") != state.get("kind"):
+        return [
+            f"genre changé ({state.get('kind')} → {one_line(ticket.get('kind'))}) : le genre d'un ticket publié est "
+            "gelé avec le graphe approuvé ; un autre genre est un autre ticket"
+        ]
+    reasons: list[str] = []
+    if drafted["demonstration_line"] != state.get("demonstration_line"):
+        reasons.append(
+            "ligne de démonstration changée : elle est gelée avec le graphe approuvé "
+            f"(publiée : « {truncate_line(str(state.get('demonstration_line')), MAX_QUOTED_CRITERION)} ») ; "
+            "une autre observation est un autre ticket"
+        )
+    if drafted["user_stories"] != state.get("user_stories") and drafted["user_stories"] is not None:
+        reasons.append(
+            f"user stories changées ({', '.join(state.get('user_stories') or [])} → "
+            f"{', '.join(drafted['user_stories'])}) : elles sont gelées avec le graphe approuvé"
+        )
+    if drafted["establishes"] != (state.get("establishes_launch_recipe") is True):
+        reasons.append("establishes_launch_recipe changé : ce champ est gelé avec le graphe approuvé")
+    return reasons
+
+
+def unapproved_patch_refusals(
+    parsed: dict[str, Any], tickets: list[dict[str, Any]], members: dict[str, dict[str, Any]], human_approver: str,
+) -> list[tuple[str, str]]:
+    """Spec §2, genre `repair`: while it stays inside the approved intent, a
+    repair needs no new approval. Mechanically: the patch only adds repair
+    tickets -- each naming what it restores, as any repair -- to a graph it
+    otherwise leaves as published; a published ticket may only gain an added
+    repair among its blockers."""
+    refusals: list[tuple[str, str]] = []
+    added = {str(ticket["id"]) for ticket in tickets if str(ticket["id"]) not in members}
+    if parsed.get("withdrawn"):
+        refusals.append((WHERE_DRAFT, "retire un ticket (withdrawn) : un retrait demande l'approbation du graphe révisé"))
+    for ticket in tickets:
+        key = str(ticket["id"])
+        if key in added:
+            if ticket.get("kind") != "repair":
+                refusals.append((
+                    key, f"ajouté avec le genre {one_line(ticket.get('kind'))} : seul un repair s'ajoute sans approbation"))
+            continue
+        member = members[key]
+        try:
+            unchanged = member["description"].startswith(new_flow_ticket_description(ticket) + POINTERS_START)
+        except (KeyError, TypeError):  # a ticket the entry contract already refuses
+            unchanged = False
+        if not unchanged:
+            refusals.append((key, "modifié : son texte publié diffère de celui du brouillon"))
+        published = {blocker for blocker in member["blocked_by"].split(",") if blocker}
+        drafted = {str(blocker) for blocker in ticket["blocked_by"]}
+        if not published <= drafted or not drafted - published <= added:
+            refusals.append((
+                key,
+                "réordonné : un ticket publié ne peut que gagner un repair ajouté parmi ses bloqueurs "
+                f"(publié : {', '.join(sorted(published)) or 'aucun'} ; brouillon : {', '.join(sorted(drafted)) or 'aucun'})",
+            ))
+    if refusals:
+        refusals.insert(0, (
+            WHERE_DRAFT,
+            f"ce patch n'a pas l'approbation de {human_approver} (approved_by, approved_evidence, approved_digest "
+            "absents) : sans approbation, la porte ne publie que des tickets repair ajoutés à un graphe laissé "
+            "tel que publié",
+        ))
+    return refusals
+
+
+def withdrawal_refusals(
+    parsed: dict[str, Any], tickets: list[dict[str, Any]], members: dict[str, dict[str, Any]],
+    register: str | None,
+) -> tuple[dict[str, str], list[tuple[str, str]]]:
+    """Spec §9: a ticket leaves the graph only by a resolved Planning
+    Exception. Returns the withdrawn tickets (key -> Planning Exception) and
+    why the withdrawal is refused."""
+    if "withdrawn" not in parsed:
+        return {}, []
+    entries = parsed["withdrawn"]
+    expected = "attendu : une liste de {ticket, planning_exception}"
+    if not isinstance(entries, list) or not entries:
+        return {}, [(WHERE_DRAFT, f"withdrawn mal formé ({expected})")]
+    decisions: dict[str, Any] | None = None
+    refusals: list[tuple[str, str]] = []
+    if not register:
+        refusals.append((
+            WHERE_DRAFT,
+            "le brouillon retire un ticket et le registre des Planning Exceptions n'est pas donné "
+            "(--planning-exception-register) : un retrait suit une Planning Exception résolue",
+        ))
+    else:
+        status = run_subtool([tool_path("PLANNING_EXCEPTION_BIN", "planning-exception"), "status", register])
+        decisions = status.get("decisions") if isinstance(status.get("decisions"), dict) else {}
+    drafted = {str(ticket["id"]) for ticket in tickets}
+    withdrawn: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("ticket"), str) or set(entry) - set(WITHDRAWN_FIELDS):
+            refusals.append((WHERE_DRAFT, f"withdrawn mal formé : « {truncate_line(str(entry))} » ({expected})"))
+            continue
+        key = entry["ticket"]
+        decision = entry.get("planning_exception")
+        if key not in members:
+            refusals.append((key, "retiré, mais le convoi ne suit aucun ticket de ce nom"))
+            continue
+        if key in withdrawn:
+            refusals.append((key, "retiré deux fois"))
+            continue
+        withdrawn[key] = str(decision or "")
+        if key in drafted:
+            refusals.append((key, "retiré et repris par le même brouillon : un ticket retiré n'y figure plus"))
+        if members[key]["status"] == "closed":
+            refusals.append((key, f"retiré, mais {members[key]['id']} est fermé : un ticket livré ou déjà retiré ne se retire pas"))
+        if not isinstance(decision, str) or not decision.strip():
+            refusals.append((key, "retiré sans Planning Exception (champ planning_exception : l'identifiant de la décision résolue)"))
+        elif decisions is not None and decisions.get(decision) != "resolved":
+            state = decisions.get(decision)
+            refusals.append((
+                key,
+                f"retiré, mais la Planning Exception {decision} n'est pas résolue "
+                f"({'inconnue du registre' if state is None else f'état : {state}'})",
+            ))
+    # A ticket left out of the revision that waits for a withdrawn one would
+    # become ready with nothing delivered behind it.
+    for key, member in members.items():
+        waited = sorted({blocker for blocker in member["blocked_by"].split(",") if blocker} & set(withdrawn))
+        if waited and key not in drafted and key not in withdrawn and member["status"] != "closed":
+            refusals.append((
+                key,
+                f"attend {', '.join(waited)}, retiré par ce patch, et le brouillon révisé ne dit pas ce qu'il devient "
+                "(le reprendre sans ce bloqueur, ou le retirer aussi)",
+            ))
+    return withdrawn, refusals
+
+
+def withdraw_tickets(
+    convoy_id: str, withdrawn: dict[str, str], members: dict[str, dict[str, Any]], author: str, reason: str,
+) -> dict[str, str]:
+    """Close each withdrawn ticket behind its gate record (`withdrawn`,
+    written by bin/convoy-state): a ticket closed without one is an « état
+    sans règle ». A ticket already closed is left as it is."""
+    done: dict[str, str] = {}
+    for key, decision in withdrawn.items():
+        member = members[key]
+        done[key] = member["id"]
+        if member["status"] == "closed":
+            continue
+        run_subtool(
+            [tool_path("CONVOY_STATE_BIN", "convoy-state"), "record-gate", convoy_id, member["id"], "--gate", "withdrawn"],
+            cwd=BD_WORKSPACE,
+        )
+        run(
+            "update", member["id"], "--status", "closed",
+            "--append-notes", f"WITHDRAWN by {author} (Planning Exception {decision}): {reason}",
+        )
+    return done
+
+
+def cmd_bd_patch_new_flow(args: argparse.Namespace, bead: dict[str, Any], human_approver: str) -> int:
+    """`bd-patch` on a draft that declares the new-flow contract: the entry
+    contract applies as it is to what the patch adds, and the graph checks
+    to the graph that results from it. Everything is checked before any
+    write."""
+    repo_root = Path(args.repo_root)
+    profile_bin = tool_path("PROJECT_PLANNING_PROFILE_BIN", "project-planning-profile")
+    draft_id = str(args.draft)
+    metadata = bead.get("metadata") or {}
+    if args.reslice:
+        raise PublishError(
+            f"refus : --reslice sur le brouillon {draft_id}, qui déclare le contrat du nouveau flux ({NEW_FLOW}) : "
+            "le reslice est le geste du Mayor, qui ne modifie pas les tickets d'un convoi marqué ; rien n'est écrit"
+        )
+    approved = any(str(metadata.get(key) or "").strip() for key in ("approved_by", "approved_evidence", "approved_digest"))
+    bead, tickets, parsed, digest = load_approved_bead_draft(draft_id, human_approver, bead, require_approval=approved)
+    spec_id = str(metadata.get("spec_id") or "").strip()
+    if not spec_id:
+        raise PublishError("refused: draft bead has no spec_id")
+    spec_bead = load_approved_spec_bead(spec_id)
+    revises = str(metadata.get("revises_digest") or "").strip()
+    if not revises:
+        raise PublishError("refused: draft bead metadata.revises_digest must be a non-empty string")
+    project_id = str((spec_bead.get("metadata") or {}).get("gc.project_id") or "").strip()
+    if not project_id:
+        raise PublishError(f"refused: source Spec {spec_id} has no project key (gc.project_id)")
+
+    issues = all_issues()
+    # A patch already applied (its convoy carries this draft's digest) is
+    # only completed: withdrawals and marking, both idempotent.
+    resumed = "_convoy" in members_among(issues, digest)
+    convoy = (members_among(issues, digest) if resumed else members_among(issues, revises)).get("_convoy")
+    if convoy is None:
+        raise PublishError(
+            f"refus : aucun convoi publié ne porte le digest que le brouillon {draft_id} révise ({revises}) ; "
+            "un brouillon révise le graphe tel qu'il est publié aujourd'hui ; rien n'est écrit"
+        )
+    convoy_id = convoy["id"]
+    state = convoy_state(convoy_id)
+    if state is None:
+        raise PublishError(
+            f"refus : le brouillon {draft_id} déclare le contrat du nouveau flux ({NEW_FLOW}) et le convoi qu'il "
+            f"révise ({convoy_id}) ne porte pas la marque du nouveau flux : un convoi est révisé au contrat sous "
+            "lequel il a été publié ; rien n'est écrit"
+        )
+    published_spec = str(convoy["metadata"].get("gc.spec_id") or "")
+    if published_spec != spec_id:
+        raise PublishError(
+            f"refus : le brouillon {draft_id} est lié à la Spec {spec_id} et le convoi qu'il révise ({convoy_id}) "
+            f"a été publié depuis la Spec {published_spec or '(aucune)'} : un graphe est révisé contre la Spec "
+            "dont il vient ; rien n'est écrit"
+        )
+    states = {str(ticket.get("id")): ticket for ticket in state["tickets"] if isinstance(ticket, dict)}
+    members: dict[str, dict[str, Any]] = {}
+    for issue in issues:
+        if str(issue.get("id")) not in states:
+            continue
+        entry = member_entry(issue)
+        key = str(entry["metadata"].get("gc.ticket_id") or "")
+        if not key or key in members:
+            raise PublishError(f"convoy {convoy_id} tracks a ticket without a ticket id, or two with the same: {entry['id']}")
+        members[key] = entry
+    spec = spec_view(spec_id, spec_bead)
+    spec_digest = spec["digest"]
+    launch, descriptor = project_launch(project_id, descriptors_dir(args, repo_root), profile_bin)
+    withdrawn = {
+        str(entry["ticket"]): str(entry.get("planning_exception") or "")
+        for entry in (parsed.get("withdrawn") or []) if isinstance(entry, dict) and entry.get("ticket") in members
+    } if resumed and isinstance(parsed.get("withdrawn"), list) else {}
+    result: dict[str, Any]
+    scope_edges: list[dict[str, str]] = []
+
+    if resumed:
+        result = {
+            "ids": {"_convoy": convoy_id, **{key: member["id"] for key, member in members.items()}},
+            "patched": [], "created": [], "merged": {}, "superseded": {}, "resumed": True,
+        }
+    else:
+        refusals = entry_contract_refusals(parsed, tickets, spec)
+        for ticket in tickets:
+            key = str(ticket["id"])
+            if key not in members:
+                continue
+            if members[key]["status"] == "closed":
+                refusals.append((
+                    key,
+                    f"repris alors que {members[key]['id']} est fermé : un patch ne modifie pas un ticket livré ; "
+                    "le brouillon révisé ne le reprend pas",
+                ))
+            elif ticket.get("kind") in TICKET_KINDS:
+                refusals += [(key, reason) for reason in frozen_field_refusals(ticket, states[members[key]["id"]])]
+        withdrawn, withdrawal = withdrawal_refusals(parsed, tickets, members, args.planning_exception_register)
+        refusals += withdrawal
+        if not approved:
+            refusals += unapproved_patch_refusals(parsed, tickets, members, human_approver)
+        refusals += operator_need_refusals(parsed, metadata, human_approver, draft_id)
+
+        # The graph that results from the patch: what the convoy tracks,
+        # less what is withdrawn (now or before), with the revision on top.
+        drafted = {str(ticket["id"]) for ticket in tickets}
+        graph = [
+            published_ticket(member, states[member["id"]])
+            for key, member in members.items()
+            if key not in drafted and key not in withdrawn
+            and "withdrawn" not in (states[member["id"]].get("gates") or {})
+        ] + [graph_ticket(ticket, spec["stories"]) for ticket in tickets]
+        refusals += graph_refusals(graph, spec, launch, project_id, descriptor)
+        refuse_unless_contract_met(draft_id, refusals)
+
+        scope_edges = add_scope_overlap_edges(tickets)
+        record_scope_overlaps(scope_edges, tickets, digest)
+        compat_draft = bead_compat_draft(draft_id, parsed, digest, spec_id, spec_digest, revises, bead)
+        plan = graph_plan(compat_draft, tickets, describe=new_flow_describe(graph, spec, launch))
+        for node, ticket in zip((n for n in plan["nodes"] if n["key"] != "_convoy"), tickets):
+            node["_blocked_by_keys"] = [str(b) for b in ticket["blocked_by"]]
+        result = patch(
+            compat_draft, plan, tickets, args.author, args.reason, False,
+            old_members={"_convoy": convoy, **members}, new_flow=True,
+        )
+        # The tickets the revision does not carry keep their text; their
+        # pointers follow the graph (new sibling, amended Spec).
+        by_key = {ticket["key"]: ticket for ticket in graph}
+        for key, member in members.items():
+            if key in drafted or key not in by_key or member["status"] == "closed":
+                continue
+            pointers = pointer_sections(by_key[key], graph, spec, launch)
+            if by_key[key]["kind"] != KIND_COVERING_STORIES:
+                del pointers["User stories"]
+            description = repointed(member["description"], pointers)
+            if description != member["description"]:
+                run("update", member["id"], "--description", description)
+
+    result["withdrawn"] = withdraw_tickets(convoy_id, withdrawn, members, args.author, args.reason)
+    marked = mark_new_flow_convoy(draft_id, tickets, result["ids"])
+    # Spec §0 rule 3: code starts the tickets of a marked convoy, not the Mayor.
+    print(json.dumps({
+        "ok": True,
+        "graph_digest": digest,
+        "revises": revises,
+        "scope_edges": scope_edges,
+        FLOW_CONTRACT_KEY: NEW_FLOW,
+        "marked": marked,
+        "approved": approved,
+        "mayor_notified": None,
+        **result,
+    }, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def cmd_bd_patch(args: argparse.Namespace) -> int:
     if not (args.author or "").strip() or not (args.reason or "").strip():
         raise PublishError("--author and --reason are required for patch")
@@ -1223,13 +1998,10 @@ def cmd_bd_patch(args: argparse.Namespace) -> int:
 
     draft_id = str(args.draft)
     human_approver = declared_human_approver(args.project, config_dir, profile_bin)
-    bead, tickets, parsed, digest = load_approved_bead_draft(draft_id, human_approver)
-    if flow_contract(parsed, draft_id) == NEW_FLOW:
-        raise PublishError(
-            f"refus : le brouillon {draft_id} déclare le contrat du nouveau flux ({NEW_FLOW}), que la porte "
-            "de patch n'applique pas encore : un ticket ajouté ne doit jamais être plus faible qu'un "
-            "ticket d'origine, donc rien n'est écrit"
-        )
+    bead = bd_show(draft_id)
+    if declared_contract(bead, draft_id) == NEW_FLOW:
+        return cmd_bd_patch_new_flow(args, bead, human_approver)
+    bead, tickets, parsed, digest = load_approved_bead_draft(draft_id, human_approver, bead)
     metadata = bead.get("metadata") or {}
     spec_id = str(metadata.get("spec_id") or "").strip()
     if not spec_id:
@@ -1239,7 +2011,17 @@ def cmd_bd_patch(args: argparse.Namespace) -> int:
     revises = str(metadata.get("revises_digest") or "").strip()
     if not revises:
         raise PublishError("refused: draft bead metadata.revises_digest must be a non-empty string")
-    refuse_prototype_tickets(tickets, frozenset(graph_members(revises)))
+    revised = graph_members(revises)
+    # A ticket added to a marked convoy is never weaker than an original one
+    # (Spec §2, user story 12): a draft that does not declare the contract
+    # does not revise a convoy published under it.
+    if NEW_FLOW_MARK_KEY in (revised.get("_convoy") or {}).get("metadata", {}):
+        raise PublishError(
+            f"refus : le brouillon {draft_id} ne déclare pas le contrat du nouveau flux ({NEW_FLOW}) et le convoi "
+            f"qu'il révise ({revised['_convoy']['id']}) en porte la marque : un ticket ajouté n'est jamais plus "
+            "faible qu'un ticket d'origine ; rien n'est écrit"
+        )
+    refuse_prototype_tickets(tickets, frozenset(revised))
 
     scope_edges = add_scope_overlap_edges(tickets)
     record_scope_overlaps(scope_edges, tickets, digest)
@@ -1261,9 +2043,48 @@ def cmd_bd_patch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lift_need(args: argparse.Namespace) -> int:
+    """Record that a declared operator need is lifted, with the words of the
+    project's human approver, on the draft bead that declares it."""
+    config_dir = Path(args.config_dir) if args.config_dir else Path(args.repo_root) / "config" / "projects"
+    profile_bin = tool_path("PROJECT_PLANNING_PROFILE_BIN", "project-planning-profile")
+    draft_id, need_id = str(args.draft), str(args.need or "")
+    human_approver = declared_human_approver(args.project, config_dir, profile_bin)
+    bead = bd_show(draft_id)
+    try:
+        parsed = yaml.safe_load(str(bead.get("description") or "")) or {}
+    except yaml.YAMLError as exc:
+        raise PublishError(f"draft bead {draft_id} description is not valid YAML: {exc}") from exc
+    needs = parsed.get("operator_needs") if isinstance(parsed, dict) else None
+    declared = [need.get("id") for need in needs if isinstance(need, dict)] if isinstance(needs, list) else []
+    if not OPERATOR_NEED_ID.match(need_id) or need_id not in declared:
+        raise PublishError(
+            f"refus : le brouillon {draft_id} ne déclare pas le besoin opérateur {need_id!r} "
+            f"(déclarés : {', '.join(str(item) for item in declared) or 'aucun'}) ; rien n'est écrit"
+        )
+    if (args.by or "").strip() != human_approver:
+        raise PublishError(
+            f"refus : un besoin opérateur est levé par l'approbateur humain déclaré du projet ({human_approver!r}), "
+            f"pas par {args.by!r} ; rien n'est écrit"
+        )
+    if not (args.evidence or "").strip():
+        raise PublishError("refus : --evidence est vide : un besoin est levé avec les mots de l'approbateur ; rien n'est écrit")
+    metadata = bead.get("metadata") or {}
+    already = need_is_lifted(metadata, need_id, human_approver)
+    if not already:
+        record = json.dumps({
+            "lifted_by": human_approver, "evidence": args.evidence.strip(),
+            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }, ensure_ascii=False, sort_keys=True)
+        run("update", draft_id, "--set-metadata", f"{OPERATOR_NEED_KEY}{need_id}={record}")
+    print(json.dumps({"ok": True, "draft": draft_id, "need": need_id, "lifted_by": human_approver, "already": already},
+                     ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(prog=PROGRAM)
-    value.add_argument("command", choices=("bd-publish", "bd-patch"))
+    value.add_argument("command", choices=("bd-publish", "bd-patch", "lift-need"))
     value.add_argument("draft", help="Ticket Graph Draft bead id")
     value.add_argument("--author", help="who authored this patch (required for bd-patch)")
     value.add_argument("--reason", help="why this patch was applied (required for bd-patch)")
@@ -1283,6 +2104,18 @@ def parser() -> argparse.ArgumentParser:
         "--config-dir", default=None,
         help="directory holding config/projects/*.toml files (default: <repo-root>/config/projects)",
     )
+    value.add_argument(
+        "--descriptors-dir", default=None,
+        help="directory holding the project profiles <project>.json, with their launch recipe "
+             "(default: <repo-root>/config/project-descriptors)",
+    )
+    value.add_argument(
+        "--planning-exception-register", default=None,
+        help="bd-patch: the Planning Exception register a withdrawn ticket's decision is resolved in",
+    )
+    value.add_argument("--need", help="lift-need: id of the operator need the draft declares")
+    value.add_argument("--by", help="lift-need: who lifts it (the project's declared human approver)")
+    value.add_argument("--evidence", help="lift-need: the approver's exact words")
     return value
 
 
@@ -1291,6 +2124,8 @@ def main() -> int:
         args = parser().parse_args()
         if args.command == "bd-publish":
             return cmd_bd_publish(args)
+        if args.command == "lift-need":
+            return cmd_lift_need(args)
         return cmd_bd_patch(args)
     except (OSError, PublishError, json.JSONDecodeError) as exc:
         print(f"{PROGRAM}: {exc}", file=sys.stderr)

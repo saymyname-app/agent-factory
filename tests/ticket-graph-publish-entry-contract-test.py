@@ -26,6 +26,10 @@ FAKE_GC = FIXTURES / "gc"
 PROJECTS_CONFIG_DIR = ROOT / "tests" / "fixtures" / "spec-approve" / "projects"
 
 CONFORMANT_DRAFT = FIXTURES / "fixture-city-new-flow-draft.yaml"
+FIXTURE_CITY = ROOT / "tests" / "fixtures" / "delivery-fixture-city"
+# The Spec the conformant draft slices: numbered user stories 1 to 3 (T06).
+FIXTURE_SPEC = (FIXTURE_CITY / "spec.md").read_text(encoding="utf-8")
+LEGACY_SPEC = "spec de la fixture"
 COCKPIT_V2_DRAFT = FIXTURES / "cockpit-v2-draft.yaml"
 LEGACY_GOLDEN = FIXTURES / "legacy-publication-golden.json"
 
@@ -42,6 +46,10 @@ class EntryContractTest(unittest.TestCase):
         self.gc_log.write_text("")
         self.repo_root = self.tmp / "repo"
         self.repo_root.mkdir()
+        # The project's profile, with its launch recipe and entry points (T06).
+        self.descriptors = self.tmp / "descriptors"
+        self.descriptors.mkdir()
+        shutil.copy(FIXTURE_CITY / "descriptor.json", self.descriptors / "delivery-fixture-city.json")
         self.env = {
             **os.environ,
             "BD_BIN": str(FAKE_BD),
@@ -56,10 +64,9 @@ class EntryContractTest(unittest.TestCase):
     def digest(self, description):
         return "sha256:" + hashlib.sha256(description.encode("utf-8")).hexdigest()
 
-    def seed(self, description, revises_digest=None):
+    def seed(self, description, revises_digest=None, spec_text=FIXTURE_SPEC):
         """An approved Ticket Graph Draft bead with this description, bound to
         an approved Spec bead."""
-        spec_text = "spec de la fixture"
         draft_metadata = {
             "spec_id": "spec-1", "approved_by": "benjamin",
             "approved_evidence": "« j'approuve le graphe » (Benjamin, fixture)",
@@ -89,7 +96,7 @@ class EntryContractTest(unittest.TestCase):
     def door(self, command="bd-publish", extra=(), env=None):
         return subprocess.run(
             (str(PUBLISHER), command, "draft-1", "--project", "acme", "--repo-root", str(self.repo_root),
-             "--config-dir", str(PROJECTS_CONFIG_DIR), *extra),
+             "--config-dir", str(PROJECTS_CONFIG_DIR), "--descriptors-dir", str(self.descriptors), *extra),
             env={**self.env, **(env or {})}, text=True, capture_output=True,
         )
 
@@ -382,7 +389,7 @@ class EntryContractTest(unittest.TestCase):
         self.seed(CONFORMANT_DRAFT.read_text(encoding="utf-8"))
 
         result = self.published()
-        self.assertEqual({"_convoy", "T1", "T2", "T3"}, set(result["ids"]))
+        self.assertEqual({"_convoy", "T1", "T2", "T3", "T4"}, set(result["ids"]))
         self.assertEqual(MARK, result["flow_contract"])
 
         shown = self.convoy_state(result["ids"]["_convoy"])
@@ -391,7 +398,7 @@ class EntryContractTest(unittest.TestCase):
         self.assertFalse(state["unruled"])
         self.assertEqual(MARK, state["convoy"]["mark"])
         by_id = {t["id"]: t for t in state["tickets"]}
-        self.assertEqual({result["ids"][key] for key in ("T1", "T2", "T3")}, set(by_id))
+        self.assertEqual({result["ids"][key] for key in ("T1", "T2", "T3", "T4")}, set(by_id))
         t1, t2, t3 = (by_id[result["ids"][key]] for key in ("T1", "T2", "T3"))
         self.assertEqual([MARK] * 3, [t["mark"] for t in (t1, t2, t3)])
         self.assertEqual(["prefactoring", "vertical_slice", "repair"], [t["kind"] for t in (t1, t2, t3)])
@@ -455,21 +462,6 @@ class EntryContractTest(unittest.TestCase):
         self.assertEqual(0, shown.returncode, shown.stdout + shown.stderr)
         self.assertEqual(MARK, json.loads(shown.stdout)["convoy"]["mark"])
 
-    def test_patch_of_a_new_flow_draft_is_refused_until_the_patch_door_applies_the_contract(self):
-        old_digest = "sha256:" + "1" * 64
-        self.seed(CONFORMANT_DRAFT.read_text(encoding="utf-8"), revises_digest=old_digest)
-        state = json.loads(self.state_path.read_text())
-        state["beads"]["af-conv"] = {"id": "af-conv", "status": "open", "labels": [], "title": "",
-                                     "description": "", "metadata": {"gc.graph_digest": old_digest}}
-        self.state_path.write_text(json.dumps(state))
-        before = self.state_path.read_bytes()
-
-        proc = self.door("bd-patch", ("--author", "Test", "--reason", "ajout d'un ticket"))
-        self.assertNotEqual(0, proc.returncode, proc.stdout)
-        self.assertIn("contrat du nouveau flux", proc.stderr)
-        self.assertEqual(before, self.state_path.read_bytes())
-        self.assertEqual([], self.tracker_writes())
-
     # --- AC6: a draft that does not declare the contract --------------------
 
     LEGACY_DRAFT = (
@@ -499,7 +491,7 @@ class EntryContractTest(unittest.TestCase):
         # The golden file was written by the door as it was before T05
         # (commit 15374c7), on this same seed.
         golden = json.loads(LEGACY_GOLDEN.read_text(encoding="utf-8"))
-        self.seed(self.LEGACY_DRAFT)
+        self.seed(self.LEGACY_DRAFT, spec_text=LEGACY_SPEC)
 
         result = self.published()
         result.pop("mayor_city")

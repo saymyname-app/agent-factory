@@ -25,6 +25,10 @@ remote repository, and a Validated Prototype that
 interface story is approved without a reference; an already approved Spec
 is never re-examined.
 
+`outline` reads a Spec text on stdin and prints, with that same reader, what
+the publication door poses in each ticket (T06, af-cgauf8): the numbered
+user stories and the Testing Decisions. It reads no bead and writes nothing.
+
 The file-Spec mode (`approve`/`freeze-check`/`revise`/`expire-check`/
 `status` over a JSON Spec artifact carrying the
 `agent-factory-planning-run-spec/v1` contract) served only the now-retired
@@ -532,6 +536,29 @@ def cmd_bd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def testing_decisions(found: list[tuple[int, str, list[str]]]) -> list[str]:
+    """The seams the Spec agreed on: the numbered items of its « Testing
+    Decisions » section, or its lines when none is numbered."""
+    lines = [line.strip() for _, _, body in (subtree(found, "testing decisions") or []) for line in body]
+    numbered = [line for line in lines if NUMBERED_STORY.match(line)]
+    return numbered or [line for line in lines if line]
+
+
+def cmd_outline(args: argparse.Namespace) -> int:
+    found = sections(sys.stdin.read())
+    try:
+        stories = numbered_user_stories(found)
+    except SpecApproveError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
+        return 1
+    print(json.dumps({
+        "ok": True,
+        "user_stories": [{"number": number, "text": text.strip()} for number, text in stories],
+        "testing_decisions": testing_decisions(found),
+    }, indent=2, ensure_ascii=False))
+    return 0
+
+
 # --- CLI ---------------------------------------------------------------------------
 
 
@@ -565,6 +592,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bd_status.add_argument("--spec", required=True, help="Spec bead id")
     bd_status.set_defaults(func=cmd_bd_status)
+
+    outline = subparsers.add_parser(
+        "outline", help="print the numbered user stories and Testing Decisions of a Spec text read on stdin"
+    )
+    outline.set_defaults(func=cmd_outline)
 
     return parser
 

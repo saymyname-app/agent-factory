@@ -77,9 +77,17 @@ Planning Run starts.
    still approved and its current digest still equals the approved one.
    A draft that declares the new-flow contract (`flow_contract:
    new-flow/v1`) is also held to the entry contract of the Delivery
-   Workflow -- declared kind, demonstration line, observable criteria --
-   and its convoy is published with the new-flow mark; a draft that does
-   not declare it is published as before (`docs/ENTRY_CONTRACT.md`).
+   Workflow -- declared kind, demonstration line, observable criteria,
+   every numbered user story of the Spec covered by a slice, every
+   declared operator need lifted (`lift-need`), a launch recipe in the
+   project profile or established by the first slice -- the door poses
+   the pointers in each ticket (Spec and digest, user stories, sibling
+   tickets, seams), and its convoy is published with the new-flow mark;
+   `bd-patch` applies the same contract to the graph that results from a
+   revision, publishes without a new approval a revision that only adds
+   `repair` tickets, and withdraws a ticket only on a resolved Planning
+   Exception. A draft that does not declare the contract is published as
+   before (`docs/ENTRY_CONTRACT.md`).
    On success, in the same door: delivery beads and the convoy are created
    atomically (one approved ticket becomes exactly one delivery bead), the
    Planning Run Reservation advances (to `next`, or clears) when the

@@ -216,7 +216,7 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_mark_writes_the_demonstration_lines_and_show_renders_kind_and_line(self):
         self.seed(kinds={T1: "vertical_slice", T2: "prefactoring"})
-        self.ok("mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}")
+        self.ok("mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}", "--user-stories", f"{T1}=2")
 
         shown = self.show()
         self.assertFalse(shown["unruled"])
@@ -260,9 +260,10 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_mark_refuses_to_change_a_demonstration_line_already_written(self):
         self.seed(kinds={T1: "vertical_slice"})
-        self.ok("mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}")
+        self.ok("mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}", "--user-stories", f"{T1}=2")
         self.assert_refused_and_nothing_written(
-            "mark", CONVOY, "--demonstration-line", f"{T1}=Une autre observation.", mention="déjà")
+            "mark", CONVOY, "--demonstration-line", f"{T1}=Une autre observation.", "--user-stories", f"{T1}=2",
+            mention="déjà")
 
     def test_ticket_whose_kind_is_unknown_is_unruled_and_not_defaulted(self):
         self.ok("mark", CONVOY)
@@ -279,6 +280,122 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual("état sans règle", t1["signal"])
         self.assertIsNone(t1["demonstration_line"])
         self.assertIn("ligne de démonstration", json.dumps(t1["unruled"], ensure_ascii=False))
+
+    # --- T06: the user stories a marked vertical_slice covers -----------------
+
+    def mark_slice(self, *stories):
+        return ("mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}",
+                *(arg for entry in stories for arg in ("--user-stories", entry)))
+
+    def test_mark_writes_the_user_stories_and_show_renders_them(self):
+        self.seed(kinds={T1: "vertical_slice", T2: "repair"})
+        self.ok(*self.mark_slice(f"{T1}=4,12"), "--demonstration-line", f"{T2}={self.LINE}")
+
+        shown = self.show()
+        self.assertFalse(shown["unruled"])
+        self.assertEqual(["4", "12"], self.ticket(shown, T1)["user_stories"])
+        self.assertIsNone(self.ticket(shown, T2)["user_stories"])
+
+    def test_marking_again_with_the_same_user_stories_writes_nothing(self):
+        self.seed(kinds={T1: "vertical_slice"})
+        self.ok(*self.mark_slice(f"{T1}=4,12"))
+        before = self.tracker.read_bytes()
+        self.ok(*self.mark_slice(f"{T1}=4,12"))
+        self.ok(*self.mark_slice())
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_mark_refuses_a_slice_without_user_stories(self):
+        self.seed(kinds={T1: "vertical_slice"})
+        self.assert_refused_and_nothing_written(*self.mark_slice(), mention="user stor")
+        self.assert_refused_and_nothing_written(*self.mark_slice(f"{T1}="), mention="user stor")
+
+    def test_mark_refuses_user_stories_on_a_prefactoring_or_a_repair(self):
+        for kind in ("prefactoring", "repair"):
+            with self.subTest(kind=kind):
+                self.seed(kinds={T1: kind})
+                lines = ("--demonstration-line", f"{T1}={self.LINE}") if kind == "repair" else ()
+                self.assert_refused_and_nothing_written(
+                    "mark", CONVOY, *lines, "--user-stories", f"{T1}=4", mention="vertical_slice")
+
+    def test_mark_refuses_user_stories_that_are_not_story_numbers(self):
+        self.seed(kinds={T1: "vertical_slice"})
+        for stories in ("quatre", "4,,5", "4,4", "0", "-1", "4;5"):
+            with self.subTest(stories=stories):
+                self.assert_refused_and_nothing_written(*self.mark_slice(f"{T1}={stories}"), mention="user stor")
+
+    def test_mark_refuses_user_stories_for_a_ticket_outside_the_convoy_or_given_twice(self):
+        self.seed(kinds={T1: "vertical_slice"})
+        self.assert_refused_and_nothing_written(*self.mark_slice(f"{T1}=4", "fx-elsewhere=5"), mention="fx-elsewhere")
+        self.assert_refused_and_nothing_written(*self.mark_slice(f"{T1}=4", f"{T1}=5"), mention=T1)
+        self.assert_refused_and_nothing_written(*self.mark_slice("4"), mention="TICKET=")
+
+    def test_mark_refuses_to_change_user_stories_already_written(self):
+        self.seed(kinds={T1: "vertical_slice"})
+        self.ok(*self.mark_slice(f"{T1}=4,12"))
+        self.assert_refused_and_nothing_written(*self.mark_slice(f"{T1}=4"), mention="déjà")
+
+    def test_slice_without_user_stories_is_unruled(self):
+        self.seed(kinds={T1: "repair"})
+        self.ok("mark", CONVOY, "--demonstration-line", f"{T1}={self.LINE}")
+        self.edit_tracker(T1, **{"gc.ticket_kind": "vertical_slice"})
+        t1 = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertEqual("état sans règle", t1["signal"])
+        self.assertIsNone(t1["user_stories"])
+        self.assertIn("user stor", json.dumps(t1["unruled"], ensure_ascii=False))
+
+    def test_user_stories_written_outside_the_command_are_unruled_and_not_rendered_as_stories(self):
+        self.seed(kinds={T1: "vertical_slice"})
+        self.ok(*self.mark_slice(f"{T1}=4"))
+        for raw in ("4", 4, json.dumps({"stories": []}), json.dumps({"stories": ["quatre"]})):
+            with self.subTest(raw=raw):
+                self.edit_tracker(T1, **{"gc.flow.user_stories": raw})
+                t1 = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+                self.assertNotIsInstance(t1["user_stories"], list)
+                self.assertEqual(raw, t1["user_stories"]["raw"])
+
+    # --- T06: the slice that establishes the launch recipe --------------------
+
+    def test_mark_writes_the_slice_that_establishes_the_launch_recipe(self):
+        self.seed(kinds={T1: "vertical_slice", T2: "prefactoring"})
+        self.ok(*self.mark_slice(f"{T1}=3"), "--establishes-launch-recipe", T1)
+
+        shown = self.show()
+        self.assertFalse(shown["unruled"])
+        self.assertIs(True, self.ticket(shown, T1)["establishes_launch_recipe"])
+        self.assertIs(False, self.ticket(shown, T2)["establishes_launch_recipe"])
+        before = self.tracker.read_bytes()
+        self.ok(*self.mark_slice(f"{T1}=3"), "--establishes-launch-recipe", T1)
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_mark_refuses_a_launch_recipe_established_by_anything_but_a_vertical_slice(self):
+        self.assert_refused_and_nothing_written(
+            "mark", CONVOY, "--establishes-launch-recipe", T1, mention="vertical_slice")
+        self.assert_refused_and_nothing_written(
+            "mark", CONVOY, "--establishes-launch-recipe", "fx-elsewhere", mention="fx-elsewhere")
+
+    def test_mark_refuses_two_slices_that_establish_the_launch_recipe(self):
+        self.seed(kinds={T1: "vertical_slice", T2: "vertical_slice"})
+        self.assert_refused_and_nothing_written(
+            *self.mark_slice(f"{T1}=3", f"{T2}=4"), "--demonstration-line", f"{T2}={self.LINE}",
+            "--establishes-launch-recipe", T1, "--establishes-launch-recipe", T2, mention="une seule")
+
+    def test_mark_refuses_to_change_which_slice_establishes_the_launch_recipe(self):
+        self.seed(kinds={T1: "vertical_slice"})
+        self.ok(*self.mark_slice(f"{T1}=3"))
+        self.assert_refused_and_nothing_written(
+            *self.mark_slice(f"{T1}=3"), "--establishes-launch-recipe", T1, mention="déjà")
+
+    def test_launch_recipe_flag_written_outside_the_command_is_unruled(self):
+        self.ok("mark", CONVOY)
+        self.edit_tracker(T1, **{"gc.flow.establishes_launch_recipe": True})
+        t1 = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertIn("vertical_slice", json.dumps(t1["unruled"], ensure_ascii=False))
+
+        self.seed(kinds={T1: "vertical_slice"})
+        self.ok(*self.mark_slice(f"{T1}=3"))
+        self.edit_tracker(T1, **{"gc.flow.establishes_launch_recipe": "oui"})
+        t1 = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertEqual("oui", t1["establishes_launch_recipe"]["raw"])
 
     # --- AC2: a malformed write is refused and nothing is written -------------
 

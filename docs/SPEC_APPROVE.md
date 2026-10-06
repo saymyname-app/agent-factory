@@ -15,7 +15,16 @@ now-retired Planning Run router and was retired with it (A6b, W10).
     --approved-by benjamin-hurand --evidence "« J'approuve » (Benjamin, live chat, 2026-09-30 Paris)" \
     --project agent-factory
 ./bin/spec-approve bd-status --spec af-3s8prq
+./bin/spec-approve outline < spec.md
 ```
+
+`outline` (T06, af-cgauf8) reads a Spec text on stdin and prints as JSON
+its numbered user stories (`user_stories`: `number`, `text`) and its
+« Testing Decisions » (`testing_decisions`: the numbered items of that
+section, or its lines when none is numbered). It reads no bead and writes
+nothing; it exits 1 on a text without numbered user stories. The
+publication door calls it on the approved Spec, so the unit of coverage has
+one reader (`docs/ENTRY_CONTRACT.md`).
 
 Before any write, `bd-approve` refuses unless, in order:
 

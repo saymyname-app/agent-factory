@@ -508,5 +508,45 @@ class SpecApproveEntryContractTest(unittest.TestCase):
         self.assertEqual(before, self.current_state())
 
 
+
+class SpecOutlineTest(unittest.TestCase):
+    """T06 (af-cgauf8): `outline` reads, from a Spec text on stdin, what the
+    publication door poses in each ticket -- the numbered user stories and
+    the Testing Decisions -- with the reader `bd-approve` holds the Spec to."""
+
+    def outline(self, text):
+        return subprocess.run((str(TOOL), "outline"), input=text, text=True, capture_output=True)
+
+    def test_outline_lists_the_numbered_user_stories_and_the_testing_decisions(self):
+        proc = self.outline(FIXTURE_SPEC)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        outline = json.loads(proc.stdout)
+        self.assertEqual(["1", "2", "3"], [story["number"] for story in outline["user_stories"]])
+        self.assertEqual(
+            "As an exploitant, I want une sonde de santé, so that je sache que le produit répond.",
+            outline["user_stories"][2]["text"],
+        )
+        self.assertEqual(["Fixture City Oracle et ligne de commande des portes."], outline["testing_decisions"])
+
+    def test_outline_lists_numbered_testing_decisions_one_per_seam(self):
+        text = SPEC_BODY + (
+            "\n## Testing Decisions\n\nSeams confirmés :\n\n"
+            "1. **Oracle** : le flux entier.\n2. **Ligne de commande** de chaque porte.\n\nAucun seam nouveau.\n"
+        )
+        outline = json.loads(self.outline(text).stdout)
+        self.assertEqual(
+            ["1. **Oracle** : le flux entier.", "2. **Ligne de commande** de chaque porte."],
+            outline["testing_decisions"],
+        )
+
+    def test_outline_of_a_spec_without_testing_decisions_lists_none(self):
+        self.assertEqual([], json.loads(self.outline(SPEC_BODY).stdout)["testing_decisions"])
+
+    def test_outline_refuses_a_spec_without_numbered_user_stories(self):
+        proc = self.outline("prose spec body\n\n## User Stories\n\n- As an operator, I want a probe.\n")
+        self.assertNotEqual(0, proc.returncode, proc.stdout)
+        self.assertIn("user stories numérotées", json.loads(proc.stdout)["error"])
+
+
 if __name__ == "__main__":
     unittest.main()
