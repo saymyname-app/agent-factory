@@ -15,6 +15,16 @@ reports whether a later edit to the Spec's description has voided the
 approval -- its content digest no longer matches the one recorded at
 approval.
 
+`bd-approve` also holds the Spec's side of the delivery entry contract
+(T07, af-tvda3w; spec af-wf4w5r sections 2 and 3): last, before any write,
+it refuses a Spec without numbered user stories, a Spec with an interface
+story but no complete Validated Prototype reference (branch, commit, path,
+states) or no state inventory, a reference whose commit is not on the
+remote repository, and a Validated Prototype that
+`bin/prototype-conformance` reports as not conformant. A Spec with no
+interface story is approved without a reference; an already approved Spec
+is never re-examined.
+
 The file-Spec mode (`approve`/`freeze-check`/`revise`/`expire-check`/
 `status` over a JSON Spec artifact carrying the
 `agent-factory-planning-run-spec/v1` contract) served only the now-retired
@@ -27,9 +37,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import io
 import os
+import re
 import subprocess
 import sys
+import tarfile
+import tempfile
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -144,12 +159,253 @@ def declared_human_approver(project: str, config_dir: Path, profile_bin: str) ->
     )["human_approver"]
 
 
+# --- entry contract: numbered user stories and Validated Prototype (T07) ----------
+
+HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+NUMBERED_STORY = re.compile(r"^\s*(\d+)[.)]\s+(\S.*)$")
+INTERFACE_TAG = "[interface]"
+REFERENCE_LINE = re.compile(r"^\s*[-*]\s*([^:|]+?)\s*:\s*(.*?)\s*$")
+SCREEN_HEADING = re.compile(r"^(?:ecran|screen)\s*:\s*(\S.*)$")
+COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
+REFERENCE_FIELDS = {
+    "branche": "branche", "branch": "branche",
+    "commit": "commit",
+    "chemin": "chemin", "path": "chemin",
+    "etats": "états", "states": "états",
+}
+CONTROL_STATES = ("vide", "chargement", "erreur", "contenu long", "écran étroit", "thème sombre")
+PROTOTYPED, NOT_PROTOTYPED, NOT_APPLICABLE = "prototype", "non prototype", "sans objet"
+
+
+def fold(text: str) -> str:
+    """Case-, accent- and spacing-insensitive form of a Spec label."""
+    plain = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return " ".join(plain.lower().replace("`", " ").replace("*", " ").split())
+
+
+def bare(value: str) -> str:
+    return value.strip().strip("`").strip()
+
+
+def sections(description: str) -> list[tuple[int, str, list[str]]]:
+    """The Spec's headings in order, each with the lines up to the next
+    heading of any level."""
+    found: list[tuple[int, str, list[str]]] = []
+    fenced = False
+    for line in description.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        heading = None if fenced else HEADING.match(line)
+        if heading:
+            found.append((len(heading.group(1)), heading.group(2), []))
+        elif found:
+            found[-1][2].append(line)
+    return found
+
+
+def subtree(found: list[tuple[int, str, list[str]]], title: str) -> list[tuple[int, str, list[str]]] | None:
+    """The section titled `title` with every deeper section under it."""
+    for index, (level, heading, _) in enumerate(found):
+        if fold(heading) == title:
+            end = index + 1
+            while end < len(found) and found[end][0] > level:
+                end += 1
+            return found[index:end]
+    return None
+
+
+def numbered_user_stories(found: list[tuple[int, str, list[str]]]) -> list[tuple[str, str]]:
+    stories_section = subtree(found, "user stories")
+    stories = [
+        (match.group(1), match.group(2))
+        for _, _, lines in (stories_section or [])
+        for match in map(NUMBERED_STORY.match, lines) if match
+    ]
+    if not stories:
+        raise SpecApproveError(
+            "refus : la Spec n'a pas de user stories numérotées (une section « User Stories » dont chaque "
+            "story commence par son numéro, « 1. As a … ») ; sans elles le graphe ne peut pas prouver sa couverture"
+        )
+    numbers = [number for number, _ in stories]
+    repeated = sorted({number for number in numbers if numbers.count(number) > 1}, key=int)
+    if repeated:
+        raise SpecApproveError(
+            "refus : la Spec n'a pas de user stories numérotées sans ambiguïté : le numéro "
+            + ", ".join(repeated) + " est porté par plusieurs stories"
+        )
+    return stories
+
+
+def prototype_reference(section: list[tuple[int, str, list[str]]]) -> dict[str, Any]:
+    fields: dict[str, str] = {}
+    for line in section[0][2]:
+        match = REFERENCE_LINE.match(line)
+        if match and fold(match.group(1)) in REFERENCE_FIELDS and bare(match.group(2)):
+            fields.setdefault(REFERENCE_FIELDS[fold(match.group(1))], match.group(2))
+    missing = [name for name in ("branche", "commit", "chemin", "états") if name not in fields]
+    if missing:
+        raise SpecApproveError(
+            "refus : la référence du Validated Prototype est incomplète, il manque : " + ", ".join(missing)
+            + " (attendu sous « Validated Prototype » : branche, commit, chemin, états)"
+        )
+    commit = bare(fields["commit"])
+    if not COMMIT_ID.fullmatch(commit):
+        raise SpecApproveError(
+            f"refus : la référence du Validated Prototype nomme le commit {commit!r}, "
+            "qui n'est pas un identifiant complet de 40 caractères hexadécimaux"
+        )
+    states = [bare(state) for state in fields["états"].split(",") if bare(state)]
+    return {"branch": bare(fields["branche"]), "commit": commit, "path": bare(fields["chemin"]).strip("/"), "states": states}
+
+
+def check_state_inventory(section: list[tuple[int, str, list[str]]], reference_states: list[str]) -> None:
+    """Every screen lists its states, each `prototypé` (naming a state of
+    the reference) or `non prototypé`; the six control states are each
+    present, or `sans objet` with a reason."""
+    problems: list[str] = []
+    screens = [
+        (match.group(1), lines)
+        for _, heading, lines in section[1:]
+        for match in [SCREEN_HEADING.match(fold(heading))] if match
+    ]
+    if not screens:
+        raise SpecApproveError(
+            "refus : l'inventaire des états manque : sous « Validated Prototype », chaque écran "
+            "(« Écran : <nom> ») liste ses états dans un tableau « État | Statut | Détail »"
+        )
+    prototyped: set[str] = set()
+    for screen, lines in screens:
+        listed: set[str] = set()
+        for line in lines:
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if not line.strip().startswith("|") or len(cells) < 2:
+                continue
+            state, status = fold(cells[0]), fold(cells[1])
+            detail = bare(cells[2]) if len(cells) > 2 else ""
+            if not state or set(cells[0]) <= set("-: ") or state in ("etat", "state"):
+                continue
+            listed.add(state)
+            name = cells[0].strip()
+            if status == PROTOTYPED:
+                if not detail:
+                    problems.append(f"écran {screen} : l'état « {name} » est prototypé sans nommer l'état du prototype")
+                elif detail not in reference_states:
+                    problems.append(
+                        f"écran {screen} : l'état « {name} » renvoie à « {detail} », absent des états de la référence"
+                    )
+                else:
+                    prototyped.add(detail)
+            elif status == NOT_APPLICABLE:
+                if state not in map(fold, CONTROL_STATES):
+                    problems.append(f"écran {screen} : « sans objet » ne vaut que pour un état de contrôle, pas « {name} »")
+                elif not detail:
+                    problems.append(f"écran {screen} : l'état « {name} » est « sans objet » sans raison")
+            elif status != NOT_PROTOTYPED:
+                problems.append(
+                    f"écran {screen} : l'état « {name} » n'est ni « prototypé » ni « non prototypé » ({cells[1] or 'vide'})"
+                )
+        for control in CONTROL_STATES:
+            if fold(control) not in listed:
+                problems.append(f"écran {screen} : l'état de contrôle « {control} » manque (présent, ou « sans objet » avec raison)")
+    for state in reference_states:
+        if state not in prototyped:
+            problems.append(f"l'état « {state} » de la référence n'est prototypé dans aucun écran")
+    if problems:
+        raise SpecApproveError("refus : l'inventaire des états est incomplet : " + " ; ".join(problems))
+
+
+def run_git(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[bytes]:
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        return subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True)
+    except OSError as exc:
+        raise SpecApproveError(f"could not run git: {exc}") from exc
+
+
+def prototype_remote(explicit: str | None, repo_root: Path) -> str:
+    if explicit:
+        return explicit
+    proc = run_git(["-C", str(repo_root), "remote", "get-url", "origin"])
+    remote = proc.stdout.decode("utf-8", "replace").strip()
+    if proc.returncode != 0 or not remote:
+        raise SpecApproveError(
+            f"refus : aucun dépôt distant où lire le Validated Prototype : {repo_root} n'a pas de remote "
+            "« origin » ; nommer le dépôt du projet avec --prototype-remote"
+        )
+    return remote
+
+
+def check_validated_prototype(reference: dict[str, Any], remote: str, repo_root: Path, conformance_bin: str) -> None:
+    """Read the referenced commit from the remote repository only (a commit
+    that exists just locally does not count) and check the prototype there."""
+    branch, commit, path = reference["branch"], reference["commit"], reference["path"]
+    with tempfile.TemporaryDirectory(prefix="spec-approve-prototype-") as tmp:
+        clone = Path(tmp) / "remote.git"
+        clone_args = ["clone", "--quiet", "--bare", "--single-branch", "--branch", branch]
+        if (repo_root / ".git").is_dir():
+            clone_args += ["--reference-if-able", str(repo_root)]
+        if run_git([*clone_args, remote, str(clone)]).returncode != 0:
+            raise SpecApproveError(
+                f"refus : la branche {branch} de la référence du Validated Prototype est introuvable "
+                f"sur le dépôt distant {remote}"
+            )
+        if run_git(["merge-base", "--is-ancestor", commit, f"refs/heads/{branch}"], cwd=clone).returncode != 0:
+            raise SpecApproveError(
+                f"refus : le commit {commit} de la référence du Validated Prototype n'existe pas sur la "
+                f"branche {branch} du dépôt distant {remote}"
+            )
+        archive = run_git(["archive", "--format=tar", commit, "--", path], cwd=clone)
+        if archive.returncode != 0:
+            raise SpecApproveError(
+                f"refus : le chemin {path} de la référence du Validated Prototype n'existe pas au commit {commit}"
+            )
+        tree = Path(tmp) / "tree"
+        with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+            tar.extractall(tree, filter="data")
+        proc = subprocess.run(
+            [conformance_bin, "check", "--prototype", str(tree / path), "--states", ",".join(reference["states"])],
+            capture_output=True, text=True,
+        )
+        try:
+            report = json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise SpecApproveError(f"{conformance_bin} returned invalid JSON: {proc.stderr.strip() or exc}") from exc
+        if proc.returncode == 0 and report.get("ok"):
+            return
+        failures = [
+            f"{record['property']} : {failure}"
+            for record in report.get("properties", []) if not record.get("ok")
+            for failure in record.get("failures", [])
+        ] or [report.get("error", "contrôle de conformité en échec")]
+        raise SpecApproveError(
+            f"refus : le Validated Prototype ({branch} @ {commit}, {path}) est non conforme : " + " ; ".join(failures)
+        )
+
+
+def check_entry_contract(description: str, explicit_remote: str | None, repo_root: Path, conformance_bin: str) -> None:
+    found = sections(description)
+    stories = numbered_user_stories(found)
+    interface_stories = [number for number, text in stories if INTERFACE_TAG in text.lower()]
+    section = subtree(found, "validated prototype")
+    if section is None:
+        if interface_stories:
+            raise SpecApproveError(
+                "refus : la référence du Validated Prototype manque (branche, commit, chemin, états) alors que "
+                "la Spec décrit une interface : user stories " + ", ".join(interface_stories)
+            )
+        return
+    reference = prototype_reference(section)
+    check_state_inventory(section, reference["states"])
+    check_validated_prototype(reference, prototype_remote(explicit_remote, repo_root), repo_root, conformance_bin)
+
+
 def cmd_bd_approve(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root)
     config_dir = Path(args.config_dir) if args.config_dir else repo_root / "config" / "projects"
     map_bin = tool_path("PLANNING_MAP_BIN", "planning-map")
     reservation_bin = tool_path("PLANNING_RUN_RESERVATION_BIN", "planning-run-reservation")
     profile_bin = tool_path("PROJECT_PLANNING_PROFILE_BIN", "project-planning-profile")
+    conformance_bin = tool_path("PROTOTYPE_CONFORMANCE_BIN", "prototype-conformance")
 
     try:
         spec_bead = bd_show(args.spec)
@@ -204,6 +460,8 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
             )
         evidence = required_string(args.evidence, "--evidence")
 
+        check_entry_contract(spec_bead.get("description") or "", args.prototype_remote, repo_root, conformance_bin)
+
         digest = canonical_bead_digest(spec_bead.get("description") or "")
 
         update_args = [
@@ -222,7 +480,7 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
             map_close(planning_map, f"Spec approved by {approved_by}: {args.spec}", map_bin)
             map_closed = True
     except SpecApproveError as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
         return 1
     print(
         json.dumps(
@@ -295,6 +553,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bd_approve.add_argument(
         "--config-dir", default=None, help="directory holding config/projects/*.toml files (default: <repo-root>/config/projects)"
+    )
+    bd_approve.add_argument(
+        "--prototype-remote", default=None,
+        help="repository the Spec's Validated Prototype branch lives on (default: <repo-root>'s origin remote)",
     )
     bd_approve.set_defaults(func=cmd_bd_approve)
 

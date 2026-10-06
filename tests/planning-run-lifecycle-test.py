@@ -141,7 +141,7 @@ class PlanningRunLifecycleTest(unittest.TestCase):
         return beads
 
     def spec_bead(
-        self, spec_id="spec-1", target="A6b", map_id="map-1", description="prose spec body",
+        self, spec_id="spec-1", target="A6b", map_id="map-1", description="prose spec body\n\n## User Stories\n\n1. As an operator, I want a probe, so that I know it runs.\n",
         no_fog_evidence=None, project_id=PROJECT,
     ) -> dict:
         metadata = {"planning_run_target": target, "planning_map": map_id or "none", "gc.plane": "planning"}

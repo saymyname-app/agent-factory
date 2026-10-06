@@ -406,4 +406,37 @@ if door benjamin af-does-not-exist "$COMPLETE_REQUEST" >/dev/null 2>&1; then
   fail "benjamin on an unknown bead must refuse"
 fi
 
+# --- a long-lived child of one call never blocks the next call (af-wnj692) --
+# `gc mail send --notify` leaves a detached nudge poller behind. If it
+# inherits the door's lock fd it holds the flock for as long as it lives and
+# every later escalation fails with "Could not acquire the escalation-door
+# lock." -- an escalation to the operator can be lost that way.
+reset_beads
+seed af-blocker '{"id":"af-blocker","status":"open","metadata":{},"notes":"","labels":[]}'
+seed af-next '{"id":"af-next","status":"open","metadata":{},"notes":"","labels":[]}'
+TESTS_RUN=$((TESTS_RUN + 1))
+POLLER_PIDS="$TEST_TMP/poller.pids"
+: >"$POLLER_PIDS"
+kill_pollers() {
+  local pid
+  while read -r pid; do kill "$pid" 2>/dev/null || true; done <"$POLLER_PIDS"
+}
+trap 'kill_pollers; rm -rf -- "$TEST_TMP"' EXIT
+ED_MAIL_POLLER_PID_FILE="$POLLER_PIDS" door benjamin af-blocker "$COMPLETE_REQUEST" >/dev/null \
+  || fail "benjamin should succeed while its mail leaves a poller behind"
+poller=$(head -n1 "$POLLER_PIDS")
+[[ -n $poller ]] && kill -0 "$poller" 2>/dev/null \
+  || fail "the fixture did not leave a long-lived child behind: this check would prove nothing"
+for fd in /proc/"$poller"/fd/*; do
+  [[ $(readlink "$fd" 2>/dev/null || true) != "$TEST_TMP/lock" ]] \
+    || fail "the child left behind by benjamin inherited the door's lock fd (${fd##*/})"
+done
+second_err=$(door mayor af-next "second escalation" 2>&1 >/dev/null) \
+  || fail "a second door call failed while the first call's child was still alive: $second_err"
+kill -0 "$poller" 2>/dev/null \
+  || fail "the long-lived child died before the second call: this check would prove nothing"
+[[ -n $(jq -r '.metadata["gc.escalation_mayor_paged_at"] // empty' "$TEST_TMP/beads/af-next.json") ]] \
+  || fail "the second door call did not record its Mayor-first page"
+kill_pollers
+
 printf 'PASS: %d deterministic escalation-door checks\n' "$TESTS_RUN"

@@ -1,0 +1,624 @@
+#!/usr/bin/env python3
+"""Read and write the durable state of a "new flow" convoy (T33, af-p4d6ec).
+
+Spec af-wf4w5r §0 rule 2: the state of a delivery lives in the tracker, never
+in a session. This command is the only reader and writer of that state for a
+convoy that carries the new-flow mark: the mark of the convoy and of its
+tickets, a ticket's branch and Ticket Exit, its verdicts (each tied to a
+commit), its counters, its evidence fingerprints and its gate records. No
+other script invents a `gc.flow.*` field: a missing field is added here.
+
+    convoy-state show CONVOY [--repo DIR]
+    convoy-state mark CONVOY
+    convoy-state set-branch   CONVOY TICKET --branch NAME
+    convoy-state set-exit     CONVOY TICKET --exit EXIT
+    convoy-state set-verdict  CONVOY TICKET --kind KIND --state STATE --commit SHA
+    convoy-state set-counter  CONVOY [--ticket TICKET] --counter NAME --value N
+    convoy-state bump-counter CONVOY [--ticket TICKET] --counter NAME [--counter NAME]
+    convoy-state add-evidence CONVOY TICKET --piece NAME --digest sha256:HEX --commit SHA
+    convoy-state record-gate  CONVOY TICKET --gate GATE [--commit SHA]
+
+Every answer is one JSON object on stdout. Exit status: 0 done; 1 refused or
+could not run (nothing written); 3 `show` found an "état sans règle" (the
+state is still printed, the incoherent field never as a default value);
+4 the convoy does not carry the mark ("pas un convoi du nouveau flux":
+nothing is read further, nothing is written).
+
+A verdict is valid only while its commit is the tip of the ticket's branch
+in `--repo` (default: the current directory): a commit added after it makes
+it invalid, a commit that is not on the branch at all is an "état sans
+règle". Closed lists and stored keys: docs/CONVOY_STATE.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterator
+
+
+PROGRAM = "convoy-state"
+GC_BIN = os.environ.get("GC_BIN", "gc")
+
+MARK = "new-flow/v1"
+PREFIX = "gc.flow."
+KEY_MARK = PREFIX + "mark"
+KEY_BRANCH = PREFIX + "branch"
+KEY_EXIT = PREFIX + "exit"
+VERDICT_PREFIX = PREFIX + "verdict."
+COUNTER_PREFIX = PREFIX + "counter."
+EVIDENCE_PREFIX = PREFIX + "evidence."
+GATE_PREFIX = PREFIX + "gate."
+
+EXITS = ("finished", "planning_exception", "operator_request", "technically_blocked", "interrupted")
+VERDICT_KINDS = ("test_review", "code_review", "evaluation", "fidelity")
+VERDICT_STATES = ("favorable", "unfavorable")
+TICKET_COUNTERS = ("resumes", "correction_rounds")
+CONVOY_COUNTERS = ("end_rounds",)
+GATES = ("dispatch", "ticket_end", "withdrawn")
+CLOSING_GATES = ("ticket_end", "withdrawn")
+
+EXIT_REFUSED = 1
+EXIT_UNRULED = 3
+EXIT_NOT_NEW_FLOW = 4
+
+NOT_NEW_FLOW = "pas un convoi du nouveau flux"
+UNRULED = "état sans règle"
+
+COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+# A piece name ends a tracker metadata key, and bd refuses any key outside
+# [a-zA-Z_][a-zA-Z0-9_.]* (observed on bd 1.2.2): no hyphen.
+PIECE_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$")
+BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")
+
+
+class Refusal(RuntimeError):
+    """A write that is refused, or a read that cannot be made: nothing is written."""
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark."""
+
+
+# --- tracker -----------------------------------------------------------------
+
+
+def run_gc(args: list[str]) -> str:
+    try:
+        proc = subprocess.run([GC_BIN, *args], capture_output=True, text=True)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {GC_BIN} : {exc}") from exc
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        raise Refusal(f"gc {' '.join(args[:3])} a échoué : {detail}")
+    return proc.stdout
+
+
+def load_convoy(convoy_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """The convoy bead and its tracked tickets, in one tracker read."""
+    out = run_gc(["bd", "show", convoy_id, "--json"])
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc bd show {convoy_id} a rendu un JSON illisible : {exc}") from exc
+    if isinstance(data, list):
+        data = data[0] if data else None
+    if not isinstance(data, dict):
+        raise Refusal(f"bead introuvable : {convoy_id}")
+    if data.get("issue_type") != "convoy":
+        raise Refusal(f"{convoy_id} n'est pas un convoi (type {data.get('issue_type')!r})")
+    tickets = [
+        dep for dep in data.get("dependencies") or []
+        if isinstance(dep, dict) and dep.get("dependency_type") == "tracks"
+    ]
+    return data, tickets
+
+
+def metadata_of(bead: dict[str, Any]) -> dict[str, Any]:
+    metadata = bead.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def require_marked(convoy: dict[str, Any]) -> None:
+    mark = metadata_of(convoy).get(KEY_MARK)
+    if mark is None:
+        raise NotNewFlow(convoy["id"])
+    if mark != MARK:
+        raise Refusal(f"{UNRULED} : le convoi {convoy['id']} porte une marque inconnue ({mark!r})")
+
+
+def write_metadata(bead_id: str, values: dict[str, Any]) -> None:
+    args = ["bd", "update", bead_id]
+    for key, value in values.items():
+        args += ["--set-metadata", f"{key}={value}"]
+    run_gc(args)
+
+
+@contextmanager
+def convoy_lock(convoy_id: str) -> Iterator[None]:
+    """Serialise every read-validate-write on one convoy: a counter bump is a
+    read-modify-write, and a reviewer and an Evaluator write the same ticket
+    in parallel."""
+    lock_dir = Path(os.environ.get("CONVOY_STATE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = re.sub(r"[^A-Za-z0-9._-]", "_", convoy_id)
+    with (lock_dir / f"agent-factory-convoy-state-{safe_id}.lock").open("w") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def encode(record: dict[str, Any]) -> str:
+    return json.dumps(record, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+# --- validation shared by writes and reads -----------------------------------
+
+
+def one_of(value: Any, allowed: tuple[str, ...], name: str) -> str:
+    if value not in allowed:
+        raise Refusal(f"{name} hors de la liste fermée : {value!r} (attendu : {', '.join(allowed)})")
+    return value
+
+
+def valid_commit(value: Any, name: str = "commit") -> str:
+    if not isinstance(value, str) or not COMMIT_RE.match(value):
+        raise Refusal(f"{name} absent ou mal formé : {value!r} (attendu : le SHA complet d'un commit)")
+    return value
+
+
+def valid_digest(value: Any) -> str:
+    if not isinstance(value, str) or not DIGEST_RE.match(value):
+        raise Refusal(f"digest absent ou mal formé : {value!r} (attendu : sha256:<64 hex>)")
+    return value
+
+
+def counter_value(raw: Any, name: str) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise Refusal(f"compteur {name} incohérent : {raw!r} n'est pas un entier positif ou nul")
+    return raw
+
+
+def check_ticket_counters(counters: dict[str, int]) -> None:
+    # Spec §8: a correction round counts among the K resumes.
+    if counters["correction_rounds"] > counters["resumes"]:
+        raise Refusal(
+            f"compteurs incohérents : correction_rounds ({counters['correction_rounds']}) "
+            f"dépasse resumes ({counters['resumes']}), or un tour de correction compte parmi les reprises"
+        )
+
+
+def stored_record(raw: Any, required: tuple[str, ...], optional: tuple[str, ...] = ()) -> dict[str, Any]:
+    """A record this command wrote: a JSON object with exactly the known fields."""
+    if not isinstance(raw, str):
+        raise Refusal(f"valeur illisible : {raw!r}")
+    try:
+        record = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"valeur illisible : {raw!r}") from exc
+    if not isinstance(record, dict):
+        raise Refusal(f"valeur illisible : {raw!r}")
+    missing = [field for field in required if field not in record]
+    unknown = [field for field in record if field not in required + optional]
+    if missing or unknown:
+        raise Refusal(f"champs manquants {missing} ou inconnus {unknown} dans {raw!r}")
+    return record
+
+
+# --- show --------------------------------------------------------------------
+
+
+class Repo:
+    """The Git repository holding the ticket branches, opened only if a
+    verdict has to be tied to a branch tip."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self._is_repo: bool | None = None
+
+    def git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+        return subprocess.run(["git", "-C", self.path, *args], capture_output=True, text=True, env=env)
+
+    def is_repo(self) -> bool:
+        if self._is_repo is None:
+            try:
+                self._is_repo = self.git("rev-parse", "--git-dir").returncode == 0
+            except OSError:
+                self._is_repo = False
+        return self._is_repo
+
+    def tip(self, branch: str) -> str | None:
+        for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+            proc = self.git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+            if proc.returncode == 0:
+                return proc.stdout.strip()
+        return None
+
+    def is_ancestor(self, commit: str, tip: str) -> bool:
+        return self.git("merge-base", "--is-ancestor", commit, tip).returncode == 0
+
+
+def render_counters(metadata: dict[str, Any], names: tuple[str, ...], unruled: list[dict[str, str]]) -> dict[str, Any]:
+    counters: dict[str, Any] = {}
+    coherent = True
+    for name in names:
+        key = COUNTER_PREFIX + name
+        try:
+            if key not in metadata:
+                raise Refusal(f"compteur {name} absent : il n'a jamais été posé par la marque")
+            counters[name] = counter_value(metadata[key], name)
+        except Refusal as exc:
+            coherent = False
+            counters[name] = {"unruled": str(exc), "raw": metadata.get(key)}
+            unruled.append({"field": key, "reason": str(exc)})
+    if coherent and names == TICKET_COUNTERS:
+        try:
+            check_ticket_counters(counters)
+        except Refusal as exc:
+            unruled.append({"field": COUNTER_PREFIX + "correction_rounds", "reason": str(exc)})
+    return counters
+
+
+def verdict_is_valid(kind: str, commit: str, branch: str | None, tip: str | None, repo: Repo) -> bool:
+    """Spec §8 "commit après verdict": a verdict holds only for the exact tip
+    of the ticket's branch. Refuses when the commit cannot be placed on it."""
+    if not repo.is_repo():
+        raise Refusal(f"--repo {repo.path} n'est pas un dépôt Git : verdict {kind} impossible à relier à sa branche")
+    if not branch:
+        raise Refusal(f"verdict {kind} sans branche de ticket enregistrée")
+    if tip is None:
+        raise Refusal(f"verdict {kind} : branche du ticket introuvable dans le dépôt ({branch})")
+    if commit == tip:
+        return True
+    if repo.is_ancestor(commit, tip):
+        return False
+    raise Refusal(f"verdict {kind} lié au commit {commit}, absent de la branche {branch}")
+
+
+def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
+    metadata = metadata_of(ticket)
+    status = ticket.get("status")
+    unruled: list[dict[str, str]] = []
+
+    def flag(field: str, reason: str) -> None:
+        unruled.append({"field": field, "reason": reason})
+
+    out: dict[str, Any] = {"id": ticket.get("id"), "title": ticket.get("title"), "status": status}
+
+    mark = metadata.get(KEY_MARK)
+    out["mark"] = mark
+    if mark is None:
+        flag(KEY_MARK, "ticket sans marque dans un convoi marqué : il n'est pas entré par la commande d'état")
+    elif mark != MARK:
+        flag(KEY_MARK, f"marque inconnue : {mark!r}")
+
+    branch = metadata.get(KEY_BRANCH)
+    if branch is not None and not (isinstance(branch, str) and BRANCH_RE.match(branch)):
+        flag(KEY_BRANCH, f"branche mal formée : {branch!r}")
+        branch = None
+    out["branch"] = branch
+    tip = repo.tip(branch) if branch and repo.is_repo() else None
+    out["tip"] = tip
+
+    out["exit"] = None
+    if KEY_EXIT in metadata:
+        try:
+            record = stored_record(metadata[KEY_EXIT], ("exit", "at"))
+            one_of(record["exit"], EXITS, "sortie de ticket")
+            out["exit"] = record
+        except Refusal as exc:
+            out["exit"] = {"unruled": str(exc), "raw": metadata[KEY_EXIT]}
+            flag(KEY_EXIT, str(exc))
+
+    verdicts: dict[str, Any] = {}
+    evidence: dict[str, Any] = {}
+    gates: dict[str, Any] = {}
+    groups = ((VERDICT_PREFIX, verdicts), (EVIDENCE_PREFIX, evidence), (GATE_PREFIX, gates))
+    for key in sorted(metadata):
+        if not key.startswith(PREFIX) or key in (KEY_MARK, KEY_BRANCH, KEY_EXIT):
+            continue
+        raw = metadata[key]
+        group, name = next(((target, key[len(prefix):]) for prefix, target in groups if key.startswith(prefix)), (None, ""))
+        try:
+            if group is verdicts:
+                one_of(name, VERDICT_KINDS, "genre de verdict")
+                record = stored_record(raw, ("state", "commit", "at"))
+                one_of(record["state"], VERDICT_STATES, "état de verdict")
+                valid_commit(record["commit"])
+                try:
+                    record["valid"] = verdict_is_valid(name, record["commit"], branch, tip, repo)
+                except Refusal as exc:
+                    # No default: neither valid nor invalid, the reason instead.
+                    record["unruled"] = f"{key} : {exc}"
+                    flag(key, record["unruled"])
+                verdicts[name] = record
+            elif group is evidence:
+                record = stored_record(raw, ("digest", "commit", "at"))
+                valid_digest(record["digest"])
+                valid_commit(record["commit"])
+                evidence[name] = record
+            elif group is gates:
+                one_of(name, GATES, "porte")
+                record = stored_record(raw, ("at",), ("commit",))
+                if "commit" in record or name == "ticket_end":
+                    valid_commit(record.get("commit"))
+                gates[name] = record
+            elif key.startswith(COUNTER_PREFIX):
+                one_of(key[len(COUNTER_PREFIX):], TICKET_COUNTERS, "compteur de ticket")
+            else:
+                raise Refusal("champ inconnu de la commande d'état, écrit hors d'elle")
+        except Refusal as exc:
+            reason = f"{key} : {exc}"
+            if group is not None:
+                group[name] = {"unruled": reason, "raw": raw}
+            flag(key, reason)
+    out["verdicts"] = verdicts
+    out["counters"] = render_counters(metadata, TICKET_COUNTERS, unruled)
+    out["evidence"] = evidence
+    out["gates"] = gates
+
+    def has_gate(name: str) -> bool:
+        return "at" in gates.get(name, {})
+
+    if status == "closed" and not any(has_gate(gate) for gate in CLOSING_GATES):
+        flag("status", "ticket fermé sans relevé de porte (ni porte de fin de ticket, ni retrait du graphe) : fermé hors porte")
+    if status == "in_progress" and not has_gate("dispatch"):
+        flag("status", "ticket démarré sans relevé de la porte de dispatch : démarré hors porte")
+
+    out["unruled"] = unruled
+    if unruled:
+        out["signal"] = UNRULED
+    return out
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    convoy, tickets = load_convoy(args.convoy)
+    metadata = metadata_of(convoy)
+    mark = metadata.get(KEY_MARK)
+    if mark is None:
+        raise NotNewFlow(args.convoy)
+
+    convoy_unruled: list[dict[str, str]] = []
+    if mark != MARK:
+        convoy_unruled.append({"field": KEY_MARK, "reason": f"marque inconnue : {mark!r}"})
+    for key in sorted(metadata):
+        known = (KEY_MARK, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
+        if key.startswith(PREFIX) and key not in known:
+            convoy_unruled.append({"field": key, "reason": f"{key} : champ inconnu de la commande d'état, écrit hors d'elle"})
+    convoy_out: dict[str, Any] = {
+        "id": convoy["id"], "title": convoy.get("title"), "status": convoy.get("status"), "mark": mark,
+        "counters": render_counters(metadata, CONVOY_COUNTERS, convoy_unruled),
+        "unruled": convoy_unruled,
+    }
+    if convoy_unruled:
+        convoy_out["signal"] = UNRULED
+
+    repo = Repo(args.repo)
+    rendered = [render_ticket(ticket, repo) for ticket in tickets]
+    unruled = bool(convoy_unruled) or any(ticket["unruled"] for ticket in rendered)
+    answer: dict[str, Any] = {"ok": True, "new_flow": True, "unruled": unruled, "convoy": convoy_out, "tickets": rendered}
+    if unruled:
+        answer["message"] = UNRULED
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return EXIT_UNRULED if unruled else 0
+
+
+# --- writes ------------------------------------------------------------------
+
+
+def done(convoy_id: str, bead_id: str, written: dict[str, Any]) -> int:
+    print(json.dumps({"ok": True, "convoy": convoy_id, "bead": bead_id, "written": written},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def marked_ticket(convoy_id: str, ticket_id: str | None) -> dict[str, Any]:
+    """The named ticket of a marked convoy; refuses anything else."""
+    convoy, tickets = load_convoy(convoy_id)
+    require_marked(convoy)
+    if not ticket_id:
+        raise Refusal("ticket absent : cette écriture porte sur un ticket du convoi")
+    for ticket in tickets:
+        if ticket.get("id") == ticket_id:
+            if metadata_of(ticket).get(KEY_MARK) != MARK:
+                raise Refusal(f"{UNRULED} : le ticket {ticket_id} ne porte pas la marque du nouveau flux")
+            return ticket
+    raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {convoy_id}")
+
+
+def cmd_mark(args: argparse.Namespace) -> int:
+    convoy, tickets = load_convoy(args.convoy)
+    writes: list[tuple[str, dict[str, Any]]] = []
+    for bead, counters in [*((ticket, TICKET_COUNTERS) for ticket in tickets), (convoy, CONVOY_COUNTERS)]:
+        metadata = metadata_of(bead)
+        mark = metadata.get(KEY_MARK)
+        if mark not in (None, MARK):
+            raise Refusal(f"{UNRULED} : {bead['id']} porte une marque inconnue ({mark!r})")
+        if mark is None:
+            # Counters start at an explicit 0: a counter that is absent later
+            # is an "état sans règle", never read as a default.
+            values: dict[str, Any] = {KEY_MARK: MARK}
+            values.update({COUNTER_PREFIX + name: 0 for name in counters if COUNTER_PREFIX + name not in metadata})
+            writes.append((bead["id"], values))
+    # Tickets first, the convoy last: the convoy's mark is what makes this a
+    # new-flow convoy, so an interrupted marking leaves an unmarked convoy.
+    for bead_id, values in writes:
+        write_metadata(bead_id, values)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "mark": MARK, "marked": [bead_id for bead_id, _ in writes]},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_set_branch(args: argparse.Namespace) -> int:
+    marked_ticket(args.convoy, args.ticket)
+    if not isinstance(args.branch, str) or not BRANCH_RE.match(args.branch):
+        raise Refusal(f"branche absente ou mal formée : {args.branch!r}")
+    values = {KEY_BRANCH: args.branch}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_set_exit(args: argparse.Namespace) -> int:
+    marked_ticket(args.convoy, args.ticket)
+    one_of(args.exit, EXITS, "sortie de ticket")
+    values = {KEY_EXIT: encode({"exit": args.exit, "at": now()})}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_set_verdict(args: argparse.Namespace) -> int:
+    marked_ticket(args.convoy, args.ticket)
+    one_of(args.kind, VERDICT_KINDS, "genre de verdict")
+    one_of(args.state, VERDICT_STATES, "état de verdict")
+    valid_commit(args.commit, "commit du verdict")
+    values = {VERDICT_PREFIX + args.kind: encode({"state": args.state, "commit": args.commit, "at": now()})}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def counter_target(args: argparse.Namespace) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """The bead a counter write lands on, and the counters that bead owns."""
+    names = args.counter if isinstance(args.counter, list) else [args.counter]
+    if not names or any(name is None for name in names):
+        raise Refusal("compteur absent : --counter est obligatoire")
+    if args.ticket:
+        bead, allowed, scope = marked_ticket(args.convoy, args.ticket), TICKET_COUNTERS, "compteur de ticket"
+    else:
+        convoy, _ = load_convoy(args.convoy)
+        require_marked(convoy)
+        bead, allowed, scope = convoy, CONVOY_COUNTERS, "compteur de convoi"
+    for name in names:
+        one_of(name, allowed, scope)
+    return bead, allowed
+
+
+def write_counters(args: argparse.Namespace, bead: dict[str, Any], allowed: tuple[str, ...], changes: dict[str, int]) -> int:
+    metadata = metadata_of(bead)
+    counters = {name: counter_value(metadata.get(COUNTER_PREFIX + name), name) for name in allowed}
+    counters.update(changes)
+    if allowed == TICKET_COUNTERS:
+        check_ticket_counters(counters)
+    values = {COUNTER_PREFIX + name: counters[name] for name in changes}
+    write_metadata(bead["id"], values)
+    return done(args.convoy, bead["id"], values)
+
+
+def cmd_set_counter(args: argparse.Namespace) -> int:
+    bead, allowed = counter_target(args)
+    if not isinstance(args.value, str) or not re.fullmatch(r"\d+", args.value):
+        raise Refusal(f"valeur de compteur refusée : {args.value!r} n'est pas un entier positif ou nul")
+    return write_counters(args, bead, allowed, {args.counter: int(args.value)})
+
+
+def cmd_bump_counter(args: argparse.Namespace) -> int:
+    bead, allowed = counter_target(args)
+    metadata = metadata_of(bead)
+    changes = {
+        name: counter_value(metadata.get(COUNTER_PREFIX + name), name) + 1
+        for name in dict.fromkeys(args.counter)
+    }
+    return write_counters(args, bead, allowed, changes)
+
+
+def cmd_add_evidence(args: argparse.Namespace) -> int:
+    marked_ticket(args.convoy, args.ticket)
+    if not isinstance(args.piece, str) or not PIECE_RE.match(args.piece):
+        raise Refusal(f"nom de pièce absent ou mal formé : {args.piece!r} (lettres, chiffres, _ et . seulement)")
+    valid_digest(args.digest)
+    valid_commit(args.commit, "commit de la pièce")
+    values = {EVIDENCE_PREFIX + args.piece: encode({"digest": args.digest, "commit": args.commit, "at": now()})}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_record_gate(args: argparse.Namespace) -> int:
+    marked_ticket(args.convoy, args.ticket)
+    one_of(args.gate, GATES, "porte")
+    record: dict[str, Any] = {"at": now()}
+    if args.commit is not None or args.gate == "ticket_end":
+        record["commit"] = valid_commit(args.commit, f"commit du relevé de porte {args.gate}")
+    values = {GATE_PREFIX + args.gate: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+# --- command line ------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def command(name: str, handler: Any, ticket: bool = True) -> argparse.ArgumentParser:
+        p = sub.add_parser(name)
+        p.add_argument("convoy")
+        if ticket:
+            p.add_argument("ticket")
+        p.set_defaults(handler=handler)
+        return p
+
+    # Closed lists and required values are checked by the handlers, not by
+    # argparse: a refusal is one JSON answer, and it is made under the lock,
+    # after the mark has been read.
+    p = command("show", cmd_show, ticket=False)
+    p.add_argument("--repo", default=".")
+    command("mark", cmd_mark, ticket=False)
+    command("set-branch", cmd_set_branch).add_argument("--branch")
+    command("set-exit", cmd_set_exit).add_argument("--exit")
+    p = command("set-verdict", cmd_set_verdict)
+    p.add_argument("--kind")
+    p.add_argument("--state")
+    p.add_argument("--commit")
+    p = command("set-counter", cmd_set_counter, ticket=False)
+    p.add_argument("--ticket")
+    p.add_argument("--counter")
+    p.add_argument("--value")
+    p = command("bump-counter", cmd_bump_counter, ticket=False)
+    p.add_argument("--ticket")
+    p.add_argument("--counter", action="append", default=[])
+    p = command("add-evidence", cmd_add_evidence)
+    p.add_argument("--piece")
+    p.add_argument("--digest")
+    p.add_argument("--commit")
+    p = command("record-gate", cmd_record_gate)
+    p.add_argument("--gate")
+    p.add_argument("--commit")
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        if args.handler is cmd_show:
+            return cmd_show(args)
+        with convoy_lock(args.convoy):
+            return args.handler(args)
+    except NotNewFlow as exc:
+        print(json.dumps({
+            "ok": False, "new_flow": False, "convoy": str(exc),
+            "message": f"{exc} : {NOT_NEW_FLOW} ; rien n'est écrit",
+        }, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "error": f"refus : {exc}"}, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

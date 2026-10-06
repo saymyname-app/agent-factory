@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+"""Check a Validated Prototype against its six conformance properties
+(T07, af-tvda3w; spec af-wf4w5r section 3).
+
+A Validated Prototype is the frozen version of the prototype variant the
+project owner chose. `check --prototype <dir>` reads the directory's
+`validated-prototype.json` manifest and the static pages and datasets it
+names, and reports one record per property:
+
+  variant           one winning variant only, no variant command bar left
+  states            every prototyped state opens at its own address
+  encoding          the encoding is declared, and every page declares it
+  viewports_themes  reference screen sizes and themes are declared
+  anchors           every visible element sits inside a named anchor
+  datasets          one synthetic dataset per state, fixed time included
+
+Exit 0 when the six hold, 1 otherwise. `--states a,b` names the states a
+Spec lists as prototyped: each must be a state of the prototype. Failure
+messages are in French: they reach the project owner through the refusal
+of `bin/spec-approve`. The agent
+of a prototype session runs this before showing the frozen version, then
+`bin/spec-approve bd-approve` runs it on the commit the Spec names.
+"""
+
+from __future__ import annotations
+
+import argparse
+import codecs
+import json
+import re
+import sys
+from datetime import datetime
+from html.parser import HTMLParser
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+
+PROGRAM = "prototype-conformance"
+MANIFEST_NAME = "validated-prototype.json"
+MANIFEST_CONTRACT = "agent-factory-validated-prototype/v1"
+RESULT_CONTRACT = "agent-factory-prototype-conformance/v1"
+PROPERTIES = ("variant", "states", "encoding", "viewports_themes", "anchors", "datasets")
+SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+COMMAND_BAR = re.compile(r"[?&]variant=|(?:prototype|variant)[-_ ]?switcher", re.IGNORECASE)
+META_CHARSET = re.compile(rb"<meta[^>]*charset\s*=\s*[\"']?\s*([A-Za-z0-9._:-]+)", re.IGNORECASE)
+
+VOID_ELEMENTS = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr",
+}
+# Subtrees that render nothing.
+UNRENDERED_ELEMENTS = {"head", "script", "style", "template", "noscript"}
+# Elements that are visible without holding any text of their own.
+REPLACED_ELEMENTS = {
+    "audio", "button", "canvas", "embed", "hr", "iframe", "img", "input", "meter", "object", "progress",
+    "select", "svg", "textarea", "video",
+}
+
+
+class ConformanceError(RuntimeError):
+    """The prototype cannot be checked at all (no readable manifest)."""
+
+
+def non_empty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def inside(root: Path, relative: str) -> Path | None:
+    """`relative` resolved under `root`, or None when it leaves it."""
+    candidate = (root / relative).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError:
+        return None
+    return candidate
+
+
+def load_manifest(prototype: Path) -> dict[str, Any]:
+    path = prototype / MANIFEST_NAME
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ConformanceError(f"{MANIFEST_NAME} illisible dans {prototype} : {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise ConformanceError(f"{MANIFEST_NAME} doit être un objet JSON")
+    if manifest.get("contract") != MANIFEST_CONTRACT:
+        raise ConformanceError(f"le contrat de {MANIFEST_NAME} doit être {MANIFEST_CONTRACT}")
+    return manifest
+
+
+def declared_states(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    states = manifest.get("states")
+    if not isinstance(states, list):
+        return []
+    return [state for state in states if isinstance(state, dict)]
+
+
+def state_label(state: dict[str, Any], index: int) -> str:
+    return state["id"] if non_empty_string(state.get("id")) else f"#{index + 1}"
+
+
+def address_page(prototype: Path, address: str) -> tuple[str, Path | None]:
+    """The page an address opens: its path inside the prototype, and the
+    file when it exists there."""
+    relative = urlsplit(address).path
+    page = inside(prototype, relative) if relative else None
+    return relative, page if page is not None and page.is_file() else None
+
+
+def pages(prototype: Path, manifest: dict[str, Any]) -> list[tuple[str, Path]]:
+    """Every distinct existing page a state's address opens."""
+    found: dict[str, Path] = {}
+    for state in declared_states(manifest):
+        if non_empty_string(state.get("address")):
+            relative, page = address_page(prototype, state["address"])
+            if page is not None:
+                found.setdefault(relative, page)
+    return list(found.items())
+
+
+# --- the six properties ---------------------------------------------------------
+
+
+def check_variant(prototype: Path, manifest: dict[str, Any], _: list[str] | None) -> list[str]:
+    failures = []
+    if not non_empty_string(manifest.get("variant")):
+        failures.append("variant doit nommer la seule variante retenue")
+    if "variants" in manifest:
+        failures.append("variants ne doit pas être déclaré : un Validated Prototype ne porte que la variante retenue")
+    for state in declared_states(manifest):
+        if non_empty_string(state.get("address")) and COMMAND_BAR.search(state["address"]):
+            failures.append(f"l'adresse {state['address']} choisit encore une variante")
+    for relative, page in pages(prototype, manifest):
+        if COMMAND_BAR.search(page.read_bytes().decode("utf-8", errors="replace")):
+            failures.append(f"{relative} porte encore la barre de commandes des variantes")
+    return failures
+
+
+def check_states(prototype: Path, manifest: dict[str, Any], named: list[str] | None) -> list[str]:
+    failures = []
+    states = manifest.get("states")
+    if not isinstance(states, list) or not states:
+        return ["states doit lister au moins un état prototypé"]
+    seen_ids: set[str] = set()
+    seen_addresses: dict[str, str] = {}
+    for index, state in enumerate(states):
+        if not isinstance(state, dict):
+            failures.append(f"l'état #{index + 1} doit être un objet")
+            continue
+        label = state_label(state, index)
+        if not (non_empty_string(state.get("id")) and SAFE_ID.fullmatch(state["id"])):
+            failures.append(f"l'état {label} n'a pas d'identifiant utilisable")
+        elif state["id"] in seen_ids:
+            failures.append(f"l'état {label} est déclaré deux fois")
+        else:
+            seen_ids.add(state["id"])
+        address = state.get("address")
+        if not non_empty_string(address):
+            failures.append(f"l'état {label} n'a pas d'adresse")
+            continue
+        if address in seen_addresses:
+            failures.append(f"l'état {label} partage l'adresse {address} avec l'état {seen_addresses[address]}")
+        seen_addresses[address] = label
+        relative, page = address_page(prototype, address)
+        if page is None:
+            failures.append(f"état {label} : l'adresse {address} n'ouvre aucune page du prototype ({relative or address})")
+    for name in named or []:
+        if name not in seen_ids:
+            failures.append(f"l'état {name} est dit prototypé mais le prototype ne le déclare pas")
+    return failures
+
+
+def check_encoding(prototype: Path, manifest: dict[str, Any], _: list[str] | None) -> list[str]:
+    encoding = manifest.get("encoding")
+    if not non_empty_string(encoding):
+        return ["encoding n'est pas déclaré"]
+    try:
+        codec = codecs.lookup(encoding)
+    except LookupError:
+        return [f"encoding {encoding} n'est pas un encodage connu"]
+    failures = []
+    for relative, page in pages(prototype, manifest):
+        raw = page.read_bytes()
+        try:
+            raw.decode(codec.name)
+        except UnicodeDecodeError:
+            failures.append(f"{relative} n'est pas encodé en {encoding}")
+            continue
+        declared = META_CHARSET.search(raw)
+        if declared is None:
+            failures.append(f"{relative} ne déclare pas son encodage (<meta charset>)")
+            continue
+        try:
+            same = codecs.lookup(declared.group(1).decode("ascii")).name == codec.name
+        except LookupError:
+            same = False
+        if not same:
+            failures.append(f"{relative} déclare {declared.group(1).decode('ascii')}, pas {encoding}")
+    return failures
+
+
+def check_viewports_themes(prototype: Path, manifest: dict[str, Any], _: list[str] | None) -> list[str]:
+    failures = []
+    viewports = manifest.get("viewports")
+    if not isinstance(viewports, list) or not viewports:
+        failures.append("viewports doit déclarer au moins une taille d'écran de référence")
+    else:
+        names: set[str] = set()
+        for index, viewport in enumerate(viewports):
+            usable = (
+                isinstance(viewport, dict)
+                and non_empty_string(viewport.get("name"))
+                and all(
+                    isinstance(viewport.get(side), int) and not isinstance(viewport.get(side), bool)
+                    and viewport[side] > 0
+                    for side in ("width", "height")
+                )
+            )
+            if not usable:
+                failures.append(f"la taille d'écran #{index + 1} doit avoir un nom, une largeur et une hauteur positives")
+            elif viewport["name"] in names:
+                failures.append(f"la taille d'écran {viewport['name']} est déclarée deux fois")
+            else:
+                names.add(viewport["name"])
+    themes = manifest.get("themes")
+    if not isinstance(themes, list) or not themes:
+        failures.append("themes doit déclarer au moins un thème de référence")
+    elif not all(non_empty_string(theme) for theme in themes) or len(set(themes)) != len(themes):
+        failures.append("themes doit lister des noms distincts et non vides")
+    return failures
+
+
+class AnchorCoverage(HTMLParser):
+    """Collects every visible element that sits outside all named anchors."""
+
+    def __init__(self, attribute: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.attribute = attribute
+        # One frame per open element: tag, inside an anchor, renders nothing,
+        # start line, already reported as outside.
+        self.stack: list[list[Any]] = []
+        self.outside: list[tuple[str, int]] = []
+        self.unnamed: list[tuple[str, int]] = []
+        self.anchors = 0
+
+    def frame(self, tag: str, attrs: list[tuple[str, str | None]]) -> list[Any]:
+        attributes = dict(attrs)
+        anchored = bool(self.stack and self.stack[-1][1])
+        unrendered = bool(self.stack and self.stack[-1][2])
+        line = self.getpos()[0]
+        if self.attribute in attributes:
+            if non_empty_string(attributes[self.attribute]):
+                anchored = True
+                self.anchors += 1
+            else:
+                self.unnamed.append((tag, line))
+        if tag in UNRENDERED_ELEMENTS or "hidden" in attributes:
+            unrendered = True
+        if tag == "input" and (attributes.get("type") or "").lower() == "hidden":
+            unrendered = True
+        return [tag, anchored, unrendered, line, False]
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        frame = self.frame(tag, attrs)
+        if tag in REPLACED_ELEMENTS and not frame[1] and not frame[2]:
+            self.outside.append((tag, frame[3]))
+        if tag not in VOID_ELEMENTS:
+            self.stack.append(frame)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        frame = self.frame(tag, attrs)
+        if tag in REPLACED_ELEMENTS and not frame[1] and not frame[2]:
+            self.outside.append((tag, frame[3]))
+
+    def handle_endtag(self, tag: str) -> None:
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index][0] == tag:
+                del self.stack[index:]
+                return
+
+    def handle_data(self, data: str) -> None:
+        if not data.strip() or not self.stack:
+            return
+        frame = self.stack[-1]
+        if frame[1] or frame[2] or frame[4]:
+            return
+        frame[4] = True
+        self.outside.append((frame[0], frame[3]))
+
+
+def check_anchors(prototype: Path, manifest: dict[str, Any], _: list[str] | None) -> list[str]:
+    attribute = manifest.get("anchor_attribute")
+    if not non_empty_string(attribute):
+        return ["anchor_attribute n'est pas déclaré"]
+    failures = []
+    for relative, page in pages(prototype, manifest):
+        coverage = AnchorCoverage(attribute.lower())
+        coverage.feed(page.read_bytes().decode("utf-8", errors="replace"))
+        coverage.close()
+        for tag, line in coverage.outside:
+            failures.append(f"{relative} : <{tag}> ligne {line} est visible hors de toute ancre")
+        for tag, line in coverage.unnamed:
+            failures.append(f"{relative} : <{tag}> ligne {line} porte {attribute} sans nom")
+        if not coverage.anchors:
+            failures.append(f"{relative} : aucune ancre nommée")
+    return failures
+
+
+def check_datasets(prototype: Path, manifest: dict[str, Any], _: list[str] | None) -> list[str]:
+    failures = []
+    time_field = manifest.get("fixed_time_field")
+    if not non_empty_string(time_field):
+        failures.append("fixed_time_field n'est pas déclaré")
+    seen: dict[str, str] = {}
+    for index, state in enumerate(declared_states(manifest)):
+        label = state_label(state, index)
+        dataset = state.get("dataset")
+        if not non_empty_string(dataset):
+            failures.append(f"l'état {label} n'a pas de jeu de données")
+            continue
+        if dataset in seen:
+            failures.append(f"l'état {label} partage le jeu de données {dataset} avec l'état {seen[dataset]}")
+        seen[dataset] = label
+        path = inside(prototype, dataset)
+        if path is None or not path.is_file():
+            failures.append(f"état {label} : le jeu de données {dataset} manque")
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            failures.append(f"état {label} : le jeu de données {dataset} n'est pas un JSON lisible ({exc})")
+            continue
+        if not isinstance(data, dict):
+            failures.append(f"état {label} : le jeu de données {dataset} doit être un objet JSON")
+            continue
+        if non_empty_string(time_field):
+            fixed = data.get(time_field)
+            try:
+                datetime.fromisoformat(fixed.replace("Z", "+00:00") if isinstance(fixed, str) else "")
+            except ValueError:
+                failures.append(f"état {label} : le jeu de données {dataset} ne fixe aucune heure dans {time_field}")
+    return failures
+
+
+CHECKS = {
+    "variant": check_variant,
+    "states": check_states,
+    "encoding": check_encoding,
+    "viewports_themes": check_viewports_themes,
+    "anchors": check_anchors,
+    "datasets": check_datasets,
+}
+
+
+# --- CLI ---------------------------------------------------------------------------
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    prototype = Path(args.prototype)
+    named = [name.strip() for name in args.states.split(",") if name.strip()] if args.states else None
+    try:
+        manifest = load_manifest(prototype)
+    except ConformanceError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
+        return 1
+    records = []
+    for name in PROPERTIES:
+        failures = CHECKS[name](prototype, manifest, named)
+        records.append({"property": name, "ok": not failures, "failures": failures})
+    ok = all(record["ok"] for record in records)
+    print(
+        json.dumps(
+            {"ok": ok, "contract": RESULT_CONTRACT, "prototype": str(prototype), "properties": records},
+            indent=2, ensure_ascii=False,
+        )
+    )
+    return 0 if ok else 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    check = subparsers.add_parser("check", help="check a Validated Prototype directory, one record per property")
+    check.add_argument("--prototype", required=True, help=f"directory holding {MANIFEST_NAME}")
+    check.add_argument(
+        "--states", default=None, help="comma-separated state ids a Spec names as prototyped; each must be declared"
+    )
+    check.set_defaults(func=cmd_check)
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
