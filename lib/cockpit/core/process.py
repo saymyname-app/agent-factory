@@ -38,7 +38,16 @@ def build(config, clock=None):
     for name, display_name in SOURCE_DISPLAY_NAMES.items():
         read_model.register(name, display_name=display_name)
 
-    pollers = [GcSsePoller(read_model, config.gc_base_url)]
+    pollers = [
+        GcSsePoller(
+            read_model,
+            config.gc_base_url,
+            city=config.gc_city,
+            status_poll_seconds=config.gc_status_poll_seconds,
+            stream_silence_seconds=config.gc_stream_silence_seconds,
+            reconnect_seconds=config.gc_reconnect_seconds,
+        )
+    ]
     if config.bd_bin:
         pollers.append(
             PollingSource(

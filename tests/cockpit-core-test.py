@@ -108,6 +108,8 @@ class CockpitSeamTest(unittest.TestCase):
                 "COCKPIT_HOST": "127.0.0.1",
                 "COCKPIT_PORT": str(port if port is not None else self.port),
                 "COCKPIT_GC_BASE_URL": self.fake_gc.base_url,
+                "COCKPIT_GC_STATUS_POLL_SECONDS": "0.1",
+                "COCKPIT_GC_RECONNECT_SECONDS": "0.1",
                 "COCKPIT_BD_BIN": str(FIXTURES / "fake-bd"),
                 "COCKPIT_PID_FILE": self.pid_file,
                 "COCKPIT_BEADS_POLL_SECONDS": "0.2",
@@ -139,7 +141,7 @@ class CockpitSeamTest(unittest.TestCase):
         self.start_cockpit()
         wait_for_port("127.0.0.1", self.port)
 
-        self.fake_gc.push_event({"running": True, "suspended": False, "partial": False})
+        self.fake_gc.set_status(agents_running=2)
         # "Tout est à jour" needs every source fresh: wait for beads too,
         # not only gc (the beads source makes two bd reads, af-1al0t1).
         snapshot = wait_until(
@@ -149,7 +151,9 @@ class CockpitSeamTest(unittest.TestCase):
             timeout=5,
         )
         self.assertEqual("fresh", snapshot["gc"]["freshness"])
+        self.assertFalse(snapshot["gc"]["value"]["suspended"])
         self.assertIn("beads", snapshot)
+        wait_until(lambda: self.snapshot()["gc"]["value"]["agents_running"] == 2, timeout=5)
 
         status, body = http_get(self.port, "/")
         self.assertEqual(200, status)
@@ -157,10 +161,17 @@ class CockpitSeamTest(unittest.TestCase):
 
     # ------------------------------------------------------------------
     # AC2 — fresh -> stale -> unknown over the clock; never a "0" without
-    # a fresh read; a partial:true gc response is not taken as complete.
+    # a fresh read; a status read while the event stream hangs is not
+    # taken as a complete read.
     # ------------------------------------------------------------------
     def test_freshness_ages_from_fresh_through_stale_to_unknown(self):
-        self.start_cockpit(extra_env={"COCKPIT_VALIDITY_GC_SECONDS": "0.3"})
+        self.fake_gc.go_down()
+        self.start_cockpit(
+            extra_env={
+                "COCKPIT_VALIDITY_GC_SECONDS": "0.5",
+                "COCKPIT_GC_STREAM_SILENCE_SECONDS": "0.3",
+            }
+        )
         wait_for_port("127.0.0.1", self.port)
 
         # Before any read: never a bare "0" or default value — None, unknown.
@@ -168,29 +179,30 @@ class CockpitSeamTest(unittest.TestCase):
         self.assertIsNone(snapshot["gc"]["value"])
         self.assertEqual("unknown", snapshot["gc"]["freshness"])
 
-        self.fake_gc.push_event({"running": True, "partial": False})
-        snapshot = wait_until(
-            lambda: self.snapshot() if self.snapshot()["gc"]["freshness"] == "fresh" else None,
-            timeout=5,
-        )
-        self.assertEqual("fresh", snapshot["gc"]["freshness"])
+        self.fake_gc.go_up()
+        wait_until(lambda: self.snapshot()["gc"]["freshness"] == "fresh", timeout=5)
 
-        # A partial:true response must not be taken as a complete, fresh
-        # read: it must not reset the age clock.
-        self.fake_gc.push_event({"running": True, "partial": True})
-        time.sleep(0.4)  # > validity (0.3s), so a real refresh would show fresh
-        snapshot = self.snapshot()
-        self.assertEqual(
-            "stale", snapshot["gc"]["freshness"],
-            "a partial:true gc event must not count as a complete, fresh read",
-        )
+        # The stream hangs while the API still answers: those status reads
+        # must not reset the age clock.
+        self.fake_gc.mute_stream()
+        wait_until(lambda: self.snapshot()["gc"]["freshness"] == "stale", timeout=5)
 
         # Long enough without a complete read: the source is failing, not
         # merely stale — unknown (GLOSSARY.md Freshness: "or its source is
         # failing").
-        time.sleep(0.6)
-        snapshot = self.snapshot()
-        self.assertEqual("unknown", snapshot["gc"]["freshness"])
+        wait_until(lambda: self.snapshot()["gc"]["freshness"] == "unknown", timeout=5)
+
+    def test_partial_status_keeps_the_values_it_delivered(self):
+        self.fake_gc.set_status(partial_errors=["store health: list timed out"])
+        self.start_cockpit()
+        wait_for_port("127.0.0.1", self.port)
+
+        snapshot = wait_until(
+            lambda: self.snapshot() if self.snapshot()["gc"]["freshness"] == "fresh" else None,
+            timeout=5,
+        )
+        self.assertEqual(["store health: list timed out"], snapshot["gc"]["value"]["partial_errors"])
+        self.assertFalse(snapshot["gc"]["value"]["suspended"])
 
     # ------------------------------------------------------------------
     # AC3 — headline "Tout est à jour à HH:MM (Paris)", or the list of
@@ -204,7 +216,6 @@ class CockpitSeamTest(unittest.TestCase):
             }
         )
         wait_for_port("127.0.0.1", self.port)
-        self.fake_gc.push_event({"running": True, "partial": False})
 
         body = wait_until(
             lambda: self.home_body() if "Tout est à jour à" in self.home_body() else None,
@@ -212,7 +223,8 @@ class CockpitSeamTest(unittest.TestCase):
         )
         self.assertIn("Tout est à jour à", body)
 
-        # gc goes quiet — no more events — and ages past its Validity window.
+        # gc dies and ages past its Validity window.
+        self.fake_gc.go_down()
         body = wait_until(
             lambda: self.home_body() if "Périmé ou inconnu" in self.home_body() else None,
             timeout=5,
@@ -234,7 +246,6 @@ class CockpitSeamTest(unittest.TestCase):
     def test_survives_a_simulated_city_stop(self):
         self.start_cockpit()
         wait_for_port("127.0.0.1", self.port)
-        self.fake_gc.push_event({"running": True, "partial": False})
         wait_until(
             lambda: self.snapshot() if self.snapshot()["gc"]["freshness"] == "fresh" else None,
             timeout=5,
