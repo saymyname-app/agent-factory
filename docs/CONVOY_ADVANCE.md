@@ -33,6 +33,11 @@ when all of this holds:
 
 - the ticket is `open`, carries the mark, and has no gate record and no
   Ticket Exit yet (it was never started);
+- the ticket is not parked (T11: a Ticket Exit `planning_exception` or
+  `operator_request` parks its ticket and every ticket that waits for it,
+  `docs/TICKET_EXIT.md`); a parked ticket is listed under `waiting`, with
+  its cause and the ticket that parked it, and the tickets that wait for
+  none of them keep starting;
 - every bead it depends on with a `blocks` edge is closed — which is what
   makes the starts follow the dependency order;
 - a place is free under the ceiling N.

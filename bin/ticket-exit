@@ -1,0 +1,880 @@
+#!/usr/bin/env python3
+"""End the work of an author on a ticket of a "new flow" convoy, by a
+structured call (T11, af-egkabn; Spec af-wf4w5r §5, Ticket Exit and Ticket
+Handoff).
+
+An author never ends in free text. Each Ticket Exit has a destination fixed
+here, by code:
+
+    ticket-exit exit CONVOY TICKET --exit finished --repo DIR --handoff FILE
+    ticket-exit exit CONVOY TICKET --exit planning_exception --kind semantic|topology --summary LINE
+    ticket-exit exit CONVOY TICKET --exit operator_request --request FILE
+    ticket-exit exit CONVOY TICKET --exit technically_blocked --repair FILE
+    ticket-exit exit CONVOY TICKET --exit interrupted --repo DIR [--handoff FILE]
+    ticket-exit read CONVOY TICKET
+    ticket-exit deferral CONVOY TICKET --repo DIR [--handoff FILE]
+
+`finished`: refused without a valid Ticket Handoff -- its four sections, each
+with content or « aucun » -- and while the diff of the ticket carries a
+deferral marker (TODO, FIXME, « not wired », « à brancher ») that no declared
+« non fait » covers. `planning_exception` and `operator_request`: the ticket
+and every ticket that waits for it are parked, and the request reaches the
+operator through bin/escalation-door. `technically_blocked`: a `repair`
+ticket is drafted by code and published by the patch door
+(bin/ticket-graph-publish bd-patch); it blocks the ticket, the rest of the
+convoy goes on. `interrupted`: the branch is pushed and a partial Handoff is
+recorded. Every exit but `finished` takes `--repo` and `--handoff` too, for
+a partial Handoff.
+
+The records of a Handoff -- commits, files touched outside the Declared
+Scope, proof of the red, deferral markers -- are never given by the author:
+they are computed here from the ticket branch and the tracker, inside
+bin/evidence-capture, so they are a sealed piece of the evidence store
+(`handoff_records`). The Handoff and the exit are written on the ticket
+through bin/convoy-state.
+
+`read` renders a ticket as its author receives it: its text, its Ticket
+Exit, and the Ticket Handoff of each of its direct blockers that is closed.
+A started ticket whose session ended without an exit is read as
+`interrupted`. `deferral` runs the detector alone and writes nothing.
+
+Every answer is one JSON object on stdout. Exit status: 0 done; 1 refused
+(nothing was written, unless the answer says what was); 4 the convoy does
+not carry the new-flow mark. Details: docs/TICKET_EXIT.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+PROGRAM = "ticket-exit"
+BIN = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
+GC_BIN = os.environ.get("GC_BIN", "gc")
+STATE_TOOL = BIN / "convoy-state"
+CAPTURE_TOOL = BIN / "evidence-capture"
+ESCALATION_TOOL = BIN / "escalation-door"
+PUBLISH_TOOL = BIN / "ticket-graph-publish"
+EXCEPTION_TOOL = BIN / "planning-exception"
+OPERATOR_CONFIG_TOOL = BIN / "operator-config"
+
+EXITS = ("finished", "planning_exception", "operator_request", "technically_blocked", "interrupted")
+PARKING_EXITS = ("planning_exception", "operator_request")
+SECTIONS = ("done", "deviations", "not_done", "out_of_ticket")
+SECTION_NAMES = {"done": "Fait", "deviations": "Écarts", "not_done": "Non fait", "out_of_ticket": "Constats hors ticket"}
+NOTHING = "aucun"
+RECORDS_PIECE = "handoff_records"
+RED_PIECES = {"red": "tdd_red", "prefactoring": "tdd_prefactoring"}
+KIND_PREFACTORING = "prefactoring"
+NEW_FLOW = "new-flow/v1"
+# What the author gives of a `repair`; the rest is set by code.
+REPAIR_FIELDS = ("title", "what_it_delivers", "restores", "demonstration_line", "acceptance_criteria")
+
+# A deferral marker (Spec §5, user story 32): a net by markers, not a proof.
+MARKERS = (
+    ("TODO", re.compile(r"\bTODO\b", re.IGNORECASE)),
+    ("FIXME", re.compile(r"\bFIXME\b", re.IGNORECASE)),
+    ("not wired", re.compile(r"\bnot\s+(?:yet\s+)?wired\b", re.IGNORECASE)),
+    ("à brancher", re.compile(r"(?<!\w)[àa]\s+brancher\b", re.IGNORECASE)),
+)
+
+EXIT_REFUSED = 1
+EXIT_NOT_NEW_FLOW = 4
+
+REQUEST_LINE_MAX = 140
+MAX_DETAIL = 300
+MAX_MARKER_TEXT = 160
+CAPTURE_TIMEOUT = 600
+
+
+class Refusal(RuntimeError):
+    """The call is refused. `written` names what was already written when
+    the refusal came after a first write."""
+
+    def __init__(self, message: str, written: list[str] | None = None):
+        super().__init__(" ".join(message.split()))
+        self.written = written or []
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark: bin/convoy-state's answer."""
+
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+def short(text: str, limit: int = MAX_DETAIL) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+# --- the other commands ----------------------------------------------------------
+
+
+def run(argv: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=cwd)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+
+
+def detail_of(proc: subprocess.CompletedProcess[str]) -> str:
+    return short(proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}")
+
+
+def tool(path: Path, *args: str) -> tuple[int, dict[str, Any]]:
+    """One JSON answer of bin/convoy-state or bin/evidence-capture."""
+    proc = run([str(path), *args])
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {detail_of(proc)}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def state_write(*args: str) -> dict[str, Any]:
+    status, answer = tool(STATE_TOOL, *args)
+    if status != 0:
+        raise Refusal(f"{args[0]} refusé par la commande d'état : {refusal_text(answer)}")
+    return answer
+
+
+def gc_json(*args: str) -> Any:
+    proc = run([GC_BIN, *args])
+    if proc.returncode != 0:
+        raise Refusal(f"gc {' '.join(args[:3])} a échoué : {detail_of(proc)}")
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc {' '.join(args[:3])} a rendu un JSON illisible : {exc}") from exc
+
+
+def read_bead(bead_id: str) -> dict[str, Any]:
+    data = gc_json("bd", "show", bead_id, "--json")
+    bead = data[0] if isinstance(data, list) and data else data
+    if not isinstance(bead, dict):
+        raise Refusal(f"bead introuvable : {bead_id}")
+    return bead
+
+
+def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), "-c", "core.quotepath=off", *args], capture_output=True, text=True,
+            errors="replace", env=env, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer git : {exc}") from exc
+
+
+def read_json_file(path: str | None, what: str) -> Any:
+    try:
+        return json.loads(Path(path or "").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise Refusal(f"{what} illisible ({path!r}) : {exc}") from exc
+
+
+# --- the ticket in the tracker -----------------------------------------------
+
+
+class Ticket:
+    """One ticket of a marked convoy, as bin/convoy-state renders it."""
+
+    def __init__(self, convoy_id: str, ticket_id: str, repo: Path | None = None):
+        self.convoy_id, self.id = convoy_id, ticket_id
+        status, answer = tool(STATE_TOOL, "show", convoy_id, *(("--repo", str(repo)) if repo else ()))
+        if status == EXIT_NOT_NEW_FLOW:
+            raise NotNewFlow(answer)
+        if status not in (0, 3) or not isinstance(answer.get("tickets"), list):
+            raise Refusal(refusal_text(answer))
+        self.convoy: dict[str, Any] = answer["convoy"]
+        self.tickets: dict[str, dict[str, Any]] = {t.get("id"): t for t in answer["tickets"]}
+        if ticket_id not in self.tickets:
+            raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {convoy_id}")
+        self.state = self.tickets[ticket_id]
+        if self.state.get("mark") != NEW_FLOW:
+            raise Refusal(f"état sans règle : le ticket {ticket_id} ne porte pas la marque du nouveau flux")
+        self.kind = self.state.get("kind")
+        if not isinstance(self.kind, str):
+            raise Refusal(f"état sans règle : le genre du ticket {ticket_id} est illisible ({self.kind!r})")
+
+    def require_at_work(self) -> None:
+        """A Ticket Exit ends the work of an author: the ticket was started
+        through the dispatch door and is not closed."""
+        gates = self.state.get("gates") or {}
+        if self.state.get("status") == "closed" or any(gate in gates for gate in ("ticket_end", "withdrawn")):
+            raise Refusal(f"le ticket {self.id} est fermé : aucune sortie ne s'y enregistre")
+        if "dispatch" not in gates:
+            raise Refusal(
+                f"le ticket {self.id} n'a pas été démarré par la porte de dispatch : aucun auteur n'y travaille")
+
+    def red(self) -> dict[str, Any] | None:
+        """The proof that opens the work of the ticket: the red step, or
+        the regression of a prefactoring (bin/tdd-step)."""
+        step = "prefactoring" if self.kind == KIND_PREFACTORING else "red"
+        record = (self.state.get("tdd") or {}).get(step)
+        sealed = (self.state.get("evidence") or {}).get(RED_PIECES[step])
+        if not isinstance(record, dict) or "base" not in record or not isinstance(sealed, dict) or "digest" not in sealed:
+            return None
+        return {"step": step, "base": record["base"], "commit": record["commit"],
+                "piece": RED_PIECES[step], "digest": sealed["digest"]}
+
+
+# --- the Ticket Handoff: what the author writes ----------------------------------
+
+
+def author_sections(path: str | None, complete: bool) -> dict[str, Any]:
+    """The four sections of the author, as given. A complete Handoff has
+    every one, each with content or « aucun »; a partial one may leave some
+    out. The records are never read from the author."""
+    if path is None:
+        if complete:
+            raise Refusal("sortie « terminé » sans Ticket Handoff (--handoff) : ses quatre rubriques sont attendues")
+        return {}
+    given = read_json_file(path, "Ticket Handoff")
+    if not isinstance(given, dict):
+        raise Refusal("Ticket Handoff mal formé : un objet JSON est attendu")
+    unknown = sorted(set(given) - set(SECTIONS))
+    if unknown:
+        raise Refusal(
+            f"Ticket Handoff : champ(s) inconnu(s) {', '.join(unknown)} (attendu : {', '.join(SECTIONS)}) ; "
+            "les relevés sont écrits par du code, l'auteur ne les fournit pas")
+    for name in SECTIONS:
+        value = given.get(name)
+        label = f"rubrique « {SECTION_NAMES[name]} » ({name})"
+        if value is None:
+            if complete:
+                raise Refusal(f"Ticket Handoff : {label} absente : ni contenu ni « {NOTHING} »")
+            continue
+        if value == NOTHING:
+            continue
+        if not isinstance(value, list) or not value:
+            raise Refusal(f"Ticket Handoff : {label} vide ou mal formée (attendu : une liste non vide, ou « {NOTHING} »)")
+        for item in value:
+            if name == "not_done" and isinstance(item, dict):
+                paths = item.get("paths", [])
+                if set(item) - {"what", "paths"} or not isinstance(paths, list) or any(
+                        not isinstance(entry, str) or not entry.strip() for entry in paths):
+                    raise Refusal(f"Ticket Handoff : {label} : élément mal formé {item!r} (attendu : what, et paths en option)")
+                item = item.get("what")
+            if not isinstance(item, str) or not item.strip() or "\n" in item:
+                raise Refusal(f"Ticket Handoff : {label} : chaque élément est une ligne non vide ({item!r})")
+    return {name: given[name] for name in SECTIONS if given.get(name) is not None}
+
+
+def in_paths(path: str, entries: list[str]) -> bool:
+    """Whether a file sits under one of the declared paths (a file, a
+    directory, or a glob as the publication door reads them)."""
+    return any(
+        path == entry.rstrip("/") or path.startswith(entry.rstrip("/") + "/") or fnmatch.fnmatch(path, entry)
+        for entry in entries
+    )
+
+
+def declared_not_done_paths(sections: dict[str, Any]) -> list[str]:
+    not_done = sections.get("not_done")
+    return [
+        path for item in (not_done if isinstance(not_done, list) else [])
+        if isinstance(item, dict) for path in item.get("paths", [])
+    ]
+
+
+# --- the Ticket Handoff: what the code records -----------------------------------
+
+
+def clean_head(repo: Path) -> str:
+    proc = git(repo, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    if proc.returncode != 0:
+        raise Refusal(f"--repo {repo} n'est pas un dépôt Git avec un commit")
+    dirty = git(repo, "status", "--porcelain", "--untracked-files=no")
+    if dirty.returncode != 0 or dirty.stdout.strip():
+        raise Refusal(
+            f"des fichiers suivis diffèrent de HEAD dans {repo} : le travail se commite avant la sortie "
+            f"({short(dirty.stdout or dirty.stderr, 120)})")
+    return proc.stdout.strip()
+
+
+def checked_out_branch(repo: Path, ticket: Ticket) -> str:
+    proc = git(repo, "symbolic-ref", "--quiet", "--short", "HEAD")
+    branch = proc.stdout.strip()
+    if proc.returncode != 0 or not branch:
+        raise Refusal(f"aucune branche n'est extraite dans {repo} (HEAD détachée)")
+    recorded = ticket.state.get("branch")
+    if recorded and recorded != branch:
+        raise Refusal(f"la branche extraite dans {repo} ({branch}) n'est pas celle du ticket ({recorded})")
+    return branch
+
+
+def added_lines(repo: Path, base: str, head: str) -> list[tuple[str, int, str]]:
+    """(path, line number, text) of every line the ticket added."""
+    proc = git(repo, "diff", "--no-color", "--no-ext-diff", "--no-renames", "-U0", base, head)
+    if proc.returncode != 0:
+        raise Refusal(f"git diff {base}..{head} a échoué : {short(proc.stderr)}")
+    out: list[tuple[str, int, str]] = []
+    path, number = None, 0
+    for line in proc.stdout.splitlines():
+        if line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else None
+        elif line.startswith("@@"):
+            match = re.match(r"@@ -\S+ \+(\d+)", line)
+            number = int(match.group(1)) if match else 0
+        elif line.startswith("+") and path is not None:
+            out.append((path, number, line[1:]))
+            number += 1
+    return out
+
+
+def deferral_markers(repo: Path, base: str, head: str, sections: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every deferral marker in the lines the ticket added. A marker is
+    declared when a « non fait » of the Handoff names its file (`paths`)."""
+    declared = declared_not_done_paths(sections)
+    found = []
+    for path, number, text in added_lines(repo, base, head):
+        for name, pattern in MARKERS:
+            if pattern.search(text):
+                found.append({"path": path, "line": number, "marker": name, "text": short(text, MAX_MARKER_TEXT),
+                              "declared": in_paths(path, declared)})
+    return found
+
+
+def undeclared(markers: list[dict[str, Any]]) -> str | None:
+    """Why the detector refuses, or None when it passes."""
+    missing = [marker for marker in markers if not marker["declared"]]
+    if not missing:
+        return None
+    named = " ; ".join(f"{m['path']}:{m['line']} ({m['marker']})" for m in missing[:5])
+    more = f" (+{len(missing) - 5})" if len(missing) > 5 else ""
+    return (
+        f"marqueur de report sans « non fait » déclaré : {named}{more} — retirer le report, ou le déclarer dans "
+        "la rubrique « Non fait » (not_done) avec son fichier (paths)")
+
+
+def build_records(ticket: Ticket, repo: Path, exit_name: str, sections: dict[str, Any]) -> dict[str, Any]:
+    """What the code records in a Ticket Handoff, from the branch of the
+    ticket and the tracker. Refuses what a `finished` exit may not carry."""
+    head = clean_head(repo)
+    branch = checked_out_branch(repo, ticket)
+    finished = exit_name == "finished"
+    records: dict[str, Any] = {"exit": exit_name, "branch": branch, "head": head}
+    red = ticket.red()
+    records["red_proof"] = red
+    amendment = (ticket.state.get("tdd") or {}).get("amendment")
+    records["amendment"] = (
+        {"commit": amendment["commit"], "reason": amendment["reason"]}
+        if isinstance(amendment, dict) and "reason" in amendment else None)
+    scope = ticket.state.get("declared_scope")
+    records["declared_scope"] = scope
+    base = red["base"] if red else None
+    if base is not None and git(repo, "merge-base", "--is-ancestor", base, head).returncode != 0:
+        if finished:
+            raise Refusal(f"le commit de départ prouvé ({base}) n'est pas un ancêtre de HEAD ({head})")
+        base = None
+    records["base"] = base
+    if base is None:
+        if finished:
+            proof = "régression d'un prefactoring" if ticket.kind == KIND_PREFACTORING else "étape rouge"
+            raise Refusal(
+                f"aucune preuve du rouge sur le ticket {ticket.id} ({proof}, bin/tdd-step) : "
+                "les relevés du Handoff partent du commit de départ qu'elle a prouvé")
+        records.update(commits=None, files_changed=None, files_outside_declared_scope=None, deferral_markers=None)
+    else:
+        log = git(repo, "log", "--reverse", "--format=%H%x09%s", f"{base}..{head}")
+        names = git(repo, "diff", "--name-only", "--no-renames", base, head)
+        if log.returncode != 0 or names.returncode != 0:
+            raise Refusal(f"lecture de la branche {branch} impossible : {short(log.stderr or names.stderr)}")
+        records["commits"] = [
+            {"commit": line.partition("\t")[0], "subject": line.partition("\t")[2]} for line in log.stdout.splitlines()]
+        files = [line for line in names.stdout.splitlines() if line]
+        records["files_changed"] = files
+        records["files_outside_declared_scope"] = (
+            None if scope is None else [path for path in files if not in_paths(path, scope)])
+        markers = deferral_markers(repo, base, head, sections)
+        records["deferral_markers"] = markers
+        reason = undeclared(markers)
+        if finished and reason:
+            raise Refusal(reason)
+    if exit_name == "interrupted":
+        remote = git(repo, "ls-remote", "--exit-code", "origin", f"refs/heads/{branch}")
+        pushed = remote.stdout.split()[0] if remote.returncode == 0 and remote.stdout.split() else None
+        if pushed != head:
+            raise Refusal(f"la branche {branch} n'est pas poussée à son commit de tête ({head}) sur origin")
+        records["pushed"] = {"remote": "origin", "branch": branch, "commit": head}
+    return records
+
+
+def cmd_records(args: argparse.Namespace) -> int:
+    """The records of one Handoff. It writes nothing: bin/evidence-capture
+    runs it and seals what it prints."""
+    try:
+        repo = Path(args.repo or ".").resolve()
+        ticket = Ticket(args.convoy, args.ticket, repo)
+        sections = author_sections(args.handoff, complete=args.exit == "finished")
+        records = build_records(ticket, repo, args.exit, sections)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+    print(json.dumps(records, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def sealed_records(args: argparse.Namespace, repo: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run `records` inside bin/evidence-capture: the answer of the capture
+    and the records it sealed. Nothing is filed if `records` refuses."""
+    check = [str(Path(__file__).resolve()), "records", args.convoy, args.ticket, "--repo", str(repo), "--exit", args.exit]
+    if args.handoff:
+        check += ["--handoff", str(Path(args.handoff).resolve())]
+    status, answer = tool(
+        CAPTURE_TOOL, "command", args.convoy, args.ticket, "--piece", RECORDS_PIECE, "--repo", str(repo),
+        "--expect-exit", "0", "--timeout", str(CAPTURE_TIMEOUT), "--", *check)
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(answer)
+    if status != 0:
+        if "output" not in answer:
+            raise Refusal(refusal_text(answer))
+        try:
+            raise Refusal(json.loads(answer["output"])["error"])
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise Refusal(
+                f"les relevés du Handoff n'ont pas pu être pris (exit {answer.get('exit_code')}) : "
+                f"{short(str(answer['output'])[-MAX_DETAIL:])}") from exc
+    try:
+        records = json.loads(json.loads(Path(answer["path"]).read_text(encoding="utf-8"))["output"])
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise Refusal(f"pièce {RECORDS_PIECE} illisible après sa capture : {exc}") from exc
+    return answer, records
+
+
+def record_handoff(args: argparse.Namespace, sections: dict[str, Any], written: list[str]) -> dict[str, Any] | None:
+    """Seal the records and write the Handoff on the ticket. Without a
+    repository there is nothing to record: only the sections, if any."""
+    partial = args.exit != "finished"
+    handoff: dict[str, Any] = {"sections": sections, "partial": partial}
+    if args.repo:
+        repo = Path(args.repo).resolve()
+        filed, records = sealed_records(args, repo)
+        written.append(f"pièce {RECORDS_PIECE}")
+        handoff.update(commit=filed["commit"], records=records)
+    else:
+        return None
+    with tempfile.NamedTemporaryFile("w", prefix="ticket-exit-", suffix=".json", encoding="utf-8") as handle:
+        json.dump(handoff, handle, ensure_ascii=False)
+        handle.flush()
+        state_write("set-handoff", args.convoy, args.ticket, "--file", handle.name)
+    written.append("Ticket Handoff")
+    return handoff
+
+
+# --- destinations ------------------------------------------------------------
+
+
+def operator_language() -> str:
+    proc = run([str(OPERATOR_CONFIG_TOOL), "language"])
+    if proc.returncode != 0:
+        raise Refusal(f"langue de l'opérateur illisible : {detail_of(proc)}")
+    return proc.stdout.strip()
+
+
+def request_line(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value.strip() or "\n" in value or "\r" in value:
+        raise Refusal(f"demande : champ « {name} » absent ou sur plusieurs lignes")
+    if len(value.strip()) > REQUEST_LINE_MAX:
+        raise Refusal(f"demande : champ « {name} » de plus de {REQUEST_LINE_MAX} caractères")
+    return value.strip()
+
+
+def operator_request(args: argparse.Namespace) -> dict[str, Any]:
+    """The request of an `operator_request` exit, as the author wrote it:
+    what is needed, why, and what the operator can answer."""
+    if not args.request:
+        raise Refusal("sortie « demande opérateur » sans demande (--request) : quoi, pourquoi, que_faire")
+    given = read_json_file(args.request, "demande opérateur")
+    if not isinstance(given, dict) or set(given) - {"quoi", "pourquoi", "que_faire"}:
+        raise Refusal("demande opérateur mal formée (attendu : quoi, pourquoi, que_faire)")
+    options = given.get("que_faire")
+    if not isinstance(options, list) or not options or not all(isinstance(option, dict) for option in options):
+        raise Refusal("demande : champ « que_faire » absent ou vide (attendu : une liste d'options)")
+    for index, option in enumerate(options, 1):
+        request_line(option.get("option"), f"option {index}")
+        request_line(option.get("consequence"), f"conséquence de l'option {index}")
+    return {"quoi": request_line(given.get("quoi"), "quoi"), "pourquoi": request_line(given.get("pourquoi"), "pourquoi"),
+            "que_faire": options}
+
+
+def planning_exception_request(args: argparse.Namespace) -> dict[str, Any]:
+    """The request of a `planning_exception` exit: the question goes back to
+    the Planning Run, so to the operator; the author decides nothing."""
+    summary = args.summary
+    if not isinstance(summary, str) or not summary.strip() or "\n" in summary:
+        raise Refusal("sortie « Planning Exception » sans résumé (--summary) : une ligne qui pose la question")
+    proc = run([str(EXCEPTION_TOOL), "classify", "--kind", str(args.kind)])
+    try:
+        needed = json.loads(proc.stdout).get("requires_planning_exception")
+    except (json.JSONDecodeError, AttributeError):
+        needed = None
+    if proc.returncode != 0 or needed is not True:
+        raise Refusal(
+            f"--kind {args.kind!r} n'est pas une Planning Exception (attendu : semantic ou topology) ; un défaut "
+            "technique hors du ticket sort par « bloqué technique »")
+    head = f"Planning Exception ({args.kind}) sur {args.ticket} : "
+    return {
+        "quoi": head + short(summary, REQUEST_LINE_MAX - len(head)),
+        "pourquoi": "L'auteur ne tranche pas une question d'intention, de comportement ou de découpage.",
+        "que_faire": [
+            {"option": "Trancher dans le Planning Run",
+             "consequence": "Le ticket et ceux qui l'attendent restent parqués jusqu'à ta décision."},
+            {"option": "Retirer le ticket du graphe",
+             "consequence": "Le graphe révisé passe par la porte de patch ; la couverture est recalculée."},
+        ],
+    }
+
+
+def escalate(ticket_id: str, request: dict[str, Any]) -> None:
+    payload = json.dumps({**request, "langue": operator_language(), "bloquant": True}, ensure_ascii=False)
+    proc = run([str(ESCALATION_TOOL), "benjamin", ticket_id, payload])
+    if proc.returncode != 0:
+        raise Refusal(f"la porte d'escalade a refusé la demande : {detail_of(proc)}")
+
+
+def park(args: argparse.Namespace, ticket: Ticket, detail: str) -> list[str]:
+    parked = ticket.state.get("park")
+    if isinstance(parked, dict) and parked.get("cause") == args.exit and parked.get("origin") == ticket.id:
+        return []  # a second call completes the first: already parked for this exit
+    return state_write("park", args.convoy, args.ticket, "--cause", args.exit, "--detail", detail)["parked"]
+
+
+def repair_of(args: argparse.Namespace) -> dict[str, Any]:
+    """What the author says of the defect that blocks the ticket: the
+    fields of a `repair` the entry contract asks for. The patch door checks
+    them; nothing else is taken from the author."""
+    if not args.repair:
+        raise Refusal(
+            "sortie « bloqué technique » sans ticket repair (--repair) : title, what_it_delivers, restores, "
+            "demonstration_line, acceptance_criteria")
+    given = read_json_file(args.repair, "ticket repair")
+    if not isinstance(given, dict) or set(given) != set(REPAIR_FIELDS):
+        raise Refusal(f"ticket repair mal formé (attendu, exactement : {', '.join(REPAIR_FIELDS)})")
+    return given
+
+
+def draft_of(bead_id: str) -> dict[str, Any]:
+    try:
+        parsed = yaml.safe_load(str(read_bead(bead_id).get("description") or ""))
+    except yaml.YAMLError as exc:
+        raise Refusal(f"brouillon de graphe {bead_id} illisible : {exc}") from exc
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("tickets"), list):
+        raise Refusal(f"brouillon de graphe {bead_id} illisible : aucune liste de tickets")
+    return parsed
+
+
+def publish_repair(args: argparse.Namespace, ticket: Ticket, repair: dict[str, Any]) -> dict[str, Any]:
+    """Draft the revision that adds the `repair` in front of the ticket, and
+    send it through the patch door. The revision carries the ticket as it
+    was published, with the repair among its blockers, and the blockers of
+    the ticket that are still open; nothing else of the graph."""
+    convoy = read_bead(args.convoy)
+    convoy_meta = convoy.get("metadata") or {}
+    members = {
+        str((dep.get("metadata") or {}).get("gc.ticket_id") or ""): dep
+        for dep in convoy.get("dependencies") or []
+        if isinstance(dep, dict) and dep.get("dependency_type") == "tracks"
+    }
+    revises, spec_id = convoy_meta.get("gc.graph_digest"), convoy_meta.get("gc.spec_id")
+    project = convoy_meta.get("gc.project_id") or (read_bead(str(spec_id)).get("metadata") or {}).get("gc.project_id")
+    own_key = next((key for key, dep in members.items() if dep.get("id") == ticket.id), "")
+    if not revises or not spec_id or not project or not own_key:
+        raise Refusal(
+            f"le convoi {args.convoy} ne porte pas ce que la porte de patch révise (gc.graph_digest, gc.spec_id, "
+            "gc.project_id, gc.ticket_id du ticket) : il n'a pas été publié par la porte de publication")
+    number = 1
+    while f"R{number}" in members:
+        number += 1
+    repair_key = f"R{number}"
+
+    drafts: dict[str, dict[str, Any]] = {}
+    carried: dict[str, dict[str, Any]] = {}
+
+    def carry(key: str) -> None:
+        """The ticket as its draft wrote it, with its blockers still open."""
+        if key in carried:
+            return
+        member = members[key]
+        meta = member.get("metadata") or {}
+        source = str(meta.get("gc.artifact_id") or "")
+        if source not in drafts:
+            drafts[source] = draft_of(source)
+        entry = next((t for t in drafts[source]["tickets"] if isinstance(t, dict) and str(t.get("id")) == key), None)
+        if entry is None:
+            raise Refusal(f"le brouillon {source} ne porte pas le ticket {key} : la révision ne peut pas le reprendre")
+        entry = dict(entry)
+        blockers = [b for b in str(meta.get("gc.blocked_by") or "").split(",") if b]
+        entry["blocked_by"] = [b for b in blockers if b in members and members[b].get("status") != "closed"]
+        carried[key] = entry
+        for blocker in entry["blocked_by"]:
+            carry(blocker)
+
+    carry(own_key)
+    carried[own_key]["blocked_by"] = sorted([*carried[own_key]["blocked_by"], repair_key])
+    rigs = carried[own_key].get("target_rigs")
+    added = {"id": repair_key, "kind": "repair", "blocked_by": [],
+             "target_rigs": list(rigs) if isinstance(rigs, list) else rigs, **repair}
+    description = yaml.safe_dump(
+        {"flow_contract": NEW_FLOW, "tickets": [added, *carried.values()]}, allow_unicode=True, sort_keys=False)
+
+    title = f"Révision : repair {repair_key} devant {own_key} (bloqué technique, {ticket.id})"
+    created = gc_json("bd", "create", title, "-t", "task", "-d", description, "--json")
+    draft_id = created.get("id") if isinstance(created, dict) else None
+    if not draft_id:
+        raise Refusal("le brouillon de révision n'a pas pu être créé dans le tracker")
+
+    def abandon(reason: str) -> None:
+        run([GC_BIN, "bd", "close", draft_id, "--reason", f"révision refusée par la porte de patch : {short(reason, 200)}"])
+
+    proc = run([GC_BIN, "bd", "update", draft_id,
+                "--set-metadata", f"spec_id={spec_id}", "--set-metadata", f"revises_digest={revises}",
+                "--set-metadata", "gc.plane=planning"])
+    if proc.returncode != 0:
+        abandon(detail_of(proc))
+        raise Refusal(f"le brouillon de révision {draft_id} n'a pas pu être préparé : {detail_of(proc)}")
+    proc = run([
+        str(PUBLISH_TOOL), "bd-patch", draft_id, "--project", str(project), "--repo-root", str(ROOT),
+        "--author", PROGRAM, "--reason", f"bloqué technique sur {ticket.id} : {short(str(repair.get('title')), 120)}",
+    ])
+    try:
+        result = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        result = None
+    if proc.returncode != 0 or not isinstance(result, dict) or not result.get("ok"):
+        reason = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        abandon(reason)
+        raise Refusal(f"la porte de patch a refusé le ticket repair : {reason}")
+    return {"key": repair_key, "id": result["ids"][repair_key], "draft": draft_id, "blocks": ticket.id}
+
+
+# --- exit ------------------------------------------------------------------------
+
+
+def cmd_exit(args: argparse.Namespace) -> int:
+    written: list[str] = []
+    if args.exit not in EXITS:
+        raise Refusal(f"sortie de ticket hors de la liste fermée : {args.exit!r} (attendu : {', '.join(EXITS)})")
+    ticket = Ticket(args.convoy, args.ticket, Path(args.repo).resolve() if args.repo else None)
+    ticket.require_at_work()
+    finished = args.exit == "finished"
+    if finished and ticket.state.get("stop"):
+        raise Refusal(f"le ticket {args.ticket} est arrêté : il ne sort pas par « terminé »")
+    if args.exit in ("finished", "interrupted") and not args.repo:
+        raise Refusal(f"sortie « {args.exit} » sans dépôt (--repo) : la branche du ticket y est lue")
+    # Everything the author gives is read before anything is written.
+    sections = author_sections(args.handoff, complete=finished)
+    if sections and not args.repo:
+        raise Refusal("Ticket Handoff sans dépôt (--repo) : ses relevés se prennent sur la branche du ticket")
+    answer: dict[str, Any] = {"ok": True, "convoy": args.convoy, "ticket": args.ticket, "exit": args.exit}
+    request = repair = None
+    if args.exit == "operator_request":
+        request = operator_request(args)
+    elif args.exit == "planning_exception":
+        request = planning_exception_request(args)
+    elif args.exit == "technically_blocked":
+        repair = repair_of(args)
+    if args.repo:
+        repo = Path(args.repo).resolve()
+        clean_head(repo)
+        branch = checked_out_branch(repo, ticket)
+
+    try:
+        if args.exit == "interrupted":
+            push = git(repo, "push", "--quiet", "origin", f"HEAD:refs/heads/{branch}")
+            if push.returncode != 0:
+                raise Refusal(f"la branche {branch} n'a pas pu être poussée sur origin : {short(push.stderr)}")
+            written.append(f"branche {branch} poussée sur origin")
+        if request is not None:
+            escalate(args.ticket, request)
+            written.append("demande sur la liste de la porte d'escalade")
+            answer["parked"] = park(args, ticket, request["quoi"])
+            written.append("parcage")
+        if repair is not None:
+            answer["repair"] = publish_repair(args, ticket, repair)
+            written.append(f"ticket repair {answer['repair']['id']}")
+        handoff = record_handoff(args, sections, written)
+        state_write("set-exit", args.convoy, args.ticket, "--exit", args.exit)
+    except Refusal as exc:
+        raise Refusal(str(exc), written) from exc
+    answer["handoff"] = handoff
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- read --------------------------------------------------------------------
+
+
+def session_ended(bead: dict[str, Any]) -> str | None:
+    """The session that took the ticket, when it is over: closed, or no
+    longer listed. None while it lives, or when no session is named."""
+    metadata = bead.get("metadata") or {}
+    names = {str(value) for value in (bead.get("assignee"), metadata.get("gc.session_name"), metadata.get("gc.session_id")) if value}
+    if not names:
+        return None
+    answer = gc_json("session", "list", "--json")
+    sessions = answer.get("sessions") if isinstance(answer, dict) else None
+    if not isinstance(sessions, list):
+        raise Refusal("gc session list n'a pas rendu de liste de sessions")
+    for entry in sessions:
+        if not isinstance(entry, dict):
+            continue
+        if names & {str(entry.get(key)) for key in ("id", "name", "session_name", "alias") if entry.get(key)}:
+            return None if not (entry.get("closed") or entry.get("state") == "closed") else sorted(names)[0]
+    return sorted(names)[0]
+
+
+def read_exit(ticket: Ticket, bead: dict[str, Any]) -> dict[str, Any] | None:
+    """The Ticket Exit of a ticket. A session that ended without one is
+    read as `interrupted` (Spec §5); nothing is written."""
+    declared = ticket.state.get("exit")
+    if declared:
+        return {**declared, "declared": True}
+    gates = ticket.state.get("gates") or {}
+    if "dispatch" not in gates or any(gate in gates for gate in ("ticket_end", "withdrawn")):
+        return None
+    if bead.get("status") != "in_progress":
+        return None
+    session = session_ended(bead)
+    if session is None:
+        return None
+    return {"exit": "interrupted", "declared": False, "reason": f"session terminée sans sortie : {session}"}
+
+
+def cmd_read(args: argparse.Namespace) -> int:
+    ticket = Ticket(args.convoy, args.ticket)
+    bead = read_bead(args.ticket)
+    blockers = []
+    for dep in bead.get("dependencies") or []:
+        if not isinstance(dep, dict) or dep.get("dependency_type") != "blocks" or dep.get("status") != "closed":
+            continue
+        state = ticket.tickets.get(dep.get("id"))
+        blockers.append({
+            "ticket": dep.get("id"), "title": dep.get("title"),
+            "handoff": state.get("handoff") if state else None,
+        })
+    state = ticket.state
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy,
+        "ticket": {
+            "id": args.ticket, "title": bead.get("title"), "status": bead.get("status"), "kind": state.get("kind"),
+            "description": bead.get("description"), "demonstration_line": state.get("demonstration_line"),
+            "criteria": state.get("criteria"), "declared_scope": state.get("declared_scope"),
+        },
+        "exit": read_exit(ticket, bead),
+        "park": state.get("park"),
+        "handoff": state.get("handoff"),
+        "blocker_handoffs": blockers,
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- deferral ------------------------------------------------------------------
+
+
+def cmd_deferral(args: argparse.Namespace) -> int:
+    """The deferral detector alone: the markers of the ticket's diff against
+    the « non fait » of the Handoff given, or of the one on the ticket."""
+    if not args.repo:
+        raise Refusal("détecteur de report sans dépôt (--repo) : le diff du ticket y est lu")
+    repo = Path(args.repo).resolve()
+    ticket = Ticket(args.convoy, args.ticket, repo)
+    if args.handoff:
+        sections = author_sections(args.handoff, complete=False)
+    else:
+        stored = ticket.state.get("handoff") or {}
+        sections = stored.get("sections") or {}
+    head = clean_head(repo)
+    red = ticket.red()
+    if red is None or git(repo, "merge-base", "--is-ancestor", red["base"], head).returncode != 0:
+        raise Refusal(f"aucun commit de départ prouvé sur le ticket {args.ticket} : le diff du ticket ne peut pas être lu")
+    markers = deferral_markers(repo, red["base"], head, sections)
+    reason = undeclared(markers)
+    answer: dict[str, Any] = {"ok": reason is None, "convoy": args.convoy, "ticket": args.ticket,
+                              "base": red["base"], "head": head, "markers": markers}
+    if reason:
+        answer["error"] = f"refus : {reason}"
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return EXIT_REFUSED if reason else 0
+
+
+# --- command line ----------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def command(name: str, handler: Any) -> argparse.ArgumentParser:
+        p = sub.add_parser(name)
+        p.add_argument("convoy")
+        p.add_argument("ticket")
+        p.set_defaults(handler=handler)
+        return p
+
+    # Closed lists and required values are checked by the handlers, not by
+    # argparse: a refusal is one JSON answer.
+    p = command("exit", cmd_exit)
+    p.add_argument("--exit")
+    p.add_argument("--repo")
+    p.add_argument("--handoff")
+    p.add_argument("--request")
+    p.add_argument("--kind")
+    p.add_argument("--summary")
+    p.add_argument("--repair")
+    command("read", cmd_read)
+    p = command("deferral", cmd_deferral)
+    p.add_argument("--repo")
+    p.add_argument("--handoff")
+    # What bin/evidence-capture runs; not a command an author calls.
+    p = command("records", cmd_records)
+    p.add_argument("--repo")
+    p.add_argument("--exit", choices=EXITS)
+    p.add_argument("--handoff")
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    if args.handler is cmd_records:
+        return cmd_records(args)
+    try:
+        return args.handler(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        answer: dict[str, Any] = {"ok": False, "ticket": args.ticket, "error": f"refus : {exc}"}
+        if exc.written:
+            answer["written"] = exc.written
+        print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

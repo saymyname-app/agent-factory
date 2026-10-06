@@ -5,13 +5,13 @@ Spec af-wf4w5r §0 rule 2: the state of a delivery lives in the tracker, never
 in a session. This command is the only reader and writer of that state for a
 convoy that carries the new-flow mark: the mark of the convoy and of its
 tickets, the Spec the convoy delivers (T09, read only), a ticket's kind and
-demonstration line (T05), the user stories a
-vertical_slice covers and whether it establishes the project's launch
+demonstration line (T05), its Declared Scope (T11, read only), the user
+stories a vertical_slice covers and whether it establishes the project's launch
 recipe (T06) or is the Prototype Fold (T36), its acceptance criteria (T10,
 read only), its branch and Ticket Exit, its verdicts (each tied to a
 commit), its counters, its evidence fingerprints and its gate records, the
-steps of its TDD and its stop (T10), and
-the convoy's open factory incident. No other script invents a `gc.flow.*`
+steps of its TDD and its stop (T10), its Ticket Handoff and its parking
+(T11), and the convoy's open factory incident. No other script invents a `gc.flow.*`
 field: a missing field is added here.
 
     convoy-state list
@@ -28,6 +28,8 @@ field: a missing field is added here.
     convoy-state record-gate  CONVOY TICKET --gate GATE [--commit SHA]
     convoy-state set-tdd      CONVOY TICKET --step STEP --commit SHA [--base SHA] [--reason TEXT]
     convoy-state stop-ticket  CONVOY TICKET --reason REASON --detail LINE
+    convoy-state set-handoff  CONVOY TICKET --file PATH
+    convoy-state park         CONVOY TICKET --cause CAUSE --detail LINE
     convoy-state record-incident CONVOY --bead BEAD [--signature sha256:HEX]
     convoy-state clear-incident  CONVOY
 
@@ -79,6 +81,10 @@ KEY_KIND = "gc.ticket_kind"
 # The Spec a convoy delivers is written by the publication door too
 # (`gc.spec_id`); the evidence store is filed under it (T09). Read only.
 KEY_SPEC = "gc.spec_id"
+# The Declared Scope of a ticket is written by the publication door as well
+# (`gc.scope_paths`, comma-separated paths); it orders tickets and bounds
+# nothing (Spec §2). Read only.
+KEY_SCOPE = "gc.scope_paths"
 KEY_BRANCH = PREFIX + "branch"
 KEY_EXIT = PREFIX + "exit"
 VERDICT_PREFIX = PREFIX + "verdict."
@@ -87,6 +93,8 @@ EVIDENCE_PREFIX = PREFIX + "evidence."
 GATE_PREFIX = PREFIX + "gate."
 TDD_PREFIX = PREFIX + "tdd."
 KEY_STOP = PREFIX + "stop"
+KEY_HANDOFF = PREFIX + "handoff"
+KEY_PARK = PREFIX + "park"
 KEY_INCIDENT = PREFIX + "incident"
 
 TICKET_KINDS = ("vertical_slice", "prefactoring", "repair")
@@ -105,6 +113,14 @@ TDD_STEPS_WITH_BASE = ("red", "prefactoring")
 KIND_WITHOUT_RED = "prefactoring"
 STOP_REASONS = ("criterion_already_green", "amendment_exhausted")
 ACCEPTANCE_HEADING = "## acceptance criteria"
+# The Ticket Handoff (Spec §5): four sections written by the author, each
+# with content or the word for "nothing", and the records written by code.
+HANDOFF_SECTIONS = ("done", "deviations", "not_done", "out_of_ticket")
+HANDOFF_NOTHING = "aucun"
+# The piece of the evidence store bin/ticket-exit seals the records in.
+HANDOFF_RECORDS_PIECE = "handoff_records"
+# Why a ticket and its descendants are parked (Spec §5, Ticket Exit).
+PARK_CAUSES = ("planning_exception", "operator_request")
 
 EXIT_REFUSED = 1
 EXIT_UNRULED = 3
@@ -389,6 +405,71 @@ def stop_record(raw: Any) -> dict[str, Any]:
     return record
 
 
+def handoff_section(name: str, value: Any, partial: bool) -> None:
+    """One section of a Ticket Handoff: content, or the word for "nothing";
+    never empty, never left out, unless the Handoff is a partial one."""
+    if value is None:
+        if partial:
+            return
+        raise Refusal(f"rubrique {name} absente : ni contenu ni « {HANDOFF_NOTHING} »")
+    if value == HANDOFF_NOTHING:
+        return
+    if not isinstance(value, list) or not value:
+        raise Refusal(
+            f"rubrique {name} mal formée : {value!r} (attendu : une liste non vide, ou « {HANDOFF_NOTHING} »)")
+    for item in value:
+        if name == "not_done" and isinstance(item, dict):
+            paths = item.get("paths", [])
+            if set(item) - {"what", "paths"} or not isinstance(paths, list) or any(
+                    not isinstance(path, str) or not path.strip() for path in paths):
+                raise Refusal(f"rubrique {name} : élément mal formé : {item!r} (attendu : what, et paths en option)")
+            item = item.get("what")
+        if not isinstance(item, str) or not item.strip() or "\n" in item:
+            raise Refusal(f"rubrique {name} : élément absent ou mal formé : {item!r} (attendu : une ligne non vide)")
+
+
+def handoff_record(raw: Any, evidence: dict[str, Any] | None = None) -> dict[str, Any]:
+    """A Ticket Handoff: the four sections of the author and the records of
+    the code, tied to the commit they were taken at. A complete Handoff has
+    every section and its records; a partial one (an interrupted session)
+    says so. With `evidence` (the ticket's stored fingerprints, at a write),
+    the records must be the ones bin/ticket-exit sealed at that commit; a
+    read does not ask it, since a new exit replaces the piece first."""
+    record = stored_record(raw, ("sections", "partial", "commit", "at"), ("records",))
+    partial = record["partial"]
+    if not isinstance(partial, bool):
+        raise Refusal(f"champ partial mal formé : {partial!r} (attendu : true ou false)")
+    valid_commit(record["commit"], "commit du Handoff")
+    sections = record["sections"]
+    if not isinstance(sections, dict) or set(sections) - set(HANDOFF_SECTIONS):
+        raise Refusal(f"rubriques inconnues dans le Handoff (attendu : {', '.join(HANDOFF_SECTIONS)})")
+    for name in HANDOFF_SECTIONS:
+        handoff_section(name, sections.get(name), partial)
+    if "records" not in record:
+        if not partial:
+            raise Refusal("Handoff sans relevés : ils sont écrits par du code, à chaque sortie")
+    elif not isinstance(record["records"], dict):
+        raise Refusal(f"relevés mal formés : {record['records']!r}")
+    elif evidence is not None:
+        sealed = evidence.get(HANDOFF_RECORDS_PIECE)
+        if not isinstance(sealed, dict) or sealed.get("commit") != record["commit"]:
+            raise Refusal(
+                f"relevés sans pièce {HANDOFF_RECORDS_PIECE} au commit du Handoff : "
+                "ils sont écrits par du code (bin/ticket-exit), jamais fournis")
+    return record
+
+
+def park_record(raw: Any) -> dict[str, Any]:
+    """Why a ticket is parked (Spec §5): the cause, and the ticket whose
+    Ticket Exit parked it (itself, or the one it descends from)."""
+    record = stored_record(raw, ("cause", "origin", "detail", "at"))
+    one_of(record["cause"], PARK_CAUSES, "cause de parcage")
+    if not isinstance(record["origin"], str) or not BEAD_ID_RE.match(record["origin"]):
+        raise Refusal(f"ticket d'origine du parcage absent ou mal formé : {record['origin']!r}")
+    single_line(record["detail"], "précision du parcage")
+    return record
+
+
 def incident_record(raw: Any) -> dict[str, Any]:
     """The convoy's open factory incident: the bead that carries it and, once
     it reached the escalation door, the signature of the anomalies it names."""
@@ -516,6 +597,8 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     stories = None
     out["user_stories"] = None
     out["criteria"] = acceptance_criteria(ticket.get("description"))
+    scope = metadata.get(KEY_SCOPE)
+    out["declared_scope"] = [path for path in scope.split(",") if path] if isinstance(scope, str) and scope else None
     for key, name, _, _ in SLICE_FLAGS:
         out[name] = metadata.get(key) is True
     if KEY_USER_STORIES in metadata:
@@ -575,7 +658,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     for key in sorted(metadata):
         if not key.startswith(PREFIX) or key in (
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
-            KEY_STOP,
+            KEY_STOP, KEY_HANDOFF, KEY_PARK,
         ):
             continue
         raw = metadata[key]
@@ -628,6 +711,19 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             # Still a stop: an unreadable one is never rendered as no stop.
             out["stop"] = {"unruled": f"{KEY_STOP} : {exc}", "raw": metadata[KEY_STOP]}
             flag(KEY_STOP, out["stop"]["unruled"])
+    # The Ticket Handoff and the parking, each None when the ticket has none;
+    # an unreadable one is never rendered as none.
+    for name, key, read in (
+        ("handoff", KEY_HANDOFF, handoff_record),
+        ("park", KEY_PARK, park_record),
+    ):
+        out[name] = None
+        if key in metadata:
+            try:
+                out[name] = read(metadata[key])
+            except Refusal as exc:
+                out[name] = {"unruled": f"{key} : {exc}", "raw": metadata[key]}
+                flag(key, out[name]["unruled"])
 
     def has_gate(name: str) -> bool:
         return "at" in gates.get(name, {})
@@ -996,6 +1092,78 @@ def cmd_stop_ticket(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, values)
 
 
+def cmd_set_handoff(args: argparse.Namespace) -> int:
+    """Record the Ticket Handoff of a ticket, as bin/ticket-exit built it:
+    the sections of the author, validated, and the records of the code."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    try:
+        given = json.loads(Path(args.file or "").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise Refusal(f"Handoff illisible (--file {args.file!r}) : {exc}") from exc
+    if not isinstance(given, dict) or "at" in given:
+        raise Refusal("Handoff mal formé : un objet JSON sans champ « at » est attendu")
+    evidence = {
+        key[len(EVIDENCE_PREFIX):]: stored_record(raw, ("digest", "commit", "at"))
+        for key, raw in metadata_of(ticket).items() if key.startswith(EVIDENCE_PREFIX)
+    }
+    record = handoff_record(encode({**given, "at": now()}), evidence)
+    values = {KEY_HANDOFF: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def blockers_of(ticket_id: str) -> list[str]:
+    """The beads a ticket waits for (`blocks` edges), read on the ticket."""
+    out = run_gc(["bd", "show", ticket_id, "--json"])
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc bd show {ticket_id} a rendu un JSON illisible : {exc}") from exc
+    bead = data[0] if isinstance(data, list) and data else data
+    if not isinstance(bead, dict):
+        raise Refusal(f"bead introuvable : {ticket_id}")
+    return [
+        dep.get("id") for dep in bead.get("dependencies") or []
+        if isinstance(dep, dict) and dep.get("dependency_type") == "blocks"
+    ]
+
+
+def cmd_park(args: argparse.Namespace) -> int:
+    """Park a ticket and every ticket of the convoy that waits for it,
+    directly or not (Spec §5: a Planning Exception or an operator request
+    parks the ticket and its descendants). The other tickets are untouched."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    cause = one_of(args.cause, PARK_CAUSES, "cause de parcage")
+    detail = single_line(args.detail, "précision du parcage")
+    if ticket.get("status") == "closed":
+        raise Refusal(f"le ticket {args.ticket} est fermé : un ticket fermé ne se parque pas")
+    if KEY_PARK in metadata_of(ticket):
+        raise Refusal(f"le ticket {args.ticket} est déjà parqué")
+    _, tickets = load_convoy(args.convoy)
+    waits_for = {other["id"]: blockers_of(other["id"]) for other in tickets if other["id"] != args.ticket}
+    parked, frontier = [args.ticket], [args.ticket]
+    while frontier:
+        current = frontier.pop()
+        for other, blockers in waits_for.items():
+            if current in blockers and other not in parked:
+                parked.append(other)
+                frontier.append(other)
+    by_id = {other["id"]: other for other in tickets}
+    value = encode({"cause": cause, "origin": args.ticket, "detail": detail, "at": now()})
+    written = []
+    # The descendants first, the ticket last: an interrupted parking leaves
+    # the ticket unparked, and the same command completes it.
+    for bead_id in reversed(parked):
+        other = by_id[bead_id]
+        if other.get("status") == "closed" or (bead_id != args.ticket and KEY_PARK in metadata_of(other)):
+            continue
+        write_metadata(bead_id, {KEY_PARK: value})
+        written.append(bead_id)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "cause": cause,
+                      "parked": sorted(written)}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 def convoy_with_a_mark(convoy_id: str) -> dict[str, Any]:
     """An incident is recorded on any convoy that carries a mark, an unknown
     one included: an unknown mark is itself an "état sans règle" to report."""
@@ -1074,6 +1242,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason")
     p = command("stop-ticket", cmd_stop_ticket)
     p.add_argument("--reason")
+    p.add_argument("--detail")
+    command("set-handoff", cmd_set_handoff).add_argument("--file")
+    p = command("park", cmd_park)
+    p.add_argument("--cause")
     p.add_argument("--detail")
     p = command("record-incident", cmd_record_incident, ticket=False)
     p.add_argument("--bead")

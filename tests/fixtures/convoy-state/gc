@@ -17,7 +17,8 @@ use are implemented, with the behavior
 observed on the real bd 1.2.2 in an isolated city (2026-10-06): `bd show
 <id> --json` returns a one-element list whose `dependencies` carry each
 tracked ticket's status and metadata (`metadata` is null when empty, and
-`dependency_type` distinguishes `tracks` from other edges); `bd update <id>
+`dependency_type` distinguishes `tracks` from other edges), and a bead taken
+by a session carries its `assignee` (bin/ticket-exit, T11); `bd update <id>
 --set-metadata k=v` stores an integer-looking value as a
 number and `true`/`false` as a boolean, anything else as a string, and
 refuses a metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*`. Every
@@ -65,7 +66,7 @@ def coerce(value):
 
 
 def view(bead_id, bead):
-    extra = {key: bead[key] for key in ("description", "labels") if key in bead}
+    extra = {key: bead[key] for key in ("description", "labels", "assignee") if key in bead}
     return {
         **extra,
         "id": bead_id,

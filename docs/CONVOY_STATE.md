@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -31,6 +31,8 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state record-gate  af-convoy af-t1 --gate ticket_end --commit <sha>
 ./bin/convoy-state set-tdd      af-convoy af-t1 --step red --commit <sha> --base <start sha>   # bin/tdd-step, once a step is proven
 ./bin/convoy-state stop-ticket  af-convoy af-t1 --reason criterion_already_green --detail "critère 2 déjà vert : …"   # bin/tdd-step
+./bin/convoy-state set-handoff af-convoy af-t1 --file handoff.json                                   # bin/ticket-exit
+./bin/convoy-state park        af-convoy af-t1 --cause planning_exception --detail "La Spec fixe X, …"  # bin/ticket-exit
 ./bin/convoy-state ticket af-t1                         # does this bead carry the mark? (bin/dispatch-door, the Mayor)
 ./bin/convoy-state record-incident af-convoy --bead af-incident [--signature sha256:<hex>]   # bin/convoy-advance
 ./bin/convoy-state clear-incident  af-convoy            # bin/convoy-advance, once the state is valid again
@@ -64,6 +66,9 @@ Every answer is one JSON object on stdout.
 | Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (commit required), `withdrawn` (removed from the graph by a resolved Planning Exception) |
 | TDD step | `gc.flow.tdd.<step>` | ticket | step: `red`, `freeze`, `green`, `amendment`, `prefactoring`; always with the full commit SHA it was proven at; `red` and `prefactoring` with their start commit (`base`), `amendment` with its one-line reason |
 | Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`; with a one-line detail |
+| Ticket Handoff | `gc.flow.handoff` | ticket | `sections` (`done`, `deviations`, `not_done`, `out_of_ticket`: each `aucun` or a non-empty list of one-line items; an item of `not_done` may be `{what, paths}`), `partial`, the full commit SHA it was taken at, and the `records` written by code |
+| Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`; the ticket whose Ticket Exit parked it (`origin`); a one-line detail |
+| Declared Scope | `gc.scope_paths` (read only: written by the publication door) | ticket | the declared paths, comma-separated; they order tickets and bound nothing |
 | Acceptance criteria | the bead's description (read only) | ticket | the checkbox lines under `## Acceptance criteria`, in order |
 | Factory incident | `gc.flow.incident` | convoy | the bead that carries the open incident of a stopped convoy and, once it reached the escalation door, the `sha256:` signature of the anomalies it names |
 
@@ -112,6 +117,24 @@ writes why a script stopped the ticket (Spec §5: a criterion already green,
 a second amendment); a stopped ticket takes no further step, and a second
 stop is refused. Nothing here lifts a stop.
 
+`set-handoff` is called by `bin/ticket-exit` (T11, `docs/TICKET_EXIT.md`)
+with the Handoff it built, as a JSON file: the sections of the author and
+the records it sealed. It refuses a section that is absent or empty (a
+complete Handoff has the four, each with content or `aucun`; only a
+`partial` one may leave some out), a section it does not know, a complete
+Handoff without records, and records without a `handoff_records` evidence
+fingerprint at the commit of the Handoff: the records are written by code,
+never given. `set-exit` itself is unchanged: that `finished` needs a valid
+Handoff is the exit tool's refusal.
+
+`park` writes the parking on the ticket and on every ticket of the convoy
+that waits for it, directly or through others, following the `blocks` edges
+read on each ticket; the descendants first, the ticket last, so that the
+same call completes an interrupted one. A descendant that is closed or
+already parked is left as it is. It refuses a cause outside the list, a
+missing detail, a closed ticket and a ticket already parked. Nothing here
+lifts a parking.
+
 A piece name is made of letters, digits, `_` and `.` only: the tracker
 refuses any metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*` (observed on bd
 1.2.2), so a hyphen is refused here before it is tried.
@@ -124,6 +147,7 @@ a negative or non-integer counter; a ticket counter on the convoy or the
 reverse; a counter write after which `correction_rounds` would exceed
 `resumes` (a correction round counts among the resumes, Spec §8); an
 evidence fingerprint without a `sha256:` digest or without a commit; a
+Ticket Handoff or a parking as described above; a
 `ticket_end` gate record without a commit; a TDD step outside its closed
 list, without a full commit SHA, out of order, or on a stopped ticket; a
 stop whose reason is outside its closed list or that has no detail; a ticket
@@ -146,8 +170,10 @@ the Prototype Fold (`prototype_fold`), tracker status,
 branch and its tip, Ticket Exit, verdicts, counters, evidence fingerprints
 and gate records, its acceptance criteria (`criteria`, the lines of its
 description, numbered from 1 by `bin/tdd-step`), the proven steps of its
-TDD (`tdd`, `{step: {commit, at, base?, reason?}}`) and its stop (`stop`,
-`null` when it is not stopped); and for the convoy the Spec it delivers (`spec`, `null`
+TDD (`tdd`, `{step: {commit, at, base?, reason?}}`), its stop (`stop`,
+`null` when it is not stopped), its Ticket Handoff (`handoff`), its parking
+(`park`) and its Declared Scope (`declared_scope`, a list of paths), each
+`null` when the ticket has none; and for the convoy the Spec it delivers (`spec`, `null`
 when it names none), its counters and its open factory incident
 (`incident`, `null` when there is none).
 
@@ -203,4 +229,5 @@ more anomaly of the convoy.
 state (`tests/fixtures/convoy-state/gc`): one test per pass and per
 refusal, each refusal re-reading the tracker to prove nothing was written.
 `tests/convoy-state-real-tracker-test.sh` (local-only) replays the same
-contract on the real `gc`/`bd` in a disposable city.
+contract on the real `gc`/`bd` in a disposable city, a Ticket Handoff of
+20 kB and a parking along real `blocks` edges included.

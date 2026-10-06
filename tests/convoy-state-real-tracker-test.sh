@@ -181,6 +181,57 @@ for refused in \
 done
 [ "$before" = "$(gc bd show "$CONVOY" --json)" ] || fail "a refused write changed the tracker"
 
+# --- Ticket Handoff, parking and Declared Scope (T11, af-egkabn) ---------------
+# T2 waits for T1 and T4 for T2; T5, added to the convoy since, waits for nothing.
+T5=$(gc bd create --title "ticket sans lien" --type task --silent 2>/dev/null)
+gc bd update "$T5" --set-metadata gc.ticket_kind=prefactoring \
+  --set-metadata "gc.scope_paths=app/home.py,app/static/*" >/dev/null
+gc bd dep add "$CONVOY" "$T5" --type tracks >/dev/null
+gc bd dep add "$T2" "$T1" >/dev/null
+gc bd dep add "$T4" "$T2" >/dev/null
+state mark "$CONVOY"
+
+# A Handoff of some twenty kilobytes, with quotes, « », = and accents in it.
+HANDOFF="$TRIAL/handoff.json"
+jq -n --arg tip "$TIP" '{
+  sections: {
+    done: [range(0; 150) | "Critère \(.) : l\u0027observation « a=b » obtenue sur GET /?jeu=contenu, champ \"label\" non vide, éléments Alpha, Bêta, Gamma"],
+    deviations: "aucun",
+    not_done: [{what: "La sonde n\u0027est pas branchée.", paths: ["app/home.py"]}],
+    out_of_ticket: "aucun"},
+  partial: false, commit: $tip,
+  records: {commits: [{commit: $tip, subject: "work on t1"}], files_outside_declared_scope: ["README.md"],
+            deferral_markers: [{path: "app/home.py", line: 3, marker: "TODO", text: "# TODO brancher", declared: true}]}
+}' >"$HANDOFF"
+[ "$(wc -c <"$HANDOFF")" -gt 20000 ] || fail "the trial Handoff is smaller than intended"
+set +e
+"$TOOL" set-handoff "$CONVOY" "$T1" --file "$HANDOFF" >/dev/null; rc=$?
+set -e
+[ "$rc" = 1 ] || fail "a Handoff whose records no piece seals exited $rc, want 1"
+state add-evidence "$CONVOY" "$T1" --piece handoff_records \
+  --digest "sha256:$(sha256sum <"$HANDOFF" | cut -d' ' -f1)" --commit "$TIP"
+state set-handoff "$CONVOY" "$T1" --file "$HANDOFF"
+state park "$CONVOY" "$T1" --cause planning_exception --detail "La Spec fixe l'ordre « alphabétique » ; a=b ?"
+
+shown=$("$TOOL" show "$CONVOY" --repo "$REPO") || fail "show after the Handoff and the parking failed: $shown"
+jq -e --arg t1 "$T1" --arg t2 "$T2" --arg t4 "$T4" --arg t5 "$T5" --slurpfile given "$HANDOFF" '
+  .unruled == false
+  and (.tickets[] | select(.id == $t1)
+       | (.handoff | del(.at)) == $given[0]
+         and .park.cause == "planning_exception" and .park.origin == $t1
+         and .park.detail == "La Spec fixe l\u0027ordre « alphabétique » ; a=b ?")
+  and ([.tickets[] | select(.id == $t2 or .id == $t4) | .park.origin] == [$t1, $t1])
+  and (.tickets[] | select(.id == $t5)
+       | .park == null and .handoff == null and .declared_scope == ["app/home.py", "app/static/*"])
+' <<<"$shown" >/dev/null || fail "Handoff, parking or Declared Scope not read back from the real tracker: $shown"
+
+before=$(gc bd show "$CONVOY" --json)
+set +e
+"$TOOL" park "$CONVOY" "$T1" --cause planning_exception --detail "encore" >/dev/null; rc=$?
+set -e
+[ "$rc" = 1 ] || fail "parking a parked ticket exited $rc, want 1"
+[ "$before" = "$(gc bd show "$CONVOY" --json)" ] || fail "a refused parking changed the tracker"
+
 # --- a commit after the verdict makes it invalid -----------------------------
 git -C "$REPO" commit -q --allow-empty -m "one more commit"
 shown=$("$TOOL" show "$CONVOY" --repo "$REPO") || fail "show after a new commit failed: $shown"

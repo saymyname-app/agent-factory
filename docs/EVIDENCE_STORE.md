@@ -46,6 +46,8 @@ with that code. Any other exit is a refusal (exit 1) whose answer carries
 proves a step uses, so that only its passing report becomes a piece:
 `bin/tdd-step` runs each of its checks this way (`docs/TDD_STEP.md`, pieces
 `tdd_red`, `tdd_freeze`, `tdd_green`, `tdd_amendment`, `tdd_prefactoring`).
+`bin/ticket-exit` seals the records of a Ticket Handoff the same way (piece
+`handoff_records`, `docs/TICKET_EXIT.md`).
 
 ## The store
 

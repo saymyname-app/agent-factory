@@ -314,6 +314,20 @@ class ConvoyAdvanceTest(unittest.TestCase):
 
         self.assertEqual([T1], self.started(answer))
 
+    def test_a_parked_ticket_is_not_started_and_the_unrelated_ones_are(self):
+        # T11: a Ticket Exit parked T1, and T3 behind it; T2 waits for neither.
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", "Accès à l'horloge")
+        self.write_log.write_text("")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([T2], self.started(answer))
+        self.assertEqual([T2], self.slung())
+        waiting = {entry["id"]: entry["reason"] for entry in answer["convoys"][0]["waiting"]}
+        self.assertEqual({T1, T3}, set(waiting))
+        for reason in waiting.values():
+            self.assertIn("parqué (operator_request", reason)
+
     def test_the_ceiling_is_shared_between_specs(self):
         self.settings(ceiling=2)
         self.advance(CONVOY)

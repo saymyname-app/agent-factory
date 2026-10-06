@@ -139,7 +139,8 @@ the product at the start commit recorded by `red` (a test that passes there
 is refused, without stopping the ticket), the piece `tdd_amendment` records
 the reason and the diff of the frozen files since the freeze, and the new
 state is frozen. The ticket then carries `tdd.amendment` (commit, reason):
-this is the deviation the Ticket Handoff reports. After an amendment, the
+this is the deviation the Ticket Handoff reports (`records.amendment`,
+`docs/TICKET_EXIT.md`). After an amendment, the
 red proof of the amended tests is `tdd_amendment`; `tdd_red` stays the first
 one.
 

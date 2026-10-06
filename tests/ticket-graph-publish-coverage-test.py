@@ -740,6 +740,29 @@ class PatchDoorTest(Harness):
         self.assertIn("user_story : user story 2", beads[r1]["description"])
         self.assertNotIn("approved_by", beads["draft-2"]["metadata"])
 
+    def test_unapproved_repair_in_front_of_a_ticket_whose_blocker_is_delivered(self):
+        # T11: a ticket at work has every blocker delivered, and a revision
+        # never carries a delivered ticket. T2 gains the repair and keeps T1.
+        self.state_tool("record-gate", self.convoy, self.ids["T1"], "--gate", "ticket_end", "--commit", "0" * 40)
+        self.edit_bead(self.ids["T1"], status="closed")
+        draft = self.revision(self.REPAIR, keep=("T2",))
+        self.ticket(draft, "T2")["blocked_by"] = ["R1"]
+        self.propose(draft, approved=False)
+
+        result = self.patched()
+
+        self.assertEqual(["R1"], result["created"])
+        self.assertEqual("R1,T1", self.beads()[self.ids["T2"]]["metadata"]["gc.blocked_by"])
+        self.assertFalse(self.convoy_state(self.convoy)["unruled"])
+
+    def test_unapproved_patch_that_drops_an_open_blocker_is_refused(self):
+        draft = self.revision(self.REPAIR, keep=("T2",))
+        self.ticket(draft, "T2")["blocked_by"] = ["R1"]
+        self.propose(draft, approved=False)
+
+        proc = self.refused("approbation")
+        self.assertTrue(any("réordonné" in line for line in self.refusal_lines(proc, "T2")), proc.stderr)
+
     def test_unapproved_patch_that_adds_anything_but_a_repair_is_refused(self):
         self.propose(self.revision(self.SLICE), approved=False)
 

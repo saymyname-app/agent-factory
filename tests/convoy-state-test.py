@@ -913,5 +913,155 @@ class ConvoyStateTest(unittest.TestCase):
             self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
             self.assertEqual(before, self.tracker.read_text())
 
+    # --- T11: the Ticket Handoff, the parking, the Declared Scope --------------
+
+    HEAD = "4" * 40
+    SECTIONS = {"done": ["Critère 1 : le nombre s'affiche."], "deviations": "aucun",
+                "not_done": [{"what": "La sonde n'est pas branchée.", "paths": ["app.py"]}, "Le libellé manque."],
+                "out_of_ticket": "aucun"}
+
+    def handoff_file(self, **changes):
+        handoff = {"sections": self.SECTIONS, "partial": False, "commit": self.HEAD,
+                   "records": {"commits": [], "deferral_markers": []}, **changes}
+        path = self.tmp / "handoff.json"
+        path.write_text(json.dumps({key: value for key, value in handoff.items() if value is not None}))
+        return path
+
+    def sealed_records(self, commit=None):
+        self.ok("add-evidence", CONVOY, T1, "--piece", "handoff_records", "--digest", DIGEST,
+                "--commit", commit or self.HEAD)
+
+    def test_set_handoff_records_the_sections_and_the_records(self):
+        self.marked_slice()
+        self.sealed_records()
+
+        self.ok("set-handoff", CONVOY, T1, "--file", self.handoff_file())
+
+        handoff = self.ticket(self.show(), T1)["handoff"]
+        self.assertEqual(self.SECTIONS, handoff["sections"])
+        self.assertEqual((False, self.HEAD), (handoff["partial"], handoff["commit"]))
+        self.assertEqual({"commits": [], "deferral_markers": []}, handoff["records"])
+        self.assertIsNone(self.ticket(self.show(), T2)["handoff"])
+
+    def test_set_handoff_refuses_a_section_absent_empty_or_unknown(self):
+        self.marked_slice()
+        self.sealed_records()
+        for sections, mention in (
+            ({key: value for key, value in self.SECTIONS.items() if key != "deviations"}, "deviations absente"),
+            ({**self.SECTIONS, "done": []}, "done mal formée"),
+            ({**self.SECTIONS, "out_of_ticket": ""}, "out_of_ticket mal formée"),
+            ({**self.SECTIONS, "done": ["deux\nlignes"]}, "done"),
+            ({**self.SECTIONS, "not_done": [{"what": "x", "ligne": 3}]}, "not_done"),
+            ({**self.SECTIONS, "suite": "aucun"}, "rubriques inconnues"),
+        ):
+            with self.subTest(mention=mention):
+                self.assert_refused_and_nothing_written(
+                    "set-handoff", CONVOY, T1, "--file", self.handoff_file(sections=sections), mention=mention)
+
+    def test_set_handoff_refuses_records_the_exit_tool_did_not_seal(self):
+        self.marked_slice()
+        self.assert_refused_and_nothing_written(
+            "set-handoff", CONVOY, T1, "--file", self.handoff_file(), mention="handoff_records")
+        # Sealed at another commit: not the records of this Handoff.
+        self.sealed_records(commit=self.RED)
+        self.assert_refused_and_nothing_written(
+            "set-handoff", CONVOY, T1, "--file", self.handoff_file(), mention="handoff_records")
+
+    def test_set_handoff_refuses_a_complete_handoff_without_records_and_a_bad_file(self):
+        self.marked_slice()
+        self.assert_refused_and_nothing_written(
+            "set-handoff", CONVOY, T1, "--file", self.handoff_file(records=None), mention="sans relevés")
+        self.assert_refused_and_nothing_written(
+            "set-handoff", CONVOY, T1, "--file", self.handoff_file(commit="abc"), mention="commit du Handoff")
+        self.assert_refused_and_nothing_written(
+            "set-handoff", CONVOY, T1, "--file", self.handoff_file(partial="non"), mention="partial")
+        self.assert_refused_and_nothing_written(
+            "set-handoff", CONVOY, T1, "--file", self.tmp / "absent.json", mention="illisible")
+        self.assert_refused_and_nothing_written("set-handoff", CONVOY, T1, mention="illisible")
+
+    def test_a_partial_handoff_may_leave_sections_and_records_out(self):
+        self.marked_slice()
+        self.ok("set-handoff", CONVOY, T1, "--file", self.handoff_file(
+            sections={"done": ["Le chargeur est écrit."]}, partial=True, records=None))
+        handoff = self.ticket(self.show(), T1)["handoff"]
+        self.assertEqual(({"done": ["Le chargeur est écrit."]}, True), (handoff["sections"], handoff["partial"]))
+        self.assertNotIn("records", handoff)
+
+    def seed_chain(self):
+        """T2 waits for T1, T3 for T2; T4 waits for nothing."""
+        self.seed(tickets=(T1, T2, "fx-t3", "fx-t4"))
+        state = self.tracker_state()
+        state["beads"][T2]["blocks"] = [T1]
+        state["beads"]["fx-t3"]["blocks"] = [T2]
+        self.tracker.write_text(json.dumps(state))
+        self.ok("mark", CONVOY)
+
+    def test_park_parks_the_ticket_and_every_ticket_that_waits_for_it(self):
+        self.seed_chain()
+
+        answer = self.ok("park", CONVOY, T1, "--cause", "planning_exception", "--detail", "Question sur l'ordre")
+
+        self.assertEqual([T1, T2, "fx-t3"], answer["parked"])
+        shown = self.show()
+        for ticket_id in (T1, T2, "fx-t3"):
+            park = self.ticket(shown, ticket_id)["park"]
+            self.assertEqual(("planning_exception", T1, "Question sur l'ordre"),
+                             (park["cause"], park["origin"], park["detail"]), ticket_id)
+        self.assertIsNone(self.ticket(shown, "fx-t4")["park"])
+
+    def test_park_leaves_a_descendant_already_parked_and_a_closed_one(self):
+        self.seed_chain()
+        self.ok("park", CONVOY, "fx-t3", "--cause", "operator_request", "--detail", "Accès à l'horloge")
+        self.ok("record-gate", CONVOY, T2, "--gate", "withdrawn")
+        self.edit_tracker(T2, status="closed")
+
+        answer = self.ok("park", CONVOY, T1, "--cause", "planning_exception", "--detail", "Question sur l'ordre")
+
+        self.assertEqual([T1], answer["parked"])
+        shown = self.show()
+        self.assertEqual("operator_request", self.ticket(shown, "fx-t3")["park"]["cause"])
+        self.assertIsNone(self.ticket(shown, T2)["park"])
+
+    def test_park_refuses_a_cause_outside_the_list_no_detail_a_closed_or_parked_ticket(self):
+        self.seed_chain()
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "fatigue", "--detail", "x", mention="cause de parcage")
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "operator_request", mention="précision du parcage")
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, "fx-absent", "--cause", "operator_request", "--detail", "x", mention="n'appartient pas")
+        self.ok("park", CONVOY, "fx-t4", "--cause", "operator_request", "--detail", "x")
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, "fx-t4", "--cause", "operator_request", "--detail", "x", mention="déjà parqué")
+        self.ok("record-gate", CONVOY, T1, "--gate", "withdrawn")
+        self.edit_tracker(T1, status="closed")
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "operator_request", "--detail", "x", mention="fermé")
+
+    def test_handoff_or_park_written_outside_the_command_is_a_state_without_rule(self):
+        self.marked_slice()
+        self.edit_tracker(T1, **{"gc.flow.handoff": json.dumps({"sections": {}, "at": "x"}),
+                                 "gc.flow.park": json.dumps({"cause": "fatigue", "origin": T1, "detail": "x", "at": "x"})})
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+
+        self.assertIn("unruled", ticket["handoff"])
+        self.assertIn("unruled", ticket["park"])
+        self.assertEqual({"gc.flow.handoff", "gc.flow.park"}, {entry["field"] for entry in ticket["unruled"]})
+
+    def test_show_renders_the_declared_scope_the_publication_door_wrote(self):
+        self.marked_slice()
+        self.assertIsNone(self.ticket(self.show(), T1)["declared_scope"])
+        self.edit_tracker(T1, **{"gc.scope_paths": "app/home.py,app/static/*"})
+        self.assertEqual(["app/home.py", "app/static/*"], self.ticket(self.show(), T1)["declared_scope"])
+
+    def test_handoff_and_park_on_an_unmarked_convoy_write_nothing(self):
+        before = self.tracker.read_text()
+        for command in (("set-handoff", CONVOY, T1, "--file", self.handoff_file()),
+                        ("park", CONVOY, T1, "--cause", "operator_request", "--detail", "x")):
+            proc = self.run_tool(*command)
+            self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+            self.assertEqual(before, self.tracker.read_text())
+
 if __name__ == "__main__":
     unittest.main()

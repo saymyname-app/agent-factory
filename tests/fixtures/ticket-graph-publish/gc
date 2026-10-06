@@ -11,7 +11,12 @@ fake `bd` beside this file (TICKET_GRAPH_BD_STATE), so one tracker state is
 published by the door and then marked and re-read by the state command. The
 shapes are the ones observed on the real bd 1.2.2 (see
 tests/fixtures/convoy-state/gc). TICKET_GRAPH_GC_BD_UPDATE_FAIL=1 makes every
-`bd update` fail before it writes."""
+`bd update` fail before it writes.
+
+For bin/ticket-exit (T11), which drafts a revision and sends it through the
+patch door: `bd show` carries the bead's `description`, `bd create TITLE -t
+TYPE -d TEXT --json` adds an open bead under the next id of the store and
+answers `{"id": ...}`, and `bd close ID --reason TEXT` closes one."""
 import json
 import os
 import re
@@ -36,6 +41,7 @@ if command[:3] == ["mail", "send", "mayor"]:
 
 def view(bead):
     return {
+        **({"description": bead["description"]} if "description" in bead else {}),
         "id": bead["id"],
         "title": bead.get("title", ""),
         "status": bead.get("status", "open"),
@@ -66,6 +72,20 @@ if command[:1] == ["bd"] and os.environ.get("TICKET_GRAPH_BD_STATE"):
         if tracked:
             out["dependencies"] = tracked
         print(json.dumps([out]))
+        raise SystemExit(0)
+    if command[1:2] == ["create"] and len(command) == 8 and command[3::2] == ["-t", "-d", "--json"]:
+        number = state["next_id"]
+        state["next_id"] = number + 1
+        bead_id = f"af-{number:03d}"
+        beads[bead_id] = {"id": bead_id, "title": command[2], "description": command[6], "status": "open",
+                          "issue_type": command[4], "labels": [], "metadata": {}}
+        state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+        print(json.dumps({"id": bead_id, "title": command[2], "status": "open"}))
+        raise SystemExit(0)
+    if command[1:2] == ["close"] and len(command) == 5 and command[2] in beads and command[3] == "--reason":
+        beads[command[2]]["status"] = "closed"
+        state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+        print(json.dumps([{"id": command[2], "status": "closed"}]))
         raise SystemExit(0)
     if command[1:2] == ["update"] and len(command) >= 3 and command[2] in beads:
         if os.environ.get("TICKET_GRAPH_GC_BD_UPDATE_FAIL"):
