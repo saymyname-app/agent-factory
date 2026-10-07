@@ -330,4 +330,83 @@ fi
 [[ $output == *"--required-workflow is required for unknown-org/unknown-repo"* ]] \
   || fail_test "unresolvable-repo refusal did not name the repo: $output"
 
+
+# 2026-10-07 (af-3yo0we, af-yc2ly0, af-1ai5e3, af-r2y2w9): a verified merge
+# close resolves, through bin/proposal-door resoudre, every still-pending
+# proposal the merged PR explicitly names (title, body, a commit message, or
+# gc.resolves_proposal on the delivered bead) -- and nothing else: a pending
+# proposal the PR does not name stays pending, an accepted/rejected one is
+# left to the door (which refuses), and a refused close resolves nothing.
+PD_LOG=$(mktemp)
+PD_STUB=$(mktemp)
+trap 'rm -f "$CALL_LOG" "$PD_LOG" "$PD_STUB"' EXIT
+cat >"$PD_STUB" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$PROPOSAL_DOOR_CALL_LOG"
+[[ ${PROPOSAL_DOOR_STUB_FAIL:-0} == 1 ]] && { echo "stub: refused" >&2; exit 1; }
+exit 0
+STUB
+chmod +x "$PD_STUB"
+PROPOSALS='[{"id":"af-prop1","status":"open","labels":["proposal"],"metadata":{"gc.proposal_state":"ouverte"}},
+            {"id":"af-prop2","status":"open","labels":["proposal"],"metadata":{"gc.proposal_state":"ouverte"}},
+            {"id":"af-prop3","status":"open","labels":["proposal"],"metadata":{"gc.proposal_state":"rejetee"}},
+            {"id":"af-legacy","status":"open","labels":["proposal"],"metadata":null}]'
+run_pd() {  # scenario args... (PROPOSAL_DOOR_* and DELIVER_CLOSE_PR_* from the caller's env)
+  : >"$PD_LOG"
+  PROPOSAL_DOOR_BIN="$PD_STUB" PROPOSAL_DOOR_CALL_LOG="$PD_LOG" \
+    DELIVER_CLOSE_PROPOSALS_JSON="$PROPOSALS" run "$@"
+}
+
+# The PR body names af-prop1 (pending) and af-prop3 (rejected, never touched);
+# af-prop2 is not named; the delivered bead itself (af-work, "Closes af-work")
+# is not a proposal.
+TESTS_RUN=$((TESTS_RUN + 1))
+DELIVER_CLOSE_PR_BODY=$'Closes af-work.\n\nRésout la proposition af-prop1 (et af-prop3 reste à l\'opérateur).' \
+  run_pd merged af-work --repo owner/repo --pr 42 >/dev/null \
+  || fail_test "a merged PR naming a proposal should still close its bead"
+[[ $(<"$CALL_LOG") == *"--status=closed"* ]] || fail_test "proposal resolution must not skip the bead close"
+[[ $(wc -l <"$PD_LOG") -eq 1 ]] || fail_test "expected exactly one proposal-door call, got: $(cat "$PD_LOG")"
+[[ $(<"$PD_LOG") == "resoudre af-prop1 PR #42 (owner/repo, merge bbbbbbbbbbbb) deliver-close" ]] \
+  || fail_test "unexpected proposal-door call: $(cat "$PD_LOG")"
+
+# A proposal named in a commit message of the PR.
+TESTS_RUN=$((TESTS_RUN + 1))
+DELIVER_CLOSE_PR_COMMIT_HEADLINE="fix(guard): exempt bd.dog wisps (af-legacy)" \
+  run_pd merged af-work --repo owner/repo --pr 42 >/dev/null \
+  || fail_test "a merged PR whose commit names a proposal should close its bead"
+[[ $(<"$PD_LOG") == "resoudre af-legacy PR #42 (owner/repo, merge bbbbbbbbbbbb) deliver-close" ]] \
+  || fail_test "a proposal named by a commit message was not resolved: $(cat "$PD_LOG")"
+
+# A proposal named by the delivered bead's own gc.resolves_proposal.
+TESTS_RUN=$((TESTS_RUN + 1))
+DELIVER_CLOSE_BEAD_METADATA='{"gc.resolves_proposal":"af-prop2"}' \
+  run_pd merged af-work --repo owner/repo --pr 42 >/dev/null \
+  || fail_test "a bead carrying gc.resolves_proposal should close"
+[[ $(<"$PD_LOG") == "resoudre af-prop2 PR #42 (owner/repo, merge bbbbbbbbbbbb) deliver-close" ]] \
+  || fail_test "gc.resolves_proposal was not honoured: $(cat "$PD_LOG")"
+
+# A merged PR naming no proposal resolves nothing; a prefix match
+# (af-prop1 vs af-prop10) is not a mention.
+TESTS_RUN=$((TESTS_RUN + 1))
+DELIVER_CLOSE_PR_BODY="Closes af-work. See also af-prop10 and af-prop1x." \
+  run_pd merged af-work --repo owner/repo --pr 42 >/dev/null \
+  || fail_test "a merged PR naming no proposal should close its bead"
+[[ ! -s $PD_LOG ]] || fail_test "a PR naming no pending proposal must resolve none: $(cat "$PD_LOG")"
+
+# A refused close resolves nothing, whatever the PR says.
+TESTS_RUN=$((TESTS_RUN + 1))
+if DELIVER_CLOSE_PR_BODY="Résout af-prop1" run_pd not-merged af-work --repo owner/repo --pr 42 >/dev/null 2>&1; then
+  fail_test "an unmerged PR must be refused"
+fi
+[[ ! -s $PD_LOG ]] || fail_test "a refused close must resolve no proposal: $(cat "$PD_LOG")"
+
+# The proposal door refusing (or failing) never fails the close: the bead is
+# already closed on verified proof; the failure is logged for a hand resolve.
+TESTS_RUN=$((TESTS_RUN + 1))
+output=$(DELIVER_CLOSE_PR_BODY="Résout af-prop1" PROPOSAL_DOOR_STUB_FAIL=1 \
+  run_pd merged af-work --repo owner/repo --pr 42 2>&1) \
+  || fail_test "a proposal-door failure must not fail a verified close: $output"
+[[ $output == *"WARNING: proposal af-prop1"*"was not resolved"* ]] \
+  || fail_test "a proposal-door failure must be logged: $output"
+
 printf 'PASS: %d deterministic deliver-close checks\n' "$TESTS_RUN"

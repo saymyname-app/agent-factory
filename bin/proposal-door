@@ -11,6 +11,20 @@
 # heure). Every transition is traced on the bead (comment + metadata,
 # acteur), never by erasing a prior trace.
 #
+# Proposals are Benjamin's hand (accepter / rejeter). One more transition,
+# `resoudre`, exists for a proposal whose fix has already merged (2026-10-07:
+# af-3yo0we, af-yc2ly0, af-1ai5e3, af-r2y2w9 stayed « pending » in the
+# Cockpit's « Ce qui t'attend » for days after PRs #385, #376 and #340 had
+# landed). It is legitimate only on proof of a merge: the proof must name a
+# PR number or a commit sha, it is recorded on the bead, and the door
+# refuses to resolve a proposal Benjamin already accepted or rejected -- his
+# decision is never overridden by a delivery. bin/deliver-close calls it
+# for every pending proposal a merged PR names (title, body, commits, or
+# gc.resolves_proposal on the delivered ticket); bin/upstream-skills-check
+# calls it for a mattpocock/skills proposal whose tag is at or before the
+# pinned baseline. See docs/COCKPIT.md « Proposition résolue par une
+# livraison fusionnée ».
+#
 # A proposal created before this door existed (no gc.proposal_* fields)
 # stays readable and still counts as pending -- this door never rewrites an
 # existing proposal's fields, only adds the new ones going forward.
@@ -70,11 +84,22 @@
 #                                Defer until <heure> (free text: an hour or
 #                                 a date); traced. State is unchanged --
 #                                 a reported proposal is still pending.
+#   resoudre <bead> <preuve> <acteur>
+#                                Resolve a pending proposal on proof of a
+#                                 merged delivery. <preuve> is one line that
+#                                 must name a PR number (`#385`) or a commit
+#                                 sha (7-40 hex); refused (no write)
+#                                 otherwise, and refused on a proposal that
+#                                 is not labelled `proposal` or is already
+#                                 accepted / rejected / resolved.
+#                                 gc.proposal_state -> resolue,
+#                                 gc.proposal_resolved_by=<preuve>, traced
+#                                 (comment + metadata, acteur).
 #   compte                      Read-only: print the count of proposals
 #                                 still pending (open, labelled `proposal`,
-#                                 not accepted nor rejected). A legacy
-#                                 proposal with no gc.proposal_state counts
-#                                 as pending.
+#                                 not accepted, rejected nor resolved). A
+#                                 legacy proposal with no gc.proposal_state
+#                                 counts as pending.
 set -Eeuo pipefail
 
 PROGRAM_NAME="proposal-door"
@@ -264,6 +289,35 @@ cmd_reporter() {
   printf 'REPORTÉE: %s — jusqu'"'"'à %s\n' "$bead" "$heure"
 }
 
+cmd_resoudre() {
+  local bead=${1:-} preuve=${2:-} acteur=${3:-}
+  [[ -n $bead && -n $acteur ]] || die "Usage: $PROGRAM_NAME resoudre <bead> <preuve> <acteur>"
+  field_ok "preuve" "$preuve"
+  grep -qE '#[0-9]+|[0-9a-f]{7,40}' <<<"$preuve" \
+    || die "la preuve « $preuve » ne nomme ni PR (#123) ni commit (sha) : une proposition ne se résout que sur preuve de merge."
+  valid_bead_id "$bead" || die "'$bead' is not a Bead id."
+  local bead_json state
+  bead_json=$(show_bead "$bead")
+  jq -e '(.labels // []) | index("proposal") != null' <<<"$bead_json" >/dev/null 2>&1 \
+    || die "$bead n'est pas une proposition (label proposal absent)."
+  state=$(jq -r '(.metadata // {})["gc.proposal_state"] // "ouverte"' <<<"$bead_json")
+  case "$state" in
+    ouverte) ;;
+    a_planifier) die "$bead a déjà été acceptée par l'opérateur (à planifier) : une livraison ne l'annule pas." ;;
+    rejetee) die "$bead a déjà été rejetée par l'opérateur : une livraison ne l'annule pas." ;;
+    resolue) die "$bead est déjà résolue ($(jq -r '(.metadata // {})["gc.proposal_resolved_by"] // "?"' <<<"$bead_json"))." ;;
+    *) die "$bead est dans l'état inconnu « $state » ; refus de la résoudre." ;;
+  esac
+  "$GC_BIN" bd update "$bead" \
+    --set-metadata "gc.proposal_state=resolue" \
+    --set-metadata "gc.proposal_resolved_by=$preuve" \
+    --set-metadata "gc.proposal_response_at=$(now_iso)" \
+    --set-metadata "gc.proposal_response_actor=$acteur" \
+    --append-notes "PROPOSITION RÉSOLUE par $acteur — $preuve" \
+    >/dev/null || die "Beads write failed for $bead."
+  printf 'RÉSOLUE: %s — %s\n' "$bead" "$preuve"
+}
+
 cmd_compte() {
   local proposals_json
   proposals_json=$("$GC_BIN" bd list --status open --label proposal --json 2>/dev/null) \
@@ -271,7 +325,7 @@ cmd_compte() {
   [[ -n $proposals_json ]] || proposals_json='[]'
   jq -r '
     (if type == "array" then . else [.] end)
-    | map(select((.metadata["gc.proposal_state"] // "ouverte") as $s | ($s != "a_planifier" and $s != "rejetee")))
+    | map(select(((.metadata // {})["gc.proposal_state"] // "ouverte") as $s | ($s != "a_planifier" and $s != "rejetee" and $s != "resolue")))
     | length
   ' <<<"$proposals_json"
 }
@@ -286,6 +340,7 @@ main() {
     accepter) cmd_accepter "$@" ;;
     rejeter) cmd_rejeter "$@" ;;
     reporter) cmd_reporter "$@" ;;
+    resoudre) cmd_resoudre "$@" ;;
     compte) cmd_compte "$@" ;;
     *) usage >&2; return 2 ;;
   esac

@@ -14,6 +14,13 @@
 # `./bin/escalation-door list`'s pending-proposal count. Seeing the same
 # tag again on a later run never files a second proposal.
 #
+# A tag at or before the pinned baseline tag is never proposed (the pin
+# already answers it), and every pending proposal this order filed for such
+# a tag is resolved through bin/proposal-door resoudre with the pin as proof
+# (the last commit that touched the baseline file, and its PR number when
+# the subject carries one). 2026-10-07: af-3yo0we (v1.2.3) and af-yc2ly0
+# (v1.3.1) stayed pending in the Cockpit after PR #385 had pinned v1.3.1.
+#
 # `compare` mode: diffs the vendored skills/ directory, file for file,
 # against the pinned tag's skills/ subtree fetched fresh from
 # mattpocock/skills (AR-008). Exits 0 and names the tag when the copy is
@@ -138,6 +145,48 @@ if [ "${1:-}" = "compare" ]; then
   exit 0
 fi
 
+baseline_tag=$(sed -n 's/^Pinned baseline tag: `\{0,1\}\([^`]*\)`\{0,1\}.*/\1/p' "$BASELINE_FILE" | head -n1)
+[ "$baseline_tag" != "none" ] || baseline_tag=""
+
+# version_le a b: a sorts at or before b in version order (sort -V).
+version_le() {
+  [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]
+}
+
+# resolve_pinned_proposals: every pending proposal this order filed whose
+# tag is at or before the pinned baseline tag is resolved through the
+# proposal door, with the pin as proof. One `gc bd list` per run; nothing
+# is written when no such proposal exists. Proposals Benjamin already
+# accepted or rejected are never touched (the door refuses them).
+resolve_pinned_proposals() {
+  [ -n "$baseline_tag" ] || return 0
+  local proposals_json pin_dir pin_commit pin_subject pin_pr preuve id quoi tag out
+  proposals_json=$("$GC_BIN" bd list --status open --label proposal --json 2>/dev/null) || {
+    log "WARNING: could not list pending proposals; none resolved against the pin $baseline_tag"
+    return 0
+  }
+  [ -n "$proposals_json" ] || return 0
+  pin_dir=$(dirname "$BASELINE_FILE")
+  pin_commit=$(git -C "$pin_dir" log -1 --format=%h -- "$BASELINE_FILE" 2>/dev/null || true)
+  pin_subject=$(git -C "$pin_dir" log -1 --format=%s -- "$BASELINE_FILE" 2>/dev/null || true)
+  pin_pr=$(printf '%s' "$pin_subject" | grep -oE '\(#[0-9]+\)$' | tr -d '()' || true)
+  preuve="pin $baseline_tag dans $(basename "$BASELINE_FILE")${pin_pr:+, PR $pin_pr}${pin_commit:+, commit $pin_commit}"
+  while IFS=$'\t' read -r id quoi; do
+    [ -n "$id" ] || continue
+    tag=$(printf '%s' "$quoi" | sed -n 's/.*a publié \([^ ,]*\).*/\1/p')
+    [ -n "$tag" ] || continue
+    version_le "$tag" "$baseline_tag" || continue
+    if out=$("$PROPOSAL_DOOR_BIN" resoudre "$id" "$preuve" "upstream-skills-check" 2>&1); then
+      log "resolved proposal $id: $tag is at or before the pin $baseline_tag ($preuve)"
+    else
+      log "WARNING: proposal $id ($tag, at or before the pin $baseline_tag) was not resolved: $out"
+    fi
+  done < <(jq -r '(if type == "array" then . else [.] end)[]
+    | select(((.metadata // {})["gc.proposal_state"] // "ouverte") as $s
+        | $s != "a_planifier" and $s != "rejetee" and $s != "resolue")
+    | [.id, ((.metadata // {})["gc.proposal_quoi"] // .title // "")] | @tsv' <<<"$proposals_json" 2>/dev/null)
+}
+
 DRY_RUN=0
 for arg in "$@"; do
   case "$arg" in
@@ -171,6 +220,17 @@ latest_tag=$(printf '%s\n' "$tags_raw" \
 
 if [ -z "$latest_tag" ]; then
   log "no tags published at $REPO_URL -- nothing to compare"
+  exit 0
+fi
+
+if [ "$DRY_RUN" = 1 ]; then
+  log "DRY-RUN: pending proposals at or before the pin ${baseline_tag:-none} would be resolved"
+else
+  resolve_pinned_proposals
+fi
+
+if [ -n "$baseline_tag" ] && version_le "$latest_tag" "$baseline_tag"; then
+  log "$latest_tag is at or before the pinned baseline tag $baseline_tag -- no proposal"
   exit 0
 fi
 

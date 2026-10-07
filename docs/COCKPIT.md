@@ -446,11 +446,48 @@ comments, which are empty on a bead Benjamin answered:
 | answer to a NEEDS BENJAMIN | `bin/escalation-door repondre` | `RÉPONSE: <lettre> — <option>` | `gc.escalation_response_at` (latest answer only) |
 | decision cleared without an answer | `bin/escalation-door clear` | `DECISION CLEARED: …` | `gc.escalation_cleared_at` (latest clearance; absent before 2026-10-06) |
 | proposal accepted / rejected | `bin/proposal-door` | `PROPOSITION ACCEPTÉE par …` / `PROPOSITION REJETÉE par … — <raison>` | `gc.proposal_response_at` |
+| proposal resolved by a merged delivery | `bin/proposal-door resoudre` (called by `bin/deliver-close`, `bin/upstream-skills-check`, or by hand) | `PROPOSITION RÉSOLUE par … — <preuve>` | `gc.proposal_response_at` |
 | relance, chantier accepté | `cockpit.actions.trace` | `Cockpit: <quoi> sur <cible> (…) — <quand>, par <acteur>` | the note itself |
 
 The question an entry answers is the `NEEDS BENJAMIN: …` / `PROPOSITION: …`
 note before it. An entry no trace dates shows « date inconnue » and comes
 after the dated ones.
+
+### Proposition résolue par une livraison fusionnée
+
+Intent (Benjamin, his words, 2026-10-07): « les propositions sont la main
+de Benjamin (accepter/rejeter) ; une fermeture automatique n'est légitime
+que sur preuve de merge référençant explicitement la proposition ».
+
+Mechanism (agent interpretation): a proposal has a fourth state,
+`gc.proposal_state=resolue`, reached only through `bin/proposal-door
+resoudre <bead> <preuve> <acteur>`. The door refuses a proof that names
+neither a PR number nor a commit sha, refuses a bead that is not labelled
+`proposal`, and refuses a proposal already accepted, rejected or resolved —
+Benjamin's decision is never overridden by a delivery. The proof is kept
+on the bead (`gc.proposal_resolved_by`) and in its notes; a resolved
+proposal leaves « Ce qui t'attend » at the source and enters the journal as
+« proposition résolue par une livraison — <preuve> ». Two producers call
+it from code:
+
+- `bin/deliver-close`, after a verified merge close (so also every
+  `pr-autopilot` reconciliation): every still-pending proposal the merged
+  PR names in its title, body, a commit message, or in
+  `gc.resolves_proposal` on the delivered bead, with the proof
+  `PR #<n> (<repo>, merge <sha>)`. A PR that names no proposal resolves
+  none; a prefix match (`af-prop1` in `af-prop10`) is not a mention.
+- `bin/upstream-skills-check`, on each daily run: every pending proposal
+  it filed for a `mattpocock/skills` tag at or before the pinned baseline
+  tag, with the pin as proof (last commit touching
+  `docs/UPSTREAM_SKILLS.md`, and its PR number). Such a tag is never
+  proposed again.
+
+Why (2026-10-07): af-3yo0we and af-yc2ly0 (tags v1.2.3 and v1.3.1, pinned
+by PR #385), af-1ai5e3 (fixed by PR #376) and af-r2y2w9 (fixed by PR #340,
+named in its title) stayed « pending » in « Ce qui t'attend » for days
+after their fix had merged: nothing closed a proposal when the delivery
+that answered it landed. A PR that fixes a proposal without naming it
+(PR #376's shape) is resolved by hand with the same door, proof in hand.
 
 Intent (Benjamin, his words, 2026-10-06): « affiche tel quel ». Mechanism
 (agent interpretation): the journal shows each text exactly as its

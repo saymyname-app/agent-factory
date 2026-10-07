@@ -8,8 +8,11 @@ Only two kinds of bead ever become a request here:
     NEEDS BENJAMIN (T06). Its level is Urgent when
     ``gc.escalation_bloquant`` is "true", otherwise À faire (spec .5).
   * an open bead labelled ``proposal`` whose ``gc.proposal_state`` is not
-    yet ``a_planifier``/``rejetee`` — an open proposal-door proposal (T07),
-    always Quand tu veux.
+    yet ``a_planifier``/``rejetee``/``resolue`` — an open proposal-door
+    proposal (T07), always Quand tu veux. ``resolue`` is the door's
+    ``resoudre`` transition: the delivery that answered the proposal merged
+    (proof on the bead, ``gc.proposal_resolved_by``), so nothing waits on
+    the operator any more.
 
 A bead with only ``gc.escalation_mayor_paged_at`` set (a Mayor-first
 escalation not yet promoted) carries no ``gc.needs_benjamin`` and is never
@@ -38,7 +41,7 @@ from cockpit.text.validate import request_violations
 
 NEEDS_BENJAMIN_KEY = "gc.needs_benjamin"
 PROPOSAL_LABEL = "proposal"
-_CLOSED_PROPOSAL_STATES = {"a_planifier", "rejetee"}
+_CLOSED_PROPOSAL_STATES = {"a_planifier", "rejetee", "resolue"}
 
 
 def _parse_iso(value):

@@ -68,6 +68,20 @@
 #     gc.needs_benjamin (set and not "none"): the close would silently drop
 #     the operator's question. Answer it (`escalation-door repondre`) or
 #     clear it (`escalation-door clear`) first. Parking stays allowed.
+#
+# 2026-10-07 (af-3yo0we, af-yc2ly0, af-1ai5e3, af-r2y2w9): nothing closed a
+# proposal when the delivery that resolved it merged, so four proposals
+# stayed « pending » in the Cockpit's « Ce qui t'attend » after PRs #385,
+# #376 and #340 had landed. After a verified merge close succeeds, this
+# door now resolves, through bin/proposal-door resoudre (traced, never by
+# erasure), every still-pending proposal the merged PR explicitly names:
+# in its title, its body, one of its commit messages, or in
+# gc.resolves_proposal on the delivered bead. Proposals are Benjamin's
+# hand: one he already accepted or rejected is never touched (the proposal
+# door refuses), and a merge that names no proposal resolves nothing. A
+# resolution failure is logged, never fatal -- the bead is already closed
+# on verified proof, and the proposal can be resolved by hand with the
+# same door.
 
 set -Eeuo pipefail
 
@@ -75,6 +89,7 @@ PROGRAM_NAME="deliver-close"
 GC_BIN="${GC_BIN:-gc}"
 GH_BIN="${GH_BIN:-gh}"
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+PROPOSAL_DOOR_BIN="${PROPOSAL_DOOR_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/proposal-door}"
 # shellcheck source=lib/project_registry.sh
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/project_registry.sh"
 
@@ -200,7 +215,7 @@ verify_pr_delivery() {  # bead-id bead-json repo pr-number required-workflow
 
   require_command "$GH_BIN"
   capture_json PR_RESPONSE "GitHub PR $pr_number" "$GH_BIN" pr view "$pr_number" \
-    --repo "$repo" --json number,state,mergedAt,mergeCommit,headRefOid,headRefName,baseRefName,url
+    --repo "$repo" --json number,state,mergedAt,mergeCommit,headRefOid,headRefName,baseRefName,url,title,body,commits
 
   jq -e --argjson number "$pr_number" '
     .number == $number and
@@ -219,6 +234,12 @@ verify_pr_delivery() {  # bead-id bead-json repo pr-number required-workflow
   MERGED_TARGET=$(jq -r '.baseRefName' <<<"$PR_RESPONSE")
   MERGE_COMMIT=$(jq -r '.mergeCommit.oid' <<<"$PR_RESPONSE")
   PR_URL=$(jq -r '.url' <<<"$PR_RESPONSE")
+  # Everything the merged PR says, for resolve_referenced_proposals: a
+  # proposal is resolved only when this text (or the delivered bead's own
+  # gc.resolves_proposal) names it explicitly.
+  PR_MENTIONS=$(jq -r '[(.title // ""), (.body // ""),
+    ((.commits // [])[] | ((.messageHeadline // ""), (.messageBody // "")))] | join("\n")' <<<"$PR_RESPONSE")
+  PR_MENTIONS+=$'\n'"$(metadata_value "$bead_json" "gc.resolves_proposal")"
 
   linked_url=$(metadata_value "$bead_json" "gc.pr_url")
   linked_branch=$(metadata_value "$bead_json" "gc.work_branch")
@@ -259,6 +280,34 @@ verify_pr_delivery() {  # bead-id bead-json repo pr-number required-workflow
   REQUIRED_WORKFLOW=$required_workflow
 }
 
+# After a verified merge close: resolve every still-pending proposal the
+# merged PR names (see the header). One `gc bd list` when the PR text holds
+# anything shaped like a bead id, none otherwise; the transition itself goes
+# through bin/proposal-door, which refuses an accepted/rejected proposal.
+resolve_referenced_proposals() {  # bead-id repo pr-number
+  local bead_id=$1 repo=$2 pr_number=$3 proposals_json pending id preuve out
+  [[ $PR_MENTIONS =~ [A-Za-z][A-Za-z0-9]*-[A-Za-z0-9] ]] || return 0
+  if ! proposals_json=$("$GC_BIN" bd list --status open --label proposal --json 2>/dev/null) \
+    || [[ -z $proposals_json ]]; then
+    log "WARNING: could not list pending proposals; none resolved by $repo#$pr_number (resolve by hand: proposal-door resoudre)."
+    return 0
+  fi
+  pending=$(jq -r '(if type == "array" then . else [.] end)[]
+    | select(((.metadata // {})["gc.proposal_state"] // "ouverte") as $s
+        | $s != "a_planifier" and $s != "rejetee" and $s != "resolue")
+    | .id' <<<"$proposals_json" 2>/dev/null) || return 0
+  preuve="PR #$pr_number ($repo, merge ${MERGE_COMMIT:0:12})"
+  while IFS= read -r id; do
+    [[ -n $id && $id != "$bead_id" ]] || continue
+    grep -qE "(^|[^A-Za-z0-9.])${id//./\\.}([^A-Za-z0-9]|\$)" <<<"$PR_MENTIONS" || continue
+    if out=$("$PROPOSAL_DOOR_BIN" resoudre "$id" "$preuve" "deliver-close" 2>&1); then
+      log "Resolved proposal $id named by $repo#$pr_number: $preuve."
+    else
+      log "WARNING: proposal $id is named by $repo#$pr_number but was not resolved: $out"
+    fi
+  done <<<"$pending"
+}
+
 close_verified_pr() {  # bead-id repo pr reason verification
   local bead_id=$1 repo=$2 pr_number=$3 reason=$4 verification=$5
   local -a args=("$GC_BIN" bd update "$bead_id"
@@ -285,6 +334,7 @@ close_verified_pr() {  # bead-id repo pr reason verification
   args+=(--status=closed --notes "$reason")
   "${args[@]}" || die "Beads update failed for $bead_id after delivery verification succeeded."
   log "Closed $bead_id after verified merge and '$REQUIRED_WORKFLOW' success on $PR_HEAD ($repo#$pr_number, $MERGE_COMMIT)."
+  resolve_referenced_proposals "$bead_id" "$repo" "$pr_number"
 }
 
 close_by_outcome() {
