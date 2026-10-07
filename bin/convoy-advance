@@ -48,6 +48,17 @@ gave no result, stops the ticket when the relaunch gave none either, and
 sends the answers given to its Blocking Findings to a second reviewer
 session. bin/spec-integration merges nothing without a favorable verdict.
 
+A pass also has each finished ticket evaluated on the launched product
+before its merge (T15, af-higj9z; Spec §7, §8): it hands each convoy that
+has a finished ticket not merged yet, or a launched product left to stop,
+to bin/ticket-evaluation settle, which launches the product from a clean
+copy of the ticket's commit, sends it to a session of the Evaluator role
+(for a prefactoring: checks itself that the product starts), sends it once
+more when the evaluation gave no result, stops the ticket when the relaunch
+gave none either, parks a ticket whose criterion cannot be observed, and
+stops the products once the states are in. Review and evaluation are sent
+by the same pass: they run in parallel.
+
 A convoy in an "état sans règle" (bin/convoy-state: a ticket started or
 closed outside its door, evidence or a counter that cannot be read) is
 stopped (T34, af-ckwina; Spec §0 rule 5): the pass starts none of its
@@ -62,7 +73,7 @@ Every answer is one JSON object on stdout. Exit status: 0 the pass is done
 (what it started is listed, possibly nothing); 1 refused or could not run,
 the dispatch door refused a ticket (named under `refused`), an incident
 could not be raised or withdrawn, or the merge pass or the settlement of
-the test reviews or of the code reviews could not run; 3 a
+the test reviews, of the code reviews or of the evaluations could not run; 3 a
 convoy is in an "état sans règle": nothing of it is started (0 with
 --stopped-ok once its incident is raised: what the order runs, so that a
 stopped convoy is not also an order failure);
@@ -96,6 +107,7 @@ ESCALATION_BIN = BIN / "escalation-door"
 INTEGRATION_BIN = BIN / "spec-integration"
 TEST_REVIEW_BIN = BIN / "test-review"
 CODE_REVIEW_BIN = BIN / "code-review"
+EVALUATION_BIN = BIN / "ticket-evaluation"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
 SETTINGS = ROOT / "config" / "delivery-flow.json"
 ROLES = ROOT / "config" / "delivery-roles.json"
@@ -115,6 +127,8 @@ TEST_REVIEW_STOPS = ("test_review_refused", "test_review_no_result")
 
 # The stop the code review of a ticket writes (bin/convoy-state).
 CODE_REVIEW_STOP = "code_review_no_result"
+# The stops the Ticket Evaluation of a ticket writes (bin/convoy-state).
+EVALUATION_STOPS = ("evaluation_no_result", "evaluation_outage")
 
 UNRULED = "état sans règle"
 # bin/escalation-door refuses a field longer than this, or on several lines.
@@ -254,6 +268,23 @@ class Convoy:
             stop = t.get("stop") or {}
             if stop:
                 if stop.get("reason") == CODE_REVIEW_STOP and "raised" not in stop:
+                    due.append(t["id"])
+            elif not t.get("park") and t["id"] in self.finished_unmerged():
+                due.append(t["id"])
+        return due
+
+    def evaluations_due(self) -> list[str]:
+        """Tickets whose author has finished and that are not merged yet,
+        that still have a launched product to stop, or that their
+        evaluation stopped without the stop having reached the operator:
+        what makes a settlement of the evaluations worth running."""
+        due = []
+        for t in self.tickets:
+            stop = t.get("stop") or {}
+            if (t.get("evaluation") or {}).get("live"):
+                due.append(t["id"])
+            elif stop:
+                if stop.get("reason") in EVALUATION_STOPS and "raised" not in stop:
                     due.append(t["id"])
             elif not t.get("park") and t["id"] in self.finished_unmerged():
                 due.append(t["id"])
@@ -563,6 +594,24 @@ def settle_code_reviews(convoy: Convoy) -> dict[str, Any] | None:
     return {name: answer[name] for name in kept if answer.get(name)}
 
 
+def settle_evaluations(convoy: Convoy) -> dict[str, Any] | None:
+    """Spec §7, §8: code, not a session, has each finished ticket evaluated
+    on the launched product before its merge, through bin/ticket-evaluation.
+    None when the convoy has nothing to evaluate and no product to stop."""
+    if not convoy.evaluations_due():
+        return None
+    try:
+        answer = parsed(run([str(EVALUATION_BIN), "settle", convoy.id, "--repo", str(convoy.repo)]),
+                        f"ticket-evaluation settle {convoy.id}")
+    except Refusal as exc:
+        return {"error": f"refus : {exc}"}
+    if not isinstance(answer, dict):
+        return {"error": f"refus : ticket-evaluation settle {convoy.id} a rendu une réponse illisible"}
+    kept = ("launched", "relaunched", "pending", "waiting", "started", "refused_startup", "planning_exception",
+            "stopped", "escalated", "deferred", "refused", "error")
+    return {name: answer[name] for name in kept if answer.get(name)}
+
+
 def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     """`targets` None: every open marked convoy."""
     with advance_lock():
@@ -595,6 +644,9 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         code_reviews = settle_code_reviews(convoys[result["id"]])
         if code_reviews is not None:
             result["code_review"] = code_reviews
+        evaluations = settle_evaluations(convoys[result["id"]])
+        if evaluations is not None:
+            result["evaluation"] = evaluations
         merge = merge_finished(convoys[result["id"]])
         if merge is not None:
             result["integration"] = merge
@@ -607,6 +659,7 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         or any(key in result.get("integration", {}) for key in ("error", "message"))
         or any(key in result.get("test_review", {}) for key in ("error", "refused"))
         or any(key in result.get("code_review", {}) for key in ("error", "refused"))
+        or any(key in result.get("evaluation", {}) for key in ("error", "refused"))
         for result in results
     )
     answer: dict[str, Any] = {

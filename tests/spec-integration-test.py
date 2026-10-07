@@ -219,8 +219,9 @@ class SpecIntegrationTest(unittest.TestCase):
     def finish(self, ticket, commit, reviewed=True):
         """What stands for the author's Ticket Exit « terminé » at `commit`
         (bin/ticket-exit, T11): the sealed records, the Handoff, the exit;
-        and, unless `reviewed` is false, for the favorable code review that
-        follows it at that commit (bin/code-review, T14)."""
+        and, unless `reviewed` is false, for the favorable code review
+        (bin/code-review, T14) and the favorable Ticket Evaluation
+        (bin/ticket-evaluation, T15) that follow it at that commit."""
         self.state("add-evidence", CONVOY, ticket, "--piece", "handoff_records", "--digest", DIGEST, "--commit", commit)
         handoff = self.tmp / f"handoff-{ticket}.json"
         handoff.write_text(json.dumps({"sections": SECTIONS, "partial": False, "commit": commit, "records": {}}))
@@ -228,6 +229,7 @@ class SpecIntegrationTest(unittest.TestCase):
         self.state("set-exit", CONVOY, ticket, "--exit", "finished")
         if reviewed:
             self.reviewed(ticket, commit)
+            self.evaluated(ticket, commit)
 
     def json_file(self, name, content):
         path = self.tmp / name
@@ -241,6 +243,23 @@ class SpecIntegrationTest(unittest.TestCase):
         return self.state("record-code-review", CONVOY, ticket, "--file", self.json_file(f"review-{ticket}.json", {
             "commit": commit, "recorded_by": session, "findings": list(findings), "answers": {}}))
 
+    def evaluated(self, ticket, commit):
+        """A favorable Ticket Evaluation of the ticket at `commit`, as an
+        Evaluator session records it (bin/ticket-evaluation, T15): every
+        criterion and the demonstration line observed, each with its piece."""
+        shown = self.shown(ticket)
+        self.state("open-evaluation", CONVOY, ticket, "--commit", commit, "--file", self.json_file(
+            f"evaluation-request-{ticket}.json", {
+                "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
+                "environment": [{"dataset": None, "address": "http://127.0.0.1:1", "state_file": "/launch.json"}]}))
+        self.state("add-evidence", CONVOY, ticket, "--piece", "evaluation.seen", "--digest", DIGEST, "--commit", commit)
+        return self.state("record-evaluation", CONVOY, ticket, "--file", self.json_file(f"evaluation-{ticket}.json", {
+            "commit": commit, "recorded_by": "delivery-evaluator-fx",
+            "criteria": [{"number": number, "text": text, "state": "observed", "evidence": "evaluation.seen"}
+                         for number, text in enumerate(shown["criteria"], start=1)],
+            "demonstration_line": {"text": shown["demonstration_line"], "state": "observed",
+                                   "evidence": "evaluation.seen"}}))
+
     def finished(self, ticket, files, start=None, reviewed=True):
         """A ticket started through the dispatch door, with one commit on its
         branch, that its author has finished; returns that commit."""
@@ -252,13 +271,15 @@ class SpecIntegrationTest(unittest.TestCase):
         return tip
 
     def judged(self, ticket, commit, state="favorable", kinds=("code_review", "evaluation")):
-        """The verdicts of a ticket at `commit`: the Ticket Evaluation as its
-        verdict alone, the code review as the round it comes from."""
+        """The verdicts of a ticket at `commit`: a favorable one as the
+        round of the code review or of the Ticket Evaluation it comes from,
+        an unfavorable one as its verdict alone."""
+        rounds = {"code_review": self.reviewed, "evaluation": self.evaluated}
         for kind in kinds:
-            if kind != "code_review" or state != "favorable":
+            if state != "favorable":
                 self.state("set-verdict", CONVOY, ticket, "--kind", kind, "--state", state, "--commit", commit)
-            elif ((self.shown(ticket)["code_review"] or {}).get("state") or {}).get("commit") != commit:
-                self.reviewed(ticket, commit)
+            elif ((self.shown(ticket)[kind] or {}).get("state") or {}).get("commit") != commit:
+                rounds[kind](ticket, commit)
 
     def two_finished_tickets(self):
         self.opened()
@@ -544,11 +565,53 @@ class SpecIntegrationTest(unittest.TestCase):
     def test_every_blocking_finding_fixed_or_contested_and_judged_favorably_lets_the_ticket_merge(self):
         # AC3, second half.
         tip = self.judged_findings({"state": "favorable"})
+        self.evaluated(T1, tip)
 
         answer = self.merged()
 
         self.assertEqual([T1], [entry["id"] for entry in answer["merged"]])
         self.assertTrue(self.contains(self.remote_tip(), tip))
+
+    # --- the Ticket Evaluation of a ticket (T15): no merge without a favorable one ---
+
+    def reviewed_ticket(self):
+        """A finished ticket whose code review is favorable, and that no
+        Evaluator has evaluated."""
+        tip = self.unreviewed_ticket()
+        self.reviewed(T1, tip)
+        return tip
+
+    def not_merged(self, mention):
+        before = self.snapshot()
+        answer = self.merged()
+        self.assertEqual(([], [T1]), (answer["merged"], [entry["id"] for entry in answer["waiting"]]))
+        self.assertIn(mention, answer["waiting"][0]["reason"])
+        self.assertEqual(before, self.snapshot())
+
+    def test_a_reviewed_ticket_without_a_ticket_evaluation_is_not_merged(self):
+        self.reviewed_ticket()
+
+        self.not_merged("aucune Ticket Evaluation rendue")
+
+    def test_a_ticket_evaluation_that_gave_no_state_yet_is_not_an_agreement(self):
+        tip = self.reviewed_ticket()
+        self.state("open-evaluation", CONVOY, T1, "--commit", tip, "--file", self.json_file("request.json", {
+            "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
+            "environment": [{"dataset": None, "address": "http://127.0.0.1:1", "state_file": "/launch.json"}]}))
+
+        self.not_merged("Ticket Evaluation en cours")
+
+    def test_a_favorable_evaluation_verdict_written_without_its_evaluation_is_not_an_agreement(self):
+        tip = self.reviewed_ticket()
+        self.state("set-verdict", CONVOY, T1, "--kind", "evaluation", "--state", "favorable", "--commit", tip)
+
+        self.not_merged("aucune Ticket Evaluation rendue")
+
+    def test_a_ticket_evaluated_favorably_at_its_tip_is_merged(self):
+        tip = self.reviewed_ticket()
+        self.evaluated(T1, tip)
+
+        self.assertEqual([T1], [entry["id"] for entry in self.merged()["merged"]])
 
     def test_one_blocking_finding_judged_unfavorably_keeps_the_ticket_out_of_the_merge(self):
         self.judged_findings({"state": "unfavorable", "reason": "La liste n'a toujours que deux éléments."})

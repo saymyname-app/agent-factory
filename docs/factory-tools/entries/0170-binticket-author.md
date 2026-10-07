@@ -39,8 +39,10 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
 - **Ticket arrêté** (critère déjà vert, second refus de la relecture des
   tests, relecture sans résultat) : chaque contrôle le refuse, la séquence
   échoue et rien n'en est fusionné.
-- **Pas ici** : revue et évaluation (T14, T15), porte de fin de ticket
-  (T19), reprise d'un ticket (T20).
+- **Pas ici** : la revue de code (`./bin/code-review`) et la Ticket
+  Evaluation sur le produit lancé (`./bin/ticket-evaluation`), que le flux
+  envoie après la sortie « terminé » ; la porte de fin de ticket (T19) ; la
+  reprise d'un ticket (T20).
 
 Détail : `docs/TICKET_AUTHOR.md`.
 

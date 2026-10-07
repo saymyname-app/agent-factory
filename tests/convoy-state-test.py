@@ -1989,6 +1989,379 @@ class ConvoyStateTest(unittest.TestCase):
             self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
             self.assertEqual(before, self.tracker.read_text())
 
+    # --- Ticket Evaluation on the launched product (T15) ---------------------------
+
+    CRITERIA = ("Le nombre s'affiche", "La sonde nomme le jeu")
+    LINE = "La page affiche 3"
+    ROLES = {"author": {"provider": "claude-standard", "supplier": "anthropic"},
+             "evaluator": {"provider": "codex", "supplier": "openai"}, "same_provider": False,
+             "other_declared": ["openai"]}
+    PRODUCT = {"dataset": "content", "address": "http://127.0.0.1:41001", "state_file": "/state/content.json"}
+
+    def open_evaluation(self, commit=None, environment=None, roles=None):
+        return self.ok("open-evaluation", CONVOY, T1, "--commit", commit or self.REVIEWED, "--file",
+                       self.json_file("evaluation-request.json",
+                                      {"roles": roles or self.ROLES, "environment": environment or [self.PRODUCT]}))
+
+    def captured(self, piece="evaluation.seen", commit=None, ticket=T1):
+        """The fingerprint bin/evidence-capture writes for a piece captured at `commit`."""
+        self.ok("add-evidence", CONVOY, ticket, "--piece", piece, "--digest", DIGEST, "--commit", commit or self.REVIEWED)
+        return piece
+
+    def states(self, commit=None, **changes):
+        """Every state « observed », each on a captured piece."""
+        piece = self.captured(commit=commit)
+        content = {
+            "commit": commit or self.REVIEWED, "recorded_by": "delivery-evaluator-fx",
+            "criteria": [{"number": number, "text": text, "state": "observed", "evidence": piece}
+                         for number, text in enumerate(self.CRITERIA, start=1)],
+            "demonstration_line": {"text": self.LINE, "state": "observed", "evidence": piece},
+        }
+        content.update(changes)
+        return content
+
+    def states_file(self, content):
+        return self.json_file("evaluation.json", content)
+
+    def record_evaluation(self, content=None):
+        return self.ok("record-evaluation", CONVOY, T1, "--file", self.states_file(content or self.states()))
+
+    def evaluation(self, expect=0):
+        return self.ticket(self.show(expect=expect), T1)["evaluation"]
+
+    def opened_evaluation(self):
+        self.finished_slice()
+        self.open_evaluation()
+
+    def finished_prefactoring(self):
+        """A marked prefactoring whose author has finished at REVIEWED."""
+        commit = self.REVIEWED
+        self.ok("mark", CONVOY)
+        self.ok("set-branch", CONVOY, T1, "--branch", "ticket/t1")
+        self.sealed_records(commit)
+        self.ok("set-handoff", CONVOY, T1, "--file", self.handoff_file(commit=commit))
+        self.ok("set-exit", CONVOY, T1, "--exit", "finished")
+        return commit
+
+    def test_open_evaluation_freezes_the_criteria_and_the_demonstration_line_of_the_approved_ticket(self):
+        self.finished_slice()
+
+        self.open_evaluation()
+
+        evaluation = self.evaluation()
+        request = evaluation["request"]
+        self.assertEqual((self.REVIEWED, list(self.CRITERIA), self.LINE),
+                         (request["commit"], request["criteria"], request["demonstration_line"]))
+        self.assertEqual((self.ROLES, [self.PRODUCT], []), (request["roles"], request["environment"], request["launches"]))
+        self.assertEqual([self.PRODUCT["state_file"]], evaluation["live"])
+        self.assertEqual({"verdict": None, "outcome": None, "commit": None, "not_observed": [], "unobservable": []},
+                         evaluation["state"])
+
+    def test_open_evaluation_twice_writes_nothing_more_and_new_products_keep_the_launches(self):
+        self.opened_evaluation()
+        self.ok("launch-evaluation", CONVOY, T1, "--bead", "fx-e1")
+        self.assertEqual({}, self.open_evaluation()["written"])
+
+        other = {**self.PRODUCT, "address": "http://127.0.0.1:41002", "state_file": "/state/content-2.json"}
+        self.open_evaluation(environment=[other])
+
+        evaluation = self.evaluation()
+        self.assertEqual(([other], ["fx-e1"]), (evaluation["request"]["environment"],
+                                                [launch["bead"] for launch in evaluation["request"]["launches"]]))
+        self.assertEqual([other["state_file"], self.PRODUCT["state_file"]], evaluation["live"])
+
+    def test_open_evaluation_refusals_write_nothing(self):
+        self.finished_slice()
+        request = self.json_file("evaluation-request.json", {"roles": self.ROLES, "environment": [self.PRODUCT]})
+        for content, mention in (
+            ({"roles": self.ROLES}, "environnement d'évaluation absent"),
+            ({"roles": self.ROLES, "environment": [{**self.PRODUCT, "address": "http://example.org"}]}, "adresse du produit lancé"),
+            ({"roles": self.ROLES, "environment": [{"dataset": "content", "address": self.PRODUCT["address"]}]},
+             "environnement d'évaluation mal formé"),
+            ({"environment": [self.PRODUCT]}, "relevé des rôles"),
+            ({"roles": {**self.ROLES, "same_provider": None}, "environment": [self.PRODUCT]}, "incohérent"),
+            ({"roles": self.ROLES, "environment": [self.PRODUCT], "criteria": ["autre"]}, "champs inconnus"),
+        ):
+            with self.subTest(mention=mention):
+                self.assert_refused_and_nothing_written(
+                    "open-evaluation", CONVOY, T1, "--commit", self.REVIEWED, "--file",
+                    self.json_file("refused-request.json", content), mention=mention)
+        self.assert_refused_and_nothing_written(
+            "open-evaluation", CONVOY, T1, "--commit", self.CORRECTED, "--file", request, mention="Ticket Handoff")
+        self.assert_refused_and_nothing_written(
+            "open-evaluation", CONVOY, T1, "--commit", "HEAD", "--file", request, mention="commit de l'évaluation")
+
+    def test_open_evaluation_refuses_a_ticket_that_is_not_finished_or_has_no_criterion(self):
+        self.marked_slice()
+        self.review_commits()
+        request = self.json_file("evaluation-request.json", {"roles": self.ROLES, "environment": [self.PRODUCT]})
+        self.assert_refused_and_nothing_written(
+            "open-evaluation", CONVOY, T1, "--commit", self.REVIEWED, "--file", request, mention="n'est pas terminé")
+
+        self.finished_slice()
+        self.edit_bead(T1, description="## What to build\n\nrien d'observable\n")
+        self.assert_refused_and_nothing_written(
+            "open-evaluation", CONVOY, T1, "--commit", self.REVIEWED, "--file", request,
+            mention="aucun critère d'acceptation")
+
+    def test_open_evaluation_refuses_a_prefactoring(self):
+        commit = self.finished_prefactoring()
+
+        self.assert_refused_and_nothing_written(
+            "open-evaluation", CONVOY, T1, "--commit", commit, "--file",
+            self.json_file("evaluation-request.json", {"roles": self.ROLES, "environment": [self.PRODUCT]}),
+            mention="aucune session d'Evaluator")
+
+    def test_launch_evaluation_records_two_launches_and_refuses_a_third(self):
+        self.finished_slice()
+        self.assert_refused_and_nothing_written("launch-evaluation", CONVOY, T1, "--bead", "fx-e1", mention="rien à lancer")
+        self.open_evaluation()
+        self.assert_refused_and_nothing_written("launch-evaluation", CONVOY, T1, "--bead", "pas un bead", mention="mal formé")
+
+        self.ok("launch-evaluation", CONVOY, T1, "--bead", "fx-e1")
+        self.ok("launch-evaluation", CONVOY, T1, "--bead", "fx-e2")
+
+        self.assertEqual(["fx-e1", "fx-e2"], [launch["bead"] for launch in self.evaluation()["request"]["launches"]])
+        self.assert_refused_and_nothing_written("launch-evaluation", CONVOY, T1, "--bead", "fx-e3", mention="une seule relance")
+
+    def test_record_evaluation_computes_a_favorable_verdict_when_everything_is_observed(self):
+        self.opened_evaluation()
+
+        answer = self.record_evaluation()
+
+        self.assertEqual(("favorable", "favorable"), (answer["outcome"], answer["verdict"]))
+        evaluation = self.evaluation()
+        self.assertNotIn("request", evaluation)
+        (round_,) = evaluation["rounds"]
+        self.assertEqual(("evaluation", self.REVIEWED, "delivery-evaluator-fx", self.ROLES),
+                         tuple(round_[name] for name in ("kind", "commit", "recorded_by", "roles")))
+        self.assertEqual([{"dataset": "content", "address": self.PRODUCT["address"]}], round_["environment"])
+        self.assertEqual([(1, self.CRITERIA[0], "observed"), (2, self.CRITERIA[1], "observed")],
+                         [(item["number"], item["text"], item["state"]) for item in round_["criteria"]])
+        verdict = self.ticket(self.show(), T1)["verdicts"]["evaluation"]
+        self.assertEqual(("favorable", self.REVIEWED), (verdict["state"], verdict["commit"]))
+
+    def test_record_evaluation_computes_the_outcome_of_each_refusal(self):
+        not_observed = {"state": "not_observed", "reason": "le nombre n'est pas sur la page"}
+        by_criterion = {"state": "unobservable", "cause": "criterion", "reason": "aucun point d'entrée ne le sert"}
+        by_environment = {"state": "unobservable", "cause": "environment", "reason": "le produit ne répond plus"}
+        for first, second, outcome, verdict in (
+            (not_observed, {}, "return_to_author", "unfavorable"),
+            (by_criterion, {}, "planning_exception", "unfavorable"),
+            (by_criterion, not_observed, "planning_exception", "unfavorable"),
+            (by_environment, not_observed, "return_to_author", "unfavorable"),
+            (by_environment, {}, "environment_outage", None),
+        ):
+            with self.subTest(outcome=outcome, first=first["state"], second=second.get("state")):
+                # Each case on a convoy and a repository of its own.
+                self.seed()
+                self.__dict__.pop("_review_commits", None)
+                shutil.rmtree(self.repo, ignore_errors=True)
+                self.opened_evaluation()
+                content = self.states()
+                content["criteria"][0].update(first)
+                content["criteria"][1].update(second)
+
+                answer = self.record_evaluation(content)
+
+                self.assertEqual((outcome, verdict), (answer["outcome"], answer["verdict"]))
+                shown = self.ticket(self.show(), T1)
+                self.assertEqual(outcome, shown["evaluation"]["state"]["outcome"])
+                if verdict is None:
+                    # An outage is not a refusal: no verdict is written.
+                    self.assertNotIn("evaluation", shown["verdicts"])
+                    self.assertEqual([{"what": "critère 1", "cause": "environment"}],
+                                     shown["evaluation"]["state"]["unobservable"])
+                else:
+                    self.assertEqual(verdict, shown["verdicts"]["evaluation"]["state"])
+
+    def test_record_evaluation_refuses_what_is_outside_its_contract_and_writes_nothing(self):
+        self.opened_evaluation()
+        valid = self.states()
+
+        def changed(**criterion):
+            content = json.loads(json.dumps(valid))
+            content["criteria"][0].update(criterion)
+            return content
+
+        without_evidence = changed()
+        del without_evidence["criteria"][0]["evidence"]
+        removed = json.loads(json.dumps(valid))
+        del removed["criteria"][1]
+        twice = json.loads(json.dumps(valid))
+        twice["criteria"].append(dict(twice["criteria"][0]))
+        other_commit = self.captured("evaluation.other", commit=self.CORRECTED)
+        for content, mention in (
+            ({**valid, "verdict": "favorable"}, "le verdict est calculé par du code, jamais donné par l'Evaluator"),
+            ({**valid, "outcome": "favorable"}, "le verdict est calculé par du code"),
+            ({**valid, "note": "tout va bien"}, "champ inconnu : note"),
+            ({**valid, "commit": self.CORRECTED}, "porte sur le commit"),
+            ({**valid, "recorded_by": ""}, "session de l'Evaluator"),
+            (changed(state="partially_observed"), "état hors de la liste fermée"),
+            (without_evidence, "état sans Evidence Record valide"),
+            (changed(evidence="evaluation.absent"), "n'a pas d'empreinte sur le ticket"),
+            (changed(evidence=other_commit), "non au commit évalué"),
+            (changed(text="Le nombre est visible"), "critère 1 reformulé"),
+            (removed, "critère 2 retiré"),
+            (twice, "deux états rendus"),
+            ({**valid, "criteria": valid["criteria"] + [{"number": 3, "text": "x", "state": "observed",
+                                                         "evidence": "evaluation.seen"}]},
+             "un critère que le ticket approuvé n'a pas"),
+            ({**valid, "demonstration_line": {**valid["demonstration_line"], "text": "La page répond"}},
+             "ligne de démonstration reformulé"),
+            ({key: value for key, value in valid.items() if key != "demonstration_line"},
+             "ligne de démonstration : aucun état rendu"),
+            (changed(state="not_observed"), "sans raison"),
+            (changed(reason="tout est là"), "une raison ne se donne pas"),
+            (changed(state="unobservable", reason="rien"), "sans cause dans la liste fermée"),
+            (changed(state="unobservable", reason="rien", cause="author"), "sans cause dans la liste fermée"),
+            (changed(cause="criterion"), "une cause ne se donne qu'avec"),
+        ):
+            with self.subTest(mention=mention):
+                self.assert_refused_and_nothing_written(
+                    "record-evaluation", CONVOY, T1, "--file", self.states_file(content), mention=mention)
+
+    def test_record_evaluation_refuses_criteria_changed_on_the_ticket_since_the_request(self):
+        self.opened_evaluation()
+        content = self.states()
+        self.edit_bead(T1, description="## Acceptance criteria\n\n- [ ] Le nombre s'affiche\n")
+
+        self.assert_refused_and_nothing_written(
+            "record-evaluation", CONVOY, T1, "--file", self.states_file(content),
+            mention="ne sont plus ceux de la demande d'évaluation")
+
+    def test_record_evaluation_without_an_open_request_is_refused(self):
+        self.finished_slice()
+
+        self.assert_refused_and_nothing_written(
+            "record-evaluation", CONVOY, T1, "--file", self.states_file(self.states()),
+            mention="aucune évaluation n'est demandée")
+
+    def test_an_evaluation_already_made_at_a_commit_is_not_opened_again_unless_it_was_an_outage(self):
+        self.opened_evaluation()
+        content = self.states()
+        content["criteria"][0].update(state="unobservable", cause="environment", reason="le produit ne répond plus")
+        self.record_evaluation(content)
+
+        self.open_evaluation()
+        self.record_evaluation()
+
+        self.assertEqual(["environment_outage", "favorable"], [r["outcome"] for r in self.evaluation()["rounds"]])
+        self.assert_refused_and_nothing_written(
+            "open-evaluation", CONVOY, T1, "--commit", self.REVIEWED, "--file",
+            self.json_file("evaluation-request.json", {"roles": self.ROLES, "environment": [self.PRODUCT]}),
+            mention="déjà évalué")
+
+    def test_record_startup_records_that_the_product_of_a_prefactoring_starts(self):
+        commit = self.finished_prefactoring()
+        piece = self.captured("evaluation.startup", commit=commit)
+        environment = [{"dataset": "content", "address": self.PRODUCT["address"]}]
+
+        answer = self.ok("record-startup", CONVOY, T1, "--commit", commit, "--piece", piece, "--file",
+                         self.json_file("startup.json", {"environment": environment}))
+
+        self.assertEqual(("startup", "favorable", "favorable"), (answer["kind"], answer["outcome"], answer["verdict"]))
+        (round_,) = self.evaluation()["rounds"]
+        self.assertEqual((True, piece, environment), (round_["started"], round_["evidence"], round_["environment"]))
+        self.assertEqual("favorable", self.ticket(self.show(), T1)["verdicts"]["evaluation"]["state"])
+
+    def test_record_startup_records_a_product_that_does_not_start_as_unfavorable(self):
+        commit = self.finished_prefactoring()
+
+        answer = self.ok("record-startup", CONVOY, T1, "--commit", commit, "--detail", "la sonde ne répond pas")
+
+        self.assertEqual(("return_to_author", "unfavorable"), (answer["outcome"], answer["verdict"]))
+        evaluation = self.evaluation()
+        self.assertEqual((False, "la sonde ne répond pas"), (evaluation["rounds"][0]["started"], evaluation["rounds"][0]["detail"]))
+        self.assertEqual(["démarrage du produit"], evaluation["state"]["not_observed"])
+
+    def test_record_startup_refusals_write_nothing(self):
+        commit = self.finished_prefactoring()
+        environment = self.json_file("startup.json", {"environment": [{"dataset": None, "address": self.PRODUCT["address"]}]})
+        for args, mention in (
+            (("--commit", commit), "précision du démarrage manqué"),
+            (("--commit", commit, "--piece", "evaluation.absent", "--file", environment), "sans Evidence Record valide"),
+            (("--commit", commit, "--piece", self.captured("evaluation.startup", commit=commit), "--detail", "x"), "s'excluent"),
+            (("--commit", commit, "--piece", "evaluation.startup"), "illisible"),
+            (("--commit", self.CORRECTED, "--detail", "x"), "Ticket Handoff"),
+        ):
+            with self.subTest(mention=mention):
+                self.assert_refused_and_nothing_written("record-startup", CONVOY, T1, *args, mention=mention)
+
+    def test_a_product_that_starts_is_not_the_evaluation_of_a_slice_but_one_that_does_not_start_refuses_it(self):
+        self.opened_evaluation()
+        piece = self.captured("evaluation.startup")
+        self.assert_refused_and_nothing_written(
+            "record-startup", CONVOY, T1, "--commit", self.REVIEWED, "--piece", piece, "--file",
+            self.json_file("startup.json", {"environment": [{"dataset": None, "address": self.PRODUCT["address"]}]}),
+            mention="ne vaut évaluation que pour un prefactoring")
+
+        self.ok("record-startup", CONVOY, T1, "--commit", self.REVIEWED, "--detail", "la copie propre ne démarre pas")
+
+        evaluation = self.evaluation()
+        self.assertNotIn("request", evaluation)
+        self.assertEqual("unfavorable", evaluation["state"]["verdict"])
+
+    def test_release_evaluation_forgets_the_stopped_products_and_keeps_those_an_open_evaluation_runs_on(self):
+        self.opened_evaluation()
+        self.assert_refused_and_nothing_written(
+            "release-evaluation", CONVOY, T1, "--state-file", self.PRODUCT["state_file"], mention="une évaluation est ouverte")
+        self.assert_refused_and_nothing_written("release-evaluation", CONVOY, T1, mention="relevé de lancement absent")
+        self.assert_refused_and_nothing_written(
+            "release-evaluation", CONVOY, T1, "--state-file", "/state/unknown.json", mention="produit lancé inconnu")
+        self.record_evaluation()
+
+        self.ok("release-evaluation", CONVOY, T1, "--state-file", self.PRODUCT["state_file"])
+
+        self.assertNotIn("live", self.evaluation())
+
+    def test_release_evaluation_withdraws_the_open_evaluation_with_its_products_when_asked(self):
+        self.opened_evaluation()
+        self.ok("launch-evaluation", CONVOY, T1, "--bead", "fx-e1")
+        content = self.states()
+
+        self.ok("release-evaluation", CONVOY, T1, "--state-file", self.PRODUCT["state_file"], "--withdraw")
+
+        evaluation = self.evaluation()
+        self.assertEqual(([], False, False), (evaluation["rounds"], "request" in evaluation, "live" in evaluation))
+        # What the session of the withdrawn evaluation hands in later is refused.
+        self.assert_refused_and_nothing_written(
+            "record-evaluation", CONVOY, T1, "--file", self.states_file(content), mention="aucune évaluation n'est demandée")
+
+    def test_the_products_of_a_stopped_ticket_are_released_and_nothing_else_is_recorded_on_it(self):
+        self.opened_evaluation()
+        self.ok("stop-ticket", CONVOY, T1, "--reason", "evaluation_no_result", "--detail", "aucun état en 2 lancements")
+
+        self.ok("release-evaluation", CONVOY, T1, "--state-file", self.PRODUCT["state_file"])
+
+        self.assertNotIn("live", self.evaluation())
+        self.assert_refused_and_nothing_written(
+            "record-evaluation", CONVOY, T1, "--file", self.states_file(self.states()), mention="ticket arrêté")
+        self.assertEqual("evaluation_no_result", self.ticket(self.show(), T1)["stop"]["reason"])
+
+    def test_an_evaluation_written_outside_the_command_is_a_state_without_rule(self):
+        self.finished_slice()
+        self.edit_tracker(T1, **{"gc.flow.evaluation": json.dumps({"rounds": [{"verdict": "favorable"}]})})
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+
+        self.assertIn("unruled", ticket["evaluation"])
+        self.assertEqual(["gc.flow.evaluation"], [entry["field"] for entry in ticket["unruled"]])
+
+    def test_an_evaluation_on_an_unmarked_convoy_writes_nothing(self):
+        before = self.tracker.read_text()
+        request = self.json_file("evaluation-request.json", {"roles": self.ROLES, "environment": [self.PRODUCT]})
+        for command in (
+            ("open-evaluation", CONVOY, T1, "--commit", self.REVIEWED, "--file", request),
+            ("launch-evaluation", CONVOY, T1, "--bead", "fx-e1"),
+            ("record-evaluation", CONVOY, T1, "--file", request),
+            ("record-startup", CONVOY, T1, "--commit", self.REVIEWED, "--detail", "x"),
+            ("release-evaluation", CONVOY, T1, "--state-file", "/state/content.json"),
+        ):
+            proc = self.run_tool(*command)
+            self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+            self.assertEqual(before, self.tracker.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

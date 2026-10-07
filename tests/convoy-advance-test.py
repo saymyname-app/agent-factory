@@ -26,6 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin" / "convoy-advance"
 STATE = ROOT / "bin" / "convoy-state"
+FIXTURE = Path("tests") / "fixtures" / "delivery-fixture-city"
 DOOR = ROOT / "bin" / "dispatch-door"
 ESCALATION = ROOT / "bin" / "escalation-door"
 INTEGRATION_TOOL = ROOT / "bin" / "spec-integration"
@@ -732,12 +733,45 @@ class ConvoyAdvanceTest(unittest.TestCase):
         (self.root / "config" / "project-descriptors").mkdir()
         (self.root / "config" / "project-descriptors" / "fx.json").write_text(json.dumps(descriptor))
         (self.root / ".gitignore").write_text("config/\n")
+        # The product the profile launches: what an evaluation is made on.
+        shutil.copytree(ROOT / FIXTURE, self.root / FIXTURE, ignore=shutil.ignore_patterns("__pycache__"))
         self.git("init", "-q", "-b", "main")
         self.git("add", "-A")
         self.git("commit", "-q", "-m", "base")
         self.run_ok(INTEGRATION_TOOL, "open", CONVOY, "--repo", self.root, "--protected", "main")
         self.code_reviewed("favorable")
+        self.evaluated()
         return self.git("rev-parse", "main")
+
+    def evaluated(self, *plan, timeout_seconds=3600):
+        """The Ticket Evaluation of the finished tickets (T15): its settings,
+        where the launch records of the products are kept, and what the
+        Evaluator session does at each launch
+        (tests/fixtures/ticket-evaluation/evaluator), the last one repeated."""
+        (self.tmp / "evaluation-plan.json").write_text(json.dumps(list(plan or ({},))))
+        self.env.update({
+            "TICKET_EVALUATION_DISPATCH_DOOR_BIN": str(ROOT / "tests" / "fixtures" / "ticket-evaluation" / "evaluator"),
+            "TICKET_EVALUATION_STATE_DIR": str(self.tmp / "launches"),
+            "TICKET_EVALUATION_FAKE_LOG": str(self.tmp / "evaluation-door.log"),
+            "TICKET_EVALUATION_FAKE_PLAN": str(self.tmp / "evaluation-plan.json"),
+        })
+        self.addCleanup(self.stop_every_product)
+        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
+        settings["evaluation"] = {"formula": "mol-ticket-evaluation", "role": "evaluator", "rig": "fx-rig",
+                                  "timeout_seconds": timeout_seconds, "start_timeout_seconds": 15}
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+
+    def stop_every_product(self):
+        for record in (self.tmp / "launches").rglob("*.json"):
+            subprocess.run((str(ROOT / "bin" / "project-launch"), "stop", "--state-file", str(record)),
+                           env=self.env, capture_output=True)
+
+    def evaluation_of(self, answer, convoy=CONVOY):
+        return next(c for c in answer["convoys"] if c["id"] == convoy).get("evaluation")
+
+    def evaluation_launches(self):
+        log = self.tmp / "evaluation-door.log"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
     def code_reviewed(self, *plan, timeout_seconds=3600):
         """The code review of the finished tickets (T14): its settings, the
@@ -932,6 +966,42 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertFalse(answer["ok"])
         self.assertIn("rôle relecteur", self.code_review_of(answer)["refused"][0]["reason"])
         self.assertEqual([], self.integration_of(answer)["merged"])
+        self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
+
+    # --- a finished ticket is evaluated on the launched product before its merge (T15) ---
+
+    def test_a_pass_checks_that_the_product_of_a_finished_prefactoring_starts_and_merges_it(self):
+        self.integrated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, tip, "favorable")], [(entry["ticket"], entry["commit"], entry["verdict"])
+                                                    for entry in self.evaluation_of(answer)["started"]])
+        # No Evaluator session for a prefactoring, and the review is sent by the same pass.
+        self.assertEqual([], self.evaluation_launches())
+        self.assertEqual([T1], [entry["ticket"] for entry in self.code_review_of(answer)["launched"]])
+        evaluation = self.shown(T1)["evaluation"]
+        self.assertEqual(("startup", True, tip), tuple(evaluation["rounds"][0][name] for name in ("kind", "started", "commit")))
+        self.assertEqual([T1], [entry["id"] for entry in self.integration_of(answer)["merged"]])
+        self.assertEqual([], list((self.tmp / "launches").rglob("*.json")))
+        self.assertIsNone(self.evaluation_of(self.advance(CONVOY)))
+
+    def test_an_evaluation_that_cannot_run_fails_the_pass_and_merges_nothing(self):
+        base = self.integrated()
+        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
+        del settings["evaluation"]
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+        self.advance(CONVOY)
+        self.finished(T1)
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED)
+
+        self.assertFalse(answer["ok"])
+        self.assertIn("la Ticket Evaluation n'est pas réglée", self.evaluation_of(answer)["error"])
+        self.assertEqual([], self.integration_of(answer)["merged"])
+        self.assertIn("aucune Ticket Evaluation rendue", self.integration_of(answer)["waiting"][0]["reason"])
         self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
 
     # --- review of the criterion tests left without result (T13) ---------------
