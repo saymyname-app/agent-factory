@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin" / "convoy-state"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
+GATE_REPORT = ROOT / "tests" / "fixtures" / "convoy-state" / "ticket-end-report.json"
 
 CONVOY = "fx-convoy"
 T1 = "fx-t1"
@@ -161,8 +162,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
         self.ok("bump-counter", CONVOY, "--counter", "end_rounds")
         self.ok("add-evidence", CONVOY, T1, "--piece", "red_proof", "--digest", DIGEST, "--commit", tip)
-        self.ok("record-gate", CONVOY, T1, "--gate", "ticket_end", "--commit", tip)
-        self.edit_tracker(T1, status="closed")
+        self.ok("close-ticket", CONVOY, T1, "--commit", tip, "--file", GATE_REPORT)
 
         shown = self.show()
         self.assertTrue(shown["ok"])
@@ -471,10 +471,13 @@ class ConvoyStateTest(unittest.TestCase):
         self.started_ticket()
         self.assert_refused_and_nothing_written("set-exit", CONVOY, T1, "--exit", "done", mention="done")
 
-    def test_gate_outside_the_closed_list_or_ticket_end_without_commit_is_refused(self):
-        self.started_ticket()
+    def test_gate_outside_the_closed_list_or_ticket_end_without_its_verdicts_is_refused(self):
+        tip = self.started_ticket()
         self.assert_refused_and_nothing_written("record-gate", CONVOY, T1, "--gate", "by-hand", mention="by-hand")
-        self.assert_refused_and_nothing_written("record-gate", CONVOY, T1, "--gate", "ticket_end", mention="commit")
+        # T19: the record of the ticket-end gate is its nine verdicts, written with the closing.
+        self.assert_refused_and_nothing_written(
+            "record-gate", CONVOY, T1, "--gate", "ticket_end", "--commit", tip, mention="close-ticket")
+        self.assert_refused_and_nothing_written("close-ticket", CONVOY, T1, "--file", GATE_REPORT, mention="commit")
 
     def test_negative_or_non_integer_counter_is_refused(self):
         self.started_ticket()
@@ -1193,8 +1196,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.assert_refused_and_nothing_written(*record, mention="branche d'intégration")
 
         self.ok("set-integration", CONVOY, "--branch", "integration/fx-spec", "--protected", "main", "--base", tip)
-        self.ok("record-gate", CONVOY, T1, "--gate", "ticket_end", "--commit", tip)
-        self.edit_tracker(T1, status="closed")
+        self.ok("close-ticket", CONVOY, T1, "--commit", tip, "--file", GATE_REPORT)
         self.assert_refused_and_nothing_written(*record, mention="fermé")
 
     def test_invalidate_verdicts_marks_them_invalid_and_counts_one_resume(self):
@@ -2781,6 +2783,195 @@ class ConvoyStateTest(unittest.TestCase):
             proc = self.run_tool(*command)
             self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
             self.assertEqual(before, self.tracker.read_text())
+
+    # --- T19: the criteria frozen with the approved graph ------------------------
+
+    APPROVED_CRITERIA = "## Acceptance criteria\n\n- [ ] Point d'entrée : GET / — Observable : liste — Faux si : une ligne manque"
+    GRAPH_ONE, GRAPH_TWO = "sha256:" + "11" * 32, "sha256:" + "22" * 32
+
+    def describe(self, ticket_id, description, **metadata):
+        """What the publication door writes of a ticket: its description
+        and the digest of the approved graph it is published under."""
+        state = self.tracker_state()
+        state["beads"][ticket_id]["description"] = description
+        state["beads"][ticket_id].setdefault("metadata", {}).update(metadata)
+        self.tracker.write_text(json.dumps(state))
+
+    def frozen(self, ticket_id=T1):
+        return self.ticket(self.show(), ticket_id)["criteria_frozen"]
+
+    def test_mark_freezes_the_fingerprint_of_the_criteria_with_the_digest_of_the_approved_graph(self):
+        self.init_repo()
+        self.describe(T1, self.APPROVED_CRITERIA, **{"gc.graph_digest": self.GRAPH_ONE})
+
+        self.ok("mark", CONVOY)
+
+        frozen = self.frozen()
+        self.assertRegex(frozen["digest"], r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual((self.GRAPH_ONE, frozen["digest"], self.GRAPH_ONE, True),
+                         tuple(frozen[name] for name in ("graph_digest", "current", "current_graph_digest", "identical")))
+        # A ticket the door published under no digest is frozen all the same.
+        self.assertEqual((None, True), (self.frozen(T2)["graph_digest"], self.frozen(T2)["identical"]))
+
+    def test_a_criterion_edited_on_the_ticket_is_no_longer_the_frozen_one_and_a_new_mark_does_not_refreeze_it(self):
+        self.init_repo()
+        self.describe(T1, self.APPROVED_CRITERIA, **{"gc.graph_digest": self.GRAPH_ONE})
+        self.ok("mark", CONVOY)
+        approved = self.frozen()["digest"]
+
+        self.describe(T1, self.APPROVED_CRITERIA + " ou deux")
+        self.ok("mark", CONVOY)
+
+        frozen = self.frozen()
+        self.assertEqual(approved, frozen["digest"])
+        self.assertNotEqual(approved, frozen["current"])
+        self.assertFalse(frozen["identical"])
+
+    def test_a_ticket_published_again_under_another_approved_digest_is_frozen_again_by_the_mark(self):
+        self.init_repo()
+        self.describe(T1, self.APPROVED_CRITERIA, **{"gc.graph_digest": self.GRAPH_ONE})
+        self.ok("mark", CONVOY)
+        approved = self.frozen()["digest"]
+
+        # A patch of the graph: the door rewrites the ticket under the new digest.
+        self.describe(T1, self.APPROVED_CRITERIA + " ou deux", **{"gc.graph_digest": self.GRAPH_TWO})
+        self.assertFalse(self.frozen()["identical"])
+        self.ok("mark", CONVOY)
+
+        frozen = self.frozen()
+        self.assertNotEqual(approved, frozen["digest"])
+        self.assertEqual((self.GRAPH_TWO, True), (frozen["graph_digest"], frozen["identical"]))
+
+    def test_the_criteria_of_a_closed_ticket_are_never_frozen_again(self):
+        tip = self.started_ticket()
+        self.ok("close-ticket", CONVOY, T1, "--commit", tip, "--file", GATE_REPORT)
+        before = self.tracker_state()["beads"][T1]["metadata"]["gc.flow.criteria"]
+
+        self.describe(T1, self.APPROVED_CRITERIA, **{"gc.graph_digest": self.GRAPH_TWO})
+        self.ok("mark", CONVOY)
+
+        self.assertEqual(before, self.tracker_state()["beads"][T1]["metadata"]["gc.flow.criteria"])
+
+    def test_a_frozen_fingerprint_written_outside_the_command_is_a_state_without_rule(self):
+        self.started_ticket()
+        self.edit_tracker(T1, **{"gc.flow.criteria": json.dumps({"digest": "à la main"})})
+
+        shown = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+
+        self.assertIn("unruled", shown["criteria_frozen"])
+        self.assertEqual(["gc.flow.criteria"], [entry["field"] for entry in shown["unruled"]])
+        self.assert_refused_and_nothing_written("mark", CONVOY, mention="gc.flow.criteria")
+
+    # --- T19: the reference of the Validated Prototype of an interface ticket -----
+
+    def prototype_section(self, **fields):
+        lines = {"branche": "prototype/fx", "commit": "ab" * 20, "chemin": "prototype/", "états": "empty, content",
+                 **fields}
+        return "## Validated Prototype\n\n" + "\n".join(
+            f"- {name} : {value}" for name, value in lines.items() if value is not None) + "\n- Prototype Fold : ce ticket"
+
+    def test_show_renders_the_reference_of_the_validated_prototype_of_an_interface_ticket(self):
+        self.started_ticket()
+        self.describe(T1, self.APPROVED_CRITERIA + "\n\n" + self.prototype_section() + "\n\n## Target rigs\n\nfx-rig")
+
+        shown = self.show()
+
+        ticket = self.ticket(shown, T1)
+        self.assertTrue(ticket["interface"])
+        self.assertEqual({"branch": "prototype/fx", "commit": "ab" * 20, "path": "prototype", "states": ["empty", "content"]},
+                         ticket["validated_prototype"])
+        # A ticket without the section touches no screen.
+        other = self.ticket(shown, T2)
+        self.assertEqual((False, None), (other["interface"], other["validated_prototype"]))
+
+    def test_a_reference_of_the_validated_prototype_that_is_incomplete_is_a_state_without_rule(self):
+        self.started_ticket()
+        for broken, mention in (({"commit": None}, "commit"), ({"commit": "pas-un-sha"}, "commit"),
+                                ({"états": " , "}, "état")):
+            with self.subTest(broken=broken):
+                self.describe(T1, self.prototype_section(**broken))
+
+                ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+
+                self.assertIn(mention, ticket["validated_prototype"]["unruled"])
+                self.assertEqual(["description"], [entry["field"] for entry in ticket["unruled"]])
+
+    # --- T19: the ticket-end gate closes a ticket -------------------------------------
+
+    def gate_report(self, **changes):
+        report = json.loads(GATE_REPORT.read_text())
+        report.update(changes)
+        path = self.tmp / "gate-report.json"
+        path.write_text(json.dumps(report, ensure_ascii=False))
+        return path
+
+    def test_close_ticket_writes_the_record_of_the_gate_and_the_closed_status_in_one_tracker_write(self):
+        tip = self.started_ticket()
+        self.write_log.write_text("")
+
+        answer = self.ok("close-ticket", CONVOY, T1, "--commit", tip, "--file", GATE_REPORT)
+
+        self.assertTrue(answer["closed"])
+        writes = [line for line in self.write_log.read_text().splitlines() if line.strip()]
+        self.assertEqual(1, len(writes), writes)
+        ticket = self.ticket(self.show(), T1)
+        record = ticket["gates"]["ticket_end"]
+        self.assertEqual(("closed", tip, "ticket-end/v1", list(range(1, 10))),
+                         (ticket["status"], record["commit"], record["version"],
+                          [entry["number"] for entry in record["conditions"]]))
+        self.assertEqual({"pass"}, {entry["verdict"] for entry in record["conditions"]})
+        self.assertEqual([], ticket["unruled"])
+
+    def test_close_ticket_refuses_a_record_that_is_not_the_nine_passing_verdicts_of_the_known_version(self):
+        tip = self.started_ticket()
+        conditions = json.loads(GATE_REPORT.read_text())["conditions"]
+        failing = [dict(entry, verdict="fail") if entry["number"] == 6 else entry for entry in conditions]
+        renamed = [dict(entry, name="autre") if entry["number"] == 2 else entry for entry in conditions]
+        silent = [dict(entry, detail=" ") if entry["number"] == 9 else entry for entry in conditions]
+        for changes, mention in (
+            ({"version": "ticket-end/v0"}, "version"),
+            ({"conditions": conditions[:8]}, "neuf"),
+            ({"conditions": failing}, "condition 6"),
+            ({"conditions": renamed}, "condition 2"),
+            ({"conditions": silent}, "condition 9"),
+            ({"closed_by": "auteur"}, "closed_by"),
+        ):
+            with self.subTest(mention=mention):
+                self.assert_refused_and_nothing_written(
+                    "close-ticket", CONVOY, T1, "--commit", tip, "--file", self.gate_report(**changes), mention=mention)
+        self.assert_refused_and_nothing_written(
+            "close-ticket", CONVOY, T1, "--commit", tip, "--file", self.tmp / "absent.json", mention="relevé")
+        self.assert_refused_and_nothing_written(
+            "close-ticket", CONVOY, T1, "--commit", "pas-un-sha", "--file", GATE_REPORT, mention="commit")
+        self.assertEqual("in_progress", self.ticket(self.show(), T1)["status"])
+
+    def test_close_ticket_refuses_a_ticket_already_closed_or_withdrawn(self):
+        tip = self.started_ticket()
+        self.ok("close-ticket", CONVOY, T1, "--commit", tip, "--file", GATE_REPORT)
+
+        self.assert_refused_and_nothing_written(
+            "close-ticket", CONVOY, T1, "--commit", tip, "--file", GATE_REPORT, mention="déjà fermé")
+
+        self.ok("record-gate", CONVOY, T2, "--gate", "withdrawn")
+        self.assert_refused_and_nothing_written(
+            "close-ticket", CONVOY, T2, "--commit", tip, "--file", GATE_REPORT, mention="relevé de fermeture")
+
+    def test_a_ticket_end_record_without_its_nine_verdicts_is_a_state_without_rule(self):
+        tip = self.started_ticket()
+        self.edit_tracker(T1, status="closed", **{"gc.flow.gate.ticket_end": json.dumps({"at": "2026-01-01T00:00:00Z",
+                                                                                           "commit": tip})})
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+
+        self.assertIn("gc.flow.gate.ticket_end", [entry["field"] for entry in ticket["unruled"]])
+
+    def test_close_ticket_on_an_unmarked_convoy_writes_nothing(self):
+        before = self.tracker.read_text()
+
+        proc = self.run_tool("close-ticket", CONVOY, T1, "--commit", ABSENT_COMMIT, "--file", GATE_REPORT)
+
+        self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(before, self.tracker.read_text())
 
 
 if __name__ == "__main__":

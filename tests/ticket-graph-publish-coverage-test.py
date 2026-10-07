@@ -21,6 +21,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+GATE_REPORT = ROOT / "tests" / "fixtures" / "convoy-state" / "ticket-end-report.json"
 PUBLISHER = ROOT / "bin" / "ticket-graph-publish"
 CONVOY_STATE = ROOT / "bin" / "convoy-state"
 PLANNING_EXCEPTION = ROOT / "bin" / "planning-exception"
@@ -750,8 +751,7 @@ class PatchDoorTest(Harness):
     def test_unapproved_repair_in_front_of_a_ticket_whose_blocker_is_delivered(self):
         # T11: a ticket at work has every blocker delivered, and a revision
         # never carries a delivered ticket. T2 gains the repair and keeps T1.
-        self.state_tool("record-gate", self.convoy, self.ids["T1"], "--gate", "ticket_end", "--commit", "0" * 40)
-        self.edit_bead(self.ids["T1"], status="closed")
+        self.state_tool("close-ticket", self.convoy, self.ids["T1"], "--commit", "0" * 40, "--file", str(GATE_REPORT))
         draft = self.revision(self.REPAIR, keep=("T2",))
         self.ticket(draft, "T2")["blocked_by"] = ["R1"]
         self.propose(draft, approved=False)
@@ -837,14 +837,12 @@ class PatchDoorTest(Harness):
                 self.assertTrue(any(mention in line for line in self.refusal_lines(proc, ticket_id)), proc.stderr)
 
     def test_refuses_a_patch_that_touches_a_delivered_ticket(self):
-        self.state_tool("record-gate", self.convoy, self.ids["T4"], "--gate", "ticket_end", "--commit", "a" * 40)
-        self.edit_bead(self.ids["T4"], status="closed")
+        self.state_tool("close-ticket", self.convoy, self.ids["T4"], "--commit", "a" * 40, "--file", str(GATE_REPORT))
         self.propose(self.revision(self.SLICE))
         self.assert_refused_and_nothing_written(self.patch, "T4")
 
     def test_coverage_counts_a_delivered_ticket_the_revision_does_not_carry(self):
-        self.state_tool("record-gate", self.convoy, self.ids["T4"], "--gate", "ticket_end", "--commit", "a" * 40)
-        self.edit_bead(self.ids["T4"], status="closed")
+        self.state_tool("close-ticket", self.convoy, self.ids["T4"], "--commit", "a" * 40, "--file", str(GATE_REPORT))
         self.propose(self.revision(self.SLICE, keep=("T1", "T2", "T3")))
 
         result = self.patched()
@@ -1039,8 +1037,7 @@ class PatchDoorTest(Harness):
     def test_refuses_to_withdraw_a_delivered_ticket(self):
         register = self.register("resolved")
         self.amend_spec(self.SPEC_WITHOUT_STORY_3)
-        self.state_tool("record-gate", self.convoy, self.ids["T4"], "--gate", "ticket_end", "--commit", "a" * 40)
-        self.edit_bead(self.ids["T4"], status="closed")
+        self.state_tool("close-ticket", self.convoy, self.ids["T4"], "--commit", "a" * 40, "--file", str(GATE_REPORT))
         self.propose(self.withdrawal())
         self.assert_refused_and_nothing_written(
             lambda: self.patch(extra=("--planning-exception-register", str(register))), "T4", "livré")

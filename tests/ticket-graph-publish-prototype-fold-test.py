@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+GATE_REPORT = ROOT / "tests" / "fixtures" / "convoy-state" / "ticket-end-report.json"
 _loaded = importlib.util.spec_from_file_location(
     "ticket_graph_publish_coverage_harness", ROOT / "tests" / "ticket-graph-publish-coverage-test.py")
 _coverage = importlib.util.module_from_spec(_loaded)
@@ -315,8 +316,7 @@ class PrototypeFoldPatchTest(FoldHarness):
     def test_added_repair_needs_no_edge_to_a_prototype_fold_already_delivered(self):
         # A repair written at the end of the Spec restores an interface story
         # once the Fold is merged: there is nothing left to wait for.
-        self.state_tool("record-gate", self.convoy, self.ids["T2"], "--gate", "ticket_end", "--commit", "a" * 40)
-        self.edit_bead(self.ids["T2"], status="closed")
+        self.state_tool("close-ticket", self.convoy, self.ids["T2"], "--commit", "a" * 40, "--file", str(GATE_REPORT))
         draft = self.conformant()
         draft["tickets"] = [copy.deepcopy(REPAIR)]
         self.propose(draft, approved=False)

@@ -82,6 +82,15 @@
 # resolution failure is logged, never fatal -- the bead is already closed
 # on verified proof, and the proposal can be resolved by hand with the
 # same door.
+#
+# T19 (af-iefuud, Spec af-wf4w5r §9): a ticket of a convoy that carries the
+# new-flow mark is closed by the ticket-end gate (bin/ticket-end, run by
+# bin/convoy-advance) on its nine conditions, and by nothing else: a merged
+# pull request and a green CI are not among them, and its author never
+# closes it. No closing form of this door closes such a ticket; the refusal
+# is made before any Beads write. Parking (--outcome blocked) closes nothing
+# and stays as it was. A ticket without the mark is closed here exactly as
+# before.
 
 set -Eeuo pipefail
 
@@ -90,6 +99,7 @@ GC_BIN="${GC_BIN:-gc}"
 GH_BIN="${GH_BIN:-gh}"
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 PROPOSAL_DOOR_BIN="${PROPOSAL_DOOR_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/proposal-door}"
+CONVOY_STATE_BIN="${CONVOY_STATE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/convoy-state}"
 # shellcheck source=lib/project_registry.sh
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/project_registry.sh"
 
@@ -121,6 +131,9 @@ gc.work_outcome=<outcome>, and for shipped gc.work_commit/gc.work_branch) and
 closes the bead -- except --outcome blocked, which parks it instead (status
 blocked, gc.outcome=blocked; dependents stay gated; escalation-door repondre
 reopens it).
+
+No closing form closes a ticket of a new-flow convoy (gc.flow.mark): only the
+ticket-end gate does (bin/ticket-end, run by bin/convoy-advance).
 
 No form closes a bead whose gc.needs_benjamin is still active (set and not
 "none"): answer or clear it through escalation-door first. If <bead-id> already carries its own gc.pr_url (a previous
@@ -193,6 +206,18 @@ refuse_close_on_active_needs_benjamin() {  # bead-id bead-json
   question=$(bead_object "$2" | jq -r '.metadata["gc.needs_benjamin"] // "" | tostring')
   [[ -z $question || $question == none ]] \
     || die "$1 carries an active NEEDS BENJAMIN ($question); refusing to close it. Answer it with 'escalation-door repondre $1 <lettre>' or clear it with 'escalation-door clear $1' first; to wait for the answer use --outcome blocked, which parks the bead without closing it."
+}
+
+# The mark is read by bin/convoy-state, on the bead already in hand (no
+# second tracker read): 4 = no mark, 0 = marked, 3 = a mark it does not know.
+refuse_close_on_new_flow_ticket() {  # bead-id bead-json
+  local status=0
+  bead_object "$2" | "$CONVOY_STATE_BIN" ticket "$1" --bead-json - >/dev/null 2>&1 || status=$?
+  case "$status" in
+    4) ;;
+    0|3) die "$1 is a ticket of a new-flow convoy; refusing to close it. Only the ticket-end gate closes it, on its nine conditions (bin/ticket-end, run by bin/convoy-advance; Spec af-wf4w5r §9): its author never does, and a merged PR with a green CI does not. See what is missing with 'ticket-end check <convoy> $1 --repo <dir>'." ;;
+    *) die "could not tell through convoy-state whether $1 is a ticket of a new-flow convoy; refusing to close it." ;;
+  esac
 }
 
 requires_pr_contract() {
@@ -483,6 +508,7 @@ main() {
       [[ -z $classification && -z $planning_exception_id ]] \
         || die "--classification/--planning-exception-id only apply to --outcome blocked|abandoned."
     fi
+    [[ $outcome == blocked ]] || refuse_close_on_new_flow_ticket "$bead_id" "$bead_json"
     [[ $outcome == blocked ]] || refuse_close_on_active_needs_benjamin "$bead_id" "$bead_json"
     local linked_url linked_pair linked_repo linked_number resolved_workflow
     linked_url=$(metadata_value "$bead_json" "gc.pr_url")
@@ -516,6 +542,7 @@ main() {
   fi
 
   require_command "$GH_BIN"
+  refuse_close_on_new_flow_ticket "$bead_id" "$bead_json"
   refuse_close_on_active_needs_benjamin "$bead_id" "$bead_json"
 
   [[ -n $repo ]] || die "--repo owner/repository is required; refusing to close $bead_id without it."
