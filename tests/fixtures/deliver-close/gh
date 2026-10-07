@@ -53,6 +53,8 @@ case "$scenario" in
   *) printf 'unknown DELIVER_SCENARIO: %s\n' "$scenario" >&2; exit 64 ;;
 esac
 
+title_json=$(printf '%s' "${DELIVER_CLOSE_PR_TITLE:-do-work: af-work}" | jq -Rs .)
+body_json=$(printf '%s' "${DELIVER_CLOSE_PR_BODY:-}" | jq -Rs .)
 cat <<JSON
-{"number":$number,"state":"$state","mergedAt":"$merged_at","headRefOid":"$head_ref","headRefName":"$head_branch","baseRefName":"$base_branch","mergeCommit":{"oid":"$merge_oid"},"url":"https://github.com/$repo/pull/$pr_arg"}
+{"number":$number,"state":"$state","mergedAt":"$merged_at","headRefOid":"$head_ref","headRefName":"$head_branch","baseRefName":"$base_branch","mergeCommit":{"oid":"$merge_oid"},"url":"https://github.com/$repo/pull/$pr_arg","title":$title_json,"body":$body_json,"commits":[{"messageHeadline":"${DELIVER_CLOSE_PR_COMMIT_HEADLINE:-do-work: af-work}","messageBody":""}]}
 JSON

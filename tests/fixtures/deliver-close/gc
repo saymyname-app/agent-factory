@@ -12,6 +12,12 @@ if [[ ${1:-} == bd && ${2:-} == show ]]; then
   exit 0
 fi
 
+# Pending proposals, for the post-close resolution (DELIVER_CLOSE_PROPOSALS_JSON).
+if [[ ${1:-} == bd && ${2:-} == list ]]; then
+  printf '%s\n' "${DELIVER_CLOSE_PROPOSALS_JSON:-[]}"
+  exit 0
+fi
+
 [[ ${1:-} == bd && ${2:-} == update ]] || exit 64
 shift 2
 

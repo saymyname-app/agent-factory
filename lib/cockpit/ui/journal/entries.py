@@ -22,9 +22,11 @@ in the codebase today and this module recognises all three:
   * ``bin/escalation-door``'s ``repondre``: ``"RÉPONSE: %s — %s"``
     (lettre, option_texte) — always resolves the NEEDS BENJAMIN it
     answers.
-  * ``bin/proposal-door``'s ``accepter``/``rejeter``: ``"PROPOSITION
-    ACCEPTÉE par %s — passe à planifier"`` / ``"PROPOSITION REJETÉE par
-    %s — %s"`` (acteur[, raison]) — both resolve the proposal.
+  * ``bin/proposal-door``'s ``accepter``/``rejeter``/``resoudre``:
+    ``"PROPOSITION ACCEPTÉE par %s — passe à planifier"`` /
+    ``"PROPOSITION REJETÉE par %s — %s"`` / ``"PROPOSITION RÉSOLUE par %s
+    — %s"`` (acteur[, raison | preuve]) — all three resolve the proposal;
+    the third is the one a merged delivery writes, with its proof.
 
 A bead accumulates one comment per action over its lifetime (Beads
 comments are append-only), so a bead resolved, reopened (a new NEEDS
@@ -50,6 +52,7 @@ from dataclasses import dataclass
 REPONSE_RE = re.compile(r"^RÉPONSE: (?P<lettre>.+?) — (?P<texte>.*)$")
 PROPOSITION_ACCEPTEE_RE = re.compile(r"^PROPOSITION ACCEPTÉE par (?P<acteur>.+?) — passe à planifier$")
 PROPOSITION_REJETEE_RE = re.compile(r"^PROPOSITION REJETÉE par (?P<acteur>.+?) — (?P<raison>.*)$")
+PROPOSITION_RESOLUE_RE = re.compile(r"^PROPOSITION RÉSOLUE par (?P<acteur>.+?) — (?P<preuve>.*)$")
 COCKPIT_TRACE_RE = re.compile(
     r"^Cockpit: (?P<quoi>.+?) sur (?P<sur_quoi>.+?) \((?P<detail>.*?)\) — (?P<quand>.+?), par (?P<acteur>.+)$"
 )
@@ -135,6 +138,16 @@ def parse_trace_note(bead_id, comment):
         return JournalEntry(
             bead_id=bead_id,
             quoi="proposition rejetée — %s" % match.group("raison"),
+            quand=parsed["created_at"] or "",
+            par=parsed["author"] or match.group("acteur"),
+            voie="proposal-door",
+        )
+
+    match = PROPOSITION_RESOLUE_RE.match(text)
+    if match:
+        return JournalEntry(
+            bead_id=bead_id,
+            quoi="proposition résolue par une livraison — %s" % match.group("preuve"),
             quand=parsed["created_at"] or "",
             par=parsed["author"] or match.group("acteur"),
             voie="proposal-door",
