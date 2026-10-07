@@ -71,6 +71,37 @@ def _json_file(holder, content):
     return path
 
 
+def prove_red(env, repo, convoy, ticket, commit, base):
+    """The red step of a slice proven at `commit`: its sealed report, then
+    the step (bin/tdd-step red)."""
+    capture(env, repo, convoy, ticket, "tdd_red", commit, {
+        "verdict": "red", "base": base, "seam_mode": "black_box",
+        "tests": [{"id": TEST_ID, "outcome": "failed", "entry_points": ["GET /"]}]})
+    state(env, "set-tdd", convoy, ticket, "--step", "red", "--commit", commit, "--base", base)
+
+
+def prove_freeze(env, repo, convoy, ticket):
+    """The criterion tests of a slice read favorably by their reviewer at
+    the red commit (bin/test-review), then frozen there (bin/tdd-step
+    freeze), each with what the ticket does not carry yet."""
+    shown = _ticket(env, repo, convoy, ticket)
+    known, filed = shown.get("tdd") or {}, shown.get("evidence") or {}
+    red = known["red"]["commit"]
+    if not known.get("freeze"):
+        files = {"tests/test_critere.py": DIGEST}
+        with tempfile.TemporaryDirectory(prefix="ticket-proofs-") as holder:
+            state(env, "open-test-review", convoy, ticket, "--commit", red, "--file",
+                  _json_file(holder, {"files": files, "criteria": {"1": [TEST_ID]}}))
+            state(env, "record-test-review", convoy, ticket, "--file", _json_file(holder, {
+                "commit": red, "files": files, "tests": {TEST_ID: {"state": "favorable"}},
+                "recorded_by": "delivery-test-reviewer-fx"}))
+        state(env, "set-tdd", convoy, ticket, "--step", "freeze", "--commit", red)
+    frozen = (known.get("freeze") or {}).get("commit") or red
+    if "tdd_freeze" not in filed:
+        capture(env, repo, convoy, ticket, "tdd_freeze", frozen, {"frozen": frozen})
+    return frozen
+
+
 def prove_tdd(env, repo, convoy, ticket, tip, base, green=True):
     """The TDD of a ticket proven up to `tip`, each step with its sealed
     report: for a prefactoring the unchanged regression at the tip; for a
@@ -89,24 +120,13 @@ def prove_tdd(env, repo, convoy, ticket, tip, base, green=True):
         return {"step": "prefactoring", "base": start, "commit": tip, "piece": "tdd_prefactoring"}, None
     red = (known.get("red") or {}).get("commit") or tip
     start = (known.get("red") or {}).get("base") or base
-    if "tdd_red" not in filed:
+    if not known.get("red"):
+        prove_red(env, repo, convoy, ticket, red, start)
+    elif "tdd_red" not in filed:
         capture(env, repo, convoy, ticket, "tdd_red", red, {
             "verdict": "red", "base": start, "seam_mode": "black_box",
             "tests": [{"id": TEST_ID, "outcome": "failed", "entry_points": ["GET /"]}]})
-    if not known.get("red"):
-        state(env, "set-tdd", convoy, ticket, "--step", "red", "--commit", red, "--base", start)
-    if not known.get("freeze"):
-        files = {"tests/test_critere.py": DIGEST}
-        with tempfile.TemporaryDirectory(prefix="ticket-proofs-") as holder:
-            state(env, "open-test-review", convoy, ticket, "--commit", red, "--file",
-                  _json_file(holder, {"files": files, "criteria": {"1": [TEST_ID]}}))
-            state(env, "record-test-review", convoy, ticket, "--file", _json_file(holder, {
-                "commit": red, "files": files, "tests": {TEST_ID: {"state": "favorable"}},
-                "recorded_by": "delivery-test-reviewer-fx"}))
-        state(env, "set-tdd", convoy, ticket, "--step", "freeze", "--commit", red)
-    frozen = (known.get("freeze") or {}).get("commit") or red
-    if "tdd_freeze" not in filed:
-        capture(env, repo, convoy, ticket, "tdd_freeze", frozen, {"frozen": frozen})
+    frozen = prove_freeze(env, repo, convoy, ticket)
     if known.get("amendment") and "tdd_amendment" not in filed:
         capture(env, repo, convoy, ticket, "tdd_amendment", known["amendment"]["commit"], {"amended": True})
     proof = {"step": "red", "base": start, "commit": red, "piece": "tdd_red"}
