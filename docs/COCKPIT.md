@@ -396,6 +396,28 @@ would refuse it): a NEEDS BENJAMIN can still reach the inbox as a repli.
 
 To undo: remove the `cockpit_can_display` call in `bin/proposal-door`.
 
+## After an action, the list is right at once (2026-10-07)
+
+Intent (Benjamin, his words, 2026-10-07): « l'item reste tout pareil dans
+la liste, et je peux même re accepter. […] Il faut afficher l'item dans le
+bon état ensuite, ou l'enlever. »
+Mechanism (agent interpretation): the action was written, but the page
+reads the read model, which only saw it at the next regular read (20 s for
+Beads, 30 s for the projects), and the page did not reload either. Now
+`POST /api/actions/<action>` re-reads the bead-backed sources (`beads`,
+`projets`, `journal`) before it answers, and says so (`rafraichi`). The
+page script (`ui/actions/render.py`, `settle`) then, for every action that
+writes: says a refusal instead of staying silent; on success writes the
+result on the request, removes its controls, and reloads when `rafraichi`
+is true -- the reloaded list shows the request gone or in its new state.
+When the re-read did not finish within 8 s, the request stays marked as
+handled until the next regular read. It does not change what any action
+writes, nor the exit-at-source rule.
+
+`continuer`, `pas_bon_vers_agent` and `notifier_test` write nothing on a
+bead and trigger no re-read. To undo: drop the `rafraichi` line in
+`core/server.py`.
+
 ## Journal of resolved requests (af-mjfvwx)
 
 `GET /journal` (linked under « Ce qui t'attend ») and `GET /api/journal`
