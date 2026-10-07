@@ -137,7 +137,12 @@ finish() {  # TICKET COMMIT
   state set-exit "$CONVOY" "$1" --exit finished
 }
 judge() {  # TICKET COMMIT
-  state set-verdict "$CONVOY" "$1" --kind code_review --state favorable --commit "$2"
+  # The code review as a reviewer session records it (bin/code-review, T14):
+  # the merge takes no ticket without it. The evaluation as its verdict alone.
+  jq -n --arg commit "$2" '{commit: $commit, recorded_by: "delivery-reviewer-trial", findings: [], answers: {}}' \
+    > "$TRIAL/review-$1.json"
+  state open-code-review "$CONVOY" "$1" --kind review --commit "$2" --base "$BASE"
+  state record-code-review "$CONVOY" "$1" --file "$TRIAL/review-$1.json"
   state set-verdict "$CONVOY" "$1" --kind evaluation --state favorable --commit "$2"
 }
 

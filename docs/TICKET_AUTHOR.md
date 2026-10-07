@@ -15,7 +15,9 @@ Only `bin/convoy-advance` starts the formula (`config/delivery-flow.json`,
 `start.formula`), through `bin/dispatch-door --role author --convoy`. Nobody
 slings it by hand.
 
-Not in this ticket: the code review and the evaluation (T14, T15), the
+What follows the exit « terminé » is not the author's: the code review of
+the ticket is sent by the flow to a reviewer session (T14,
+`docs/CODE_REVIEW.md`). Not delivered yet: the evaluation (T15), the
 ticket-end gate (T19), the resume of a parked, blocked or interrupted ticket
 (T20).
 
@@ -81,7 +83,10 @@ of `integration/<spec>`, and records the branch (`set-branch`) and the
 session (`set-session`). It is refused for a ticket the dispatch door did
 not start, for a closed ticket, when the integration branch is not open,
 and for a session that already took another ticket of the convoy: one fresh
-session per ticket.
+session per ticket. It also writes the model the author role runs on
+(`bin/convoy-state set-model`, role `author`): what the code review compares
+the model of its reviewer with. When that model cannot be read nothing is
+written, and the review says so.
 
 **`demonstrate`** launches the product at the head commit of the ticket
 branch through `bin/project-launch`, captures the demonstration line on it

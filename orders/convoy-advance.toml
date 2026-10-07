@@ -15,8 +15,13 @@
 # the integration branch of its Spec, through bin/spec-integration, with tests
 # on the merged result. A ticket returned to its author is an outcome, not an
 # order failure; a merge pass that could not run fails the order.
+# T14 (af-96cusm, §6): before that merge, the same pass has the code of each
+# finished ticket reviewed, through bin/code-review settle (a reviewer
+# session per review, one relaunch, then the stop of the ticket). A ticket
+# without a favorable verdict is not merged; that is an outcome, not an
+# order failure.
 [order]
-description = "Starts the ready tickets of every open convoy that carries the new-flow mark, in dependency order and under the factory-wide ceiling N (config/delivery-flow.json), through bin/dispatch-door; merges one finished ticket per convoy into the integration branch of its Spec through bin/spec-integration; stops a convoy in a state without rule and raises one factory incident for it. No agent takes part."
+description = "Starts the ready tickets of every open convoy that carries the new-flow mark, in dependency order and under the factory-wide ceiling N (config/delivery-flow.json), through bin/dispatch-door; has the code of each finished ticket reviewed through bin/code-review, then merges one reviewed ticket per convoy into the integration branch of its Spec through bin/spec-integration; stops a convoy in a state without rule and raises one factory incident for it. No agent takes part."
 trigger = "condition"
 interval = "1m"
 check = "/home/benja/agent-factory/bin/convoy-advance --check-only"

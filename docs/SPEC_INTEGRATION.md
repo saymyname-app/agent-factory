@@ -1,4 +1,4 @@
-# Spec integration branch and serial merge (T18, Spec af-wf4w5r §4 and §8)
+# Spec integration branch and serial merge (T18, T14, Spec af-wf4w5r §4, §6 and §8)
 
 ## Status and purpose
 
@@ -57,11 +57,23 @@ convoy that names no Spec, a protected branch the repository does not have.
 
 One pass reads the convoy through `bin/convoy-state show` and takes its
 tickets in the convoy's order. A ticket is **ready** when its author has
-finished at the tip of its branch: Ticket Exit `finished`, and a complete
-Ticket Handoff taken at that very tip. The other tickets are left alone;
+finished at the tip of its branch — Ticket Exit `finished`, and a complete
+Ticket Handoff taken at that very tip — and its **code review is favorable
+at that tip** (below). The other tickets are left alone;
 those worth a word are listed under `waiting` with the reason (parked,
 stopped, an unfavorable verdict, a verdict to replay, an author still at
-work, a ticket already returned to its author).
+work, a code review that is absent, open or unfavorable, a ticket already
+returned to its author).
+
+**No merge without a favorable code review** (T14, Spec §6,
+`docs/CODE_REVIEW.md`). A finished ticket is merged only when the last
+round of its code review (`code_review.state` of `bin/convoy-state show`)
+is favorable, was given at the tip, no round is open, and the verdict
+`code_review` is favorable and valid at the tip. A ticket with no review, a
+review still running or left without output, a Blocking Finding without a
+favorable verdict (named in the reason), or a favorable verdict written
+without the review it comes from, stays under `waiting`: nothing of it is
+merged, nothing is written.
 
 Passes on one convoy are serialised by a lock (`SPEC_INTEGRATION_LOCK_DIR`):
 two merges are never made at once, and each merge is made on the result of
@@ -112,11 +124,12 @@ test, no merge. A pass with no ready ticket does not read the profile.
 
 ## Limits
 
-- **Which verdicts a merge requires is not decided here.** A ticket with no
-  code review and no Ticket Evaluation recorded is merged once its author
-  has finished; a recorded verdict must be favorable and valid. The
-  ticket-end gate (T19) makes the merge command refuse while its conditions
-  1 to 5 and 7 to 9 are not met.
+- **Of the conditions of the ticket-end gate, only the code review is
+  required here** (condition 9, without Benjamin's recorded override, which
+  is T17's). A ticket with no Ticket Evaluation recorded is merged once it
+  is reviewed; a recorded evaluation verdict must be favorable and valid.
+  The ticket-end gate (T19) makes the merge command refuse while its
+  conditions 1 to 5, 7 and 8 are not met.
 - **Starting the fresh author session of a returned ticket is not in this
   command.** The return is recorded (`merge` on the ticket, listed by the
   pass); resuming a ticket is T20's, and the start formula is T12's (`docs/TICKET_AUTHOR.md`).

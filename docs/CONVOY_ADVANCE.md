@@ -1,4 +1,4 @@
-# Convoy Advance (T04, T34, T18, Spec af-wf4w5r §0 rules 3 and 5, §4)
+# Convoy Advance (T04, T34, T18, T13, T14, Spec af-wf4w5r §0 rules 3 and 5, §4, §6)
 
 ## Status and purpose
 
@@ -59,7 +59,8 @@ them never count the same free place.
 
 ## Finished tickets are merged by the pass (T18)
 
-Once the starts are made, and outside their lock, the pass hands each convoy
+Once the starts are made and the reviews settled (below), and outside the
+lock of the starts, the pass hands each convoy
 that has an integration branch and a finished ticket not merged yet to
 `bin/spec-integration merge <convoy> --repo <project repository> --profile
 <project profile> --limit 1` (`docs/SPEC_INTEGRATION.md`): one ticket per
@@ -99,9 +100,30 @@ The settings file also names what the door receives for a start:
 and the role `author` (`docs/TICKET_AUTHOR.md`). With no formula the
 command refuses and starts nothing.
 
+## The code of a finished ticket is reviewed before its merge (T14)
+
+Before the merge, the pass hands each convoy that has a finished ticket not
+merged yet — or a ticket its code review stopped and that did not reach the
+operator yet — to `bin/code-review settle <convoy> --repo <project
+repository>` (`docs/CODE_REVIEW.md`). For each ticket finished and green at
+the tip of its branch, the command opens the review at that tip and sends it
+to a session of the reviewer role; it sends a review left without result
+once more, stops the ticket when the relaunch gave none either and raises
+the stop through `bin/escalation-door`; and it sends the answers given to
+the Blocking Findings of a review to a second reviewer session. The merge
+that follows in the same pass takes a ticket only when its review is
+favorable at its tip, so a ticket whose verdict was already there is merged
+by that pass, and the others wait.
+
+The convoy's entry then carries `code_review` (`launched`, `relaunched`,
+`pending`, `waiting`, `stopped`, `escalated`, `deferred`, `refused`). A
+launch the door deferred is retried by the next pass; a settlement that
+could not run, or a launch the door refused, fails the pass (exit 1). A
+stopped convoy (« état sans règle ») is settled no more than it is started.
+
 ## Test reviews left without result (T13)
 
-Once the starts and the merge are made, the pass hands each convoy that has
+Once the starts are made, and before the merge, the pass hands each convoy that has
 a review of criterion tests open, or a ticket that review stopped and that
 did not reach the operator yet, to `bin/test-review settle`
 (`docs/TEST_REVIEW.md`): a review whose launch gave no result in
@@ -122,14 +144,14 @@ per role, the tickets awaiting a session, and per convoy the tickets
 `started`, `waiting` (with the reason: blocker ids, or the ceiling),
 `deferred` (the door deferred: low memory, hot path held — retried on the
 next pass) and `refused` (the door refused, with its reason), plus
-`integration` when the pass ran a merge and `test_review` when it settled
-reviews of criterion tests. A stopped convoy carries `signal`,
+`integration` when the pass ran a merge, `test_review` when it settled
+reviews of criterion tests and `code_review` when it settled code reviews. A stopped convoy carries `signal`,
 `unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass or the settlement of the test reviews could not run |
+| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass or the settlement of the test reviews or of the code reviews could not run |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 

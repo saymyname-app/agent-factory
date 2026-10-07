@@ -11,7 +11,8 @@ recipe (T06) or is the Prototype Fold (T36), its acceptance criteria (T10,
 read only), its branch and Ticket Exit, its verdicts (each tied to a
 commit), its counters, its evidence fingerprints and its gate records, the
 steps of its TDD and its stop (T10), the review of its criterion tests
-before the freeze (T13), its Ticket Handoff and its parking (T11), the
+before the freeze (T13), its code review and the model each delivery role
+ran on (T14), its Ticket Handoff and its parking (T11), the
 integration branch of the convoy's Spec and what the merge command did of a
 ticket (T18), and the convoy's open factory incident. No other script
 invents a `gc.flow.*` field: a missing field is added here.
@@ -35,6 +36,11 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state open-test-review   CONVOY TICKET --commit SHA --file PATH
     convoy-state launch-test-review CONVOY TICKET --bead BEAD
     convoy-state record-test-review CONVOY TICKET --file PATH
+    convoy-state set-model    CONVOY TICKET --role ROLE --agent NAME --provider NAME --model NAME
+    convoy-state open-code-review    CONVOY TICKET --kind review|judgement --commit SHA --base SHA [--file PATH]
+    convoy-state launch-code-review  CONVOY TICKET --bead BEAD
+    convoy-state record-code-review  CONVOY TICKET --file PATH
+    convoy-state respond-code-review CONVOY TICKET --file PATH
     convoy-state set-handoff  CONVOY TICKET --file PATH
     convoy-state park         CONVOY TICKET --cause CAUSE --detail LINE
     convoy-state set-integration CONVOY --branch NAME --protected NAME --base SHA
