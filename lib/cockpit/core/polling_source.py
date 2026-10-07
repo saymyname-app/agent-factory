@@ -38,10 +38,15 @@ class PollingSource:
             ok = self._poll_once()
             self._stop.wait(self._interval if ok else min(self._interval, RETRY_SECONDS))
 
+    @property
+    def source(self):
+        return self._source
+
     def poll_now(self):
         """Force an immediate read, bypassing the interval wait (spec .65:
-        the health zone's "revérifier maintenant" button, T16)."""
-        self._poll_once()
+        the health zone's "revérifier maintenant" button, T16; and the
+        re-read after an Operator Action). True when the read succeeded."""
+        return self._poll_once()
 
     def _poll_once(self):
         try:

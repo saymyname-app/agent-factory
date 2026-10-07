@@ -119,6 +119,60 @@ SCRIPT = """
     menu.hidden = !open;
     if (menu.previousElementSibling) { menu.previousElementSibling.hidden = open; }
   }
+  function say(text) {
+    var toast = document.createElement('div');
+    toast.className = 'cockpit-undo-toast cockpit-repondu-toast';
+    toast.setAttribute('role', 'status');
+    toast.textContent = text;
+    document.body.appendChild(toast);
+    setTimeout(function () { toast.remove(); }, 10000);
+  }
+  // After an action that wrote (2026-10-07): the request must not stay
+  // listed as if nothing happened, still offering the same gesture. A
+  // refusal is said; a success marks the request as handled (controls
+  // removed, the result written on it), then the page reloads -- the
+  // server re-read its sources before answering (`rafraichi`), so the
+  // reloaded list shows the request gone or in its new state. Without
+  // `rafraichi` the mark stays until the next regular read.
+  function settle(el, beadId, fallback) {
+    return function (resp) {
+      return resp.json().then(function (data) {
+        if (!resp.ok || !data || data.error) {
+          say('Action refusée : ' + ((data && data.error) || resp.status));
+          return data;
+        }
+        var text = data.display || fallback || 'Fait';
+        say(text);
+        var holders = [];
+        var article = el && el.closest ? el.closest('.cockpit-request') : null;
+        if (!article && beadId) { article = document.getElementById('d-' + beadId); }
+        if (article) { holders.push(article); } else if (el) { holders.push(el.parentNode || el); }
+        var row = beadId ? document.querySelector('.li[data-id="' + beadId + '"]') : null;
+        if (row) { row.classList.add('cockpit-done'); }
+        holders.forEach(function (holder) {
+          holder.classList.add('cockpit-done');
+          holder.setAttribute('data-done', 'true');
+          var controls = holder.querySelectorAll('[data-action]');
+          for (var i = 0; i < controls.length; i++) {
+            controls[i].removeAttribute('data-action');
+            controls[i].setAttribute('aria-disabled', 'true');
+            if ('disabled' in controls[i]) { controls[i].disabled = true; }
+          }
+          var note = document.createElement('div');
+          note.className = 'chip ack cockpit-done-note';
+          note.textContent = text;
+          var title = holder.querySelector('.cockpit-request-quoi');
+          if (title && title.parentNode) {
+            title.parentNode.insertBefore(note, title.nextSibling);
+          } else {
+            holder.appendChild(note);
+          }
+        });
+        if (data.rafraichi) { setTimeout(function () { window.location.reload(); }, 1500); }
+        return data;
+      });
+    };
+  }
   function withUndo(label, run) {
     var cancelled = false;
     var toast = document.createElement('div');
@@ -142,6 +196,13 @@ SCRIPT = """
   // sends confirm:true; any other click disarms it first.
   var TWO_STEP_ACTIONS = ['repondre', 'accepter_proposition', 'rejeter_proposition', 'reporter_proposition', 'relancer',
                           'accepter_chantier'];
+  var TWO_STEP_DONE = {
+    accepter_proposition: 'Proposition acceptée, à planifier',
+    rejeter_proposition: 'Proposition refusée',
+    reporter_proposition: 'Proposition reportée',
+    relancer: 'Relance demandée',
+    accepter_chantier: 'Chantier accepté'
+  };
   var CONFIRM_WINDOW_MS = 10000;
   var armed = null; // {el, timer}
 
@@ -191,22 +252,11 @@ SCRIPT = """
         var body = bodyFor(action, el);
         body.confirm = true;
         disarm();
-        post(action, body).then(function (resp) {
-          return resp.json();
-        }).then(function (data) {
-          // répondre's immediate feedback (spec .26: "la demande affiche
-          // « répondu b à HH:MM, en cours de traitement par l'usine »")
-          // -- a transient toast at the moment of the action, since the
-          // request itself exits the list once gc.needs_benjamin clears
-          // (builder.py: "Exit is at-source only").
-          if (data && data.display) {
-            var toast = document.createElement('div');
-            toast.className = 'cockpit-undo-toast cockpit-repondu-toast';
-            toast.textContent = data.display;
-            document.body.appendChild(toast);
-            setTimeout(function () { toast.remove(); }, 10000);
-          }
-        });
+        // répondre's immediate feedback (spec .26: "la demande affiche
+        // « répondu b à HH:MM, en cours de traitement par l'usine »"),
+        // and the same for every two-step gesture: said, written on the
+        // request, then the list re-read (see settle).
+        post(action, body).then(settle(el, body.bead_id, TWO_STEP_DONE[action]));
         return;
       }
       disarm();
@@ -232,7 +282,9 @@ SCRIPT = """
     disarm();
     var beadId = el.getAttribute('data-bead-id');
     if (action === 'acquitter') {
-      withUndo('Acquitter', function () { post('acquitter', {bead_id: beadId}); });
+      withUndo('Acquitter', function () {
+        post('acquitter', {bead_id: beadId}).then(settle(el, beadId, 'Acquittée, rappels coupés'));
+      });
     } else if (action === 'reporter_ouvrir' || action === 'reporter_fermer') {
       showReportMenu(beadId, action === 'reporter_ouvrir');
     } else if (action === 'reporter') {
@@ -248,7 +300,9 @@ SCRIPT = """
         body.custom_epoch = when;
       }
       showReportMenu(beadId, false);
-      withUndo('Reporter', function () { post('reporter', body); });
+      withUndo('Reporter', function () {
+        post('reporter', body).then(settle(el, beadId, 'Reportée'));
+      });
     } else if (action === 'notifier_test') {
       post('notifier_test', {}).then(function (resp) {
         return resp.json();
