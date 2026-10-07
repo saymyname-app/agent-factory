@@ -20,7 +20,15 @@ the same incremental pattern T11 used for ``gc``/``beads`` (core/process.py
                          gc.order_failed_at epoch.
   gc.ci_status           "red" while a ticket's CI is red; gc.ci_red_since
                          epoch.
+
+Two more read a ``proposal`` bead's class (ADR-0029, through
+:mod:`cockpit.requests.proposals`): a ``maintenance`` proposal the factory
+holds (``gc.proposal_classe=maintenance``, bin/proposal-door), and a
+proposal no door wrote (no ``gc.proposal_*`` field at all).
 """
+from datetime import datetime, timezone
+
+from cockpit.requests import proposals as _proposals
 
 
 def _float_or_none(value):
@@ -59,6 +67,38 @@ def loop_items(beads):
 
 def order_failure_items(beads):
     return _metadata_flag_items(beads, "gc.order_failed", "gc.order_failed_at")
+
+
+def maintenance_proposal_items(beads):
+    """ADR-0029 point 2: every maintenance proposal the factory is
+    correcting itself -- shown here, never in « Ce qui t'attend »."""
+    return [{"since": _epoch_or_none(item.get("since"))} for item in _proposals.maintenance_in_progress(beads)]
+
+
+def proposal_sans_champs_items(beads):
+    """ADR-0029 point 4: every pending proposal with no door-written
+    field -- an anomaly to reformulate through the door or to close."""
+    return _proposals.sans_champs(beads)
+
+
+def _epoch_or_none(value):
+    """proposal-door stamps ``gc.proposal_horodatage`` as ISO-8601 UTC;
+    the other signals above carry epoch seconds. Both read to an epoch."""
+    epoch = _float_or_none(value)
+    if epoch is not None:
+        return epoch
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
 
 
 def red_ci_items(beads):

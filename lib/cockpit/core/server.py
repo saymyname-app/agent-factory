@@ -436,6 +436,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             loops=collectors.loop_items(beads),
             order_failures=collectors.order_failure_items(beads),
             red_ci=collectors.red_ci_items(beads),
+            maintenance_proposals=collectors.maintenance_proposal_items(beads),
+            proposals_sans_champs=collectors.proposal_sans_champs_items(beads),
             extra_lines=self._project_health_lines(snapshot)
             + [
                 line
