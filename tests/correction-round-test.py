@@ -17,8 +17,12 @@ import os
 import shutil
 import subprocess
 import tempfile
+import sys
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+import ticket_proofs  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -243,14 +247,10 @@ class CorrectionRoundTest(unittest.TestCase):
 
     def finish(self, ticket, tip):
         """What stands for the author's Ticket Exit « terminé » at `tip`
-        (bin/ticket-exit), on a ticket green there (bin/tdd-step)."""
-        self.state("set-tdd", CONVOY, ticket, "--step", "green", "--commit", tip)
-        self.state("add-evidence", CONVOY, ticket, "--piece", "handoff_records", "--digest", DIGEST, "--commit", tip)
-        records = {"head": tip, "base": self.base, "files_changed": [NOTE], "deferral_markers": [],
-                   "commits": [{"commit": tip, "subject": "travail du ticket"}], "amendment": None}
-        self.state("set-handoff", CONVOY, ticket, "--file", self.json_file(
-            {"sections": SECTIONS, "partial": False, "commit": tip, "records": records}))
-        self.state("set-exit", CONVOY, ticket, "--exit", "finished")
+        (bin/ticket-exit), on a ticket green there (bin/tdd-step): each step
+        with its sealed report, the demonstration, the sealed records."""
+        ticket_proofs.finish(self.env, self.repo, CONVOY, ticket, tip, self.base, branch_of(ticket), sections=SECTIONS, records={
+            "files_changed": [NOTE], "commits": [{"commit": tip, "subject": "travail du ticket"}], "amendment": None})
 
     def finished_slice(self, ticket=SLICE):
         """A slice started through the dispatch door, whose criterion test
@@ -301,7 +301,7 @@ class CorrectionRoundTest(unittest.TestCase):
         records it (bin/ticket-evaluation, T15): the criterion observed, or
         not, each state with its piece."""
         self.open_evaluation(tip, ticket)
-        self.state("add-evidence", CONVOY, ticket, "--piece", "evaluation.seen", "--digest", DIGEST, "--commit", tip)
+        ticket_proofs.capture(self.env, self.repo, CONVOY, ticket, "evaluation.seen", tip)
         criterion = {"number": 1, "text": CRITERION, "state": "observed", "evidence": "evaluation.seen"}
         if not observed:
             criterion.update(state="not_observed", reason=NOT_SEEN)

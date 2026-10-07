@@ -149,8 +149,9 @@ out: a Planning Exception (`bin/planning-exception`,
 
 The override records a decision; it lifts nothing by itself. The finding
 keeps its unfavorable verdict (`code_review.state.unsettled`), the ticket
-stays stopped, and nothing is merged: the ticket-end gate (T19) is what
-reads `overrides` for its condition 9.
+stays stopped. Once **every** Blocking Finding left unsettled is overridden,
+the next pass merges the ticket and the ticket-end gate closes it: its
+condition 9 reads `overrides` (`docs/TICKET_END.md`).
 
 ## Stored state
 
@@ -173,8 +174,9 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
   the approver: nothing technically stops an agent from typing them. The
   record makes it visible afterwards (the same limit as the acceptance,
   Spec §11).
-- Nothing lifts a stop, and an override does not merge the ticket: the
-  ticket-end gate (T19) and the resume of a stopped ticket (T20) do.
+- Nothing lifts a stop. A ticket whose every unsettled Blocking Finding is
+  overridden is merged and closed while still carrying its stop
+  (`docs/TICKET_END.md`); resuming any other stopped ticket is T20's.
 - A Planning Exception named by the refusal of a criterion is not opened by
   this command.
 - The author role counts in the ceiling N once its session is alive; like a

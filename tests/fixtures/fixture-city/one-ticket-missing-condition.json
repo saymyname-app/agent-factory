@@ -1,0 +1,6 @@
+{
+  "contract": "agent-factory-fixture-delivery-scenario/v1",
+  "scenario_id": "one-ticket-missing-condition",
+  "inject": {"delivery": "criterion-edited"},
+  "expect": {"closed": false, "missing": [1, 6]}
+}

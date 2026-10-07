@@ -29,6 +29,7 @@ LAUNCH_TOOL = ROOT / "bin" / "project-launch"
 ESCALATION_TOOL = ROOT / "bin" / "escalation-door"
 FIXTURE = Path("tests") / "fixtures" / "delivery-fixture-city"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
+GATE_REPORT = ROOT / "tests" / "fixtures" / "convoy-state" / "ticket-end-report.json"
 
 CONVOY, SPEC = "fx-convoy", "fx-spec"
 # The graph of the Fixture City: T2 waits for T1, T3 for T2; T4 waits for nothing.
@@ -223,9 +224,9 @@ class TicketExitTest(unittest.TestCase):
         self.tracker.write_text(json.dumps(state))
 
     def close_through_gate(self, ticket_id):
-        """What stands for the flow's own ticket end (T19)."""
-        self.state("record-gate", CONVOY, ticket_id, "--gate", "ticket_end", "--commit", "0" * 40)
-        self.edit(ticket_id, status="closed")
+        """What stands for the flow's own ticket end (T19, bin/ticket-end):
+        the record of the gate, written with the closing."""
+        self.state("close-ticket", CONVOY, ticket_id, "--commit", "0" * 40, "--file", GATE_REPORT)
 
     def file(self, name, content):
         path = self.tmp / name
@@ -800,8 +801,7 @@ class TechnicallyBlockedTest(publication.Harness):
         for name in SESSION_IDENTITY:
             self.env.pop(name, None)
         # T1 is delivered, T2 is at work.
-        self.state_tool("record-gate", self.convoy, self.ids["T1"], "--gate", "ticket_end", "--commit", "0" * 40)
-        self.edit_bead(self.ids["T1"], status="closed")
+        self.state_tool("close-ticket", self.convoy, self.ids["T1"], "--commit", "0" * 40, "--file", str(GATE_REPORT))
         self.state_tool("record-gate", self.convoy, self.ids["T2"], "--gate", "dispatch")
         self.edit_bead(self.ids["T2"], status="in_progress")
 
