@@ -222,6 +222,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                     "verifie_a": r.verifie_a,
                     "incomplete": r.incomplete,
                     "missing_fields": r.missing_fields,
+                    "motifs": r.motifs,
+                    "texte_origine": r.texte_origine,
+                    "precisions": r.precisions,
                     "acquittee": r.acquittee,
                     "reportee": r.reportee,
                 }

@@ -20,6 +20,12 @@
 set -Eeuo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+# The fixture repo below gets its own copy of bin/ci-run-tests, which runs
+# the tests of $FACTORY_ROOT when that is set. Inherited from a caller that
+# ran `FACTORY_ROOT=<worktree> bin/ci-run-tests`, it sent the copy back to
+# the real battery, which reached this test again: an endless nested battery
+# that saturated the host twice on 2026-10-07 (load 25, two sessions).
+unset FACTORY_ROOT
 GATE="$REPO_ROOT/bin/factory-main-gate"
 HOOK="$REPO_ROOT/.githooks/pre-push"
 RUNNER="$REPO_ROOT/bin/ci-run-tests"
