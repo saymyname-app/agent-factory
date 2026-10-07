@@ -40,6 +40,14 @@ which launches once more a review left without result, stops the ticket
 when the relaunch gave none either, and raises the stop through
 bin/escalation-door. No author session has to be alive for that.
 
+A pass also has the code of each finished ticket reviewed before its merge
+(T14, af-96cusm; Spec §6, §8): it hands each convoy that has a finished
+ticket not merged yet to bin/code-review settle, which sends the diff of the
+ticket to a session of the reviewer role, sends it once more when the review
+gave no result, stops the ticket when the relaunch gave none either, and
+sends the answers given to its Blocking Findings to a second reviewer
+session. bin/spec-integration merges nothing without a favorable verdict.
+
 A convoy in an "état sans règle" (bin/convoy-state: a ticket started or
 closed outside its door, evidence or a counter that cannot be read) is
 stopped (T34, af-ckwina; Spec §0 rule 5): the pass starts none of its
@@ -54,7 +62,7 @@ Every answer is one JSON object on stdout. Exit status: 0 the pass is done
 (what it started is listed, possibly nothing); 1 refused or could not run,
 the dispatch door refused a ticket (named under `refused`), an incident
 could not be raised or withdrawn, or the merge pass or the settlement of
-the test reviews could not run; 3 a
+the test reviews or of the code reviews could not run; 3 a
 convoy is in an "état sans règle": nothing of it is started (0 with
 --stopped-ok once its incident is raised: what the order runs, so that a
 stopped convoy is not also an order failure);
@@ -87,6 +95,7 @@ DOOR_BIN = BIN / "dispatch-door"
 ESCALATION_BIN = BIN / "escalation-door"
 INTEGRATION_BIN = BIN / "spec-integration"
 TEST_REVIEW_BIN = BIN / "test-review"
+CODE_REVIEW_BIN = BIN / "code-review"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
 SETTINGS = ROOT / "config" / "delivery-flow.json"
 ROLES = ROOT / "config" / "delivery-roles.json"
@@ -103,6 +112,9 @@ MERGES_PER_PASS = 1
 
 # The stops the review of criterion tests writes (bin/convoy-state).
 TEST_REVIEW_STOPS = ("test_review_refused", "test_review_no_result")
+
+# The stop the code review of a ticket writes (bin/convoy-state).
+CODE_REVIEW_STOP = "code_review_no_result"
 
 UNRULED = "état sans règle"
 # bin/escalation-door refuses a field longer than this, or on several lines.
@@ -229,6 +241,21 @@ class Convoy:
         for t in self.tickets:
             review, stop = t.get("test_review") or {}, t.get("stop") or {}
             if (stop.get("reason") in TEST_REVIEW_STOPS and "raised" not in stop) or (review.get("request") and not stop):
+                due.append(t["id"])
+        return due
+
+    def code_reviews_due(self) -> list[str]:
+        """Tickets whose author has finished and that are not merged yet,
+        or that their code review stopped without the stop having reached
+        the operator: what makes a settlement of the code reviews worth
+        running."""
+        due = []
+        for t in self.tickets:
+            stop = t.get("stop") or {}
+            if stop:
+                if stop.get("reason") == CODE_REVIEW_STOP and "raised" not in stop:
+                    due.append(t["id"])
+            elif not t.get("park") and t["id"] in self.finished_unmerged():
                 due.append(t["id"])
         return due
 
@@ -519,6 +546,23 @@ def settle_test_reviews(convoy: Convoy) -> dict[str, Any] | None:
     return {name: answer[name] for name in kept if answer.get(name)}
 
 
+def settle_code_reviews(convoy: Convoy) -> dict[str, Any] | None:
+    """Spec §6, §8: code, not a session, has each finished ticket reviewed
+    before its merge, through bin/code-review. None when the convoy has no
+    finished ticket to review."""
+    if not convoy.code_reviews_due():
+        return None
+    try:
+        answer = parsed(run([str(CODE_REVIEW_BIN), "settle", convoy.id, "--repo", str(convoy.repo)]),
+                        f"code-review settle {convoy.id}")
+    except Refusal as exc:
+        return {"error": f"refus : {exc}"}
+    if not isinstance(answer, dict):
+        return {"error": f"refus : code-review settle {convoy.id} a rendu une réponse illisible"}
+    kept = ("launched", "relaunched", "pending", "waiting", "stopped", "escalated", "deferred", "refused", "error")
+    return {name: answer[name] for name in kept if answer.get(name)}
+
+
 def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     """`targets` None: every open marked convoy."""
     with advance_lock():
@@ -541,12 +585,19 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     # Outside the lock of the starts: the tests on a merged result take the
     # time they take, and bin/spec-integration holds its own lock per convoy.
     for result in results:
-        merge = None if "unruled" in result else merge_finished(convoys[result["id"]])
-        if merge is not None:
-            result["integration"] = merge
-        reviews = None if "unruled" in result else settle_test_reviews(convoys[result["id"]])
+        if "unruled" in result:
+            continue
+        # The reviews first: a ticket whose verdict is already there is
+        # merged by the same pass.
+        reviews = settle_test_reviews(convoys[result["id"]])
         if reviews is not None:
             result["test_review"] = reviews
+        code_reviews = settle_code_reviews(convoys[result["id"]])
+        if code_reviews is not None:
+            result["code_review"] = code_reviews
+        merge = merge_finished(convoys[result["id"]])
+        if merge is not None:
+            result["integration"] = merge
 
     unruled = any("unruled" in result for result in results)
     # A ticket returned or refused by the merge is an outcome of the pass; a
@@ -555,6 +606,7 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         result["refused"] or "error" in result.get("incident", {})
         or any(key in result.get("integration", {}) for key in ("error", "message"))
         or any(key in result.get("test_review", {}) for key in ("error", "refused"))
+        or any(key in result.get("code_review", {}) for key in ("error", "refused"))
         for result in results
     )
     answer: dict[str, Any] = {

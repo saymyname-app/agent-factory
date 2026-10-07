@@ -216,28 +216,49 @@ class SpecIntegrationTest(unittest.TestCase):
         self.git("checkout", "-q", "--detach", self.base)
         return tip
 
-    def finish(self, ticket, commit):
+    def finish(self, ticket, commit, reviewed=True):
         """What stands for the author's Ticket Exit « terminé » at `commit`
-        (bin/ticket-exit, T11): the sealed records, the Handoff, the exit."""
+        (bin/ticket-exit, T11): the sealed records, the Handoff, the exit;
+        and, unless `reviewed` is false, for the favorable code review that
+        follows it at that commit (bin/code-review, T14)."""
         self.state("add-evidence", CONVOY, ticket, "--piece", "handoff_records", "--digest", DIGEST, "--commit", commit)
         handoff = self.tmp / f"handoff-{ticket}.json"
         handoff.write_text(json.dumps({"sections": SECTIONS, "partial": False, "commit": commit, "records": {}}))
         self.state("set-handoff", CONVOY, ticket, "--file", handoff)
         self.state("set-exit", CONVOY, ticket, "--exit", "finished")
+        if reviewed:
+            self.reviewed(ticket, commit)
 
-    def finished(self, ticket, files, start=None):
+    def json_file(self, name, content):
+        path = self.tmp / name
+        path.write_text(json.dumps(content, ensure_ascii=False))
+        return path
+
+    def reviewed(self, ticket, commit, findings=(), session="delivery-reviewer-fx"):
+        """A round of the code review of the ticket at `commit`, as a
+        reviewer session records it: favorable unless a finding blocks."""
+        self.state("open-code-review", CONVOY, ticket, "--kind", "review", "--commit", commit, "--base", self.base)
+        return self.state("record-code-review", CONVOY, ticket, "--file", self.json_file(f"review-{ticket}.json", {
+            "commit": commit, "recorded_by": session, "findings": list(findings), "answers": {}}))
+
+    def finished(self, ticket, files, start=None, reviewed=True):
         """A ticket started through the dispatch door, with one commit on its
         branch, that its author has finished; returns that commit."""
         self.state("record-gate", CONVOY, ticket, "--gate", "dispatch")
         self.state("set-branch", CONVOY, ticket, "--branch", branch_of(ticket))
         self.edit(ticket, status="in_progress")
         tip = self.commit_on(ticket, files, start=start)
-        self.finish(ticket, tip)
+        self.finish(ticket, tip, reviewed=reviewed)
         return tip
 
     def judged(self, ticket, commit, state="favorable", kinds=("code_review", "evaluation")):
+        """The verdicts of a ticket at `commit`: the Ticket Evaluation as its
+        verdict alone, the code review as the round it comes from."""
         for kind in kinds:
-            self.state("set-verdict", CONVOY, ticket, "--kind", kind, "--state", state, "--commit", commit)
+            if kind != "code_review" or state != "favorable":
+                self.state("set-verdict", CONVOY, ticket, "--kind", kind, "--state", state, "--commit", commit)
+            elif ((self.shown(ticket)["code_review"] or {}).get("state") or {}).get("commit") != commit:
+                self.reviewed(ticket, commit)
 
     def two_finished_tickets(self):
         self.opened()
@@ -428,7 +449,7 @@ class SpecIntegrationTest(unittest.TestCase):
 
     def test_a_ticket_finished_at_an_older_commit_than_its_tip_is_not_merged(self):
         self.opened()
-        self.finished(T1, {"docs/t1.md": "tranche 1\n"})
+        self.finished(T1, {"docs/t1.md": "tranche 1\n"}, reviewed=False)
         self.commit_on(T1, {"docs/t1.md": "repris par une session neuve\n"})
         before = self.snapshot()
 
@@ -459,13 +480,94 @@ class SpecIntegrationTest(unittest.TestCase):
         self.assertEqual([T1, T2], [entry["id"] for entry in answer["merged"]])
         self.assertEqual({"resumes": 0, "correction_rounds": 0}, self.shown(T2)["counters"])
 
+    # --- the code review of a ticket (T14): no merge without a favorable verdict ---
+
+    CITED = {"axis": "spec", "blocking": True, "summary": "La liste n'affiche que deux éléments.",
+             "citation": {"source": "ticket", "quote": "Point d'entrée : GET / — Observable : liste"}}
+
+    def unreviewed_ticket(self):
+        """A ticket whose author has finished, and that no reviewer has read."""
+        self.opened()
+        return self.finished(T1, {"docs/t1.md": "tranche 1\n"}, reviewed=False)
+
+    def assert_not_merged(self, mention):
+        before = self.snapshot()
+        answer = self.merged()
+        self.assertEqual(([], [], [T1]), (answer["merged"], answer["refused"], [e["id"] for e in answer["waiting"]]))
+        self.assertIn(mention, answer["waiting"][0]["reason"])
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(self.base, self.remote_tip())
+
+    def test_a_finished_ticket_without_a_code_review_is_not_merged(self):
+        self.unreviewed_ticket()
+
+        self.assert_not_merged("aucune revue de code")
+
+    def test_a_code_review_that_gave_no_verdict_yet_is_not_an_agreement(self):
+        tip = self.unreviewed_ticket()
+        self.state("open-code-review", CONVOY, T1, "--kind", "review", "--commit", tip, "--base", self.base)
+        self.state("launch-code-review", CONVOY, T1, "--bead", "fx-r1")
+
+        self.assert_not_merged("revue de code en cours")
+
+    def test_a_ticket_with_a_blocking_finding_without_a_favorable_verdict_is_not_merged(self):
+        # AC3, first half.
+        tip = self.unreviewed_ticket()
+        self.reviewed(T1, tip, findings=[self.CITED])
+
+        self.assert_not_merged("F1.1")
+
+    def test_a_blocking_finding_answered_but_not_judged_yet_is_not_merged(self):
+        tip = self.unreviewed_ticket()
+        self.reviewed(T1, tip, findings=[self.CITED])
+        self.state("respond-code-review", CONVOY, T1, "--file", self.json_file("responses.json", {
+            "responses": {"F1.1": {"response": "contested", "reason": "La liste affiche bien trois éléments."}}}))
+
+        self.assert_not_merged("F1.1")
+
+    def judged_findings(self, state):
+        """Two Blocking Findings, one fixed and one contested, judged by a
+        second reviewer session at the tip the author finished at again."""
+        reviewed = self.unreviewed_ticket()
+        self.reviewed(T1, reviewed, findings=[self.CITED, {**self.CITED, "summary": "Le troisième élément manque."}])
+        tip = self.commit_on(T1, {"docs/t1.md": "tranche 1, corrigée\n"})
+        self.finish(T1, tip, reviewed=False)
+        self.state("respond-code-review", CONVOY, T1, "--file", self.json_file("responses.json", {"responses": {
+            "F1.1": {"response": "fixed", "commit": tip},
+            "F1.2": {"response": "contested", "reason": "Les trois éléments sont rendus."}}}))
+        self.state("open-code-review", CONVOY, T1, "--kind", "judgement", "--commit", tip, "--base", reviewed)
+        self.state("record-code-review", CONVOY, T1, "--file", self.json_file("judgement.json", {
+            "commit": tip, "recorded_by": "delivery-reviewer-fx2",
+            "judgements": {"F1.1": {"state": "favorable"}, "F1.2": state}}))
+        return tip
+
+    def test_every_blocking_finding_fixed_or_contested_and_judged_favorably_lets_the_ticket_merge(self):
+        # AC3, second half.
+        tip = self.judged_findings({"state": "favorable"})
+
+        answer = self.merged()
+
+        self.assertEqual([T1], [entry["id"] for entry in answer["merged"]])
+        self.assertTrue(self.contains(self.remote_tip(), tip))
+
+    def test_one_blocking_finding_judged_unfavorably_keeps_the_ticket_out_of_the_merge(self):
+        self.judged_findings({"state": "unfavorable", "reason": "La liste n'a toujours que deux éléments."})
+
+        self.assert_not_merged("F1.2")
+
+    def test_a_favorable_verdict_written_without_its_review_does_not_let_the_ticket_merge(self):
+        tip = self.unreviewed_ticket()
+        self.state("set-verdict", CONVOY, T1, "--kind", "code_review", "--state", "favorable", "--commit", tip)
+
+        self.assert_not_merged("aucune revue de code")
+
     # --- AC2: a commit added after a verdict -----------------------------------
 
     def test_a_commit_newer_than_the_judged_commit_refuses_the_merge_and_invalidates_the_verdicts(self):
         tip1, judged = self.two_finished_tickets()
         self.judged(T2, judged)
         newer = self.commit_on(T2, {"docs/t2.md": "retouche après le verdict\n"})
-        self.finish(T2, newer)
+        self.finish(T2, newer, reviewed=False)
 
         answer = self.merged(expect=EXIT_REFUSED)
         self.assertFalse(answer["ok"])
@@ -490,7 +592,7 @@ class SpecIntegrationTest(unittest.TestCase):
     def test_an_invalidated_verdict_counts_one_resume_whatever_the_number_of_passes(self):
         _, judged = self.two_finished_tickets()
         self.judged(T2, judged)
-        self.finish(T2, self.commit_on(T2, {"docs/t2.md": "retouche après le verdict\n"}))
+        self.finish(T2, self.commit_on(T2, {"docs/t2.md": "retouche après le verdict\n"}), reviewed=False)
         self.merged(expect=EXIT_REFUSED)
         before = self.snapshot()
 
@@ -505,7 +607,7 @@ class SpecIntegrationTest(unittest.TestCase):
         _, judged = self.two_finished_tickets()
         self.judged(T2, judged)
         newer = self.commit_on(T2, {"docs/t2.md": "retouche après le verdict\n"})
-        self.finish(T2, newer)
+        self.finish(T2, newer, reviewed=False)
         self.merged(expect=EXIT_REFUSED)
 
         self.judged(T2, newer)
@@ -521,7 +623,7 @@ class SpecIntegrationTest(unittest.TestCase):
         judged = self.finished(T1, {"docs/t1.md": "tranche 1\n"})
         self.judged(T1, judged, kinds=("code_review",))
         newer = self.commit_on(T1, {"docs/t1.md": "retouche\n"})
-        self.finish(T1, newer)
+        self.finish(T1, newer, reviewed=False)
         self.judged(T1, newer, kinds=("evaluation",))
 
         answer = self.merged(expect=EXIT_REFUSED)
