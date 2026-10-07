@@ -1,0 +1,140 @@
+description = """
+Ticket Evaluation — one Evaluator session uses the launched product of one
+ticket before it is merged, and hands one state per acceptance criterion and
+for the demonstration line, each with a captured piece of evidence, to
+`bin/ticket-evaluation record` (T15, af-higj9z; Spec af-wf4w5r §7).
+
+Only `bin/ticket-evaluation` dispatches this formula, through
+`bin/dispatch-door --role evaluator`: the session is new, runs on the
+read-only Evaluator role, and knows nothing of the session that wrote the
+code. Code launched the product from a clean copy of the ticket's commit and
+stops it afterwards; the session is given the demonstration line and the
+frozen criteria only. The verdict is computed by `bin/convoy-state`, never
+written by the Evaluator, and `bin/spec-integration` merges nothing without
+a favorable one. The stored state, the bounds and the stops are in
+docs/TICKET_EVALUATION.md.
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|--------------|
+| convoy_id | runtime | Input convoy tracking the single evaluation bead |
+"""
+formula = "mol-ticket-evaluation"
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "evaluate"
+title = "Use the launched product of one ticket, capture what you observe, and record one state per criterion"
+description = """
+You are the Evaluator of one ticket. You did not write its code and you
+judge the product, not the code: this is a black box. You are read-only: do
+not modify the ticket, the Spec, a branch or any file of a repository.
+
+**1. Read what you are given:**
+
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+EVALUATION_BEAD=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+[ -n "$EVALUATION_BEAD" ] || { echo "mol-ticket-evaluation requires an input convoy with exactly one tracked member" >&2; exit 1; }
+EVALUATION_TEXT=$(gc bd show "$EVALUATION_BEAD" --json | jq -r '.[0].description')
+TICKET_CONVOY=$(printf '%s\n' "$EVALUATION_TEXT" | sed -n 's/^convoy: //p')
+TICKET=$(printf '%s\n' "$EVALUATION_TEXT" | sed -n 's/^ticket: //p')
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+"$FACTORY_ROOT/bin/ticket-evaluation" brief "$TICKET_CONVOY" "$TICKET" > evaluation-brief.json
+jq -r '.commit, .demonstration_line, (.criteria[] | "\\(.number). \\(.text)"), (.environments[] | "\\(.dataset): \\(.address)")' evaluation-brief.json
+```
+
+The brief is everything you are given: the demonstration line
+(`.demonstration_line`), the frozen acceptance criteria (`.criteria`), the
+launched products (`.environments`: one per dataset, each at its own address
+on this host, with the launch record you name to the capture tool), and the
+entry points of the product (`.entry_points`). Do not read anything of the
+author: not the ticket bead, its notes or its comments, not the Ticket
+Handoff, not the diff, the branch or the repository of the product, not the
+commit messages, not its mail, not its session. Do not launch the product
+yourself and do not use one that somebody else launched: only the addresses
+of `.environments` are what you evaluate. `.independence`, when it is not
+null, says that you run on the author's supplier or that it is not known: go
+on, it is recorded for the operator.
+
+**2. Use the product, and capture what you observe.**
+
+For each criterion, and for the demonstration line, use the launched product
+through its entry points until you can say what it does. Every state rests
+on a piece of evidence captured by the capture tool on one of the launched
+products -- never a text you write yourself. A command, with its real
+output:
+
+```bash
+ADDRESS=$(jq -r '.environments[0].address' evaluation-brief.json)
+LAUNCH_STATE=$(jq -r '.environments[0].launch_state' evaluation-brief.json)
+"$FACTORY_ROOT/bin/evidence-capture" command "$TICKET_CONVOY" "$TICKET" --piece evaluation.c1 \\
+  --launch-state "$LAUNCH_STATE" -- curl -s -i "$ADDRESS/"
+```
+
+or a screenshot of one address of that product:
+
+```bash
+"$FACTORY_ROOT/bin/evidence-capture" screenshot "$TICKET_CONVOY" "$TICKET" --piece evaluation.c1.page \\
+  --launch-state "$LAUNCH_STATE" --path /
+```
+
+Name your pieces `evaluation.<something>` (letters, digits, `_` and `.`).
+The answer of the tool gives the `path` of the record: read it to see what
+was captured. Pick the product whose dataset shows what the criterion is
+about; a piece may back several states.
+
+**3. Give one state per criterion and one for the demonstration line.**
+
+- `observed` — you saw on the launched product what the criterion (or the
+  line) says, and the piece shows it.
+- `not_observed` — you used the product as the criterion says and what it
+  describes is not there, or is false. Give a one-line `reason` in the
+  Operator Language (`"$FACTORY_ROOT/bin/operator-config" language`); the
+  piece shows what the product did instead.
+- `unobservable` — you could not get to an observation at all. Give the
+  `cause` and a one-line `reason`:
+  - `criterion`: the criterion names nothing that can be observed on the
+    launched product (no entry point reaches it, no dataset shows it, it
+    cannot be made false);
+  - `environment`: the launched product, or the tools you use it with,
+    failed (it stopped answering, the capture tool could not run).
+
+You do not reword a criterion, you do not skip one, and you do not waive
+one: copy each `text` exactly as the brief gives it. You give no overall
+verdict: code computes it.
+
+Write `evaluation-result.json` in the current directory in the shape
+`.result_shape` shows, then record it:
+
+```bash
+jq '{commit, criteria: [.criteria[] | {number, text, state: null, evidence: null}],
+     demonstration_line: {text: .demonstration_line, state: null, evidence: null}}' evaluation-brief.json > evaluation-result.json
+# then set, for each criterion and for the demonstration line: .state, .evidence (the piece name),
+# and .reason (unless observed) and .cause (unobservable only)
+"$FACTORY_ROOT/bin/ticket-evaluation" record "$TICKET_CONVOY" "$TICKET" --file evaluation-result.json
+```
+
+**4. If `record` refuses**, it lists what is missing or outside its closed
+lists: fix the file (capture the missing piece on a launched product) and
+run it again. Do not write the evaluation state any other way.
+
+**5. Close:**
+
+```bash
+gc bd update "$EVALUATION_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Ticket Evaluation of $TICKET recorded."
+if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$EVALUATION_BEAD" ]; then
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Ticket Evaluation of $TICKET recorded."
+fi
+```
+
+States that are `not_observed` or `unobservable` are your output, not a
+failure of this step: close with `gc.outcome=pass`. If you could not record
+any result, close both with `gc.outcome=fail` and the reason in the notes
+instead: an evaluation without a result is not a passed one.
+
+**Exit criteria:** `bin/ticket-evaluation record` accepted your states, and
+the evaluation bead and this step are closed."""

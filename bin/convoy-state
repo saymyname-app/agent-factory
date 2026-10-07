@@ -12,7 +12,8 @@ read only), its branch and Ticket Exit, its verdicts (each tied to a
 commit), its counters, its evidence fingerprints and its gate records, the
 steps of its TDD and its stop (T10), the review of its criterion tests
 before the freeze (T13), its code review and the model each delivery role
-ran on (T14), its Ticket Handoff and its parking (T11), the
+ran on (T14), its Ticket Evaluation on the launched product (T15), its
+Ticket Handoff and its parking (T11), the
 integration branch of the convoy's Spec and what the merge command did of a
 ticket (T18), and the convoy's open factory incident. No other script
 invents a `gc.flow.*` field: a missing field is added here.
@@ -41,6 +42,11 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state launch-code-review  CONVOY TICKET --bead BEAD
     convoy-state record-code-review  CONVOY TICKET --file PATH
     convoy-state respond-code-review CONVOY TICKET --file PATH
+    convoy-state open-evaluation    CONVOY TICKET --commit SHA --file PATH
+    convoy-state launch-evaluation  CONVOY TICKET --bead BEAD
+    convoy-state record-evaluation  CONVOY TICKET --file PATH
+    convoy-state record-startup     CONVOY TICKET --commit SHA (--piece NAME --file PATH | --detail LINE)
+    convoy-state release-evaluation CONVOY TICKET --state-file PATH [--state-file PATH] [--withdraw]
     convoy-state set-handoff  CONVOY TICKET --file PATH
     convoy-state park         CONVOY TICKET --cause CAUSE --detail LINE
     convoy-state set-integration CONVOY --branch NAME --protected NAME --base SHA
@@ -120,6 +126,7 @@ KEY_MERGE = PREFIX + "merge"
 KEY_SESSION = PREFIX + "session"
 KEY_CODE_REVIEW = PREFIX + "code_review"
 KEY_MODELS = PREFIX + "models"
+KEY_EVALUATION = PREFIX + "evaluation"
 # The key Gas City and bin/ticket-exit read the session of a bead under.
 KEY_SESSION_NAME = "gc.session_name"
 
@@ -139,7 +146,7 @@ TDD_STEPS_WITH_BASE = ("red", "prefactoring")
 KIND_WITHOUT_RED = "prefactoring"
 STOP_TEST_REVIEW_REFUSED = "test_review_refused"
 STOP_REASONS = ("criterion_already_green", "amendment_exhausted", STOP_TEST_REVIEW_REFUSED, "test_review_no_result",
-                "code_review_no_result")
+                "code_review_no_result", "evaluation_no_result", "evaluation_outage")
 # The review of the criterion tests between red and freeze (Spec §5, §8): a
 # refusal returns once to the author, the second one stops the ticket; a
 # review that gives no result is launched once more, no further.
@@ -160,6 +167,17 @@ QUESTION_ANSWERS = ("oui", "non")
 AXIS_TESTS = "tests"
 FINDING_RESPONSES = ("fixed", "contested")
 MODEL_ROLES = ("author", "reviewer", "evaluator")
+# The Ticket Evaluation of the launched product (T15, Spec §7): one state per
+# acceptance criterion and for the demonstration line, each with a captured
+# piece of evidence; the Evaluator gives no verdict, code computes it. An
+# « inobservable » says what made it so: the criterion, or the environment.
+EVALUATION_KINDS = ("evaluation", "startup")
+EVALUATION_STATES = ("observed", "not_observed", "unobservable")
+UNOBSERVABLE_CAUSES = ("criterion", "environment")
+EVALUATION_OUTCOMES = ("favorable", "return_to_author", "planning_exception", "environment_outage")
+EVALUATION_MAX_LAUNCHES = 2
+KIND_WITHOUT_EVALUATOR = "prefactoring"
+ADDRESS_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}$")
 MAX_FINDING_LINE = 600
 ACCEPTANCE_HEADING = "## acceptance criteria"
 # The Ticket Handoff (Spec §5): four sections written by the author, each
@@ -746,6 +764,207 @@ def code_review_rendered(raw: Any) -> dict[str, Any]:
     return {**record, "state": code_review_state(record)}
 
 
+def evaluation_roles(value: Any) -> dict[str, Any]:
+    """The providers the author and the Evaluator of a ticket ran on (Spec
+    §7): never left out, `same_provider` is null when one is not recorded."""
+    if not isinstance(value, dict) or set(value) != {"author", "evaluator", "same_provider", "other_declared"}:
+        raise Refusal(f"relevé des rôles de l'évaluation mal formé : {value!r}")
+    for role in ("author", "evaluator"):
+        entry = value[role]
+        if entry is not None and (not isinstance(entry, dict) or set(entry) != {"provider", "supplier"}
+                                  or any(not isinstance(v, str) or not v.strip() for v in entry.values())):
+            raise Refusal(f"relevé du rôle {role} de l'évaluation mal formé : {entry!r}")
+    same = value["same_provider"]
+    if same is not None and not isinstance(same, bool):
+        raise Refusal(f"relevé des rôles de l'évaluation mal formé : same_provider {same!r}")
+    if (same is None) != (value["author"] is None or value["evaluator"] is None):
+        raise Refusal("relevé des rôles de l'évaluation incohérent : same_provider ne dit pas ce que disent ses rôles")
+    other = value["other_declared"]
+    if not isinstance(other, list) or any(not isinstance(name, str) or not name.strip() for name in other):
+        raise Refusal(f"relevé des rôles de l'évaluation mal formé : other_declared {other!r}")
+    return value
+
+
+def evaluation_environment(value: Any, launched: bool) -> list[dict[str, Any]]:
+    """The launched products an evaluation is made on: one per dataset, each
+    at its own address, with the launch record of bin/project-launch while
+    it runs (`launched`)."""
+    fields = {"dataset", "address"} | ({"state_file"} if launched else set())
+    if not isinstance(value, list) or not value:
+        raise Refusal(f"environnement d'évaluation absent ou mal formé : {value!r}")
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) != fields:
+            raise Refusal(f"environnement d'évaluation mal formé : {entry!r}")
+        if not isinstance(entry["address"], str) or not ADDRESS_RE.match(entry["address"]):
+            raise Refusal(f"adresse du produit lancé mal formée : {entry['address']!r}")
+        if entry["dataset"] is not None and (not isinstance(entry["dataset"], str) or not entry["dataset"].strip()):
+            raise Refusal(f"jeu de données du produit lancé mal formé : {entry['dataset']!r}")
+        if launched:
+            single_line(entry["state_file"], "relevé de lancement")
+    if len({entry["address"] for entry in value}) != len(value):
+        raise Refusal("environnement d'évaluation mal formé : deux produits lancés à la même adresse")
+    return value
+
+
+def evaluation_criteria(value: Any) -> list[str]:
+    if not isinstance(value, list) or not value or any(not isinstance(text, str) or not text.strip() for text in value):
+        raise Refusal(f"critères de l'évaluation absents ou mal formés : {value!r}")
+    return value
+
+
+def evaluation_launches(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > EVALUATION_MAX_LAUNCHES:
+        raise Refusal(f"lancements d'évaluation mal formés : {value!r}")
+    for launch in value:
+        if not isinstance(launch, dict) or set(launch) != {"bead", "at"} or not isinstance(launch["bead"], str) \
+                or not BEAD_ID_RE.match(launch["bead"]):
+            raise Refusal(f"lancement d'évaluation mal formé : {launch!r}")
+    return value
+
+
+def evaluation_request(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"commit", "criteria", "demonstration_line", "roles", "environment",
+                                                      "launches", "at"}:
+        raise Refusal(f"demande d'évaluation mal formée : {value!r}")
+    valid_commit(value["commit"], "commit de l'évaluation")
+    evaluation_criteria(value["criteria"])
+    valid_demonstration_line(value["demonstration_line"])
+    evaluation_roles(value["roles"])
+    evaluation_environment(value["environment"], launched=True)
+    evaluation_launches(value["launches"])
+    return value
+
+
+def evaluation_item(value: Any, what: str) -> dict[str, Any]:
+    """One state of an evaluation: « observé », « non observé » or
+    « inobservable », always with the piece of evidence it rests on."""
+    if not isinstance(value, dict) or not {"text", "state", "evidence"} <= set(value) \
+            or set(value) - {"number", "text", "state", "evidence", "reason", "cause"}:
+        raise Refusal(f"état d'évaluation mal formé pour {what} : {value!r}")
+    state = one_of(value["state"], EVALUATION_STATES, f"état de {what}")
+    if not isinstance(value["evidence"], str) or not PIECE_RE.match(value["evidence"]):
+        raise Refusal(f"{what} : état sans pièce de preuve : {value['evidence']!r}")
+    if (state != "observed") != ("reason" in value):
+        raise Refusal(f"{what} : raison absente d'un état qui n'est pas « observé », ou donnée avec « observé »")
+    if (state == "unobservable") != ("cause" in value):
+        raise Refusal(f"{what} : cause absente d'un « inobservable », ou donnée avec un autre état")
+    if "cause" in value:
+        one_of(value["cause"], UNOBSERVABLE_CAUSES, f"cause de l'inobservable de {what}")
+    return value
+
+
+def evaluation_items(round_: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Every state of an evaluation round, named: the criteria in order,
+    then the demonstration line."""
+    named = [(f"critère {item['number']}", item) for item in round_["criteria"]]
+    return named + [("ligne de démonstration", round_["demonstration_line"])]
+
+
+def evaluation_outcome(items: list[tuple[str, dict[str, Any]]]) -> str:
+    """Spec §7: what code makes of the states. Favorable only when every
+    state is « observé ». An « inobservable » by the criterion goes back to
+    the Planning Run, a « non observé » to the author; when the environment
+    alone hid something, it is an outage, not a refusal."""
+    states = [item for _, item in items]
+    if any(item["state"] == "unobservable" and item["cause"] == "criterion" for item in states):
+        return "planning_exception"
+    if any(item["state"] == "not_observed" for item in states):
+        return "return_to_author"
+    if any(item["state"] == "unobservable" for item in states):
+        return "environment_outage"
+    return "favorable"
+
+
+def verdict_of_outcome(outcome: str) -> str | None:
+    """An outage is neither an agreement nor a refusal: it gives no verdict."""
+    return {"favorable": "favorable", "environment_outage": None}.get(outcome, "unfavorable")
+
+
+def evaluation_round(value: Any) -> dict[str, Any]:
+    common = {"kind", "commit", "outcome", "verdict", "at"}
+    if not isinstance(value, dict) or not common <= set(value):
+        raise Refusal(f"passe d'évaluation mal formée : {value!r}")
+    kind = one_of(value["kind"], EVALUATION_KINDS, "genre d'évaluation")
+    valid_commit(value["commit"], "commit de l'évaluation")
+    outcome = one_of(value["outcome"], EVALUATION_OUTCOMES, "issue de l'évaluation")
+    if value["verdict"] != verdict_of_outcome(outcome):
+        raise Refusal("verdict d'évaluation qui n'est pas celui de son issue")
+    if kind == "startup":
+        # A prefactoring: no Evaluator session, code checked that the product
+        # starts and that its probe answers (Spec §7).
+        if set(value) - common - {"started", "evidence", "environment", "detail"} or not isinstance(value.get("started"), bool):
+            raise Refusal(f"contrôle de démarrage mal formé : {value!r}")
+        if value["started"]:
+            if not isinstance(value.get("evidence"), str) or not PIECE_RE.match(value["evidence"]) or "detail" in value:
+                raise Refusal(f"contrôle de démarrage sans pièce de preuve : {value!r}")
+            evaluation_environment(value.get("environment"), launched=False)
+        else:
+            single_line(value.get("detail"), "précision du démarrage manqué")
+            if "evidence" in value or "environment" in value:
+                raise Refusal(f"contrôle de démarrage mal formé : {value!r}")
+        if outcome != ("favorable" if value["started"] else "return_to_author"):
+            raise Refusal("issue du contrôle de démarrage qui n'est pas celle de son résultat")
+        return value
+    if set(value) != common | {"criteria", "demonstration_line", "roles", "environment", "recorded_by"}:
+        raise Refusal(f"passe d'évaluation mal formée : {value!r}")
+    if not isinstance(value["criteria"], list) or not value["criteria"]:
+        raise Refusal(f"passe d'évaluation sans état par critère : {value['criteria']!r}")
+    for position, item in enumerate(value["criteria"], start=1):
+        if evaluation_item(item, f"critère {position}").get("number") != position:
+            raise Refusal(f"critère {position} : numéro absent ou hors de l'ordre des critères")
+    if "number" in evaluation_item(value["demonstration_line"], "ligne de démonstration"):
+        raise Refusal("ligne de démonstration : numéro inattendu")
+    evaluation_roles(value["roles"])
+    evaluation_environment(value["environment"], launched=False)
+    single_line(value["recorded_by"], "session de l'Evaluator")
+    if outcome != evaluation_outcome(evaluation_items(value)):
+        raise Refusal("issue d'évaluation qui n'est pas celle de ses états")
+    return value
+
+
+def evaluation_record(raw: Any) -> dict[str, Any]:
+    """The Ticket Evaluation of a ticket (T15): the rounds recorded, each
+    bound to the commit of the launched product, the request that is open,
+    and the launch records of the products still to stop (`live`)."""
+    record = stored_record(raw, ("rounds",), ("request", "live"))
+    if not isinstance(record["rounds"], list):
+        raise Refusal(f"passes d'évaluation mal formées : {record['rounds']!r}")
+    for value in record["rounds"]:
+        evaluation_round(value)
+    if "request" in record:
+        evaluation_request(record["request"])
+    if "live" in record:
+        live = record["live"]
+        if not isinstance(live, list) or not live or any(not isinstance(path, str) or not path.strip() for path in live):
+            raise Refusal(f"produits lancés à arrêter mal formés : {live!r}")
+    return record
+
+
+def evaluation_state(record: dict[str, Any]) -> dict[str, Any]:
+    """What the evaluation says of the ticket now: the issue of its last
+    round, the commit it was made at, and each state that is not « observé »."""
+    last = record["rounds"][-1] if record["rounds"] else None
+    state: dict[str, Any] = {"verdict": None, "outcome": None, "commit": None, "not_observed": [], "unobservable": []}
+    if last is None:
+        return state
+    state.update(verdict=last["verdict"], outcome=last["outcome"], commit=last["commit"])
+    if last["kind"] == "startup":
+        if not last["started"]:
+            state["not_observed"] = ["démarrage du produit"]
+        return state
+    for name, item in evaluation_items(last):
+        if item["state"] == "not_observed":
+            state["not_observed"].append(name)
+        elif item["state"] == "unobservable":
+            state["unobservable"].append({"what": name, "cause": item["cause"]})
+    return state
+
+
+def evaluation_rendered(raw: Any) -> dict[str, Any]:
+    record = evaluation_record(raw)
+    return {**record, "state": evaluation_state(record)}
+
+
 def handoff_section(name: str, value: Any, partial: bool) -> None:
     """One section of a Ticket Handoff: content, or the word for "nothing";
     never empty, never left out, unless the Handoff is a partial one."""
@@ -1054,6 +1273,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         if not key.startswith(PREFIX) or key in (
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
             KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION, KEY_TEST_REVIEW, KEY_CODE_REVIEW, KEY_MODELS,
+            KEY_EVALUATION,
         ):
             continue
         raw = metadata[key]
@@ -1107,12 +1327,13 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             out["stop"] = {"unruled": f"{KEY_STOP} : {exc}", "raw": metadata[KEY_STOP]}
             flag(KEY_STOP, out["stop"]["unruled"])
     # The Ticket Handoff, the parking, the merge, the author session, the
-    # review of the criterion tests, the code review and the models per role,
-    # each None when the ticket has none; an unreadable one is never rendered
-    # as none.
+    # review of the criterion tests, the code review, the Ticket Evaluation
+    # and the models per role, each None when the ticket has none; an
+    # unreadable one is never rendered as none.
     for name, key, read in (
         ("test_review", KEY_TEST_REVIEW, test_review_record),
         ("code_review", KEY_CODE_REVIEW, code_review_rendered),
+        ("evaluation", KEY_EVALUATION, evaluation_rendered),
         ("models", KEY_MODELS, models_record),
         ("handoff", KEY_HANDOFF, handoff_record),
         ("park", KEY_PARK, park_record),
@@ -1986,6 +2207,291 @@ def cmd_respond_code_review(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, values)
 
 
+def evaluation_target(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """The ticket an evaluation write lands on, its metadata, and its
+    Ticket Evaluation so far."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    if KEY_STOP in metadata:
+        raise Refusal(f"ticket arrêté : aucune évaluation ne s'enregistre sur {args.ticket} tant que l'arrêt n'est pas levé")
+    record = evaluation_record(metadata[KEY_EVALUATION]) if KEY_EVALUATION in metadata else {"rounds": []}
+    return ticket, metadata, record
+
+
+def finished_at(metadata: dict[str, Any], ticket_id: str, commit: str) -> None:
+    """An evaluation is of the commit the author finished at."""
+    finished = KEY_EXIT in metadata and stored_record(metadata[KEY_EXIT], ("exit", "at"))["exit"] == "finished"
+    if not finished:
+        raise Refusal(f"le ticket {ticket_id} n'est pas terminé : l'évaluation suit la sortie « terminé »")
+    handoff = handoff_record(metadata[KEY_HANDOFF]) if KEY_HANDOFF in metadata else None
+    if handoff is None or handoff["partial"] or handoff["commit"] != commit:
+        raise Refusal(
+            f"le Ticket Handoff de {ticket_id} n'est pas complet au commit {commit} : l'évaluation porte sur le commit "
+            "où l'auteur a terminé")
+
+
+def evidence_at(metadata: dict[str, Any], piece: Any, commit: str) -> str | None:
+    """Why `piece` is not a piece of evidence of the ticket captured at
+    `commit`, or None when it is one."""
+    if not isinstance(piece, str) or not PIECE_RE.match(piece):
+        return f"aucune pièce de preuve nommée ({piece!r})"
+    raw = metadata.get(EVIDENCE_PREFIX + piece)
+    if raw is None:
+        return f"la pièce {piece} n'a pas d'empreinte sur le ticket : elle n'a pas été capturée (bin/evidence-capture)"
+    fingerprint = stored_record(raw, ("digest", "commit", "at"))
+    if fingerprint["commit"] != commit:
+        return f"la pièce {piece} a été capturée au commit {fingerprint['commit']}, non au commit évalué {commit}"
+    return None
+
+
+def cmd_open_evaluation(args: argparse.Namespace) -> int:
+    """Open the Ticket Evaluation of a ticket (T15, Spec §7) at the commit
+    its author finished at, on the products code launched from a clean copy
+    of that commit. The criteria and the demonstration line are read here,
+    on the approved ticket: nobody hands them in. The same request again
+    writes nothing; one at the same commit on other products keeps its
+    launches."""
+    ticket, metadata, record = evaluation_target(args)
+    commit = valid_commit(args.commit, "commit de l'évaluation")
+    kind = valid_kind(metadata.get(KEY_KIND))
+    if kind == KIND_WITHOUT_EVALUATOR:
+        raise Refusal(
+            f"le ticket {args.ticket} est un {kind} : aucune session d'Evaluator, du code vérifie que le produit démarre "
+            "(record-startup)")
+    finished_at(metadata, args.ticket, commit)
+    criteria = acceptance_criteria(ticket.get("description"))
+    if not criteria:
+        raise Refusal(f"le ticket {args.ticket} n'a aucun critère d'acceptation sous « ## Acceptance criteria » : rien à évaluer")
+    line = valid_demonstration_line(metadata.get(KEY_DEMONSTRATION))
+    given = json_argument(args.file, "demande d'évaluation")
+    unknown = sorted(set(given) - {"roles", "environment"})
+    if unknown:
+        raise Refusal(f"champs inconnus dans la demande d'évaluation : {', '.join(unknown)}")
+    roles = evaluation_roles(given.get("roles"))
+    environment = evaluation_environment(given.get("environment"), launched=True)
+    last = record["rounds"][-1] if record["rounds"] else None
+    if last and last["commit"] == commit and last["verdict"] is not None:
+        raise Refusal(f"le ticket {args.ticket} est déjà évalué au commit {commit} ({last['outcome']})")
+    request = record.get("request")
+    wanted = {"commit": commit, "criteria": criteria, "demonstration_line": line}
+    if request and {name: request[name] for name in wanted} == wanted:
+        if request["roles"] == roles and request["environment"] == environment:
+            return done(args.convoy, args.ticket, {})
+        # The same evaluation on products launched again: its launches stay counted.
+        request.update(roles=roles, environment=environment)
+    else:
+        record["request"] = {**wanted, "roles": roles, "environment": environment, "launches": [], "at": now()}
+    record["live"] = list(dict.fromkeys(
+        [entry["state_file"] for entry in environment] + record.get("live", [])))
+    values = {KEY_EVALUATION: encode(evaluation_record(encode(record)))}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_launch_evaluation(args: argparse.Namespace) -> int:
+    """Record that an Evaluator session was sent the open evaluation: the
+    first launch, then one relaunch when the first gave no result."""
+    _, _, record = evaluation_target(args)
+    request = record.get("request")
+    if not request:
+        raise Refusal(f"aucune évaluation n'est demandée sur {args.ticket} : rien à lancer")
+    if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
+        raise Refusal(f"bead d'évaluation absent ou mal formé : {args.bead!r}")
+    if len(request["launches"]) >= EVALUATION_MAX_LAUNCHES:
+        raise Refusal(
+            f"une seule relance par évaluation : {args.ticket} en a déjà lancé {len(request['launches'])} sans résultat")
+    request["launches"].append({"bead": args.bead, "at": now()})
+    values = {KEY_EVALUATION: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def given_state(given: Any, what: str, text: str, metadata: dict[str, Any], commit: str, problems: list[str]) -> dict[str, Any]:
+    """One state an Evaluator hands in, as it is stored; what is wrong with
+    it goes to `problems`."""
+    stored: dict[str, Any] = {"text": text, "state": None, "evidence": None}
+    if not isinstance(given, dict):
+        problems.append(f"{what} : aucun état rendu")
+        return stored
+    unknown = sorted(set(given) - {"number", "text", "state", "evidence", "reason", "cause"})
+    if unknown:
+        problems.append(f"{what} : champs inconnus : {', '.join(unknown)}")
+    if given.get("text") != text:
+        # Spec §7: the Evaluator neither waives nor rewords a criterion.
+        problems.append(
+            f"{what} reformulé : le texte rendu n'est pas celui du ticket approuvé ({given.get('text')!r} au lieu de {text!r})")
+    state = given.get("state")
+    if state not in EVALUATION_STATES:
+        problems.append(f"{what} : état hors de la liste fermée : {state!r} (attendu : {', '.join(EVALUATION_STATES)})")
+        return stored
+    stored["state"] = state
+    refusal = evidence_at(metadata, given.get("evidence"), commit)
+    if refusal:
+        problems.append(f"{what} : état sans Evidence Record valide : {refusal}")
+    else:
+        stored["evidence"] = given["evidence"]
+    reason = " ".join(str(given.get("reason") or "").split())[:MAX_FINDING_LINE]
+    if state != "observed":
+        if not reason:
+            problems.append(f"{what} : « {state} » sans raison")
+        stored["reason"] = reason
+    elif reason:
+        problems.append(f"{what} : une raison ne se donne pas avec « observed »")
+    if state == "unobservable":
+        if given.get("cause") not in UNOBSERVABLE_CAUSES:
+            problems.append(
+                f"{what} : « unobservable » sans cause dans la liste fermée : {given.get('cause')!r} "
+                f"(attendu : {', '.join(UNOBSERVABLE_CAUSES)})")
+        stored["cause"] = given.get("cause")
+    elif "cause" in given:
+        problems.append(f"{what} : une cause ne se donne qu'avec « unobservable »")
+    return stored
+
+
+def cmd_record_evaluation(args: argparse.Namespace) -> int:
+    """Record what an Evaluator session hands in for the open evaluation,
+    and compute the verdict (T15, Spec §7): one state per approved criterion
+    and one for the demonstration line, each with a captured piece of
+    evidence. The verdict of the family `evaluation` is written in the same
+    tracker write; an outage of the environment writes none."""
+    ticket, metadata, record = evaluation_target(args)
+    request = record.get("request")
+    if not request:
+        raise Refusal(f"aucune évaluation n'est demandée sur {args.ticket} : des états répondent à une demande ouverte")
+    given = json_argument(args.file, "évaluation")
+    problems = [
+        "le verdict est calculé par du code, jamais donné par l'Evaluator" if name in ("verdict", "outcome")
+        else f"champ inconnu : {name}"
+        for name in sorted(set(given) - {"commit", "criteria", "demonstration_line", "recorded_by"})]
+    if given.get("commit") != request["commit"]:
+        problems.append(f"l'évaluation rendue porte sur le commit {given.get('commit')!r}, la demande sur {request['commit']}")
+    recorded_by = given.get("recorded_by")
+    if not isinstance(recorded_by, str) or not recorded_by.strip() or "\n" in recorded_by:
+        problems.append(f"session de l'Evaluator absente ou mal formée : {recorded_by!r}")
+    # Spec §9, condition 1: the criteria evaluated are those of the approved ticket.
+    approved = acceptance_criteria(ticket.get("description"))
+    if approved != request["criteria"] or metadata.get(KEY_DEMONSTRATION) != request["demonstration_line"]:
+        problems.append(
+            "les critères ou la ligne de démonstration du ticket ne sont plus ceux de la demande d'évaluation : "
+            "ils sont gelés avec le graphe approuvé")
+    handed = given.get("criteria")
+    if not isinstance(handed, list):
+        problems.append("criteria mal formé : une liste d'états, un par critère, est attendue")
+        handed = []
+    by_number: dict[Any, Any] = {}
+    for item in handed:
+        number = item.get("number") if isinstance(item, dict) else None
+        if isinstance(number, bool) or not isinstance(number, int) or not 1 <= number <= len(request["criteria"]):
+            problems.append(f"état rendu pour un critère que le ticket approuvé n'a pas : {number!r}")
+        elif number in by_number:
+            problems.append(f"critère {number} : deux états rendus")
+        else:
+            by_number[number] = item
+    criteria = []
+    for number, text in enumerate(request["criteria"], start=1):
+        if number not in by_number:
+            problems.append(f"critère {number} retiré : aucun état rendu pour « {text} »")
+            continue
+        criteria.append({"number": number, **given_state(
+            by_number[number], f"critère {number}", text, metadata, request["commit"], problems)})
+    line = given_state(given.get("demonstration_line"), "ligne de démonstration", request["demonstration_line"],
+                       metadata, request["commit"], problems)
+    if problems:
+        raise Refusal("évaluation hors contrat : " + " ; ".join(problems))
+    at = now()
+    round_: dict[str, Any] = {
+        "kind": "evaluation", "commit": request["commit"], "criteria": criteria, "demonstration_line": line,
+        "roles": request["roles"],
+        "environment": [{"dataset": entry["dataset"], "address": entry["address"]} for entry in request["environment"]],
+        "recorded_by": recorded_by.strip(), "at": at}
+    round_["outcome"] = evaluation_outcome(evaluation_items(round_))
+    round_["verdict"] = verdict_of_outcome(round_["outcome"])
+    record["rounds"].append(evaluation_round(round_))
+    del record["request"]
+    values = {KEY_EVALUATION: encode(record)}
+    if round_["verdict"] is not None:
+        values[VERDICT_PREFIX + "evaluation"] = encode({"state": round_["verdict"], "commit": request["commit"], "at": at})
+    write_metadata(args.ticket, values)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "kind": "evaluation",
+                      "outcome": round_["outcome"], "verdict": round_["verdict"], "state": evaluation_state(record),
+                      "written": values}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_record_startup(args: argparse.Namespace) -> int:
+    """Record what code saw when it launched the product from a clean copy
+    of `--commit` (T15, Spec §7). For a prefactoring it stands for the
+    evaluation: no Evaluator session, the product started and its probe
+    answered (`--piece`, the captured answer, and the launched products in
+    `--file`). On any ticket, the product did not start (`--detail`):
+    nothing can be observed on it. The verdict `evaluation` is written in
+    the same write."""
+    _, metadata, record = evaluation_target(args)
+    commit = valid_commit(args.commit, "commit du contrôle de démarrage")
+    kind = valid_kind(metadata.get(KEY_KIND))
+    if kind != KIND_WITHOUT_EVALUATOR and args.piece is not None:
+        raise Refusal(
+            f"le ticket {args.ticket} est un {kind} : son évaluation est faite par une session d'Evaluator, "
+            "un produit qui démarre ne vaut évaluation que pour un prefactoring")
+    finished_at(metadata, args.ticket, commit)
+    at = now()
+    round_: dict[str, Any] = {"kind": "startup", "commit": commit, "at": at}
+    if args.piece is not None:
+        if args.detail is not None:
+            raise Refusal("--piece et --detail s'excluent : le produit a démarré, ou non")
+        refusal = evidence_at(metadata, args.piece, commit)
+        if refusal:
+            raise Refusal(f"contrôle de démarrage sans Evidence Record valide : {refusal}")
+        given = json_argument(args.file, "environnement du contrôle de démarrage")
+        round_.update(started=True, evidence=args.piece, outcome="favorable",
+                      environment=evaluation_environment(given.get("environment"), launched=False))
+    else:
+        round_.update(started=False, detail=single_line(args.detail, "précision du démarrage manqué"),
+                      outcome="return_to_author")
+    round_["verdict"] = verdict_of_outcome(round_["outcome"])
+    record["rounds"].append(evaluation_round(round_))
+    # An evaluation that was open is over: there is no product to use.
+    record.pop("request", None)
+    values = {KEY_EVALUATION: encode(record),
+              VERDICT_PREFIX + "evaluation": encode({"state": round_["verdict"], "commit": commit, "at": at})}
+    write_metadata(args.ticket, values)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "kind": "startup",
+                      "outcome": round_["outcome"], "verdict": round_["verdict"], "written": values},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_release_evaluation(args: argparse.Namespace) -> int:
+    """Record that the launched products of an evaluation were stopped by
+    code: `--state-file` (repeatable) names each launch record that is
+    gone. A product an open evaluation still runs on is not released,
+    unless the ticket is stopped (its evaluation does not go on) or the
+    evaluation is withdrawn with it (`--withdraw`: the ticket is no longer
+    to be evaluated at that commit, and nothing can be observed any more)."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    record = evaluation_record(metadata[KEY_EVALUATION]) if KEY_EVALUATION in metadata else {"rounds": []}
+    live = record.get("live", [])
+    if not args.state_file:
+        raise Refusal("relevé de lancement absent : --state-file nomme chaque produit arrêté")
+    unknown = [path for path in args.state_file if path not in live]
+    if unknown:
+        raise Refusal(f"produit lancé inconnu de l'évaluation de {args.ticket} : {', '.join(unknown)}")
+    used = {entry["state_file"] for entry in (record.get("request") or {}).get("environment", [])}
+    held = [path for path in args.state_file if path in used]
+    if held and args.withdraw:
+        del record["request"]
+    elif held and KEY_STOP not in metadata:
+        raise Refusal(f"une évaluation est ouverte sur ce produit lancé : il ne se libère pas ({', '.join(held)})")
+    left = [path for path in live if path not in args.state_file]
+    record.pop("live", None)
+    if left:
+        record["live"] = left
+    values = {KEY_EVALUATION: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
 def cmd_stop_ticket(args: argparse.Namespace) -> int:
     ticket = marked_ticket(args.convoy, args.ticket)
     if KEY_STOP in metadata_of(ticket):
@@ -2259,6 +2765,19 @@ def build_parser() -> argparse.ArgumentParser:
     command("launch-code-review", cmd_launch_code_review).add_argument("--bead")
     command("record-code-review", cmd_record_code_review).add_argument("--file")
     command("respond-code-review", cmd_respond_code_review).add_argument("--file")
+    p = command("open-evaluation", cmd_open_evaluation)
+    p.add_argument("--commit")
+    p.add_argument("--file")
+    command("launch-evaluation", cmd_launch_evaluation).add_argument("--bead")
+    command("record-evaluation", cmd_record_evaluation).add_argument("--file")
+    p = command("record-startup", cmd_record_startup)
+    p.add_argument("--commit")
+    p.add_argument("--piece")
+    p.add_argument("--detail")
+    p.add_argument("--file")
+    p = command("release-evaluation", cmd_release_evaluation)
+    p.add_argument("--state-file", action="append", default=[])
+    p.add_argument("--withdraw", action="store_true")
     p = command("park", cmd_park)
     p.add_argument("--cause")
     p.add_argument("--detail")

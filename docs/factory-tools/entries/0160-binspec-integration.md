@@ -24,6 +24,11 @@ protégée (Spec af-wf4w5r §4 et §8, T18). Pour un convoi qui porte la
   sa branche. Sans revue, avec une revue en cours ou restée sans sortie, ou
   avec un Blocking Finding sans verdict favorable, il reste dans `waiting`
   avec la raison.
+- **Pas de fusion sans Ticket Evaluation favorable** : même règle pour
+  l'évaluation du produit lancé (`./bin/ticket-evaluation`) ; pour un
+  `prefactoring`, c'est le contrôle que le produit démarre. Sans évaluation,
+  avec une évaluation en cours, un critère « non observé » ou une panne de
+  l'environnement, le ticket reste dans `waiting` avec la raison.
 - **Conflit, ou tests rouges sur le résultat** : rien n'est fusionné ni
   poussé, le ticket retourne à son auteur. Aucun agent ne résout à sa place.
 - **Commit ajouté après un verdict** (revue de code ou Ticket Evaluation) :

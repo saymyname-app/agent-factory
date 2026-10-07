@@ -40,6 +40,12 @@ touché : il reste avancé par le Mayor.
   (`./bin/code-review settle`), relance une fois une revue restée sans
   résultat, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list`. Rien ne fusionne sans verdict favorable.
+- **Évaluation sur le produit lancé avant la fusion** : la même passe lance
+  le produit de chaque ticket terminé et vert depuis une copie propre de sa
+  branche et l'envoie à une session du rôle Evaluator
+  (`./bin/ticket-evaluation settle`) ; pour un `prefactoring`, elle vérifie
+  elle-même que le produit démarre. Les produits lancés restent debout
+  entre deux passes et sont arrêtés par une passe suivante.
 - **Relecture des tests restée sans résultat** : la même passe la relance une
   fois, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune
