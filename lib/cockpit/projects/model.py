@@ -55,6 +55,9 @@ class Chantier:
     # as such, never as a promotion Benjamin is asked for.
     promu_inconnu: bool = False
     termine: bool = False
+    # What Benjamin must look at before accepting, written on the convoy
+    # (gc.cockpit_acceptance_note) -- see cockpit.projects.stage.
+    a_regarder: str = ""
     abandonne: bool = False
     raison_abandon: str = None
     planning_run_target: str = None

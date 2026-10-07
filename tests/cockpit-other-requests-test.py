@@ -81,7 +81,8 @@ def beads():
         # A delivered chantier, not accepted: placed under Usine by its tickets' rig.
         {
             "id": "af-conv-b", "title": "Page d'accueil publique", "status": "closed", "issue_type": "convoy",
-            "labels": ["approved-ticket-graph"], "notes": "", "metadata": {"gc.graph_digest": "sha256:b"},
+            "labels": ["approved-ticket-graph"], "notes": "",
+            "metadata": {"gc.graph_digest": "sha256:b", "gc.flow.mark": "new-flow/v1"},
         },
         {
             "id": "af-tk-b1", "title": "ticket", "status": "closed", "issue_type": "task",
