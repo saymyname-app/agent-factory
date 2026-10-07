@@ -1,0 +1,66 @@
+[
+  {
+    "id": "af-os9sh2",
+    "status": "open",
+    "labels": [
+      "proposal"
+    ],
+    "notes": "",
+    "metadata": {
+      "gc.proposal_horodatage": "2026-10-06T10:37:30Z",
+      "gc.proposal_langue": "fr",
+      "gc.proposal_pourquoi": "bd list masque le type gate : la demande bloquante sur af-th4gdf est restée invisible ; reposée sur af-pvcg6t le 2026-10-06",
+      "gc.proposal_que_faire": "[{\"option\":\"Faire lire aussi --type gate par escalation-door list et le Cockpit\",\"consequence\":\"Une demande sur une barrière devient visible ; un test la couvre.\",\"lettre\":\"a\"},{\"option\":\"Faire refuser par escalation-door benjamin un bead de type gate\",\"consequence\":\"La demande doit être posée sur le ticket bloqué, toujours visible.\",\"lettre\":\"b\"}]",
+      "gc.proposal_quoi": "Faire apparaître dans NEEDS BENJAMIN et le Cockpit les demandes posées sur un bead de type barrière (gate)",
+      "gc.proposal_state": "ouverte"
+    }
+  },
+  {
+    "id": "af-vnv59w",
+    "status": "open",
+    "labels": [
+      "proposal"
+    ],
+    "notes": "",
+    "metadata": {
+      "gc.proposal_horodatage": "2026-10-06T12:42:36Z",
+      "gc.proposal_langue": "fr",
+      "gc.proposal_pourquoi": "Le 2026-10-06 il a réveillé le Mayor pour af-wtjo2x, le convoi D01 lui-même, alors qu aucun ticket n était prêt",
+      "gc.proposal_que_faire": "[{\"option\":\"Ne compter que les tickets prêts, pas les convois\",\"consequence\":\"Plus de réveil à vide du Mayor pendant qu un PR attend sa CI.\",\"lettre\":\"a\"}]",
+      "gc.proposal_quoi": "Faire ignorer par idle-ready-work-wake les beads de type convoi quand il compte le travail prêt",
+      "gc.proposal_state": "ouverte"
+    }
+  },
+  {
+    "id": "af-1ai5e3",
+    "status": "open",
+    "labels": [
+      "proposal"
+    ],
+    "notes": "",
+    "metadata": {
+      "gc.proposal_horodatage": "2026-10-01T02:46:18Z",
+      "gc.proposal_langue": "fr",
+      "gc.proposal_pourquoi": "2 escalations pr-autopilot en 1h (af-6jyjrz, af-guyzth), meme cause : work_branch jamais mis a jour",
+      "gc.proposal_que_faire": "[{\"option\":\"deliver-close corrige work_branch via le head reel du PR\",\"consequence\":\"Plus de blocage deliver-close sur ce cas, zero intervention manuelle\",\"lettre\":\"a\"},{\"option\":\"Ne rien changer\",\"consequence\":\"Le Mayor continue a diagnostiquer et fermer cette escalade a la main a chaque recurrence\",\"lettre\":\"b\"}]",
+      "gc.proposal_quoi": "Corriger gc.work_branch perime quand 2e ticket corrige le meme PR en vol",
+      "gc.proposal_state": "ouverte"
+    }
+  },
+  {
+    "id": "af-vws964",
+    "status": "open",
+    "labels": [
+      "proposal"
+    ],
+    "notes": "",
+    "metadata": {
+      "gc.proposal_horodatage": "2026-10-06T02:37:52Z",
+      "gc.proposal_langue": "fr",
+      "gc.proposal_pourquoi": "Les 12 barrières humaines de D01 (af-c23f62) sont pagées dès 30 min puis remontées à Benjamin après 2 h, alors que M0 est en cours",
+      "gc.proposal_que_faire": "[{\"option\":\"Ne pager une barrière que lorsque tous les autres bloqueurs de son ticket sont fermés\",\"consequence\":\"Benjamin n est sollicité que quand la levée est vraiment son tour.\",\"lettre\":\"a\"},{\"option\":\"Ne rien changer\",\"consequence\":\"Le Mayor efface chaque page prématurée à la main, sinon jusqu à 12 demandes sans objet arrivent à Benjamin.\",\"lettre\":\"b\"}]",
+      "gc.proposal_quoi": "Faire ignorer par factory-watchdog les barrières d étape dont l étape précédente n est pas encore livrée",
+      "gc.proposal_state": "ouverte"
+    }
+  }
+]

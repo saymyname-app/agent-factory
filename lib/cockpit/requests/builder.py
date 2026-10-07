@@ -34,7 +34,7 @@ from cockpit.requests.model import (
     URGENT,
 )
 from cockpit.text import fallback
-from cockpit.text.validate import violations as text_violations
+from cockpit.text.validate import request_violations
 
 NEEDS_BENJAMIN_KEY = "gc.needs_benjamin"
 PROPOSAL_LABEL = "proposal"
@@ -74,36 +74,33 @@ def _parse_json_field(raw):
     return None
 
 
-def _parse_que_faire(raw):
-    """Returns (options, ok) — ``ok`` False if ``raw`` is missing, not a
-    non-empty list, or any option fails the main-text control."""
-    raw = _parse_json_field(raw)
-    if not isinstance(raw, list) or not raw:
-        return [], False
-    options = []
-    for item in raw:
-        if not isinstance(item, dict):
-            return [], False
-        option = item.get("option")
-        consequence = item.get("consequence")
-        if text_violations("option", option) or text_violations("conséquence", consequence):
-            return [], False
-        options.append(
-            {
-                "lettre": item.get("lettre", ""),
-                "option": option,
-                "consequence": consequence,
-                "recommande": bool(item.get("recommande", False)),
-                "raison": item.get("raison") or "",
-            }
-        )
-    recommended = [o for o in options if o["recommande"]]
-    if len(recommended) > 1:
-        return [], False
-    for option in recommended:
-        if text_violations("raison de la recommandation", option["raison"]):
-            return [], False
-    return options, True
+def _normalise_que_faire(options):
+    """The option list as the page renders it, from a list
+    :func:`cockpit.text.validate.request_violations` already accepted."""
+    return [
+        {
+            "lettre": item.get("lettre", ""),
+            "option": item.get("option"),
+            "consequence": item.get("consequence"),
+            "recommande": bool(item.get("recommande", False)),
+            "raison": item.get("raison") or "",
+        }
+        for item in options
+    ]
+
+
+def _origin_text(field, value):
+    """What the producer actually wrote for ``field``, for the folded
+    details (spec .75) -- None when it wrote nothing."""
+    if field == "que_faire":
+        if isinstance(value, str):
+            return value if value.strip() else None
+        if isinstance(value, (list, dict)) and value:
+            return json.dumps(value, ensure_ascii=False)
+        return None
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
 
 
 def _is_escalation(bead):
@@ -126,6 +123,7 @@ def _build_one(bead, verifie_a, defects):
     bead_id = bead.get("id") or ""
     missing = []
 
+    precisions = ""
     if _is_escalation(bead):
         req_type = TYPE_ESCALATION
         quoi = metadata.get(NEEDS_BENJAMIN_KEY)
@@ -140,19 +138,34 @@ def _build_one(bead, verifie_a, defects):
         que_faire_raw = metadata.get("gc.proposal_que_faire") or []
         depuis_iso = metadata.get("gc.proposal_horodatage")
         niveau = QUAND_TU_VEUX
+        precisions = metadata.get("gc.proposal_details") or ""
 
-    if text_violations("quoi", quoi):
-        missing.append("quoi")
+    # The same control the doors run before writing (bin/operator-text-check
+    # -> cockpit.text.validate.request_violations): a field that fails it is
+    # shown as its fixed repli, with the reason and the producer's own text
+    # kept for the folded details.
+    que_faire_parsed = _parse_json_field(que_faire_raw)
+    failures = request_violations(quoi, pourquoi, que_faire_parsed)
+    if que_faire_parsed is None and isinstance(que_faire_raw, str) and que_faire_raw.strip():
+        failures["que_faire"] = ["champ « que faire » illisible (JSON invalide)"]
+    motifs = {}
+    texte_origine = {}
+    for field_name, raw_value in (("quoi", quoi), ("pourquoi", pourquoi), ("que_faire", que_faire_raw)):
+        if field_name not in failures:
+            continue
+        missing.append(field_name)
+        motifs[field_name] = failures[field_name]
+        origin = _origin_text(field_name, raw_value)
+        if origin is not None:
+            texte_origine[field_name] = origin
+    if "quoi" in failures:
         quoi = fallback.incomplete_label("quoi")
-
-    if text_violations("pourquoi", pourquoi):
-        missing.append("pourquoi")
+    if "pourquoi" in failures:
         pourquoi = fallback.FALLBACK_POURQUOI
-
-    que_faire, que_faire_ok = _parse_que_faire(que_faire_raw)
-    if not que_faire_ok:
-        missing.append("que_faire")
+    if "que_faire" in failures:
         que_faire = fallback.fallback_que_faire()
+    else:
+        que_faire = _normalise_que_faire(que_faire_parsed)
 
     depuis_quand = _parse_iso(depuis_iso)
     if depuis_quand is None:
@@ -164,9 +177,11 @@ def _build_one(bead, verifie_a, defects):
     defect_key = None
     if incomplete:
         defect_key = (bead_id, tuple(sorted(missing)))
+        reasons = [reason for field_name in missing for reason in motifs.get(field_name, [])]
         defects.record_once(
             defect_key,
-            "%s: champ(s) manquant(s) ou invalide(s) — %s" % (bead_id, ", ".join(missing)),
+            "%s: champ(s) manquant(s) ou invalide(s) — %s%s"
+            % (bead_id, ", ".join(missing), (" — " + " ; ".join(reasons)) if reasons else ""),
         )
 
     recommande_absent = not any(o.get("recommande") for o in que_faire)
@@ -185,6 +200,9 @@ def _build_one(bead, verifie_a, defects):
         incomplete=incomplete,
         missing_fields=missing,
         recommande_absent=recommande_absent,
+        motifs=motifs,
+        texte_origine=texte_origine,
+        precisions=precisions if isinstance(precisions, str) else "",
     )
     return request, defect_key
 
