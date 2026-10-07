@@ -5,7 +5,7 @@
     "status": "closed",
     "issue_type": "convoy",
     "labels": ["approved-ticket-graph"],
-    "metadata": {"gc.project_id": "saymyname", "gc.graph_digest": "sha256:ccc20"}
+    "metadata": {"gc.flow.mark": "new-flow/v1", "gc.project_id": "saymyname", "gc.graph_digest": "sha256:ccc20"}
   },
   {
     "id": "af-tk20",

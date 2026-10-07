@@ -132,6 +132,9 @@ class ConvoyStageTest(unittest.TestCase):
                 bead["status"] = "closed"
                 bead["metadata"].pop("gc.delivery_status", None)
         beads[0]["status"] = "closed"
+        # A convoy of the Delivery Workflow: the one that waits for an
+        # acceptance once delivered (cockpit.projects.stage).
+        beads[0]["metadata"]["gc.flow.mark"] = "new-flow/v1"
         chantiers = convoy_chantiers(beads)
         self.assertEqual(1, len(chantiers))
         self.assertEqual(LIVRE, chantiers[0].stage)
