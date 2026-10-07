@@ -58,12 +58,12 @@ convoy that names no Spec, a protected branch the repository does not have.
 One pass reads the convoy through `bin/convoy-state show` and takes its
 tickets in the convoy's order. A ticket is **ready** when its author has
 finished at the tip of its branch — Ticket Exit `finished`, and a complete
-Ticket Handoff taken at that very tip — and its **code review is favorable
-at that tip** (below). The other tickets are left alone;
-those worth a word are listed under `waiting` with the reason (parked,
-stopped, an unfavorable verdict, a verdict to replay, an author still at
-work, a code review that is absent, open or unfavorable, a ticket already
-returned to its author).
+Ticket Handoff taken at that very tip — and its **code review and its
+Ticket Evaluation are favorable at that tip** (below). The other tickets are
+left alone; those worth a word are listed under `waiting` with the reason
+(parked, stopped, an unfavorable verdict, a verdict to replay, an author
+still at work, a code review or a Ticket Evaluation that is absent, open or
+unfavorable, a ticket already returned to its author).
 
 **No merge without a favorable code review** (T14, Spec §6,
 `docs/CODE_REVIEW.md`). A finished ticket is merged only when the last
@@ -74,6 +74,17 @@ review still running or left without output, a Blocking Finding without a
 favorable verdict (named in the reason), or a favorable verdict written
 without the review it comes from, stays under `waiting`: nothing of it is
 merged, nothing is written.
+
+**No merge without a favorable Ticket Evaluation** (T15, Spec §7,
+`docs/TICKET_EVALUATION.md`). The same holds for the evaluation of the
+launched product: a finished ticket is merged only when the last round of
+its evaluation (`evaluation.state` of `bin/convoy-state show`) is favorable,
+was made at the tip, no evaluation is open, and the verdict `evaluation` is
+favorable and valid at the tip. For a `prefactoring` that round is the
+control that its product starts. A ticket with no evaluation, an evaluation
+still running or left without result, a state that is not « observé »
+(named in the reason), an outage of the environment, or a favorable verdict
+written without the evaluation it comes from, stays under `waiting`.
 
 Passes on one convoy are serialised by a lock (`SPEC_INTEGRATION_LOCK_DIR`):
 two merges are never made at once, and each merge is made on the result of
@@ -116,7 +127,7 @@ invalidate-verdicts` marks each outdated verdict invalid, with the tip that
 outdated it, and counts one resume (K) — not the correction round — in the
 same tracker write. The next passes count nothing more and list the ticket
 under `waiting` until the verdicts are replayed on the new tip
-(`set-verdict` writes a fresh one). A verdict that is merely unfavorable
+(the code review and the Ticket Evaluation each record a new round there). A verdict that is merely unfavorable
 merges nothing and invalidates nothing.
 
 A profile without `regression_command` is refused when a ticket is ready: no
@@ -124,12 +135,11 @@ test, no merge. A pass with no ready ticket does not read the profile.
 
 ## Limits
 
-- **Of the conditions of the ticket-end gate, only the code review is
-  required here** (condition 9, without Benjamin's recorded override, which
-  is T17's). A ticket with no Ticket Evaluation recorded is merged once it
-  is reviewed; a recorded evaluation verdict must be favorable and valid.
-  The ticket-end gate (T19) makes the merge command refuse while its
-  conditions 1 to 5, 7 and 8 are not met.
+- **Of the conditions of the ticket-end gate, only the Ticket Evaluation
+  and the code review are required here** (condition 3, and condition 9
+  without Benjamin's recorded override, which is T17's). The ticket-end
+  gate (T19) makes the merge command refuse while its conditions 1, 2, 4, 5,
+  7 and 8 are not met.
 - **Starting the fresh author session of a returned ticket is not in this
   command.** The return is recorded (`merge` on the ticket, listed by the
   pass); resuming a ticket is T20's, and the start formula is T12's (`docs/TICKET_AUTHOR.md`).

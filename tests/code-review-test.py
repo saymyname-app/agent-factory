@@ -371,6 +371,23 @@ class CodeReviewTest(unittest.TestCase):
         needs = proc.stdout.split("Pending proposals")[0].splitlines()[1:]
         return [line.strip() for line in needs if line.strip() and "(none)" not in line]
 
+    def evaluated(self, ticket, commit):
+        """A favorable Ticket Evaluation of the ticket at `commit`, as an
+        Evaluator session records it (bin/ticket-evaluation, T15): every
+        criterion and the demonstration line observed, each with its piece."""
+        shown = self.shown(ticket)
+        self.state("open-evaluation", CONVOY, ticket, "--commit", commit, "--file", self.json_file(
+            f"evaluation-request-{ticket}.json", {
+                "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
+                "environment": [{"dataset": None, "address": "http://127.0.0.1:1", "state_file": "/launch.json"}]}))
+        self.state("add-evidence", CONVOY, ticket, "--piece", "evaluation.seen", "--digest", DIGEST, "--commit", commit)
+        return self.state("record-evaluation", CONVOY, ticket, "--file", self.json_file(f"evaluation-{ticket}.json", {
+            "commit": commit, "recorded_by": "delivery-evaluator-fx",
+            "criteria": [{"number": number, "text": text, "state": "observed", "evidence": "evaluation.seen"}
+                         for number, text in enumerate(shown["criteria"], start=1)],
+            "demonstration_line": {"text": shown["demonstration_line"], "state": "observed",
+                                   "evidence": "evaluation.seen"}}))
+
     def merge(self):
         """The merge control: one pass of the real bin/spec-integration."""
         proc = self.run_cmd(INTEGRATION_TOOL, "merge", CONVOY, "--repo", self.repo, "--profile", self.profile)
@@ -416,6 +433,7 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual((False, TASTE["summary"]), (finding["blocking"], finding["summary"]))
         self.assertIn("refusé comme bloquant", finding["demoted"])
         self.assertEqual({"verdict": "favorable", "commit": tip, "unsettled": []}, review["state"])
+        self.evaluated(SLICE, tip)
         self.assertEqual([SLICE], [entry["id"] for entry in self.merge()["merged"]])
 
     def test_a_review_without_output_leaves_the_ticket_unmergeable(self):
@@ -650,6 +668,7 @@ class CodeReviewTest(unittest.TestCase):
                          (judgement["kind"], judgement["commit"], judgement["base"],
                           [finding["id"] for finding in judgement["findings"]]))
         self.assertEqual("fixed", judgement["responses"]["F1.1"]["response"])
+        self.evaluated(SLICE, tip)
         self.assertEqual([SLICE], [entry["id"] for entry in self.merge()["merged"]])
 
     def test_a_contested_finding_is_judged_at_the_same_commit(self):

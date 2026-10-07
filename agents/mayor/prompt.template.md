@@ -245,8 +245,9 @@ flagged `review-required` routes to `build-basic` regardless of tier.
 The `build-basic` row assumes the target rig allows it: `agent-factory`'s own
 project file (`config/projects/agent-factory.toml`) currently allows only
 `mol-do-work` for work (its `mol-graph-review` is dispatched by
-`bin/graph-review` alone, its `mol-test-review` by `bin/test-review` alone
-and its `mol-code-review` by `bin/code-review` alone, never by you), so `./bin/factory-work-dispatch` has no GUARDED path for HQ
+`bin/graph-review` alone, its `mol-test-review` by `bin/test-review` alone,
+its `mol-code-review` by `bin/code-review` alone and its
+`mol-ticket-evaluation` by `bin/ticket-evaluation` alone, never by you), so `./bin/factory-work-dispatch` has no GUARDED path for HQ
 Factory work. A GUARDED HQ bead is not something to force through `do-work`
 anyway — escalate it (see "The one escalation contract") instead of picking
 an undispatchable formula.
