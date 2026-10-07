@@ -98,8 +98,10 @@ check_gcbin_opt_in() {
     # Require a path-like reference (preceded by "/") so a prose mention
     # like "escalation-door's mayor-first class" in a comment or fail
     # message doesn't count as an invocation.
-    grep -vE '^[[:space:]]*#' "$f" | grep -qE "/${script}([[:space:]\"'\`]|\$)" || continue
-    grep -vE '^[[:space:]]*#' "$f" | grep -qE 'GC_BIN[[:space:]]*=[^=]|"GC_BIN"[[:space:]]*:' && return 0
+    # Not `grep -q`: it leaves at the first match, and under pipefail the
+    # SIGPIPE of the grep before it reads as "no match" on a large file.
+    grep -vE '^[[:space:]]*#' "$f" | grep -E "/${script}([[:space:]\"'\`]|\$)" >/dev/null || continue
+    grep -vE '^[[:space:]]*#' "$f" | grep -E 'GC_BIN[[:space:]]*=[^=]|"GC_BIN"[[:space:]]*:' >/dev/null && return 0
     echo "$f invokes $script (resolves \${GC_BIN:-gc}) with no actual GC_BIN= assignment and no shared sandbox harness -- a PATH stub alone does not protect it"
     return 1
   done
