@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -380,6 +381,90 @@ class EvidenceCaptureTest(unittest.TestCase):
         error = self.refused("screenshot", CONVOY, T1, "--piece", "demo.page", "--launch-state", state_file,
                              "--path", "/", env={**self.env, "EVIDENCE_CAPTURE_BROWSER": str(self.tmp / "absent")})
         self.assertIn("navigateur", error)
+
+    # --- comparison mode (T16, af-622nya) --------------------------------------
+
+    def reference(self, body="<!doctype html><title>prototype</title><p>référence</p>"):
+        """A reference page served on this host, as bin/prototype-fidelity
+        serves a state of the Validated Prototype."""
+        root = self.tmp / f"reference-{uuid.uuid4().hex}"
+        root.mkdir()
+        (root / "state.html").write_text(body)
+        port_file = root / "port"
+        server = subprocess.Popen(
+            ("python3", "-c",
+             "import functools, http.server, sys\n"
+             "handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[1])\n"
+             "server = http.server.HTTPServer(('127.0.0.1', 0), handler)\n"
+             "open(sys.argv[2], 'w').write(str(server.server_address[1]))\n"
+             "server.serve_forever()\n", str(root), str(port_file)),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(server.wait)
+        self.addCleanup(server.kill)
+        for _ in range(100):
+            if port_file.exists() and port_file.read_text():
+                break
+            time.sleep(0.05)
+        return f"http://127.0.0.1:{port_file.read_text()}/state.html"
+
+    def test_comparison_piece_holds_both_sides_captured_now_and_their_difference(self):
+        state_file, launch = self.launch()
+        reference = self.reference()
+
+        answer = self.ok("comparison", CONVOY, T1, "--piece", "fidelite.contenu", "--launch-state", state_file,
+                         "--path", "/", "--reference-url", reference)
+
+        record = self.record("fidelite.contenu")
+        self.assertEqual(("comparison", launch["address"] + "/", reference, launch["commit"]),
+                         (record["kind"], record["address"], record["reference"], record["commit"]))
+        for field in ("image", "difference"):
+            image = self.store / SPEC / T1 / record[field]
+            self.assertEqual(str(image), answer[field])
+            self.assertTrue(image.read_bytes().startswith(PNG_MAGIC))
+            self.assertEqual(sha256_of(image), record[f"{field}_digest"])
+        # Both sides were rendered by this capture: nothing stored earlier is compared.
+        self.assertEqual(sorted([reference, launch["address"] + "/"]), sorted(self.browser_log.read_text().split()))
+        # The two pages differ; the count is recorded and judges nothing.
+        self.assertEqual((1, 1), (record["differing_pixels"], record["pixels"]))
+        self.assertEqual(sha256_of(self.store / SPEC / T1 / "fidelite.contenu.json"),
+                         self.tracked_evidence()["fidelite.contenu"]["digest"])
+        self.ok("verify", CONVOY, T1)
+
+    def test_comparison_of_a_page_with_itself_counts_no_differing_pixel(self):
+        state_file, launch = self.launch()
+        # The reference is the launched product's own page, on this host.
+        answer = self.ok("comparison", CONVOY, T1, "--piece", "fidelite.meme", "--launch-state", state_file,
+                         "--reference-url", launch["address"] + "/")
+
+        self.assertEqual(0, answer["differing_pixels"])
+
+    def test_comparison_refused_without_a_reference_served_on_this_host(self):
+        state_file, _ = self.launch()
+        base = ("comparison", CONVOY, T1, "--piece", "fidelite.contenu", "--launch-state", state_file)
+        self.assertIn("--reference-url", self.refused(*base))
+        self.assertIn("--reference-url", self.refused(*base, "--reference-url", "https://example.invalid/page"))
+        self.assertIn("référence", self.refused(*base, "--reference-url", "http://127.0.0.1:9/absente.html"))
+        self.assertIn("référence", self.refused(*base, "--reference-url", self.reference().replace("state.html", "absente.html")))
+        self.assertFalse(self.browser_log.exists(), "rien ne doit être capturé avant le refus")
+
+    def test_verify_fails_when_the_difference_image_was_replaced(self):
+        state_file, _ = self.launch()
+        self.ok("comparison", CONVOY, T1, "--piece", "fidelite.contenu", "--launch-state", state_file,
+                "--reference-url", self.reference())
+        difference = self.store / SPEC / T1 / self.record("fidelite.contenu")["difference"]
+        difference.write_bytes(PNG_MAGIC + b"autre image")
+
+        self.assertIn("image", self.refused("verify", CONVOY, T1, "--piece", "fidelite.contenu"))
+
+    def test_screenshot_piece_replacing_a_comparison_piece_leaves_no_difference_image(self):
+        state_file, _ = self.launch()
+        self.ok("comparison", CONVOY, T1, "--piece", "demo.page", "--launch-state", state_file,
+                "--reference-url", self.reference())
+
+        self.ok("screenshot", CONVOY, T1, "--piece", "demo.page", "--launch-state", state_file)
+
+        self.assertEqual(["demo.page.json", "demo.page.png"], sorted(p.name for p in (self.store / SPEC / T1).iterdir()))
+        self.ok("verify", CONVOY, T1)
 
     # --- verify -------------------------------------------------------------
 

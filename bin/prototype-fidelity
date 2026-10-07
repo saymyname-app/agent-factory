@@ -1,0 +1,751 @@
+#!/usr/bin/env python3
+"""Compare a delivered screen to its Validated Prototype, state by state
+(T16, af-622nya; Spec af-wf4w5r §3, §7, §9).
+
+    prototype-fidelity check DESCRIPTOR --prototype DIR --commit SHA [--repo-root DIR]
+                             [--states STATE,STATE] [--screen NAME ...] [--convoy CONVOY --ticket TICKET]
+
+For every prototyped state, the product is launched by bin/project-launch
+from a clean copy of `--commit` on the dataset of that state, and the page of
+its screen, served at its real address, is compared to the page of the frozen
+prototype (`--prototype`, the directory `bin/prototype-conformance` checks):
+
+- **tokens, on the sources**: the custom properties the style sheets of the
+  page declare on `:root`, `html` or a `[data-theme…]` selector. A token of
+  the prototype that the delivered page lacks, or gives another value, is a
+  deviation;
+- **structure and computed styles, on every anchor**, in a headless Chromium,
+  at every reference viewport and theme the prototype declares: an anchor of
+  the prototype absent from the delivered page, another element, another
+  enclosing anchor, another number of occurrences, or another computed value
+  of a compared property, is a deviation.
+
+Any deviation is red and is named by state, viewport, anchor and property. A
+state that could not be compared is never green: the command refuses.
+
+With `--convoy` and `--ticket` (a ticket of a convoy that carries the
+new-flow mark), only the screens the ticket touches are compared (`--screen`,
+required when the profile declares several); the full record is sealed as a
+piece of the evidence store; side-by-side captures and an image of the
+difference are filed per state and viewport by bin/evidence-capture, both
+sides rendered at that moment, and judge nothing; and the result is written
+on the ticket by bin/convoy-state, tied to the commit. A deviation is never
+lifted here: it reads « accepté par Benjamin » only once a Planning Exception
+that names its anchor (bin/ticket-exit --anchor) was answered so by the
+operator (bin/escalation-door repondre).
+
+Every answer is one JSON object on stdout. Exit status: 0 green, or every
+deviation accepted by Benjamin; 1 red; 2 refused (nothing was compared to the
+end, nothing is written on the ticket); 4 the convoy does not carry the mark
+("pas un convoi du nouveau flux": nothing is run or written). Details:
+docs/PROTOTYPE_FIDELITY.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import functools
+import html
+import http.server
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from html.parser import HTMLParser
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+
+PROGRAM = "prototype-fidelity"
+BIN = Path(__file__).resolve().parent
+STATE_TOOL = BIN / "convoy-state"
+CAPTURE_TOOL = BIN / "evidence-capture"
+LAUNCH_TOOL = BIN / "project-launch"
+MANIFEST = "validated-prototype.json"
+MARK = "new-flow/v1"
+MANIFEST_CONTRACT = "agent-factory-validated-prototype/v1"
+
+EXIT_RED = 1
+EXIT_REFUSED = 2
+EXIT_NOT_NEW_FLOW = 4
+
+GREEN = "vert"
+RED = "rouge"
+ACCEPTED = "accepté par Benjamin"
+OPEN = "ouvert"
+
+# The computed properties compared on every anchor (the ones the fidelity
+# trial of af-0sayxf.18 found telling).
+PROPERTIES = (
+    "font-family", "font-size", "font-weight", "line-height", "color", "background-color",
+    "border-radius", "padding", "display", "box-shadow",
+)
+# What a reference theme is for the browser: its preferred colour scheme
+# (observed on chrome-headless-shell 1243, 2026-10-07: 0 is dark, 1 is light).
+COLOUR_SCHEMES = {"light": "1", "dark": "0"}
+PIECE = "fidelity"
+MEASURE_PATH = "/__fidelity__/measure.html"
+MEASURE_RE = re.compile(r'<pre id="fidelity-measure">(.*?)</pre>', re.S)
+BROWSER_TIMEOUT = 60
+LAUNCH_TIMEOUT = 60
+
+# The page the browser is given: it loads the page to measure in a frame of
+# the size of the viewport, reads every anchor, and writes what it read in
+# the document, which `--dump-dom` prints.
+MEASURE_PAGE = """<!doctype html>
+<html><head><meta charset="utf-8"><title>mesure de fidélité</title></head>
+<body style="margin:0">
+<iframe id="page" style="border:0;display:block"></iframe>
+<pre id="fidelity-measure"></pre>
+<script>
+(function () {
+  var query = new URLSearchParams(location.search);
+  var out = document.getElementById('fidelity-measure');
+  var frame = document.getElementById('page');
+  var attribute = query.get('attr');
+  var properties = query.get('props').split(',');
+  frame.style.width = query.get('w') + 'px';
+  frame.style.height = query.get('h') + 'px';
+  function measure() {
+    try {
+      var view = frame.contentWindow, anchors = [];
+      frame.contentDocument.querySelectorAll('[' + attribute + ']').forEach(function (element) {
+        var computed = view.getComputedStyle(element), styles = {}, up = element.parentElement;
+        properties.forEach(function (name) { styles[name] = computed.getPropertyValue(name); });
+        while (up && !up.hasAttribute(attribute)) { up = up.parentElement; }
+        anchors.push({
+          name: element.getAttribute(attribute), tag: element.tagName.toLowerCase(),
+          parent: up ? up.getAttribute(attribute) : null, styles: styles
+        });
+      });
+      out.textContent = JSON.stringify({ok: true, anchors: anchors});
+    } catch (error) {
+      out.textContent = JSON.stringify({ok: false, error: String(error)});
+    }
+  }
+  frame.addEventListener('load', function () {
+    var fonts = frame.contentDocument && frame.contentDocument.fonts;
+    if (fonts && fonts.ready) { fonts.ready.then(measure, measure); } else { measure(); }
+  });
+  frame.src = query.get('target');
+})();
+</script>
+</body></html>
+"""
+
+
+class Refusal(RuntimeError):
+    """Nothing was compared to the end. `written` says what was already done."""
+
+    def __init__(self, message: str, written: list[str] | None = None):
+        super().__init__(message)
+        self.written = written or []
+
+
+class NotNewFlow(RuntimeError):
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+def load_tool(name: str) -> ModuleType:
+    """A sibling tool, loaded as a module: the profile reader and the browser
+    finder are the ones the launcher and the capture tool use."""
+    loader = importlib.machinery.SourceFileLoader(name.replace("-", "_"), str(BIN / name))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def run_json(argv: list[str]) -> tuple[int, Any]:
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+    try:
+        return proc.returncode, json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        raise Refusal(f"{Path(argv[0]).name} {argv[1]} a rendu une réponse illisible : {detail[-300:]}") from exc
+
+
+def refusal_text(answer: Any) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer) if isinstance(answer, dict) else str(answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+# --- what is compared ------------------------------------------------------------
+
+
+def read_manifest(prototype: Path) -> dict[str, Any]:
+    path = prototype / MANIFEST
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise Refusal(f"Validated Prototype illisible : {path} ({exc})") from exc
+    if not isinstance(manifest, dict) or manifest.get("contract") != MANIFEST_CONTRACT:
+        raise Refusal(f"{path} n'est pas le manifeste d'un Validated Prototype ({MANIFEST_CONTRACT})")
+    attribute = manifest.get("anchor_attribute")
+    if not isinstance(attribute, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", attribute):
+        raise Refusal(f"{path} : attribut d'ancre absent ou mal formé ({attribute!r})")
+    viewports = manifest.get("viewports")
+    if not isinstance(viewports, list) or not viewports or any(
+            not isinstance(v, dict) or not isinstance(v.get("name"), str) or not v["name"]
+            or any(isinstance(v.get(side), bool) or not isinstance(v.get(side), int) or v[side] < 1 for side in ("width", "height"))
+            for v in viewports):
+        raise Refusal(f"{path} : tailles d'écran de référence absentes ou mal formées")
+    themes = manifest.get("themes")
+    if not isinstance(themes, list) or not themes:
+        raise Refusal(f"{path} : thèmes de référence absents")
+    unknown = [theme for theme in themes if theme not in COLOUR_SCHEMES]
+    if unknown:
+        raise Refusal(
+            f"{path} : thème de référence non comparable ({', '.join(map(str, unknown))}) ; le contrôle sait rendre "
+            f"{', '.join(COLOUR_SCHEMES)} et ne passe sur aucun état qu'il n'a pas comparé")
+    states = manifest.get("states")
+    if not isinstance(states, list) or not states or any(
+            not isinstance(s, dict) or not isinstance(s.get("id"), str) or not isinstance(s.get("address"), str)
+            for s in states):
+        raise Refusal(f"{path} : états absents ou mal formés")
+    for state in states:
+        page = (prototype / state["address"].split("?")[0].split("#")[0]).resolve()
+        if prototype.resolve() not in page.parents or not page.is_file():
+            raise Refusal(f"{path} : l'adresse de l'état {state['id']} n'ouvre aucune page du prototype ({state['address']})")
+    return manifest
+
+
+def renderings(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every reference viewport in every reference theme. The light theme
+    keeps the name of the viewport; another one is named after it."""
+    return [
+        {"label": viewport["name"] if theme == "light" else f"{viewport['name']}@{theme}",
+         "width": viewport["width"], "height": viewport["height"], "theme": theme}
+        for theme in manifest["themes"] for viewport in manifest["viewports"]
+    ]
+
+
+def select_states(
+    manifest: dict[str, Any], screens: list[dict[str, Any]], wanted_states: list[str] | None,
+    wanted_screens: list[str], ticket: str | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """The states to compare, each with its screen, and the screens compared.
+    Every prototyped state is compared, or the command refuses: none is left
+    out in silence."""
+    prototype_states = {state["id"]: state for state in manifest["states"]}
+    required = wanted_states if wanted_states is not None else list(prototype_states)
+    absent = [state for state in required if state not in prototype_states]
+    if absent:
+        raise Refusal(
+            f"état prototypé absent du Validated Prototype : {', '.join(absent)} "
+            f"(états du prototype : {', '.join(prototype_states)})")
+    by_name = {screen["name"]: screen for screen in screens}
+    unknown = [name for name in wanted_screens if name not in by_name]
+    if unknown:
+        raise Refusal(f"écran inconnu du profil : {', '.join(unknown)} (écrans déclarés : {', '.join(by_name)})")
+    if ticket and not wanted_screens and len(screens) > 1:
+        raise Refusal(
+            f"le profil déclare plusieurs écrans ({', '.join(by_name)}) : nommer par --screen celui que le ticket "
+            f"{ticket} touche")
+    owner = {state: screen for screen in screens for state in screen["states"]}
+    unserved = [state for state in required if state not in owner]
+    if unserved:
+        raise Refusal(
+            f"état prototypé servi par aucun écran du profil (launch.screens) : {', '.join(unserved)} ; "
+            "il ne serait pas comparé")
+    chosen = wanted_screens or [screen["name"] for screen in screens]
+    selected = [
+        {"id": state, "address": prototype_states[state]["address"], "screen": owner[state]["name"], "path": owner[state]["path"]}
+        for state in required if owner[state]["name"] in chosen
+    ]
+    if not selected:
+        raise Refusal(f"aucun état prototypé sur les écrans demandés ({', '.join(chosen)})")
+    return selected, [name for name in chosen if any(state["screen"] == name for state in selected)]
+
+
+# --- the two sides ---------------------------------------------------------------
+
+
+class PrototypeHandler(http.server.SimpleHTTPRequestHandler):
+    """The frozen prototype, served as it is, and the measuring page."""
+
+    def log_message(self, *args: Any) -> None:
+        pass
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib method name
+        if urllib.parse.urlsplit(self.path).path == MEASURE_PATH:
+            body = MEASURE_PAGE.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        super().do_GET()
+
+
+def serve_prototype(prototype: Path) -> tuple[http.server.ThreadingHTTPServer, str]:
+    handler = functools.partial(PrototypeHandler, directory=str(prototype))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def launch(descriptor: Path, repo_root: Path, commit: str, state: str, work: Path) -> tuple[Path, dict[str, Any]]:
+    state_file = work / f"launch-{len(list(work.glob('launch-*.json')))}.json"
+    status, answer = run_json([
+        str(LAUNCH_TOOL), "--repo-root", str(repo_root), "start", str(descriptor), "--commit", commit,
+        "--dataset", state, "--timeout", str(LAUNCH_TIMEOUT), "--state-file", str(state_file)])
+    if status != 0 or not isinstance(answer, dict) or not answer.get("started"):
+        raise Refusal(f"le produit n'a pas démarré sur le jeu de données « {state} » : {refusal_text(answer)}")
+    return state_file, answer
+
+
+def stop(state_file: Path) -> None:
+    if state_file.exists():
+        subprocess.run([str(LAUNCH_TOOL), "stop", "--state-file", str(state_file)], capture_output=True, text=True)
+
+
+# --- tokens, on the sources ------------------------------------------------------
+
+
+class StyleSources(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.inline: list[str] = []
+        self.linked: list[str] = []
+        self._in_style = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "style":
+            self._in_style = True
+        elif tag == "link" and "stylesheet" in (attributes.get("rel") or "").lower().split() and attributes.get("href"):
+            self.linked.append(attributes["href"] or "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "style":
+            self._in_style = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_style:
+            self.inline.append(data)
+
+
+def fetch(url: str, what: str) -> str:
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            return response.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, OSError) as exc:
+        raise Refusal(f"{what} ne répond pas ({url}) : {getattr(exc, 'reason', exc)}") from exc
+
+
+def css_rules(css: str, context: str = "") -> list[tuple[str, str, str]]:
+    """(at-rule context, selector, declarations) of every rule, `@media` and
+    `@supports` blocks opened."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    rules, at, size = [], 0, len(css)
+    while at < size:
+        opening = css.find("{", at)
+        if opening < 0:
+            break
+        head = css[at:opening].strip()
+        depth, end = 1, opening + 1
+        while end < size and depth:
+            depth += {"{": 1, "}": -1}.get(css[end], 0)
+            end += 1
+        body = css[opening + 1:end - 1]
+        if head.startswith(("@media", "@supports", "@layer")):
+            rules += css_rules(body, (context + " " + head).strip())
+        elif not head.startswith("@"):
+            rules.append((context, head, body))
+        at = end
+    return rules
+
+
+def tokens_of(page_url: str, what: str) -> dict[str, str]:
+    """The tokens the sources of a page declare: custom properties on `:root`,
+    `html` or a `[data-theme…]` selector, in its `<style>` blocks and the
+    style sheets it links from its own address. A token declared for the dark
+    theme is another token than the light one."""
+    sources = StyleSources()
+    sources.feed(fetch(page_url, what))
+    css = list(sources.inline)
+    origin = urllib.parse.urlsplit(page_url)[:2]
+    for href in sources.linked:
+        sheet = urllib.parse.urljoin(page_url, href)
+        if urllib.parse.urlsplit(sheet)[:2] == origin:
+            css.append(fetch(sheet, f"la feuille de style de {what}"))
+    tokens: dict[str, str] = {}
+    for context, selector, body in css_rules("\n".join(css)):
+        if not re.search(r":root|\bhtml\b|\[data-theme", selector):
+            continue
+        dark = "dark" in context or "dark" in selector
+        for declaration in body.split(";"):
+            name, separator, value = declaration.partition(":")
+            if separator and name.strip().startswith("--"):
+                tokens[name.strip() + (" (dark)" if dark else "")] = re.sub(r"\s+", "", value).lower()
+    return tokens
+
+
+# --- structure and computed styles, in the browser -------------------------------
+
+
+def dump_dom(browser: str, url: str, rendering: dict[str, Any]) -> str:
+    work = tempfile.mkdtemp(prefix="prototype-fidelity-")
+    argv = [
+        browser, "--headless", "--disable-gpu", "--hide-scrollbars", f"--user-data-dir={work}/profile",
+        # The measuring page reads a frame served from another port of this
+        # host: tried on chrome-headless-shell 1243 (2026-10-07), both
+        # switches are needed, and the measuring page must itself be served
+        # over HTTP (a file:// page is refused the frame's document).
+        "--disable-web-security", "--disable-site-isolation-trials",
+        f"--window-size={rendering['width']},{rendering['height']}",
+        f"--blink-settings=preferredColorScheme={COLOUR_SCHEMES[rendering['theme']]}",
+        "--virtual-time-budget=10000", "--dump-dom", url,
+    ]
+    proc = None
+    try:
+        with open(Path(work) / "dom.html", "wb") as out, open(Path(work) / "browser.log", "wb") as log:
+            try:
+                proc = subprocess.Popen(argv, cwd=work, stdin=subprocess.DEVNULL, stdout=out, stderr=log, start_new_session=True)
+                proc.wait(timeout=BROWSER_TIMEOUT)
+            except subprocess.TimeoutExpired as exc:
+                raise Refusal(f"le navigateur ({browser}) n'a rien rendu en {BROWSER_TIMEOUT} s : aucune mesure") from exc
+            except OSError as exc:
+                raise Refusal(f"navigateur impossible à lancer : {browser} ({exc.strerror or exc})") from exc
+        return (Path(work) / "dom.html").read_text(encoding="utf-8", errors="replace")
+    finally:
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+        for _ in range(20):
+            shutil.rmtree(work, ignore_errors=True)
+            if not os.path.exists(work):
+                break
+            time.sleep(0.1)
+
+
+def measure_page(browser: str, measure_url: str, target: str, attribute: str, rendering: dict[str, Any], what: str) -> list[dict[str, Any]]:
+    """The anchors of one page, in document order: name, element, enclosing
+    anchor and computed styles."""
+    query = urllib.parse.urlencode({
+        "target": target, "attr": attribute, "props": ",".join(PROPERTIES),
+        "w": rendering["width"], "h": rendering["height"]})
+    found = MEASURE_RE.search(dump_dom(browser, f"{measure_url}?{query}", rendering))
+    try:
+        measured = json.loads(html.unescape(found.group(1))) if found and found.group(1).strip() else None
+    except json.JSONDecodeError:
+        measured = None
+    if not isinstance(measured, dict):
+        raise Refusal(f"aucune mesure rendue par le navigateur pour {what} ({target}, {rendering['label']})")
+    if measured.get("ok") is not True or not isinstance(measured.get("anchors"), list):
+        raise Refusal(f"mesure impossible pour {what} ({target}, {rendering['label']}) : {measured.get('error')}")
+    return measured["anchors"]
+
+
+def by_name(anchors: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for anchor in anchors:
+        grouped.setdefault(str(anchor.get("name")), []).append(anchor)
+    return grouped
+
+
+def compare_anchors(prototype: list[dict[str, Any]], delivered: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """One record per anchor of the prototype, and the anchors only the
+    delivered page has (a note: nothing of the prototype is missing there)."""
+    expected, found = by_name(prototype), by_name(delivered)
+    records = []
+    for name, references in expected.items():
+        occurrences = found.get(name)
+        if not occurrences:
+            records.append({"anchor": name, "verdict": "absente", "deviations": [
+                {"kind": "absent", "property": "présence", "prototype": f"{len(references)} occurrence(s)", "delivered": "absente"}]})
+            continue
+        deviations: list[dict[str, Any]] = []
+
+        def differ(kind: str, name_of_property: str, reference: Any, value: Any) -> None:
+            if reference != value and not any(d["kind"] == kind and d["property"] == name_of_property for d in deviations):
+                deviations.append({"kind": kind, "property": name_of_property, "prototype": reference, "delivered": value})
+
+        differ("structure", "occurrences", len(references), len(occurrences))
+        for reference, occurrence in zip(references, occurrences):
+            differ("structure", "tag", reference.get("tag"), occurrence.get("tag"))
+            differ("structure", "parent", reference.get("parent"), occurrence.get("parent"))
+            for name_of_property in PROPERTIES:
+                differ("style", name_of_property, (reference.get("styles") or {}).get(name_of_property),
+                       (occurrence.get("styles") or {}).get(name_of_property))
+        records.append({"anchor": name, "verdict": "écart" if deviations else "identique", "deviations": deviations})
+    return records, [name for name in found if name not in expected]
+
+
+def measure(plan: dict[str, Any]) -> dict[str, Any]:
+    """Compare every state of the plan; the two sides are rendered here, now."""
+    browser, attribute = plan["browser"], plan["anchor_attribute"]
+    states: dict[str, Any] = {}
+    deviations: list[dict[str, Any]] = []
+    for state in plan["states"]:
+        reference_tokens = tokens_of(state["prototype_url"], f"la page du prototype (état {state['id']})")
+        delivered_tokens = tokens_of(state["delivered_url"], f"la page livrée (état {state['id']})")
+        for name, value in reference_tokens.items():
+            if delivered_tokens.get(name) != value:
+                deviations.append({
+                    "state": state["id"], "viewport": None, "anchor": None, "kind": "token", "property": name,
+                    "prototype": value, "delivered": delivered_tokens.get(name)})
+        records, anchors, extra = [], [], {}
+        for rendering in plan["renderings"]:
+            prototype = measure_page(browser, plan["measure_url"], state["prototype_url"], attribute, rendering, "le prototype")
+            if not prototype:
+                raise Refusal(
+                    f"aucune ancre mesurée sur le prototype pour l'état {state['id']} ({rendering['label']}) : "
+                    "rien à comparer n'est pas une fidélité prouvée")
+            delivered = measure_page(browser, plan["measure_url"], state["delivered_url"], attribute, rendering, "le livré")
+            compared, only_delivered = compare_anchors(prototype, delivered)
+            for record in compared:
+                records.append({"viewport": rendering["label"], **record})
+                if record["anchor"] not in anchors:
+                    anchors.append(record["anchor"])
+                deviations += [
+                    {"state": state["id"], "viewport": rendering["label"], "anchor": record["anchor"], **deviation}
+                    for deviation in record["deviations"]]
+            if only_delivered:
+                extra[rendering["label"]] = only_delivered
+        states[state["id"]] = {
+            "screen": state["screen"], "path": state["path"], "viewports": [r["label"] for r in plan["renderings"]],
+            "anchors": anchors, "records": records,
+            "tokens": {"compared": len(reference_tokens),
+                       "only_delivered": sorted(name for name in delivered_tokens if name not in reference_tokens)},
+            "anchors_only_delivered": extra,
+        }
+    return {"commit": plan["commit"], "screens": plan["screens"], "states": states, "deviations": deviations}
+
+
+def cmd_measure(args: argparse.Namespace) -> int:
+    """Run inside bin/evidence-capture command: its output is the record. It
+    exits 0 once everything was compared, red or green, so that only a
+    complete record becomes a piece."""
+    try:
+        plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise Refusal(f"plan de mesure illisible ({args.plan}) : {exc}") from exc
+    print(json.dumps(measure(plan), indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- check -----------------------------------------------------------------------
+
+
+def read_ticket(convoy: str, ticket: str) -> dict[str, Any]:
+    status, answer = run_json([str(STATE_TOOL), "show", convoy])
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(answer)
+    # 3 is an « état sans règle » : the state is still rendered.
+    if status not in (0, 3) or not isinstance(answer, dict) or "tickets" not in answer:
+        raise Refusal(refusal_text(answer))
+    for entry in answer["tickets"]:
+        if entry.get("id") == ticket:
+            if entry.get("mark") != MARK:
+                raise Refusal(f"le ticket {ticket} ne porte pas la marque du nouveau flux")
+            return entry
+    raise Refusal(f"le ticket {ticket} n'appartient pas au convoi {convoy}")
+
+
+def piece_name(*parts: str) -> str:
+    return ".".join(re.sub(r"[^A-Za-z0-9_]", "_", part) for part in parts)
+
+
+def sealed_measure(args: argparse.Namespace, plan: dict[str, Any], state_file: Path, work: Path) -> dict[str, Any]:
+    """The same measure, run by the capture tool: the record is a sealed
+    piece of the evidence store at the commit of the launched product."""
+    plan_file = work / "plan.json"
+    plan_file.write_text(json.dumps(plan), encoding="utf-8")
+    status, answer = run_json([
+        str(CAPTURE_TOOL), "command", args.convoy, args.ticket, "--piece", PIECE, "--launch-state", str(state_file),
+        "--expect-exit", "0", "--", sys.executable, str(Path(__file__).resolve()), "measure", "--plan", str(plan_file)])
+    if status != 0:
+        output = answer.get("output") if isinstance(answer, dict) else None
+        try:
+            inner = json.loads(output) if output else None
+        except json.JSONDecodeError:
+            inner = None
+        raise Refusal(refusal_text(inner) if isinstance(inner, dict) and inner.get("error") else refusal_text(answer))
+    try:
+        return json.loads(json.loads(Path(answer["path"]).read_text(encoding="utf-8"))["output"])
+    except (OSError, KeyError, json.JSONDecodeError) as exc:
+        raise Refusal(f"relevé de fidélité illisible dans le magasin de preuves : {exc}", [f"pièce {PIECE}"]) from exc
+
+
+def capture(args: argparse.Namespace, state: dict[str, Any], rendering: dict[str, Any], state_file: Path) -> dict[str, Any]:
+    piece = piece_name(PIECE, state["id"], rendering["label"])
+    status, answer = run_json([
+        str(CAPTURE_TOOL), "comparison", args.convoy, args.ticket, "--piece", piece, "--launch-state", str(state_file),
+        "--path", state["path"], "--reference-url", state["prototype_url"],
+        "--window-size", f"{rendering['width']}x{rendering['height']}", "--color-scheme", rendering["theme"]])
+    if status != 0:
+        raise Refusal(f"capture côte à côte impossible ({state['id']}, {rendering['label']}) : {refusal_text(answer)}")
+    return {"piece": piece, "side_by_side": answer["image"], "difference": answer["difference"],
+            "differing_pixels": answer["differing_pixels"], "pixels": answer["pixels"]}
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    if bool(args.convoy) != bool(args.ticket):
+        raise Refusal("--convoy et --ticket vont ensemble : le résultat s'enregistre sur un ticket d'un convoi marqué")
+    prototype = Path(args.prototype).resolve()
+    manifest = read_manifest(prototype)
+    profile = load_tool("project-planning-profile")
+    try:
+        descriptor = profile.load_descriptor(Path(args.descriptor).resolve())
+    except profile.ProfileError as exc:
+        raise Refusal(f"profil de projet illisible ({args.descriptor}) : {exc}") from exc
+    launch_block = descriptor.get("launch") or {}
+    screens = launch_block.get("screens")
+    if not screens:
+        raise Refusal(
+            f"le profil du projet {descriptor.get('project_id')!r} ne déclare aucun écran (launch.screens) : "
+            "nom, chemin servi et états prototypés de chaque écran comparé au prototype")
+    wanted_states = [state for state in args.states.split(",") if state] if args.states is not None else None
+    selected, compared_screens = select_states(manifest, screens, wanted_states, args.screen, args.ticket)
+    accepted: list[str] = []
+    if args.ticket:
+        ticket = read_ticket(args.convoy, args.ticket)
+        accepted = ticket.get("accepted_anchors") or []
+    capture_tool = load_tool("evidence-capture")
+    try:
+        browser = capture_tool.find_browser()
+    except capture_tool.Refusal as exc:
+        raise Refusal(str(exc)) from exc
+    repo_root = Path(args.repo_root).resolve()
+    resolved = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "--verify", "--quiet", f"{args.commit}^{{commit}}"],
+        capture_output=True, text=True)
+    commit = resolved.stdout.strip()
+    if resolved.returncode != 0 or not commit:
+        raise Refusal(f"commit introuvable dans {repo_root} : {args.commit!r}")
+
+    work = Path(tempfile.mkdtemp(prefix="prototype-fidelity-"))
+    server, prototype_address = serve_prototype(prototype)
+    launched: list[Path] = []
+    written: list[str] = []
+    try:
+        for state in selected:
+            state_file, record = launch(Path(args.descriptor).resolve(), repo_root, commit, state["id"], work)
+            launched.append(state_file)
+            state["state_file"] = str(state_file)
+            state["delivered_url"] = record["address"] + state["path"]
+            state["prototype_url"] = f"{prototype_address}/{state['address'].lstrip('/')}"
+        plan = {
+            "browser": browser, "anchor_attribute": manifest["anchor_attribute"], "commit": commit,
+            "screens": compared_screens, "renderings": renderings(manifest), "states": selected,
+            "measure_url": prototype_address + MEASURE_PATH,
+        }
+        try:
+            if args.ticket:
+                result = sealed_measure(args, plan, launched[0], work)
+                written.append(f"pièce {PIECE}")
+                for state in selected:
+                    captures = result["states"][state["id"]]["captures"] = {}
+                    for rendering in plan["renderings"]:
+                        captures[rendering["label"]] = capture(args, state, rendering, Path(state["state_file"]))
+                        written.append(f"pièce {captures[rendering['label']]['piece']}")
+            else:
+                result = measure(plan)
+                for state in selected:
+                    result["states"][state["id"]]["captures"] = None
+            missing = [state["id"] for state in selected if not result["states"].get(state["id"], {}).get("records")]
+            if missing:
+                raise Refusal(f"état sans relevé : {', '.join(missing)} ; il n'a pas été comparé")
+            if args.ticket:
+                summary = work / "fidelity.json"
+                summary.write_text(json.dumps({
+                    "screens": result["screens"],
+                    "states": {name: {"viewports": state["viewports"], "anchors": state["anchors"]}
+                               for name, state in result["states"].items()},
+                    "deviations": [{key: deviation[key] for key in ("state", "viewport", "anchor", "kind", "property")}
+                                   for deviation in result["deviations"]],
+                }, ensure_ascii=False), encoding="utf-8")
+                status, answer = run_json([
+                    str(STATE_TOOL), "set-fidelity", args.convoy, args.ticket, "--commit", commit, "--piece", PIECE,
+                    "--file", str(summary)])
+                if status != 0:
+                    raise Refusal(f"résultat refusé par la commande d'état : {refusal_text(answer)}")
+                result["recorded"] = {"convoy": args.convoy, "ticket": args.ticket, "piece": PIECE, "commit": commit}
+            else:
+                result["recorded"] = None
+        except Refusal as exc:
+            raise Refusal(str(exc), written + exc.written) from exc
+    finally:
+        for state_file in launched:
+            stop(state_file)
+        server.shutdown()
+        server.server_close()
+        shutil.rmtree(work, ignore_errors=True)
+
+    for deviation in result["deviations"]:
+        deviation["status"] = ACCEPTED if deviation["anchor"] in accepted else OPEN
+    if not result["deviations"]:
+        result["result"] = GREEN
+    elif all(deviation["status"] == ACCEPTED for deviation in result["deviations"]):
+        result["result"] = ACCEPTED
+    else:
+        result["result"] = RED
+    result["ok"] = result["result"] != RED
+    result["prototype"] = str(prototype)
+    print(json.dumps(result, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0 if result["ok"] else EXIT_RED
+
+
+# --- command line ----------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="mode", required=True)
+    p = sub.add_parser("check")
+    p.add_argument("descriptor")
+    p.add_argument("--prototype", required=True)
+    p.add_argument("--commit", required=True)
+    p.add_argument("--repo-root", default=str(BIN.parent))
+    p.add_argument("--states")
+    p.add_argument("--screen", action="append", default=[])
+    p.add_argument("--convoy")
+    p.add_argument("--ticket")
+    p.set_defaults(handler=cmd_check)
+    # Run by `check` through the capture tool; not a command of its own.
+    p = sub.add_parser("measure")
+    p.add_argument("--plan", required=True)
+    p.set_defaults(handler=cmd_measure)
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.handler(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        answer: dict[str, Any] = {"ok": False, "error": f"refus : {exc}"}
+        if exc.written:
+            answer["written"] = exc.written
+        print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
