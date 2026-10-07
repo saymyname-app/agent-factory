@@ -97,12 +97,15 @@ class StopAndAccessTest(unittest.TestCase):
         with open(self.state_file, "w") as fh:
             json.dump(
                 [{"id": "af-work1", "title": "Export des listes", "status": "in_progress", "issue_type": "task",
-                  "labels": [], "notes": "", "metadata": {}}],
+                  # As the factory records a ticket being delivered: the session is on the ticket,
+                  # the session list itself names no ticket (checked on the live host).
+                  "labels": [], "notes": "",
+                  "metadata": {"gc.session_id": "af-s1", "gc.session_name": "factory-worker"}}],
                 fh,
             )
         self.expiry_file.write_text(iso_in(200))
         self.fake_gc.set_sessions([
-            session("af-s1", "factory-worker", active_bead="af-work1"),
+            session("af-s1", "factory-worker"),
             session("af-s2", "mayor"),
         ])
 
@@ -213,6 +216,11 @@ class StopAndAccessTest(unittest.TestCase):
             self.assertEqual(404, status, action)
             self.assertEqual("unknown_action", payload["error"])
         self.assertFalse(self.get("/api/status")["gc"]["value"]["suspended"])
+
+        # A session that names its ticket itself is read too.
+        self.fake_gc.set_sessions([session("af-s9", "factory-worker", active_bead="af-work1")])
+        time.sleep(1.0)
+        self.assertIn("Travail en vol : 1 agent sur un ticket.", self.get("/"))
 
         # No agent on a ticket any more.
         self.fake_gc.set_sessions([session("af-s2", "mayor")])
