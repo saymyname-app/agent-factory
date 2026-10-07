@@ -1,0 +1,692 @@
+#!/usr/bin/env python3
+"""The single correction round of a ticket, the stop of a ticket still
+refused, and the override of the operator (T17, af-rx0ocp; Spec af-wf4w5r
+§8; user stories 43 to 45).
+
+The code review (bin/code-review) and the Ticket Evaluation
+(bin/ticket-evaluation) of a finished ticket run in parallel on the same tip.
+Once both have answered there and at least one refused, the flow -- never
+the author, never a reviewer -- opens the one correction round of the ticket
+and sends it to one fresh author session, started as routed work through
+bin/dispatch-door on the formula `mol-ticket-correction`. That session is
+given every finding of both (`brief`). The round counts among the resumes
+of the ticket.
+
+A ticket still refused after that round -- its answers judged unfavorably, a
+criterion still not observed, a review replayed in full that blocks again, a
+session that ended without correcting -- is stopped: no second round starts,
+nothing of it is merged, and it is raised once to the operator through
+bin/escalation-door, as one item.
+
+On a stopped ticket the declared human approver of the project may override
+a Blocking Finding of the code review, with their words (`override`); it is
+then read as « dérogation enregistrée ». A criterion that was not observed
+is never waived: the command refuses it and names the Planning Exception.
+
+    correction-round settle   CONVOY [--repo DIR]            bin/convoy-advance, at each pass
+    correction-round brief    CONVOY TICKET [--repo DIR]     the author session of the round
+    correction-round override CONVOY TICKET --finding ID --approved-by NAME --words TEXT [--repo DIR]
+    correction-round show     CONVOY TICKET [--repo DIR]
+
+The state lives in the tracker, read and written through bin/convoy-state
+only (`correction`, `overrides`, `stop`, the counters). Every answer is one
+JSON object on stdout. Exit status: 0 done; 1 refused or could not run; 4
+the convoy does not carry the new-flow mark. Details:
+docs/CORRECTION_ROUND.md.
+
+Environment (tests and non-default layouts):
+  FACTORY_ROOT                          repository whose settings and projects are read
+  CORRECTION_ROUND_DISPATCH_DOOR_BIN    door that routes the round to the author
+  PROJECT_PLANNING_PROFILE_BIN          what names the human approver of a project
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import tomllib
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterator
+
+
+PROGRAM = "correction-round"
+BIN = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
+GC_BIN = os.environ.get("GC_BIN", "gc")
+STATE_TOOL = BIN / "convoy-state"
+ESCALATION_TOOL = BIN / "escalation-door"
+OPERATOR_CONFIG_BIN = BIN / "operator-config"
+SETTINGS = ROOT / "config" / "delivery-flow.json"
+PROJECTS = ROOT / "config" / "projects"
+
+NEW_FLOW = "new-flow/v1"
+KIND_PREFACTORING = "prefactoring"
+FAVORABLE = "favorable"
+STOP_STILL_REFUSED = "still_refused"
+OVERRIDE_RECORDED = "dérogation enregistrée"
+# What the code review or the evaluation says of a ticket at its tip.
+PENDING, ACCEPTED, REFUSED, WITH_AUTHOR = "pending", "accepted", "refused", "with_author"
+
+EXIT_REFUSED = 1
+EXIT_NOT_NEW_FLOW = 4
+# bin/dispatch-door: the launch is deferred, nothing was dispatched.
+DOOR_DEFERRED = 75
+
+MAX_DETAIL = 300
+# The escalation door refuses a line of a request longer than that.
+REQUEST_LINE_MAX = 140
+
+RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
+RIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+FINDING_ID_RE = re.compile(r"^F[1-9][0-9]*\.[1-9][0-9]*$")
+NEVER_WAIVED = ("un critère non observé ne se dispense jamais : seul un Blocking Finding de la revue de code reçoit "
+                "une dérogation (--finding F<n>.<m>). Pour un critère ou la ligne de démonstration, ouvre une "
+                "Planning Exception (bin/planning-exception, docs/PLANNING_EXCEPTION.md)")
+
+
+class Refusal(RuntimeError):
+    """The call is refused, or could not run."""
+
+    def __init__(self, message: str):
+        super().__init__(" ".join(message.split()))
+
+
+class Deferred(Refusal):
+    """The dispatch door deferred the launch (low memory, a hot path held):
+    nothing was sent, and the next call tries again."""
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark: bin/convoy-state's answer."""
+
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+def short(text: str, limit: int = MAX_DETAIL) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+# --- the other commands ----------------------------------------------------------
+
+
+def run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+
+
+def detail_of(proc: subprocess.CompletedProcess[str]) -> str:
+    return short(proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}")
+
+
+def state_tool(*args: str) -> tuple[int, dict[str, Any]]:
+    """One JSON answer of bin/convoy-state."""
+    proc = run([str(STATE_TOOL), *args])
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"convoy-state {args[0]} a rendu une réponse illisible : {detail_of(proc)}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"convoy-state {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def state_write(*args: str) -> dict[str, Any]:
+    status, answer = state_tool(*args)
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(answer)
+    if status != 0:
+        raise Refusal(f"{args[0]} refusé par la commande d'état : {refusal_text(answer)}")
+    return answer
+
+
+def read_bead(bead_id: str) -> dict[str, Any]:
+    proc = run([GC_BIN, "bd", "show", bead_id, "--json"])
+    if proc.returncode != 0:
+        raise Refusal(f"gc bd show {bead_id} a échoué : {detail_of(proc)}")
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc bd show {bead_id} a rendu un JSON illisible : {exc}") from exc
+    bead = data[0] if isinstance(data, list) and data else data
+    if not isinstance(bead, dict):
+        raise Refusal(f"bead introuvable : {bead_id}")
+    return bead
+
+
+# --- settings ----------------------------------------------------------------
+
+
+def load_settings() -> dict[str, str]:
+    """`correction` of config/delivery-flow.json: what the dispatch door is
+    given to start the author session of a correction round."""
+    try:
+        data = json.loads(SETTINGS.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise Refusal(f"config/delivery-flow.json illisible : {exc}") from exc
+    block = data.get("correction") if isinstance(data, dict) else None
+    if not isinstance(block, dict):
+        raise Refusal("aucun réglage correction dans config/delivery-flow.json : le tour de correction n'est pas réglé")
+    settings = {name: block.get(name) for name in ("formula", "role", "rig")}
+    for name, value in settings.items():
+        if not isinstance(value, str) or not value:
+            raise Refusal(f"correction.{name} absent ou invalide dans config/delivery-flow.json : {value!r}")
+    return settings
+
+
+# --- the convoy and its tickets ---------------------------------------------------
+
+
+def ticket_rig(ticket_id: str) -> str | None:
+    """The single project the ticket names under « Target rigs », or None."""
+    description = read_bead(ticket_id).get("description")
+    match = RIGS_SECTION_RE.search(description if isinstance(description, str) else "")
+    rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
+    if len(rigs) != 1 or not RIG_RE.match(rigs[0]) or not (PROJECTS / f"{rigs[0]}.toml").is_file():
+        return None
+    return rigs[0]
+
+
+def rig_repository(rig: str) -> Path:
+    try:
+        rig_dir = tomllib.loads((PROJECTS / f"{rig}.toml").read_text(encoding="utf-8")).get("rig_dir")
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise Refusal(f"config/projects/{rig}.toml illisible : {exc}") from exc
+    if not isinstance(rig_dir, str) or not rig_dir:
+        raise Refusal(f"config/projects/{rig}.toml ne déclare pas rig_dir")
+    return (ROOT / rig_dir).resolve()
+
+
+class Convoy:
+    """A marked convoy as bin/convoy-state renders it, in the repository
+    that holds its ticket branches."""
+
+    def __init__(self, convoy_id: str, repo: str | None):
+        self.id = convoy_id
+        self.given_repo = Path(repo).resolve() if repo else None
+        self.load()
+
+    def load(self) -> None:
+        if self.given_repo is None:
+            # The mark is read first: an unmarked convoy is answered as such,
+            # whatever its tickets name.
+            status, answer = state_tool("show", self.id)
+            if status == EXIT_NOT_NEW_FLOW:
+                raise NotNewFlow(answer)
+            if status not in (0, 3) or not isinstance(answer.get("tickets"), list) or not answer["tickets"]:
+                raise Refusal(refusal_text(answer))
+            rig = ticket_rig(answer["tickets"][0]["id"])
+            if not rig:
+                raise Refusal(
+                    f"les tickets du convoi {self.id} ne nomment pas un seul projet de config/projects sous "
+                    "« Target rigs » : son dépôt se donne par --repo")
+            self.repo = rig_repository(rig)
+        else:
+            self.repo = self.given_repo
+        status, answer = state_tool("show", self.id, "--repo", str(self.repo))
+        if status == EXIT_NOT_NEW_FLOW:
+            raise NotNewFlow(answer)
+        if status not in (0, 3) or not isinstance(answer.get("tickets"), list):
+            raise Refusal(refusal_text(answer))
+        self.tickets: list[dict[str, Any]] = answer["tickets"]
+
+    def ticket(self, ticket_id: str) -> dict[str, Any]:
+        for ticket in self.tickets:
+            if ticket.get("id") == ticket_id:
+                return readable(ticket)
+        raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {self.id}")
+
+
+def readable(ticket: dict[str, Any]) -> dict[str, Any]:
+    """A ticket whose correction round this command can decide from."""
+    if ticket.get("mark") != NEW_FLOW:
+        raise Refusal(f"état sans règle : le ticket {ticket.get('id')} ne porte pas la marque du nouveau flux")
+    for name in ("code_review", "evaluation", "correction", "overrides", "stop", "exit", "handoff", "merge", "park"):
+        record = ticket.get(name)
+        if isinstance(record, dict) and "unruled" in record:
+            raise Refusal(f"état sans règle : {record['unruled']}")
+    for name, value in (ticket.get("counters") or {}).items():
+        if isinstance(value, dict):
+            raise Refusal(f"état sans règle : compteur {name} illisible")
+    return ticket
+
+
+def review_of(ticket: dict[str, Any]) -> dict[str, Any]:
+    return ticket.get("code_review") or {"rounds": [], "state": {"verdict": None, "commit": None, "unsettled": []}}
+
+
+def evaluation_of(ticket: dict[str, Any]) -> dict[str, Any]:
+    empty = {"verdict": None, "outcome": None, "commit": None, "not_observed": [], "unobservable": []}
+    return ticket.get("evaluation") or {"rounds": [], "state": empty}
+
+
+def own_stop(ticket: dict[str, Any]) -> dict[str, Any] | None:
+    """The stop of the ticket, when this command is what stopped it."""
+    stop = ticket.get("stop")
+    return stop if isinstance(stop, dict) and stop.get("reason") == STOP_STILL_REFUSED else None
+
+
+# --- what the two controls say of a ticket ------------------------------------------
+
+
+def review_position(ticket: dict[str, Any], tip: str) -> tuple[str, list[str], str]:
+    """What the code review says of the ticket at its tip: `pending` (no
+    verdict there yet, with the reason), `accepted`, `refused` (with the
+    Blocking Findings left without a favorable verdict), or `with_author`
+    (the Blocking Findings of the round under correction that still wait
+    for their answer)."""
+    review, correction = review_of(ticket), ticket.get("correction")
+    last = review["rounds"][-1] if review["rounds"] else None
+    unsettled = list(review["state"]["unsettled"])
+    if review.get("request"):
+        return PENDING, unsettled, "la revue de code n'a pas rendu son verdict à la pointe"
+    if last is None:
+        return PENDING, [], "aucune revue de code n'est rendue"
+    if last["verdict"] == FAVORABLE:
+        if last["commit"] == tip:
+            return ACCEPTED, [], ""
+        return PENDING, [], "la revue de code est à rejouer sur la pointe"
+    if last["kind"] != "review":
+        return REFUSED, unsettled, ""
+    if correction is None:
+        if last["commit"] == tip:
+            return REFUSED, unsettled, ""
+        return PENDING, unsettled, "la revue de code n'a pas rendu son verdict à la pointe"
+    if last["commit"] != correction["commit"]:
+        # A review replayed in full after the round, and it blocks again.
+        return REFUSED, unsettled, ""
+    if all(finding_id in (last.get("responses") or {}) for finding_id in unsettled):
+        return PENDING, unsettled, "les réponses aux Blocking Findings attendent leur jugement"
+    return WITH_AUTHOR, unsettled, ""
+
+
+def evaluation_position(ticket: dict[str, Any], tip: str) -> tuple[str, list[str], str]:
+    """The same for the Ticket Evaluation: `refused` names what was not
+    observed; `with_author` is the evaluation the round is correcting."""
+    evaluation, correction = evaluation_of(ticket), ticket.get("correction")
+    last = evaluation["rounds"][-1] if evaluation["rounds"] else None
+    not_observed = list(evaluation["state"]["not_observed"])
+    if evaluation.get("request"):
+        return PENDING, not_observed, "la Ticket Evaluation n'a pas rendu ses états à la pointe"
+    if last is None:
+        return PENDING, [], "aucune Ticket Evaluation n'est rendue"
+    if last["commit"] != tip:
+        return PENDING, not_observed, "la Ticket Evaluation est à rejouer sur la pointe"
+    if last["outcome"] == FAVORABLE:
+        return ACCEPTED, [], ""
+    if last["outcome"] != "return_to_author":
+        # An unobservable criterion is a Planning Exception, an outage is
+        # made again: neither is corrected by the author (bin/ticket-evaluation).
+        return PENDING, not_observed, "la Ticket Evaluation n'a pas rendu d'états que l'auteur puisse corriger"
+    if correction is not None and last["commit"] == correction["commit"]:
+        return WITH_AUTHOR, not_observed, ""
+    return REFUSED, not_observed, ""
+
+
+def green_at(ticket: dict[str, Any], tip: str) -> bool:
+    step = "prefactoring" if ticket.get("kind") == KIND_PREFACTORING else "green"
+    return ((ticket.get("tdd") or {}).get(step) or {}).get("commit") == tip
+
+
+def finished_at(ticket: dict[str, Any], tip: str) -> bool:
+    """The author has finished, green, at the tip of the ticket branch."""
+    handoff = ticket.get("handoff") or {}
+    return handoff.get("partial") is False and handoff.get("commit") == tip and green_at(ticket, tip)
+
+
+def still_refused(review: tuple[str, list[str], str], evaluation: tuple[str, list[str], str], unfinished: bool) -> str:
+    """The one-line detail of the stop: what the ticket is still refused for."""
+    parts = []
+    if review[0] in (REFUSED, WITH_AUTHOR) and review[1]:
+        parts.append(f"revue de code ({', '.join(review[1])})")
+    if evaluation[0] in (REFUSED, WITH_AUTHOR) and evaluation[1]:
+        parts.append(f"Ticket Evaluation ({', '.join(evaluation[1])})")
+    detail = "encore refusé après son tour de correction : " + (" ; ".join(parts) or "aucun verdict favorable")
+    if unfinished:
+        detail += " ; la session de correction s'est terminée sans que le ticket soit terminé à la pointe de sa branche"
+    return short(detail)
+
+
+# --- launching the author ---------------------------------------------------------
+
+
+@contextmanager
+def ticket_lock(ticket_id: str) -> Iterator[None]:
+    """One decision at a time on the correction round of a ticket."""
+    lock_dir = Path(os.environ.get("CONVOY_STATE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = re.sub(r"[^A-Za-z0-9._-]", "_", ticket_id)
+    with (lock_dir / f"agent-factory-correction-round-{safe_id}.lock").open("w") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def launch(convoy: Convoy, ticket_id: str, correction: dict[str, Any], settings: dict[str, str]) -> str:
+    """Send the round to one fresh author session: a bead of its own,
+    routed through the dispatch door on the author role."""
+    proc = run([
+        GC_BIN, "bd", "create", f"Tour de correction — {ticket_id}",
+        "-p", "1", "-t", "task", "-d",
+        f"Correction round of ticket {ticket_id}: the findings of its code review and of its Ticket Evaluation, "
+        f"given at commit {correction['commit']}.\n\nconvoy: {convoy.id}\nticket: {ticket_id}\n",
+        "--json"])
+    try:
+        created = json.loads(proc.stdout)
+        created = created[0] if isinstance(created, list) and created else created
+        bead_id = created["id"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise Refusal(f"gc bd create n'a pas rendu l'identifiant du bead du tour de correction : {detail_of(proc)}") from exc
+    door = os.environ.get("CORRECTION_ROUND_DISPATCH_DOOR_BIN") or str(BIN / "dispatch-door")
+    routed = run([door, bead_id, "--rig", settings["rig"], "--formula", settings["formula"], "--role", settings["role"]])
+    if routed.returncode != 0:
+        run([GC_BIN, "bd", "close", bead_id, "--reason", "Tour de correction non routé par la porte de dispatch."])
+        if routed.returncode == DOOR_DEFERRED:
+            raise Deferred(
+                f"le lancement du tour de correction du ticket {ticket_id} est différé par la porte de dispatch : "
+                f"{detail_of(routed)} ; aucune session n'est comptée, le prochain appel réessaie")
+        raise Refusal(
+            f"le tour de correction du ticket {ticket_id} n'a pas été routé vers le rôle auteur : "
+            f"{detail_of(routed)} ; aucune session n'est comptée")
+    state_write("launch-correction", convoy.id, ticket_id, "--bead", bead_id)
+    return bead_id
+
+
+def session_over(launched: dict[str, Any]) -> bool:
+    """The author session of the round has ended: its bead is closed."""
+    try:
+        return read_bead(launched["bead"]).get("status") == "closed"
+    except Refusal:
+        return False
+
+
+# --- a stopped ticket reaches the operator ------------------------------------------
+
+
+def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> bool:
+    """One request per stopped ticket, whatever refused it: the escalation
+    door puts it on the operator's list, and bin/convoy-state records that
+    it did."""
+    if "raised" in stop:
+        return False
+    language = run([str(OPERATOR_CONFIG_BIN), "language"])
+    if language.returncode != 0:
+        raise Refusal(f"la langue de l'opérateur est illisible : {detail_of(language)}")
+    head = f"Ticket {ticket['id']} arrêté : "
+    payload = {
+        "quoi": head + short(stop["detail"], REQUEST_LINE_MAX - len(head)),
+        "pourquoi": "Un ticket n'a qu'un tour de correction : aucun second tour ne démarre, rien de ce ticket ne fusionne.",
+        "que_faire": [
+            {"option": "Passer outre un Blocking Finding de la revue de code, avec tes mots",
+             "consequence": f"bin/{PROGRAM} override l'enregistre comme dérogation ; jamais un critère non observé."},
+            {"option": "Ouvrir une Planning Exception",
+             "consequence": "Le ticket reste arrêté jusqu'à ta décision dans le Planning Run."},
+            {"option": "Laisser le ticket arrêté",
+             "consequence": "Rien de ce ticket ne fusionne ; les tickets qui l'attendent ne démarrent pas."},
+        ],
+        "langue": language.stdout.strip(), "bloquant": True,
+    }
+    proc = run([str(ESCALATION_TOOL), "benjamin", ticket["id"], json.dumps(payload, ensure_ascii=False)])
+    if proc.returncode != 0:
+        raise Refusal(
+            f"le ticket {ticket['id']} est arrêté ({stop['reason']}) mais la porte d'escalade a refusé sa remontée : "
+            f"{detail_of(proc)} ; {PROGRAM} settle {convoy_id} la rejoue")
+    state_write("stop-raised", convoy_id, ticket["id"])
+    return True
+
+
+def stop_ticket(convoy: Convoy, ticket_id: str, detail: str) -> dict[str, Any]:
+    state_write("stop-ticket", convoy.id, ticket_id, "--reason", STOP_STILL_REFUSED, "--detail", detail)
+    convoy.load()
+    ticket = convoy.ticket(ticket_id)
+    raise_stop(convoy.id, ticket, ticket["stop"])
+    return {"ticket": ticket_id, "action": "stopped", "stop": STOP_STILL_REFUSED}
+
+
+# --- settle: what is due on one ticket ----------------------------------------------
+
+
+def settle_ticket(convoy: Convoy, ticket_id: str) -> dict[str, Any]:
+    """Do what is due on the correction round of one ticket, from the
+    tracker and its branch alone: raise a stop that did not reach the
+    operator; open the round once the code review and the evaluation both
+    answered at the tip and one refused, and send it to one author session;
+    stop the ticket that is still refused after its round. A second call on
+    the same state does nothing."""
+    with ticket_lock(ticket_id):
+        convoy.load()
+        ticket = convoy.ticket(ticket_id)
+        stop = own_stop(ticket)
+        if stop:
+            return {"ticket": ticket_id, "action": "escalated" if raise_stop(convoy.id, ticket, stop) else "none"}
+        tip = ticket.get("tip")
+        merge = ticket.get("merge") or {}
+        if ticket.get("status") == "closed" or (ticket.get("exit") or {}).get("exit") != "finished" \
+                or ticket.get("park") or ticket.get("stop") or not ticket.get("branch") or not tip \
+                or (merge.get("outcome") == "merged" and merge.get("ticket_commit") == tip):
+            return {"ticket": ticket_id, "action": "none"}
+        correction = ticket.get("correction")
+        finished = finished_at(ticket, tip)
+        review, evaluation = review_position(ticket, tip), evaluation_position(ticket, tip)
+        positions = (review[0], evaluation[0])
+
+        if correction is None:
+            if review[0] == REFUSED and review_of(ticket)["rounds"][-1]["kind"] != "review":
+                # Answers already judged unfavorably: that judgement was its round.
+                return stop_ticket(convoy, ticket_id, still_refused(review, evaluation, False))
+            if not finished or REFUSED not in positions:
+                return {"ticket": ticket_id, "action": "none"}
+            if PENDING in positions:
+                missing = review if review[0] == PENDING else evaluation
+                return {"ticket": ticket_id, "action": "waiting",
+                        "reason": f"{missing[2]} : une seule session d'auteur reçoit tous les constats, le tour de "
+                                  "correction attend les deux"}
+            state_write("open-correction", convoy.id, ticket_id, "--commit", tip)
+            convoy.load()
+            correction = convoy.ticket(ticket_id)["correction"]
+
+        if not correction["launches"]:
+            # The settings are read when a round is sent, not before: a
+            # convoy nothing refused asks nothing of them.
+            bead_id = launch(convoy, ticket_id, correction, load_settings())
+            return {"ticket": ticket_id, "action": "launched", "commit": correction["commit"], "bead": bead_id}
+        over = session_over(correction["launches"][-1])
+        if not finished or WITH_AUTHOR in positions:
+            if over:
+                return stop_ticket(convoy, ticket_id, still_refused(review, evaluation, not finished))
+            return {"ticket": ticket_id, "action": "pending", "commit": correction["commit"],
+                    "reason": "la session de correction travaille"}
+        if PENDING in positions:
+            return {"ticket": ticket_id, "action": "pending", "commit": correction["commit"],
+                    "reason": review[2] if review[0] == PENDING else evaluation[2]}
+        if REFUSED in positions:
+            return stop_ticket(convoy, ticket_id, still_refused(review, evaluation, False))
+        return {"ticket": ticket_id, "action": "none"}
+
+
+def cmd_settle(args: argparse.Namespace) -> int:
+    convoy = Convoy(args.convoy, args.repo)
+    answer: dict[str, Any] = {"ok": True, "convoy": args.convoy, "launched": [], "pending": [], "waiting": [],
+                              "stopped": [], "escalated": [], "deferred": [], "refused": []}
+    for ticket_id in [ticket.get("id") for ticket in convoy.tickets]:
+        try:
+            done = settle_ticket(convoy, ticket_id)
+        except Deferred as exc:
+            answer["deferred"].append({"ticket": ticket_id, "reason": str(exc)})
+            continue
+        except Refusal as exc:
+            answer["refused"].append({"ticket": ticket_id, "reason": str(exc)})
+            continue
+        if done["action"] != "none":
+            answer[done.pop("action")].append(done)
+    answer["ok"] = not answer["refused"]
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0 if answer["ok"] else EXIT_REFUSED
+
+
+# --- brief: what the author session of the round is given ---------------------------
+
+
+def cmd_brief(args: argparse.Namespace) -> int:
+    convoy = Convoy(args.convoy, args.repo)
+    ticket = convoy.ticket(args.ticket)
+    correction = ticket.get("correction")
+    if not correction:
+        raise Refusal(f"aucun tour de correction n'est ouvert sur {args.ticket} : rien à corriger")
+    commit = correction["commit"]
+    reviewed = next((round_ for round_ in reversed(review_of(ticket)["rounds"])
+                     if round_["kind"] == "review" and round_["commit"] == commit), None)
+    findings = (reviewed or {}).get("findings", [])
+    kept = ("id", "axis", "summary", "citation", "question")
+    blocking = [{name: finding[name] for name in kept if name in finding}
+                for finding in findings if finding["id"] in correction["blocking_findings"]]
+    recorded = [{name: finding[name] for name in (*kept, "demoted") if name in finding}
+                for finding in findings if not finding["blocking"]]
+    evaluated = next((round_ for round_ in reversed(evaluation_of(ticket)["rounds"]) if round_["commit"] == commit), None)
+    not_observed = []
+    for what in correction["not_observed"]:
+        if evaluated is None or evaluated["kind"] == "startup":
+            not_observed.append({"what": what, "reason": (evaluated or {}).get("detail")})
+            continue
+        named = {f"critère {item['number']}": item for item in evaluated["criteria"]}
+        named["ligne de démonstration"] = evaluated["demonstration_line"]
+        item = named[what]
+        not_observed.append({"what": what, "text": item["text"], "reason": item.get("reason"),
+                             "evidence": item.get("evidence")})
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy, "ticket": args.ticket, "commit": commit, "branch": ticket.get("branch"),
+        "tip": ticket.get("tip"), "repo": str(convoy.repo),
+        "round": ("C'est l'unique tour de correction de ce ticket, revue de code et Ticket Evaluation confondues : "
+                  "encore refusé après lui, le ticket s'arrête sans fusionner et remonte à l'opérateur."),
+        "code_review": {
+            "commit": commit, "blocking_findings": blocking, "non_blocking_findings": recorded,
+            "respond": (f"bin/code-review respond {args.convoy} {args.ticket} --file <responses.json> : une réponse "
+                        "par Blocking Finding, et rien d'autre"),
+            "response_shape": {"responses": {"<finding id>": {"response": "fixed", "commit": "<commit of the correction>"},
+                                             "<other finding id>": {"response": "contested", "reason": "<one line>"}}},
+        },
+        "evaluation": {"commit": commit, "not_observed": not_observed},
+        "counters": ticket.get("counters"),
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- override: the words of the operator on a stopped ticket -------------------------
+
+
+def declared_human_approver(ticket_id: str) -> tuple[str, str]:
+    """The project the ticket names and its declared human approver."""
+    rig = ticket_rig(ticket_id)
+    if not rig:
+        raise Refusal(
+            f"l'approbateur humain du ticket {ticket_id} est inconnu : le ticket ne nomme pas un seul projet de "
+            "config/projects sous « Target rigs » ; rien n'est écrit")
+    profile = os.environ.get("PROJECT_PLANNING_PROFILE_BIN") or str(BIN / "project-planning-profile")
+    proc = run([profile, "human-approver", "--project", rig, "--config-dir", str(PROJECTS)])
+    try:
+        return rig, json.loads(proc.stdout)["human_approver"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise Refusal(
+            f"l'approbateur humain du projet {rig} est inconnu ({detail_of(proc)}) ; rien n'est écrit") from exc
+
+
+def cmd_override(args: argparse.Namespace) -> int:
+    convoy = Convoy(args.convoy, args.repo)
+    convoy.ticket(args.ticket)
+    if args.criterion is not None or (args.finding is not None and not FINDING_ID_RE.match(args.finding)):
+        named = args.criterion if args.criterion is not None else args.finding
+        raise Refusal(f"{named!r} n'est pas un Blocking Finding de la revue de code ; {NEVER_WAIVED} ; rien n'est écrit")
+    if args.finding is None:
+        raise Refusal(f"--finding absent : une dérogation nomme le Blocking Finding de revue qu'elle passe outre ; {NEVER_WAIVED}")
+    rig, approver = declared_human_approver(args.ticket)
+    if args.approved_by != approver:
+        raise Refusal(
+            f"{args.approved_by!r} n'est pas l'approbateur humain déclaré du projet {rig} ({approver!r}) : lui seul "
+            "passe outre un Blocking Finding ; rien n'est écrit")
+    words = (args.words or "").strip()
+    if not words:
+        raise Refusal("dérogation sans mots : elle s'enregistre avec les mots de l'approbateur (--words), non vides ; "
+                      "rien n'est écrit")
+    state_write("override-finding", args.convoy, args.ticket, "--finding", args.finding, "--approver", approver,
+                "--words", words)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "ticket": args.ticket, "finding": args.finding,
+                      "state": OVERRIDE_RECORDED, "approver": approver, "words": words},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    convoy = Convoy(args.convoy, args.repo)
+    ticket = convoy.ticket(args.ticket)
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy, "ticket": args.ticket, "tip": ticket.get("tip"),
+        "correction": ticket.get("correction"), "overrides": ticket.get("overrides"), "stop": ticket.get("stop"),
+        "counters": ticket.get("counters"), "code_review": review_of(ticket)["state"],
+        "evaluation": evaluation_of(ticket)["state"],
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- command line --------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def command(name: str, handler: Any) -> argparse.ArgumentParser:
+        p = sub.add_parser(name)
+        p.add_argument("convoy")
+        p.add_argument("ticket")
+        p.add_argument("--repo")
+        p.set_defaults(handler=handler)
+        return p
+
+    # Required values are checked by the handlers, not by argparse: a
+    # refusal is one JSON answer.
+    command("brief", cmd_brief)
+    command("show", cmd_show)
+    p = command("override", cmd_override)
+    p.add_argument("--finding")
+    p.add_argument("--criterion")
+    p.add_argument("--approved-by")
+    p.add_argument("--words")
+    p = sub.add_parser("settle")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.set_defaults(handler=cmd_settle, ticket=None)
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.handler(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "ticket": args.ticket, "error": f"refus : {exc}"},
+                         indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

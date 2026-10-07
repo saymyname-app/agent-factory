@@ -62,7 +62,7 @@ reason. A second call on the same state does nothing.
 | favorable at the tip | nothing: the merge may follow |
 | unfavorable review, a Blocking Finding without an answer | waits (`respond`) |
 | unfavorable review, every Blocking Finding answered | opens a **judgement** at the tip, against the reviewed commit |
-| unfavorable judgement | nothing more opens, nothing merges (the stop of the ticket after its correction round is T17's) |
+| unfavorable judgement | nothing more opens, nothing merges; `bin/correction-round settle` stops the ticket, still refused after its correction round (`docs/CORRECTION_ROUND.md`) |
 | a round open at a commit the author has since left | replaced by one at the tip |
 
 ## What the reviewer is given
@@ -152,8 +152,11 @@ to a new reviewer session, which gives one state per Blocking Finding —
 judgement recorded by the session that made the review is refused. The
 verdict is favorable only if every Blocking Finding is judged favorably.
 
-Starting the fresh author session that corrects, bounding that round to one
-and stopping a ticket still refused are T17's.
+The fresh author session that answers is the one of the ticket's single
+correction round, started by `bin/correction-round` once this review and the
+Ticket Evaluation have both answered (`docs/CORRECTION_ROUND.md`). A ticket
+whose answers are judged unfavorably is stopped there, and the operator may
+then override a Blocking Finding with their words.
 
 ## The merge control
 
@@ -231,7 +234,7 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 - The reviewer role holds one session at a time: a review waits behind
   another one, and the time of a launch runs from the dispatch.
 - Nothing lifts a stop yet. A ticket still refused after its judgement is
-  not stopped here (T17).
+  stopped by `bin/correction-round`, not here.
 
 ## Proof
 

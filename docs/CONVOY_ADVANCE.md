@@ -1,4 +1,4 @@
-# Convoy Advance (T04, T34, T18, T13, T14, Spec af-wf4w5r §0 rules 3 and 5, §4, §6)
+# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, Spec af-wf4w5r §0 rules 3 and 5, §4, §6, §7, §8)
 
 ## Status and purpose
 
@@ -146,6 +146,26 @@ while another declared one is available — is retried by the next pass; a
 settlement that could not run, or a launch the door refused, fails the pass
 (exit 1).
 
+## One correction round, then the ticket stops (T17)
+
+After the code review and the evaluation, and before the merge, the pass
+hands each convoy that has a finished ticket not merged yet — or a ticket
+stopped still refused that did not reach the operator yet — to
+`bin/correction-round settle <convoy> --repo <project repository>`
+(`docs/CORRECTION_ROUND.md`). Once both controls have answered at the tip of
+a ticket and at least one refused, the command opens the single correction
+round of that ticket and sends everything both refused to one fresh author
+session; while one of the two has not answered, it waits. After the round,
+it stops the ticket that is still refused and raises it once through
+`bin/escalation-door`: no second round, no merge.
+
+The convoy's entry carries `correction` (`launched`, `pending`, `waiting`,
+`stopped`, `escalated`, `deferred`, `refused`) **only when the settlement had
+something to say**: a convoy whose tickets nothing refused has none, and
+asks nothing of the `correction` settings. A launch the door deferred is
+retried by the next pass; a settlement that could not run, or a launch the
+door refused, fails the pass (exit 1).
+
 ## Test reviews left without result (T13)
 
 Once the starts are made, and before the merge, the pass hands each convoy that has
@@ -170,14 +190,15 @@ per role, the tickets awaiting a session, and per convoy the tickets
 `deferred` (the door deferred: low memory, hot path held — retried on the
 next pass) and `refused` (the door refused, with its reason), plus
 `integration` when the pass ran a merge, `test_review` when it settled
-reviews of criterion tests, `code_review` when it settled code reviews and
-`evaluation` when it settled Ticket Evaluations. A stopped convoy carries `signal`,
+reviews of criterion tests, `code_review` when it settled code reviews,
+`evaluation` when it settled Ticket Evaluations and `correction` when a
+correction round was opened, awaited or ended in a stop. A stopped convoy carries `signal`,
 `unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass or the settlement of the test reviews, of the code reviews or of the evaluations could not run |
+| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass or the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds could not run |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
@@ -271,6 +292,11 @@ T18: the same file covers the pass that merges, through the real
 `bin/spec-integration` on a throwaway repository: one finished ticket merged
 per pass, a ticket returned by red tests, a merge pass that cannot run, a
 stopped convoy that merges nothing.
+
+T17: the same file covers the settlement of the correction rounds through
+the real `bin/correction-round`: a ticket its review refused sent to one
+author session, a ticket still refused stopped and raised once, a round
+that cannot be sent, a convoy nothing refused.
 
 T34: the same `tests/convoy-advance-test.py` covers the stop (one test per
 kind of anomaly), the single incident read back from the real

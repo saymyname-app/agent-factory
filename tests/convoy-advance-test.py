@@ -1004,6 +1004,113 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertIn("aucune Ticket Evaluation rendue", self.integration_of(answer)["waiting"][0]["reason"])
         self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
 
+    # --- one correction round, then the ticket stops (T17) ----------------------
+
+    BLOCKS = {"findings": [{"axis": "spec", "blocking": True, "summary": "Le diff ne livre pas l'essai demandé.",
+                            "citation": {"source": "spec", "quote": "As Benjamin, I want un essai."}}]}
+
+    def corrected(self, *plan):
+        """The correction round of a refused ticket (T17): its settings, and
+        what the author session does at each launch
+        (tests/fixtures/correction-round/author), the last one repeated."""
+        (self.tmp / "correction-plan.json").write_text(json.dumps(list(plan)))
+        self.env.update({
+            "CORRECTION_ROUND_DISPATCH_DOOR_BIN": str(ROOT / "tests" / "fixtures" / "correction-round" / "author"),
+            "CORRECTION_ROUND_FAKE_LOG": str(self.tmp / "correction-door.log"),
+            "CORRECTION_ROUND_FAKE_PLAN": str(self.tmp / "correction-plan.json"),
+            "CORRECTION_ROUND_FAKE_REPO": str(self.root),
+            "CORRECTION_ROUND_FAKE_BRIEFS": str(self.tmp / "correction-briefs"),
+        })
+        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
+        settings["correction"] = {"formula": "mol-ticket-correction", "role": "author", "rig": "fx-rig"}
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+
+    def correction_of(self, answer, convoy=CONVOY):
+        return next(c for c in answer["convoys"] if c["id"] == convoy).get("correction")
+
+    def correction_launches(self):
+        log = self.tmp / "correction-door.log"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def refused_by_its_review(self, *plan):
+        """A finished ticket whose code review, sent by the next pass,
+        leaves a Blocking Finding. Returns the tip of the ticket."""
+        base = self.integrated()
+        self.code_reviewed(self.BLOCKS)
+        self.corrected(*plan)
+        self.advance(CONVOY)
+        return base, self.finished(T1)
+
+    def test_a_pass_sends_a_ticket_its_review_refused_to_one_author_session_and_merges_nothing(self):
+        base, tip = self.refused_by_its_review("works")
+
+        first = self.advance(CONVOY)
+        second = self.advance(CONVOY)
+
+        # The review and the control of the product run in the same pass, on
+        # the same tip; the round is opened once both have answered there.
+        self.assertEqual([T1], [entry["ticket"] for entry in self.code_review_of(first)["launched"]])
+        self.assertEqual([(T1, tip)], [(entry["ticket"], entry["commit"]) for entry in self.evaluation_of(first)["started"]])
+        self.assertEqual([(T1, tip)], [(entry["ticket"], entry["commit"]) for entry in self.correction_of(first)["launched"]])
+        (call,) = self.correction_launches()
+        self.assertEqual(["--rig", "fx-rig", "--formula", "mol-ticket-correction", "--role", "author"], call[1:])
+        self.assertEqual([T1], [entry["ticket"] for entry in self.correction_of(second)["pending"]])
+        self.assertEqual({"resumes": 1, "correction_rounds": 1}, self.shown(T1)["counters"])
+        brief = json.loads((self.tmp / "correction-briefs" / "brief-1.json").read_text())
+        self.assertEqual(["F1.1"], [finding["id"] for finding in brief["code_review"]["blocking_findings"]])
+        for answer in (first, second):
+            self.assertEqual([], self.integration_of(answer)["merged"])
+            self.assertTrue(answer["ok"])
+        self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
+
+    def test_a_pass_stops_a_ticket_still_refused_after_its_round_and_raises_it_once(self):
+        base, _ = self.refused_by_its_review("leaves")
+        self.advance(CONVOY)
+
+        stopped = self.advance(CONVOY)
+        after = self.advance(CONVOY)
+
+        self.assertEqual([{"ticket": T1, "stop": "still_refused"}], self.correction_of(stopped)["stopped"])
+        self.assertIsNone(self.correction_of(after))
+        self.assertEqual(1, len(self.correction_launches()))
+        stop = json.loads(self.bead(T1)["metadata"]["gc.flow.stop"])
+        self.assertEqual("still_refused", stop["reason"])
+        self.assertIn("raised", stop)
+        listed = self.run_ok(ESCALATION, "list").stdout
+        self.assertEqual(1, listed.count(f"{T1} — "), listed)
+        self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
+        self.assertTrue(after["ok"])
+
+    def test_a_correction_round_that_cannot_be_sent_fails_the_pass(self):
+        base, _ = self.refused_by_its_review("door-refuses")
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED)
+
+        self.assertFalse(answer["ok"])
+        self.assertIn("rôle auteur", self.correction_of(answer)["refused"][0]["reason"])
+        self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
+
+    def test_a_refused_ticket_without_settings_of_the_correction_round_fails_the_pass(self):
+        self.refused_by_its_review("works")
+        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
+        del settings["correction"]
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED)
+
+        self.assertIn("le tour de correction n'est pas réglé", self.correction_of(answer)["refused"][0]["reason"])
+        self.assertEqual([], self.correction_launches())
+
+    def test_a_pass_reports_no_correction_round_for_tickets_nothing_refused(self):
+        self.integrated()
+        self.advance(CONVOY)
+        self.finished(T1)
+
+        answer = self.advance(CONVOY)
+
+        self.assertIsNone(self.correction_of(answer))
+        self.assertEqual([T1], [entry["id"] for entry in self.integration_of(answer)["merged"]])
+
     # --- review of the criterion tests left without result (T13) ---------------
 
     REVIEWED = "fx-review"
