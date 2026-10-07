@@ -302,6 +302,45 @@ class OperatorActionsSeamTest(unittest.TestCase):
         calls = self.read_calls(self.proposal_calls_file)
         self.assertIn(["accepter", "af-prop1", "benjamin"], calls)
 
+    # ------------------------------------------------------------------
+    # After an action that wrote, the list is right at once (2026-10-07:
+    # an accepted chantier stayed listed, unchanged and clickable again,
+    # until the next regular read of Beads). The regular read is set far
+    # away here, so only the action's own re-read can explain the list.
+    # ------------------------------------------------------------------
+    def test_a_handled_request_leaves_the_list_without_waiting_for_the_next_read(self):
+        self.write_beads([proposal_bead("af-prop9", "ajouter un filtre", "gagne du temps", OPTIONS_WITH_LETTERS, "2026-09-30T08:00:00Z")])
+        self.start_cockpit(extra_env={"COCKPIT_BEADS_POLL_SECONDS": "3600"})
+        self.wait_for_requests(lambda p: [r["id"] for r in p["requests"]] == ["af-prop9"])
+
+        status, payload = self.post_action("accepter_proposition", {"bead_id": "af-prop9", "confirm": True})
+        self.assertEqual(200, status)
+        self.assertTrue(payload["rafraichi"], payload)
+        self.assertEqual([], self.requests_payload()["requests"])
+
+    def test_a_refused_action_rereads_nothing(self):
+        self.write_beads([proposal_bead("af-prop8", "ajouter un filtre", "gagne du temps", OPTIONS_WITH_LETTERS, "2026-09-30T08:00:00Z")])
+        self.start_cockpit(extra_env={"COCKPIT_BEADS_POLL_SECONDS": "3600"})
+        self.wait_for_requests(lambda p: len(p["requests"]) == 1)
+        status, payload = self.post_action("accepter_proposition", {"bead_id": "af-prop8"})
+        self.assertEqual(400, status)
+        self.assertNotIn("rafraichi", payload)
+
+    def test_the_page_marks_a_handled_request_and_says_a_refusal(self):
+        self.write_beads([proposal_bead("af-prop7", "ajouter un filtre", "gagne du temps", OPTIONS_WITH_LETTERS, "2026-09-30T08:00:00Z")])
+        self.start_cockpit()
+        self.wait_for_requests(lambda p: len(p["requests"]) == 1)
+        req = urllib.request.Request("http://127.0.0.1:%d/" % self.port)
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            body = resp.read().decode("utf-8")
+        # The script that handles every action's answer: result written on
+        # the request, its controls removed, a refusal said, then reload.
+        self.assertIn("settle(el, body.bead_id", body)
+        self.assertIn("removeAttribute('data-action')", body)
+        self.assertIn("Action refusée", body)
+        self.assertIn("data.rafraichi", body)
+        self.assertIn(".cockpit-done", body)
+
     def test_rejeter_proposition_requires_reason(self):
         self.write_beads([proposal_bead("af-prop2", "ajouter un filtre", "gagne du temps", OPTIONS_WITH_LETTERS, "2026-09-30T08:00:00Z")])
         self.start_cockpit()
