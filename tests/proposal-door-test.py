@@ -4,9 +4,12 @@ Proves: `create` refuses a proposal missing its required fields (quoi /
 pourquoi / que_faire / langue in the Operator Language) without writing
 anything, and creates a complete one labelled `proposal`; `accepter`,
 `rejeter` (refuses without a reason) and `reporter` each trace their action
-on the bead (comment + metadata, acteur); `compte` excludes accepted and
-rejected proposals from the pending count, while a legacy proposal with no
-gc.proposal_state still counts as pending.
+on the bead (comment + metadata, acteur); `resoudre` (2026-10-07) resolves a
+pending proposal only on a proof naming a PR or a commit, records that proof,
+and never overrides a proposal Benjamin already accepted or rejected;
+`compte` excludes accepted, rejected and resolved proposals from the pending
+count, while a legacy proposal with no gc.proposal_state still counts as
+pending.
 """
 
 import json
@@ -241,9 +244,55 @@ class ProposalDoorTest(unittest.TestCase):
         # A deferred proposal is still pending: reporter never sets proposal_state.
         self.assertNotIn("gc.proposal_state", bead["metadata"])
 
+    # --- resoudre --------------------------------------------------------
+    # 2026-10-07: four proposals (af-3yo0we, af-yc2ly0, af-1ai5e3, af-r2y2w9)
+    # stayed pending in the Cockpit after the PRs that answered them had
+    # merged. A merged delivery resolves a proposal through this door only.
+
+    PROOF = "PR #385 (saymyname-app/agent-factory, merge a3393ef5a174)"
+
+    def test_resoudre_on_a_merge_proof_traces_proof_and_actor(self):
+        self.seed("af-x", {"id": "af-x", "status": "open", "metadata": {"gc.proposal_state": "ouverte"}, "notes": "", "labels": ["proposal"]})
+        result = self.door("resoudre", "af-x", self.PROOF, "deliver-close", check=True)
+        self.assertIn("RÉSOLUE: af-x", result.stdout)
+        bead = self.bead("af-x")
+        self.assertEqual("resolue", bead["metadata"]["gc.proposal_state"])
+        self.assertEqual(self.PROOF, bead["metadata"]["gc.proposal_resolved_by"])
+        self.assertEqual("deliver-close", bead["metadata"]["gc.proposal_response_actor"])
+        self.assertIn("PROPOSITION RÉSOLUE par deliver-close — " + self.PROOF, bead["notes"])
+
+    def test_resoudre_a_legacy_proposal_without_fields(self):
+        # af-r2y2w9's shape: created before the door existed, metadata null.
+        self.seed("af-legacy", {"id": "af-legacy", "status": "open", "metadata": None, "notes": "", "labels": ["proposal"]})
+        self.door("resoudre", "af-legacy", "PR #340 (saymyname-app/agent-factory, merge d4933731c767)", "benjamin", check=True)
+        self.assertEqual("resolue", self.bead("af-legacy")["metadata"]["gc.proposal_state"])
+
+    def test_resoudre_without_a_merge_proof_is_refused(self):
+        self.seed("af-x", {"id": "af-x", "status": "open", "metadata": {"gc.proposal_state": "ouverte"}, "notes": "", "labels": ["proposal"]})
+        for proof in ("", "c'est corrigé", "voir la discussion"):
+            result = self.door("resoudre", "af-x", proof, "deliver-close")
+            self.assertNotEqual(0, result.returncode, proof)
+        self.assertEqual("ouverte", self.bead("af-x")["metadata"]["gc.proposal_state"])
+        self.assertNotIn("update", self.call_log.read_text(encoding="utf-8"))
+
+    def test_resoudre_never_overrides_the_operators_decision(self):
+        for state in ("a_planifier", "rejetee", "resolue"):
+            self.seed("af-" + state, {"id": "af-" + state, "status": "open", "metadata": {"gc.proposal_state": state}, "notes": "", "labels": ["proposal"]})
+            result = self.door("resoudre", "af-" + state, self.PROOF, "deliver-close")
+            self.assertNotEqual(0, result.returncode, state)
+            self.assertEqual(state, self.bead("af-" + state)["metadata"]["gc.proposal_state"])
+        self.assertNotIn("update", self.call_log.read_text(encoding="utf-8"))
+
+    def test_resoudre_refuses_a_bead_that_is_not_a_proposal(self):
+        self.seed("af-ticket", {"id": "af-ticket", "status": "open", "metadata": {}, "notes": "", "labels": []})
+        result = self.door("resoudre", "af-ticket", self.PROOF, "deliver-close")
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn("gc.proposal_state", self.bead("af-ticket")["metadata"])
+
     # --- compte ----------------------------------------------------------
 
-    def test_compte_excludes_accepted_and_rejected_proposals(self):
+    def test_compte_excludes_accepted_rejected_and_resolved_proposals(self):
+        self.seed("af-resolved", {"id": "af-resolved", "status": "open", "metadata": {"gc.proposal_state": "resolue"}, "notes": "", "labels": ["proposal"]})
         self.seed("af-legacy", {"id": "af-legacy", "status": "open", "metadata": {}, "notes": "", "labels": ["proposal"]})
         self.seed("af-accepted", {"id": "af-accepted", "status": "open", "metadata": {"gc.proposal_state": "a_planifier"}, "notes": "", "labels": ["proposal"]})
         self.seed("af-rejected", {"id": "af-rejected", "status": "open", "metadata": {"gc.proposal_state": "rejetee"}, "notes": "", "labels": ["proposal"]})

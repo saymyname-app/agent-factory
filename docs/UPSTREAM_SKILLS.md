@@ -48,7 +48,13 @@ flagged, it files exactly one `proposal`-labelled bead (never built
 without Benjamin, same discipline as `bin/overlap-conflict-log`'s "dynamic
 leases" proposal) so it surfaces at the next session start through
 `./bin/escalation-door list`'s pending-proposal count. Seeing the same tag
-again on a later day never files a second proposal.
+again on a later day never files a second proposal. A tag at or before the
+pinned baseline tag is never proposed, and each run resolves, through
+`bin/proposal-door resoudre` with the pin as proof (last commit touching
+this file, and its PR number), every pending proposal it filed for such a
+tag — so re-pinning closes its own proposals the next day, without
+erasing them (`docs/COCKPIT.md`, « Proposition résolue par une livraison
+fusionnée »).
 
 ## Comparison check (CI, read-only)
 
