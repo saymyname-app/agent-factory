@@ -282,7 +282,7 @@ class CodeReviewTest(unittest.TestCase):
         """What stands for the author's Ticket Exit « terminé » at `tip`
         (bin/ticket-exit): each step of its TDD with its sealed report, the
         demonstration, the sealed records, the Handoff, the exit."""
-        ticket_proofs.finish(self.env, self.repo, CONVOY, ticket, tip, self.base, branch_of(ticket), green=green, records={
+        ticket_proofs.finish(self.env, self.repo, CONVOY, ticket, tip, self.base, branch_of(ticket), green=green, sections=SECTIONS, records={
             "files_changed": [NOTE], "commits": [{"commit": tip, "subject": COMMIT_PROSE}],
             "amendment": {"commit": amendment, "reason": AMENDMENT_PROSE} if amendment else None})
 

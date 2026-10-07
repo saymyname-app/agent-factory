@@ -249,7 +249,7 @@ class CorrectionRoundTest(unittest.TestCase):
         """What stands for the author's Ticket Exit « terminé » at `tip`
         (bin/ticket-exit), on a ticket green there (bin/tdd-step): each step
         with its sealed report, the demonstration, the sealed records."""
-        ticket_proofs.finish(self.env, self.repo, CONVOY, ticket, tip, self.base, branch_of(ticket), records={
+        ticket_proofs.finish(self.env, self.repo, CONVOY, ticket, tip, self.base, branch_of(ticket), sections=SECTIONS, records={
             "files_changed": [NOTE], "commits": [{"commit": tip, "subject": "travail du ticket"}], "amendment": None})
 
     def finished_slice(self, ticket=SLICE):
