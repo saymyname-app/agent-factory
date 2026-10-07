@@ -414,6 +414,16 @@ When the re-read did not finish within 8 s, the request stays marked as
 handled until the next regular read. It does not change what any action
 writes, nor the exit-at-source rule.
 
+Shown at the click (Benjamin, his words, 2026-10-07: « il faut qu'il y ait
+un peu d'optimistic UI, car là le bouton et l'item restent longtemps comme
+si on avait pas cliqué … pareil pour l'item projets »). Mechanism (agent
+interpretation): `mark` greys the request, its row in the list and the
+chantier's row in « Projets », switches their controls off and writes the
+expected result followed by « · enregistrement… », before the server
+answers (its re-read takes seconds). The answer confirms the text and
+reloads, or -- a refusal, a lost connection -- puts everything back and
+says so. Nothing is shown as recorded before the server said so.
+
 `continuer`, `pas_bon_vers_agent` and `notifier_test` write nothing on a
 bead and trigger no re-read. To undo: drop the `rafraichi` line in
 `core/server.py`.
