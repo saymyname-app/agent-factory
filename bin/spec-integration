@@ -8,6 +8,11 @@ branch; no ticket opens a pull request toward the protected branch.
     spec-integration open  CONVOY --repo DIR --protected BRANCH
     spec-integration merge CONVOY --repo DIR --profile DESCRIPTOR [--limit N] [--timeout SECONDS]
 
+A ticket is merged only once the conditions of the ticket-end gate that are
+read before the merge are met (T19, bin/ticket-end check --before-merge:
+conditions 1 to 5 and 7 to 9 of Spec §9); the gate reads condition 6 on what
+this command writes.
+
 `open`: the branch `integration/<spec id>` is created in the repository of
 the project, at the tip of the protected branch, and recorded on the convoy.
 The publication door calls it once the convoy is marked.
@@ -58,6 +63,7 @@ PROGRAM = "spec-integration"
 BIN = Path(__file__).resolve().parent
 STATE_TOOL = BIN / "convoy-state"
 CAPTURE_TOOL = BIN / "evidence-capture"
+GATE_TOOL = BIN / "ticket-end"
 PROFILE_TOOL = BIN / "project-planning-profile"
 
 REMOTE = "origin"
@@ -68,6 +74,10 @@ TESTS_PIECE = "merged_tests"
 # The merges are made by code: their author is the Factory, whoever runs it.
 IDENTITY = ("-c", "user.name=Agent Factory", "-c", "user.email=agent-factory@noreply.invalid")
 RETURN_CAUSES = {"conflict": "conflit", "red": "tests rouges sur le résultat fusionné"}
+# The one stop a ticket may be merged under: every Blocking Finding its code
+# review left without a favorable verdict carries the recorded override of
+# the operator (Spec §8, « passer outre »; condition 9 of the ticket-end gate).
+STOP_OVERRIDABLE = "still_refused"
 
 EXIT_REFUSED = 1
 EXIT_UNRULED = 3
@@ -389,17 +399,40 @@ def evaluation_refusal(ticket: dict[str, Any], tip: str) -> str | None:
     return None
 
 
+def overridden(ticket: dict[str, Any]) -> bool:
+    """A ticket stopped still refused, every Blocking Finding of which the
+    operator overrode: the override stands for the favorable verdict of the
+    code review, and for nothing else."""
+    if (ticket.get("stop") or {}).get("reason") != STOP_OVERRIDABLE:
+        return False
+    unsettled = ((ticket.get("code_review") or {}).get("state") or {}).get("unsettled") or []
+    recorded = {entry.get("finding") for entry in ticket.get("overrides") or [] if isinstance(entry, dict)}
+    return bool(unsettled) and all(finding in recorded for finding in unsettled)
+
+
+def gate_refusal(convoy_id: str, ticket: dict[str, Any], repo: "Repo") -> str | None:
+    """Spec §9: conditions 1 to 5 and 7 to 9 of the ticket-end gate are met
+    before the merge. None when they are; else what the gate names."""
+    status, answer = tool(GATE_TOOL, "check", convoy_id, ticket["id"], "--repo", str(repo.path), "--before-merge")
+    if status == 0 and answer.get("ok") is True:
+        return None
+    if status != EXIT_REFUSED or not answer.get("missing"):
+        raise Refusal(f"porte de fin de ticket illisible pour {ticket['id']} : {refusal_text(answer)}")
+    return refusal_text(answer)
+
+
 def disposition(ticket: dict[str, Any]) -> tuple[str, Any]:
     """What a pass does of one ticket: `skip` (nothing to say), `waiting`
     (with the reason), `stale` (with the verdicts a newer commit made
-    invalid), or `ready` (to merge)."""
+    invalid), or `ready` (to merge, once the ticket-end gate agrees)."""
     exit_record = ticket.get("exit") or {}
     if ticket.get("status") == "closed" or exit_record.get("exit") != "finished":
         return "skip", None
     park, stop = ticket.get("park"), ticket.get("stop")
     if park:
         return "waiting", f"parqué ({park.get('cause')}, par {park.get('origin')})"
-    if stop:
+    override = overridden(ticket)
+    if stop and not override:
         return "waiting", f"arrêté ({stop.get('reason')})"
     tip = ticket.get("tip")
     if not ticket.get("branch") or not tip:
@@ -417,7 +450,8 @@ def disposition(ticket: dict[str, Any]) -> tuple[str, Any]:
     if invalidated:
         return "waiting", (f"verdict invalidé par un commit plus récent ({', '.join(invalidated)}) : "
                            f"à rejouer sur la pointe {tip[:12]}")
-    unfavorable = [kind for kind, verdict in verdicts.items() if verdict.get("state") != "favorable"]
+    unfavorable = [kind for kind, verdict in verdicts.items()
+                   if verdict.get("state") != "favorable" and not (override and kind == "code_review")]
     if unfavorable:
         unsettled = ((ticket.get("code_review") or {}).get("state") or {}).get("unsettled") or []
         findings = f" : Blocking Finding sans verdict favorable ({', '.join(unsettled)})" \
@@ -426,7 +460,7 @@ def disposition(ticket: dict[str, Any]) -> tuple[str, Any]:
     handoff = ticket.get("handoff") or {}
     if handoff.get("partial") is not False or handoff.get("commit") != tip:
         return "waiting", f"le ticket n'est pas terminé à la pointe de sa branche ({tip[:12]}) : son auteur y travaille"
-    unreviewed = review_refusal(ticket, tip) or evaluation_refusal(ticket, tip)
+    unreviewed = (None if override else review_refusal(ticket, tip)) or evaluation_refusal(ticket, tip)
     if unreviewed:
         return "waiting", unreviewed
     if merge and merge.get("ticket_commit") == tip:
@@ -602,7 +636,13 @@ def cmd_merge(args: argparse.Namespace) -> int:
             elif what == "stale":
                 out["refused"].append(invalidate(args.convoy, ticket, detail))
             elif what == "ready":
-                ready.append(ticket)
+                # The author, the reviewer and the Evaluator have answered:
+                # the ticket-end gate says whether everything else is there.
+                missing = gate_refusal(args.convoy, ticket, repo)
+                if missing:
+                    out["waiting"].append({"id": ticket["id"], "reason": missing})
+                else:
+                    ready.append(ticket)
 
         takeover = None
         try:

@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin" / "convoy-state"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
+GATE_REPORT = ROOT / "tests" / "fixtures" / "convoy-state" / "ticket-end-report.json"
 
 CONVOY = "fx-convoy"
 T1 = "fx-t1"
@@ -161,8 +162,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
         self.ok("bump-counter", CONVOY, "--counter", "end_rounds")
         self.ok("add-evidence", CONVOY, T1, "--piece", "red_proof", "--digest", DIGEST, "--commit", tip)
-        self.ok("record-gate", CONVOY, T1, "--gate", "ticket_end", "--commit", tip)
-        self.edit_tracker(T1, status="closed")
+        self.ok("close-ticket", CONVOY, T1, "--commit", tip, "--file", GATE_REPORT)
 
         shown = self.show()
         self.assertTrue(shown["ok"])
@@ -471,10 +471,13 @@ class ConvoyStateTest(unittest.TestCase):
         self.started_ticket()
         self.assert_refused_and_nothing_written("set-exit", CONVOY, T1, "--exit", "done", mention="done")
 
-    def test_gate_outside_the_closed_list_or_ticket_end_without_commit_is_refused(self):
-        self.started_ticket()
+    def test_gate_outside_the_closed_list_or_ticket_end_without_its_verdicts_is_refused(self):
+        tip = self.started_ticket()
         self.assert_refused_and_nothing_written("record-gate", CONVOY, T1, "--gate", "by-hand", mention="by-hand")
-        self.assert_refused_and_nothing_written("record-gate", CONVOY, T1, "--gate", "ticket_end", mention="commit")
+        # T19: the record of the ticket-end gate is its nine verdicts, written with the closing.
+        self.assert_refused_and_nothing_written(
+            "record-gate", CONVOY, T1, "--gate", "ticket_end", "--commit", tip, mention="close-ticket")
+        self.assert_refused_and_nothing_written("close-ticket", CONVOY, T1, "--file", GATE_REPORT, mention="commit")
 
     def test_negative_or_non_integer_counter_is_refused(self):
         self.started_ticket()
@@ -1193,8 +1196,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.assert_refused_and_nothing_written(*record, mention="branche d'intégration")
 
         self.ok("set-integration", CONVOY, "--branch", "integration/fx-spec", "--protected", "main", "--base", tip)
-        self.ok("record-gate", CONVOY, T1, "--gate", "ticket_end", "--commit", tip)
-        self.edit_tracker(T1, status="closed")
+        self.ok("close-ticket", CONVOY, T1, "--commit", tip, "--file", GATE_REPORT)
         self.assert_refused_and_nothing_written(*record, mention="fermé")
 
     def test_invalidate_verdicts_marks_them_invalid_and_counts_one_resume(self):

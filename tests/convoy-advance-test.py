@@ -31,6 +31,7 @@ DOOR = ROOT / "bin" / "dispatch-door"
 ESCALATION = ROOT / "bin" / "escalation-door"
 INTEGRATION_TOOL = ROOT / "bin" / "spec-integration"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
+GATE_REPORT = ROOT / "tests" / "fixtures" / "convoy-state" / "ticket-end-report.json"
 
 CONVOY = "fx-convoy"
 OTHER = "fx-other"
@@ -171,9 +172,9 @@ class ConvoyAdvanceTest(unittest.TestCase):
         return next(c for c in answer["convoys"] if c["id"] == convoy)["started"]
 
     def close_through_gate(self, ticket_id, convoy=CONVOY):
-        """What the trial does in place of the flow's own ticket end (not in T04)."""
-        self.run_ok(STATE, "record-gate", convoy, ticket_id, "--gate", "ticket_end", "--commit", COMMIT)
-        self.edit(ticket_id, status="closed")
+        """What stands for the flow's own ticket end (T19, bin/ticket-end):
+        the record of the gate, written with the closing."""
+        self.run_ok(STATE, "close-ticket", convoy, ticket_id, "--commit", COMMIT, "--file", GATE_REPORT)
 
     def log(self, kind):
         lines = [json.loads(line) for line in self.write_log.read_text().splitlines() if line]
