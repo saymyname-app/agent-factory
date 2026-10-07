@@ -45,7 +45,7 @@ exits again).
 
 | `--exit` | Asks for | What the code does | Effect on the convoy |
 |---|---|---|---|
-| `finished` | `--repo`, `--handoff` (complete) | seals the records, writes the Handoff, then the exit | none: the code review follows (`docs/CODE_REVIEW.md`), then the evaluation (T15) |
+| `finished` | `--repo`, `--handoff` (complete) | seals the records, writes the Handoff, then the exit | none: the code review (`docs/CODE_REVIEW.md`) and the Ticket Evaluation on the launched product (`docs/TICKET_EVALUATION.md`) follow, in parallel |
 | `planning_exception` | `--kind semantic\|topology`, `--summary` (one line) | sends the question to the operator through `bin/escalation-door benjamin`, parks, writes the exit | the ticket and every ticket that waits for it are parked |
 | `operator_request` | `--request` (`quoi`, `pourquoi`, `que_faire`) | sends the request through `bin/escalation-door benjamin`, parks, writes the exit | the ticket and every ticket that waits for it are parked |
 | `technically_blocked` | `--repair` (the fields of a `repair`) | drafts a revision that adds the `repair` in front of the ticket and sends it through `bin/ticket-graph-publish bd-patch`, writes the exit | the ticket waits for the repair; nothing is parked, the rest goes on |

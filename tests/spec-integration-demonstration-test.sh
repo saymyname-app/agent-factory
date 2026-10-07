@@ -96,8 +96,12 @@ BASE=$(git -C "$REPO" rev-parse main)
 cd "$TEST_CITY"
 SPEC=$(gc bd create --title "Spec d'essai" --type task --silent 2>/dev/null)
 CONVOY=$(gc bd create --title "convoi d'essai" --type convoy --silent 2>/dev/null)
-T1=$(gc bd create --title "tranche d'essai 1" --type task --silent 2>/dev/null)
-T2=$(gc bd create --title "tranche d'essai 2" --type task --silent 2>/dev/null)
+# A slice has acceptance criteria: its Ticket Evaluation gives one state per criterion.
+CRITERIA="## Acceptance criteria
+
+- [ ] Point d'entrée : GET / — Observable : la liste — Faux si : une ligne manque"
+T1=$(gc bd create --title "tranche d'essai 1" --type task --silent --description "$CRITERIA" 2>/dev/null)
+T2=$(gc bd create --title "tranche d'essai 2" --type task --silent --description "$CRITERIA" 2>/dev/null)
 gc bd update "$CONVOY" --set-metadata "gc.spec_id=$SPEC" >/dev/null
 for ticket in "$T1" "$T2"; do
   gc bd update "$ticket" --set-metadata gc.ticket_kind=vertical_slice >/dev/null
@@ -136,14 +140,27 @@ finish() {  # TICKET COMMIT
   state set-handoff "$CONVOY" "$1" --file "$handoff"
   state set-exit "$CONVOY" "$1" --exit finished
 }
+evaluated() {  # TICKET COMMIT REPO: a favorable Ticket Evaluation, as an Evaluator session records it (bin/ticket-evaluation, T15)
+  local shown
+  shown=$("$ROOT/bin/convoy-state" show "$CONVOY" --repo "$3" | jq -c --arg t "$1" '.tickets[] | select(.id == $t)')
+  jq -n '{roles: {author: null, evaluator: null, same_provider: null, other_declared: []},
+    environment: [{dataset: null, address: "http://127.0.0.1:1", state_file: "/launch.json"}]}' > "$TRIAL/evaluation-request-$1.json"
+  state open-evaluation "$CONVOY" "$1" --commit "$2" --file "$TRIAL/evaluation-request-$1.json" >/dev/null
+  state add-evidence "$CONVOY" "$1" --piece evaluation.seen --digest "sha256:$(printf '%064d' 0)" --commit "$2" >/dev/null
+  jq -n --arg commit "$2" --argjson t "$shown" '{commit: $commit, recorded_by: "delivery-evaluator-trial",
+    criteria: [$t.criteria | to_entries[] | {number: (.key + 1), text: .value, state: "observed", evidence: "evaluation.seen"}],
+    demonstration_line: {text: $t.demonstration_line, state: "observed", evidence: "evaluation.seen"}}' > "$TRIAL/evaluation-$1.json"
+  state record-evaluation "$CONVOY" "$1" --file "$TRIAL/evaluation-$1.json" >/dev/null
+}
 judge() {  # TICKET COMMIT
-  # The code review as a reviewer session records it (bin/code-review, T14):
-  # the merge takes no ticket without it. The evaluation as its verdict alone.
+  # The code review as a reviewer session records it (bin/code-review, T14),
+  # and the Ticket Evaluation as an Evaluator session records it
+  # (bin/ticket-evaluation, T15): the merge takes no ticket without them.
   jq -n --arg commit "$2" '{commit: $commit, recorded_by: "delivery-reviewer-trial", findings: [], answers: {}}' \
     > "$TRIAL/review-$1.json"
   state open-code-review "$CONVOY" "$1" --kind review --commit "$2" --base "$BASE"
   state record-code-review "$CONVOY" "$1" --file "$TRIAL/review-$1.json"
-  state set-verdict "$CONVOY" "$1" --kind evaluation --state favorable --commit "$2"
+  evaluated "$1" "$2" "$REPO"
 }
 
 git -C "$REPO" fetch -q origin

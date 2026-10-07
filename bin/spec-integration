@@ -13,8 +13,11 @@ the project, at the tip of the protected branch, and recorded on the convoy.
 The publication door calls it once the convoy is marked.
 
 `merge`: every ticket whose author has finished at the tip of its branch,
-and whose code review is favorable at that tip (T14, bin/code-review: no
-merge without it), is merged, in the convoy's order, never two at once. Before the first merge the
+whose code review is favorable at that tip (T14, bin/code-review: no merge
+without it), and whose Ticket Evaluation on the launched product is
+favorable there too (T15, bin/ticket-evaluation: for a prefactoring, the
+control that its product starts), is merged, in the convoy's order, never
+two at once. Before the first merge the
 integration branch takes up the protected branch. Each merge is made in a
 work tree of its own; the regression command of the project's profile is run
 on the merged result by bin/evidence-capture (piece `merged_tests`, tied to
@@ -361,6 +364,31 @@ def review_refusal(ticket: dict[str, Any], tip: str) -> str | None:
     return None
 
 
+def evaluation_refusal(ticket: dict[str, Any], tip: str) -> str | None:
+    """Spec §7: nothing is merged before the Ticket Evaluation of the
+    launched product (bin/ticket-evaluation) is favorable at the tip of the
+    ticket branch -- for a prefactoring, the control that its product
+    starts. An evaluation that is absent, open or without result is not an
+    agreement; a verdict written without the evaluation it comes from is
+    not one either."""
+    evaluation = ticket.get("evaluation") or {}
+    state = evaluation.get("state") or {}
+    if evaluation.get("request"):
+        return "Ticket Evaluation en cours : les états de la pointe ne sont pas rendus, et son absence ne vaut pas accord"
+    if state.get("outcome") is None:
+        return "aucune Ticket Evaluation rendue : l'absence d'évaluation ne vaut pas accord"
+    if state["outcome"] != "favorable":
+        refused = state.get("not_observed", []) + [entry["what"] for entry in state.get("unobservable", [])]
+        return f"Ticket Evaluation non favorable ({state['outcome']}) : {', '.join(refused)}"
+    if state.get("commit") != tip:
+        return (f"Ticket Evaluation rendue au commit {str(state.get('commit'))[:12]} et non à la pointe {tip[:12]} : "
+                "à rejouer sur la pointe")
+    verdict = (ticket.get("verdicts") or {}).get("evaluation") or {}
+    if verdict.get("state") != "favorable" or verdict.get("commit") != tip or verdict.get("valid") is not True:
+        return f"verdict de la Ticket Evaluation absent ou invalide à la pointe {tip[:12]}"
+    return None
+
+
 def disposition(ticket: dict[str, Any]) -> tuple[str, Any]:
     """What a pass does of one ticket: `skip` (nothing to say), `waiting`
     (with the reason), `stale` (with the verdicts a newer commit made
@@ -398,7 +426,7 @@ def disposition(ticket: dict[str, Any]) -> tuple[str, Any]:
     handoff = ticket.get("handoff") or {}
     if handoff.get("partial") is not False or handoff.get("commit") != tip:
         return "waiting", f"le ticket n'est pas terminé à la pointe de sa branche ({tip[:12]}) : son auteur y travaille"
-    unreviewed = review_refusal(ticket, tip)
+    unreviewed = review_refusal(ticket, tip) or evaluation_refusal(ticket, tip)
     if unreviewed:
         return "waiting", unreviewed
     if merge and merge.get("ticket_commit") == tip:

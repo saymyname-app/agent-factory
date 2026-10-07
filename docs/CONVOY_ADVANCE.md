@@ -121,6 +121,31 @@ launch the door deferred is retried by the next pass; a settlement that
 could not run, or a launch the door refused, fails the pass (exit 1). A
 stopped convoy (« état sans règle ») is settled no more than it is started.
 
+## A finished ticket is evaluated on the launched product before its merge (T15)
+
+In the same pass as the code review — the two run in parallel, on the same
+tip — the pass hands each convoy that has a finished ticket not merged yet,
+a launched product left to stop, or a ticket its evaluation stopped and that
+did not reach the operator yet, to `bin/ticket-evaluation settle <convoy>
+--repo <project repository>` (`docs/TICKET_EVALUATION.md`). For each ticket
+finished and green at the tip of its branch, the command launches the
+product from a clean copy of that tip and sends the evaluation to a session
+of the Evaluator role (for a `prefactoring`: checks itself that the product
+starts, without a session); it sends an evaluation left without result once
+more, stops the ticket when the relaunch gave none either; it parks a ticket
+whose criterion cannot be observed and puts the Planning Exception on the
+operator's list; and it stops the products once the states are in. The
+launched products outlive the pass: a later pass stops them. The merge that
+follows takes a ticket only when its evaluation is favorable at its tip.
+
+The convoy's entry then carries `evaluation` (`launched`, `relaunched`,
+`pending`, `waiting`, `started`, `refused_startup`, `planning_exception`,
+`stopped`, `escalated`, `deferred`, `refused`). A launch that is deferred —
+by the door, or because the Evaluator would run on the author's supplier
+while another declared one is available — is retried by the next pass; a
+settlement that could not run, or a launch the door refused, fails the pass
+(exit 1).
+
 ## Test reviews left without result (T13)
 
 Once the starts are made, and before the merge, the pass hands each convoy that has
@@ -145,13 +170,14 @@ per role, the tickets awaiting a session, and per convoy the tickets
 `deferred` (the door deferred: low memory, hot path held — retried on the
 next pass) and `refused` (the door refused, with its reason), plus
 `integration` when the pass ran a merge, `test_review` when it settled
-reviews of criterion tests and `code_review` when it settled code reviews. A stopped convoy carries `signal`,
+reviews of criterion tests, `code_review` when it settled code reviews and
+`evaluation` when it settled Ticket Evaluations. A stopped convoy carries `signal`,
 `unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass or the settlement of the test reviews or of the code reviews could not run |
+| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass or the settlement of the test reviews, of the code reviews or of the evaluations could not run |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 

@@ -448,6 +448,12 @@ touché : il reste avancé par le Mayor.
   (`./bin/code-review settle`), relance une fois une revue restée sans
   résultat, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list`. Rien ne fusionne sans verdict favorable.
+- **Évaluation sur le produit lancé avant la fusion** : la même passe lance
+  le produit de chaque ticket terminé et vert depuis une copie propre de sa
+  branche et l'envoie à une session du rôle Evaluator
+  (`./bin/ticket-evaluation settle`) ; pour un `prefactoring`, elle vérifie
+  elle-même que le produit démarre. Les produits lancés restent debout
+  entre deux passes et sont arrêtés par une passe suivante.
 - **Relecture des tests restée sans résultat** : la même passe la relance une
   fois, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune
@@ -671,6 +677,11 @@ protégée (Spec af-wf4w5r §4 et §8, T18). Pour un convoi qui porte la
   sa branche. Sans revue, avec une revue en cours ou restée sans sortie, ou
   avec un Blocking Finding sans verdict favorable, il reste dans `waiting`
   avec la raison.
+- **Pas de fusion sans Ticket Evaluation favorable** : même règle pour
+  l'évaluation du produit lancé (`./bin/ticket-evaluation`) ; pour un
+  `prefactoring`, c'est le contrôle que le produit démarre. Sans évaluation,
+  avec une évaluation en cours, un critère « non observé » ou une panne de
+  l'environnement, le ticket reste dans `waiting` avec la raison.
 - **Conflit, ou tests rouges sur le résultat** : rien n'est fusionné ni
   poussé, le ticket retourne à son auteur. Aucun agent ne résout à sa place.
 - **Commit ajouté après un verdict** (revue de code ou Ticket Evaluation) :
@@ -727,8 +738,10 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
 - **Ticket arrêté** (critère déjà vert, second refus de la relecture des
   tests, relecture sans résultat) : chaque contrôle le refuse, la séquence
   échoue et rien n'en est fusionné.
-- **Pas ici** : revue et évaluation (T14, T15), porte de fin de ticket
-  (T19), reprise d'un ticket (T20).
+- **Pas ici** : la revue de code (`./bin/code-review`) et la Ticket
+  Evaluation sur le produit lancé (`./bin/ticket-evaluation`), que le flux
+  envoie après la sortie « terminé » ; la porte de fin de ticket (T19) ; la
+  reprise d'un ticket (T20).
 
 Détail : `docs/TICKET_AUTHOR.md`.
 
@@ -828,6 +841,70 @@ convoi qui porte la **marque du nouveau flux**.
   corrige, son tour unique et l'arrêt d'un ticket encore refusé sont à T17.
 
 Détail : `docs/CODE_REVIEW.md`.
+
+---
+
+## `./bin/ticket-evaluation` — qui vérifie que le produit marche, avant la fusion d'un ticket ?
+
+Un **Evaluator**, jamais l'auteur (Spec af-wf4w5r §7, §8, T15). Dès qu'un
+ticket est terminé et vert à la pointe de sa branche, le flux lance le
+produit **depuis une copie propre de cette pointe** (port isolé, jeux de
+données synthétiques) et l'envoie à une session neuve du rôle Evaluator, en
+lecture seule, qui l'utilise en boîte noire. Ne concerne qu'un ticket d'un
+convoi qui porte la **marque du nouveau flux**.
+
+```bash
+./bin/ticket-evaluation show <convoi> <ticket>                 # les passes, la demande ouverte, les rôles, les produits encore lancés
+./bin/ticket-evaluation verdict <convoi> <ticket>              # le verdict, recalculé : favorable ou non, et pourquoi
+./bin/ticket-evaluation settle <convoi>                        # lancé par ./bin/convoy-advance à chaque passe
+./bin/ticket-evaluation brief <convoi> <ticket>                # la session Evaluator (formule mol-ticket-evaluation)
+./bin/ticket-evaluation record <convoi> <ticket> --file <f>    # la session Evaluator
+```
+
+- **Sans évaluation favorable, pas de fusion** : `./bin/spec-integration
+  merge` laisse le ticket dans `waiting` tant que son évaluation n'est pas
+  favorable à la pointe. Une évaluation absente, en cours ou sans résultat
+  ne vaut pas accord.
+- **Un état par critère et pour la ligne de démonstration** : « observé »
+  (`observed`), « non observé » (`not_observed`) ou « inobservable »
+  (`unobservable`), chacun avec une **preuve capturée** par
+  `./bin/evidence-capture` sur le produit lancé. Un état sans preuve
+  valide, une preuve prise ailleurs que sur ce produit, un critère
+  reformulé ou retiré : refusés.
+- **Le verdict est calculé par du code** : l'Evaluator ne rend jamais de
+  verdict global. Favorable seulement si tout est « observé » avec preuve
+  au commit de tête.
+  - « non observé » : défavorable, retour à l'auteur.
+  - « inobservable » par le critère : Planning Exception — une demande dans
+    `./bin/escalation-door list`, le ticket et ceux qui l'attendent sont
+    parqués. Un critère ne se dispense jamais.
+  - « inobservable » par l'environnement : panne, non comptée comme refus ;
+    l'évaluation est refaite une fois, puis le ticket est arrêté.
+- **Ce que reçoit l'Evaluator** (`brief`) : la ligne de démonstration, les
+  critères gelés, les adresses des produits lancés. Ni le Handoff, ni le
+  diff, ni le dépôt.
+- **`prefactoring`** : aucune session d'Evaluator. Du code lance le
+  produit, capture la réponse de sa sonde, et enregistre qu'il démarre.
+- **Fournisseur de l'Evaluator** : inscrit sur le ticket avec celui de
+  l'auteur. S'il est le même, la mention « même fournisseur que l'auteur »
+  est enregistrée, jamais omise. Si un autre fournisseur est déclaré et
+  disponible pour le rôle, l'évaluation n'est pas lancée sur celui de
+  l'auteur (`./bin/provider-failover` règle le rôle).
+- **Évaluation sans résultat** : une relance, puis le ticket est arrêté et
+  apparaît **une seule fois** dans `./bin/escalation-door list`. Le délai
+  d'un lancement est `evaluation.timeout_seconds` dans
+  `config/delivery-flow.json` (3600 s, valeur sans base mesurée).
+- **Produits lancés** : ils restent debout entre deux passes, le temps de
+  l'évaluation, puis du code les arrête. `show` liste ceux qui tournent
+  encore (`live`).
+- **Ne jamais dispatcher `mol-ticket-evaluation` à la main** ni écrire
+  `gc.flow.evaluation` : seul `./bin/ticket-evaluation` le fait, par
+  `./bin/dispatch-door` et `./bin/convoy-state`.
+- **Limites** : rien ne lève encore un arrêt ; la session neuve d'auteur
+  après un « non observé » et son tour unique sont à T17 ; les contrôles de
+  fidélité d'un ticket qui touche un écran sont à T16.
+
+Détail : `docs/TICKET_EVALUATION.md`.
 
 ---
 

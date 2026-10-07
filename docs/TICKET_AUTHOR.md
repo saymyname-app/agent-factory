@@ -17,7 +17,8 @@ slings it by hand.
 
 What follows the exit « terminé » is not the author's: the code review of
 the ticket is sent by the flow to a reviewer session (T14,
-`docs/CODE_REVIEW.md`). Not delivered yet: the evaluation (T15), the
+`docs/CODE_REVIEW.md`), and the ticket is evaluated on the launched product
+by an Evaluator session (T15, `docs/TICKET_EVALUATION.md`). Not delivered yet: the
 ticket-end gate (T19), the resume of a parked, blocked or interrupted ticket
 (T20).
 
