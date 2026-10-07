@@ -425,10 +425,10 @@ echo "convoi $CONVOY (Spec $SPEC) : A=$A (corrige après un refus) B=$B (second 
 (gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
-gc --city "$CITY" status 2>/dev/null | grep -q "Controller: supervisor-managed" || fail "the isolated city's controller did not start"
+grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"
 gc order show convoy-advance --json >/dev/null 2>&1 || fail "the city does not accept orders/convoy-advance.toml"
 for formula in mol-ticket-author mol-test-review; do
-  gc formula list 2>/dev/null | grep -q "^$formula\$" || fail "the city does not resolve formulas/$formula.formula.toml"
+  grep -q "^$formula\$" <<<"$(gc formula list 2>/dev/null)" || fail "the city does not resolve formulas/$formula.formula.toml"
 done
 gates=$("$ROOT/bin/factory-build-gates" --root "$CITY") || fail "factory-build-gates did not materialise the check of the formula: $gates"
 

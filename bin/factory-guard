@@ -314,7 +314,7 @@ if [ "$FETCH_RC" = 0 ]; then
     if FACTORY_GUARD_INTERNAL=1 git merge -q --ff-only "origin/$EXPECTED" >/dev/null 2>&1; then
       did "fast-forwarded the live root by $BEHIND merged commit(s)"
       # Some config is only read on reload; a reload with nothing new is a no-op.
-      if git diff --name-only "$OLD_HEAD" HEAD | grep -qE '^(city\.toml|pack\.toml|orders/|agents/)'; then
+      if grep -qE '^(city\.toml|pack\.toml|orders/|agents/)' <<<"$(git diff --name-only "$OLD_HEAD" HEAD)"; then
         bounded 60 gc reload >/dev/null 2>&1 && did "reloaded the city config changed by that fast-forward"
       fi
     else

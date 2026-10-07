@@ -339,9 +339,9 @@ echo "convoi $CONVOY (Spec $SPEC) : A=$A (suit la séquence) B=$B (saute le roug
 (gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
-gc --city "$CITY" status 2>/dev/null | grep -q "Controller: supervisor-managed" || fail "the isolated city's controller did not start"
+grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"
 gc order show convoy-advance --json >/dev/null 2>&1 || fail "the city does not accept orders/convoy-advance.toml"
-gc formula list 2>/dev/null | grep -q '^mol-ticket-author$' || fail "the city does not resolve formulas/mol-ticket-author.formula.toml"
+grep -q '^mol-ticket-author$' <<<"$(gc formula list 2>/dev/null)" || fail "the city does not resolve formulas/mol-ticket-author.formula.toml"
 gates=$("$ROOT/bin/factory-build-gates" --root "$CITY") || fail "factory-build-gates did not materialise the check of the formula: $gates"
 [ -x "$CITY/.gc/scripts/checks/ticket-author-check.sh" ] || fail "the check of the formula is not in the city root: $gates"
 

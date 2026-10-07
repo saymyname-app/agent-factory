@@ -227,7 +227,7 @@ git -C "$WT9" commit -qm "before restart"
 "$SCRIPT" restart af-restart-test "$WT9" do-work/af-restart-test "operator asked to abandon this approach" \
   || fail "restart with a written reason should succeed"
 [ -d "$WT9" ] && fail "restart with a reason did not remove the worktree"
-git -C "$TMP/root" branch --list do-work/af-restart-test | grep -q . \
+grep -q . <<<"$(git -C "$TMP/root" branch --list do-work/af-restart-test)" \
   && fail "restart with a reason did not delete the local do-work/af-restart-test branch"
 
 WT9b=$("$SCRIPT" enter af-restart-test)
@@ -384,9 +384,9 @@ printf '## Non fait\naucun\n\n## Écarts\naucun\n' > "$(pr_body_path "$WT13")"
 rc=0
 "$SCRIPT" finish af-sections-a "$WT13" do-work/af-sections-a main >"$TMP/s13b.out" 2>"$TMP/s13b.err" || rc=$?
 [ "$rc" = "3" ] || fail "finish with a PR_BODY.md missing one section exited $rc (expected 3)"
-grep -F -- "Missing:" "$TMP/s13b.err" | grep -qF -- "« Constats hors ticket »" \
+grep -qF -- "« Constats hors ticket »" <<<"$(grep -F -- "Missing:" "$TMP/s13b.err")" \
   || fail "the refusal does not list the one missing section"
-grep -F -- "Missing:" "$TMP/s13b.err" | grep -qF -- "« Non fait »" \
+grep -qF -- "« Non fait »" <<<"$(grep -F -- "Missing:" "$TMP/s13b.err")" \
   && fail "the refusal lists as missing a section that is present"
 
 # 13c. the three sections: PR opened with them in its body, worktree removed

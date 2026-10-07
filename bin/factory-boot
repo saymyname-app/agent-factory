@@ -45,7 +45,7 @@ say "factory-boot — $ROOT$([ "$DRY_RUN" = 1 ] && echo ' (dry run)')"
 step "provider overlay" ./bin/provider-failover apply --no-reload
 
 # 2. Supervisor (systemd normally has it already).
-if "$GC_BIN" supervisor status 2>/dev/null | grep -qi 'is running'; then
+if grep -qi 'is running' <<<"$("$GC_BIN" supervisor status 2>/dev/null)"; then
   say "OK     supervisor already running"
 else
   step "supervisor start" "$GC_BIN" supervisor start
