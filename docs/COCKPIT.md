@@ -243,6 +243,39 @@ repositories » below). Promu is computed too (« Promu » below).
 `tests/cockpit-home-projects-test.py` drives all of the above through the
 process's HTTP surface.
 
+## A delivered chantier asks for acceptance only with something to judge (2026-10-07)
+
+Intent (Benjamin, his words, 2026-10-07): « on me demande d'accepter un truc
+je n'ai aucune idée de ce que c'est exactement, ce que je dois faire en
+tant qu'humain. […] Soit on rend l'humain vraiment utile en le guidant,
+soit on le skip » ; then, on the proposal to drop the request for chantiers
+delivered before D01 and to send C01 back to its seven-day criteria:
+« ok fait tout ca ».
+Mechanism (agent interpretation), in `lib/cockpit/projects/stage.py`:
+
+| Closed convoy, not accepted | What the Cockpit does |
+|---|---|
+| carries the new-flow mark (`gc.flow.mark`, `bin/convoy-state`) | asks, as before: « Livré, non accepté » |
+| carries `gc.cockpit_acceptance_note` (one line: what to look at) | asks, and shows that line as « Pourquoi ça t'attend » |
+| neither | asks nothing: « Livré avant le flux d'acceptation : rien à accepter », in the project's historique |
+
+Why: a convoy with neither was delivered by the flow that merged each
+ticket to the protected branch as it went and closed by itself; no Evidence
+Pack exists and the button changed a label only. It is not accepted in
+Benjamin's name (no `gc.cockpit_chantier_accepted` is written), and nothing
+changes for a convoy of the Delivery Workflow. A note the main-text control
+refuses (`text/validate.py`) falls back to the fixed phrase.
+
+Set a note: `gc bd update <convoy> --set-metadata
+"gc.cockpit_acceptance_note=<one line, plain French, 140 characters>"`.
+C01's convoy carries one, drawn from its Spec's end criteria (seven
+consecutive days of real use).
+
+Consequence to know: a convoy still delivered by the old flow after this
+change (D01's own convoy does not carry the mark) will ask nothing when it
+closes, unless it is given a note. To undo: drop the `nothing_to_judge`
+branch in `stage.py`.
+
 ## Project page (af-mjfvwx)
 
 `GET /projet/<project_id>` serves `ui/projects/project_page.py` (T22, until

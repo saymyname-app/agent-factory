@@ -16,6 +16,17 @@ stops producing a demande the moment it leaves Livré/Accepté-non-promu
 to clear."""
 from cockpit.projects.model import ACCEPTE, LIVRE
 from cockpit.requests.model import DEFAULT_PROJECT, OperatorRequest, QUAND_TU_VEUX
+from cockpit.text.validate import is_valid
+
+POURQUOI_LIVRE = "Toi seul peux accepter ce chantier livré, ou demander sa correction."
+
+
+def _pourquoi_livre(chantier):
+    """What to look at before accepting, when the convoy says it
+    (cockpit.projects.stage: ACCEPTANCE_NOTE_KEY) and the main-text
+    control lets it through; the fixed phrase otherwise."""
+    note = getattr(chantier, "a_regarder", "") or ""
+    return note if note and is_valid("pourquoi", note) else POURQUOI_LIVRE
 
 TYPE_LIVRE_NON_ACCEPTE = "chantier_livre_non_accepte"
 TYPE_ACCEPTE_NON_PROMU = "chantier_accepte_non_promu"
@@ -27,7 +38,7 @@ def _livre_non_accepte(chantier, verifie_a):
         type=TYPE_LIVRE_NON_ACCEPTE,
         niveau=QUAND_TU_VEUX,
         quoi="Le chantier %s est livré, non accepté." % chantier.titre,
-        pourquoi="Toi seul peux accepter ce chantier livré, ou demander sa correction.",
+        pourquoi=_pourquoi_livre(chantier),
         que_faire=[
             {
                 "lettre": "a",
