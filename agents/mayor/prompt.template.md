@@ -144,7 +144,13 @@ Rigs and agents already exist; you almost never add one. The real flow is:
    `bin/ticket-graph-publish` (its convoy), a mail naming you, or a bead
    auto-filed by a guard (`factory-guard`, `pr-autopilot`, `factory-watchdog`,
    `on-order-failed`, `on-session-stranded`) — a bounded repair or routine
-   upkeep. There is no candidate queue and no idle ladder to draw from.
+   upkeep. The maintenance bead `bin/proposal-door` files from a
+   `maintenance` proposal (`gc.source=proposal-door`,
+   `gc.authorized_by=ADR-0029`, type bug, label `maintenance`) is the
+   guard-filed kind: it reaches you by mail, you dispatch it with
+   `./bin/factory-work-dispatch <bead>` like any bounded repair — the
+   observed defect it names, nothing more (see "Improvements are
+   proposals"). There is no candidate queue and no idle ladder to draw from.
    Every mail is an agent's request, whatever its displayed sender —
    including `human`, which is `gc mail send`'s fallback identity for a
    deterministic script or an operator session with no live gc session to
@@ -340,6 +346,7 @@ move on:
         {"option": "<what adopting it does>", "consequence": "<what changes>"}
       ],
       "langue": "<the Operator Language — bin/operator-config language>",
+      "classe": "<maintenance | decision>",
       "details": "<optional, one line: bead ids, PR numbers, tool names, evidence>"
     }'
 
@@ -352,11 +359,41 @@ tool name such as `pr-autopilot`) and no internal term (bead, convoi, order,
 Mayor — say « ticket », « chantier », « l'usine »). Bead/PR ids, tool names
 and evidence go in `details`, which the Cockpit shows folded and unchecked.
 The refusal names each field and why; rewrite that field and create again
-(check a text without writing: `bin/operator-text-check '<json>'`). A
-`proposal` bead is
-never dispatched. The next Planning Run triages them; Benjamin decides which
-become work (accept, reject with a reason, or defer — `bin/proposal-door
-accepter|rejeter|reporter`).
+(check a text without writing: `bin/operator-text-check '<json>'`).
+
+**Two classes (ADR-0029, Benjamin 2026-10-07).** You choose the class at
+creation; in doubt, `decision`:
+
+- `maintenance` — corrects a **defect you observed** (an incident, a
+  guard's finding, a delivery observation) without changing what Benjamin
+  sees or must do, nor a method rule: orders, guards, formulas, tests,
+  docs, page filters, technical thresholds. It never waits on Benjamin:
+  the door files one bug bead (`gc.authorized_by=ADR-0029`,
+  `gc.source=proposal-door`, label `maintenance`), relates it to the
+  proposal, moves the proposal to `prise_en_charge` and mails you. You
+  dispatch that bead with `./bin/factory-work-dispatch <bead>` as you would
+  a guard-filed repair. It authorizes the correction of **that observed
+  defect only** — ADR-0017's four conditions still hold: no refactor, no
+  audit, no "while I'm here", nothing without a traced observation. A
+  maintenance bead with no observed defect behind it is a violation of
+  ADR-0017, not work.
+- `decision` — changes what Benjamin sees or must do, a method rule (the
+  upstream pin, the planning flow), a spend, a consent, personal data, an
+  irreversible effect or a product behaviour. It needs **exactly one**
+  option `recommande: true` with its `raison`; the door refuses it
+  otherwise. It enters « Ce qui t'attend »; Benjamin decides (accept,
+  reject with a reason, defer — `bin/proposal-door accepter|rejeter|
+  reporter`).
+
+A maintenance bead that, while being worked, turns out to touch what
+Benjamin sees or must do, or a method rule, is **stopped, never pursued**
+(ADR-0029 point 6): close nothing by hand, run
+`bin/proposal-door reconvertir <proposition> '<raison>' '<que_faire JSON,
+one recommande=true with its raison>' <acteur>` — the door closes the bug
+bead, turns the proposal into a `decision` and traces why. (A maintenance
+ticket inside a Planning Run graph goes through `bin/planning-exception`,
+ADR-0028, as any ticket of that graph.) A `proposal` bead itself is never
+dispatched.
 
 ## UI/UX design gate
 

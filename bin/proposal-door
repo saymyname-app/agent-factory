@@ -25,9 +25,30 @@
 # pinned baseline. See docs/COCKPIT.md « Proposition résolue par une
 # livraison fusionnée ».
 #
+# Two classes (ADR-0029, 2026-10-07 -- Intent, Benjamin: « oui pour R1 »):
+#   maintenance  corrects a defect of the factory the producer observed,
+#                without changing what the operator sees or must do, nor a
+#                method rule (orders, guards, formulas, tests, docs, page
+#                filters, technical thresholds). It never waits on the
+#                operator: at creation this door files one bug bead
+#                authorized by ADR-0029 (gc.authorized_by=ADR-0029), links
+#                it to the proposal, moves the proposal to
+#                `prise_en_charge`, and mails the Mayor, who dispatches the
+#                bead through the usual door (bin/factory-work-dispatch).
+#                The Cockpit shows it in the health zone and the journal.
+#   decision     changes what the operator sees or must do, a method rule,
+#                a spend, a consent, personal data, an irreversible effect
+#                or a product behaviour. It enters « Ce qui t'attend » and
+#                must carry exactly one « Recommandé » option with its
+#                raison -- refused otherwise, nothing written.
+# In doubt the producer chooses `decision`. A maintenance bead that turns
+# out to touch what the operator sees is stopped and reconverted
+# (`reconvertir`), never pursued (ADR-0029 point 6).
+#
 # A proposal created before this door existed (no gc.proposal_* fields)
-# stays readable and still counts as pending -- this door never rewrites an
-# existing proposal's fields, only adds the new ones going forward.
+# stays readable -- this door never rewrites an existing proposal's
+# fields, only adds the new ones going forward. The Cockpit shows it in
+# the health zone as « à reformuler par la porte » (ADR-0029 point 4).
 #
 # Usage: proposal-door <command> [arguments]
 #
@@ -61,6 +82,12 @@
 #                                                 one needs its raison.
 #                                   langue     -- must equal the Operator
 #                                                 Language.
+#                                   classe     -- `maintenance` or
+#                                                 `decision` (ADR-0029);
+#                                                 a `decision` needs
+#                                                 exactly one option
+#                                                 recommande=true with
+#                                                 its raison.
 #                                   details    -- optional, one line, at
 #                                                 most 1000 characters: the
 #                                                 identifiers and evidence
@@ -72,8 +99,19 @@
 #                                                 « Détails », unchecked.
 #                                 On success, creates a bead labelled
 #                                 `proposal` with those fields recorded as
-#                                 metadata (state: ouverte) and prints
+#                                 metadata (gc.proposal_classe, state:
+#                                 ouverte) and prints
 #                                 "PROPOSITION CRÉÉE: <bead> — <quoi>".
+#                                 For `maintenance`, then files the bug
+#                                 bead (type bug, label maintenance,
+#                                 gc.authorized_by=ADR-0029,
+#                                 gc.source=proposal-door,
+#                                 gc.proposal_id=<proposal>), relates the
+#                                 two, sets the proposal to
+#                                 prise_en_charge (gc.proposal_bug=<bead>,
+#                                 traced), mails the Mayor, and prints
+#                                 "PRISE EN CHARGE: <proposal> — ticket
+#                                 <bead>".
 #   accepter <bead> <acteur>    Accept: gc.proposal_state -> a_planifier,
 #                                 traced (comment + metadata, acteur).
 #   rejeter <bead> <raison> <acteur>
@@ -95,11 +133,31 @@
 #                                 gc.proposal_state -> resolue,
 #                                 gc.proposal_resolved_by=<preuve>, traced
 #                                 (comment + metadata, acteur).
-#   compte                      Read-only: print the count of proposals
+#   reconvertir <proposition> <raison> <que_faire_json> <acteur>
+#                                ADR-0029 point 6: a maintenance bead that
+#                                 touches what the operator sees is
+#                                 stopped, never pursued. Closes its bug
+#                                 bead (reason traced), turns the proposal
+#                                 into a `decision` (state ouverte) with
+#                                 the given options -- exactly one
+#                                 recommande=true with its raison, same
+#                                 rules as create -- keeps the maintenance
+#                                 options as gc.proposal_que_faire_maintenance,
+#                                 and traces the reason and the acteur.
+#                                 Refused (no write) on a proposal that is
+#                                 not of class maintenance.
+#   compte [--classe <classe>]  Read-only: print the count of proposals
 #                                 still pending (open, labelled `proposal`,
-#                                 not accepted, rejected nor resolved). A
-#                                 legacy proposal with no gc.proposal_state
-#                                 counts as pending.
+#                                 not accepted, rejected, resolved nor
+#                                 taken over as maintenance). A legacy
+#                                 proposal with no gc.proposal_state counts
+#                                 as pending. --classe keeps one class:
+#                                 maintenance, decision (a proposal with
+#                                 fields and no class counts as decision)
+#                                 or sans_champs (no gc.proposal_* field).
+#   list [--classe <classe>]    Read-only: one pending proposal per line,
+#                                 "<bead>\t<classe>\t<state>\t<quoi>",
+#                                 same filter as compte.
 set -Eeuo pipefail
 
 PROGRAM_NAME="proposal-door"
@@ -111,6 +169,13 @@ OPERATOR_CONFIG_BIN="${OPERATOR_CONFIG_BIN:-$ROOT/bin/operator-config}"
 OPERATOR_TEXT_CHECK_BIN="${OPERATOR_TEXT_CHECK_BIN:-$ROOT/bin/operator-text-check}"
 BEAD_ID_RE='^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(\.[A-Za-z0-9]+)*$'
 OPTION_LETTERS="abcdefghijklmnopqrstuvwxyz"
+CLASSE_MAINTENANCE="maintenance"
+CLASSE_DECISION="decision"
+CLASSE_SANS_CHAMPS="sans_champs"
+AUTHORIZING_ADR="ADR-0029"
+MAYOR_RECIPIENT="${PROPOSAL_DOOR_MAYOR_RECIPIENT:-mayor}"
+# The acteur the door itself writes in a trace it authors (a take-over).
+DOOR_ACTOR="proposal-door"
 
 log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2; }
 die() { log "ERROR: $1"; exit 1; }
@@ -186,6 +251,83 @@ validate_que_faire() {  # $1 = JSON array
     '[to_entries[] | .value + {lettre: $letters[.key:(.key + 1)]}]' <<<"$json"
 }
 
+# validate_classe checks the class field (ADR-0029 point 1) and, for a
+# decision, that exactly one option is recommended (point 3) -- dies without
+# printing anything otherwise. $1 = classe, $2 = validated que_faire JSON.
+validate_classe() {
+  local classe=$1 que_faire=$2 recommended_count
+  [[ -n $classe ]] || die "proposition incomplète : champ « classe » manquant ($CLASSE_MAINTENANCE | $CLASSE_DECISION, $AUTHORIZING_ADR)."
+  [[ $classe == "$CLASSE_MAINTENANCE" || $classe == "$CLASSE_DECISION" ]] \
+    || die "classe « $classe » inconnue : $CLASSE_MAINTENANCE ou $CLASSE_DECISION ($AUTHORIZING_ADR)."
+  if [[ $classe == "$CLASSE_DECISION" ]]; then
+    recommended_count=$(jq '[.[] | (.recommande // false)] | map(select(. == true)) | length' <<<"$que_faire")
+    (( recommended_count == 1 )) \
+      || die "une proposition de classe $CLASSE_DECISION porte exactement une option « Recommandé » avec sa raison ($AUTHORIZING_ADR point 3)."
+  fi
+}
+
+# classe_of_bead reads a proposal bead's class the way the Cockpit does
+# (lib/cockpit/requests/proposals.py): the recorded class; else decision
+# when the door wrote its fields; else sans_champs. $1 = bead JSON.
+classe_of_bead() {
+  jq -r --arg m "$CLASSE_MAINTENANCE" --arg d "$CLASSE_DECISION" --arg s "$CLASSE_SANS_CHAMPS" '
+    (.metadata // {}) as $meta
+    | ($meta["gc.proposal_classe"] // "") as $c
+    | if $c == $m then $m
+      elif $c == $d then $d
+      elif (($meta["gc.proposal_quoi"] // "") != "" or ($meta["gc.proposal_pourquoi"] // "") != "" or ($meta["gc.proposal_que_faire"] // "") != "") then $d
+      else $s end' <<<"$1"
+}
+
+# take_over_maintenance files the bug bead a maintenance proposal becomes
+# (ADR-0029 point 2) and routes it to the Mayor by the usual path: the
+# Mayor dispatches it through bin/factory-work-dispatch. Never
+# escalation-door mayor -- its sweep would promote the bead to the operator
+# after 2 h, which is exactly what this class must not do.
+# $1 = proposal bead id, $2 = quoi, $3 = pourquoi, $4 = lettered que_faire.
+take_over_maintenance() {
+  local proposal=$1 quoi=$2 pourquoi=$3 que_faire=$4
+  local options description create_output bug_id
+  options=$(jq -r '.[] | "- \(.lettre). \(.option) — \(.consequence)"' <<<"$que_faire")
+  description="$pourquoi
+
+Proposition $proposal, classe $CLASSE_MAINTENANCE, autorisée par $AUTHORIZING_ADR : corriger ce défaut constaté, rien d'autre (ADR-0017 : pas de refactor, d'audit ni de « pendant que j'y suis »).
+Options proposées :
+$options
+
+Si la correction touche un comportement visible de l'opérateur ou une règle de méthode : arrêter, ne pas poursuivre, et lancer
+  bin/proposal-door reconvertir $proposal '<raison>' '<que_faire JSON avec une option recommande=true et sa raison>' <acteur>
+($AUTHORIZING_ADR point 6)."
+  create_output=$("$GC_BIN" bd create "$quoi" -t bug -p 2 -l "$CLASSE_MAINTENANCE" -d "$description" 2>&1) \
+    || die "gc bd create (bead de maintenance) failed for $proposal: $create_output"
+  bug_id=$(printf '%s\n' "$create_output" | grep -oE '[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+' | head -n1)
+  [[ -n $bug_id && $bug_id != "$proposal" ]] || die "gc bd create did not report a bead id for the maintenance bead of $proposal: $create_output"
+  "$GC_BIN" bd update "$bug_id" \
+    --set-metadata "gc.authorized_by=$AUTHORIZING_ADR" \
+    --set-metadata "gc.source=$DOOR_ACTOR" \
+    --set-metadata "gc.proposal_id=$proposal" \
+    --set-metadata "gc.proposal_classe=$CLASSE_MAINTENANCE" \
+    --append-notes "MAINTENANCE: proposition $proposal, autorisée par $AUTHORIZING_ADR" \
+    >/dev/null || die "Beads write failed for the maintenance bead $bug_id."
+  "$GC_BIN" bd dep relate "$bug_id" "$proposal" >/dev/null 2>&1 \
+    || log "WARNING: could not relate $bug_id to $proposal (gc bd dep relate); the link is in their metadata."
+  "$GC_BIN" bd update "$proposal" \
+    --set-metadata "gc.proposal_state=prise_en_charge" \
+    --set-metadata "gc.proposal_bug=$bug_id" \
+    --set-metadata "gc.proposal_response_at=$(now_iso)" \
+    --set-metadata "gc.proposal_response_actor=$DOOR_ACTOR" \
+    --append-notes "PROPOSITION PRISE EN CHARGE par $DOOR_ACTOR — ticket $bug_id" \
+    >/dev/null || die "Beads write failed for $proposal."
+  "$GC_BIN" mail send "$MAYOR_RECIPIENT" --notify \
+    -s "Maintenance ($AUTHORIZING_ADR): $bug_id" \
+    -m "ACTION: proposal-door filed a maintenance bead from proposal $proposal
+STATE: $quoi
+EVIDENCE: gc bd show $bug_id (gc.authorized_by=$AUTHORIZING_ADR); gc bd show $proposal
+NEXT: dispatch it with ./bin/factory-work-dispatch $bug_id -- correct the observed defect only; if it touches what the operator sees, stop and run bin/proposal-door reconvertir ($AUTHORIZING_ADR point 6)" \
+    >/dev/null || die "Could not mail $MAYOR_RECIPIENT about $bug_id; the bead and the proposal are written -- send the mail again rather than creating a second proposal."
+  printf 'PRISE EN CHARGE: %s — ticket %s\n' "$proposal" "$bug_id"
+}
+
 # cockpit_can_display runs the Cockpit's own main-text control
 # (bin/operator-text-check, lib/cockpit/text/validate.py) on the exact
 # fields about to be written, and dies with its reasons -- the same reasons
@@ -206,7 +348,7 @@ cmd_create() {
   [[ -n $payload ]] || die "Usage: $PROGRAM_NAME create <json>"
   jq -e 'type == "object"' <<<"$payload" >/dev/null 2>&1 \
     || die "proposition incomplète : le corps n'est pas un objet JSON valide."
-  local quoi pourquoi langue que_faire_raw lettered expected_language titre bead_id create_output details
+  local quoi pourquoi langue classe que_faire_raw lettered expected_language titre bead_id create_output details
   local -a details_args=()
   details=$(jq -r 'if (.details | type) == "string" then .details else "" end' <<<"$payload")
   [[ $details != *$'\n'* && $details != *$'\r'* ]] || die "champ « details » doit tenir sur une seule ligne."
@@ -215,6 +357,7 @@ cmd_create() {
   quoi=$(jq -r '.quoi // ""' <<<"$payload")
   pourquoi=$(jq -r '.pourquoi // ""' <<<"$payload")
   langue=$(jq -r '.langue // ""' <<<"$payload")
+  classe=$(jq -r '.classe // ""' <<<"$payload")
   que_faire_raw=$(jq -c '.que_faire // []' <<<"$payload")
   field_ok "quoi" "$quoi"
   field_ok "pourquoi" "$pourquoi"
@@ -224,6 +367,7 @@ cmd_create() {
   [[ $langue == "$expected_language" ]] \
     || die "la proposition est dans la langue « $langue », la langue de l'opérateur est « $expected_language »."
   cockpit_can_display "$quoi" "$pourquoi" "$lettered"
+  validate_classe "$classe" "$lettered"
 
   titre="PROPOSITION: $quoi"
   create_output=$("$GC_BIN" bd create "$titre" -l proposal -t task -d "$pourquoi" 2>&1) \
@@ -236,12 +380,51 @@ cmd_create() {
     --set-metadata "gc.proposal_pourquoi=$pourquoi" \
     --set-metadata "gc.proposal_que_faire=$lettered" \
     --set-metadata "gc.proposal_langue=$langue" \
+    --set-metadata "gc.proposal_classe=$classe" \
     --set-metadata "gc.proposal_state=ouverte" \
     --set-metadata "gc.proposal_horodatage=$(now_iso)" \
     "${details_args[@]}" \
     --append-notes "PROPOSITION: $quoi" \
     >/dev/null || die "Beads write failed for $bead_id."
   printf 'PROPOSITION CRÉÉE: %s — %s\n' "$bead_id" "$quoi"
+  if [[ $classe == "$CLASSE_MAINTENANCE" ]]; then
+    take_over_maintenance "$bead_id" "$quoi" "$pourquoi" "$lettered"
+  fi
+}
+
+cmd_reconvertir() {
+  local proposal=${1:-} raison=${2:-} que_faire_raw=${3:-} acteur=${4:-}
+  [[ -n $proposal && -n $acteur ]] || die "Usage: $PROGRAM_NAME reconvertir <proposition> <raison> <que_faire_json> <acteur>"
+  field_ok "raison" "$raison"
+  valid_bead_id "$proposal" || die "'$proposal' is not a Bead id."
+  local bead_json classe lettered old_que_faire bug_id
+  bead_json=$(show_bead "$proposal")
+  jq -e '(.labels // []) | index("proposal") != null' <<<"$bead_json" >/dev/null 2>&1 \
+    || die "$proposal n'est pas une proposition (label proposal absent)."
+  classe=$(classe_of_bead "$bead_json")
+  [[ $classe == "$CLASSE_MAINTENANCE" ]] \
+    || die "$proposal est de classe « $classe » : seule une proposition $CLASSE_MAINTENANCE se reconvertit en $CLASSE_DECISION ($AUTHORIZING_ADR point 6)."
+  jq -e 'type == "array"' <<<"$que_faire_raw" >/dev/null 2>&1 \
+    || die "proposition incomplète : « que faire » doit être un tableau JSON d'options."
+  lettered=$(validate_que_faire "$que_faire_raw")
+  validate_classe "$CLASSE_DECISION" "$lettered"
+  old_que_faire=$(jq -r '(.metadata // {})["gc.proposal_que_faire"] // ""' <<<"$bead_json")
+  bug_id=$(jq -r '(.metadata // {})["gc.proposal_bug"] // ""' <<<"$bead_json")
+  if [[ -n $bug_id ]]; then
+    "$GC_BIN" bd close "$bug_id" --reason "Reconvertie en décision ($AUTHORIZING_ADR point 6) par $acteur — $raison" >/dev/null \
+      || die "Could not close the maintenance bead $bug_id; nothing reconverted."
+  fi
+  "$GC_BIN" bd update "$proposal" \
+    --set-metadata "gc.proposal_classe=$CLASSE_DECISION" \
+    --set-metadata "gc.proposal_state=ouverte" \
+    --set-metadata "gc.proposal_que_faire=$lettered" \
+    --set-metadata "gc.proposal_que_faire_maintenance=$old_que_faire" \
+    --set-metadata "gc.proposal_reconversion_raison=$raison" \
+    --set-metadata "gc.proposal_response_at=$(now_iso)" \
+    --set-metadata "gc.proposal_response_actor=$acteur" \
+    --append-notes "PROPOSITION RECONVERTIE en décision par $acteur — $raison" \
+    >/dev/null || die "Beads write failed for $proposal."
+  printf 'RECONVERTIE: %s — décision (%s)\n' "$proposal" "$raison"
 }
 
 cmd_accepter() {
@@ -302,7 +485,7 @@ cmd_resoudre() {
     || die "$bead n'est pas une proposition (label proposal absent)."
   state=$(jq -r '(.metadata // {})["gc.proposal_state"] // "ouverte"' <<<"$bead_json")
   case "$state" in
-    ouverte) ;;
+    ouverte|prise_en_charge) ;;
     a_planifier) die "$bead a déjà été acceptée par l'opérateur (à planifier) : une livraison ne l'annule pas." ;;
     rejetee) die "$bead a déjà été rejetée par l'opérateur : une livraison ne l'annule pas." ;;
     resolue) die "$bead est déjà résolue ($(jq -r '(.metadata // {})["gc.proposal_resolved_by"] // "?"' <<<"$bead_json"))." ;;
@@ -318,16 +501,59 @@ cmd_resoudre() {
   printf 'RÉSOLUE: %s — %s\n' "$bead" "$preuve"
 }
 
-cmd_compte() {
-  local proposals_json
+# pending_proposals prints the JSON array of pending proposals (open,
+# labelled proposal, state neither a_planifier, rejetee, resolue nor
+# prise_en_charge -- a maintenance proposal the factory holds waits on no
+# one), each with its .classe read as classe_of_bead does. $1 = optional
+# class filter (maintenance | decision | sans_champs).
+pending_proposals() {
+  local classe_filter=${1:-} proposals_json
+  if [[ -n $classe_filter ]]; then
+    case "$classe_filter" in
+      "$CLASSE_MAINTENANCE"|"$CLASSE_DECISION"|"$CLASSE_SANS_CHAMPS") ;;
+      *) die "classe « $classe_filter » inconnue : $CLASSE_MAINTENANCE, $CLASSE_DECISION ou $CLASSE_SANS_CHAMPS." ;;
+    esac
+  fi
   proposals_json=$("$GC_BIN" bd list --status open --label proposal --json 2>/dev/null) \
-    || die "Could not count pending proposals."
+    || die "Could not list pending proposals."
   [[ -n $proposals_json ]] || proposals_json='[]'
-  jq -r '
+  jq -c --arg m "$CLASSE_MAINTENANCE" --arg d "$CLASSE_DECISION" --arg s "$CLASSE_SANS_CHAMPS" --arg f "$classe_filter" '
     (if type == "array" then . else [.] end)
-    | map(select(((.metadata // {})["gc.proposal_state"] // "ouverte") as $s | ($s != "a_planifier" and $s != "rejetee" and $s != "resolue")))
-    | length
+    | map(select(((.metadata // {})["gc.proposal_state"] // "ouverte") as $st
+        | ($st != "a_planifier" and $st != "rejetee" and $st != "resolue" and $st != "prise_en_charge")))
+    | map(. + {classe: ((.metadata // {}) as $meta | ($meta["gc.proposal_classe"] // "") as $c
+        | if $c == $m then $m
+          elif $c == $d then $d
+          elif (($meta["gc.proposal_quoi"] // "") != "" or ($meta["gc.proposal_pourquoi"] // "") != "" or ($meta["gc.proposal_que_faire"] // "") != "") then $d
+          else $s end)})
+    | map(select($f == "" or .classe == $f))
   ' <<<"$proposals_json"
+}
+
+parse_classe_option() {  # prints the --classe value from "$@", or ""
+  local classe=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --classe) [[ $# -ge 2 ]] || die "--classe requires a value."; classe=$2; shift 2 ;;
+      --classe=*) classe=${1#--classe=}; shift ;;
+      *) die "unsupported argument '$1'." ;;
+    esac
+  done
+  printf '%s' "$classe"
+}
+
+cmd_compte() {
+  local classe
+  classe=$(parse_classe_option "$@")
+  pending_proposals "$classe" | jq -r 'length'
+}
+
+cmd_list() {
+  local classe
+  classe=$(parse_classe_option "$@")
+  pending_proposals "$classe" | jq -r '
+    .[] | [.id, .classe, ((.metadata // {})["gc.proposal_state"] // "ouverte"),
+           ((.metadata // {})["gc.proposal_quoi"] // .title // "")] | @tsv'
 }
 
 main() {
@@ -341,7 +567,9 @@ main() {
     rejeter) cmd_rejeter "$@" ;;
     reporter) cmd_reporter "$@" ;;
     resoudre) cmd_resoudre "$@" ;;
+    reconvertir) cmd_reconvertir "$@" ;;
     compte) cmd_compte "$@" ;;
+    list) cmd_list "$@" ;;
     *) usage >&2; return 2 ;;
   esac
 }

@@ -104,8 +104,10 @@ def _maybe_file_lease_proposal(args: argparse.Namespace, path: Path, now: float)
     count = ocl.undeclared_conflict_count(entries, now=now)
     # proposal-door (T07) requires the same fields an escalation-door
     # request needs, in the Operator Language: it never accepts a plain
-    # title+body any more.
+    # title+body any more. Dynamic leases change the delivery method
+    # (how tickets are serialized): a `decision` (ADR-0029), Benjamin's.
     payload = json.dumps({
+        "classe": "decision",
         "quoi": "Proposer des leases dynamiques : conflits PR non déclarés répétés",
         "pourquoi": f"{count} conflits PR sans chevauchement déclaré en 7 jours",
         "que_faire": [{

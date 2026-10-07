@@ -260,13 +260,18 @@ if [ "${#details}" -gt 1000 ]; then
   details="${details:0:999}…"
 fi
 langue=$("$OPERATOR_CONFIG_BIN" language) || die "could not read the Operator Language"
+# ADR-0029: re-pinning the Method Baseline is a method rule, so this is a
+# `decision` (Benjamin's), and a decision carries exactly one « Recommandé »
+# option with its raison. The order cannot read the tag's content: it
+# recommends following upstream, the diff being reviewed before the re-pin.
 que_faire=$(jq -n '[
-  {option: "Adopter la mise à jour", consequence: "Réépingle la référence Method Baseline et réécrit ses usages (docs/UPSTREAM_SKILLS.md)."},
+  {option: "Adopter la mise à jour", consequence: "Réépingle la référence Method Baseline et réécrit ses usages (docs/UPSTREAM_SKILLS.md).",
+   recommande: true, raison: "La référence de méthode suit l'"'"'amont ; l'"'"'écart est relu avant de réépingler."},
   {option: "Ne pas adopter pour l'"'"'instant", consequence: "La référence reste inchangée ; le prochain tag sera à nouveau signalé."}
 ]')
 title="Upstream mattpocock/skills published $latest_tag (Method Baseline pinned at $baseline_commit)"
 payload=$(jq -n --arg quoi "$quoi" --arg pourquoi "$pourquoi" --arg langue "$langue" --arg details "$details" --argjson que_faire "$que_faire" \
-  '{quoi: $quoi, pourquoi: $pourquoi, que_faire: $que_faire, langue: $langue, details: $details}')
+  '{quoi: $quoi, pourquoi: $pourquoi, que_faire: $que_faire, langue: $langue, details: $details, classe: "decision"}')
 
 if [ "$DRY_RUN" = 1 ]; then
   log "DRY-RUN: would file proposal bead: $title"
