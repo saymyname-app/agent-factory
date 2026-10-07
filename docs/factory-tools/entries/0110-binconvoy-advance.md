@@ -46,6 +46,12 @@ touché : il reste avancé par le Mayor.
   (`./bin/ticket-evaluation settle`) ; pour un `prefactoring`, elle vérifie
   elle-même que le produit démarre. Les produits lancés restent debout
   entre deux passes et sont arrêtés par une passe suivante.
+- **Un seul tour de correction, puis l'arrêt** : quand la revue et
+  l'évaluation ont toutes deux répondu et que l'une refuse, la même passe
+  envoie tous leurs constats à une seule session neuve d'auteur
+  (`./bin/correction-round settle`). Encore refusé après ce tour, le ticket
+  est arrêté sans fusionner et remonte une fois dans
+  `./bin/escalation-door list`.
 - **Relecture des tests restée sans résultat** : la même passe la relance une
   fois, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune

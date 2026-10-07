@@ -127,7 +127,10 @@ invalidate-verdicts` marks each outdated verdict invalid, with the tip that
 outdated it, and counts one resume (K) — not the correction round — in the
 same tracker write. The next passes count nothing more and list the ticket
 under `waiting` until the verdicts are replayed on the new tip
-(the code review and the Ticket Evaluation each record a new round there). A verdict that is merely unfavorable
+(the code review and the Ticket Evaluation each record a new round there).
+When the outdated verdicts were given at the commit of the ticket's
+correction round, the reason says « aucune reprise de plus n'est comptée » :
+that round was counted when it was opened (`docs/CORRECTION_ROUND.md`). A verdict that is merely unfavorable
 merges nothing and invalidates nothing.
 
 A profile without `regression_command` is refused when a ticket is ready: no
@@ -137,7 +140,9 @@ test, no merge. A pass with no ready ticket does not read the profile.
 
 - **Of the conditions of the ticket-end gate, only the Ticket Evaluation
   and the code review are required here** (condition 3, and condition 9
-  without Benjamin's recorded override, which is T17's). The ticket-end
+  without Benjamin's recorded override: `bin/correction-round override`
+  records it on a stopped ticket, and a stopped ticket is not merged here,
+  `docs/CORRECTION_ROUND.md`). The ticket-end
   gate (T19) makes the merge command refuse while its conditions 1, 2, 4, 5,
   7 and 8 are not met.
 - **Starting the fresh author session of a returned ticket is not in this

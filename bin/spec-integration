@@ -442,12 +442,17 @@ def invalidate(convoy_id: str, ticket: dict[str, Any], kinds: list[str]) -> dict
     answer = state_write("invalidate-verdicts", convoy_id, ticket["id"], "--tip", tip,
                          *(arg for kind in kinds for arg in ("--kind", kind)))
     judged = sorted({ticket["verdicts"][kind]["commit"][:12] for kind in kinds})
+    resumes = answer.get("written", {}).get("gc.flow.counter.resumes")
+    # The commit of the correction round was counted when that round was
+    # opened (bin/convoy-state): it is not counted a second time here.
+    counted = ("une reprise est comptée" if resumes is not None
+               else "aucune reprise de plus n'est comptée (ce commit est celui du tour de correction)")
     return {
         "id": ticket["id"], "tip": tip, "invalidated": answer.get("invalidated", kinds),
-        "resumes": answer.get("written", {}).get("gc.flow.counter.resumes"),
+        "resumes": resumes,
         "reason": (f"la branche du ticket porte un commit ({tip[:12]}) plus récent que le commit jugé "
                    f"({', '.join(judged)}) : verdict invalidé ({', '.join(kinds)}), à rejouer en entier sur la "
-                   "nouvelle pointe ; une reprise est comptée, rien n'est fusionné"),
+                   f"nouvelle pointe ; {counted}, rien n'est fusionné"),
     }
 
 

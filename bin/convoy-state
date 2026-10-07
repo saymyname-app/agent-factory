@@ -17,7 +17,8 @@ Ticket Handoff and its parking (T11), the result of the mechanical fidelity
 check against the Validated Prototype and the Planning Exceptions that name
 an anchor (T16), the
 integration branch of the convoy's Spec and what the merge command did of a
-ticket (T18), and the convoy's open factory incident. No other script
+ticket (T18), the single correction round of a ticket and the overrides of
+the operator on a stopped one (T17), and the convoy's open factory incident. No other script
 invents a `gc.flow.*` field: a missing field is added here.
 
     convoy-state list
@@ -56,6 +57,9 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state set-integration CONVOY --branch NAME --protected NAME --base SHA
     convoy-state set-merge    CONVOY TICKET --outcome OUTCOME --ticket-commit SHA --integration SHA [--commit SHA]
     convoy-state invalidate-verdicts CONVOY TICKET --tip SHA --kind KIND [--kind KIND]
+    convoy-state open-correction   CONVOY TICKET --commit SHA
+    convoy-state launch-correction CONVOY TICKET --bead BEAD
+    convoy-state override-finding  CONVOY TICKET --finding ID --approver NAME --words TEXT
     convoy-state record-incident CONVOY --bead BEAD [--signature sha256:HEX]
     convoy-state clear-incident  CONVOY
 
@@ -74,7 +78,8 @@ A verdict is valid only while its commit is the tip of the ticket's branch
 in `--repo` (default: the current directory): a commit added after it makes
 it invalid, a commit that is not on the branch at all is an "état sans
 règle". `invalidate-verdicts` writes that on the verdicts the merge command
-found outdated, and counts one resume for it. Closed lists and stored keys:
+found outdated, and counts one resume for it -- none when the commit is the
+one of the correction round, which `open-correction` already counted. Closed lists and stored keys:
 docs/CONVOY_STATE.md.
 """
 
@@ -133,6 +138,8 @@ KEY_MODELS = PREFIX + "models"
 KEY_EVALUATION = PREFIX + "evaluation"
 KEY_FIDELITY = PREFIX + "fidelity"
 KEY_PLANNING_EXCEPTIONS = PREFIX + "planning_exceptions"
+KEY_CORRECTION = PREFIX + "correction"
+KEY_OVERRIDES = PREFIX + "overrides"
 # What bin/escalation-door writes on a bead when the operator answers a
 # request (`repondre`); a Planning Exception is resolved by that answer. Read only.
 KEY_NEEDS_BENJAMIN = "gc.needs_benjamin"
@@ -157,7 +164,15 @@ TDD_STEPS_WITH_BASE = ("red", "prefactoring")
 KIND_WITHOUT_RED = "prefactoring"
 STOP_TEST_REVIEW_REFUSED = "test_review_refused"
 STOP_REASONS = ("criterion_already_green", "amendment_exhausted", STOP_TEST_REVIEW_REFUSED, "test_review_no_result",
-                "code_review_no_result", "evaluation_no_result", "evaluation_outage")
+                "code_review_no_result", "evaluation_no_result", "evaluation_outage", "still_refused")
+# The correction round of a ticket (T17, Spec §8): one for its code review
+# and its Ticket Evaluation together, worked by one fresh author session. A
+# ticket still refused after it is stopped (`still_refused`); on a stopped
+# ticket the operator may override a Blocking Finding of the review, never a
+# criterion that was not observed.
+CORRECTION_MAX_ROUNDS = 1
+CORRECTION_MAX_LAUNCHES = 1
+OVERRIDE_RECORDED = "dérogation enregistrée"
 # The review of the criterion tests between red and freeze (Spec §5, §8): a
 # refusal returns once to the author, the second one stops the ticket; a
 # review that gives no result is launched once more, no further.
@@ -1169,6 +1184,53 @@ def fidelity_rendered(record: dict[str, Any], accepted_anchors: list[str]) -> di
     return {**record, "deviations": deviations, "state": state}
 
 
+def correction_record(raw: Any) -> dict[str, Any]:
+    """The correction round of a ticket (T17): the commit both verdicts were
+    given at, what each of them refused there, and the author session it was
+    sent to."""
+    record = stored_record(raw, ("commit", "blocking_findings", "not_observed", "launches", "at"))
+    valid_commit(record["commit"], "commit du tour de correction")
+    findings, not_observed, launches = record["blocking_findings"], record["not_observed"], record["launches"]
+    if not isinstance(findings, list) or any(not isinstance(name, str) or not FINDING_ID_RE.match(name) for name in findings):
+        raise Refusal(f"Blocking Findings du tour de correction mal formés : {findings!r}")
+    if not isinstance(not_observed, list) or any(not isinstance(name, str) or not name.strip() for name in not_observed):
+        raise Refusal(f"états non observés du tour de correction mal formés : {not_observed!r}")
+    if not findings and not not_observed:
+        raise Refusal("tour de correction sans rien à corriger")
+    if not isinstance(launches, list) or len(launches) > CORRECTION_MAX_LAUNCHES:
+        raise Refusal(f"lancements du tour de correction mal formés : {launches!r}")
+    for launch in launches:
+        if not isinstance(launch, dict) or set(launch) != {"bead", "at"} or not isinstance(launch["bead"], str) \
+                or not BEAD_ID_RE.match(launch["bead"]):
+            raise Refusal(f"lancement du tour de correction mal formé : {launch!r}")
+    return record
+
+
+def overrides_record(raw: Any) -> list[dict[str, Any]]:
+    """The overrides of the operator on the Blocking Findings of a stopped
+    ticket (T17, Spec §8), oldest first: one per finding, with their words."""
+    record = stored_record(raw, ("entries",))
+    entries = record["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise Refusal(f"dérogations mal formées : {entries!r}")
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"finding", "approver", "words", "commit", "at"}:
+            raise Refusal(f"dérogation mal formée : {entry!r}")
+        if not isinstance(entry["finding"], str) or not FINDING_ID_RE.match(entry["finding"]) or entry["finding"] in seen:
+            raise Refusal(f"dérogation sur un constat mal formé ou donné deux fois : {entry['finding']!r}")
+        seen.add(entry["finding"])
+        single_line(entry["approver"], "approbateur de la dérogation")
+        if not isinstance(entry["words"], str) or not entry["words"].strip():
+            raise Refusal(f"dérogation sans les mots de l'approbateur : {entry['words']!r}")
+        valid_commit(entry["commit"], "commit de la revue dérogée")
+    return entries
+
+
+def overrides_rendered(raw: Any) -> list[dict[str, Any]]:
+    return [{**entry, "state": OVERRIDE_RECORDED} for entry in overrides_record(raw)]
+
+
 def park_record(raw: Any) -> dict[str, Any]:
     """Why a ticket is parked (Spec §5): the cause, and the ticket whose
     Ticket Exit parked it (itself, or the one it descends from)."""
@@ -1423,7 +1485,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         if not key.startswith(PREFIX) or key in (
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
             KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION, KEY_TEST_REVIEW, KEY_CODE_REVIEW, KEY_MODELS,
-            KEY_EVALUATION, KEY_FIDELITY, KEY_PLANNING_EXCEPTIONS,
+            KEY_EVALUATION, KEY_FIDELITY, KEY_PLANNING_EXCEPTIONS, KEY_CORRECTION, KEY_OVERRIDES,
         ):
             continue
         raw = metadata[key]
@@ -1478,9 +1540,10 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             flag(KEY_STOP, out["stop"]["unruled"])
     # The Ticket Handoff, the parking, the merge, the author session, the
     # review of the criterion tests, the code review, the Ticket Evaluation
-    # and the models per role, each None when the ticket has none; an
-    # unreadable one is never rendered as none.
+    # the models per role and the correction round, each None when the ticket
+    # has none; an unreadable one is never rendered as none.
     for name, key, read in (
+        ("correction", KEY_CORRECTION, correction_record),
         ("test_review", KEY_TEST_REVIEW, test_review_record),
         ("code_review", KEY_CODE_REVIEW, code_review_rendered),
         ("evaluation", KEY_EVALUATION, evaluation_rendered),
@@ -1516,6 +1579,15 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         except Refusal as exc:
             out["fidelity"] = {"unruled": f"{KEY_FIDELITY} : {exc}", "raw": metadata[KEY_FIDELITY]}
             flag(KEY_FIDELITY, out["fidelity"]["unruled"])
+
+    # The overrides of the operator (T17): an empty list when there is none.
+    out["overrides"] = []
+    if KEY_OVERRIDES in metadata:
+        try:
+            out["overrides"] = overrides_rendered(metadata[KEY_OVERRIDES])
+        except Refusal as exc:
+            out["overrides"] = {"unruled": f"{KEY_OVERRIDES} : {exc}", "raw": metadata[KEY_OVERRIDES]}
+            flag(KEY_OVERRIDES, out["overrides"]["unruled"])
 
     def has_gate(name: str) -> bool:
         return "at" in gates.get(name, {})
@@ -2869,10 +2941,14 @@ def cmd_invalidate_verdicts(args: argparse.Namespace) -> int:
     """Spec §8, « commit après verdict »: write on the named verdicts that
     the tip `--tip`, added after them, made them invalid, and count one
     resume for it, in one tracker write. A verdict already invalidated is
-    left as it is and counts nothing more."""
+    left as it is and counts nothing more. Verdicts given at the commit of
+    the correction round count nothing either: the commit that outdates
+    them is that round, which `open-correction` counted among the resumes."""
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
     tip = valid_commit(args.tip, "pointe de la branche du ticket")
+    corrected = correction_record(metadata[KEY_CORRECTION])["commit"] if KEY_CORRECTION in metadata else None
+    judged: set[str] = set()
     if not args.kind:
         raise Refusal("genre de verdict absent : --kind nomme chaque verdict à invalider")
     values: dict[str, Any] = {}
@@ -2886,15 +2962,131 @@ def cmd_invalidate_verdicts(args: argparse.Namespace) -> int:
             raise Refusal(f"le verdict {kind} porte sur la pointe {tip} : aucun commit ne lui a été ajouté")
         if "invalidated" not in record:
             values[key] = encode({**record, "invalidated": {"tip": tip, "at": now()}})
+            judged.add(record["commit"])
     invalidated = [key[len(VERDICT_PREFIX):] for key in values]
     if values:
-        # It counts as a resume (K), not as the correction round.
-        resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
-        values[COUNTER_PREFIX + "resumes"] = resumes + 1
+        if judged != {corrected}:
+            # It counts as a resume (K), not as the correction round.
+            resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
+            values[COUNTER_PREFIX + "resumes"] = resumes + 1
         write_metadata(args.ticket, values)
     print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "invalidated": invalidated,
                       "written": values}, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
+
+
+def cmd_open_correction(args: argparse.Namespace) -> int:
+    """Open the correction round of a ticket (T17, Spec §8) at the commit
+    its code review and its Ticket Evaluation both answered at: what each of
+    them refused goes to one fresh author session. There is one round per
+    ticket, and it counts among the resumes: the round and the two counters
+    go in one tracker write. The same round again writes nothing."""
+    metadata = metadata_of(marked_ticket(args.convoy, args.ticket))
+    commit = valid_commit(args.commit, "commit du tour de correction")
+    if KEY_STOP in metadata:
+        raise Refusal(f"ticket arrêté : aucun tour de correction ne s'ouvre sur {args.ticket}")
+    if KEY_PARK in metadata:
+        raise Refusal(f"ticket parqué : aucun tour de correction ne s'ouvre sur {args.ticket}")
+    counters = {name: counter_value(metadata.get(COUNTER_PREFIX + name), name) for name in TICKET_COUNTERS}
+    if KEY_CORRECTION in metadata:
+        if correction_record(metadata[KEY_CORRECTION])["commit"] == commit:
+            return done(args.convoy, args.ticket, {})
+    if KEY_CORRECTION in metadata or counters["correction_rounds"] >= CORRECTION_MAX_ROUNDS:
+        raise Refusal(
+            f"le ticket {args.ticket} a déjà pris son tour de correction : un seul tour de correction par ticket, "
+            "revue de code et Ticket Evaluation confondues")
+    finished_at(metadata, args.ticket, commit)
+    # One session receives every finding: both have answered at that commit.
+    review = code_review_record(metadata[KEY_CODE_REVIEW]) if KEY_CODE_REVIEW in metadata else {"rounds": []}
+    reviewed = review["rounds"][-1] if review["rounds"] else None
+    if "request" in review or reviewed is None or reviewed["commit"] != commit:
+        raise Refusal(
+            f"la revue de code de {args.ticket} n'a pas rendu son verdict au commit {commit} : une seule session "
+            "d'auteur reçoit tous les constats, ceux de la revue compris")
+    evaluation = evaluation_record(metadata[KEY_EVALUATION]) if KEY_EVALUATION in metadata else {"rounds": []}
+    evaluated = evaluation["rounds"][-1] if evaluation["rounds"] else None
+    if "request" in evaluation or evaluated is None or evaluated["commit"] != commit \
+            or evaluated["outcome"] not in ("favorable", "return_to_author"):
+        raise Refusal(
+            f"la Ticket Evaluation de {args.ticket} n'a pas rendu ses états au commit {commit} : une seule session "
+            "d'auteur reçoit tous les constats, ceux de l'évaluation compris")
+    findings: list[str] = []
+    if reviewed["verdict"] == "unfavorable":
+        if reviewed["kind"] != "review":
+            raise Refusal(
+                f"les réponses aux Blocking Findings de {args.ticket} sont déjà jugées défavorablement : "
+                "il n'y a plus de tour de correction à ouvrir")
+        findings = blocking_ids(reviewed)
+    not_observed = evaluation_state(evaluation)["not_observed"] if evaluated["outcome"] == "return_to_author" else []
+    if not findings and not not_observed:
+        raise Refusal(f"rien à corriger sur {args.ticket} au commit {commit} : ni Blocking Finding, ni état non observé")
+    counters = {name: value + 1 for name, value in counters.items()}
+    check_ticket_counters(counters)
+    record = {"commit": commit, "blocking_findings": findings, "not_observed": not_observed, "launches": [], "at": now()}
+    values: dict[str, Any] = {KEY_CORRECTION: encode(record),
+                              **{COUNTER_PREFIX + name: value for name, value in counters.items()}}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_launch_correction(args: argparse.Namespace) -> int:
+    """Record the author session the correction round was sent to: one
+    fresh session receives every finding, and there is no second one."""
+    metadata = metadata_of(marked_ticket(args.convoy, args.ticket))
+    if KEY_CORRECTION not in metadata:
+        raise Refusal(f"aucun tour de correction n'est ouvert sur {args.ticket} : rien à lancer")
+    if KEY_STOP in metadata:
+        raise Refusal(f"ticket arrêté : aucune session de correction ne se lance sur {args.ticket}")
+    record = correction_record(metadata[KEY_CORRECTION])
+    if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
+        raise Refusal(f"bead du tour de correction absent ou mal formé : {args.bead!r}")
+    if len(record["launches"]) >= CORRECTION_MAX_LAUNCHES:
+        raise Refusal(
+            f"une seule session de correction par ticket : {args.ticket} a déjà la sienne ({record['launches'][0]['bead']})")
+    record["launches"].append({"bead": args.bead, "at": now()})
+    values = {KEY_CORRECTION: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_override_finding(args: argparse.Namespace) -> int:
+    """Record that the operator overrides a Blocking Finding of the code
+    review of a stopped ticket, with their words (T17, Spec §8). Only a
+    Blocking Finding left without a favorable verdict can be overridden: a
+    criterion that was not observed never is. That `--approver` is the
+    declared human approver of the project is the refusal of the caller,
+    bin/correction-round, which reads the project."""
+    metadata = metadata_of(marked_ticket(args.convoy, args.ticket))
+    finding = args.finding
+    review = code_review_record(metadata[KEY_CODE_REVIEW]) if KEY_CODE_REVIEW in metadata else {"rounds": []}
+    unsettled = code_review_state(review)["unsettled"]
+    if not isinstance(finding, str) or not FINDING_ID_RE.match(finding):
+        raise Refusal(
+            f"{finding!r} n'est pas un Blocking Finding de la revue de code : seul un Blocking Finding de revue reçoit "
+            "une dérogation ; un critère non observé ne se dispense jamais, il passe par une Planning Exception "
+            "(bin/planning-exception)")
+    if KEY_STOP not in metadata:
+        raise Refusal(f"le ticket {args.ticket} n'est pas arrêté : une dérogation ne se donne que sur un ticket arrêté")
+    if finding not in unsettled:
+        raise Refusal(
+            f"{finding} n'est pas un Blocking Finding resté sans verdict favorable sur {args.ticket} "
+            f"(restants : {', '.join(unsettled) or 'aucun'})")
+    if not isinstance(args.approver, str) or not args.approver.strip() or "\n" in args.approver:
+        raise Refusal(f"approbateur de la dérogation absent ou mal formé : {args.approver!r}")
+    if not isinstance(args.words, str) or not args.words.strip():
+        raise Refusal("dérogation sans mots : les mots de l'approbateur sont enregistrés avec elle, non vides")
+    approver, words = args.approver.strip(), args.words.strip()
+    entries = overrides_record(metadata[KEY_OVERRIDES]) if KEY_OVERRIDES in metadata else []
+    known = next((entry for entry in entries if entry["finding"] == finding), None)
+    if known:
+        if (known["approver"], known["words"]) == (approver, words):
+            return done(args.convoy, args.ticket, {})
+        raise Refusal(f"le constat {finding} porte déjà une dérogation de {known['approver']} : elle ne se réécrit pas")
+    entries.append({"finding": finding, "approver": approver, "words": words, "commit": review["rounds"][-1]["commit"],
+                    "at": now()})
+    values = {KEY_OVERRIDES: encode({"entries": entries})}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
 
 
 def convoy_with_a_mark(convoy_id: str) -> dict[str, Any]:
@@ -3034,6 +3226,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("invalidate-verdicts", cmd_invalidate_verdicts)
     p.add_argument("--tip")
     p.add_argument("--kind", action="append", default=[])
+    command("open-correction", cmd_open_correction).add_argument("--commit")
+    command("launch-correction", cmd_launch_correction).add_argument("--bead")
+    p = command("override-finding", cmd_override_finding)
+    p.add_argument("--finding")
+    p.add_argument("--approver")
+    p.add_argument("--words")
     p = command("record-incident", cmd_record_incident, ticket=False)
     p.add_argument("--bead")
     p.add_argument("--signature")

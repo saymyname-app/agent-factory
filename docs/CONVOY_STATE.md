@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T18, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -53,6 +53,9 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-integration af-convoy --branch integration/af-spec --protected main --base <sha>   # bin/spec-integration open
 ./bin/convoy-state set-merge   af-convoy af-t1 --outcome merged --ticket-commit <sha> --integration <sha> --commit <sha>   # bin/spec-integration merge
 ./bin/convoy-state invalidate-verdicts af-convoy af-t1 --tip <sha> --kind code_review --kind evaluation   # bin/spec-integration merge
+./bin/convoy-state open-correction   af-convoy af-t1 --commit <tip>          # bin/correction-round settle: the single correction round
+./bin/convoy-state launch-correction af-convoy af-t1 --bead af-correction    # bin/correction-round, once the author session is sent
+./bin/convoy-state override-finding  af-convoy af-t1 --finding F1.1 --approver <human approver> --words "…"   # bin/correction-round override
 ./bin/convoy-state ticket af-t1                         # does this bead carry the mark? (bin/dispatch-door, the Mayor)
 ./bin/convoy-state record-incident af-convoy --bead af-incident [--signature sha256:<hex>]   # bin/convoy-advance
 ./bin/convoy-state clear-incident  af-convoy            # bin/convoy-advance, once the state is valid again
@@ -86,12 +89,14 @@ Every answer is one JSON object on stdout.
 | Evidence fingerprint | `gc.flow.evidence.<piece>` | ticket | `sha256:<64 hex>` and the commit of the piece |
 | Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (commit required), `withdrawn` (removed from the graph by a resolved Planning Exception) |
 | TDD step | `gc.flow.tdd.<step>` | ticket | step: `red`, `freeze`, `green`, `amendment`, `prefactoring`; always with the full commit SHA it was proven at; `red` and `prefactoring` with their start commit (`base`), `amendment` with its one-line reason |
-| Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_refused`, `test_review_no_result`, `code_review_no_result`, `evaluation_no_result`, `evaluation_outage`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
+| Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_refused`, `test_review_no_result`, `code_review_no_result`, `evaluation_no_result`, `evaluation_outage`, `still_refused`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
 | Code review | `gc.flow.code_review` | ticket | `rounds`: each recorded round (`kind`: `review` / `judgement`, `commit`, `base`, `verdict`, `models`, `recorded_by`, `at`; a review with `findings` — `id`, `axis`: `standards` / `spec` / `tests`, `blocking`, `summary`, and `citation` (`source`: `spec` / `ticket` / `repo_rule`, `quote`, `path`), `demoted` or `question` — its `answers` (question id → `oui` / `non` and a reason) and its `responses` (finding id → `fixed` with a commit, or `contested` with a reason); a judgement with `judgements`: finding id → `favorable` / `unfavorable` and a reason); `request` while a round is open (`kind`, `commit`, `base`, `questions`, `models`, `launches`: at most two `{bead, at}`, `at`) |
 | Ticket Evaluation | `gc.flow.evaluation` | ticket | `rounds`: each recorded round — kind `evaluation` (`commit`, `criteria`: one `{number, text, state, evidence, reason, cause}` per approved criterion, in order; `demonstration_line`: `{text, state, evidence, reason, cause}`; state: `observed` / `not_observed` / `unobservable`, a `reason` unless observed, a `cause` (`criterion` / `environment`) for an unobservable; `outcome`: `favorable` / `return_to_author` / `planning_exception` / `environment_outage`; `verdict`: `favorable`, `unfavorable`, or `null` for an outage; `roles`; `environment`: `{dataset, address}` per launched product; `recorded_by`, `at`) or kind `startup` (`commit`, `started`, then `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`); `request` while an evaluation is open (`commit`, `criteria`, `demonstration_line`, `roles`: `{author, evaluator: {provider, supplier} or null, same_provider, other_declared}`, `environment`: `{dataset, address, state_file}` per launched product, `launches`: at most two `{bead, at}`, `at`); `live`: the launch records of the products still to stop |
 | Models per role | `gc.flow.models` | ticket | role: `author`, `reviewer`, `evaluator`; each with `agent`, `provider`, `model`, `at` |
 | Test review | `gc.flow.test_review` | ticket (`vertical_slice`, `repair`) | `rounds`: each recorded pass (`commit`, `files`: path → `sha256:`, `verdict`: `favorable` / `unfavorable`, `tests`: test id → `state` and, when unfavorable, `reason`, `recorded_by`, `at`); `request` while a review is open (`commit`, `files`, `criteria`: the criterion → test table, `launches`: at most two `{bead, at}`, `at`) |
 | Ticket Handoff | `gc.flow.handoff` | ticket | `sections` (`done`, `deviations`, `not_done`, `out_of_ticket`: each `aucun` or a non-empty list of one-line items; an item of `not_done` may be `{what, paths}`), `partial`, the full commit SHA it was taken at, and the `records` written by code |
+| Correction round | `gc.flow.correction` | ticket | `commit` (the full SHA both the code review and the evaluation answered at), `blocking_findings` (the ids of the Blocking Findings of that review), `not_observed` (what the evaluation did not observe there), at least one of the two not empty; `launches`: at most one `{bead, at}`; `at` |
+| Overrides | `gc.flow.overrides` | ticket | `entries`, oldest first, one per overridden Blocking Finding: `finding`, `approver`, `words` (not empty, as given), `commit` (the one of the review), `at` |
 | Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`; the ticket whose Ticket Exit parked it (`origin`); a one-line detail |
 | Fidelity result | `gc.flow.fidelity` | ticket | `commit`, `verdict` (`favorable` / `unfavorable`, computed), `piece` (the sealed record), `screens`, `states` (state → `viewports`, `anchors` compared), `deviations`: each `state`, `viewport`, `anchor`, `kind` (`absent`, `structure`, `style`, `token`), `property`; a `token` deviation has neither viewport nor anchor |
 | Planning Exceptions | `gc.flow.planning_exceptions` | ticket | `entries`, oldest first: `kind` (`semantic`, `topology`), `summary`, `anchors` (the anchors whose deviation it asks to accept, possibly none), `accept_option` (the letter of the request's option that accepts it; with anchors only), `prior_response_at`, `at`, and `resolution` (`option`, `at`) once a later one was raised |
@@ -310,9 +315,42 @@ recorded integration branch, and a closed ticket. `invalidate-verdicts`
 (Spec §8, « commit après verdict ») writes on each named verdict the tip
 that outdated it and adds one to `resumes`, in one tracker write; a verdict
 already invalidated is left as it is and counts nothing more, so repeating
-the call is harmless. It refuses a kind outside the list, a ticket that has
+the call is harmless. Verdicts that were all given at the commit of the
+ticket's correction round (T17) are invalidated **without** a resume: the
+commit that outdates them is that round, counted when it was opened. It refuses a kind outside the list, a ticket that has
 no such verdict, and a verdict that judged that very tip. `set-verdict`
 writes a fresh verdict: replaying is what lifts an invalidation.
+
+`open-correction`, `launch-correction` and `override-finding` are called by
+`bin/correction-round` (T17, `docs/CORRECTION_ROUND.md`).
+
+`open-correction` opens the single correction round of a ticket at the
+commit its author finished at. It refuses a stopped or a parked ticket; a
+ticket that already took its round (one per ticket, code review and Ticket
+Evaluation together); a code review that has no round at that commit or has
+one open; an evaluation that has no round at that commit, has one open, or
+whose outcome there is neither `favorable` nor `return_to_author` (one
+session receives every finding: both have answered); answers already judged
+unfavorably; and a ticket neither of them refused. What was refused is read
+here — the Blocking Findings of the review, the states the evaluation did
+not observe — never given. The round, `resumes` and `correction_rounds` each
+one more, go in **one tracker write**: the round counts among the resumes
+(Spec §8). The same round again writes nothing. `launch-correction` records
+the bead of the author session the round was sent to: one, a second is
+refused.
+
+`override-finding` records that the operator overrides a Blocking Finding
+of the code review, with their words (Spec §8, « passer outre »). It refuses
+a ticket that is not stopped; a `--finding` that is not a Blocking Finding
+left without a favorable verdict (`code_review.state.unsettled`); anything
+that is not a finding id — a criterion that was not observed is never
+waived, and the refusal names the Planning Exception; a missing approver;
+and words that are absent or blank. The same override again writes nothing;
+other words for a finding already overridden are refused. That the approver
+is the declared human approver of the project is the refusal of
+`bin/correction-round override`, which reads the project. Nothing here
+lifts the stop or the unfavorable verdict: `show` renders the override
+beside them.
 
 `set-fidelity` is called by `bin/prototype-fidelity` (T16,
 `docs/PROTOTYPE_FIDELITY.md`) with what it compared at `--commit` (`--file`:
@@ -368,7 +406,8 @@ launch or a verdict of the test review as described above, or on a stopped
 ticket; a request, a launch, a record or an answer of the code review as
 described above, or on a stopped ticket; a model for a role outside the
 list; a stop whose reason is outside its closed list or that has no
-detail; a ticket
+detail; a correction round, its launch or an override as described above; a
+ticket
 that is not tracked by the convoy, or that does not carry the mark.
 
 Writes on one convoy are serialised by a lock (`CONVOY_STATE_LOCK_DIR`,
@@ -393,7 +432,10 @@ TDD (`tdd`, `{step: {commit, at, base?, reason?}}`), its stop (`stop`,
 (`test_review`, `null` before the first request), its code review
 (`code_review`, `null` before the first request), its Ticket Evaluation
 (`evaluation`, `null` before the first request) and the models per role
-(`models`), its Ticket Handoff (`handoff`), its parking
+(`models`), its correction round (`correction`, `null` while none is
+opened), the overrides of the operator (`overrides`, an empty list when
+none, each with `state`: `dérogation enregistrée`), its Ticket Handoff
+(`handoff`), its parking
 (`park`) and its Declared Scope (`declared_scope`, a list of paths), each
 `null` when the ticket has none, and what the merge command did of it
 (`merge`, `null` while it did nothing), the Planning Exceptions it raised
@@ -463,4 +505,6 @@ contract on the real `gc`/`bd` in a disposable city, a Ticket Handoff of
 invalidated verdict and a merge (T18) included.
 `tests/prototype-fidelity-demonstration-test.sh` (local-only) reads the
 fidelity result and an answered Planning Exception back from the real
-tracker (T16).
+tracker (T16). `tests/correction-round-isolated-city-test.sh` (local-only)
+reads the correction round, its counters, the stop and an override back
+from the real tracker (T17).

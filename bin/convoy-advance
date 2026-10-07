@@ -59,6 +59,12 @@ gave none either, parks a ticket whose criterion cannot be observed, and
 stops the products once the states are in. Review and evaluation are sent
 by the same pass: they run in parallel.
 
+A pass also holds the single correction round of a ticket (T17, af-rx0ocp;
+Spec §8): once the code review and the evaluation have both answered at the
+tip and one refused, it hands the convoy to bin/correction-round settle,
+which sends everything both refused to one fresh author session, and stops
+the ticket still refused after that round, raised once to the operator.
+
 A convoy in an "état sans règle" (bin/convoy-state: a ticket started or
 closed outside its door, evidence or a counter that cannot be read) is
 stopped (T34, af-ckwina; Spec §0 rule 5): the pass starts none of its
@@ -73,7 +79,8 @@ Every answer is one JSON object on stdout. Exit status: 0 the pass is done
 (what it started is listed, possibly nothing); 1 refused or could not run,
 the dispatch door refused a ticket (named under `refused`), an incident
 could not be raised or withdrawn, or the merge pass or the settlement of
-the test reviews, of the code reviews or of the evaluations could not run; 3 a
+the test reviews, of the code reviews, of the evaluations or of the
+correction rounds could not run; 3 a
 convoy is in an "état sans règle": nothing of it is started (0 with
 --stopped-ok once its incident is raised: what the order runs, so that a
 stopped convoy is not also an order failure);
@@ -108,6 +115,7 @@ INTEGRATION_BIN = BIN / "spec-integration"
 TEST_REVIEW_BIN = BIN / "test-review"
 CODE_REVIEW_BIN = BIN / "code-review"
 EVALUATION_BIN = BIN / "ticket-evaluation"
+CORRECTION_BIN = BIN / "correction-round"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
 SETTINGS = ROOT / "config" / "delivery-flow.json"
 ROLES = ROOT / "config" / "delivery-roles.json"
@@ -129,6 +137,8 @@ TEST_REVIEW_STOPS = ("test_review_refused", "test_review_no_result")
 CODE_REVIEW_STOP = "code_review_no_result"
 # The stops the Ticket Evaluation of a ticket writes (bin/convoy-state).
 EVALUATION_STOPS = ("evaluation_no_result", "evaluation_outage")
+# The stop of a ticket still refused after its correction round (bin/correction-round).
+CORRECTION_STOP = "still_refused"
 
 UNRULED = "état sans règle"
 # bin/escalation-door refuses a field longer than this, or on several lines.
@@ -285,6 +295,22 @@ class Convoy:
                 due.append(t["id"])
             elif stop:
                 if stop.get("reason") in EVALUATION_STOPS and "raised" not in stop:
+                    due.append(t["id"])
+            elif not t.get("park") and t["id"] in self.finished_unmerged():
+                due.append(t["id"])
+        return due
+
+    def corrections_due(self) -> list[str]:
+        """Tickets whose author has finished and that are not merged yet --
+        their review or their evaluation may have refused them -- or that
+        were stopped still refused without the stop having reached the
+        operator: what makes a settlement of the correction rounds worth
+        running."""
+        due = []
+        for t in self.tickets:
+            stop = t.get("stop") or {}
+            if stop:
+                if stop.get("reason") == CORRECTION_STOP and "raised" not in stop:
                     due.append(t["id"])
             elif not t.get("park") and t["id"] in self.finished_unmerged():
                 due.append(t["id"])
@@ -612,6 +638,25 @@ def settle_evaluations(convoy: Convoy) -> dict[str, Any] | None:
     return {name: answer[name] for name in kept if answer.get(name)}
 
 
+def settle_corrections(convoy: Convoy) -> dict[str, Any] | None:
+    """Spec §8: code, not a session, opens the single correction round of a
+    ticket its code review or its evaluation refused, sends it to one fresh
+    author session, and stops the ticket still refused after it, through
+    bin/correction-round. None when the convoy has no finished ticket, or
+    when nothing was refused: the settlement then had nothing to say."""
+    if not convoy.corrections_due():
+        return None
+    try:
+        answer = parsed(run([str(CORRECTION_BIN), "settle", convoy.id, "--repo", str(convoy.repo)]),
+                        f"correction-round settle {convoy.id}")
+    except Refusal as exc:
+        return {"error": f"refus : {exc}"}
+    if not isinstance(answer, dict):
+        return {"error": f"refus : correction-round settle {convoy.id} a rendu une réponse illisible"}
+    kept = ("launched", "pending", "waiting", "stopped", "escalated", "deferred", "refused", "error")
+    return {name: answer[name] for name in kept if answer.get(name)} or None
+
+
 def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     """`targets` None: every open marked convoy."""
     with advance_lock():
@@ -647,6 +692,11 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         evaluations = settle_evaluations(convoys[result["id"]])
         if evaluations is not None:
             result["evaluation"] = evaluations
+        # Once both have answered: what they refused goes to one author
+        # session, and a ticket still refused after its round is stopped.
+        corrections = settle_corrections(convoys[result["id"]])
+        if corrections is not None:
+            result["correction"] = corrections
         merge = merge_finished(convoys[result["id"]])
         if merge is not None:
             result["integration"] = merge
@@ -660,6 +710,7 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         or any(key in result.get("test_review", {}) for key in ("error", "refused"))
         or any(key in result.get("code_review", {}) for key in ("error", "refused"))
         or any(key in result.get("evaluation", {}) for key in ("error", "refused"))
+        or any(key in result.get("correction", {}) for key in ("error", "refused"))
         for result in results
     )
     answer: dict[str, Any] = {

@@ -44,7 +44,8 @@ convoi qui porte la **marque du nouveau flux**.
   `gc.flow.code_review` : seul `./bin/code-review` le fait, par
   `./bin/dispatch-door` et `./bin/convoy-state`.
 - **Limites** : rien ne lève encore un arrêt ; la session neuve d'auteur qui
-  corrige, son tour unique et l'arrêt d'un ticket encore refusé sont à T17.
+  corrige, son tour unique et l'arrêt d'un ticket encore refusé sont tenus
+  par `./bin/correction-round`.
 
 Détail : `docs/CODE_REVIEW.md`.
 

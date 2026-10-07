@@ -2567,5 +2567,221 @@ class ConvoyStateTest(unittest.TestCase):
             self.assertEqual(before, self.tracker.read_text())
 
 
+    # --- the single correction round, a ticket still refused, the override (T17) ----
+
+    NOT_OBSERVED = {"state": "not_observed", "reason": "le nombre n'est pas sur la page"}
+    APPROVER = "benjamin-hurand"
+    WORDS = "Je passe outre : ce constat ne vaut pas un arrêt."
+
+    def evaluated(self, commit=None, **first_criterion):
+        """A Ticket Evaluation recorded at `commit`: every state « observed »
+        but what `first_criterion` says of the first criterion."""
+        self.open_evaluation(commit=commit)
+        content = self.states(commit=commit)
+        content["criteria"][0].update(first_criterion)
+        return self.record_evaluation(content)
+
+    def refused_by_both(self):
+        """A finished slice whose code review left the Blocking Finding F1.1
+        and whose evaluation did not observe its first criterion, both at
+        REVIEWED."""
+        self.refused_review()
+        self.evaluated(**self.NOT_OBSERVED)
+
+    def correction(self, expect=0):
+        return self.ticket(self.show(expect=expect), T1)["correction"]
+
+    def still_refused(self):
+        """A ticket refused by both, whose correction round is taken, and
+        that code stopped because it is still refused."""
+        self.refused_by_both()
+        self.ok("open-correction", CONVOY, T1, "--commit", self.REVIEWED)
+        self.ok("stop-ticket", CONVOY, T1, "--reason", "still_refused",
+                "--detail", "encore refusé après son tour de correction : revue (F1.1) ; évaluation (critère 1)")
+
+    def override(self, *args):
+        return ("override-finding", CONVOY, T1, *args)
+
+    def test_open_correction_records_what_both_refused_and_counts_among_the_resumes(self):
+        self.refused_by_both()
+        self.assertIsNone(self.correction())
+
+        self.ok("open-correction", CONVOY, T1, "--commit", self.REVIEWED)
+
+        shown = self.ticket(self.show(), T1)
+        correction = shown["correction"]
+        self.assertEqual((self.REVIEWED, ["F1.1"], ["critère 1"], []),
+                         tuple(correction[name] for name in ("commit", "blocking_findings", "not_observed", "launches")))
+        self.assertEqual({"resumes": 1, "correction_rounds": 1}, shown["counters"])
+
+    def test_open_correction_takes_what_only_one_of_the_two_refused(self):
+        self.refused_review()
+        self.evaluated()
+
+        self.ok("open-correction", CONVOY, T1, "--commit", self.REVIEWED)
+
+        correction = self.correction()
+        self.assertEqual((["F1.1"], []), (correction["blocking_findings"], correction["not_observed"]))
+
+    def test_open_correction_again_at_the_same_commit_writes_nothing_and_counts_nothing_more(self):
+        self.refused_by_both()
+        self.ok("open-correction", CONVOY, T1, "--commit", self.REVIEWED)
+
+        again = self.ok("open-correction", CONVOY, T1, "--commit", self.REVIEWED)
+
+        self.assertEqual({}, again["written"])
+        self.assertEqual({"resumes": 1, "correction_rounds": 1}, self.ticket(self.show(), T1)["counters"])
+
+    def test_open_correction_refuses_while_the_code_review_or_the_evaluation_has_not_answered(self):
+        self.refused_review()
+        self.assert_refused_and_nothing_written(
+            "open-correction", CONVOY, T1, "--commit", self.REVIEWED, mention="Ticket Evaluation")
+        self.open_evaluation()
+        self.assert_refused_and_nothing_written(
+            "open-correction", CONVOY, T1, "--commit", self.REVIEWED, mention="Ticket Evaluation")
+
+    def test_open_correction_refuses_an_evaluation_refused_while_the_code_review_is_still_open(self):
+        self.finished_slice()
+        self.evaluated(**self.NOT_OBSERVED)
+        self.assert_refused_and_nothing_written(
+            "open-correction", CONVOY, T1, "--commit", self.REVIEWED, mention="revue de code")
+        self.open_code_review()
+        self.assert_refused_and_nothing_written(
+            "open-correction", CONVOY, T1, "--commit", self.REVIEWED, mention="revue de code")
+
+    def test_open_correction_refuses_a_ticket_nothing_refused_or_another_commit_than_the_judged_one(self):
+        self.finished_slice()
+        self.open_code_review()
+        self.record_code_review()
+        self.evaluated()
+        self.assert_refused_and_nothing_written(
+            "open-correction", CONVOY, T1, "--commit", self.REVIEWED, mention="rien à corriger")
+        self.assert_refused_and_nothing_written("open-correction", CONVOY, T1, "--commit", "HEAD", mention="commit")
+        self.assert_refused_and_nothing_written("open-correction", CONVOY, T1, mention="commit")
+
+    def test_a_second_correction_round_is_refused(self):
+        self.refused_by_both()
+        self.ok("open-correction", CONVOY, T1, "--commit", self.REVIEWED)
+
+        self.assert_refused_and_nothing_written(
+            "open-correction", CONVOY, T1, "--commit", self.CORRECTED, mention="un seul tour de correction")
+
+    def test_open_correction_is_refused_on_a_stopped_or_a_parked_ticket(self):
+        self.refused_by_both()
+        self.ok("park", CONVOY, T1, "--cause", "operator_request", "--detail", "un secret manque")
+        self.assert_refused_and_nothing_written(
+            "open-correction", CONVOY, T1, "--commit", self.REVIEWED, mention="parqué")
+        self.edit_tracker(T1, **{"gc.flow.stop": json.dumps(
+            {"reason": "code_review_no_result", "detail": "aucun verdict", "at": "2026-10-07T00:00:00Z"})})
+        self.assert_refused_and_nothing_written(
+            "open-correction", CONVOY, T1, "--commit", self.REVIEWED, mention="arrêté")
+
+    def test_launch_correction_records_the_single_author_session_and_refuses_a_second(self):
+        self.refused_by_both()
+        self.assert_refused_and_nothing_written("launch-correction", CONVOY, T1, "--bead", "fx-c1", mention="aucun tour")
+        self.ok("open-correction", CONVOY, T1, "--commit", self.REVIEWED)
+        self.assert_refused_and_nothing_written("launch-correction", CONVOY, T1, mention="bead")
+
+        self.ok("launch-correction", CONVOY, T1, "--bead", "fx-c1")
+
+        self.assertEqual(["fx-c1"], [launch["bead"] for launch in self.correction()["launches"]])
+        self.assert_refused_and_nothing_written(
+            "launch-correction", CONVOY, T1, "--bead", "fx-c2", mention="une seule session")
+
+    def test_a_ticket_still_refused_after_its_correction_round_is_stopped_for_that_reason(self):
+        self.still_refused()
+
+        stop = self.ticket(self.show(), T1)["stop"]
+        self.assertEqual("still_refused", stop["reason"])
+        self.assertIn("F1.1", stop["detail"])
+
+    def test_a_commit_of_the_correction_round_invalidates_the_verdicts_without_a_second_resume(self):
+        self.refused_by_both()
+        self.ok("open-correction", CONVOY, T1, "--commit", self.REVIEWED)
+
+        answer = self.ok("invalidate-verdicts", CONVOY, T1, "--tip", self.CORRECTED,
+                         "--kind", "code_review", "--kind", "evaluation")
+
+        self.assertEqual(["code_review", "evaluation"], answer["invalidated"])
+        shown = self.ticket(self.show(), T1)
+        self.assertEqual({"resumes": 1, "correction_rounds": 1}, shown["counters"])
+        self.assertIn("invalidated", shown["verdicts"]["code_review"])
+
+    def test_an_override_of_a_blocking_finding_is_read_back_as_a_recorded_override(self):
+        self.still_refused()
+        self.assertEqual([], self.ticket(self.show(), T1)["overrides"])
+
+        self.ok(*self.override("--finding", "F1.1", "--approver", self.APPROVER, "--words", self.WORDS))
+
+        (override,) = self.ticket(self.show(), T1)["overrides"]
+        self.assertEqual(("F1.1", self.APPROVER, self.WORDS, self.REVIEWED, "dérogation enregistrée"),
+                         tuple(override[name] for name in ("finding", "approver", "words", "commit", "state")))
+        # The finding keeps its unfavorable verdict: the override is read beside it.
+        self.assertEqual(["F1.1"], self.code_review()["state"]["unsettled"])
+
+    def test_the_same_override_again_writes_nothing_and_other_words_are_refused(self):
+        self.still_refused()
+        given = self.override("--finding", "F1.1", "--approver", self.APPROVER, "--words", self.WORDS)
+        self.ok(*given)
+
+        self.assertEqual({}, self.ok(*given)["written"])
+        self.assert_refused_and_nothing_written(
+            *self.override("--finding", "F1.1", "--approver", self.APPROVER, "--words", "Autres mots."),
+            mention="déjà")
+
+    def test_an_override_is_refused_without_words_or_without_its_approver(self):
+        self.still_refused()
+        for words in ("", "   ", "\n"):
+            self.assert_refused_and_nothing_written(
+                *self.override("--finding", "F1.1", "--approver", self.APPROVER, "--words", words), mention="mots")
+        self.assert_refused_and_nothing_written(
+            *self.override("--finding", "F1.1", "--approver", self.APPROVER), mention="mots")
+        self.assert_refused_and_nothing_written(
+            *self.override("--finding", "F1.1", "--words", self.WORDS), mention="approbateur")
+
+    def test_an_override_is_refused_on_a_ticket_that_is_not_stopped(self):
+        self.refused_by_both()
+        self.assert_refused_and_nothing_written(
+            *self.override("--finding", "F1.1", "--approver", self.APPROVER, "--words", self.WORDS),
+            mention="n'est pas arrêté")
+
+    def test_an_override_is_refused_for_what_is_not_a_blocking_finding_left_without_favorable_verdict(self):
+        self.still_refused()
+        self.assert_refused_and_nothing_written(
+            *self.override("--finding", "F9.9", "--approver", self.APPROVER, "--words", self.WORDS),
+            mention="Blocking Finding")
+        self.assert_refused_and_nothing_written(
+            *self.override("--approver", self.APPROVER, "--words", self.WORDS), mention="Blocking Finding")
+
+    def test_an_override_of_a_criterion_that_was_not_observed_is_refused_towards_the_planning_exception(self):
+        self.still_refused()
+        for named in ("critère 1", "1", "ligne de démonstration"):
+            self.assert_refused_and_nothing_written(
+                *self.override("--finding", named, "--approver", self.APPROVER, "--words", self.WORDS),
+                mention="Planning Exception")
+
+    def test_a_correction_or_an_override_written_outside_the_command_is_a_state_without_rule(self):
+        self.refused_by_both()
+        self.edit_tracker(T1, **{"gc.flow.correction": json.dumps({"commit": self.REVIEWED}),
+                                 "gc.flow.overrides": json.dumps({"entries": [{"finding": "F1.1"}]})})
+
+        shown = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+
+        self.assertIn("unruled", shown["correction"])
+        self.assertIn("unruled", shown["overrides"])
+        self.assertEqual({"gc.flow.correction", "gc.flow.overrides"}, {entry["field"] for entry in shown["unruled"]})
+
+    def test_a_correction_and_an_override_on_an_unmarked_convoy_write_nothing(self):
+        before = self.tracker.read_text()
+        for command in (
+            ("open-correction", CONVOY, T1, "--commit", ABSENT_COMMIT),
+            ("launch-correction", CONVOY, T1, "--bead", "fx-c1"),
+            self.override("--finding", "F1.1", "--approver", self.APPROVER, "--words", self.WORDS),
+        ):
+            proc = self.run_tool(*command)
+            self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+            self.assertEqual(before, self.tracker.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,136 @@
+description = """
+Correction round — one fresh author session receives every finding of the
+code review and of the Ticket Evaluation of one ticket, and corrects it: the
+single correction round of that ticket (T17, af-rx0ocp; Spec af-wf4w5r §8,
+user stories 43 and 44).
+
+Only `bin/correction-round` dispatches this formula, through
+`bin/dispatch-door --role author`, once the review and the evaluation have
+both answered at the tip of the ticket branch and at least one refused. The
+session is new: it is not the one that wrote the ticket, and it knows of it
+only what `bin/correction-round brief` gives. It works in the work tree of
+the ticket, on the ticket branch, and never opens a pull request.
+
+What the session says closes nothing. After it, code decides from the
+tracker and the branch (`bin/correction-round settle`): the answers given to
+the Blocking Findings are judged by a second reviewer session, the product
+is evaluated again at the new tip, and a ticket still refused is stopped
+without being merged and raised to the operator as one item. There is no
+second round. The stored state and the stop are in docs/CORRECTION_ROUND.md.
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|--------------|
+| convoy_id | runtime | Input convoy tracking the single correction bead |
+"""
+formula = "mol-ticket-correction"
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "correct"
+title = "Correct one ticket from the findings of its code review and of its Ticket Evaluation, once"
+description = """
+You are the author of the single correction round of one ticket. Another
+session wrote it; its code review and its Ticket Evaluation refused it.
+
+**1. Take the ticket and read what you are given:**
+
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+CORRECTION_BEAD=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+[ -n "$CORRECTION_BEAD" ] || { echo "mol-ticket-correction requires an input convoy with exactly one tracked member" >&2; exit 1; }
+CORRECTION_TEXT=$(gc bd show "$CORRECTION_BEAD" --json | jq -r '.[0].description')
+CONVOY=$(printf '%s\n' "$CORRECTION_TEXT" | sed -n 's/^convoy: //p')
+TICKET=$(printf '%s\n' "$CORRECTION_TEXT" | sed -n 's/^ticket: //p')
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+START=$("$FACTORY_ROOT/bin/ticket-author" start "$CONVOY" "$TICKET")
+WORKTREE=$(printf '%s' "$START" | jq -r '.worktree'); BASE=$(printf '%s' "$START" | jq -r '.base')
+PROFILE=$(printf '%s' "$START" | jq -r '.profile')
+"$FACTORY_ROOT/bin/correction-round" brief "$CONVOY" "$TICKET" > "$HOME/correction-brief-$TICKET.json"
+"$FACTORY_ROOT/bin/ticket-exit" read "$CONVOY" "$TICKET"
+cd "$WORKTREE"
+```
+
+`start` gives you the work tree of the ticket, on its branch; if it refuses,
+stop: do not create a work tree or a branch by hand. The brief is everything
+both controls hold against the ticket, at the commit they judged (`.commit`):
+
+- `.code_review.blocking_findings` — each Blocking Finding of the reviewer,
+  with the line of the Spec, of the ticket or of a written rule of the
+  repository it cites. `.code_review.non_blocking_findings` are recorded and
+  block nothing.
+- `.evaluation.not_observed` — each criterion, or the demonstration line,
+  that the Evaluator did not observe on the launched product, with its
+  reason.
+
+Read the ticket and the Spec it names in full. Work only in the work tree.
+
+**2. Correct, once.** This is the only correction round of the ticket: still
+refused after it, the ticket is stopped without being merged.
+
+- For each Blocking Finding: correct the code so that what the cited line
+  asks is true, or contest it when the cited line does not say what the
+  finding claims. A contested finding needs no commit, only its reason.
+- For each state that was not observed: make it observable on the launched
+  product through its real entry point. A criterion is never reworded and
+  never waived.
+- The rules of the author hold: follow the `tdd` and `codebase-design`
+  skills; you write the code yourself, no writing sub-agent; a frozen test
+  is changed by `bin/tdd-step amend` only, once; a behaviour the Spec or
+  another ticket fixes is not yours to change — take the Ticket Exit
+  `planning_exception` instead (docs/TICKET_EXIT.md).
+
+Commit, then prove the ticket again at the tip of its branch, as its author
+did (docs/TICKET_AUTHOR.md):
+
+```bash
+# vertical_slice, repair
+"$FACTORY_ROOT/bin/tdd-step" green "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" --dataset <a dataset of the profile>
+"$FACTORY_ROOT/bin/ticket-author" demonstrate "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" \\
+  --dataset <a dataset of the profile> -- <command that observes the demonstration line>
+# prefactoring
+"$FACTORY_ROOT/bin/tdd-step" prefactoring "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" --base "$BASE"
+```
+
+**3. Answer every Blocking Finding, and nothing else** — `fixed` with the
+commit of the correction, or `contested` with a one-line reason, in the
+shape `.code_review.response_shape` shows (skip this when the brief holds no
+Blocking Finding):
+
+```bash
+"$FACTORY_ROOT/bin/code-review" respond "$CONVOY" "$TICKET" --file <responses.json>
+```
+
+**4. Leave by the Ticket Exit « terminé »**, with your Ticket Handoff of the
+whole ticket as it now stands — the four sections, each with content or
+`"aucun"` — in a JSON file outside the work tree:
+
+```bash
+"$FACTORY_ROOT/bin/ticket-exit" exit "$CONVOY" "$TICKET" --exit finished --repo "$WORKTREE" --handoff <handoff.json>
+```
+
+You do not close the ticket, judge your own answers or merge anything: a
+second reviewer session judges the answers, the product is evaluated again
+at your tip, and code decides.
+
+**5. Close and end the session:**
+
+```bash
+"$FACTORY_ROOT/bin/ticket-author" release "$CONVOY" "$TICKET" || true
+gc bd update "$CORRECTION_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Correction round of $TICKET done."
+if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$CORRECTION_BEAD" ]; then
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Correction round of $TICKET done."
+fi
+gc runtime drain-ack
+```
+
+If you could not correct the ticket, close both the same way with
+`gc.outcome=fail` and the reason in the notes: the round is spent, and code
+stops the ticket that is still refused.
+
+**Exit criteria:** every Blocking Finding has its answer, the ticket is
+green, demonstrated and « terminé » at the tip of its branch, and the
+correction bead and this step are closed."""

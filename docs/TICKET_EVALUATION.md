@@ -57,7 +57,7 @@ on the same tip.
 |---|---|
 | none at the tip (none yet, or a commit was added after the last one) | launches the products at the tip and opens an **evaluation**: a commit added after a verdict has it replayed in full (Spec §8). For a `prefactoring`: the **startup control** |
 | favorable at the tip | nothing: the merge may follow |
-| `not_observed` at the tip | waits: back to the author, nothing merges before a new commit (starting the fresh author session and bounding its round is T17's) |
+| `not_observed` at the tip | waits: back to the author, nothing merges before a new commit. `bin/correction-round settle` sends what was not observed, with the findings of the code review, to the one author session of the ticket's correction round, and stops the ticket still not observed after it (`docs/CORRECTION_ROUND.md`) |
 | `unobservable` by the criterion at the tip | **Planning Exception**: one request on the operator's list (`bin/escalation-door`), the ticket and those that wait for it are parked (`bin/convoy-state park`) |
 | `unobservable` by the environment only | an **outage**: no verdict, nothing counted as a refusal; the evaluation is made once more on products launched again. A second outage at the same commit stops the ticket (`evaluation_outage`) |
 | open, launched, within its time | waits |
@@ -270,9 +270,9 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
   evaluation is made again.
 - The mechanical fidelity controls of a ticket that touches a screen are
   `bin/prototype-fidelity` (`docs/PROTOTYPE_FIDELITY.md`); the gate that
-  runs them for a ticket is T19's. Starting the fresh author session after a refusal, bounding the
-  correction round and stopping a ticket still refused are T17's. Nothing
-  lifts a stop yet.
+  runs them for a ticket is T19's. The fresh author session after a refusal, its single
+  correction round and the stop of a ticket still refused are
+  `bin/correction-round`'s (`docs/CORRECTION_ROUND.md`). Nothing lifts a stop yet.
 
 ## Proof
 
