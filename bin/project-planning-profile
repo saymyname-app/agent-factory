@@ -381,6 +381,39 @@ def load_launch(raw: Any, name: str) -> dict[str, Any]:
             except re.error as exc:
                 raise ProfileError(f"{name}.import_rule.{field} is not a regular expression: {exc}") from exc
         loaded["import_rule"] = rule
+    # Optional declaration read by bin/prototype-fidelity (T16): the screens
+    # compared to the Validated Prototype. Each is served at one path of the
+    # launched product and holds prototyped states; a state is the dataset of
+    # the same name, and belongs to one screen.
+    if "screens" in launch:
+        screens: list[dict[str, Any]] = []
+        owner: dict[str, str] = {}
+        for index, raw_screen in enumerate(as_list(launch["screens"], f"{name}.screens")):
+            screen = as_dict(raw_screen, f"{name}.screens[{index}]")
+            screen_name = required_string(screen.get("name"), f"{name}.screens[{index}].name")
+            if any(other["name"] == screen_name for other in screens):
+                raise ProfileError(f"{name}.screens declares the screen {screen_name!r} twice")
+            path = required_string(screen.get("path"), f"{name}.screens[{index}].path")
+            if not path.startswith("/") or path.startswith("//") or re.search(r"\s", path):
+                raise ProfileError(f"{name}.screens[{index}].path must be a path of the launched product, got {path!r}")
+            states = [
+                required_string(state, f"{name}.screens[{index}].states[{position}]")
+                for position, state in enumerate(as_list(screen.get("states"), f"{name}.screens[{index}].states"))
+            ]
+            if not states:
+                raise ProfileError(f"{name}.screens[{index}].states must name at least one prototyped state")
+            for state in states:
+                if state not in datasets:
+                    raise ProfileError(
+                        f"{name}.screens[{index}].states names {state!r}, which is not a declared dataset "
+                        f"({sorted(datasets)})")
+                if state in owner:
+                    raise ProfileError(
+                        f"{name}.screens: the state {state!r} belongs to {owner[state]!r} and to {screen_name!r}; "
+                        "a state belongs to one screen")
+                owner[state] = screen_name
+            screens.append({"name": screen_name, "path": path, "states": states})
+        loaded["screens"] = screens
     return loaded
 
 

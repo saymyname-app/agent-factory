@@ -2362,6 +2362,210 @@ class ConvoyStateTest(unittest.TestCase):
             self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
             self.assertEqual(before, self.tracker.read_text())
 
+    # --- T16: the fidelity result and the Planning Exceptions that name an anchor --
+
+    FIDELITY = {
+        "screens": ["accueil"],
+        "states": {"empty": {"viewports": ["desktop"], "anchors": ["titre", "liste"]}},
+        "deviations": [],
+    }
+    DEVIATION = {"state": "empty", "viewport": "desktop", "anchor": "liste", "kind": "absent", "property": "présence"}
+
+    def fidelity_file(self, **changes):
+        path = self.tmp / "fidelity.json"
+        path.write_text(json.dumps({**self.FIDELITY, **changes}, ensure_ascii=False))
+        return path
+
+    def measured_slice(self):
+        self.marked_slice()
+        self.ok("add-evidence", CONVOY, T1, "--piece", "fidelity", "--digest", DIGEST, "--commit", self.HEAD)
+
+    def set_fidelity(self, **changes):
+        return self.ok("set-fidelity", CONVOY, T1, "--commit", self.HEAD, "--piece", "fidelity",
+                       "--file", self.fidelity_file(**changes))
+
+    def test_set_fidelity_records_a_green_result_and_its_verdict_at_the_commit(self):
+        self.measured_slice()
+
+        self.set_fidelity()
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        fidelity = ticket["fidelity"]
+        self.assertEqual((self.HEAD, "favorable", "vert", "fidelity"),
+                         (fidelity["commit"], fidelity["verdict"], fidelity["state"], fidelity["piece"]))
+        self.assertEqual(self.FIDELITY["states"], fidelity["states"])
+        self.assertEqual(("favorable", self.HEAD), (ticket["verdicts"]["fidelity"]["state"], ticket["verdicts"]["fidelity"]["commit"]))
+        self.assertIsNone(self.ticket(self.show(expect=EXIT_UNRULED), T2)["fidelity"])
+
+    def test_set_fidelity_with_a_deviation_is_red_and_names_it(self):
+        self.measured_slice()
+
+        self.set_fidelity(deviations=[self.DEVIATION])
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertEqual(("unfavorable", "rouge"), (ticket["fidelity"]["verdict"], ticket["fidelity"]["state"]))
+        self.assertEqual([{**self.DEVIATION, "status": "ouvert"}], ticket["fidelity"]["deviations"])
+        self.assertEqual("unfavorable", ticket["verdicts"]["fidelity"]["state"])
+
+    def test_set_fidelity_refuses_a_result_that_code_did_not_measure(self):
+        self.marked_slice()
+        # No piece of the evidence store at that commit.
+        self.assert_refused_and_nothing_written(
+            "set-fidelity", CONVOY, T1, "--commit", self.HEAD, "--piece", "fidelity", "--file", self.fidelity_file(),
+            mention="pièce")
+        self.ok("add-evidence", CONVOY, T1, "--piece", "fidelity", "--digest", DIGEST, "--commit", self.HEAD)
+        for changes, mention in (
+            ({"verdict": "favorable"}, "verdict"),
+            ({"states": {}}, "état"),
+            ({"screens": []}, "écrans"),
+            ({"states": {"empty": {"viewports": ["desktop"], "anchors": []}}}, "ancres"),
+            ({"deviations": [{**self.DEVIATION, "kind": "goût"}]}, "genre d'écart"),
+            ({"deviations": [{**self.DEVIATION, "state": "content"}]}, "état non comparé"),
+            ({"deviations": [{**self.DEVIATION, "anchor": None}]}, "sans ancre"),
+            ({"deviations": [{"state": "empty", "anchor": "liste"}]}, "écart mal formé"),
+        ):
+            with self.subTest(changes=changes):
+                self.assert_refused_and_nothing_written(
+                    "set-fidelity", CONVOY, T1, "--commit", self.HEAD, "--piece", "fidelity",
+                    "--file", self.fidelity_file(**changes), mention=mention)
+        self.assert_refused_and_nothing_written(
+            "set-fidelity", CONVOY, T1, "--commit", ABSENT_COMMIT, "--piece", "fidelity", "--file", self.fidelity_file(),
+            mention="commit")
+
+    def raise_exception(self, *anchors, option="c", summary="La liste est livrée sans sa région"):
+        args = [arg for anchor in anchors for arg in ("--anchor", anchor)]
+        return self.ok("raise-planning-exception", CONVOY, T1, "--kind", "semantic", "--summary", summary,
+                       *args, *(("--accept-option", option) if anchors else ()))
+
+    def answer(self, option, at="2099-01-01T00:00:00Z"):
+        """What bin/escalation-door repondre writes on the ticket."""
+        self.edit_tracker(T1, **{"gc.needs_benjamin": "none", "gc.escalation_response_option": option,
+                                 "gc.escalation_response_at": at})
+
+    def test_planning_exception_naming_an_anchor_is_open_until_the_operator_answers(self):
+        self.measured_slice()
+        self.set_fidelity(deviations=[self.DEVIATION])
+
+        self.raise_exception("liste")
+        self.edit_tracker(T1, **{"gc.needs_benjamin": "Planning Exception (semantic) sur fx-t1 : …"})
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        raised = ticket["planning_exceptions"]
+        self.assertEqual([("semantic", ["liste"], "c", "open", False)],
+                         [(e["kind"], e["anchors"], e["accept_option"], e["state"], e["accepted"]) for e in raised])
+        self.assertEqual([], ticket["accepted_anchors"])
+        self.assertEqual("rouge", ticket["fidelity"]["state"])
+
+    def test_resolved_planning_exception_naming_the_anchor_turns_the_deviation_accepted(self):
+        self.measured_slice()
+        self.set_fidelity(deviations=[self.DEVIATION])
+        self.raise_exception("liste")
+
+        self.answer("c")
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertEqual(["liste"], ticket["accepted_anchors"])
+        self.assertEqual(("resolved", True), (ticket["planning_exceptions"][0]["state"], ticket["planning_exceptions"][0]["accepted"]))
+        fidelity = ticket["fidelity"]
+        self.assertEqual("accepté par Benjamin", fidelity["state"])
+        self.assertEqual(["accepté par Benjamin"], [d["status"] for d in fidelity["deviations"]])
+        # Nothing rewrote the verdict: the deviation is still one.
+        self.assertEqual("unfavorable", fidelity["verdict"])
+        self.assertEqual("unfavorable", ticket["verdicts"]["fidelity"]["state"])
+
+    def test_only_the_accepting_answer_on_the_named_anchor_accepts_a_deviation(self):
+        self.measured_slice()
+        other = {**self.DEVIATION, "anchor": "titre", "kind": "style", "property": "color"}
+        self.set_fidelity(deviations=[self.DEVIATION, other])
+        self.raise_exception("liste")
+
+        # Answered by another option than the one that accepts.
+        self.answer("a")
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertEqual(("resolved", False), (ticket["planning_exceptions"][0]["state"], ticket["planning_exceptions"][0]["accepted"]))
+        self.assertEqual("rouge", ticket["fidelity"]["state"])
+
+        # Accepted, on one of the two anchors that deviate: still red.
+        self.answer("c", at="2099-01-02T00:00:00Z")
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertEqual("rouge", ticket["fidelity"]["state"])
+        self.assertEqual({"liste": "accepté par Benjamin", "titre": "ouvert"},
+                         {d["anchor"]: d["status"] for d in ticket["fidelity"]["deviations"]})
+
+    def test_an_answer_given_before_the_exception_was_raised_resolves_nothing(self):
+        self.measured_slice()
+        self.set_fidelity(deviations=[self.DEVIATION])
+        self.answer("c")
+
+        self.raise_exception("liste")
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertEqual("open", ticket["planning_exceptions"][0]["state"])
+        self.assertEqual("rouge", ticket["fidelity"]["state"])
+
+    def test_a_later_planning_exception_keeps_the_answer_given_to_the_previous_one(self):
+        self.measured_slice()
+        self.set_fidelity(deviations=[self.DEVIATION])
+        self.raise_exception("liste")
+        self.answer("c")
+
+        self.raise_exception(summary="Le ticket recouvre un autre ticket")
+        self.edit_tracker(T1, **{"gc.needs_benjamin": "Planning Exception (semantic) sur fx-t1 : …"})
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+        self.assertEqual([("resolved", True), ("open", False)],
+                         [(e["state"], e["accepted"]) for e in ticket["planning_exceptions"]])
+        self.assertEqual(["liste"], ticket["accepted_anchors"])
+        self.assertEqual("accepté par Benjamin", ticket["fidelity"]["state"])
+
+    def test_raising_the_same_planning_exception_again_writes_nothing(self):
+        self.measured_slice()
+        self.raise_exception("liste")
+        before = self.tracker.read_bytes()
+
+        answer = self.raise_exception("liste")
+
+        self.assertEqual({}, answer["written"])
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_raise_planning_exception_refuses_what_is_outside_its_lists(self):
+        self.marked_slice()
+        base = ("raise-planning-exception", CONVOY, T1)
+        for args, mention in (
+            (("--kind", "repair", "--summary", "x"), "genre de Planning Exception"),
+            (("--kind", "semantic"), "résumé"),
+            (("--kind", "semantic", "--summary", "x", "--anchor", "une ancre"), "ancre"),
+            (("--kind", "semantic", "--summary", "x", "--anchor", "liste", "--anchor", "liste", "--accept-option", "c"), "deux fois"),
+            (("--kind", "semantic", "--summary", "x", "--anchor", "liste"), "option"),
+            (("--kind", "semantic", "--summary", "x", "--accept-option", "c"), "option"),
+            (("--kind", "semantic", "--summary", "x", "--anchor", "liste", "--accept-option", "oui"), "option"),
+        ):
+            with self.subTest(args=args):
+                self.assert_refused_and_nothing_written(*base, *args, mention=mention)
+
+    def test_fidelity_or_planning_exception_written_outside_the_command_is_a_state_without_rule(self):
+        self.marked_slice()
+        self.edit_tracker(T1, **{
+            "gc.flow.fidelity": json.dumps({"commit": self.HEAD, "verdict": "favorable", "piece": "fidelity",
+                                            "screens": ["accueil"], "states": self.FIDELITY["states"],
+                                            "deviations": [self.DEVIATION], "at": "x"}),
+            "gc.flow.planning_exceptions": json.dumps({"entries": [{"kind": "semantic", "accepted": True}]})})
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+
+        self.assertIn("unruled", ticket["fidelity"])
+        self.assertIn("unruled", ticket["planning_exceptions"])
+        self.assertLessEqual({"gc.flow.fidelity", "gc.flow.planning_exceptions"},
+                             {entry["field"] for entry in ticket["unruled"]})
+
+    def test_fidelity_and_planning_exception_on_an_unmarked_convoy_write_nothing(self):
+        before = self.tracker.read_text()
+        for command in (("set-fidelity", CONVOY, T1, "--commit", self.HEAD, "--piece", "fidelity", "--file", self.fidelity_file()),
+                        ("raise-planning-exception", CONVOY, T1, "--kind", "semantic", "--summary", "x")):
+            proc = self.run_tool(*command)
+            self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+            self.assertEqual(before, self.tracker.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

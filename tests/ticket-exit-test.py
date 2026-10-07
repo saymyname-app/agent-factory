@@ -546,6 +546,44 @@ class TicketExitTest(unittest.TestCase):
         self.assertIn(T2, requests[0])
         self.assertIn("Planning Exception (semantic)", requests[0])
 
+    def test_planning_exception_naming_an_anchor_offers_its_acceptance_to_the_operator(self):
+        """T16: a deviation from the Validated Prototype is never decided by
+        the author; the request names the anchor and one of its options
+        accepts the deviation. Only the operator's answer accepts it."""
+        self.exited("--exit", "planning_exception", "--kind", "semantic",
+                    "--summary", "La liste est livrée sans sa région", "--anchor", "fixture-items")
+
+        raised = self.shown()["planning_exceptions"]
+        self.assertEqual([("semantic", ["fixture-items"], "open", False)],
+                         [(e["kind"], e["anchors"], e["state"], e["accepted"]) for e in raised])
+        self.assertEqual([], self.shown()["accepted_anchors"])
+        options = json.loads(json.loads(self.tracker.read_text())["beads"][T2]["metadata"]["gc.escalation_que_faire"])
+        accepting = [o for o in options if o["lettre"] == raised[0]["accept_option"]]
+        self.assertEqual(1, len(accepting))
+        self.assertIn("fixture-items", accepting[0]["option"])
+
+        proc = self.run_cmd(ESCALATION_TOOL, "repondre", T2, raised[0]["accept_option"])
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+        self.assertEqual(["fixture-items"], self.shown()["accepted_anchors"])
+
+    def test_planning_exception_without_anchor_offers_no_acceptance(self):
+        self.exited("--exit", "planning_exception", "--kind", "semantic", "--summary", "Question sur l'ordre")
+
+        raised = self.shown()["planning_exceptions"]
+        self.assertEqual([([], None)], [(e["anchors"], e["accept_option"]) for e in raised])
+        proc = self.run_cmd(ESCALATION_TOOL, "repondre", T2, "a")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual([], self.shown()["accepted_anchors"])
+
+    def test_planning_exception_is_refused_with_a_malformed_anchor(self):
+        self.assert_refused_and_nothing_written(
+            lambda: self.exit("--exit", "planning_exception", "--kind", "semantic", "--summary", "x",
+                              "--anchor", "une ancre"), "ancre")
+        self.assert_refused_and_nothing_written(
+            lambda: self.exit("--exit", "operator_request", "--request", self.file("r.json", {}), "--anchor", "liste"),
+            "--anchor")
+
     def test_tickets_unrelated_to_a_parked_ticket_keep_starting(self):
         self.exited("--exit", "planning_exception", "--kind", "topology", "--summary", "Le ticket recouvre T4")
         # The parked ticket is given back to the pool, as a resumed one would be.

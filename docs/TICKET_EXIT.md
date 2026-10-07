@@ -21,7 +21,7 @@ it as `demonstration_proof`.
 
 ```bash
 ./bin/ticket-exit exit af-convoy af-t1 --exit finished --repo <ticket worktree> --handoff handoff.json
-./bin/ticket-exit exit af-convoy af-t1 --exit planning_exception --kind semantic --summary "La Spec fixe X, la démonstration demande Y"
+./bin/ticket-exit exit af-convoy af-t1 --exit planning_exception --kind semantic --summary "La Spec fixe X, la démonstration demande Y" [--anchor liste]
 ./bin/ticket-exit exit af-convoy af-t1 --exit operator_request --request request.json
 ./bin/ticket-exit exit af-convoy af-t1 --exit technically_blocked --repair repair.json
 ./bin/ticket-exit exit af-convoy af-t1 --exit interrupted --repo <ticket worktree> [--handoff partial.json]
@@ -58,7 +58,19 @@ Handoff. Everything the author gives is read before anything is written.
 calls a Planning Exception (`semantic`, `topology`); `repair` is refused: a
 technical defect outside the ticket exits by `technically_blocked`. The
 request on the operator's list reads « Planning Exception (kind) sur
-<ticket> : <summary> ».
+<ticket> : <summary> ». It is written on the ticket first
+(`bin/convoy-state raise-planning-exception`, `docs/CONVOY_STATE.md`).
+
+**A deviation from the Validated Prototype** (T16, Spec §3) is never decided
+by the author: it exits by a Planning Exception that names the anchors
+(`--anchor`, repeatable; refused on any other exit and for a malformed
+name). The request then carries a third option, « Accepter l'écart sur
+l'ancre <name> », and the ticket records the letter the escalation door
+gives it. Once the operator answers by that letter (`bin/escalation-door
+repondre`), the fidelity check reads the deviation as « accepté par
+Benjamin » (`docs/PROTOTYPE_FIDELITY.md`); any other answer leaves it red.
+The option must fit one line of 140 characters: a long list of anchors is
+several Planning Exceptions.
 
 **Operator request.** The file is the request the operator reads, as the
 escalation door takes it: `quoi` and `pourquoi` on one line of at most 140
@@ -161,9 +173,10 @@ writes nothing.
   refuses after another passed, the answer says what was written; the same
   call again completes it.
 - A revision the patch door refuses leaves one closed draft bead behind.
-- The Planning Exception is recorded as a parking and a request to the
-  operator. It is not written into a `bin/planning-exception` register: no
-  register is attached to a marked convoy yet.
+- The Planning Exception is recorded on the ticket (`planning_exceptions`),
+  as a parking and as a request to the operator. It is not written into a
+  `bin/planning-exception` register: no register is attached to a marked
+  convoy yet.
 - Nothing here resumes a ticket, lifts a parking, or counts a resume (T20).
 
 ## Proof

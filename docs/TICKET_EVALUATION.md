@@ -269,7 +269,8 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
   address (an `unobservable` by the environment, or no result), and the
   evaluation is made again.
 - The mechanical fidelity controls of a ticket that touches a screen are
-  T16's. Starting the fresh author session after a refusal, bounding the
+  `bin/prototype-fidelity` (`docs/PROTOTYPE_FIDELITY.md`); the gate that
+  runs them for a ticket is T19's. Starting the fresh author session after a refusal, bounding the
   correction round and stopping a ticket still refused are T17's. Nothing
   lifts a stop yet.
 

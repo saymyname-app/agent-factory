@@ -56,7 +56,7 @@ convoi qui porte la **marque du nouveau flux**.
   `./bin/dispatch-door` et `./bin/convoy-state`.
 - **Limites** : rien ne lève encore un arrêt ; la session neuve d'auteur
   après un « non observé » et son tour unique sont à T17 ; les contrôles de
-  fidélité d'un ticket qui touche un écran sont à T16.
+  fidélité d'un ticket qui touche un écran sont `./bin/prototype-fidelity`.
 
 Détail : `docs/TICKET_EVALUATION.md`.
 

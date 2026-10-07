@@ -32,6 +32,9 @@
     "test_command": "python3 tests/fixtures/delivery-fixture-city/tests/harness.py {test} {report}",
     "seam_mode": "black_box",
     "regression_command": "python3 tests/fixtures/delivery-fixture-city/tests/regression.py",
-    "k": 3
+    "k": 3,
+    "screens": [
+      {"name": "accueil", "path": "/", "states": ["empty", "content"]}
+    ]
   }
 }
