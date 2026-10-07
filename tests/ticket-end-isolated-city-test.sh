@@ -584,7 +584,7 @@ named=$(gate_check "$B"); rc=$?
 set -e
 [ "$rc" = 1 ] || fail "the gate on B exited $rc, want 1: $named"
 [ "$(printf '%s' "$named" | jq -c '.missing')" = '[1,6]' ] || fail "the gate on B names $(printf '%s' "$named" | jq -c '.missing'), want conditions 1 (criteria) and 6 (not merged)"
-printf '%s' "$named" | jq -r '.error' | grep -q "condition 1" || fail "the refusal of the gate on B does not name condition 1: $named"
+grep -q "condition 1" <<<"$(printf '%s' "$named" | jq -r '.error')" || fail "the refusal of the gate on B does not name condition 1: $named"
 waiting=$(tail -1 "$TRIAL/passes.jsonl" | jq -r --arg c "$CONVOY" --arg b "$B" '.convoys[] | select(.id == $c) | .integration.waiting[]? | select(.id == $b) | .reason')
 printf '%s' "$waiting" | grep -q "condition 1" || fail "the last pass does not say B waits for condition 1: $(tail -1 "$TRIAL/passes.jsonl")"
 echo "$(date -u +%H:%M:%S) B : relu et évalué favorablement, jamais fusionné, laissé ouvert par les passes suivantes (statut $(status_of "$B"), aucun relevé de porte) ; la porte nomme : $(printf '%s' "$named" | jq -r '[.conditions[] | select(.verdict == "fail") | "condition \(.number) (\(.name)) : \(.detail)"] | join(" | ")')"
