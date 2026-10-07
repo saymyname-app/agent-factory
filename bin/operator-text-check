@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""operator-text-check — the Cockpit's main-text control, for a door to run
+before it writes (spec af-oohx2x .73, .78; 2026-10-07).
+
+The inbox (lib/cockpit/text/validate.py) refuses to show a field holding an
+identifier (af-xxx, #300), an internal term outside the Cockpit Lexicon
+(bead, convoi, Mayor...), more than one line or more than 140 characters,
+and replaces it by a fixed repli while counting a producer defect. A door
+that accepts such a field writes a request the operator can never read in
+full. This command is that same check, callable from bash: proposal-door
+runs it on the exact fields it is about to write and refuses the write
+when it fails, so the producer sees the reason at once instead of the
+operator seeing « incomplète » later.
+
+Usage:
+  operator-text-check '<json>'      the request as one JSON object:
+                                     {"quoi": ..., "pourquoi": ...,
+                                      "que_faire": [{option, consequence,
+                                      recommande?, raison?}, ...]}
+                                     (other keys ignored)
+  operator-text-check < file.json   the same object on stdin
+
+Exit 0: the Cockpit will display every field exactly as written.
+Exit 1: one French reason per line on stderr, naming the field.
+Exit 2: usage (no object, or not a JSON object).
+"""
+import json
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "lib"))
+
+from cockpit.text.validate import request_violations  # noqa: E402
+
+PROGRAM = "operator-text-check"
+
+
+def main(argv):
+    if len(argv) > 2 or (len(argv) == 2 and argv[1] in ("-h", "--help")):
+        sys.stderr.write(__doc__)
+        return 2
+    raw = argv[1] if len(argv) == 2 else sys.stdin.read()
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        sys.stderr.write("%s: le corps n'est pas un JSON valide : %s\n" % (PROGRAM, exc))
+        return 2
+    if not isinstance(payload, dict):
+        sys.stderr.write("%s: le corps n'est pas un objet JSON.\n" % PROGRAM)
+        return 2
+    failures = request_violations(
+        payload.get("quoi"), payload.get("pourquoi"), payload.get("que_faire")
+    )
+    for reasons in failures.values():
+        for reason in reasons:
+            sys.stderr.write(reason + "\n")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

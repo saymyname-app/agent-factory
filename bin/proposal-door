@@ -23,8 +23,16 @@
 #                                 `benjamin` command requires -- the door
 #                                 infers nothing and refuses the write (no
 #                                 bead created) if any is missing, malformed,
-#                                 over 140 characters on one line, or not in
-#                                 the Operator Language:
+#                                 over 140 characters on one line, not in
+#                                 the Operator Language, or not displayable
+#                                 by the Cockpit as written (an identifier
+#                                 such as af-xxx or #300, an internal term
+#                                 outside the Cockpit Lexicon such as
+#                                 « bead » or « Mayor ») -- the exact check
+#                                 the Cockpit inbox applies, run here through
+#                                 bin/operator-text-check so the producer
+#                                 reads the reason instead of the operator
+#                                 reading « incomplète » (2026-10-07):
 #                                   quoi       -- one line, what the proposal
 #                                                 is.
 #                                   pourquoi   -- one line, why it is being
@@ -39,6 +47,15 @@
 #                                                 one needs its raison.
 #                                   langue     -- must equal the Operator
 #                                                 Language.
+#                                   details    -- optional, one line, at
+#                                                 most 1000 characters: the
+#                                                 identifiers and evidence
+#                                                 (bead ids, PR numbers,
+#                                                 tool names) the three
+#                                                 fields above may not
+#                                                 hold. The Cockpit shows it
+#                                                 only in the folded
+#                                                 « Détails », unchecked.
 #                                 On success, creates a bead labelled
 #                                 `proposal` with those fields recorded as
 #                                 metadata (state: ouverte) and prints
@@ -63,8 +80,10 @@ set -Eeuo pipefail
 PROGRAM_NAME="proposal-door"
 GC_BIN="${GC_BIN:-gc}"
 MAX_LINE_LENGTH=140
+MAX_DETAILS_LENGTH=1000
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
 OPERATOR_CONFIG_BIN="${OPERATOR_CONFIG_BIN:-$ROOT/bin/operator-config}"
+OPERATOR_TEXT_CHECK_BIN="${OPERATOR_TEXT_CHECK_BIN:-$ROOT/bin/operator-text-check}"
 BEAD_ID_RE='^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(\.[A-Za-z0-9]+)*$'
 OPTION_LETTERS="abcdefghijklmnopqrstuvwxyz"
 
@@ -142,12 +161,32 @@ validate_que_faire() {  # $1 = JSON array
     '[to_entries[] | .value + {lettre: $letters[.key:(.key + 1)]}]' <<<"$json"
 }
 
+# cockpit_can_display runs the Cockpit's own main-text control
+# (bin/operator-text-check, lib/cockpit/text/validate.py) on the exact
+# fields about to be written, and dies with its reasons -- the same reasons
+# the Cockpit would otherwise count as a producer defect while showing a
+# fixed repli in place of the text (spec .73, .78). One contract, checked
+# at the door and at the screen.
+cockpit_can_display() {  # quoi pourquoi lettered_que_faire_json
+  local quoi=$1 pourquoi=$2 que_faire=$3 payload reasons
+  payload=$(jq -nc --arg quoi "$quoi" --arg pourquoi "$pourquoi" --argjson que_faire "$que_faire" \
+    '{quoi: $quoi, pourquoi: $pourquoi, que_faire: $que_faire}')
+  if ! reasons=$("$OPERATOR_TEXT_CHECK_BIN" "$payload" 2>&1 >/dev/null); then
+    die "proposition refusée, le Cockpit ne pourrait pas l'afficher telle quelle : $(paste -sd '|' <<<"$reasons" | sed 's/|/ ; /g')"
+  fi
+}
+
 cmd_create() {
   local payload=${1:-}
   [[ -n $payload ]] || die "Usage: $PROGRAM_NAME create <json>"
   jq -e 'type == "object"' <<<"$payload" >/dev/null 2>&1 \
     || die "proposition incomplète : le corps n'est pas un objet JSON valide."
-  local quoi pourquoi langue que_faire_raw lettered expected_language titre bead_id create_output
+  local quoi pourquoi langue que_faire_raw lettered expected_language titre bead_id create_output details
+  local -a details_args=()
+  details=$(jq -r 'if (.details | type) == "string" then .details else "" end' <<<"$payload")
+  [[ $details != *$'\n'* && $details != *$'\r'* ]] || die "champ « details » doit tenir sur une seule ligne."
+  (( ${#details} <= MAX_DETAILS_LENGTH )) || die "champ « details » dépasse $MAX_DETAILS_LENGTH caractères."
+  [[ -z $details ]] || details_args=(--set-metadata "gc.proposal_details=$details")
   quoi=$(jq -r '.quoi // ""' <<<"$payload")
   pourquoi=$(jq -r '.pourquoi // ""' <<<"$payload")
   langue=$(jq -r '.langue // ""' <<<"$payload")
@@ -159,6 +198,7 @@ cmd_create() {
   expected_language=$(operator_language)
   [[ $langue == "$expected_language" ]] \
     || die "la proposition est dans la langue « $langue », la langue de l'opérateur est « $expected_language »."
+  cockpit_can_display "$quoi" "$pourquoi" "$lettered"
 
   titre="PROPOSITION: $quoi"
   create_output=$("$GC_BIN" bd create "$titre" -l proposal -t task -d "$pourquoi" 2>&1) \
@@ -173,6 +213,7 @@ cmd_create() {
     --set-metadata "gc.proposal_langue=$langue" \
     --set-metadata "gc.proposal_state=ouverte" \
     --set-metadata "gc.proposal_horodatage=$(now_iso)" \
+    "${details_args[@]}" \
     --append-notes "PROPOSITION: $quoi" \
     >/dev/null || die "Beads write failed for $bead_id."
   printf 'PROPOSITION CRÉÉE: %s — %s\n' "$bead_id" "$quoi"

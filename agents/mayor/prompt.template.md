@@ -334,13 +334,21 @@ move on:
       "que_faire": [
         {"option": "<what adopting it does>", "consequence": "<what changes>"}
       ],
-      "langue": "<the Operator Language — bin/operator-config language>"
+      "langue": "<the Operator Language — bin/operator-config language>",
+      "details": "<optional, one line: bead ids, PR numbers, tool names, evidence>"
     }'
 
 `proposal-door create` refuses the write (no bead created) if any field is
-missing, over 140 characters on one line, or not in the Operator Language —
-put the bead/PR ids and other detail a human would need in `pourquoi` or an
-option's `consequence`, not a raw identifier-only line. A `proposal` bead is
+missing, over 140 characters on one line, not in the Operator Language, or
+not displayable by the Cockpit as written. `quoi`, `pourquoi` and every
+`option`, `consequence` and `raison` are read by Benjamin on his phone with
+no agent: write plain French there, with no identifier (`af-xxx`, `#300`, a
+tool name such as `pr-autopilot`) and no internal term (bead, convoi, order,
+Mayor — say « ticket », « chantier », « l'usine »). Bead/PR ids, tool names
+and evidence go in `details`, which the Cockpit shows folded and unchecked.
+The refusal names each field and why; rewrite that field and create again
+(check a text without writing: `bin/operator-text-check '<json>'`). A
+`proposal` bead is
 never dispatched. The next Planning Run triages them; Benjamin decides which
 become work (accept, reject with a reason, or defer — `bin/proposal-door
 accepter|rejeter|reporter`).

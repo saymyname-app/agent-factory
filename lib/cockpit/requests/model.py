@@ -30,6 +30,18 @@ class OperatorRequest:
     lien: str = ""
     incomplete: bool = False
     missing_fields: list = field(default_factory=list)
+    # Why each field in missing_fields was replaced by its fixed repli
+    # ({field: [French reasons]}, from cockpit.text.validate) and, when the
+    # producer did write something, its text exactly as written
+    # ({field: text}) -- shown in the folded details (spec .75: « le texte
+    # d'origine du producteur »), never as main text (spec .73). Without
+    # these, a request refused for an identifier or an internal term read
+    # as « champ manquant » with the field present (2026-10-07).
+    motifs: dict = field(default_factory=dict)
+    texte_origine: dict = field(default_factory=dict)
+    # A proposal's optional `details` (bin/proposal-door): identifiers and
+    # evidence, shown as written in the folded details only (spec .75).
+    precisions: str = ""
     recommande_absent: bool = False
     # Out-of-scope touch (T13, af-cx20q9): Acquitter/Reporter (declared
     # scope lib/cockpit/actions/**) only mean anything if "Ce qui

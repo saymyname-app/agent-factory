@@ -21,6 +21,15 @@ A failure never raises past the caller: :func:`violations` always returns a
 (possibly empty) list of French reasons, because the runtime path (spec
 .78: "échec à l'exécution = repli + défaut producteur compté") must fall
 back to a fixed phrase, never crash the page.
+
+One contract, two sides (2026-10-07): the doors (bin/proposal-door, through
+bin/operator-text-check) run :func:`request_violations` before they write a
+request, and the inbox (cockpit.requests.builder) runs the same function
+before it shows one. Before that, proposal-door only checked presence, one
+line and 140 characters, so four proposals written in agent jargon (bead
+ids, « bead », « Mayor ») were accepted at the door and then shown as
+« incomplète : champ quoi manquant » with every field present
+(af-os9sh2, af-vnv59w, af-1ai5e3, af-vws964).
 """
 import re
 
@@ -92,3 +101,60 @@ def violations(label, value, max_length=MAX_LINE_LENGTH):
 
 def is_valid(label, value, max_length=MAX_LINE_LENGTH):
     return not violations(label, value, max_length=max_length)
+
+
+# The que_faire side of the same contract: what a door validates per option
+# is exactly what the inbox refuses to show (spec .12, .13: every option
+# with its consequence, at most one « Recommandé » with its raison).
+QUE_FAIRE_LABEL = "que faire"
+RAISON_LABEL = "raison de la recommandation"
+
+
+def option_label(index):
+    return "option %d" % (index + 1)
+
+
+def consequence_label(index):
+    return "conséquence de l'option %d" % (index + 1)
+
+
+def que_faire_violations(options, max_length=MAX_LINE_LENGTH):
+    """Reasons (French, possibly empty) an already-parsed ``que_faire``
+    list fails: not a non-empty list, an item that is not an object, an
+    option or consequence failing :func:`violations`, more than one
+    recommended option, a recommended option without a readable raison."""
+    if not isinstance(options, list) or not options:
+        return ["champ « %s » manquant ou vide" % QUE_FAIRE_LABEL]
+    reasons = []
+    recommended = 0
+    for index, item in enumerate(options):
+        if not isinstance(item, dict):
+            reasons.append("%s illisible" % option_label(index))
+            continue
+        reasons.extend(violations(option_label(index), item.get("option"), max_length))
+        reasons.extend(violations(consequence_label(index), item.get("consequence"), max_length))
+        if bool(item.get("recommande", False)):
+            recommended += 1
+            reasons.extend(violations(RAISON_LABEL, item.get("raison"), max_length))
+    if recommended > 1:
+        reasons.append("au plus une option « Recommandé »")
+    return reasons
+
+
+def request_violations(quoi, pourquoi, que_faire, max_length=MAX_LINE_LENGTH):
+    """The whole contract for one request: ``{field: reasons}`` for every
+    field (``quoi``, ``pourquoi``, ``que_faire``) the inbox would replace by
+    its fixed repli; empty when the request displays exactly as written.
+    ``que_faire`` is the parsed list (a door has the JSON; the inbox parses
+    the metadata string first)."""
+    failures = {}
+    reasons = violations("quoi", quoi, max_length)
+    if reasons:
+        failures["quoi"] = reasons
+    reasons = violations("pourquoi", pourquoi, max_length)
+    if reasons:
+        failures["pourquoi"] = reasons
+    reasons = que_faire_violations(que_faire, max_length)
+    if reasons:
+        failures["que_faire"] = reasons
+    return failures
