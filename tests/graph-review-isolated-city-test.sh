@@ -279,7 +279,7 @@ refused "n'est pas l'approbateur humain déclaré" -- "$REVIEW" decide "$D1" --t
 "$REVIEW" decide "$D1" --ticket T2 --decision publish --approved-by benjamin \
   --words "T2 reste ainsi : T3 suit dans la même Spec, l'écart « = » est voulu." --project acme --config-dir "$PROJECTS" >/dev/null \
   || fail "Benjamin's decision was refused"
-"$REVIEW" remaining "$D1" --text | grep -qF "« T2 reste ainsi : T3 suit dans la même Spec, l'écart « = » est voulu. »" \
+grep -qF "« T2 reste ainsi : T3 suit dans la même Spec, l'écart « = » est voulu. »" <<<"$("$REVIEW" remaining "$D1" --text)" \
   || fail "Benjamin's words are not read back as recorded"
 published=$(publish "$D1") || fail "the reviewed and ruled draft was refused"
 jq -e '.graph_review.pass == 2 and .graph_review.decisions.T2.by == "benjamin" and (.ids | length) == 4' <<<"$published" >/dev/null \

@@ -269,7 +269,7 @@ for ticket in "$T2" "$T3"; do
     grep -qxF -- "$line" <<<"$text" || fail "interface ticket $ticket does not show '$line': $text"
   done
 done
-gc bd show "$T4" --json | jq -r '.[0].description' | grep -qF "## Validated Prototype" \
+grep -qF "## Validated Prototype" <<<"$(gc bd show "$T4" --json | jq -r '.[0].description')" \
   && fail "a ticket that is not an interface ticket shows a prototype reference"
 grep -qF "dfdd34f50623661f6644524b6489342cdbbdee19" "$FIXTURES/fixture-city-new-flow-draft.yaml" \
   && fail "the prototype reference is written in the draft"
@@ -310,7 +310,7 @@ ready_interface() {
 }
 [ "$(ready_interface)" = "$(jq -cn --arg f2 "$F2" '[$f2]')" ] \
   || fail "the Prototype Fold is not the only interface ticket ready at the start: $(ready_interface)"
-gc bd show "$F5" --json | jq -r '.[0].description' | grep -qxF -- "- Prototype Fold : T2 — La page d'accueil liste les éléments" \
+grep -qxF -- "- Prototype Fold : T2 — La page d'accueil liste les éléments" <<<"$(gc bd show "$F5" --json | jq -r '.[0].description')" \
   || fail "an interface ticket does not name its Prototype Fold"
 gc bd update "$F2" --status closed >/dev/null
 [ "$(ready_interface)" = "$(jq -cn --arg f3 "$F3" '[$f3]')" ] \
@@ -377,7 +377,7 @@ jq -e --arg r1 "$R1" '.unruled == false and (.tickets | length) == 5
   || fail "the added repair is not tracked by the convoy and marked: $shown"
 gc bd show "$T2" --json | jq -e --arg r1 "$R1" '.[0].dependencies | any(.id == $r1 and .dependency_type == "blocks")' >/dev/null \
   || fail "T2 is not blocked by the added repair in the real tracker"
-gc bd show "$T4" --json | jq -r '.[0].description' | grep -qF -- "- R1 (repair) — La liste retrouve son troisième élément" \
+grep -qF -- "- R1 (repair) — La liste retrouve son troisième élément" <<<"$(gc bd show "$T4" --json | jq -r '.[0].description')" \
   || fail "a ticket the patch did not carry does not name its new sibling"
 
 # --- T06: a ticket withdrawn after a resolved Planning Exception --------------

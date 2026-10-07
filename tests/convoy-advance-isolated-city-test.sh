@@ -196,7 +196,7 @@ echo "convoi $CONVOY : T1=$T1 T2=$T2 T3=$T3 (T3 bloqué par T1 et T2) ; autre Sp
 (gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
-gc --city "$CITY" status 2>/dev/null | grep -q "Controller: supervisor-managed" || fail "the isolated city's controller did not start"
+grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"
 gc order show convoy-advance --json >/dev/null 2>&1 || fail "the city does not accept orders/convoy-advance.toml"
 
 # A ticket is started when the door stamped it; it is in flight until closed.

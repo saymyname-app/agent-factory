@@ -49,6 +49,17 @@ is_local_only() {
   grep -qE '^#[[:space:]]*ci:[[:space:]]*local-only' "$1"
 }
 
+# The non-comment lines of a file, read whole before any question is asked
+# of them. Never `producer | grep -q` here: this script runs under pipefail,
+# grep -q exits at its first match, a producer that still has output to
+# write then dies of SIGPIPE, and the pipeline reads a real match as "no
+# match". On 2026-10-07, under host load, that reported a different
+# compliant test as a violation on each run. The rule is enforced on every
+# script by tests/pipefail-early-exit-check-test.sh.
+code_lines() {
+  grep -vE '^[[:space:]]*#' "$1" || true
+}
+
 # Live-root literal check: every match must be either in a local-only file,
 # or have an allow-live-root marker on its own line or the line before it.
 check_live_root() {
@@ -57,11 +68,11 @@ check_live_root() {
   is_local_only "$f" && return 0
   while IFS=: read -r lineno _; do
     [ -n "$lineno" ] || continue
-    if sed -n "${lineno}p" "$f" | grep -qF 'sandbox: allow-live-root'; then
+    if [[ $(sed -n "${lineno}p" "$f") == *'sandbox: allow-live-root'* ]]; then
       continue
     fi
     prev=$((lineno - 1))
-    if [ "$prev" -ge 1 ] && sed -n "${prev}p" "$f" | grep -qF 'sandbox: allow-live-root'; then
+    if [ "$prev" -ge 1 ] && [[ $(sed -n "${prev}p" "$f") == *'sandbox: allow-live-root'* ]]; then
       continue
     fi
     echo "$f:$lineno names the live Factory root ($LIVE_ROOT) with no # sandbox: allow-live-root marker"
@@ -76,10 +87,10 @@ check_live_root() {
 # pattern -- must show one of the recognized isolation opt-ins somewhere in
 # it.
 check_gc_opt_in() {
-  local f=$1
+  local f=$1 code
   [ -e "$f" ] || return 0
-  grep -vE '^[[:space:]]*#' "$f" \
-    | grep -qE '(^|;|&&|\|\||\$\()[[:space:]]*(gc|bd)[[:space:]]' || return 0
+  code=$(code_lines "$f")
+  grep -qE '(^|;|&&|\|\||\$\()[[:space:]]*(gc|bd)[[:space:]]' <<<"$code" || return 0
   is_local_only "$f" && return 0
   grep -qE 'tests/lib/sandbox\.(sh|py)|sandbox_init|from sandbox import Sandbox|sandbox\.Sandbox\(|PATH=|GC_BIN|BD_BIN' "$f" && return 0
   echo "$f calls gc/bd with no isolation opt-in (source tests/lib/sandbox.sh, use tests/lib/sandbox.py's Sandbox, put a stub first on PATH, or mark # ci: local-only)"
@@ -90,18 +101,17 @@ check_gc_opt_in() {
 GCBIN_ESCALATION_SCRIPTS="escalation-door factory-watchdog on-order-failed on-session-stranded"
 
 check_gcbin_opt_in() {
-  local f=$1 script
+  local f=$1 script code
   [ -e "$f" ] || return 0
   is_local_only "$f" && return 0
   grep -qE 'tests/lib/sandbox\.(sh|py)|sandbox_init|from sandbox import Sandbox|sandbox\.Sandbox\(' "$f" && return 0
+  code=$(code_lines "$f")
   for script in $GCBIN_ESCALATION_SCRIPTS; do
     # Require a path-like reference (preceded by "/") so a prose mention
     # like "escalation-door's mayor-first class" in a comment or fail
     # message doesn't count as an invocation.
-    # Not `grep -q`: it leaves at the first match, and under pipefail the
-    # SIGPIPE of the grep before it reads as "no match" on a large file.
-    grep -vE '^[[:space:]]*#' "$f" | grep -E "/${script}([[:space:]\"'\`]|\$)" >/dev/null || continue
-    grep -vE '^[[:space:]]*#' "$f" | grep -E 'GC_BIN[[:space:]]*=[^=]|"GC_BIN"[[:space:]]*:' >/dev/null && return 0
+    grep -qE "/${script}([[:space:]\"'\`]|\$)" <<<"$code" || continue
+    grep -qE 'GC_BIN[[:space:]]*=[^=]|"GC_BIN"[[:space:]]*:' <<<"$code" && return 0
     echo "$f invokes $script (resolves \${GC_BIN:-gc}) with no actual GC_BIN= assignment and no shared sandbox harness -- a PATH stub alone does not protect it"
     return 1
   done
@@ -158,6 +168,28 @@ cat >"$tmp/gcbin-prose-only.sh" <<'EOF'
 fail() { echo "did not route through escalation-door's mayor-first class"; }
 EOF
 out=$(check_gcbin_opt_in "$tmp/gcbin-prose-only.sh") || { fail "the escalation-door check false-positives on a file that only mentions escalation-door in prose"; violations=$((violations + 1)); }
+
+# A match must be found wherever it sits in a file of any size. A file
+# larger than a pipe holds makes the 2026-10-07 false answers deterministic
+# for any check that pipes it into `grep -q` under pipefail: the GC_BIN
+# assignment at the top of a compliant test was read as absent (a false
+# violation), and a bare gc call at the top of an offender was read as
+# absent too (a missed violation).
+large_filler() {
+  seq -f 'echo "filler line %.0f, long enough for the file to exceed what one pipe can hold"' 1 40000
+}
+{
+  printf '%s\n' '#!/usr/bin/env bash' 'export GC_BIN="$TMP/bin/gc"'
+  large_filler
+  printf '%s\n' '"$REPO_ROOT/bin/escalation-door" mayor af-fixture "test"'
+} >"$tmp/gcbin-compliant-large.sh"
+out=$(check_gcbin_opt_in "$tmp/gcbin-compliant-large.sh") || { fail "the escalation-door check false-positives on a large test whose GC_BIN assignment comes first (a match cut short by an early-exit pipeline)"; violations=$((violations + 1)); }
+
+{
+  printf '%s\n' '#!/usr/bin/env bash' 'gc bd list'
+  large_filler
+} >"$tmp/offender-large.sh"
+out=$(check_gc_opt_in "$tmp/offender-large.sh") && { fail "the gc/bd check misses a bare gc call at the top of a large test (a match cut short by an early-exit pipeline)"; violations=$((violations + 1)); }
 
 if [ "$violations" -gt 0 ]; then
   echo "sandbox-isolation-check: $violations violation(s)" >&2

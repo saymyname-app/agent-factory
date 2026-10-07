@@ -188,8 +188,10 @@ PR_SECTION_PATTERNS=("Non fait" "Écarts|Ecarts" "Constats hors ticket")
 # tracker cannot be read: a tracker outage must not block a push.
 bead_requires_pr_sections() {
   command -v bd >/dev/null 2>&1 || return 1
-  (cd "$ROOT" 2>/dev/null && timeout 30 bd show "$1" --json 2>/dev/null) \
-    | grep -q 'Constats hors ticket'
+  # Read whole, then ask: piped into grep -q under pipefail, a match would
+  # read as "no section demanded" whenever bd is killed by SIGPIPE.
+  grep -q 'Constats hors ticket' \
+    <<<"$(cd "$ROOT" 2>/dev/null && timeout 30 bd show "$1" --json 2>/dev/null)"
 }
 
 # missing_pr_sections <file> — prints the demanded sections <file> lacks.
