@@ -13,7 +13,7 @@ from cockpit.core.readmodel import PARIS
 from cockpit.projects.demandes import TYPE_LIVRE_NON_ACCEPTE
 from cockpit.requests.model import A_FAIRE, TYPE_ESCALATION, TYPE_PROPOSAL, URGENT
 from cockpit.requests.sources.readability import TYPE_SOURCE_ILLISIBLE
-from cockpit.text.fallback import FALLBACK_NO_RECOMMENDATION, incomplete_label
+from cockpit.text.fallback import FALLBACK_NO_RECOMMENDATION, FIELD_LABELS, incomplete_label
 from cockpit.ui.actions.render import render_actions
 
 SECTION_TITLE = "Ce qui t'attend"
@@ -202,8 +202,9 @@ def _render_detail(r, now, selected, undelivered=False):
         '<details class="more cockpit-request-details"><summary>Détails</summary><div class="det">'
         '<div class="row"><span>Identifiant</span><code>%s</code></div>'
         '<div class="row"><span>Type</span><code>%s</code></div>'
+        "%s"
         "</div></details>"
-    ) % (html.escape(r.id), html.escape(r.type))
+    ) % (html.escape(r.id), html.escape(r.type), _render_refused_fields(r))
 
     return (
         '<article class="detail zone-body cockpit-request%s" id="d-%s" data-level="%s" '
@@ -233,6 +234,35 @@ def _render_detail(r, now, selected, undelivered=False):
         meta,
         details,
     )
+
+
+def _render_refused_fields(r):
+    """In the folded details only (spec .75): for each field the main-text
+    control replaced by its repli, why (the control's own French reason)
+    and the producer's text exactly as written (spec .107: never
+    rewritten) -- so a request refused for an identifier or an internal
+    term can still be read in full, where « champ X manquant » alone read
+    as a missing field with the field present (2026-10-07)."""
+    rows = []
+    if r.precisions:
+        rows.append(
+            '<div class="row cockpit-request-precisions"><span>Précisions</span><code>%s</code></div>'
+            % html.escape(r.precisions)
+        )
+    for field_name in r.missing_fields:
+        label = FIELD_LABELS.get(field_name, field_name)
+        for reason in r.motifs.get(field_name, []):
+            rows.append(
+                '<div class="row cockpit-request-motif"><span>Refusé</span><code>%s</code></div>'
+                % html.escape(reason)
+            )
+        origin = r.texte_origine.get(field_name)
+        if origin:
+            rows.append(
+                '<div class="row cockpit-request-origine"><span>Texte écrit (%s)</span>'
+                "<code>%s</code></div>" % (html.escape(label), html.escape(origin))
+            )
+    return "".join(rows)
 
 
 def _option_control(r, lettre):
