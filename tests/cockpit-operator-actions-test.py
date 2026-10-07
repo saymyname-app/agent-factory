@@ -335,11 +335,17 @@ class OperatorActionsSeamTest(unittest.TestCase):
             body = resp.read().decode("utf-8")
         # The script that handles every action's answer: result written on
         # the request, its controls removed, a refusal said, then reload.
-        self.assertIn("settle(el, body.bead_id", body)
+        self.assertIn("settle(el, body.bead_id, TWO_STEP_DONE[action], post(action, body))", body)
         self.assertIn("removeAttribute('data-action')", body)
         self.assertIn("Action refusée", body)
         self.assertIn("data.rafraichi", body)
         self.assertIn(".cockpit-done", body)
+        # Shown at the click, before the answer (optimistic), on the request,
+        # its row and the chantier's row; put back on a refusal.
+        self.assertIn("var marked = mark(el, beadId, text);", body)
+        self.assertIn("getElementById('ch-' + beadId)", body)
+        self.assertIn("marked.undo();", body)
+        self.assertIn("Action non envoyée", body)
 
     def test_rejeter_proposition_requires_reason(self):
         self.write_beads([proposal_bead("af-prop2", "ajouter un filtre", "gagne du temps", OPTIONS_WITH_LETTERS, "2026-09-30T08:00:00Z")])
