@@ -127,51 +127,103 @@ SCRIPT = """
     document.body.appendChild(toast);
     setTimeout(function () { toast.remove(); }, 10000);
   }
-  // After an action that wrote (2026-10-07): the request must not stay
-  // listed as if nothing happened, still offering the same gesture. A
-  // refusal is said; a success marks the request as handled (controls
-  // removed, the result written on it), then the page reloads -- the
-  // server re-read its sources before answering (`rafraichi`), so the
-  // reloaded list shows the request gone or in its new state. Without
-  // `rafraichi` the mark stays until the next regular read.
-  function settle(el, beadId, fallback) {
-    return function (resp) {
+  // An action that writes shows at once, before the server answers
+  // (2026-10-07, docs/COCKPIT.md: the button and the request stayed for
+  // seconds as if nothing had been clicked; the server re-reads its
+  // sources before answering). This script is served with the page: it
+  // never names the operator. At the
+  // click: the request in « Ce qui t'attend », its row in the list and the
+  // chantier's row in « Projets » are greyed, their controls switched off
+  // and the expected result written on them. When the server answers: a
+  // success confirms the text and reloads the page (`rafraichi`: the list
+  // was re-read, the reloaded page shows the request gone or in its new
+  // state); a refusal or a lost connection puts everything back as it was
+  // and says so. Nothing is assumed written before the server said so:
+  // the mark reads « … enregistrement » until then.
+  function mark(el, beadId, text) {
+    var holders = [];
+    function add(node) { if (node && holders.indexOf(node) === -1) { holders.push(node); } }
+    add(el && el.closest ? el.closest('.cockpit-request') : null);
+    add(el && el.closest ? el.closest('.cockpit-chantier') : null);
+    if (beadId) {
+      add(document.getElementById('d-' + beadId));
+      add(document.getElementById('ch-' + beadId));
+      add(document.querySelector('.li[data-id="' + beadId + '"]'));
+    }
+    if (!holders.length && el) { add(el.parentNode || el); }
+    var notes = [];
+    var hidden = [];
+    var switched = [];
+    holders.forEach(function (holder) {
+      holder.classList.add('cockpit-done');
+      holder.setAttribute('data-done', 'pending');
+      var controls = holder.querySelectorAll('[data-action]');
+      for (var i = 0; i < controls.length; i++) {
+        var control = controls[i];
+        switched.push({el: control, action: control.getAttribute('data-action'), disabled: control.disabled});
+        control.removeAttribute('data-action');
+        control.setAttribute('aria-disabled', 'true');
+        if ('disabled' in control) { control.disabled = true; }
+      }
+      // « À toi de jouer » no longer holds once the gesture is made.
+      var chips = holder.querySelectorAll('.cockpit-chantier-etat');
+      for (var j = 0; j < chips.length; j++) {
+        if (!chips[j].hidden) { chips[j].hidden = true; hidden.push(chips[j]); }
+      }
+      var note = document.createElement('span');
+      note.className = 'chip ack cockpit-done-note';
+      note.setAttribute('role', 'status');
+      note.textContent = text + ' · enregistrement…';
+      var anchor = holder.querySelector('.cockpit-request-quoi, .cockpit-chantier-n, .q');
+      if (anchor && anchor.parentNode) {
+        anchor.parentNode.insertBefore(note, anchor.nextSibling);
+      } else {
+        holder.appendChild(note);
+      }
+      notes.push(note);
+    });
+    return {
+      confirm: function (finalText) {
+        holders.forEach(function (holder) { holder.setAttribute('data-done', 'true'); });
+        notes.forEach(function (note) { note.textContent = finalText; });
+      },
+      undo: function () {
+        holders.forEach(function (holder) {
+          holder.classList.remove('cockpit-done');
+          holder.removeAttribute('data-done');
+        });
+        switched.forEach(function (item) {
+          item.el.setAttribute('data-action', item.action);
+          item.el.removeAttribute('aria-disabled');
+          if ('disabled' in item.el) { item.el.disabled = item.disabled; }
+        });
+        hidden.forEach(function (chip) { chip.hidden = false; });
+        notes.forEach(function (note) { note.remove(); });
+      }
+    };
+  }
+  // Use as: settle(el, beadId, text, post(action, body)). The mark is put
+  // before the answer exists.
+  function settle(el, beadId, fallback, request) {
+    var text = fallback || 'Fait';
+    var marked = mark(el, beadId, text);
+    return request.then(function (resp) {
       return resp.json().then(function (data) {
         if (!resp.ok || !data || data.error) {
+          marked.undo();
           say('Action refusée : ' + ((data && data.error) || resp.status));
           return data;
         }
-        var text = data.display || fallback || 'Fait';
-        say(text);
-        var holders = [];
-        var article = el && el.closest ? el.closest('.cockpit-request') : null;
-        if (!article && beadId) { article = document.getElementById('d-' + beadId); }
-        if (article) { holders.push(article); } else if (el) { holders.push(el.parentNode || el); }
-        var row = beadId ? document.querySelector('.li[data-id="' + beadId + '"]') : null;
-        if (row) { row.classList.add('cockpit-done'); }
-        holders.forEach(function (holder) {
-          holder.classList.add('cockpit-done');
-          holder.setAttribute('data-done', 'true');
-          var controls = holder.querySelectorAll('[data-action]');
-          for (var i = 0; i < controls.length; i++) {
-            controls[i].removeAttribute('data-action');
-            controls[i].setAttribute('aria-disabled', 'true');
-            if ('disabled' in controls[i]) { controls[i].disabled = true; }
-          }
-          var note = document.createElement('div');
-          note.className = 'chip ack cockpit-done-note';
-          note.textContent = text;
-          var title = holder.querySelector('.cockpit-request-quoi');
-          if (title && title.parentNode) {
-            title.parentNode.insertBefore(note, title.nextSibling);
-          } else {
-            holder.appendChild(note);
-          }
-        });
-        if (data.rafraichi) { setTimeout(function () { window.location.reload(); }, 1500); }
+        var finalText = data.display || text;
+        marked.confirm(finalText);
+        say(finalText);
+        if (data.rafraichi) { setTimeout(function () { window.location.reload(); }, 600); }
         return data;
       });
-    };
+    }).catch(function () {
+      marked.undo();
+      say('Action non envoyée : le cockpit ne répond pas');
+    });
   }
   function withUndo(label, run) {
     var cancelled = false;
@@ -200,6 +252,7 @@ SCRIPT = """
     accepter_proposition: 'Proposition acceptée, à planifier',
     rejeter_proposition: 'Proposition refusée',
     reporter_proposition: 'Proposition reportée',
+    repondre: 'Réponse envoyée',
     relancer: 'Relance demandée',
     accepter_chantier: 'Chantier accepté'
   };
@@ -254,9 +307,9 @@ SCRIPT = """
         disarm();
         // répondre's immediate feedback (spec .26: "la demande affiche
         // « répondu b à HH:MM, en cours de traitement par l'usine »"),
-        // and the same for every two-step gesture: said, written on the
-        // request, then the list re-read (see settle).
-        post(action, body).then(settle(el, body.bead_id, TWO_STEP_DONE[action]));
+        // and the same for every two-step gesture: shown at the click,
+        // confirmed or put back when the server answers (see settle).
+        settle(el, body.bead_id, TWO_STEP_DONE[action], post(action, body));
         return;
       }
       disarm();
@@ -283,7 +336,7 @@ SCRIPT = """
     var beadId = el.getAttribute('data-bead-id');
     if (action === 'acquitter') {
       withUndo('Acquitter', function () {
-        post('acquitter', {bead_id: beadId}).then(settle(el, beadId, 'Acquittée, rappels coupés'));
+        settle(el, beadId, 'Acquittée, rappels coupés', post('acquitter', {bead_id: beadId}));
       });
     } else if (action === 'reporter_ouvrir' || action === 'reporter_fermer') {
       showReportMenu(beadId, action === 'reporter_ouvrir');
@@ -301,7 +354,7 @@ SCRIPT = """
       }
       showReportMenu(beadId, false);
       withUndo('Reporter', function () {
-        post('reporter', body).then(settle(el, beadId, 'Reportée'));
+        settle(el, beadId, 'Reportée', post('reporter', body));
       });
     } else if (action === 'notifier_test') {
       post('notifier_test', {}).then(function (resp) {
