@@ -152,6 +152,73 @@ class StageEtatTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# When a delivered chantier asks for an acceptance (2026-10-07): only when
+# there is something to judge it on.
+
+
+def _delivered(mark=False, note=None):
+    beads = load_fixture("convoy-livre-not-accepted.json")
+    metadata = beads[0]["metadata"]
+    metadata.pop("gc.flow.mark", None)
+    if mark:
+        metadata["gc.flow.mark"] = "new-flow/v1"
+    if note is not None:
+        metadata["gc.cockpit_acceptance_note"] = note
+    return beads
+
+
+class AcceptanceAskedOnlyWithSomethingToJudgeTest(unittest.TestCase):
+    NOTE = "À accepter après 7 jours d'usage réel sans défaut bloquant"
+
+    def test_delivered_by_the_old_flow_asks_nothing_and_goes_to_the_history(self):
+        beads = _delivered()
+        self.assertEqual([], convoy_chantiers(beads))
+        self.assertEqual([], chantier_demandes(convoy_chantiers(beads)))
+        historique = build_historique(beads)
+        self.assertEqual(1, len(historique))
+        self.assertEqual(LIVRE, historique[0].stage)
+        self.assertTrue(historique[0].termine)
+        self.assertEqual(etat_mod.NORMAL, historique[0].etat)
+        self.assertEqual("Livré avant le flux d'acceptation : rien à accepter", historique[0].detail)
+        # Shown as delivered, never as accepted in Benjamin's name.
+        self.assertNotIn("gc.cockpit_chantier_accepted", beads[0]["metadata"])
+        html_out = render_historique_section([], historique)
+        self.assertIn('data-stage="Livré"', html_out)
+        self.assertIn("rien à accepter", html_out)
+
+    def test_a_convoy_of_the_delivery_workflow_still_asks(self):
+        chantiers = convoy_chantiers(_delivered(mark=True))
+        self.assertEqual(LIVRE, chantiers[0].stage)
+        self.assertEqual(etat_mod.A_TOI_DE_JOUER, chantiers[0].etat)
+        demandes = chantier_demandes(chantiers)
+        self.assertEqual(1, len(demandes))
+        self.assertEqual(
+            "Toi seul peux accepter ce chantier livré, ou demander sa correction.", demandes[0].pourquoi
+        )
+
+    def test_a_note_keeps_the_request_and_says_what_to_look_at(self):
+        chantiers = convoy_chantiers(_delivered(note=self.NOTE))
+        self.assertEqual(1, len(chantiers))
+        self.assertEqual(etat_mod.A_TOI_DE_JOUER, chantiers[0].etat)
+        demandes = chantier_demandes(chantiers)
+        self.assertEqual(self.NOTE, demandes[0].pourquoi)
+        self.assertEqual("Accepter", demandes[0].que_faire[0]["option"])
+
+    def test_a_note_the_screen_could_not_show_falls_back_to_the_fixed_phrase(self):
+        demandes = chantier_demandes(convoy_chantiers(_delivered(note="voir af-oohx2x, section 4")))
+        self.assertEqual(1, len(demandes))
+        self.assertEqual(
+            "Toi seul peux accepter ce chantier livré, ou demander sa correction.", demandes[0].pourquoi
+        )
+
+    def test_an_accepted_old_flow_chantier_is_unchanged(self):
+        beads = _delivered()
+        beads[0]["metadata"]["gc.cockpit_chantier_accepted"] = "true"
+        historique = build_historique(beads)
+        self.assertEqual(ACCEPTE, historique[0].stage)
+
+
+# ---------------------------------------------------------------------------
 # Accepté / Promu (spec "Calcul d'étape des chantiers")
 
 

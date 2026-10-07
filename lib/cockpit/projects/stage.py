@@ -45,6 +45,29 @@ ABANDON_REASON_KEY = "gc.chantier_abandon_reason"
 # locale de l'état des actions").
 ACCEPTED_KEY = "gc.cockpit_chantier_accepted"
 
+# When a delivered chantier asks Benjamin for his acceptance (2026-10-07).
+# Intent (Benjamin, his words, 2026-10-07): « on me demande d'accepter un
+# truc je n'ai aucune idée de ce que c'est exactement […] Soit on rend
+# l'humain vraiment utile en le guidant, soit on le skip » ; then, on the
+# proposal to drop the request for chantiers delivered before D01 and to
+# send C01 back to its seven-day criteria: « ok fait tout ca ».
+# Mechanism (agent interpretation): a closed convoy asks for acceptance
+# only when there is something to judge it on --
+#   * it carries the new-flow mark (bin/convoy-state: the Delivery Workflow,
+#     Spec af-wf4w5r, which hands over an Evidence Pack), or
+#   * it carries ACCEPTANCE_NOTE_KEY: one line saying what to look at,
+#     shown as the request's « pourquoi ».
+# A convoy with neither was delivered by the flow that merged every ticket
+# to the protected branch as it went and closed by itself: nothing is left
+# to judge and the button changed nothing but a label. It is shown as
+# delivered, in the historique, and asks nothing. It does not accept it in
+# Benjamin's name (no ACCEPTED_KEY is written) and changes nothing for a
+# convoy of the new flow. To undo: treat every closed convoy as before
+# (drop the `nothing_to_judge` branch below).
+NEW_FLOW_MARK_KEY = "gc.flow.mark"
+ACCEPTANCE_NOTE_KEY = "gc.cockpit_acceptance_note"
+DETAIL_LIVRE_SANS_ACCEPTATION = "Livré avant le flux d'acceptation : rien à accepter"
+
 
 def _project_of(bead):
     return (bead.get("metadata") or {}).get(PROJECT_KEY)
@@ -224,6 +247,7 @@ def _convoy_chantiers_all(beads, promotion_results=None):
         promu_masque = False
         promu_inconnu = False
         termine = False
+        a_regarder = ""
         if bead.get("status") != "closed":
             detail = "%d/%d tickets mergés · %d en cours · %d en PR" % (merged, total, en_cours, en_pr)
             stage = LIVRAISON
@@ -233,8 +257,17 @@ def _convoy_chantiers_all(beads, promotion_results=None):
             # is bloqué, never a convoy that simply has one ticket moving.
             etat_val, cible = _etat_for(bead, extra_beads=tickets, bloque_extra=(pret + en_cours + en_pr == 0))
         else:
-            accepted = str((bead.get("metadata") or {}).get(ACCEPTED_KEY, "")).lower() == "true"
-            if not accepted:
+            metadata = bead.get("metadata") or {}
+            accepted = str(metadata.get(ACCEPTED_KEY, "")).lower() == "true"
+            note = metadata.get(ACCEPTANCE_NOTE_KEY)
+            a_regarder = note.strip() if isinstance(note, str) else ""
+            nothing_to_judge = not accepted and not a_regarder and not metadata.get(NEW_FLOW_MARK_KEY)
+            if nothing_to_judge:
+                stage = LIVRE
+                detail = DETAIL_LIVRE_SANS_ACCEPTATION
+                termine = True
+                etat_val, cible = _etat_for(bead, extra_beads=tickets)
+            elif not accepted:
                 detail = "Livré : %d/%d tickets mergés" % (merged, total)
                 stage = LIVRE
                 etat_val, cible = _etat_for(bead, extra_beads=tickets, a_toi_de_jouer=True, cible=bead_id)
@@ -278,6 +311,7 @@ def _convoy_chantiers_all(beads, promotion_results=None):
                 promu_masque=promu_masque,
                 promu_inconnu=promu_inconnu,
                 termine=termine,
+                a_regarder=a_regarder,
                 planning_run_target=(bead.get("metadata") or {}).get("planning_run_target"),
                 rig=rigs.pop() if len(rigs) == 1 else None,
             )
