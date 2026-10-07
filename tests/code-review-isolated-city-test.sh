@@ -355,9 +355,9 @@ echo "$(date -u +%H:%M:%S) marque posée, branche $INTEGRATION ouverte, trois ti
 (gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
-gc --city "$CITY" status 2>/dev/null | grep -q "Controller: supervisor-managed" || fail "the isolated city's controller did not start"
+grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"
 gc order show convoy-advance --json >/dev/null 2>&1 || fail "the city does not accept orders/convoy-advance.toml"
-gc formula list 2>/dev/null | grep -q "^mol-code-review\$" || fail "the city does not resolve formulas/mol-code-review.formula.toml"
+grep -q "^mol-code-review\$" <<<"$(gc formula list 2>/dev/null)" || fail "the city does not resolve formulas/mol-code-review.formula.toml"
 
 wait_for() { # <seconds> <command...>
   local deadline=$(( $(date +%s) + $1 )); shift

@@ -288,7 +288,7 @@ BEFORE=$(snapshot)
 (gc supervisor run > "$TRIAL/supervisor.out" 2>&1 &)
 sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
-gc --city "$CITY" status 2>/dev/null | grep -q "Controller: supervisor-managed" || fail "the isolated city's controller did not start"
+grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"
 gc order show convoy-advance --json >/dev/null 2>&1 || fail "the city does not accept orders/convoy-advance.toml"
 
 wait_for() { # <seconds> <command...>
@@ -431,7 +431,7 @@ second_started() { flow_started "$SECOND"; }
 wait_for 300 second_started || fail "the convoy did not resume: $S was not started within 300s of the repair"
 wait_passes 1
 [ -z "$(incident_lines)" ] || fail "the incident is still in the escalation door's list after the resume: $(incident_lines)"
-incident_beads | grep -q "=closed" || fail "the incident bead was not closed by the resume: $(incident_beads)"
+grep -q "=closed" <<<"$(incident_beads)" || fail "the incident bead was not closed by the resume: $(incident_beads)"
 grep -E "$SECOND" "$DOOR_LOG" | awk -F'\t' '$3 == 0 && $2 == "aucune session" { found = 1 } END { exit !found }' \
   || fail "$S was not started by the order's own call of the dispatch door"
 echo "$(stamp) reprise par le code : $S démarré par l'ordre, incident retiré de la liste, bead $(incident_beads)"

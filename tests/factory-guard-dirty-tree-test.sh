@@ -84,9 +84,9 @@ snap=$(git ls-remote --refs origin 'refs/factory-guard/snapshots/*' | awk '{prin
 # --- and the snapshot must actually CONTAIN the work, not just exist -------
 git fetch -q origin "$snap:refs/remotes/snap" 2>/dev/null \
   || git fetch -q origin "+$snap:refs/remotes/snap"
-git show "refs/remotes/snap:ADR-0015.md" 2>/dev/null | grep -q adr \
+grep -q adr <<<"$(git show "refs/remotes/snap:ADR-0015.md" 2>/dev/null)" \
   || fail "the untracked file is not recoverable from the snapshot"
-git show "refs/remotes/snap:file" 2>/dev/null | grep -q two \
+grep -q two <<<"$(git show "refs/remotes/snap:file" 2>/dev/null)" \
   || fail "the modified file is not recoverable from the snapshot"
 git show "refs/remotes/snap:debug.log" >/dev/null 2>&1 \
   && fail "the snapshot swept in a .gitignore'd file"

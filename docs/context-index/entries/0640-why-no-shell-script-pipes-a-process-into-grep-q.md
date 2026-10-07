@@ -1,0 +1,2 @@
+Need: Why a shell check or test answers "no match" for a match that is there, only when the host is loaded and on a different file each run (a process piped into `grep -q` under `pipefail`: grep -q exits first, the producer dies of SIGPIPE, the pipeline fails), what to write instead, which producers are accepted, and how a line is exempted
+Read: `tests/pipefail-early-exit-check-test.sh` (the rule, its reproduction, the `# pipefail: allow-early-exit` marker), `tests/sandbox-isolation-check-test.sh` (`code_lines`, large-file canaries)
