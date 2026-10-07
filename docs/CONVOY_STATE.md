@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, T11, T13, T14, T15, T18, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T18, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -48,6 +48,8 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state release-evaluation af-convoy af-t1 --state-file <launch record> [--withdraw]   # bin/ticket-evaluation settle, once a launched product is stopped
 ./bin/convoy-state set-handoff af-convoy af-t1 --file handoff.json                                   # bin/ticket-exit
 ./bin/convoy-state park        af-convoy af-t1 --cause planning_exception --detail "La Spec fixe X, …"  # bin/ticket-exit
+./bin/convoy-state set-fidelity af-convoy af-t1 --commit <sha> --piece fidelity --file result.json   # bin/prototype-fidelity
+./bin/convoy-state raise-planning-exception af-convoy af-t1 --kind semantic --summary "…" [--anchor liste --accept-option c]   # bin/ticket-exit
 ./bin/convoy-state set-integration af-convoy --branch integration/af-spec --protected main --base <sha>   # bin/spec-integration open
 ./bin/convoy-state set-merge   af-convoy af-t1 --outcome merged --ticket-commit <sha> --integration <sha> --commit <sha>   # bin/spec-integration merge
 ./bin/convoy-state invalidate-verdicts af-convoy af-t1 --tip <sha> --kind code_review --kind evaluation   # bin/spec-integration merge
@@ -91,6 +93,9 @@ Every answer is one JSON object on stdout.
 | Test review | `gc.flow.test_review` | ticket (`vertical_slice`, `repair`) | `rounds`: each recorded pass (`commit`, `files`: path → `sha256:`, `verdict`: `favorable` / `unfavorable`, `tests`: test id → `state` and, when unfavorable, `reason`, `recorded_by`, `at`); `request` while a review is open (`commit`, `files`, `criteria`: the criterion → test table, `launches`: at most two `{bead, at}`, `at`) |
 | Ticket Handoff | `gc.flow.handoff` | ticket | `sections` (`done`, `deviations`, `not_done`, `out_of_ticket`: each `aucun` or a non-empty list of one-line items; an item of `not_done` may be `{what, paths}`), `partial`, the full commit SHA it was taken at, and the `records` written by code |
 | Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`; the ticket whose Ticket Exit parked it (`origin`); a one-line detail |
+| Fidelity result | `gc.flow.fidelity` | ticket | `commit`, `verdict` (`favorable` / `unfavorable`, computed), `piece` (the sealed record), `screens`, `states` (state → `viewports`, `anchors` compared), `deviations`: each `state`, `viewport`, `anchor`, `kind` (`absent`, `structure`, `style`, `token`), `property`; a `token` deviation has neither viewport nor anchor |
+| Planning Exceptions | `gc.flow.planning_exceptions` | ticket | `entries`, oldest first: `kind` (`semantic`, `topology`), `summary`, `anchors` (the anchors whose deviation it asks to accept, possibly none), `accept_option` (the letter of the request's option that accepts it; with anchors only), `prior_response_at`, `at`, and `resolution` (`option`, `at`) once a later one was raised |
+| Operator's answer | `gc.needs_benjamin`, `gc.escalation_response_option`, `gc.escalation_response_at` (read only: written by `bin/escalation-door`) | ticket | what resolves the last Planning Exception |
 | Integration branch | `gc.flow.integration` | convoy | `branch`, the `protected` branch it takes up, and `base`, the full commit SHA of the protected branch it left from; written once |
 | Merge | `gc.flow.merge` | ticket | outcome: `merged`, `conflict`, `red`; `ticket_commit` (the tip of the ticket that was taken), `integration` (the tip it was merged on), and `commit`, the merged result, for `merged` and `red` only |
 | Declared Scope | `gc.scope_paths` (read only: written by the publication door) | ticket | the declared paths, comma-separated; they order tickets and bound nothing |
@@ -309,6 +314,39 @@ the call is harmless. It refuses a kind outside the list, a ticket that has
 no such verdict, and a verdict that judged that very tip. `set-verdict`
 writes a fresh verdict: replaying is what lifts an invalidation.
 
+`set-fidelity` is called by `bin/prototype-fidelity` (T16,
+`docs/PROTOTYPE_FIDELITY.md`) with what it compared at `--commit` (`--file`:
+`screens`, `states`, `deviations`). The verdict is computed here —
+`unfavorable` as soon as there is one deviation — and written with the
+result, as `gc.flow.verdict.fidelity`, in one tracker write. It refuses, and
+writes nothing: a file that carries a `verdict` or any other field; a result
+without screen, without state, or with a state without viewport or anchor (a
+result that compared nothing); a deviation outside its shape, of a kind
+outside the list, on a state that was not compared, or without its anchor;
+and a result whose record is not a piece of the evidence store captured at
+that commit (`--piece`): it is written by code, never given.
+
+`raise-planning-exception` is called by `bin/ticket-exit` (T16,
+`docs/TICKET_EXIT.md`) before the request reaches the operator. It refuses a
+kind outside the list, a summary that is not one line, a malformed anchor
+name or one given twice, anchors without `--accept-option` and the reverse.
+The answer the operator gave to the previous exception is stored with it;
+the same exception again writes nothing; another one replaces the one that
+was still open. **Nothing here resolves a Planning Exception**: the answer
+is the operator's, written by `bin/escalation-door repondre`.
+
+`show` renders `planning_exceptions` with, for each, a computed `state`
+(`open`, `resolved`), the `response` and `accepted`: true when it names
+anchors and was answered by its `accept_option`. The last one is resolved
+when the ticket carries an answer (`gc.escalation_response_at`) given since
+it was raised — not the one that was already there, and no request left
+open (`gc.needs_benjamin` is `none`). `accepted_anchors` is the union of the
+anchors of the accepted ones. `fidelity` is rendered with each deviation's
+`status` — `accepté par Benjamin` when its anchor is one of them, else
+`ouvert` — and a computed `state`: `vert` without deviation, `accepté par
+Benjamin` when every deviation is, else `rouge`. The stored verdict is not
+rewritten: a gate reads `fidelity.state`.
+
 A piece name is made of letters, digits, `_` and `.` only: the tracker
 refuses any metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*` (observed on bd
 1.2.2), so a hyphen is refused here before it is tried.
@@ -358,7 +396,10 @@ TDD (`tdd`, `{step: {commit, at, base?, reason?}}`), its stop (`stop`,
 (`models`), its Ticket Handoff (`handoff`), its parking
 (`park`) and its Declared Scope (`declared_scope`, a list of paths), each
 `null` when the ticket has none, and what the merge command did of it
-(`merge`, `null` while it did nothing); and for the convoy the Spec it
+(`merge`, `null` while it did nothing), the Planning Exceptions it raised
+(`planning_exceptions`, an empty list when none), the anchors whose
+deviation a resolved one accepts (`accepted_anchors`) and the result of its
+fidelity check (`fidelity`, `null` before the first one); and for the convoy the Spec it
 delivers (`spec`, `null` when it names none), its counters, its open factory
 incident (`incident`, `null` when there is none) and the integration branch
 of its Spec (`integration`, `null` before it is opened).
@@ -420,3 +461,6 @@ refusal, each refusal re-reading the tracker to prove nothing was written.
 contract on the real `gc`/`bd` in a disposable city, a Ticket Handoff of
 20 kB, a parking along real `blocks` edges, and the integration branch, an
 invalidated verdict and a merge (T18) included.
+`tests/prototype-fidelity-demonstration-test.sh` (local-only) reads the
+fidelity result and an answered Planning Exception back from the real
+tracker (T16).

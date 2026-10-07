@@ -13,7 +13,9 @@ commit), its counters, its evidence fingerprints and its gate records, the
 steps of its TDD and its stop (T10), the review of its criterion tests
 before the freeze (T13), its code review and the model each delivery role
 ran on (T14), its Ticket Evaluation on the launched product (T15), its
-Ticket Handoff and its parking (T11), the
+Ticket Handoff and its parking (T11), the result of the mechanical fidelity
+check against the Validated Prototype and the Planning Exceptions that name
+an anchor (T16), the
 integration branch of the convoy's Spec and what the merge command did of a
 ticket (T18), and the convoy's open factory incident. No other script
 invents a `gc.flow.*` field: a missing field is added here.
@@ -49,6 +51,8 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state release-evaluation CONVOY TICKET --state-file PATH [--state-file PATH] [--withdraw]
     convoy-state set-handoff  CONVOY TICKET --file PATH
     convoy-state park         CONVOY TICKET --cause CAUSE --detail LINE
+    convoy-state set-fidelity CONVOY TICKET --commit SHA --piece NAME --file PATH
+    convoy-state raise-planning-exception CONVOY TICKET --kind KIND --summary LINE [--anchor NAME ...] [--accept-option LETTER]
     convoy-state set-integration CONVOY --branch NAME --protected NAME --base SHA
     convoy-state set-merge    CONVOY TICKET --outcome OUTCOME --ticket-commit SHA --integration SHA [--commit SHA]
     convoy-state invalidate-verdicts CONVOY TICKET --tip SHA --kind KIND [--kind KIND]
@@ -127,6 +131,13 @@ KEY_SESSION = PREFIX + "session"
 KEY_CODE_REVIEW = PREFIX + "code_review"
 KEY_MODELS = PREFIX + "models"
 KEY_EVALUATION = PREFIX + "evaluation"
+KEY_FIDELITY = PREFIX + "fidelity"
+KEY_PLANNING_EXCEPTIONS = PREFIX + "planning_exceptions"
+# What bin/escalation-door writes on a bead when the operator answers a
+# request (`repondre`); a Planning Exception is resolved by that answer. Read only.
+KEY_NEEDS_BENJAMIN = "gc.needs_benjamin"
+KEY_RESPONSE_OPTION = "gc.escalation_response_option"
+KEY_RESPONSE_AT = "gc.escalation_response_at"
 # The key Gas City and bin/ticket-exit read the session of a bead under.
 KEY_SESSION_NAME = "gc.session_name"
 
@@ -194,6 +205,18 @@ PARK_CAUSES = ("planning_exception", "operator_request")
 MERGE_OUTCOMES = ("merged", "conflict", "red")
 MERGE_OUTCOMES_WITH_COMMIT = ("merged", "red")
 
+# The mechanical fidelity check against the Validated Prototype (T16, Spec
+# §3): what a deviation is, and the three states of a result. A deviation is
+# never lifted by its author: only a resolved Planning Exception that names
+# the anchor turns it « accepté par Benjamin ».
+DEVIATION_KINDS = ("absent", "structure", "style", "token")
+DEVIATION_KIND_WITHOUT_ANCHOR = "token"
+FIDELITY_GREEN = "vert"
+FIDELITY_RED = "rouge"
+FIDELITY_ACCEPTED = "accepté par Benjamin"
+DEVIATION_OPEN = "ouvert"
+PLANNING_EXCEPTION_KINDS = ("semantic", "topology")
+
 EXIT_REFUSED = 1
 EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
@@ -210,6 +233,8 @@ BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")
 # A user story is named by its number in the Spec ("1. As a ...").
 STORY_RE = re.compile(r"^[1-9][0-9]*$")
 BEAD_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$")
+ANCHOR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+OPTION_LETTER_RE = re.compile(r"^[a-z]$")
 CRITERION_RE = re.compile(r"^\s*-\s+\[[ xX]\]\s+(.*\S)\s*$")
 QUESTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 FINDING_ID_RE = re.compile(r"^F[1-9][0-9]*\.[1-9][0-9]*$")
@@ -1019,6 +1044,131 @@ def handoff_record(raw: Any, evidence: dict[str, Any] | None = None) -> dict[str
     return record
 
 
+def names_of(value: Any, what: str) -> list[str]:
+    if not isinstance(value, list) or not value or any(
+            not isinstance(name, str) or not name.strip() or "\n" in name for name in value) or len(set(value)) != len(value):
+        raise Refusal(f"{what} : liste absente, vide ou mal formée ({value!r})")
+    return value
+
+
+def fidelity_record(raw: Any, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The result of the mechanical fidelity check of a ticket (T16): the
+    commit it compared, the screens, per prototyped state the viewports and
+    the anchors it compared, and every deviation, named by state, viewport,
+    anchor and property. The verdict is the one the deviations give. With
+    `metadata` (at a write), the full record must be a piece of the evidence
+    store captured at that commit: the result is written by code."""
+    record = stored_record(raw, ("commit", "verdict", "piece", "screens", "states", "deviations", "at"))
+    commit = valid_commit(record["commit"], "commit du contrôle de fidélité")
+    names_of(record["screens"], "écrans comparés")
+    states = record["states"]
+    if not isinstance(states, dict) or not states:
+        raise Refusal("contrôle de fidélité sans état comparé : un résultat porte sur au moins un état prototypé")
+    for state, compared in states.items():
+        if not isinstance(compared, dict) or set(compared) != {"viewports", "anchors"}:
+            raise Refusal(f"état {state} mal formé : {compared!r} (attendu : viewports, anchors)")
+        names_of(compared["viewports"], f"état {state}, tailles d'écran comparées")
+        names_of(compared["anchors"], f"état {state}, ancres comparées")
+    deviations = record["deviations"]
+    if not isinstance(deviations, list):
+        raise Refusal(f"écarts mal formés : {deviations!r}")
+    for deviation in deviations:
+        if not isinstance(deviation, dict) or set(deviation) != {"state", "viewport", "anchor", "kind", "property"}:
+            raise Refusal(f"écart mal formé : {deviation!r} (attendu : state, viewport, anchor, kind, property)")
+        kind = one_of(deviation["kind"], DEVIATION_KINDS, "genre d'écart")
+        if deviation["state"] not in states:
+            raise Refusal(f"écart sur un état non comparé : {deviation['state']!r}")
+        single_line(deviation["property"], "propriété de l'écart")
+        located = (deviation["viewport"], deviation["anchor"])
+        if kind == DEVIATION_KIND_WITHOUT_ANCHOR:
+            if located != (None, None):
+                raise Refusal(f"écart de token mal formé : {deviation!r} (un token se lit sur les sources, sans ancre)")
+        elif any(not isinstance(name, str) or not name for name in located):
+            raise Refusal(f"écart sans ancre ou sans taille d'écran : {deviation!r}")
+    expected = "unfavorable" if deviations else "favorable"
+    if record["verdict"] != expected:
+        raise Refusal(f"verdict de fidélité incohérent : {record['verdict']!r} avec {len(deviations)} écart(s)")
+    if not isinstance(record["piece"], str) or not PIECE_RE.match(record["piece"]):
+        raise Refusal(f"pièce du relevé de fidélité absente ou mal formée : {record['piece']!r}")
+    if metadata is not None:
+        problem = evidence_at(metadata, record["piece"], commit)
+        if problem:
+            raise Refusal(f"relevé de fidélité sans pièce de preuve : {problem} ; il est écrit par bin/prototype-fidelity")
+    return record
+
+
+def planning_exceptions_record(raw: Any) -> list[dict[str, Any]]:
+    """The Planning Exceptions raised on a ticket (Spec §3, §5), oldest
+    first: the question, the anchors whose deviation it asks to accept and
+    the option of the request that accepts it, and the answer once a later
+    one was raised (the answer of the last one is read on the ticket)."""
+    entries = stored_record(raw, ("entries",))["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise Refusal(f"Planning Exceptions mal formées : {entries!r}")
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) - {"resolution"} != {
+                "kind", "summary", "anchors", "accept_option", "prior_response_at", "at"}:
+            raise Refusal(f"Planning Exception mal formée : {entry!r}")
+        one_of(entry["kind"], PLANNING_EXCEPTION_KINDS, "genre de Planning Exception")
+        single_line(entry["summary"], "résumé de la Planning Exception")
+        anchors, option = entry["anchors"], entry["accept_option"]
+        if not isinstance(anchors, list) or any(not isinstance(a, str) or not ANCHOR_RE.match(a) for a in anchors):
+            raise Refusal(f"ancres de la Planning Exception mal formées : {anchors!r}")
+        if bool(anchors) != (option is not None) or (option is not None and not (
+                isinstance(option, str) and OPTION_LETTER_RE.match(option))):
+            raise Refusal(
+                f"Planning Exception mal formée : ancres {anchors!r}, option d'acceptation {option!r} "
+                "(l'option qui accepte l'écart va avec les ancres qu'elle nomme)")
+        resolution = entry.get("resolution")
+        if resolution is not None and not (
+                isinstance(resolution, dict) and set(resolution) == {"option", "at"}
+                and all(isinstance(value, str) and value for value in resolution.values())):
+            raise Refusal(f"réponse de Planning Exception mal formée : {resolution!r}")
+    return entries
+
+
+def live_resolution(entry: dict[str, Any], metadata: dict[str, Any]) -> dict[str, str] | None:
+    """The operator's answer to the last Planning Exception, as the
+    escalation door wrote it on the ticket: an answer given since it was
+    raised, with no request left open."""
+    option, at = metadata.get(KEY_RESPONSE_OPTION), metadata.get(KEY_RESPONSE_AT)
+    if metadata.get(KEY_NEEDS_BENJAMIN) != "none" or not isinstance(at, str) or not isinstance(option, str):
+        return None
+    if at == entry["prior_response_at"] or at < entry["at"]:
+        return None
+    return {"option": option, "at": at}
+
+
+def planning_exceptions_rendered(entries: list[dict[str, Any]], metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    out = []
+    for index, entry in enumerate(entries):
+        resolution = entry.get("resolution")
+        if resolution is None and index == len(entries) - 1:
+            resolution = live_resolution(entry, metadata)
+        rendered = {key: value for key, value in entry.items() if key not in ("resolution", "prior_response_at")}
+        rendered["state"] = "resolved" if resolution else "open"
+        rendered["response"] = resolution
+        rendered["accepted"] = bool(resolution) and bool(entry["anchors"]) and resolution["option"] == entry["accept_option"]
+        out.append(rendered)
+    return out
+
+
+def fidelity_rendered(record: dict[str, Any], accepted_anchors: list[str]) -> dict[str, Any]:
+    """The result with its computed state: green without deviation; else red,
+    unless a resolved Planning Exception names the anchor of each one."""
+    deviations = [
+        {**deviation, "status": FIDELITY_ACCEPTED if deviation["anchor"] in accepted_anchors else DEVIATION_OPEN}
+        for deviation in record["deviations"]
+    ]
+    if not deviations:
+        state = FIDELITY_GREEN
+    elif all(deviation["status"] == FIDELITY_ACCEPTED for deviation in deviations):
+        state = FIDELITY_ACCEPTED
+    else:
+        state = FIDELITY_RED
+    return {**record, "deviations": deviations, "state": state}
+
+
 def park_record(raw: Any) -> dict[str, Any]:
     """Why a ticket is parked (Spec §5): the cause, and the ticket whose
     Ticket Exit parked it (itself, or the one it descends from)."""
@@ -1273,7 +1423,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         if not key.startswith(PREFIX) or key in (
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
             KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION, KEY_TEST_REVIEW, KEY_CODE_REVIEW, KEY_MODELS,
-            KEY_EVALUATION,
+            KEY_EVALUATION, KEY_FIDELITY, KEY_PLANNING_EXCEPTIONS,
         ):
             continue
         raw = metadata[key]
@@ -1347,6 +1497,25 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             except Refusal as exc:
                 out[name] = {"unruled": f"{key} : {exc}", "raw": metadata[key]}
                 flag(key, out[name]["unruled"])
+
+    # The Planning Exceptions raised on the ticket and the anchors whose
+    # deviation a resolved one accepts; then the fidelity result, whose state
+    # is computed from them (T16). None, or an empty list, when there is none.
+    out["planning_exceptions"], out["accepted_anchors"], out["fidelity"] = [], [], None
+    if KEY_PLANNING_EXCEPTIONS in metadata:
+        try:
+            raised = planning_exceptions_rendered(planning_exceptions_record(metadata[KEY_PLANNING_EXCEPTIONS]), metadata)
+            out["planning_exceptions"] = raised
+            out["accepted_anchors"] = sorted({anchor for entry in raised if entry["accepted"] for anchor in entry["anchors"]})
+        except Refusal as exc:
+            out["planning_exceptions"] = {"unruled": f"{KEY_PLANNING_EXCEPTIONS} : {exc}", "raw": metadata[KEY_PLANNING_EXCEPTIONS]}
+            flag(KEY_PLANNING_EXCEPTIONS, out["planning_exceptions"]["unruled"])
+    if KEY_FIDELITY in metadata:
+        try:
+            out["fidelity"] = fidelity_rendered(fidelity_record(metadata[KEY_FIDELITY]), out["accepted_anchors"])
+        except Refusal as exc:
+            out["fidelity"] = {"unruled": f"{KEY_FIDELITY} : {exc}", "raw": metadata[KEY_FIDELITY]}
+            flag(KEY_FIDELITY, out["fidelity"]["unruled"])
 
     def has_gate(name: str) -> bool:
         return "at" in gates.get(name, {})
@@ -2539,6 +2708,69 @@ def cmd_set_handoff(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, values)
 
 
+def cmd_set_fidelity(args: argparse.Namespace) -> int:
+    """Record the result of the mechanical fidelity check of a ticket, as
+    bin/prototype-fidelity measured it at `--commit`: what it compared and
+    every deviation. The verdict is computed here and written with it, in
+    one tracker write; the full record must be a piece of the evidence store
+    at that commit."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    given = json_argument(args.file, "résultat du contrôle de fidélité")
+    unknown = sorted(set(given) - {"screens", "states", "deviations"})
+    if unknown:
+        raise Refusal(
+            f"champs inattendus dans le résultat du contrôle de fidélité : {', '.join(unknown)} "
+            "(le verdict est calculé ici, à partir des écarts, jamais fourni)")
+    commit = valid_commit(args.commit)
+    at = now()
+    verdict = "unfavorable" if given.get("deviations") else "favorable"
+    record = fidelity_record(encode({
+        "commit": commit, "verdict": verdict, "piece": args.piece, "screens": given.get("screens"),
+        "states": given.get("states"), "deviations": given.get("deviations"), "at": at,
+    }), metadata_of(ticket))
+    values = {KEY_FIDELITY: encode(record),
+              VERDICT_PREFIX + "fidelity": encode({"state": verdict, "commit": commit, "at": at})}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_raise_planning_exception(args: argparse.Namespace) -> int:
+    """Record the Planning Exception a ticket raises (bin/ticket-exit, before
+    the request reaches the operator), with the anchors whose deviation from
+    the Validated Prototype it asks to accept and the option of the request
+    that accepts it. The answer is the operator's, through the escalation
+    door: nothing here resolves one. The answer given to the previous one is
+    kept with it; the same exception again writes nothing, another one
+    replaces the one that was still open."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    anchors = list(args.anchor)
+    for anchor in anchors:
+        if not ANCHOR_RE.match(anchor):
+            raise Refusal(f"nom d'ancre mal formé : {anchor!r}")
+    if len(set(anchors)) != len(anchors):
+        raise Refusal(f"ancre nommée deux fois : {anchors!r}")
+    entry = {
+        "kind": one_of(args.kind, PLANNING_EXCEPTION_KINDS, "genre de Planning Exception"),
+        "summary": single_line(args.summary, "résumé de la Planning Exception"),
+        "anchors": anchors, "accept_option": args.accept_option,
+    }
+    entries = planning_exceptions_record(metadata[KEY_PLANNING_EXCEPTIONS]) if KEY_PLANNING_EXCEPTIONS in metadata else []
+    if entries and "resolution" not in entries[-1]:
+        resolution = live_resolution(entries[-1], metadata)
+        if resolution:
+            entries[-1]["resolution"] = resolution
+        elif {key: entries[-1][key] for key in entry} == entry:
+            return done(args.convoy, args.ticket, {})
+        else:
+            entries.pop()
+    prior = metadata.get(KEY_RESPONSE_AT)
+    entries.append({**entry, "prior_response_at": prior if isinstance(prior, str) else None, "at": now()})
+    values = {KEY_PLANNING_EXCEPTIONS: encode({"entries": planning_exceptions_record(encode({"entries": entries}))})}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
 def blockers_of(ticket_id: str) -> list[str]:
     """The beads a ticket waits for (`blocks` edges), read on the ticket."""
     out = run_gc(["bd", "show", ticket_id, "--json"])
@@ -2781,6 +3013,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("park", cmd_park)
     p.add_argument("--cause")
     p.add_argument("--detail")
+    p = command("set-fidelity", cmd_set_fidelity)
+    p.add_argument("--commit")
+    p.add_argument("--piece")
+    p.add_argument("--file")
+    p = command("raise-planning-exception", cmd_raise_planning_exception)
+    p.add_argument("--kind")
+    p.add_argument("--summary")
+    p.add_argument("--anchor", action="append", default=[])
+    p.add_argument("--accept-option")
     p = command("set-integration", cmd_set_integration, ticket=False)
     p.add_argument("--branch")
     p.add_argument("--protected")

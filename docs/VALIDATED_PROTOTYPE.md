@@ -21,6 +21,10 @@ JSON output carries one record per property (`property`, `ok`,
 must be a state of the prototype. Failure messages are in French
 (Operator Language): `bin/spec-approve` quotes them in its refusal.
 
+The delivered screen is compared to this frozen version, state by state, by
+`bin/prototype-fidelity` (`docs/PROTOTYPE_FIDELITY.md`): the anchors named
+here are what it measures.
+
 ## The frozen version
 
 A directory holding static pages, datasets and one manifest,

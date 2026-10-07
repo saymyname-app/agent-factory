@@ -250,6 +250,29 @@ class ProjectPlanningProfileTest(unittest.TestCase):
         self.assertNotIn("red_error_types", launch)
         self.assertNotIn("import_rule", launch)
 
+    # --- screens compared to the Validated Prototype (T16, af-622nya) ---------
+
+    def test_describe_renders_the_screens_of_the_fixture(self):
+        launch = json.loads(self.describe(self.LAUNCH_FIXTURE_DESCRIPTOR, check=True).stdout)["launch"]
+
+        self.assertEqual([{"name": "accueil", "path": "/", "states": ["empty", "content"]}], launch["screens"])
+
+    def test_malformed_screens_are_rejected(self):
+        screen = {"name": "accueil", "path": "/", "states": ["empty"]}
+        for screens, named in (
+            ({"accueil": screen}, "screens"),
+            ([{**screen, "path": "accueil"}], "screens[0].path"),
+            ([{**screen, "states": []}], "screens[0].states"),
+            ([{**screen, "states": ["inconnu"]}], "inconnu"),
+            ([screen, {**screen, "path": "/autre"}], "accueil"),
+            ([screen, {**screen, "name": "autre"}], "empty"),
+        ):
+            with self.subTest(screens=screens):
+                status, error = self.describe_launch(screens=screens)
+                self.assertNotEqual(0, status)
+                self.assertFalse(error["valid"])
+                self.assertIn(named, error["error"])
+
     def test_malformed_optional_launch_declarations_are_rejected(self):
         for launch, named in (
             ({"red_error_types": "AttributeError"}, "red_error_types"),

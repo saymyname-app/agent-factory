@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""Fake headless browser for prototype-fidelity-test.py (T16, af-622nya).
+
+Takes the two command lines bin/prototype-fidelity and bin/evidence-capture
+give a Chromium (observed on chrome-headless-shell 1243, 2026-10-07):
+
+- `--screenshot=<file> ... <url>`: handed to the fake browser of
+  evidence-capture-test.py, which fetches the page and writes a 1x1 PNG whose
+  pixel is derived from it.
+- `--dump-dom ... <url of the measuring page>`: the real browser runs the
+  script of the measuring page, which reads the anchors of the page named by
+  its `target` parameter and writes them as JSON in `<pre
+  id="fidelity-measure">`. This fake fetches the target for real and answers
+  the same JSON from a small model of CSS: the `<style>` blocks of the page,
+  rules whose selector is `:root`, a tag name or `[attribute="value"]`,
+  `var(--token)`, `@media (max-width: Npx)` against `--window-size`, and
+  inheritance of the text properties. It is enough to tell two pages apart;
+  it is not a rendering engine.
+
+Each fetched URL is appended to EVIDENCE_FAKE_BROWSER_LOG when set.
+"""
+import html
+import json
+import os
+import re
+import sys
+import urllib.parse
+import urllib.request
+from html.parser import HTMLParser
+from pathlib import Path
+
+SCREENSHOT_FAKE = Path(__file__).resolve().parents[1] / "evidence-capture" / "browser"
+INHERITED = ("color", "font-family", "font-size", "font-weight", "line-height")
+DEFAULTS = {
+    "color": "rgb(0, 0, 0)", "font-family": "serif", "font-size": "16px", "font-weight": "400",
+    "line-height": "normal", "background-color": "rgba(0, 0, 0, 0)", "border-radius": "0px", "padding": "0px",
+    "display": "block", "box-shadow": "none",
+}
+VOID = {"meta", "link", "br", "hr", "img", "input"}
+
+
+class Page(HTMLParser):
+    def __init__(self, attribute):
+        super().__init__(convert_charrefs=True)
+        self.attribute = attribute
+        self.stack = []      # (tag, attributes) of the open elements
+        self.elements = []   # (tag, attributes, ancestors) of every anchored element
+        self.css = []
+        self.in_style = False
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "style":
+            self.in_style = True
+        if self.attribute in attributes:
+            self.elements.append((tag, attributes, list(self.stack)))
+        if tag not in VOID:
+            self.stack.append((tag, attributes))
+
+    def handle_endtag(self, tag):
+        if tag == "style":
+            self.in_style = False
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index][0] == tag:
+                del self.stack[index:]
+                break
+
+    def handle_data(self, data):
+        if self.in_style:
+            self.css.append(data)
+
+
+def rules_of(css, width):
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+
+    def media(match):
+        return match.group(2) if width <= int(match.group(1)) else ""
+
+    css = re.sub(r"@media\s*\(\s*max-width\s*:\s*(\d+)px\s*\)\s*\{((?:[^{}]*\{[^{}]*\})*[^{}]*)\}", media, css)
+    out = []
+    for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        declarations = {}
+        for declaration in body.split(";"):
+            if ":" in declaration:
+                name, value = declaration.split(":", 1)
+                declarations[name.strip()] = value.strip()
+        for selector in selectors.split(","):
+            out.append((selector.strip(), declarations))
+    return out
+
+
+def matches(selector, tag, attributes):
+    if selector == tag:
+        return True
+    found = re.fullmatch(r"\[([\w-]+)=\"([^\"]*)\"\]", selector)
+    return bool(found) and attributes.get(found.group(1)) == found.group(2)
+
+
+def measure(target, attribute, properties, width):
+    with urllib.request.urlopen(target, timeout=5) as response:
+        source = response.read().decode("utf-8", errors="replace")
+    page = Page(attribute)
+    page.feed(source)
+    rules = rules_of("\n".join(page.css), width)
+    tokens = {}
+    for selector, declarations in rules:
+        if selector in (":root", "html"):
+            tokens.update({name: value for name, value in declarations.items() if name.startswith("--")})
+
+    def resolved(value):
+        return re.sub(r"var\(\s*(--[\w-]+)\s*\)", lambda found: tokens.get(found.group(1), ""), value)
+
+    def own(tag, attributes):
+        values = {}
+        for selector, declarations in rules:
+            if matches(selector, tag, attributes):
+                values.update({name: resolved(value) for name, value in declarations.items()})
+        return values
+
+    anchors = []
+    for tag, attributes, ancestors in page.elements:
+        styles = dict(DEFAULTS)
+        for ancestor_tag, ancestor_attributes in ancestors:
+            styles.update({name: value for name, value in own(ancestor_tag, ancestor_attributes).items() if name in INHERITED})
+        styles.update(own(tag, attributes))
+        parent = next((a[attribute] for _, a in reversed(ancestors) if attribute in a), None)
+        anchors.append({
+            "name": attributes[attribute], "tag": tag, "parent": parent,
+            "styles": {name: styles.get(name, "") for name in properties},
+        })
+    return {"ok": True, "anchors": anchors}
+
+
+def main(args):
+    if any(arg.startswith("--screenshot=") for arg in args):
+        os.execv(sys.executable, [sys.executable, str(SCREENSHOT_FAKE), *args])
+    url = args[-1] if args and not args[-1].startswith("--") else None
+    if "--dump-dom" not in args or url is None:
+        sys.stderr.write(f"fake browser: no canned response configured for: {' '.join(args)}\n")
+        return 1
+    mode = os.environ.get("FIDELITY_FAKE_BROWSER_MODE")
+    if mode == "no-measure":
+        print("<html><body></body></html>")
+        return 0
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+    target = query["target"][0]
+    size = next((arg.split("=", 1)[1] for arg in args if arg.startswith("--window-size=")), "1280,800")
+    log = os.environ.get("EVIDENCE_FAKE_BROWSER_LOG")
+    if log:
+        with open(log, "a", encoding="utf-8") as handle:
+            handle.write(target + "\n")
+    result = measure(target, query["attr"][0], query["props"][0].split(","), int(size.split(",")[0]))
+    print(f'<html><body><pre id="fidelity-measure">{html.escape(json.dumps(result))}</pre></body></html>')
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
