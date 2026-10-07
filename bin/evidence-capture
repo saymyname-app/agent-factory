@@ -13,6 +13,8 @@ refused by `verify`.
                                               [--timeout SECONDS] [--expect-exit CODE] -- COMMAND [ARG ...]
     evidence-capture screenshot CONVOY TICKET --piece NAME --launch-state FILE [--path /PATH]
                                               [--window-size WIDTHxHEIGHT]
+    evidence-capture comparison CONVOY TICKET --piece NAME --launch-state FILE --reference-url URL
+                                              [--path /PATH] [--window-size WIDTHxHEIGHT] [--color-scheme light|dark]
     evidence-capture verify     CONVOY TICKET [--piece NAME]
     evidence-capture purge      --spec SPEC
 
@@ -25,7 +27,10 @@ output. With `--expect-exit CODE`, the piece is filed only if COMMAND exits
 with that code: any other exit is a refusal that carries the exit code and
 the output, and files nothing (what a script that proves a step uses, so
 that only its passing report becomes a piece). `screenshot` records an image of one address of that launched
-product. `verify` fails if a piece of the store no longer matches the
+product. `comparison` captures that address and a reference page served on
+this host (a state of the Validated Prototype) at the same moment, and
+records them side by side with an image of their difference; it counts the
+differing pixels and judges nothing (bin/prototype-fidelity, T16). `verify` fails if a piece of the store no longer matches the
 fingerprint of the tracker, or was not produced by this tool. `purge` removes
 the pieces of one Spec and no other.
 
@@ -50,9 +55,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import struct
 import urllib.error
 import urllib.request
 import uuid
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +80,12 @@ BEAD_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$
 COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 # What bin/project-launch writes as the address of a launched product.
 ADDRESS_RE = re.compile(r"^http://(?:127\.0\.0\.1|localhost):[0-9]+$")
+# A reference page of a comparison is served on this host, like the product.
+REFERENCE_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}/\S*$")
+DIFFERENCE_SUFFIX = "--difference.png"
+# The colour scheme a comparison is rendered in, as Chromium numbers it
+# (observed on chrome-headless-shell 1243, 2026-10-07).
+COLOUR_SCHEMES = {"light": "1", "dark": "0"}
 WINDOW_RE = re.compile(r"^([1-9][0-9]{1,4})x([1-9][0-9]{1,4})$")
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
@@ -315,12 +328,14 @@ def http_status_of(url: str) -> int:
         raise Refusal(f"le produit lancé ne répond pas à {url} : {getattr(exc, 'reason', exc)}") from exc
 
 
-def take_screenshot(browser: str, url: str, width: str, height: str) -> bytes:
+def take_screenshot(browser: str, url: str, width: str, height: str, colour_scheme: str | None = None) -> bytes:
     work = tempfile.mkdtemp(prefix="evidence-capture-")
     image = Path(work) / "capture.png"
     argv = [
         browser, "--headless", "--disable-gpu", "--hide-scrollbars", f"--user-data-dir={work}/profile",
-        f"--window-size={width},{height}", f"--screenshot={image}", url,
+        f"--window-size={width},{height}",
+        *([f"--blink-settings=preferredColorScheme={COLOUR_SCHEMES[colour_scheme]}"] if colour_scheme else []),
+        f"--screenshot={image}", url,
     ]
     proc = None
     try:
@@ -364,8 +379,121 @@ def take_screenshot(browser: str, url: str, width: str, height: str) -> bytes:
             time.sleep(0.1)
 
 
+# --- images of a comparison ------------------------------------------------------
+
+Pixels = tuple[int, int, list[bytearray]]  # width, height, one RGB row per line
+
+
+def png_pixels(data: bytes, what: str) -> Pixels:
+    """The pixels of a PNG as a headless Chromium writes it (8 bits per
+    channel, not interlaced); transparency is dropped."""
+    unreadable = Refusal(f"{what} : image PNG illisible, la comparaison ne peut pas être dessinée")
+    try:
+        width, height, depth, colour, _, _, interlace = struct.unpack(">IIBBBBB", data[16:29])
+        chunks, palette, at = [], b"", 8
+        while at < len(data):
+            length, kind = struct.unpack(">I4s", data[at:at + 8])
+            body = data[at + 8:at + 8 + length]
+            if kind == b"IDAT":
+                chunks.append(body)
+            elif kind == b"PLTE":
+                palette = body
+            at += 12 + length
+        raw = zlib.decompress(b"".join(chunks))
+    except (struct.error, zlib.error) as exc:
+        raise unreadable from exc
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(colour)
+    if depth != 8 or interlace or channels is None or not width or not height or len(raw) < height * (1 + width * channels):
+        raise unreadable
+    stride, rows, previous = width * channels, [], bytearray(width * channels)
+    for line in range(height):
+        start = line * (stride + 1)
+        kind, row = raw[start], bytearray(raw[start + 1:start + 1 + stride])
+        for index in range(stride if kind else 0):
+            left = row[index - channels] if index >= channels else 0
+            up = previous[index]
+            corner = previous[index - channels] if index >= channels else 0
+            if kind == 1:
+                row[index] = (row[index] + left) & 255
+            elif kind == 2:
+                row[index] = (row[index] + up) & 255
+            elif kind == 3:
+                row[index] = (row[index] + (left + up) // 2) & 255
+            elif kind == 4:
+                estimate = left + up - corner
+                near = min((abs(estimate - left), 0, left), (abs(estimate - up), 1, up), (abs(estimate - corner), 2, corner))
+                row[index] = (row[index] + near[2]) & 255
+            elif kind != 0:
+                raise unreadable
+        previous = row
+        rgb = bytearray(width * 3)
+        if colour == 3:
+            for x in range(width):
+                rgb[x * 3:x * 3 + 3] = palette[row[x] * 3:row[x] * 3 + 3].ljust(3, b"\0")
+        else:
+            for channel in range(3):
+                rgb[channel::3] = row[(channel if channels >= 3 else 0)::channels]
+        rows.append(rgb)
+    return width, height, rows
+
+
+def png_of(pixels: Pixels) -> bytes:
+    width, height, rows = pixels
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    return (
+        PNG_MAGIC + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"".join(b"\0" + bytes(row) for row in rows), 6)) + chunk(b"IEND", b"")
+    )
+
+
+def side_by_side(reference: Pixels, delivered: Pixels) -> Pixels:
+    """The reference on the left, the delivered page on the right, one grey
+    column between them; a shorter image is completed in white."""
+    height = max(reference[1], delivered[1])
+    rows = []
+    for line in range(height):
+        row = bytearray()
+        for width, lines, tall in ((reference[0], reference[2], reference[1]), (delivered[0], delivered[2], delivered[1])):
+            row += lines[line] if line < tall else b"\xff" * (width * 3)
+            if lines is reference[2]:
+                row += b"\x80\x80\x80"
+        rows.append(row)
+    return reference[0] + 1 + delivered[0], height, rows
+
+
+def difference_of(reference: Pixels, delivered: Pixels) -> tuple[Pixels, int]:
+    """The image of the difference: a differing pixel in red, the others as
+    the faded reference; and how many differ. A pixel one image does not
+    have differs. Nothing is judged from the count."""
+    width, height = max(reference[0], delivered[0]), max(reference[1], delivered[1])
+    rows, differing = [], 0
+    for line in range(height):
+        row = bytearray(width * 3)
+        same = line < reference[1] and line < delivered[1] and reference[2][line] == delivered[2][line]
+        if same:
+            for channel in range(3):
+                row[channel::3] = bytes(255 - (255 - sum(reference[2][line][x * 3:x * 3 + 3]) // 3) // 4 for x in range(width))
+        for x in range(0 if same else width):
+            sides = [
+                bytes(lines[line][x * 3:x * 3 + 3]) if line < tall and x < wide else None
+                for wide, tall, lines in (reference, delivered)
+            ]
+            if sides[0] != sides[1]:
+                differing += 1
+                row[x * 3:x * 3 + 3] = b"\xe2\x2d\x25"
+            else:
+                grey = sum(sides[0]) // 3
+                row[x * 3:x * 3 + 3] = bytes((255 - (255 - grey) // 4,)) * 3
+        rows.append(row)
+    return (width, height, rows), differing
+
+
 def file_piece(
     store: Path, convoy_id: str, ticket_id: str, spec: str, record: dict[str, Any], image: bytes | None,
+    difference: bytes | None = None,
 ) -> dict[str, Any]:
     """Seal the record, write the piece in the store and its fingerprint in
     the tracker. If the tracker refuses, the store keeps what it had."""
@@ -382,6 +510,8 @@ def file_piece(
     final = {ticket_dir / f"{piece}.json": data}
     if image is not None:
         final[ticket_dir / record["image"]] = image
+    if difference is not None:
+        final[ticket_dir / record["difference"]] = difference
     pending = {ticket_dir / f".tmp-{uuid.uuid4().hex}": (path, content) for path, content in final.items()}
     try:
         for tmp, (_, content) in pending.items():
@@ -396,6 +526,8 @@ def file_piece(
         if image is None:
             # A command piece that replaces a screenshot piece leaves no image.
             (ticket_dir / f"{piece}.png").unlink(missing_ok=True)
+        if difference is None:
+            (ticket_dir / f"{piece}{DIFFERENCE_SUFFIX}").unlink(missing_ok=True)
     finally:
         for tmp in pending:
             tmp.unlink(missing_ok=True)
@@ -410,6 +542,8 @@ def file_piece(
     }
     if image is not None:
         out["image"] = str(ticket_dir / record["image"])
+    if difference is not None:
+        out["difference"] = str(ticket_dir / record["difference"])
     return out
 
 
@@ -463,7 +597,8 @@ def cmd_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_screenshot(args: argparse.Namespace) -> int:
+def screenshot_target(args: argparse.Namespace) -> tuple[str, Any]:
+    """What a capture of the launched product needs, checked before anything runs."""
     piece = valid_piece(args.piece)
     if args.launch_state is None:
         raise Refusal("--launch-state absent : une capture d'écran porte sur une adresse du produit lancé par bin/project-launch")
@@ -472,6 +607,11 @@ def cmd_screenshot(args: argparse.Namespace) -> int:
         raise Refusal(f"--window-size mal formé : {args.window_size!r} (attendu : LARGEURxHAUTEUR)")
     if not isinstance(args.path, str) or not args.path.startswith("/") or args.path.startswith("//") or re.search(r"\s", args.path):
         raise Refusal(f"--path mal formé : {args.path!r} (attendu : un chemin du produit lancé, qui commence par /)")
+    return piece, window
+
+
+def cmd_screenshot(args: argparse.Namespace) -> int:
+    piece, window = screenshot_target(args)
     store = usable_store()
     spec, _ = read_ticket(args.convoy, args.ticket)
     address, commit = launched_product(args.launch_state)
@@ -488,6 +628,51 @@ def cmd_screenshot(args: argparse.Namespace) -> int:
     )
     print(json.dumps(file_piece(store, args.convoy, args.ticket, spec, record, image),
                      indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_comparison(args: argparse.Namespace) -> int:
+    piece, window = screenshot_target(args)
+    reference_url = args.reference_url
+    if not isinstance(reference_url, str) or not REFERENCE_RE.match(reference_url):
+        raise Refusal(
+            f"--reference-url absent ou mal formé : {reference_url!r} (attendu : une page de référence servie "
+            "sur cet hôte, http://127.0.0.1:<port>/…)")
+    scheme = args.color_scheme
+    if scheme not in COLOUR_SCHEMES:
+        raise Refusal(f"--color-scheme hors de la liste fermée : {scheme!r} (attendu : {', '.join(COLOUR_SCHEMES)})")
+    store = usable_store()
+    spec, _ = read_ticket(args.convoy, args.ticket)
+    address, commit = launched_product(args.launch_state)
+    url = address + args.path
+    browser = find_browser()
+    http_status = http_status_of(url)
+    try:
+        reference_status = http_status_of(reference_url)
+    except Refusal as exc:
+        raise Refusal(f"la page de référence ne répond pas ({reference_url})") from exc
+    if reference_status != 200:
+        raise Refusal(f"la page de référence répond {reference_status} ({reference_url})")
+
+    # Both sides are captured now, by the same browser at the same size:
+    # no capture made earlier is ever compared.
+    width, height = window.group(1), window.group(2)
+    reference = png_pixels(take_screenshot(browser, reference_url, width, height, scheme), "page de référence")
+    delivered = png_pixels(take_screenshot(browser, url, width, height, scheme), "page livrée")
+    image = png_of(side_by_side(reference, delivered))
+    drawn, differing = difference_of(reference, delivered)
+    difference = png_of(drawn)
+
+    record = new_record("comparison", spec, args.convoy, args.ticket, piece, commit, url)
+    record.update(
+        reference=reference_url, image=f"{piece}.png", image_digest=digest_of(image),
+        difference=f"{piece}{DIFFERENCE_SUFFIX}", difference_digest=digest_of(difference),
+        differing_pixels=differing, pixels=drawn[0] * drawn[1], http_status=http_status,
+        window_size=f"{width}x{height}", color_scheme=scheme,
+    )
+    answer = file_piece(store, args.convoy, args.ticket, spec, record, image, difference)
+    answer.update(differing_pixels=differing, pixels=record["pixels"])
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
 
@@ -534,15 +719,16 @@ def check_piece(
         )
     out = {"piece": piece, "kind": record.get("kind"), "digest": fingerprint["digest"], "commit": record["commit"],
            "at": record.get("at"), "path": str(path)}
-    if record.get("kind") == "screenshot":
-        image = ticket_dir / f"{piece}.png"
+    images = {"screenshot": (("image", ".png"),), "comparison": (("image", ".png"), ("difference", DIFFERENCE_SUFFIX))}
+    for field, suffix in images.get(record.get("kind"), ()):
+        image = ticket_dir / f"{piece}{suffix}"
         try:
             image_digest = digest_of(image.read_bytes())
         except OSError as exc:
             raise Refusal(f"pièce {piece} : image absente du magasin ({image})") from exc
-        if record.get("image") != image.name or image_digest != record.get("image_digest"):
+        if record.get(field) != image.name or image_digest != record.get(f"{field}_digest"):
             raise Refusal(f"pièce {piece} : l'image du magasin ne correspond plus à celle de la capture ({image})")
-        out["image"] = str(image)
+        out[field] = str(image)
     return out
 
 
@@ -568,7 +754,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
             problems.append(str(exc))
     if args.piece is None:
         # Whatever else sits in the ticket's folder was not filed by a capture.
-        known = {f"{piece}.json" for piece in pieces} | {Path(entry["image"]).name for entry in verified if "image" in entry}
+        known = {f"{piece}.json" for piece in pieces} | {
+            Path(entry[field]).name for entry in verified for field in ("image", "difference") if field in entry}
         problems += [f"fichier sans empreinte dans le magasin : {ticket_dir / name}" for name in stored if name not in known]
     if problems:
         raise Refusal(" ; ".join(problems))
@@ -625,6 +812,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--launch-state")
     p.add_argument("--path", default="/")
     p.add_argument("--window-size", default="1280x800")
+    p = mode("comparison", cmd_comparison)
+    p.add_argument("--launch-state")
+    p.add_argument("--path", default="/")
+    p.add_argument("--window-size", default="1280x800")
+    p.add_argument("--reference-url")
+    p.add_argument("--color-scheme", default="light")
     mode("verify", cmd_verify)
     p = sub.add_parser("purge")
     p.add_argument("--spec")

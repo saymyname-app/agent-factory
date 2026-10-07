@@ -7,7 +7,7 @@ An author never ends in free text. Each Ticket Exit has a destination fixed
 here, by code:
 
     ticket-exit exit CONVOY TICKET --exit finished --repo DIR --handoff FILE
-    ticket-exit exit CONVOY TICKET --exit planning_exception --kind semantic|topology --summary LINE
+    ticket-exit exit CONVOY TICKET --exit planning_exception --kind semantic|topology --summary LINE [--anchor NAME ...]
     ticket-exit exit CONVOY TICKET --exit operator_request --request FILE
     ticket-exit exit CONVOY TICKET --exit technically_blocked --repair FILE
     ticket-exit exit CONVOY TICKET --exit interrupted --repo DIR [--handoff FILE]
@@ -21,7 +21,11 @@ demonstrate; a `prefactoring` has no such line), and while the diff of the ticke
 deferral marker (TODO, FIXME, « not wired », « à brancher ») that no declared
 « non fait » covers. `planning_exception` and `operator_request`: the ticket
 and every ticket that waits for it are parked, and the request reaches the
-operator through bin/escalation-door. `technically_blocked`: a `repair`
+operator through bin/escalation-door; a Planning Exception about a deviation
+from the Validated Prototype names its anchors (`--anchor`), and the request
+then offers the operator to accept that deviation: the fidelity check reads
+it as « accepté par Benjamin » once answered so, never before (T16).
+`technically_blocked`: a `repair`
 ticket is drafted by code and published by the patch door
 (bin/ticket-graph-publish bd-patch); it blocks the ticket, the rest of the
 convoy goes on. `interrupted`: the branch is pushed and a partial Handoff is
@@ -98,6 +102,8 @@ EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
 
 REQUEST_LINE_MAX = 140
+# An anchor name of the Validated Prototype, as bin/convoy-state takes it.
+ANCHOR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 MAX_DETAIL = 300
 MAX_MARKER_TEXT = 160
 CAPTURE_TIMEOUT = 600
@@ -582,16 +588,44 @@ def planning_exception_request(args: argparse.Namespace) -> dict[str, Any]:
             f"--kind {args.kind!r} n'est pas une Planning Exception (attendu : semantic ou topology) ; un défaut "
             "technique hors du ticket sort par « bloqué technique »")
     head = f"Planning Exception ({args.kind}) sur {args.ticket} : "
+    options = [
+        {"option": "Trancher dans le Planning Run",
+         "consequence": "Le ticket et ceux qui l'attendent restent parqués jusqu'à ta décision."},
+        {"option": "Retirer le ticket du graphe",
+         "consequence": "Le graphe révisé passe par la porte de patch ; la couverture est recalculée."},
+    ]
+    if args.anchor:
+        # A deviation from the Validated Prototype (Spec §3): the author asks,
+        # the operator alone accepts it, anchor by anchor.
+        for anchor in args.anchor:
+            if not ANCHOR_RE.match(anchor):
+                raise Refusal(f"nom d'ancre mal formé (--anchor) : {anchor!r}")
+        named = "les ancres" if len(args.anchor) > 1 else "l'ancre"
+        accept = f"Accepter l'écart sur {named} {', '.join(args.anchor)}"
+        if len(accept) > REQUEST_LINE_MAX:
+            raise Refusal(
+                f"trop d'ancres pour une seule demande ({len(args.anchor)}) : l'option dépasse {REQUEST_LINE_MAX} "
+                "caractères ; une Planning Exception par groupe d'ancres")
+        options.append({
+            "option": accept,
+            "consequence": "Le contrôle de fidélité lit cet écart comme accepté par toi ; le prototype reste la cible ailleurs."})
     return {
         "quoi": head + short(summary, REQUEST_LINE_MAX - len(head)),
         "pourquoi": "L'auteur ne tranche pas une question d'intention, de comportement ou de découpage.",
-        "que_faire": [
-            {"option": "Trancher dans le Planning Run",
-             "consequence": "Le ticket et ceux qui l'attendent restent parqués jusqu'à ta décision."},
-            {"option": "Retirer le ticket du graphe",
-             "consequence": "Le graphe révisé passe par la porte de patch ; la couverture est recalculée."},
-        ],
+        "que_faire": options,
     }
+
+
+def record_planning_exception(args: argparse.Namespace, request: dict[str, Any]) -> None:
+    """Write the Planning Exception on the ticket before the request leaves:
+    its anchors, and the letter the escalation door will give the option
+    that accepts their deviation (it letters the options in order)."""
+    command = ["raise-planning-exception", args.convoy, args.ticket, "--kind", args.kind, "--summary", " ".join(args.summary.split())]
+    for anchor in args.anchor:
+        command += ["--anchor", anchor]
+    if args.anchor:
+        command += ["--accept-option", "abcdefghijklmnopqrstuvwxyz"[len(request["que_faire"]) - 1]]
+    state_write(*command)
 
 
 def escalate(ticket_id: str, request: dict[str, Any]) -> None:
@@ -736,6 +770,8 @@ def cmd_exit(args: argparse.Namespace) -> int:
         raise Refusal("Ticket Handoff sans dépôt (--repo) : ses relevés se prennent sur la branche du ticket")
     answer: dict[str, Any] = {"ok": True, "convoy": args.convoy, "ticket": args.ticket, "exit": args.exit}
     request = repair = None
+    if args.anchor and args.exit != "planning_exception":
+        raise Refusal("--anchor ne va qu'avec la sortie « Planning Exception » : un écart avec le prototype y passe")
     if args.exit == "operator_request":
         request = operator_request(args)
     elif args.exit == "planning_exception":
@@ -753,6 +789,9 @@ def cmd_exit(args: argparse.Namespace) -> int:
             if push.returncode != 0:
                 raise Refusal(f"la branche {branch} n'a pas pu être poussée sur origin : {short(push.stderr)}")
             written.append(f"branche {branch} poussée sur origin")
+        if args.exit == "planning_exception":
+            record_planning_exception(args, request)
+            written.append("Planning Exception sur le ticket")
         if request is not None:
             escalate(args.ticket, request)
             written.append("demande sur la liste de la porte d'escalade")
@@ -889,6 +928,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--request")
     p.add_argument("--kind")
     p.add_argument("--summary")
+    p.add_argument("--anchor", action="append", default=[])
     p.add_argument("--repair")
     command("read", cmd_read)
     p = command("deferral", cmd_deferral)

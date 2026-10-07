@@ -25,6 +25,10 @@ is run, nothing is written.
 # a screenshot of one address of that launched product
 ./bin/evidence-capture screenshot af-convoy af-t1 --piece demo.page --launch-state /tmp/launch.json --path /
 
+# the same address beside a reference page served on this host, and the image of their difference (bin/prototype-fidelity)
+./bin/evidence-capture comparison af-convoy af-t1 --piece fidelity.content.desktop --launch-state /tmp/launch.json --path / \
+    --reference-url http://127.0.0.1:<port>/states/content.html [--window-size 1280x800] [--color-scheme light|dark]
+
 ./bin/evidence-capture verify af-convoy af-t1 [--piece demo.page]   # the gates, before they accept a piece
 ./bin/evidence-capture purge --spec af-spec                         # after promotion, by code
 ```
@@ -59,7 +63,8 @@ to the commit that was tested and never pushed.
 ```
 <store>/.seal-key                      the key that seals every record (mode 0600, created at the first capture)
 <store>/<spec id>/<ticket id>/<piece>.json     the Evidence Record
-<store>/<spec id>/<ticket id>/<piece>.png      the image of a screenshot piece
+<store>/<spec id>/<ticket id>/<piece>.png      the image of a screenshot piece, or the two sides of a comparison piece
+<store>/<spec id>/<ticket id>/<piece>--difference.png   the image of the difference of a comparison piece
 ```
 
 `<store>` is `EVIDENCE_STORE_DIR`, default `~/.local/state/agent-factory-evidence`
@@ -121,6 +126,19 @@ refused when the product does not answer (a browser pointed at a stopped
 product would capture its own error page), when no Chromium is found, and
 when the browser writes no PNG image.
 
+`comparison` (T16, `docs/PROTOTYPE_FIDELITY.md`) captures the address of the
+launched product and a **reference page** at the same moment, with the same
+browser, at the same size and colour scheme, and files one piece of kind
+`comparison`: `address` and `reference` (the two addresses), `image` (the two
+captures side by side, the reference on the left), `difference` (a differing
+pixel in red on the faded reference; a pixel one side does not have
+differs), each with its fingerprint, `differing_pixels` and `pixels`,
+`http_status`, `window_size`, `color_scheme`. The count is data: the tool
+judges nothing from it and has no threshold. It refuses, before any capture,
+a reference that is not a page served on this host
+(`http://127.0.0.1:<port>/…`), one that does not answer 200, a colour scheme
+outside `light` / `dark`, and everything `screenshot` refuses.
+
 If the tracker refuses the fingerprint, the store keeps what it had: the new
 files are removed.
 
@@ -146,7 +164,8 @@ fails, naming each reason, when:
   hand (`bin/convoy-state add-evidence`);
 - a genuine piece was copied under another Spec, convoy, ticket or name;
 - the record's commit is not the commit of the tracker's fingerprint;
-- the image of a screenshot piece is missing or was replaced;
+- the image of a screenshot piece, or either image of a comparison piece, is
+  missing or was replaced;
 - (whole ticket) a file sits in the ticket's folder that no capture filed.
 
 `verify` writes nothing. A ticket without any piece verifies: which pieces a
