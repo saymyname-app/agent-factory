@@ -31,7 +31,7 @@ Use progressive disclosure. Do not read every document by default.
 | External Evidence Gate and reusable research format | `DELIVERY.md`, `RESEARCH_BRIEF.md` |
 | A goal ships as more than one PR across rigs; the goal bead's own six proof fields aren't the whole picture | `DELIVERY.md` (Multi-repo / cross-rig delivery proof), `./bin/goal-delivery-pairs` |
 | Trust boundaries, secrets, and concurrency | `SECURITY.md` |
-| Structural decisions | `decisions/ADR-0025-approved-graph-bootstrap-scope.md` through `decisions/ADR-0028-planning-exception-routing.md`; ADR-0001..0024 are pre-refactor, in `../legacy/docs/decisions/` (see `../legacy/README.md` for which mechanisms still run) |
+| Structural decisions | `decisions/ADR-0025-approved-graph-bootstrap-scope.md` through `decisions/ADR-0029-proposal-classes.md`; ADR-0001..0024 are pre-refactor, in `../legacy/docs/decisions/` (see `../legacy/README.md` for which mechanisms still run) |
 | Which proposals reach Benjamin (classe `decision`) and which the Mayor corrects itself (classe `maintenance`, authorized by ADR-0029) | `decisions/ADR-0029-proposal-classes.md` |
 | Why delivery-proof state is written only through a door script (`deliver-close`), never with `--set-metadata`, and why readers degrade instead of dying | `../legacy/docs/decisions/ADR-0023-coordination-state-write-door.md` (legacy ADR — superseded for escalation by O06; delivery-proof half still active, not re-validated) |
 | Why every escalation (straight to Benjamin, or Mayor-first with a 2h auto-promotion) goes through one door, never `--set-metadata gc.needs_benjamin=...` by hand | `./bin/escalation-door`, `tests/escalation-door-test.sh` (O06; replaces the retired `campaign-pointer escalate`) |
