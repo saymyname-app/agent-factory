@@ -131,14 +131,8 @@ commit_on() {  # TICKET FILE TEXT
   git -C "$REPO" rev-parse HEAD
   git -C "$REPO" checkout -q --detach "$BASE"
 }
-finish() {  # TICKET COMMIT
-  local handoff="$TRIAL/handoff-$1.json"
-  jq -n --arg commit "$2" '{sections: {done: ["Critère 1 observé sur GET /."], deviations: "aucun", not_done: "aucun",
-    out_of_ticket: "aucun"}, partial: false, commit: $commit, records: {}}' > "$handoff"
-  state add-evidence "$CONVOY" "$1" --piece handoff_records \
-    --digest "sha256:$(sha256sum <"$handoff" | cut -d' ' -f1)" --commit "$2"
-  state set-handoff "$CONVOY" "$1" --file "$handoff"
-  state set-exit "$CONVOY" "$1" --exit finished
+finish() {  # TICKET COMMIT: every step of the TDD with its sealed report, the demonstration, the sealed records, the Handoff, the exit (T19: the merge asks the ticket-end gate)
+  python3 "$ROOT/tests/lib/ticket_proofs.py" finish "$CONVOY" "$1" "$2" --repo "$REPO" --base "$BASE" --branch "ticket/$1" >/dev/null
 }
 evaluated() {  # TICKET COMMIT REPO: a favorable Ticket Evaluation, as an Evaluator session records it (bin/ticket-evaluation, T15)
   local shown
@@ -146,7 +140,7 @@ evaluated() {  # TICKET COMMIT REPO: a favorable Ticket Evaluation, as an Evalua
   jq -n '{roles: {author: null, evaluator: null, same_provider: null, other_declared: []},
     environment: [{dataset: null, address: "http://127.0.0.1:1", state_file: "/launch.json"}]}' > "$TRIAL/evaluation-request-$1.json"
   state open-evaluation "$CONVOY" "$1" --commit "$2" --file "$TRIAL/evaluation-request-$1.json" >/dev/null
-  state add-evidence "$CONVOY" "$1" --piece evaluation.seen --digest "sha256:$(printf '%064d' 0)" --commit "$2" >/dev/null
+  python3 "$ROOT/tests/lib/ticket_proofs.py" capture "$CONVOY" "$1" evaluation.seen "$2" --repo "$3" >/dev/null
   jq -n --arg commit "$2" --argjson t "$shown" '{commit: $commit, recorded_by: "delivery-evaluator-trial",
     criteria: [$t.criteria | to_entries[] | {number: (.key + 1), text: .value, state: "observed", evidence: "evaluation.seen"}],
     demonstration_line: {text: $t.demonstration_line, state: "observed", evidence: "evaluation.seen"}}' > "$TRIAL/evaluation-$1.json"

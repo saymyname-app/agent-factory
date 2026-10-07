@@ -52,6 +52,11 @@ touché : il reste avancé par le Mayor.
   (`./bin/correction-round settle`). Encore refusé après ce tour, le ticket
   est arrêté sans fusionner et remonte une fois dans
   `./bin/escalation-door list`.
+- **Fermeture par la porte de fin de ticket** : la passe qui fusionne un
+  ticket le ferme si ses neuf conditions sont réunies
+  (`./bin/ticket-end settle`) ; avant la fusion, elle mesure la fidélité
+  d'un ticket d'interface (`./bin/ticket-end fidelity`). Un ticket laissé
+  ouvert est listé avec la condition qui manque.
 - **Relecture des tests restée sans résultat** : la même passe la relance une
   fois, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune

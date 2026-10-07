@@ -17,8 +17,15 @@ Usage (plain module on a path-inserted directory, like sandbox.py):
     import ticket_proofs
 
     ticket_proofs.finish(env, repo, convoy, ticket, tip, base, branch)
+
+From a shell trial (tests/*-isolated-city-test.sh), in its environment:
+
+    python3 tests/lib/ticket_proofs.py finish CONVOY TICKET TIP --repo DIR --base SHA --branch NAME [--done TEXT] [--subject TEXT]
+    python3 tests/lib/ticket_proofs.py capture CONVOY TICKET PIECE COMMIT --repo DIR
 """
+import argparse
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -153,3 +160,32 @@ def finish(env, repo, convoy, ticket, tip, base, branch, records=None, sections=
                 "exit": "finished", "branch": branch, "head": tip, "base": base, "red_proof": red,
                 "demonstration_proof": demonstration, "deferral_markers": [], **(records or {})}}))
     state(env, "set-exit", convoy, ticket, "--exit", "finished")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="ticket_proofs")
+    sub = parser.add_subparsers(dest="command", required=True)
+    command = sub.add_parser("finish")
+    for name in ("convoy", "ticket", "tip"):
+        command.add_argument(name)
+    for name in ("--repo", "--base", "--branch"):
+        command.add_argument(name, required=True)
+    command.add_argument("--done", help="the one item of the section « done » of the Handoff")
+    command.add_argument("--subject", help="the subject of the commit, in the records of the Handoff")
+    command = sub.add_parser("capture")
+    for name in ("convoy", "ticket", "piece", "commit"):
+        command.add_argument(name)
+    command.add_argument("--repo", required=True)
+    args = parser.parse_args(argv)
+    env = dict(os.environ)
+    if args.command == "capture":
+        capture(env, args.repo, args.convoy, args.ticket, args.piece, args.commit)
+        return 0
+    finish(env, args.repo, args.convoy, args.ticket, args.tip, args.base, args.branch,
+           records={"commits": [{"commit": args.tip, "subject": args.subject}]} if args.subject else None,
+           sections={**SECTIONS, "done": [args.done]} if args.done else None)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

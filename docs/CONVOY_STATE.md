@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, T19, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -29,7 +29,7 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state bump-counter af-convoy --ticket af-t1 --counter resumes --counter correction_rounds
 ./bin/convoy-state set-counter  af-convoy --counter end_rounds --value 0
 ./bin/convoy-state add-evidence af-convoy af-t1 --piece red_proof --digest sha256:<hex> --commit <sha>
-./bin/convoy-state record-gate  af-convoy af-t1 --gate ticket_end --commit <sha>
+./bin/convoy-state close-ticket af-convoy af-t1 --commit <merged tip> --file report.json   # bin/ticket-end: the record of the gate and the closed status, in one write
 ./bin/convoy-state set-tdd      af-convoy af-t1 --step red --commit <sha> --base <start sha>   # bin/tdd-step, once a step is proven
 ./bin/convoy-state stop-ticket  af-convoy af-t1 --reason criterion_already_green --detail "critère 2 déjà vert : …"   # bin/tdd-step
 ./bin/convoy-state open-test-review   af-convoy af-t1 --commit <sha> --file request.json   # bin/test-review review
@@ -87,7 +87,8 @@ Every answer is one JSON object on stdout.
 | Verdict | `gc.flow.verdict.<kind>` | ticket | kind: `test_review`, `code_review`, `evaluation`, `fidelity`; state: `favorable`, `unfavorable`; always with the full commit SHA it judged; `invalidated` (`tip`, `at`) once `invalidate-verdicts` wrote that a newer commit outdated it |
 | Counter | `gc.flow.counter.<name>` | ticket: `resumes`, `correction_rounds`; convoy: `end_rounds` | integer ≥ 0 |
 | Evidence fingerprint | `gc.flow.evidence.<piece>` | ticket | `sha256:<64 hex>` and the commit of the piece |
-| Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (commit required), `withdrawn` (removed from the graph by a resolved Planning Exception) |
+| Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (written only by `close-ticket`, with the closing: the merged commit, the version of the list `ticket-end/v1` and its nine passing verdicts; T19, `docs/TICKET_END.md`), `withdrawn` (removed from the graph by a resolved Planning Exception) |
+| Frozen criteria | `gc.flow.criteria` | ticket | `{digest, graph_digest, at}`: the fingerprint of the acceptance criteria of the ticket, in order, and the digest of the approved graph it was published under (`gc.graph_digest`, read only; null when the door wrote none). Written by `mark`; written again only when `gc.graph_digest` has changed since (a patch of the graph went through the publication door), never on a closed ticket (T19) |
 | TDD step | `gc.flow.tdd.<step>` | ticket | step: `red`, `freeze`, `green`, `amendment`, `prefactoring`; always with the full commit SHA it was proven at; `red` and `prefactoring` with their start commit (`base`), `amendment` with its one-line reason |
 | Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_refused`, `test_review_no_result`, `code_review_no_result`, `evaluation_no_result`, `evaluation_outage`, `still_refused`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
 | Code review | `gc.flow.code_review` | ticket | `rounds`: each recorded round (`kind`: `review` / `judgement`, `commit`, `base`, `verdict`, `models`, `recorded_by`, `at`; a review with `findings` — `id`, `axis`: `standards` / `spec` / `tests`, `blocking`, `summary`, and `citation` (`source`: `spec` / `ticket` / `repo_rule`, `quote`, `path`), `demoted` or `question` — its `answers` (question id → `oui` / `non` and a reason) and its `responses` (finding id → `fixed` with a commit, or `contested` with a reason); a judgement with `judgements`: finding id → `favorable` / `unfavorable` and a reason); `request` while a round is open (`kind`, `commit`, `base`, `questions`, `models`, `launches`: at most two `{bead, at}`, `at`) |
@@ -399,7 +400,11 @@ reverse; a counter write after which `correction_rounds` would exceed
 evidence fingerprint without a `sha256:` digest or without a commit; a
 Ticket Handoff, a parking, an integration branch, a merge or an invalidation
 as described above; a
-`ticket_end` gate record without a commit; a TDD step outside its closed
+`record-gate --gate ticket_end` (that record is written by `close-ticket`
+only); a `close-ticket` whose report is not the nine conditions of the known
+version, in order, all passing, each with a one-line detail, or that names
+no full commit SHA, or on a ticket already closed or carrying a closing
+gate record; a TDD step outside its closed
 list, without a full commit SHA, out of order, or on a stopped ticket; a
 freeze without a favorable test review at the same commit; a request, a
 launch or a verdict of the test review as described above, or on a stopped
@@ -415,6 +420,14 @@ default `$XDG_RUNTIME_DIR` or `/tmp`), so concurrent counter bumps are all
 counted and a reviewer and an Evaluator can write the same ticket in parallel.
 
 ## What a read reports
+
+T19: each ticket is rendered with `criteria_frozen` (the stored record plus
+`current`, the fingerprint of the criteria read on the ticket now,
+`current_graph_digest`, and `identical`: both equal to what was frozen),
+`validated_prototype` (the reference the publication door posed under
+`## Validated Prototype`: `branch`, `commit`, `path`, `states`; null when
+the ticket has no such section) and `interface` (true when it has one: the
+ticket touches a screen). Neither is written here.
 
 `list` answers `{"convoys": [...]}`: the ids of the convoys that carry the
 mark and are not closed. It is what `bin/convoy-advance` walks
@@ -470,6 +483,11 @@ key), never as a default value:
 
 - closed without a `ticket_end` or `withdrawn` gate record (closed outside
   the gate);
+- a `ticket_end` record that is not the version of the list and its nine
+  passing verdicts (not written by the gate);
+- a frozen-criteria record that cannot be read, or a `## Validated
+  Prototype` section of the description without its branch, commit, path
+  and states;
 - in progress without a `dispatch` gate record (started outside the gate);
 - a verdict whose commit is not on the ticket's branch, whose ticket has no
   recorded branch, or whose branch cannot be found in `--repo`;
@@ -507,4 +525,6 @@ invalidated verdict and a merge (T18) included.
 fidelity result and an answered Planning Exception back from the real
 tracker (T16). `tests/correction-round-isolated-city-test.sh` (local-only)
 reads the correction round, its counters, the stop and an override back
-from the real tracker (T17).
+from the real tracker (T17). `tests/ticket-end-isolated-city-test.sh`
+(local-only) reads the record of the ticket-end gate and the closed status
+back from the real tracker (T19).

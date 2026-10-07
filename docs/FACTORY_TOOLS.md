@@ -154,6 +154,12 @@ réseau ni accès au domicile hôte. Une injection `after-stage` doit laisser z�
 graphe, bead delivery ou convoy. Le résultat JSON est déterministe et ne dépend
 pas du Cockpit V1. Contrat complet : `FIXTURE_CITY_ORACLE.md`.
 
+`./bin/fixture-city-oracle run <scenario> --delivery-driver <driver>` fait
+parcourir le flux de livraison à un ticket d'un convoi marqué et observe son
+état public après chaque événement : publié, démarré, rouge, gel, code,
+revue, évaluation, fusion, fermé par la porte de fin de ticket. Un ticket
+fermé hors porte fait échouer l'oracle.
+
 ## `./bin/factory-doctor` — « y a-t-il quelque chose que je puisse réparer ? »
 
 `gc doctor` rapporte sur toute la pile, la nôtre **et ses dépendances**. Ce
@@ -460,6 +466,11 @@ touché : il reste avancé par le Mayor.
   (`./bin/correction-round settle`). Encore refusé après ce tour, le ticket
   est arrêté sans fusionner et remonte une fois dans
   `./bin/escalation-door list`.
+- **Fermeture par la porte de fin de ticket** : la passe qui fusionne un
+  ticket le ferme si ses neuf conditions sont réunies
+  (`./bin/ticket-end settle`) ; avant la fusion, elle mesure la fidélité
+  d'un ticket d'interface (`./bin/ticket-end fidelity`). Un ticket laissé
+  ouvert est listé avec la condition qui manque.
 - **Relecture des tests restée sans résultat** : la même passe la relance une
   fois, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune
@@ -996,17 +1007,66 @@ nouveau flux**.
 - **Un critère non observé ne se dispense jamais** : `override --criterion`
   est refusé, et le message renvoie à la Planning Exception
   (`./bin/planning-exception`).
-- **La dérogation ne lève rien seule** : le ticket reste arrêté et rien ne
-  fusionne ; la porte de fin de ticket (T19) la lira.
+- **La dérogation ne lève pas l'arrêt** : quand tous les Blocking Findings
+  restés sans verdict favorable sont dérogés, la passe suivante fusionne le
+  ticket et la porte de fin de ticket le ferme (`./bin/ticket-end`,
+  condition 9).
 - **Ne jamais dispatcher `mol-ticket-correction` à la main** ni écrire
   `gc.flow.correction` ou `gc.flow.overrides` : seul
   `./bin/correction-round` le fait, par `./bin/dispatch-door` et
   `./bin/convoy-state`.
 - **Limites** : aucun délai sur la session de correction (une session morte
   sans fermer son bead laisse le ticket en attente ; la reprise est à T20) ;
-  rien ne lève encore un arrêt.
+  rien ne lève un arrêt.
 
 Détail : `docs/CORRECTION_ROUND.md`.
+
+---
+
+## `./bin/ticket-end` — pourquoi ce ticket n'est-il pas fermé ?
+
+**La porte de fin de ticket** (Spec af-wf4w5r §9, T19). Dans un convoi qui
+porte la **marque du nouveau flux**, un ticket ne se ferme que par cette
+porte : une liste fermée et versionnée de **neuf conditions**. Une PR
+fusionnée et une CI verte ne ferment rien, et l'auteur ne ferme jamais son
+ticket.
+
+```bash
+./bin/ticket-end check <convoi> <ticket> --repo <dépôt du projet>                  # les neuf verdicts ; n'écrit rien
+./bin/ticket-end check <convoi> <ticket> --repo <dépôt du projet> --before-merge   # ce que la fusion exige
+./bin/ticket-end settle <convoi> --repo <dépôt du projet>                          # lancé par ./bin/convoy-advance après la fusion
+./bin/ticket-end fidelity <convoi> --repo <dépôt du projet> --profile <profil>     # lancé par ./bin/convoy-advance avant la fusion
+```
+
+- **Les neuf conditions** (liste `ticket-end/v1`), lues à la pointe de la
+  branche du ticket : 1 critères identiques au digest approuvé ; 2 Handoff
+  valide avec preuve du rouge et de démonstration ; 3 Ticket Evaluation
+  favorable (prefactoring : le produit démarre) ; 4 fidélité verte si le
+  ticket touche un écran ; 5 détecteur de report passé ; 6 fusionné dans la
+  branche d'intégration, tests verts sur le résultat ; 7 preuves scellées,
+  liées à la pointe fusionnée ; 8 preuve TDD enregistrée ; 9 revue favorable
+  ou dérogation enregistrée.
+- **Pour savoir ce qui manque** : `check` nomme chaque condition non réunie
+  et dit ce qui a été lu. Rien n'est écrit lors d'un refus.
+- **Avant la fusion** : `./bin/spec-integration merge` ne fusionne un ticket
+  que si les conditions 1 à 5 et 7 à 9 sont réunies ; sinon le ticket attend,
+  avec le texte de la porte. La condition 6 se vérifie après.
+- **Fermeture** : la passe qui fusionne un ticket le ferme si les neuf
+  conditions sont réunies. Le relevé de la porte (commit fusionné, version
+  de la liste, neuf verdicts) et le statut fermé sont écrits ensemble ; il se
+  lit sous `gates.ticket_end` dans `./bin/convoy-state show`.
+- **Ticket d'interface** : avant la fusion, la passe lance le contrôle de
+  fidélité sur le commit qui fusionne, contre le Validated Prototype que le
+  ticket nomme.
+- **Ne jamais fermer à la main un ticket d'un convoi marqué** (`gc bd
+  close`, `./bin/deliver-close`) : `./bin/deliver-close` le refuse, et une
+  fermeture hors porte arrête le convoi (incident d'usine). `close` et
+  `settle` sont refusés à toute session d'agent.
+- **Un convoi sans marque** garde `./bin/deliver-close`, sans changement.
+- **Limites** : une fidélité rouge laisse le ticket en attente (la reprise
+  est à T20) ; un contrôle de fidélité par passe ; la fin de Spec est à T23.
+
+Détail : `docs/TICKET_END.md`.
 
 ---
 
