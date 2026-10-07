@@ -15,8 +15,10 @@
 #
 # The rule: read the producer's output whole, then ask.
 #   grep -q PATTERN <<<"$(producer)"        # or a variable filled earlier
-# Redirecting to /dev/null instead of -q does not help: GNU grep also stops
-# at the first match when its output is /dev/null.
+# `producer | grep PATTERN >/dev/null` also reads everything with the grep
+# measured here (GNU grep 3.11), and this check does not flag it; the
+# here-string form is preferred because it has no producer left to kill,
+# whatever the reader does.
 #
 # One producer is accepted: the shell builtins `printf` and `echo` printing
 # a value already in memory. They hand the value to the pipe in one write,

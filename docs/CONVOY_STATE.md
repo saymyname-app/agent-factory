@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, T11, T13, T14, T18, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, T13, T14, T15, T18, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -41,6 +41,11 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state launch-code-review  af-convoy af-t1 --bead af-review                    # bin/code-review, once the reviewer is sent
 ./bin/convoy-state record-code-review  af-convoy af-t1 --file result.json                  # bin/code-review record
 ./bin/convoy-state respond-code-review af-convoy af-t1 --file responses.json               # bin/code-review respond
+./bin/convoy-state open-evaluation    af-convoy af-t1 --commit <tip> --file request.json  # bin/ticket-evaluation settle: the roles and the launched products
+./bin/convoy-state launch-evaluation  af-convoy af-t1 --bead af-evaluation                # bin/ticket-evaluation, once the Evaluator is sent
+./bin/convoy-state record-evaluation  af-convoy af-t1 --file states.json                  # bin/ticket-evaluation record
+./bin/convoy-state record-startup     af-convoy af-t1 --commit <tip> --piece evaluation.startup --file environment.json   # bin/ticket-evaluation settle (or --detail "…" when the product did not start)
+./bin/convoy-state release-evaluation af-convoy af-t1 --state-file <launch record> [--withdraw]   # bin/ticket-evaluation settle, once a launched product is stopped
 ./bin/convoy-state set-handoff af-convoy af-t1 --file handoff.json                                   # bin/ticket-exit
 ./bin/convoy-state park        af-convoy af-t1 --cause planning_exception --detail "La Spec fixe X, …"  # bin/ticket-exit
 ./bin/convoy-state set-integration af-convoy --branch integration/af-spec --protected main --base <sha>   # bin/spec-integration open
@@ -79,8 +84,9 @@ Every answer is one JSON object on stdout.
 | Evidence fingerprint | `gc.flow.evidence.<piece>` | ticket | `sha256:<64 hex>` and the commit of the piece |
 | Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (commit required), `withdrawn` (removed from the graph by a resolved Planning Exception) |
 | TDD step | `gc.flow.tdd.<step>` | ticket | step: `red`, `freeze`, `green`, `amendment`, `prefactoring`; always with the full commit SHA it was proven at; `red` and `prefactoring` with their start commit (`base`), `amendment` with its one-line reason |
-| Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_refused`, `test_review_no_result`, `code_review_no_result`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
+| Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_refused`, `test_review_no_result`, `code_review_no_result`, `evaluation_no_result`, `evaluation_outage`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
 | Code review | `gc.flow.code_review` | ticket | `rounds`: each recorded round (`kind`: `review` / `judgement`, `commit`, `base`, `verdict`, `models`, `recorded_by`, `at`; a review with `findings` — `id`, `axis`: `standards` / `spec` / `tests`, `blocking`, `summary`, and `citation` (`source`: `spec` / `ticket` / `repo_rule`, `quote`, `path`), `demoted` or `question` — its `answers` (question id → `oui` / `non` and a reason) and its `responses` (finding id → `fixed` with a commit, or `contested` with a reason); a judgement with `judgements`: finding id → `favorable` / `unfavorable` and a reason); `request` while a round is open (`kind`, `commit`, `base`, `questions`, `models`, `launches`: at most two `{bead, at}`, `at`) |
+| Ticket Evaluation | `gc.flow.evaluation` | ticket | `rounds`: each recorded round — kind `evaluation` (`commit`, `criteria`: one `{number, text, state, evidence, reason, cause}` per approved criterion, in order; `demonstration_line`: `{text, state, evidence, reason, cause}`; state: `observed` / `not_observed` / `unobservable`, a `reason` unless observed, a `cause` (`criterion` / `environment`) for an unobservable; `outcome`: `favorable` / `return_to_author` / `planning_exception` / `environment_outage`; `verdict`: `favorable`, `unfavorable`, or `null` for an outage; `roles`; `environment`: `{dataset, address}` per launched product; `recorded_by`, `at`) or kind `startup` (`commit`, `started`, then `evidence` and `environment`, or `detail`; `outcome`, `verdict`, `at`); `request` while an evaluation is open (`commit`, `criteria`, `demonstration_line`, `roles`: `{author, evaluator: {provider, supplier} or null, same_provider, other_declared}`, `environment`: `{dataset, address, state_file}` per launched product, `launches`: at most two `{bead, at}`, `at`); `live`: the launch records of the products still to stop |
 | Models per role | `gc.flow.models` | ticket | role: `author`, `reviewer`, `evaluator`; each with `agent`, `provider`, `model`, `at` |
 | Test review | `gc.flow.test_review` | ticket (`vertical_slice`, `repair`) | `rounds`: each recorded pass (`commit`, `files`: path → `sha256:`, `verdict`: `favorable` / `unfavorable`, `tests`: test id → `state` and, when unfavorable, `reason`, `recorded_by`, `at`); `request` while a review is open (`commit`, `files`, `criteria`: the criterion → test table, `launches`: at most two `{bead, at}`, `at`) |
 | Ticket Handoff | `gc.flow.handoff` | ticket | `sections` (`done`, `deviations`, `not_done`, `out_of_ticket`: each `aucun` or a non-empty list of one-line items; an item of `not_done` may be `{what, paths}`), `partial`, the full commit SHA it was taken at, and the `records` written by code |
@@ -213,6 +219,58 @@ the judgement is opened.
 no favorable verdict. It is what `bin/spec-integration` reads to refuse a
 merge.
 
+`open-evaluation`, `launch-evaluation`, `record-evaluation`,
+`record-startup` and `release-evaluation` are called by
+`bin/ticket-evaluation` (T15, `docs/TICKET_EVALUATION.md`).
+
+`open-evaluation` opens the Ticket Evaluation of a ticket at the commit its
+author finished at (Ticket Exit `finished`, complete Handoff at that
+commit), on the products named in `--file` (`{roles, environment}`). The
+criteria and the demonstration line are **read here, on the approved
+ticket**, and frozen in the request: nobody hands them in. The same request
+again writes nothing; the same commit on other products replaces them and
+keeps the launches. It refuses a `prefactoring` (no Evaluator session), a
+ticket without acceptance criteria, a commit already evaluated with a
+verdict (an outage gave none, and is opened again), an environment that is
+not a list of products each at its own `http://127.0.0.1:<port>` address
+with its launch record, and roles outside their shape. `launch-evaluation`
+records each Evaluator bead sent: the first, then one relaunch; a third is
+refused.
+
+`record-evaluation` takes what the Evaluator hands in (`--file`: `commit`,
+`criteria`, `demonstration_line`, `recorded_by`). It refuses, and writes
+nothing: a `verdict` or an `outcome` (computed here, never given); a state
+outside the three; a state without a piece whose fingerprint
+(`gc.flow.evidence.<piece>`) is on the ticket at the evaluated commit; a
+criterion whose text is not the one of the request (« reformulé »), a
+criterion without a state (« retiré »), a state for a criterion the ticket
+does not have, or given twice; a demonstration line reworded; criteria that
+changed on the ticket since the request; a `not_observed` or an
+`unobservable` without a reason, an `unobservable` without its cause. The
+outcome is computed from the states — `planning_exception` as soon as one
+is unobservable by the criterion, else `return_to_author` as soon as one is
+not observed, else `environment_outage` when the environment hid one, else
+`favorable` — and written with the round; the verdict
+`gc.flow.verdict.evaluation` goes in the same tracker write, except for an
+outage, which is neither an agreement nor a refusal and writes none.
+
+`record-startup` records what code saw when it launched the product from a
+clean copy of `--commit`: with `--piece` (the captured answer of the probe,
+a fingerprint of the ticket at that commit) and the launched products in
+`--file`, a favorable round — accepted on a `prefactoring` only, for which
+it stands for the evaluation; with `--detail`, a product that did not
+start, an unfavorable round accepted on any kind, which also closes an open
+request. `release-evaluation` removes from `live` the launch records of the
+products code stopped (`--state-file`, repeatable); it refuses one an open
+evaluation still runs on, unless the ticket is stopped, or `--withdraw` is
+given: the open evaluation is then withdrawn with its products (the ticket
+is no longer to be evaluated at that commit).
+
+`show` renders `evaluation` with a computed `state`: the `verdict`, the
+`outcome` and the `commit` of the last round, `not_observed` (what was not
+observed) and `unobservable` (what could not be, with its cause). It is
+what `bin/spec-integration` reads to refuse a merge.
+
 The verdict of the test review is not a `gc.flow.verdict.test_review`: a
 verdict of that family holds only while its commit is the tip of the branch,
 and this one holds for the frozen tests. The kind stays in the closed list
@@ -295,7 +353,8 @@ description, numbered from 1 by `bin/tdd-step`), the proven steps of its
 TDD (`tdd`, `{step: {commit, at, base?, reason?}}`), its stop (`stop`,
 `null` when it is not stopped), the review of its criterion tests
 (`test_review`, `null` before the first request), its code review
-(`code_review`, `null` before the first request) and the models per role
+(`code_review`, `null` before the first request), its Ticket Evaluation
+(`evaluation`, `null` before the first request) and the models per role
 (`models`), its Ticket Handoff (`handoff`), its parking
 (`park`) and its Declared Scope (`declared_scope`, a list of paths), each
 `null` when the ticket has none, and what the merge command did of it

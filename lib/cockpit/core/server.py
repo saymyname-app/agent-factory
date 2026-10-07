@@ -5,6 +5,8 @@ config: a local process already has every power on this host (spec .9
 threat model), but the cockpit is still not allowed to become reachable
 from the tailnet or LAN by an operator mistake in a config file.
 """
+import time
+import threading
 import json
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -44,6 +46,14 @@ from cockpit.ui.projects.tokens import CSS as PROJECT_PAGE_CSS
 
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
 
+
+
+# Actions that write nothing on a bead (a prompt to copy, a test push): no
+# re-read after them.
+ACTIONS_WITHOUT_WRITE = frozenset({"continuer", "pas_bon_vers_agent", "notifier_test"})
+# What "Ce qui t'attend", the projects and the journal are built from.
+SOURCES_REREAD_AFTER_ACTION = frozenset({"beads", "projets", "journal"})
+REREAD_AFTER_ACTION_SECONDS = 8.0
 
 class CockpitRequestHandler(BaseHTTPRequestHandler):
     server_version = "cockpit/1"
@@ -173,7 +183,38 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
         except ActionError as exc:
             self._send_json({"error": str(exc)}, status=400)
             return
+        if action not in ACTIONS_WITHOUT_WRITE and isinstance(result, dict):
+            result["rafraichi"] = self._reread_after_action()
         self._send_json(result)
+
+    def _reread_after_action(self):
+        """An action just wrote on a bead; the page reads the read model,
+        which would only see it at the next poll (20 s for Beads, 30 s for
+        the projects) -- until then the request stayed listed, unchanged
+        and clickable again (2026-10-07: a chantier accepted twice). Read
+        the bead-backed sources again now, before answering, so the page
+        the browser reloads on this answer shows the request gone or in
+        its new state. True only if every one of them was read in time;
+        the browser then reloads, otherwise it keeps the request marked
+        as handled until the next regular read."""
+        pollers = [
+            poller for poller in getattr(self.server, "pollers", ())
+            if getattr(poller, "source", None) in SOURCES_REREAD_AFTER_ACTION
+        ]
+        if not pollers:
+            return False
+        results = {}
+
+        def reread(poller):
+            results[poller.source] = bool(poller.poll_now())
+
+        threads = [threading.Thread(target=reread, args=(poller,), daemon=True) for poller in pollers]
+        for thread in threads:
+            thread.start()
+        deadline = time.monotonic() + REREAD_AFTER_ACTION_SECONDS
+        for thread in threads:
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        return len(results) == len(pollers) and all(results.values())
 
     def _assemble_requests(self, snapshot, now):
         """"Ce qui t'attend" (spec §"Demandes opérateur"): every kind of
@@ -222,6 +263,9 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                     "verifie_a": r.verifie_a,
                     "incomplete": r.incomplete,
                     "missing_fields": r.missing_fields,
+                    "motifs": r.motifs,
+                    "texte_origine": r.texte_origine,
+                    "precisions": r.precisions,
                     "acquittee": r.acquittee,
                     "reportee": r.reportee,
                 }

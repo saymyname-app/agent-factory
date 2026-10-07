@@ -245,8 +245,9 @@ flagged `review-required` routes to `build-basic` regardless of tier.
 The `build-basic` row assumes the target rig allows it: `agent-factory`'s own
 project file (`config/projects/agent-factory.toml`) currently allows only
 `mol-do-work` for work (its `mol-graph-review` is dispatched by
-`bin/graph-review` alone, its `mol-test-review` by `bin/test-review` alone
-and its `mol-code-review` by `bin/code-review` alone, never by you), so `./bin/factory-work-dispatch` has no GUARDED path for HQ
+`bin/graph-review` alone, its `mol-test-review` by `bin/test-review` alone,
+its `mol-code-review` by `bin/code-review` alone and its
+`mol-ticket-evaluation` by `bin/ticket-evaluation` alone, never by you), so `./bin/factory-work-dispatch` has no GUARDED path for HQ
 Factory work. A GUARDED HQ bead is not something to force through `do-work`
 anyway — escalate it (see "The one escalation contract") instead of picking
 an undispatchable formula.
@@ -333,13 +334,21 @@ move on:
       "que_faire": [
         {"option": "<what adopting it does>", "consequence": "<what changes>"}
       ],
-      "langue": "<the Operator Language — bin/operator-config language>"
+      "langue": "<the Operator Language — bin/operator-config language>",
+      "details": "<optional, one line: bead ids, PR numbers, tool names, evidence>"
     }'
 
 `proposal-door create` refuses the write (no bead created) if any field is
-missing, over 140 characters on one line, or not in the Operator Language —
-put the bead/PR ids and other detail a human would need in `pourquoi` or an
-option's `consequence`, not a raw identifier-only line. A `proposal` bead is
+missing, over 140 characters on one line, not in the Operator Language, or
+not displayable by the Cockpit as written. `quoi`, `pourquoi` and every
+`option`, `consequence` and `raison` are read by Benjamin on his phone with
+no agent: write plain French there, with no identifier (`af-xxx`, `#300`, a
+tool name such as `pr-autopilot`) and no internal term (bead, convoi, order,
+Mayor — say « ticket », « chantier », « l'usine »). Bead/PR ids, tool names
+and evidence go in `details`, which the Cockpit shows folded and unchecked.
+The refusal names each field and why; rewrite that field and create again
+(check a text without writing: `bin/operator-text-check '<json>'`). A
+`proposal` bead is
 never dispatched. The next Planning Run triages them; Benjamin decides which
 become work (accept, reject with a reason, or defer — `bin/proposal-door
 accepter|rejeter|reporter`).

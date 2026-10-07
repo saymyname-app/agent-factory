@@ -16,7 +16,9 @@
 # real tools the step names; and the author, whose finished tickets are
 # written through bin/convoy-state as bin/tdd-step, bin/test-review and
 # bin/ticket-exit would (the author formula has its own trial,
-# tests/ticket-author-isolated-city-test.sh).
+# tests/ticket-author-isolated-city-test.sh), each with the favorable Ticket
+# Evaluation the merge also asks for, written as bin/ticket-evaluation would
+# (its own trial: tests/ticket-evaluation-isolated-city-test.sh).
 #
 # Three tickets of the fixture, each finished by its author:
 #   A  its diff contradicts a line of the Spec: the review records a Blocking
@@ -165,7 +167,16 @@ while true; do
     OUTCOME=fail
   else
     BRIEF="$TRIAL/brief.\$REVIEW_BEAD.json"
-    "\$BIN/code-review" brief "\$CONVOY" "\$TICKET" > "\$BRIEF" 2>>"\$LOG"
+    if ! "\$BIN/code-review" brief "\$CONVOY" "\$TICKET" > "\$BRIEF.new" 2>>"\$LOG"; then
+      # Seen in this trial (gc 1.4.1): once a stub has drained and exited, a
+      # session is started again on the step it just closed. Nothing is
+      # asked any more: the brief it was given stays, nothing is written.
+      say "ticket \$TICKET : aucune revue demandée (\$REVIEW_BEAD), rien à faire"
+      rm -f "\$BRIEF.new"
+      gc runtime drain-ack >/dev/null 2>&1
+      exit 0
+    fi
+    mv "\$BRIEF.new" "\$BRIEF"
     KIND=\$(jq -r '.kind' "\$BRIEF")
     echo "\$TICKET \$REVIEW_BEAD \${GC_SESSION_NAME:-?} \$KIND" >> "$TRIAL/review-sessions"
     RESULT="$TRIAL/result.\$REVIEW_BEAD.json"
@@ -231,7 +242,8 @@ TOML
 jq '.rigs = ["trial"]' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/trial.json"
 jq -n --argjson n "$CEILING" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n,
   start: {formula: "mol-ticket-author", role: "author"},
-  code_review: {formula: "mol-code-review", role: "reviewer", rig: "trial", timeout_seconds: 600}}' \
+  code_review: {formula: "mol-code-review", role: "reviewer", rig: "trial", timeout_seconds: 600},
+  evaluation: {formula: "mol-ticket-evaluation", role: "evaluator", rig: "trial", timeout_seconds: 600, start_timeout_seconds: 30}}' \
   > "$CITY/config/delivery-flow.json"
 jq '.roles.author.agent = "trial-author" | .roles.reviewer.agent = "trial-reviewer"' "$ROOT/config/delivery-roles.json" \
   > "$CITY/config/delivery-roles.json"
@@ -318,13 +330,26 @@ commit_on() { # <ticket> <path> <content> <message>: one commit on the branch of
   git -C "$wt" commit -q -m "$4"
   git -C "$wt" rev-parse HEAD
 }
-finish() { # <ticket> <tip>: green at the tip, the sealed records, the Handoff, the exit
+evaluated() {  # TICKET COMMIT REPO: a favorable Ticket Evaluation, as an Evaluator session records it (bin/ticket-evaluation, T15)
+  local shown
+  shown=$("$ROOT/bin/convoy-state" show "$CONVOY" --repo "$3" | jq -c --arg t "$1" '.tickets[] | select(.id == $t)')
+  jq -n '{roles: {author: null, evaluator: null, same_provider: null, other_declared: []},
+    environment: [{dataset: null, address: "http://127.0.0.1:1", state_file: "/launch.json"}]}' > "$TRIAL/evaluation-request-$1.json"
+  state open-evaluation "$CONVOY" "$1" --commit "$2" --file "$TRIAL/evaluation-request-$1.json" >/dev/null
+  state add-evidence "$CONVOY" "$1" --piece evaluation.seen --digest "sha256:$(printf '%064d' 0)" --commit "$2" >/dev/null
+  jq -n --arg commit "$2" --argjson t "$shown" '{commit: $commit, recorded_by: "delivery-evaluator-trial",
+    criteria: [$t.criteria | to_entries[] | {number: (.key + 1), text: .value, state: "observed", evidence: "evaluation.seen"}],
+    demonstration_line: {text: $t.demonstration_line, state: "observed", evidence: "evaluation.seen"}}' > "$TRIAL/evaluation-$1.json"
+  state record-evaluation "$CONVOY" "$1" --file "$TRIAL/evaluation-$1.json" >/dev/null
+}
+finish() { # <ticket> <tip>: green at the tip, the sealed records, the Handoff, the exit, a favorable evaluation
   state set-tdd "$CONVOY" "$1" --step green --commit "$2" >/dev/null
   state add-evidence "$CONVOY" "$1" --piece handoff_records --digest "sha256:$(printf '%064d' 0)" --commit "$2" >/dev/null
   jq -n --arg commit "$2" '{sections: {done: ["PROSE-DU-HANDOFF : fait à ma façon."], deviations: "aucun", not_done: "aucun", out_of_ticket: "aucun"},
     partial: false, commit: $commit, records: {commits: [{commit: $commit, subject: "PROSE-DU-COMMIT"}]}}' > "$TRIAL/handoff.$1.json"
   state set-handoff "$CONVOY" "$1" --file "$TRIAL/handoff.$1.json" >/dev/null
   state set-exit "$CONVOY" "$1" --exit finished >/dev/null
+  evaluated "$1" "$2" "$PRODUCT"
 }
 author_finishes() { # <ticket> <author model> <what the slice says>
   local t=$1 red tip files
@@ -425,7 +450,9 @@ echo "$(date -u +%H:%M:%S) A : F1.1 « corrigé » au commit $FIX_A, jugé favor
 # --- C: reviewer without verdict -> one relaunch, then stopped, never merged -------
 c_stopped() { [ "$(field "$C" gc.flow.stop | jq -r '.reason // empty' 2>/dev/null)" = code_review_no_result ]; }
 wait_for 900 c_stopped || { dump; fail "C was not stopped after two reviews without result within 900s"; }
-launches_c=$(grep -c "^$C " "$TRIAL/review-sessions" || true)
+# One review bead per launch: a session started again on a bead it already
+# closed (seen with these stubs on gc 1.4.1) is not a launch.
+launches_c=$(grep "^$C " "$TRIAL/review-sessions" | cut -d' ' -f2 | sort -u | wc -l | tr -d ' ')
 [ "$launches_c" = 2 ] || fail "the review of C was launched $launches_c times, not twice"
 c_raised() { [ "$(on_list "$C")" = 1 ]; }
 wait_for 120 c_raised || { dump; fail "the stop of C is not exactly once on the operator's list: $(operator_list)"; }

@@ -93,6 +93,9 @@ div.btn.opt:hover{border-color:var(--line)}
 .btn[disabled]{opacity:.45;cursor:not-allowed}
 .cockpit-armed{background:var(--accent-soft);border-color:var(--accent)}
 .cockpit-armed-note{font-size:var(--fs-xs);font-weight:600;color:var(--accent)}
+.cockpit-done{opacity:.6}
+.cockpit-done [aria-disabled=true]{pointer-events:none;cursor:default}
+.cockpit-done-note{opacity:1;margin:8px 0}
 .field{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:6px 10px;font-size:var(--fs-s);min-height:38px}
 .inline{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
 details.more{font-size:var(--fs-s)}

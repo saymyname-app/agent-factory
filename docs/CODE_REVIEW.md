@@ -225,6 +225,9 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 - The models are the configured ones, not ones observed in the sessions.
 - `record` checks that it runs in a read-only role session, not which one;
   a judgement is distinguished from the review by the session name.
+- The Ticket Evaluation of the launched product is another control, sent
+  by the same pass on the same tip (`docs/TICKET_EVALUATION.md`): the merge
+  asks for both.
 - The reviewer role holds one session at a time: a review waits behind
   another one, and the time of a launch runs from the dispatch.
 - Nothing lifts a stop yet. A ticket still refused after its judgement is

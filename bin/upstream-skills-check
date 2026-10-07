@@ -191,9 +191,13 @@ quoi="mattpocock/skills a publié $latest_tag, au-delà de la référence Method
 if [ "${#quoi}" -gt 140 ]; then
   quoi="${quoi:0:139}…"
 fi
-pourquoi="Référence épinglée à ${baseline_commit:0:12} dans $BASELINE_FILE"
-if [ "${#pourquoi}" -gt 140 ]; then
-  pourquoi="${pourquoi:0:139}…"
+# The file path goes in `details`, not in `pourquoi`: proposal-door refuses
+# a main-text field the Cockpit could not display, and a path can hold an
+# identifier-shaped segment (it did under a temporary directory).
+pourquoi="Référence épinglée à ${baseline_commit:0:12}, plus ancienne que cette publication"
+details="Fichier de référence : $BASELINE_FILE ; commit épinglé : $baseline_commit"
+if [ "${#details}" -gt 1000 ]; then
+  details="${details:0:999}…"
 fi
 langue=$("$OPERATOR_CONFIG_BIN" language) || die "could not read the Operator Language"
 que_faire=$(jq -n '[
@@ -201,8 +205,8 @@ que_faire=$(jq -n '[
   {option: "Ne pas adopter pour l'"'"'instant", consequence: "La référence reste inchangée ; le prochain tag sera à nouveau signalé."}
 ]')
 title="Upstream mattpocock/skills published $latest_tag (Method Baseline pinned at $baseline_commit)"
-payload=$(jq -n --arg quoi "$quoi" --arg pourquoi "$pourquoi" --arg langue "$langue" --argjson que_faire "$que_faire" \
-  '{quoi: $quoi, pourquoi: $pourquoi, que_faire: $que_faire, langue: $langue}')
+payload=$(jq -n --arg quoi "$quoi" --arg pourquoi "$pourquoi" --arg langue "$langue" --arg details "$details" --argjson que_faire "$que_faire" \
+  '{quoi: $quoi, pourquoi: $pourquoi, que_faire: $que_faire, langue: $langue, details: $details}')
 
 if [ "$DRY_RUN" = 1 ]; then
   log "DRY-RUN: would file proposal bead: $title"

@@ -306,6 +306,85 @@ unrecognised signal today).
 `tests/cockpit-other-requests-test.py` covers all of the above through the
 process's HTTP surface.
 
+## One text contract for the proposal door and the inbox (2026-10-07)
+
+Intent (Benjamin, his words, 2026-10-07): « le producteur proposal-door et
+le lecteur Cockpit partagent un même contrat de champs ».
+Mechanism (agent interpretation): one function,
+`cockpit.text.validate.request_violations` (`lib/cockpit/text/validate.py`),
+decides whether `quoi`, `pourquoi` and `que_faire` display as written. The
+inbox calls it before showing a request; `bin/proposal-door create` calls it
+through `bin/operator-text-check` before writing one, and refuses the write
+with the reason. It does not loosen the main text (spec .73), and it does
+not rewrite any existing proposal.
+
+| Cause of a refusal | Example | Where the producer reads it |
+|---|---|---|
+| an identifier | `af-th4gdf`, `#300`, `pr-autopilot`, `idle-ready-work-wake` | stderr of `proposal-door create` |
+| an internal term outside the Cockpit Lexicon | bead, convoi, Mayor, order | same |
+| more than one line, or more than 140 characters | | same |
+| a missing field, an option without its consequence | | same |
+
+Why: four proposals (af-os9sh2, af-vnv59w, af-1ai5e3, af-vws964) passed the
+door, which only checked presence, one line and 140 characters, and were
+then shown « incomplète : champ … manquant » with every field present in
+Beads — the inbox had replaced each field holding an identifier or an
+internal term by its fixed repli. Options without `recommande`/`raison`,
+straight apostrophes, non-ASCII letters, length and the read model's cache
+were not the cause.
+
+A request written before the door checked, or by a producer that does not
+go through it, still shows its repli as main text; the folded « Détails »
+of the request now give, per replaced field, the reason (« Refusé ») and
+the text exactly as written (« Texte écrit »). `GET /api/requests` carries
+the same as `motifs` and `texte_origine`.
+
+Identifiers and evidence have their own place: the optional `details`
+field of `proposal-door create` (one line, 1000 characters, stored as
+`gc.proposal_details`), shown as « Précisions » in the same folded details
+and never checked. The Mayor prompt (« Improvements are proposals ») used to
+tell producers to put bead/PR ids in `pourquoi` or a `consequence`; it now
+sends them to `details`.
+
+`bin/upstream-skills-check` put its reference file's path in `pourquoi`;
+the path now goes in `details` (a path under another directory could hold
+an identifier-shaped segment and be refused).
+
+Check a text by hand: `bin/operator-text-check '{"quoi": …, "pourquoi": …,
+"que_faire": [...]}'` (exit 0 = displays as written; exit 1 = reasons on
+stderr). `tests/proposal-cockpit-contract-test.py` creates proposals
+through the door and reads them through the Cockpit process; its fixture
+`tests/fixtures/cockpit/requests/refused-proposals.json` holds the four
+cases as Beads holds them.
+
+Known gap: `bin/escalation-door benjamin` does not run this control yet
+(its own 2 h promotion text names the Mayor and the bead, so the control
+would refuse it): a NEEDS BENJAMIN can still reach the inbox as a repli.
+
+To undo: remove the `cockpit_can_display` call in `bin/proposal-door`.
+
+## After an action, the list is right at once (2026-10-07)
+
+Intent (Benjamin, his words, 2026-10-07): « l'item reste tout pareil dans
+la liste, et je peux même re accepter. […] Il faut afficher l'item dans le
+bon état ensuite, ou l'enlever. »
+Mechanism (agent interpretation): the action was written, but the page
+reads the read model, which only saw it at the next regular read (20 s for
+Beads, 30 s for the projects), and the page did not reload either. Now
+`POST /api/actions/<action>` re-reads the bead-backed sources (`beads`,
+`projets`, `journal`) before it answers, and says so (`rafraichi`). The
+page script (`ui/actions/render.py`, `settle`) then, for every action that
+writes: says a refusal instead of staying silent; on success writes the
+result on the request, removes its controls, and reloads when `rafraichi`
+is true -- the reloaded list shows the request gone or in its new state.
+When the re-read did not finish within 8 s, the request stays marked as
+handled until the next regular read. It does not change what any action
+writes, nor the exit-at-source rule.
+
+`continuer`, `pas_bon_vers_agent` and `notifier_test` write nothing on a
+bead and trigger no re-read. To undo: drop the `rafraichi` line in
+`core/server.py`.
+
 ## Journal of resolved requests (af-mjfvwx)
 
 `GET /journal` (linked under « Ce qui t'attend ») and `GET /api/journal`
