@@ -337,6 +337,26 @@ class TicketAuthorTest(unittest.TestCase):
         self.assertEqual("main", self.git("symbolic-ref", "--short", "HEAD"))
         self.assertEqual("La page d'accueil affiche 3", answer["demonstration_line"])
 
+    def test_start_records_the_model_the_author_role_runs_on(self):
+        # T14: the code review compares the model of its reviewer with it.
+        shutil.copy(ROOT / "config" / "delivery-roles.json", self.root / "config" / "delivery-roles.json")
+        (self.root / "city.toml").write_text('[providers.p-author]\nargs_append = ["--model", "claude-opus-5-5"]\n')
+        failover = self.tmp / "provider-failover"
+        failover.write_text("#!/bin/sh\necho '{\"targets\": {\"delivery-author\": {\"effective\": \"p-author\"}}}'\n")
+        failover.chmod(0o755)
+        self.env["DELIVERY_ROLE_PROVIDER_FAILOVER_BIN"] = str(failover)
+
+        self.start()
+
+        author = self.shown()["models"]["author"]
+        self.assertEqual(("delivery-author", "p-author", "claude-opus-5-5"),
+                         (author["agent"], author["provider"], author["model"]))
+
+    def test_start_without_a_readable_author_model_records_none(self):
+        self.start()
+
+        self.assertIsNone(self.shown()["models"])
+
     def test_start_is_refused_without_a_session(self):
         self.refused("start", CONVOY, T1, mention="session")
 

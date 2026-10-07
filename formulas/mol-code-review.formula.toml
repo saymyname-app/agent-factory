@@ -1,0 +1,158 @@
+description = """
+Code review — one reviewer session reviews the committed diff of one ticket
+before it is merged, or judges the answers given to the Blocking Findings of
+an earlier review, and hands the result to `bin/code-review record` (T14,
+af-96cusm; Spec af-wf4w5r §6).
+
+Only `bin/code-review` dispatches this formula, through `bin/dispatch-door
+--role reviewer`: the session is new, runs on the read-only reviewer role,
+and knows nothing of the session that wrote the code. The step calls Matt
+Pocock's `code-review` skill as it is written; it does not restate it. The
+verdict is computed by `bin/convoy-state`, never written by the reviewer,
+and `bin/spec-integration` merges nothing without a favorable one. The
+stored state, the bounds and the stop are in docs/CODE_REVIEW.md.
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|--------------|
+| convoy_id | runtime | Input convoy tracking the single code-review bead |
+"""
+formula = "mol-code-review"
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "review"
+title = "Review the committed diff of one ticket, or judge the answers to its Blocking Findings, and record the result"
+description = """
+You are the reviewer of one ticket. You did not write its code. You are
+read-only: do not modify the ticket, the Spec, a branch or any file of a
+repository, and never check out a branch (read a file of the reviewed commit
+with `git show <commit>:<path>`).
+
+**1. Read what you are given:**
+
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+REVIEW_BEAD=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+[ -n "$REVIEW_BEAD" ] || { echo "mol-code-review requires an input convoy with exactly one tracked member" >&2; exit 1; }
+REVIEW_TEXT=$(gc bd show "$REVIEW_BEAD" --json | jq -r '.[0].description')
+TICKET_CONVOY=$(printf '%s\n' "$REVIEW_TEXT" | sed -n 's/^convoy: //p')
+TICKET=$(printf '%s\n' "$REVIEW_TEXT" | sed -n 's/^ticket: //p')
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+"$FACTORY_ROOT/bin/code-review" brief "$TICKET_CONVOY" "$TICKET" > code-review-brief.json
+jq -r '.kind, .commit, .base, .repo, .diff.command' code-review-brief.json
+jq -r '.spec.text' code-review-brief.json > code-review-spec.md
+jq -r '.ticket_text.description, "", "Demonstration line: " + (.ticket_text.demonstration_line // "none")' code-review-brief.json > code-review-ticket.md
+```
+
+The brief is everything you are given: the diff of the ticket
+(`.diff.command`, its files and the SHAs of its commits), the approved Spec
+(`code-review-spec.md`), the approved ticket (`code-review-ticket.md`), the
+standards files of the repository (`.standards`), and the records written by
+scripts (`.records`). Do not read anything else of the author: not the
+Ticket Handoff, not the notes or the comments of the ticket bead, not the
+commit messages (`git log`), not its mail, not its session. `.independence`,
+when it is not null, says that your model is the author's or that it is not
+known: go on, it is recorded for the operator.
+
+`.kind` says which of the two works below is asked. Do that one only.
+
+**2a. When `.kind` is `review`: call the `code-review` skill, unchanged.**
+
+Invoke the skill `code-review` in the repository `.repo` with:
+
+- the fixed point `.base`, and the reviewed commit `.commit` standing for
+  `HEAD` (the checked-out `HEAD` of the repository is not the ticket: the
+  diff is `.diff.command`, the list of commits is `.diff.commits`);
+- the spec source given as paths: `code-review-spec.md` and
+  `code-review-ticket.md`;
+- the standards sources `.standards`, plus whatever else the skill finds in
+  the repository at `.commit`.
+
+Follow the skill as it is written: its two axes (Standards, Spec), its two
+parallel sub-agents, its smell baseline. Then turn its two reports into
+findings, one per reported point, keeping the two axes apart:
+
+- `axis`: `standards` or `spec`.
+- `summary`: one line, in the Operator Language
+  (`"$FACTORY_ROOT/bin/operator-config" language`), naming the file and what
+  is wrong.
+- `blocking`: `true` only when the finding cites a line of the Spec, a line
+  of the ticket, or a written rule of the repository, and that line says the
+  diff is wrong. Then give the `citation`: `source` (`spec`, `ticket` or
+  `repo_rule`), `quote` (the cited line, copied exactly, at least a full
+  clause), and for `repo_rule` the `path` of the file that holds the rule.
+  Code checks that the quote is a line of its source: a finding given as
+  blocking without a citation that holds is recorded as non-blocking.
+- A smell of the baseline, a matter of taste, anything you cannot cite:
+  `blocking: false`. It is recorded and blocks nothing.
+
+**The closed questions on the tests.** Answer every question of `.questions`
+(there may be none) by `oui` or `non`, with a one-line `reason` when `non`:
+
+- `internal_test` — the test file named by `subject` is not a frozen
+  criterion test. Does it go through a listed seam (the entry points of
+  `.tests.seams`, and the « Testing Decisions » of the Spec)? A test that
+  imports or calls the inside of the product instead of a listed seam: `non`.
+- `amended_test` — the frozen criterion test file named by `subject` was
+  amended after the freeze. Read it at `.commit`, and the criteria of the
+  ticket (`.ticket_text.criteria`): does each amended test still observe its
+  criterion, and would it still fail on the observation that makes that
+  criterion false? Otherwise: `non`.
+
+A `non` is a Blocking Finding: code writes it. You give no overall verdict:
+code computes it.
+
+Write `code-review-result.json` in the current directory in the shape
+`.review_shape` shows, then record it:
+
+```bash
+jq '{commit, findings: [], answers: {}}' code-review-brief.json > code-review-result.json
+# then add each finding to .findings and set .answers["<question id>"] for every question of the brief
+"$FACTORY_ROOT/bin/code-review" record "$TICKET_CONVOY" "$TICKET" --file code-review-result.json
+```
+
+**2b. When `.kind` is `judgement`: judge the closed list.**
+
+An earlier review left Blocking Findings (`.findings`, each with its
+citation), and each received an answer (`.responses`): `fixed`, with the
+commit of the correction, or `contested`, with a reason. You are a second
+reviewer: judge each answer against the correction diff (`.diff.command`,
+from the reviewed commit `.base` to `.commit`) and the cited line.
+
+- `favorable` — a `fixed` finding is really fixed at `.commit`: what the
+  cited line asks is now true of the code. A `contested` finding is rightly
+  contested: the cited line does not say what the finding claims, or the
+  code already did what it asks.
+- `unfavorable` — anything else, with a one-line `reason`.
+
+Judge only that list: no new finding. Write `code-review-result.json` in the
+shape `.judgement_shape` shows, one state per finding id, then record it:
+
+```bash
+jq '{commit, judgements: {}}' code-review-brief.json > code-review-result.json
+# then set .judgements["<finding id>"] = {"state": "favorable"} or {"state": "unfavorable", "reason": "..."}
+"$FACTORY_ROOT/bin/code-review" record "$TICKET_CONVOY" "$TICKET" --file code-review-result.json
+```
+
+**3. If `record` refuses**, it lists what is missing or outside its closed
+lists: fix the file and run it again. Do not write the review state any
+other way.
+
+**4. Close:**
+
+```bash
+gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Code review of $TICKET recorded."
+if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$REVIEW_BEAD" ]; then
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Code review of $TICKET recorded."
+fi
+```
+
+If you could not record a result, close both with `gc.outcome=fail` and the
+reason in the notes instead: a review without a result is not a passed one.
+
+**Exit criteria:** `bin/code-review record` accepted your result, and the
+review bead and this step are closed."""

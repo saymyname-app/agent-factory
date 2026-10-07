@@ -447,8 +447,12 @@ gc session list --state all --json | jq -e '[.sessions[] | select(.template | te
   || fail "a Mayor session exists in the trial city"
 echo "$(date -u +%H:%M:%S) trois tickets, trois sessions d'auteur distinctes, aucun Mayor"
 
-# --- what the order then did with the finished ticket (observed, T18) -----------
+# --- what the order then did with the finished ticket (observed, T18, T14) -------
+# This city sets no code review (no `code_review` in its delivery-flow.json,
+# no reviewer for it): the finished ticket is not merged without one. The
+# review itself is tried in tests/code-review-isolated-city-test.sh.
 sleep 45
 merge=$(state show "$CONVOY" --repo "$PRODUCT" | jq -c --arg t "$A" '.tickets[] | select(.id == $t) | .merge')
-echo "$(date -u +%H:%M:%S) relevé : fusion de A par l'ordre (bin/spec-integration) = $merge"
+[ "$merge" = null ] || fail "A was merged without a code review: $merge"
+echo "$(date -u +%H:%M:%S) relevé : A terminé, non fusionné par l'ordre tant que sa revue de code n'est pas rendue (merge = $merge)"
 echo "PASS: mol-ticket-author, started by the city's own order, held the sequence of each ticket by script"

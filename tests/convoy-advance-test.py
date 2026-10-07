@@ -736,7 +736,28 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.git("add", "-A")
         self.git("commit", "-q", "-m", "base")
         self.run_ok(INTEGRATION_TOOL, "open", CONVOY, "--repo", self.root, "--protected", "main")
+        self.code_reviewed("favorable")
         return self.git("rev-parse", "main")
+
+    def code_reviewed(self, *plan, timeout_seconds=3600):
+        """The code review of the finished tickets (T14): its settings, the
+        Spec the convoy delivers, and what the reviewer session does at each
+        launch (tests/fixtures/code-review/reviewer), the last one repeated."""
+        state = self.tracker_state()
+        state["beads"].setdefault("fx-spec", {"title": "Spec d'essai", "status": "open", "issue_type": "task",
+                                              "description": "## User Stories\n\n1. As Benjamin, I want un essai."})
+        self.tracker.write_text(json.dumps(state))
+        (self.tmp / "code-review-plan.json").write_text(json.dumps(list(plan)))
+        self.env.update({
+            "CODE_REVIEW_DISPATCH_DOOR_BIN": str(ROOT / "tests" / "fixtures" / "code-review" / "reviewer"),
+            "CODE_REVIEW_FAKE_LOG": str(self.tmp / "code-review-door.log"),
+            "CODE_REVIEW_FAKE_PLAN": str(self.tmp / "code-review-plan.json"),
+            "CODE_REVIEW_FAKE_REPO": str(self.root),
+        })
+        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
+        settings["code_review"] = {"formula": "mol-code-review", "role": "reviewer", "rig": "fx-rig",
+                                   "timeout_seconds": timeout_seconds}
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
 
     def finished(self, ticket_id):
         """A ticket started by the pass, with one commit on its branch, that
@@ -758,7 +779,17 @@ class ConvoyAdvanceTest(unittest.TestCase):
             "partial": False, "commit": tip, "records": {}}))
         self.run_ok(STATE, "set-handoff", CONVOY, ticket_id, "--file", handoff)
         self.run_ok(STATE, "set-exit", CONVOY, ticket_id, "--exit", "finished")
+        # The regression of the prefactoring, proven at the tip (bin/tdd-step).
+        self.run_ok(STATE, "set-tdd", CONVOY, ticket_id, "--step", "prefactoring", "--commit", tip,
+                    "--base", self.git("rev-parse", "main"))
         return tip
+
+    def code_review_of(self, answer, convoy=CONVOY):
+        return next(c for c in answer["convoys"] if c["id"] == convoy).get("code_review")
+
+    def code_review_launches(self):
+        log = self.tmp / "code-review-door.log"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
     def integration_of(self, answer, convoy=CONVOY):
         return next(c for c in answer["convoys"] if c["id"] == convoy).get("integration")
@@ -833,6 +864,75 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertIsNone(self.integration_of(answer))
         self.assertEqual(before, self.git("rev-parse", self.INTEGRATION))
         self.assertIsNone(self.bead(T1)["metadata"].get("gc.flow.merge"))
+
+    # --- the code of a finished ticket is reviewed before its merge (T14) -------
+
+    def test_a_pass_sends_a_finished_ticket_to_the_reviewer_role_and_merges_it_once_reviewed(self):
+        self.integrated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "review", tip)], [(entry["ticket"], entry["kind"], entry["commit"])
+                                                 for entry in self.code_review_of(answer)["launched"]])
+        (call,) = self.code_review_launches()
+        self.assertEqual(["--rig", "fx-rig", "--formula", "mol-code-review", "--role", "reviewer"], call[1:])
+        self.assertEqual("favorable", self.shown(T1)["code_review"]["state"]["verdict"])
+        self.assertEqual([T1], [entry["id"] for entry in self.integration_of(answer)["merged"]])
+
+    def test_a_pass_merges_nothing_of_a_ticket_whose_code_review_gave_no_verdict(self):
+        base = self.integrated()
+        self.code_reviewed("silent")
+        self.advance(CONVOY)
+        self.finished(T1)
+
+        first = self.advance(CONVOY)
+        second = self.advance(CONVOY)
+
+        self.assertEqual([T1], [entry["ticket"] for entry in self.code_review_of(first)["launched"]])
+        self.assertEqual([T1], [entry["ticket"] for entry in self.code_review_of(second)["pending"]])
+        for answer in (first, second):
+            self.assertEqual(([], [T1]), (self.integration_of(answer)["merged"],
+                                          [entry["id"] for entry in self.integration_of(answer)["waiting"]]))
+        self.assertTrue(second["ok"])
+        self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
+        self.assertEqual(1, len(self.code_review_launches()))
+
+    def test_a_pass_stops_a_ticket_whose_code_review_gave_no_result_twice_and_raises_it_once(self):
+        base = self.integrated()
+        self.code_reviewed("silent", timeout_seconds=0)
+        self.advance(CONVOY)
+        self.finished(T1)
+        self.advance(CONVOY)
+
+        relaunched = self.advance(CONVOY)
+        stopped = self.advance(CONVOY)
+        after = self.advance(CONVOY)
+
+        self.assertEqual([T1], [entry["ticket"] for entry in self.code_review_of(relaunched)["relaunched"]])
+        self.assertEqual([T1], [entry["ticket"] for entry in self.code_review_of(stopped)["stopped"]])
+        self.assertIsNone(self.code_review_of(after))
+        self.assertEqual(2, len(self.code_review_launches()))
+        stop = json.loads(self.bead(T1)["metadata"]["gc.flow.stop"])
+        self.assertEqual("code_review_no_result", stop["reason"])
+        self.assertIn("raised", stop)
+        listed = self.run_ok(ESCALATION, "list").stdout
+        self.assertEqual(1, listed.count(f"{T1} — "), listed)
+        self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
+
+    def test_a_code_review_that_cannot_be_sent_fails_the_pass_and_merges_nothing(self):
+        base = self.integrated()
+        self.code_reviewed("door-refuses")
+        self.advance(CONVOY)
+        self.finished(T1)
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED)
+
+        self.assertFalse(answer["ok"])
+        self.assertIn("rôle relecteur", self.code_review_of(answer)["refused"][0]["reason"])
+        self.assertEqual([], self.integration_of(answer)["merged"])
+        self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
 
     # --- review of the criterion tests left without result (T13) ---------------
 

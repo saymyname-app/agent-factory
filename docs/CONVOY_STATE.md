@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, T11, T13, T18, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, T13, T14, T18, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -36,6 +36,11 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state launch-test-review af-convoy af-t1 --bead af-review                     # bin/test-review, once the reviewer is sent
 ./bin/convoy-state record-test-review af-convoy af-t1 --file verdict.json                  # bin/test-review record
 ./bin/convoy-state stop-raised af-convoy af-t1                                              # once the escalation door accepted the stop
+./bin/convoy-state set-model af-convoy af-t1 --role reviewer --agent delivery-reviewer --provider codex --model gpt-5.6-sol   # bin/ticket-author start (author), bin/code-review (reviewer)
+./bin/convoy-state open-code-review    af-convoy af-t1 --kind review --commit <tip> --base <fixed point> [--file questions.json]   # bin/code-review settle
+./bin/convoy-state launch-code-review  af-convoy af-t1 --bead af-review                    # bin/code-review, once the reviewer is sent
+./bin/convoy-state record-code-review  af-convoy af-t1 --file result.json                  # bin/code-review record
+./bin/convoy-state respond-code-review af-convoy af-t1 --file responses.json               # bin/code-review respond
 ./bin/convoy-state set-handoff af-convoy af-t1 --file handoff.json                                   # bin/ticket-exit
 ./bin/convoy-state park        af-convoy af-t1 --cause planning_exception --detail "La Spec fixe X, …"  # bin/ticket-exit
 ./bin/convoy-state set-integration af-convoy --branch integration/af-spec --protected main --base <sha>   # bin/spec-integration open
@@ -74,7 +79,9 @@ Every answer is one JSON object on stdout.
 | Evidence fingerprint | `gc.flow.evidence.<piece>` | ticket | `sha256:<64 hex>` and the commit of the piece |
 | Gate record | `gc.flow.gate.<gate>` | ticket | `dispatch`, `ticket_end` (commit required), `withdrawn` (removed from the graph by a resolved Planning Exception) |
 | TDD step | `gc.flow.tdd.<step>` | ticket | step: `red`, `freeze`, `green`, `amendment`, `prefactoring`; always with the full commit SHA it was proven at; `red` and `prefactoring` with their start commit (`base`), `amendment` with its one-line reason |
-| Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_refused`, `test_review_no_result`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
+| Stop | `gc.flow.stop` | ticket | reason: `criterion_already_green`, `amendment_exhausted`, `test_review_refused`, `test_review_no_result`, `code_review_no_result`; with a one-line detail, and `raised` once `stop-raised` wrote that the escalation door accepted it |
+| Code review | `gc.flow.code_review` | ticket | `rounds`: each recorded round (`kind`: `review` / `judgement`, `commit`, `base`, `verdict`, `models`, `recorded_by`, `at`; a review with `findings` — `id`, `axis`: `standards` / `spec` / `tests`, `blocking`, `summary`, and `citation` (`source`: `spec` / `ticket` / `repo_rule`, `quote`, `path`), `demoted` or `question` — its `answers` (question id → `oui` / `non` and a reason) and its `responses` (finding id → `fixed` with a commit, or `contested` with a reason); a judgement with `judgements`: finding id → `favorable` / `unfavorable` and a reason); `request` while a round is open (`kind`, `commit`, `base`, `questions`, `models`, `launches`: at most two `{bead, at}`, `at`) |
+| Models per role | `gc.flow.models` | ticket | role: `author`, `reviewer`, `evaluator`; each with `agent`, `provider`, `model`, `at` |
 | Test review | `gc.flow.test_review` | ticket (`vertical_slice`, `repair`) | `rounds`: each recorded pass (`commit`, `files`: path → `sha256:`, `verdict`: `favorable` / `unfavorable`, `tests`: test id → `state` and, when unfavorable, `reason`, `recorded_by`, `at`); `request` while a review is open (`commit`, `files`, `criteria`: the criterion → test table, `launches`: at most two `{bead, at}`, `at`) |
 | Ticket Handoff | `gc.flow.handoff` | ticket | `sections` (`done`, `deviations`, `not_done`, `out_of_ticket`: each `aucun` or a non-empty list of one-line items; an item of `not_done` may be `{what, paths}`), `partial`, the full commit SHA it was taken at, and the `records` written by code |
 | Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`; the ticket whose Ticket Exit parked it (`origin`); a one-line detail |
@@ -156,6 +163,56 @@ amended test). `stop-raised` records that the stop of a ticket reached the
 operator, so the code that stopped it raises it once; it refuses a ticket
 that is not stopped, and the same record again writes nothing.
 
+`set-model`, `open-code-review`, `launch-code-review`, `record-code-review`
+and `respond-code-review` are called by `bin/code-review` (T14,
+`docs/CODE_REVIEW.md`), `set-model` also by `bin/ticket-author start`.
+`set-model` writes the agent, provider and model a delivery role runs on
+for this ticket; the same record again writes nothing.
+
+`open-code-review` opens a round of the code review at the commit the author
+finished at: it refuses a ticket whose Ticket Exit is not « terminé », whose
+complete Handoff is not at `--commit`, or that is stopped. `--kind review`
+takes the closed questions on the tests (`--file`, `{questions: [{id, kind,
+subject, text}]}`); it is refused while Blocking Findings wait for their
+judgement, and at a commit already reviewed favorably. `--kind judgement`
+needs an unfavorable review as last round, an answer to every Blocking
+Finding, and `--base` equal to the reviewed commit. After an unfavorable
+judgement neither opens. The request carries `models` — the models of the
+author and of the reviewer read on the ticket, and `same_model` (`null` when
+one is not recorded): the mention is stored, never left out. The same
+request again writes nothing; another one replaces it.
+`launch-code-review` records each reviewer bead: the first, then one
+relaunch; a third is refused.
+
+`record-code-review` takes what the reviewer session hands in (`--file`) and
+refuses, with every reason listed and nothing written: a record when no
+round is open, on another commit, without the session, with a field it does
+not know — a `verdict` first of all: it is computed here — an axis outside
+the list, a summary that is not one line, a `blocking` that is not a
+boolean, an answer left out, unknown, outside `oui` / `non`, or a « non »
+without a reason. A finding given as blocking is **stored as non-blocking**,
+with the reason under `demoted`, when its citation is absent, malformed,
+from a source outside the list, or declared not found by the caller
+(`citation_refused`, set by `bin/code-review record`, which reads the
+sources). A « non » to a closed question is stored as a Blocking Finding of
+axis `tests`. The verdict is `unfavorable` as soon as one finding blocks.
+For a judgement the file gives one state per Blocking Finding of the
+reviewed round, exactly; it is refused from the session that recorded the
+review. The round, the closing of the request and
+`gc.flow.verdict.code_review` at the reviewed commit go in one tracker
+write.
+
+`respond-code-review` writes on the last review the answer to each of its
+Blocking Findings: the closed list, every one and nothing else, `fixed` with
+a full commit SHA other than the reviewed one, or `contested` with a reason.
+It is refused when the last round is not an unfavorable review, and once
+the judgement is opened.
+
+`show` renders `code_review` with a computed `state`: the `verdict` and the
+`commit` of the last round, and `unsettled`, the Blocking Findings that have
+no favorable verdict. It is what `bin/spec-integration` reads to refuse a
+merge.
+
 The verdict of the test review is not a `gc.flow.verdict.test_review`: a
 verdict of that family holds only while its commit is the tip of the branch,
 and this one holds for the frozen tests. The kind stays in the closed list
@@ -212,7 +269,9 @@ as described above; a
 list, without a full commit SHA, out of order, or on a stopped ticket; a
 freeze without a favorable test review at the same commit; a request, a
 launch or a verdict of the test review as described above, or on a stopped
-ticket; a stop whose reason is outside its closed list or that has no
+ticket; a request, a launch, a record or an answer of the code review as
+described above, or on a stopped ticket; a model for a role outside the
+list; a stop whose reason is outside its closed list or that has no
 detail; a ticket
 that is not tracked by the convoy, or that does not carry the mark.
 
@@ -235,7 +294,9 @@ and gate records, its acceptance criteria (`criteria`, the lines of its
 description, numbered from 1 by `bin/tdd-step`), the proven steps of its
 TDD (`tdd`, `{step: {commit, at, base?, reason?}}`), its stop (`stop`,
 `null` when it is not stopped), the review of its criterion tests
-(`test_review`, `null` before the first request), its Ticket Handoff (`handoff`), its parking
+(`test_review`, `null` before the first request), its code review
+(`code_review`, `null` before the first request) and the models per role
+(`models`), its Ticket Handoff (`handoff`), its parking
 (`park`) and its Declared Scope (`declared_scope`, a list of paths), each
 `null` when the ticket has none, and what the merge command did of it
 (`merge`, `null` while it did nothing); and for the convoy the Spec it

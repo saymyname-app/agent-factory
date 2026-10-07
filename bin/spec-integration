@@ -12,8 +12,9 @@ branch; no ticket opens a pull request toward the protected branch.
 the project, at the tip of the protected branch, and recorded on the convoy.
 The publication door calls it once the convoy is marked.
 
-`merge`: every ticket whose author has finished at the tip of its branch is
-merged, in the convoy's order, never two at once. Before the first merge the
+`merge`: every ticket whose author has finished at the tip of its branch,
+and whose code review is favorable at that tip (T14, bin/code-review: no
+merge without it), is merged, in the convoy's order, never two at once. Before the first merge the
 integration branch takes up the protected branch. Each merge is made in a
 work tree of its own; the regression command of the project's profile is run
 on the merged result by bin/evidence-capture (piece `merged_tests`, tied to
@@ -336,6 +337,30 @@ def cmd_open(args: argparse.Namespace) -> int:
 # --- merge -----------------------------------------------------------------------
 
 
+def review_refusal(ticket: dict[str, Any], tip: str) -> str | None:
+    """Spec §6: code refuses the merge without a favorable verdict of the
+    code review (bin/code-review), given at the tip of the ticket branch. A
+    review that is absent, open or without output is not an agreement; a
+    verdict written without the review it comes from is not one either."""
+    review = ticket.get("code_review") or {}
+    state = review.get("state") or {}
+    if state.get("verdict") is None:
+        if review.get("request"):
+            return "revue de code en cours : aucun verdict encore, et l'absence de revue ne vaut pas accord"
+        return "aucune revue de code rendue : l'absence de revue ne vaut pas accord"
+    if review.get("request"):
+        return "revue de code en cours : le verdict de la pointe n'est pas rendu"
+    if state.get("unsettled") or state["verdict"] != "favorable":
+        return f"revue de code défavorable : Blocking Finding sans verdict favorable ({', '.join(state.get('unsettled') or [])})"
+    if state.get("commit") != tip:
+        return (f"revue de code rendue au commit {str(state.get('commit'))[:12]} et non à la pointe {tip[:12]} : "
+                "à rejouer sur la pointe")
+    verdict = (ticket.get("verdicts") or {}).get("code_review") or {}
+    if verdict.get("state") != "favorable" or verdict.get("commit") != tip or verdict.get("valid") is not True:
+        return f"verdict de la revue de code absent ou invalide à la pointe {tip[:12]}"
+    return None
+
+
 def disposition(ticket: dict[str, Any]) -> tuple[str, Any]:
     """What a pass does of one ticket: `skip` (nothing to say), `waiting`
     (with the reason), `stale` (with the verdicts a newer commit made
@@ -366,10 +391,16 @@ def disposition(ticket: dict[str, Any]) -> tuple[str, Any]:
                            f"à rejouer sur la pointe {tip[:12]}")
     unfavorable = [kind for kind, verdict in verdicts.items() if verdict.get("state") != "favorable"]
     if unfavorable:
-        return "waiting", f"verdict défavorable ({', '.join(unfavorable)})"
+        unsettled = ((ticket.get("code_review") or {}).get("state") or {}).get("unsettled") or []
+        findings = f" : Blocking Finding sans verdict favorable ({', '.join(unsettled)})" \
+            if "code_review" in unfavorable and unsettled else ""
+        return "waiting", f"verdict défavorable ({', '.join(unfavorable)}){findings}"
     handoff = ticket.get("handoff") or {}
     if handoff.get("partial") is not False or handoff.get("commit") != tip:
         return "waiting", f"le ticket n'est pas terminé à la pointe de sa branche ({tip[:12]}) : son auteur y travaille"
+    unreviewed = review_refusal(ticket, tip)
+    if unreviewed:
+        return "waiting", unreviewed
     if merge and merge.get("ticket_commit") == tip:
         return "waiting", (f"retourné à son auteur ({RETURN_CAUSES.get(merge.get('outcome'), merge.get('outcome'))}) : "
                            "attend un nouveau commit sur sa branche")

@@ -11,7 +11,8 @@ recipe (T06) or is the Prototype Fold (T36), its acceptance criteria (T10,
 read only), its branch and Ticket Exit, its verdicts (each tied to a
 commit), its counters, its evidence fingerprints and its gate records, the
 steps of its TDD and its stop (T10), the review of its criterion tests
-before the freeze (T13), its Ticket Handoff and its parking (T11), the
+before the freeze (T13), its code review and the model each delivery role
+ran on (T14), its Ticket Handoff and its parking (T11), the
 integration branch of the convoy's Spec and what the merge command did of a
 ticket (T18), and the convoy's open factory incident. No other script
 invents a `gc.flow.*` field: a missing field is added here.
@@ -35,6 +36,11 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state open-test-review   CONVOY TICKET --commit SHA --file PATH
     convoy-state launch-test-review CONVOY TICKET --bead BEAD
     convoy-state record-test-review CONVOY TICKET --file PATH
+    convoy-state set-model    CONVOY TICKET --role ROLE --agent NAME --provider NAME --model NAME
+    convoy-state open-code-review    CONVOY TICKET --kind review|judgement --commit SHA --base SHA [--file PATH]
+    convoy-state launch-code-review  CONVOY TICKET --bead BEAD
+    convoy-state record-code-review  CONVOY TICKET --file PATH
+    convoy-state respond-code-review CONVOY TICKET --file PATH
     convoy-state set-handoff  CONVOY TICKET --file PATH
     convoy-state park         CONVOY TICKET --cause CAUSE --detail LINE
     convoy-state set-integration CONVOY --branch NAME --protected NAME --base SHA
@@ -112,6 +118,8 @@ KEY_INCIDENT = PREFIX + "incident"
 KEY_INTEGRATION = PREFIX + "integration"
 KEY_MERGE = PREFIX + "merge"
 KEY_SESSION = PREFIX + "session"
+KEY_CODE_REVIEW = PREFIX + "code_review"
+KEY_MODELS = PREFIX + "models"
 # The key Gas City and bin/ticket-exit read the session of a bead under.
 KEY_SESSION_NAME = "gc.session_name"
 
@@ -130,12 +138,29 @@ TDD_STEPS = ("red", "freeze", "green", "amendment", "prefactoring")
 TDD_STEPS_WITH_BASE = ("red", "prefactoring")
 KIND_WITHOUT_RED = "prefactoring"
 STOP_TEST_REVIEW_REFUSED = "test_review_refused"
-STOP_REASONS = ("criterion_already_green", "amendment_exhausted", STOP_TEST_REVIEW_REFUSED, "test_review_no_result")
+STOP_REASONS = ("criterion_already_green", "amendment_exhausted", STOP_TEST_REVIEW_REFUSED, "test_review_no_result",
+                "code_review_no_result")
 # The review of the criterion tests between red and freeze (Spec §5, §8): a
 # refusal returns once to the author, the second one stops the ticket; a
 # review that gives no result is launched once more, no further.
 TEST_REVIEW_MAX_REFUSALS = 2
 TEST_REVIEW_MAX_LAUNCHES = 2
+# The code review of a ticket (T14, Spec §6). A round is the review itself,
+# or the judgement a second reviewer session gives of the answers to its
+# Blocking Findings.
+CODE_REVIEW_KINDS = ("review", "judgement")
+CODE_REVIEW_MAX_LAUNCHES = 2
+REVIEW_AXES = ("standards", "spec")
+# What a Blocking Finding may cite (Spec §6): a line of the Spec, of the
+# ticket, or a written rule of the repository.
+CITATION_SOURCES = ("spec", "ticket", "repo_rule")
+QUESTION_KINDS = ("internal_test", "amended_test")
+QUESTION_ANSWERS = ("oui", "non")
+# The axis of a Blocking Finding made by code of a closed question answered « non ».
+AXIS_TESTS = "tests"
+FINDING_RESPONSES = ("fixed", "contested")
+MODEL_ROLES = ("author", "reviewer", "evaluator")
+MAX_FINDING_LINE = 600
 ACCEPTANCE_HEADING = "## acceptance criteria"
 # The Ticket Handoff (Spec §5): four sections written by the author, each
 # with content or the word for "nothing", and the records written by code.
@@ -168,6 +193,8 @@ BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")
 STORY_RE = re.compile(r"^[1-9][0-9]*$")
 BEAD_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$")
 CRITERION_RE = re.compile(r"^\s*-\s+\[[ xX]\]\s+(.*\S)\s*$")
+QUESTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+FINDING_ID_RE = re.compile(r"^F[1-9][0-9]*\.[1-9][0-9]*$")
 
 
 class Refusal(RuntimeError):
@@ -520,6 +547,205 @@ def review_refusals(record: dict[str, Any]) -> int:
     return sum(1 for value in record["rounds"] if value["verdict"] == "unfavorable")
 
 
+def normalized_model(model: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", model.lower())
+
+
+def models_record(raw: Any) -> dict[str, Any]:
+    """The agent, provider and model each delivery role ran on for this
+    ticket (T14, Spec §6: the reviewer has another model than the author)."""
+    record = stored_record(raw, (), MODEL_ROLES)
+    for role, entry in record.items():
+        if not isinstance(entry, dict) or set(entry) != {"agent", "provider", "model", "at"}:
+            raise Refusal(f"relevé du rôle {role} mal formé : {entry!r}")
+        for name in ("agent", "provider", "model"):
+            single_line(entry[name], f"valeur {name} du rôle {role}")
+    return record
+
+
+def review_models(value: Any) -> dict[str, Any]:
+    """The models a round of the code review is given under: never left out,
+    `same_model` is null when one of the two is not recorded."""
+    if not isinstance(value, dict) or set(value) != {"author", "reviewer", "same_model"}:
+        raise Refusal(f"modèles de la revue mal formés : {value!r}")
+    for role in ("author", "reviewer"):
+        if value[role] is not None:
+            single_line(value[role], f"modèle du rôle {role}")
+    known = value["author"] is not None and value["reviewer"] is not None
+    if (value["same_model"] is None) == known or not isinstance(value["same_model"], (bool, type(None))):
+        raise Refusal(f"mention des modèles incohérente : {value!r}")
+    return value
+
+
+def review_questions(value: Any) -> list[dict[str, str]]:
+    """The closed questions a code review answers about the tests (Spec §6,
+    « troisième vérification »): asked by code, one answer each."""
+    if not isinstance(value, list):
+        raise Refusal(f"questions fermées mal formées : {value!r}")
+    for question in value:
+        if not isinstance(question, dict) or set(question) != {"id", "kind", "subject", "text"} \
+                or not isinstance(question["id"], str) or not QUESTION_ID_RE.match(question["id"]):
+            raise Refusal(f"question fermée mal formée : {question!r}")
+        one_of(question["kind"], QUESTION_KINDS, "genre de question fermée")
+        single_line(question["subject"], "sujet de la question fermée")
+        single_line(question["text"], "question fermée")
+    if len({question["id"] for question in value}) != len(value):
+        raise Refusal("questions fermées : un identifiant est donné deux fois")
+    return value
+
+
+def citation_of(finding: dict[str, Any]) -> tuple[dict[str, str] | None, str | None]:
+    """The citation a finding gives, and why it does not hold when it does
+    not (Spec §6: a finding blocks only if it cites a line of the Spec, of
+    the ticket or a written rule of the repository)."""
+    citation = finding.get("citation")
+    if citation is None:
+        return None, "constat sans citation d'une ligne de la Spec, du ticket ou d'une règle écrite du dépôt"
+    wanted = ", ".join(CITATION_SOURCES)
+    if not isinstance(citation, dict) or set(citation) - {"source", "quote", "path"}:
+        return None, f"citation mal formée : attendu source ({wanted}), quote et, pour repo_rule, path"
+    source, quote, path = citation.get("source"), citation.get("quote"), citation.get("path")
+    if source not in CITATION_SOURCES:
+        return None, f"citation d'une source hors de la liste fermée : {source!r} (attendu : {wanted})"
+    if not isinstance(quote, str) or not quote.strip():
+        return None, "citation sans la ligne citée (quote)"
+    if (source == "repo_rule") != (isinstance(path, str) and bool(path.strip())):
+        return None, "citation mal formée : path nomme le fichier d'une règle écrite du dépôt, et seulement elle"
+    kept = {"source": source, "quote": " ".join(quote.split())[:MAX_FINDING_LINE]}
+    if source == "repo_rule":
+        kept["path"] = path.strip()
+    refused = finding.get("citation_refused")
+    if refused is not None:
+        return kept, " ".join(str(refused).split())[:MAX_FINDING_LINE] or "citation refusée"
+    return kept, None
+
+
+def review_finding(value: Any) -> dict[str, Any]:
+    """One Review Finding as stored. A Blocking Finding carries its
+    citation, or the closed question whose answer « non » made it."""
+    if not isinstance(value, dict) or not {"id", "axis", "blocking", "summary"} <= set(value) \
+            or set(value) - {"id", "axis", "blocking", "summary", "citation", "demoted", "question"}:
+        raise Refusal(f"constat de revue mal formé : {value!r}")
+    if not isinstance(value["id"], str) or not FINDING_ID_RE.match(value["id"]):
+        raise Refusal(f"identifiant de constat mal formé : {value['id']!r}")
+    one_of(value["axis"], (*REVIEW_AXES, AXIS_TESTS), "axe de revue")
+    single_line(value["summary"], "résumé du constat")
+    if not isinstance(value["blocking"], bool):
+        raise Refusal(f"constat {value['id']} : blocking mal formé : {value['blocking']!r}")
+    if "citation" in value and citation_of({"citation": value["citation"]})[1] is not None:
+        raise Refusal(f"constat {value['id']} : citation mal formée")
+    if value["blocking"] and ("demoted" in value or not ("citation" in value or "question" in value)):
+        raise Refusal(f"constat {value['id']} : bloquant sans citation ni question fermée")
+    return value
+
+
+def blocking_ids(round_: dict[str, Any]) -> list[str]:
+    """The Blocking Findings of a review round."""
+    return [finding["id"] for finding in round_.get("findings", []) if finding["blocking"]]
+
+
+def code_review_request(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"kind", "commit", "base", "questions", "launches", "models", "at"}:
+        raise Refusal(f"demande de revue de code mal formée : {value!r}")
+    one_of(value["kind"], CODE_REVIEW_KINDS, "genre de revue")
+    valid_commit(value["commit"], "commit de la revue")
+    valid_commit(value["base"], "commit de départ de la revue")
+    review_questions(value["questions"])
+    review_models(value["models"])
+    launches = value["launches"]
+    if not isinstance(launches, list) or len(launches) > CODE_REVIEW_MAX_LAUNCHES:
+        raise Refusal(f"lancements de revue mal formés : {launches!r}")
+    for launch in launches:
+        if not isinstance(launch, dict) or set(launch) != {"bead", "at"} or not isinstance(launch["bead"], str) \
+                or not BEAD_ID_RE.match(launch["bead"]):
+            raise Refusal(f"lancement de revue mal formé : {launch!r}")
+    return value
+
+
+def code_review_round(value: Any) -> dict[str, Any]:
+    common = {"kind", "commit", "base", "verdict", "models", "recorded_by", "at"}
+    if not isinstance(value, dict) or not common <= set(value):
+        raise Refusal(f"passe de revue de code mal formée : {value!r}")
+    kind = one_of(value["kind"], CODE_REVIEW_KINDS, "genre de revue")
+    own = {"findings", "answers", "responses"} if kind == "review" else {"judgements"}
+    required = own - {"responses"}
+    if set(value) - common - own or not required <= set(value):
+        raise Refusal(f"passe de revue de code mal formée : {value!r}")
+    valid_commit(value["commit"], "commit de la revue")
+    valid_commit(value["base"], "commit de départ de la revue")
+    one_of(value["verdict"], VERDICT_STATES, "verdict de revue")
+    review_models(value["models"])
+    single_line(value["recorded_by"], "session du relecteur")
+    if kind == "judgement":
+        judgements = value["judgements"]
+        if not isinstance(judgements, dict) or not judgements:
+            raise Refusal(f"jugement sans réponse par constat : {judgements!r}")
+        for finding_id, answer in judgements.items():
+            if not isinstance(answer, dict) or answer.get("state") not in VERDICT_STATES or set(answer) - {"state", "reason"} \
+                    or (answer["state"] == "unfavorable") != ("reason" in answer):
+                raise Refusal(f"jugement mal formé pour {finding_id} : {answer!r}")
+        refused = any(answer["state"] == "unfavorable" for answer in judgements.values())
+    else:
+        if not isinstance(value["findings"], list) or not isinstance(value["answers"], dict):
+            raise Refusal(f"passe de revue de code mal formée : {value!r}")
+        for finding in value["findings"]:
+            review_finding(finding)
+        for question_id, answer in value["answers"].items():
+            if not isinstance(answer, dict) or answer.get("answer") not in QUESTION_ANSWERS \
+                    or set(answer) - {"answer", "reason"} or (answer["answer"] == "non") != ("reason" in answer):
+                raise Refusal(f"réponse mal formée à la question {question_id} : {answer!r}")
+        responses = value.get("responses", {})
+        if not isinstance(responses, dict) or set(responses) - set(blocking_ids(value)):
+            raise Refusal(f"réponses aux constats mal formées : {responses!r}")
+        for finding_id, response in responses.items():
+            given = response.get("response") if isinstance(response, dict) else None
+            if given not in FINDING_RESPONSES or set(response) != {"response", "at", "commit" if given == "fixed" else "reason"}:
+                raise Refusal(f"réponse mal formée au constat {finding_id} : {response!r}")
+        refused = bool(blocking_ids(value))
+    if (value["verdict"] == "unfavorable") != refused:
+        raise Refusal("verdict de revue qui n'est pas celui de ses constats")
+    return value
+
+
+def code_review_record(raw: Any) -> dict[str, Any]:
+    """The code review of a ticket (T14): the rounds reviewer sessions
+    recorded, each bound to the commit it judged, and the request that is
+    open. A judgement round follows the review round it judges."""
+    record = stored_record(raw, ("rounds",), ("request",))
+    if not isinstance(record["rounds"], list):
+        raise Refusal(f"passes de revue de code mal formées : {record['rounds']!r}")
+    previous = None
+    for value in record["rounds"]:
+        code_review_round(value)
+        if value["kind"] == "judgement" and (
+                previous is None or previous["kind"] != "review" or previous["verdict"] != "unfavorable"
+                or set(value["judgements"]) != set(blocking_ids(previous))):
+            raise Refusal("jugement qui ne suit pas la revue défavorable qu'il juge")
+        previous = value
+    if "request" in record:
+        code_review_request(record["request"])
+    return record
+
+
+def code_review_state(record: dict[str, Any]) -> dict[str, Any]:
+    """What the code review says of the ticket now: the verdict of its last
+    round, the commit it judged, and the Blocking Findings that have no
+    favorable verdict (Spec §6: code refuses the merge while there is one)."""
+    last = record["rounds"][-1] if record["rounds"] else None
+    if last is None:
+        return {"verdict": None, "commit": None, "unsettled": []}
+    if last["kind"] == "review":
+        unsettled = blocking_ids(last)
+    else:
+        unsettled = [finding_id for finding_id, answer in last["judgements"].items() if answer["state"] == "unfavorable"]
+    return {"verdict": last["verdict"], "commit": last["commit"], "unsettled": unsettled}
+
+
+def code_review_rendered(raw: Any) -> dict[str, Any]:
+    record = code_review_record(raw)
+    return {**record, "state": code_review_state(record)}
+
+
 def handoff_section(name: str, value: Any, partial: bool) -> None:
     """One section of a Ticket Handoff: content, or the word for "nothing";
     never empty, never left out, unless the Handoff is a partial one."""
@@ -827,7 +1053,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     for key in sorted(metadata):
         if not key.startswith(PREFIX) or key in (
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
-            KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION, KEY_TEST_REVIEW,
+            KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION, KEY_TEST_REVIEW, KEY_CODE_REVIEW, KEY_MODELS,
         ):
             continue
         raw = metadata[key]
@@ -880,11 +1106,14 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             # Still a stop: an unreadable one is never rendered as no stop.
             out["stop"] = {"unruled": f"{KEY_STOP} : {exc}", "raw": metadata[KEY_STOP]}
             flag(KEY_STOP, out["stop"]["unruled"])
-    # The Ticket Handoff, the parking, the merge, the author session and the
-    # review of the criterion tests, each None when the ticket has none; an
-    # unreadable one is never rendered as none.
+    # The Ticket Handoff, the parking, the merge, the author session, the
+    # review of the criterion tests, the code review and the models per role,
+    # each None when the ticket has none; an unreadable one is never rendered
+    # as none.
     for name, key, read in (
         ("test_review", KEY_TEST_REVIEW, test_review_record),
+        ("code_review", KEY_CODE_REVIEW, code_review_rendered),
+        ("models", KEY_MODELS, models_record),
         ("handoff", KEY_HANDOFF, handoff_record),
         ("park", KEY_PARK, park_record),
         ("merge", KEY_MERGE, merge_record),
@@ -1460,6 +1689,303 @@ def cmd_record_test_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set_model(args: argparse.Namespace) -> int:
+    """Record the agent, provider and model a delivery role runs on for this
+    ticket (T14): what says whether the reviewer differs from the author."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    role = one_of(args.role, MODEL_ROLES, "rôle de livraison")
+    entry = {name: single_line(getattr(args, name), f"valeur --{name} (agent, fournisseur ou modèle du rôle {role})")
+             for name in ("agent", "provider", "model")}
+    record = models_record(metadata[KEY_MODELS]) if KEY_MODELS in metadata else {}
+    known = record.get(role)
+    if known and {name: known[name] for name in entry} == entry:
+        return done(args.convoy, args.ticket, {})
+    record[role] = {**entry, "at": now()}
+    values = {KEY_MODELS: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def code_review_target(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The metadata of the ticket a code-review write lands on, and its
+    code review so far."""
+    metadata = metadata_of(marked_ticket(args.convoy, args.ticket))
+    if KEY_STOP in metadata:
+        raise Refusal(f"ticket arrêté : aucune revue ne s'enregistre sur {args.ticket} tant que l'arrêt n'est pas levé")
+    record = code_review_record(metadata[KEY_CODE_REVIEW]) if KEY_CODE_REVIEW in metadata else {"rounds": []}
+    return metadata, record
+
+
+def models_of_review(metadata: dict[str, Any]) -> dict[str, Any]:
+    known = models_record(metadata[KEY_MODELS]) if KEY_MODELS in metadata else {}
+    author, reviewer = ((known.get(role) or {}).get("model") for role in ("author", "reviewer"))
+    same = None if author is None or reviewer is None else normalized_model(author) == normalized_model(reviewer)
+    return {"author": author, "reviewer": reviewer, "same_model": same}
+
+
+def cmd_open_code_review(args: argparse.Namespace) -> int:
+    """Open a round of the code review of a ticket (T14, Spec §6) at the
+    commit its author finished at: the review itself, or the judgement of
+    the answers given to its Blocking Findings. The same request again
+    writes nothing."""
+    metadata, record = code_review_target(args)
+    kind = one_of(args.kind, CODE_REVIEW_KINDS, "genre de revue")
+    commit = valid_commit(args.commit, "commit de la revue")
+    base = valid_commit(args.base, "commit de départ de la revue")
+    finished = KEY_EXIT in metadata and stored_record(metadata[KEY_EXIT], ("exit", "at"))["exit"] == "finished"
+    if not finished:
+        raise Refusal(f"le ticket {args.ticket} n'est pas terminé : la revue de code suit la sortie « terminé »")
+    handoff = handoff_record(metadata[KEY_HANDOFF]) if KEY_HANDOFF in metadata else None
+    if handoff is None or handoff["partial"] or handoff["commit"] != commit:
+        raise Refusal(
+            f"le Ticket Handoff de {args.ticket} n'est pas complet au commit {commit} : la revue porte sur le commit "
+            "où l'auteur a terminé")
+    questions: list[dict[str, str]] = []
+    if args.file is not None:
+        given = json_argument(args.file, "questions fermées de la revue")
+        unknown = sorted(set(given) - {"questions"})
+        if unknown:
+            raise Refusal(f"champs inconnus dans les questions fermées : {', '.join(unknown)}")
+        questions = review_questions(given.get("questions"))
+    models = models_of_review(metadata)
+    request = record.get("request")
+    wanted = (kind, commit, base, questions)
+    if request and tuple(request[name] for name in ("kind", "commit", "base", "questions")) == wanted:
+        if request["models"] == models:
+            return done(args.convoy, args.ticket, {})
+        # The same review, sent to a reviewer of another model: its launches stay counted.
+        request["models"] = models
+    else:
+        last = record["rounds"][-1] if record["rounds"] else None
+        if last and last["verdict"] == "unfavorable":
+            if last["kind"] == "judgement":
+                raise Refusal(
+                    f"le ticket {args.ticket} est encore refusé après son tour de correction : aucune revue ne s'ouvre")
+            waiting = ", ".join(blocking_ids(last))
+            if kind == "review":
+                raise Refusal(
+                    f"des Blocking Findings attendent leur réponse et leur jugement ({waiting}) : "
+                    "aucune autre revue ne s'ouvre avant")
+            unanswered = [finding_id for finding_id in blocking_ids(last) if finding_id not in last.get("responses", {})]
+            if unanswered:
+                raise Refusal(
+                    f"Blocking Finding sans réponse ({', '.join(unanswered)}) : chaque constat reçoit « corrigé » ou "
+                    "« contesté » avant son jugement")
+            if base != last["commit"]:
+                raise Refusal(
+                    f"le jugement porte sur la correction faite depuis le commit revu ({last['commit']}), non depuis {base}")
+            if questions:
+                raise Refusal("un jugement ne pose pas de questions fermées : il juge la liste des Blocking Findings")
+        elif kind == "judgement":
+            raise Refusal(f"aucun Blocking Finding à juger sur {args.ticket} : le jugement suit une revue défavorable")
+        elif last and last["commit"] == commit:
+            raise Refusal(f"le ticket {args.ticket} est déjà revu favorablement au commit {commit}")
+        record["request"] = {"kind": kind, "commit": commit, "base": base, "questions": questions, "launches": [],
+                             "models": models, "at": now()}
+    values = {KEY_CODE_REVIEW: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_launch_code_review(args: argparse.Namespace) -> int:
+    """Record that a reviewer session was sent the open round: the first
+    launch, then one relaunch when the first gave no result (Spec §6)."""
+    _, record = code_review_target(args)
+    request = record.get("request")
+    if not request:
+        raise Refusal(f"aucune revue de code n'est demandée sur {args.ticket} : rien à lancer")
+    if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
+        raise Refusal(f"bead de revue absent ou mal formé : {args.bead!r}")
+    if len(request["launches"]) >= CODE_REVIEW_MAX_LAUNCHES:
+        raise Refusal(
+            f"une seule relance par revue : {args.ticket} en a déjà lancé {len(request['launches'])} sans résultat")
+    request["launches"].append({"bead": args.bead, "at": now()})
+    values = {KEY_CODE_REVIEW: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def given_findings(given: dict[str, Any], number: int, problems: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """The findings a reviewer hands in, as they are stored: a finding given
+    as blocking whose citation does not hold is recorded as non-blocking,
+    with the reason (Spec §6)."""
+    findings: list[dict[str, Any]] = []
+    demoted: list[dict[str, str]] = []
+    raw = given.get("findings", [])
+    if not isinstance(raw, list):
+        problems.append("findings mal formé : une liste de constats est attendue")
+        raw = []
+    for position, finding in enumerate(raw, start=1):
+        where = f"constat {position}"
+        if not isinstance(finding, dict):
+            problems.append(f"{where} mal formé : un objet est attendu")
+            continue
+        unknown = sorted(set(finding) - {"axis", "blocking", "summary", "citation", "citation_refused"})
+        if unknown:
+            problems.append(f"{where} : champs inconnus : {', '.join(unknown)}")
+        if finding.get("axis") not in REVIEW_AXES:
+            problems.append(f"{where} : axe hors de la liste fermée : {finding.get('axis')!r} (attendu : {', '.join(REVIEW_AXES)})")
+        summary = finding.get("summary")
+        if not isinstance(summary, str) or not summary.strip() or "\n" in summary or len(summary) > MAX_FINDING_LINE:
+            problems.append(f"{where} : résumé absent ou mal formé (attendu : une ligne non vide d'au plus {MAX_FINDING_LINE} caractères)")
+            summary = ""
+        if not isinstance(finding.get("blocking"), bool):
+            problems.append(f"{where} : blocking mal formé : {finding.get('blocking')!r} (attendu : true ou false)")
+        stored: dict[str, Any] = {"id": f"F{number}.{position}", "axis": finding.get("axis"),
+                                  "blocking": finding.get("blocking") is True, "summary": summary.strip()}
+        citation, reason = citation_of(finding)
+        if citation is not None:
+            stored["citation"] = citation
+        if stored["blocking"] and reason is not None:
+            stored["blocking"] = False
+            stored["demoted"] = f"refusé comme bloquant : {reason}"
+            demoted.append({"id": stored["id"], "reason": stored["demoted"]})
+        findings.append(stored)
+    return findings, demoted
+
+
+def cmd_record_code_review(args: argparse.Namespace) -> int:
+    """Record what a reviewer session hands in for the open round, and
+    compute the verdict (T14, Spec §6). A review: its findings, each
+    blocking only with a citation that holds, and one answer per closed
+    question, a « non » being a Blocking Finding. A judgement: one state per
+    Blocking Finding of the review it judges. The verdict of the family
+    `code_review` is written in the same tracker write."""
+    _, record = code_review_target(args)
+    request = record.get("request")
+    if not request:
+        raise Refusal(f"aucune revue de code n'est demandée sur {args.ticket} : un verdict répond à une demande ouverte")
+    given = json_argument(args.file, "revue de code")
+    review = request["kind"] == "review"
+    known = {"commit", "recorded_by"} | ({"findings", "answers"} if review else {"judgements"})
+    problems = [
+        "le verdict est calculé par du code, jamais donné par le relecteur" if name == "verdict"
+        else f"champ inconnu : {name}" for name in sorted(set(given) - known)]
+    if given.get("commit") != request["commit"]:
+        problems.append(f"la revue rendue porte sur le commit {given.get('commit')!r}, la demande sur {request['commit']}")
+    recorded_by = given.get("recorded_by")
+    if not isinstance(recorded_by, str) or not recorded_by.strip() or "\n" in recorded_by:
+        problems.append(f"session du relecteur absente ou mal formée : {recorded_by!r}")
+    round_: dict[str, Any] = {"kind": request["kind"], "commit": request["commit"], "base": request["base"]}
+    demoted: list[dict[str, str]] = []
+    if review:
+        number = len(record["rounds"]) + 1
+        findings, demoted = given_findings(given, number, problems)
+        answers = given.get("answers") if isinstance(given.get("answers"), dict) else {}
+        questions = {question["id"]: question for question in request["questions"]}
+        problems += [f"réponse à une question qui n'est pas posée : {name}" for name in sorted(set(answers) - set(questions))]
+        kept: dict[str, dict[str, str]] = {}
+        for question_id, question in questions.items():
+            answer = answers.get(question_id)
+            said = answer.get("answer") if isinstance(answer, dict) else None
+            reason = " ".join(str(answer.get("reason") or "").split()) if isinstance(answer, dict) else ""
+            if answer is None:
+                problems.append(f"pas de réponse à la question {question_id}")
+            elif said not in QUESTION_ANSWERS:
+                problems.append(f"réponse hors de la liste fermée à {question_id} : {said!r} (attendu : {', '.join(QUESTION_ANSWERS)})")
+            elif said == "non" and not reason:
+                problems.append(f"réponse « non » sans raison à la question {question_id}")
+            elif said == "non":
+                kept[question_id] = {"answer": said, "reason": reason}
+                # Spec §6: a « non » is a Blocking Finding.
+                findings.append({
+                    "id": f"F{number}.{len(findings) + 1}", "axis": AXIS_TESTS, "blocking": True,
+                    "summary": f"{question['text']} — non : {reason}"[:MAX_FINDING_LINE], "question": question_id})
+            else:
+                kept[question_id] = {"answer": said}
+        round_.update(findings=findings, answers=kept)
+        refused = [finding["id"] for finding in findings if finding["blocking"]]
+    else:
+        reviewed = record["rounds"][-1]
+        if isinstance(recorded_by, str) and recorded_by.strip() == reviewed["recorded_by"]:
+            # Spec §6: a second reviewer session judges the answers.
+            problems.append(
+                f"le jugement est rendu par la session qui a fait la revue ({reviewed['recorded_by']}) : "
+                "une seconde session relecteur juge les réponses")
+        expected = blocking_ids(reviewed)
+        judgements = given.get("judgements") if isinstance(given.get("judgements"), dict) else {}
+        problems += [f"{name} n'est pas un Blocking Finding de la revue jugée" for name in sorted(set(judgements) - set(expected))]
+        kept = {}
+        for finding_id in expected:
+            answer = judgements.get(finding_id)
+            state = answer.get("state") if isinstance(answer, dict) else None
+            reason = " ".join(str(answer.get("reason") or "").split()) if isinstance(answer, dict) else ""
+            if answer is None:
+                problems.append(f"pas de jugement pour le constat {finding_id}")
+            elif state not in VERDICT_STATES:
+                problems.append(f"état hors de la liste fermée pour {finding_id} : {state!r} (attendu : {', '.join(VERDICT_STATES)})")
+            elif state == "unfavorable" and not reason:
+                problems.append(f"jugement défavorable sans raison pour {finding_id}")
+            else:
+                kept[finding_id] = {"state": state, "reason": reason} if state == "unfavorable" else {"state": state}
+        round_["judgements"] = kept
+        refused = [finding_id for finding_id in expected if kept.get(finding_id, {}).get("state") == "unfavorable"]
+    if problems:
+        raise Refusal("revue de code hors contrat : " + " ; ".join(problems))
+    verdict = "unfavorable" if refused else "favorable"
+    at = now()
+    round_.update(verdict=verdict, models=request["models"], recorded_by=recorded_by.strip(), at=at)
+    record["rounds"].append(code_review_round(round_))
+    del record["request"]
+    values = {KEY_CODE_REVIEW: encode(record),
+              VERDICT_PREFIX + "code_review": encode({"state": verdict, "commit": request["commit"], "at": at})}
+    write_metadata(args.ticket, values)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "kind": request["kind"], "verdict": verdict,
+                      "blocking": refused, "demoted": demoted, "findings": len(round_.get("findings", [])),
+                      "written": values}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_respond_code_review(args: argparse.Namespace) -> int:
+    """Record the answer of the author to each Blocking Finding of the last
+    review: « corrigé » with the commit of the correction, or « contesté »
+    with a reason (Spec §6). The list is closed: every Blocking Finding, and
+    nothing else. A second reviewer session judges it."""
+    _, record = code_review_target(args)
+    last = record["rounds"][-1] if record["rounds"] else None
+    if last is None or last["kind"] != "review" or last["verdict"] != "unfavorable":
+        raise Refusal(f"aucun Blocking Finding n'attend de réponse sur {args.ticket}")
+    if "request" in record:
+        raise Refusal(f"le jugement de ces réponses est demandé sur {args.ticket} : elles ne se réécrivent plus")
+    given = json_argument(args.file, "réponses aux constats")
+    responses = given.get("responses")
+    problems = [f"champ inconnu : {name}" for name in sorted(set(given) - {"responses"})]
+    if not isinstance(responses, dict):
+        problems.append("responses mal formé : un objet constat → réponse est attendu")
+        responses = {}
+    expected = blocking_ids(last)
+    problems += [f"{name} n'est pas un Blocking Finding de cette revue" for name in sorted(set(responses) - set(expected))]
+    at = now()
+    kept: dict[str, dict[str, str]] = {}
+    for finding_id in expected:
+        response = responses.get(finding_id)
+        said = response.get("response") if isinstance(response, dict) else None
+        if response is None:
+            problems.append(f"pas de réponse au constat {finding_id}")
+        elif said not in FINDING_RESPONSES:
+            problems.append(f"réponse hors de la liste fermée pour {finding_id} : {said!r} (attendu : {', '.join(FINDING_RESPONSES)})")
+        elif said == "fixed":
+            commit = response.get("commit")
+            if not isinstance(commit, str) or not COMMIT_RE.match(commit) or commit == last["commit"]:
+                problems.append(
+                    f"{finding_id} « corrigé » sans le commit de la correction (un SHA complet, autre que le commit revu) : {commit!r}")
+            else:
+                kept[finding_id] = {"response": said, "commit": commit, "at": at}
+        else:
+            reason = " ".join(str(response.get("reason") or "").split())[:MAX_FINDING_LINE]
+            if not reason:
+                problems.append(f"{finding_id} « contesté » sans raison")
+            else:
+                kept[finding_id] = {"response": said, "reason": reason, "at": at}
+    if problems:
+        raise Refusal("réponses hors contrat : " + " ; ".join(problems))
+    last["responses"] = kept
+    values = {KEY_CODE_REVIEW: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
 def cmd_stop_ticket(args: argparse.Namespace) -> int:
     ticket = marked_ticket(args.convoy, args.ticket)
     if KEY_STOP in metadata_of(ticket):
@@ -1720,6 +2246,19 @@ def build_parser() -> argparse.ArgumentParser:
     command("launch-test-review", cmd_launch_test_review).add_argument("--bead")
     command("record-test-review", cmd_record_test_review).add_argument("--file")
     command("set-handoff", cmd_set_handoff).add_argument("--file")
+    p = command("set-model", cmd_set_model)
+    p.add_argument("--role")
+    p.add_argument("--agent")
+    p.add_argument("--provider")
+    p.add_argument("--model")
+    p = command("open-code-review", cmd_open_code_review)
+    p.add_argument("--kind")
+    p.add_argument("--commit")
+    p.add_argument("--base")
+    p.add_argument("--file")
+    command("launch-code-review", cmd_launch_code_review).add_argument("--bead")
+    command("record-code-review", cmd_record_code_review).add_argument("--file")
+    command("respond-code-review", cmd_respond_code_review).add_argument("--file")
     p = command("park", cmd_park)
     p.add_argument("--cause")
     p.add_argument("--detail")

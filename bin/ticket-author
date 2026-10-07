@@ -73,6 +73,10 @@ DEMONSTRATION_PIECE = "demonstration"
 # The steps of the formula mol-ticket-author that a gate closes, in order.
 STEPS = ("workspace", "red", "code", "demonstration", "exit")
 BRANCH_PREFIX = "ticket/"
+AUTHOR_ROLE = "author"
+
+sys.path.insert(0, str(BIN.parent / "lib"))
+from delivery_role_identity import role_identity  # noqa: E402
 
 EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
@@ -402,6 +406,20 @@ def worktree_branch(path: Path) -> str | None:
     return proc.stdout.strip() if proc.returncode == 0 else None
 
 
+def record_author_model(convoy_id: str, ticket_id: str) -> bool:
+    """The model the author role runs on, written on the ticket when its
+    session takes it (T14, Spec §6): what the code review compares the
+    model of its reviewer with. When it cannot be read nothing is written,
+    and the review says that the independence is not established."""
+    try:
+        identity = role_identity(ROOT, AUTHOR_ROLE)
+    except LookupError:
+        return False
+    answer = state_write("set-model", convoy_id, ticket_id, "--role", AUTHOR_ROLE, "--agent", identity["agent"],
+                         "--provider", identity["provider"], "--model", identity["model"])
+    return bool(answer.get("written"))
+
+
 def cmd_start(args: argparse.Namespace) -> int:
     ticket = Ticket(args.convoy, args.ticket, args.repo)
     ticket.require_at_work()
@@ -443,6 +461,8 @@ def cmd_start(args: argparse.Namespace) -> int:
             written.append("branche du ticket")
         if state_write("set-session", args.convoy, args.ticket, "--session", session).get("written"):
             written.append("session du ticket")
+        if record_author_model(args.convoy, args.ticket):
+            written.append("modèle de l'auteur")
     except Refusal as exc:
         raise Refusal(str(exc), written) from exc
     print(json.dumps({
