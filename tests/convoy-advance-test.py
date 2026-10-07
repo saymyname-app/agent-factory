@@ -19,8 +19,12 @@ import os
 import shutil
 import subprocess
 import tempfile
+import sys
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+import ticket_proofs  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -806,17 +810,10 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.git("checkout", "-q", "--detach", "main")
         self.run_ok(STATE, "set-branch", CONVOY, ticket_id, "--branch", branch)
         self.edit(ticket_id, status="in_progress")
-        self.run_ok(STATE, "add-evidence", CONVOY, ticket_id, "--piece", "handoff_records",
-                    "--digest", "sha256:" + "ab" * 32, "--commit", tip)
-        handoff = self.tmp / f"handoff-{ticket_id}.json"
-        handoff.write_text(json.dumps({
-            "sections": dict.fromkeys(("done", "deviations", "not_done", "out_of_ticket"), "aucun"),
-            "partial": False, "commit": tip, "records": {}}))
-        self.run_ok(STATE, "set-handoff", CONVOY, ticket_id, "--file", handoff)
-        self.run_ok(STATE, "set-exit", CONVOY, ticket_id, "--exit", "finished")
-        # The regression of the prefactoring, proven at the tip (bin/tdd-step).
-        self.run_ok(STATE, "set-tdd", CONVOY, ticket_id, "--step", "prefactoring", "--commit", tip,
-                    "--base", self.git("rev-parse", "main"))
+        # The regression of the prefactoring proven at the tip (bin/tdd-step),
+        # the sealed records, the Handoff and the exit (bin/ticket-exit).
+        ticket_proofs.finish(self.env, self.root, CONVOY, ticket_id, tip, self.git("rev-parse", "main"), branch,
+                             sections=dict.fromkeys(("done", "deviations", "not_done", "out_of_ticket"), "aucun"))
         return tip
 
     def code_review_of(self, answer, convoy=CONVOY):

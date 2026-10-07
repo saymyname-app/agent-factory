@@ -15,8 +15,12 @@ import os
 import shutil
 import subprocess
 import tempfile
+import sys
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+import ticket_proofs  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,7 +41,6 @@ RIG = "fx-rig"
 
 EXIT_REFUSED = 1
 EXIT_NOT_NEW_FLOW = 4
-DIGEST = "sha256:" + "ab" * 32
 
 SESSION_IDENTITY = ("GC_AGENT", "GC_SESSION_NAME", "GC_SESSION_ID", "BEADS_ACTOR", "GC_TEMPLATE", "GC_BEAD_ID",
                     "DELIVERY_ROLE_READ_ONLY")
@@ -275,17 +278,13 @@ class CodeReviewTest(unittest.TestCase):
         self.state("set-branch", CONVOY, ticket, "--branch", branch_of(ticket))
         self.edit(ticket, "in_progress")
 
-    def finish(self, ticket, tip, amendment=None):
+    def finish(self, ticket, tip, amendment=None, green=True):
         """What stands for the author's Ticket Exit « terminé » at `tip`
-        (bin/ticket-exit): the sealed records, the Handoff, the exit."""
-        self.state("add-evidence", CONVOY, ticket, "--piece", "handoff_records", "--digest", DIGEST, "--commit", tip)
-        records = {"head": tip, "base": self.base, "files_changed": [NOTE], "deferral_markers": [],
-                   "commits": [{"commit": tip, "subject": COMMIT_PROSE}],
-                   "amendment": {"commit": amendment, "reason": AMENDMENT_PROSE} if amendment else None}
-        handoff = self.json_file(f"handoff-{ticket}.json",
-                                 {"sections": SECTIONS, "partial": False, "commit": tip, "records": records})
-        self.state("set-handoff", CONVOY, ticket, "--file", handoff)
-        self.state("set-exit", CONVOY, ticket, "--exit", "finished")
+        (bin/ticket-exit): each step of its TDD with its sealed report, the
+        demonstration, the sealed records, the Handoff, the exit."""
+        ticket_proofs.finish(self.env, self.repo, CONVOY, ticket, tip, self.base, branch_of(ticket), green=green, records={
+            "files_changed": [NOTE], "commits": [{"commit": tip, "subject": COMMIT_PROSE}],
+            "amendment": {"commit": amendment, "reason": AMENDMENT_PROSE} if amendment else None})
 
     def green(self, ticket, tip):
         self.state("set-tdd", CONVOY, ticket, "--step", "green", "--commit", tip)
@@ -306,9 +305,7 @@ class CodeReviewTest(unittest.TestCase):
             "commit": red, "files": fingerprints, "tests": {COUNT_ID: {"state": "favorable"}},
             "recorded_by": "delivery-reviewer-tests"}))
         self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red)
-        if green:
-            self.green(ticket, tip)
-        self.finish(ticket, tip)
+        self.finish(ticket, tip, green=green)
         return red, tip
 
     def corrected(self, files, ticket=SLICE):
@@ -380,7 +377,7 @@ class CodeReviewTest(unittest.TestCase):
             f"evaluation-request-{ticket}.json", {
                 "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
                 "environment": [{"dataset": None, "address": "http://127.0.0.1:1", "state_file": "/launch.json"}]}))
-        self.state("add-evidence", CONVOY, ticket, "--piece", "evaluation.seen", "--digest", DIGEST, "--commit", commit)
+        ticket_proofs.capture(self.env, self.repo, CONVOY, ticket, "evaluation.seen", commit)
         return self.state("record-evaluation", CONVOY, ticket, "--file", self.json_file(f"evaluation-{ticket}.json", {
             "commit": commit, "recorded_by": "delivery-evaluator-fx",
             "criteria": [{"number": number, "text": text, "state": "observed", "evidence": "evaluation.seen"}
