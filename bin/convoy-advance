@@ -65,6 +65,15 @@ tip and one refused, it hands the convoy to bin/correction-round settle,
 which sends everything both refused to one fresh author session, and stops
 the ticket still refused after that round, raised once to the operator.
 
+A pass also closes the tickets (T19, af-iefuud; Spec §9): before the merge,
+it hands each convoy that has a finished interface ticket whose fidelity was
+not measured at its tip to bin/ticket-end fidelity, which runs the
+mechanical fidelity check on the screens of its Validated Prototype; after
+the merge, it hands each convoy that has a merged ticket still open to
+bin/ticket-end settle, which closes the ticket once the nine conditions of
+the ticket-end gate are met and leaves it open, with what is missing named,
+otherwise. No agent closes a ticket of a marked convoy.
+
 A convoy in an "état sans règle" (bin/convoy-state: a ticket started or
 closed outside its door, evidence or a counter that cannot be read) is
 stopped (T34, af-ckwina; Spec §0 rule 5): the pass starts none of its
@@ -79,8 +88,9 @@ Every answer is one JSON object on stdout. Exit status: 0 the pass is done
 (what it started is listed, possibly nothing); 1 refused or could not run,
 the dispatch door refused a ticket (named under `refused`), an incident
 could not be raised or withdrawn, or the merge pass or the settlement of
-the test reviews, of the code reviews, of the evaluations or of the
-correction rounds could not run; 3 a
+the test reviews, of the code reviews, of the evaluations, of the
+correction rounds, of the fidelity checks or of the ticket-end gate could
+not run; 3 a
 convoy is in an "état sans règle": nothing of it is started (0 with
 --stopped-ok once its incident is raised: what the order runs, so that a
 stopped convoy is not also an order failure);
@@ -116,6 +126,7 @@ TEST_REVIEW_BIN = BIN / "test-review"
 CODE_REVIEW_BIN = BIN / "code-review"
 EVALUATION_BIN = BIN / "ticket-evaluation"
 CORRECTION_BIN = BIN / "correction-round"
+TICKET_END_BIN = BIN / "ticket-end"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
 SETTINGS = ROOT / "config" / "delivery-flow.json"
 ROLES = ROOT / "config" / "delivery-roles.json"
@@ -129,6 +140,9 @@ DOOR_DEFERRED = 75
 # One ticket is merged per pass and per convoy: the merges stay serial, and a
 # pass stays short however many tickets finished at once.
 MERGES_PER_PASS = 1
+# One interface ticket is measured against its Validated Prototype per pass
+# and per convoy: a launch of the product and its captures take their time.
+FIDELITY_CHECKS_PER_PASS = 1
 
 # The stops the review of criterion tests writes (bin/convoy-state).
 TEST_REVIEW_STOPS = ("test_review_refused", "test_review_no_result")
@@ -315,6 +329,24 @@ class Convoy:
             elif not t.get("park") and t["id"] in self.finished_unmerged():
                 due.append(t["id"])
         return due
+
+    def fidelity_due(self) -> list[str]:
+        """Finished interface tickets, not merged yet, whose fidelity to the
+        Validated Prototype was not measured at the tip of their branch:
+        what makes a fidelity check worth running."""
+        return [
+            t["id"] for t in self.tickets
+            if t["id"] in self.finished_unmerged() and t.get("interface") and not t.get("park") and t.get("tip")
+            and (t.get("fidelity") or {}).get("commit") != t.get("tip")
+        ]
+
+    def merged_open(self) -> list[str]:
+        """Tickets merged into the integration branch and not closed yet:
+        what the ticket-end gate has to settle."""
+        return [
+            t["id"] for t in self.tickets
+            if t.get("status") != "closed" and (t.get("merge") or {}).get("outcome") == "merged"
+        ]
 
     def finished_unmerged(self) -> list[str]:
         """Tickets whose author has finished and that are not merged yet:
@@ -657,6 +689,47 @@ def settle_corrections(convoy: Convoy) -> dict[str, Any] | None:
     return {name: answer[name] for name in kept if answer.get(name)} or None
 
 
+def check_fidelity(convoy: Convoy) -> dict[str, Any] | None:
+    """Spec §9, condition 4: code, before the merge, runs the mechanical
+    fidelity check of each finished interface ticket at the tip of its
+    branch, through bin/ticket-end fidelity, which records the result on the
+    ticket. None when the convoy has no such ticket to measure."""
+    if not convoy.fidelity_due():
+        return None
+    try:
+        if not convoy.rig:
+            raise Refusal(f"les tickets du convoi {convoy.id} ne nomment pas un seul projet connu de config/projects : "
+                          "le profil qui déclare ses écrans est inconnu")
+        answer = parsed(run([str(TICKET_END_BIN), "fidelity", convoy.id, "--repo", str(convoy.repo),
+                             "--profile", str(rig_profile(convoy.rig)), "--limit", str(FIDELITY_CHECKS_PER_PASS)]),
+                        f"ticket-end fidelity {convoy.id}")
+    except Refusal as exc:
+        return {"error": f"refus : {exc}"}
+    if not isinstance(answer, dict):
+        return {"error": f"refus : ticket-end fidelity {convoy.id} a rendu une réponse illisible"}
+    kept = ("checked", "waiting", "refused", "error", "message", "unruled")
+    return {name: answer[name] for name in kept if answer.get(name)} or None
+
+
+def settle_ticket_end(convoy: Convoy, merge: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Spec §9: code, and no agent, closes a ticket, through the ticket-end
+    gate (bin/ticket-end settle): each merged ticket whose nine conditions
+    are met is closed with the record of the gate; the others stay open,
+    what they miss named. None when the convoy has no merged ticket left
+    open and this pass merged none."""
+    if not convoy.merged_open() and not (merge or {}).get("merged"):
+        return None
+    try:
+        answer = parsed(run([str(TICKET_END_BIN), "settle", convoy.id, "--repo", str(convoy.repo)]),
+                        f"ticket-end settle {convoy.id}")
+    except Refusal as exc:
+        return {"error": f"refus : {exc}"}
+    if not isinstance(answer, dict):
+        return {"error": f"refus : ticket-end settle {convoy.id} a rendu une réponse illisible"}
+    kept = ("version", "closed", "open", "error", "message", "unruled")
+    return {name: answer[name] for name in kept if answer.get(name)}
+
+
 def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     """`targets` None: every open marked convoy."""
     with advance_lock():
@@ -697,9 +770,18 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         corrections = settle_corrections(convoys[result["id"]])
         if corrections is not None:
             result["correction"] = corrections
+        # Before the merge: the fidelity of an interface ticket is measured
+        # on the commit that merges (condition 4 of the ticket-end gate).
+        fidelity = check_fidelity(convoys[result["id"]])
+        if fidelity is not None:
+            result["fidelity"] = fidelity
         merge = merge_finished(convoys[result["id"]])
         if merge is not None:
             result["integration"] = merge
+        # After the merge: the gate closes what its nine conditions allow.
+        closing = settle_ticket_end(convoys[result["id"]], merge)
+        if closing is not None:
+            result["ticket_end"] = closing
 
     unruled = any("unruled" in result for result in results)
     # A ticket returned or refused by the merge is an outcome of the pass; a
@@ -711,6 +793,8 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         or any(key in result.get("code_review", {}) for key in ("error", "refused"))
         or any(key in result.get("evaluation", {}) for key in ("error", "refused"))
         or any(key in result.get("correction", {}) for key in ("error", "refused"))
+        or any(key in result.get("fidelity", {}) for key in ("error", "refused", "message"))
+        or any(key in result.get("ticket_end", {}) for key in ("error", "message"))
         for result in results
     )
     answer: dict[str, Any] = {

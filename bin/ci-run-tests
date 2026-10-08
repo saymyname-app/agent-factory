@@ -20,6 +20,13 @@
 #   ci-run-tests --list     # print the discovered file paths, one per line,
 #                            # and exit 0 (used by bin/factory-main-gate-like
 #                            # callers that want the list without running it)
+#   ci-run-tests --shard I/N [--list]
+#                            # only lot I of N: the discovered files, largest
+#                            # first, dealt one by one to N lots, so every file
+#                            # is in exactly one lot. Factory CI runs N lots on
+#                            # N runners at once (.github/workflows/ci.yml):
+#                            # run one after the other, the tests took 48 min
+#                            # on 2026-10-07, up from 7 min two days before.
 
 set -uo pipefail
 
@@ -27,11 +34,22 @@ REPO_ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd
 cd "$REPO_ROOT" || { echo "ci-run-tests: $REPO_ROOT unreachable" >&2; exit 2; }
 
 MODE="run"
-case "${1:-}" in
-  --list) MODE="list" ;;
-  "") ;;
-  *) echo "ci-run-tests: unknown argument: $1" >&2; exit 2 ;;
-esac
+SHARD_I=""
+SHARD_N=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --list) MODE="list" ;;
+    --shard)
+      if ! [[ "${2:-}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || [ "${BASH_REMATCH[1]}" -gt "${BASH_REMATCH[2]}" ]; then
+        echo "ci-run-tests: --shard wants I/N with 1 <= I <= N, got: ${2:-nothing}" >&2; exit 2
+      fi
+      SHARD_I=${BASH_REMATCH[1]}; SHARD_N=${BASH_REMATCH[2]}
+      shift
+      ;;
+    *) echo "ci-run-tests: unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
 
 is_local_only() {
   grep -qE '^#[[:space:]]*ci:[[:space:]]*local-only' "$1"
@@ -45,11 +63,26 @@ mapfile -t files < <(
   done | sort
 )
 
+if [ -n "$SHARD_N" ]; then
+  # Largest file first, dealt in turn: size stands in for duration, so the
+  # few very long tests do not all land in the same lot.
+  mapfile -t files < <(
+    for f in "${files[@]}"; do printf '%s %s\n' "$(wc -c < "$f")" "$f"; done \
+      | sort -k1,1nr -k2,2 \
+      | awk -v i="$SHARD_I" -v n="$SHARD_N" '(NR - 1) % n == i - 1 { print $2 }' \
+      | sort
+  )
+fi
+
 if [ "$MODE" = "list" ]; then
   printf '%s\n' "${files[@]}"
   exit 0
 fi
 
+if [ "${#files[@]}" -eq 0 ] && [ -n "$SHARD_N" ]; then
+  echo "ci-run-tests: lot $SHARD_I/$SHARD_N is empty"
+  exit 0
+fi
 if [ "${#files[@]}" -eq 0 ]; then
   echo "ci-run-tests: no discoverable tests under tests/*.sh, tests/*.py" >&2
   exit 1

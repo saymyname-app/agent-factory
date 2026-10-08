@@ -138,13 +138,18 @@ test, no merge. A pass with no ready ticket does not read the profile.
 
 ## Limits
 
-- **Of the conditions of the ticket-end gate, only the Ticket Evaluation
-  and the code review are required here** (condition 3, and condition 9
-  without Benjamin's recorded override: `bin/correction-round override`
-  records it on a stopped ticket, and a stopped ticket is not merged here,
-  `docs/CORRECTION_ROUND.md`). The ticket-end
-  gate (T19) makes the merge command refuse while its conditions 1, 2, 4, 5,
-  7 and 8 are not met.
+- **A ready ticket is merged only when the ticket-end gate agrees** (T19):
+  once the author, the code review and the Ticket Evaluation have answered
+  at the tip, `merge` asks `bin/ticket-end check --before-merge` and merges
+  the ticket only if conditions 1 to 5 and 7 to 9 are met
+  (`docs/TICKET_END.md`); condition 6 is read on what `merge` writes. A
+  ticket that misses one is listed under `waiting` with the text of the
+  gate, and the pass still exits 0: a missing condition is not a failure of
+  the command. A gate that cannot be read is one (exit 1).
+- **A ticket stopped `still_refused` is merged when every Blocking Finding
+  its review left unsettled carries Benjamin's recorded override**
+  (`bin/correction-round override`, condition 9). Any other stopped ticket
+  is not merged.
 - **Starting the fresh author session of a returned ticket is not in this
   command.** The return is recorded (`merge` on the ticket, listed by the
   pass); resuming a ticket is T20's, and the start formula is T12's (`docs/TICKET_AUTHOR.md`).

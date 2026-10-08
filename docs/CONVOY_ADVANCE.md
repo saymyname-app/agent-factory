@@ -1,4 +1,4 @@
-# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, Spec af-wf4w5r §0 rules 3 and 5, §4, §6, §7, §8)
+# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, T19, Spec af-wf4w5r §0 rules 3 and 5, §4, §6, §7, §8, §9)
 
 ## Status and purpose
 
@@ -146,6 +146,32 @@ while another declared one is available — is retried by the next pass; a
 settlement that could not run, or a launch the door refused, fails the pass
 (exit 1).
 
+## A merged ticket is closed by the ticket-end gate (T19)
+
+A ticket of a marked convoy is closed by the pass, through `bin/ticket-end`
+(`docs/TICKET_END.md`), and by nothing else:
+
+- **Before the merge**, a convoy that has a finished interface ticket whose
+  fidelity was not measured at its tip is handed to `bin/ticket-end fidelity
+  <convoy> --repo <project repository> --profile <project profile> --limit
+  1`, which runs the mechanical fidelity check on the commit that merges.
+  Reported under `fidelity` (`checked`, `waiting`, `refused`).
+- **After the merge**, a convoy that has a merged ticket still open, or in
+  which this pass merged one, is handed to `bin/ticket-end settle <convoy>
+  --repo <project repository>`. Reported under `ticket_end`: `closed` (the
+  tickets closed, each with the merged commit and the version of the list)
+  and `open` (the merged tickets left open, each with the numbers of the
+  missing conditions and the text of the gate).
+
+A ticket merged by a pass is closed by the same pass when its nine
+conditions hold; its dependents start at the next one. A ticket left open
+is an outcome of the pass, not a failure. A fidelity check or a settlement
+that could not run is a failure of the pass (exit 1): this includes a pass
+run from an agent session, which the gate refuses.
+
+A ticket closed without the record of the gate, or with a record that lacks
+the nine verdicts, is an « état sans règle »: the convoy stops (below).
+
 ## One correction round, then the ticket stops (T17)
 
 After the code review and the evaluation, and before the merge, the pass
@@ -191,14 +217,16 @@ per role, the tickets awaiting a session, and per convoy the tickets
 next pass) and `refused` (the door refused, with its reason), plus
 `integration` when the pass ran a merge, `test_review` when it settled
 reviews of criterion tests, `code_review` when it settled code reviews,
-`evaluation` when it settled Ticket Evaluations and `correction` when a
-correction round was opened, awaited or ended in a stop. A stopped convoy carries `signal`,
+`evaluation` when it settled Ticket Evaluations, `correction` when a
+correction round was opened, awaited or ended in a stop, `fidelity` when it
+measured an interface ticket and `ticket_end` when the gate settled merged
+tickets. A stopped convoy carries `signal`,
 `unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass or the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds could not run |
+| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check or the ticket-end gate could not run |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
@@ -297,6 +325,15 @@ T17: the same file covers the settlement of the correction rounds through
 the real `bin/correction-round`: a ticket its review refused sent to one
 author session, a ticket still refused stopped and raised once, a round
 that cannot be sent, a convoy nothing refused.
+
+T19: the same file covers the gate in the pass, through the real
+`bin/ticket-end`: a ticket merged and closed by one pass with its nine
+verdicts, an interface ticket measured against its Validated Prototype
+before its merge, a merged ticket that misses a condition left open and
+named, a closure whose record lacks the nine verdicts stopping the convoy,
+a pass run from an agent session refused. `tests/ticket-end-isolated-city-test.sh`
+(local-only) is the adoption trial: the city's own order merges and closes
+a ticket on the real tracker.
 
 T34: the same `tests/convoy-advance-test.py` covers the stop (one test per
 kind of anomaly), the single incident read back from the real
