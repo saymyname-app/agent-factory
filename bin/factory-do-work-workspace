@@ -124,8 +124,18 @@ protected_branch_for() {
 # commit stays best-effort (a transient network failure must never block the
 # commit that triggered it; the branch is still recoverable at `finish` or
 # by hand), but getting the hook installed in the first place is not.
+#
+# af-po8j3u: the hook lives under the worktree's own git dir, never in the
+# work tree. Written to <worktree>/.git-hooks/, it was an untracked file in
+# every repository that did not already track it, and `finish`'s "capture
+# remaining work" commit delivered it in the PR.
 install_post_commit_push_hook() {
-  local wt="$1" hooks_dir="$1/.git-hooks"
+  local wt="$1" git_dir hooks_dir
+  git_dir=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) && [ -n "$git_dir" ] || {
+    echo "factory-do-work-workspace: could not resolve the git dir of $wt" >&2
+    return 1
+  }
+  hooks_dir="$git_dir/do-work-hooks"
   git -C "$wt" config extensions.worktreeConfig true || {
     echo "factory-do-work-workspace: could not enable worktree-scoped git config for $wt" >&2
     return 1
