@@ -160,7 +160,18 @@ remote_head=$(git -C "$TMP/root" rev-parse origin/do-work/af-interrupted-test)
 local_head=$(git -C "$WT7" rev-parse HEAD)
 [ "$remote_head" = "$local_head" ] \
   || fail "remote branch is not at the same commit as the worktree after an unfinished commit"
-git -C "$TMP/root" worktree remove --force "$WT7" 2>/dev/null || true
+
+# af-po8j3u: the hook is not a file of the work tree. In a repository that
+# does not track it, it used to sit there untracked, and `finish`'s "capture
+# remaining work" commit delivered it in the PR.
+[ -z "$(git -C "$WT7" status --porcelain)" ] \
+  || fail "enter left files in the work tree: $(git -C "$WT7" status --porcelain)"
+echo leftover > "$WT7/i"
+"$SCRIPT" finish af-interrupted-test "$WT7" do-work/af-interrupted-test main >/dev/null 2>&1 \
+  || fail "finish exited non-zero with uncommitted work left in the worktree"
+delivered=$(git -C "$TMP/origin.git" diff --name-only main do-work/af-interrupted-test | sort | tr '\n' ' ')
+[ "$delivered" = "h i " ] \
+  || fail "the delivered branch must hold the ticket's work only (h, i), got: $delivered"
 
 # ---------------------------------------------------------------------------
 # 8. O04: `finish` resumes an already-open PR instead of trying (and
