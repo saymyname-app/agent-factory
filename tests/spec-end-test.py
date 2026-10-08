@@ -381,13 +381,15 @@ class Harness(unittest.TestCase):
             return self.mechanical_green(*self.run_gate())["commit"]
         return self.stage("verified", build)
 
-    def mechanical_green(self, status, answer):
+    def mechanical_green(self, status, answer, missing=(4,)):
         """The gate rendered its three mechanical verdicts green, and waits
-        for the Outcome Evaluation of that commit (T24): it launches none."""
+        for the Outcome Evaluation of that commit (T24): it launches none.
+        `run` names the conditions that refused, `check` every one that is
+        not green."""
         self.assertEqual(EXIT_REFUSED, status, answer)
         self.assertEqual([(number, name, "pass") for number, name in enumerate(NAMES, start=1)] + AWAITED,
                          self.verdicts(answer))
-        self.assertEqual(([4], {"ok": True, "commit": answer["commit"], "reason": None}),
+        self.assertEqual((list(missing), {"ok": True, "commit": answer["commit"], "reason": None}),
                          (answer["missing"], answer["mechanical"]))
         self.assertIn("aucune Outcome Evaluation rendue", answer["error"])
         return answer
@@ -488,7 +490,7 @@ class SpecEndTest(Harness):
         commit = self.verified()
         before = self.snapshot()
 
-        answer = self.mechanical_green(*self.check())
+        answer = self.mechanical_green(*self.check(), missing=(4, 5))
 
         self.assertEqual((False, commit), (answer["stale"], answer["commit"]))
         self.assertEqual(before, self.snapshot())
@@ -770,7 +772,7 @@ class SpecEndTest(Harness):
         replayed = self.mechanical_green(*self.run_gate())
         self.assertEqual((added, True), (replayed["commit"], replayed["replayed"]))
         self.assertEqual(added, self.show()["convoy"]["spec_end"]["commit"])
-        self.assertFalse(self.mechanical_green(*self.check())["stale"])
+        self.assertFalse(self.mechanical_green(*self.check(), missing=(4, 5))["stale"])
 
     def test_protected_branch_moved_after_the_verdicts_makes_them_stale(self):
         commit = self.verified()
