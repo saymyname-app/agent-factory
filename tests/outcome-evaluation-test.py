@@ -44,7 +44,7 @@ gate = load("spec-end-test.py")
 CONVOY, SPEC, SLICE, SCREEN = gate.CONVOY, gate.SPEC, gate.SLICE, gate.SCREEN
 PLAIN_CONVOY = gate.PLAIN_CONVOY
 EXIT_REFUSED, EXIT_NOT_NEW_FLOW = 1, 4
-NAMES = ("registry", "tests", "fidelity", "outcome_evaluation", "findings")
+NAMES = ("registry", "tests", "fidelity", "outcome_evaluation", "findings", "end_review")
 
 SESSION = {"DELIVERY_ROLE_READ_ONLY": "1", "GC_SESSION_NAME": "delivery-evaluator-fx"}
 FINDING = "Le pied de page de la page d'accueil porte une année périmée."
@@ -259,6 +259,11 @@ class OutcomeEvaluationTest(gate.Harness):
     def conditions(self, answer):
         return [(entry["number"], entry["name"], entry["verdict"]) for entry in answer["conditions"]]
 
+    def reviewed(self):
+        """The end code review of the commit of the gate, favorable (T25):
+        the gate then refuses on what this suite judges, and on nothing else."""
+        self.end_reviewed(self.show()["convoy"]["spec_end"]["commit"])
+
     # --- AC1: one state and one Evidence Record per numbered user story, at the commit of the gate ------
 
     def test_conforming_fixture_every_story_is_observed_with_proof_and_the_gate_passes(self):
@@ -285,7 +290,8 @@ class OutcomeEvaluationTest(gate.Harness):
         verdict = self.verdict()
         self.assertTrue(verdict["favorable"], verdict)
         self.assertEqual((commit, commit, []), (verdict["commit"], verdict["gate_commit"], verdict["reasons"]))
-        # The gate: five conditions green on that one commit.
+        # The gate: six conditions green on that one commit, its end code review made there too.
+        self.reviewed()
         status, answer = self.run_gate()
         self.assertEqual(0, status, answer)
         self.assertEqual([(number, name, "pass") for number, name in enumerate(NAMES, start=1)], self.conditions(answer))
@@ -410,13 +416,14 @@ class OutcomeEvaluationTest(gate.Harness):
 
         self.assertEqual(EXIT_REFUSED, status, answer)
         self.assertEqual([(1, "registry", "pass"), (2, "tests", "pass"), (3, "fidelity", "pass"),
-                          (4, "outcome_evaluation", "fail"), (5, "findings", "not_run")], self.conditions(answer))
+                          (4, "outcome_evaluation", "fail"), (5, "findings", "not_run")], self.conditions(answer)[:5])
         self.assertNotEqual(commit, answer["commit"])
         self.assertIn("non au commit de la porte", answer["error"])
         # A new evaluation, in full, on the new tip.
         again = self.settle()
         self.assertEqual(("launched", answer["commit"]), (again["action"], again["commit"]))
         self.assertEqual([commit, answer["commit"]], [round_["commit"] for round_ in self.outcome()["rounds"]])
+        self.reviewed()
         self.assertEqual(0, self.run_gate()[0])
 
     def test_evaluation_left_open_on_an_outdated_commit_is_withdrawn_with_its_products(self):
@@ -585,6 +592,7 @@ class OutcomeEvaluationTest(gate.Harness):
                          [(p["id"], p["text"], p["state"]) for p in shown["proposals"]])
         self.assertEqual(["proposition pour Benjamin", "écarté"], [finding["state"] for finding in shown["findings"]])
         # Both are final: the gate passes.
+        self.reviewed()
         self.assertEqual(0, self.run_gate()[0])
 
     def test_classification_outside_the_closed_list_or_of_an_unknown_finding_is_refused(self):
@@ -626,6 +634,7 @@ class OutcomeEvaluationTest(gate.Harness):
     def test_gate_with_an_unclassified_finding_refuses_and_names_it(self):
         self.verified()
         self.settle()
+        self.reviewed()
         self.assertEqual(0, self.run_gate()[0])
         # A finding the evaluation of this commit did not classify.
         self.declare(SLICE, out_of_ticket=[FINDING])
@@ -636,7 +645,7 @@ class OutcomeEvaluationTest(gate.Harness):
         self.assertEqual(EXIT_REFUSED, status, answer)
         self.assertFalse(answer["ok"])
         self.assertEqual([(1, "registry", "pass"), (2, "tests", "pass"), (3, "fidelity", "pass"),
-                          (4, "outcome_evaluation", "fail"), (5, "findings", "not_run")], self.conditions(answer))
+                          (4, "outcome_evaluation", "fail"), (5, "findings", "not_run")], self.conditions(answer)[:5])
         self.assertEqual([4], answer["missing"])
         for mention in ("condition 4", FINDING, SLICE, "non classé"):
             self.assertIn(mention, answer["error"])
@@ -652,12 +661,13 @@ class OutcomeEvaluationTest(gate.Harness):
         self.classify(FINDING_ID, "--as", "repaired", "--file", self.json_file("d.json", repair(restores={
             "kind": "repo_rule", "ref": "README.md : le pied de page porte l'année en cours."})))
         self.record(self.result(brief))
+        self.reviewed()
         before = self.snapshot()
 
         status, answer = self.run_gate()
 
         self.assertEqual(EXIT_REFUSED, status, answer)
-        self.assertEqual([(4, "outcome_evaluation", "pass"), (5, "findings", "fail")], self.conditions(answer)[3:])
+        self.assertEqual([(4, "outcome_evaluation", "pass"), (5, "findings", "fail")], self.conditions(answer)[3:5])
         self.assertEqual([5], answer["missing"])
         for mention in ("condition 5", FINDING, "à réparer", "pas encore publié"):
             self.assertIn(mention, answer["error"])
@@ -678,6 +688,7 @@ class OutcomeEvaluationTest(gate.Harness):
         shown = self.outcome()
         self.assertEqual((exploration, deviations), (shown["exploration"], shown["fidelity_deviations"]))
         self.assertTrue(self.verdict()["favorable"])
+        self.reviewed()
         self.assertEqual(0, self.run_gate()[0])
 
     def test_record_without_the_exploration_or_the_fidelity_deviations_is_refused(self):

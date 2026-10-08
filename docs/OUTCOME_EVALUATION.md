@@ -24,7 +24,7 @@ and 5 of the end-of-Spec gate (`verdict`).
 ```bash
 ./bin/outcome-evaluation show    af-convoy          # states, proofs, drafted repairs, contradictions; reads only
 ./bin/outcome-evaluation verdict af-convoy          # the computed verdict and why; reads only
-./bin/spec-end check af-convoy --repo <repository>  # the five conditions of the end of the Spec
+./bin/spec-end check af-convoy --repo <repository>  # the six conditions of the end of the Spec
 ```
 
 ## What code prepares, what the Evaluator hands in

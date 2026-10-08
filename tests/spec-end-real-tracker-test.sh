@@ -195,7 +195,7 @@ state record-integration-red "$CONVOY" --commit "$TIP" --integration "$TIP" --pr
 REPORT="$TRIAL/spec-end.json"
 COMMAND="sh -c 'test ! -e rouge' --seuil=1"
 jq -n --arg tip "$TIP" --arg command "$COMMAND" '{
-  version: "spec-end/v2",
+  version: "spec-end/v3",
   conditions: [
     {number: 1, name: "registry", verdict: "pass", detail: "2 ticket(s) fermé(s) par la porte ; 2 écart(s) et « non fait(s) » dans un état final (0 accepté par Benjamin, 2 réparé)"},
     {number: 2, name: "tests", verdict: "pass", detail: "commande de régression (\($command)) : code 0"},

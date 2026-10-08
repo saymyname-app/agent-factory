@@ -1,0 +1,880 @@
+#!/usr/bin/env python3
+"""The end code review of a Spec, on its assembled diff (T25, af-ji2ruy; Spec
+af-wf4w5r §6 « Fin de Spec », §9 point 4; user story 58).
+
+Once the end-of-Spec gate has rendered its three mechanical verdicts on one
+tip of the integration branch (bin/spec-end), the flow -- never an author --
+sends the whole diff of that tip against the protected branch to a reviewer
+in a fresh context: a session of the read-only reviewer role, started as
+routed work through bin/dispatch-door, on the formula `mol-end-review`, which
+calls Matt Pocock's `code-review` skill unchanged. One run, on the commit of
+the gate, in the pass that launches the other end verification of point 4.
+
+The rules are those of the review of a ticket (bin/code-review): a finding
+blocks only if it cites a line of the Spec, of a ticket of the convoy, or a
+written rule of the repository, and the cited line is found in that source.
+There is no « corrigé / contesté » at the end: each Blocking Finding comes
+with the `repair` its reviewer drafted, bin/convoy-advance publishes it
+through the patch door, and it follows the flow of any ticket. Its merge
+moves the tip: the gate replays everything and the review is made again in
+full. A round says nothing of another commit than its own.
+
+    spec-end-review settle CONVOY [--repo DIR]            bin/convoy-advance, at each pass
+    spec-end-review brief  CONVOY [--repo DIR]            the reviewer session: its preparation record
+    spec-end-review record CONVOY --file FILE [--repo DIR]   the reviewer session
+    spec-end-review show   CONVOY [--repo DIR]
+
+A review that gives no result -- no output in time, a bead closed without
+one, or an output that does not cover the two axes and every file of the
+diff -- is not a passed one: it is launched once more, then stopped and
+raised to the operator once. The state lives in the tracker, read and
+written through bin/convoy-state only (`end_review`). Every answer is one
+JSON object on stdout. Exit status: 0 done; 1 refused or could not run; 4
+the convoy does not carry the new-flow mark. Details: docs/SPEC_END_REVIEW.md.
+
+Environment (tests and non-default layouts):
+  FACTORY_ROOT                          repository whose settings and projects are read
+  SPEC_END_REVIEW_DISPATCH_DOOR_BIN     door that routes the review to the reviewer
+  DELIVERY_ROLE_PROVIDER_FAILOVER_BIN   what says which provider a role runs on
+"""
+
+from __future__ import annotations
+
+import argparse
+import calendar
+import fcntl
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterator
+
+
+PROGRAM = "spec-end-review"
+BIN = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
+GC_BIN = os.environ.get("GC_BIN", "gc")
+STATE_TOOL = BIN / "convoy-state"
+ESCALATION_TOOL = BIN / "escalation-door"
+OPERATOR_CONFIG_BIN = BIN / "operator-config"
+SETTINGS = ROOT / "config" / "delivery-flow.json"
+PROJECTS = ROOT / "config" / "projects"
+
+sys.path.insert(0, str(BIN.parent / "lib"))
+from delivery_role_identity import role_identity  # noqa: E402
+
+REVIEWER_ROLE = "reviewer"
+FAVORABLE, UNFAVORABLE, INCOMPLETE = "favorable", "unfavorable", "incomplete"
+STOP_NO_RESULT, STOP_REPAIR_REFUSED = "end_review_no_result", "end_review_repair_refused"
+# bin/convoy-state holds the bound (launch-end-review refuses a third
+# launch): the first launch, then one relaunch.
+MAX_LAUNCHES = 2
+AXES = ("standards", "spec")
+CITATION_SOURCES = ("spec", "ticket", "repo_rule")
+DRAFT_RESTORES = ("user_story", "anchor", "spec_line", "repo_rule")
+# A citation shorter than this, once its spaces are folded, names no line.
+MIN_QUOTE = 12
+# The files of a repository that usually hold its written rules: a hint for
+# the Standards axis of the skill, which looks for them itself.
+STANDARDS_FILES = ("AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "CODING_STANDARDS.md", "STANDARDS.md",
+                   "docs/CODING_STANDARDS.md", "docs/CONTRIBUTING.md", "docs/STANDARDS.md")
+GATE_WITHDRAWN = "withdrawn"
+# The files left out of an incomplete output that the record names.
+MAX_MISSING_NAMED = 20
+
+EXIT_REFUSED = 1
+EXIT_UNRULED = 3
+EXIT_NOT_NEW_FLOW = 4
+# What bin/dispatch-door exits with when it defers a dispatch (EX_TEMPFAIL).
+DOOR_DEFERRED = 75
+
+REMOTE = "origin"
+MAX_DETAIL = 300
+# bin/escalation-door refuses a field longer than this, or on several lines.
+REQUEST_LINE_MAX = 140
+
+# The publication door renders a ticket's rigs under this heading.
+RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
+RIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+class Refusal(RuntimeError):
+    """The call is refused, or could not run."""
+
+    def __init__(self, message: str):
+        super().__init__(" ".join(message.split()))
+
+
+class Deferred(Refusal):
+    """The dispatch door deferred the launch: nothing was sent, and the next
+    call tries again."""
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark: bin/convoy-state's answer."""
+
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+def short(text: Any, limit: int = MAX_DETAIL) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def sha(commit: Any) -> str:
+    return str(commit)[:12]
+
+
+# --- the other commands ----------------------------------------------------------
+
+
+def run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+
+
+def detail_of(proc: subprocess.CompletedProcess[str]) -> str:
+    return short(proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}")
+
+
+def state_tool(*args: str) -> tuple[int, dict[str, Any]]:
+    """One JSON answer of bin/convoy-state."""
+    proc = run([str(STATE_TOOL), *args])
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"convoy-state {args[0]} a rendu une réponse illisible : {detail_of(proc)}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"convoy-state {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def state_write(*args: str) -> dict[str, Any]:
+    status, answer = state_tool(*args)
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(answer)
+    if status != 0:
+        raise Refusal(f"{args[0]} refusé par la commande d'état : {refusal_text(answer)}")
+    return answer
+
+
+def state_write_file(command: str, convoy_id: str, content: dict[str, Any], *args: str) -> dict[str, Any]:
+    """A state write whose content goes through a JSON file."""
+    handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+    try:
+        with handle:
+            json.dump(content, handle, ensure_ascii=False)
+        return state_write(command, convoy_id, *args, "--file", handle.name)
+    finally:
+        os.unlink(handle.name)
+
+
+def read_bead(bead_id: str) -> dict[str, Any]:
+    proc = run([GC_BIN, "bd", "show", bead_id, "--json"])
+    if proc.returncode != 0:
+        raise Refusal(f"gc bd show {bead_id} a échoué : {detail_of(proc)}")
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc bd show {bead_id} a rendu un JSON illisible : {exc}") from exc
+    bead = data[0] if isinstance(data, list) and data else data
+    if not isinstance(bead, dict):
+        raise Refusal(f"bead introuvable : {bead_id}")
+    return bead
+
+
+def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+    try:
+        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, env=env,
+                              stdin=subprocess.DEVNULL, errors="replace")
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer git : {exc}") from exc
+
+
+def file_at(repo: Path, commit: str, path: str) -> str | None:
+    proc = git(repo, "show", f"{commit}:{path}")
+    return proc.stdout if proc.returncode == 0 else None
+
+
+# --- settings ----------------------------------------------------------------
+
+
+def load_settings() -> dict[str, Any]:
+    """`end_review` of config/delivery-flow.json: what the dispatch door is
+    given to start the reviewer, and how long a launch may take."""
+    try:
+        data = json.loads(SETTINGS.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise Refusal(f"config/delivery-flow.json illisible : {exc}") from exc
+    block = data.get("end_review") if isinstance(data, dict) else None
+    if not isinstance(block, dict):
+        raise Refusal("aucun réglage end_review dans config/delivery-flow.json : la revue de fin n'est pas réglée")
+    settings = {name: block.get(name) for name in ("formula", "role", "rig", "timeout_seconds")}
+    for name in ("formula", "role", "rig"):
+        if not isinstance(settings[name], str) or not settings[name]:
+            raise Refusal(f"end_review.{name} absent ou invalide dans config/delivery-flow.json : {settings[name]!r}")
+    timeout = settings["timeout_seconds"]
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 0:
+        raise Refusal(
+            f"end_review.timeout_seconds absent ou invalide dans config/delivery-flow.json : {timeout!r} "
+            "(attendu : un nombre entier de secondes)")
+    return settings
+
+
+# --- the convoy ---------------------------------------------------------------------
+
+
+def ticket_rig(ticket_id: str) -> str | None:
+    """The single project the ticket names under « Target rigs », or None."""
+    description = read_bead(ticket_id).get("description")
+    match = RIGS_SECTION_RE.search(description if isinstance(description, str) else "")
+    rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
+    if len(rigs) != 1 or not RIG_RE.match(rigs[0]) or not (PROJECTS / f"{rigs[0]}.toml").is_file():
+        return None
+    return rigs[0]
+
+
+def rig_repository(rig: str) -> Path:
+    try:
+        rig_dir = tomllib.loads((PROJECTS / f"{rig}.toml").read_text(encoding="utf-8")).get("rig_dir")
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise Refusal(f"config/projects/{rig}.toml illisible : {exc}") from exc
+    if not isinstance(rig_dir, str) or not rig_dir:
+        raise Refusal(f"config/projects/{rig}.toml ne déclare pas rig_dir")
+    return (ROOT / rig_dir).resolve()
+
+
+class Convoy:
+    """A marked convoy as bin/convoy-state renders it, in the repository
+    that holds its integration branch."""
+
+    def __init__(self, convoy_id: str, repo: str | None):
+        self.id = convoy_id
+        self.given_repo = Path(repo).resolve() if repo else None
+        self.repo: Path | None = None
+        self.load()
+
+    def load(self) -> None:
+        if self.repo is None and self.given_repo is None:
+            # The mark is read first: an unmarked convoy is answered as such,
+            # whatever its tickets name.
+            status, answer = state_tool("show", self.id)
+            if status == EXIT_NOT_NEW_FLOW:
+                raise NotNewFlow(answer)
+            if status not in (0, EXIT_UNRULED) or not isinstance(answer.get("tickets"), list) or not answer["tickets"]:
+                raise Refusal(refusal_text(answer))
+            rig = ticket_rig(answer["tickets"][0]["id"])
+            if not rig:
+                raise Refusal(
+                    f"les tickets du convoi {self.id} ne nomment pas un seul projet de config/projects sous "
+                    "« Target rigs » : son dépôt se donne par --repo")
+            self.repo = rig_repository(rig)
+        elif self.repo is None:
+            self.repo = self.given_repo
+        status, answer = state_tool("show", self.id, "--repo", str(self.repo))
+        if status == EXIT_NOT_NEW_FLOW:
+            raise NotNewFlow(answer)
+        if status not in (0, EXIT_UNRULED) or not isinstance(answer.get("tickets"), list):
+            raise Refusal(refusal_text(answer))
+        anomalies = [
+            *answer["convoy"].get("unruled", []),
+            *({"ticket": ticket["id"], **anomaly} for ticket in answer["tickets"] for anomaly in ticket.get("unruled", [])),
+        ]
+        if anomalies:
+            # No command of the flow decides on a state the code has no rule for.
+            named = " ; ".join(short(anomaly.get("reason"), 120) for anomaly in anomalies[:3])
+            raise Refusal(f"état sans règle : la revue de fin ne décide rien sur le convoi {self.id} ({named})")
+        self.state: dict[str, Any] = answer["convoy"]
+        self.tickets: list[dict[str, Any]] = answer["tickets"]
+
+    @property
+    def review(self) -> dict[str, Any]:
+        return self.state.get("end_review") or {"rounds": [], "state": {"commit": None, "outcome": None, "unsettled": []}}
+
+    def delivered_tickets(self) -> list[dict[str, Any]]:
+        """The tickets whose work is in the assembled diff: every ticket but
+        those a resolved Planning Exception withdrew from the graph."""
+        return [ticket for ticket in self.tickets if "at" not in (ticket.get("gates") or {}).get(GATE_WITHDRAWN, {})]
+
+
+def tips(repo: Path, integration: dict[str, Any]) -> tuple[str, str]:
+    """The tips of the integration and of the protected branches, as they
+    are now: asked of the remote when the repository has one, and nothing
+    is fetched (bin/spec-end reads them the same way)."""
+    found = []
+    remote = REMOTE in git(repo, "remote").stdout.split()
+    for branch in (integration["branch"], integration["protected"]):
+        if remote:
+            proc = git(repo, "ls-remote", REMOTE, f"refs/heads/{branch}")
+            if proc.returncode != 0:
+                raise Refusal(f"git ls-remote {REMOTE} a échoué : {detail_of(proc)}")
+            tip = proc.stdout.split()[0] if proc.stdout.split() else None
+        else:
+            proc = git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}")
+            tip = proc.stdout.strip() if proc.returncode == 0 else None
+        if not tip:
+            raise Refusal(f"branche {branch} introuvable dans le dépôt {repo}")
+        found.append(tip)
+    return found[0], found[1]
+
+
+def gate_commit(convoy: Convoy) -> tuple[str | None, str]:
+    """The commit the end review is due on, or None and why it is not due:
+    the commit of the end-of-Spec gate, while its three mechanical verdicts
+    hold -- every ticket closed, the integration branch not red, that
+    commit still its tip, the tip of the protected branch held by it."""
+    integration = convoy.state.get("integration")
+    if not integration:
+        return None, "le convoi n'a pas de branche d'intégration"
+    still_open = [ticket["id"] for ticket in convoy.tickets if ticket.get("status") != "closed"]
+    if still_open or not convoy.tickets:
+        return None, (f"ticket(s) encore ouvert(s) ({', '.join(still_open[:5]) or 'aucun ticket'}) : la revue de fin suit "
+                      "les trois verdicts mécaniques de la porte de fin de Spec")
+    if convoy.state.get("integration_red"):
+        return None, "branche d'intégration rouge : aucune revue de fin avant son repair"
+    gate = convoy.state.get("spec_end")
+    if not gate:
+        return None, "les trois verdicts mécaniques de la porte de fin de Spec ne sont pas encore rendus (bin/spec-end run)"
+    tip, protected_tip = tips(convoy.repo, integration)
+    if gate["commit"] != tip:
+        return None, (f"verdicts mécaniques périmés : rendus au commit {sha(gate['commit'])}, la branche d'intégration "
+                      f"{integration['branch']} est à {sha(tip)} ; la porte rejoue tout avant la revue de fin")
+    if git(convoy.repo, "merge-base", "--is-ancestor", protected_tip, tip).returncode != 0:
+        return None, (f"verdicts mécaniques périmés : la branche protégée {integration['protected']} a avancé "
+                      f"({sha(protected_tip)}) ; la porte rejoue tout avant la revue de fin")
+    return tip, ""
+
+
+def diff_extent(repo: Path, base: str, commit: str) -> tuple[list[dict[str, str]], list[str], dict[str, Any]]:
+    """The whole diff of the integration branch against the protected
+    branch (Spec §6): its files, its commits, and its extent, counted here
+    and kept with the request and the round."""
+    if git(repo, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
+        git(repo, "fetch", "--quiet", REMOTE)
+    names = git(repo, "diff", "--name-status", "--no-renames", base, commit)
+    stat = git(repo, "diff", "--shortstat", "--no-renames", base, commit)
+    listing = git(repo, "rev-list", "--reverse", f"{base}..{commit}")
+    if names.returncode != 0 or stat.returncode != 0 or listing.returncode != 0:
+        raise Refusal(f"git diff {sha(base)}..{sha(commit)} a échoué dans {repo} : "
+                      f"{short(names.stderr or stat.stderr or listing.stderr)}")
+    files = []
+    for line in names.stdout.splitlines():
+        status, _, path = line.partition("\t")
+        if path:
+            files.append({"status": status, "path": path})
+    counts = {name: int(match.group(1)) if (match := re.search(rf"(\d+) {word}", stat.stdout)) else 0
+              for name, word in (("insertions", "insertion"), ("deletions", "deletion"))}
+    commits = listing.stdout.split()
+    digest = "sha256:" + hashlib.sha256("\n".join(sorted(entry["path"] for entry in files)).encode("utf-8")).hexdigest()
+    return files, commits, {"files": len(files), "commits": len(commits), **counts, "digest": digest}
+
+
+def independence(models: dict[str, Any] | None) -> str | None:
+    """Never silent (Spec §6): a reviewer of an author's model is said so
+    for the Evidence Pack, and so is a model that was not recorded."""
+    if not models or models.get("same_model") is None:
+        return ("indépendance de modèle non établie : le modèle d'un auteur du convoi ou celui du relecteur n'est pas "
+                "relevé")
+    if models["same_model"]:
+        return f"revue non indépendante : le relecteur tourne sur le même modèle qu'un auteur du convoi ({models['reviewer']})"
+    return None
+
+
+def blocking_findings(round_: dict[str, Any]) -> list[dict[str, Any]]:
+    return [finding for finding in round_.get("findings", []) if finding["blocking"]]
+
+
+def round_at(review: dict[str, Any], commit: str) -> dict[str, Any] | None:
+    """The complete round of the end review at this commit: a round of
+    another commit never stands for it."""
+    for round_ in reversed(review["rounds"]):
+        if round_["commit"] == commit and round_["outcome"] != INCOMPLETE:
+            return round_
+    return None
+
+
+# --- launching the reviewer -------------------------------------------------------
+
+
+@contextmanager
+def review_lock(convoy_id: str) -> Iterator[None]:
+    """One decision at a time on the end review of a convoy."""
+    lock_dir = Path(os.environ.get("CONVOY_STATE_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = re.sub(r"[^A-Za-z0-9._-]", "_", convoy_id)
+    with (lock_dir / f"agent-factory-spec-end-review-{safe_id}.lock").open("w") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def reviewer_identity() -> dict[str, str] | None:
+    """The agent, provider and model the reviewer role runs on now. None
+    when it cannot be read: the round then says that the independence is
+    not established."""
+    try:
+        identity = role_identity(ROOT, REVIEWER_ROLE)
+    except LookupError:
+        return None
+    return {name: identity[name] for name in ("agent", "provider", "model")}
+
+
+def open_request(convoy: Convoy, commit: str) -> None:
+    base = convoy.state["spec_end"]["protected"]
+    _, _, extent = diff_extent(convoy.repo, base, commit)
+    state_write_file("open-end-review", convoy.id, {"extent": extent, "reviewer": reviewer_identity()}, "--commit", commit)
+
+
+def launch(convoy: Convoy, request: dict[str, Any], settings: dict[str, Any]) -> str:
+    """Send the open end review to a new reviewer session: a bead of its
+    own, routed through the dispatch door on the reviewer role."""
+    number = len(request["launches"]) + 1
+    proc = run([
+        GC_BIN, "bd", "create", f"Revue de code de fin — convoi {convoy.id} (lancement {number})",
+        "-p", "1", "-t", "task", "-d",
+        f"End code review of the assembled diff of convoy {convoy.id}, at commit {request['commit']} against "
+        f"{request['base']} (launch {number}).\n\nconvoy: {convoy.id}\n",
+        "--json"])
+    try:
+        created = json.loads(proc.stdout)
+        created = created[0] if isinstance(created, list) and created else created
+        bead_id = created["id"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise Refusal(f"gc bd create n'a pas rendu l'identifiant du bead de revue : {detail_of(proc)}") from exc
+    door = os.environ.get("SPEC_END_REVIEW_DISPATCH_DOOR_BIN") or str(BIN / "dispatch-door")
+    routed = run([door, bead_id, "--rig", settings["rig"], "--formula", settings["formula"], "--role", settings["role"]])
+    if routed.returncode != 0:
+        run([GC_BIN, "bd", "close", bead_id, "--reason", "Revue de fin non routée par la porte de dispatch."])
+        if routed.returncode == DOOR_DEFERRED:
+            raise Deferred(
+                f"le lancement de la revue de fin du convoi {convoy.id} est différé par la porte de dispatch : "
+                f"{detail_of(routed)} ; aucun lancement n'est compté, le prochain appel réessaie")
+        raise Refusal(
+            f"la revue de fin du convoi {convoy.id} n'a pas été routée vers le rôle relecteur : "
+            f"{detail_of(routed)} ; aucun lancement n'est compté")
+    try:
+        state_write("launch-end-review", convoy.id, "--bead", bead_id)
+    except Refusal:
+        # The reviewer answered before its launch was written: its complete
+        # output closed the request, and there is nothing left to record.
+        convoy.load()
+        if convoy.review.get("request") is not None:
+            raise
+    return bead_id
+
+
+def launched_at(launched: dict[str, Any]) -> int:
+    try:
+        return calendar.timegm(time.strptime(launched["at"], "%Y-%m-%dT%H:%M:%SZ"))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise Refusal(f"heure de lancement de la revue de fin illisible : {launched!r}") from exc
+
+
+def expired(launched: dict[str, Any], timeout: int) -> bool:
+    """A launch that gave no result: its output was incomplete, its time is
+    over, or its bead was closed without an output (a complete output
+    closes the request first)."""
+    if launched.get("result") == INCOMPLETE or time.time() >= launched_at(launched) + timeout:
+        return True
+    try:
+        return read_bead(launched["bead"]).get("status") == "closed"
+    except Refusal:
+        return False
+
+
+# --- a stopped end review reaches the operator ---------------------------------------
+
+
+def raise_stop(convoy: Convoy, stop: dict[str, Any]) -> bool:
+    """One request per stop, on a bead of its own: the escalation door puts
+    it on the operator's list, and bin/convoy-state records that it did."""
+    if "raised" in stop:
+        return False
+    language = run([str(OPERATOR_CONFIG_BIN), "language"])
+    if language.returncode != 0:
+        raise Refusal(f"la langue de l'opérateur est illisible : {detail_of(language)}")
+    if stop["reason"] == STOP_REPAIR_REFUSED:
+        what = f"Convoi {convoy.id} : un repair rédigé par la revue de fin est refusé par la porte de publication"
+        why = "Sans repair publié, le Blocking Finding de la revue de fin reste sans verdict favorable."
+    else:
+        what = f"Convoi {convoy.id} : la revue de code de fin n'a rendu aucun résultat complet, relance comprise"
+        why = "Une revue de fin sans résultat n'est pas passée : la porte de fin de Spec refuse sans elle."
+    text = (f"La revue de code de fin du convoi {convoy.id} est arrêtée au commit {stop['commit']} "
+            f"({stop['reason']}) : {stop['detail']}\n\nRien n'est relancé sur cette pointe : la porte de fin de Spec "
+            "refuse tant que la revue de fin n'est pas favorable sur la pointe de la branche d'intégration "
+            "(docs/SPEC_END_REVIEW.md).")
+    created = run([GC_BIN, "bd", "create", short(what, REQUEST_LINE_MAX), "-p", "1", "-t", "task", "-d", text, "--json"])
+    try:
+        bead = json.loads(created.stdout)
+        bead = bead[0] if isinstance(bead, list) and bead else bead
+        bead_id = bead["id"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise Refusal(f"gc bd create n'a pas rendu l'identifiant du bead de la demande : {detail_of(created)}") from exc
+    payload = {
+        "quoi": short(what, REQUEST_LINE_MAX), "pourquoi": short(why, REQUEST_LINE_MAX),
+        "que_faire": [
+            {"option": "Faire vérifier la revue de fin par la maintenance de l'usine",
+             "consequence": "La porte de fin de Spec refuse tant que la revue de fin n'est pas favorable sur la pointe."},
+            {"option": "Laisser la revue de fin arrêtée",
+             "consequence": "Le convoi reste ouvert, non livré ; cette demande ne revient pas."},
+        ],
+        "langue": language.stdout.strip(), "bloquant": True,
+    }
+    proc = run([str(ESCALATION_TOOL), "benjamin", bead_id, json.dumps(payload, ensure_ascii=False)])
+    if proc.returncode != 0:
+        run([GC_BIN, "bd", "close", bead_id, "--reason", "Demande refusée par la porte d'escalade."])
+        raise Refusal(
+            f"la revue de fin du convoi {convoy.id} est arrêtée ({stop['reason']}) mais la porte d'escalade a refusé "
+            f"sa remontée : {detail_of(proc)} ; {PROGRAM} settle {convoy.id} la rejoue")
+    state_write("end-review-stop-raised", convoy.id, "--bead", bead_id)
+    return True
+
+
+def stop_review(convoy: Convoy, reason: str, detail: str) -> None:
+    state_write("stop-end-review", convoy.id, "--reason", reason, "--detail", short(detail))
+    convoy.load()
+    raise_stop(convoy, convoy.review["stop"])
+
+
+# --- settle: what is due on the end review of one convoy ---------------------------------
+
+
+def repairs_due(convoy: Convoy, round_: dict[str, Any]) -> list[dict[str, Any]]:
+    """The Blocking Findings of the round that have no published repair
+    yet, each with what bin/convoy-advance sends through the patch door:
+    the draft of the reviewer, and the finding it restores, cited."""
+    due = []
+    for finding in blocking_findings(round_):
+        if "repair" in finding or "repair_refused" in finding:
+            continue
+        draft, citation = finding["repair_draft"], finding["citation"]
+        where = {"spec": "de la Spec", "repo_rule": f"du fichier {citation.get('path')}",
+                 "ticket": f"du ticket {citation.get('ticket')}"}[citation["source"]]
+        due.append({"finding": finding["id"], "commit": round_["commit"], "repair": {
+            **draft,
+            "title": short(f"Revue de fin {sha(round_['commit'])} {finding['id']} : {draft['title']}", 200),
+            "what_it_delivers": (
+                f"{draft['what_it_delivers']} Ce ticket répond au Blocking Finding {finding['id']} de la revue de code "
+                f"de fin, rendue sur le diff assemblé au commit {sha(round_['commit'])} : « {finding['summary']} » "
+                f"Ligne citée {where} : « {citation['quote']} »"),
+        }})
+    return due
+
+
+def settle(convoy: Convoy) -> dict[str, Any]:
+    """Do what is due on the end review, from the tracker and the branches
+    alone: raise a stop that did not reach the operator, open the review on
+    the commit of the gate and send it, send it once more when it gave no
+    result, stop it when the relaunch gave none either, hand over the
+    repairs drafted for the Blocking Findings of a review made on the tip.
+    A second call on the same state does nothing."""
+    with review_lock(convoy.id):
+        convoy.load()
+        review = convoy.review
+        stop = review.get("stop")
+        if stop and "raised" not in stop:
+            raise_stop(convoy, stop)
+            return {"action": "escalated", "stop": stop["reason"], "commit": stop["commit"]}
+        commit, why = gate_commit(convoy)
+        if commit is None:
+            return {"action": "waiting", "reason": why}
+        if stop and stop["commit"] == commit:
+            return {"action": "stopped", "stop": stop["reason"], "commit": commit, "raised": False}
+        done = round_at(review, commit)
+        if done is not None:
+            result: dict[str, Any] = {"action": "reviewed", "commit": commit, "outcome": done["outcome"],
+                                      "blocking": [finding["id"] for finding in blocking_findings(done)]}
+            refused = [finding for finding in blocking_findings(done) if "repair_refused" in finding]
+            if refused:
+                stop_review(convoy, STOP_REPAIR_REFUSED, "; ".join(
+                    f"{finding['id']} : {finding['repair_refused']}" for finding in refused))
+                return {**result, "action": "stopped", "stop": STOP_REPAIR_REFUSED, "raised": True}
+            due = repairs_due(convoy, done)
+            if due:
+                result["repairs_due"] = due
+            return result
+        # Read once a review is due: a convoy whose end is not there yet
+        # asks nothing of the settings.
+        settings = load_settings()
+        request = review.get("request")
+        if not request or request["commit"] != commit:
+            open_request(convoy, commit)
+            convoy.load()
+            request = convoy.review["request"]
+        launches = request["launches"]
+        timeout = settings["timeout_seconds"]
+        extent = request["extent"]
+        if launches and not expired(launches[-1], timeout):
+            deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(launched_at(launches[-1]) + timeout))
+            return {"action": "pending", "commit": commit, "launches": len(launches), "deadline": deadline, "extent": extent}
+        if len(launches) >= MAX_LAUNCHES:
+            stop_review(convoy, STOP_NO_RESULT, (
+                f"la revue de fin n'a rendu aucun résultat complet en {len(launches)} lancements "
+                f"({', '.join(launch_['bead'] for launch_ in launches)})"))
+            return {"action": "stopped", "stop": STOP_NO_RESULT, "commit": commit, "raised": True}
+        bead_id = launch(convoy, request, settings)
+        return {"action": "relaunched" if launches else "launched", "commit": commit, "base": request["base"],
+                "bead": bead_id, "launches": len(launches) + 1, "extent": extent}
+
+
+def cmd_settle(args: argparse.Namespace) -> int:
+    convoy = Convoy(args.convoy, args.repo)
+    answer: dict[str, Any] = {"ok": True, "convoy": args.convoy}
+    try:
+        answer.update(settle(convoy))
+    except Deferred as exc:
+        answer.update(action="deferred", reason=str(exc))
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- brief: the preparation record, what the reviewer is given -------------------------
+
+
+def spec_of(convoy: Convoy) -> dict[str, Any]:
+    spec_id = convoy.state.get("spec")
+    if not spec_id:
+        raise Refusal(f"le convoi {convoy.id} ne nomme pas de Spec (gc.spec_id) : la revue se fait contre elle")
+    text = read_bead(spec_id).get("description")
+    return {"id": spec_id, "text": text if isinstance(text, str) else ""}
+
+
+def ticket_text(ticket: dict[str, Any]) -> dict[str, Any]:
+    """The approved ticket: what the publication door wrote, nothing a
+    session added since."""
+    description = read_bead(ticket["id"]).get("description")
+    return {
+        "id": ticket["id"], "title": ticket.get("title"), "kind": ticket.get("kind"),
+        "description": description if isinstance(description, str) else "", "criteria": ticket.get("criteria") or [],
+        "demonstration_line": ticket.get("demonstration_line"), "user_stories": ticket.get("user_stories"),
+    }
+
+
+def open_request_of(convoy: Convoy) -> dict[str, Any]:
+    request = convoy.review.get("request")
+    if request is None or "stop" in convoy.review:
+        raise Refusal(
+            f"aucune revue de fin n'est demandée sur le convoi {convoy.id} : la revue répond à une demande ouverte "
+            f"par {PROGRAM} settle")
+    return request
+
+
+def cmd_brief(args: argparse.Namespace) -> int:
+    """The preparation record of the end review: everything the reviewer
+    session is given, and nothing of an author but the committed diff -- the
+    extent under review (the whole diff of the integration branch against
+    the protected branch), the Spec, the approved tickets of the convoy,
+    the standards of the repository, and the shape of what it hands to
+    `record`. Neither a Ticket Handoff nor any prose of an author."""
+    convoy = Convoy(args.convoy, args.repo)
+    request = open_request_of(convoy)
+    repo, commit, base = convoy.repo, request["commit"], request["base"]
+    files, commits, extent = diff_extent(repo, base, commit)
+    if extent != request["extent"]:
+        raise Refusal(
+            f"l'étendue du diff {sha(base)}..{sha(commit)} n'est plus celle de la demande : {extent} au lieu de "
+            f"{request['extent']}")
+    integration = convoy.state["integration"]
+    tracked = git(repo, "ls-tree", "-r", "--name-only", commit).stdout.splitlines()
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy, "kind": "end_review", "commit": commit, "base": base, "repo": str(repo),
+        "branch": integration["branch"], "protected": integration["protected"],
+        "diff": {
+            "fixed_point": base, "command": f"git -C {repo} diff {base}...{commit}",
+            "scope": (f"tout le diff de la branche d'intégration {integration['branch']} ({sha(commit)}) contre la "
+                      f"branche protégée {integration['protected']} ({sha(base)})"),
+            "extent": extent, "files": files, "commits": commits,
+        },
+        "spec": spec_of(convoy),
+        "tickets": [ticket_text(ticket) for ticket in convoy.delivered_tickets()],
+        "skill": "code-review", "axes": list(AXES), "citation_sources": list(CITATION_SOURCES),
+        "standards": [path for path in tracked if path in STANDARDS_FILES or path.startswith("docs/agents/")],
+        "models": request["models"], "independence": independence(request["models"]),
+        "review_shape": {
+            "commit": commit,
+            "coverage": {"axes": list(AXES), "files": ["<every file of diff.files that was reviewed>"]},
+            "findings": [{
+                "axis": "|".join(AXES), "blocking": "true|false", "summary": "<one line>",
+                "citation": {"source": "|".join(CITATION_SOURCES), "quote": "<the cited line, copied>",
+                             "path": "<file of the rule, for repo_rule only>",
+                             "ticket": "<id of the ticket of the convoy, for ticket only>"},
+                "repair": {
+                    "title": "<one line>", "what_it_delivers": "<one line>",
+                    "restores": {"kind": "|".join(DRAFT_RESTORES), "ref": "<what it restores, cited>"},
+                    "demonstration_line": "<what is observed on the launched product>",
+                    "acceptance_criteria": [{"entry_point": "<route, command, public API>",
+                                             "observable": "<what is observed there>",
+                                             "false_if": "<the observation that makes it false>"}],
+                },
+            }],
+        },
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- record: what the reviewer hands in ---------------------------------------------
+
+
+def folded(text: str) -> str:
+    return " ".join(text.split())
+
+
+def citation_refusal(citation: Any, spec: str, tickets: dict[str, str], repo: Path, commit: str) -> str | None:
+    """Why the cited line is not a line of its source, or None when it is
+    one. A citation whose shape is wrong is left to bin/convoy-state."""
+    if not isinstance(citation, dict) or citation.get("source") not in CITATION_SOURCES \
+            or not isinstance(citation.get("quote"), str):
+        return None
+    source, quote = citation["source"], folded(citation["quote"])
+    if len(quote) < MIN_QUOTE:
+        return f"la citation est trop courte pour désigner une ligne (moins de {MIN_QUOTE} caractères)"
+    if source == "repo_rule":
+        path = citation.get("path")
+        if not isinstance(path, str) or not path.strip():
+            return None
+        text = file_at(repo, commit, path.strip())
+        if text is None:
+            return f"la règle citée nomme un fichier absent du dépôt au commit revu : {path.strip()}"
+        where = f"du fichier {path.strip()}"
+    elif source == "ticket":
+        ticket_id = citation.get("ticket")
+        if not isinstance(ticket_id, str) or not ticket_id.strip():
+            return None
+        if ticket_id not in tickets:
+            return f"la ligne citée nomme un ticket qui n'est pas un ticket livré du convoi : {ticket_id}"
+        text, where = tickets[ticket_id], f"du ticket {ticket_id}"
+    else:
+        text, where = spec, "de la Spec"
+    return None if quote in folded(text) else f"la ligne citée n'est pas une ligne {where}"
+
+
+def coverage_of(given: Any, files: list[dict[str, str]]) -> Any:
+    """What the reviewer says it read, against the diff: the axes it ran,
+    how many files of the diff it covered, and those it left out. A
+    coverage whose shape is wrong is left to bin/convoy-state."""
+    if not isinstance(given, dict) or not isinstance(given.get("axes"), list) or not isinstance(given.get("files"), list) \
+            or set(given) - {"axes", "files"}:
+        return given
+    read = {path for path in given["files"] if isinstance(path, str)}
+    missing = sorted(entry["path"] for entry in files if entry["path"] not in read)
+    coverage: dict[str, Any] = {"axes": [axis for axis in AXES if axis in given["axes"]]
+                                + [axis for axis in given["axes"] if axis not in AXES],
+                                "files": len(files) - len(missing), "missing": missing[:MAX_MISSING_NAMED]}
+    if len(missing) > MAX_MISSING_NAMED:
+        coverage["missing_count"] = len(missing)
+    return coverage
+
+
+def cmd_record(args: argparse.Namespace) -> int:
+    convoy = Convoy(args.convoy, args.repo)
+    if os.environ.get("DELIVERY_ROLE_READ_ONLY") != "1":
+        raise Refusal(
+            "une revue de fin ne s'enregistre que depuis une session du rôle relecteur, en lecture seule "
+            "(bin/delivery-role-sandbox)")
+    try:
+        given = json.loads(Path(args.file or "").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise Refusal(f"la revue {args.file!r} n'est pas lisible ({exc})") from exc
+    if not isinstance(given, dict):
+        raise Refusal("la revue rendue n'est pas un objet JSON")
+    request = open_request_of(convoy)
+    session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_AGENT") or ""
+    files, _, _ = diff_extent(convoy.repo, request["base"], request["commit"])
+    if isinstance(given.get("findings"), list):
+        spec = spec_of(convoy)["text"]
+        tickets = {}
+        for ticket in convoy.delivered_tickets():
+            text = ticket_text(ticket)
+            tickets[ticket["id"]] = "\n".join([text["description"], text["demonstration_line"] or ""])
+        findings = []
+        for finding in given["findings"]:
+            if isinstance(finding, dict):
+                finding = {name: value for name, value in finding.items() if name != "citation_refused"}
+                refusal = citation_refusal(finding.get("citation"), spec, tickets, convoy.repo, request["commit"])
+                if refusal:
+                    finding["citation_refused"] = refusal
+            findings.append(finding)
+        given = {**given, "findings": findings}
+    given = {**given, "coverage": coverage_of(given.get("coverage"), files), "recorded_by": session}
+    written = state_write_file("record-end-review", args.convoy, given)
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy, "commit": request["commit"], "outcome": written["outcome"],
+        "complete": written["complete"], "blocking": written["blocking"], "demoted": written["demoted"],
+        "findings": written["findings"], "duration_seconds": written["duration_seconds"],
+        "coverage": given["coverage"],
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    convoy = Convoy(args.convoy, args.repo)
+    review = convoy.review
+    last = review["rounds"][-1] if review["rounds"] else None
+    models = (review.get("request") or last or {}).get("models")
+    commit, why = gate_commit(convoy)
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy, "gate_commit": commit, "not_due": why or None,
+        "rounds": review["rounds"], "request": review.get("request"), "state": review["state"],
+        "stop": review.get("stop"), "end_round": convoy.state.get("end_round"),
+        "independence": independence(models) if models else None,
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- command line --------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def command(name: str, handler: Any) -> argparse.ArgumentParser:
+        p = sub.add_parser(name)
+        p.add_argument("convoy")
+        p.add_argument("--repo")
+        p.set_defaults(handler=handler)
+        return p
+
+    # Required values are checked by the handlers, not by argparse: a
+    # refusal is one JSON answer.
+    command("settle", cmd_settle)
+    command("brief", cmd_brief)
+    command("record", cmd_record).add_argument("--file")
+    command("show", cmd_show)
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.handler(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "convoy": args.convoy, "error": f"refus : {exc}"},
+                         indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

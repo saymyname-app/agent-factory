@@ -30,10 +30,14 @@ that restores it (T21), and, for the end of the Spec (T23): the final state
 of each deviation and « non fait » of a Ticket Handoff, the Planning
 Exception that names them, the repair that restores them, and the record of
 the end-of-Spec gate, its three mechanical verdicts tied to one commit of
-the integration branch; and the Outcome Evaluation of the convoy on the
+the integration branch; the Outcome Evaluation of the convoy on the
 assembled product at that commit, the fingerprints of its pieces, the
 classification of each finding « hors ticket » of a Ticket Handoff and the
-repairs drafted then published for them (T24). No other script
+repairs drafted then published for them (T24); and the end code review of
+the Spec on the assembled diff (T25): its request, its rounds, each tied to
+the commit of the gate it read, the repair drafted for each of its Blocking
+Findings, its stop, and the tip the last round of the end was counted for.
+No other script
 invents a `gc.flow.*` field: a missing field is added here.
 
     convoy-state list            (open marked convoys; under `closed_outside`,
@@ -87,6 +91,12 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state set-integration-repair CONVOY --ticket TICKET
     convoy-state clear-integration-red  CONVOY
     convoy-state record-spec-end CONVOY --commit SHA --protected SHA --file PATH
+    convoy-state open-end-review        CONVOY --commit SHA --file PATH
+    convoy-state launch-end-review      CONVOY --bead BEAD
+    convoy-state record-end-review      CONVOY --file PATH
+    convoy-state set-end-review-repair  CONVOY --finding ID (--ticket TICKET | --refused LINE)
+    convoy-state stop-end-review        CONVOY --reason REASON --detail LINE
+    convoy-state end-review-stop-raised CONVOY --bead BEAD
     convoy-state open-outcome-evaluation    CONVOY --commit SHA --file PATH
     convoy-state launch-outcome-evaluation  CONVOY --bead BEAD
     convoy-state record-outcome-evaluation  CONVOY --file PATH
@@ -202,6 +212,8 @@ KEY_RESUME = PREFIX + "resume"
 KEY_PARK_LIFTS = PREFIX + "park_lifts"
 KEY_GROUPED_REQUEST = PREFIX + "grouped_request"
 KEY_SPEC_END = PREFIX + "spec_end"
+KEY_END_REVIEW = PREFIX + "end_review"
+KEY_END_ROUND = PREFIX + "end_round"
 KEY_OUTCOME_EVALUATION = PREFIX + "outcome_evaluation"
 KEY_FINDINGS = PREFIX + "findings"
 # Written by the publication door (bin/ticket-graph-publish): the digest of
@@ -240,13 +252,27 @@ PROTOTYPE_FIELDS = {"branche": "branch", "commit": "commit", "chemin": "path", "
 # The end-of-Spec gate (T23, Spec §9, points 1 to 3): its closed list of
 # mechanical conditions, versioned. bin/spec-end computes the verdicts; a
 # record that is not this list, all passing, is refused.
-SPEC_END_VERSION = "spec-end/v2"
-# A record written under the list of T23 is still read: the gate holds it for
-# outdated and replays everything.
-SPEC_END_VERSIONS = ("spec-end/v1", SPEC_END_VERSION)
+SPEC_END_VERSION = "spec-end/v3"
+# A record written under an earlier list (T23's, T24's) is still read: the
+# gate holds it for outdated and replays everything.
+SPEC_END_VERSIONS = ("spec-end/v1", "spec-end/v2", SPEC_END_VERSION)
 SPEC_END_CONDITIONS = ("registry", "tests", "fidelity")
 SPEC_END_PASS = "pass"
 SPEC_END_RECORDS = ("tests", "fidelity")
+# The end code review of the Spec (T25, Spec §6, « Fin de Spec »): one run on
+# the whole assembled diff, replayed in full on each new tip. An output that
+# is not complete is not a passed review: its launch gave no result.
+END_REVIEW_OUTCOMES = ("favorable", "unfavorable", "incomplete")
+END_REVIEW_INCOMPLETE = "incomplete"
+END_REVIEW_MAX_LAUNCHES = 2
+END_REVIEW_STOPS = ("end_review_no_result", "end_review_repair_refused")
+END_REVIEW_SOURCE = "end_review"
+END_CITATION_SOURCES = ("spec", "ticket", "repo_rule")
+END_EXTENT_COUNTS = ("files", "commits", "insertions", "deletions")
+# What a repair drafted by the end reviewer may restore (Spec §2): a red
+# control is restored by a repair that code writes, never by a drafted one.
+DRAFT_RESTORES = ("user_story", "anchor", "spec_line", "repo_rule")
+MAX_MISSING_NAMED = 20
 # What is red on the integration branch: the regression command (T21), or
 # the mechanical fidelity the end-of-Spec gate measures (T23).
 RED_CHECKS = ("regression", "fidelity")
@@ -1725,6 +1751,191 @@ def spec_end_record(raw: Any) -> dict[str, Any]:
     return record
 
 
+def end_citation_of(finding: dict[str, Any]) -> tuple[dict[str, str] | None, str | None]:
+    """The citation a finding of the end review gives, and why it does not
+    hold when it does not: the rule of the review of a ticket (Spec §6), a
+    line of a ticket naming the ticket of the convoy it is a line of."""
+    citation = finding.get("citation")
+    ticket = citation.get("ticket") if isinstance(citation, dict) else None
+    if isinstance(citation, dict) and (citation.get("source") == "ticket") != (
+            isinstance(ticket, str) and bool(BEAD_ID_RE.match(ticket))):
+        return None, "citation mal formée : ticket nomme le ticket du convoi dont la ligne est citée, et seulement lui"
+    plain = {**finding, "citation": {name: value for name, value in citation.items() if name != "ticket"}} \
+        if isinstance(citation, dict) else finding
+    kept, reason = citation_of(plain)
+    if kept is not None and kept["source"] == "ticket":
+        kept["ticket"] = ticket
+    return kept, reason
+
+
+def end_repair_draft(value: Any, where: str) -> tuple[dict[str, Any] | None, str | None]:
+    """The `repair` the end reviewer drafts for one Blocking Finding (Spec
+    §6: written by the reviewer, never published by it), and what is wrong
+    with it when it is not one."""
+    try:
+        draft = repair_draft(value, f"{where} : repair rédigé")
+    except Refusal as exc:
+        return None, str(exc)
+    if draft["restores"]["kind"] not in DRAFT_RESTORES:
+        return None, (f"{where} : repair rédigé, restores mal formé (attendu : kind parmi {', '.join(DRAFT_RESTORES)}, "
+                      "et ref, une ligne qui cite ce qu'il rétablit)")
+    return draft, None
+
+
+def end_extent(value: Any) -> dict[str, Any]:
+    """The extent of the diff an end review reads: the whole diff of the
+    integration branch against the protected branch, counted by code."""
+    if not isinstance(value, dict) or set(value) != {*END_EXTENT_COUNTS, "digest"} or any(
+            isinstance(value[name], bool) or not isinstance(value[name], int) or value[name] < 0
+            for name in END_EXTENT_COUNTS):
+        raise Refusal(f"étendue de la revue de fin mal formée : {value!r} (attendu : {', '.join(END_EXTENT_COUNTS)}, digest)")
+    valid_digest(value["digest"])
+    return value
+
+
+def end_models(value: Any) -> dict[str, Any]:
+    """The models an end review is given under: the model of each author of
+    the convoy, the reviewer's, and whether the reviewer runs on one of
+    them -- null when one of them is not recorded."""
+    if not isinstance(value, dict) or set(value) != {"authors", "reviewer", "same_model"} \
+            or not isinstance(value["authors"], list) or not isinstance(value["same_model"], (bool, type(None))):
+        raise Refusal(f"modèles de la revue de fin mal formés : {value!r}")
+    for model in value["authors"]:
+        single_line(model, "modèle d'un auteur")
+    if value["reviewer"] is not None:
+        single_line(value["reviewer"], "modèle du relecteur")
+    elif value["same_model"] is not None:
+        raise Refusal(f"mention des modèles incohérente : {value!r}")
+    return value
+
+
+def end_coverage(value: Any) -> dict[str, Any]:
+    """What an end review says it read: the axes of the skill it ran and
+    the files of the diff it covered, those left out named."""
+    if not isinstance(value, dict) or not {"axes", "files", "missing"} <= set(value) \
+            or set(value) - {"axes", "files", "missing", "missing_count"} \
+            or not isinstance(value["axes"], list) or set(value["axes"]) - set(REVIEW_AXES) \
+            or isinstance(value["files"], bool) or not isinstance(value["files"], int) or value["files"] < 0 \
+            or not isinstance(value["missing"], list) or any(not isinstance(path, str) for path in value["missing"]):
+        raise Refusal(f"coverage mal formé : {value!r} (attendu : axes parmi {', '.join(REVIEW_AXES)}, files, missing)")
+    return value
+
+
+def end_review_complete(coverage: dict[str, Any], extent: dict[str, Any]) -> bool:
+    return set(coverage["axes"]) == set(REVIEW_AXES) and not coverage["missing"] \
+        and not coverage.get("missing_count") and coverage["files"] == extent["files"]
+
+
+def end_finding(value: Any) -> dict[str, Any]:
+    """One finding of the end review as stored. A Blocking Finding carries
+    its citation and the repair its reviewer drafted, then the ticket code
+    published from it, or why the patch door refused it."""
+    known = {"id", "axis", "blocking", "summary", "citation", "demoted", "repair_draft", "repair", "repair_refused"}
+    if not isinstance(value, dict) or not {"id", "axis", "blocking", "summary"} <= set(value) or set(value) - known:
+        raise Refusal(f"constat de revue de fin mal formé : {value!r}")
+    if not isinstance(value["id"], str) or not FINDING_ID_RE.match(value["id"]):
+        raise Refusal(f"identifiant de constat mal formé : {value['id']!r}")
+    one_of(value["axis"], REVIEW_AXES, "axe de revue")
+    single_line(value["summary"], "résumé du constat")
+    if not isinstance(value["blocking"], bool):
+        raise Refusal(f"constat {value['id']} : blocking mal formé : {value['blocking']!r}")
+    if "citation" in value and end_citation_of({"citation": value["citation"]})[1] is not None:
+        raise Refusal(f"constat {value['id']} : citation mal formée")
+    if value["blocking"]:
+        if "demoted" in value or "citation" not in value or end_repair_draft(value.get("repair_draft"), value["id"])[1]:
+            raise Refusal(f"constat {value['id']} : bloquant sans citation ou sans repair rédigé")
+        if "repair" in value and "repair_refused" in value:
+            raise Refusal(f"constat {value['id']} : repair publié et repair refusé à la fois")
+        if "repair" in value and (not isinstance(value["repair"], str) or not BEAD_ID_RE.match(value["repair"])):
+            raise Refusal(f"constat {value['id']} : ticket repair mal formé : {value['repair']!r}")
+        if "repair_refused" in value:
+            single_line(value["repair_refused"], "refus du repair rédigé")
+    elif {"repair_draft", "repair", "repair_refused"} & set(value):
+        raise Refusal(f"constat {value['id']} : repair sur un constat qui ne bloque pas")
+    return value
+
+
+def end_launches(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or len(value) > END_REVIEW_MAX_LAUNCHES:
+        raise Refusal(f"lancements de la revue de fin mal formés : {value!r}")
+    for launch in value:
+        if not isinstance(launch, dict) or not {"bead", "at"} <= set(launch) or set(launch) - {"bead", "at", "result"} \
+                or not isinstance(launch["bead"], str) or not BEAD_ID_RE.match(launch["bead"]) \
+                or launch.get("result", END_REVIEW_INCOMPLETE) != END_REVIEW_INCOMPLETE:
+            raise Refusal(f"lancement de la revue de fin mal formé : {launch!r}")
+    return value
+
+
+def end_review_record(raw: Any) -> dict[str, Any]:
+    """The end code review of the Spec (T25): the rounds reviewer sessions
+    recorded, each bound to the commit of the end-of-Spec gate it read and
+    to the tip of the protected branch that commit holds, the request that
+    is open, and the stop of a review that gave no result."""
+    record = stored_record(raw, ("rounds",), ("request", "stop"))
+    if not isinstance(record["rounds"], list):
+        raise Refusal(f"passes de la revue de fin mal formées : {record['rounds']!r}")
+    for value in record["rounds"]:
+        common = {"commit", "base", "outcome", "findings", "coverage", "extent", "models", "recorded_by",
+                  "launched_at", "duration_seconds", "at"}
+        if not isinstance(value, dict) or set(value) != common:
+            raise Refusal(f"passe de la revue de fin mal formée : {value!r}")
+        valid_commit(value["commit"], "commit de la revue de fin")
+        valid_commit(value["base"], "pointe de la branche protégée de la revue de fin")
+        outcome = one_of(value["outcome"], END_REVIEW_OUTCOMES, "issue de la revue de fin")
+        end_models(value["models"])
+        single_line(value["recorded_by"], "session du relecteur")
+        if not isinstance(value["findings"], list):
+            raise Refusal(f"constats de la revue de fin mal formés : {value['findings']!r}")
+        for finding in value["findings"]:
+            end_finding(finding)
+        complete = end_review_complete(end_coverage(value["coverage"]), end_extent(value["extent"]))
+        blocked = any(finding["blocking"] for finding in value["findings"])
+        expected = END_REVIEW_INCOMPLETE if not complete else "unfavorable" if blocked else "favorable"
+        if outcome != expected:
+            raise Refusal("issue de la revue de fin qui n'est pas celle de ses constats et de son étendue")
+        duration = value["duration_seconds"]
+        if isinstance(duration, bool) or not isinstance(duration, int) or duration < 0:
+            raise Refusal(f"durée de la revue de fin mal formée : {duration!r}")
+    if "request" in record:
+        request = record["request"]
+        if not isinstance(request, dict) or set(request) != {"commit", "base", "extent", "launches", "models", "at"}:
+            raise Refusal(f"demande de revue de fin mal formée : {request!r}")
+        valid_commit(request["commit"], "commit de la revue de fin")
+        valid_commit(request["base"], "pointe de la branche protégée de la revue de fin")
+        end_extent(request["extent"])
+        end_models(request["models"])
+        end_launches(request["launches"])
+    if "stop" in record:
+        stop = record["stop"]
+        if not isinstance(stop, dict) or not {"reason", "detail", "commit", "at"} <= set(stop) \
+                or set(stop) - {"reason", "detail", "commit", "at", "bead", "raised"} or ("bead" in stop) != ("raised" in stop):
+            raise Refusal(f"arrêt de la revue de fin mal formé : {stop!r}")
+        one_of(stop["reason"], END_REVIEW_STOPS, "raison de l'arrêt de la revue de fin")
+        single_line(stop["detail"], "détail de l'arrêt de la revue de fin")
+        valid_commit(stop["commit"], "commit de l'arrêt de la revue de fin")
+    return record
+
+
+def end_review_state(record: dict[str, Any]) -> dict[str, Any]:
+    """What the end review says now: the outcome of its last round, the
+    commit that round read, and its Blocking Findings. A round says nothing
+    of another commit than its own: the gate reads the commit."""
+    last = record["rounds"][-1] if record["rounds"] else None
+    if last is None:
+        return {"commit": None, "outcome": None, "unsettled": []}
+    unsettled = [] if last["outcome"] == END_REVIEW_INCOMPLETE else blocking_ids(last)
+    return {"commit": last["commit"], "outcome": last["outcome"], "unsettled": unsettled}
+
+
+def end_round_record(raw: Any) -> dict[str, Any]:
+    """The tip of the integration branch the last round of the end of the
+    Spec was counted for, and the source that counted it: several sources
+    that refuse the same tip are one round (Spec §8: one counter, every
+    source)."""
+    record = stored_record(raw, ("commit", "source", "at"))
+    valid_commit(record["commit"], "commit du tour de fin")
+    single_line(record["source"], "source du tour de fin")
+    return record
 def restores_record(value: Any, what: str) -> dict[str, str]:
     """What a `repair` restores, cited (Spec §2): one of the kinds the patch
     door knows, and the line that cites it."""
@@ -2465,11 +2676,27 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             outcome_evaluation = {"unruled": f"{KEY_OUTCOME_EVALUATION} : {exc}", "raw": metadata[KEY_OUTCOME_EVALUATION]}
             convoy_unruled.append({"field": KEY_OUTCOME_EVALUATION, "reason": outcome_evaluation["unruled"]})
+    end_review: dict[str, Any] | None = None
+    if KEY_END_REVIEW in metadata:
+        try:
+            end_review = end_review_record(metadata[KEY_END_REVIEW])
+            end_review["state"] = end_review_state(end_review)
+        except Refusal as exc:
+            end_review = {"unruled": f"{KEY_END_REVIEW} : {exc}", "raw": metadata[KEY_END_REVIEW]}
+            convoy_unruled.append({"field": KEY_END_REVIEW, "reason": end_review["unruled"]})
+    end_round: dict[str, Any] | None = None
+    if KEY_END_ROUND in metadata:
+        try:
+            end_round = end_round_record(metadata[KEY_END_ROUND])
+        except Refusal as exc:
+            end_round = {"unruled": f"{KEY_END_ROUND} : {exc}", "raw": metadata[KEY_END_ROUND]}
+            convoy_unruled.append({"field": KEY_END_ROUND, "reason": end_round["unruled"]})
     # The fingerprints of the pieces captured on the assembled product (T24).
     evidence: dict[str, Any] = {}
     for key in sorted(metadata):
         known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_GROUPED_REQUEST, KEY_SPEC_END,
-                 KEY_OUTCOME_EVALUATION, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
+                 KEY_OUTCOME_EVALUATION, KEY_END_REVIEW, KEY_END_ROUND,
+                 *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(EVIDENCE_PREFIX):
             name = key[len(EVIDENCE_PREFIX):]
             try:
@@ -2491,6 +2718,8 @@ def cmd_show(args: argparse.Namespace) -> int:
         "integration_red": integration_red,
         "grouped_request": grouped_request,
         "spec_end": spec_end,
+        "end_review": end_review,
+        "end_round": end_round,
         "outcome_evaluation": outcome_evaluation,
         "evidence": evidence,
         "unruled": convoy_unruled,
@@ -4300,6 +4529,284 @@ def cmd_record_spec_end(args: argparse.Namespace) -> int:
     return done(args.convoy, args.convoy, values)
 
 
+# --- the end code review of the Spec, on the assembled diff (T25) ---------------------
+
+
+def end_review_target(convoy_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    """The convoy an end-review write lands on, its tickets, its metadata
+    and its end review so far."""
+    convoy, tickets = load_convoy(convoy_id)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    record = end_review_record(metadata[KEY_END_REVIEW]) if KEY_END_REVIEW in metadata else {"rounds": []}
+    return convoy, tickets, metadata, record
+
+
+def end_review_models(tickets: list[dict[str, Any]], reviewer: str | None) -> dict[str, Any]:
+    """Spec §6: the reviewer is of another model than the author; when they
+    are identical, or one is not known, it is said, never left out."""
+    authors: list[str] = []
+    unknown = False
+    for ticket in tickets:
+        metadata = metadata_of(ticket)
+        if GATE_PREFIX + "withdrawn" in metadata:
+            continue
+        model = ((models_record(metadata[KEY_MODELS]) if KEY_MODELS in metadata else {}).get("author") or {}).get("model")
+        if model is None:
+            unknown = True
+        elif model not in authors:
+            authors.append(model)
+    if reviewer is None:
+        same = None
+    elif any(normalized_model(model) == normalized_model(reviewer) for model in authors):
+        same = True
+    else:
+        same = None if unknown else False
+    return {"authors": sorted(authors), "reviewer": reviewer, "same_model": same}
+
+
+def cmd_open_end_review(args: argparse.Namespace) -> int:
+    """Open the end code review of the Spec (T25, Spec §6, §9 point 4) on
+    the commit the end-of-Spec gate rendered its three mechanical verdicts
+    on: the diff under review is the whole one, from the tip of the
+    protected branch that commit holds. The same request again writes
+    nothing; a request left on an earlier commit is replaced, and no round
+    of an earlier commit stands for this one."""
+    _, tickets, metadata, record = end_review_target(args.convoy)
+    commit = valid_commit(args.commit, "commit de la revue de fin")
+    gate = spec_end_record(metadata[KEY_SPEC_END]) if KEY_SPEC_END in metadata else None
+    if gate is None or gate["commit"] != commit or KEY_INTEGRATION_RED in metadata:
+        raise Refusal(
+            f"les trois verdicts mécaniques de la porte de fin de Spec ne sont pas rendus au commit {commit} "
+            f"({'rendus au commit ' + gate['commit'] if gate else 'jamais rendus'}"
+            f"{', branche d’intégration rouge' if KEY_INTEGRATION_RED in metadata else ''}) : la revue de fin "
+            "porte sur le commit de la porte")
+    given = json_argument(args.file, "demande de revue de fin")
+    unknown = sorted(set(given) - {"extent", "reviewer"})
+    if unknown:
+        raise Refusal(f"champs inconnus dans la demande de revue de fin : {', '.join(unknown)}")
+    extent = end_extent(given.get("extent"))
+    reviewer = given.get("reviewer")
+    if reviewer is not None:
+        if not isinstance(reviewer, dict) or set(reviewer) != {"agent", "provider", "model"}:
+            raise Refusal(f"relecteur de la revue de fin mal formé : {reviewer!r} (attendu : agent, provider, model)")
+        reviewer = single_line(reviewer["model"], "modèle du relecteur")
+    models = end_review_models(tickets, reviewer)
+    stop = record.get("stop")
+    if stop and stop["commit"] == commit:
+        raise Refusal(
+            f"la revue de fin est arrêtée au commit {commit} ({stop['reason']}) : aucune autre ne s'ouvre sur cette pointe")
+    if any(round_["commit"] == commit and round_["outcome"] != END_REVIEW_INCOMPLETE for round_ in record["rounds"]):
+        raise Refusal(f"le diff assemblé est déjà revue au commit {commit} : la revue de fin est rejouée sur une nouvelle pointe")
+    request = record.get("request")
+    if request and (request["commit"], request["base"], request["extent"]) == (commit, gate["protected"], extent):
+        if request["models"] == models:
+            return done(args.convoy, args.convoy, {})
+        request["models"] = models
+    else:
+        record["request"] = {"commit": commit, "base": gate["protected"], "extent": extent, "launches": [],
+                             "models": models, "at": now()}
+        record.pop("stop", None)
+    values = {KEY_END_REVIEW: encode(end_review_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_launch_end_review(args: argparse.Namespace) -> int:
+    """Record that a reviewer session was sent the open end review: the
+    first launch, then one relaunch when the first gave no result."""
+    _, _, _, record = end_review_target(args.convoy)
+    request = record.get("request")
+    if not request or "stop" in record:
+        raise Refusal(f"aucune revue de fin n'est demandée sur le convoi {args.convoy} : rien à lancer")
+    if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
+        raise Refusal(f"bead de revue absent ou mal formé : {args.bead!r}")
+    if len(request["launches"]) >= END_REVIEW_MAX_LAUNCHES:
+        raise Refusal(
+            f"une seule relance par revue de fin : le convoi {args.convoy} en a déjà lancé {len(request['launches'])} "
+            "sans résultat")
+    launch: dict[str, Any] = {"bead": args.bead, "at": now()}
+    incomplete = sum(1 for round_ in record["rounds"]
+                     if round_["commit"] == request["commit"] and round_["outcome"] == END_REVIEW_INCOMPLETE)
+    if incomplete > sum(1 for known in request["launches"] if "result" in known):
+        # Its session already handed in an incomplete output, before this
+        # launch was written: it gave no result.
+        launch["result"] = END_REVIEW_INCOMPLETE
+    request["launches"].append(launch)
+    values = {KEY_END_REVIEW: encode(record)}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def end_round_values(metadata: dict[str, Any], commit: str, source: str, at: str) -> dict[str, Any]:
+    """One round of the end of the Spec counted for a refusal of the tip
+    `commit` (Spec §8: at most 2 rounds, every source of findings
+    together): counted once per tip, whichever source refuses it first."""
+    counted = end_round_record(metadata[KEY_END_ROUND]) if KEY_END_ROUND in metadata else None
+    if counted and counted["commit"] == commit:
+        return {}
+    counter = COUNTER_PREFIX + "end_rounds"
+    return {counter: counter_value(metadata.get(counter), "end_rounds") + 1,
+            KEY_END_ROUND: encode({"commit": commit, "source": source, "at": at})}
+
+
+def cmd_record_end_review(args: argparse.Namespace) -> int:
+    """Record what a reviewer session hands in for the open end review, and
+    compute its outcome (T25, Spec §6). A finding blocks only with a
+    citation that holds, as in the review of a ticket; a Blocking Finding
+    comes with the `repair` its reviewer drafted. An output that does not
+    cover the two axes and every file of the diff is incomplete: it is
+    recorded, gives no verdict, and its launch gave no result. An
+    unfavorable review counts one round of the end, in the same write."""
+    _, _, metadata, record = end_review_target(args.convoy)
+    request = record.get("request")
+    if not request:
+        raise Refusal(f"aucune revue de fin n'est demandée sur le convoi {args.convoy} : une revue répond à une demande ouverte")
+    if "stop" in record:
+        raise Refusal(f"la revue de fin du convoi {args.convoy} est arrêtée ({record['stop']['reason']}) : rien ne s'y enregistre")
+    given = json_argument(args.file, "revue de fin")
+    problems = [
+        "l'issue est calculée par du code, jamais donnée par le relecteur" if name in ("verdict", "outcome")
+        else f"champ inconnu : {name}"
+        for name in sorted(set(given) - {"commit", "recorded_by", "findings", "coverage"})]
+    if given.get("commit") != request["commit"]:
+        problems.append(f"la revue rendue porte sur le commit {given.get('commit')!r}, la demande sur {request['commit']}")
+    recorded_by = given.get("recorded_by")
+    if not isinstance(recorded_by, str) or not recorded_by.strip() or "\n" in recorded_by:
+        problems.append(f"session du relecteur absente ou mal formée : {recorded_by!r}")
+    try:
+        coverage = end_coverage(given.get("coverage"))
+    except Refusal as exc:
+        problems.append(str(exc))
+        coverage = None
+    number = len(record["rounds"]) + 1
+    raw = given.get("findings", [])
+    if not isinstance(raw, list):
+        problems.append("findings mal formé : une liste de constats est attendue")
+        raw = []
+    drafts = [finding.get("repair") if isinstance(finding, dict) else None for finding in raw]
+    plain = [{name: value for name, value in finding.items() if name not in ("repair", "citation")}
+             if isinstance(finding, dict) else finding for finding in raw]
+    findings, _ = given_findings({"findings": plain}, number, problems)
+    demoted: list[dict[str, str]] = []
+    for finding, source, draft in zip(findings, raw, drafts):
+        citation, reason = end_citation_of(source) if isinstance(source, dict) else (None, "constat mal formé")
+        finding.pop("demoted", None)
+        if citation is not None:
+            finding["citation"] = citation
+        finding["blocking"] = isinstance(source, dict) and source.get("blocking") is True
+        if finding["blocking"] and reason is not None:
+            finding["blocking"] = False
+            finding["demoted"] = f"refusé comme bloquant : {reason}"
+            demoted.append({"id": finding["id"], "reason": finding["demoted"]})
+        elif finding["blocking"]:
+            # Spec §6: a Blocking Finding of the end becomes a repair its reviewer drafted.
+            if draft is None:
+                problems.append(f"constat {finding['id']} : Blocking Finding sans repair rédigé (champ repair)")
+                continue
+            written, wrong = end_repair_draft(draft, f"constat {finding['id']}")
+            if wrong:
+                problems.append(wrong)
+            else:
+                finding["repair_draft"] = written
+    if problems:
+        raise Refusal("revue de fin hors contrat : " + " ; ".join(problems))
+    complete = end_review_complete(coverage, request["extent"])
+    blocking = [finding["id"] for finding in findings if finding["blocking"]]
+    outcome = END_REVIEW_INCOMPLETE if not complete else "unfavorable" if blocking else "favorable"
+    at = now()
+    # The time the review took: from its launch, or from the request when
+    # the session answered before its launch was written.
+    launched = request["launches"][-1]["at"] if request["launches"] else request["at"]
+    duration = max(0, int(time.mktime(time.strptime(at, "%Y-%m-%dT%H:%M:%SZ"))
+                          - time.mktime(time.strptime(launched, "%Y-%m-%dT%H:%M:%SZ"))))
+    record["rounds"].append({
+        "commit": request["commit"], "base": request["base"], "outcome": outcome, "findings": findings,
+        "coverage": coverage, "extent": request["extent"], "models": request["models"],
+        "recorded_by": recorded_by.strip(), "launched_at": launched, "duration_seconds": duration, "at": at})
+    if complete:
+        del record["request"]
+    elif request["launches"]:
+        # An incomplete output is not a passed review: its launch gave no result.
+        request["launches"][-1]["result"] = END_REVIEW_INCOMPLETE
+    values: dict[str, Any] = {KEY_END_REVIEW: encode(end_review_record(encode(record)))}
+    if outcome == "unfavorable":
+        values.update(end_round_values(metadata, request["commit"], END_REVIEW_SOURCE, at))
+    write_metadata(args.convoy, values)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.convoy, "outcome": outcome, "complete": complete,
+                      "blocking": blocking if complete else [], "demoted": demoted, "findings": len(findings),
+                      "duration_seconds": duration, "written": values}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_set_end_review_repair(args: argparse.Namespace) -> int:
+    """Name, on a Blocking Finding of the last end review, the `repair` code
+    published from the draft of the reviewer through the patch door -- or
+    why that door refused the draft. Written once per finding."""
+    _, tickets, _, record = end_review_target(args.convoy)
+    last = record["rounds"][-1] if record["rounds"] else None
+    finding = next((entry for entry in (last or {}).get("findings", [])
+                    if entry["id"] == args.finding and entry["blocking"]), None)
+    if last is None or last["outcome"] != "unfavorable" or finding is None:
+        raise Refusal(f"{args.finding!r} n'est pas un Blocking Finding de la dernière revue de fin du convoi {args.convoy}")
+    if (args.ticket is None) == (args.refused is None):
+        raise Refusal("--ticket ou --refused : le repair publié, ou la raison pour laquelle la porte de patch l'a refusé")
+    if args.ticket is not None:
+        wanted = ("repair", args.ticket)
+        repair = next((ticket for ticket in tickets if ticket.get("id") == args.ticket), None)
+        if repair is None:
+            raise Refusal(f"le ticket {args.ticket} n'appartient pas au convoi {args.convoy}")
+        if metadata_of(repair).get(KEY_KIND) != "repair":
+            raise Refusal(f"le ticket {args.ticket} n'est pas un repair")
+    else:
+        wanted = ("repair_refused", single_line(args.refused, "raison du refus (--refused)")[:MAX_FINDING_LINE])
+    if finding.get(wanted[0]) == wanted[1]:
+        return done(args.convoy, args.convoy, {})
+    if "repair" in finding or "repair_refused" in finding:
+        raise Refusal(f"le constat {args.finding} a déjà son repair ({finding.get('repair') or 'refusé par la porte de patch'})")
+    finding[wanted[0]] = wanted[1]
+    values = {KEY_END_REVIEW: encode(end_review_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_stop_end_review(args: argparse.Namespace) -> int:
+    """Stop the end review on its commit: its two launches gave no result,
+    or the patch door refused a repair its reviewer drafted. Nothing more is
+    launched on that commit; the gate goes on refusing."""
+    _, _, _, record = end_review_target(args.convoy)
+    reason = one_of(args.reason, END_REVIEW_STOPS, "raison de l'arrêt de la revue de fin")
+    detail = single_line(args.detail, "détail de l'arrêt (--detail)")
+    request, last = record.get("request"), record["rounds"][-1] if record["rounds"] else None
+    commit = request["commit"] if request else last["commit"] if last else None
+    if commit is None:
+        raise Refusal(f"aucune revue de fin n'a été demandée sur le convoi {args.convoy} : rien à arrêter")
+    if "stop" in record:
+        if (record["stop"]["reason"], record["stop"]["commit"]) == (reason, commit):
+            return done(args.convoy, args.convoy, {})
+        raise Refusal(f"la revue de fin du convoi {args.convoy} est déjà arrêtée ({record['stop']['reason']})")
+    record["stop"] = {"reason": reason, "detail": detail, "commit": commit, "at": now()}
+    values = {KEY_END_REVIEW: encode(end_review_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_end_review_stop_raised(args: argparse.Namespace) -> int:
+    """Record that the stop of the end review reached the operator, on the
+    bead that carries the request."""
+    _, _, _, record = end_review_target(args.convoy)
+    if "stop" not in record:
+        raise Refusal(f"la revue de fin du convoi {args.convoy} n'est pas arrêtée : aucune remontée à enregistrer")
+    if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
+        raise Refusal(f"bead de la demande absent ou mal formé : {args.bead!r}")
+    if "raised" in record["stop"]:
+        return done(args.convoy, args.convoy, {})
+    record["stop"].update(bead=args.bead, raised=now())
+    values = {KEY_END_REVIEW: encode(end_review_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
 def cmd_set_integration_repair(args: argparse.Namespace) -> int:
     """Name the repair ticket code published for the red of the integration
     branch: a tracked ticket of the convoy, of kind `repair`. One repair per
@@ -4963,6 +5470,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ticket")
     p.add_argument("--item")
     command("set-integration-repair", cmd_set_integration_repair, ticket=False).add_argument("--ticket")
+    p = command("open-end-review", cmd_open_end_review, ticket=False)
+    p.add_argument("--commit")
+    p.add_argument("--file")
+    command("launch-end-review", cmd_launch_end_review, ticket=False).add_argument("--bead")
+    command("record-end-review", cmd_record_end_review, ticket=False).add_argument("--file")
+    p = command("set-end-review-repair", cmd_set_end_review_repair, ticket=False)
+    p.add_argument("--finding")
+    p.add_argument("--ticket")
+    p.add_argument("--refused")
+    p = command("stop-end-review", cmd_stop_end_review, ticket=False)
+    p.add_argument("--reason")
+    p.add_argument("--detail")
+    command("end-review-stop-raised", cmd_end_review_stop_raised, ticket=False).add_argument("--bead")
     command("clear-integration-red", cmd_clear_integration_red, ticket=False)
     p = sub.add_parser("ticket")
     p.add_argument("ticket")
