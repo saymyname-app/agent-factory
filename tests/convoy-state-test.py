@@ -4161,6 +4161,184 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertIn("unruled", shown["convoy"]["end_review"])
         self.assertIn("gc.flow.end_review", [entry["field"] for entry in shown["convoy"]["unruled"]])
 
+    # --- the bound of the rounds of the end, and the stop « non conforme » (T26) ----------------
+
+    OTHER_CONTROL = "fidélité mécanique au Validated Prototype : écart(s) ouvert(s) sur integration/fx-spec"
+
+    def red_of_the_end(self, commit, base, control=None, *more):
+        return ("record-integration-red", CONVOY, "--commit", commit, "--integration", commit, "--protected", base,
+                "--control", control or self.RED_CONTROL, "--end-round", *more)
+
+    def end_stop(self, expect=0):
+        return self.show(expect)["convoy"]["end_stop"]
+
+    def writes(self):
+        return [line for line in self.write_log.read_text().splitlines() if line.strip()]
+
+    def test_a_round_of_the_end_names_the_tip_and_the_source_that_counted_it(self):
+        tip, base = self.integrated()
+
+        self.ok(*self.red_of_the_end(tip, base))
+
+        convoy = self.show()["convoy"]
+        self.assertEqual({"end_rounds": 1}, convoy["counters"])
+        self.assertEqual((tip, "regression"), (convoy["end_round"]["commit"], convoy["end_round"]["source"]))
+        self.assertIsNone(convoy["end_stop"])
+
+    def test_a_refusal_once_the_two_rounds_are_consumed_counts_no_round_and_stops_the_rounds_of_the_end(self):
+        tip, base = self.integrated()
+        self.ok("set-counter", CONVOY, "--counter", "end_rounds", "--value", "2")
+        self.write_log.write_text("")
+
+        self.ok(*self.red_of_the_end(tip, base))
+
+        # The red and the stop are one tracker write; no third round is counted.
+        self.assertEqual(1, len(self.writes()))
+        convoy = self.show()["convoy"]
+        self.assertEqual({"end_rounds": 2}, convoy["counters"])
+        self.assertEqual(self.RED_CONTROL, convoy["integration_red"]["control"])
+        stop = convoy["end_stop"]
+        self.assertEqual(("end_rounds_exhausted", tip, "regression", 2),
+                         tuple(stop[name] for name in ("reason", "commit", "source", "rounds")))
+        self.assertIn(self.RED_CONTROL, stop["detail"])
+        self.assertIn("at", stop)
+        self.assertNotIn("request", stop)
+        self.assertFalse(self.show()["unruled"])
+        # Seen again by another pass: nothing more is written.
+        before = self.tracker.read_bytes()
+        self.assertEqual({}, self.ok(*self.red_of_the_end(tip, base))["written"])
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_the_rounds_of_the_end_are_one_counter_whatever_the_source_of_the_findings(self):
+        tip, base = self.delivered_convoy()
+        # Round 1: a mechanical red, repaired since.
+        self.ok(*self.red_of_the_end(base, base))
+        self.ok("clear-integration-red", CONVOY)
+        # Round 2: a Blocking Finding of the end review, on the tip the mechanical verdicts are green on.
+        self.ok("record-spec-end", CONVOY, "--commit", tip, "--protected", base, "--file", self.spec_end_file())
+        self.ok("open-end-review", CONVOY, "--commit", tip, "--file", self.end_request_file())
+        self.ok("launch-end-review", CONVOY, "--bead", "fx-review1")
+        self.ok("record-end-review", CONVOY, "--file", self.end_review_file(tip, [self.END_BLOCKING]))
+        convoy = self.show()["convoy"]
+        self.assertEqual({"end_rounds": 2}, convoy["counters"])
+        self.assertEqual((tip, "end_review"), (convoy["end_round"]["commit"], convoy["end_round"]["source"]))
+        self.assertIsNone(convoy["end_stop"])
+
+        # A mechanical red again: the red and the review do not have two rounds each.
+        self.ok(*self.red_of_the_end(tip, base, self.OTHER_CONTROL, "--check", "fidelity"))
+
+        convoy = self.show()["convoy"]
+        self.assertEqual({"end_rounds": 2}, convoy["counters"])
+        self.assertEqual(("end_rounds_exhausted", tip, "fidelity", 2),
+                         tuple(convoy["end_stop"][name] for name in ("reason", "commit", "source", "rounds")))
+        self.assertEqual((tip, "end_review"), (convoy["end_round"]["commit"], convoy["end_round"]["source"]))
+
+    def test_an_unfavorable_end_review_once_the_rounds_are_consumed_stops_the_rounds_and_counts_none(self):
+        tip, _ = self.opened_end_review()
+        self.ok("launch-end-review", CONVOY, "--bead", "fx-review1")
+        self.ok("set-counter", CONVOY, "--counter", "end_rounds", "--value", "2")
+        self.write_log.write_text("")
+
+        answer = self.ok("record-end-review", CONVOY, "--file", self.end_review_file(tip, [self.END_BLOCKING]))
+
+        # The round of the review and the stop are one tracker write.
+        self.assertEqual(1, len(self.writes()))
+        self.assertEqual("unfavorable", answer["outcome"])
+        convoy = self.show()["convoy"]
+        self.assertEqual({"end_rounds": 2}, convoy["counters"])
+        self.assertIsNone(convoy["end_round"])
+        self.assertEqual(("end_rounds_exhausted", tip, "end_review", 2),
+                         tuple(convoy["end_stop"][name] for name in ("reason", "commit", "source", "rounds")))
+        self.assertIn("F1.1", convoy["end_stop"]["detail"])
+
+    def test_a_refusal_on_a_convoy_whose_rounds_are_stopped_writes_no_other_stop_and_counts_nothing(self):
+        tip, base = self.delivered_convoy()
+        self.ok("set-counter", CONVOY, "--counter", "end_rounds", "--value", "2")
+        self.ok(*self.red_of_the_end(base, base))
+        stop = self.end_stop()
+        self.ok("clear-integration-red", CONVOY)
+
+        self.ok(*self.red_of_the_end(tip, base, self.OTHER_CONTROL, "--check", "fidelity"))
+
+        convoy = self.show()["convoy"]
+        self.assertEqual(stop, convoy["end_stop"])
+        self.assertEqual({"end_rounds": 2}, convoy["counters"])
+        self.assertEqual(self.OTHER_CONTROL, convoy["integration_red"]["control"])
+
+    def test_the_bound_of_the_rounds_of_the_end_is_the_one_of_the_delivery_flow_settings(self):
+        tip, base = self.integrated()
+        self.bounds(resumes=3, open_planning_exceptions=2, end_rounds=1)
+
+        self.ok(*self.red_of_the_end(base, base))
+        self.assertEqual(({"end_rounds": 1}, None), (self.show()["convoy"]["counters"], self.end_stop()))
+        self.ok("clear-integration-red", CONVOY)
+        self.ok(*self.red_of_the_end(tip, base))
+
+        self.assertEqual({"end_rounds": 1}, self.show()["convoy"]["counters"])
+        self.assertEqual(("end_rounds_exhausted", 1), (self.end_stop()["reason"], self.end_stop()["rounds"]))
+
+    def test_a_missing_or_malformed_bound_of_the_rounds_of_the_end_refuses_the_count_and_writes_nothing(self):
+        tip, base = self.integrated()
+        for value in (None, 0, "deux", True):
+            with self.subTest(value=value):
+                self.bounds(resumes=3, open_planning_exceptions=2, **({} if value is None else {"end_rounds": value}))
+                self.assert_refused_and_nothing_written(*self.red_of_the_end(tip, base), mention="bounds.end_rounds")
+        # A red that counts no round of the end reads no bound of the rounds.
+        self.ok("record-integration-red", CONVOY, "--commit", tip, "--integration", tip, "--protected", base,
+                "--control", self.RED_CONTROL)
+
+    def stopped_convoy(self):
+        """A convoy whose rounds of the end are consumed and whose tip is
+        refused once more: stopped. Returns that tip."""
+        tip, base = self.integrated()
+        self.ok("set-counter", CONVOY, "--counter", "end_rounds", "--value", "2")
+        self.ok(*self.red_of_the_end(tip, base))
+        return tip
+
+    def test_end_stop_raised_records_the_request_and_the_non_conforming_pack_it_carries(self):
+        tip = self.stopped_convoy()
+        self.ok(*self.pack(tip, "--non-conforming"))
+        self.write_log.write_text("")
+
+        self.ok("end-stop-raised", CONVOY, "--bead", CONVOY)
+
+        self.assertEqual(1, len(self.writes()))
+        request = self.end_stop()["request"]
+        self.assertEqual((CONVOY, tip, self.PACK_DIGEST, "/var/packs/fx-spec/fx-convoy/index.html"),
+                         tuple(request[name] for name in ("bead", "commit", "digest", "page")))
+        self.assertIn("at", request)
+        self.assertFalse(self.show()["unruled"])
+        # Raised once: the same request again writes nothing.
+        before = self.tracker.read_bytes()
+        self.assertEqual({}, self.ok("end-stop-raised", CONVOY, "--bead", CONVOY)["written"])
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_end_stop_raised_refuses_a_convoy_that_is_not_stopped_or_has_no_non_conforming_pack(self):
+        tip, base = self.integrated()
+        raised = ("end-stop-raised", CONVOY, "--bead", CONVOY)
+        self.assert_refused_and_nothing_written(*raised, mention="pas arrêtés")
+        self.ok("set-counter", CONVOY, "--counter", "end_rounds", "--value", "2")
+        self.ok(*self.red_of_the_end(tip, base))
+        self.assert_refused_and_nothing_written(*raised, mention="Evidence Pack")
+        self.ok(*self.pack(tip))
+        self.assert_refused_and_nothing_written(*raised, mention="non conforme")
+        self.ok(*self.pack(tip, "--non-conforming"))
+        self.assert_refused_and_nothing_written("end-stop-raised", CONVOY, "--bead", "pas un bead", mention="bead")
+        self.assert_refused_and_nothing_written("end-stop-raised", CONVOY, mention="bead")
+        self.assertNotIn("request", self.end_stop())
+
+    def test_a_stop_of_the_rounds_of_the_end_written_outside_the_command_is_a_state_without_rule(self):
+        tip, _ = self.integrated()
+        for record in ({"reason": "lassitude", "detail": "x", "commit": tip, "source": "regression", "rounds": 2, "at": "x"},
+                       {"reason": "end_rounds_exhausted", "commit": tip}):
+            with self.subTest(record=record):
+                self.edit_tracker(CONVOY, **{"gc.flow.end_stop": json.dumps(record)})
+
+                shown = self.show(expect=EXIT_UNRULED)
+
+                self.assertIn("unruled", shown["convoy"]["end_stop"])
+                self.assertIn("gc.flow.end_stop", [entry["field"] for entry in shown["convoy"]["unruled"]])
+
     def test_the_end_of_the_spec_of_an_unmarked_convoy_is_not_recorded(self):
         before = self.tracker.read_text()
 
@@ -4169,7 +4347,9 @@ class ConvoyStateTest(unittest.TestCase):
                          "--file", self.spec_end_file()),
                         ("open-end-review", CONVOY, "--commit", ABSENT_COMMIT, "--file", self.end_request_file()),
                         ("record-end-review", CONVOY, "--file", self.end_review_file(ABSENT_COMMIT)),
-                        ("stop-end-review", CONVOY, "--reason", "end_review_no_result", "--detail", "x")):
+                        ("stop-end-review", CONVOY, "--reason", "end_review_no_result", "--detail", "x"),
+                        ("end-stop-raised", CONVOY, "--bead", CONVOY),
+                        ("record-delivered", CONVOY, "--commit", ABSENT_COMMIT, "--pack-digest", DIGEST)):
             with self.subTest(command=command[0]):
                 proc = self.run_tool(*command)
                 self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)

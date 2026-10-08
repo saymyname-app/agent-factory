@@ -777,6 +777,234 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
             final["spec_end"]["verdicts"][name] for name in ("registry", "tests", "fidelity", "end_review")))
         self.assertEqual(1, self.end_rounds())
 
+    # --- the repair rounds of the end are bounded, then a « non conforme » request (T26, af-vwcflt) ---
+
+    def verdicts_at(self, commit):
+        """What bin/spec-end leaves once its three mechanical verdicts are green at `commit`."""
+        report = self.json_file("spec-end.json", {
+            "version": "spec-end/v4",
+            "conditions": [{"number": number, "name": name, "verdict": "pass", "detail": "réunie (relevé d'essai)"}
+                           for number, name in enumerate(("registry", "tests", "fidelity"), start=1)]})
+        self.run_ok(STATE, "record-spec-end", self.convoy, "--commit", commit, "--protected", self.git("rev-parse", "main"),
+                    "--file", report)
+
+    def evaluation_at(self, commit, not_observed=()):
+        """What the end of the Spec leaves at `commit` once its mechanical
+        verdicts are green there and the Evaluator of the end has handed in
+        its states: every story observed with its piece, but those of
+        `not_observed`, each with its drafted repair. A process that does
+        nothing stands for the launched product."""
+        self.verdicts_at(commit)
+        product = subprocess.Popen(("sleep", "600"))
+        self.addCleanup(product.wait)
+        self.addCleanup(product.kill)
+        (self.tmp / "launches").mkdir(exist_ok=True)
+        launch = self.tmp / "launches" / f"produit-{commit[:12]}.json"
+        launch.write_text(json.dumps({"pid": product.pid}))
+        request = self.json_file("outcome-request.json", {
+            "roles": {"authors": [], "evaluator": None, "same_provider": None, "other_declared": []},
+            "environment": [{"dataset": None, "address": "http://127.0.0.1:1", "state_file": str(launch)}]})
+        self.run_ok(STATE, "open-outcome-evaluation", self.convoy, "--commit", commit, "--file", request)
+        self.run_ok(STATE, "launch-outcome-evaluation", self.convoy, "--bead", self.convoy)
+        self.run_ok(STATE, "add-evidence", self.convoy, self.convoy, "--piece", "outcome.produit",
+                    "--digest", "sha256:" + "cd" * 32, "--commit", commit)
+        states = [{"number": story["number"], "text": story["text"], "evidence": "outcome.produit",
+                   **({"state": "not_observed", "reason": "le produit lancé ne la sert pas"}
+                      if story["number"] in not_observed else {"state": "observed"})}
+                  for story in self.outcome()["request"]["stories"]]
+        handed = self.json_file("outcome.json", {
+            "commit": commit, "stories": states, "exploration": "aucun", "fidelity_deviations": "aucun",
+            "repairs": [{"story": number, **self.drafted(
+                f"la user story {number}", {"kind": "user_story", "ref": f"user story {number}"})} for number in not_observed],
+            "recorded_by": self.EVALUATOR})
+        self.run_ok(STATE, "record-outcome-evaluation", self.convoy, "--file", handed)
+
+    def repair_delivered(self, repair):
+        """What the flow of a repair leaves once it is merged and closed by
+        its gate: one commit more on the integration branch. Returns that tip."""
+        self.git("checkout", "-q", self.integration)
+        (self.repo_root / f"{repair}.md").write_text(f"ce que le repair {repair} rétablit\n")
+        self.git("add", f"{repair}.md")
+        self.git("commit", "-q", "-m", f"repair {repair} fusionné")
+        tip = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "--detach", "main")
+        self.run_ok(STATE, "close-ticket", self.convoy, repair, "--commit", tip, "--file", GATE_REPORT)
+        return tip
+
+    def repairs(self):
+        return [ticket["id"] for ticket in self.shown()["tickets"] if ticket["kind"] == "repair" and ticket["id"]
+                not in self.tickets.values()]
+
+    def requests(self):
+        """The lines of the convoy on the operator's list, as bin/escalation-door prints it."""
+        return [line.strip() for line in self.run_ok(ESCALATION, "list").stdout.splitlines()
+                if line.strip().startswith(f"{self.convoy} ")]
+
+    def stop(self):
+        return self.shown()["convoy"]["end_stop"]
+
+    def assert_non_conforme_request(self, answer, reason):
+        """The pass raised the « non conforme » request of the convoy: one
+        line on the operator's list, which carries the link of an Evidence
+        Pack whose header says « non conforme »."""
+        raised = answer["non_conforme"]
+        self.assertEqual(("raised", reason), (raised["action"], raised["reason"]), raised)
+        listed = self.requests()
+        self.assertEqual(1, len(listed), listed)
+        self.assertIn("« non conforme »", listed[0])
+        self.assertIn(raised["page"], listed[0])
+        page = Path(raised["page"])
+        self.assertEqual("index.html", page.name)
+        header = page.read_text(encoding="utf-8").split('<section id="rubrique-2">')[0]
+        self.assertIn("Dossier non conforme", header)
+        self.assertIn(self.git("rev-parse", self.integration), header)
+        # Recorded on the convoy with the pack it carries; « accepté » is not one of its issues.
+        stop = self.stop()
+        pack = self.shown()["convoy"]["evidence_pack"]
+        self.assertEqual((self.convoy, str(page), pack["digest"], False),
+                         (stop["request"]["bead"], stop["request"]["page"], stop["request"]["digest"], pack["conforming"]))
+        options = json.loads(self.beads()[self.convoy]["metadata"]["gc.escalation_que_faire"])
+        self.assertEqual(3, len(options))
+        self.assertNotIn("accept", " ".join(option["option"] for option in options).lower())
+        return raised
+
+    def test_two_rounds_consumed_and_a_condition_still_red_no_more_repair_and_a_non_conforme_request(self):
+        self.delivered()
+        story = 3
+        # The false state: two rounds of the end consumed, and the Outcome Evaluation refuses the tip once more.
+        self.run_ok(STATE, "set-counter", self.convoy, "--counter", "end_rounds", "--value", "2")
+        self.evaluation_at(self.base, not_observed=[story])
+        tracked = sorted(self.tracked())
+
+        answer = self.one_pass()
+
+        # The repair the Evaluator drafted is not published: no third round starts.
+        self.assertNotIn("outcome_repairs", answer)
+        self.assertEqual(([], tracked, []), (answer["started"], sorted(self.tracked()), self.slung()))
+        self.assertEqual(2, self.end_rounds())
+        self.assertEqual("fail", answer["spec_end"]["verdicts"]["outcome_evaluation"])
+        stop = self.stop()
+        self.assertEqual(("end_rounds_exhausted", self.base, "outcome_evaluation", 2),
+                         tuple(stop[name] for name in ("reason", "commit", "source", "rounds")))
+        self.assert_non_conforme_request(answer, "end_rounds_exhausted")
+        self.assertIsNone(self.shown()["convoy"]["delivered"])
+        self.assertFalse(self.shown()["unruled"])
+
+        # Whatever the number of passes: one request, no repair, nothing written.
+        before = self.state_path.read_bytes()
+        for _ in range(2):
+            again = self.one_pass()
+            self.assertNotIn("non_conforme", again)
+            self.assertNotIn("outcome_repairs", again)
+            self.assertEqual([], again["started"])
+        self.assertEqual(before, self.state_path.read_bytes())
+        self.assertEqual(1, len(self.requests()))
+
+    def one_round_for(self, not_observed):
+        """One round of the end, for the stories the first Outcome Evaluation
+        did not observe: counted, their repairs published by the pass,
+        delivered. Returns the tip their merge leaves."""
+        self.delivered()
+        self.evaluation_at(self.base, not_observed=not_observed)
+        self.assertEqual((1, None), (self.end_rounds(), self.stop()))
+        published = self.one_pass()["outcome_repairs"]
+        self.assertEqual(sorted(not_observed), sorted(entry["story"] for entry in published))
+        for entry in published:
+            tip = self.repair_delivered(entry["id"])
+        self.write_log.write_text("")
+        return tip
+
+    def test_a_round_that_does_not_reduce_the_stories_not_observed_stops_before_the_second_round(self):
+        tip = self.one_round_for([1])
+        tracked = sorted(self.tracked())
+
+        # Replayed on the new tip: another story is not observed, as many as before the round.
+        self.evaluation_at(tip, not_observed=[2])
+        answer = self.one_pass()
+
+        stop = self.stop()
+        self.assertEqual(("stories_not_reduced", tip, "outcome_evaluation", 1),
+                         tuple(stop[name] for name in ("reason", "commit", "source", "rounds")))
+        self.assertEqual(1, self.end_rounds())
+        self.assertNotIn("outcome_repairs", answer)
+        self.assertEqual(([], tracked, []), (answer["started"], sorted(self.tracked()), self.slung()))
+        raised = self.assert_non_conforme_request(answer, "stories_not_reduced")
+        self.assertIn(tip, Path(raised["page"]).read_text(encoding="utf-8"))
+        self.assertNotIn("non_conforme", self.one_pass())
+        self.assertEqual(tracked, sorted(self.tracked()))
+
+    def test_the_same_story_refused_twice_stops_before_the_second_round(self):
+        tip = self.one_round_for([1, 3])
+        tracked = sorted(self.tracked())
+
+        # Fewer stories are refused, but one of them for the second time.
+        self.evaluation_at(tip, not_observed=[3])
+        answer = self.one_pass()
+
+        stop = self.stop()
+        self.assertEqual(("story_refused_twice", tip, 1), tuple(stop[name] for name in ("reason", "commit", "rounds")))
+        self.assertIn("user story 3", stop["detail"])
+        self.assertEqual(1, self.end_rounds())
+        self.assertNotIn("outcome_repairs", answer)
+        self.assertEqual(([], tracked), (answer["started"], sorted(self.tracked())))
+        self.assert_non_conforme_request(answer, "story_refused_twice")
+
+    def test_a_round_that_reduces_the_stories_not_observed_leaves_the_second_round_start(self):
+        tip = self.one_round_for([1, 3])
+
+        # Fewer stories refused, none for the second time: the second round is counted and its repair published.
+        self.evaluation_at(tip, not_observed=[2])
+        answer = self.one_pass()
+
+        self.assertEqual((2, None), (self.end_rounds(), self.stop()))
+        self.assertEqual([2], [entry["story"] for entry in answer["outcome_repairs"]])
+        self.assertNotIn("non_conforme", answer)
+        self.assertEqual([], self.requests())
+
+    def test_a_mechanical_red_and_a_finding_of_the_end_review_share_the_two_rounds_of_the_end(self):
+        self.delivered()
+        (self.tmp / "end-review-plan.json").write_text(json.dumps([{"findings": [self.END_FINDING]}], ensure_ascii=False))
+
+        # Round 1: the tests are red on the tip, found by the gate of the pass.
+        self.assertEqual("fail", self.one_pass()["spec_end"]["verdicts"]["tests"])
+        self.assertEqual(1, self.end_rounds())
+        first = self.one_pass()["repair"]["id"]
+        self.git("rm", "-q", RED_FILE)
+        self.git("commit", "-q", "-m", "le contrôle rétabli")
+        self.run_ok(STATE, "close-ticket", self.convoy, first, "--commit", self.git("rev-parse", "main"), "--file", GATE_REPORT)
+        self.assertNotIn("red", self.one_pass()["integration"])
+        self.assertIsNone(self.shown()["convoy"]["integration_red"])
+
+        # Round 2: on the new tip, mechanical verdicts and Outcome Evaluation green, the end review finds a Blocking Finding.
+        tip = self.git("rev-parse", self.integration)
+        self.evaluation_at(tip)
+        self.assertEqual("unfavorable", self.one_pass()["end_review"]["outcome"])
+        counted = self.shown()["convoy"]
+        self.assertEqual((2, tip, "end_review", None),
+                         (counted["counters"]["end_rounds"], counted["end_round"]["commit"], counted["end_round"]["source"],
+                          counted["end_stop"]))
+        second = self.one_pass()["end_review"]["repairs"][0]["id"]
+        self.assertEqual(sorted([first, second]), sorted(self.repairs()))
+
+        # Replayed in full on the tip of that repair, the review refuses again: the rounds are consumed.
+        last = self.repair_delivered(second)
+        self.evaluation_at(last)
+        tracked = sorted(self.tracked())
+        self.write_log.write_text("")
+        answer = self.one_pass()
+
+        # One counter read in the tracker: the red and the review did not have two rounds each.
+        self.assertEqual(2, self.end_rounds())
+        stop = self.stop()
+        self.assertEqual(("end_rounds_exhausted", last, "end_review", 2),
+                         tuple(stop[name] for name in ("reason", "commit", "source", "rounds")))
+        self.assertNotIn("repairs", answer["end_review"])
+        self.assertEqual(([], tracked, []), (answer["started"], sorted(self.tracked()), self.slung()))
+        self.assert_non_conforme_request(answer, "end_rounds_exhausted")
+        again = self.one_pass()
+        self.assertNotIn("repairs", again.get("end_review", {}))
+        self.assertEqual(tracked, sorted(self.tracked()))
+
 
 if __name__ == "__main__":
     unittest.main()
