@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# ci: every-run — it asks Git for the state of the whole Factory repository
+# (the tool must write nothing there), which reads docs/ and the Cockpit: it
+# cannot be left out of a run that changes only those (bin/ci-run-tests).
 """bin/evidence-capture on a fake tracker state (T09, af-pvcg6t; Spec
 af-wf4w5r §9, Testing Decisions seam 2): one test per pass and per refusal,
 each refusal re-reading the tracker and the evidence store to prove nothing

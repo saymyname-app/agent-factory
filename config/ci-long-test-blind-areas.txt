@@ -9,7 +9,8 @@
 #
 # One area per line: "dir/" is everything under that directory, anything else
 # is a glob on the path. The long tests are the files config/ci-test-seconds.tsv
-# gives 30 seconds or more, less those that are themselves in an area.
+# gives 30 seconds or more, less those that are themselves in an area or
+# carry a "# ci: every-run — <reason>" line.
 #
 # An area is held, not believed: every long test runs without sight of the
 # real areas and fails if it read one (bin/ci-run-tests, "blindfold";

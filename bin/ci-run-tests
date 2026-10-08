@@ -49,8 +49,10 @@
 #                            # committed between REF and HEAD is in an area
 #                            # they cannot reach (af-5mw6z0). The long tests
 #                            # are the files config/ci-test-seconds.tsv gives
-#                            # LONG_TEST_SECONDS or more; the areas are the
-#                            # closed list config/ci-long-test-blind-areas.txt.
+#                            # LONG_TEST_SECONDS or more, less those marked
+#                            #   # ci: every-run — <reason>
+#                            # the areas are the closed list
+#                            # config/ci-long-test-blind-areas.txt.
 #                            # Anything else is a full run: a changed file
 #                            # outside the list, no changed file, a REF that
 #                            # cannot be read, uncommitted changes, or
@@ -118,7 +120,10 @@ by_weight() {  # file paths on stdin -> "<seconds> <path>" lines, longest first
 # --- the long tests and the areas they cannot reach (af-5mw6z0) -------------
 # One line per area: "dir/" is everything under that directory, anything else
 # is a glob on the path. A file that is itself in an area is never a long
-# test: a change to it must run it.
+# test: a change to it must run it. Neither is a file marked
+#   # ci: every-run — <reason>
+# which is how a test that does read an area (it asks Git for the state of
+# the whole repository, say) stays in every run.
 LONG_TEST_SECONDS=30
 AREAS_FILE=config/ci-long-test-blind-areas.txt
 AREAS=()
@@ -143,7 +148,8 @@ in_blind_area() {
 }
 
 is_long() {
-  [ "${#AREAS[@]}" -gt 0 ] && [ "${MEASURED[$1]:-0}" -ge "$LONG_TEST_SECONDS" ] && ! in_blind_area "$1"
+  [ "${#AREAS[@]}" -gt 0 ] && [ "${MEASURED[$1]:-0}" -ge "$LONG_TEST_SECONDS" ] && ! in_blind_area "$1" \
+    && ! grep -qE '^#[[:space:]]*ci:[[:space:]]*every-run' "$1"
 }
 
 # SKIP_LONG stays 0 unless every question below has the answer that allows
@@ -318,7 +324,7 @@ run_one() {  # index file -> prints its result line, leaves $RESULTS/<index>.fai
     reached=$(cd "$blind" && find . -mindepth 1 -newerat '2001-01-01' | sed 's|^\./||' | sort)
     if [ -n "$reached" ]; then
       status=1
-      out+=$'\n'"ci-run-tests: $f is a long test and read an area of $AREAS_FILE. A change to that area does not run this test, so it must not depend on it: remove the dependency, or take the area out of the list. Read:"$'\n'"$reached"
+      out+=$'\n'"ci-run-tests: $f is a long test and read an area of $AREAS_FILE. A change to that area does not run this test, so it must not depend on it: remove the dependency, take the area out of the list, or keep this test in every run with a '# ci: every-run — <reason>' line. Read:"$'\n'"$reached"
     fi
     rm -rf -- "$blind"
   fi

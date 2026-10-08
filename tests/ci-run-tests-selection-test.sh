@@ -153,6 +153,15 @@ printf '#!/usr/bin/env bash\ncat "$(dirname "$0")/../docs/guide/page.md" >/dev/n
 out=$(blind_run 'exit 0') || { echo "$out" >&2; fail "a short test or a Cockpit test that reads docs failed"; }
 echo "ok   a long test that opens or lists an area, itself or through a child, fails the run"
 
+# --- a long test marked for every run reads what it wants and is never left out
+back_to_base
+printf '#!/usr/bin/env bash\n# ci: every-run — reads the docs\ncat "$(dirname "$0")/../docs/guide/page.md" >/dev/null\n' >"$REPO/tests/long-test.sh"
+commit "the long test is marked"
+out=$(runner) || { echo "$out" >&2; fail "a long test marked every-run failed for reading docs"; }
+echo "more" >>"$REPO/docs/guide/page.md" && commit "docs only"
+[ "$(listed --changed-since 'HEAD~1')" = "$ALL" ] || fail "a long test marked every-run was left out of a docs-only run"
+echo "ok   a long test marked '# ci: every-run' may read an area, and runs every time"
+
 # --- the versioned list and the workflow --------------------------------------
 [ -r "$ROOT/$AREAS" ] || fail "$AREAS is missing: no run can be reduced"
 long=$(awk -F'\t' '$2 ~ /^[0-9]+$/ && $2 >= 30' "$ROOT/config/ci-test-seconds.tsv" | wc -l)
