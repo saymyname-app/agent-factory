@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Billed GitHub Actions minutes of a repository, per day and per run (af-mzuprx).
+
+GitHub bills each job of a private repository for its duration rounded up to
+the minute. The run `timing` API answers 0 and the billing API wants an
+`admin:org` token the Factory does not hold, so this reads the jobs of each
+run (start and end) and applies that rule itself. A job that never got a
+runner (quota reached) has no step that ran and is billed nothing.
+
+    ci-minutes [--repo OWNER/NAME] [--since YYYY-MM-DD] [--runs N]
+
+Read-only. Days and times are Europe/Paris. See docs/OPERATIONS.md, "Factory
+CI cost and the Actions quota".
+"""
+
+import argparse
+import collections
+import json
+import math
+import os
+import subprocess
+import sys
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+GH_BIN = os.environ.get("GH_BIN", "gh")
+PARIS = ZoneInfo("Europe/Paris")
+
+
+def gh_api(path: str, paginate: bool = False) -> list[dict]:
+    """The JSON documents `gh api` answers for `path` (one per page)."""
+    args = [GH_BIN, "api", path] + (["--paginate"] if paginate else [])
+    proc = subprocess.run(args, capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.exit(f"ci-minutes: gh api {path} failed: {proc.stderr.strip()}")
+    documents, decoder, text = [], json.JSONDecoder(), proc.stdout.strip()
+    while text:
+        document, end = decoder.raw_decode(text)
+        documents.append(document)
+        text = text[end:].lstrip()
+    return documents
+
+
+def moment(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+
+
+def billed_minutes(job: dict) -> int:
+    started, ended = moment(job.get("started_at")), moment(job.get("completed_at"))
+    ran = any(step.get("conclusion") not in (None, "skipped") for step in job.get("steps") or [])
+    if not (started and ended and ran):
+        return 0
+    return math.ceil(max(0.0, (ended - started).total_seconds()) / 60)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--repo", default="saymyname-app/agent-factory")
+    parser.add_argument("--since", help="first day, YYYY-MM-DD (default: 3 days ago)")
+    parser.add_argument("--runs", type=int, default=15, help="how many of the latest runs to detail")
+    args = parser.parse_args()
+    since = args.since or (datetime.now(PARIS) - timedelta(days=3)).strftime("%Y-%m-%d")
+
+    runs = [run for page in gh_api(f"repos/{args.repo}/actions/runs?per_page=100&created=>={since}", paginate=True)
+            for run in page.get("workflow_runs", [])]
+    runs.sort(key=lambda run: run["created_at"])
+    days: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    lines = []
+    for run in runs:
+        jobs = [job for page in gh_api(f"repos/{args.repo}/actions/runs/{run['id']}/jobs?per_page=100&filter=all")
+                for job in page.get("jobs", [])]
+        minutes = {f"{job['name']}#{job.get('run_attempt', 1)}": billed_minutes(job) for job in jobs}
+        total = sum(minutes.values())
+        created = moment(run["created_at"]).astimezone(PARIS)
+        day = days[created.strftime("%Y-%m-%d")]
+        day["runs"] += 1
+        day["minutes"] += total
+        day[run["event"]] += total
+        day["not_success"] += total if run.get("conclusion") != "success" else 0
+        detail = " ".join(f"{name.removesuffix('#1')}={value}" for name, value in sorted(minutes.items()))
+        lines.append(f"{created:%Y-%m-%d %H:%M}  {run['event']:<17} {str(run.get('conclusion')):<10} "
+                     f"{total:>4} min  {detail}  [{run['head_branch']}]")
+
+    print(f"Billed minutes of {args.repo} since {since} (Europe/Paris), each job rounded up to the minute")
+    print(f"{'day':<11} {'runs':>5} {'minutes':>8} {'pull_request':>13} {'push':>6} {'other':>6} {'not green':>10}")
+    for name in sorted(days):
+        day = days[name]
+        other = day["minutes"] - day["pull_request"] - day["push"]
+        print(f"{name:<11} {day['runs']:>5} {day['minutes']:>8} {day['pull_request']:>13} {day['push']:>6} "
+              f"{other:>6} {day['not_success']:>10}")
+    if args.runs > 0 and lines:
+        print(f"\nLatest {min(args.runs, len(lines))} run(s):")
+        print("\n".join(lines[-args.runs:]))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -20,21 +20,79 @@
 #   ci-run-tests --list     # print the discovered file paths, one per line,
 #                            # and exit 0 (used by bin/factory-main-gate-like
 #                            # callers that want the list without running it)
+#   ci-run-tests --shard I/N [--list]
+#                            # only lot I of N: the discovered files, longest
+#                            # first, each given to the lot that has the least
+#                            # so far, so every file is in exactly one lot and
+#                            # the lots last about as long as each other.
+#                            # Factory CI runs N lots on N runners at once
+#                            # (.github/workflows/ci.yml): run one after the
+#                            # other, the tests took 48 min on 2026-10-07, up
+#                            # from 7 min two days before. How long a file
+#                            # lasts is read in config/ci-test-seconds.tsv
+#                            # (written by bin/ci-test-seconds from a real
+#                            # run); a file it does not name is weighed by its
+#                            # size. A stale list only makes the lots uneven:
+#                            # the job named "Tests" is then billed while it
+#                            # waits for the longest lot (af-mzuprx).
+#   ci-run-tests --jobs J   # run J test files at once (default 1, or
+#                            # CI_RUN_TESTS_JOBS). The tests are bound by the
+#                            # processor -- one file starts thousands of
+#                            # Python processes -- so a runner that runs one
+#                            # file at a time leaves its other cores idle and
+#                            # billed: Factory CI passes its core count
+#                            # (af-mzuprx, docs/OPERATIONS.md "Factory CI
+#                            # cost"). Each result line ends with the seconds
+#                            # the file took.
 
 set -uo pipefail
 
 REPO_ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+SELF="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
+ARGS=("$@")
 cd "$REPO_ROOT" || { echo "ci-run-tests: $REPO_ROOT unreachable" >&2; exit 2; }
 
 MODE="run"
-case "${1:-}" in
-  --list) MODE="list" ;;
-  "") ;;
-  *) echo "ci-run-tests: unknown argument: $1" >&2; exit 2 ;;
-esac
+SHARD_I=""
+SHARD_N=""
+JOBS="${CI_RUN_TESTS_JOBS:-1}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --list) MODE="list" ;;
+    --shard)
+      if ! [[ "${2:-}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || [ "${BASH_REMATCH[1]}" -gt "${BASH_REMATCH[2]}" ]; then
+        echo "ci-run-tests: --shard wants I/N with 1 <= I <= N, got: ${2:-nothing}" >&2; exit 2
+      fi
+      SHARD_I=${BASH_REMATCH[1]}; SHARD_N=${BASH_REMATCH[2]}
+      shift
+      ;;
+    --jobs) JOBS=${2:-}; shift ;;
+    *) echo "ci-run-tests: unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+if ! [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ci-run-tests: --jobs wants a number of files to run at once (1 or more), got: ${JOBS:-nothing}" >&2; exit 2
+fi
 
 is_local_only() {
   grep -qE '^#[[:space:]]*ci:[[:space:]]*local-only' "$1"
+}
+
+# Seconds each file took in a real run: "<path><TAB><seconds>" lines.
+declare -A MEASURED=()
+if [ -r config/ci-test-seconds.tsv ]; then
+  while IFS=$'\t' read -r path seconds; do
+    [[ "$seconds" =~ ^[0-9]+$ ]] && MEASURED[$path]=$seconds
+  done < config/ci-test-seconds.tsv
+fi
+
+by_weight() {  # file paths on stdin -> "<seconds> <path>" lines, longest first
+  local f
+  while IFS= read -r f; do
+    # Not measured yet: about one second per 200 bytes, what the long files show.
+    printf '%s %s\n' "${MEASURED[$f]:-$(( $(wc -c < "$f") / 200 + 1 ))}" "$f"
+  done | sort -k1,1nr -k2,2
 }
 
 mapfile -t files < <(
@@ -45,26 +103,89 @@ mapfile -t files < <(
   done | sort
 )
 
+if [ -n "$SHARD_N" ]; then
+  mapfile -t files < <(
+    printf '%s\n' "${files[@]}" | by_weight \
+      | awk -v i="$SHARD_I" -v n="$SHARD_N" '{
+          least = 1
+          for (lot = 2; lot <= n; lot++) if (total[lot] + 0 < total[least] + 0) least = lot
+          total[least] += $1
+          if (least == i) print $2
+        }' \
+      | sort
+  )
+fi
+
 if [ "$MODE" = "list" ]; then
   printf '%s\n' "${files[@]}"
   exit 0
 fi
 
+if [ "${#files[@]}" -eq 0 ] && [ -n "$SHARD_N" ]; then
+  echo "ci-run-tests: lot $SHARD_I/$SHARD_N is empty"
+  exit 0
+fi
 if [ "${#files[@]}" -eq 0 ]; then
   echo "ci-run-tests: no discoverable tests under tests/*.sh, tests/*.py" >&2
   exit 1
 fi
 
+# One battery at a time on a host that several sessions share (af-7m7ymg).
+# On 2026-10-08 three batteries ran at once beside the live Factory: load 37,
+# memory full, one file took 504 s instead of 60, and two Cockpit tests failed
+# on "nothing listening on 127.0.0.1:<port> after 5s" that pass alone in 14 s.
+# So a run takes a lock for the host and the next one waits its turn, saying
+# whose battery it waits for. `flock --close` holds the lock in its own
+# process: a server a test leaves behind does not keep the line, and the lock
+# goes when the battery ends, however it ends. After CI_RUN_TESTS_HOST_WAIT
+# seconds (default 5400) the run gives up with exit 75 and says no test ran:
+# that is not a test failure. Not taken on a GitHub runner (one run per
+# machine), by --list, or by a ci-run-tests started from inside a battery
+# (tests of this script): that one inherits its battery's turn.
+# CI_RUN_TESTS_HOST_LOCK_FILE names another lock file (tests only).
+HOST_LOCK="${CI_RUN_TESTS_HOST_LOCK_FILE:-/tmp/agent-factory-ci-run-tests-$(id -u).lock}"
+if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${CI_RUN_TESTS_HOST_LOCK_HELD:-}" != "$HOST_LOCK" ]; then
+  HOST_WAIT="${CI_RUN_TESTS_HOST_WAIT:-5400}"
+  if ! [[ "$HOST_WAIT" =~ ^[0-9]+$ ]]; then
+    echo "ci-run-tests: CI_RUN_TESTS_HOST_WAIT wants a number of seconds, got: $HOST_WAIT" >&2; exit 2
+  fi
+  step=0
+  while :; do
+    CI_RUN_TESTS_HOST_LOCK_HELD="$HOST_LOCK" flock --close --timeout "$step" --conflict-exit-code 75 \
+      "$HOST_LOCK" "$BASH" "$SELF" "${ARGS[@]}"
+    status=$?
+    [ "$status" -eq 75 ] || exit "$status"
+    holder=$(cat "$HOST_LOCK.holder" 2>/dev/null) || holder="another session"
+    if [ "$SECONDS" -ge "$HOST_WAIT" ]; then
+      echo "ci-run-tests: NOT RUN -- the battery of $holder still holds the host after ${SECONDS}s (CI_RUN_TESTS_HOST_WAIT=$HOST_WAIT). No test ran: this is not a test failure. Start it again later." >&2
+      exit 75
+    fi
+    echo "ci-run-tests: waiting for the battery of $holder -- one battery at a time on this host; waited ${SECONDS}s of at most ${HOST_WAIT}s" >&2
+    step=$(( HOST_WAIT - SECONDS < 60 ? HOST_WAIT - SECONDS : 60 ))
+  done
+fi
+if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
+  printf '%s (pid %s, since %s, %s file(s) at once)\n' "$REPO_ROOT" "$$" "$(date +%H:%M)" "$JOBS" > "$HOST_LOCK.holder" 2>/dev/null || true
+fi
+
 PYTHON=python3
 command -v python3 >/dev/null 2>&1 || PYTHON=python
 
-failed=()
-for f in "${files[@]}"; do
+# Several at once: start the long files first, so the last one to end is not
+# a long file that waited its turn behind short ones.
+if [ "$JOBS" -gt 1 ]; then
+  mapfile -t files < <(printf '%s\n' "${files[@]}" | by_weight | cut -d' ' -f2-)
+fi
+
+RESULTS=$(mktemp -d)
+trap 'rm -rf -- "$RESULTS"' EXIT
+
+run_one() {  # index file -> prints its result line, leaves $RESULTS/<index>.failed on failure
+  local index=$1 f=$2 interp out status runtime_dir started=$SECONDS
   case "$f" in
     *.py) interp=$PYTHON ;;
     *.sh) interp=bash ;;
   esac
-  printf '  %-70s ' "$f"
   # Each test gets a throwaway XDG_RUNTIME_DIR, so bin/escalation-door's
   # default lock can never be the host's own -- and a test that still
   # reaches that default instead of setting ESCALATION_DOOR_LOCK_FILE fails
@@ -78,13 +199,33 @@ for f in "${files[@]}"; do
     out+=$'\n'"ci-run-tests: $f reached bin/escalation-door's default lock file -- set ESCALATION_DOOR_LOCK_FILE to a path the test owns (tests/lib/sandbox.sh does)"
   fi
   rm -rf -- "$runtime_dir"
-  if [ "$status" -eq 0 ]; then
-    echo OK
-  else
-    echo FAIL
-    printf '%s\n' "$out" | sed 's/^/    /'
-    failed+=("$f")
+  # One file's result is written whole, never mixed with another's.
+  {
+    flock 9
+    if [ "$status" -eq 0 ]; then
+      printf '  %-70s OK   %4ss\n' "$f" "$((SECONDS - started))"
+    else
+      printf '  %-70s FAIL %4ss\n' "$f" "$((SECONDS - started))"
+      printf '%s\n' "$out" | sed 's/^/    /'
+      : > "$RESULTS/$index.failed"
+    fi
+  } 9>"$RESULTS/print.lock"
+}
+
+running=0
+for index in "${!files[@]}"; do
+  if [ "$running" -ge "$JOBS" ]; then
+    wait -n
+    running=$((running - 1))
   fi
+  run_one "$index" "${files[$index]}" &
+  running=$((running + 1))
+done
+wait
+
+failed=()
+for index in "${!files[@]}"; do
+  [ -e "$RESULTS/$index.failed" ] && failed+=("${files[$index]}")
 done
 
 echo

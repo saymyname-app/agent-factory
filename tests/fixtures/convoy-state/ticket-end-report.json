@@ -1,0 +1,59 @@
+{
+  "version": "ticket-end/v1",
+  "conditions": [
+    {
+      "number": 1,
+      "name": "criteria",
+      "verdict": "pass",
+      "detail": "réunie (relevé d'essai)"
+    },
+    {
+      "number": 2,
+      "name": "handoff",
+      "verdict": "pass",
+      "detail": "réunie (relevé d'essai)"
+    },
+    {
+      "number": 3,
+      "name": "evaluation",
+      "verdict": "pass",
+      "detail": "réunie (relevé d'essai)"
+    },
+    {
+      "number": 4,
+      "name": "fidelity",
+      "verdict": "pass",
+      "detail": "réunie (relevé d'essai)"
+    },
+    {
+      "number": 5,
+      "name": "deferral",
+      "verdict": "pass",
+      "detail": "réunie (relevé d'essai)"
+    },
+    {
+      "number": 6,
+      "name": "merge",
+      "verdict": "pass",
+      "detail": "réunie (relevé d'essai)"
+    },
+    {
+      "number": 7,
+      "name": "evidence",
+      "verdict": "pass",
+      "detail": "réunie (relevé d'essai)"
+    },
+    {
+      "number": 8,
+      "name": "tdd",
+      "verdict": "pass",
+      "detail": "réunie (relevé d'essai)"
+    },
+    {
+      "number": 9,
+      "name": "review",
+      "verdict": "pass",
+      "detail": "réunie (relevé d'essai)"
+    }
+  ]
+}

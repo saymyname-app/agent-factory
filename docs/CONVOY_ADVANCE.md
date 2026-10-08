@@ -1,4 +1,4 @@
-# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, Spec af-wf4w5r §0 rules 3 and 5, §4, §6, §7, §8)
+# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, T19, Spec af-wf4w5r §0 rules 3 and 5, §4, §6, §7, §8, §9)
 
 ## Status and purpose
 
@@ -13,8 +13,8 @@ Mayor advances such a convoy as before.
 
 ```bash
 ./bin/convoy-advance af-convoy      # one pass on that convoy
-./bin/convoy-advance --all          # one pass on every open marked convoy
-./bin/convoy-advance --check-only   # exit 0 if an open marked convoy exists, else 1
+./bin/convoy-advance --all          # one pass on every open marked convoy, and on those closed outside acceptance or abandon
+./bin/convoy-advance --check-only   # exit 0 if such a convoy exists, else 1
 ./bin/convoy-advance --all --stopped-ok   # what the order runs (see « État sans règle »)
 ```
 
@@ -24,7 +24,7 @@ observed on Gas City 1.4.1: a `condition` order is paced by its check, not
 by its `interval`) and runs `--all --stopped-ok` only while `--check-only`
 passes. The
 order costs one tracker read and runs nothing while no marked convoy is
-open.
+open or was closed outside its commands.
 
 ## What one pass does
 
@@ -146,6 +146,32 @@ while another declared one is available — is retried by the next pass; a
 settlement that could not run, or a launch the door refused, fails the pass
 (exit 1).
 
+## A merged ticket is closed by the ticket-end gate (T19)
+
+A ticket of a marked convoy is closed by the pass, through `bin/ticket-end`
+(`docs/TICKET_END.md`), and by nothing else:
+
+- **Before the merge**, a convoy that has a finished interface ticket whose
+  fidelity was not measured at its tip is handed to `bin/ticket-end fidelity
+  <convoy> --repo <project repository> --profile <project profile> --limit
+  1`, which runs the mechanical fidelity check on the commit that merges.
+  Reported under `fidelity` (`checked`, `waiting`, `refused`).
+- **After the merge**, a convoy that has a merged ticket still open, or in
+  which this pass merged one, is handed to `bin/ticket-end settle <convoy>
+  --repo <project repository>`. Reported under `ticket_end`: `closed` (the
+  tickets closed, each with the merged commit and the version of the list)
+  and `open` (the merged tickets left open, each with the numbers of the
+  missing conditions and the text of the gate).
+
+A ticket merged by a pass is closed by the same pass when its nine
+conditions hold; its dependents start at the next one. A ticket left open
+is an outcome of the pass, not a failure. A fidelity check or a settlement
+that could not run is a failure of the pass (exit 1): this includes a pass
+run from an agent session, which the gate refuses.
+
+A ticket closed without the record of the gate, or with a record that lacks
+the nine verdicts, is an « état sans règle »: the convoy stops (below).
+
 ## One correction round, then the ticket stops (T17)
 
 After the code review and the evaluation, and before the merge, the pass
@@ -191,14 +217,16 @@ per role, the tickets awaiting a session, and per convoy the tickets
 next pass) and `refused` (the door refused, with its reason), plus
 `integration` when the pass ran a merge, `test_review` when it settled
 reviews of criterion tests, `code_review` when it settled code reviews,
-`evaluation` when it settled Ticket Evaluations and `correction` when a
-correction round was opened, awaited or ended in a stop. A stopped convoy carries `signal`,
+`evaluation` when it settled Ticket Evaluations, `correction` when a
+correction round was opened, awaited or ended in a stop, `fidelity` when it
+measured an interface ticket and `ticket_end` when the gate settled merged
+tickets. A stopped convoy carries `signal`,
 `unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass or the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds could not run |
+| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check or the ticket-end gate could not run |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
@@ -231,6 +259,27 @@ The repair is Factory maintenance: bring the tracker back to a state the
 command has a rule for (`bin/convoy-state show <convoy>` lists what is
 wrong). It never consists in advancing or closing the convoy's tickets by
 hand.
+
+### A marked convoy does not close by itself (T22)
+
+Spec §9, user story 55: a marked convoy stays open when all its tickets are
+closed; it closes only by code, on the operator's words (accepted or
+abandoned: T29, T30). Three things hold that:
+
+- `bin/convoy-state mark` puts the convoy under Gas City's manual lifecycle
+  (the label `owned`): `gc convoy check`, which
+  `orders/convoy-parent-sweep.toml` runs on every closing, leaves it open.
+  A convoy without the mark is closed by that sweep as before.
+- `bin/planning-artifacts-close` closes the Spec and the Ticket Graph Draft
+  of a closed convoy; it leaves alone those of a marked convoy that
+  `bin/convoy-state list` names under `closed_outside`.
+- a marked convoy found closed anyway (by hand, or by a sweep after the
+  label was removed) is an « état sans règle » of the convoy. `--all` walks
+  it with the open ones and `--check-only` passes on it, so the order runs:
+  the pass starts nothing in it and raises the factory incident above,
+  `Incident d'usine : convoi <id> — convoi fermé hors commande …`, in
+  `bin/escalation-door list`. Reopening the convoy is the repair: the next
+  pass withdraws the incident.
 
 `--stopped-ok` makes the pass exit 0 instead of 3 for a stopped convoy whose
 incident is raised. The order runs it that way: without it the order would
@@ -288,6 +337,17 @@ supervisor and no Mayor, the city's own order starts a marked convoy's three
 tickets in dependency order under N, the third only after the trial closed
 the two others in the tracker.
 
+T22: the same file covers a marked convoy closed outside its commands
+(raised once on the escalation door's list, withdrawn once reopened, the
+order's check passing on it, an unmarked closed convoy left alone);
+`tests/planning-artifacts-close-test.sh` covers its Spec and Draft left
+open. `tests/convoy-manual-lifecycle-isolated-city-test.sh` (local-only) is
+the adoption trial: in a disposable city with its own supervisor, no Mayor
+and no agent, the city's own `convoy-parent-sweep` order closes an unmarked
+convoy whose tickets are closed and leaves the marked one open with its
+Spec and Draft; closed by hand, the marked convoy is raised by the city's
+own `convoy-advance` order.
+
 T18: the same file covers the pass that merges, through the real
 `bin/spec-integration` on a throwaway repository: one finished ticket merged
 per pass, a ticket returned by red tests, a merge pass that cannot run, a
@@ -297,6 +357,15 @@ T17: the same file covers the settlement of the correction rounds through
 the real `bin/correction-round`: a ticket its review refused sent to one
 author session, a ticket still refused stopped and raised once, a round
 that cannot be sent, a convoy nothing refused.
+
+T19: the same file covers the gate in the pass, through the real
+`bin/ticket-end`: a ticket merged and closed by one pass with its nine
+verdicts, an interface ticket measured against its Validated Prototype
+before its merge, a merged ticket that misses a condition left open and
+named, a closure whose record lacks the nine verdicts stopping the convoy,
+a pass run from an agent session refused. `tests/ticket-end-isolated-city-test.sh`
+(local-only) is the adoption trial: the city's own order merges and closes
+a ticket on the real tracker.
 
 T34: the same `tests/convoy-advance-test.py` covers the stop (one test per
 kind of anomaly), the single incident read back from the real

@@ -1,0 +1,44 @@
+{
+  "contract": "agent-factory-project-descriptor/v1",
+  "project_id": "delivery-fixture-city-api",
+  "display_name": "Delivery Fixture City API",
+  "rigs": ["delivery-fixture-city-api"],
+  "knowledge_repo": "agent-factory/agent-factory",
+  "roadmap_path": "docs/roadmap.toml",
+  "rituals_status_command": "true",
+  "launch": {
+    "recipe": [
+      "node",
+      "tests/fixtures/delivery-fixture-city-api/server.js",
+      "--port",
+      "{port}",
+      "--dataset",
+      "{dataset}"
+    ],
+    "entry_points": [
+      {"kind": "http", "method": "GET", "path": "/items"},
+      {"kind": "http", "method": "GET", "path": "/health"}
+    ],
+    "health_probe": {"path": "/health", "expect_status": 200},
+    "datasets": {
+      "empty": "tests/fixtures/delivery-fixture-city-api/datasets/empty.json",
+      "content": "tests/fixtures/delivery-fixture-city-api/datasets/content.json"
+    },
+    "test_perimeter": ["tests/fixtures/delivery-fixture-city-api/tests/"],
+    "frozen_harness_paths": [
+      "tests/fixtures/delivery-fixture-city-api/tests/harness.js"
+    ],
+    "test_command": "node tests/fixtures/delivery-fixture-city-api/tests/harness.js {test} {report}",
+    "seam_mode": "black_box",
+    "regression_command": "node tests/fixtures/delivery-fixture-city-api/tests/regression.js",
+    "k": 3,
+    "anchors": {
+      "equivalent": [
+        {"name": "items-state", "entry_point": "GET /items", "observable": "champ state"},
+        {"name": "items-generated-at", "entry_point": "GET /items", "observable": "champ generated_at"},
+        {"name": "items-list", "entry_point": "GET /items", "observable": "champ items"},
+        {"name": "health-status", "entry_point": "GET /health", "observable": "champ status"}
+      ]
+    }
+  }
+}

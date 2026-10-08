@@ -87,6 +87,11 @@ gc suspend
 gc session list      # toutes doivent être « asleep »
 ```
 
+`gc stop` **en premier**, toujours : c'est lui qui retire la cité de la liste
+du superviseur, et c'est à cela que `bin/factory-revive` reconnaît un arrêt
+délibéré. Un `gc supervisor stop` lancé sans ce `gc stop` est traité comme un
+arrêt que personne n'a demandé, et défait en 7 minutes au plus (§3).
+
 ### 2.2 Piège majeur — le GC Dolt n'est *pas* une opération à froid
 
 `gc maintenance dolt-gc` tourne **à l'intérieur du superviseur**. Or `gc stop`
@@ -146,9 +151,24 @@ suspendue. Journal :
 `.gc/runtime/factory-boot.log`. Après une fenêtre **planifiée**, suivez la
 séquence manuelle ci-dessus.
 
+**Arrêt que personne n'a demandé** (2026-10-08 : le script d'essai d'un
+ouvrier a lancé `gc supervisor stop` sur l'usine vivante, arrêtée 56 minutes) :
+`./bin/factory-revive`, appelé toutes les 5 minutes par un minuteur systemd
+utilisateur (`factory-revive.timer`, posé une fois par `./bin/factory-revive
+install` ; `systemctl --user list-timers` le montre), relance par `factory-boot` un
+superviseur arrêté alors que la cité est encore enregistrée, puis ouvre un
+ticket et une escalade « Mayor d'abord ». Délai : 7 minutes au plus. Il ne
+fait rien après un `gc stop` (arrêt délibéré, §2.1) et ne reprend jamais une
+cité suspendue. Journal : `.gc/runtime/factory-revive.log`. Détail :
+`FACTORY_TOOLS.md` (`./bin/factory-revive`).
+
 **Racine vivante en retard** : `factory-guard` avance désormais lui-même la
 racine (fast-forward seul, arbre suivi propre, branche épinglée) quand des PR
 fusionnés n'y tournent pas encore — plus besoin de `git pull` à la main.
+`factory-guard` est un order : superviseur arrêté, il ne tourne pas, et le
+code fusionné pendant l'arrêt n'atteint pas la racine. Rien à faire à la
+main : son premier passage après la relance (5 minutes au plus) rattrape le
+retard, et `factory-revive` borne la durée de l'arrêt.
 
 **Piège** : `gc reload` ne suffit pas pour tout. Certaines sections de
 `city.toml` — `[maintenance.dolt]` notamment — ne sont lues qu'au **démarrage du
@@ -192,14 +212,24 @@ Si quelque chose ne revient pas, réparez-le **avant** de continuer.
 
 ## 6. Si la cité ne revient pas
 
-1. `gc supervisor status` — le superviseur d'abord, toujours.
+1. `gc supervisor status` — le superviseur d'abord, toujours. S'il répond
+   alors que `systemctl --user status gascity-supervisor` affiche
+   `activating (auto-restart)`, un superviseur tourne **hors** de son unité
+   (lancé par `gc supervisor start`) et l'unité échoue en boucle à côté de
+   lui, toutes les 5 secondes (vu le 2026-10-08). L'usine fonctionne, mais ce
+   superviseur n'a pas l'environnement de l'unité. Remède, geste ADMIN :
+   tuer ce seul processus par son numéro, à un instant sans order en cours ;
+   l'unité reprend la place en 5 secondes et réadopte les sessions (fait le
+   2026-10-08 à 05:34, aucun agent interrompu). `factory-boot` ne crée plus
+   cet état : il démarre le superviseur par son unité quand elle est
+   installée.
 2. `gc doctor` — lisez les `✗` avant les `⚠`.
 3. `./bin/factory-guard` — il répare seul la dérive de branche et la sauvegarde.
 4. Les stores Dolt sont dans `.beads/dolt` ; la restauration hors ligne est
    décrite dans `OPERATIONS.md` (Backup / restore).
 5. Le store legacy retiré le 2026-09-16 est conservé, non supprimé, dans
    `.beads/embeddeddolt.retired-20260916`, avec une archive vérifiée dans
-   `~/factory-cold-backups/`.
+   `~/factory-archive/factory-cold-backups/`.
 
 ---
 

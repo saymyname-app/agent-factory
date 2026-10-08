@@ -1,0 +1,6 @@
+{
+  "contract": "agent-factory-fixture-delivery-scenario/v1",
+  "scenario_id": "one-ticket-closed-by-hand",
+  "inject": {"delivery": "closed-by-hand"},
+  "expect": {"closed": true}
+}

@@ -28,6 +28,12 @@ partial launch block fails loudly instead of launching with a silent gap.
 A descriptor with no `launch` block at all (e.g. the Factory's own
 descriptor) is unaffected: `bin/project-launch` refuses to start a project
 with no declared recipe.
+
+A project whose interface is not a web page (a command line, an API) has no
+anchor attribute to carry: its `launch` block declares `anchors` instead
+(spec af-wf4w5r .12, T35) -- either the equivalent of the anchors, each a
+named observable of a declared entry point, or `not_applicable` with its
+reason. `describe` renders it.
 """
 
 from __future__ import annotations
@@ -76,6 +82,11 @@ LAUNCH_REQUIRED_FIELDS = (
 )
 
 SEAM_MODES = ("black_box", "import_rule")
+
+# The equivalent of the anchors for an interface that is not a web page
+# (spec af-wf4w5r .12, T35): exactly one of these two forms.
+ANCHORS_EQUIVALENT, ANCHORS_NOT_APPLICABLE = "equivalent", "not_applicable"
+ANCHOR_EQUIVALENT_FIELDS = ("name", "entry_point", "observable")
 
 # Common people/data safety principles (spec: "Universal safety principles
 # govern people and data"). A profile may add its own stricter keys, but it
@@ -414,7 +425,58 @@ def load_launch(raw: Any, name: str) -> dict[str, Any]:
                 owner[state] = screen_name
             screens.append({"name": screen_name, "path": path, "states": states})
         loaded["screens"] = screens
+    if "anchors" in launch:
+        loaded["anchors"] = load_anchors(launch["anchors"], f"{name}.anchors", entry_points)
     return loaded
+
+
+def load_anchors(raw: Any, name: str, entry_points: list[dict[str, Any]]) -> dict[str, Any]:
+    """Validate the equivalent of the anchors of an interface that is not a
+    web page (spec af-wf4w5r .12, T35). Either `equivalent`: what stands for
+    the anchors, each a name, the declared entry point that answers it
+    (`METHOD path`) and the observable read there; or `not_applicable`: the
+    reason this interface has nothing a check could name."""
+    anchors = as_dict(raw, name)
+    unknown = sorted(set(anchors) - {ANCHORS_EQUIVALENT, ANCHORS_NOT_APPLICABLE})
+    if unknown:
+        raise ProfileError(f"{name} has unknown field(s): {', '.join(unknown)}")
+    if len(anchors) != 1:
+        raise ProfileError(
+            f"{name} must declare exactly one of {ANCHORS_EQUIVALENT!r} (the equivalent of the anchors) "
+            f"or {ANCHORS_NOT_APPLICABLE!r} (with its reason)"
+        )
+    if ANCHORS_NOT_APPLICABLE in anchors:
+        reason = required_string(anchors[ANCHORS_NOT_APPLICABLE], f"{name}.{ANCHORS_NOT_APPLICABLE}")
+        return {ANCHORS_NOT_APPLICABLE: reason}
+
+    declared = {f"{entry['method'].upper()} {entry['path']}" for entry in entry_points}
+    equivalent: list[dict[str, str]] = []
+    for index, raw_anchor in enumerate(as_list(anchors[ANCHORS_EQUIVALENT], f"{name}.{ANCHORS_EQUIVALENT}")):
+        field = f"{name}.{ANCHORS_EQUIVALENT}[{index}]"
+        anchor = as_dict(raw_anchor, field)
+        unknown = sorted(set(anchor) - set(ANCHOR_EQUIVALENT_FIELDS))
+        if unknown:
+            raise ProfileError(f"{field} has unknown field(s): {', '.join(unknown)}")
+        anchor_name = safe_id(anchor.get("name"), f"{field}.name")
+        if any(other["name"] == anchor_name for other in equivalent):
+            raise ProfileError(f"{name}.{ANCHORS_EQUIVALENT} declares the anchor {anchor_name!r} twice")
+        entry_point = required_string(anchor.get("entry_point"), f"{field}.entry_point")
+        if entry_point not in declared:
+            raise ProfileError(
+                f"{field}.entry_point names {entry_point!r}, which is not a declared entry point "
+                f"({sorted(declared)})"
+            )
+        equivalent.append({
+            "name": anchor_name,
+            "entry_point": entry_point,
+            "observable": required_string(anchor.get("observable"), f"{field}.observable"),
+        })
+    if not equivalent:
+        raise ProfileError(
+            f"{name}.{ANCHORS_EQUIVALENT} must name at least one anchor equivalent; an interface with none "
+            f"declares {ANCHORS_NOT_APPLICABLE!r} with its reason"
+        )
+    return {ANCHORS_EQUIVALENT: equivalent}
 
 
 def load_descriptor(path: Path) -> dict[str, Any]:

@@ -11,10 +11,14 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+import ticket_proofs  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,11 +41,7 @@ EXIT_NOT_NEW_FLOW = 4
 
 README = "README.md"
 DATASET = f"{FIXTURE}/datasets/content.json"
-DIGEST = "sha256:" + "ab" * 32
 SESSION_IDENTITY = ("GC_AGENT", "GC_SESSION_NAME", "GC_SESSION_ID", "BEADS_ACTOR", "GC_TEMPLATE")
-
-SECTIONS = {"done": ["Critère 1 observé sur GET /."], "deviations": "aucun", "not_done": "aucun",
-            "out_of_ticket": "aucun"}
 
 
 def branch_of(ticket):
@@ -218,15 +218,12 @@ class SpecIntegrationTest(unittest.TestCase):
 
     def finish(self, ticket, commit, reviewed=True):
         """What stands for the author's Ticket Exit « terminé » at `commit`
-        (bin/ticket-exit, T11): the sealed records, the Handoff, the exit;
+        (bin/ticket-exit, T11): its TDD proven and its demonstration
+        captured there, the sealed records, the Handoff, the exit;
         and, unless `reviewed` is false, for the favorable code review
         (bin/code-review, T14) and the favorable Ticket Evaluation
         (bin/ticket-evaluation, T15) that follow it at that commit."""
-        self.state("add-evidence", CONVOY, ticket, "--piece", "handoff_records", "--digest", DIGEST, "--commit", commit)
-        handoff = self.tmp / f"handoff-{ticket}.json"
-        handoff.write_text(json.dumps({"sections": SECTIONS, "partial": False, "commit": commit, "records": {}}))
-        self.state("set-handoff", CONVOY, ticket, "--file", handoff)
-        self.state("set-exit", CONVOY, ticket, "--exit", "finished")
+        ticket_proofs.finish(self.env, self.repo, CONVOY, ticket, commit, self.base, branch_of(ticket))
         if reviewed:
             self.reviewed(ticket, commit)
             self.evaluated(ticket, commit)
@@ -252,7 +249,7 @@ class SpecIntegrationTest(unittest.TestCase):
             f"evaluation-request-{ticket}.json", {
                 "roles": {"author": None, "evaluator": None, "same_provider": None, "other_declared": []},
                 "environment": [{"dataset": None, "address": "http://127.0.0.1:1", "state_file": "/launch.json"}]}))
-        self.state("add-evidence", CONVOY, ticket, "--piece", "evaluation.seen", "--digest", DIGEST, "--commit", commit)
+        ticket_proofs.capture(self.env, self.repo, CONVOY, ticket, "evaluation.seen", commit)
         return self.state("record-evaluation", CONVOY, ticket, "--file", self.json_file(f"evaluation-{ticket}.json", {
             "commit": commit, "recorded_by": "delivery-evaluator-fx",
             "criteria": [{"number": number, "text": text, "state": "observed", "evidence": "evaluation.seen"}

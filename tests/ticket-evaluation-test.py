@@ -17,9 +17,13 @@ import os
 import shutil
 import subprocess
 import tempfile
+import sys
 import unittest
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+import ticket_proofs  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -302,14 +306,11 @@ class TicketEvaluationTest(unittest.TestCase):
 
     def finish(self, ticket, tip):
         """What stands for the author's Ticket Exit « terminé » at `tip`
-        (bin/ticket-exit): the sealed records, the Handoff, the exit."""
-        self.state("add-evidence", CONVOY, ticket, "--piece", "handoff_records", "--digest", DIGEST, "--commit", tip)
-        records = {"head": tip, "base": self.base, "files_changed": [NOTE], "deferral_markers": [],
-                   "commits": [{"commit": tip, "subject": COMMIT_PROSE}], "amendment": None}
-        handoff = self.json_file(f"handoff-{ticket}.json",
-                                 {"sections": SECTIONS, "partial": False, "commit": tip, "records": records})
-        self.state("set-handoff", CONVOY, ticket, "--file", handoff)
-        self.state("set-exit", CONVOY, ticket, "--exit", "finished")
+        (bin/ticket-exit): each step of its TDD with its sealed report, the
+        demonstration, the sealed records, the Handoff, the exit."""
+        ticket_proofs.finish(self.env, self.repo, CONVOY, ticket, tip, self.base, branch_of(ticket), sections=SECTIONS,
+                             records={"files_changed": [NOTE], "commits": [{"commit": tip, "subject": COMMIT_PROSE}],
+                                      "amendment": None})
 
     def finished_slice(self, files=None, ticket=SLICE):
         """A slice whose criterion test was proven red, read by the test

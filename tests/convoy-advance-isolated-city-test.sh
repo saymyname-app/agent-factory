@@ -26,6 +26,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 PORT="${CONVOY_ADVANCE_TRIAL_PORT:-18393}"
 CEILING=2
 
@@ -44,8 +45,7 @@ PASSES="$TRIAL/passes.jsonl"
 cleanup() {
   status=$?
   trap - EXIT
-  gc --city "$CITY" stop >/dev/null 2>&1 || true
-  gc supervisor stop >/dev/null 2>&1 || true
+  isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   tmux -L "$(basename "$TRIAL")" kill-server >/dev/null 2>&1 || true
   # The supervisor, the city's managed Dolt server and the stub sessions
   # carry the trial directory on their command line; nothing else does.
@@ -228,8 +228,9 @@ wait_passes() { # <n more passes>
   wait_for 300 passes_reach "$target" || fail "the order did not run $1 more pass(es) in 300s"
 }
 close_by_trial() { # the flow's own ticket end is not in T04: the trial closes
-  state record-gate "$CONVOY" "$1" --gate ticket_end --commit 0123456789abcdef0123456789abcdef01234567
-  gc bd close "$1" --reason "fermé par l'essai" >/dev/null 2>&1
+  # The record of the gate and the closed status, in one write (T19).
+  state close-ticket "$CONVOY" "$1" --commit 0123456789abcdef0123456789abcdef01234567 \
+    --file "$ROOT/tests/fixtures/convoy-state/ticket-end-report.json"
   echo "$(date -u +%H:%M:%S) l'essai ferme ${NAME[$1]} dans le tracker"
 }
 

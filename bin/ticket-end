@@ -1,0 +1,774 @@
+#!/usr/bin/env python3
+"""The ticket-end gate of a "new flow" convoy (T19, af-iefuud; Spec af-wf4w5r
+§9, user story 51).
+
+A ticket of a convoy that carries the new-flow mark is closed by this gate
+and by nothing else: a closed, versioned list of nine conditions, each read
+on the durable state of the convoy (bin/convoy-state) and on the evidence
+store (bin/evidence-capture verify). A merged pull request and a green CI
+close nothing here. The author never closes its ticket: `close` and `settle`
+are refused from an agent session.
+
+    ticket-end check    CONVOY TICKET --repo DIR [--before-merge]
+    ticket-end close    CONVOY TICKET --repo DIR
+    ticket-end settle   CONVOY --repo DIR
+    ticket-end fidelity CONVOY --repo DIR --profile DESCRIPTOR [--limit N]
+
+`check` lists the verdict of each condition and writes nothing. With
+`--before-merge` it asks conditions 1 to 5 and 7 to 9: what the merge command
+(bin/spec-integration) requires before it merges a ticket; condition 6 is
+read after the merge. `close` closes the ticket when the nine are met: the
+record of the gate (the commit of the ticket that was merged, the version of
+the list, the nine verdicts) and the closed status go in one tracker write,
+through bin/convoy-state close-ticket. Otherwise the ticket stays open,
+nothing is written, and each missing condition is named. `settle` does the
+same for every merged ticket of the convoy that is not closed yet; a ticket
+left open is an outcome of it, not a failure. `fidelity` runs the mechanical
+fidelity check (bin/prototype-fidelity) of each finished interface ticket at
+the tip of its branch, before its merge, on the screens that serve the
+states of the Validated Prototype the publication door posed in the ticket;
+the result is written on the ticket by that command.
+
+Called by bin/convoy-advance on each of its passes (`fidelity` before the
+merge, `settle` after it). Every answer is one JSON object on stdout. Exit
+status: 0 done; 1 refused, or a condition is missing (named); 3 the convoy
+is in an "état sans règle": nothing is closed; 4 the convoy does not carry
+the new-flow mark. Details: docs/TICKET_END.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
+from typing import Any
+
+
+PROGRAM = "ticket-end"
+BIN = Path(__file__).resolve().parent
+STATE_TOOL = BIN / "convoy-state"
+CAPTURE_TOOL = BIN / "evidence-capture"
+FIDELITY_TOOL = BIN / "prototype-fidelity"
+PROFILE_TOOL = BIN / "project-planning-profile"
+
+# The closed list (Spec §9), versioned: a change of the list is a new
+# version. bin/convoy-state holds the same names and refuses any other record.
+VERSION = "ticket-end/v1"
+CONDITIONS = (
+    ("criteria", "Critères évalués identiques au digest approuvé"),
+    ("handoff", "Ticket Handoff valide, avec preuve du rouge et preuve de démonstration"),
+    ("evaluation", "Ticket Evaluation : tout « observé avec preuve » ; prefactoring : le produit démarre"),
+    ("fidelity", "Contrôles mécaniques de fidélité verts si le ticket touche un écran"),
+    ("deferral", "Détecteur de report passé"),
+    ("merge", "Fusionné dans la branche d'intégration, tests verts sur le résultat fusionné"),
+    ("evidence", "Preuves recevables, liées à la pointe exacte de la branche du ticket au moment de la fusion"),
+    ("tdd", "Preuve TDD (rouge, gel, vert, seam) enregistrée"),
+    ("review", "Verdict de revue : chaque Blocking Finding favorable, ou dérogation enregistrée de Benjamin"),
+)
+AFTER_MERGE = "merge"
+PASS, FAIL, LATER = "pass", "fail", "after_merge"
+
+KIND_PREFACTORING = "prefactoring"
+HANDOFF_PIECE = "handoff_records"
+DEMONSTRATION_PIECE = "demonstration"
+MERGED_TESTS_PIECE = "merged_tests"
+TDD_PIECES = {"red": "tdd_red", "freeze": "tdd_freeze", "green": "tdd_green", "amendment": "tdd_amendment",
+              "prefactoring": "tdd_prefactoring"}
+FIDELITY_PASSING = ("vert", "accepté par Benjamin")
+OVERRIDE_RECORDED = "dérogation enregistrée"
+# The only stop a ticket may be merged and closed under: the one its
+# overridden Blocking Findings left (Spec §8, « passer outre »).
+STOP_OVERRIDABLE = "still_refused"
+# Gas City exports these into every agent session and into none of the
+# controller's orders (docs/CONVOY_ADVANCE.md).
+SESSION_IDENTITY = ("GC_AGENT", "GC_SESSION_NAME", "GC_SESSION_ID")
+
+EXIT_REFUSED = 1
+EXIT_UNRULED = 3
+EXIT_NOT_NEW_FLOW = 4
+FIDELITY_RED, FIDELITY_REFUSED = 1, 2
+
+UNRULED = "état sans règle"
+MAX_DETAIL = 300
+REMOTE = "origin"
+
+
+class Refusal(RuntimeError):
+    def __init__(self, message: str, extra: dict[str, Any] | None = None):
+        super().__init__(" ".join(message.split()))
+        self.extra = extra or {}
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark: bin/convoy-state's answer."""
+
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+class Unruled(RuntimeError):
+    """The convoy is in an "état sans règle": carries the anomalies."""
+
+    def __init__(self, anomalies: list[dict[str, Any]]):
+        super().__init__(UNRULED)
+        self.anomalies = anomalies
+
+
+def short(text: Any, limit: int = MAX_DETAIL) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def sha(commit: Any) -> str:
+    return str(commit)[:12]
+
+
+# --- the other commands ----------------------------------------------------------
+
+
+def run(argv: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, errors="replace", stdin=subprocess.DEVNULL, cwd=cwd)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+
+
+def tool(path: Path, *args: str) -> tuple[int, dict[str, Any]]:
+    """One JSON answer of another command of the flow."""
+    proc = run([str(path), *args])
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        detail = short(proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}")
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {detail}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def require_repo(path: str | None) -> Path:
+    if not path:
+        raise Refusal("--repo absent : le dépôt du projet porte la branche du ticket et la branche d'intégration")
+    repo = Path(path).resolve()
+    if run(["git", "-C", str(repo), "rev-parse", "--git-dir"]).returncode != 0:
+        raise Refusal(f"--repo {repo} n'est pas un dépôt Git")
+    return repo
+
+
+def read_state(convoy_id: str, repo: Path) -> dict[str, Any]:
+    """The convoy as bin/convoy-state renders it. An "état sans règle" closes
+    nothing: no gate decides on a state the code has no rule for."""
+    status, answer = tool(STATE_TOOL, "show", convoy_id, "--repo", str(repo))
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(answer)
+    if status not in (0, EXIT_UNRULED) or not isinstance(answer.get("tickets"), list):
+        raise Refusal(f"lecture de l'état du convoi {convoy_id} impossible : {refusal_text(answer)}")
+    anomalies = [
+        *answer["convoy"].get("unruled", []),
+        *({"ticket": ticket["id"], **anomaly} for ticket in answer["tickets"] for anomaly in ticket.get("unruled", [])),
+    ]
+    if anomalies:
+        raise Unruled(anomalies)
+    return answer
+
+
+def ticket_of(state: dict[str, Any], convoy_id: str, ticket_id: str) -> dict[str, Any]:
+    for ticket in state["tickets"]:
+        if ticket.get("id") == ticket_id:
+            return ticket
+    raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {convoy_id}")
+
+
+def refuse_agent_session(what: str) -> None:
+    """Spec §9: the author never closes its ticket. Only the order of the
+    Factory runs the gate; an agent session is refused, whatever its role."""
+    caller = next((os.environ[name] for name in SESSION_IDENTITY if os.environ.get(name)), None)
+    if caller:
+        raise Refusal(
+            f"{what} demandé par la session d'agent « {caller} » : aucun agent ne ferme un ticket d'un convoi marqué, "
+            "l'auteur compris ; seule la porte de fin de ticket, lancée par l'ordre de l'usine, le fait "
+            "(Spec af-wf4w5r §9) ; rien n'est écrit")
+
+
+# --- the evidence of one ticket -----------------------------------------------------
+
+
+class Evidence:
+    """The pieces of a ticket as the evidence store verifies them: a piece
+    is admissible when the capture tool filed it (seal), under this ticket
+    and this name, at the commit of its fingerprint."""
+
+    def __init__(self, convoy_id: str, ticket: dict[str, Any]):
+        self.convoy_id, self.ticket_id = convoy_id, ticket["id"]
+        self.fingerprints: dict[str, Any] = ticket.get("evidence") or {}
+        self.pieces: dict[str, dict[str, Any]] = {}
+        self.problems: dict[str, str] = {}
+        status, answer = tool(CAPTURE_TOOL, "verify", convoy_id, self.ticket_id)
+        self.whole: str | None = None if status == 0 else refusal_text(answer)
+        if status == 0:
+            self.pieces = {entry["piece"]: entry for entry in answer.get("pieces", []) if isinstance(entry, dict)}
+
+    def piece(self, name: str) -> dict[str, Any] | None:
+        """One verified piece, or None; the reason is kept for the verdict."""
+        if name in self.pieces:
+            return self.pieces[name]
+        if name in self.problems:
+            return None
+        if self.whole is None or name not in self.fingerprints:
+            self.problems[name] = f"pièce {name} absente : aucune empreinte sur le ticket"
+            return None
+        # The ticket as a whole does not verify: this piece may still.
+        status, answer = tool(CAPTURE_TOOL, "verify", self.convoy_id, self.ticket_id, "--piece", name)
+        entries = answer.get("pieces") if status == 0 else None
+        if not entries:
+            self.problems[name] = refusal_text(answer)
+            return None
+        self.pieces[name] = entries[0]
+        return entries[0]
+
+    def why(self, name: str) -> str:
+        return self.problems.get(name, f"pièce {name} non recevable")
+
+    def at(self, name: str, commit: str | None, what: str) -> str | None:
+        """None when the piece is admissible and tied to `commit`; else why not."""
+        piece = self.piece(name)
+        if piece is None:
+            return f"{what} : {self.why(name)}"
+        if commit is not None and piece.get("commit") != commit:
+            return f"{what} : pièce {name} capturée au commit {sha(piece.get('commit'))} et non à {sha(commit)}"
+        return None
+
+    def record(self, name: str) -> dict[str, Any]:
+        """The Evidence Record of a verified piece, as the store holds it."""
+        piece = self.piece(name) or {}
+        try:
+            record = json.loads(Path(piece["path"]).read_text(encoding="utf-8"))
+        except (OSError, KeyError, TypeError, json.JSONDecodeError):
+            return {}
+        return record if isinstance(record, dict) else {}
+
+    def report(self, name: str) -> dict[str, Any]:
+        """What the captured command printed, when it is a JSON report: the
+        report of a script of the flow (bin/tdd-step)."""
+        try:
+            report = json.loads(self.record(name).get("output") or "")
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return report if isinstance(report, dict) else {}
+
+
+# --- the nine conditions ---------------------------------------------------------------
+# Each returns (met, detail): one line that says what was read.
+
+Verdict = tuple[bool, str]
+
+
+def condition_criteria(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:
+    frozen = ticket.get("criteria_frozen")
+    criteria = ticket.get("criteria") or []
+    if not frozen:
+        return False, "aucune empreinte des critères approuvés sur le ticket : elle est posée avec la marque, à la publication"
+    if frozen.get("current") != frozen.get("digest"):
+        return False, (f"les critères lus sur le ticket ({frozen.get('current')}) ne sont plus ceux du graphe approuvé "
+                       f"({frozen.get('digest')}) : un critère change par Planning Exception, jamais sur le ticket")
+    if frozen.get("current_graph_digest") != frozen.get("graph_digest"):
+        return False, (f"le ticket est publié sous le digest {frozen.get('current_graph_digest')} et ses critères sont "
+                       f"gelés sous {frozen.get('graph_digest')} : à regeler par la porte de publication")
+    rounds = (ticket.get("evaluation") or {}).get("rounds") or []
+    evaluated = next((r for r in reversed(rounds) if r.get("kind", "evaluation") == "evaluation"), None)
+    if evaluated is not None:
+        texts = [entry.get("text") for entry in evaluated.get("criteria") or []]
+        if texts != criteria:
+            return False, "les critères évalués par la Ticket Evaluation ne sont pas ceux du graphe approuvé"
+    return True, f"{len(criteria)} critère(s) identiques à l'empreinte gelée avec le graphe approuvé ({frozen['digest'][:19]}…)"
+
+
+def condition_handoff(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:
+    if (ticket.get("exit") or {}).get("exit") != "finished":
+        return False, "le ticket n'a pas de sortie « terminé »"
+    handoff = ticket.get("handoff") or {}
+    if not handoff or handoff.get("partial") is not False:
+        return False, "aucun Ticket Handoff complet sur le ticket"
+    if handoff.get("commit") != tip:
+        return False, f"Ticket Handoff rendu au commit {sha(handoff.get('commit'))} et non à la pointe {sha(tip)}"
+    problem = evidence.at(HANDOFF_PIECE, tip, "relevés du Handoff")
+    if problem:
+        return False, problem
+    step = "prefactoring" if ticket.get("kind") == KIND_PREFACTORING else "red"
+    proven = (ticket.get("tdd") or {}).get(step)
+    red = (handoff.get("records") or {}).get("red_proof") or {}
+    if not proven or red.get("step") != step or red.get("commit") != proven.get("commit"):
+        return False, f"le Handoff ne porte pas la preuve du rouge ({step}) prouvée sur le ticket"
+    problem = evidence.at(TDD_PIECES[step], proven["commit"], "preuve du rouge")
+    if problem:
+        return False, problem
+    if ticket.get("kind") == KIND_PREFACTORING:
+        return True, f"Handoff complet à {sha(tip)}, régression du prefactoring prouvée à {sha(proven['commit'])}"
+    problem = evidence.at(DEMONSTRATION_PIECE, tip, "preuve de démonstration")
+    if problem:
+        return False, problem
+    return True, f"Handoff complet à {sha(tip)}, rouge prouvé à {sha(proven['commit'])}, démonstration capturée à {sha(tip)}"
+
+
+def condition_evaluation(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:
+    evaluation = ticket.get("evaluation") or {}
+    state = evaluation.get("state") or {}
+    rounds = evaluation.get("rounds") or []
+    if evaluation.get("request"):
+        return False, "Ticket Evaluation en cours : ses états ne sont pas rendus"
+    if not rounds or state.get("outcome") is None:
+        return False, "aucune Ticket Evaluation rendue : son absence ne vaut pas accord"
+    last = rounds[-1]
+    if state.get("outcome") != "favorable":
+        refused = state.get("not_observed", []) + [entry.get("what") for entry in state.get("unobservable", [])]
+        return False, f"Ticket Evaluation non favorable ({state.get('outcome')}) : {', '.join(str(r) for r in refused)}"
+    if state.get("commit") != tip:
+        return False, f"Ticket Evaluation rendue au commit {sha(state.get('commit'))} et non à la pointe {sha(tip)}"
+    verdict = (ticket.get("verdicts") or {}).get("evaluation") or {}
+    if verdict.get("state") != "favorable" or verdict.get("commit") != tip or "invalidated" in verdict:
+        return False, f"verdict de la Ticket Evaluation absent ou invalide à la pointe {sha(tip)}"
+    if ticket.get("kind") == KIND_PREFACTORING:
+        if last.get("kind") != "startup" or last.get("started") is not True:
+            return False, "prefactoring : aucun relevé du démarrage du produit"
+        problem = evidence.at(str(last.get("evidence")), tip, "démarrage du produit")
+        if problem:
+            return False, problem
+        return True, f"prefactoring : le produit démarre à {sha(tip)} (pièce {last.get('evidence')})"
+    if last.get("kind", "evaluation") != "evaluation":
+        return False, "le démarrage du produit ne vaut évaluation que pour un prefactoring"
+    items = [*(last.get("criteria") or []), last.get("demonstration_line") or {}]
+    for item in items:
+        if item.get("state") != "observed":
+            return False, f"état « {item.get('state')} » : {short(item.get('text'), 80)}"
+        problem = evidence.at(str(item.get("evidence")), tip, "preuve d'un état observé")
+        if problem:
+            return False, problem
+    return True, f"{len(items) - 1} critère(s) et la ligne de démonstration observés avec preuve à {sha(tip)}"
+
+
+def condition_fidelity(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:
+    if not ticket.get("interface"):
+        return True, "sans objet : le ticket ne touche aucun écran (aucune référence de Validated Prototype posée à la publication)"
+    fidelity = ticket.get("fidelity")
+    if not fidelity:
+        return False, f"aucun contrôle de fidélité sur ce ticket d'interface : la commande n'a pas tourné à la pointe {sha(tip)}"
+    if fidelity.get("commit") != tip:
+        return False, (f"contrôle de fidélité fait au commit {sha(fidelity.get('commit'))} et non à la pointe "
+                       f"{sha(tip)} : à refaire sur le commit qui fusionne")
+    if fidelity.get("state") not in FIDELITY_PASSING:
+        open_ = [f"{d.get('state')}/{d.get('anchor') or d.get('property')}" for d in fidelity.get("deviations") or []
+                 if d.get("status") != FIDELITY_PASSING[1]]
+        return False, f"fidélité {fidelity.get('state')} : écart ouvert ({', '.join(open_[:5])})"
+    problem = evidence.at(str(fidelity.get("piece")), tip, "relevé de fidélité")
+    if problem:
+        return False, problem
+    return True, (f"fidélité {fidelity['state']} à {sha(tip)} sur {', '.join(fidelity.get('screens') or [])} "
+                  f"(pièce {fidelity.get('piece')})")
+
+
+def condition_deferral(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:
+    handoff = ticket.get("handoff") or {}
+    markers = (handoff.get("records") or {}).get("deferral_markers")
+    if handoff.get("commit") != tip or not isinstance(markers, list):
+        return False, f"le détecteur de report n'a pas de relevé à la pointe {sha(tip)}"
+    missing = [m for m in markers if not (isinstance(m, dict) and m.get("declared") is True)]
+    if missing:
+        named = ", ".join(f"{m.get('path')}:{m.get('line')} ({m.get('marker')})" if isinstance(m, dict) else repr(m)
+                          for m in missing[:5])
+        return False, f"marqueur de report sans « non fait » déclaré : {named}"
+    return True, f"{len(markers)} marqueur(s) de report relevé(s), tous déclarés en « non fait »"
+
+
+def condition_merge(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:
+    merge = ticket.get("merge") or {}
+    integration = convoy.get("integration") or {}
+    if merge.get("outcome") != "merged":
+        return False, "le ticket n'est pas fusionné dans la branche d'intégration"
+    if merge.get("ticket_commit") != tip:
+        return False, (f"fusionné à {sha(merge.get('ticket_commit'))} ; la branche du ticket porte un commit plus "
+                       f"récent ({sha(tip)})")
+    branch = integration.get("branch")
+    reachable = any(
+        run(["git", "-C", str(repo), "merge-base", "--is-ancestor", str(merge.get("commit")), ref]).returncode == 0
+        for ref in (f"refs/remotes/{REMOTE}/{branch}", f"refs/heads/{branch}"))
+    if not branch or not reachable:
+        return False, f"le résultat fusionné {sha(merge.get('commit'))} n'est pas sur la branche d'intégration {branch}"
+    problem = evidence.at(MERGED_TESTS_PIECE, merge.get("commit"), "tests sur le résultat fusionné")
+    if problem:
+        return False, problem
+    code = evidence.record(MERGED_TESTS_PIECE).get("exit_code")
+    if code != 0:
+        return False, f"tests rouges sur le résultat fusionné {sha(merge.get('commit'))} (code {code})"
+    return True, f"fusionné dans {branch} à {sha(merge['commit'])}, tests verts sur ce résultat"
+
+
+def condition_evidence(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:
+    if evidence.whole is not None:
+        return False, f"pièce non recevable : {short(evidence.whole)}"
+    # What proves the state that is merged is tied to the exact tip.
+    at_tip = [HANDOFF_PIECE]
+    if ticket.get("kind") != KIND_PREFACTORING:
+        at_tip += [DEMONSTRATION_PIECE, TDD_PIECES["green"]]
+    rounds = (ticket.get("evaluation") or {}).get("rounds") or []
+    if rounds:
+        last = rounds[-1]
+        at_tip += [str(item["evidence"]) for item in [*(last.get("criteria") or []), last.get("demonstration_line") or {},
+                                                      last] if item.get("evidence")]
+    if ticket.get("fidelity"):
+        at_tip.append(str(ticket["fidelity"].get("piece")))
+    elsewhere = [f"{name} ({sha(evidence.pieces[name].get('commit'))})" for name in dict.fromkeys(at_tip)
+                 if name in evidence.pieces and evidence.pieces[name].get("commit") != tip]
+    if elsewhere:
+        return False, f"pièce liée à un autre commit que la pointe {sha(tip)} : {', '.join(elsewhere)}"
+    return True, f"{len(evidence.pieces)} pièce(s) scellée(s) par l'outil de capture, celles de l'état fusionné liées à {sha(tip)}"
+
+
+def condition_tdd(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:
+    tdd = ticket.get("tdd") or {}
+    if ticket.get("kind") == KIND_PREFACTORING:
+        step = tdd.get("prefactoring")
+        if not step:
+            return False, "prefactoring : aucune régression avant / après enregistrée"
+        if step.get("commit") != tip:
+            return False, f"régression du prefactoring prouvée à {sha(step.get('commit'))} et non à la pointe {sha(tip)}"
+        problem = evidence.at(TDD_PIECES["prefactoring"], tip, "régression du prefactoring")
+        if problem:
+            return False, problem
+        if evidence.report(TDD_PIECES["prefactoring"]).get("verdict") != "unchanged":
+            return False, "le relevé de régression du prefactoring ne dit pas « unchanged »"
+        return True, f"prefactoring : comportement inchangé prouvé à {sha(tip)} (pas d'étape rouge)"
+    for step, said in (("red", "rouge"), ("freeze", "gel"), ("green", "vert")):
+        record = tdd.get(step)
+        if not record:
+            return False, f"étape « {said} » ({step}) non enregistrée sur le ticket"
+        problem = evidence.at(TDD_PIECES[step], record.get("commit"), f"preuve de l'étape « {said} »")
+        if problem:
+            return False, problem
+    if "amendment" in tdd:
+        problem = evidence.at(TDD_PIECES["amendment"], tdd["amendment"].get("commit"), "preuve de l'amendement")
+        if problem:
+            return False, problem
+    if tdd["green"].get("commit") != tip:
+        return False, f"vert prouvé à {sha(tdd['green'].get('commit'))} et non à la pointe {sha(tip)}"
+    red, green = evidence.report(TDD_PIECES["red"]), evidence.report(TDD_PIECES["green"])
+    if red.get("verdict") != "red":
+        return False, "le relevé de l'étape rouge ne dit pas « red »"
+    if not red.get("seam_mode"):
+        return False, "le relevé de l'étape rouge ne porte pas la preuve du seam (seam_mode)"
+    if green.get("verdict") != "green":
+        return False, "le relevé de l'étape verte ne dit pas « green »"
+    return True, (f"rouge à {sha(tdd['red'].get('commit'))}, gel à {sha(tdd['freeze'].get('commit'))}, vert à "
+                  f"{sha(tip)}, seam {red['seam_mode']}")
+
+
+def condition_review(ticket: dict[str, Any], tip: str, evidence: Evidence, repo: Path, convoy: dict[str, Any]) -> Verdict:
+    review = ticket.get("code_review") or {}
+    state = review.get("state") or {}
+    if review.get("request"):
+        return False, "revue de code en cours : le verdict de la pointe n'est pas rendu"
+    if state.get("verdict") is None:
+        return False, "aucune revue de code rendue : l'absence de revue ne vaut pas accord"
+    if state.get("commit") != tip:
+        return False, f"revue de code rendue au commit {sha(state.get('commit'))} et non à la pointe {sha(tip)}"
+    unsettled = state.get("unsettled") or []
+    if not unsettled and state.get("verdict") == "favorable":
+        verdict = (ticket.get("verdicts") or {}).get("code_review") or {}
+        if verdict.get("state") != "favorable" or verdict.get("commit") != tip or "invalidated" in verdict:
+            return False, f"verdict de la revue de code absent ou invalide à la pointe {sha(tip)}"
+        return True, f"revue de code favorable à {sha(tip)}, aucun Blocking Finding sans verdict favorable"
+    overrides = {entry.get("finding"): entry for entry in ticket.get("overrides") or []
+                 if isinstance(entry, dict) and entry.get("state") == OVERRIDE_RECORDED}
+    left = [finding for finding in unsettled if finding not in overrides]
+    if left or not unsettled:
+        return False, (f"Blocking Finding sans verdict favorable ni dérogation enregistrée : "
+                       f"{', '.join(left) or state.get('verdict')}")
+    named = ", ".join(f"{finding} ({overrides[finding].get('approver')})" for finding in unsettled)
+    return True, f"{OVERRIDE_RECORDED} sur chaque Blocking Finding resté sans verdict favorable : {named}"
+
+
+CHECKS = {
+    "criteria": condition_criteria, "handoff": condition_handoff, "evaluation": condition_evaluation,
+    "fidelity": condition_fidelity, "deferral": condition_deferral, "merge": condition_merge,
+    "evidence": condition_evidence, "tdd": condition_tdd, "review": condition_review,
+}
+
+
+def evaluate(convoy_id: str, state: dict[str, Any], ticket: dict[str, Any], repo: Path, before_merge: bool) -> dict[str, Any]:
+    """The verdict of each condition for one ticket, at the tip of its
+    branch: the commit that is, or was, merged."""
+    tip = ticket.get("tip")
+    conditions: list[dict[str, Any]] = []
+    evidence = Evidence(convoy_id, ticket) if tip else None
+    for number, (name, label) in enumerate(CONDITIONS, start=1):
+        if before_merge and name == AFTER_MERGE:
+            verdict, detail = LATER, "se vérifie après la fusion"
+        elif not tip or evidence is None:
+            verdict, detail = FAIL, "branche du ticket introuvable dans le dépôt : aucune pointe à laquelle lier une preuve"
+        else:
+            met, detail = CHECKS[name](ticket, tip, evidence, repo, state["convoy"])
+            verdict = PASS if met else FAIL
+        conditions.append({"number": number, "name": name, "label": label, "verdict": verdict, "detail": short(detail)})
+    return {"commit": tip, "conditions": conditions,
+            "missing": [entry["number"] for entry in conditions if entry["verdict"] == FAIL]}
+
+
+def overridable(ticket: dict[str, Any]) -> bool:
+    """A ticket stopped still refused whose every Blocking Finding left
+    without a favorable verdict carries the recorded override of the operator."""
+    if (ticket.get("stop") or {}).get("reason") != STOP_OVERRIDABLE:
+        return False
+    unsettled = ((ticket.get("code_review") or {}).get("state") or {}).get("unsettled") or []
+    overridden = {entry.get("finding") for entry in ticket.get("overrides") or [] if isinstance(entry, dict)}
+    return bool(unsettled) and all(finding in overridden for finding in unsettled)
+
+
+def missing_text(result: dict[str, Any]) -> str:
+    return " ; ".join(
+        f"condition {entry['number']} ({entry['label']}) non réunie : {entry['detail']}"
+        for entry in result["conditions"] if entry["verdict"] == FAIL)
+
+
+# --- check, close, settle ------------------------------------------------------------------
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    repo = require_repo(args.repo)
+    state = read_state(args.convoy, repo)
+    ticket = ticket_of(state, args.convoy, args.ticket)
+    result = evaluate(args.convoy, state, ticket, repo, args.before_merge)
+    answer = {"ok": not result["missing"], "convoy": args.convoy, "ticket": args.ticket, "version": VERSION,
+              "phase": "before_merge" if args.before_merge else "close", **result}
+    if result["missing"]:
+        answer["error"] = f"refus : porte de fin de ticket ({VERSION}) : {missing_text(result)}"
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return EXIT_REFUSED if result["missing"] else 0
+
+
+def close_ticket(convoy_id: str, state: dict[str, Any], ticket: dict[str, Any], repo: Path) -> dict[str, Any]:
+    """Close one ticket when its nine conditions are met. Returns the
+    evaluation, with `closed`."""
+    result = evaluate(convoy_id, state, ticket, repo, before_merge=False)
+    result["closed"] = False
+    if result["missing"]:
+        return result
+    with tempfile.TemporaryDirectory(prefix="ticket-end-") as tmp:
+        report = Path(tmp) / "report.json"
+        report.write_text(json.dumps({"version": VERSION, "conditions": [
+            {name: entry[name] for name in ("number", "name", "verdict", "detail")} for entry in result["conditions"]
+        ]}, ensure_ascii=False), encoding="utf-8")
+        status, answer = tool(STATE_TOOL, "close-ticket", convoy_id, ticket["id"], "--commit", result["commit"],
+                              "--file", str(report))
+    if status != 0:
+        raise Refusal(f"fermeture de {ticket['id']} refusée par la commande d'état : {refusal_text(answer)}")
+    result["closed"] = True
+    return result
+
+
+def cmd_close(args: argparse.Namespace) -> int:
+    refuse_agent_session(f"fermeture du ticket {args.ticket}")
+    repo = require_repo(args.repo)
+    state = read_state(args.convoy, repo)
+    ticket = ticket_of(state, args.convoy, args.ticket)
+    if ticket.get("status") == "closed":
+        raise Refusal(f"le ticket {args.ticket} est déjà fermé")
+    result = close_ticket(args.convoy, state, ticket, repo)
+    answer = {"ok": result["closed"], "convoy": args.convoy, "ticket": args.ticket, "version": VERSION, **result}
+    if not result["closed"]:
+        answer["error"] = (f"refus : porte de fin de ticket ({VERSION}) : le ticket {args.ticket} reste ouvert, rien "
+                           f"n'est écrit ; {missing_text(result)}")
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0 if result["closed"] else EXIT_REFUSED
+
+
+def cmd_settle(args: argparse.Namespace) -> int:
+    """Close every merged ticket of the convoy whose nine conditions are
+    met. A merged ticket left open is listed with what it misses."""
+    refuse_agent_session(f"règlement de la porte de fin de ticket du convoi {args.convoy}")
+    repo = require_repo(args.repo)
+    state = read_state(args.convoy, repo)
+    closed, left = [], []
+    for ticket in state["tickets"]:
+        if ticket.get("status") == "closed" or (ticket.get("merge") or {}).get("outcome") != "merged":
+            continue
+        result = close_ticket(args.convoy, state, ticket, repo)
+        if result["closed"]:
+            closed.append({"id": ticket["id"], "commit": result["commit"], "version": VERSION})
+        else:
+            left.append({"id": ticket["id"], "commit": result["commit"], "missing": result["missing"],
+                         "reason": missing_text(result)})
+    print(json.dumps({"ok": True, "convoy": args.convoy, "version": VERSION, "closed": closed, "open": left},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- fidelity of an interface ticket, before its merge ------------------------------------------
+
+
+def work_dir() -> Path:
+    base = os.environ.get("TICKET_END_WORK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    path = Path(base)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def profile_screens(profile: str | None) -> list[dict[str, Any]]:
+    if not profile:
+        raise Refusal("--profile absent : le profil du projet déclare les écrans et la recette de lancement")
+    proc = run([str(PROFILE_TOOL), "describe", profile])
+    try:
+        described = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"profil du projet illisible ({profile}) : {short(proc.stderr or proc.stdout)}") from exc
+    if proc.returncode != 0 or not isinstance(described, dict) or described.get("valid") is False:
+        raise Refusal(f"profil du projet invalide ({profile}) : {short(proc.stderr or proc.stdout)}")
+    launch = described.get("launch")
+    screens = launch.get("screens") if isinstance(launch, dict) else None
+    return [screen for screen in screens or [] if isinstance(screen, dict)]
+
+
+def extract_prototype(repo: Path, reference: dict[str, Any], into: Path) -> Path:
+    """The frozen Validated Prototype, as its reference names it: the path
+    at the commit, read in the repository of the project."""
+    commit, path, branch = reference["commit"], reference["path"], reference["branch"]
+    if run(["git", "-C", str(repo), "cat-file", "-e", f"{commit}^{{commit}}"]).returncode != 0:
+        run(["git", "-C", str(repo), "fetch", "--quiet", REMOTE, branch])
+    try:
+        archive = subprocess.run(["git", "-C", str(repo), "archive", "--format=tar", commit, "--", path],
+                                 capture_output=True, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer git : {exc}") from exc
+    if archive.returncode != 0:
+        raise Refusal(
+            f"le Validated Prototype {path} est introuvable au commit {sha(commit)} (branche {branch}) dans le dépôt "
+            f"{repo} : {short(archive.stderr.decode('utf-8', 'replace'))}")
+    with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+        tar.extractall(into, filter="data")
+    return into / path
+
+
+def measure(convoy_id: str, ticket: dict[str, Any], repo: Path, profile: str, screens: list[dict[str, Any]]) -> dict[str, Any]:
+    """Run the mechanical fidelity check of one interface ticket at its tip,
+    on the screens that serve the states of its Validated Prototype."""
+    reference, tip = ticket["validated_prototype"], ticket["tip"]
+    touched = [screen["name"] for screen in screens
+               if set(screen.get("states") or []) & set(reference["states"]) and isinstance(screen.get("name"), str)]
+    if not touched:
+        raise Refusal(
+            f"aucun écran du profil ne sert un état du Validated Prototype du ticket ({', '.join(reference['states'])}) : "
+            "rien à comparer")
+    tmp = Path(tempfile.mkdtemp(prefix="ticket-end-prototype-", dir=work_dir()))
+    try:
+        prototype = extract_prototype(repo, reference, tmp)
+        status, answer = tool(
+            FIDELITY_TOOL, "check", profile, "--prototype", str(prototype), "--commit", tip, "--repo-root", str(repo),
+            "--states", ",".join(reference["states"]), "--convoy", convoy_id, "--ticket", ticket["id"],
+            *(arg for name in touched for arg in ("--screen", name)))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if status not in (0, FIDELITY_RED) or "result" not in answer:
+        raise Refusal(f"contrôle de fidélité impossible : {refusal_text(answer)}")
+    return {"id": ticket["id"], "commit": tip, "result": answer["result"], "screens": touched,
+            "deviations": len(answer.get("deviations") or [])}
+
+
+def cmd_fidelity(args: argparse.Namespace) -> int:
+    repo = require_repo(args.repo)
+    limit = None
+    if args.limit is not None:
+        if not re.fullmatch(r"[1-9][0-9]*", str(args.limit)):
+            raise Refusal(f"--limit mal formé : {args.limit!r} (attendu : un entier d'au moins 1)")
+        limit = int(args.limit)
+    state = read_state(args.convoy, repo)
+    due = []
+    for ticket in state["tickets"]:
+        handoff, tip = ticket.get("handoff") or {}, ticket.get("tip")
+        if (ticket.get("status") == "closed" or not ticket.get("interface") or ticket.get("park")
+                or (ticket.get("exit") or {}).get("exit") != "finished" or not tip
+                or (ticket.get("stop") and not overridable(ticket))
+                or handoff.get("partial") is not False or handoff.get("commit") != tip
+                or (ticket.get("merge") or {}).get("outcome") == "merged"
+                or (ticket.get("fidelity") or {}).get("commit") == tip):
+            continue
+        due.append(ticket)
+    checked, waiting, refused = [], [], []
+    screens = profile_screens(args.profile) if due else []
+    for count, ticket in enumerate(due):
+        if limit is not None and count >= limit:
+            waiting.append({"id": ticket["id"], "reason": f"limite de la passe atteinte ({limit})"})
+            continue
+        try:
+            checked.append(measure(args.convoy, ticket, repo, args.profile, screens))
+        except Refusal as exc:
+            refused.append({"id": ticket["id"], "commit": ticket["tip"], "reason": str(exc)})
+    print(json.dumps({"ok": not refused, "convoy": args.convoy, "checked": checked, "waiting": waiting, "refused": refused},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return EXIT_REFUSED if refused else 0
+
+
+# --- command line ------------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    # Required values are checked by the handlers, not by argparse: a refusal
+    # is one JSON answer.
+    p = sub.add_parser("check")
+    p.add_argument("convoy")
+    p.add_argument("ticket")
+    p.add_argument("--repo")
+    p.add_argument("--before-merge", action="store_true")
+    p.set_defaults(handler=cmd_check)
+    p = sub.add_parser("close")
+    p.add_argument("convoy")
+    p.add_argument("ticket")
+    p.add_argument("--repo")
+    p.set_defaults(handler=cmd_close)
+    p = sub.add_parser("settle")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.set_defaults(handler=cmd_settle)
+    p = sub.add_parser("fidelity")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.add_argument("--profile")
+    p.add_argument("--limit")
+    p.set_defaults(handler=cmd_fidelity)
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.handler(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Unruled as exc:
+        print(json.dumps({
+            "ok": False, "convoy": args.convoy, "unruled": exc.anomalies,
+            "message": f"{UNRULED} : rien n'est fermé dans le convoi {args.convoy}",
+        }, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_UNRULED
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "error": f"refus : {exc}", **exc.extra},
+                         indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

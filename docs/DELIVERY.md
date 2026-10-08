@@ -276,8 +276,9 @@ This closes a real gap: commit `8d92c13` landed directly on `main` and broke
 referential integrity between `legacy/docs/products/saymyname/DECISIONS.md` and
 `config/products/saymyname.json`'s `decision_refs` — a check
 `legacy/tests/factory-cockpit-test.py` already had. Nothing forced that suite to run
-before the commit reached `main`; Factory CI (which also runs `on: push` to
-`main`, see `.github/workflows/ci.yml`) only reported it after the fact, and
+before the commit reached `main`; Factory CI (which then also ran `on: push`
+to `main`; it no longer does, see `OPERATIONS.md`, "Factory CI cost and the
+Actions quota") only reported it after the fact, and
 both CI and the live cockpit stayed broken for hours before it was noticed.
 At the time (2026-09-16) this repository could not use GitHub branch
 protection or a required check — private repo, no GitHub Pro, `403` on the
@@ -300,6 +301,47 @@ the door — directly or through a script that escalates — sets
 `ESCALATION_DOOR_LOCK_FILE` to a path it owns; `tests/lib/sandbox.sh` and
 `tests/lib/sandbox.py` do it for every test built on them
 (`tests/ci-run-tests-host-lock-test.sh`).
+
+**One battery at a time on the host (af-7m7ymg).**
+
+Intent (Benjamin, his words, 2026-10-08): « je veux que l'usine finisse son
+taf pendant que je dors, et je veux que ca consomme pas toutes les minutes
+github et que les tests soient intelligents et econome en token, mais que la
+qualité soit là à la fin »
+Mechanism (agent interpretation): batteries started on the host run one
+after the other. It does not mean fewer tests, nor a different gate.
+
+On 2026-10-08, 06:04 to 06:35 (Paris), three batteries ran at once beside the
+live Factory (two delivery workers and an operator session): load 37 on 12
+cores, 8 GB of memory full, one test file at 504 s instead of about 60, and
+two Cockpit tests red on "nothing listening on 127.0.0.1:<port> after 5s"
+that pass alone in 14 s on the same commit. A false red costs an agent a
+diagnosis and a second run, and can send a red or a retry to GitHub.
+
+| What you see | What it means | What to do |
+|---|---|---|
+| `ci-run-tests: waiting for the battery of <work tree> (pid, since HH:MM, J file(s) at once) -- ... waited Ns of at most Ms`, repeated every minute | Another battery holds the host; yours has not started and starts by itself when that one ends. | Nothing. Do not start a second one, do not kill the other. |
+| `ci-run-tests: NOT RUN -- the battery of ... still holds the host after Ns`, exit 75 | The wait reached `CI_RUN_TESTS_HOST_WAIT` seconds (default 5400). No test ran. | Not a test failure: start it again later. Never report it as red or green. |
+
+How it holds: `bin/ci-run-tests` takes `/tmp/agent-factory-ci-run-tests-<uid>.lock`
+through `flock --close` and runs itself under it, so the lock belongs to the
+battery and to nothing a test leaves behind, and it goes when the battery
+ends, however it ends. `--list`, a GitHub runner (one run per machine) and a
+`ci-run-tests` started from inside a battery (the tests of the runner) do not
+wait. Proof: `tests/ci-run-tests-host-queue-test.sh`.
+
+What it does not cover:
+
+- The size of one battery: `--jobs J` still runs J files at once. Lots
+  started side by side by one session (`--shard 1/4 &`, `--shard 2/4 &` ...)
+  now run one after the other: on the host use `--jobs`, lots are for CI.
+- A test file run alone (`bash tests/x-test.sh`, `python3 tests/x-test.py`),
+  `bin/local-only-tests` and its nightly order, and any other heavy process
+  (on that night a secret scan of the archive's whole history held 4 GB): they
+  do not take the lock.
+- The order of arrival: when several batteries wait, any of them is next.
+- A game or anything else Benjamin runs on the PC: the lock does not look at
+  the load, it only keeps batteries from adding to each other.
 
 **It does not touch the automated delivery loop.** `bin/pr-autopilot` lands
 merges with `gh pr merge` — a GitHub-side API call, never a local `git push`

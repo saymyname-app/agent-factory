@@ -4,6 +4,10 @@ description = "Deterministic zero-token cleanup (af-mu8j4): auto-close open conv
 # only go closeable when one of its tracked children closes, so the 15m
 # cooldown was pure polling. `bead.closed` fires this exactly when there is
 # something to check, with no drift in reaction time.
+# T22 (af-kn83no, Spec af-wf4w5r §9): a convoy that carries the new-flow mark
+# is not closed here. bin/convoy-state mark puts it under Gas City's manual
+# lifecycle (label `owned`), which `gc convoy check` skips: it closes only by
+# code, on the operator's words. A convoy without the mark is closed as before.
 trigger = "event"
 on = "bead.closed"
 exec = "gc convoy check --json"

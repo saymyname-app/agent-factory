@@ -37,6 +37,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 PORT="${TICKET_EVALUATION_TRIAL_PORT:-18411}"
 CEILING=6
 COUNT='data-anchor="fixture-count"'
@@ -60,8 +61,7 @@ FIXTURE="tests/fixtures/delivery-fixture-city"
 cleanup() {
   status=$?
   trap - EXIT
-  gc --city "$CITY" stop >/dev/null 2>&1 || true
-  gc supervisor stop >/dev/null 2>&1 || true
+  isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   tmux -L "$(basename "$TRIAL")" kill-server >/dev/null 2>&1 || true
   # A product an evaluation launched and that no pass stopped.
   if [ -d "$TRIAL/launches" ]; then
@@ -368,17 +368,9 @@ PY
   git -C "$wt" commit -q -m "PROSE-DU-COMMIT : le nombre est affiché"
   git -C "$wt" rev-parse HEAD
 }
-finish() { # <ticket> <tip> <green step>: green at the tip, the sealed records, the Handoff, the exit, a favorable code review
-  if [ "$3" = prefactoring ]; then
-    state set-tdd "$CONVOY" "$1" --step prefactoring --commit "$2" --base "$BASE" >/dev/null
-  else
-    state set-tdd "$CONVOY" "$1" --step green --commit "$2" >/dev/null
-  fi
-  state add-evidence "$CONVOY" "$1" --piece handoff_records --digest "sha256:$(printf '%064d' 0)" --commit "$2" >/dev/null
-  jq -n --arg commit "$2" '{sections: {done: ["PROSE-DU-HANDOFF : tout est observable, à ma façon."], deviations: "aucun", not_done: "aucun", out_of_ticket: "aucun"},
-    partial: false, commit: $commit, records: {commits: [{commit: $commit, subject: "PROSE-DU-COMMIT"}]}}' > "$TRIAL/handoff.$1.json"
-  state set-handoff "$CONVOY" "$1" --file "$TRIAL/handoff.$1.json" >/dev/null
-  state set-exit "$CONVOY" "$1" --exit finished >/dev/null
+finish() { # <ticket> <tip> <green step>: every step of the TDD with its sealed report, the demonstration, the sealed records, the Handoff, the exit, a favorable code review
+  python3 "$ROOT/tests/lib/ticket_proofs.py" finish "$CONVOY" "$1" "$2" --repo "$PRODUCT" --base "$BASE" --branch "ticket/$1" \
+    --done "PROSE-DU-HANDOFF : tout est observable, à ma façon." --subject "PROSE-DU-COMMIT" >/dev/null
   state open-code-review "$CONVOY" "$1" --kind review --commit "$2" --base "$BASE" >/dev/null
   jq -n --arg commit "$2" '{commit: $commit, findings: [], answers: {}, recorded_by: "trial-reviewer"}' > "$TRIAL/review.$1.json"
   state record-code-review "$CONVOY" "$1" --file "$TRIAL/review.$1.json" >/dev/null

@@ -271,7 +271,9 @@ Cockpit V2 (`bin/cockpit`, spec af-oohx2x, C01) is the approved operator
 surface for the factory's day-to-day state — NEEDS BENJAMIN, proposals,
 project/chantier status, Operator Actions. It listens on
 `127.0.0.1:8173` (default; `COCKPIT_PORT`) inside WSL and refuses any
-other bind address outright (`lib/cockpit/core/server.py`). The Gas City
+other bind address outright (`lib/cockpit/core/server.py`). After a merge
+that changes it, the running process still runs the old code until
+`bin/cockpit restart` (`COCKPIT.md`, "Process lifecycle"). The Gas City
 dashboard on port `8372` (`gc`'s own API/UI, see "Detailed Gas City
 dashboard" above) is a separate, engineering-only surface and is **never**
 exposed to the tailnet: only the cockpit's own port gets a Tailscale Serve
@@ -527,6 +529,96 @@ only that verified write closes the PR-backed bead (ADR-0026).
 The SayMyName legacy-automation cutover boundary and its temporary M6
 rollback procedure are dead, product-specific history now retired to
 `legacy/docs/products/saymyname/CUTOVER_AND_M6_ROLLBACK.md`.
+
+## Factory CI cost and the Actions quota (af-mzuprx)
+
+Intent (Benjamin, his words, 2026-10-08): « il faut que l'usine consomme
+moins de minute github action »
+Mechanism (agent interpretation): measure where the minutes go, cut the
+largest avoidable shares, leave the merge gate as it is. It does not mean
+fewer tests, a merge without CI, or a runner on the host.
+
+`saymyname-app/agent-factory` is private: every minute of a GitHub runner is
+billed, each job rounded up to the minute. On 2026-10-08 the organization
+reached 100% of its included minutes: from 02:37 (Paris) every job ended
+"not started because recent account payments have failed or your spending
+limit needs to be increased" and no pull request could merge until Benjamin
+raised the spending limit.
+
+**Read the figure:** `./bin/ci-minutes` (billed minutes per day and per run,
+read-only). The quota left and the amount billed are only on the
+organization's GitHub usage page: the billing API wants an `admin:org` token
+the Factory does not hold, and the run `timing` API answers 0.
+
+### What was measured (Paris days)
+
+| When | Runs | Billed minutes | Merged PRs | Minutes per merged PR | One green run |
+|---|---|---|---|---|---|
+| 2026-10-06 | 104 | 991 | 35 | 28 | 7 min (morning) to 19 min (night) |
+| 2026-10-07 | 46 | 1,546 | 13 | 119 | 16 min (01:00) to 50 min (20:00) |
+| 2026-10-08, before this change | | | | about 230 (same mix of runs as 10-07) | 63 to 72 min, green after 18 to 20 min |
+| 2026-10-08, after (runs of PR #437) | | | | about 100 (same mix) | 50 min, green after 15 min |
+
+On 2026-10-07 a merged pull request cost 3.5 runs: 2.5 on the pull request
+(a branch is often pushed twice in a minute, then caught up with `main`) and
+one on `push` after the merge. After the change it costs the 2.5 pull request
+runs at 50 minutes, less the replaced runs that are now cancelled: a little
+over half less. Re-measure with `./bin/ci-minutes` on a full day.
+
+| Cause | Measured share | What was done |
+|---|---|---|
+| The run on `push` to `main` repeated the pull request's run. The ruleset requires a branch up to date with `main`, so that run had already tested the tree the merge puts on `main`; nothing read the second one (`bin/deliver-close` and `bin/pr-autopilot` read `pull_request` runs). | 30% of all minutes (331 of 991, 453 of 1,546) | No run on `push`. `workflow_dispatch` starts one on `main` by hand. |
+| A run on a commit already replaced by a newer one kept going. | 16% of pull request minutes on 10-06, 30% on 10-07 | One `concurrency` group per pull request, `cancel-in-progress`. |
+| Each runner ran one test file at a time on its two cores. | Two files at once need 1.3 to 1.4 times fewer runner seconds, not 2: two long files side by side slow each other (`ticket-evaluation-test.py`: 481 s next to short files, 824 s next to `code-review-test.py`). | `bin/ci-run-tests --jobs "$(nproc)"`. |
+| The lots were dealt by file size, which does not follow duration (`spec-integration-test.py`: 908 lines, 628 s; `convoy-state-test.py`: 2,978 lines, 273 s). The job named `Tests` is billed while it waits for the longest lot. | 8 to 11 minutes of waiting per run with four lots by size; 12 with two | Lots dealt by the seconds each file took in a real run: `config/ci-test-seconds.tsv`, written by `./bin/ci-test-seconds`. Still 6 minutes of waiting on the first run: runners are not equally fast. |
+| The tests themselves grew: 391 s of test time on 10-06 at 03:00, 3,284 s on 10-08 at 01:40. Fourteen files of the new delivery flow (`ticket-evaluation`, `spec-integration`, `convoy-advance`, `convoy-state`, `code-review`, `correction-round`, ...) are 88% of it. One of them, `tests/convoy-state-test.py`, starts 5,404 Python processes (2,013 calls of `bin/convoy-state`, 3,391 of the fake `gc`), 40 to 90 ms each. | The reason a run went from 7 to 65 minutes | Not reduced here: it is the largest share left. Each line of `bin/ci-run-tests` now ends with the seconds the file took, so the next growth is visible in the job log. |
+| A change to docs only runs every test. | 4 of 51 merged PRs | Left as is: several tests read the docs (catalogues, registration, prompts), so skipping them would weaken the gate. |
+
+`tests/ci-workflow-cost-test.sh` fails if the workflow runs on `push` again,
+stops cancelling a replaced run, or stops using every core.
+
+### Keeping the lots even
+
+A lot costs about one billed minute of setup and rounding; uneven lots cost
+more, because `Tests` waits. When its "Wait for the other lots" step waited
+more than 3 minutes it prints a warning in the run. Then, from a work tree:
+
+```bash
+./bin/ci-test-seconds          # rewrites config/ci-test-seconds.tsv from the latest green run
+```
+
+and land the file through a pull request. A file the list does not name is
+weighed by its size, and a stale list changes only the balance, never which
+files run (`tests/ci-test-seconds-test.sh`).
+
+### What did not change
+
+The job named `Tests` is still the one status check ruleset
+`AF-main-protection` requires and `bin/pr-autopilot` waits on. It exists from
+the first second of a run and is green only when its own lot and every other
+lot passed. A cancelled run belongs to a commit that is no longer the head of
+its pull request, so it could not have let anything merge.
+
+### When the quota is reached
+
+Signs: every job of every run fails within seconds with the sentence quoted
+above, `./bin/ci-minutes` shows runs at 0 minutes, open pull requests stay
+unmerged with a red `Tests`.
+
+1. It is not a test failure: do not re-run, do not retry in a loop, do not
+   merge around the check.
+2. Only Benjamin can lift it (spend): the spending limit or the plan, on the
+   organization's billing page. Raise it to him through
+   `./bin/escalation-door`, with the day's figure from `./bin/ci-minutes`.
+3. Once runs start again, re-run the failed runs of the open pull requests
+   (`gh run rerun <id> --failed`); `bin/pr-autopilot` then merges them as
+   usual.
+4. The included minutes come back at the start of the billing month.
+
+Benjamin's decisions, never taken by an agent: a self-hosted runner on the
+WSL host (no billed minute, but it loads his PC and runs pull request code on
+the host), making the repository public (free minutes, public code), a paid
+plan, the spending limit.
 
 ## Upgrade
 

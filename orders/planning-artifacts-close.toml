@@ -8,6 +8,9 @@
 # naming the convoy. A convoy published from a file draft (earlier graphs,
 # where the artifact/spec ids are plain strings, not bead ids) is left
 # untouched without error.
+# T22 (af-kn83no): a marked convoy closed outside the acceptance or abandon
+# command keeps its Spec and its Draft open (bin/convoy-state list,
+# `closed_outside`); bin/convoy-advance raises it to the operator.
 [order]
 description = "Closes the Spec bead and Ticket Graph Draft bead a convoy was published from, with a reason naming the convoy, once that convoy closes (W06, A6b)."
 trigger = "event"

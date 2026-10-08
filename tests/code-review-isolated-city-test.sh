@@ -37,6 +37,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 PORT="${CODE_REVIEW_TRIAL_PORT:-18401}"
 CEILING=6
 SPEC_LINE="La page d'accueil affiche le nombre d'éléments du jeu de données."
@@ -57,8 +58,7 @@ FIXTURE="tests/fixtures/delivery-fixture-city"
 cleanup() {
   status=$?
   trap - EXIT
-  gc --city "$CITY" stop >/dev/null 2>&1 || true
-  gc supervisor stop >/dev/null 2>&1 || true
+  isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   tmux -L "$(basename "$TRIAL")" kill-server >/dev/null 2>&1 || true
   # The supervisor, the city's managed Dolt server and the stub sessions
   # carry the trial directory on their command line.
@@ -336,19 +336,15 @@ evaluated() {  # TICKET COMMIT REPO: a favorable Ticket Evaluation, as an Evalua
   jq -n '{roles: {author: null, evaluator: null, same_provider: null, other_declared: []},
     environment: [{dataset: null, address: "http://127.0.0.1:1", state_file: "/launch.json"}]}' > "$TRIAL/evaluation-request-$1.json"
   state open-evaluation "$CONVOY" "$1" --commit "$2" --file "$TRIAL/evaluation-request-$1.json" >/dev/null
-  state add-evidence "$CONVOY" "$1" --piece evaluation.seen --digest "sha256:$(printf '%064d' 0)" --commit "$2" >/dev/null
+  python3 "$ROOT/tests/lib/ticket_proofs.py" capture "$CONVOY" "$1" evaluation.seen "$2" --repo "$3" >/dev/null
   jq -n --arg commit "$2" --argjson t "$shown" '{commit: $commit, recorded_by: "delivery-evaluator-trial",
     criteria: [$t.criteria | to_entries[] | {number: (.key + 1), text: .value, state: "observed", evidence: "evaluation.seen"}],
     demonstration_line: {text: $t.demonstration_line, state: "observed", evidence: "evaluation.seen"}}' > "$TRIAL/evaluation-$1.json"
   state record-evaluation "$CONVOY" "$1" --file "$TRIAL/evaluation-$1.json" >/dev/null
 }
-finish() { # <ticket> <tip>: green at the tip, the sealed records, the Handoff, the exit, a favorable evaluation
-  state set-tdd "$CONVOY" "$1" --step green --commit "$2" >/dev/null
-  state add-evidence "$CONVOY" "$1" --piece handoff_records --digest "sha256:$(printf '%064d' 0)" --commit "$2" >/dev/null
-  jq -n --arg commit "$2" '{sections: {done: ["PROSE-DU-HANDOFF : fait à ma façon."], deviations: "aucun", not_done: "aucun", out_of_ticket: "aucun"},
-    partial: false, commit: $commit, records: {commits: [{commit: $commit, subject: "PROSE-DU-COMMIT"}]}}' > "$TRIAL/handoff.$1.json"
-  state set-handoff "$CONVOY" "$1" --file "$TRIAL/handoff.$1.json" >/dev/null
-  state set-exit "$CONVOY" "$1" --exit finished >/dev/null
+finish() { # <ticket> <tip>: every step of the TDD with its sealed report, the demonstration, the sealed records, the Handoff, the exit, a favorable evaluation
+  python3 "$ROOT/tests/lib/ticket_proofs.py" finish "$CONVOY" "$1" "$2" --repo "$PRODUCT" --base "$BASE" --branch "ticket/$1" \
+    --done "PROSE-DU-HANDOFF : fait à ma façon." --subject "PROSE-DU-COMMIT" >/dev/null
   evaluated "$1" "$2" "$PRODUCT"
 }
 author_finishes() { # <ticket> <author model> <what the slice says>

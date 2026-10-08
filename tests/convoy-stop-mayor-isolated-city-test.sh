@@ -42,6 +42,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 PORT="${CONVOY_STOP_TRIAL_PORT:-18394}"
 MAYOR_WAIT="${CONVOY_STOP_TRIAL_MAYOR_WAIT:-1200}"
 CLAUDE_BIN="${CONVOY_STOP_TRIAL_CLAUDE_BIN:-$(command -v claude || true)}"
@@ -74,8 +75,7 @@ DOOR_LOG="$TRIAL/door.log"
 cleanup() {
   status=$?
   trap - EXIT
-  gc --city "$CITY" stop >/dev/null 2>&1 || true
-  gc supervisor stop >/dev/null 2>&1 || true
+  isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   tmux -L af-convoy-stop-trial kill-server >/dev/null 2>&1 || true
   # The supervisor, the city's managed Dolt server and the sessions carry the
   # trial directory on their command line or in their working directory.
@@ -425,8 +425,12 @@ echo "$(stamp) convoi arrêté : $S et T3 non démarrés après 3 passes de plus
 printf '%s\n' "$lines" | sed 's/^/    | /'
 echo "$(stamp) un seul incident : bead $(incident_beads), $mails_after_stop courrier à l'opérateur, $(jq -s '[.[] | select(.convoys[]?.incident.raised == true)] | length' "$PASSES") passe l'a levé sur $(passes)"
 
-state record-gate "$MARKED" "$FIRST" --gate ticket_end --commit "$COMMIT"
-echo "$(stamp) maintenance de l'usine simulée : l'essai enregistre le relevé de la porte de fin de ticket de $F (aucun ticket avancé ni fermé à la main)"
+# T19: a record of the ticket-end gate is written only with the closing, by
+# the gate. The repair of a ticket closed by hand is to reopen it, then to
+# let its gate close it; the trial stands for the gate with its passing report.
+gc bd update "$FIRST" --status in_progress >/dev/null
+state close-ticket "$MARKED" "$FIRST" --commit "$COMMIT" --file "$ROOT/tests/fixtures/convoy-state/ticket-end-report.json"
+echo "$(stamp) maintenance de l'usine simulée : l'essai rouvre $F puis le ferme avec le relevé de la porte de fin de ticket (aucun ticket avancé à la main)"
 second_started() { flow_started "$SECOND"; }
 wait_for 300 second_started || fail "the convoy did not resume: $S was not started within 300s of the repair"
 wait_passes 1

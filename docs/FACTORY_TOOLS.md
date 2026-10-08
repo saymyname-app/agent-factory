@@ -154,6 +154,12 @@ réseau ni accès au domicile hôte. Une injection `after-stage` doit laisser z�
 graphe, bead delivery ou convoy. Le résultat JSON est déterministe et ne dépend
 pas du Cockpit V1. Contrat complet : `FIXTURE_CITY_ORACLE.md`.
 
+`./bin/fixture-city-oracle run <scenario> --delivery-driver <driver>` fait
+parcourir le flux de livraison à un ticket d'un convoi marqué et observe son
+état public après chaque événement : publié, démarré, rouge, gel, code,
+revue, évaluation, fusion, fermé par la porte de fin de ticket. Un ticket
+fermé hors porte fait échouer l'oracle.
+
 ## `./bin/factory-doctor` — « y a-t-il quelque chose que je puisse réparer ? »
 
 `gc doctor` rapporte sur toute la pile, la nôtre **et ses dépendances**. Ce
@@ -460,6 +466,11 @@ touché : il reste avancé par le Mayor.
   (`./bin/correction-round settle`). Encore refusé après ce tour, le ticket
   est arrêté sans fusionner et remonte une fois dans
   `./bin/escalation-door list`.
+- **Fermeture par la porte de fin de ticket** : la passe qui fusionne un
+  ticket le ferme si ses neuf conditions sont réunies
+  (`./bin/ticket-end settle`) ; avant la fusion, elle mesure la fidélité
+  d'un ticket d'interface (`./bin/ticket-end fidelity`). Un ticket laissé
+  ouvert est listé avec la condition qui manque.
 - **Relecture des tests restée sans résultat** : la même passe la relance une
   fois, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune
@@ -996,15 +1007,17 @@ nouveau flux**.
 - **Un critère non observé ne se dispense jamais** : `override --criterion`
   est refusé, et le message renvoie à la Planning Exception
   (`./bin/planning-exception`).
-- **La dérogation ne lève rien seule** : le ticket reste arrêté et rien ne
-  fusionne ; la porte de fin de ticket (T19) la lira.
+- **La dérogation ne lève pas l'arrêt** : quand tous les Blocking Findings
+  restés sans verdict favorable sont dérogés, la passe suivante fusionne le
+  ticket et la porte de fin de ticket le ferme (`./bin/ticket-end`,
+  condition 9).
 - **Ne jamais dispatcher `mol-ticket-correction` à la main** ni écrire
   `gc.flow.correction` ou `gc.flow.overrides` : seul
   `./bin/correction-round` le fait, par `./bin/dispatch-door` et
   `./bin/convoy-state`.
 - **Limites** : aucun délai sur la session de correction (une session morte
   sans fermer son bead laisse le ticket en attente ; la reprise est à T20) ;
-  rien ne lève encore un arrêt.
+  rien ne lève un arrêt.
 
 Détail : `docs/CORRECTION_ROUND.md`.
 
@@ -1051,5 +1064,157 @@ décisions qui n'étaient pas de son niveau.
 Tests : `tests/proposal-door-test.py` (la porte sur un faux `gc`),
 `tests/proposal-classes-contract-test.py` (la vraie porte puis le vrai
 Cockpit sur les mêmes beads).
+
+---
+## `./bin/ticket-end` — pourquoi ce ticket n'est-il pas fermé ?
+
+**La porte de fin de ticket** (Spec af-wf4w5r §9, T19). Dans un convoi qui
+porte la **marque du nouveau flux**, un ticket ne se ferme que par cette
+porte : une liste fermée et versionnée de **neuf conditions**. Une PR
+fusionnée et une CI verte ne ferment rien, et l'auteur ne ferme jamais son
+ticket.
+
+```bash
+./bin/ticket-end check <convoi> <ticket> --repo <dépôt du projet>                  # les neuf verdicts ; n'écrit rien
+./bin/ticket-end check <convoi> <ticket> --repo <dépôt du projet> --before-merge   # ce que la fusion exige
+./bin/ticket-end settle <convoi> --repo <dépôt du projet>                          # lancé par ./bin/convoy-advance après la fusion
+./bin/ticket-end fidelity <convoi> --repo <dépôt du projet> --profile <profil>     # lancé par ./bin/convoy-advance avant la fusion
+```
+
+- **Les neuf conditions** (liste `ticket-end/v1`), lues à la pointe de la
+  branche du ticket : 1 critères identiques au digest approuvé ; 2 Handoff
+  valide avec preuve du rouge et de démonstration ; 3 Ticket Evaluation
+  favorable (prefactoring : le produit démarre) ; 4 fidélité verte si le
+  ticket touche un écran ; 5 détecteur de report passé ; 6 fusionné dans la
+  branche d'intégration, tests verts sur le résultat ; 7 preuves scellées,
+  liées à la pointe fusionnée ; 8 preuve TDD enregistrée ; 9 revue favorable
+  ou dérogation enregistrée.
+- **Pour savoir ce qui manque** : `check` nomme chaque condition non réunie
+  et dit ce qui a été lu. Rien n'est écrit lors d'un refus.
+- **Avant la fusion** : `./bin/spec-integration merge` ne fusionne un ticket
+  que si les conditions 1 à 5 et 7 à 9 sont réunies ; sinon le ticket attend,
+  avec le texte de la porte. La condition 6 se vérifie après.
+- **Fermeture** : la passe qui fusionne un ticket le ferme si les neuf
+  conditions sont réunies. Le relevé de la porte (commit fusionné, version
+  de la liste, neuf verdicts) et le statut fermé sont écrits ensemble ; il se
+  lit sous `gates.ticket_end` dans `./bin/convoy-state show`.
+- **Ticket d'interface** : avant la fusion, la passe lance le contrôle de
+  fidélité sur le commit qui fusionne, contre le Validated Prototype que le
+  ticket nomme.
+- **Ne jamais fermer à la main un ticket d'un convoi marqué** (`gc bd
+  close`, `./bin/deliver-close`) : `./bin/deliver-close` le refuse, et une
+  fermeture hors porte arrête le convoi (incident d'usine). `close` et
+  `settle` sont refusés à toute session d'agent.
+- **Un convoi sans marque** garde `./bin/deliver-close`, sans changement.
+- **Limites** : une fidélité rouge laisse le ticket en attente (la reprise
+  est à T20) ; un contrôle de fidélité par passe ; la fin de Spec est à T23.
+
+Détail : `docs/TICKET_END.md`.
+
+---
+
+## `./bin/ci-minutes` — combien de minutes GitHub Actions la CI de l'usine a-t-elle consommées ?
+
+**Les minutes facturées, par jour et par run** (af-mzuprx). Le dépôt est
+privé : chaque minute de runner est facturée, chaque job arrondi à la minute
+supérieure. L'API `timing` de GitHub répond 0 et l'API de facturation exige
+un jeton `admin:org` que l'usine n'a pas : ce script lit le début et la fin
+de chaque job et applique lui-même la règle. Lecture seule.
+
+```bash
+./bin/ci-minutes                       # les 3 derniers jours, et le détail des 15 derniers runs
+./bin/ci-minutes --since 2026-10-06    # depuis un jour donné
+./bin/ci-minutes --runs 40             # plus de runs détaillés
+```
+
+- **Jours et heures** : Europe/Paris.
+- **Colonnes** : runs, minutes, dont `pull_request`, dont `push`, dont
+  autres, et minutes des runs qui n'ont pas fini verts.
+- **Un job qui n'a jamais eu de runner** (quota atteint) compte 0.
+- **Quels tests coûtent le plus** : chaque ligne de `./bin/ci-run-tests`
+  finit par les secondes du fichier ; elles se lisent dans le journal du job.
+- **Ce que le script ne dit pas** : le quota restant et le montant facturé.
+  Ils se lisent sur la page d'usage GitHub de l'organisation.
+
+Détail : `docs/OPERATIONS.md`, « Factory CI cost and the Actions quota ».
+
+---
+## `./bin/ci-test-seconds` — pourquoi « Tests » attend-il les autres lots ?
+
+**La durée mesurée de chaque fichier de test** (af-mzuprx). La CI de l'usine
+répartit les tests en lots, un runner par lot. `./bin/ci-run-tests --shard`
+donne chaque fichier, du plus long au plus court, au lot le moins chargé, en
+lisant `config/ci-test-seconds.tsv`. Ce script réécrit cette liste à partir
+des journaux d'un run vert.
+
+```bash
+./bin/ci-test-seconds              # depuis le dernier run vert de Factory CI
+./bin/ci-test-seconds --run <id>   # depuis un run donné
+```
+
+- **Quand le lancer** : quand l'étape « Wait for the other lots » du job
+  `Tests` affiche un avertissement (plus de 3 minutes d'attente, facturées).
+- **Où** : dans un arbre de travail, jamais dans la racine vive ; le fichier
+  réécrit passe par une pull request.
+- **Liste périmée ou absente** : les lots sont moins égaux, rien d'autre. Un
+  fichier absent de la liste est pesé par sa taille ; chaque fichier reste
+  dans exactement un lot.
+
+Détail : `docs/OPERATIONS.md`, « Factory CI cost and the Actions quota ».
+
+---
+## `./bin/factory-revive` — relancer un superviseur que personne n'a arrêté exprès
+
+**Un arrêt non demandé est relancé en 7 minutes au plus** (af-v9t5vz). Le
+2026-10-08 à 04:27 (Paris), le script d'essai d'un ouvrier a lancé `gc
+supervisor stop` sur l'usine vivante. systemd a vu un arrêt propre (code 0)
+et n'a rien relancé, `bin/factory-boot` ne tourne qu'à l'ouverture de session
+Windows, et tous les orders sont morts avec le superviseur : l'usine est
+restée arrêtée 56 minutes.
+
+```bash
+./bin/factory-revive check       # verdict seul, ne touche à rien (sort 1 si arrêt non demandé)
+./bin/factory-revive run         # ce que le minuteur appelle
+./bin/factory-revive install     # écrit et active le minuteur systemd utilisateur (une fois, sur accord de l'opérateur)
+./bin/factory-revive uninstall   # le retire
+```
+
+Ce qui distingue un arrêt non demandé d'un arrêt délibéré : l'arrêt délibéré
+du runbook (§2) commence par `gc stop`, qui retire la cité de la liste du
+superviseur (`~/.gc/cities.toml`).
+
+| État constaté | Ce que fait `run` |
+|---|---|
+| le superviseur répond | rien |
+| superviseur arrêté, cité absente de la liste | rien : arrêt délibéré (une ligne au journal, une seule) |
+| superviseur arrêté, cité encore dans la liste, toujours vrai 45 s plus tard | `bin/factory-boot`, puis un ticket `maintenance` et une escalade « Mayor d'abord » par `bin/escalation-door` (promue à Benjamin au bout de 2 h si rien n'est élucidé) |
+| `factory-boot` n'a pas ramené le superviseur | sort 1, nouvel essai au passage suivant |
+
+- **Délai** : minuteur toutes les 5 min + 45 s de confirmation + le temps de
+  `factory-boot` (environ 1 min), soit 7 minutes au plus.
+- **Ne défait jamais un arrêt délibéré** : il ne relance que par
+  `factory-boot`, qui laisse suspendue une cité suspendue ; il n'arrête, ne
+  suspend et ne désenregistre rien.
+- **Pourquoi un minuteur systemd et pas un order** : un order tourne dans le
+  superviseur, donc pas quand il est arrêté.
+- **Ce qu'il ne voit pas** : un `gc stop` de la cité vivante lancé par erreur
+  (il ressemble à un arrêt délibéré), et une usine qui tourne mais n'avance
+  pas (c'est le rôle de `factory-watchdog` et de la ligne « Usine à l'arrêt ? »
+  du cockpit). Si le minuteur lui-même ne tourne pas, il reste l'alerte
+  externe « Usine muette » du cockpit.
+- **Journal** : `.gc/runtime/factory-revive.log`.
+
+Le même correctif fait démarrer le superviseur par son unité systemd dans
+`bin/factory-boot` quand elle est installée, au lieu de `gc supervisor
+start` : ce dernier lance un superviseur hors de l'unité, que `gc start`
+réactive ensuite et qui redémarre alors en échec toutes les 5 secondes.
+
+Côté tests : aucun test n'arrête une cité ou un superviseur autrement que par
+`isolated_city_stop` (`tests/lib/isolated-city.sh`), qui refuse si `GC_HOME`
+n'est pas dans le répertoire de l'essai.
+
+Tests : `tests/factory-revive-test.sh`, `tests/factory-boot-supervisor-test.sh`,
+`tests/isolated-city-stop-guard-test.sh`. Runbook :
+`docs/RUNBOOK_STOP_AND_RESTART.md` §3.
 
 ---

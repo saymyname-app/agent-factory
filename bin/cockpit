@@ -6,15 +6,20 @@ stopped city (spec .9, .13). Binds 127.0.0.1 only; refuses any other host.
 
 Usage:
   cockpit run             run in the foreground until SIGTERM/SIGINT
-  cockpit start           start in the background if not already running
-  cockpit stop            stop a background instance
+  cockpit start           start in the background if not already running;
+                          succeeds only once the new process is listening
+  cockpit stop            stop a background instance; returns only once it
+                          is gone (SIGKILL if SIGTERM was not enough)
+  cockpit restart         stop, then start — the way to load new code
   cockpit status          exit 0 if a background instance is running
 
 Config is read from the environment — see lib/cockpit/core/config.py.
+Lifecycle contract: docs/COCKPIT.md, "Process lifecycle".
 """
+import faulthandler
 import os
+import select
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -26,14 +31,15 @@ from cockpit.core.config import Config  # noqa: E402
 from cockpit.core.process import run_foreground  # noqa: E402
 
 START_WAIT_SECONDS = 10
-
-
-def _pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-    except (OSError, ProcessLookupError):
-        return False
-    return True
+# The process gives its own threads 5 s to end (process.SHUTDOWN_BUDGET_SECONDS)
+# and frees the port before that: one still alive after this wait is stuck,
+# not stopping.
+STOP_WAIT_SECONDS = float(os.environ.get("COCKPIT_STOP_WAIT_SECONDS", "15"))
+KILL_WAIT_SECONDS = 5
+# `start` hands `run` the write end of a pipe; `run` writes to it once its
+# own socket listens. Something answering on the port proves nothing: it
+# can be the previous process (2026-10-08).
+READY_FD_ENV = "COCKPIT_READY_FD"
 
 
 def _read_pid(pid_file):
@@ -44,9 +50,70 @@ def _read_pid(pid_file):
         return None
 
 
-def cmd_status(config):
+def _is_cockpit(pid):
+    """True while ``pid`` is a live `cockpit run`. The pid file outlives a
+    WSL restart, after which its number can be any other process: a pid
+    that merely exists is never taken for the cockpit, let alone signalled."""
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as fh:
+            args = fh.read().split(b"\0")
+    except OSError:
+        return False
+    return any(
+        arg.endswith(b"/bin/cockpit") and args[index + 1 : index + 2] == [b"run"]
+        for index, arg in enumerate(args)
+    )
+
+
+def _running_pid(config):
     pid = _read_pid(config.pid_file)
-    if pid is not None and _pid_alive(pid):
+    return pid if pid is not None and _is_cockpit(pid) else None
+
+
+def _wait_gone(pid, seconds):
+    deadline = time.monotonic() + seconds
+    while _is_cockpit(pid):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+    return True
+
+
+def _signal(pid, signum):
+    try:
+        os.kill(pid, signum)
+    except OSError:
+        pass
+
+
+def _remove(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _log_path(config):
+    return os.environ.get(
+        "COCKPIT_LOG_FILE", os.path.join(os.path.dirname(config.pid_file), "cockpit.log")
+    )
+
+
+def _last_log_line(log_path, offset):
+    """The last line the process wrote since ``offset`` — for a failed
+    start, the exception that ended it."""
+    try:
+        with open(log_path, "rb") as fh:
+            fh.seek(offset)
+            lines = fh.read().decode("utf-8", errors="replace").strip().splitlines()
+    except OSError:
+        return ""
+    return lines[-1].strip() if lines else ""
+
+
+def cmd_status(config):
+    pid = _running_pid(config)
+    if pid is not None:
         print("cockpit: running (pid %d)" % pid)
         return 0
     print("cockpit: not running")
@@ -58,67 +125,113 @@ def cmd_start(config):
         return 0  # already running — never a second process (af-0b6ffa AC5)
 
     os.makedirs(os.path.dirname(config.pid_file), exist_ok=True)
-    log_path = os.environ.get(
-        "COCKPIT_LOG_FILE", os.path.join(os.path.dirname(config.pid_file), "cockpit.log")
-    )
+    log_path = _log_path(config)
     log_fh = open(log_path, "ab")
+    log_offset = os.path.getsize(log_path)
+    ready_read, ready_write = os.pipe()
+    env = os.environ.copy()
+    env[READY_FD_ENV] = str(ready_write)
     proc = subprocess.Popen(
         [sys.executable, os.path.abspath(__file__), "run"],
         stdout=log_fh,
         stderr=log_fh,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
-        env=os.environ.copy(),
+        pass_fds=(ready_write,),
+        env=env,
     )
+    os.close(ready_write)
+    log_fh.close()
     with open(config.pid_file, "w") as fh:
         fh.write(str(proc.pid))
 
-    deadline = time.time() + START_WAIT_SECONDS
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            try:
-                os.remove(config.pid_file)
-            except OSError:
-                pass
-            print("cockpit: failed to start — see %s" % log_path, file=sys.stderr)
-            return proc.returncode or 1
+    # Readable with data: the process listens. Readable and empty: it died
+    # and the pipe closed with it.
+    readable, _, _ = select.select([ready_read], [], [], START_WAIT_SECONDS)
+    listening = bool(readable) and os.read(ready_read, 16) != b""
+    os.close(ready_read)
+    if listening:
+        print("cockpit: started (pid %d) on %s:%d" % (proc.pid, config.host, config.port))
+        return 0
+
+    if readable:
         try:
-            with socket.create_connection((config.host, config.port), timeout=0.2):
-                print("cockpit: started (pid %d) on %s:%d" % (proc.pid, config.host, config.port))
-                return 0
-        except OSError:
-            time.sleep(0.1)
-    print("cockpit: did not confirm it was listening within %ss" % START_WAIT_SECONDS, file=sys.stderr)
+            what = "exited with code %s" % proc.wait(timeout=KILL_WAIT_SECONDS)
+        except subprocess.TimeoutExpired:
+            what = "gave up before listening"
+    else:
+        what = "was not listening after %ss" % START_WAIT_SECONDS
+    if proc.poll() is None:
+        proc.kill()
+        proc.wait()
+    _remove(config.pid_file)
+    reason = _last_log_line(log_path, log_offset)
+    print(
+        "cockpit: failed to start — the new process %s%s (log: %s)"
+        % (what, ": " + reason if reason else "", log_path),
+        file=sys.stderr,
+    )
     return 1
 
 
 def cmd_stop(config):
-    pid = _read_pid(config.pid_file)
-    if pid is None or not _pid_alive(pid):
-        try:
-            os.remove(config.pid_file)
-        except OSError:
-            pass
+    pid = _running_pid(config)
+    if pid is None:
+        _remove(config.pid_file)
         print("cockpit: not running")
         return 0
-    os.kill(pid, signal.SIGTERM)
-    deadline = time.time() + START_WAIT_SECONDS
-    while time.time() < deadline and _pid_alive(pid):
-        time.sleep(0.1)
-    try:
-        os.remove(config.pid_file)
-    except OSError:
-        pass
-    if _pid_alive(pid):
-        print("cockpit: pid %d did not stop in time" % pid, file=sys.stderr)
+    _signal(pid, signal.SIGTERM)
+    if _wait_gone(pid, STOP_WAIT_SECONDS):
+        _remove(config.pid_file)
+        print("cockpit: stopped")
+        return 0
+
+    # SIGTERM was not enough. The cockpit holds nothing a kill can corrupt
+    # (its state files are written whole, then renamed), and a process left
+    # alive keeps the port: kill it, after asking it where it is stuck.
+    print(
+        "cockpit: pid %d still alive %gs after SIGTERM — its threads go to %s, then SIGKILL"
+        % (pid, STOP_WAIT_SECONDS, _log_path(config)),
+        file=sys.stderr,
+    )
+    _signal(pid, signal.SIGUSR1)
+    time.sleep(0.5)
+    _signal(pid, signal.SIGKILL)
+    if not _wait_gone(pid, KILL_WAIT_SECONDS):
+        print(
+            "cockpit: pid %d survived SIGKILL — still running, pid file kept" % pid,
+            file=sys.stderr,
+        )
         return 1
-    print("cockpit: stopped")
+    _remove(config.pid_file)
+    print("cockpit: stopped (killed)")
     return 0
 
 
-def cmd_run(config):
+def cmd_restart(config):
+    stopped = cmd_stop(config)
+    if stopped != 0:
+        return stopped  # the old process still holds the port: starting would fail
+    return cmd_start(config)
+
+
+def _announce_listening(server):
+    fd = os.environ.pop(READY_FD_ENV, None)
+    if fd is None:
+        return
     try:
-        return run_foreground(config)
+        os.write(int(fd), b"listening\n")
+        os.close(int(fd))
+    except (OSError, ValueError):
+        pass
+
+
+def cmd_run(config):
+    # `stop` sends SIGUSR1 before it kills a process that will not end:
+    # every thread's stack then lands in the log.
+    faulthandler.register(signal.SIGUSR1, all_threads=True)
+    try:
+        return run_foreground(config, ready_callback=_announce_listening)
     except ValueError as exc:
         print("cockpit: %s" % exc, file=sys.stderr)
         return 2
@@ -134,6 +247,7 @@ def main(argv):
         "run": cmd_run,
         "start": cmd_start,
         "stop": cmd_stop,
+        "restart": cmd_restart,
         "status": cmd_status,
     }
     handler = handlers.get(command)

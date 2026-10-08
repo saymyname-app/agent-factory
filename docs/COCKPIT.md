@@ -30,9 +30,10 @@ and **Validity window**.
   - `process.py`, `config.py` — wires it all together; config from env vars.
 - `lib/cockpit/ui/base/` — the variant D stylesheet and page skeleton
   every screen builds on (see "Home screen" below).
-- `bin/cockpit` — the CLI: `run` (foreground), `start`/`stop`/`status`
-  (background, pidfile-tracked, idempotent — `start` is a no-op if already
-  running).
+- `bin/cockpit` — the CLI: `run` (foreground), `start`/`stop`/`restart`/
+  `status` (background, pidfile-tracked, idempotent — `start` is a no-op if
+  already running). To load new code, `bin/cockpit restart`: see "Process
+  lifecycle" below.
 - `bin/factory-boot` — starts the cockpit if it is not already running,
   ahead of the suspended-city early exit, so it keeps reading and showing
   status through a suspended or stopped city.
@@ -69,6 +70,57 @@ windows are shrinkable via `COCKPIT_VALIDITY_<SOURCE>_SECONDS` env vars so
 the test doesn't wait real minutes), the "Tout est à jour" / "Périmé ou
 inconnu" headline, refusing to bind off `127.0.0.1`, surviving a simulated
 city stop, and `bin/factory-boot`'s idempotent cockpit launch.
+
+## Process lifecycle: start, stop, restart (2026-10-08)
+
+**To restart the Cockpit, run `bin/cockpit restart`** — never `stop` then
+`start` by hand. On the live host, tell Benjamin first: the page he has
+open answers nothing for about a second.
+
+What each command guarantees, whatever the exit code of the one before:
+
+| Command | Exit 0 means | Otherwise |
+|---|---|---|
+| `start` | the process it just launched is listening (`started (pid N)`), or one was already running | non-zero, no pid file, the new process killed if it was still there; stderr gives the last line the process wrote (`OSError: [Errno 98] Address already in use`) and the log path |
+| `stop` | no cockpit process is left and the port is free | non-zero only if the process survived SIGKILL; the pid file is then kept, because it is still true |
+| `restart` | `stop` then `start` both succeeded | `stop`'s failure, without starting; or `start`'s |
+| `status` | the pid file names a live `cockpit run` | 1 |
+
+- **When SIGTERM is not enough.** `stop` waits `COCKPIT_STOP_WAIT_SECONDS`
+  (15 s), then sends SIGUSR1 — the process writes every thread's stack to
+  `cockpit.log` — and SIGKILL, and says so on stderr (`stopped (killed)`).
+  Killing is safe: the cockpit's state files are written whole and renamed,
+  and what it reads lives elsewhere. A cockpit left alive would keep the
+  port and make the next start fail.
+- **"Started" is the new process's own word.** `start` hands `run` a pipe;
+  `run` writes to it once its socket listens. Something answering on the
+  port proves nothing — it can be the previous process.
+- **A pid is not the cockpit.** The pid file outlives a WSL restart, after
+  which its number can belong to anything. `status`, `stop` and `start`
+  read `/proc/<pid>/cmdline` and only treat a `…/bin/cockpit run` as the
+  cockpit; anything else is a stale file, removed, never signalled.
+- **A stopping process frees the port first**, then asks every source
+  reader to end, then waits for all of them together for at most 5 s
+  (`process.shut_down`, `SHUTDOWN_BUDGET_SECONDS`). A reader still busy
+  then ends with the process and is named in the log.
+- `cockpit.log` now dates each life of the process: `pid N listening since
+  …`, `stopping at …`, `stopped in 0.4s` (`… without waiting for: beads`
+  when a reader was cut).
+
+Why (2026-10-08, 01:24 Paris): `stop` gave up after 10 s, removed the pid
+file and left the process holding the port; `start` then connected to that
+old process, printed `started`, and its own child died on `Address already
+in use`. The stop was slow because of one call: closing the supervisor's
+event stream from another thread waits for the read in progress, that is
+for gc's next frame — its heartbeat, every 15 s on a quiet city. Measured
+on the live sources: 2 s to 12.5 s per stop before, 0.3 s to 1.3 s after
+(`gc_client._end_read` shuts the connection down instead). By day the
+stream is busy and the same stop passed.
+
+`tests/cockpit-core-test.py` (`CockpitCliLifecycleTest`) holds this through
+the CLI: a supervisor silent for 30 s, a restart on the same port, a start
+while an orphan holds the port, a process deaf to SIGTERM, a pid file
+naming another process.
 
 ## Heartbeat (T18, af-a57xhe)
 

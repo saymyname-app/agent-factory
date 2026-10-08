@@ -45,6 +45,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 PORT="${CORRECTION_ROUND_TRIAL_PORT:-18421}"
 CEILING=6
 APPROVER="essai-approbateur"
@@ -68,8 +69,7 @@ FIXTURE="tests/fixtures/delivery-fixture-city"
 cleanup() {
   status=$?
   trap - EXIT
-  gc --city "$CITY" stop >/dev/null 2>&1 || true
-  gc supervisor stop >/dev/null 2>&1 || true
+  isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   tmux -L "$(basename "$TRIAL")" kill-server >/dev/null 2>&1 || true
   # A product an evaluation launched and that no pass stopped.
   if [ -d "$TRIAL/launches" ]; then
@@ -153,6 +153,7 @@ git -C "$PRODUCT" init -q -b main
 git -C "$PRODUCT" add -- "$FIXTURE"
 git -C "$PRODUCT" commit -q -m "base"
 BASE=$(git -C "$PRODUCT" rev-parse HEAD)
+printf '%s' "$BASE" > "$TRIAL/base"
 
 # --- what an author does to a ticket, written as its tools would ---------------
 # Shared by this script (the first author of each ticket) and by the stub of
@@ -195,13 +196,9 @@ PY
   git -C "$wt" commit -q -m "le nombre est affiché"
   git -C "$wt" rev-parse HEAD
 }
-finish() { # <convoy> <ticket> <tip>: green at the tip, the sealed records, the Handoff, the exit « terminé »
-  state set-tdd "$1" "$2" --step green --commit "$3" >/dev/null || return 1
-  state add-evidence "$1" "$2" --piece handoff_records --digest "sha256:$(printf '%064d' 0)" --commit "$3" >/dev/null || return 1
-  jq -n --arg commit "$3" '{sections: {done: ["Le nombre est affiché."], deviations: "aucun", not_done: "aucun", out_of_ticket: "aucun"},
-    partial: false, commit: $commit, records: {commits: [{commit: $commit, subject: "travail du ticket"}]}}' > "$TRIAL/handoff.$2.$3.json"
-  state set-handoff "$1" "$2" --file "$TRIAL/handoff.$2.$3.json" >/dev/null || return 1
-  state set-exit "$1" "$2" --exit finished >/dev/null
+finish() { # <convoy> <ticket> <tip>: every step of the TDD with its sealed report, the demonstration, the sealed records, the Handoff, the exit « terminé » (T19: the merge asks the ticket-end gate)
+  python3 "$BIN/../tests/lib/ticket_proofs.py" finish "$1" "$2" "$3" --repo "$PRODUCT" --base "$(cat "$TRIAL/base")" --branch "ticket/$2" \
+    --done "Le nombre est affiché." --subject "travail du ticket" >/dev/null
 }
 LIB
 

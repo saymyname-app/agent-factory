@@ -10,8 +10,9 @@ author, and records written by code. A convoy without the mark is not
 touched (exit 4).
 
 The author formula ends its sequence with it (`docs/TICKET_AUTHOR.md`).
-The ticket-end gate (T19) reads the Handoff and the detector's result, and
-the resume of a parked, blocked or interrupted ticket is T20's.
+The ticket-end gate reads the Handoff (condition 2) and the detector's
+result (condition 5) at the tip of the branch (`docs/TICKET_END.md`); the
+resume of a parked, blocked or interrupted ticket is T20's.
 
 « terminé » on a `vertical_slice` or a `repair` is refused without the
 demonstration proof: the piece `demonstration`, verified by the evidence
