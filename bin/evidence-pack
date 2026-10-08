@@ -102,6 +102,14 @@ RESUME_CAUSES = {"interrupted": "session interrompue", "returned": "retour de la
 NONE = "aucun"
 
 
+# Why the repair rounds of the end of a Spec are stopped (T26), as the page says it.
+END_STOPS = {
+    "end_rounds_exhausted": "tours de réparation épuisés",
+    "stories_not_reduced": "un tour n'a pas réduit les user stories non observées",
+    "story_refused_twice": "la même user story refusée deux fois",
+}
+
+
 class Refusal(RuntimeError):
     def __init__(self, message: str):
         super().__init__(" ".join(message.split()))
@@ -860,6 +868,13 @@ class Page:
         rounds = f"<p>Tours de fin comptés : {e((self.convoy.get('counters') or {}).get('end_rounds'))}." + (
             f" Dernier tour compté au commit {e(counted.get('commit'))} ({e(counted.get('source'))}) le {e(counted.get('at'))}."
             if counted else "") + "</p>"
+        # The stop of the rounds (T26), not the request it leads to: that
+        # one is written once this page exists, and carries its link.
+        stop = self.convoy.get("end_stop")
+        if isinstance(stop, dict) and "reason" in stop:
+            rounds += (f"\n<p>Tours de réparation de fin arrêtés ({e(END_STOPS.get(stop['reason'], stop['reason']))}) au commit "
+                       f"{e(stop.get('commit'))}, le {e(stop.get('at'))} : {e(stop.get('detail'))}. Aucun tour de plus ne "
+                       "démarre ; une demande « non conforme » part vers l'opérateur.</p>")
         contradictions = [
             li(f"User story {e(entry.get('story'))} non observée sur le produit assemblé, alors que ses tickets couvrants "
                "étaient observés : " + e(" ; ".join(
