@@ -1,0 +1,2 @@
+Need: Why `bin/ci-run-tests` prints "waiting for the battery of ..." or ends "NOT RUN" with exit 75 on the host, what makes batteries started at once run one after the other, what to do while one waits, and what the lock does not cover (files at once inside one battery, a test file run alone, local-only tests, other heavy processes)
+Read: `DELIVERY.md` ("One battery at a time on the host"), `./bin/ci-run-tests` (`CI_RUN_TESTS_HOST_WAIT`), `tests/ci-run-tests-host-queue-test.sh`
