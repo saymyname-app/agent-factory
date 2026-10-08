@@ -9,6 +9,11 @@ the Delivery Workflow goes through this command; none writes a `gc.flow.*`
 key itself. A field that is missing is added here, in the ticket that needs
 it, with its closed list and its refusal test.
 
+The code is `lib/convoy_state.py`; `bin/convoy-state` is its entry point and
+holds nothing else. The delivery flow and its tests start this command
+thousands of times, and Python keeps the compiled form only of what it
+imports (af-xhryl7).
+
 A convoy without the mark is not touched: `show` and every write answer
 « pas un convoi du nouveau flux » (exit 4) and write nothing, so it is
 published, dispatched, merged and closed exactly as before.
