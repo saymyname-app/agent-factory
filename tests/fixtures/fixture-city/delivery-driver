@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Reference delivery driver of the Fixture City Oracle (T19, af-iefuud).
 
-It makes one interface ticket of a marked convoy walk the delivery flow in a
-throwaway city, one event per call, so that bin/fixture-city-oracle can
-observe the public state after each. Called only as:
+It makes one ticket of a marked convoy walk the delivery flow in a throwaway
+city, one event per call, so that bin/fixture-city-oracle can observe the
+public state after each. Called only as:
 
-    delivery-driver --workspace DIR prepare [--inject NAME]
+    delivery-driver --workspace DIR prepare [--inject NAME] [--project NAME]
     delivery-driver --workspace DIR publish
     delivery-driver --workspace DIR advance
     delivery-driver --workspace DIR stop
@@ -37,10 +37,17 @@ no-socket sandbox of the planning adapters.
 `--inject` makes the walk go wrong in one named way:
     criterion-edited   a criterion is edited on the ticket once its author has finished
     closed-by-hand     the ticket is closed in the tracker, outside the ticket-end gate
+
+`--project` names the project of the fixture the ticket belongs to (T35,
+af-f62cxt); the same events are played on either, each from its own profile:
+    delivery-fixture-city       the first one (default): a web page in Python, with a Validated Prototype;
+                                its ticket is an interface ticket
+    delivery-fixture-city-api   the second one: a JSON API on Node.js, no web page, no prototype
 """
 import argparse
 import json
 import os
+import pwd
 import shutil
 import subprocess
 import sys
@@ -51,7 +58,7 @@ sys.path.insert(0, str(ROOT / "tests" / "lib"))
 import ticket_proofs  # noqa: E402
 
 BIN = ROOT / "bin"
-FIXTURE = Path("tests") / "fixtures" / "delivery-fixture-city"
+FIXTURES = Path("tests") / "fixtures"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
 REVIEWER = ROOT / "tests" / "fixtures" / "code-review" / "reviewer"
 EVALUATOR = ROOT / "tests" / "fixtures" / "ticket-evaluation" / "evaluator"
@@ -60,9 +67,33 @@ BROWSER = ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"
 CONVOY, SPEC, TICKET, RIG = "fx-convoy", "fx-spec", "fx-t1", "fx-rig"
 BRANCH = f"ticket/{TICKET}"
 INTEGRATION = f"integration/{SPEC}"
-CRITERION = "Point d'entrée : GET / — Observable : liste — Faux si : une ligne manque"
-LINE = "La page d'accueil affiche les trois éléments"
 INJECTIONS = ("none", "criterion-edited", "closed-by-hand")
+# What differs from one project of the fixture to the other; everything else
+# of the walk is read by the flow in the profile of the project.
+PROJECTS = {
+    "delivery-fixture-city": {
+        "criterion": "Point d'entrée : GET / — Observable : liste — Faux si : une ligne manque",
+        "line": "La page d'accueil affiche les trois éléments",
+        "interface": True,
+        "criterion_test": ("test_critere_fixture.py", "# test de critère du ticket\n"),
+        # The Evaluator captures the home page.
+        "evaluation": {},
+        # The merged result is tested by the command of the suites of the flow.
+        "regression_command": "true",
+        "interpreter": None,
+    },
+    "delivery-fixture-city-api": {
+        "criterion": "Point d'entrée : GET /items — Observable : champ items — Faux si : un élément manque",
+        "line": "GET /items répond les trois éléments",
+        "interface": False,
+        "criterion_test": ("critere_fixture.test.js", "// test de critère du ticket\n"),
+        "evaluation": {"path": "/items", "look_for": '"alpha"'},
+        # The merged result is tested by the regression command of the profile.
+        "regression_command": None,
+        "interpreter": "node",
+    },
+}
+DEFAULT_PROJECT = "delivery-fixture-city"
 GIT_IDENTITY = ("-c", "user.name=Fixture City", "-c", "user.email=fixture@example.invalid")
 
 
@@ -72,6 +103,27 @@ class City:
         self.root = workspace / "city"
         self.tracker = workspace / "tracker.json"
         self.memo = workspace / "driver.json"
+        memo = json.loads(self.memo.read_text()) if self.memo.exists() else {}
+        self.use(memo.get("project", DEFAULT_PROJECT))
+
+    def use(self, project: str) -> None:
+        self.project = PROJECTS[project]
+        self.fixture = FIXTURES / project
+
+    def path(self) -> str:
+        """The PATH of the order: the one the driver was given, and the
+        directory of the interpreter of the project when it is not on it
+        (the oracle gives its adapters a bare PATH; a per-user install of
+        Node.js sits in ~/.local/bin)."""
+        given = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+        interpreter = self.project["interpreter"]
+        if not interpreter or shutil.which(interpreter, path=given):
+            return given
+        local = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".local" / "bin"
+        if not shutil.which(interpreter, path=str(local)):
+            raise SystemExit(f"delivery-driver: {interpreter} is not installed: the project "
+                             f"{self.fixture.name} is launched and tested with it")
+        return f"{given}:{local}"
 
     # --- environment -----------------------------------------------------------
 
@@ -93,7 +145,7 @@ class City:
         home = self.workspace / "home"
         home.mkdir(exist_ok=True)
         return {
-            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            "PATH": self.path(),
             "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "HOME": str(home), "TMPDIR": str(self.workspace / "tmp"),
             "PYTHONDONTWRITEBYTECODE": "1",
             **self.state_environment(),
@@ -146,7 +198,8 @@ class City:
 
     # --- prepare, publish ----------------------------------------------------------
 
-    def prepare(self, inject: str) -> dict:
+    def prepare(self, inject: str, project: str) -> dict:
+        self.use(project)
         for name in ("tmp", "locks"):
             (self.workspace / name).mkdir(parents=True, exist_ok=True)
         for name, body in (("provider-failover", "#!/bin/sh\nprintf '{}\\n'\n"), ("proposal-door", "#!/bin/sh\necho 0\n")):
@@ -165,13 +218,14 @@ class City:
             "code_review": {"formula": "mol-code-review", "role": "reviewer", "rig": RIG, "timeout_seconds": 3600},
             "evaluation": {"formula": "mol-ticket-evaluation", "role": "evaluator", "rig": RIG,
                            "timeout_seconds": 3600, "start_timeout_seconds": 15}}))
-        descriptor = json.loads((ROOT / FIXTURE / "descriptor.json").read_text())
+        descriptor = json.loads((ROOT / self.fixture / "descriptor.json").read_text())
         descriptor["rigs"] = [RIG]
-        descriptor["launch"]["regression_command"] = "true"
+        if self.project["regression_command"]:
+            descriptor["launch"]["regression_command"] = self.project["regression_command"]
         (config / "project-descriptors" / "fx.json").write_text(json.dumps(descriptor))
         (self.root / ".gitignore").write_text("config/\n")
-        # The product, launchable, with its Validated Prototype.
-        shutil.copytree(ROOT / FIXTURE, self.root / FIXTURE, ignore=shutil.ignore_patterns("__pycache__"))
+        # The product, launchable; the first project with its Validated Prototype.
+        shutil.copytree(ROOT / self.fixture, self.root / self.fixture, ignore=shutil.ignore_patterns("__pycache__"))
         self.git("init", "-q", "-b", "main")
         self.git("add", "-A")
         self.git("commit", "-q", "-m", "base")
@@ -179,27 +233,30 @@ class City:
         (self.workspace / "code-review-plan.json").write_text(json.dumps(["favorable"]))
         # The Evaluator is not sent in the pass that sends the reviewer (its
         # door defers once): review and evaluation are observed one by one.
-        (self.workspace / "evaluation-plan.json").write_text(json.dumps(["door-defers", {}]))
-        self.remember(inject=inject, base=self.git("rev-parse", "HEAD"))
+        (self.workspace / "evaluation-plan.json").write_text(json.dumps(["door-defers", self.project["evaluation"]]))
+        self.remember(inject=inject, project=project, base=self.git("rev-parse", "HEAD"))
         return {"convoy": CONVOY, "ticket": TICKET, "repo": str(self.root), "environment": self.state_environment()}
 
     def publish(self) -> dict:
         base = json.loads(self.memo.read_text())["base"]
+        interface = self.project["interface"]
+        prototype = (
+            f"## Validated Prototype\n\n- branche : main\n- commit : {base}\n- chemin : {self.fixture}/prototype\n"
+            f"- états : empty, content\n- Prototype Fold : ce ticket\n\n") if interface else ""
         description = (
-            f"## Acceptance criteria\n\n- [ ] {CRITERION}\n\n"
-            f"## Validated Prototype\n\n- branche : main\n- commit : {base}\n- chemin : {FIXTURE}/prototype\n"
-            f"- états : empty, content\n- Prototype Fold : ce ticket\n\n## Target rigs\n\n{RIG}")
+            f"## Acceptance criteria\n\n- [ ] {self.project['criterion']}\n\n{prototype}"
+            f"## Target rigs\n\n{RIG}")
         beads = {
             CONVOY: {"title": "convoi de la fixture", "status": "open", "issue_type": "convoy",
                      "metadata": {"gc.spec_id": SPEC}, "tracks": [TICKET]},
-            TICKET: {"title": "ticket d'interface de la fixture", "status": "open", "issue_type": "task",
+            TICKET: {"title": "ticket de la fixture", "status": "open", "issue_type": "task",
                      "description": description, "metadata": {"gc.ticket_kind": "vertical_slice"}, "blocks": []},
             SPEC: {"title": "Spec de la fixture", "status": "open", "issue_type": "task",
                    "description": "## User Stories\n\n1. As Benjamin, I want la liste des éléments."},
         }
         self.tracker.write_text(json.dumps({"beads": beads, "sessions": []}))
-        self.state("mark", CONVOY, "--demonstration-line", f"{TICKET}={LINE}", "--user-stories", f"{TICKET}=1",
-                   "--prototype-fold", TICKET)
+        self.state("mark", CONVOY, "--demonstration-line", f"{TICKET}={self.project['line']}",
+                   "--user-stories", f"{TICKET}=1", *(("--prototype-fold", TICKET) if interface else ()))
         self.run(BIN / "spec-integration", "open", CONVOY, "--repo", self.root, "--protected", "main")
         return {"published": True}
 
@@ -238,8 +295,8 @@ class City:
         if not shown.get("branch"):
             self.state("set-branch", CONVOY, TICKET, "--branch", BRANCH)
             self.run(FAKE_GC, "bd", "update", TICKET, "--status", "in_progress")
-            red = self.commit({f"{FIXTURE}/tests/test_critere_fixture.py": "# test de critère du ticket\n"},
-                              "tests de critère")
+            name, content = self.project["criterion_test"]
+            red = self.commit({f"{self.fixture}/tests/{name}": content}, "tests de critère")
             ticket_proofs.prove_red(env, self.root, CONVOY, TICKET, red, base)
             return "session:red"
         if not tdd.get("freeze"):
@@ -261,8 +318,9 @@ class City:
         else:
             if memo["inject"] == "criterion-edited" and not memo.get("injected"):
                 state = json.loads(self.tracker.read_text())
+                criterion = self.project["criterion"]
                 state["beads"][TICKET]["description"] = state["beads"][TICKET]["description"].replace(
-                    CRITERION, CRITERION + " ou deux")
+                    criterion, criterion + " ou deux")
                 self.tracker.write_text(json.dumps(state))
                 self.remember(injected=True)
                 before = self.tracker.read_bytes()
@@ -284,13 +342,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="delivery-driver")
     parser.add_argument("--workspace", type=Path, required=True)
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("prepare").add_argument("--inject", choices=INJECTIONS, default="none")
+    prepare = sub.add_parser("prepare")
+    prepare.add_argument("--inject", choices=INJECTIONS, default="none")
+    prepare.add_argument("--project", default=DEFAULT_PROJECT)
     for name in ("publish", "advance", "stop"):
         sub.add_parser(name)
     args = parser.parse_args()
     city = City(args.workspace.resolve())
     if args.command == "prepare":
-        answer = city.prepare(args.inject)
+        if args.project not in PROJECTS:
+            raise SystemExit(f"delivery-driver: unknown project of the fixture: {args.project} "
+                             f"(known: {', '.join(PROJECTS)})")
+        answer = city.prepare(args.inject, args.project)
     elif args.command == "publish":
         answer = city.publish()
     elif args.command == "advance":

@@ -315,6 +315,47 @@ class FixtureCityOracleTest(unittest.TestCase):
         self.assertEqual("", proc.stdout)
         self.assertIn("closed outside the gate", proc.stderr)
 
+    # --- the same walk on the second project of the fixture (T35, af-f62cxt) ------
+
+    def test_one_ticket_of_the_second_project_walks_the_same_flow_and_is_closed_by_the_ticket_end_gate(self):
+        proc = self.deliver("one-ticket-second-project.json")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("delivery-fixture-city-api", result["project"])
+        self.assertEqual(DELIVERY_STATES, result["lifecycle"])
+        self.assertEqual(DELIVERY_STATES, [state for seen in result["observations"] for state in seen])
+        self.assertTrue(result["closed"])
+        gate = result["ticket_end"]
+        self.assertEqual("ticket-end/v1", gate["version"])
+        self.assertEqual([(number, name, "pass") for number, name in enumerate(GATE_CONDITIONS, start=1)],
+                         [(entry["number"], entry["name"], entry["verdict"]) for entry in gate["conditions"]])
+        self.assertTrue(result["evidence"]["verified"])
+        for piece in ("tdd_red", "tdd_freeze", "tdd_green", "demonstration", "handoff_records", "merged_tests",
+                      "evaluation.c1", "evaluation.demo"):
+            self.assertIn(piece, result["evidence"]["pieces"])
+        # Its interface is not a web page: no screen was compared to a prototype.
+        self.assertNotIn("fidelity", result["evidence"]["pieces"])
+        # The same flow as the first project: same states, observed at the
+        # same events, and the same list of conditions with the same verdicts.
+        first = json.loads(self.deliver("one-ticket-end-to-end.json").stdout)
+        self.assertNotIn("project", first)
+        for same in ("lifecycle", "observations", "closed", "ticket_end", "interfaces"):
+            self.assertEqual(first[same], result[same], same)
+
+    def test_a_delivery_scenario_naming_a_project_the_driver_does_not_know_fails_the_oracle(self):
+        scenario = json.loads((FIXTURES / "one-ticket-second-project.json").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            for project, named in (("projet-inconnu", "projet-inconnu"), ("../ailleurs", "project"), (3, "project")):
+                broken = Path(tmp) / "scenario.json"
+                broken.write_text(json.dumps({**scenario, "project": project}))
+                proc = subprocess.run((str(ORACLE), "run", str(broken), "--delivery-driver", str(DELIVERY_DRIVER)),
+                                      cwd=ROOT, text=True, capture_output=True, check=False)
+                self.assertEqual(1, proc.returncode, project)
+                self.assertEqual("", proc.stdout)
+                self.assertIn(named, proc.stderr)
+
     def test_a_scenario_is_walked_only_with_the_adapters_of_its_contract(self):
         planning = ("--operator", str(OPERATOR), "--publication-door", str(OPERATOR))
         proc = self.deliver("one-ticket-end-to-end.json", *planning)
