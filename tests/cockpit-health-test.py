@@ -336,6 +336,34 @@ class CockpitHealthZoneTest(unittest.TestCase):
         ) else None)
 
     # ------------------------------------------------------------------
+    def test_maintenance_proposal_is_information_and_a_fieldless_one_an_anomaly(self):
+        # ADR-0029 points 2 and 4: a maintenance proposal the factory holds
+        # is said here (never in « Ce qui t'attend ») and is not a problem;
+        # a proposal no door wrote is an anomaly to reformulate or close.
+        self.set_beads([{
+            "id": "af-maint1", "status": "open", "labels": ["proposal"],
+            "metadata": {
+                "gc.proposal_classe": "maintenance", "gc.proposal_state": "prise_en_charge",
+                "gc.proposal_quoi": "filtrer les pages mortes", "gc.proposal_pourquoi": "trois pages",
+                "gc.proposal_que_faire": "[]", "gc.proposal_horodatage": "2026-10-07T06:00:00Z",
+            },
+        }])
+        self.start_cockpit()
+        line = self.wait_for_line_containing("corrige seule")
+        self.assertEqual("ok", line["kind"])
+        self.assertNotIn("af-maint1", line["text"])
+        self.assertNotIn("Mayor", self.home())
+        health = self.health()
+        self.assertEqual(1, len(health["lines"]))
+        self.assertTrue(health["ok"])  # information, not a problem
+
+        self.set_beads([{"id": "af-legacy1", "status": "open", "labels": ["proposal"], "metadata": {}}])
+        line = self.wait_for_line_containing("reformuler par la porte")
+        self.assertEqual("warn", line["kind"])
+        self.assertNotIn("af-legacy1", line["text"])
+        self.assertFalse(self.health()["ok"])
+
+    # ------------------------------------------------------------------
     def test_loop_order_failure_and_red_ci_lines(self):
         now = time.time()
         self.set_beads([

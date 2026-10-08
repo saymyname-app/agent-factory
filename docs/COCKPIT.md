@@ -480,6 +480,31 @@ says so. Nothing is shown as recorded before the server said so.
 bead and trigger no re-read. To undo: drop the `rafraichi` line in
 `core/server.py`.
 
+## Which proposal waits on Benjamin (ADR-0029)
+
+Intent (Benjamin, his words, 2026-10-07): « oui pour R1, enregistre la
+décision et lance la puce » — R1: two classes of proposal at creation,
+`maintenance` (orders, guards, tests, docs) and `decision` (behaviour,
+method, spend, what he sees); the `maintenance` class is not shown to him.
+Mechanism (agent interpretation): `requests/proposals.py` is the one
+reading of a `proposal` bead's class, shared by the inbox and the health
+zone, so a proposal is never in both and never in neither:
+
+| `gc.proposal_classe` | Where it shows | Why |
+|---|---|---|
+| `decision` | « Ce qui t'attend », Quand tu veux, with its « Recommandé » option | ADR-0029 point 3 |
+| `maintenance` | health zone, one line « L'usine corrige seule N défaut(s) qu'elle a constaté(s) depuis … » (kind `ok`: information, not a problem — the zone stays « ok ») ; the journal when the door takes it over or reconverts it | ADR-0029 point 2 |
+| absent, fields present (the door wrote it before the class existed — the proposals open on 2026-10-07) | « Ce qui t'attend », as before | still Benjamin's to treat; in doubt, `decision` (point 6) |
+| absent, no `gc.proposal_*` field at all (never written by the door) | health zone, « N proposition(s) sans champs lisibles : à reformuler par la porte des propositions, ou à fermer » (kind `warn`) ; no longer a request | ADR-0029 point 4 |
+
+A maintenance proposal in state `prise_en_charge` (the door filed its bug
+bead) or `ouverte` is counted in the health line; `a_planifier`,
+`rejetee` and `resolue` leave it. An unknown class value reads as
+`decision`: a producer's mistake must reach the operator, never vanish.
+
+`tests/cockpit-requests-test.py` (inbox side) and
+`tests/cockpit-health-test.py` (health side) cover this through HTTP.
+
 ## Journal of resolved requests (af-mjfvwx)
 
 `GET /journal` (linked under « Ce qui t'attend ») and `GET /api/journal`
@@ -499,6 +524,7 @@ comments, which are empty on a bead Benjamin answered:
 | decision cleared without an answer | `bin/escalation-door clear` | `DECISION CLEARED: …` | `gc.escalation_cleared_at` (latest clearance; absent before 2026-10-06) |
 | proposal accepted / rejected | `bin/proposal-door` | `PROPOSITION ACCEPTÉE par …` / `PROPOSITION REJETÉE par … — <raison>` | `gc.proposal_response_at` |
 | proposal resolved by a merged delivery | `bin/proposal-door resoudre` (called by `bin/deliver-close`, `bin/upstream-skills-check`, or by hand) | `PROPOSITION RÉSOLUE par … — <preuve>` | `gc.proposal_response_at` |
+| maintenance proposal taken over by the factory / reconverted into a decision (ADR-0029) | `bin/proposal-door` | `PROPOSITION PRISE EN CHARGE par … — ticket <bead>` / `PROPOSITION RECONVERTIE en décision par … — <raison>` | `gc.proposal_response_at` |
 | relance, chantier accepté | `cockpit.actions.trace` | `Cockpit: <quoi> sur <cible> (…) — <quand>, par <acteur>` | the note itself |
 
 The question an entry answers is the `NEEDS BENJAMIN: …` / `PROPOSITION: …`
