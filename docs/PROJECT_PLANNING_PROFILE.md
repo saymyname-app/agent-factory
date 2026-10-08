@@ -194,6 +194,7 @@ declaring `launch` at all requires every one of these sub-fields, or
 | `k` | consecutive green runs required at the ticket's green step. |
 | `red_error_types` | optional — error types (e.g. `AttributeError`) that are a valid red on a library seam, where a missing symbol is the red. Absent: only an assertion failure is a red. |
 | `screens` | optional, required by `bin/prototype-fidelity` (T16, `docs/PROTOTYPE_FIDELITY.md`) — the screens compared to the Validated Prototype: `[{name, path, states}]`, the path the launched product serves the screen at and its prototyped states. A state is the dataset of the same name and belongs to one screen; a duplicate name, a path that does not start with `/`, an empty list of states or a state that is no declared dataset is rejected. |
+| `anchors` | optional — the equivalent of the anchors for an interface that is **not a web page** (a command line, an API; T35, spec af-wf4w5r §12). Exactly one of: `{"equivalent": [{name, entry_point, observable}]}`, what stands for the anchors of a screen — each a unique name, the declared entry point that answers it (`"METHOD path"`) and the observable read there (a field, an exit status, a line of output); or `{"not_applicable": "<reason>"}`. An empty list, a missing reason, both forms at once, an unknown field, a duplicate name or an entry point that is not declared is rejected. `describe` renders it. |
 | `import_rule` | optional, required by `bin/tdd-step` when `seam_mode` is `import_rule` — `{product_import, entry_point_import}`, two regular expressions applied to each line of a test: a line that imports the product must import one of its entry points. |
 
 A descriptor with no `launch` block at all (e.g. the Factory's own
@@ -225,3 +226,33 @@ the port. Two concurrent launches each get their own port and worktree and
 do not disturb each other; stopping one leaves the other answering.
 `tests/project-launch-test.py` and `tests/fixtures/delivery-fixture-city/`
 are the fixture project and its proof.
+
+### The same flow whatever the language or the layer (T35)
+
+The Delivery Fixture City holds a second project,
+`tests/fixtures/delivery-fixture-city-api/`: a JSON API on Node.js
+(`server.js`: `GET /items`, `GET /health`), another language than the first
+project and no web page. Its profile declares the same `launch` block — the
+recipe names `node`, the test command is its own `tests/harness.js` (one
+JUnit XML report per test, an `AssertionError` a `failure`, anything else an
+`error` with its type), the regression command its `tests/regression.js` —
+no `screens`, and `anchors.equivalent` in their place.
+
+No script of the flow knows which project it works on: the launcher, the red
+step, the freeze, the green step, the prefactoring regime, the evaluation,
+the merge and the ticket-end gate read the profile. A ticket of a project
+with no screen and no Validated Prototype passes condition 4 of the gate
+(fidelity) as a ticket that touches no screen.
+
+| Proof | What it shows |
+| --- | --- |
+| `tests/fixture-second-project-test.py` (CI) | the launch command starts it by its recipe and its probe answers; `tdd-step red`, `freeze`, `green` and `prefactoring` pass on one of its tickets, with criterion tests written in JavaScript; each refusal leaves the tracker and the evidence store as they were; `describe` renders the anchors' equivalent |
+| `one-ticket-second-project.json` (CI, `docs/FIXTURE_CITY_ORACLE.md`) | one of its tickets walks the nine lifecycle states and is closed by the ticket-end gate, observed at the same events and with the same verdicts as a ticket of the first project |
+| `tests/second-project-isolated-city-test.sh` (local-only) | on a real controller, order and tracker, one of its tickets goes from started to closed by the gate through the real `mol-ticket-author`, `mol-code-review` and `mol-ticket-evaluation` |
+
+Limits. The `anchors` declaration is read by `describe` only: no gate
+compares a delivered API to a prototype, and a profile with neither `screens`
+nor `anchors` is still accepted. The black-box seam of `bin/tdd-step` records
+HTTP entry points: a project whose only interface is a command line has no
+mechanical proof of its seam yet. A recipe names its interpreter itself
+(`node`); only `{python}` is substituted by the launcher.

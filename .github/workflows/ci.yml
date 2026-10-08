@@ -66,6 +66,13 @@ jobs:
               config/fixture-city-bwrap.apparmor
           fi
 
+      # The second project of the Delivery Fixture City is a JSON API on
+      # Node.js (T35, af-f62cxt): its launch recipe, its test command and its
+      # regression command run `node`. The runner ships it in /usr/local/bin,
+      # which is on the bare PATH the Fixture City Oracle gives its adapters.
+      - name: Ensure Node.js for the second fixture project
+        run: PATH=/usr/local/bin:/usr/bin:/bin node --version
+
       # Every tests/*.sh and tests/*.py file runs here automatically -- adding
       # a test is adding a file, not editing this workflow (P01, af-tltj3).
       # A file that needs the live gc/bd runtime and a Dolt server (which this

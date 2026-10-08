@@ -17,7 +17,8 @@ one entry per call, the last one repeated:
 
     {"look_for": "<text>",          a criterion, or the demonstration line, is « observed » when the page of the
      "dataset": "<name>",           product launched on that dataset (default: the first one) shows that text,
-     "states": {"<n>|demo": {...}}} « not_observed » otherwise; `states` gives the state of an item instead
+     "path": "<path>",              « not_observed » otherwise; `path` is the entry point captured instead of the
+     "states": {"<n>|demo": {...}}} home page (a product with no web page); `states` gives the state of an item instead
     "silent"                        the session starts and never answers
     "closed"                        the session closes its bead without states
     "door-refuses"                  the door refuses the dispatch
@@ -74,11 +75,12 @@ product = next((entry for entry in brief["environments"] if entry["dataset"] == 
 
 
 def observe(name):
-    """Capture the home page of the launched product; answer the piece and what it shows."""
+    """Capture the home page of the launched product, or the entry point the plan names; answer the piece
+    and what it shows."""
     piece = f"evaluation.{name}"
     captured = subprocess.run(
         [CAPTURE, "command", convoy, ticket, "--piece", piece, "--launch-state", product["launch_state"], "--",
-         sys.executable, "-c", FETCH, product["address"] + "/"], env=session, capture_output=True, text=True, check=True)
+         sys.executable, "-c", FETCH, product["address"] + given.get("path", "/")], env=session, capture_output=True, text=True, check=True)
     return piece, json.loads(Path(json.loads(captured.stdout)["path"]).read_text(encoding="utf-8"))["output"]
 
 

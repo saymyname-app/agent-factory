@@ -208,7 +208,7 @@ itself can honor.
 ## The delivery of one ticket (T19)
 
 A second kind of scenario (`agent-factory-fixture-delivery-scenario/v1`)
-walks one interface ticket of a marked convoy through the delivery flow and
+walks one ticket of a marked convoy through the delivery flow and
 requires its lifecycle, in this order and with none skipped:
 `published`, `started`, `red`, `frozen`, `coded`, `reviewed`, `evaluated`,
 `merged`, `closed` (by the ticket-end gate, `docs/TICKET_END.md`).
@@ -220,8 +220,8 @@ requires its lifecycle, in this order and with none skipped:
 ```
 
 The **driver** makes the flow advance; the **oracle** observes. The driver
-is called as `<driver> --workspace <dir> prepare [--inject NAME] | publish |
-advance | stop`. `prepare` says where the public state is read (convoy,
+is called as `<driver> --workspace <dir> prepare [--inject NAME] [--project
+NAME] | publish | advance | stop`. `prepare` says where the public state is read (convoy,
 ticket, repository, environment of the state commands). Each `advance`
 plays one event: one pass of the Factory's order (the real
 `bin/convoy-advance`) or what one agent session leaves behind. After each
@@ -252,6 +252,16 @@ The scenario says what the walk must end in: `expect: {closed: true}`, or
 | `one-ticket-end-to-end.json` | nothing goes wrong | the nine states, closed by the gate |
 | `one-ticket-missing-condition.json` | a criterion is edited on the ticket once its author has finished | stops at `evaluated`; the gate names conditions 1 and 6 |
 | `one-ticket-closed-by-hand.json` | the ticket is closed in the tracker outside the gate | the oracle fails |
+| `one-ticket-second-project.json` | nothing goes wrong, on a ticket of the second project of the fixture (T35) | the nine states, closed by the gate |
+
+A scenario may name the `project` of the fixture its ticket belongs to; the
+oracle hands the name to the driver (`prepare --project`) and reports it in
+its result. Absent, the ticket is an interface ticket of the first project
+(`delivery-fixture-city`: a web page in Python, with a Validated Prototype).
+`delivery-fixture-city-api` is the second one: a JSON API on Node.js, with no
+web page and no prototype (`docs/PROJECT_PLANNING_PROFILE.md`). The oracle
+requires the same lifecycle of both and reads the same public state; what the
+flow does differently is read by the flow in the profile of the project.
 
 The result is one deterministic JSON object
 (`agent-factory-fixture-delivery-result/v1`): the lifecycle, what each
@@ -272,5 +282,9 @@ Limits of the reference driver (`tests/fixtures/fixture-city/delivery-driver`):
   the integration branch) without calling `bin/ticket-graph-publish`.
 - The browser of the fidelity check is the fake one of
   `tests/fixtures/prototype-fidelity/browser`.
+- On the second project the product is launched, and the merged result
+  tested, with Node.js: when `node` is not on the bare `PATH` the oracle
+  gives its adapters, the driver adds the user's `~/.local/bin` to the `PATH`
+  of the order, and fails if it is not there either.
 - The walk ends at the closed ticket: the end of the Spec, the Delivered
   Outcome and the acceptance are not walked yet.
