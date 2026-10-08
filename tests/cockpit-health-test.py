@@ -303,14 +303,27 @@ class CockpitHealthZoneTest(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_partial_supervisor_read_is_said_not_hidden(self):
         self.set_beads([])
-        self.fake_gc.set_status(partial_errors=["store health: list timed out"])
+        self.fake_gc.set_status(partial_errors=["sessions: loading session snapshot timed out after 1s"])
         self.start_cockpit()
         line = self.wait_for_line_containing("une partie de son état est illisible")
         self.assertEqual("warn", line["kind"])
-        self.assertNotIn("store health", self.home())  # gc's raw text never reaches the page
+        self.assertNotIn("session snapshot", self.home())  # gc's raw text never reaches the page
 
         self.fake_gc.set_status(partial_errors=[])
         wait_until(lambda: self.health() if self.health()["lines"] == [] else None)
+
+    def test_partial_on_a_block_the_cockpit_does_not_read_is_not_a_health_line(self):
+        # af-jew53p: gc 1.4.1 fails its own store measure on every read; the
+        # cockpit shows nothing of that block and the operator can do nothing.
+        store_health = "store health: counting retained bead rows: list timed out: context deadline exceeded"
+        self.set_beads([])
+        self.fake_gc.set_status(partial_errors=[store_health, "mail: count timed out after 1s"])
+        self.start_cockpit()
+        self.wait_for_line_containing("une partie de son état est illisible")
+
+        self.fake_gc.set_status(partial_errors=[store_health])
+        wait_until(lambda: self.health() if self.health()["lines"] == [] else None)
+        self.assertTrue(self.health()["ok"])
 
     # ------------------------------------------------------------------
     def test_mayor_first_escalation_not_promoted(self):
