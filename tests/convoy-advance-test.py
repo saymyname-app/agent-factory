@@ -2094,7 +2094,7 @@ class ConvoyAdvanceTest(unittest.TestCase):
                          call)
         rounds = self.convoy_shown()["outcome_evaluation"]["rounds"]
         self.assertEqual([("favorable", tip)], [(entry["outcome"], entry["commit"]) for entry in rounds])
-        self.assertEqual([1, 2, 3], [story["number"] for story in rounds[0]["stories"]])
+        self.assertEqual([1], [story["number"] for story in rounds[0]["stories"]])
 
         # Every story observed with its piece: the five conditions are met.
         second = self.advance(CONVOY)

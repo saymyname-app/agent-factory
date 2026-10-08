@@ -7,8 +7,12 @@ writes one: `bin/evidence-capture` runs the command, or drives the browser,
 itself, and records what it got. The piece goes into the Factory's **evidence
 store**, outside any Git history, filed by Spec and by ticket; its fingerprint
 goes on the ticket in the tracker through `bin/convoy-state add-evidence`
-(`docs/CONVOY_STATE.md`). A piece the tool did not produce is refused by
-`verify`.
+(`docs/CONVOY_STATE.md`). A piece of the end of the Spec, captured on the
+assembled product by the Evaluator of the end (T24,
+`docs/OUTCOME_EVALUATION.md`), names the convoy in the place of the ticket
+(`evidence-capture command CONVOY CONVOY …`): it is filed under
+`<store>/<spec id>/<convoy id>/` and its fingerprint goes on the convoy. A
+piece the tool did not produce is refused by `verify`.
 
 The tool applies to a convoy that carries the new-flow mark only. On any
 other convoy it answers « pas un convoi du nouveau flux » (exit 4): nothing

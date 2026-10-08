@@ -1,4 +1,4 @@
-# The end-of-Spec gate (T23, Spec af-wf4w5r §9, points 1 to 3)
+# The end-of-Spec gate (T23 and T24, Spec af-wf4w5r §9, points 1 to 5)
 
 ## What it is for
 
@@ -7,7 +7,10 @@ not the Spec being verified. Once every ticket of the convoy is closed, code
 renders three mechanical verdicts, in this order, **all tied to one commit**
 of the integration branch that holds the tip of the protected branch. No
 agent renders them, and no agent sets a deviation or a « non fait » aside
-(user stories 56 and 59).
+(user stories 56 and 59). On that same commit, two more conditions are read
+in what the Evaluator of the end handed in: the Outcome Evaluation and the
+findings « hors ticket » (T24, `docs/OUTCOME_EVALUATION.md`, user stories 57
+and 60).
 
 A convoy **without** the mark is not concerned: the gate answers « pas un
 convoi du nouveau flux » (exit 4) and writes nothing.
@@ -24,7 +27,7 @@ is not red (`docs/CONVOY_ADVANCE.md`).
 To know where the end of a Spec stands, run `check`: each condition has a
 verdict and one line that says what was read.
 
-## The three conditions (list `spec-end/v1`)
+## The five conditions (list `spec-end/v2`)
 
 | # | Name | Met when |
 | --- | --- | --- |
@@ -32,10 +35,19 @@ verdict and one line that says what was read.
 | 2 | `tests` | The integration branch has taken up the protected branch and the regression command of the project's profile ends with code 0 on that tip (`bin/spec-integration take-up`, `docs/SPEC_INTEGRATION.md`). |
 | 3 | `fidelity` | On that same tip, the mechanical fidelity check is green on every anchor of every prototyped state, for every screen of the profile (`bin/prototype-fidelity check`, `docs/PROTOTYPE_FIDELITY.md`). A deviation on an anchor a resolved Planning Exception accepted is not an open one. A convoy none of whose tickets names a Validated Prototype passes with « sans objet ». |
 
+| 4 | `outcome_evaluation` | Once 1 to 3 are green: every numbered user story of the Spec is « observée avec preuve » on the assembled product at that commit (`bin/outcome-evaluation verdict`), and no finding « hors ticket » is left unclassified. |
+| 5 | `findings` | Every finding « hors ticket » of a Ticket Handoff is in a final state: « réparé », « proposition pour Benjamin » or « écarté ». |
+
 A condition that is not met stops the gate there: the following ones are
 **not launched** (`not_run`). Changing the list means a new version.
-`bin/convoy-state` holds the same names and refuses a record that is not the
-three conditions of the version it knows, all passing.
+Conditions 1 to 3 are the **mechanical** ones: their verdicts are what the
+gate records, and `bin/convoy-state` holds the same names and refuses a
+record that is not those three, all passing. Conditions 4 and 5 are not
+recorded by the gate: they are read at each call in what the Evaluator of
+the end handed in, which is tied to the commit of the three verdicts. The
+gate launches no agent; `bin/convoy-advance` has the evaluation settled
+(`bin/outcome-evaluation settle`). A record written under `spec-end/v1` is
+read as outdated: everything is replayed.
 
 ## The registry: tracked elements
 
@@ -95,7 +107,7 @@ and the tip of the protected branch that commit holds:
 
 ```json
 {"at": "…", "commit": "<tip of the integration branch>", "protected": "<tip of the protected branch>",
- "version": "spec-end/v1",
+ "version": "spec-end/v2",
  "conditions": [{"number": 1, "name": "registry", "verdict": "pass", "detail": "…"}, "… three entries"],
  "records": {"tests": {"command": "…", "exit_code": 0, "commit": "…"}, "fidelity": {"commit": "…", "prototypes": ["…"]}}}
 ```
@@ -106,18 +118,22 @@ now: as soon as the integration branch holds one commit more, or the
 protected branch moved, the three verdicts are `stale` (« périmés ») and
 everything is to replay. `run` on the tip the verdicts were rendered on
 replays nothing and writes nothing (`replayed: false`); on another tip it
-runs the three conditions again and rewrites the record.
+runs the three conditions again and rewrites the record. Conditions 4 and 5
+follow: an Outcome Evaluation handed in at another commit is to replay on
+the tip.
 
 ## Refusals and exit status
 
 Every answer is one JSON object on stdout: `conditions` (number, name,
 label, verdict `pass` / `fail` / `not_run` / `stale`, detail), `missing`,
-and for `run` what it did (`refused`, `requests`, `red`, `end_rounds`,
-`replayed`).
+`mechanical` (whether the three mechanical verdicts are green on the tip,
+their commit, and why not), and for `run` what it did (`refused`,
+`requests`, `red`, `end_rounds`, `replayed`). `run` names in `missing` the
+conditions that refused; `check` every condition that is not green.
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | The three verdicts are green and hold on the current tip. |
+| 0 | The five conditions are met on the current tip. |
 | 1 | Refused, or a condition is not met: it is named (`condition N (label) non réunie : …`). |
 | 3 | The convoy is in an « état sans règle »: no verdict. |
 | 4 | The convoy does not carry the mark. |
@@ -147,16 +163,17 @@ and for `run` what it did (`refused`, `requests`, `red`, `end_rounds`,
 - **A takeover of the protected branch in conflict** is a refusal of the
   gate at each pass, with no red, no repair and no round: a conflict is not
   a red control (same limit as the merge, `docs/SPEC_INTEGRATION.md`).
-- **Only the Ticket Handoff is tracked.** A TDD amendment and a finding
-  « hors ticket » are not tracked elements; the findings out of ticket are
-  T24's.
+- **Only the Ticket Handoff is tracked.** A TDD amendment is not a tracked
+  element. A finding « hors ticket » is not one either: it is classified by
+  the Evaluator of the end and read by condition 5
+  (`docs/OUTCOME_EVALUATION.md`).
 - **The repair of tracked elements is written by code** from the text of the
   Handoff: one criterion, on the entry point of the ticket's demonstration
   line. A sharper criterion is a Planning Exception, as for any ticket.
 - **The gate verifies; it accepts nothing and closes nothing.** The final
-  code review, the Outcome Evaluation and the acceptance by Benjamin are
-  T25, T24 and later tickets; the round counted here is not yet compared to
-  a bound.
+  code review and the acceptance by Benjamin are T25 and later tickets; the
+  round counted here is not yet compared to a bound, and a story still not
+  observed after its repair counts no round.
 - **The Fixture City Oracle has no scenario for the end of a Spec**, and no
   isolated-city trial runs the gate under the real controller and order:
   on the real tracker only the state writes were replayed (Proof).
@@ -178,6 +195,8 @@ and for `run` what it did (`refused`, `requests`, `red`, `end_rounds`,
 - `tests/convoy-advance-test.py`: the gate run by the pass once every ticket
   is closed and not before, a registry refusal and red tests as outcomes, a
   gate that cannot run as a failure.
+- `tests/outcome-evaluation-test.py` and the suites above: conditions 4 and
+  5 (`docs/OUTCOME_EVALUATION.md`, Proof).
 - `tests/spec-integration-test.py` (`take-up`), `tests/convoy-state-test.py`
   (tracked elements, `--item`, `set-item-repair`, `record-spec-end`,
   `--check`, `--end-round`).
