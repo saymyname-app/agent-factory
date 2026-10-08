@@ -2126,24 +2126,24 @@ class ConvoyAdvanceTest(unittest.TestCase):
 
     def test_a_drafted_repair_of_a_story_not_observed_that_the_patch_door_cannot_publish_fails_the_pass(self):
         self.every_ticket_closed()
-        # Story 3 is looked for on a page the assembled product does not serve.
-        self.outcome_evaluated({"stories": {"3": {"path": "/version"}}})
+        # The story of the Spec is looked for on a page the assembled product does not serve.
+        self.outcome_evaluated({"stories": {"1": {"path": "/version"}}})
         self.advance(CONVOY)
         state = self.convoy_shown()["outcome_evaluation"]["state"]
-        self.assertEqual(("unfavorable", [3]), (state["verdict"], state["not_observed"]))
+        self.assertEqual(("unfavorable", [1]), (state["verdict"], state["not_observed"]))
         before = self.tickets_snapshot()
 
         answer = self.advance(CONVOY, expect=EXIT_REFUSED)
 
         # This convoy was not published by the publication door: nothing to revise.
         (refused,) = self.of(answer, "outcome_repairs")
-        self.assertEqual(3, refused["story"])
+        self.assertEqual(1, refused["story"])
         self.assertIn("porte de patch", refused["error"])
         self.assertFalse(answer["ok"])
         # The gate names the story; nothing is started, no ticket is touched.
         ending = self.spec_end_of(answer)
         self.assertEqual([4], ending["missing"])
-        self.assertIn("user story 3", ending["reason"])
+        self.assertIn("user story 1", ending["reason"])
         self.assertEqual(([], []), (self.started(answer), self.slung()))
         self.assertEqual(before, self.tickets_snapshot())
         self.assertEqual(1, len(self.outcome_launches()))

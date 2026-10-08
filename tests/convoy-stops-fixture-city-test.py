@@ -416,7 +416,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
 
         # The gate of the end of the Spec, run by the pass: the tests are red on the tip.
         ending = first["spec_end"]
-        self.assertEqual({"registry": "pass", "tests": "fail", "fidelity": "not_run"}, ending["verdicts"])
+        self.assertEqual({"registry": "pass", "tests": "fail", "fidelity": "not_run", "outcome_evaluation": "not_run", "findings": "not_run"}, ending["verdicts"])
         self.assertEqual(1, ending["end_rounds"])
         control = self.shown()["convoy"]["integration_red"]["control"]
         self.assertIn(REGRESSION, control)
@@ -473,7 +473,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
 
         # The registry refuses and names the element: an outcome of the pass, asked of the operator.
         ending = first["spec_end"]
-        self.assertEqual({"registry": "fail", "tests": "not_run", "fidelity": "not_run"}, ending["verdicts"])
+        self.assertEqual({"registry": "fail", "tests": "not_run", "fidelity": "not_run", "outcome_evaluation": "not_run", "findings": "not_run"}, ending["verdicts"])
         self.assertIn(self.NOT_DONE, ending["reason"])
         self.assertEqual([(t4, ["not_done.1"])], [(entry["ticket"], entry["items"]) for entry in ending["requests"]])
         listed = [line for line in self.run_ok(ESCALATION, "list").stdout.splitlines() if line.strip().startswith(f"{t4} ")]
