@@ -398,6 +398,32 @@ class EvidencePackTest(outcome.Harness):
         # Still the nine rubrics, and the one that is mandatory.
         self.assertEqual(9, len(re.findall(r'<section id="rubrique-\d">', self.page(answer))))
 
+    def test_generation_on_a_convoy_whose_rounds_of_the_end_are_stopped_says_the_stop_among_its_records(self):
+        commit = self.verified()
+        detail = "2 tour(s) de réparation consommé(s) (borne : 2), et la fin de Spec est encore refusée"
+        self.edit(CONVOY, **{"gc.flow.end_stop": json.dumps({
+            "reason": "end_rounds_exhausted", "detail": detail, "commit": commit, "source": "outcome_evaluation",
+            "rounds": 2, "at": "2026-10-08T10:00:00Z"})})
+
+        first = self.generate()
+
+        self.assertFalse(first["conforming"])
+        records = self.rubric(self.page(first), 8)
+        for said in ("Tours de réparation de fin arrêtés", "tours de réparation épuisés", html.escape(detail), commit,
+                     "2026-10-08T10:00:00Z"):
+            self.assertIn(said, records)
+        # The « non conforme » request is written once the page exists: it does not change the page.
+        self.state("end-stop-raised", CONVOY, "--bead", CONVOY)
+        self.assertIn("request", self.show()["convoy"]["end_stop"])
+        self.assertEqual(first["digest"], self.generate()["digest"])
+
+    def test_generation_on_a_convoy_whose_rounds_are_not_stopped_says_no_stop(self):
+        self.verified()
+
+        records = self.rubric(self.page(self.generate()), 8)
+
+        self.assertNotIn("arrêtés", records)
+
     def test_generation_on_a_convoy_whose_tickets_are_not_all_closed_writes_a_non_conforming_page(self):
         self.one_closed()
 
@@ -514,6 +540,86 @@ class EvidencePackTest(outcome.Harness):
         self.assertEqual(EXIT_REFUSED, status, answer)
         self.assertEqual({"stale"}, {entry["verdict"] for entry in answer["conditions"]})
         self.assertEqual(len(NAMES), len(answer["conditions"]))
+
+    # --- Delivered: every condition of the end green on one commit, complete pack included (T26) ----------------
+
+    def outcome_delivered(self):
+        return self.show()["convoy"]["delivered"]
+
+    def refused_delivered(self, commit, digest):
+        """`record-delivered` called directly: refused, and nothing written."""
+        before = self.everything()
+        proc = self.run_cmd(gate.STATE_TOOL, "record-delivered", CONVOY, "--commit", commit, "--pack-digest", digest)
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(before, self.everything())
+        return json.loads(proc.stdout)["error"]
+
+    def test_gate_records_the_delivered_outcome_once_its_seven_conditions_are_green_on_one_commit(self):
+        commit = self.ready()
+        pack = self.generate()
+        self.assertIsNone(self.outcome_delivered())
+
+        status, answer = self.run_gate()
+
+        self.assertEqual((0, True), (status, answer["delivered"]))
+        delivered = self.outcome_delivered()
+        self.assertEqual((commit, pack["digest"], answer["protected"]["commit"]),
+                         (delivered["commit"], delivered["pack"], delivered["protected"]))
+        # Recording it outdates neither the pack nor the verdicts: the gate still passes, and says Delivered.
+        status, checked = self.check()
+        self.assertEqual((0, True, None), (status, checked["delivered"], checked["end_stop"]))
+        # The gate again on the same tip writes nothing.
+        before = self.everything()
+        self.assertEqual((0, True), (self.run_gate()[0], self.run_gate()[1]["delivered"]))
+        self.assertEqual(before, self.everything())
+        self.assertFalse(self.show()["convoy"]["unruled"])
+
+    def test_gate_never_records_delivered_while_no_pack_is_generated(self):
+        commit = self.ready()
+
+        status, answer = self.run_gate()
+
+        self.assertEqual((EXIT_REFUSED, False, None), (status, answer["delivered"], self.outcome_delivered()))
+        self.assertFalse(self.check()[1]["delivered"])
+        self.assertIn("Evidence Pack", self.refused_delivered(commit, "sha256:" + "ab" * 32))
+
+    def test_gate_never_records_delivered_on_a_pack_generated_while_a_condition_was_red(self):
+        commit = self.verified()
+        stale = self.generate()
+        self.settle()
+        self.reviewed()
+
+        status, answer = self.run_gate()
+
+        self.assertEqual((EXIT_REFUSED, False, None), (status, answer["delivered"], self.outcome_delivered()))
+        self.assertIn("Evidence Pack", self.refused_delivered(commit, stale["digest"]))
+
+    def test_gate_never_records_delivered_while_a_condition_before_the_pack_is_red(self):
+        commit = self.verified()
+        pack = self.generate()
+
+        status, answer = self.run_gate()
+
+        self.assertEqual((EXIT_REFUSED, False, None), (status, answer["delivered"], self.outcome_delivered()))
+        error = self.refused_delivered(commit, pack["digest"])
+        for named in ("Outcome Evaluation", "revue de code de fin", "Evidence Pack"):
+            self.assertIn(named, error)
+
+    def test_delivered_does_not_stand_for_one_commit_more(self):
+        commit = self.ready()
+        pack = self.generate()
+        self.assertEqual(0, self.run_gate()[0])
+        tip = self.note(INTEGRATION)
+
+        status, checked = self.check()
+
+        # The record is the one of the commit before: the gate does not say Delivered of this tip.
+        self.assertEqual((EXIT_REFUSED, False, commit), (status, checked["delivered"], self.outcome_delivered()["commit"]))
+        self.assertIn("ne sont pas enregistrés à ce commit", self.refused_delivered(tip, pack["digest"]))
+        # The mechanical verdicts replayed on the new tip withdraw it, in the write that records them.
+        status, answer = self.run_gate()
+        self.assertEqual((EXIT_REFUSED, False, tip), (status, answer["delivered"], answer["commit"]))
+        self.assertIsNone(self.outcome_delivered())
 
     # --- a piece the store no longer holds, a convoy without the mark ------------------------------------------
 

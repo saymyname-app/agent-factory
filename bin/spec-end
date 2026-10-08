@@ -703,8 +703,14 @@ def cmd_check(args: argparse.Namespace) -> int:
     if args.before_pack:
         conditions = [entry for entry in conditions if entry["number"] != PACK]
     missing = [entry["number"] for entry in conditions if entry["verdict"] != PASS]
+    delivered = state["convoy"].get("delivered")
     answer: dict[str, Any] = {
         "ok": not missing, "convoy": args.convoy, "version": VERSION, "branch": integration["branch"], "commit": tip,
+        # Delivered (T26): recorded by the gate on this very tip, and every
+        # condition still met there. Never said of a tip a condition misses on.
+        "delivered": bool(not missing and not args.before_pack and isinstance(delivered, dict)
+                          and delivered.get("commit") == tip),
+        "end_stop": state["convoy"].get("end_stop"),
         "protected": {"branch": integration["protected"], "commit": protected_tip},
         "recorded": recorded, "stale": bool(stale), "conditions": conditions, "missing": missing, "refused": refused,
         "mechanical": {"ok": green, "commit": recorded["commit"] if recorded else None, "reason": (
@@ -737,9 +743,28 @@ def gate_lock(convoy_id: str) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def end_rounds(convoy_id: str, repo: Path) -> Any:
+def end_rounds(convoy_id: str, repo: Path) -> dict[str, Any]:
+    """What a refusal of the end left on the convoy (T26): the rounds
+    counted, and the stop of the rounds when no round is left."""
     status, answer = tool(STATE_TOOL, "show", convoy_id, "--repo", str(repo))
-    return ((answer.get("convoy") or {}).get("counters") or {}).get("end_rounds")
+    convoy = answer.get("convoy") or {}
+    return {"end_rounds": (convoy.get("counters") or {}).get("end_rounds"), "end_stop": convoy.get("end_stop")}
+
+
+def red_consequence(left: dict[str, Any]) -> str:
+    """What follows a mechanical red of the end, said in its condition."""
+    stop = left.get("end_stop")
+    if isinstance(stop, dict) and "reason" in stop:
+        return ("les tours de réparation de fin sont arrêtés : aucun repair n'est créé, une demande « non conforme » "
+                "part vers l'opérateur")
+    return "un repair est créé par du code et un tour de fin est compté"
+
+
+def record_delivered(convoy_id: str, repo: Path, tip: str) -> None:
+    """Every condition of the list is met on `tip`: the Outcome is
+    Delivered (Spec §9), recorded with the pack the last condition read."""
+    pack = read_state(convoy_id, repo)["convoy"].get("evidence_pack") or {}
+    state_write("record-delivered", convoy_id, "--commit", tip, "--pack-digest", str(pack.get("digest")))
 
 
 def judged_answer(args: argparse.Namespace, repo: Path, base: dict[str, Any], state: dict[str, Any],
@@ -749,8 +774,15 @@ def judged_answer(args: argparse.Namespace, repo: Path, base: dict[str, Any], st
     conditions = [*mechanical, *judged_conditions(args.convoy, repo, tip), end_review_condition(state, tip)]
     conditions.append(pack_condition(args.convoy, repo, tip, conditions))
     missing = [entry["number"] for entry in conditions if entry["verdict"] == FAIL]
+    delivered = all(entry["verdict"] == PASS for entry in conditions)
+    if delivered:
+        record_delivered(args.convoy, repo, tip)
     answer = {**base, "ok": not missing, "commit": tip, "protected": protected, "conditions": conditions,
-              "missing": missing, "replayed": replayed, "mechanical": {"ok": True, "commit": tip, "reason": None}}
+              "missing": missing, "replayed": replayed, "mechanical": {"ok": True, "commit": tip, "reason": None},
+              "delivered": delivered}
+    stop = read_state(args.convoy, repo)["convoy"].get("end_stop")
+    if stop:
+        answer["end_stop"] = stop
     if missing:
         answer["error"] = (f"refus : porte de fin de Spec ({VERSION}) : les trois verdicts mécaniques sont verts à "
                            f"{sha(tip)} ; {missing_text(conditions)}")
@@ -800,10 +832,12 @@ def cmd_run(args: argparse.Namespace) -> int:
                                   refused=refused, requests=requests)
         red = state["convoy"].get("integration_red")
         if red:
-            raise Refusal(
-                f"{RED} ({red['control']}) : la porte de fin de Spec ne rend aucun verdict avant son repair "
-                f"{red.get('repair') or '(que la passe d’avancement publie)'}, ou avant que ce contrôle repasse au vert",
-                {"red": red})
+            stop = state["convoy"].get("end_stop")
+            waits = ("tant que ses tours de réparation de fin sont arrêtés (demande « non conforme »)" if stop else
+                     f"avant son repair {red.get('repair') or '(que la passe d’avancement publie)'}, ou avant que ce "
+                     "contrôle repasse au vert")
+            raise Refusal(f"{RED} ({red['control']}) : la porte de fin de Spec ne rend aucun verdict {waits}",
+                          {"red": red, **({"end_stop": stop} if stop else {})})
 
         # Verdicts rendered on this very tip are not replayed.
         tip, protected_tip = tips(repo, integration)
@@ -823,9 +857,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             red = taken.get("red")
             if not isinstance(red, dict) or "control" not in red:
                 raise Refusal(f"reprise de la branche protégée et tests impossibles : {refusal_text(taken)}")
-            second = condition(2, FAIL, f"{red['control']} ; un repair est créé par du code et un tour de fin est compté")
-            return refused_answer(args, base, [first, second, condition(3, NOT_RUN, not_run)], red=red,
-                                  end_rounds=end_rounds(args.convoy, repo))
+            left = end_rounds(args.convoy, repo)
+            second = condition(2, FAIL, f"{red['control']} ; {red_consequence(left)}")
+            return refused_answer(args, base, [first, second, condition(3, NOT_RUN, not_run)], red=red, **left)
         tip, protected_tip = taken["integration"], taken["protected_tip"]
         tests = taken["tests"]
         second = condition(2, PASS, (
@@ -841,9 +875,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                         "--protected", protected_tip, "--control", control, "--detail", short(detail),
                         "--check", "fidelity", "--end-round")
             recorded_red = read_state(args.convoy, repo)["convoy"].get("integration_red")
-            third["detail"] = short(f"{detail} ; un repair est créé par du code et un tour de fin est compté", 900)
-            return refused_answer(args, base, [first, second, third], red=recorded_red,
-                                  end_rounds=end_rounds(args.convoy, repo))
+            left = end_rounds(args.convoy, repo)
+            third["detail"] = short(f"{detail} ; {red_consequence(left)}", 900)
+            return refused_answer(args, base, [first, second, third], red=recorded_red, **left)
 
         conditions = [first, second, third]
         with tempfile.TemporaryDirectory(prefix="spec-end-") as tmp:

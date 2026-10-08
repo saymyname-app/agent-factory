@@ -32,7 +32,16 @@ calculé par du code**.
 - **Arrêts** : aucun résultat après une relance, environnement en panne,
   story inobservable — une demande t'est adressée, une fois.
 - **Sorties** : 0 fait ; 1 refus ; 3 état sans règle ; 4 convoi sans marque.
-- **Limites** : pas de borne sur les tours de fin (T26) ; aucun essai avec
+- **Tours de fin bornés** (T26) : une évaluation qui laisse une user story
+  non observée, ou un constat hors ticket à réparer, compte un tour de fin
+  (`counters.end_rounds`, borne 2, compteur commun aux rouges mécaniques et
+  à la revue de fin). Les tours s'arrêtent **avant le deuxième** si le tour
+  précédent n'a pas réduit le nombre de user stories non observées, ou si
+  une user story déjà refusée l'est de nouveau ; sinon à la borne. Arrêtés,
+  les `repair` rédigés ne sont plus publiés et tu reçois une demande « non
+  conforme » avec le lien du dossier (`./bin/convoy-advance`).
+- **Limites** : l'arrêt anticipé ne lit que les user stories non observées,
+  pas les constats hors ticket ; aucun essai avec
   une vraie session d'Evaluator ; le dossier n'est pas généré ici.
 
 Détail : `docs/OUTCOME_EVALUATION.md`.

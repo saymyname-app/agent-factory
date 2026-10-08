@@ -33,12 +33,18 @@ Ne concerne qu'un convoi qui porte la **marque du nouveau flux**.
   une fois (`./bin/escalation-door list`). Chaque passe garde sa durée et
   les fichiers non relus.
 - **Un tour de fin est compté** par revue défavorable, une fois par pointe
-  (`counters.end_rounds`).
+  (`counters.end_rounds`) — le même compteur que les rouges mécaniques et
+  l'Outcome Evaluation, borné à 2 (`bounds.end_rounds`, T26). Une revue
+  défavorable une fois les tours consommés n'en compte pas : les tours sont
+  arrêtés, ses `repair` rédigés ne sont pas publiés et tu reçois une demande
+  « non conforme » (`./bin/convoy-advance`).
 - **Indépendance** : `show` dit si le relecteur tourne sur le modèle d'un
   auteur, ou si un modèle n'est pas relevé.
 - **Limites** : les constats restent le jugement d'un agent ; la couverture
   est déclarée par le relecteur ; rien ne lève un arrêt de la revue sur sa
-  pointe ; le compteur de tours n'est pas encore comparé à une borne.
+  pointe ; pas d'arrêt anticipé sur les constats de revue : un même constat
+  relevé deux fois de suite coûte un tour, l'arrêt avant la borne n'existe
+  que pour les user stories non observées.
 - **En même temps que l'Outcome Evaluation** : la passe qui rend les trois
   verdicts lance les deux sur le même commit ; aucune n'attend l'autre.
 

@@ -222,7 +222,9 @@ requires its lifecycle, in this order and with none skipped:
 The **driver** makes the flow advance; the **oracle** observes. The driver
 is called as `<driver> --workspace <dir> prepare [--inject NAME] [--project
 NAME] | publish | advance | stop`. `prepare` says where the public state is read (convoy,
-ticket, repository, environment of the state commands). Each `advance`
+ticket, repository, environment of the state commands); a driver that
+publishes through a door that numbers the convoy and the ticket names them
+in the answer of `publish` instead. Each `advance`
 plays one event: one pass of the Factory's order (the real
 `bin/convoy-advance`) or what one agent session leaves behind. After each
 event the oracle itself runs `bin/convoy-state show`, reads the branches of
@@ -254,6 +256,7 @@ The scenario says what the walk must end in: `expect: {closed: true}`, or
 | `one-ticket-closed-by-hand.json` | the ticket is closed in the tracker outside the gate | the oracle fails |
 | `one-ticket-second-project.json` | nothing goes wrong, on a ticket of the second project of the fixture (T35) | the nine states, closed by the gate |
 | `three-failures-parked.json` | the convoy holds two more tickets: one whose author session ends three times without a Ticket Exit, one that waits for it (T20) | the walked ticket reaches its nine states and is closed by the gate; the two others are parked; one grouped request names them both |
+| `story-repaired-delivered.json` | the Spec holds a second user story the product does not serve when the walked ticket closes (T26) | the end of the Spec refuses once on the Outcome Evaluation; one `repair` is published and delivered by the flow of a ticket; the whole gate is replayed on the new tip; the convoy is Delivered |
 
 ### A ticket that fails three times is parked (T20)
 
@@ -284,6 +287,66 @@ resume of the failure before. The order itself — the real
 `bin/convoy-advance` — counts the resumes, parks at the third and raises
 the request.
 
+### A story not observed at the end is repaired, then Delivered (T26)
+
+`expect: {closed: true, outcome: "delivered", repairs: N}` adds to the walk
+what Spec §9 asks of the end of the Spec (`docs/SPEC_END.md`,
+`docs/CONVOY_ADVANCE.md`). `outcome` goes with `closed: true` and without
+`parked`; `repairs` (zero when absent) goes with `outcome` only. With it:
+
+- the walk does not end when the walked ticket closes: it goes on until an
+  event changes nothing, within 48 events;
+- after each event the oracle also reads, on `bin/convoy-state show`, the
+  tickets the convoy gained since its publication — more than N, or one
+  that is not a `repair`, fails the run — and requires of each the
+  lifecycle of a ticket, as of the walked one; it runs `bin/spec-end check`
+  and reads the operator's list on `bin/escalation-door list`, where any
+  request fails the run;
+- Delivered is never recorded while a condition is missing: at every
+  observation where the convoy carries `delivered`, `bin/spec-end check`
+  must exit 0 and answer `delivered: true`, with no condition named and no
+  ticket open. The reverse (the command answers Delivered, the convoy
+  carries no record) fails too;
+- at the end, once an event changed nothing: exactly N repairs, each with
+  the nine states and closed by the ticket-end gate (its record, tied to
+  the commit that was merged); `convoy.delivered.commit`,
+  `convoy.spec_end.commit` and the commit `bin/spec-end check` answers are
+  all the tip of the integration branch, read in the repository, and that
+  tip holds the merge of every repair — the gate was replayed in full on
+  the new tip; the first observation that showed Delivered came with the N
+  repairs closed; `convoy.end_stop` is null; `convoy.counters.end_rounds` is
+  zero without a repair and between 1 and N with repairs (a round publishes
+  at least one repair, a repair belongs to one round); the operator's list
+  is empty.
+
+The result then carries `outcome`: `state`, the tickets `published` at
+first, the `repairs` (id, kind, lifecycle, closed by the gate),
+`end_rounds`, `end_stop`, `refused` (the verdicts `bin/spec-end check`
+named at the observation that first showed a round counted — absent when
+no round was), `spec_end` (the version of the list and its verdicts on the
+tip), `delivered` (how many observations showed it and were checked, how
+many repairs were closed at the first one) and the number of `requests`.
+`interfaces.read` gains `git rev-parse`, `spec-end check` and
+`escalation-door list`. A scenario that names no `outcome` keeps the result
+it had: nothing of the end of the Spec is read for it, and its walk still
+ends at the closed ticket.
+
+With `--inject story-not-observed` the reference driver publishes through
+the real publication door (`bin/ticket-graph-publish bd-publish`, after
+the real `bin/graph-review`): an approved Spec with two user stories — the
+home page, and the items in JSON at `GET /items`, which the product of the
+fixture does not serve — and an approved draft whose one slice covers
+both. The stand-in Evaluator of the end fetches `GET /items` on the
+launched product, does not observe the second story and drafts its repair;
+the order itself — the real `bin/convoy-advance` — counts the round,
+publishes the repair through the patch door and starts it. The driver then
+plays the author session of the repair, whose commit adds the route to the
+product for real; the reviewer and the Evaluator of the ticket answer for
+it (the Evaluator on `GET /items`), the order merges and closes it, then
+replays the gate: `bin/spec-end run`, the Outcome Evaluation on the new
+tip, where the story is now observed, the end review, the Evidence Pack,
+and `bin/spec-end run` again, which records Delivered.
+
 A scenario may name the `project` of the fixture its ticket belongs to; the
 oracle hands the name to the driver (`prepare --project`) and reports it in
 its result. Absent, the ticket is an interface ticket of the first project
@@ -309,15 +372,25 @@ Limits of the reference driver (`tests/fixtures/fixture-city/delivery-driver`):
   piece sealed by the real `bin/evidence-capture`), not through
   `bin/tdd-step`, `bin/demonstrate` and `bin/ticket-exit`.
 - `publish` leaves what the publication door leaves (the ticket, the mark,
-  the integration branch) without calling `bin/ticket-graph-publish`.
+  the integration branch) without calling `bin/ticket-graph-publish`,
+  except with `--inject story-not-observed`, where the real door publishes
+  (the patch door needs a published graph to revise). The door then writes
+  the tracker through the fake `bd` of
+  `tests/fixtures/ticket-graph-publish/bd-bead-mode`, on the same file as
+  the fake `gc`; the approved Spec, the approved draft and the verdict of
+  the graph review are written by the driver, as a Planning Run leaves them.
 - The browser of the fidelity check is the fake one of
   `tests/fixtures/prototype-fidelity/browser`.
 - On the second project the product is launched, and the merged result
   tested, with Node.js: when `node` is not on the bare `PATH` the oracle
   gives its adapters, the driver adds the user's `~/.local/bin` to the `PATH`
   of the order, and fails if it is not there either.
-- The walk ends at the closed ticket: the end of the Spec, the Delivered
-  Outcome and the acceptance are not walked yet. The end-of-Spec gate (T23,
-  `docs/SPEC_END.md`) is proven by its own suites, on the Delivery Fixture
-  City and on the published graph of the Fixture City, not by a scenario of
-  this oracle.
+- Without `expect.outcome` the walk ends at the closed ticket. With it the
+  end of the Spec is walked up to Delivered (T26), on the first project
+  only, and with the stand-ins of the Evaluator and the reviewer of the end
+  (`tests/fixtures/outcome-evaluation/evaluator`,
+  `tests/fixtures/spec-end-review/reviewer`). The other ways the end can go
+  — a second round, the rounds exhausted and the « non conforme » request, a
+  red integration branch, a Blocking Finding of the end review — and the
+  acceptance are not scenarios of this oracle: they are proven by the suites
+  of the gate and of the pass (`docs/SPEC_END.md`, `docs/CONVOY_ADVANCE.md`).

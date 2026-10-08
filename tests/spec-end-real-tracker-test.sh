@@ -21,6 +21,14 @@
 # with the user stories read in a Spec bead of the real tracker. No
 # Evaluator session runs here: bin/outcome-evaluation is proven on the fake
 # tracker (tests/outcome-evaluation-test.py).
+#
+# T26 (af-vwcflt): the same for the bound of the rounds of the end -- a
+# refusal of the end once the rounds are consumed writes the red, the stop
+# (`gc.flow.end_stop`) and the withdrawal of a Delivered Outcome in ONE
+# `gc bd update` (set and unset together), the « non conforme » request is
+# recorded on the stop (`end-stop-raised`), and `record-delivered` is
+# refused under a stop. Its passage is proven on the fake tracker
+# (tests/evidence-pack-test.py): it needs a whole green end of Spec.
 
 set -Eeuo pipefail
 
@@ -366,4 +374,64 @@ jq -e --arg t "$T1" --arg tip "$TIP" --arg r1 "$R1" --arg r2 "$R2" '
        == [["\($t):out_of_ticket.1", "réparé", "repaired", $r1]])
 ' <<<"$shown" >/dev/null || fail "Outcome Evaluation and findings not read back from the real tracker: $shown"
 
-echo "PASS: tracked elements, their repair, the red of the end with its round, the record of the end-of-Spec gate, the Outcome Evaluation and the classified findings are written and read back on the real tracker"
+# --- the bound of the rounds of the end, its stop, Delivered withdrawn (T26, af-vwcflt) ---
+# A Delivered Outcome on the convoy (a false state, of the shape its command
+# writes): what the next refusal of the end must withdraw.
+TIP2=fedcba9876543210fedcba9876543210fedcba98
+PACK_DIGEST="sha256:$(printf 'dossier' | sha256sum | cut -d' ' -f1)"
+gc bd update "$CONVOY" --set-metadata "gc.flow.delivered=$(jq -nc --arg tip "$TIP" --arg base "$BASE" --arg pack "$PACK_DIGEST" \
+  '{commit: $tip, protected: $base, pack: $pack, version: "spec-end/v4", at: "2026-10-08T10:00:00Z"}')" >/dev/null
+shown=$("$TOOL" show "$CONVOY") || fail "show with a Delivered Outcome failed: $shown"
+jq -e --arg tip "$TIP" '.unruled == false and .convoy.delivered.commit == $tip and .convoy.end_stop == null' <<<"$shown" >/dev/null \
+  || fail "Delivered Outcome not read back from the real tracker: $shown"
+
+# The two rounds consumed, then the tip refused once more: no third round.
+state set-counter "$CONVOY" --counter end_rounds --value 2
+CONTROL2="fidélité mécanique au Validated Prototype : écart(s) ouvert(s) sur integration/essai à ${TIP2:0:12}"
+state record-integration-red "$CONVOY" --commit "$TIP2" --integration "$TIP2" --protected "$BASE" \
+  --control "$CONTROL2" --detail "$DETAIL" --check fidelity --end-round
+shown=$("$TOOL" show "$CONVOY") || fail "show after the stop of the rounds failed: $shown"
+jq -e --arg tip "$TIP2" '
+  .unruled == false
+  and .convoy.integration_red.commit == $tip
+  and ([.convoy.end_stop | .reason, .commit, .source, .rounds] == ["end_rounds_exhausted", $tip, "fidelity", 2])
+  and (.convoy.end_stop | has("request") | not)
+  and .convoy.counters.end_rounds == 2
+  and .convoy.delivered == null
+' <<<"$shown" >/dev/null || fail "red, stop of the rounds and Delivered withdrawn not read back from the real tracker: $shown"
+gc bd show "$CONVOY" --json | jq -e '(if type == "array" then .[0] else . end).metadata | has("gc.flow.delivered") | not' >/dev/null \
+  || fail "the refusal of the end left gc.flow.delivered on the real tracker"
+# The same red again, and one more refusal: nothing written on a stopped convoy.
+before=$(gc bd show "$CONVOY" --json)
+state record-integration-red "$CONVOY" --commit "$TIP2" --integration "$TIP2" --protected "$BASE" \
+  --control "$CONTROL2" --detail "$DETAIL" --check fidelity --end-round
+[ "$before" = "$(gc bd show "$CONVOY" --json)" ] || fail "the same red on a stopped convoy changed the tracker"
+
+# The « non conforme » request: refused before its dossier, recorded once.
+set +e
+out=$("$TOOL" end-stop-raised "$CONVOY" --bead "$CONVOY"); rc=$?
+set -e
+[ "$rc" = 1 ] || fail "a « non conforme » request without its Evidence Pack exited $rc, want 1"
+grep -q "aucun Evidence Pack" <<<"$out" || fail "the refusal of a request without its dossier does not say why: $out"
+[ "$before" = "$(gc bd show "$CONVOY" --json)" ] || fail "a refused « non conforme » request changed the tracker"
+PACK_DIR="$TRIAL/packs/essai/$CONVOY/$TIP2"
+state record-evidence-pack "$CONVOY" --commit "$TIP2" --digest "$PACK_DIGEST" --path "$PACK_DIR" --non-conforming --inadmissible 0
+state end-stop-raised "$CONVOY" --bead "$CONVOY"
+shown=$("$TOOL" show "$CONVOY") || fail "show after the « non conforme » request failed: $shown"
+jq -e --arg convoy "$CONVOY" --arg tip "$TIP2" --arg pack "$PACK_DIGEST" --arg page "$PACK_DIR/index.html" '
+  .unruled == false
+  and (.convoy.end_stop.request | del(.at)) == {bead: $convoy, commit: $tip, digest: $pack, page: $page}
+' <<<"$shown" >/dev/null || fail "« non conforme » request not read back from the real tracker: $shown"
+before=$(gc bd show "$CONVOY" --json)
+state end-stop-raised "$CONVOY" --bead "$CONVOY"
+[ "$before" = "$(gc bd show "$CONVOY" --json)" ] || fail "the same « non conforme » request recorded again changed the tracker"
+
+# Never Delivered under a stop.
+set +e
+out=$("$TOOL" record-delivered "$CONVOY" --commit "$TIP2" --pack-digest "$PACK_DIGEST"); rc=$?
+set -e
+[ "$rc" = 1 ] || fail "a Delivered Outcome under a stop of the rounds exited $rc, want 1"
+grep -q "tours de réparation de fin arrêtés" <<<"$out" || fail "the refusal of Delivered under a stop does not say why: $out"
+[ "$before" = "$(gc bd show "$CONVOY" --json)" ] || fail "a refused Delivered Outcome changed the tracker"
+
+echo "PASS: tracked elements, their repair, the red of the end with its round, the record of the end-of-Spec gate, the Outcome Evaluation and the classified findings, the stop of the rounds of the end with its « non conforme » request and the withdrawal of Delivered are written and read back on the real tracker"

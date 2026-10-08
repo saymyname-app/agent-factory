@@ -1,4 +1,4 @@
-# The end-of-Spec gate (T23, T24, T25 and T27; Spec af-wf4w5r §9, points 1 to 6)
+# The end-of-Spec gate (T23, T24, T25, T27 and T26; Spec af-wf4w5r §9, points 1 to 6, §8)
 
 ## What it is for
 
@@ -13,7 +13,9 @@ findings « hors ticket », in what the Evaluator of the end handed in (T24,
 `docs/OUTCOME_EVALUATION.md`, user stories 57 and 60), and the end code
 review of the whole assembled diff (T25, `docs/SPEC_END_REVIEW.md`, user
 story 58). Last, the gate reads the Evidence Pack code generated on that
-commit (T27, `docs/EVIDENCE_PACK.md`, user story 62).
+commit (T27, `docs/EVIDENCE_PACK.md`, user story 62). When the seven are
+met on one commit the gate records that the Outcome is **Delivered** (T26,
+user story 61); the repair rounds its refusals count are bounded (Spec §8).
 
 A convoy **without** the mark is not concerned: the gate answers « pas un
 convoi du nouveau flux » (exit 4) and writes nothing.
@@ -110,6 +112,46 @@ gate replays everything on the new tip.
 
 The same red seen by several passes is recorded once and counted once.
 
+**Once the rounds are consumed (T26).** The rounds of the end are one
+counter for every source — these reds, the end review, the Outcome
+Evaluation — bounded by `bounds.end_rounds` of `config/delivery-flow.json`
+(2; `docs/CONVOY_STATE.md`, « The rounds of the end »). A mechanical red
+found when no round is left is still recorded as the red of the integration
+branch, but the same write counts no round and records the stop of the
+rounds (`gc.flow.end_stop`, `reason: end_rounds_exhausted`). The detail of
+the red condition then ends with « les tours de réparation de fin sont
+arrêtés : aucun repair n'est créé, une demande « non conforme » part vers
+l'opérateur », and the answer carries `end_stop` beside `red` and
+`end_rounds`. No `repair` is published for that red
+(`docs/CONVOY_ADVANCE.md`, « The rounds of the end are bounded »); `run`
+under it refuses, saying that the gate renders no verdict while the repair
+rounds of the end are stopped (« demande « non conforme » »), and returns
+`red` and `end_stop`.
+
+## Delivered: the seven conditions met on one commit (T26)
+
+When `run` finds every condition `pass` on the tip — the Evidence Pack
+included, so on a pack generated on that commit while nothing was red — it
+calls `bin/convoy-state record-delivered` with that commit and the
+fingerprint of the pack, and answers `"delivered": true`. The record is
+`gc.flow.delivered` (`commit`, `protected`, `pack`, `version`, `at`),
+rendered as `convoy.delivered`. `run` again on the same tip writes nothing.
+Writing it outdates neither the pack nor the verdicts.
+
+Delivered is never recorded with a condition `fail` or `not_run`, with no
+pack, with a pack generated while a condition was red (it is not
+conforming), or for one commit more: `bin/convoy-state` refuses a record
+its own state contradicts, and withdraws the one it holds in the write of
+any refusal of the end and of `record-spec-end` at another commit.
+
+`check` writes nothing and answers `delivered`: `true` only when the record
+names the current tip **and** no condition is missing there (always `false`
+with `--before-pack`); and `end_stop`, the stop of the rounds or `null`.
+
+**Delivered is a state of the convoy, not an acceptance.** Nothing is
+merged into the protected branch and nothing is closed: the operator's
+judgment and what it triggers are T28's.
+
 ## One commit more outdates every verdict
 
 Three green verdicts are recorded on the convoy
@@ -140,8 +182,11 @@ in full on the new tip.
 Every answer is one JSON object on stdout: `conditions` (number, name,
 label, verdict `pass` / `fail` / `not_run` / `stale`, detail), `missing`,
 `mechanical` (whether the three mechanical verdicts are green on the tip,
-their commit, and why not), and for `run` what it did (`refused`,
-`requests`, `red`, `end_rounds`, `replayed`). `run` names in `missing` the
+their commit, and why not), `delivered` (T26; absent from a `run` that
+stopped before its three mechanical verdicts were green), `end_stop` (T26:
+always in `check`, `null` when the rounds are not stopped; in `run` only
+when they are), and for `run` what it did (`refused`, `requests`, `red`,
+`end_rounds`, `replayed`). `run` names in `missing` the
 conditions that refused; `check` every condition that is not green.
 
 | Exit | Meaning |
@@ -189,10 +234,17 @@ conditions that refused; `check` every condition that is not green.
 - **The repair of tracked elements is written by code** from the text of the
   Handoff: one criterion, on the entry point of the ticket's demonstration
   line. A sharper criterion is a Planning Exception, as for any ticket.
-- **The gate verifies; it accepts nothing and closes nothing.** The
-  acceptance by Benjamin is a later ticket; the round counted here is not
-  yet compared to a bound, and a story still not observed after its repair
-  counts no round.
+- **The gate verifies; it accepts nothing and closes nothing.** Delivered
+  is recorded, and the acceptance by Benjamin is a later ticket (T28).
+- **Nothing withdraws the stop of the rounds yet.** Once `end_stop` is
+  written the convoy stays stopped whatever the operator answers to the
+  « non conforme » request: acting on the answer is T28 and T29's.
+- **`check` under a red of the end names no red condition.** While the
+  integration branch is red, nothing is recorded on the tip: `check` shows
+  condition 1 as it reads it and conditions 2 to 7 as `not_run` (« non
+  lancé ») — or all seven as `stale` when verdicts of an earlier tip are
+  still recorded —, not the red one as `fail`. The red and the stop are read in `end_stop` and in
+  `bin/convoy-state show` (`integration_red`).
 - **The Fixture City Oracle has no scenario of its own for the end of a
   Spec**: its delivery driver walks the gate with a stand-in for the
   Evaluator and for the reviewer of the end. Under the real controller,
@@ -228,9 +280,19 @@ conditions that refused; `check` every condition that is not green.
   generated, with a pack generated while a condition was red, with a pack
   short of a piece; the seven conditions green on one commit
   (`docs/EVIDENCE_PACK.md`).
+- `tests/evidence-pack-test.py`, T26: the gate records Delivered once its
+  seven conditions are green on one commit and writes nothing the second
+  time; never while no pack is generated, on a pack generated while a
+  condition was red, or while a condition before the pack is red (a direct
+  `record-delivered` is then refused and writes nothing); not for one
+  commit more, the record withdrawn in the write of the verdicts replayed
+  on the new tip.
+- `tests/convoy-stops-fixture-city-test.py`, T26: a mechanical red found by
+  the gate once the rounds are consumed — the red and the stop recorded, no
+  repair, the « non conforme » request raised under the red.
 - `tests/spec-integration-test.py` (`take-up`), `tests/convoy-state-test.py`
   (tracked elements, `--item`, `set-item-repair`, `record-spec-end`,
-  `--check`, `--end-round`).
+  `--check`, `--end-round`, the bound of the rounds and their stop).
 - `tests/spec-end-real-tracker-test.sh` (local-only): in a disposable city,
   on the real `gc`/`bd`, the state the gate writes is written and read
   back — tracked elements, the Planning Exception that names them, their

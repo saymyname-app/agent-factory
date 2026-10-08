@@ -81,7 +81,9 @@ several Planning Exceptions.
 escalation door takes it: `quoi` and `pourquoi` on one line of at most 140
 characters each, `que_faire` a non-empty list of `{option, consequence}`.
 The language and the blocking flag are set by code. The line `<ticket> —
-<quoi>` then appears in `bin/escalation-door list`.
+<quoi>` then appears in `bin/escalation-door list`. The door also takes an
+optional `lien`, the link of a dossier, which a Ticket Exit never sets
+(T26, `docs/CONVOY_ADVANCE.md`, « The rounds of the end are bounded »).
 
 **Parking.** `bin/convoy-state park` writes the parking on the ticket and on
 every ticket of the convoy that waits for it, directly or not, read on the

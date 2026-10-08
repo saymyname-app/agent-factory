@@ -48,6 +48,17 @@
 #                                bloquant   -- optional bool (default
 #                                              false): this NEEDS BENJAMIN
 #                                              blocks a chantier.
+#                                lien       -- optional, one line of any
+#                                              length: the dossier Benjamin
+#                                              reads to decide (the « non
+#                                              conforme » request of a
+#                                              convoy carries its Evidence
+#                                              Pack). Written as
+#                                              gc.escalation_lien, mailed,
+#                                              and printed by `list` on the
+#                                              request's line; a request
+#                                              without one resets the link
+#                                              of the request before.
 #                              On success the door letters the options (a,
 #                              b, c, ...), writes them with a timestamp and
 #                              the blocking flag on <bead>, clears any
@@ -194,10 +205,17 @@ validate_que_faire() {  # $1 = JSON array
 # emit_benjamin performs the write + mail once a request has validated;
 # never called directly from a command handler -- cmd_benjamin validates
 # first, sweep's repli path always builds a request that will validate.
-emit_benjamin() {  # bead quoi pourquoi lettered_que_faire_json bloquant
-  local bead=$1 quoi=$2 pourquoi=$3 que_faire_json=$4 bloquant=$5
-  local horodatage options_summary
+emit_benjamin() {  # bead quoi pourquoi lettered_que_faire_json bloquant [lien]
+  local bead=$1 quoi=$2 pourquoi=$3 que_faire_json=$4 bloquant=$5 lien=${6:-}
+  local horodatage options_summary dossier_line=""
+  local -a lien_args=()
   horodatage=$(now_iso)
+  # The link belongs to one request: a value writes it, none resets the one
+  # of the request before, nothing leaves a bead that never had one as it is.
+  if [[ -n $lien ]]; then
+    lien_args=(--set-metadata "gc.escalation_lien=$lien")
+    [[ $lien == none ]] || dossier_line="DOSSIER: $lien"$'\n'
+  fi
   "$GC_BIN" bd update "$bead" \
     --set-metadata "gc.needs_benjamin=$quoi" \
     --set-metadata "gc.escalation_pourquoi=$pourquoi" \
@@ -206,6 +224,7 @@ emit_benjamin() {  # bead quoi pourquoi lettered_que_faire_json bloquant
     --set-metadata "gc.escalation_horodatage=$horodatage" \
     --set-metadata "gc.escalation_mayor_paged_at=none" \
     --set-metadata "gc.escalation_mayor_reason=none" \
+    "${lien_args[@]}" \
     --append-notes "NEEDS BENJAMIN: $quoi" \
     >/dev/null || die "Beads write failed for $bead."
   options_summary=$(jq -r '
@@ -219,7 +238,7 @@ STATE: $quoi
 POURQUOI: $pourquoi
 QUE FAIRE:
 $options_summary
-EVIDENCE: gc bd show $bead
+${dossier_line}EVIDENCE: gc bd show $bead
 NEXT: escalation-door repondre $bead <lettre>, ou escalation-door clear $bead" \
     >/dev/null || die "Could not mail $ESCALATION_RECIPIENT; gc.needs_benjamin is set but the mail was not sent -- retry rather than clearing it by hand."
   printf 'ESCALATED (benjamin): %s — %s\n' "$bead" "$quoi"
@@ -231,7 +250,7 @@ cmd_benjamin() {
   valid_bead_id "$bead" || die "'$bead' is not a Bead id."
   jq -e 'type == "object"' <<<"$payload" >/dev/null 2>&1 \
     || die "requête incomplète : le corps n'est pas un objet JSON valide."
-  local quoi pourquoi langue bloquant que_faire_raw lettered expected_language
+  local quoi pourquoi langue bloquant que_faire_raw lettered expected_language lien issue
   quoi=$(jq -r '.quoi // ""' <<<"$payload")
   pourquoi=$(jq -r '.pourquoi // ""' <<<"$payload")
   langue=$(jq -r '.langue // ""' <<<"$payload")
@@ -240,12 +259,20 @@ cmd_benjamin() {
   field_ok "quoi" "$quoi"
   field_ok "pourquoi" "$pourquoi"
   field_ok "langue" "$langue"
+  if jq -e 'has("lien")' <<<"$payload" >/dev/null; then
+    jq -e '.lien | type == "string" and length > 0 and (test("[\n\r]") | not)' <<<"$payload" >/dev/null \
+      || die "champ « lien » doit être une ligne de texte non vide."
+    lien=$(jq -r '.lien' <<<"$payload")
+  fi
   lettered=$(validate_que_faire "$que_faire_raw")
   expected_language=$(operator_language)
   [[ $langue == "$expected_language" ]] \
     || die "la requête est dans la langue « $langue », la langue de l'opérateur est « $expected_language »."
-  show_bead "$bead" >/dev/null
-  emit_benjamin "$bead" "$quoi" "$pourquoi" "$lettered" "$bloquant"
+  issue=$(show_bead "$bead")
+  if [[ -z ${lien:-} ]] && jq -e '.metadata | has("gc.escalation_lien")' <<<"$issue" >/dev/null; then
+    lien=none
+  fi
+  emit_benjamin "$bead" "$quoi" "$pourquoi" "$lettered" "$bloquant" "${lien:-}"
 }
 
 # af-1al0t1: work parked by `deliver-close --outcome blocked` (status
@@ -431,9 +458,10 @@ cmd_list() {
   needs_count=0
   closed_count=0
   local closed_lines=""
-  while IFS=$'\t' read -r id status reason; do
+  while IFS=$'\t' read -r id status reason lien; do
     [[ -n $id ]] || continue
     [[ -n $reason && $reason != none ]] || continue
+    [[ -z $lien || $lien == none ]] || reason+=" — dossier : $lien"
     if [[ $status == closed ]]; then
       closed_lines+="  $id — $reason"$'\n'
       closed_count=$((closed_count + 1))
@@ -442,7 +470,8 @@ cmd_list() {
     printf '  %s — %s\n' "$id" "$reason"
     needs_count=$((needs_count + 1))
   done < <(jq -r '(if type == "array" then . else [.] end)[]
-    | [.id, (.status // "open"), (.metadata["gc.needs_benjamin"] // "" | tostring)] | @tsv' <<<"$needs_json")
+    | [.id, (.status // "open"), (.metadata["gc.needs_benjamin"] // "" | tostring),
+       (.metadata["gc.escalation_lien"] // "" | tostring)] | @tsv' <<<"$needs_json")
   ((needs_count > 0)) || printf '  (none)\n'
   if ((closed_count > 0)); then
     printf 'NEEDS BENJAMIN sur un bead fermé (la fermeture n'"'"'a pas répondu ; repondre ou clear) :\n'
