@@ -34,4 +34,62 @@ for field in merge_result=merged merged_sha= merged_target= gc.ci_run_id= gc.ci_
     || fail "deliver-close does not own structural field $field"
 done
 
+# af-hmqlf5: mol-do-work's push-and-pr block, run for real against a fake gc
+# and a fake `factory-do-work-workspace finish`. When finish exits non-zero
+# (other than 4) nothing was delivered and the worktree is still there: the
+# block must write nothing on the work bead, or the re-run reads work_dir "."
+# and does nothing.
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/delivery-formula-contract-test.XXXXXX")
+trap 'rm -rf "$TMP"' EXIT
+mkdir -p "$TMP/bin" "$TMP/root/bin"
+
+python3 - "$ROOT/formulas/mol-do-work.formula.toml" > "$TMP/push-and-pr.sh" <<'PY'
+import re
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+step = text.split('id = "push-and-pr"', 1)[1]
+block = re.search(r'```bash\n(.*?)```', step, re.DOTALL).group(1)
+print(block.replace("{{convoy_id}}", "cv-1"))
+PY
+grep -q 'factory-do-work-workspace" finish' "$TMP/push-and-pr.sh" \
+  || fail "could not extract mol-do-work's push-and-pr block"
+
+cat > "$TMP/bin/gc" <<'GC'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "convoy status") echo '{"children":[{"id":"wk-1"}]}' ;;
+  "bd show") echo '[{"metadata":{"work_dir":"/wt/wk-1","gc.work_branch":"do-work/wk-1","gc.work_base_branch":"main"}}]' ;;
+  "bd update") printf '%s\n' "$*" >> "$GC_UPDATE_LOG" ;;
+esac
+GC
+cat > "$TMP/root/bin/factory-do-work-workspace" <<'WS'
+#!/usr/bin/env bash
+[ -n "${FAKE_PR_URL:-}" ] && echo "$FAKE_PR_URL"
+exit "${FAKE_FINISH_RC:-0}"
+WS
+chmod +x "$TMP/bin/gc" "$TMP/root/bin/factory-do-work-workspace"
+
+run_push_and_pr() {
+  : > "$TMP/updates.log"
+  PATH="$TMP/bin:$PATH" FACTORY_ROOT="$TMP/root" GC_UPDATE_LOG="$TMP/updates.log" \
+    FAKE_FINISH_RC="$1" FAKE_PR_URL="${2:-}" bash "$TMP/push-and-pr.sh" >/dev/null 2>&1 || true
+}
+
+for rc in 1 3; do
+  run_push_and_pr "$rc"
+  [ ! -s "$TMP/updates.log" ] \
+    || fail "push-and-pr wrote on the work bead after finish exited $rc: $(cat "$TMP/updates.log")"
+done
+
+run_push_and_pr 0 "https://example.invalid/pull/7"
+grep -q 'gc.pr_url=https://example.invalid/pull/7' "$TMP/updates.log" \
+  || fail "push-and-pr did not record the PR after a successful finish"
+grep -q -- '--unset-metadata work_dir' "$TMP/updates.log" \
+  || fail "push-and-pr kept work_dir after a successful finish"
+
+run_push_and_pr 4
+[ "$(cat "$TMP/updates.log")" = "bd update wk-1 --unset-metadata work_dir" ] \
+  || fail "push-and-pr did not only drop work_dir after finish exited 4: $(cat "$TMP/updates.log")"
+
 echo "PASS: PR formulas wait and deliver-close owns merge+exact-head-CI completion"

@@ -538,6 +538,12 @@ difference with the base; the step then only drops `work_dir` and leaves
 `gc.pr_url`, `gc.delivery_status` and the notes as they are. New commits made
 after the merge are still delivered through a new PR.
 
+`push-and-pr` can be run again after a failed `finish` (af-hmqlf5,
+2026-10-08). When `finish` exits non-zero other than 4 — 3, PR sections
+missing; 1, the push failed — the step writes nothing on the work bead and
+keeps `work_dir`. It used to drop `work_dir` in that case, so the re-run read
+`.`, printed "nothing to do", and the work stayed unpublished.
+
 The SayMyName legacy-automation cutover boundary and its temporary M6
 rollback procedure are dead, product-specific history now retired to
 `legacy/docs/products/saymyname/CUTOVER_AND_M6_ROLLBACK.md`.
