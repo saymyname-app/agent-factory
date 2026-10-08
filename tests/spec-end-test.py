@@ -40,7 +40,7 @@ SLICE, SCREEN = "fx-t1", "fx-t2"
 PLAIN_CONVOY, PLAIN_TICKET = "fx-plain", "fx-q1"
 PROTECTED = "main"
 INTEGRATION = f"integration/{SPEC}"
-VERSION = "spec-end/v1"
+VERSION = "spec-end/v2"
 NAMES = ("registry", "tests", "fidelity")
 
 EXIT_REFUSED = 1
@@ -59,7 +59,10 @@ def branch_of(ticket):
     return f"ticket/{ticket}"
 
 
-class SpecEndTest(unittest.TestCase):
+class Harness(unittest.TestCase):
+    """A delivered convoy of the fixture, walked by the real commands: shared with
+    tests/outcome-evaluation-test.py."""
+
     @classmethod
     def setUpClass(cls):
         # One directory for the whole class: a stage reached once (a seeded
@@ -367,13 +370,23 @@ class SpecEndTest(unittest.TestCase):
         return self.stage("delivered", build)
 
     def verified(self):
-        """The delivered convoy, the three verdicts of the gate rendered."""
+        """The delivered convoy, the three mechanical verdicts of the gate
+        rendered; its Outcome Evaluation is not made yet."""
         def build():
             self.delivered()
-            status, answer = self.run_gate()
-            self.assertEqual(0, status, answer)
-            return answer["commit"]
+            return self.mechanical_green(*self.run_gate())["commit"]
         return self.stage("verified", build)
+
+    def mechanical_green(self, status, answer):
+        """The gate rendered its three mechanical verdicts green, and waits
+        for the Outcome Evaluation of that commit (T24): it launches none."""
+        self.assertEqual(EXIT_REFUSED, status, answer)
+        self.assertEqual([(1, "registry", "pass"), (2, "tests", "pass"), (3, "fidelity", "pass"),
+                          (4, "outcome_evaluation", "fail"), (5, "findings", "not_run")], self.verdicts(answer))
+        self.assertEqual(([4], {"ok": True, "commit": answer["commit"], "reason": None}),
+                         (answer["missing"], answer["mechanical"]))
+        self.assertIn("aucune Outcome Evaluation rendue", answer["error"])
+        return answer
 
     def declare(self, ticket, **sections):
         """What the author of a closed ticket left in its Ticket Handoff."""
@@ -437,6 +450,8 @@ class SpecEndTest(unittest.TestCase):
             self.assertEqual(before, after)
         return answer
 
+
+class SpecEndTest(Harness):
     # --- AC1: the three verdicts, on one commit --------------------------------
 
     def test_conforming_convoy_gets_three_green_verdicts_tied_to_one_integration_commit_that_holds_the_protected_tip(self):
