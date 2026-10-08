@@ -1,4 +1,4 @@
-# Spec integration branch and serial merge (T18, T14, Spec af-wf4w5r §4, §6 and §8)
+# Spec integration branch and serial merge (T18, T14, T21, T23, Spec af-wf4w5r §4, §6, §8 and §9)
 
 ## Status and purpose
 
@@ -12,12 +12,15 @@ the acceptance (T30). A convoy without the mark is not touched (exit 4).
 ```bash
 ./bin/spec-integration open  af-convoy --repo <project repository> --protected main
 ./bin/spec-integration merge af-convoy --repo <project repository> --profile <descriptor.json> [--limit 1] [--timeout 600]
+./bin/spec-integration take-up af-convoy --repo <project repository> --profile <descriptor.json> [--timeout 600] [--end-round]
 ```
 
 Who calls it: `bin/ticket-graph-publish bd-publish` calls `open` once the
 convoy is marked (`docs/ENTRY_CONTRACT.md`); `bin/convoy-advance` calls
 `merge --limit 1` on each of its passes for a convoy that has a finished
-ticket (`docs/CONVOY_ADVANCE.md`). No agent decides when a ticket is merged.
+ticket (`docs/CONVOY_ADVANCE.md`); `bin/spec-end run` calls `take-up
+--end-round` for the one tip of the end-of-Spec gate (`docs/SPEC_END.md`).
+No agent decides when a ticket is merged.
 
 Every answer is one JSON object on stdout.
 
@@ -175,6 +178,29 @@ A profile without `regression_command` is refused when a ticket is ready: no
 test, no merge. A pass with no ready ticket does not read the profile,
 unless a red makes it run the control again.
 
+## `take-up`
+
+T23, Spec §9 (« sur une seule pointe après reprise de la branche
+protégée »). `take-up` merges no ticket. Under the same lock as `merge`, the
+integration branch takes up the protected branch — when there is something
+to take up — and the regression command of the profile is run on the
+result, **whether there was anything to take up or not**.
+
+- Green: the takeover, if any, is pushed. The answer gives `integration`
+  (the tip), `protected_tip` (the tip of the protected branch it holds),
+  `takeover` (`null` when there was nothing to take up) and `tests`
+  (`command`, `exit_code`, `commit`).
+- Red: nothing is pushed, and the red is recorded on the convoy as `merge`
+  does (above). With `--end-round`, one round of the end of the Spec is
+  counted in the same write (`docs/CONVOY_STATE.md`). Exit 1, with `red`.
+- Refused, nothing written: a convoy whose integration branch is already
+  red (before any control), no integration branch, a takeover in conflict,
+  a profile without `regression_command`, a malformed `--timeout`. An
+  « état sans règle » is exit 3, a convoy without the mark exit 4.
+
+The tests of `take-up` are not filed in the evidence store: a piece belongs
+to a ticket, and this tip belongs to none.
+
 ## Limits
 
 - **A ready ticket is merged only when the ticket-end gate agrees** (T19):
@@ -201,8 +227,9 @@ unless a red makes it run the control again.
   graph that targets several rigs.
 - A takeover of the protected branch in conflict is refused at each pass:
   it records no red and has no `repair`.
-- The control of the integration branch is run by `merge` only: when a
-  ticket is ready to merge, or when a recorded red is to be checked again.
+- The control of the integration branch is run by `merge` when a ticket is
+  ready to merge or when a recorded red is to be checked again, and by
+  `take-up` when the end-of-Spec gate runs (T23); never otherwise.
 - A frozen harness file changed on the integration branch by another
   ticket's merge is still seen by `bin/tdd-step green` as modified
   (`docs/TDD_STEP.md`, Limits) when an author takes up the integration tip.
@@ -227,7 +254,11 @@ red withdrawn, the merges that resume at the next pass, a repair that
 leaves the branch red, the control run again once the protected branch is
 mended, and a branch checked again and still red;
 `tests/convoy-stops-fixture-city-test.py` plays it on the graph of the
-Fixture City. On the real `gc`/`bd`, in a
+Fixture City. T23: the same `tests/spec-integration-test.py` covers
+`take-up`: the regression command run with nothing to take up, the takeover
+pushed once green, a red takeover neither pushed nor counted without
+`--end-round`, one round counted once with it, the refusal under a red, a
+conflict, and the outright refusals. On the real `gc`/`bd`, in a
 disposable city (local-only): `tests/spec-integration-demonstration-test.sh`
 (the demonstration line), `tests/convoy-state-real-tracker-test.sh` and
 `tests/ticket-graph-publish-new-flow-real-tracker-test.sh`.

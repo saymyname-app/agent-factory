@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, T19, T20, T22, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, T19, T20, T22, T21, T23, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -50,6 +50,8 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state park        af-convoy af-t1 --cause planning_exception --detail "La Spec fixe X, …"  # bin/ticket-exit
 ./bin/convoy-state set-fidelity af-convoy af-t1 --commit <sha> --piece fidelity --file result.json   # bin/prototype-fidelity
 ./bin/convoy-state raise-planning-exception af-convoy af-t1 --kind semantic --summary "…" [--anchor liste --accept-option c]   # bin/ticket-exit
+./bin/convoy-state raise-planning-exception af-convoy af-t1 --kind semantic --summary "…" --item not_done.1 --accept-option b   # bin/spec-end: tracked elements left without a final state
+./bin/convoy-state set-item-repair af-convoy af-t1 --repair af-r2   # bin/convoy-advance, once the patch door published the repair the operator asked for
 ./bin/convoy-state set-integration af-convoy --branch integration/af-spec --protected main --base <sha>   # bin/spec-integration open
 ./bin/convoy-state set-merge   af-convoy af-t1 --outcome merged --ticket-commit <sha> --integration <sha> --commit <sha>   # bin/spec-integration merge
 ./bin/convoy-state invalidate-verdicts af-convoy af-t1 --tip <sha> --kind code_review --kind evaluation   # bin/spec-integration merge
@@ -65,9 +67,10 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state ticket af-t1                         # does this bead carry the mark? (bin/dispatch-door, the Mayor)
 ./bin/convoy-state record-incident af-convoy --bead af-incident [--signature sha256:<hex>]   # bin/convoy-advance
 ./bin/convoy-state clear-incident  af-convoy            # bin/convoy-advance, once the state is valid again
-./bin/convoy-state record-integration-red af-convoy --commit <sha> --integration <sha> --protected <sha> --control "<line>" [--detail "<line>"]   # bin/spec-integration
+./bin/convoy-state record-integration-red af-convoy --commit <sha> --integration <sha> --protected <sha> --control "<line>" [--detail "<line>"] [--check fidelity] [--end-round]   # bin/spec-integration, bin/spec-end
 ./bin/convoy-state set-integration-repair af-convoy --ticket af-r1   # bin/convoy-advance, once the patch door published the repair
 ./bin/convoy-state clear-integration-red  af-convoy     # bin/spec-integration, once the control is green again
+./bin/convoy-state record-spec-end af-convoy --commit <integration tip> --protected <protected tip> --file report.json   # bin/spec-end: three green verdicts, one commit
 ```
 
 Every answer is one JSON object on stdout.
@@ -113,14 +116,15 @@ Every answer is one JSON object on stdout.
 | Parkings lifted | `gc.flow.park_lifts` | ticket | `entries`, oldest first, one per parking lifted on the ticket that caused it (T20): `cause`, `detail`, `parked_at`, `request` (the bead of the answered request), `option` (the letter taken, or null), `resumes` (the counter at that moment), `at` |
 | Grouped request | `gc.flow.grouped_request` | convoy | the bead that carries the one request of a convoy in which nothing but parked tickets is left (T20) and, once it reached the escalation door, the `sha256:` signature of the parkings it names, with `lift_option` (a letter) and `lifts` (the tickets that option lifts), both or neither |
 | Fidelity result | `gc.flow.fidelity` | ticket | `commit`, `verdict` (`favorable` / `unfavorable`, computed), `piece` (the sealed record), `screens`, `states` (state → `viewports`, `anchors` compared), `deviations`: each `state`, `viewport`, `anchor`, `kind` (`absent`, `structure`, `style`, `token`), `property`; a `token` deviation has neither viewport nor anchor |
-| Planning Exceptions | `gc.flow.planning_exceptions` | ticket | `entries`, oldest first: `kind` (`semantic`, `topology`), `summary`, `anchors` (the anchors whose deviation it asks to accept, possibly none), `accept_option` (the letter of the request's option that accepts it; with anchors only), `prior_response_at`, `at`, and `resolution` (`option`, `at`) once a later one was raised |
+| Planning Exceptions | `gc.flow.planning_exceptions` | ticket | `entries`, oldest first: `kind` (`semantic`, `topology`), `summary`, `anchors` (the anchors whose deviation it asks to accept, possibly none), `accept_option` (the letter of the request's option that accepts it; with anchors or items only), `prior_response_at`, `at`, and `resolution` (`option`, `at`) once a later one was raised; T23: `items` (the tracked elements of the Ticket Handoff it names, `deviations.N` / `not_done.N`; absent when none) and `repair` (the `repair` ticket code published once the operator asked for one, with the answer frozen beside it) |
 | Operator's answer | `gc.needs_benjamin`, `gc.escalation_response_option`, `gc.escalation_response_at` (read only: written by `bin/escalation-door`) | ticket | what resolves the last Planning Exception |
 | Integration branch | `gc.flow.integration` | convoy | `branch`, the `protected` branch it takes up, and `base`, the full commit SHA of the protected branch it left from; written once |
 | Merge | `gc.flow.merge` | ticket | outcome: `merged`, `conflict`, `red`; `ticket_commit` (the tip of the ticket that was taken), `integration` (the tip it was merged on), and `commit`, the merged result, for `merged` and `red` only |
 | Declared Scope | `gc.scope_paths` (read only: written by the publication door) | ticket | the declared paths, comma-separated; they order tickets and bound nothing |
 | Acceptance criteria | the bead's description (read only) | ticket | the checkbox lines under `## Acceptance criteria`, in order |
 | Factory incident | `gc.flow.incident` | convoy | the bead that carries the open incident of a stopped convoy and, once it reached the escalation door, the `sha256:` signature of the anomalies it names |
-| Red of the integration branch | `gc.flow.integration_red` | convoy | T21: the control that is red, quoted on one line (`control`), the commit it was red on (`commit`), the tips of the integration and of the protected branches then (`integration`, `protected`), the end of what the control printed (`detail`, optional) and, once code published it, the one `repair` ticket that restores it (`repair`) |
+| Red of the integration branch | `gc.flow.integration_red` | convoy | T21: the control that is red, quoted on one line (`control`), the commit it was red on (`commit`), the tips of the integration and of the protected branches then (`integration`, `protected`), the end of what the control printed (`detail`, optional) and, once code published it, the one `repair` ticket that restores it (`repair`); T23: `check` (`regression`, `fidelity`; absent means the regression command), what is red |
+| Record of the end-of-Spec gate | `gc.flow.spec_end` | convoy | T23: `commit` (the one commit of the integration branch the three verdicts are tied to), `protected` (the tip of the protected branch that commit holds), `version` (`spec-end/v1`), `conditions` (`registry`, `tests`, `fidelity`, in that order, all `pass`, each with its `detail`), `records` (optional: what `tests` and `fidelity` read), `at` |
 
 `mark` is idempotent: it marks the tickets first and the convoy last, sets
 each counter to an explicit `0`, and on a later run marks only the tickets
@@ -364,6 +368,21 @@ is not red, a ticket that is not a repair, and a second repair while the
 first is open (« un seul repair par rouge »). `clear-integration-red`
 removes the record. The three refuse a convoy without the mark (exit 4).
 
+**The end of the Spec (T23, `docs/SPEC_END.md`).** `record-integration-red
+--check fidelity` says that what is red is the mechanical fidelity the
+end-of-Spec gate measured, not the regression command; a `--check` outside
+`regression`, `fidelity` is refused. `--end-round` adds one to the convoy
+counter `end_rounds` **in the write that records the red**: the same red
+again writes nothing and counts nothing. `record-spec-end` records the three
+verdicts of the gate with the commit they are tied to. It refuses a convoy
+without an integration branch, one whose integration branch is red, one
+with a ticket left open or closed without a gate record (each named), a
+version other than `spec-end/v1`, a list that is not `registry`, `tests`,
+`fidelity` in order, a verdict that is not `pass`, an empty detail, an
+unknown field, `records` other than `tests` and `fidelity`, a malformed
+commit. Nothing compares the record to the branches here: `bin/spec-end
+check` says whether it still holds.
+
 `lift-park` lifts the parking a ticket caused, once the request `--request`
 (a bead id) was answered, with the letter of the option taken (`--option`,
 optional). It removes the parking from every ticket parked behind it, then
@@ -460,6 +479,20 @@ the same exception again writes nothing; another one replaces the one that
 was still open. **Nothing here resolves a Planning Exception**: the answer
 is the operator's, written by `bin/escalation-door repondre`.
 
+T23: with `--item` (repeatable), the exception names **tracked elements**
+of the ticket's Ticket Handoff instead of anchors — `deviations.N` or
+`not_done.N`, the N-th entry of that section. It is called by `bin/spec-end`
+for elements left without a final state. It refuses an id of another shape,
+one given twice, one the Handoff does not carry (a section that says
+« aucun », a number past its end, a ticket without a Handoff), and items
+without `--accept-option`. `set-item-repair` names, on the last Planning
+Exception of a ticket, the `repair` code published for its elements. It
+refuses when that exception names no element, has no answer of the operator,
+or was answered by the option that accepts; when `--repair` is not a tracked
+ticket of the convoy of kind `repair`; and a second repair for the same
+request (« un seul repair par demande »). The same repair again writes
+nothing. The operator's answer is frozen on the exception with the repair.
+
 `show` renders `planning_exceptions` with, for each, a computed `state`
 (`open`, `resolved`), the `response` and `accepted`: true when it names
 anchors and was answered by its `accept_option`. The last one is resolved
@@ -471,6 +504,17 @@ anchors of the accepted ones. `fidelity` is rendered with each deviation's
 `ouvert` — and a computed `state`: `vert` without deviation, `accepté par
 Benjamin` when every deviation is, else `rouge`. The stored verdict is not
 rewritten: a gate reads `fidelity.state`.
+
+T23: `show` renders `tracked_items` on each ticket: one entry per deviation
+and per « non fait » of its Ticket Handoff (`id`, `section`, `number`,
+`text`, `state`, `request`, `repair`), an empty list when the ticket has no
+Handoff or declares none. `state` is computed and stored nowhere: `accepté
+par Benjamin` when the last Planning Exception that names the element since
+that Handoff was answered by its `accept_option`; `réparé` when it was
+answered otherwise and the `repair` named on it is a `repair` of the convoy
+closed with a record of the ticket-end gate; else `ouvert`. A Handoff
+rendered again starts its elements over: an exception raised before it does
+not count. No command sets an element aside.
 
 A piece name is made of letters, digits, `_` and `.` only: the tracker
 refuses any metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*` (observed on bd
@@ -553,8 +597,10 @@ is flagged on its own); and for the convoy the Spec it
 delivers (`spec`, `null` when it names none), its counters, its open factory
 incident (`incident`, `null` when there is none), the integration branch
 of its Spec (`integration`, `null` before it is opened), the red of that
-branch (`integration_red`, `null` while it is not red) and its grouped
-request (`grouped_request`, `null` when there is none).
+branch (`integration_red`, `null` while it is not red), its grouped
+request (`grouped_request`, `null` when there is none) and the record of the
+end-of-Spec gate (`spec_end`, `null` before three green verdicts were
+recorded; T23).
 
 `ticket` answers whether one bead carries the mark, without naming its
 convoy: exit 0 and `"new_flow": true`, or exit 4 and `"new_flow": false`.
@@ -653,3 +699,11 @@ grouped request, and a commit on a returned ticket counted once; on the real
 tracker, `tests/convoy-advance-isolated-city-test.sh` (local-only) goes
 through `open-resume` and `launch-resume` only; no trial there covers
 `lift-park`, the parking for exhausted resumes or the grouped request.
+T23: `tests/convoy-state-test.py` covers the tracked elements (rendered,
+accepted by the accepting answer only, repaired once the gate closed the
+repair, started over by a new Handoff), `--item` and `set-item-repair` with
+each refusal, `record-spec-end` with each refusal, a record or a repair
+written outside the command, `--check` and `--end-round` (counted in the
+same write, once). `tests/spec-end-real-tracker-test.sh` (local-only)
+replays these writes and their refusals on the real `gc`/`bd` in a
+disposable city.

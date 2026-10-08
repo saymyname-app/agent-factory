@@ -40,7 +40,8 @@ n'arrive jamais jusqu'à Benjamin sans l'être.
   chemin servi, états prototypés).
 - **Limites** : le lien ticket → écran n'est pas enregistré à la
   publication (l'appelant nomme l'écran) ; l'appel avant la fusion d'un
-  ticket est à T19, celui de fin de Spec à T23 ; le texte affiché n'est pas
+  ticket est fait par `./bin/ticket-end`, celui de fin de Spec par
+  `./bin/spec-end` ; le texte affiché n'est pas
   comparé ; un produit qui interdit d'être encadré ne se mesure pas.
 
 Détail : `docs/PROTOTYPE_FIDELITY.md`.

@@ -317,4 +317,7 @@ Limits of the reference driver (`tests/fixtures/fixture-city/delivery-driver`):
   gives its adapters, the driver adds the user's `~/.local/bin` to the `PATH`
   of the order, and fails if it is not there either.
 - The walk ends at the closed ticket: the end of the Spec, the Delivered
-  Outcome and the acceptance are not walked yet.
+  Outcome and the acceptance are not walked yet. The end-of-Spec gate (T23,
+  `docs/SPEC_END.md`) is proven by its own suites, on the Delivery Fixture
+  City and on the published graph of the Fixture City, not by a scenario of
+  this oracle.

@@ -1,4 +1,4 @@
-# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, T19, T20, Spec af-wf4w5r §0 rules 3 and 5, §4, §5, §6, §7, §8, §9)
+# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, T19, T20, T21, T23, Spec af-wf4w5r §0 rules 3 and 5, §4, §5, §6, §7, §8, §9)
 
 ## Status and purpose
 
@@ -433,8 +433,54 @@ declaration of each project's profile (`launch.k`, Spec §12,
   criterion on the product, the amendment of a criterion is a Planning
   Exception, as for any ticket.
 - The red is found by the merge command, so only once a ticket is ready to
-  merge or the convoy is already red: nothing runs the regression command
+  merge or the convoy is already red, and by the end-of-Spec gate once every
+  ticket is closed (T23, below): nothing else runs the regression command
   on an integration branch no ticket is being merged into.
+
+## The end of the Spec: three mechanical verdicts on one tip (T23)
+
+Spec §9, points 1 to 3: once every ticket of the convoy is closed, the end
+of the Spec is verified by code. At the end of each pass, after the
+ticket-end gate, the pass hands a convoy **whose every ticket is closed and
+whose integration branch is not red** to `bin/spec-end run`
+(`docs/SPEC_END.md`), with the repository and the profile of its project.
+While a ticket is open, or on a convoy without an integration branch,
+nothing is run.
+
+The gate renders its three verdicts — `registry`, `tests`, `fidelity` — on
+one tip of the integration branch, the protected branch taken up. The entry
+of the convoy carries `spec_end`:
+
+- three green verdicts: `verdicts`, the `commit` they are tied to, and
+  `replayed` (`false` when they were already recorded on that tip: the pass
+  then wrote nothing);
+- a condition that is not met: `verdicts`, `missing`, and `reason`, the text
+  of the gate. It is **an outcome of the pass, not a failure**: the pass
+  exits 0. With it, `refused` and `requests` when the registry refused
+  (each element named, and the requests raised to the operator), or `red`
+  and `end_rounds` when the tests or the fidelity are red;
+- a gate that could not run (no profile, a takeover in conflict, a fidelity
+  check that cannot run, a pass run from an agent session): `error`, and the
+  pass exits 1.
+
+**Red tests or a red fidelity** are recorded by the gate as the red of the
+integration branch, with one round of the end counted. The next pass treats
+it as any red (above): it publishes the one `repair` and starts it. For a
+red fidelity (`integration_red.check` is `fidelity`) the `repair` restores
+an `anchor` and its criterion is the screens of the profile serving every
+prototyped state as the Validated Prototype does.
+
+**Tracked elements to repair.** At its start, each pass looks for tickets
+whose deviations or « non faits » the operator asked to have repaired
+(their Planning Exception answered by another option than the one that
+accepts) and that have no `repair` yet. It publishes one `repair` per such
+ticket through the patch door, as for a red — `restores: {kind: red_check,
+ref: registre de la porte de fin de Spec : …}`, the elements quoted —, names
+it on the elements (`bin/convoy-state set-item-repair`) and starts it. The
+entry carries `item_repairs` (`{id, key, draft, published, ticket, items}`,
+or `error`). One repair per request, whatever the number of passes. A
+repair that could not be published fails the pass and is tried again by the
+next.
 
 ## Test reviews left without result (T13)
 
@@ -472,14 +518,15 @@ repair of a red (`{id, key, draft, published}`, or `error`),
 reviews of criterion tests, `code_review` when it settled code reviews,
 `evaluation` when it settled Ticket Evaluations, `correction` when a
 correction round was opened, awaited or ended in a stop, `fidelity` when it
-measured an interface ticket and `ticket_end` when the gate settled merged
-tickets. A stopped convoy carries `signal`,
+measured an interface ticket, `ticket_end` when the gate settled merged
+tickets, `item_repairs` when the pass published the repair of tracked
+elements and `spec_end` when it ran the end-of-Spec gate (T23). A stopped convoy carries `signal`,
 `unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check or the ticket-end gate could not run |
+| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate or the end-of-Spec gate could not run |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
@@ -649,6 +696,19 @@ real regression command, run again by the real `bin/spec-integration` —
 the convoy goes on by itself; with two Planning Exceptions open no ready
 ticket starts. `tests/spec-integration-test.py` covers the merge command
 under a red (`docs/SPEC_INTEGRATION.md`).
+
+T23: the same file covers the end-of-Spec gate in the pass, through the
+real `bin/spec-end`: three green verdicts once every ticket is closed, on
+the tip of the integration branch, and nothing replayed by the next pass;
+no gate while a ticket is open, on a convoy without an integration branch
+or under a red; a registry that refuses and red tests as outcomes of the
+pass, one round counted; a gate that cannot run, or a pass run from an
+agent session, as failures. `tests/convoy-stops-fixture-city-test.py` plays
+the rest on the graph of the Fixture City, with the real patch door: the
+`repair` of red tests and of a red fidelity, the request raised once for a
+« non fait », the `repair` published on the operator's answer and the
+element read « réparé » once it is closed, an accepted « non fait ». No
+isolated-city trial runs the gate under the real order.
 
 T19: the same file covers the gate in the pass, through the real
 `bin/ticket-end`: a ticket merged and closed by one pass with its nine
