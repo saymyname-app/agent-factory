@@ -119,6 +119,8 @@ an A5 input.
 | `bin/factory-gh-rollup` | ops | pr-autopilot, factory-watchdog, mayor prompt, CI test | Rebuilds statusCheckRollup for fine-grained PAT; usage matches prompt |
 | `bin/factory-guard` | to-redo | orders/factory-guard.toml (5m), git hooks, factory-boot | Core live guard, but §5 hardcodes SayMyName rigs, §7/7b store dedup on campaign bead af-1vr4, §11 serves the retired idle ladder |
 | `bin/factory-main-gate` | ops | .githooks/pre-push, factory-watchdog, CI tests | Pre-push main landing gate (ADR-0020); header cites legacy incident only as history |
+| `bin/ci-minutes` | ops | operator, docs/OPERATIONS.md (Factory CI cost) | NEW (af-mzuprx): billed GitHub Actions minutes per day and per run, read-only |
+| `bin/ci-test-seconds` | ops | config/ci-test-seconds.tsv, bin/ci-run-tests --shard | NEW (af-mzuprx): rewrites the seconds each test file took from the logs of a green run, so the lots stay even |
 | `bin/factory-observe` | kernel | CI test, docs/FACTORY_OBSERVE.md | B09 observe/wake kernel; no order or script calls it at runtime (see findings) |
 | `bin/factory-planning-exception-guard` | kernel | factory-guard §12, deliver-close, CI test | Detection net for ADR-0028 semantic/topology closes |
 | `bin/factory-provenance-guard` | ops | Backend/Frontend CI workflows (backend-ci.yml, frontend-ci.yml), CI test | Layer B PII provenance guard run by product-repo CI |
@@ -225,7 +227,11 @@ an A5 input.
 | `tests/build-basic-fail-fast-test.py` | ops | build-basic formula fail-fast (static) | in CI (ci.yml:152) |
 | `tests/build-basic-publish-overlap-followup-test.sh` | ops | build-basic publish follow-up bead on overlapping worktree | in CI (ci.yml:105) |
 | `tests/ci-registration-test.sh` | ops | meta: every tests/*.sh\|py named in ci.yml or marked local-only | in CI (ci.yml:236); header cites retired tests (product-queue, saymyname-*) as history only |
+| `tests/ci-minutes-test.sh` | ops | bin/ci-minutes | NEW (af-mzuprx): auto-discovered by bin/ci-run-tests; against a fake `gh`: each job rounded up to the minute, nothing billed for a job that never started, days in Europe/Paris |
 | `tests/ci-run-tests-host-lock-test.sh` | ops | bin/ci-run-tests | NEW (af-wnj692): auto-discovered by bin/ci-run-tests; proves the runner gives each test a throwaway `XDG_RUNTIME_DIR` and fails one that still reaches bin/escalation-door's default lock file |
+| `tests/ci-run-tests-jobs-test.sh` | ops | bin/ci-run-tests | NEW (af-mzuprx): auto-discovered by bin/ci-run-tests; `--jobs J` really runs J files at once (two tests that wait for each other), a failure among them fails the run and is shown, the default stays one at a time |
+| `tests/ci-test-seconds-test.sh` | ops | bin/ci-test-seconds, bin/ci-run-tests, config/ci-test-seconds.tsv | NEW (af-mzuprx): auto-discovered by bin/ci-run-tests; the list of seconds is written from the logs of a run (fake `gh`), the lots follow it, a missing or broken list never loses a file |
+| `tests/ci-workflow-cost-test.sh` | ops | .github/workflows/ci.yml | NEW (af-mzuprx): auto-discovered by bin/ci-run-tests; the workflow runs on pull requests and not on push, cancels the run of a replaced commit, and runs one test file per core |
 | `tests/coordination-pointer-doors-test.sh` | ops | ADR-0023 rule 6 scan of Mayor prompt, OPERATIONS.md, formulas | in CI (ci.yml:111); header/FIELDS still name legacy bin/product-queue and gc.queue_state |
 | `tests/deliver-close-test.sh` | ops | bin/deliver-close (ADR-0026 delivery proof door); fixture deliver-close | in CI (ci.yml:99) |
 | `tests/delivery-formula-contract-test.sh` | ops | mol-do-work/mol-scoped-work/mol-polecat-commit wiring to deliver-close/pr-autopilot | in CI (ci.yml:102) |
