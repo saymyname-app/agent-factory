@@ -744,7 +744,7 @@ journalctl --user -u factory-ci-runner-broker -n 50    # the hand-off
 ### Pause for a game, resume
 
 ```bash
-./bin/ci-runner pause        # the job that runs ends by itself, no new one starts
+./bin/ci-runner pause        # a job that runs ends by itself, a runner that only waits is stopped, no new job starts
 ./bin/ci-runner pause --now  # also kills the running job: its run ends red
 ./bin/ci-runner resume
 ```
@@ -779,6 +779,26 @@ wait behind a job (`bin/ci-run-tests` skips the host's lock under
 `GITHUB_ACTIONS`, and the job's `/tmp` is not the host's). What bounds the
 sum is the service: 4 named cores and 4 GB for the job whatever else runs,
 at a lower priority than the Factory and the batteries.
+
+### Measured 2026-10-08 (pull request #457, Paris times)
+
+| What | Measure |
+|---|---|
+| First full run on the host, 18:04 to 18:20 | 155 tests green in 15 min 23 s on 4 cores; billed 0 (`./bin/ci-minutes`: "on the host: 16 min, not billed"). A full run on GitHub's runners that day: 43 to 48 billed minutes. `ci-minutes` applies GitHub's rule (a self-hosted runner is not billed); the amount billed itself is only on the organization's usage page. |
+| Load of the host (1-minute load, 12 cores), the Factory running | 7.7 on average over the 20 minutes before the run, 11.6 during it, 15.7 at most |
+| Memory of the job (sampled every 15 s) | 1.2 GB at most of its 4 GB; 1.9 GB while the image is built |
+| Orders of the Factory that failed during the run | none (`gc events --type order.failed`) |
+| The isolation probe | every attempt refused, 4 cores seen. The very first job (17:58) failed on it for a false reason, the base image's own empty `/home/ubuntu`, since removed from the image |
+| Runner paused, then a push (18:42) | `Tests` "queued", `ci-runner status`: "waiting for a runner since 18:42", `factory-doctor`: ADVISORY "the operator paused the runner" |
+| `mode github`, `gh run cancel`, `gh run rerun` (18:44) | the same run started on `ubuntu-latest`, four lots, 30 s later; cancelled at once |
+| `mode self-hosted`, `resume` | a runner online and idle again within 20 s |
+| Building the image | about 2 minutes, once a week and after each install |
+
+Seen, not explained: during each of the first two image builds by the
+service (17:38 and 18:01), one call of `wsl.exe` from Windows timed out
+(`Wsl/Service/0x8007274c`). WSL did not restart and the supervisor stayed
+active; the next call answered. If calls from Windows fail in a cluster,
+look at `journalctl -u factory-ci-runner.service` for "building the image".
 
 ### Install, stop, remove
 

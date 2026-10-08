@@ -99,7 +99,7 @@ cmd_status() {
   "$GH" api "repos/$r/actions/runners" \
     --jq '.runners[] | "runner at GitHub: \(.name) \(.status)\(if .busy then ", busy" else ", idle" end)"' 2>/dev/null || true
   "$GH" api "repos/$r/actions/runs?status=queued&per_page=20" \
-    --jq '.workflow_runs[] | "waiting for a runner since \(.created_at): \(.head_branch) (run \(.id))"' 2>/dev/null || true
+    --jq '.workflow_runs[] | "waiting for a runner since \(.created_at | fromdate | localtime | strftime("%H:%M")): \(.head_branch) (run \(.id))"' 2>/dev/null || true
 }
 
 cmd_pause() {
