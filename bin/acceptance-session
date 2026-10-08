@@ -1,0 +1,496 @@
+#!/usr/bin/env python3
+"""Acceptance Session of a marked convoy (T28, Spec af-wf4w5r §11): code,
+and no agent, launches the product Benjamin judges and stops it.
+
+    ./bin/acceptance-session open   CONVOY [--repo <project repository>] [--profile <descriptor>]
+    ./bin/acceptance-session close  CONVOY
+    ./bin/acceptance-session record CONVOY [--repo <project repository>] --response relancer|planification|abandon
+
+`open` reads the dossier Benjamin was asked to judge -- the Evidence Pack
+of the Delivered Outcome, or the one the « non conforme » request of
+stopped rounds carries (same door, same session) -- and refuses it unless
+bin/evidence-pack says it is « à jour » at the tip of the integration
+branch. It then launches the product from a clean copy of the commit of
+that dossier, by the recipe of the project profile, once per synthetic
+dataset the profile declares (bin/project-launch), and answers their
+addresses with the page of the dossier. A product that does not start is
+an outage, not a judgment: it is said, no session is opened, the outage is
+recorded on the convoy (bin/convoy-state acceptance-launch-failed) and
+the next pass of bin/convoy-advance publishes its `repair`.
+
+`close` stops every product of the session and answers once each port is
+free again.
+
+`record` takes the issue Benjamin chose for a « non conforme » request --
+relancer un tour, retourner à la planification, abandonner -- and hands it
+to bin/escalation-door; « accepté » is refused there. The three answers to
+a Delivered Outcome are recorded by another command (T29).
+
+The agent of the session opens, navigates, writes Benjamin's findings in
+his words and records; it neither summarizes the dossier nor recommends
+an answer. No delay answers in Benjamin's place: nothing here, and nothing
+in the pass, accepts, merges or closes on a clock.
+
+Exit codes: 0 done; 1 refused or outage (JSON, `error` starts with
+"refus : "); 3 « état sans règle »; 4 the convoy does not carry the
+new-flow mark.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+import tomllib
+import unicodedata
+from pathlib import Path
+from typing import Any
+
+PROGRAM = "acceptance-session"
+BIN = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
+GC_BIN = os.environ.get("GC_BIN", "gc")
+STATE_TOOL = BIN / "convoy-state"
+PACK_TOOL = BIN / "evidence-pack"
+LAUNCH_TOOL = BIN / "project-launch"
+ESCALATION_TOOL = BIN / "escalation-door"
+PROJECTS = ROOT / "config" / "projects"
+DESCRIPTORS = ROOT / "config" / "project-descriptors"
+
+ACCEPTANCE, NON_CONFORME = "acceptance", "non_conforme"
+PACK_HELD = "à jour"
+# The issues of a « non conforme » request, in the order bin/convoy-advance
+# writes them on the escalation door, which letters them from « a ».
+ISSUES = (
+    ("relancer", "Relancer un tour de réparation"),
+    ("planification", "Retourner à la planification"),
+    ("abandon", "Abandonner"),
+)
+ACCEPTED = "accepte"
+# What the agent of the session is held to (Spec §11), handed to it with
+# the address: it is part of what `open` answers, not a prompt to find.
+RULES = (
+    "Ouvrir le produit à l'adresse rendue et y naviguer à la demande de Benjamin.",
+    "Rédiger les constats de Benjamin avec ses mots, sans les reformuler ni les compléter.",
+    "Ne pas résumer le dossier : en donner le lien, Benjamin le lit lui-même.",
+    "Ne jamais recommander une réponse, ni dire si le produit mérite d'être accepté : le jugement est celui de Benjamin.",
+    "Fermer la session par la commande close quand Benjamin a fini.",
+)
+START_TIMEOUT = 30.0
+START_ATTEMPTS = 2
+PORT_WAIT = 10.0
+
+EXIT_REFUSED = 1
+EXIT_UNRULED = 3
+EXIT_NOT_NEW_FLOW = 4
+MAX_DETAIL = 300
+
+RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
+RIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+class Refusal(RuntimeError):
+    """The call is refused, or could not run."""
+
+    def __init__(self, message: str):
+        super().__init__(" ".join(message.split()))
+
+
+class Outage(Refusal):
+    """The product did not start: no judgment is opened."""
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark: bin/convoy-state's answer."""
+
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+def short(text: str, limit: int = MAX_DETAIL) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+# --- the other commands ----------------------------------------------------------
+
+
+def run(argv: list[str], timeout: float | None = None, detached: bool = False) -> subprocess.CompletedProcess[str]:
+    try:
+        # `detached`: the product of the session runs until `close`.
+        return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout,
+                              start_new_session=detached)
+    except subprocess.TimeoutExpired as exc:
+        raise Refusal(f"{Path(argv[0]).name} n'a pas répondu en {timeout:.0f} s") from exc
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+
+
+def detail_of(proc: subprocess.CompletedProcess[str]) -> str:
+    try:
+        said = json.loads(proc.stdout).get("error")
+    except (json.JSONDecodeError, AttributeError):
+        said = None
+    return short(str(said or proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"))
+
+
+def tool(path: Path, *args: str) -> tuple[int, dict[str, Any]]:
+    """One JSON answer of another command of the flow."""
+    proc = run([str(path), *args])
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {detail_of(proc)}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def read_bead(bead_id: str) -> dict[str, Any]:
+    proc = run([GC_BIN, "bd", "show", bead_id, "--json"])
+    try:
+        beads = json.loads(proc.stdout) if proc.returncode == 0 else None
+    except json.JSONDecodeError:
+        beads = None
+    if not isinstance(beads, list) or not beads or not isinstance(beads[0], dict):
+        raise Refusal(f"bead {bead_id} illisible : {detail_of(proc)}")
+    return beads[0]
+
+
+def ticket_rig(ticket_id: str) -> str | None:
+    """The single project the ticket names under « Target rigs », or None."""
+    description = read_bead(ticket_id).get("description")
+    match = RIGS_SECTION_RE.search(description if isinstance(description, str) else "")
+    rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
+    if len(rigs) != 1 or not RIG_RE.match(rigs[0]) or not (PROJECTS / f"{rigs[0]}.toml").is_file():
+        return None
+    return rigs[0]
+
+
+def rig_repository(rig: str) -> Path:
+    try:
+        rig_dir = tomllib.loads((PROJECTS / f"{rig}.toml").read_text(encoding="utf-8")).get("rig_dir")
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise Refusal(f"config/projects/{rig}.toml illisible : {exc}") from exc
+    if not isinstance(rig_dir, str) or not rig_dir:
+        raise Refusal(f"config/projects/{rig}.toml ne déclare pas rig_dir")
+    return (ROOT / rig_dir).resolve()
+
+
+def rig_profile(rig: str | None) -> Path | None:
+    """The profile of the project that spans the rig."""
+    for path in sorted(DESCRIPTORS.glob("*.json")) if rig else []:
+        try:
+            profile = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(profile, dict) and isinstance(profile.get("rigs"), list) and rig in profile["rigs"]:
+            return path
+    return None
+
+
+# --- the convoy and the dossier Benjamin judges --------------------------------------
+
+
+class Convoy:
+    """A marked convoy as bin/convoy-state renders it."""
+
+    def __init__(self, convoy_id: str, repo: str | None = None, profile: str | None = None):
+        self.id = convoy_id
+        self.given_profile = profile
+        self._rig: str | None = None
+        self.given_repo = Path(repo).resolve() if repo else None
+        # The mark is read first: an unmarked convoy is answered as such.
+        status, answer = tool(STATE_TOOL, "show", convoy_id)
+        if status == EXIT_NOT_NEW_FLOW:
+            raise NotNewFlow(answer)
+        if status not in (0, EXIT_UNRULED) or not isinstance(answer.get("tickets"), list):
+            raise Refusal(refusal_text(answer))
+        self.tickets: list[dict[str, Any]] = answer["tickets"]
+        # Its records are tied to branch tips of the project's repository.
+        status, answer = tool(STATE_TOOL, "show", convoy_id, "--repo", str(self.repo()))
+        if status not in (0, EXIT_UNRULED) or not isinstance(answer.get("tickets"), list):
+            raise Refusal(refusal_text(answer))
+        self.unruled = status == EXIT_UNRULED
+        self.state: dict[str, Any] = answer["convoy"]
+
+    def rig(self) -> str | None:
+        if self._rig is None and self.tickets:
+            self._rig = ticket_rig(self.tickets[0]["id"])
+        return self._rig
+
+    def repo(self) -> Path:
+        if self.given_repo is not None:
+            return self.given_repo
+        rig = self.rig()
+        if not rig:
+            raise Refusal(
+                f"les tickets du convoi {self.id} ne nomment pas un seul projet de config/projects sous "
+                "« Target rigs » : son dépôt se donne par --repo")
+        return rig_repository(rig)
+
+    def profile(self) -> tuple[Path, dict[str, Any]]:
+        """The profile of the convoy's project and its `launch` block."""
+        path = Path(self.given_profile) if self.given_profile else rig_profile(self.rig())
+        if path is None:
+            raise Refusal(
+                f"aucun profil de projet ne couvre le convoi {self.id} (config/project-descriptors) : "
+                "le produit se lance par la recette de son profil")
+        try:
+            profile = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise Refusal(f"profil de projet illisible ({path}) : {exc}") from exc
+        launch = profile.get("launch") if isinstance(profile, dict) else None
+        if not isinstance(launch, dict) or not launch.get("recipe"):
+            raise Refusal(f"le profil {path} ne déclare aucune recette de lancement : le produit ne peut pas être lancé")
+        return path, launch
+
+    def dossier(self) -> dict[str, Any]:
+        """What Benjamin was asked to judge: the kind of the request, and
+        the commit and fingerprint of its Evidence Pack."""
+        if self.unruled:
+            raise Refusal(f"état sans règle : aucune Acceptance Session ne s'ouvre sur le convoi {self.id}")
+        delivered, stop = self.state.get("delivered"), self.state.get("end_stop")
+        if isinstance(delivered, dict) and "commit" in delivered:
+            return {"kind": ACCEPTANCE, "commit": delivered["commit"], "digest": delivered["pack"]}
+        if isinstance(stop, dict) and isinstance(stop.get("request"), dict):
+            return {"kind": NON_CONFORME, "commit": stop["request"]["commit"], "digest": stop["request"]["digest"],
+                    "bead": stop["request"]["bead"]}
+        raise Refusal(
+            f"le convoi {self.id} n'est pas Delivered et ne porte aucune demande « non conforme » : "
+            "il n'y a rien à juger, aucune Acceptance Session ne s'ouvre")
+
+
+def held_pack(convoy: Convoy, dossier: dict[str, Any]) -> dict[str, Any]:
+    """The Evidence Pack of the dossier, as bin/evidence-pack checks it now:
+    refused unless it is the one of the request and still « à jour »."""
+    _, pack = tool(PACK_TOOL, "check", convoy.id, "--repo", str(convoy.repo()))
+    state = pack.get("state")
+    if state != PACK_HELD:
+        raise Refusal(
+            f"le dossier du convoi {convoy.id} est {state or 'illisible'} ({refusal_text(pack)}) : la session ne "
+            "s'ouvre que sur un dossier à jour ; un nouveau dossier est généré par la prochaine passe")
+    if pack.get("commit") != dossier["commit"] or pack.get("digest") != dossier["digest"]:
+        raise Refusal(
+            f"le dossier enregistré sur le convoi {convoy.id} n'est plus celui de la demande faite à Benjamin : "
+            "dossier périmé, la session ne s'ouvre pas")
+    return pack
+
+
+# --- the session and its launched products -------------------------------------------
+
+
+def state_dir() -> Path:
+    configured = os.environ.get("ACCEPTANCE_SESSION_STATE_DIR")
+    return Path(configured) if configured else Path.home() / ".local" / "state" / "agent-factory-acceptance-session"
+
+
+def session_folder(convoy_id: str) -> Path:
+    return state_dir() / re.sub(r"[^A-Za-z0-9._-]", "_", convoy_id)
+
+
+def read_session(convoy_id: str) -> dict[str, Any] | None:
+    path = session_folder(convoy_id) / "session.json"
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise Refusal(f"relevé de l'Acceptance Session illisible ({path}) : {exc}") from exc
+    return record if isinstance(record, dict) else None
+
+
+def stop_product(state_file: str) -> None:
+    if Path(state_file).is_file():
+        run([str(LAUNCH_TOOL), "stop", "--state-file", state_file], timeout=60)
+
+
+def port_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def launch_products(convoy: Convoy, commit: str, folder: Path) -> list[dict[str, Any]]:
+    """Launch the product from a clean copy of `commit`, once per synthetic
+    dataset the profile declares, each on its own free port. All of them,
+    or none: one that does not start is the outage of the session."""
+    profile, launch = convoy.profile()
+    datasets = sorted(launch.get("datasets") or {}) or [None]
+    launched: list[dict[str, Any]] = []
+    try:
+        for dataset in datasets:
+            state_file = folder / f"launch-{dataset or 'product'}.json"
+            argv = [str(LAUNCH_TOOL), "--repo-root", str(convoy.repo()), "start", str(profile), "--commit", commit,
+                    "--timeout", str(START_TIMEOUT), "--state-file", str(state_file)]
+            if dataset is not None:
+                argv += ["--dataset", dataset]
+            for _ in range(START_ATTEMPTS):
+                started = run(argv, timeout=START_TIMEOUT + 60, detached=True)
+                if started.returncode == 0 and state_file.is_file():
+                    break
+            else:
+                raise Outage(
+                    f"le produit ne démarre pas depuis une copie propre du commit {commit[:12]}"
+                    f"{f' sur le jeu {dataset}' if dataset else ''} : {detail_of(started)}")
+            record = json.loads(state_file.read_text(encoding="utf-8"))
+            launched.append({"dataset": dataset, "address": record["address"], "port": int(record["port"]),
+                             "state_file": str(state_file)})
+    except (Refusal, OSError, ValueError, KeyError):
+        for entry in launched:
+            stop_product(entry["state_file"])
+        raise
+    return launched
+
+
+# --- the commands ----------------------------------------------------------------
+
+
+def cmd_open(args: argparse.Namespace) -> dict[str, Any]:
+    convoy = Convoy(args.convoy, args.repo, args.profile)
+    dossier = convoy.dossier()
+    if read_session(convoy.id) is not None:
+        raise Refusal(
+            f"une Acceptance Session est déjà ouverte sur le convoi {convoy.id} : la fermer par "
+            f"« {PROGRAM} close {convoy.id} » avant d'en ouvrir une autre")
+    pack = held_pack(convoy, dossier)
+    acceptance = convoy.state.get("acceptance")
+    outage = acceptance.get("panne") if isinstance(acceptance, dict) and acceptance.get("commit") == dossier["commit"] else None
+    if outage:
+        repair = f"son repair est le ticket {outage['ticket']}" if "ticket" in outage else "son repair est publié par la prochaine passe"
+        raise Refusal(
+            f"le produit ne démarre pas au commit {dossier['commit'][:12]} de ce dossier ({outage['detail']}) ; "
+            f"{repair} ; la session s'ouvrira sur le dossier du produit réparé")
+    folder = session_folder(convoy.id)
+    folder.mkdir(parents=True, exist_ok=True)
+    try:
+        products = launch_products(convoy, dossier["commit"], folder)
+    except Outage as exc:
+        folder.rmdir()
+        status, answer = tool(STATE_TOOL, "acceptance-launch-failed", convoy.id, "--commit", dossier["commit"],
+                              "--detail", short(str(exc)))
+        noted = "la panne est notée sur le convoi et son repair est publié par la prochaine passe" if status == 0 \
+            else f"la panne n'a pas pu être notée ({refusal_text(answer)})"
+        raise Outage(f"{exc} ; panne, aucun jugement n'est ouvert ; {noted}") from exc
+    except Refusal:
+        if not any(folder.iterdir()):
+            folder.rmdir()
+        raise
+    session = {"convoy": convoy.id, "kind": dossier["kind"], "commit": dossier["commit"], "digest": dossier["digest"],
+               "page": pack["page"], "opened_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+               "products": products}
+    (folder / "session.json").write_text(json.dumps(session, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    answer: dict[str, Any] = {
+        "ok": True, "convoy": convoy.id, "kind": dossier["kind"], "commit": dossier["commit"],
+        "digest": dossier["digest"], "page": pack["page"], "address": products[0]["address"],
+        "products": [{"dataset": entry["dataset"], "address": entry["address"]} for entry in products],
+        "rules": list(RULES),
+    }
+    if dossier["kind"] == NON_CONFORME:
+        answer["issues"] = [{"response": response, "option": option} for response, option in ISSUES]
+    return answer
+
+
+def cmd_close(args: argparse.Namespace) -> dict[str, Any]:
+    session = read_session(args.convoy)
+    if session is None:
+        raise Refusal(f"aucune Acceptance Session n'est ouverte sur le convoi {args.convoy} : rien à fermer")
+    folder = session_folder(args.convoy)
+    stopped = []
+    for entry in session.get("products") or []:
+        stop_product(entry["state_file"])
+        deadline = time.monotonic() + PORT_WAIT
+        while not port_free(entry["port"]) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        stopped.append({"dataset": entry["dataset"], "port": entry["port"], "free": port_free(entry["port"])})
+    held = [entry for entry in stopped if not entry["free"]]
+    if held:
+        raise Refusal(
+            "le produit est arrêté mais le port " + ", ".join(str(entry["port"]) for entry in held)
+            + f" n'est pas libéré : la session du convoi {args.convoy} reste à fermer")
+    for path in folder.iterdir():
+        path.unlink()
+    folder.rmdir()
+    return {"ok": True, "convoy": args.convoy, "closed": True, "stopped": stopped}
+
+
+def normalized(word: str) -> str:
+    plain = unicodedata.normalize("NFKD", word.strip().lower())
+    return "".join(char for char in plain if not unicodedata.combining(char))
+
+
+def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
+    convoy = Convoy(args.convoy, args.repo)
+    dossier = convoy.dossier()
+    response = normalized(args.response or "")
+    known = [name for name, _ in ISSUES]
+    offered = ", ".join(known)
+    if dossier["kind"] != NON_CONFORME:
+        raise Refusal(
+            f"le convoi {convoy.id} ne porte pas de demande « non conforme » : cette commande n'enregistre que "
+            f"l'issue d'une demande « non conforme » ({offered})")
+    if response in (ACCEPTED, "accepted"):
+        raise Refusal(
+            f"« accepté » n'est pas proposé pour une demande « non conforme » (convoi {convoy.id}) : "
+            f"les issues sont {offered} ; rien n'est enregistré")
+    if response not in known:
+        raise Refusal(f"issue inconnue : {args.response!r} (attendu : {offered}) ; rien n'est enregistré")
+    letter = "abc"[known.index(response)]
+    proc = run([str(ESCALATION_TOOL), "repondre", dossier["bead"], letter])
+    if proc.returncode != 0:
+        raise Refusal(f"la porte d'escalade n'a pas enregistré l'issue : {detail_of(proc)}")
+    return {"ok": True, "convoy": convoy.id, "kind": NON_CONFORME, "response": response,
+            "option": dict(ISSUES)[response], "bead": dossier["bead"]}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog=PROGRAM)
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("open")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.add_argument("--profile")
+    p.set_defaults(run=cmd_open)
+    p = sub.add_parser("close")
+    p.add_argument("convoy")
+    p.set_defaults(run=cmd_close)
+    p = sub.add_parser("record")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.add_argument("--response")
+    p.set_defaults(run=cmd_record)
+    args = parser.parse_args()
+    try:
+        answer = args.run(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Outage as exc:
+        print(json.dumps({"ok": False, "outage": True, "convoy": args.convoy, "error": f"refus : {exc}"},
+                         indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "convoy": args.convoy, "error": f"refus : {exc}"},
+                         indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

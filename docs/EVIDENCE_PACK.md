@@ -152,8 +152,10 @@ stories, and the rubric that cannot be filled.
   optional piece: nothing ties it to one capture.
 - **No address of a launched product in the header.** Nothing launches the
   product at generation; the header gives the addresses the Outcome
-  Evaluation ran on, stopped since. The Acceptance Session launches it
-  (T29).
+  Evaluation ran on, stopped since. The Acceptance Session launches it at
+  the commit of the pack, and refuses a pack that `check` does not say
+  « à jour » (T28, `bin/acceptance-session open`,
+  `docs/ACCEPTANCE_SESSION.md`).
 - **The baseline list is the four families the Spec names** (code health,
   architecture, dependencies, secrets): the classification of its thirteen
   criteria is an open point of the Spec.

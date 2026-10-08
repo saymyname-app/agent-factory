@@ -222,7 +222,8 @@ requires its lifecycle, in this order and with none skipped:
 The **driver** makes the flow advance; the **oracle** observes. The driver
 is called as `<driver> --workspace <dir> prepare [--inject NAME] [--project
 NAME] | publish | advance | stop`. `prepare` says where the public state is read (convoy,
-ticket, repository, environment of the state commands); a driver that
+ticket, repository, environment of the state commands, and optionally the
+`profile` an Acceptance Session launches the product by); a driver that
 publishes through a door that numbers the convoy and the ticket names them
 in the answer of `publish` instead. Each `advance`
 plays one event: one pass of the Factory's order (the real
@@ -301,12 +302,17 @@ what Spec §9 asks of the end of the Spec (`docs/SPEC_END.md`,
   that is not a `repair`, fails the run — and requires of each the
   lifecycle of a ticket, as of the walked one; it runs `bin/spec-end check`
   and reads the operator's list on `bin/escalation-door list`, where any
-  request fails the run;
+  request fails the run until the convoy carries `delivered`;
 - Delivered is never recorded while a condition is missing: at every
   observation where the convoy carries `delivered`, `bin/spec-end check`
   must exit 0 and answer `delivered: true`, with no condition named and no
   ticket open. The reverse (the command answers Delivered, the convoy
   carries no record) fails too;
+- from the observation that first shows Delivered on (T28, Spec §11): the
+  operator's list holds exactly one request, on the convoy, and its line
+  ends with ` — dossier : <page>`, the page `bin/evidence-pack check`
+  answers for the convoy's Evidence Pack — the Acceptance Request, sent by
+  the pass that recorded Delivered and never sent again;
 - at the end, once an event changed nothing: exactly N repairs, each with
   the nine states and closed by the ticket-end gate (its record, tied to
   the commit that was merged); `convoy.delivered.commit`,
@@ -317,7 +323,12 @@ what Spec §9 asks of the end of the Spec (`docs/SPEC_END.md`,
   repairs closed; `convoy.end_stop` is null; `convoy.counters.end_rounds` is
   zero without a repair and between 1 and N with repairs (a round publishes
   at least one repair, a repair belongs to one round); the operator's list
-  is empty.
+  holds the one Acceptance Request;
+- then the oracle runs `bin/acceptance-session open` on the convoy (the
+  repository and the profile `prepare` named): every address it answers
+  must serve HTTP, and the commit it answers must be both the commit of the
+  Evidence Pack and the tip of the integration branch. It runs
+  `bin/acceptance-session close`, after which no address may answer.
 
 The result then carries `outcome`: `state`, the tickets `published` at
 first, the `repairs` (id, kind, lifecycle, closed by the gate),
@@ -325,9 +336,12 @@ first, the `repairs` (id, kind, lifecycle, closed by the gate),
 named at the observation that first showed a round counted — absent when
 no round was), `spec_end` (the version of the list and its verdicts on the
 tip), `delivered` (how many observations showed it and were checked, how
-many repairs were closed at the first one) and the number of `requests`.
-`interfaces.read` gains `git rev-parse`, `spec-end check` and
-`escalation-door list`. A scenario that names no `outcome` keeps the result
+many repairs were closed at the first one), the number of `requests` and
+`acceptance`: `{request: 1, dossier_linked: true,
+launched_at_dossier_commit: true, stopped: true}` — counts and booleans
+only, no address, commit or path. `interfaces.read` gains `git rev-parse`,
+`spec-end check`, `escalation-door list`, `evidence-pack check`,
+`acceptance-session open` and `acceptance-session close`. A scenario that names no `outcome` keeps the result
 it had: nothing of the end of the Spec is read for it, and its walk still
 ends at the closed ticket.
 
@@ -391,6 +405,15 @@ Limits of the reference driver (`tests/fixtures/fixture-city/delivery-driver`):
   (`tests/fixtures/outcome-evaluation/evaluator`,
   `tests/fixtures/spec-end-review/reviewer`). The other ways the end can go
   — a second round, the rounds exhausted and the « non conforme » request, a
-  red integration branch, a Blocking Finding of the end review — and the
-  acceptance are not scenarios of this oracle: they are proven by the suites
-  of the gate and of the pass (`docs/SPEC_END.md`, `docs/CONVOY_ADVANCE.md`).
+  red integration branch, a Blocking Finding of the end review — and
+  Benjamin's answer to the Acceptance Request are not scenarios of this
+  oracle: they are proven by the suites of the gate and of the pass
+  (`docs/SPEC_END.md`, `docs/CONVOY_ADVANCE.md`). Of the acceptance the
+  oracle walks the request, the opening and the closing of the session; the
+  session outage, the « non conforme » session and « no delay accepts » are
+  in `tests/convoy-stops-fixture-city-test.py`.
+- The reference driver gives the session its own state directory in the
+  workspace (`ACCEPTANCE_SESSION_STATE_DIR`), `stop` closes a session left
+  open, and the order reads `ESCALATION_DOOR_NOW`, `PROPOSAL_DOOR_NOW` and
+  `PR_AUTOPILOT_NOW_EPOCH` from the driver's environment when a caller
+  simulates the clock.
