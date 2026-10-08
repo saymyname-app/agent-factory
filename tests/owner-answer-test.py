@@ -309,6 +309,54 @@ class OwnerAnswerTest(sessions.AcceptanceSessionTest):
         self.assertIn("Planning Exception", error)
         self.assertEqual(before, self.everything())
 
+    def test_the_planning_exception_of_the_batch_holds_delivered_until_it_is_resolved_on_the_approver_words(self):
+        commit, digest = self.delivered_dossier()
+        self.passed(self.give_verdict("sans suite"))
+        self.passed(self.respond("constats rendus", commit, digest, "--findings",
+                                 self.findings_file({"text": "Je veux un mode sombre."})))
+        refused = self.run_cmd(gate.STATE_TOOL, "record-delivered", CONVOY, "--commit", commit, "--pack-digest", digest)
+        self.assertEqual(EXIT_REFUSED, refused.returncode, refused.stdout)
+        self.assertIn("approbateur humain", self.refusal_of(
+            lambda: self.owner("resolve-exception", "--approved-by", "delivery-author", "--words", "C'est réglé.")))
+
+        answer = self.passed(self.owner("resolve-exception", "--approved-by", APPROVER, "--words", "La Spec est amendée."))
+
+        self.assertEqual((APPROVER, "La Spec est amendée."),
+                         (answer["exception"]["resolved"]["approver"], answer["exception"]["resolved"]["words"]))
+        # Nothing of the batch holds the Outcome any more: it is Delivered again on its green conditions.
+        self.state("record-delivered", CONVOY, "--commit", commit, "--pack-digest", digest)
+        self.assertEqual(commit, self.show()["convoy"]["delivered"]["commit"])
+
+    def test_the_repair_of_a_returned_finding_is_named_once_and_only_by_a_repair_of_the_convoy(self):
+        commit, digest = self.delivered_dossier()
+        self.passed(self.give_verdict("sans suite"))
+        self.passed(self.respond("constats rendus", commit, digest, "--findings",
+                                 self.findings_file(cited(), {"text": "Je veux un mode sombre."})))
+        for args, said in ((("--finding", "1", "--ticket", SLICE), "n'est pas un repair"),
+                           (("--finding", "2", "--ticket", SLICE), "route"),
+                           (("--finding", "7", "--ticket", SLICE), "constat inconnu")):
+            before = self.everything()
+            proc = self.run_cmd(gate.STATE_TOOL, "set-owner-repair", CONVOY, *args)
+            self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+            self.assertIn(said, json.loads(proc.stdout)["error"])
+            self.assertEqual(before, self.everything())
+
+    def test_the_acceptance_request_no_longer_waits_for_benjamin_once_he_answered(self):
+        commit, digest = self.delivered_dossier()
+        page = self.show()["convoy"]["evidence_pack"]["path"] + "/index.html"
+        self.door("benjamin", CONVOY, json.dumps({
+            "quoi": "Acceptance Request — un Delivered Outcome attend ton jugement", "pourquoi": "Tout est livré.",
+            "que_faire": [{"option": "Ouvrir l'Acceptance Session", "consequence": "Le produit est lancé."}],
+            "langue": "fr", "bloquant": True, "lien": page}, ensure_ascii=False))
+        self.state("acceptance-requested", CONVOY, "--bead", CONVOY)
+        self.assertIn(CONVOY, self.door("list"))
+        self.passed(self.give_verdict("sans suite"))
+
+        answer = self.passed(self.respond("accepté", commit, digest))
+
+        self.assertNotIn("door", answer)
+        self.assertNotIn(CONVOY, self.door("list"))
+
     def test_findings_returned_without_any_finding_are_refused(self):
         commit, digest = self.delivered_dossier()
         self.passed(self.give_verdict("sans suite"))

@@ -13,11 +13,23 @@ Action writes (:mod:`cockpit.actions.trace`), stamping
 (:mod:`cockpit.projects.stage`) reads Accepté straight off the bead -- no
 cockpit-side copy of its own (spec: "aucune copie locale").
 """
+import json
+import subprocess
+
 from cockpit.actions import trace
 from cockpit.actions.continuer import build_prompt
 
 ACCEPTED_KEY = "gc.cockpit_chantier_accepted"
 ACCEPTED_AT_KEY = "gc.cockpit_chantier_accepted_at"
+# A convoy of the Delivery Workflow (Spec af-wf4w5r §11, T29): its
+# acceptance is Benjamin's answer recorded by bin/owner-answer with his
+# words, the commit and the fingerprint of the dossier -- never this click,
+# which knows none of the three.
+NEW_FLOW_MARK_KEY = "gc.flow.mark"
+REFUS_NOUVEAU_FLUX = (
+    "Ce chantier est livré par le nouveau flux : son acceptation s'enregistre à l'Acceptance Session, avec tes mots, "
+    "le commit et l'empreinte du dossier (bin/owner-answer), pas par ce bouton. Rien n'est écrit."
+)
 
 
 class AccepterError(Exception):
@@ -31,6 +43,8 @@ def accepter_chantier(bd_bin, convoy_id, clock, acteur="benjamin", confirm=False
     for répondre/accepter-proposition/relancer."""
     if not confirm:
         raise AccepterError("confirmation requise")
+    if _carries_new_flow_mark(bd_bin, convoy_id):
+        raise AccepterError(REFUS_NOUVEAU_FLUX)
     quand = trace.now_iso(clock)
     try:
         trace.write_trace(
@@ -46,6 +60,20 @@ def accepter_chantier(bd_bin, convoy_id, clock, acteur="benjamin", confirm=False
     except trace.TraceError as exc:
         raise AccepterError(str(exc))
     return {"ok": True, "bead_id": convoy_id, "quand": quand}
+
+
+def _carries_new_flow_mark(bd_bin, convoy_id, timeout=10):
+    """Whether the convoy carries the new-flow mark. A convoy that cannot be
+    read is not accepted on a guess."""
+    try:
+        completed = subprocess.run([bd_bin, "show", convoy_id, "--json"], capture_output=True, text=True, timeout=timeout)
+        beads = json.loads(completed.stdout) if completed.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        beads = None
+    bead = beads[0] if isinstance(beads, list) and beads else beads
+    if not isinstance(bead, dict):
+        raise AccepterError("chantier %s illisible : rien n'est écrit" % convoy_id)
+    return bool((bead.get("metadata") or {}).get(NEW_FLOW_MARK_KEY))
 
 
 def pas_bon_vers_agent(convoy_id, titre, dossier=None):

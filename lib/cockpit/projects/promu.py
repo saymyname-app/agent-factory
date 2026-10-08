@@ -21,7 +21,7 @@ import os
 from cockpit.projects import promotion
 from cockpit.projects.depots import clone_path
 from cockpit.projects.stage import (
-    ACCEPTED_KEY,
+    _accepted,
     CONVOY_ISSUE_TYPE,
     DISPATCH_RIG_KEY,
     GRAPH_DIGEST_KEY,
@@ -65,7 +65,7 @@ def read_promotion_results(descriptors, beads, rig_repos, clones_dir, git_bin="g
         digest = metadata.get(GRAPH_DIGEST_KEY)
         if not digest or bead.get("status") != "closed":
             continue
-        if str(metadata.get(ACCEPTED_KEY, "")).lower() != "true":
+        if not _accepted(metadata):
             continue
         commits_by_rig = {}
         for ticket in beads:

@@ -135,6 +135,13 @@ def main():
         cmd_list(rest)
     elif command == "update":
         cmd_update(rest)
+    elif command == "show":
+        found = [bead for bead in _load() if rest and bead.get("id") == rest[0]]
+        if not found:
+            sys.stderr.write("fake bd (cockpit-actions): no bead %s\n" % (rest[0] if rest else ""))
+            sys.exit(1)
+        sys.stdout.write(json.dumps(found))
+        sys.exit(0)
     elif command == "create":
         cmd_create(rest)
     else:

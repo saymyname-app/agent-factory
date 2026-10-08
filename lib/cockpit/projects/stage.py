@@ -69,6 +69,19 @@ ACCEPTANCE_NOTE_KEY = "gc.cockpit_acceptance_note"
 DETAIL_LIVRE_SANS_ACCEPTATION = "Livré avant le flux d'acceptation : rien à accepter"
 
 
+def _accepted(metadata):
+    """Whether Benjamin accepted the chantier. A convoy of the new flow is
+    accepted by his recorded answer (bin/owner-answer, T29, Spec af-wf4w5r
+    §11), which replaces the cockpit's own key there; any other convoy by
+    the trace of the cockpit's click, as before."""
+    if metadata.get(NEW_FLOW_MARK_KEY):
+        # Deferred import: lib/ is on the path of every cockpit entry point.
+        from convoy_state import owner_answer_of
+
+        return (owner_answer_of(metadata) or {}).get("response") == "accepted"
+    return str(metadata.get(ACCEPTED_KEY, "")).lower() == "true"
+
+
 def _project_of(bead):
     return (bead.get("metadata") or {}).get(PROJECT_KEY)
 
@@ -258,7 +271,7 @@ def _convoy_chantiers_all(beads, promotion_results=None):
             etat_val, cible = _etat_for(bead, extra_beads=tickets, bloque_extra=(pret + en_cours + en_pr == 0))
         else:
             metadata = bead.get("metadata") or {}
-            accepted = str(metadata.get(ACCEPTED_KEY, "")).lower() == "true"
+            accepted = _accepted(metadata)
             note = metadata.get(ACCEPTANCE_NOTE_KEY)
             a_regarder = note.strip() if isinstance(note, str) else ""
             nothing_to_judge = not accepted and not a_regarder and not metadata.get(NEW_FLOW_MARK_KEY)
