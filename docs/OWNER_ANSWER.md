@@ -38,6 +38,7 @@ Everything is written through `bin/convoy-state`, in one convoy field,
     --approved-by NAME [--words TEXT] [--commit SHA --pack-digest DIGEST] \
     [--findings FILE] [--reason LINE] [--repo DIR]
 ./bin/owner-answer resolve-exception af-convoy --approved-by NAME --words TEXT [--repo DIR]
+./bin/owner-answer proposals af-convoy [--repo DIR]
 ```
 
 The project is the single one the convoy's first ticket names under
@@ -51,7 +52,7 @@ rubric 2 of the Evidence Pack), on a Delivered Outcome:
 | Verdict | Effect |
 | --- | --- |
 | « sans suite » | recorded; no longer blocks « accepté » |
-| « plus tard » | recorded; code creates a proposition through `bin/proposal-door create` and names it on the verdict (`proposal`); does not block |
+| « plus tard » | recorded; code creates a proposition through `bin/proposal-door create` and names it on the verdict (`proposal`); does not block. If the door fails the verdict stays recorded and the answer names it under `proposals_pending` (see `proposals`) |
 | « à faire avant d'accepter » | recorded; **blocks « accepté »** until the proposition has been returned with a « constats rendus » answer |
 
 A verdict may be changed until code acted on it (its proposition created,
@@ -84,11 +85,22 @@ Delivered Outcome, or the one of a « non conforme » request.
 **`resolve-exception`** records, on his words, that the Planning Exception
 of the last batch is resolved.
 
+**`proposals`** creates the proposition of each « plus tard » he gave — a
+verdict on a proposition, an Owner Finding of his last answer — that has
+none yet, and answers `created` and `proposals_pending` (each names the
+`proposition` or the number of the `finding`; a pending one carries the
+`detail` of the door). It takes no `--approved-by`: it records nothing he
+did not say. A proposition door that fails is **not a refusal of his
+answer**: `verdict` and `record` have already written it, exit 0, and name
+what is missing under `proposals_pending`; each pass of
+`bin/convoy-advance` then runs `proposals` until nothing is missing
+(`acceptance.owner_proposals`, `docs/CONVOY_ADVANCE.md`).
+
 Every answer is one JSON object on stdout. **Exit codes**: 0 done; 1
-refused (`error` starts with `refus : `); 4 the convoy does not carry the
-mark (answered as `bin/convoy-state` answers it, nothing touched). An
-« état sans règle » on the convoy is a refusal, exit 1 (the docstring of
-the tool announces exit 3; the code never returns it).
+refused (`error` starts with `refus : `); 3 the convoy is in an « état sans
+règle » (`unruled` carries the anomalies `bin/convoy-state show` found;
+nothing is recorded on such a convoy); 4 the convoy does not carry the mark
+(answered as `bin/convoy-state` answers it, nothing touched).
 
 ## How code routes an Owner Finding
 
@@ -136,7 +148,7 @@ the tool announces exit 3; the code never returns it).
 | Command | Refused when | Written |
 | --- | --- | --- |
 | all | `--approved-by` is not the declared human approver of the project, or that approver cannot be read (tickets naming no single project) | nothing |
-| all | the convoy is in an « état sans règle » | nothing |
+| all | the convoy is in an « état sans règle »: exit 3, not a refusal | nothing |
 | `verdict`, `record` | the last answer is « accepté » or « abandonné »: nothing reopens it | nothing |
 | `verdict` | the verdict is not one of the three; the convoy is not Delivered; the id is not a proposition of the convoy; no words; the verdict already had its follow-up and another one is given | nothing |
 | `record` | `--response` is « refusé » (return findings or abandon instead), a partial acceptance (`--stories`, « accepté partiellement »…), or unknown | nothing |
@@ -232,8 +244,9 @@ unchanged.
 - **The issue of a « non conforme » request is still read by nothing**
   (`bin/acceptance-session record`: relancer, planification, abandon):
   T29's acceptance criteria cover the Delivered Outcome only. « abandonné »
-  can be recorded here on a « non conforme » dossier; « relancer un tour »
-  does not withdraw `end_stop`, and that request stays on the door's list.
+  can be recorded here on a « non conforme » dossier, and takes that
+  request off the door's list as it does an Acceptance Request; « relancer
+  un tour » does not withdraw `end_stop`, and its request stays listed.
 - **Nothing prevents an agent from inventing Benjamin's words** or passing
   his name in `--approved-by`, as the Spec assumes: the record makes it
   visible afterwards.
@@ -242,12 +255,13 @@ unchanged.
 - **Routing reads the citation, not the meaning**: a finding that cites an
   existing story while asking for behaviour beyond it is routed as a
   repair. The patch door and the review of the ticket are the next guard.
-- **A proposition door that fails after the answer is written**: the answer
-  (or the verdict) is recorded, the command exits 1 and the proposition is
-  missing. A verdict is completed by running the same command again; a
-  « constats rendus » answer is not — the convoy is no longer Delivered —
-  so the finding keeps no `proposal`, and the Acceptance Request is not
-  cleared by that call.
+- **A proposition door that creates the proposition but whose name is not
+  written on the convoy afterwards** (`bin/convoy-state` failing between
+  the two) leaves it pending: the next `proposals` creates a second one.
+- **A proposition door that keeps failing holds nothing**: the Outcome can
+  be Delivered and accepted while a « plus tard » still has no proposition;
+  every pass says so (`acceptance.proposals_pending`) and nothing else
+  reports it.
 - **The Cockpit still shows « Accepter »** on a closed marked convoy with
   no recorded answer; the click is refused.
 - No real convoy reached an answer.

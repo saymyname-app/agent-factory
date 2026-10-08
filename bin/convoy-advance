@@ -212,6 +212,7 @@ SPEC_END_BIN = BIN / "spec-end"
 END_REVIEW_BIN = BIN / "spec-end-review"
 OUTCOME_BIN = BIN / "outcome-evaluation"
 PACK_BIN = BIN / "evidence-pack"
+OWNER_BIN = BIN / "owner-answer"
 PACK_CONDITION = "evidence_pack"
 PUBLISH_BIN = BIN / "ticket-graph-publish"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
@@ -519,6 +520,15 @@ class Convoy:
         « constats rendus » (T29, Spec §11)."""
         answers = (self.judgement or {}).get("answers") or []
         return answers[-1]["findings"] if answers and answers[-1].get("response") == "findings" else []
+
+    def later_without_proposal(self) -> bool:
+        """A « plus tard » Benjamin gave -- a verdict on a proposition, an
+        Owner Finding of his last answer -- has no proposition yet."""
+        answers = (self.judgement or {}).get("answers") or []
+        return any(v.get("verdict") == "plus_tard" and "proposal" not in v
+                   for v in (self.judgement or {}).get("verdicts") or []) \
+            or any(f.get("route") == "later" and "proposal" not in f
+                   for f in (answers[-1].get("findings") or [] if answers else []))
 
     def owner_hold(self) -> str | None:
         """What Benjamin's last « constats rendus » holds the end of the
@@ -1337,6 +1347,16 @@ def settle_acceptance(convoy: Convoy) -> dict[str, Any] | None:
             answer.setdefault("owner_repairs", []).append({"finding": number, **repair})
         if "owner_repairs" in answer:
             convoy.load()
+        # A « plus tard » of his whose proposition the door did not create
+        # when he answered gets it now; a door that still fails holds nothing.
+        if convoy.later_without_proposal():
+            said = parsed(run([str(OWNER_BIN), "proposals", convoy.id, "--repo", str(convoy.repo)]),
+                          "owner-answer proposals")
+            for key in ("created", "proposals_pending"):
+                if said.get(key):
+                    answer["owner_proposals" if key == "created" else key] = said[key]
+            if said.get("error"):
+                answer["proposals_pending"] = said["error"]
         held = convoy.owner_hold()
         if held and not convoy.delivered:
             answer["owner_hold"] = held

@@ -6,6 +6,7 @@ Finding (T29, Spec §11).
     owner-answer record  CONVOY --response RESPONSE --approved-by NAME [--words TEXT]
                          [--commit SHA --pack-digest DIGEST] [--findings PATH] [--reason LINE] [--repo DIR]
     owner-answer resolve-exception CONVOY --approved-by NAME --words TEXT [--repo DIR]
+    owner-answer proposals CONVOY [--repo DIR]
 
 The one tool that records what the declared human approver of the project
 answers to a Delivered Outcome. Everything is written through
@@ -41,9 +42,15 @@ acceptance:
 `resolve-exception` records, on his words, that the Planning Exception of
 the last batch is resolved; until then the Outcome is not Delivered again.
 
+`proposals` creates the proposition of each « plus tard » he gave that has
+none yet. A proposition door that fails is not a refusal of his answer: the
+answer stays recorded, the command that recorded it exits 0 and names what
+is missing under `proposals_pending`, and each pass of bin/convoy-advance
+runs `proposals` until nothing is.
+
 A refusal writes nothing. Exit codes: 0 done; 1 refused (JSON, `error`
-starts with "refus : "); 3 « état sans règle »; 4 the convoy does not carry
-the new-flow mark.
+starts with "refus : "); 3 « état sans règle » (JSON, `unruled`: nothing is
+recorded on such a convoy); 4 the convoy does not carry the new-flow mark.
 """
 
 from __future__ import annotations
@@ -102,6 +109,14 @@ class NotNewFlow(RuntimeError):
     def __init__(self, answer: dict[str, Any]):
         super().__init__(answer.get("message", ""))
         self.answer = answer
+
+
+class Unruled(RuntimeError):
+    """The convoy is in an « état sans règle »: carries the anomalies."""
+
+    def __init__(self, anomalies: Any):
+        super().__init__("état sans règle")
+        self.anomalies = anomalies
 
 
 def short(text: str, limit: int = MAX_DETAIL) -> str:
@@ -191,7 +206,7 @@ class Convoy:
         if status == EXIT_NOT_NEW_FLOW:
             raise NotNewFlow(answer)
         if status == EXIT_UNRULED:
-            raise Refusal(f"état sans règle sur le convoi {convoy_id} : aucune réponse ne s'y enregistre")
+            raise Unruled(answer.get("unruled"))
         if status != 0 or not isinstance(answer.get("tickets"), list):
             raise Refusal(refusal_text(answer))
         self.tickets: list[dict[str, Any]] = answer["tickets"]
@@ -248,9 +263,15 @@ class Convoy:
                 "rien n'est écrit")
         return delivered
 
-    def request_bead(self) -> str | None:
-        request = (self.state.get("acceptance") or {}).get("request")
-        return request["bead"] if isinstance(request, dict) else None
+    def request_beads(self) -> list[str]:
+        """Where a request waits for Benjamin on this convoy: its Acceptance
+        Request, and the « non conforme » request of its stopped rounds."""
+        beads: list[str] = []
+        for held in (self.state.get("acceptance"), self.state.get("end_stop")):
+            request = held.get("request") if isinstance(held, dict) else None
+            if isinstance(request, dict) and request.get("bead") not in beads:
+                beads.append(request["bead"])
+        return beads
 
 
 def held_dossier(convoy: Convoy, commit: str | None, digest: str | None, said: str) -> dict[str, Any]:
@@ -310,13 +331,45 @@ def create_proposal(convoy: Convoy, text: str, why: str) -> str:
     return match.group(1)
 
 
+def later_proposals(convoy_id: str, repo: str | None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Each « plus tard » Benjamin gave -- a verdict on a proposition, an
+    Owner Finding of his last answer -- gets its proposition, once. Returns
+    what was created, and what the door did not create: his answer stays
+    recorded, and the next call tries again."""
+    convoy = Convoy(convoy_id, repo)
+    judgement, propositions = convoy.judgement(), convoy.propositions()
+    due: list[tuple[dict[str, Any], str, str, tuple[str, ...]]] = []
+    for entry in judgement["verdicts"]:
+        if entry["verdict"] == "plus_tard" and "proposal" not in entry:
+            due.append(({"proposition": entry["proposition"]}, propositions.get(entry["proposition"], entry["proposition"]),
+                        "Benjamin a rendu le verdict « plus tard » sur cette proposition du dossier.",
+                        ("set-verdict-proposal", "--proposition", entry["proposition"])))
+    last = judgement["answers"][-1] if judgement["answers"] else {}
+    for number, finding in enumerate(last.get("findings") or [], start=1):
+        if finding["route"] == "later" and "proposal" not in finding:
+            due.append(({"finding": number}, finding["text"], "Benjamin l'a noté « plus tard » en rendant ses constats.",
+                        ("set-owner-proposal", "--finding", str(number))))
+    created: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    for named, text, why, (command, *where) in due:
+        try:
+            bead = create_proposal(convoy, text, why)
+            state_write(command, convoy.id, *where, "--bead", bead)
+        except Refusal as exc:
+            pending.append({**named, "detail": str(exc)})
+        else:
+            created.append({**named, "proposal": bead})
+    return created, pending
+
+
 def answer_request(convoy: Convoy) -> str | None:
-    """The Acceptance Request no longer waits for Benjamin once he answered."""
-    bead = convoy.request_bead()
-    if bead is None:
-        return None
-    proc = run([str(ESCALATION_TOOL), "clear", bead])
-    return None if proc.returncode == 0 else f"la demande sur {bead} n'a pas été levée à la porte d'escalade : {detail_of(proc)}"
+    """No request waits for Benjamin on the convoy once he answered."""
+    failed = []
+    for bead in convoy.request_beads():
+        proc = run([str(ESCALATION_TOOL), "clear", bead])
+        if proc.returncode != 0:
+            failed.append(f"la demande sur {bead} n'a pas été levée à la porte d'escalade : {detail_of(proc)}")
+    return " ; ".join(failed) or None
 
 
 # --- the commands --------------------------------------------------------------------
@@ -340,14 +393,13 @@ def cmd_verdict(args: argparse.Namespace) -> dict[str, Any]:
     answer: dict[str, Any] = {"ok": True, "convoy": convoy.id, "proposition": args.proposition, "verdict": verdict,
                               "verdict_name": VERDICT_NAMES[verdict]}
     if verdict == "plus_tard":
+        _, pending = later_proposals(convoy.id, args.repo)
         known = next(entry for entry in Convoy(convoy.id, args.repo).judgement()["verdicts"]
                      if entry["proposition"] == args.proposition)
-        if "proposal" not in known:
-            bead = create_proposal(convoy, propositions[args.proposition],
-                                   "Benjamin a rendu le verdict « plus tard » sur cette proposition du dossier.")
-            state_write("set-verdict-proposal", convoy.id, "--proposition", args.proposition, "--bead", bead)
-            known = {**known, "proposal": bead}
-        answer["proposal"] = known["proposal"]
+        if "proposal" in known:
+            answer["proposal"] = known["proposal"]
+        if pending:
+            answer["proposals_pending"] = pending
     return answer
 
 
@@ -384,13 +436,12 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
         extra = ["--file", args.findings] if response == "findings" and args.findings else []
         state_write("record-owner-answer", convoy.id, "--response", response, "--approver", approver,
                     "--words", args.words, "--commit", args.commit, "--pack-digest", args.pack_digest, *extra)
+    # His answer is recorded: a proposition the door does not create is named, not a refusal.
+    _, pending = later_proposals(convoy.id, args.repo)
+    if pending:
+        written["proposals_pending"] = pending
     last = Convoy(convoy.id, args.repo).judgement()["answers"][-1]
     if response == "findings":
-        for number, finding in enumerate(last["findings"], start=1):
-            if finding["route"] == "later" and "proposal" not in finding:
-                bead = create_proposal(convoy, finding["text"], "Benjamin l'a noté « plus tard » en rendant ses constats.")
-                state_write("set-owner-proposal", convoy.id, "--finding", str(number), "--bead", bead)
-                finding["proposal"] = bead
         written["findings"] = [{**finding, "number": number, "route_name": ROUTE_NAMES[finding["route"]]}
                                for number, finding in enumerate(last["findings"], start=1)]
         written["next"] = ("Les repairs sont publiés et livrés par la prochaine passe de l'ordre ; la porte de fin de "
@@ -407,6 +458,11 @@ def cmd_resolve_exception(args: argparse.Namespace) -> dict[str, Any]:
     approver = convoy.approved_by(args.approved_by, "résout la Planning Exception d'un lot de constats")
     state_write("resolve-owner-exception", convoy.id, "--approver", approver, "--words", args.words or "")
     return {"ok": True, "convoy": convoy.id, "exception": Convoy(convoy.id, args.repo).judgement()["answers"][-1]["exception"]}
+
+
+def cmd_proposals(args: argparse.Namespace) -> dict[str, Any]:
+    created, pending = later_proposals(args.convoy, args.repo)
+    return {"ok": True, "convoy": args.convoy, "created": created, "proposals_pending": pending}
 
 
 def main() -> int:
@@ -439,12 +495,22 @@ def main() -> int:
     p.add_argument("--approved-by")
     p.add_argument("--words")
     p.set_defaults(run=cmd_resolve_exception)
+    p = sub.add_parser("proposals")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.set_defaults(run=cmd_proposals)
     args = parser.parse_args()
     try:
         answer = args.run(args)
     except NotNewFlow as exc:
         print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
         return EXIT_NOT_NEW_FLOW
+    except Unruled as exc:
+        print(json.dumps({
+            "ok": False, "convoy": args.convoy, "unruled": exc.anomalies,
+            "message": f"état sans règle : aucune réponse ne s'enregistre sur le convoi {args.convoy}",
+        }, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_UNRULED
     except Refusal as exc:
         print(json.dumps({"ok": False, "convoy": args.convoy, "error": f"refus : {exc}"},
                          indent=2, sort_keys=True, ensure_ascii=False))

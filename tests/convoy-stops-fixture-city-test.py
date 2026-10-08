@@ -1312,6 +1312,7 @@ class OwnerAnswerOnTheFixtureCity(FixtureCityWalk):
 
     APPROVER = "benjamin"
     FINDING = "La liste des éléments ne se relit pas en JSON à l'adresse /items."
+    LATER = "Un export CSV de la liste serait utile."
     REPAIR = {
         "title": "Servir la liste des éléments en JSON",
         "what_it_delivers": "Le produit sert la liste des éléments du jeu de données en JSON à l'adresse /items.",
@@ -1368,12 +1369,14 @@ class OwnerAnswerOnTheFixtureCity(FixtureCityWalk):
         # His verdict on it, then one finding that cites the second user story of the Spec.
         self.owner_ok("verdict", "--proposition", proposition["id"], "--verdict", "sans suite", "--words", "Pas utile.")
         findings = self.workspace / "owner-findings.json"
-        findings.write_text(json.dumps({"findings": [{
-            "text": self.FINDING, "cites": {"kind": "user_story", "ref": "user story 2"}, "repair": self.REPAIR}]},
-            ensure_ascii=False), encoding="utf-8")
+        findings.write_text(json.dumps({"findings": [
+            {"text": self.FINDING, "cites": {"kind": "user_story", "ref": "user story 2"}, "repair": self.REPAIR},
+            {"text": self.LATER, "later": True}]}, ensure_ascii=False), encoding="utf-8")
         returned = self.owner_ok("record", "--response", "constats rendus", "--words", "Il manque le JSON.",
                                  "--commit", first["commit"], "--pack-digest", first["pack"], "--findings", findings)
-        self.assertEqual(["repair"], [finding["route"] for finding in returned["findings"]])
+        self.assertEqual(["repair", "later"], [finding["route"] for finding in returned["findings"]])
+        # The proposition door of the fixture creates nothing: his answer is recorded all the same.
+        self.assertEqual([2], [pending["finding"] for pending in returned["proposals_pending"]])
 
         # Nothing closed, nothing merged; the Outcome is no longer Delivered and its rounds start again.
         shown = self.shown()
@@ -1386,9 +1389,14 @@ class OwnerAnswerOnTheFixtureCity(FixtureCityWalk):
         self.assertEqual([], self.requests())
         self.assertFalse(shown["unruled"])
 
-        # The next pass publishes the one repair of the finding, by code, and says so.
+        # The next pass publishes the one repair of the finding, by code, and says so; the door
+        # answers again, and the same pass creates the proposition of his « plus tard ».
+        (self.workspace / "proposal-door").write_text(
+            '#!/bin/sh\n[ "$1" = create ] && echo "PROPOSITION CRÉÉE: fx-later — notée" || echo 0\n')
         self.order_pass()
         [published] = self.last_pass()["acceptance"]["owner_repairs"]
+        self.assertEqual([{"finding": 2, "proposal": "fx-later"}], self.last_pass()["acceptance"]["owner_proposals"])
+        self.assertEqual("fx-later", self.shown()["convoy"]["judgement"]["answers"][-1]["findings"][1]["proposal"])
         shown = self.shown()
         [repair] = [ticket for ticket in shown["tickets"] if ticket["id"] not in tracked]
         self.assertEqual((1, repair["id"], True), (published["finding"], published["id"], published["published"]))

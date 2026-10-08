@@ -30,7 +30,7 @@ sessions = load("acceptance-session-test.py")
 packs = sessions.packs
 gate = packs.gate
 CONVOY, PLAIN_CONVOY, INTEGRATION, SLICE = packs.CONVOY, packs.PLAIN_CONVOY, packs.INTEGRATION, packs.SLICE
-EXIT_REFUSED, EXIT_NOT_NEW_FLOW = 1, 4
+EXIT_REFUSED, EXIT_UNRULED, EXIT_NOT_NEW_FLOW = 1, 3, 4
 APPROVER = "benjamin"
 PROPOSITION = packs.FINDING_ID if ":" in packs.FINDING_ID else f"{SLICE}:{packs.FINDING_ID}"
 WORDS = "Le pied de page est bon, j'accepte."
@@ -53,11 +53,15 @@ class OwnerAnswerTest(sessions.AcceptanceSessionTest):
         door = self.tmp / "path" / "owner-proposal-door"
         door.write_text(
             "#!/bin/sh\n"
+            # The escalation door asks it for the count of pending proposals.
+            '[ "$1" = create ] || { echo 0; exit 0; }\n'
             f'n=$(( $(wc -l < "{self.proposals}" 2>/dev/null || echo 0) + 1 ))\n'
             f'printf \'%s\\n\' "$2" >> "{self.proposals}"\n'
             'echo "PROPOSITION CRÉÉE: fx-p$n — notée"\n')
         door.chmod(0o755)
         self.env["PROPOSAL_DOOR_BIN"] = str(door)
+        self.working_door = door.read_text()
+        self.proposal_door = door
 
     # --- harness ------------------------------------------------------------
 
@@ -108,6 +112,12 @@ class OwnerAnswerTest(sessions.AcceptanceSessionTest):
         self.assertTrue(answer["error"].startswith("refus : "), answer)
         self.assertEqual(before, self.everything())
         return answer["error"]
+
+    def break_the_proposition_door(self):
+        self.proposal_door.write_text("#!/bin/sh\necho 'porte en panne' >&2\nexit 1\n")
+
+    def mend_the_proposition_door(self):
+        self.proposal_door.write_text(self.working_door)
 
     def findings_file(self, *findings):
         return self.json_file("constats.json", {"findings": list(findings)})
@@ -449,6 +459,85 @@ class OwnerAnswerTest(sessions.AcceptanceSessionTest):
         error = self.refusal_of(lambda: self.respond("accepté", commit, "sha256:" + "0" * 64))
 
         self.assertIn("Delivered", error)
+
+    def test_a_proposition_door_that_fails_leaves_the_verdict_recorded_and_its_proposition_to_create(self):
+        self.delivered_dossier()
+        self.break_the_proposition_door()
+
+        answer = self.passed(self.give_verdict("plus tard"))
+
+        self.assertNotIn("proposal", answer)
+        (pending,) = answer["proposals_pending"]
+        self.assertEqual(PROPOSITION, pending["proposition"])
+        self.assertIn("porte en panne", pending["detail"])
+        (verdict,) = self.judgement()["verdicts"]
+        self.assertEqual("plus_tard", verdict["verdict"])
+        self.assertNotIn("proposal", verdict)
+        # Once the door answers again, what is missing is created, once.
+        self.mend_the_proposition_door()
+        completed = self.passed(self.owner("proposals"))
+        self.assertEqual(([{"proposition": PROPOSITION, "proposal": "fx-p1"}], []),
+                         (completed["created"], completed["proposals_pending"]))
+        self.assertEqual("fx-p1", self.judgement()["verdicts"][0]["proposal"])
+        again = self.passed(self.owner("proposals"))
+        self.assertEqual(([], []), (again["created"], again["proposals_pending"]))
+        self.assertEqual(1, len(self.proposals_made()))
+
+    def test_a_proposition_door_that_fails_leaves_the_findings_recorded_and_the_request_answered(self):
+        commit, digest = self.delivered_dossier()
+        self.passed(self.give_verdict("sans suite"))
+        self.door("benjamin", CONVOY, json.dumps({
+            "quoi": "Acceptance Request — un Delivered Outcome attend ton jugement", "pourquoi": "Tout est livré.",
+            "que_faire": [{"option": "Ouvrir l'Acceptance Session", "consequence": "Le produit est lancé."}],
+            "langue": "fr", "bloquant": True,
+            "lien": self.show()["convoy"]["evidence_pack"]["path"] + "/index.html"}, ensure_ascii=False))
+        self.state("acceptance-requested", CONVOY, "--bead", CONVOY)
+        self.break_the_proposition_door()
+        findings = self.findings_file(cited(), {"text": "Un export CSV serait utile.", "later": True})
+
+        answer = self.passed(self.respond("constats rendus", commit, digest, "--findings", findings))
+
+        (pending,) = answer["proposals_pending"]
+        self.assertEqual(2, pending["finding"])
+        (last,) = self.judgement()["answers"]
+        self.assertEqual("findings", last["response"])
+        self.assertNotIn("proposal", last["findings"][1])
+        self.assertIsNone(self.show()["convoy"]["delivered"])
+        self.assertNotIn("door", answer)
+        # The convoy is no longer Delivered: the proposition is still created once the door answers.
+        self.mend_the_proposition_door()
+        self.assertNotIn(CONVOY, self.door("list"))
+        completed = self.passed(self.owner("proposals"))
+        self.assertEqual([{"finding": 2, "proposal": "fx-p1"}], completed["created"])
+        self.assertEqual("fx-p1", self.judgement()["answers"][-1]["findings"][1]["proposal"])
+        self.assertIn("export CSV", self.proposals_made()[0]["quoi"])
+
+    def test_abandoned_on_a_non_conforme_dossier_takes_its_request_off_the_operators_list(self):
+        commit = self.non_conforme()
+        declared = self.root / "config" / "projects" / "fx-rig.toml"
+        declared.write_text(declared.read_text() + f'human_approver = "{APPROVER}"\n')
+        self.assertIn(CONVOY, self.door("list"))
+
+        answer = self.passed(self.respond("abandonné", None, None, "--reason", "Le besoin a disparu.", words=None))
+
+        self.assertNotIn("door", answer)
+        self.assertEqual(("abandoned", commit), (self.judgement()["answers"][-1]["response"], answer["commit"]))
+        self.assertNotIn(CONVOY, self.door("list"))
+
+    def test_a_convoy_in_a_state_without_rule_takes_no_answer(self):
+        commit, digest = self.delivered_dossier()
+        self.passed(self.give_verdict("sans suite"))
+        # Closed outside its gate: the record of the gate is gone.
+        self.edit(SLICE, unset=("gc.flow.gate.ticket_end",))
+        before = self.everything()
+
+        status, answer = self.respond("accepté", commit, digest)
+
+        self.assertEqual(EXIT_UNRULED, status, answer)
+        self.assertFalse(answer["ok"])
+        self.assertTrue(answer["unruled"], answer)
+        self.assertIn("état sans règle", answer["message"])
+        self.assertEqual(before, self.everything())
 
     def test_a_convoy_without_the_mark_is_answered_as_not_of_the_new_flow(self):
         self.delivered_dossier()

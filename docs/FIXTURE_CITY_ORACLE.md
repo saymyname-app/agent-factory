@@ -361,6 +361,27 @@ replays the gate: `bin/spec-end run`, the Outcome Evaluation on the new
 tip, where the story is now observed, the end review, the Evidence Pack,
 and `bin/spec-end run` again, which records Delivered.
 
+With `--inject proposition` the driver publishes the same Spec through the
+same door, but the stand-in Evaluator of the end observes both stories on
+the home page, so the Outcome is Delivered without a round; the author of
+the walked ticket leaves one finding « hors ticket », which the Evaluator
+of the end keeps as a « proposition »; and the project of the fixture
+declares its human approver (`human_approver` in its
+`config/projects/<rig>.toml`). No scenario of the oracle uses it: it is the
+start of `OwnerAnswerOnTheFixtureCity` in
+`tests/convoy-stops-fixture-city-test.py`, where the real
+`bin/owner-answer` refuses « accepté » until the proposition has its
+verdict, records « constats rendus », the real passes publish and deliver
+the repair of the returned finding — its author session makes the product
+serve `GET /items` — and create the proposition of a finding « plus tard »
+the door had not created, the whole end of the Spec runs again, the second
+dossier opens with « Depuis ton dernier jugement », and « accepté » is
+recorded (`docs/OWNER_ANSWER.md`).
+
+Whatever the injection, each pass of the order the driver plays also writes
+the answer of `bin/convoy-advance` to `<workspace>/order-pass.json`, where
+a test reads what the pass said it did.
+
 A scenario may name the `project` of the fixture its ticket belongs to; the
 oracle hands the name to the driver (`prepare --project`) and reports it in
 its result. Absent, the ticket is an interface ticket of the first project
@@ -408,7 +429,9 @@ Limits of the reference driver (`tests/fixtures/fixture-city/delivery-driver`):
   red integration branch, a Blocking Finding of the end review — and
   Benjamin's answer to the Acceptance Request are not scenarios of this
   oracle: they are proven by the suites of the gate and of the pass
-  (`docs/SPEC_END.md`, `docs/CONVOY_ADVANCE.md`). Of the acceptance the
+  (`docs/SPEC_END.md`, `docs/CONVOY_ADVANCE.md`); his answer is walked on
+  the Fixture City by `OwnerAnswerOnTheFixtureCity`, outside
+  `bin/fixture-city-oracle run`. Of the acceptance the
   oracle walks the request, the opening and the closing of the session; the
   session outage, the « non conforme » session and « no delay accepts » are
   in `tests/convoy-stops-fixture-city-test.py`.

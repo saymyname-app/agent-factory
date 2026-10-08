@@ -985,6 +985,13 @@ restoring the user story or the anchor it cites — and names it with
 `acceptance.owner_repairs`: `{finding, …the published ticket}` each. A
 finding of another route gets no repair, ever.
 
+**The propositions of his « plus tard » (T29).** While a verdict « plus
+tard » or an Owner Finding « plus tard » of his last answer names no
+proposition — the proposition door failed when he answered — the pass runs
+`bin/owner-answer proposals`: what it created is under
+`acceptance.owner_proposals`, what the door still did not create under
+`acceptance.proposals_pending`. Neither holds the end of the Spec.
+
 **The end of the Spec is held** (`Convoy.end_due()` is false) while such a
 finding has no published repair, or while the Planning Exception of the
 batch is open: `acceptance.owner_hold` says which. The exception is lifted
