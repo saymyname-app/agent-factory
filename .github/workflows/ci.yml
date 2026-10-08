@@ -31,9 +31,11 @@ permissions:
 # The tests run in LOTS lots, one runner each (bin/ci-run-tests --shard),
 # and each runner runs as many test files at once as it has cores (--jobs):
 # the tests are bound by the processor, so a core left idle is billed for
-# nothing. More lots end sooner but cost more: each one pays its own setup
-# and rounding to the minute, and the job named "Tests" is billed while it
-# waits for the longest lot.
+# nothing. Each lot pays its own setup and rounding to the minute, about one
+# billed minute, and ends the run sooner. The lots are dealt by the seconds
+# each file took in a real run (config/ci-test-seconds.tsv): uneven lots are
+# what costs, because the job named "Tests" is billed while it waits for the
+# longest one.
 # Lot 1 is the job named "Tests": the one status check the repository
 # ruleset requires and bin/pr-autopilot gates on. It exists from the first
 # second of the run, as before, and ends green only when its own lot and
@@ -41,7 +43,7 @@ permissions:
 # would report nothing while they run, which the autopilot reads as "no
 # status check ever reported".
 env:
-  LOTS: 2
+  LOTS: 4
 
 jobs:
   tests:
@@ -50,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lot: [1, 2]
+        lot: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
 
@@ -117,6 +119,9 @@ jobs:
             running=$(jq '[.[] | select(.status != "completed")] | length' <<<"$jobs")
             if [ "$total" -eq "$others" ] && [ "$running" -eq 0 ]; then
               jq -r '.[] | "\(.name): \(.conclusion)"' <<<"$jobs"
+              if [ "$SECONDS" -gt 180 ]; then
+                echo "::warning::Tests was billed ${SECONDS}s waiting for the other lots: they are uneven. Refresh config/ci-test-seconds.tsv with bin/ci-test-seconds (docs/OPERATIONS.md, Factory CI cost)."
+              fi
               [ "$(jq '[.[] | select(.conclusion != "success")] | length' <<<"$jobs")" -eq 0 ] && exit 0
               echo "a lot failed: see its own job for the failing test" >&2
               exit 1
