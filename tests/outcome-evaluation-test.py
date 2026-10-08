@@ -112,6 +112,14 @@ class OutcomeEvaluationTest(gate.Harness):
             '[providers.p-claude]\nargs_append = ["--model", "claude-opus-5-5"]\n\n'
             '[providers.p-claude-ro]\nargs_append = ["--model", "claude-opus-5-5"]\n\n'
             '[providers.p-codex]\nargs_append = ["-m", "gpt-5.6-sol"]\n')
+        # The Evaluator session is given no repository: the command finds the
+        # project of the convoy from the rig its tickets name.
+        (config / "projects").mkdir()
+        (config / "projects" / "fx-rig.toml").write_text(f'rig_dir = "{self.repo}"\n')
+        (config / "project-descriptors").mkdir()
+        profile = json.loads((ROOT / gate.FIXTURE / "descriptor.json").read_text())
+        profile["rigs"] = ["fx-rig"]
+        (config / "project-descriptors" / "fx.json").write_text(json.dumps(profile))
         self.providers(evaluator=["p-codex"])
         return base
 
