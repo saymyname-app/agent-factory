@@ -153,6 +153,26 @@ ci_runner resume >/dev/null
 [ ! -e "$T/run/stop-now" ] && [ "$(verdict)" = ok ] || fail "resume must clear the pause, got $(verdict)"
 echo "ok   status says absent, ok, down or paused; pause --now stops the job, resume clears it"
 
+# --- `mode` alone: what an agent asks before a pull request ---------------
+# (docs/DELIVERY.md, "What to run before a pull request": Benjamin, 2026-10-08, « A. »)
+cat > "$T/bin/gh-mode" <<'EOF'
+#!/bin/bash
+case "$*" in
+  "repo view"*) echo "acme/factory" ;;
+  *actions/variables/FACTORY_CI_RUNNER*) [ "$FAKE_MODE" = error ] && exit 1; echo "$FAKE_MODE" ;;
+esac
+EOF
+chmod +x "$T/bin/gh-mode"
+mode() { FAKE_MODE=$1 FACTORY_ROOT="$ROOT" FACTORY_CI_RUNNER_GH="$T/bin/gh-mode" "$RUNNER" mode; }
+[ "$(mode self-hosted)" = self-hosted ] || fail "mode must print self-hosted when the variable says so"
+[ "$(mode '')" = github ] || fail "mode must print github when the variable is not set"
+[ "$(mode error)" = github ] || fail "mode must print github when GitHub gives no clear answer: in doubt the whole battery runs"
+FORMULA="$ROOT/formulas/mol-do-work.formula.toml"
+grep -qF 'bin/ci-runner" mode' "$FORMULA" || fail "$FORMULA no longer asks where CI runs before choosing the local check"
+grep -qF 'bin/ci-run-tests --jobs 4' "$FORMULA" || fail "$FORMULA lost the whole battery for CI on GitHub's runners"
+grep -qF '| `github`, or no clear answer | The whole battery' "$ROOT/docs/DELIVERY.md" || fail "docs/DELIVERY.md lost the whole battery before a delivery when CI is on GitHub's runners"
+echo "ok   before a delivery: the rule checks while CI is on the host, the whole battery otherwise or in doubt"
+
 # --- the loop obeys stop-now ----------------------------------------------
 : > "$T/run/stop-now"; : > "$T/stdin"
 FACTORY_CI_RUNNER_RUN_DIR="$T/run" FACTORY_CI_RUNNER_PODMAN="$T/bin/podman" FACTORY_CI_RUNNER_MAX_TURNS=2 \

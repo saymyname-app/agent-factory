@@ -210,9 +210,13 @@ Do exactly what the bead describes. Follow existing codebase conventions.
 Run the verification commands requested by the bead. If the bead does not
 name verification commands, run the smallest relevant local test/build check
 you can identify. In the Factory's own repository (rig `agent-factory`) that
-check is the whole battery, `bin/ci-run-tests --jobs 4` from your work tree:
-`--rule-checks` is for a change to docs, CI or tests alone
-(`docs/DELIVERY.md`, "What to run before a pull request").
+check depends on where CI runs: when `"$FACTORY_ROOT/bin/ci-runner" mode`
+prints `self-hosted`, run `bin/ci-run-tests --rule-checks --changed-since
+origin/main` from your work tree (CI runs the whole battery right after, on
+the same machine); when it prints anything else, or for no clear answer, run
+the whole battery, `bin/ci-run-tests --jobs 4`. A change to docs, CI or
+tests alone runs `--rule-checks` either way (`docs/DELIVERY.md`, "What to
+run before a pull request").
 
 Before closing, inspect the working tree:
 ```bash
