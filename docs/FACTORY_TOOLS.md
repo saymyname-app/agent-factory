@@ -437,8 +437,12 @@ touché : il reste avancé par le Mayor.
 - **Formule de démarrage** : `start.formula` dans le même fichier, aujourd'hui
   `mol-ticket-author` (la formule de l'auteur, `docs/TICKET_AUTHOR.md`). À
   `null`, la commande refuse de démarrer quoi que ce soit (sortie 1).
+- **Formule de reprise** : `resume.formula` dans le même fichier, aujourd'hui
+  `mol-ticket-resume`. Sans ce réglage, un ticket à reprendre est refusé par
+  la passe, nommé sous `refused` (sortie 1).
 - **Sorties** : 0 passe faite ; 1 refus (réglage, tracker, porte de dispatch
-  qui refuse un ticket, nommé sous `refused`, ou incident impossible à lever) ;
+  qui refuse un ticket ou une reprise, nommé sous `refused`, incident ou
+  demande groupée impossible à lever) ;
   3 « état sans règle » : rien n'est démarré dans ce convoi ; 4 « pas un convoi
   du nouveau flux ».
 - **Convoi arrêté (« état sans règle »)** : un ticket démarré ou fermé hors de
@@ -471,6 +475,32 @@ touché : il reste avancé par le Mayor.
   (`./bin/ticket-end settle`) ; avant la fusion, elle mesure la fidélité
   d'un ticket d'interface (`./bin/ticket-end fidelity`). Un ticket laissé
   ouvert est listé avec la condition qui manque.
+- **Reprises comptées, parcage à la troisième** (T20) : à chaque passe, un
+  ticket dont l'auteur doit le reprendre part vers **une** session neuve
+  d'auteur, sur la même branche, sur un bead « Reprise — <ticket> ». Causes :
+  `interrupted` (sortie « interrompu », ou session terminée sans sortie),
+  `returned` (la fusion a rendu le ticket : conflit ou rouge), `unblocked`
+  (son `repair` est fermé), `answered` (la demande qui le parquait a sa
+  réponse). Chaque reprise est comptée et prend une place sous N. À la
+  troisième, toutes causes confondues (celles-ci, le tour de correction, un
+  commit après verdict), le ticket est parqué avec ceux qui l'attendent et
+  n'est pas relancé ; les autres continuent. Listes `resumed`, `parked`,
+  `lifted` dans la réponse.
+- **Une seule demande groupée** (T20) : quand il ne reste dans un convoi que
+  des tickets parqués, la passe lève **une** ligne pour le convoi dans
+  `./bin/escalation-door list`, sur un bead « Demande groupée : convoi … »
+  qui nomme chaque ticket parqué et sa cause — jamais une par ticket. Répondre `a`
+  relance les tickets aux reprises épuisées (trois reprises de nouveau) ;
+  `b` les laisse parqués, la demande ne revient pas.
+- **Lever un parcage, c'est répondre** : `./bin/escalation-door repondre` sur
+  la demande du ticket (demande opérateur : toute réponse ; Planning
+  Exception : seulement l'option qui accepte l'écart) ou sur la demande
+  groupée. La passe suivante lève le parcage et reprend le ticket. **Ne
+  jamais reprendre ou déparquer un ticket à la main**, ni dispatcher
+  `mol-ticket-resume`.
+- **Pas repris** : un ticket arrêté ; un ticket dont la session du tour de
+  correction est morte sans fermer son bead ; un ticket que la porte de fin
+  de ticket laisse en attente (fidélité rouge, condition manquante).
 - **Relecture des tests restée sans résultat** : la même passe la relance une
   fois, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune
@@ -708,7 +738,9 @@ protégée (Spec af-wf4w5r §4 et §8, T18). Pour un convoi qui porte la
   4 « pas un convoi du nouveau flux ».
 - **Limites** : les autres conditions de la porte de fin de ticket ne sont
   pas encore exigées avant la fusion (T19) ; la session neuve de l'auteur d'un
-  ticket retourné n'est pas démarrée ici (T20) ; un seul dépôt par convoi.
+  ticket retourné n'est pas démarrée ici : `./bin/convoy-advance` l'envoie à
+  la passe suivante et compte une reprise (`docs/CONVOY_ADVANCE.md`) ; un
+  seul dépôt par convoi.
 
 Détail : `docs/SPEC_INTEGRATION.md`.
 
@@ -757,8 +789,11 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
   échoue et rien n'en est fusionné.
 - **Pas ici** : la revue de code (`./bin/code-review`) et la Ticket
   Evaluation sur le produit lancé (`./bin/ticket-evaluation`), que le flux
-  envoie après la sortie « terminé » ; la porte de fin de ticket (T19) ; la
-  reprise d'un ticket (T20).
+  envoie après la sortie « terminé » ; la porte de fin de ticket
+  (`./bin/ticket-end`) ; la reprise d'un ticket, envoyée par
+  `./bin/convoy-advance` à une session neuve sur la formule
+  `mol-ticket-resume`, qui prend le ticket par le même `start`
+  (`docs/CONVOY_ADVANCE.md`).
 
 Détail : `docs/TICKET_AUTHOR.md`.
 
@@ -1016,8 +1051,10 @@ nouveau flux**.
   `./bin/correction-round` le fait, par `./bin/dispatch-door` et
   `./bin/convoy-state`.
 - **Limites** : aucun délai sur la session de correction (une session morte
-  sans fermer son bead laisse le ticket en attente ; la reprise est à T20) ;
-  rien ne lève un arrêt.
+  sans fermer son bead laisse le ticket en attente : les reprises de
+  `./bin/convoy-advance` ne la couvrent pas) ; rien ne lève un arrêt, et un
+  ticket arrêté n'est jamais repris. Le tour compte parmi les trois reprises
+  qui parquent un ticket (`docs/CONVOY_ADVANCE.md`).
 
 Détail : `docs/CORRECTION_ROUND.md`.
 
@@ -1106,8 +1143,10 @@ ticket.
   fermeture hors porte arrête le convoi (incident d'usine). `close` et
   `settle` sont refusés à toute session d'agent.
 - **Un convoi sans marque** garde `./bin/deliver-close`, sans changement.
-- **Limites** : une fidélité rouge laisse le ticket en attente (la reprise
-  est à T20) ; un contrôle de fidélité par passe ; la fin de Spec est à T23.
+- **Limites** : une fidélité rouge, comme toute condition manquante, laisse
+  le ticket en attente : les reprises de `./bin/convoy-advance` ne couvrent
+  pas un ticket que la porte laisse ouvert (`docs/CONVOY_ADVANCE.md`) ; un
+  contrôle de fidélité par passe ; la fin de Spec est à T23.
 
 Détail : `docs/TICKET_END.md`.
 

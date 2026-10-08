@@ -117,8 +117,10 @@ For the ready tickets, in order:
 **Returned to its author.** A conflict or a red belongs to the ticket being
 merged. Nothing here resolves a conflict or repairs a test: the ticket waits
 for a new commit of its author, who takes up the integration tip in a fresh
-session. It is not tried again until its tip has changed and its author has
-finished again at the new tip.
+session. That session is sent by the next pass of `bin/convoy-advance`,
+which counts one resume of cause `returned` (T20,
+`docs/CONVOY_ADVANCE.md`). It is not tried again until its tip has changed
+and its author has finished again at the new tip.
 
 **A commit added after a verdict** (Spec §8). When the branch of a ticket
 has a commit newer than the commit its code review or its Ticket Evaluation
@@ -130,7 +132,10 @@ under `waiting` until the verdicts are replayed on the new tip
 (the code review and the Ticket Evaluation each record a new round there).
 When the outdated verdicts were given at the commit of the ticket's
 correction round, the reason says « aucune reprise de plus n'est comptée » :
-that round was counted when it was opened (`docs/CORRECTION_ROUND.md`). A verdict that is merely unfavorable
+that round was counted when it was opened (`docs/CORRECTION_ROUND.md`). The
+same holds when they were given at the commit the merge returned and the
+pass already counted a `returned` resume for that return (T20): the return
+is counted once, not twice. A verdict that is merely unfavorable
 merges nothing and invalidates nothing.
 
 A profile without `regression_command` is refused when a ticket is ready: no
@@ -152,7 +157,9 @@ test, no merge. A pass with no ready ticket does not read the profile.
   is not merged.
 - **Starting the fresh author session of a returned ticket is not in this
   command.** The return is recorded (`merge` on the ticket, listed by the
-  pass); resuming a ticket is T20's, and the start formula is T12's (`docs/TICKET_AUTHOR.md`).
+  pass); `bin/convoy-advance` reads it and sends the ticket to a fresh
+  author session on the formula `mol-ticket-resume` (T20,
+  `docs/CONVOY_ADVANCE.md`).
 - **The tests on a merged result are the profile's regression command**, the
   one whole-suite command a profile declares. The frozen criterion tests of
   the merged tickets are replayed only as far as that command runs them.

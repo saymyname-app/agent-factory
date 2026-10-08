@@ -100,7 +100,13 @@ On a ticket of a marked convoy, and on the convoy itself, you never:
 - **override or lift a stop** — a ticket still refused after its single
   correction round is stopped by code and raised to the operator.
   `bin/correction-round override` records the words of the declared human
-  approver, never yours.
+  approver, never yours;
+- **resume it or lift its parking** — a ticket that needs its author again
+  is sent to a fresh session by `bin/convoy-advance` on a bead titled
+  « Reprise — <ticket> »; at its third resume it is parked with the tickets
+  behind it, and a convoy left with parked tickets only raises one bead
+  titled « Demande groupée : convoi … » to the operator, whose answer alone
+  lifts a parking. Neither bead is a ticket to dispatch, close or answer.
 
 You keep running the Factory around it: failing orders, orphaned or stuck
 sessions, provider quotas, guard-filed beads, mail naming you. If a marked
@@ -257,8 +263,10 @@ project file (`config/projects/agent-factory.toml`) currently allows only
 `mol-do-work` for work (its `mol-graph-review` is dispatched by
 `bin/graph-review` alone, its `mol-test-review` by `bin/test-review` alone,
 its `mol-code-review` by `bin/code-review` alone, its
-`mol-ticket-evaluation` by `bin/ticket-evaluation` alone and its
-`mol-ticket-correction` by `bin/correction-round` alone, never by you), so `./bin/factory-work-dispatch` has no GUARDED path for HQ
+`mol-ticket-evaluation` by `bin/ticket-evaluation` alone, its
+`mol-ticket-correction` by `bin/correction-round` alone and its
+`mol-ticket-author` and `mol-ticket-resume` by `bin/convoy-advance` alone,
+never by you), so `./bin/factory-work-dispatch` has no GUARDED path for HQ
 Factory work. A GUARDED HQ bead is not something to force through `do-work`
 anyway — escalate it (see "The one escalation contract") instead of picking
 an undispatchable formula.

@@ -23,8 +23,12 @@ touché : il reste avancé par le Mayor.
 - **Formule de démarrage** : `start.formula` dans le même fichier, aujourd'hui
   `mol-ticket-author` (la formule de l'auteur, `docs/TICKET_AUTHOR.md`). À
   `null`, la commande refuse de démarrer quoi que ce soit (sortie 1).
+- **Formule de reprise** : `resume.formula` dans le même fichier, aujourd'hui
+  `mol-ticket-resume`. Sans ce réglage, un ticket à reprendre est refusé par
+  la passe, nommé sous `refused` (sortie 1).
 - **Sorties** : 0 passe faite ; 1 refus (réglage, tracker, porte de dispatch
-  qui refuse un ticket, nommé sous `refused`, ou incident impossible à lever) ;
+  qui refuse un ticket ou une reprise, nommé sous `refused`, incident ou
+  demande groupée impossible à lever) ;
   3 « état sans règle » : rien n'est démarré dans ce convoi ; 4 « pas un convoi
   du nouveau flux ».
 - **Convoi arrêté (« état sans règle »)** : un ticket démarré ou fermé hors de
@@ -57,6 +61,32 @@ touché : il reste avancé par le Mayor.
   (`./bin/ticket-end settle`) ; avant la fusion, elle mesure la fidélité
   d'un ticket d'interface (`./bin/ticket-end fidelity`). Un ticket laissé
   ouvert est listé avec la condition qui manque.
+- **Reprises comptées, parcage à la troisième** (T20) : à chaque passe, un
+  ticket dont l'auteur doit le reprendre part vers **une** session neuve
+  d'auteur, sur la même branche, sur un bead « Reprise — <ticket> ». Causes :
+  `interrupted` (sortie « interrompu », ou session terminée sans sortie),
+  `returned` (la fusion a rendu le ticket : conflit ou rouge), `unblocked`
+  (son `repair` est fermé), `answered` (la demande qui le parquait a sa
+  réponse). Chaque reprise est comptée et prend une place sous N. À la
+  troisième, toutes causes confondues (celles-ci, le tour de correction, un
+  commit après verdict), le ticket est parqué avec ceux qui l'attendent et
+  n'est pas relancé ; les autres continuent. Listes `resumed`, `parked`,
+  `lifted` dans la réponse.
+- **Une seule demande groupée** (T20) : quand il ne reste dans un convoi que
+  des tickets parqués, la passe lève **une** ligne pour le convoi dans
+  `./bin/escalation-door list`, sur un bead « Demande groupée : convoi … »
+  qui nomme chaque ticket parqué et sa cause — jamais une par ticket. Répondre `a`
+  relance les tickets aux reprises épuisées (trois reprises de nouveau) ;
+  `b` les laisse parqués, la demande ne revient pas.
+- **Lever un parcage, c'est répondre** : `./bin/escalation-door repondre` sur
+  la demande du ticket (demande opérateur : toute réponse ; Planning
+  Exception : seulement l'option qui accepte l'écart) ou sur la demande
+  groupée. La passe suivante lève le parcage et reprend le ticket. **Ne
+  jamais reprendre ou déparquer un ticket à la main**, ni dispatcher
+  `mol-ticket-resume`.
+- **Pas repris** : un ticket arrêté ; un ticket dont la session du tour de
+  correction est morte sans fermer son bead ; un ticket que la porte de fin
+  de ticket laisse en attente (fidélité rouge, condition manquante).
 - **Relecture des tests restée sans résultat** : la même passe la relance une
   fois, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune

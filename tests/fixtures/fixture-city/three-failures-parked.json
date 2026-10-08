@@ -1,0 +1,6 @@
+{
+  "contract": "agent-factory-fixture-delivery-scenario/v1",
+  "scenario_id": "three-failures-parked",
+  "inject": {"delivery": "three-failures"},
+  "expect": {"closed": true, "parked": 2}
+}

@@ -157,6 +157,9 @@ KEY_PLANNING_EXCEPTIONS = PREFIX + "planning_exceptions"
 KEY_CORRECTION = PREFIX + "correction"
 KEY_OVERRIDES = PREFIX + "overrides"
 KEY_CRITERIA = PREFIX + "criteria"
+KEY_RESUME = PREFIX + "resume"
+KEY_PARK_LIFTS = PREFIX + "park_lifts"
+KEY_GROUPED_REQUEST = PREFIX + "grouped_request"
 # Written by the publication door (bin/ticket-graph-publish): the digest of
 # the approved graph the ticket was last published under. Read only here.
 KEY_GRAPH_DIGEST = "gc.graph_digest"
@@ -243,8 +246,19 @@ HANDOFF_SECTIONS = ("done", "deviations", "not_done", "out_of_ticket")
 HANDOFF_NOTHING = "aucun"
 # The piece of the evidence store bin/ticket-exit seals the records in.
 HANDOFF_RECORDS_PIECE = "handoff_records"
-# Why a ticket and its descendants are parked (Spec §5, Ticket Exit).
-PARK_CAUSES = ("planning_exception", "operator_request")
+# Why a ticket and its descendants are parked: a Ticket Exit (Spec §5), or
+# the bound of the resumes of a ticket (Spec §8, T20).
+PARK_EXHAUSTED = "resumes_exhausted"
+PARK_CAUSES = ("planning_exception", "operator_request", PARK_EXHAUSTED)
+# Spec §8, K: the resumes of a ticket, every cause together. At the third
+# the ticket is parked with its descendants. A starting value, not a measure.
+RESUMES_MAX = 3
+# Why code sends a ticket back to a fresh author session (T20): its session
+# was interrupted, the merge returned it, the repair it waited for is closed,
+# or the request that parked it was answered. The correction round and a
+# commit after a verdict are counted where they are written.
+RESUME_CAUSES = ("interrupted", "returned", "unblocked", "answered")
+RESUME_MAX_LAUNCHES = 1
 # What bin/spec-integration did of a ticket (Spec §4): merged into the
 # integration branch, or returned to its author by a conflict or by red tests
 # on the merged result. A merge and a red name the commit that was tested.
@@ -1363,6 +1377,110 @@ def park_record(raw: Any) -> dict[str, Any]:
     return record
 
 
+def operator_answer(metadata: dict[str, Any], since: str) -> dict[str, str] | None:
+    """The answer the operator gave to the request a bead carries
+    (bin/escalation-door repondre), when it was given after `since` and the
+    request is no longer open. None otherwise."""
+    option, at = metadata.get(KEY_RESPONSE_OPTION), metadata.get(KEY_RESPONSE_AT)
+    if metadata.get(KEY_NEEDS_BENJAMIN) not in (None, "none"):
+        return None
+    if not isinstance(option, str) or not isinstance(at, str) or at < since:
+        return None
+    return {"option": option, "at": at}
+
+
+def park_rendered(record: dict[str, Any], ticket_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    """The parking with the answer given to the request of the ticket that
+    was asked: the one whose exit parked it, never those behind it."""
+    answer = operator_answer(metadata, record["at"]) if record["origin"] == ticket_id else None
+    return {**record, "answer": answer}
+
+
+def launches_of(launches: Any, what: str) -> list[dict[str, Any]]:
+    if not isinstance(launches, list) or any(
+            not isinstance(launch, dict) or set(launch) != {"bead", "at"} or not isinstance(launch["bead"], str)
+            or not BEAD_ID_RE.match(launch["bead"]) for launch in launches):
+        raise Refusal(f"lancements {what} mal formés : {launches!r}")
+    return launches
+
+
+def resume_record(raw: Any) -> dict[str, Any]:
+    """The resumes code opened on a ticket (T20), oldest first: why, the
+    fact that asked for it (`ref`), the session and the Ticket Exit it
+    replaces, and the fresh author session it was sent to."""
+    record = stored_record(raw, ("entries",))
+    entries = record["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise Refusal(f"reprises mal formées : {entries!r}")
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"cause", "ref", "session", "exit", "launches", "at"}:
+            raise Refusal(f"reprise mal formée : {entry!r}")
+        one_of(entry["cause"], RESUME_CAUSES, "cause de reprise")
+        single_line(entry["ref"], "repère de la reprise")
+        if entry["session"] is not None:
+            single_line(entry["session"], "session")
+        if entry["exit"] is not None and (not isinstance(entry["exit"], dict) or set(entry["exit"]) != {"exit", "at"}):
+            raise Refusal(f"sortie remplacée par la reprise mal formée : {entry['exit']!r}")
+        if len(launches_of(entry["launches"], "de la reprise")) > RESUME_MAX_LAUNCHES:
+            raise Refusal(f"plus d'une session pour une reprise : {entry['launches']!r}")
+    return record
+
+
+def park_lifts_record(raw: Any) -> list[dict[str, Any]]:
+    """The parkings lifted on a ticket (T20), oldest first: what parked it,
+    the request that was answered, the option taken, and the count of its
+    resumes at that moment -- the bound is counted from the last lift of an
+    exhausted ticket."""
+    entries = stored_record(raw, ("entries",))["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise Refusal(f"parcages levés mal formés : {entries!r}")
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"cause", "detail", "parked_at", "request", "option", "resumes", "at"}:
+            raise Refusal(f"parcage levé mal formé : {entry!r}")
+        one_of(entry["cause"], PARK_CAUSES, "cause de parcage")
+        if not isinstance(entry["request"], str) or not BEAD_ID_RE.match(entry["request"]):
+            raise Refusal(f"bead de la demande absent ou mal formé : {entry['request']!r}")
+        if entry["option"] is not None:
+            option_letter(entry["option"])
+        counter_value(entry["resumes"], "resumes")
+    return entries
+
+
+def option_letter(value: Any) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z]", value):
+        raise Refusal(f"option de la demande absente ou mal formée : {value!r} (attendu : une lettre)")
+    return value
+
+
+def resumes_left(metadata: dict[str, Any]) -> int:
+    """How many resumes the ticket may still take before it is parked."""
+    resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
+    lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
+    since = max((lift["resumes"] for lift in lifts if lift["cause"] == PARK_EXHAUSTED), default=0)
+    return max(0, RESUMES_MAX - (resumes - since))
+
+
+def grouped_request_record(raw: Any) -> dict[str, Any]:
+    """The one request of a convoy in which nothing but parked tickets is
+    left (T20): the bead that carries it and, once it reached the escalation
+    door, the signature of the parkings it names, the option that lifts and
+    the tickets that option lifts."""
+    record = stored_record(raw, ("bead", "at"), ("signature", "lift_option", "lifts"))
+    if not isinstance(record["bead"], str) or not BEAD_ID_RE.match(record["bead"]):
+        raise Refusal(f"bead de la demande groupée absent ou mal formé : {record['bead']!r}")
+    if "signature" in record:
+        valid_digest(record["signature"])
+    if ("lift_option" in record) != ("lifts" in record):
+        raise Refusal("demande groupée : l'option qui lève et les tickets qu'elle lève vont ensemble")
+    if "lifts" in record:
+        option_letter(record["lift_option"])
+        lifts = record["lifts"]
+        if not isinstance(lifts, list) or not lifts or any(
+                not isinstance(name, str) or not BEAD_ID_RE.match(name) for name in lifts):
+            raise Refusal(f"tickets levés par la demande groupée mal formés : {lifts!r}")
+    return record
+
+
 def valid_branch(value: Any, name: str) -> str:
     if not isinstance(value, str) or not BRANCH_RE.match(value):
         raise Refusal(f"{name} absente ou mal formée : {value!r}")
@@ -1632,6 +1750,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
             KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION, KEY_TEST_REVIEW, KEY_CODE_REVIEW, KEY_MODELS,
             KEY_EVALUATION, KEY_FIDELITY, KEY_PLANNING_EXCEPTIONS, KEY_CORRECTION, KEY_OVERRIDES, KEY_CRITERIA,
+            KEY_RESUME, KEY_PARK_LIFTS,
         ):
             continue
         raw = metadata[key]
@@ -1700,9 +1819,10 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         ("evaluation", KEY_EVALUATION, evaluation_rendered),
         ("models", KEY_MODELS, models_record),
         ("handoff", KEY_HANDOFF, handoff_record),
-        ("park", KEY_PARK, park_record),
+        ("park", KEY_PARK, lambda raw: park_rendered(park_record(raw), ticket["id"], metadata)),
         ("merge", KEY_MERGE, merge_record),
         ("session", KEY_SESSION, session_record),
+        ("resume", KEY_RESUME, resume_record),
     ):
         out[name] = None
         if key in metadata:
@@ -1739,6 +1859,21 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         except Refusal as exc:
             out["overrides"] = {"unruled": f"{KEY_OVERRIDES} : {exc}", "raw": metadata[KEY_OVERRIDES]}
             flag(KEY_OVERRIDES, out["overrides"]["unruled"])
+
+    # The parkings lifted (T20), an empty list when there is none, and the
+    # resumes the ticket may still take before it is parked (Spec §8, K).
+    out["park_lifts"] = []
+    if KEY_PARK_LIFTS in metadata:
+        try:
+            out["park_lifts"] = park_lifts_record(metadata[KEY_PARK_LIFTS])
+        except Refusal as exc:
+            out["park_lifts"] = {"unruled": f"{KEY_PARK_LIFTS} : {exc}", "raw": metadata[KEY_PARK_LIFTS]}
+            flag(KEY_PARK_LIFTS, out["park_lifts"]["unruled"])
+    try:
+        out["resumes_left"] = resumes_left(metadata)
+    except Refusal:
+        # The counter or the lifts are already flagged: no default.
+        out["resumes_left"] = None
 
     def has_gate(name: str) -> bool:
         return "at" in gates.get(name, {})
@@ -1784,8 +1919,16 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             integration = {"unruled": f"{KEY_INTEGRATION} : {exc}", "raw": metadata[KEY_INTEGRATION]}
             convoy_unruled.append({"field": KEY_INTEGRATION, "reason": integration["unruled"]})
+    grouped_request: dict[str, Any] | None = None
+    if KEY_GROUPED_REQUEST in metadata:
+        try:
+            grouped_request = grouped_request_record(metadata[KEY_GROUPED_REQUEST])
+        except Refusal as exc:
+            grouped_request = {"unruled": f"{KEY_GROUPED_REQUEST} : {exc}", "raw": metadata[KEY_GROUPED_REQUEST]}
+            convoy_unruled.append({"field": KEY_GROUPED_REQUEST, "reason": grouped_request["unruled"]})
     for key in sorted(metadata):
-        known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
+        known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_GROUPED_REQUEST,
+                 *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(PREFIX) and key not in known:
             convoy_unruled.append({"field": key, "reason": f"{key} : champ inconnu de la commande d'état, écrit hors d'elle"})
     spec = metadata.get(KEY_SPEC)
@@ -1795,6 +1938,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         "counters": render_counters(metadata, CONVOY_COUNTERS, convoy_unruled),
         "incident": incident,
         "integration": integration,
+        "grouped_request": grouped_request,
         "unruled": convoy_unruled,
     }
     if convoy_unruled:
@@ -3067,10 +3211,25 @@ def blockers_of(ticket_id: str) -> list[str]:
     ]
 
 
+def waiting_for(tickets: list[dict[str, Any]], ticket_id: str) -> list[str]:
+    """The ticket, then every ticket of the convoy that waits for it,
+    directly or through others, read on the `blocks` edges."""
+    waits_for = {other["id"]: blockers_of(other["id"]) for other in tickets if other["id"] != ticket_id}
+    found, frontier = [ticket_id], [ticket_id]
+    while frontier:
+        current = frontier.pop()
+        for other, blockers in waits_for.items():
+            if current in blockers and other not in found:
+                found.append(other)
+                frontier.append(other)
+    return found
+
+
 def cmd_park(args: argparse.Namespace) -> int:
     """Park a ticket and every ticket of the convoy that waits for it,
     directly or not (Spec §5: a Planning Exception or an operator request
-    parks the ticket and its descendants). The other tickets are untouched."""
+    parks the ticket and its descendants; Spec §8: so does the third resume
+    of a ticket). The other tickets are untouched."""
     ticket = marked_ticket(args.convoy, args.ticket)
     cause = one_of(args.cause, PARK_CAUSES, "cause de parcage")
     detail = single_line(args.detail, "précision du parcage")
@@ -3078,15 +3237,12 @@ def cmd_park(args: argparse.Namespace) -> int:
         raise Refusal(f"le ticket {args.ticket} est fermé : un ticket fermé ne se parque pas")
     if KEY_PARK in metadata_of(ticket):
         raise Refusal(f"le ticket {args.ticket} est déjà parqué")
+    if cause == PARK_EXHAUSTED and resumes_left(metadata_of(ticket)) > 0:
+        raise Refusal(
+            f"le ticket {args.ticket} n'a pas épuisé ses reprises ({RESUMES_MAX}, toutes causes confondues) : "
+            "il ne se parque pas pour cette cause")
     _, tickets = load_convoy(args.convoy)
-    waits_for = {other["id"]: blockers_of(other["id"]) for other in tickets if other["id"] != args.ticket}
-    parked, frontier = [args.ticket], [args.ticket]
-    while frontier:
-        current = frontier.pop()
-        for other, blockers in waits_for.items():
-            if current in blockers and other not in parked:
-                parked.append(other)
-                frontier.append(other)
+    parked = waiting_for(tickets, args.ticket)
     by_id = {other["id"]: other for other in tickets}
     value = encode({"cause": cause, "origin": args.ticket, "detail": detail, "at": now()})
     written = []
@@ -3101,6 +3257,122 @@ def cmd_park(args: argparse.Namespace) -> int:
     print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "cause": cause,
                       "parked": sorted(written)}, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
+
+
+def cmd_lift_park(args: argparse.Namespace) -> int:
+    """Lift the parking a ticket caused (T20): on itself and on every ticket
+    parked behind it, once the request `--request` was answered. A ticket
+    that still waits for another parked one is parked behind that one
+    instead. The lift is kept on the ticket, with the count of its resumes:
+    an exhausted ticket takes its resumes again from there."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    ticket = marked_ticket_among(tickets, args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    if KEY_PARK not in metadata:
+        raise Refusal(f"le ticket {args.ticket} n'est pas parqué : rien à lever")
+    park = park_record(metadata[KEY_PARK])
+    if park["origin"] != args.ticket:
+        raise Refusal(
+            f"le ticket {args.ticket} est parqué par {park['origin']} : un parcage se lève sur le ticket qui l'a causé")
+    if not isinstance(args.request, str) or not BEAD_ID_RE.match(args.request):
+        raise Refusal(f"bead de la demande absent ou mal formé : {args.request!r} (--request)")
+    option = option_letter(args.option) if args.option is not None else None
+    lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
+    resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
+    lifts.append({"cause": park["cause"], "detail": park["detail"], "parked_at": park["at"], "request": args.request,
+                  "option": option, "resumes": resumes, "at": now()})
+    # Each other ticket that still parks, with those that wait for it.
+    still_parked: dict[str, str] = {}
+    for other in tickets:
+        other_park = metadata_of(other).get(KEY_PARK)
+        if other["id"] == args.ticket or other_park is None or other.get("status") == "closed":
+            continue
+        if park_record(other_park)["origin"] == other["id"]:
+            for behind in waiting_for(tickets, other["id"]):
+                still_parked.setdefault(behind, other_park)
+    lifted = []
+    # Those behind first, the ticket last: an interrupted lift leaves the
+    # ticket parked, and the same command completes it.
+    for other in tickets:
+        other_park = metadata_of(other).get(KEY_PARK)
+        if other["id"] == args.ticket or other_park is None or park_record(other_park)["origin"] != args.ticket:
+            continue
+        if other["id"] in still_parked:
+            write_metadata(other["id"], {KEY_PARK: still_parked[other["id"]]})
+            continue
+        run_gc(["bd", "update", other["id"], "--unset-metadata", KEY_PARK])
+        lifted.append(other["id"])
+    run_gc(["bd", "update", args.ticket, "--set-metadata", f"{KEY_PARK_LIFTS}={encode({'entries': lifts})}",
+            "--unset-metadata", KEY_PARK])
+    lifted.append(args.ticket)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "cause": park["cause"],
+                      "lifted": sorted(lifted)}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_open_resume(args: argparse.Namespace) -> int:
+    """Count one resume of a ticket and record it (T20, Spec §8): code sends
+    the ticket back to a fresh author session, on the same branch. The
+    resume, the counter and the removal of the Ticket Exit it replaces go in
+    one tracker write. The same fact (`--cause`, `--ref`) again writes
+    nothing. Refused on a ticket that is stopped, parked, closed, or that
+    has no resume left: that one is parked."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    cause = one_of(args.cause, RESUME_CAUSES, "cause de reprise")
+    ref = single_line(args.ref, "repère de la reprise")
+    if ticket.get("status") == "closed" or any(GATE_PREFIX + gate in metadata for gate in CLOSING_GATES):
+        raise Refusal(f"le ticket {args.ticket} est fermé : il ne se reprend pas")
+    if GATE_PREFIX + "dispatch" not in metadata:
+        raise Refusal(f"le ticket {args.ticket} n'a pas été démarré par la porte de dispatch : rien à reprendre")
+    if KEY_STOP in metadata:
+        raise Refusal(f"ticket arrêté : {args.ticket} ne se reprend pas")
+    if KEY_PARK in metadata:
+        raise Refusal(f"ticket parqué : {args.ticket} ne se reprend pas tant que son parcage n'est pas levé")
+    entries = resume_record(metadata[KEY_RESUME])["entries"] if KEY_RESUME in metadata else []
+    if entries and (entries[-1]["cause"], entries[-1]["ref"]) == (cause, ref):
+        return done(args.convoy, args.ticket, {})
+    if resumes_left(metadata) == 0:
+        raise Refusal(
+            f"reprises épuisées : le ticket {args.ticket} a pris ses {RESUMES_MAX} reprises, toutes causes confondues ; "
+            "il se parque avec ses descendants")
+    counters = {name: counter_value(metadata.get(COUNTER_PREFIX + name), name) for name in TICKET_COUNTERS}
+    counters["resumes"] += 1
+    check_ticket_counters(counters)
+    session = session_record(metadata[KEY_SESSION])["name"] if KEY_SESSION in metadata else None
+    replaced = stored_record(metadata[KEY_EXIT], ("exit", "at")) if KEY_EXIT in metadata else None
+    entries.append({"cause": cause, "ref": ref, "session": session, "exit": replaced, "launches": [], "at": now()})
+    values: dict[str, Any] = {KEY_RESUME: encode({"entries": entries}), COUNTER_PREFIX + "resumes": counters["resumes"]}
+    update = ["bd", "update", args.ticket]
+    for key, value in values.items():
+        update += ["--set-metadata", f"{key}={value}"]
+    if replaced is not None:
+        # A resumed ticket is at work again: it exits again.
+        update += ["--unset-metadata", KEY_EXIT]
+    run_gc(update)
+    return done(args.convoy, args.ticket, {**values, **({KEY_EXIT: None} if replaced is not None else {})})
+
+
+def cmd_launch_resume(args: argparse.Namespace) -> int:
+    """Record the fresh author session the last resume was sent to: one per
+    resume."""
+    metadata = metadata_of(marked_ticket(args.convoy, args.ticket))
+    if KEY_RESUME not in metadata:
+        raise Refusal(f"aucune reprise n'est ouverte sur {args.ticket} : rien à lancer")
+    if KEY_STOP in metadata or KEY_PARK in metadata:
+        raise Refusal(f"ticket arrêté ou parqué : aucune session de reprise ne se lance sur {args.ticket}")
+    record = resume_record(metadata[KEY_RESUME])
+    if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
+        raise Refusal(f"bead de la reprise absent ou mal formé : {args.bead!r}")
+    last = record["entries"][-1]
+    if len(last["launches"]) >= RESUME_MAX_LAUNCHES:
+        raise Refusal(
+            f"une seule session par reprise : celle de {args.ticket} est déjà lancée ({last['launches'][0]['bead']})")
+    last["launches"].append({"bead": args.bead, "at": now()})
+    values = {KEY_RESUME: encode(record)}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
 
 
 def cmd_set_integration(args: argparse.Namespace) -> int:
@@ -3151,11 +3423,20 @@ def cmd_invalidate_verdicts(args: argparse.Namespace) -> int:
     resume for it, in one tracker write. A verdict already invalidated is
     left as it is and counts nothing more. Verdicts given at the commit of
     the correction round count nothing either: the commit that outdates
-    them is that round, which `open-correction` counted among the resumes."""
+    them is that round, which `open-correction` counted among the resumes.
+    Nor do verdicts given at the commit the merge returned, once code has
+    resumed the ticket for that return (T20): `open-resume` counted it."""
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
     tip = valid_commit(args.tip, "pointe de la branche du ticket")
     corrected = correction_record(metadata[KEY_CORRECTION])["commit"] if KEY_CORRECTION in metadata else None
+    returned = None
+    if KEY_MERGE in metadata and KEY_RESUME in metadata:
+        merge = merge_record(metadata[KEY_MERGE])
+        if merge["outcome"] != "merged" and any(
+                entry["cause"] == "returned" and entry["at"] >= merge["at"]
+                for entry in resume_record(metadata[KEY_RESUME])["entries"]):
+            returned = merge["ticket_commit"]
     judged: set[str] = set()
     if not args.kind:
         raise Refusal("genre de verdict absent : --kind nomme chaque verdict à invalider")
@@ -3173,7 +3454,7 @@ def cmd_invalidate_verdicts(args: argparse.Namespace) -> int:
             judged.add(record["commit"])
     invalidated = [key[len(VERDICT_PREFIX):] for key in values]
     if values:
-        if judged != {corrected}:
+        if judged != {corrected} and judged != {returned}:
             # It counts as a resume (K), not as the correction round.
             resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
             values[COUNTER_PREFIX + "resumes"] = resumes + 1
@@ -3322,6 +3603,26 @@ def cmd_clear_incident(args: argparse.Namespace) -> int:
     return done(args.convoy, args.convoy, {KEY_INCIDENT: None})
 
 
+def cmd_record_grouped_request(args: argparse.Namespace) -> int:
+    convoy_with_a_mark(args.convoy)
+    record: dict[str, Any] = {"bead": args.bead, "at": now()}
+    if args.signature is not None:
+        record["signature"] = args.signature
+    if args.lift_option is not None:
+        record["lift_option"] = args.lift_option
+    if args.lifts:
+        record["lifts"] = list(dict.fromkeys(args.lifts))
+    values = {KEY_GROUPED_REQUEST: encode(grouped_request_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_clear_grouped_request(args: argparse.Namespace) -> int:
+    convoy_with_a_mark(args.convoy)
+    run_gc(["bd", "update", args.convoy, "--unset-metadata", KEY_GROUPED_REQUEST])
+    return done(args.convoy, args.convoy, {KEY_GROUPED_REQUEST: None})
+
+
 # --- command line ------------------------------------------------------------
 
 
@@ -3416,6 +3717,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("park", cmd_park)
     p.add_argument("--cause")
     p.add_argument("--detail")
+    p = command("lift-park", cmd_lift_park)
+    p.add_argument("--request")
+    p.add_argument("--option")
+    p = command("open-resume", cmd_open_resume)
+    p.add_argument("--cause")
+    p.add_argument("--ref")
+    command("launch-resume", cmd_launch_resume).add_argument("--bead")
     p = command("set-fidelity", cmd_set_fidelity)
     p.add_argument("--commit")
     p.add_argument("--piece")
@@ -3447,6 +3755,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--bead")
     p.add_argument("--signature")
     command("clear-incident", cmd_clear_incident, ticket=False)
+    p = command("record-grouped-request", cmd_record_grouped_request, ticket=False)
+    p.add_argument("--bead")
+    p.add_argument("--signature")
+    p.add_argument("--lift-option")
+    p.add_argument("--lifts", action="append", default=[])
+    command("clear-grouped-request", cmd_clear_grouped_request, ticket=False)
     p = sub.add_parser("ticket")
     p.add_argument("ticket")
     p.add_argument("--bead-json")
