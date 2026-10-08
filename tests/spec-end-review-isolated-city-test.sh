@@ -15,29 +15,31 @@
 # bin/dispatch-door (which routes the review to the agent of the reviewer
 # role, and starts the repair), the publication door that published the
 # graph and the patch door that adds the repair (bin/ticket-graph-publish),
-# on the real tracker. What is scripted, and spends nothing: the reviewer, a
-# stub that claims the step Gas City routes to it and runs the real tools the
-# step names; and the authors, whose two tickets are written as merged and
+# on the real tracker, and bin/outcome-evaluation, which launches the
+# assembled product from a clean copy of the commit of the gate. What is
+# scripted, and spends nothing: the reviewer, a stub that claims the step Gas
+# City routes to it and runs the real tools the step names; the Evaluator of
+# the end, the stand-in of its own suite
+# (tests/fixtures/outcome-evaluation/evaluator), called in place of the
+# dispatch door, which observes each user story on the launched product and
+# hands its states to the real `outcome-evaluation record`; and the authors, whose two tickets are written as merged and
 # closed the way bin/spec-integration and bin/ticket-end leave them (their
 # own trials: tests/ticket-end-isolated-city-test.sh).
 #
 # Two tickets of one Spec, each correct alone, contradict each other on a
 # line of the Spec once assembled:
 #   1  the pass that renders the three mechanical verdicts of the end
-#      launches the end review, on their commit; its preparation record
-#      names the whole diff of the integration branch against the protected
-#      branch;
+#      launches the end review and the Outcome Evaluation, both on their
+#      commit; the preparation record of the review names the whole diff of
+#      the integration branch against the protected branch;
 #   2  the reviewer hands in a Blocking Finding that cites the line, with
 #      the repair it drafted; the gate refuses and names the finding; the
 #      next pass publishes that repair through the patch door and starts it
 #      like any ticket;
 #   3  the repair delivered, the tip moves: the gate replays its verdicts,
 #      and the review is made again in full on the new tip by another
-#      session; favorable there, the gate passes.
-#
-# The Outcome Evaluation, the other verification of §9 point 4, is T24's and
-# is not launched here: what this trial observes is that the review is
-# launched by the pass that renders the verdicts, on their commit.
+#      session, the product evaluated again; favorable there, the gate
+#      passes its six conditions.
 #
 # The trial prints its record (« relevé d'essai ») on stdout.
 
@@ -72,6 +74,11 @@ cleanup() {
   trap - EXIT
   isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   tmux -L "$(basename "$TRIAL")" kill-server >/dev/null 2>&1 || true
+  # The products the Outcome Evaluation launched run from clean copies
+  # outside the trial directory: stopped from their launch records.
+  while IFS= read -r launched; do
+    "$ROOT/bin/project-launch" stop --state-file "$launched" >/dev/null 2>&1 || true
+  done < <(find "$TRIAL/products" -name '*.json' 2>/dev/null)
   # The supervisor, the city's managed Dolt server and the stub sessions
   # carry the trial directory on their command line.
   pkill -f -- "$TRIAL/" >/dev/null 2>&1 || true
@@ -99,7 +106,7 @@ trap cleanup EXIT
 
 # Nothing of the live Factory may reach this city (same recipe as
 # tests/code-review-isolated-city-test.sh).
-while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_|ESCALATION_DOOR_|EVIDENCE_|TICKET_GRAPH_|GRAPH_REVIEW_|SPEC_INTEGRATION_|SPEC_END_|TICKET_END_|DELIVERY_ROLE_)' || true)
+while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|BEADS_|BD_BIN$|GH_BIN$|FACTORY_ROOT$|CONVOY_|DISPATCH_DOOR_|ESCALATION_DOOR_|EVIDENCE_|TICKET_GRAPH_|GRAPH_REVIEW_|SPEC_INTEGRATION_|SPEC_END_|TICKET_END_|OUTCOME_EVALUATION_|DELIVERY_ROLE_)' || true)
 export GC_HOME="$TRIAL/h" XDG_RUNTIME_DIR="$TRIAL/r" GC_DISABLE_USAGE_METRICS=1
 unset DBUS_SESSION_BUS_ADDRESS
 export PATH="/usr/local/bin:$HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -121,9 +128,14 @@ export ESCALATION_DOOR_LOCK_FILE="$TRIAL/escalation-door.lock" PROPOSAL_DOOR_BIN
 export DISPATCH_DOOR_PROVIDER_FAILOVER_BIN="$TRIAL/provider-failover" DISPATCH_DOOR_ROLE_TRIAL_BIN="$TRIAL/role-adoption-trial"
 export DELIVERY_ROLE_PROVIDER_FAILOVER_BIN="$TRIAL/provider-failover"
 export TICKET_GRAPH_BD_WORKSPACE="$CITY" TICKET_GRAPH_PUBLISH_SKIP_MAYOR_NOTIFY=1
+export GC_BIN=gc OUTCOME_EVALUATION_DISPATCH_DOOR_BIN="$ROOT/tests/fixtures/outcome-evaluation/evaluator"
+export OUTCOME_EVALUATION_STATE_DIR="$TRIAL/products" OUTCOME_EVALUATION_FAKE_LOG="$TRIAL/evaluator.log"
+export OUTCOME_EVALUATION_FAKE_PLAN="$TRIAL/evaluator-plan.json" OUTCOME_EVALUATION_FAKE_BRIEFS="$TRIAL/evaluator-briefs"
 export GIT_AUTHOR_NAME=essai GIT_AUTHOR_EMAIL=essai@example.invalid GIT_COMMITTER_NAME=essai GIT_COMMITTER_EMAIL=essai@example.invalid
 ENV
 printf '#!/bin/sh\necho 0\n' > "$TRIAL/proposal-door"
+# The Evaluator of the end observes each user story on the launched product.
+echo '[{}]' > "$TRIAL/evaluator-plan.json"
 cat > "$TRIAL/provider-failover" <<'SH'
 #!/bin/sh
 printf '%s\n' '{"total_exhaustion": {"active": false}, "targets": {"trial-author": {"effective": "stub-author"}, "trial-reviewer": {"effective": "stub-reviewer"}}}'
@@ -284,6 +296,7 @@ done
 jq --arg rig "$RIG" '.rigs = [$rig]' "$ROOT/$FIXTURE/descriptor.json" > "$CITY/config/project-descriptors/$PROJECT.json"
 jq -n --argjson n "$CEILING" --arg rig "$RIG" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n,
   start: {formula: "trial-start", role: null},
+  outcome_evaluation: {formula: "mol-outcome-evaluation", role: "evaluator", rig: $rig, timeout_seconds: 600, start_timeout_seconds: 30},
   end_review: {formula: "mol-end-review", role: "reviewer", rig: $rig, timeout_seconds: 600}}' \
   > "$CITY/config/delivery-flow.json"
 jq '.roles.author.agent = "trial-author" | .roles.reviewer.agent = "trial-reviewer"' "$ROOT/config/delivery-roles.json" \
@@ -434,10 +447,11 @@ dump() { tail -30 "$TRIAL/reviewer.log" >&2 || true; tail -3 "$TRIAL/passes.json
 check_gate() { "$ROOT/bin/spec-end" check "$CONVOY" --repo "$PRODUCT"; }
 launch_pass() { # <commit>: the pass that launched the end review of that commit
   jq -c --arg c "$CONVOY" --arg commit "$1" 'select(any(.convoys[]; .id == $c and .end_review.action == "launched" and .end_review.commit == $commit))
-    | .at as $at | .convoys[] | select(.id == $c) | {at: $at, spec_end, end_review}' "$TRIAL/passes.jsonl" | head -1
+    | .at as $at | .convoys[] | select(.id == $c) | {at: $at, spec_end, outcome_evaluation, end_review}' "$TRIAL/passes.jsonl" | head -1
 }
 
-# --- 1: launched by the pass that renders the verdicts, on their commit, on the whole diff ---
+# --- 1: launched by the pass that renders the verdicts, with the Outcome Evaluation, on their commit, on the whole diff ---
+outcome() { field "$CONVOY" gc.flow.outcome_evaluation; }
 first_round() { [ "$(end_review | jq -r '.rounds | length' 2>/dev/null)" = 1 ]; }
 wait_for 600 first_round || { dump; fail "no end review was recorded within 600s"; }
 GATE1=$(gate_record | jq -r '.commit')
@@ -448,9 +462,14 @@ git -C "$PRODUCT" merge-base --is-ancestor "$TIP1" "$GATE1" && git -C "$PRODUCT"
 pass1=$(launch_pass "$GATE1")
 [ -n "$pass1" ] || { dump; fail "no pass launched the end review of the commit of the gate ($GATE1)"; }
 jq -e --arg commit "$GATE1" '.spec_end.commit == $commit and .spec_end.replayed == true
-  and .spec_end.verdicts == {registry: "pass", tests: "pass", fidelity: "pass", end_review: "fail"}
+  and .spec_end.verdicts == {registry: "pass", tests: "pass", fidelity: "pass", outcome_evaluation: "fail", findings: "not_run", end_review: "fail"}
   and .end_review.commit == $commit and .end_review.launches == 1' <<<"$pass1" >/dev/null \
   || fail "the end review was not launched by the pass that rendered the three verdicts, on their commit: $pass1"
+jq -e --arg commit "$GATE1" '.outcome_evaluation.action == "launched" and .outcome_evaluation.commit == $commit' <<<"$pass1" >/dev/null \
+  || fail "the Outcome Evaluation was not launched by the pass that launched the end review, on the same commit: $pass1"
+evaluated1=$(outcome | jq -c --arg commit "$GATE1" '[.rounds[] | select(.commit == $commit)][0]')
+jq -e '.outcome == "favorable" and ([.stories[].state] == ["observed", "observed"])' <<<"$evaluated1" >/dev/null \
+  || fail "the Outcome Evaluation of the commit of the gate did not observe the two user stories: $(outcome)"
 round1=$(end_review | jq -c '.rounds[0]')
 bead1=$(jq -r '.end_review.bead' <<<"$pass1")
 brief1="$TRIAL/brief.$GATE1.json"
@@ -464,7 +483,7 @@ jq -e --arg base "$BASE" --arg commit "$GATE1" --arg branch "$INTEGRATION" \
    and .diff.extent.files == (.diff.files | length) and (.diff.extent.files >= 2) and (.tickets | length) == 2' "$brief1" >/dev/null \
   || fail "the preparation record is not the one of the whole diff against the protected branch: $(jq -c '{base, commit, branch, protected, extent: .diff.extent}' "$brief1")"
 grep -q "PROSE-DU-" "$brief1" && fail "the brief handed to the end reviewer holds prose of an author"
-echo "$(date -u +%H:%M:%S) 1 : la passe de $(jq -r '.at' <<<"$pass1") rend les trois verdicts mécaniques sur $GATE1 et lance la revue de fin sur ce même commit (bead $bead1) ; relevé de préparation : $(jq -r '.diff.scope' "$brief1") — $(jq -c '.diff.extent | del(.digest)' "$brief1")"
+echo "$(date -u +%H:%M:%S) 1 : la passe de $(jq -r '.at' <<<"$pass1") rend les trois verdicts mécaniques sur $GATE1 et lance sur ce même commit la revue de fin (bead $bead1) et l'Outcome Evaluation (bead $(jq -r '.outcome_evaluation.bead' <<<"$pass1"), $(jq -r '.stories | length' <<<"$evaluated1") user stories observées avec preuve) ; relevé de préparation : $(jq -r '.diff.scope' "$brief1") — $(jq -c '.diff.extent | del(.digest)' "$brief1")"
 
 # --- 2: a cited Blocking Finding, its drafted repair through the patch door, started like any ticket ---
 jq -e --arg line "$STORY_ONE" --arg commit "$GATE1" --arg base "$BASE" \
@@ -482,7 +501,7 @@ set +e
 refusal=$(check_gate); rc=$?
 set -e
 [ "$rc" = 1 ] || fail "the gate did not refuse with a Blocking Finding of the end review: $refusal"
-jq -e '.missing == [4] and (.error | test("F1.1")) and (.error | test("sans verdict favorable"))' <<<"$refusal" >/dev/null \
+jq -e '.missing == [6] and (.error | test("F1.1")) and (.error | test("sans verdict favorable"))' <<<"$refusal" >/dev/null \
   || fail "the refusal of the gate does not name the Blocking Finding: $(jq -r '.error' <<<"$refusal")"
 repair_named() { [ -n "$(end_review | jq -r '.rounds[0].findings[0].repair // empty' 2>/dev/null)" ]; }
 wait_for 300 repair_named || { dump; fail "the drafted repair was not published within 300s: $(end_review | jq -c '.rounds[0].findings[0]')"; }
@@ -498,7 +517,7 @@ done
 repair_started() { [ -n "$(field "$REPAIR" gc.flow.gate.dispatch)" ]; }
 wait_for 300 repair_started || { dump; fail "the repair $REPAIR was not started through the dispatch door within 300s"; }
 [ "$(field "$REPAIR" gc.dispatched_via)" = dispatch-door ] || fail "the repair was not started through the dispatch door"
-echo "$(date -u +%H:%M:%S) 2 : revue par la session $reviewer1 ($(jq -r '.duration_seconds' <<<"$round1") s, sortie complète) ; Blocking Finding F1.1 qui cite « $STORY_ONE » ; porte de fin refusée : $(jq -r '.conditions[3].detail' <<<"$refusal" | cut -c1-150)… ; repair rédigé publié par la porte de patch ($REPAIR), démarré par la passe par la porte de dispatch ; tours de fin : 1"
+echo "$(date -u +%H:%M:%S) 2 : revue par la session $reviewer1 ($(jq -r '.duration_seconds' <<<"$round1") s, sortie complète) ; Blocking Finding F1.1 qui cite « $STORY_ONE » ; porte de fin refusée (condition 6 seule) : $(jq -r '.conditions[5].detail' <<<"$refusal" | cut -c1-150)… ; repair rédigé publié par la porte de patch ($REPAIR), démarré par la passe par la porte de dispatch ; tours de fin : 1"
 
 # --- 3: the repair delivered, the review is replayed in full on the new tip --------
 TIP2=$(delivered "$REPAIR" "docs/sonde-avec-chaque-jeu.md" "$RESTORED")
@@ -517,6 +536,8 @@ pass2=$(launch_pass "$GATE2")
 jq -e --arg commit "$GATE2" '.spec_end.commit == $commit and .spec_end.verdicts.end_review == "fail"
   and (.spec_end.reason | test("jamais réutilisé"))' <<<"$pass2" >/dev/null \
   || fail "the pass that replayed the gate did not refuse the earlier round and launch the review again: $pass2"
+jq -e --arg commit "$GATE2" '.outcome_evaluation.action == "launched" and .outcome_evaluation.commit == $commit' <<<"$pass2" >/dev/null \
+  || fail "the Outcome Evaluation was not launched again with the review, on the new commit of the gate: $pass2"
 brief2="$TRIAL/brief.$GATE2.json"
 [ -f "$brief2" ] || fail "the second reviewer was given no brief for the new commit of the gate $GATE2"
 [ "$reviewer2" = "$(sed -n "s/^[^ ]* \\([^ ]*\\) $GATE2\$/\\1/p" "$TRIAL/review-sessions" | head -1)" ] \
@@ -526,9 +547,9 @@ expected_files=$(git -C "$PRODUCT" diff --name-only "$BASE" "$GATE2" | sort | tr
   || fail "the second review was not given the whole diff $BASE..$GATE2: $(jq -c '.diff.files' "$brief2")"
 jq -e '.diff.extent.files >= 3' "$brief2" >/dev/null || fail "the second review read less than the whole diff"
 gate_passes() { check_gate >/dev/null 2>&1; }
-wait_for 120 gate_passes || fail "the gate does not pass its four conditions on the new tip: $(check_gate | jq -r '.error')"
+wait_for 120 gate_passes || fail "the gate does not pass its six conditions on the new tip: $(check_gate | jq -r '.error')"
 [ "$(field "$CONVOY" gc.flow.counter.end_rounds)" = 1 ] || fail "a favorable end review counted a round of the end"
-echo "$(date -u +%H:%M:%S) 3 : repair livré, pointe $TIP2 ; la porte rejoue ses verdicts sur $GATE2 et refuse le tour précédent ; revue refaite en entier par une autre session ($reviewer2 ≠ $reviewer1) sur $(jq -r '.diff.extent.files' "$brief2") fichiers, favorable ; la porte de fin passe ses quatre conditions : $(check_gate | jq -c '[.conditions[] | {(.name): .verdict}] | add')"
+echo "$(date -u +%H:%M:%S) 3 : repair livré, pointe $TIP2 ; la porte rejoue ses verdicts sur $GATE2 et refuse le tour précédent ; revue refaite en entier par une autre session ($reviewer2 ≠ $reviewer1) sur $(jq -r '.diff.extent.files' "$brief2") fichiers, favorable, produit évalué de nouveau par la même passe ; la porte de fin passe ses six conditions : $(check_gate | jq -c '[.conditions[] | {(.name): .verdict}] | add')"
 
 gc session list --state all --json | jq -e '[.sessions[] | select(.template | test("mayor"))] | length == 0' >/dev/null \
   || fail "a Mayor session exists in the trial city"

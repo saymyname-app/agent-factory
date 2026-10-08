@@ -1432,8 +1432,9 @@ Ne concerne qu'un convoi qui porte la **marque du nouveau flux**.
   auteur, ou si un modèle n'est pas relevé.
 - **Limites** : les constats restent le jugement d'un agent ; la couverture
   est déclarée par le relecteur ; rien ne lève un arrêt de la revue sur sa
-  pointe ; le compteur de tours n'est pas encore comparé à une borne ;
-  l'Outcome Evaluation (T24) n'est pas encore lancée par la même passe.
+  pointe ; le compteur de tours n'est pas encore comparé à une borne.
+- **En même temps que l'Outcome Evaluation** : la passe qui rend les trois
+  verdicts lance les deux sur le même commit ; aucune n'attend l'autre.
 
 Détail : `docs/SPEC_END_REVIEW.md`.
 

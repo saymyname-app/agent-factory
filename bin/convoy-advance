@@ -152,7 +152,7 @@ In the same pass, on the commit of those three verdicts, it has the whole
 assembled diff of the Spec reviewed (T25, af-ji2ruy; Spec §6 « Fin de
 Spec », §9 point 4), through bin/spec-end-review settle: one reviewer
 session, one relaunch, then the stop of the review. The gate reads that
-review as its fourth condition. Each Blocking Finding comes with the
+review as its sixth condition. Each Blocking Finding comes with the
 `repair` its reviewer drafted: the pass publishes it through the patch door
 as any added ticket and names it on the finding (bin/convoy-state
 set-end-review-repair); merged, it moves the tip and the review is made

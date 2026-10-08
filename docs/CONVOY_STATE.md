@@ -142,7 +142,7 @@ Every answer is one JSON object on stdout.
 | Acceptance criteria | the bead's description (read only) | ticket | the checkbox lines under `## Acceptance criteria`, in order |
 | Factory incident | `gc.flow.incident` | convoy | the bead that carries the open incident of a stopped convoy and, once it reached the escalation door, the `sha256:` signature of the anomalies it names |
 | Red of the integration branch | `gc.flow.integration_red` | convoy | T21: the control that is red, quoted on one line (`control`), the commit it was red on (`commit`), the tips of the integration and of the protected branches then (`integration`, `protected`), the end of what the control printed (`detail`, optional) and, once code published it, the one `repair` ticket that restores it (`repair`); T23: `check` (`regression`, `fidelity`; absent means the regression command), what is red |
-| Record of the end-of-Spec gate | `gc.flow.spec_end` | convoy | T23: `commit` (the one commit of the integration branch the three verdicts are tied to), `protected` (the tip of the protected branch that commit holds), `version` (`spec-end/v2`; a record under `spec-end/v1` is still read, and held outdated by the gate), `conditions` (`registry`, `tests`, `fidelity`, in that order, all `pass`, each with its `detail`), `records` (optional: what `tests` and `fidelity` read), `at` |
+| Record of the end-of-Spec gate | `gc.flow.spec_end` | convoy | T23: `commit` (the one commit of the integration branch the three verdicts are tied to), `protected` (the tip of the protected branch that commit holds), `version` (`spec-end/v3`; a record under `spec-end/v1` or `spec-end/v2` is still read, and held outdated by the gate), `conditions` (`registry`, `tests`, `fidelity`, in that order, all `pass`, each with its `detail`), `records` (optional: what `tests` and `fidelity` read), `at` |
 | Outcome Evaluation | `gc.flow.outcome_evaluation` | convoy | T24: `rounds` (each: `commit`, `stories` — one per numbered user story of the Spec, with `state` `observed` / `not_observed` / `unobservable` and its `evidence` piece —, `exploration`, `fidelity_deviations`, `repairs` — the `draft` of each story not observed and, once published, its `repair` —, `contradictions`, the computed `outcome` and `verdict`, `roles`, `environment`, `recorded_by`, `at`), the open `request` (`commit`, `stories`, `roles`, `environment`, `launches`, `at`), `live` (launch records of products still to stop) and `stop` (`commit`, `reason` among `outcome_evaluation_no_result`, `outcome_evaluation_outage`, `story_unobservable`, `detail`, `raised`) |
 | Classification of the findings « hors ticket » | `gc.flow.findings` | ticket | T24: `entries`, one per classified finding of the Ticket Handoff: `item` (`out_of_ticket.N`), `handoff_at`, `classification` (`repaired`, `proposal`, `dismissed`), `commit`, `recorded_by`, `at`; `reason` (required for `dismissed`); `draft` (the drafted `repair`, required for `repaired`, with what it `restores`) and, once code published it, `repair` |
 | End code review of the Spec | `gc.flow.end_review` | convoy | T25: `rounds`, oldest first, each `commit` (the commit of the gate it read), `base` (the tip of the protected branch that commit holds), `outcome` (`favorable`, `unfavorable`, `incomplete`; computed), `findings` (`id`, `axis`, `blocking`, `summary`, `citation`, `demoted`; a Blocking Finding with its `repair_draft`, then `repair` or `repair_refused`), `coverage` (`axes`, `files`, `missing`, `missing_count`), `extent` (`files`, `commits`, `insertions`, `deletions`, `digest`), `models` (`authors`, `reviewer`, `same_model`), `recorded_by`, `launched_at`, `duration_seconds`, `at`; `request` while a review is open (`commit`, `base`, `extent`, `models`, `launches`: at most two, each `bead`, `at`, and `result: incomplete`; `at`); `stop` (`reason`: `end_review_no_result`, `end_review_repair_refused`; `detail`, `commit`, `at`, then `bead` and `raised`) |
@@ -399,13 +399,14 @@ again writes nothing and counts nothing. `record-spec-end` records the three
 verdicts of the gate with the commit they are tied to. It refuses a convoy
 without an integration branch, one whose integration branch is red, one
 with a ticket left open or closed without a gate record (each named), a
-version other than `spec-end/v2`, a list that is not `registry`, `tests`,
+version other than `spec-end/v3`, a list that is not `registry`, `tests`,
 `fidelity` in order, a verdict that is not `pass`, an empty detail, an
 unknown field, `records` other than `tests` and `fidelity`, a malformed
 commit. Nothing compares the record to the branches here: `bin/spec-end
 check` says whether it still holds. The record holds the three mechanical
-verdicts only: the fourth condition of the list, `end_review`, is read by
-the gate in `gc.flow.end_review`, below.
+verdicts only: conditions 4 and 5 of the list are read by the gate in
+what the Evaluator of the end handed in, and the sixth, `end_review`, in
+`gc.flow.end_review`, below.
 
 **The end code review of the Spec (T25, `docs/SPEC_END_REVIEW.md`).**
 `open-end-review`, `launch-end-review`, `record-end-review`,

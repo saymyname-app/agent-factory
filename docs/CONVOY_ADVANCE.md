@@ -485,9 +485,10 @@ next.
 ## The assembled product is evaluated once the mechanical verdicts are green (T24)
 
 Spec §7 and §9, points 4 and 5 (`docs/OUTCOME_EVALUATION.md`). The gate now
-holds five conditions (`spec-end/v2`): with three green mechanical verdicts
-and no favorable Outcome Evaluation at their commit, `spec_end` carries
-`missing: [4]` and its `reason` — an outcome of the pass, which exits 0.
+holds six conditions (`spec-end/v3`; the sixth is the end code review,
+below): with three green mechanical verdicts and no favorable Outcome
+Evaluation at their commit, `spec_end` names condition 4 in `missing` and in
+its `reason` — an outcome of the pass, which exits 0.
 
 - **After the gate**, the pass hands the convoy to `bin/outcome-evaluation
   settle` with the repository and the profile of its project, when the gate

@@ -15,7 +15,9 @@ started as routed work through `bin/dispatch-door --role reviewer`, on the
 formula `mol-end-review`, which calls Matt Pocock's `code-review` skill
 unchanged. The rules are those of the review of a ticket: a finding blocks
 only with a citation that is found in its source. The end-of-Spec gate reads
-the result as its fourth condition, `end_review`, on its own commit.
+the result as its sixth condition, `end_review`, on its own commit, beside
+the Outcome Evaluation (`docs/OUTCOME_EVALUATION.md`), which is made in
+parallel on that same commit.
 
 A convoy **without** the mark is not concerned: every command answers « pas
 un convoi du nouveau flux » (exit 4) and writes nothing.
@@ -41,8 +43,9 @@ protected branch still held by it. Otherwise `settle` answers `waiting` with
 the reason, and launches nothing.
 
 `bin/convoy-advance` calls `settle` in the pass that ran the gate, right
-after it: the review is launched by the pass that recorded the three
-verdicts, on their commit (`docs/CONVOY_ADVANCE.md`).
+after `bin/outcome-evaluation settle`: the Outcome Evaluation and the review
+are launched by the pass that recorded the three verdicts, both on their
+commit, and neither waits for the other (`docs/CONVOY_ADVANCE.md`).
 
 | `action` | Meaning |
 | --- | --- |
@@ -130,10 +133,12 @@ keeps the commit and the source of the last round counted.
 
 ## What the gate reads
 
-`bin/spec-end` reads condition 4, `end_review`, on the commit its three
-verdicts are recorded on, and renders nothing there (`docs/SPEC_END.md`). It
-is met only by a complete, favorable round **on that very commit**. The gate
-refuses and says which case it is:
+`bin/spec-end` reads condition 6, `end_review` (list `spec-end/v3`), on the
+commit its three verdicts are recorded on, and renders nothing there
+(`docs/SPEC_END.md`). It is read whatever conditions 4 and 5 — the Outcome
+Evaluation and the findings « hors ticket » — say. It is met only by a
+complete, favorable round **on that very commit**. The gate refuses and says
+which case it is:
 
 - absent: no review of the assembled diff on this commit;
 - running: launches counted, and whether the last output was incomplete;
@@ -196,9 +201,11 @@ it.
   of the diff and both axes; it cannot check that a listed file was read.
 - **The citation check is textual**, as in the review of a ticket. Any
   tracked file may be named as a written rule.
-- **Not yet « en même temps que l'Outcome Evaluation ».** The review is
-  launched by the pass that records the three verdicts, on their commit. The
-  Outcome Evaluation is T24's; nothing in this tree launches it.
+- **« En même temps que l'Outcome Evaluation » means the same pass and the
+  same commit.** The pass that records the three verdicts settles the
+  Outcome Evaluation, then the review, one after the other; the two sessions
+  then run side by side. A dispatch the door defers puts one of them a pass
+  later.
 - **`end_rounds` is counted, and compared to no bound yet.**
 - **Nothing lifts a stop of the end review on its tip.** A new tip opens a
   new review; on the same tip the gate goes on refusing.
@@ -219,11 +226,15 @@ it.
   and per refusal, each refusal re-reading the tracker. No agent runs in CI:
   `tests/fixtures/spec-end-review/reviewer` stands in for the dispatch door
   and the reviewer sessions.
-- `tests/spec-end-test.py`: condition 4 of the gate — absent, running,
+- `tests/spec-end-test.py`: condition 6 of the gate — absent, running,
   stopped, tied to another commit, with a Blocking Finding, favorable.
+- `tests/fixture-city-oracle-test.py`: the delivery driver of the Fixture
+  City walks the gate with a stand-in for the reviewer of the end.
 - `tests/convoy-state-test.py`: each state write and its refusals.
-- `tests/convoy-advance-test.py`: the settlement by the pass, and the
-  drafted repairs published through the patch door.
+- `tests/convoy-advance-test.py`: the settlement by the pass — the review
+  launched by the pass that renders the mechanical verdicts, on their commit,
+  with the Outcome Evaluation — and the drafted repairs published through the
+  patch door.
 - `tests/convoy-stops-fixture-city-test.py`: on the graph published by the
   real publication door, the drafted repair of a Blocking Finding is
   published by the real patch door, and the review is replayed in full on
@@ -231,7 +242,12 @@ it.
 - `tests/spec-end-review-isolated-city-test.sh` (local-only): the
   demonstration line on a real controller, with the real order, gate,
   formula, dispatch door, publication and patch doors and tracker, and a
-  scripted reviewer.
+  scripted reviewer. The pass that renders the three verdicts launches the
+  review and the Outcome Evaluation on their commit (the real
+  `bin/outcome-evaluation` on the launched product, with the stand-in of its
+  suite for the Evaluator, called in place of the dispatch door); the gate
+  then passes its six conditions on the tip that holds the repair. Passed on
+  2026-10-08 (gc 1.4.1).
 - `tests/spec-end-review-real-session-test.sh` (local-only, and only with
   `SPEC_END_REVIEW_TRIAL_SESSION=1`: it costs a model session): one real
   session of the reviewer role, with its prompt, its `code-review` skill and

@@ -29,7 +29,7 @@ is not red (`docs/CONVOY_ADVANCE.md`).
 To know where the end of a Spec stands, run `check`: each condition has a
 verdict and one line that says what was read.
 
-## The six conditions (list `spec-end/v2`)
+## The six conditions (list `spec-end/v3`)
 
 | # | Name | Met when |
 | --- | --- | --- |
@@ -52,8 +52,8 @@ recorded by the gate: they are read at each call in what the Evaluator of
 the end and the reviewer of the end handed in, which is tied to the commit
 of the three verdicts. The gate launches no agent; `bin/convoy-advance` has
 the evaluation and the review settled (`bin/outcome-evaluation settle`,
-`bin/spec-end-review settle`). A record written under `spec-end/v1` is read
-as outdated: everything is replayed.
+`bin/spec-end-review settle`). A record written under `spec-end/v1` or
+`spec-end/v2` is read as outdated: everything is replayed.
 
 ## The registry: tracked elements
 
@@ -113,7 +113,7 @@ and the tip of the protected branch that commit holds:
 
 ```json
 {"at": "…", "commit": "<tip of the integration branch>", "protected": "<tip of the protected branch>",
- "version": "spec-end/v2",
+ "version": "spec-end/v3",
  "conditions": [{"number": 1, "name": "registry", "verdict": "pass", "detail": "…"}, "… three entries"],
  "records": {"tests": {"command": "…", "exit_code": 0, "commit": "…"}, "fidelity": {"commit": "…", "prototypes": ["…"]}}}
 ```
@@ -152,8 +152,9 @@ conditions that refused; `check` every condition that is not green.
   without an integration branch.
 - Three green verdicts with the end review missing: exit 1, the three
   verdicts are recorded (or kept, `replayed: false`), and `error` names
-  condition 4 with what was read. `check` renders condition 4 only when the
-  three before it are green on the tip, `not_run` otherwise.
+  condition 6 with what was read, after conditions 4 and 5 if they are not
+  met either. `check` renders conditions 4 to 6 only when the three before
+  them are green on the tip, `not_run` otherwise.
 - A registry that refuses writes nothing but the request to the operator,
   once. `check` never writes.
 - In the answer of `bin/convoy-advance`, a condition that is not met is an
@@ -189,8 +190,9 @@ conditions that refused; `check` every condition that is not green.
 - **The Fixture City Oracle has no scenario of its own for the end of a
   Spec**: its delivery driver walks the gate with a stand-in for the
   Evaluator and for the reviewer of the end. Under the real controller,
-  order and tracker, the gate ran in one isolated-city trial, the one of the
-  end review, before the Outcome Evaluation was a condition of it (Proof).
+  order and tracker, the gate passed its six conditions in one isolated-city
+  trial, the one of the end review, with a stand-in for the Evaluator of the
+  end called in place of the dispatch door (Proof).
 
 ## Proof
 
