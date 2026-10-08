@@ -160,6 +160,13 @@ parcourir le flux de livraison à un ticket d'un convoi marqué et observe son
 revue, évaluation, fusion, fermé par la porte de fin de ticket. Un ticket
 fermé hors porte fait échouer l'oracle.
 
+Avec `expect.outcome: "delivered"` et `expect.repairs` (T26), le parcours
+continue jusqu'à la fin de Spec : l'oracle compte les tickets de réparation
+publiés par le flux, fait parcourir chacun jusqu'à la porte de fin de ticket,
+puis exige Delivered enregistré sur la pointe de la branche d'intégration,
+`bin/spec-end check` vert, un compteur de tours de fin égal au nombre de
+réparations, aucun arrêt et aucune demande sur la liste de l'opérateur. Il
+échoue si Delivered est vu alors qu'une condition manque.
 ## `./bin/factory-doctor` — « y a-t-il quelque chose que je puisse réparer ? »
 
 `gc doctor` rapporte sur toute la pile, la nôtre **et ses dépendances**. Ce
