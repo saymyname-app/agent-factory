@@ -26,10 +26,12 @@ for n in 1 3 4 7; do
 done
 echo "ok   every file is in exactly one lot, for 1, 3, 4 and 7 lots"
 
-# No lot is left with nearly everything: the largest is at most twice the smallest.
+# The lots are dealt by measured seconds, not by count (a lot of a few long
+# files weighs as much as one of many short files:
+# tests/ci-test-seconds-test.sh proves the balance). No lot is left empty.
 counts=$(for i in 1 2 3 4; do "$RUNNER" --shard "$i/4" --list | wc -l; done | sort -n)
-[ "$(echo "$counts" | tail -1)" -le "$(( $(echo "$counts" | head -1) * 2 ))" ] || fail "lots of very unequal size: $(echo $counts)"
-echo "ok   four lots of comparable size ($(echo $counts))"
+[ "$(echo "$counts" | head -1)" -ge 1 ] || fail "one of four lots is empty: $(echo $counts)"
+echo "ok   none of four lots is empty ($(echo $counts))"
 
 # The order of the arguments does not matter, and a lot is a subset.
 [ "$("$RUNNER" --list --shard 2/4)" = "$("$RUNNER" --shard 2/4 --list)" ] || fail "--list --shard differs from --shard --list"
