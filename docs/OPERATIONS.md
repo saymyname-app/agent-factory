@@ -642,6 +642,14 @@ Measured 2026-10-08 (`./bin/ci-minutes`, Paris times):
 |---|---|
 | Full run before the change (06:49 to 07:17) | 46 to 52 |
 | Full run with the blindfold on, the two runs of pull request #441 (07:24, 08:42) | 50 and 47: the blindfold costs nothing measurable, and its nested namespaces start on a GitHub runner |
+| First reduced run, pull request #450 (docs only, 13:56): 18 long tests not run | 9 (`Tests` 3, each of the three other lots 2): 82 to 86% less than a full run of the same day |
+| Full run from 11:18, after the tests merged that day | 59 to 69: one lot at 20 minutes against 9 to 15 for the others, `config/ci-test-seconds.tsv` is stale ("Keeping the lots even" below) |
+
+38 of the last 100 merged pull requests stay inside the areas, so about 30%
+fewer billed minutes per merged pull request are expected overall. That
+overall figure is not measured yet: it needs a full day of runs after
+2026-10-08, read with `./bin/ci-minutes`. A reduced run still starts the
+four lots and pays the setup and the rounding of each.
 
 Adding an area: a place pull requests often change alone, one line in the
 list; the pull request that adds it is a full run and says at once whether a
