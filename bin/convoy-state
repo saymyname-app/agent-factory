@@ -18,7 +18,11 @@ check against the Validated Prototype and the Planning Exceptions that name
 an anchor (T16), the
 integration branch of the convoy's Spec and what the merge command did of a
 ticket (T18), the single correction round of a ticket and the overrides of
-the operator on a stopped one (T17), and the convoy's open factory incident. No other script
+the operator on a stopped one (T17), the fingerprint of its acceptance
+criteria frozen with the approved graph, the reference of the Validated
+Prototype the publication door posed in an interface ticket (read only) and
+the record of the ticket-end gate, written with the closing of the ticket
+(T19), and the convoy's open factory incident. No other script
 invents a `gc.flow.*` field: a missing field is added here.
 
     convoy-state list
@@ -34,6 +38,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state bump-counter CONVOY [--ticket TICKET] --counter NAME [--counter NAME]
     convoy-state add-evidence CONVOY TICKET --piece NAME --digest sha256:HEX --commit SHA
     convoy-state record-gate  CONVOY TICKET --gate GATE [--commit SHA]
+    convoy-state close-ticket CONVOY TICKET --commit SHA --file PATH
     convoy-state set-tdd      CONVOY TICKET --step STEP --commit SHA [--base SHA] [--reason TEXT]
     convoy-state stop-ticket  CONVOY TICKET --reason REASON --detail LINE
     convoy-state stop-raised  CONVOY TICKET
@@ -87,6 +92,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -140,6 +146,10 @@ KEY_FIDELITY = PREFIX + "fidelity"
 KEY_PLANNING_EXCEPTIONS = PREFIX + "planning_exceptions"
 KEY_CORRECTION = PREFIX + "correction"
 KEY_OVERRIDES = PREFIX + "overrides"
+KEY_CRITERIA = PREFIX + "criteria"
+# Written by the publication door (bin/ticket-graph-publish): the digest of
+# the approved graph the ticket was last published under. Read only here.
+KEY_GRAPH_DIGEST = "gc.graph_digest"
 # What bin/escalation-door writes on a bead when the operator answers a
 # request (`repondre`); a Planning Exception is resolved by that answer. Read only.
 KEY_NEEDS_BENJAMIN = "gc.needs_benjamin"
@@ -158,6 +168,17 @@ TICKET_COUNTERS = ("resumes", "correction_rounds")
 CONVOY_COUNTERS = ("end_rounds",)
 GATES = ("dispatch", "ticket_end", "withdrawn")
 CLOSING_GATES = ("ticket_end", "withdrawn")
+GATE_TICKET_END = "ticket_end"
+# The ticket-end gate (T19, Spec §9): a closed, versioned list of nine
+# conditions. bin/ticket-end computes each verdict; its record is written
+# here, with the closing of the ticket, and only when the nine pass.
+TICKET_END_VERSION = "ticket-end/v1"
+TICKET_END_CONDITIONS = (
+    "criteria", "handoff", "evaluation", "fidelity", "deferral", "merge", "evidence", "tdd", "review")
+TICKET_END_PASS = "pass"
+# The pointer the publication door poses in an interface ticket (T36).
+PROTOTYPE_HEADING = "## validated prototype"
+PROTOTYPE_FIELDS = {"branche": "branch", "commit": "commit", "chemin": "path", "états": "states"}
 # The steps bin/tdd-step proves (Spec §5), each tied to a commit.
 TDD_STEPS = ("red", "freeze", "green", "amendment", "prefactoring")
 TDD_STEPS_WITH_BASE = ("red", "prefactoring")
@@ -486,6 +507,89 @@ def acceptance_criteria(description: Any) -> list[str]:
         if inside and match:
             criteria.append(match.group(1))
     return criteria
+
+
+def criteria_digest(criteria: list[str]) -> str:
+    """The fingerprint of the acceptance criteria of a ticket, in order."""
+    return "sha256:" + hashlib.sha256(json.dumps(criteria, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def criteria_record(raw: Any) -> dict[str, Any]:
+    """The acceptance criteria as `mark` froze them with the approved graph:
+    their fingerprint and the digest of the graph the ticket was published
+    under (None when the publication door wrote none)."""
+    record = stored_record(raw, ("digest", "graph_digest", "at"))
+    valid_digest(record["digest"])
+    if record["graph_digest"] is not None and not isinstance(record["graph_digest"], str):
+        raise Refusal(f"digest du graphe mal formé : {record['graph_digest']!r}")
+    return record
+
+
+def frozen_criteria(ticket: dict[str, Any]) -> dict[str, Any]:
+    """What `mark` freezes of a ticket's criteria: read on the ticket as the
+    publication door has just written it."""
+    graph_digest = metadata_of(ticket).get(KEY_GRAPH_DIGEST)
+    return {"digest": criteria_digest(acceptance_criteria(ticket.get("description"))),
+            "graph_digest": graph_digest if isinstance(graph_digest, str) and graph_digest else None, "at": now()}
+
+
+def validated_prototype(description: Any) -> dict[str, Any] | None:
+    """The reference of the Validated Prototype the publication door posed
+    in an interface ticket (T36): branch, commit, path, states. None when
+    the ticket carries no such section: it touches no screen."""
+    fields: dict[str, str] = {}
+    inside = found = False
+    for line in description.splitlines() if isinstance(description, str) else []:
+        if line.startswith("## "):
+            inside = line.strip().lower() == PROTOTYPE_HEADING
+            found = found or inside
+            continue
+        match = re.match(r"^\s*-\s+([^:]+?)\s+:\s+(.*\S)\s*$", line) if inside else None
+        if match and match.group(1) in PROTOTYPE_FIELDS:
+            fields[PROTOTYPE_FIELDS[match.group(1)]] = match.group(2).strip("`")
+    if not found:
+        return None
+    missing = [name for name in PROTOTYPE_FIELDS.values() if name not in fields]
+    if missing:
+        raise Refusal(f"référence du Validated Prototype incomplète dans le ticket (champs absents : {', '.join(missing)})")
+    valid_commit(fields["commit"], "commit du Validated Prototype")
+    valid_branch(fields["branch"], "branche du Validated Prototype")
+    states = [state.strip() for state in fields["states"].split(",") if state.strip()]
+    if not states or not fields["path"].strip("/"):
+        raise Refusal("référence du Validated Prototype sans chemin ou sans état")
+    return {"branch": fields["branch"], "commit": fields["commit"], "path": fields["path"].strip("/"), "states": states}
+
+
+def ticket_end_conditions(value: Any) -> list[dict[str, Any]]:
+    """The nine verdicts of the ticket-end gate, in the order of its closed
+    list, every one passing: the only record that closes a ticket."""
+    if not isinstance(value, list) or len(value) != len(TICKET_END_CONDITIONS):
+        raise Refusal(
+            f"relevé de la porte de fin de ticket sans ses neuf verdicts (attendu : {', '.join(TICKET_END_CONDITIONS)})")
+    conditions = []
+    for number, (name, entry) in enumerate(zip(TICKET_END_CONDITIONS, value), start=1):
+        if not isinstance(entry, dict) or set(entry) != {"number", "name", "verdict", "detail"}:
+            raise Refusal(f"verdict de la condition {number} mal formé : {entry!r} (attendu : number, name, verdict, detail)")
+        if entry["number"] != number or entry["name"] != name:
+            raise Refusal(f"condition {number} attendue : {name} ; reçu : {entry['number']!r} {entry['name']!r}")
+        if entry["verdict"] != TICKET_END_PASS:
+            raise Refusal(
+                f"condition {number} ({name}) non réunie ({entry['verdict']!r}) : la porte ne ferme un ticket que "
+                "sur ses neuf conditions réunies")
+        conditions.append({"number": number, "name": name, "verdict": TICKET_END_PASS,
+                           "detail": single_line(entry["detail"], f"précision de la condition {number}")})
+    return conditions
+
+
+def ticket_end_record(raw: Any) -> dict[str, Any]:
+    """The record of the ticket-end gate: the commit of the ticket that was
+    merged, the version of the list and its nine verdicts."""
+    record = stored_record(raw, ("at", "commit", "version", "conditions"))
+    valid_commit(record["commit"])
+    if record["version"] != TICKET_END_VERSION:
+        raise Refusal(f"version de la liste de conditions inconnue : {record['version']!r} (attendu : {TICKET_END_VERSION})")
+    record["conditions"] = ticket_end_conditions(record["conditions"])
+    return record
 
 
 def single_line(value: Any, name: str) -> str:
@@ -1423,6 +1527,29 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
     stories = None
     out["user_stories"] = None
     out["criteria"] = acceptance_criteria(ticket.get("description"))
+    # The criteria as `mark` froze them with the approved graph (T19): the
+    # ticket-end gate reads whether the ones on the ticket are still those.
+    out["criteria_frozen"] = None
+    if KEY_CRITERIA in metadata:
+        try:
+            graph_digest = metadata.get(KEY_GRAPH_DIGEST)
+            frozen = criteria_record(metadata[KEY_CRITERIA])
+            frozen["current"] = criteria_digest(out["criteria"])
+            frozen["current_graph_digest"] = graph_digest if isinstance(graph_digest, str) and graph_digest else None
+            frozen["identical"] = (
+                frozen["current"] == frozen["digest"] and frozen["current_graph_digest"] == frozen["graph_digest"])
+            out["criteria_frozen"] = frozen
+        except Refusal as exc:
+            out["criteria_frozen"] = {"unruled": f"{KEY_CRITERIA} : {exc}", "raw": metadata[KEY_CRITERIA]}
+            flag(KEY_CRITERIA, out["criteria_frozen"]["unruled"])
+    # An interface ticket carries the reference of the Validated Prototype,
+    # posed by the publication door (T36): its fidelity is checked (T19).
+    try:
+        out["validated_prototype"] = validated_prototype(ticket.get("description"))
+    except Refusal as exc:
+        out["validated_prototype"] = {"unruled": str(exc)}
+        flag("description", str(exc))
+    out["interface"] = out["validated_prototype"] is not None
     scope = metadata.get(KEY_SCOPE)
     out["declared_scope"] = [path for path in scope.split(",") if path] if isinstance(scope, str) and scope else None
     for key, name, _, _ in SLICE_FLAGS:
@@ -1485,7 +1612,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         if not key.startswith(PREFIX) or key in (
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
             KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION, KEY_TEST_REVIEW, KEY_CODE_REVIEW, KEY_MODELS,
-            KEY_EVALUATION, KEY_FIDELITY, KEY_PLANNING_EXCEPTIONS, KEY_CORRECTION, KEY_OVERRIDES,
+            KEY_EVALUATION, KEY_FIDELITY, KEY_PLANNING_EXCEPTIONS, KEY_CORRECTION, KEY_OVERRIDES, KEY_CRITERIA,
         ):
             continue
         raw = metadata[key]
@@ -1510,9 +1637,14 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
                 evidence[name] = record
             elif group is gates:
                 one_of(name, GATES, "porte")
-                record = stored_record(raw, ("at",), ("commit",))
-                if "commit" in record or name == "ticket_end":
-                    valid_commit(record.get("commit"))
+                if name == GATE_TICKET_END:
+                    # Its record is the nine verdicts and the version of the
+                    # list: anything less was not written by the gate.
+                    record = ticket_end_record(raw)
+                else:
+                    record = stored_record(raw, ("at",), ("commit",))
+                    if "commit" in record:
+                        valid_commit(record.get("commit"))
                 gates[name] = record
             elif group is tdd:
                 tdd[name] = tdd_record(name, raw)
@@ -1804,6 +1936,19 @@ def cmd_mark(args: argparse.Namespace) -> int:
                         values[key] = "true"
             except Refusal as exc:
                 raise Refusal(f"ticket {bead['id']} : {exc}") from exc
+            # The criteria are frozen with the approved graph (Spec §2): at
+            # the mark, and again only when the publication door has since
+            # published the ticket under another approved digest (a patch).
+            frozen = frozen_criteria(bead)
+            if KEY_CRITERIA in metadata:
+                try:
+                    stale = criteria_record(metadata[KEY_CRITERIA])["graph_digest"] != frozen["graph_digest"]
+                except Refusal as exc:
+                    raise Refusal(f"ticket {bead['id']} : {KEY_CRITERIA} : {exc}") from exc
+            else:
+                stale = True
+            if stale and bead.get("status") != "closed":
+                values[KEY_CRITERIA] = encode(frozen)
         if mark is None:
             # Counters start at an explicit 0: a counter that is absent later
             # is an "état sans règle", never read as a default.
@@ -1943,12 +2088,47 @@ def cmd_add_evidence(args: argparse.Namespace) -> int:
 def cmd_record_gate(args: argparse.Namespace) -> int:
     marked_ticket(args.convoy, args.ticket)
     one_of(args.gate, GATES, "porte")
+    if args.gate == GATE_TICKET_END:
+        raise Refusal(
+            "le relevé de la porte de fin de ticket s'écrit avec la fermeture du ticket, ses neuf verdicts et la "
+            "version de la liste : close-ticket, appelé par bin/ticket-end")
     record: dict[str, Any] = {"at": now()}
-    if args.commit is not None or args.gate == "ticket_end":
+    if args.commit is not None:
         record["commit"] = valid_commit(args.commit, f"commit du relevé de porte {args.gate}")
     values = {GATE_PREFIX + args.gate: encode(record)}
     write_metadata(args.ticket, values)
     return done(args.convoy, args.ticket, values)
+
+
+def cmd_close_ticket(args: argparse.Namespace) -> int:
+    """The ticket-end gate closes a ticket (T19, Spec §9): its record -- the
+    commit of the ticket that was merged, the version of the list, the nine
+    verdicts -- and the closed status go in one tracker write, so a ticket
+    is never closed without its record nor recorded without being closed.
+    The verdicts are computed by bin/ticket-end; a list that is not the nine
+    conditions, all passing, is refused."""
+    ticket = marked_ticket(args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    if ticket.get("status") == "closed" or any(GATE_PREFIX + gate in metadata for gate in CLOSING_GATES):
+        raise Refusal(f"le ticket {args.ticket} est déjà fermé, ou porte déjà un relevé de fermeture")
+    commit = valid_commit(args.commit, "commit du relevé de la porte de fin de ticket")
+    given = json_argument(args.file, "relevé de la porte de fin de ticket")
+    unknown = sorted(set(given) - {"version", "conditions"})
+    if unknown:
+        raise Refusal(f"champs inconnus dans le relevé de la porte : {', '.join(unknown)}")
+    if given.get("version") != TICKET_END_VERSION:
+        raise Refusal(
+            f"version de la liste de conditions inconnue : {given.get('version')!r} (attendu : {TICKET_END_VERSION})")
+    record = {"at": now(), "commit": commit, "version": TICKET_END_VERSION,
+              "conditions": ticket_end_conditions(given.get("conditions"))}
+    values = {GATE_PREFIX + GATE_TICKET_END: encode(record)}
+    update = ["bd", "update", args.ticket, "--status", "closed"]
+    for key, value in values.items():
+        update += ["--set-metadata", f"{key}={value}"]
+    run_gc(update)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.ticket, "closed": True, "written": values},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
 
 
 def cmd_set_tdd(args: argparse.Namespace) -> int:
@@ -3161,6 +3341,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("record-gate", cmd_record_gate)
     p.add_argument("--gate")
     p.add_argument("--commit")
+    p = command("close-ticket", cmd_close_ticket)
+    p.add_argument("--commit")
+    p.add_argument("--file")
     p = command("set-tdd", cmd_set_tdd)
     p.add_argument("--step")
     p.add_argument("--commit")

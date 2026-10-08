@@ -201,6 +201,30 @@ fi
 [[ $output == *"active NEEDS BENJAMIN"* && -z $(<"$CALL_LOG") ]] \
   || fail_test "--repo/--pr refusal on an active NEEDS BENJAMIN wrong: $output"
 
+# T19 (af-iefuud, Spec af-wf4w5r §9): a ticket of a convoy that carries the
+# new-flow mark is closed by the ticket-end gate (bin/ticket-end) and by
+# nothing else -- no form of this door closes it, whoever asks. A ticket
+# without the mark is closed here exactly as before (every other check of
+# this file runs on one).
+NEW_FLOW='{"gc.flow.mark":"new-flow/v1"}'
+for form in "--outcome no-op" "--outcome abandoned --classification repair" \
+  "--outcome shipped --commit cafef00d --branch do-work/af-work" "--repo owner/repo --pr 42"; do
+  TESTS_RUN=$((TESTS_RUN + 1))
+  # shellcheck disable=SC2086
+  if output=$(DELIVER_CLOSE_BEAD_METADATA="$NEW_FLOW" run merged af-work $form 2>&1); then
+    fail_test "$form must refuse to close a ticket of a new-flow convoy"
+  fi
+  [[ $output == *"ticket-end"* && $output == *"new-flow"* ]] \
+    || fail_test "$form refusal did not name the ticket-end gate: $output"
+  [[ -z $(<"$CALL_LOG") ]] || fail_test "$form made a Beads write on a ticket of a new-flow convoy"
+done
+# A mark this door does not know is not read as "no mark".
+TESTS_RUN=$((TESTS_RUN + 1))
+if output=$(DELIVER_CLOSE_BEAD_METADATA='{"gc.flow.mark":"new-flow/v9"}' run merged af-work --outcome no-op 2>&1); then
+  fail_test "an unknown new-flow mark must not be closed as an unmarked ticket"
+fi
+[[ $output == *"ticket-end"* && -z $(<"$CALL_LOG") ]] || fail_test "unknown mark refusal wrong: $output"
+
 # An answered or cleared question ("none") no longer holds the close.
 TESTS_RUN=$((TESTS_RUN + 1))
 DELIVER_CLOSE_BEAD_METADATA='{"gc.needs_benjamin":"none"}' run merged af-work --outcome no-op >/dev/null \

@@ -121,8 +121,11 @@ anchor: it is repaired, never accepted.
 ## Limits
 
 - The ticket → screen link is not recorded at publication: the caller names
-  the screen (`--screen`). The gate that calls the command for a ticket is
-  T19's, the end of a Spec is T23's.
+  the screen (`--screen`). For a ticket, the caller is `bin/ticket-end
+  fidelity`, run by `bin/convoy-advance` before the merge: it extracts the
+  Validated Prototype the ticket names and compares every screen of the
+  profile that serves one of its states (`docs/TICKET_END.md`). The end of a
+  Spec is T23's.
 - A state is launched on the dataset of the same name; the profile has no
   other mapping.
 - Text content is not compared: both sides render the same synthetic

@@ -413,9 +413,9 @@ jq -e --arg t4 "$T4" '.unruled == false and (.tickets[] | select(.id == $t4) | .
 # T1 and R1 are delivered, T2 is at work. Its author exits « bloqué technique »:
 # bin/ticket-exit drafts the revision and this same patch door publishes it.
 for delivered in "$T1" "$R1"; do
-  "$STATE" record-gate "$CONVOY" "$delivered" --gate ticket_end --commit "$(printf '0%.0s' $(seq 40))" >/dev/null \
-    || fail "gate record refused for $delivered"
-  gc bd update "$delivered" --status closed >/dev/null
+  "$STATE" close-ticket "$CONVOY" "$delivered" --commit "$(printf '0%.0s' $(seq 40))" \
+    --file "$ROOT/tests/fixtures/convoy-state/ticket-end-report.json" >/dev/null \
+    || fail "closing through the gate record refused for $delivered"
 done
 "$STATE" record-gate "$CONVOY" "$T2" --gate dispatch >/dev/null || fail "dispatch gate record refused for T2"
 gc bd update "$T2" --status in_progress >/dev/null

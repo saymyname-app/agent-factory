@@ -1,0 +1,6 @@
+{
+  "contract": "agent-factory-fixture-delivery-scenario/v1",
+  "scenario_id": "one-ticket-end-to-end",
+  "inject": {"delivery": "none"},
+  "expect": {"closed": true}
+}

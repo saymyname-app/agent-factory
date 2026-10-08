@@ -19,8 +19,12 @@ import os
 import shutil
 import subprocess
 import tempfile
+import sys
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+import ticket_proofs  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +35,7 @@ DOOR = ROOT / "bin" / "dispatch-door"
 ESCALATION = ROOT / "bin" / "escalation-door"
 INTEGRATION_TOOL = ROOT / "bin" / "spec-integration"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
+GATE_REPORT = ROOT / "tests" / "fixtures" / "convoy-state" / "ticket-end-report.json"
 
 CONVOY = "fx-convoy"
 OTHER = "fx-other"
@@ -171,9 +176,9 @@ class ConvoyAdvanceTest(unittest.TestCase):
         return next(c for c in answer["convoys"] if c["id"] == convoy)["started"]
 
     def close_through_gate(self, ticket_id, convoy=CONVOY):
-        """What the trial does in place of the flow's own ticket end (not in T04)."""
-        self.run_ok(STATE, "record-gate", convoy, ticket_id, "--gate", "ticket_end", "--commit", COMMIT)
-        self.edit(ticket_id, status="closed")
+        """What stands for the flow's own ticket end (T19, bin/ticket-end):
+        the record of the gate, written with the closing."""
+        self.run_ok(STATE, "close-ticket", convoy, ticket_id, "--commit", COMMIT, "--file", GATE_REPORT)
 
     def log(self, kind):
         lines = [json.loads(line) for line in self.write_log.read_text().splitlines() if line]
@@ -805,17 +810,10 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.git("checkout", "-q", "--detach", "main")
         self.run_ok(STATE, "set-branch", CONVOY, ticket_id, "--branch", branch)
         self.edit(ticket_id, status="in_progress")
-        self.run_ok(STATE, "add-evidence", CONVOY, ticket_id, "--piece", "handoff_records",
-                    "--digest", "sha256:" + "ab" * 32, "--commit", tip)
-        handoff = self.tmp / f"handoff-{ticket_id}.json"
-        handoff.write_text(json.dumps({
-            "sections": dict.fromkeys(("done", "deviations", "not_done", "out_of_ticket"), "aucun"),
-            "partial": False, "commit": tip, "records": {}}))
-        self.run_ok(STATE, "set-handoff", CONVOY, ticket_id, "--file", handoff)
-        self.run_ok(STATE, "set-exit", CONVOY, ticket_id, "--exit", "finished")
-        # The regression of the prefactoring, proven at the tip (bin/tdd-step).
-        self.run_ok(STATE, "set-tdd", CONVOY, ticket_id, "--step", "prefactoring", "--commit", tip,
-                    "--base", self.git("rev-parse", "main"))
+        # The regression of the prefactoring proven at the tip (bin/tdd-step),
+        # the sealed records, the Handoff and the exit (bin/ticket-exit).
+        ticket_proofs.finish(self.env, self.root, CONVOY, ticket_id, tip, self.git("rev-parse", "main"), branch,
+                             sections=dict.fromkeys(("done", "deviations", "not_done", "out_of_ticket"), "aucun"))
         return tip
 
     def code_review_of(self, answer, convoy=CONVOY):
@@ -898,6 +896,136 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertIsNone(self.integration_of(answer))
         self.assertEqual(before, self.git("rev-parse", self.INTEGRATION))
         self.assertIsNone(self.bead(T1)["metadata"].get("gc.flow.merge"))
+
+    # --- a merged ticket is closed by the ticket-end gate, and by nothing else (T19) ---
+
+    def ticket_end_of(self, answer, convoy=CONVOY):
+        return next(c for c in answer["convoys"] if c["id"] == convoy).get("ticket_end")
+
+    def test_a_pass_closes_the_ticket_it_merged_through_the_ticket_end_gate_with_its_nine_verdicts(self):
+        self.integrated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([T1], [entry["id"] for entry in self.integration_of(answer)["merged"]])
+        closing = self.ticket_end_of(answer)
+        self.assertEqual([(T1, tip, "ticket-end/v1")],
+                         [(entry["id"], entry["commit"], entry["version"]) for entry in closing["closed"]])
+        shown = self.shown(T1)
+        record = shown["gates"]["ticket_end"]
+        self.assertEqual(("closed", tip, "ticket-end/v1", [1, 2, 3, 4, 5, 6, 7, 8, 9]),
+                         (shown["status"], record["commit"], record["version"],
+                          [entry["number"] for entry in record["conditions"]]))
+        self.assertEqual({"pass"}, {entry["verdict"] for entry in record["conditions"]})
+        self.assertEqual([], self.escalation_list())
+        # Nothing is left to settle: the next pass does not call the gate.
+        self.assertIsNone(self.ticket_end_of(self.advance(CONVOY)))
+
+    def test_a_merged_ticket_that_misses_a_condition_stays_open_and_the_pass_names_the_condition(self):
+        self.integrated()
+        self.advance(CONVOY)
+        self.finished(T1)
+        # Reviewed, evaluated and merged; then a criterion is edited on the
+        # ticket before the gate reads it.
+        self.run_ok(ROOT / "bin" / "code-review", "settle", CONVOY, "--repo", self.root)
+        self.run_ok(ROOT / "bin" / "ticket-evaluation", "settle", CONVOY, "--repo", self.root)
+        self.run_ok(INTEGRATION_TOOL, "merge", CONVOY, "--repo", self.root, "--profile",
+                    self.root / "config" / "project-descriptors" / "fx.json")
+        self.assertEqual("merged", self.shown(T1)["merge"]["outcome"])
+        self.edit(T1, description=self.bead(T1)["description"] + "\n\n## Acceptance criteria\n\n- [ ] ajouté à la main")
+
+        answer = self.advance(CONVOY)
+
+        closing = self.ticket_end_of(answer)
+        self.assertNotIn("closed", closing)
+        self.assertEqual([(T1, [1])], [(entry["id"], entry["missing"]) for entry in closing["open"]])
+        self.assertIn("condition 1", closing["open"][0]["reason"])
+        self.assertTrue(answer["ok"])
+        shown = self.shown(T1)
+        self.assertEqual("in_progress", shown["status"])
+        self.assertNotIn("ticket_end", shown["gates"])
+        # Its dependent is not started on a ticket the gate left open.
+        self.assert_not_started(T3)
+
+    def test_a_ticket_closed_with_a_gate_record_that_lacks_the_nine_verdicts_stops_the_convoy(self):
+        self.edit(T1, status="closed")
+        state = self.tracker_state()
+        state["beads"][T1]["metadata"]["gc.flow.gate.ticket_end"] = json.dumps({"at": "2026-01-01T00:00:00Z",
+                                                                               "commit": COMMIT})
+        self.tracker.write_text(json.dumps(state))
+
+        answer = self.advance(CONVOY, expect=EXIT_UNRULED)
+
+        self.assertEqual([], self.started(answer))
+        self.assert_not_started(T2)
+        incidents = self.escalation_list()
+        self.assertEqual(1, len(incidents), incidents)
+        self.assertIn(T1, incidents[0])
+
+    def test_a_merged_pull_request_and_a_green_ci_close_no_ticket_of_a_marked_convoy(self):
+        self.integrated()
+        self.advance(CONVOY)
+        self.finished(T1)
+        # What closes a ticket of the flow before: a merged pull request.
+        self.edit(T1, **{"metadata": {**self.bead(T1)["metadata"], "gc.pr_number": 12, "gc.pr_state": "MERGED",
+                                      "gc.ci_state": "SUCCESS"}})
+        self.code_reviewed("silent")
+
+        answer = self.advance(CONVOY)
+
+        self.assertIsNone(self.ticket_end_of(answer))
+        self.assertEqual("in_progress", self.shown(T1)["status"])
+
+    def test_a_pass_measures_the_fidelity_of_an_interface_ticket_before_its_merge_and_the_gate_reads_it(self):
+        base = self.integrated()
+        self.env.update({
+            "EVIDENCE_CAPTURE_BROWSER": str(ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"),
+            "EVIDENCE_FAKE_BROWSER_LOG": str(self.tmp / "browser.log"),
+            "TICKET_END_WORK_DIR": str(self.tmp / "gate-work"),
+        })
+        # An interface slice: the publication door posed the reference of
+        # the Validated Prototype in it, before the convoy was marked.
+        state = self.tracker_state()
+        for bead_id in (CONVOY, T1, T2, T3):
+            metadata = state["beads"][bead_id]["metadata"]
+            state["beads"][bead_id]["metadata"] = {k: v for k, v in metadata.items() if not k.startswith("gc.flow.")}
+        state["beads"][T1]["metadata"]["gc.ticket_kind"] = "vertical_slice"
+        state["beads"][T1]["description"] = (
+            "## Acceptance criteria\n\n- [ ] Point d'entrée : GET / — Observable : liste — Faux si : une ligne manque\n\n"
+            f"## Validated Prototype\n\n- branche : main\n- commit : {base}\n- chemin : {FIXTURE}/prototype\n"
+            "- états : empty, content\n- Prototype Fold : ce ticket\n\n## Target rigs\n\nfx-rig")
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "mark", CONVOY, "--demonstration-line", f"{T1}=La page d'accueil affiche les trois éléments",
+                    "--user-stories", f"{T1}=1", "--prototype-fold", T1)
+        self.run_ok(INTEGRATION_TOOL, "open", CONVOY, "--repo", self.root, "--protected", "main")
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+
+        answer = self.advance(CONVOY)
+
+        result = next(c for c in answer["convoys"] if c["id"] == CONVOY)
+        self.assertEqual([(T1, tip, "vert")],
+                         [(entry["id"], entry["commit"], entry["result"]) for entry in result["fidelity"]["checked"]], result)
+        self.assertEqual([T1], [entry["id"] for entry in result["integration"]["merged"]], result)
+        self.assertEqual([T1], [entry["id"] for entry in result["ticket_end"]["closed"]], result)
+        shown = self.shown(T1)
+        self.assertEqual((tip, "vert"), (shown["fidelity"]["commit"], shown["fidelity"]["state"]))
+        fidelity = shown["gates"]["ticket_end"]["conditions"][3]
+        self.assertEqual(("fidelity", "pass"), (fidelity["name"], fidelity["verdict"]))
+        self.assertIn(tip[:12], fidelity["detail"])
+
+    def test_a_refusal_of_the_ticket_end_gate_is_a_failure_of_the_pass(self):
+        self.integrated()
+        self.advance(CONVOY)
+        self.finished(T1)
+
+        # The pass is run from an agent session: no agent closes a ticket.
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED, env={**self.env, "GC_SESSION_NAME": "delivery-author-fx"})
+
+        self.assertFalse(answer["ok"])
+        self.assertEqual("in_progress", self.shown(T1)["status"])
 
     # --- the code of a finished ticket is reviewed before its merge (T14) -------
 

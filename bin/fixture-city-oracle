@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Black-box public-behavior oracle for an isolated fixture City."""
+"""Black-box public-behavior oracle for an isolated fixture City.
+
+    fixture-city-oracle run SCENARIO --operator EXE --publication-door EXE
+    fixture-city-oracle run SCENARIO --delivery-driver EXE
+
+The first form walks a Planning Run (scenario contract
+agent-factory-fixture-scenario/v1). The second walks the delivery of one
+ticket of a marked convoy (agent-factory-fixture-delivery-scenario/v1; T19,
+af-iefuud): the driver makes the flow advance one event at a time, and after
+each event the oracle itself reads the public state -- bin/convoy-state
+show, the branches of the repository, bin/evidence-capture verify,
+bin/ticket-end check -- and requires the lifecycle published, started, red,
+frozen, coded, reviewed, evaluated, merged, closed by the ticket-end gate.
+It reads no prompt, no formula and no role. Details: docs/FIXTURE_CITY_ORACLE.md.
+"""
 
 from __future__ import annotations
 
@@ -22,6 +36,17 @@ PROGRAM = "fixture-city-oracle"
 SCENARIO_CONTRACT = "agent-factory-fixture-scenario/v1"
 OBSERVATION_CONTRACT = "agent-factory-fixture-observation/v1"
 RESULT_CONTRACT = "agent-factory-fixture-oracle-result/v1"
+DELIVERY_SCENARIO_CONTRACT = "agent-factory-fixture-delivery-scenario/v1"
+DELIVERY_RESULT_CONTRACT = "agent-factory-fixture-delivery-result/v1"
+# The lifecycle of one ticket of a marked convoy, in the only order the flow
+# allows (Spec af-wf4w5r §4 to §9).
+DELIVERY_STATES = ("published", "started", "red", "frozen", "coded", "reviewed", "evaluated", "merged", "closed")
+DELIVERY_INJECTIONS = ("none", "criterion-edited", "closed-by-hand")
+DELIVERY_MAX_EVENTS = 16
+TICKET_END_VERSION = "ticket-end/v1"
+TICKET_END_CONDITIONS = (
+    "criteria", "handoff", "evaluation", "fidelity", "deferral", "merge", "evidence", "tdd", "review")
+BIN = Path(__file__).resolve().parent
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 
@@ -964,20 +989,248 @@ def execute(scenario_path: Path, operator: Path, publication_door: Path) -> dict
     return result
 
 
+# --- the delivery of one ticket of a marked convoy (T19) -------------------------
+
+
+def validate_delivery_scenario(scenario: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    scenario_id = required_string(scenario.get("scenario_id"), "scenario_id")
+    if not SAFE_ID.fullmatch(scenario_id):
+        raise OracleError("scenario_id contains unsupported characters")
+    unknown = sorted(set(scenario) - {"contract", "scenario_id", "inject", "expect"})
+    if unknown:
+        raise OracleError(f"delivery scenario has unknown fields: {', '.join(unknown)}")
+    inject = as_dict(scenario.get("inject", {}), "inject").get("delivery", "none")
+    if inject not in DELIVERY_INJECTIONS:
+        raise OracleError(f"inject.delivery must be one of {', '.join(DELIVERY_INJECTIONS)}")
+    expect = as_dict(scenario.get("expect"), "expect")
+    if not isinstance(expect.get("closed"), bool) or set(expect) - {"closed", "missing"}:
+        raise OracleError("expect must be {closed: true} or {closed: false, missing: [condition numbers]}")
+    missing = expect.get("missing", [])
+    if expect["closed"] == bool(missing) or any(
+            isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= len(TICKET_END_CONDITIONS) for n in missing):
+        raise OracleError("expect.missing names the conditions of the ticket-end gate an open ticket misses, and only then")
+    return inject, {"closed": expect["closed"], "missing": sorted(missing)}
+
+
+def run_driver(driver: Path, workspace: Path, command: str, *arguments: str) -> dict[str, Any]:
+    """One call of the delivery driver. It launches the product on a
+    loopback port, so it is not contained by the no-socket sandbox of the
+    planning adapters; it gets a clean environment and its own workspace."""
+    if not driver.is_absolute() or not driver.is_file() or not os.access(driver, os.X_OK):
+        raise OracleError(f"delivery driver must be an absolute executable file: {driver}")
+    try:
+        result = subprocess.run(
+            (str(driver), "--workspace", str(workspace), command, *arguments),
+            cwd=workspace, env=hermetic_env(workspace), text=True, capture_output=True,
+            stdin=subprocess.DEVNULL, timeout=600, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise OracleError(f"delivery driver {command} failed to run: {exc}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise OracleError(f"delivery driver {command} failed: {detail}")
+    return json_output(result, f"delivery driver {command}")
+
+
+class DeliveryTarget:
+    """Where the public state of the walked ticket is read."""
+
+    def __init__(self, prepared: dict[str, Any], workspace: Path):
+        self.convoy = required_string(prepared.get("convoy"), "prepare.convoy")
+        self.ticket = required_string(prepared.get("ticket"), "prepare.ticket")
+        self.repo = Path(required_string(prepared.get("repo"), "prepare.repo"))
+        environment = as_dict(prepared.get("environment"), "prepare.environment")
+        if any(not isinstance(key, str) or not isinstance(value, str) for key, value in environment.items()):
+            raise OracleError("prepare.environment must map names to strings")
+        self.environment = {**hermetic_env(workspace), **environment}
+
+    def read(self, tool: str, *arguments: str) -> tuple[int, dict[str, Any]]:
+        """One read-only command of the flow, run by the oracle itself."""
+        try:
+            result = subprocess.run((str(BIN / tool), *arguments), env=self.environment, text=True,
+                                    capture_output=True, stdin=subprocess.DEVNULL, timeout=120, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise OracleError(f"{tool} {arguments[0]} failed to run: {exc}") from exc
+        return result.returncode, json_output(result, f"{tool} {arguments[0]}")
+
+    def is_ancestor(self, commit: Any, of: str) -> bool:
+        if not isinstance(commit, str) or not REVISION.fullmatch(commit):
+            return False
+        return subprocess.run(("git", "-C", str(self.repo), "merge-base", "--is-ancestor", commit, of),
+                              env=git_env(), capture_output=True, check=False).returncode == 0
+
+
+def gate_record(ticket: dict[str, Any]) -> dict[str, Any]:
+    """The record of the ticket-end gate of a closed ticket: the version of
+    the list and its nine passing verdicts, or the ticket was not closed by
+    the gate."""
+    record = (ticket.get("gates") or {}).get("ticket_end")
+    conditions = record.get("conditions") if isinstance(record, dict) else None
+    if (not isinstance(conditions, list) or record.get("version") != TICKET_END_VERSION
+            or [(entry.get("number"), entry.get("name"), entry.get("verdict")) for entry in conditions
+                if isinstance(entry, dict)]
+            != [(number, name, "pass") for number, name in enumerate(TICKET_END_CONDITIONS, start=1)]):
+        raise OracleError(
+            "the ticket is closed without the record of the ticket-end gate (its version and nine passing verdicts): "
+            "it was closed outside the gate")
+    return record
+
+
+def observe_delivery(target: DeliveryTarget) -> list[tuple[str, str]]:
+    """The lifecycle states the ticket has reached, each with the time of
+    the public record that shows it, read on bin/convoy-state show and on
+    the branches of the repository."""
+    status, shown = target.read("convoy-state", "show", target.convoy, "--repo", str(target.repo))
+    convoy = as_dict(shown.get("convoy"), "convoy state")
+    ticket = next((entry for entry in as_list(shown.get("tickets"), "convoy tickets")
+                   if isinstance(entry, dict) and entry.get("id") == target.ticket), None)
+    if ticket is None:
+        raise OracleError(f"ticket {target.ticket} is not tracked by convoy {target.convoy}")
+    if ticket.get("status") == "closed":
+        gate_record(ticket)
+    anomalies = [*convoy.get("unruled", []), *ticket.get("unruled", [])]
+    if status != 0 or anomalies:
+        reasons = "; ".join(str(entry.get("reason", entry)) for entry in anomalies) or shown.get("message") or shown.get("error")
+        raise OracleError(f"the convoy is in a state the flow has no rule for: {reasons}")
+
+    tip = ticket.get("tip")
+    integration = convoy.get("integration") or {}
+    frozen = ticket.get("criteria_frozen") or {}
+    gates, tdd = ticket.get("gates") or {}, ticket.get("tdd") or {}
+    reached: list[tuple[str, str]] = []
+
+    def reach(state: str, at: Any) -> None:
+        reached.append((state, required_string(at, f"time of the record of « {state} »")))
+
+    if convoy.get("mark") and integration.get("branch") and frozen.get("identical") is not None:
+        reach("published", integration.get("at"))
+    if "dispatch" in gates:
+        reach("started", gates["dispatch"].get("at"))
+    if tdd.get("red"):
+        reach("red", tdd["red"].get("at"))
+    reviews = (ticket.get("test_review") or {}).get("rounds") or []
+    if tdd.get("freeze") and reviews and reviews[-1].get("verdict") == "favorable":
+        reach("frozen", tdd["freeze"].get("at"))
+    handoff, exit_record = ticket.get("handoff") or {}, ticket.get("exit") or {}
+    if (tdd.get("green") and tdd["green"].get("commit") == tip and exit_record.get("exit") == "finished"
+            and handoff.get("partial") is False and handoff.get("commit") == tip):
+        reach("coded", exit_record.get("at"))
+    review = ticket.get("code_review") or {}
+    if (review.get("state") or {}).get("verdict") == "favorable" and review["state"].get("commit") == tip:
+        reach("reviewed", (review.get("rounds") or [{}])[-1].get("at"))
+    evaluation = ticket.get("evaluation") or {}
+    if (evaluation.get("state") or {}).get("outcome") == "favorable" and evaluation["state"].get("commit") == tip:
+        reach("evaluated", (evaluation.get("rounds") or [{}])[-1].get("at"))
+    merge = ticket.get("merge") or {}
+    if merge.get("outcome") == "merged":
+        branch = required_string(integration.get("branch"), "integration branch")
+        if (merge.get("ticket_commit") != tip or not target.is_ancestor(tip, str(merge.get("commit")))
+                or not target.is_ancestor(merge.get("commit"), f"refs/heads/{branch}")):
+            raise OracleError("the merge recorded on the ticket is not the tip of its branch merged into the integration branch")
+        reach("merged", merge.get("at"))
+    if ticket.get("status") == "closed":
+        record = gate_record(ticket)
+        if record.get("commit") != merge.get("ticket_commit"):
+            raise OracleError("the record of the ticket-end gate is not tied to the commit of the ticket that was merged")
+        reach("closed", record.get("at"))
+
+    names = [state for state, _ in reached]
+    if names != list(DELIVERY_STATES[:len(names)]):
+        raise OracleError(f"lifecycle out of order: the ticket shows {', '.join(names) or 'nothing'} "
+                          f"without {next(state for state in DELIVERY_STATES if state not in names)}")
+    times = [at for _, at in reached]
+    if times != sorted(times):
+        raise OracleError(f"lifecycle out of order: the records of {', '.join(names)} are not in the order of the flow")
+    return reached
+
+
+def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
+    inject, expect = validate_delivery_scenario(scenario)
+    with tempfile.TemporaryDirectory(prefix="fixture-city-delivery-") as temporary:
+        workspace = Path(temporary).resolve()
+        target = DeliveryTarget(run_driver(driver, workspace, "prepare", "--inject", inject), workspace)
+        try:
+            run_driver(driver, workspace, "publish")
+            lifecycle = [state for state, _ in observe_delivery(target)]
+            if lifecycle != ["published"]:
+                raise OracleError(f"a published ticket shows {', '.join(lifecycle) or 'nothing'}: expected published, not started")
+            observations = [list(lifecycle)]
+            for _ in range(DELIVERY_MAX_EVENTS):
+                event = run_driver(driver, workspace, "advance")
+                reached = [state for state, _ in observe_delivery(target)]
+                if reached[:len(lifecycle)] != lifecycle:
+                    raise OracleError(f"lifecycle went backwards: {', '.join(lifecycle)} then {', '.join(reached)}")
+                observations.append(reached[len(lifecycle):])
+                lifecycle = reached
+                if lifecycle[-1] == "closed" or event.get("idle") is True:
+                    break
+            closed = lifecycle[-1] == "closed"
+            status, check = target.read("ticket-end", "check", target.convoy, target.ticket, "--repo", str(target.repo))
+            missing = sorted(check.get("missing") or [])
+            conditions = [
+                {"number": entry.get("number"), "name": entry.get("name"), "verdict": entry.get("verdict")}
+                for entry in as_list(check.get("conditions"), "ticket-end check conditions")]
+            if closed != expect["closed"]:
+                named = "; ".join(f"condition {n} ({TICKET_END_CONDITIONS[n - 1]})" for n in missing)
+                raise OracleError(
+                    f"the ticket is {'closed' if closed else 'open'} after {', '.join(lifecycle)}"
+                    + (f"; the ticket-end gate names: {named}" if named else ""))
+            if missing != expect["missing"] or (status == 0) != (not missing):
+                raise OracleError(f"the ticket-end gate names conditions {missing}, the scenario expects {expect['missing']}")
+            verify_status, verified = target.read("evidence-capture", "verify", target.convoy, target.ticket)
+            if closed and verify_status != 0:
+                raise OracleError(f"the evidence of the closed ticket does not verify: {verified.get('error')}")
+        finally:
+            run_driver(driver, workspace, "stop")
+    result = {
+        "contract": DELIVERY_RESULT_CONTRACT,
+        "ok": True,
+        "scenario_id": scenario["scenario_id"],
+        "lifecycle": lifecycle,
+        "observations": observations,
+        "closed": closed,
+        "ticket_end": {"version": check.get("version"), "conditions": conditions, "missing": missing},
+        "evidence": {"verified": verify_status == 0,
+                     "pieces": sorted(entry.get("piece") for entry in verified.get("pieces") or [])},
+        "interfaces": {
+            "driver": ["prepare", "publish", "advance", "stop"],
+            "read": ["convoy-state show", "git merge-base", "ticket-end check", "evidence-capture verify"],
+        },
+    }
+    result["oracle_digest"] = canonical_digest(result)
+    return result
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(prog=PROGRAM)
     subparsers = value.add_subparsers(dest="command", required=True)
     run = subparsers.add_parser("run")
     run.add_argument("scenario", type=Path)
-    run.add_argument("--operator", type=Path, required=True)
-    run.add_argument("--publication-door", type=Path, required=True)
+    run.add_argument("--operator", type=Path)
+    run.add_argument("--publication-door", type=Path)
+    run.add_argument("--delivery-driver", type=Path)
     return value
+
+
+def run_scenario(args: argparse.Namespace) -> dict[str, Any]:
+    """The contract of the scenario says which walk it is."""
+    path = args.scenario.resolve()
+    try:
+        contract = as_dict(json.loads(path.read_text(encoding="utf-8")), "scenario").get("contract")
+    except (OSError, json.JSONDecodeError) as exc:
+        raise OracleError(f"cannot read scenario {path}: {exc}") from exc
+    if contract == DELIVERY_SCENARIO_CONTRACT:
+        if args.delivery_driver is None or args.operator is not None or args.publication_door is not None:
+            raise OracleError("a delivery scenario is run with --delivery-driver, and with no planning adapter")
+        return execute_delivery(json.loads(path.read_text(encoding="utf-8")), args.delivery_driver)
+    if args.operator is None or args.publication_door is None or args.delivery_driver is not None:
+        raise OracleError("a planning scenario is run with --operator and --publication-door")
+    return execute(path, args.operator, args.publication_door)
 
 
 def main() -> int:
     try:
         args = parser().parse_args()
-        result = execute(args.scenario.resolve(), args.operator, args.publication_door)
+        result = run_scenario(args)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except OracleError as exc:

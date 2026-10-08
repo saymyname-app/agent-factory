@@ -32,15 +32,17 @@ nouveau flux**.
 - **Un critère non observé ne se dispense jamais** : `override --criterion`
   est refusé, et le message renvoie à la Planning Exception
   (`./bin/planning-exception`).
-- **La dérogation ne lève rien seule** : le ticket reste arrêté et rien ne
-  fusionne ; la porte de fin de ticket (T19) la lira.
+- **La dérogation ne lève pas l'arrêt** : quand tous les Blocking Findings
+  restés sans verdict favorable sont dérogés, la passe suivante fusionne le
+  ticket et la porte de fin de ticket le ferme (`./bin/ticket-end`,
+  condition 9).
 - **Ne jamais dispatcher `mol-ticket-correction` à la main** ni écrire
   `gc.flow.correction` ou `gc.flow.overrides` : seul
   `./bin/correction-round` le fait, par `./bin/dispatch-door` et
   `./bin/convoy-state`.
 - **Limites** : aucun délai sur la session de correction (une session morte
   sans fermer son bead laisse le ticket en attente ; la reprise est à T20) ;
-  rien ne lève encore un arrêt.
+  rien ne lève un arrêt.
 
 Détail : `docs/CORRECTION_ROUND.md`.
 
