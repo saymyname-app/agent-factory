@@ -276,8 +276,9 @@ This closes a real gap: commit `8d92c13` landed directly on `main` and broke
 referential integrity between `legacy/docs/products/saymyname/DECISIONS.md` and
 `config/products/saymyname.json`'s `decision_refs` — a check
 `legacy/tests/factory-cockpit-test.py` already had. Nothing forced that suite to run
-before the commit reached `main`; Factory CI (which also runs `on: push` to
-`main`, see `.github/workflows/ci.yml`) only reported it after the fact, and
+before the commit reached `main`; Factory CI (which then also ran `on: push`
+to `main`; it no longer does, see `OPERATIONS.md`, "Factory CI cost and the
+Actions quota") only reported it after the fact, and
 both CI and the live cockpit stayed broken for hours before it was noticed.
 At the time (2026-09-16) this repository could not use GitHub branch
 protection or a required check — private repo, no GitHub Pro, `403` on the

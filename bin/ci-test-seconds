@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+#
+# ci-test-seconds — rewrite config/ci-test-seconds.tsv from a real Factory CI
+# run (af-mzuprx). bin/ci-run-tests --shard reads that list to give each lot
+# about the same seconds of tests; when it is stale the lots are uneven and
+# the job named "Tests" is billed while it waits for the longest one (its
+# "Wait for the other lots" step then prints a warning that names this
+# script).
+#
+# Usage, from a work tree (never the live root):
+#   ci-test-seconds [--repo OWNER/NAME] [--run ID]
+# Without --run: the latest green Factory CI run. Reads the "tests/x OK 12s"
+# lines of the logs of its jobs. Then commit the file through a pull request.
+
+set -Eeuo pipefail
+
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+GH=${GH_BIN:-gh}
+REPO=saymyname-app/agent-factory
+RUN=""
+OUT="$REPO_ROOT/config/ci-test-seconds.tsv"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --repo) REPO=$2; shift 2 ;;
+    --run) RUN=$2; shift 2 ;;
+    --out) OUT=$2; shift 2 ;;
+    *) echo "ci-test-seconds: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [ -z "$RUN" ]; then
+  RUN=$("$GH" api "repos/$REPO/actions/workflows/ci.yml/runs?status=success&per_page=1" --jq '.workflow_runs[0].id // empty')
+  [ -n "$RUN" ] || { echo "ci-test-seconds: no green Factory CI run found on $REPO" >&2; exit 1; }
+fi
+
+tmp=$(mktemp)
+trap 'rm -f -- "$tmp"' EXIT
+jobs=$("$GH" api "repos/$REPO/actions/runs/$RUN/jobs?per_page=100" --jq '.jobs[].id')
+for job in $jobs; do
+  "$GH" api "repos/$REPO/actions/jobs/$job/logs"
+done | sed -nE 's/^.*[[:space:]](tests\/[^[:space:]]+)[[:space:]]+OK[[:space:]]+([0-9]+)s[[:space:]]*$/\1\t\2/p' | sort -u -k1,1 >"$tmp"
+
+[ -s "$tmp" ] || { echo "ci-test-seconds: run $RUN has no 'tests/x OK 12s' line -- nothing written" >&2; exit 1; }
+{
+  echo "# Seconds each test file took in Factory CI run $RUN of $REPO."
+  echo "# Written by bin/ci-test-seconds, read by bin/ci-run-tests --shard. Do not edit by hand."
+  cat "$tmp"
+} >"$OUT"
+echo "ci-test-seconds: $(wc -l <"$tmp") file(s), $(awk -F'\t' '{t += $2} END {print t}' "$tmp") s, from run $RUN -> ${OUT#"$REPO_ROOT"/}"
