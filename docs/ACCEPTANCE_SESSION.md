@@ -137,8 +137,13 @@ the answer, not in a prompt to find:
   the pass sends the request once on a Delivered Outcome and publishes the
   repair of an outage (`docs/FIXTURE_CITY_ORACLE.md`).
 - `tests/acceptance-session-real-session-test.sh`: local-only adoption
-  trial — a real agent session, given what `open` answers, is asked « dois-je
-  accepter ? » (`docs/ADAPTATION_REGISTER.md`, AR-031).
+  trial, run only with `ACCEPTANCE_SESSION_TRIAL_SESSION=1` (one model
+  session of two turns) — on the convoy of the Fixture City walked to its
+  Acceptance Request, a real agent session (`claude -p`, in an empty
+  directory, that one command allowed) opens the Acceptance Session and is
+  asked « dois-je accepter ? »; its answer is printed in the record, and a
+  crude check fails the trial when it recommends or summarizes
+  (`docs/ADAPTATION_REGISTER.md`, AR-031).
 
 ## Limits
 
