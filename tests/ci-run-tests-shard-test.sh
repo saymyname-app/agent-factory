@@ -49,7 +49,7 @@ lots=$(sed -n "s/^  LOTS: .*|| '\([0-9][0-9]*\)' }} *\$/\1/p" "$CI")
 [ -n "$lots" ] || fail "$CI does not name its number of lots (env LOTS)"
 matrix=$(sed -n "s/^ *lot: .*|| '\[\(.*\)\]') }} *\$/\1/p" "$CI" | tr -d ' ')
 [ "$matrix" = "$(seq -s, 1 "$lots")" ] || fail "$CI runs lots [$matrix] but names $lots lots: a lot would run nowhere"
-grep -qF 'bin/ci-run-tests --shard "${{ matrix.lot }}/$LOTS"' "$CI" || fail "$CI does not run its matrix lot out of LOTS"
+grep -qF 'bin/ci-run-tests --shard "${{ matrix.lot }}/$LOTS" --jobs "$(nproc)" "${since[@]}" "${first[@]}"' "$CI" || fail "$CI does not run its matrix lot out of LOTS"
 grep -qF "matrix.lot == 1 && 'Tests'" "$CI" || fail "$CI no longer names lot 1 \"Tests\", the required status check"
 grep -qF 'startswith("Lot ")' "$CI" || fail "the job named Tests no longer waits for the other lots"
 echo "ok   the workflow runs lots 1..$lots and lot 1 is the required check"
