@@ -17,8 +17,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+# The state of this host's own CI runner must not decide these tests: the
+# runs of bin/factory-doctor below skip that check unless a test names a stub.
+os.environ["FACTORY_DOCTOR_CI_RUNNER"] = ""
 SPEC = importlib.util.spec_from_loader(
     "factory_doctor",
     importlib.machinery.SourceFileLoader("factory_doctor", str(ROOT / "bin" / "factory-doctor")),
@@ -206,6 +210,38 @@ class Collection(unittest.TestCase):
                                                      "severity": "blocking"}]}}]}
         names = sorted(c["name"] for c in fd.collect(payload))
         self.assertEqual(["a", "b"], names)
+
+
+class CiRunner(unittest.TestCase):
+    """The host's own CI runner is one more check (af-r1ymfm)."""
+
+    def _verdict(self, state):
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = pathlib.Path(tmp) / "ci-runner"
+            stub.write_text("#!/usr/bin/env bash\ncat <<'JSON'\n%s\nJSON\n" % json.dumps(state),
+                            encoding="utf-8")
+            stub.chmod(0o755)
+            with unittest.mock.patch.dict(os.environ, {"FACTORY_DOCTOR_CI_RUNNER": str(stub)}):
+                return fd.ci_runner_check()
+
+    def test_no_runner_installed_is_no_check_at_all(self):
+        self.assertIsNone(self._verdict({"verdict": "absent", "message": "no runner"}))
+        with unittest.mock.patch.dict(os.environ, {"FACTORY_DOCTOR_CI_RUNNER": "/nonexistent/ci-runner"}):
+            self.assertIsNone(fd.ci_runner_check())
+
+    def test_a_runner_that_is_up_passes(self):
+        self.assertEqual("ok", self._verdict({"verdict": "ok", "message": "up"})["status"])
+
+    def test_a_runner_that_is_down_is_actionable_with_its_fix(self):
+        found = self._verdict({"verdict": "down", "message": "the runner's service is failed",
+                               "fix_hint": "journalctl -u factory-ci-runner.service -n 30"})
+        self.assertEqual("ACTIONABLE", fd.classify(found))
+        self.assertIn("journalctl", found["fix_hint"])
+
+    def test_a_runner_the_operator_paused_is_his_choice_not_a_fault(self):
+        found = self._verdict({"verdict": "paused", "message": "paused since 2026-10-08 21:00",
+                               "fix_hint": "./bin/ci-runner resume"})
+        self.assertEqual("ADVISORY", fd.classify(found))
 
 
 class ExitStatus(unittest.TestCase):

@@ -4,9 +4,13 @@ name: Factory CI
 # check there is nothing to gate on, so branches pile up unmerged — which is
 # exactly what happened up to 2026-09-15 (28 branches, 21 commits of drift).
 #
-# Every minute of a runner is billed (private repository): what a run costs,
-# why it has this shape and what to do when the quota is reached are in
-# docs/OPERATIONS.md, "Factory CI cost and the Actions quota" (af-mzuprx).
+# On GitHub's runners every minute is billed (private repository): what a run
+# costs, why it has this shape and what to do when the quota is reached are
+# in docs/OPERATIONS.md, "Factory CI cost and the Actions quota" (af-mzuprx).
+# With the repository variable FACTORY_CI_RUNNER=self-hosted the same jobs
+# run on the host's own runner instead, 0 billed minute: same file,
+# "Factory CI on the host's own runner" (af-r1ymfm); `bin/ci-runner mode`
+# sets and removes the variable.
 on:
   pull_request:
     branches: [main]
@@ -42,8 +46,11 @@ permissions:
 # every other lot passed -- a job that merely waited on the lots (`needs`)
 # would report nothing while they run, which the autopilot reads as "no
 # status check ever reported".
+# The host's own runner takes one job at a time: there the run is one lot,
+# "Tests" alone (four lots would wait on each other for ever, "Tests"
+# holding the runner while it waits for lots that need it).
 env:
-  LOTS: 4
+  LOTS: ${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && '1' || '4' }}
   # A pull request that changes only areas the long tests cannot reach
   # (config/ci-long-test-blind-areas.txt: docs, the Cockpit) runs without
   # them; any other pull request, and any doubt, runs everything
@@ -54,11 +61,11 @@ env:
 jobs:
   tests:
     name: ${{ matrix.lot == 1 && 'Tests' || format('Lot {0}', matrix.lot) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && 'factory-ci' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
-        lot: [1, 2, 3, 4]
+        lot: ${{ fromJSON(vars.FACTORY_CI_RUNNER == 'self-hosted' && '[1]' || '[1, 2, 3, 4]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -66,11 +73,23 @@ jobs:
           # main: what the pull request changes is read between the two.
           fetch-depth: 2
 
+      # On the host's own runner the job runs in a container that holds
+      # nothing of the host. This tries what it must not be able to do (the
+      # operator's files, root, the host's local services, the private
+      # networks) and fails the run if one attempt succeeds.
+      - name: The job cannot reach the host
+        if: runner.environment == 'self-hosted'
+        run: bash config/ci-runner/isolation-probe.sh
+
+      # The image of the host's own runner already holds Python 3.12 and
+      # PyYAML 6.0.2 (config/ci-runner/Containerfile).
       - uses: actions/setup-python@v5
+        if: runner.environment == 'github-hosted'
         with:
           python-version: '3.12'
 
       - name: Install Factory Python runtime dependencies
+        if: runner.environment == 'github-hosted'
         run: python -m pip install PyYAML==6.0.2
 
       - name: Syntax check every Python and shell entry point
@@ -81,6 +100,8 @@ jobs:
             head -1 "$f" | grep -q 'bash\|sh$' && bash -n "$f" && echo "ok $f" || true
           done
 
+      # Nothing to do on the host's own runner, which has no sudo: its image
+      # holds bwrap and its kernel does not restrict user namespaces.
       - name: Ensure fixture sandbox runtime
         run: |
           packages=()

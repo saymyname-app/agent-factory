@@ -1,0 +1,101 @@
+#!/bin/bash
+#
+# The runner's side of Factory CI on the host (docs/OPERATIONS.md, "Factory
+# CI on the host's own runner", af-r1ymfm). Runs as the unprivileged user
+# `factory-ci` in factory-ci-runner.service, installed by
+# config/ci-runner/root-install in /usr/local/lib/factory-ci-runner.
+#
+# One job at a time, each in a container of its own that is thrown away:
+#   1. wait for a one-job runner configuration on the hand-off pipe (the
+#      operator's `bin/ci-runner broker` writes it; this user holds no token
+#      of GitHub and cannot ask for one);
+#   2. start a rootless container with nothing of the host mounted and no
+#      way to the host's 127.0.0.1, give it the configuration on its standard
+#      input, let GitHub's runner serve one job in it;
+#   3. remove the container, start again.
+# The share of the PC it may take is on the service, not here.
+
+set -u
+
+LIB=${FACTORY_CI_RUNNER_LIB:-/usr/local/lib/factory-ci-runner}
+RUN_DIR=${FACTORY_CI_RUNNER_RUN_DIR:-/run/factory-ci-runner}
+IMAGE=${FACTORY_CI_RUNNER_IMAGE:-localhost/factory-ci-runner}
+PODMAN=${FACTORY_CI_RUNNER_PODMAN:-podman}
+# A runner too old is refused by GitHub, and the image carries the system's
+# security fixes: rebuild it after this many days.
+IMAGE_MAX_AGE_DAYS=${FACTORY_CI_RUNNER_IMAGE_MAX_AGE_DAYS:-7}
+# A job that never ends would hold the only runner for ever.
+JOB_MAX_SECONDS=${FACTORY_CI_RUNNER_JOB_MAX_SECONDS:-7200}
+# Tests only: stop after this many turns of the loop.
+MAX_TURNS=${FACTORY_CI_RUNNER_MAX_TURNS:-0}
+PAUSE=${FACTORY_CI_RUNNER_LOOP_PAUSE:-5}
+EMPTY_PAUSE=${FACTORY_CI_RUNNER_EMPTY_PAUSE:-15}
+NAME=factory-ci-job
+
+log() { printf 'runner-loop: %s\n' "$*"; }
+
+image_is_fresh() {
+  local created
+  created=$("$PODMAN" image inspect "$IMAGE" --format '{{.Created.Unix}}' 2>/dev/null) || return 1
+  [ $(( $(date +%s) - created )) -lt $(( IMAGE_MAX_AGE_DAYS * 86400 )) ]
+}
+
+build_image() {
+  local latest
+  latest=$(curl -fsS --max-time 20 https://api.github.com/repos/actions/runner/releases/latest \
+    | jq -r '.tag_name // empty' | sed 's/^v//') || latest=
+  if [ -z "$latest" ]; then
+    log "could not read the latest version of GitHub's runner: image not rebuilt"
+    return 1
+  fi
+  log "building the image with GitHub's runner $latest"
+  "$PODMAN" build --pull=newer --no-cache -q --build-arg RUNNER_VERSION="$latest" -t "$IMAGE" "$LIB" || return 1
+  "$PODMAN" image prune -f >/dev/null 2>&1 || true
+}
+
+turns=0
+while :; do
+  if [ "$MAX_TURNS" -gt 0 ]; then
+    [ "$turns" -lt "$MAX_TURNS" ] || exit 0
+    turns=$((turns + 1))
+  fi
+
+  # `bin/ci-runner pause --now`: nothing runs until `resume` removes the file.
+  if [ -e "$RUN_DIR/stop-now" ]; then sleep "$PAUSE"; continue; fi
+
+  if ! image_is_fresh && ! build_image && ! "$PODMAN" image exists "$IMAGE"; then
+    log "no image and none could be built: next try in a minute"
+    sleep 60; continue
+  fi
+
+  if [ ! -p "$RUN_DIR/handoff" ]; then sleep "$PAUSE"; continue; fi
+  # Blocks here, idle, until the broker hands a configuration over.
+  jit=
+  IFS= read -r jit < "$RUN_DIR/handoff" || true
+  if [ -z "$jit" ]; then
+    log "the broker handed nothing over (GitHub did not answer it?): next try in a moment"
+    sleep "$EMPTY_PAUSE"; continue
+  fi
+  if [ -e "$RUN_DIR/stop-now" ]; then continue; fi
+
+  "$PODMAN" rm -f "$NAME" >/dev/null 2>&1 || true
+  log "job container starting"
+  # --cgroups=disabled: the container stays in this service's control group,
+  #   so the service's limits (cores, memory) hold for the job.
+  # allow_host_loopback=false: 10.0.2.2 does not lead to the host's
+  #   127.0.0.1 (Beads' Dolt server, the supervisor, the Cockpit).
+  # No -v: nothing of the host is in the container.
+  printf '%s\n' "$jit" | "$PODMAN" run --rm -i --name "$NAME" \
+    --cgroups=disabled --network slirp4netns:allow_host_loopback=false \
+    --timeout "$JOB_MAX_SECONDS" "$IMAGE" &
+  pid=$!
+  jit=
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ -e "$RUN_DIR/stop-now" ]; then
+      log "stop-now: killing the job container"
+      "$PODMAN" kill "$NAME" >/dev/null 2>&1 || true
+    fi
+    sleep 2
+  done
+  wait "$pid"; log "job container ended (exit $?)"
+done

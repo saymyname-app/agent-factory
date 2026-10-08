@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+#
+# ci-runner -- the operator's side of Factory CI on the host's own runner
+# (docs/OPERATIONS.md, "Factory CI on the host's own runner", af-r1ymfm).
+#
+# The jobs run as the unprivileged user `factory-ci`, each in a rootless
+# container thrown away after it (config/ci-runner/runner-loop). That user
+# holds no token: this script, run as the operator, asks GitHub for a
+# one-job runner configuration and hands it over on a pipe.
+#
+#   ci-runner status [--local] [--json]  where CI runs and whether the runner is up
+#   ci-runner pause [--now]              no new job (--now: kill the running one too)
+#   ci-runner resume                     take jobs again
+#   ci-runner mode self-hosted|github    where the next runs go (a repository variable)
+#   ci-runner install                    the operator's half: the broker's user service
+#   ci-runner remove                     undo `install` and send CI back to GitHub's runners
+#   ci-runner broker                     the hand-off loop (run by the user service)
+#
+# The root half (Podman, the user, the service) is config/ci-runner/root-install.
+# Never prints, logs or stores a runner configuration.
+
+set -Euo pipefail
+
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
+ROOT=${FACTORY_ROOT:-$(cd -- "$(dirname -- "$SELF")/.." && pwd -P)}
+RUN_DIR=${FACTORY_CI_RUNNER_RUN_DIR:-/run/factory-ci-runner}
+STATE_DIR=${FACTORY_CI_RUNNER_STATE_DIR:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}}
+PAUSED="$STATE_DIR/factory-ci-runner.paused"
+SYSTEM_UNIT=factory-ci-runner.service
+BROKER_UNIT=factory-ci-runner-broker.service
+USER_UNIT_DIR=${FACTORY_CI_RUNNER_USER_UNIT_DIR:-$HOME/.config/systemd/user}
+VARIABLE=FACTORY_CI_RUNNER
+LABEL=factory-ci
+NAME_PREFIX=factory-ci-
+SYSTEMCTL=${FACTORY_CI_RUNNER_SYSTEMCTL:-systemctl}
+GH=${FACTORY_CI_RUNNER_GH:-gh}
+
+die() { echo "ci-runner: $*" >&2; exit 1; }
+usage() { sed -n '3,20p' "$SELF" | sed 's/^# \{0,1\}//'; }
+
+repo() { (cd "$ROOT" && "$GH" repo view --json nameWithOwner --jq .nameWithOwner); }
+
+unit_state() { # system|user unit -> active, inactive, failed, absent
+  local scope=$1 unit=$2 state
+  if [ "$scope" = user ]; then
+    state=$("$SYSTEMCTL" --user is-active "$unit" 2>/dev/null) || true
+    [ -n "$state" ] && [ "$state" != inactive ] || { "$SYSTEMCTL" --user cat "$unit" >/dev/null 2>&1 || state=absent; }
+  else
+    state=$("$SYSTEMCTL" is-active "$unit" 2>/dev/null) || true
+    [ -n "$state" ] && [ "$state" != inactive ] || { "$SYSTEMCTL" cat "$unit" >/dev/null 2>&1 || state=absent; }
+  fi
+  echo "${state:-inactive}"
+}
+
+# One line a reader or bin/factory-doctor can act on, from local state only.
+local_verdict() {
+  local service broker
+  service=$(unit_state system "$SYSTEM_UNIT")
+  broker=$(unit_state user "$BROKER_UNIT")
+  VERDICT=ok; MESSAGE="the runner is up: service $service, broker $broker"; FIX=
+  if [ "$service" = absent ] && [ "$broker" = absent ]; then
+    VERDICT=absent; MESSAGE="no runner is installed on this host"
+  elif [ -e "$PAUSED" ]; then
+    VERDICT=paused; MESSAGE="the operator paused the runner on $(cat "$PAUSED" 2>/dev/null): pull requests wait until he resumes it"
+    FIX="the operator's own: ./bin/ci-runner resume"
+  elif [ "$service" != active ]; then
+    VERDICT=down; MESSAGE="the runner's service is $service: pull requests wait for a runner"
+    FIX="journalctl -u $SYSTEM_UNIT -n 30; root restarts it: systemctl restart $SYSTEM_UNIT (docs/OPERATIONS.md, Factory CI on the host's own runner). Sending CI back to GitHub's billed runners (./bin/ci-runner mode github) is spend: the operator's decision"
+  elif [ "$broker" != active ]; then
+    VERDICT=down; MESSAGE="the runner's broker is $broker: no job is handed to the runner"
+    FIX="systemctl --user restart $BROKER_UNIT; journalctl --user -u $BROKER_UNIT -n 30"
+  fi
+  SERVICE=$service; BROKER=$broker
+}
+
+cmd_status() {
+  local local_only=0 json=0
+  for arg in "$@"; do
+    case "$arg" in --local) local_only=1 ;; --json) json=1 ;; *) die "status: unknown option $arg" ;; esac
+  done
+  local_verdict
+  if [ "$json" = 1 ]; then
+    jq -n --arg verdict "$VERDICT" --arg message "$MESSAGE" --arg fix "$FIX" \
+      --arg service "$SERVICE" --arg broker "$BROKER" \
+      '{verdict: $verdict, message: $message, fix_hint: $fix, service: $service, broker: $broker}'
+    return 0
+  fi
+  echo "runner on this host: $MESSAGE"
+  [ -z "$FIX" ] || echo "  fix: $FIX"
+  [ "$local_only" = 0 ] || return 0
+  local r mode
+  r=$(repo) || die "cannot read the repository of $ROOT"
+  mode=$("$GH" api "repos/$r/actions/variables/$VARIABLE" --jq .value 2>/dev/null) || mode=
+  if [ "$mode" = self-hosted ]; then
+    echo "where runs go: the host's runner ($VARIABLE=self-hosted on $r), 0 billed minute"
+  else
+    echo "where runs go: GitHub's runners, billed ($VARIABLE is ${mode:-not set} on $r)"
+  fi
+  "$GH" api "repos/$r/actions/runners" \
+    --jq '.runners[] | "runner at GitHub: \(.name) \(.status)\(if .busy then ", busy" else ", idle" end)"' 2>/dev/null || true
+  "$GH" api "repos/$r/actions/runs?status=queued&per_page=20" \
+    --jq '.workflow_runs[] | "waiting for a runner since \(.created_at): \(.head_branch) (run \(.id))"' 2>/dev/null || true
+}
+
+cmd_pause() {
+  local now=0
+  case "${1:-}" in "") ;; --now) now=1 ;; *) die "pause: unknown option $1" ;; esac
+  mkdir -p "$STATE_DIR"
+  [ -e "$PAUSED" ] || date '+%F %H:%M' > "$PAUSED"
+  "$SYSTEMCTL" --user stop "$BROKER_UNIT" 2>/dev/null || true
+  if [ "$now" = 1 ]; then
+    [ -d "$RUN_DIR" ] && : > "$RUN_DIR/stop-now"
+    echo "paused, and the running job is killed: its run ends red, re-run it after 'ci-runner resume' (gh run rerun <id> --failed)"
+  else
+    echo "paused: the job that runs now, if any, ends by itself (20 minutes at most for a full run); no new job starts"
+  fi
+}
+
+cmd_resume() {
+  rm -f "$PAUSED" "$RUN_DIR/stop-now"
+  "$SYSTEMCTL" --user start "$BROKER_UNIT" || die "the broker did not start: journalctl --user -u $BROKER_UNIT -n 30"
+  echo "resumed: jobs that waited start now"
+}
+
+cmd_mode() {
+  local r; r=$(repo) || die "cannot read the repository of $ROOT"
+  case "${1:-}" in
+    self-hosted)
+      "$GH" variable set "$VARIABLE" --repo "$r" --body self-hosted
+      echo "the next runs of $r go to the host's runner" ;;
+    github)
+      "$GH" variable delete "$VARIABLE" --repo "$r" 2>/dev/null || true
+      echo "the next runs of $r go to GitHub's runners (billed). A run already waiting for the host's runner does not move: cancel it and re-run it (gh run cancel <id>; gh run rerun <id>)" ;;
+    *) die "mode self-hosted|github" ;;
+  esac
+}
+
+cmd_install() {
+  mkdir -p "$USER_UNIT_DIR"
+  sed -e "s|@ROOT@|$ROOT|g" "$ROOT/config/ci-runner/factory-ci-runner-broker.service" > "$USER_UNIT_DIR/$BROKER_UNIT"
+  "$SYSTEMCTL" --user daemon-reload
+  "$SYSTEMCTL" --user enable "$BROKER_UNIT" >/dev/null
+  "$SYSTEMCTL" --user restart "$BROKER_UNIT"
+  rm -f "$PAUSED"
+  echo "the broker runs. Root half, once: config/ci-runner/root-install install $(id -un). Then: ci-runner mode self-hosted"
+}
+
+cmd_remove() {
+  cmd_mode github
+  "$SYSTEMCTL" --user disable --now "$BROKER_UNIT" >/dev/null 2>&1 || true
+  rm -f "$USER_UNIT_DIR/$BROKER_UNIT" "$PAUSED"
+  "$SYSTEMCTL" --user daemon-reload
+  local r id; r=$(repo)
+  for id in $("$GH" api "repos/$r/actions/runners" --jq ".runners[] | select(.name | startswith(\"$NAME_PREFIX\")) | .id" 2>/dev/null); do
+    "$GH" api -X DELETE "repos/$r/actions/runners/$id" >/dev/null 2>&1 || true
+  done
+  echo "removed the broker and the runners registered at GitHub. Root half: config/ci-runner/root-install remove"
+}
+
+# The loop. Opening the pipe for writing blocks until the runner's loop
+# reads it, that is until it is free for a job: one configuration is asked
+# for per job, never in advance.
+cmd_broker() {
+  local r pause=${FACTORY_CI_RUNNER_BROKER_PAUSE:-10} turns=${FACTORY_CI_RUNNER_BROKER_TURNS:-0} n=0 config id
+  r=$(repo) || die "cannot read the repository of $ROOT"
+  echo "ci-runner broker: handing one-job runners of $r to $RUN_DIR/handoff"
+  while :; do
+    if [ "$turns" -gt 0 ]; then [ "$n" -lt "$turns" ] || return 0; n=$((n + 1)); fi
+    if [ ! -d "$RUN_DIR" ]; then sleep "$pause"; continue; fi
+    [ -p "$RUN_DIR/handoff" ] || { rm -f "$RUN_DIR/handoff"; mkfifo -m 640 "$RUN_DIR/handoff" || { sleep "$pause"; continue; }; }
+    exec 3> "$RUN_DIR/handoff" || { sleep "$pause"; continue; }
+    # The runner's loop is free: every runner of ours still registered is a
+    # leftover of a container that died before or after its job.
+    for id in $("$GH" api "repos/$r/actions/runners" \
+        --jq ".runners[] | select(.status == \"offline\" and (.name | startswith(\"$NAME_PREFIX\"))) | .id" 2>/dev/null); do
+      "$GH" api -X DELETE "repos/$r/actions/runners/$id" >/dev/null 2>&1 || true
+    done
+    config=$("$GH" api -X POST "repos/$r/actions/runners/generate-jitconfig" \
+      -f "name=$NAME_PREFIX$(date +%Y%m%d-%H%M%S)-$$-$n" -F runner_group_id=1 \
+      -f 'labels[]=self-hosted' -f "labels[]=$LABEL" -f work_folder=_work \
+      --jq .encoded_jit_config 2>/dev/null) || config=
+    # An empty line tells the runner's loop to ask again later.
+    printf '%s\n' "$config" >&3
+    exec 3>&-
+    if [ -n "$config" ]; then
+      echo "ci-runner broker: one runner handed over"
+    else
+      echo "ci-runner broker: GitHub gave no runner configuration (token, network or quota): next try in ${pause}s" >&2
+    fi
+    config=
+    sleep "$pause"
+  done
+}
+
+case "${1:-}" in
+  status)  shift; cmd_status "$@" ;;
+  pause)   shift; cmd_pause "$@" ;;
+  resume)  cmd_resume ;;
+  mode)    shift; cmd_mode "$@" ;;
+  install) cmd_install ;;
+  remove)  cmd_remove ;;
+  broker)  cmd_broker ;;
+  -h|--help|help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

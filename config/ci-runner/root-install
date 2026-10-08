@@ -1,0 +1,69 @@
+#!/bin/bash
+#
+# The root half of Factory CI on the host's own runner (docs/OPERATIONS.md,
+# "Factory CI on the host's own runner", af-r1ymfm). ADMIN on the host: run
+# it only with the operator's word, as root, from a checkout of main:
+#
+#   root-install install <operator>   the three gestures: Podman, the user
+#                                     `factory-ci`, the service
+#   root-install remove               undo the service and the user (Podman
+#                                     stays: `apt-get remove podman` by hand)
+#
+# It never registers anything at GitHub and holds no token: registration is
+# the operator's `bin/ci-runner broker`.
+
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "root-install: run as root" >&2; exit 1; }
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+LIB=/usr/local/lib/factory-ci-runner
+UNIT=/etc/systemd/system/factory-ci-runner.service
+RUNNER_USER=factory-ci
+
+case "${1:-}" in
+  install)
+    operator=${2:?root-install install <operator>}
+    id "$operator" >/dev/null
+
+    # 1. Podman, rootless. Its root services are not used: off.
+    if ! command -v podman >/dev/null; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq
+      apt-get install -y -qq --no-install-recommends podman uidmap slirp4netns passt
+    fi
+    systemctl disable --now podman.socket podman.service podman-auto-update.timer \
+      podman-auto-update.service podman-restart.service >/dev/null 2>&1 || true
+
+    # 2. The user: no password, no shell, no sudo, no group but its own.
+    if ! id "$RUNNER_USER" >/dev/null 2>&1; then
+      useradd --system --create-home --home-dir /var/lib/factory-ci --shell /usr/sbin/nologin "$RUNNER_USER"
+      usermod --add-subuids 300000-365535 --add-subgids 300000-365535 "$RUNNER_USER"
+    fi
+    chmod 750 /var/lib/factory-ci
+    loginctl enable-linger "$RUNNER_USER"
+
+    # 3. The service.
+    install -d -m 755 "$LIB"
+    install -m 644 "$HERE/Containerfile" "$HERE/entrypoint.sh" "$LIB/"
+    install -m 755 "$HERE/runner-loop" "$LIB/"
+    sed -e "s/@OPERATOR@/$operator/g" -e "s/@UID@/$(id -u "$RUNNER_USER")/g" \
+      "$HERE/factory-ci-runner.service" > "$UNIT"
+    chmod 644 "$UNIT"
+    systemctl daemon-reload
+    systemctl enable factory-ci-runner.service >/dev/null
+    systemctl restart factory-ci-runner.service
+    systemctl --no-pager --lines 0 status factory-ci-runner.service || true
+    ;;
+  remove)
+    systemctl disable --now factory-ci-runner.service >/dev/null 2>&1 || true
+    rm -f "$UNIT"; systemctl daemon-reload
+    rm -rf "$LIB" /run/factory-ci-runner
+    if id "$RUNNER_USER" >/dev/null 2>&1; then
+      loginctl disable-linger "$RUNNER_USER" || true
+      loginctl terminate-user "$RUNNER_USER" >/dev/null 2>&1 || true
+      userdel --remove "$RUNNER_USER"
+    fi
+    echo "removed: the service and the user $RUNNER_USER"
+    ;;
+  *)
+    sed -n '3,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+esac

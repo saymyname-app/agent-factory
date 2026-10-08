@@ -151,6 +151,39 @@ def classify(check):
     return "ACTIONABLE"
 
 
+def ci_runner_check():
+    """The host's own CI runner, as one more check, when one is installed.
+
+    With Factory CI on that runner (docs/OPERATIONS.md, "Factory CI on the
+    host's own runner", af-r1ymfm) a runner that is down is a pull request
+    that waits for ever, and `gc doctor` knows nothing of it. Local state
+    only (the two services), no call to GitHub. A runner the operator paused
+    is his choice, not a fault: ADVISORY, and nobody resumes it for him.
+    FACTORY_DOCTOR_CI_RUNNER names another `ci-runner` (tests); empty skips.
+    """
+    tool = os.environ.get("FACTORY_DOCTOR_CI_RUNNER", os.path.join(ROOT, "bin", "ci-runner"))
+    if not tool:
+        return None
+    try:
+        proc = subprocess.run([tool, "status", "--local", "--json"],
+                              capture_output=True, text=True, timeout=30)
+        state = json.loads(proc.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return None
+    verdict = state.get("verdict")
+    if verdict not in ("ok", "down", "paused"):
+        return None  # "absent": no runner on this host, nothing to say
+    check = {
+        "name": "ci-runner",
+        "status": "ok" if verdict == "ok" else "warning",
+        "severity": "advisory" if verdict == "paused" else "blocking",
+        "message": str(state.get("message", "")),
+    }
+    if state.get("fix_hint"):
+        check["fix_hint"] = str(state["fix_hint"])
+    return check
+
+
 def main():
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("--all", action="store_true",
@@ -196,7 +229,8 @@ def main():
 
     buckets = {"ACTIONABLE": [], "UNKNOWN": [], "UPSTREAM": [], "ADVISORY": []}
     passed = 0
-    for check in collect(payload):
+    runner = ci_runner_check()
+    for check in collect(payload) + ([runner] if runner else []):
         if str(check.get("status", "")).lower() == "ok":
             passed += 1
             continue

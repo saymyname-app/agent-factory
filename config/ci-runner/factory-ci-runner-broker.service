@@ -1,0 +1,15 @@
+# The operator's half of Factory CI on the host's own runner
+# (docs/OPERATIONS.md, af-r1ymfm): asks GitHub for a one-job runner each time
+# the runner's loop is free and hands it over. Installed by
+# `bin/ci-runner install` in ~/.config/systemd/user; @ROOT@ is filled in there.
+[Unit]
+Description=Factory CI: hands one-job runners to factory-ci-runner.service
+
+[Service]
+WorkingDirectory=@ROOT@
+ExecStart=@ROOT@/bin/ci-runner broker
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target
