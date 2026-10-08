@@ -168,15 +168,18 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 - The author session of the round is recognised as ended when its bead is
   closed. There is **no timeout** on it: a session that dies without closing
-  its bead leaves the ticket waiting. Resuming an interrupted ticket in a
-  new session, and the bound of three resumes, are T20's.
+  its bead leaves the ticket waiting. The resumes of T20
+  (`docs/CONVOY_ADVANCE.md`) do not cover it: the ticket still carries its
+  Ticket Exit « terminé », so the pass does not read it as interrupted. The
+  round itself counts among the three resumes that park a ticket.
 - The words of an override are whatever the caller gives with the name of
   the approver: nothing technically stops an agent from typing them. The
   record makes it visible afterwards (the same limit as the acceptance,
   Spec §11).
 - Nothing lifts a stop. A ticket whose every unsettled Blocking Finding is
   overridden is merged and closed while still carrying its stop
-  (`docs/TICKET_END.md`); resuming any other stopped ticket is T20's.
+  (`docs/TICKET_END.md`); no other stopped ticket is resumed: T20 never
+  resumes a stopped ticket (`docs/CONVOY_ADVANCE.md`).
 - A Planning Exception named by the refusal of a criterion is not opened by
   this command.
 - The author role counts in the ceiling N once its session is alive; like a

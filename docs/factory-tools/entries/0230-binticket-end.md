@@ -38,8 +38,10 @@ ticket.
   fermeture hors porte arrête le convoi (incident d'usine). `close` et
   `settle` sont refusés à toute session d'agent.
 - **Un convoi sans marque** garde `./bin/deliver-close`, sans changement.
-- **Limites** : une fidélité rouge laisse le ticket en attente (la reprise
-  est à T20) ; un contrôle de fidélité par passe ; la fin de Spec est à T23.
+- **Limites** : une fidélité rouge, comme toute condition manquante, laisse
+  le ticket en attente : les reprises de `./bin/convoy-advance` ne couvrent
+  pas un ticket que la porte laisse ouvert (`docs/CONVOY_ADVANCE.md`) ; un
+  contrôle de fidélité par passe ; la fin de Spec est à T23.
 
 Détail : `docs/TICKET_END.md`.
 

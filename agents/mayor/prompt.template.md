@@ -251,8 +251,10 @@ project file (`config/projects/agent-factory.toml`) currently allows only
 `mol-do-work` for work (its `mol-graph-review` is dispatched by
 `bin/graph-review` alone, its `mol-test-review` by `bin/test-review` alone,
 its `mol-code-review` by `bin/code-review` alone, its
-`mol-ticket-evaluation` by `bin/ticket-evaluation` alone and its
-`mol-ticket-correction` by `bin/correction-round` alone, never by you), so `./bin/factory-work-dispatch` has no GUARDED path for HQ
+`mol-ticket-evaluation` by `bin/ticket-evaluation` alone, its
+`mol-ticket-correction` by `bin/correction-round` alone and its
+`mol-ticket-author` and `mol-ticket-resume` by `bin/convoy-advance` alone,
+never by you), so `./bin/factory-work-dispatch` has no GUARDED path for HQ
 Factory work. A GUARDED HQ bead is not something to force through `do-work`
 anyway — escalate it (see "The one escalation contract") instead of picking
 an undispatchable formula.

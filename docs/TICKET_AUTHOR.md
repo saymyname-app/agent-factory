@@ -21,9 +21,13 @@ the ticket is sent by the flow to a reviewer session (T14,
 by an Evaluator session (T15, `docs/TICKET_EVALUATION.md`). What they
 refuse goes, once, to another fresh author session on the formula
 `mol-ticket-correction`, which takes the ticket with the same `start`
-(T17, `docs/CORRECTION_ROUND.md`). Not delivered yet: the
-ticket-end gate (T19), the resume of a parked, blocked or interrupted ticket
-(T20).
+(T17, `docs/CORRECTION_ROUND.md`). A merged ticket is closed by the
+ticket-end gate (T19, `docs/TICKET_END.md`). A ticket whose author must take
+it again — session interrupted, ticket returned by the merge, repair closed,
+request answered — goes to one fresh author session on the formula
+`mol-ticket-resume`, which takes it with the same `start`, on the same
+branch; resumes are counted and the third parks the ticket (T20,
+`docs/CONVOY_ADVANCE.md`). A stopped ticket is not resumed.
 
 ## The pieces
 
