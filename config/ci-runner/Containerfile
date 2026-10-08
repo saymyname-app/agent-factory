@@ -1,0 +1,55 @@
+# The image one Factory CI job runs in on the self-hosted runner of the host
+# (docs/OPERATIONS.md, "Factory CI on the host's own runner", af-r1ymfm).
+# Built and started by config/ci-runner/runner-loop as the unprivileged user
+# `factory-ci`, rootless: nothing of the host is mounted into it. It holds
+# what .github/workflows/ci.yml otherwise installs on a GitHub runner
+# (Python 3.12 with PyYAML, bubblewrap, Node.js in /usr/local/bin, gh, jq),
+# and no sudo: a job cannot become root, even inside the container.
+FROM docker.io/library/ubuntu:24.04
+
+ARG RUNNER_VERSION
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq gh bubblewrap \
+      python3 python3-pip python3-venv python-is-python3 \
+      procps psmisc util-linux file less tmux sqlite3 rsync \
+      xz-utils unzip zip openssh-client iproute2 netcat-openbsd \
+ && rm -rf /var/lib/apt/lists/*
+
+# The version the workflow pins on a GitHub runner.
+RUN python3 -m pip install --no-cache-dir --break-system-packages PyYAML==6.0.2
+
+# Node.js 22 in /usr/local/bin: the bare PATH the Fixture City Oracle gives
+# its adapters (ci.yml, "Ensure Node.js for the second fixture project").
+RUN cd /tmp \
+ && curl -fsSLO https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+ && tarball=$(awk '/linux-x64\.tar\.xz$/ {print $2}' SHASUMS256.txt) \
+ && curl -fsSLO "https://nodejs.org/dist/latest-v22.x/$tarball" \
+ && grep " $tarball\$" SHASUMS256.txt | sha256sum -c - \
+ && tar -xJf "$tarball" -C /usr/local --strip-components=1 \
+ && rm -f "$tarball" SHASUMS256.txt \
+ && node --version
+
+# GitHub's runner. A runner too old is refused by GitHub: runner-loop passes
+# the latest release and rebuilds the image every week.
+#
+# The base image's own `ubuntu` user goes: the isolation probe reads any home
+# but the job's own as a home of the host.
+RUN userdel --remove ubuntu \
+ && useradd --create-home --uid 1001 runner \
+ && mkdir /runner && cd /runner \
+ && curl -fsSL -o runner.tar.gz \
+      "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
+ && tar -xzf runner.tar.gz && rm runner.tar.gz \
+ && ./bin/installdependencies.sh \
+ && rm -rf /var/lib/apt/lists/* \
+ && chown -R runner:runner /runner
+
+COPY entrypoint.sh /usr/local/bin/factory-ci-entrypoint
+RUN chmod 755 /usr/local/bin/factory-ci-entrypoint
+
+USER runner
+WORKDIR /runner
+ENTRYPOINT ["/usr/local/bin/factory-ci-entrypoint"]

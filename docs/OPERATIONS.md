@@ -693,10 +693,148 @@ unmerged with a red `Tests`.
    usual.
 4. The included minutes come back at the start of the billing month.
 
-Benjamin's decisions, never taken by an agent: a self-hosted runner on the
-WSL host (no billed minute, but it loads his PC and runs pull request code on
-the host), making the repository public (free minutes, public code), a paid
-plan, the spending limit.
+Benjamin's decisions, never taken by an agent: making the repository public
+(free minutes, public code), a paid plan, the spending limit. The
+self-hosted runner on the WSL host was his decision of 2026-10-08: "Factory
+CI on the host's own runner" below.
+
+## Factory CI on the host's own runner (af-r1ymfm)
+
+Intent (Benjamin, his words, 2026-10-08): « Je suis aussi ok pour mettre test
+sur pc aussi », then « runner sur le pc d'abord alors on oublie le repo
+public et oauth les secrets etc, pour le moment. »
+Mechanism (agent interpretation): the repository stays private and the jobs
+of Factory CI run on a self-hosted runner of the WSL host, so they are not
+billed; the job named `Tests` is still the one required check. It does not
+mean a runner on a public repository, pull request code running as the
+operator, or a PC he cannot use while CI runs.
+
+What he chose on 2026-10-08, each among options put to him in the live chat:
+
+| Question | His choice | How it is held |
+|---|---|---|
+| The runner is down while the Factory runs | The pull request waits; switching back to GitHub's billed runners is one command, by hand | `bin/factory-doctor` reports the runner down; `./bin/ci-runner mode github` |
+| Share of the PC | 4 cores, 4 GB, one job at a time, low priority; pause and resume in his hand, no automatic game detection | The limits of `factory-ci-runner.service`; `./bin/ci-runner pause` and `resume` |
+| Where pull request code runs | An ephemeral container per job, started by a dedicated unprivileged user, rootless Podman (not Docker Desktop) | `config/ci-runner/runner-loop`; `docs/SECURITY.md`, same title |
+| Root in WSL (`sudo` asks a password, `wsl -u root` does not) | Three gestures: Podman, the user, the service | `config/ci-runner/root-install` |
+
+### How it runs
+
+| Piece | Runs as | What it does |
+|---|---|---|
+| `factory-ci-runner.service` (system service, `config/ci-runner/runner-loop`) | `factory-ci`: no password, no shell, no sudo, no group but its own | Waits for a one-job runner configuration, starts a rootless container, lets GitHub's runner serve one job in it, throws the container away, starts again. Rebuilds the image (`config/ci-runner/Containerfile`) every 7 days with the latest runner of GitHub and the system's fixes. |
+| `factory-ci-runner-broker.service` (user service, `bin/ci-runner broker`) | the operator | Each time the runner's loop is free, asks GitHub for one just-in-time runner (it serves one job, then GitHub forgets it) and writes its configuration on the pipe `/run/factory-ci-runner/handoff`. The operator's token never reaches the runner's user; the configuration is never printed, logged or stored. |
+| `.github/workflows/ci.yml` | | Goes to the label `factory-ci` only when the repository variable `FACTORY_CI_RUNNER` is `self-hosted`; without it, GitHub's runners as before. On the host the run is one lot, `Tests` alone: the runner takes one job at a time, and four lots would wait on each other for ever. Its first step there is `config/ci-runner/isolation-probe.sh`. |
+
+The image holds what the workflow installs on a GitHub runner (Python 3.12
+with PyYAML 6.0.2, bubblewrap, Node.js 22 in `/usr/local/bin`, `gh`, `jq`)
+and no sudo. The long tests' nested `bwrap` starts in it with Podman's
+default rights: nothing is widened for it.
+
+### Read the state
+
+```bash
+./bin/ci-runner status      # the services, where runs go, the runner at GitHub, runs waiting for a runner
+./bin/factory-doctor        # "ci-runner" is ACTIONABLE when the runner is down
+journalctl -u factory-ci-runner.service -n 50          # the runner's loop
+journalctl --user -u factory-ci-runner-broker -n 50    # the hand-off
+./bin/ci-minutes --runs 5   # a run on the host is 0 billed minute
+```
+
+### Pause for a game, resume
+
+```bash
+./bin/ci-runner pause        # a job that runs ends by itself, a runner that only waits is stopped, no new job starts
+./bin/ci-runner pause --now  # also kills the running job: its run ends red
+./bin/ci-runner resume
+```
+
+Paused, pull requests wait with `Tests` "queued"; `bin/factory-doctor` lists
+the pause as ADVISORY and nobody resumes it for the operator. After
+`pause --now`, re-run the killed run: `gh run rerun <id> --failed`. A pause
+does not survive a restart of WSL.
+
+### When the runner is down
+
+Signs: pull requests stay open with `Tests` waiting for a runner;
+`./bin/ci-runner status` and `bin/factory-doctor` say which half is down.
+
+| What is down | Who repairs | How |
+|---|---|---|
+| The broker (user service) | Any operator session | `systemctl --user restart factory-ci-runner-broker`, then its journal. "GitHub gave no runner configuration" is the token, the network or GitHub. |
+| The service (system service) | Root: ADMIN | `journalctl -u factory-ci-runner.service -n 50`; from Windows `wsl -d Ubuntu-24.04 -u root -- systemctl restart factory-ci-runner.service`. It restarts by itself after a failure and starts with WSL. |
+| No image and none can be built | Nobody: it retries every minute | The journal names the step (the network, most often). |
+| The PC is off or asleep | Nobody | The Factory is on the same PC: no pull request is produced either. GitHub drops a job that waited 24 hours; re-run it. |
+
+Going back to GitHub's billed runners is spend, so it is Benjamin's call and
+never automatic: `./bin/ci-runner mode github`, then for each run already
+waiting `gh run cancel <id>` and `gh run rerun <id>`. `./bin/ci-runner mode
+self-hosted` comes back. The Actions budget is capped (20 dollars, his words,
+2026-10-08): "When the quota is reached" above still applies to that mode.
+
+### A battery by hand and a CI job at the same time
+
+A job does not wait behind a battery started by hand, and a battery does not
+wait behind a job (`bin/ci-run-tests` skips the host's lock under
+`GITHUB_ACTIONS`, and the job's `/tmp` is not the host's). What bounds the
+sum is the service: 4 named cores and 4 GB for the job whatever else runs,
+at a lower priority than the Factory and the batteries.
+
+### Measured 2026-10-08 (pull request #457, Paris times)
+
+| What | Measure |
+|---|---|
+| First full run on the host, 18:04 to 18:20 | 155 tests green in 15 min 23 s on 4 cores; billed 0 (`./bin/ci-minutes`: "on the host: 16 min, not billed"). A full run on GitHub's runners that day: 43 to 48 billed minutes. `ci-minutes` applies GitHub's rule (a self-hosted runner is not billed); the amount billed itself is only on the organization's usage page. |
+| Load of the host (1-minute load, 12 cores), the Factory running | 7.7 on average over the 20 minutes before the run, 11.6 during it, 15.7 at most |
+| Memory of the job (sampled every 15 s) | 1.2 GB at most of its 4 GB; 1.9 GB while the image is built |
+| Orders of the Factory that failed during the run | none (`gc events --type order.failed`) |
+| The isolation probe | every attempt refused, 4 cores seen. The very first job (17:58) failed on it for a false reason, the base image's own empty `/home/ubuntu`, since removed from the image |
+| Runner paused, then a push (18:42) | `Tests` "queued", `ci-runner status`: "waiting for a runner since 18:42", `factory-doctor`: ADVISORY "the operator paused the runner" |
+| `mode github`, `gh run cancel`, `gh run rerun` (18:44) | the same run started on `ubuntu-latest`, four lots, 30 s later; cancelled at once |
+| `mode self-hosted`, `resume` | a runner online and idle again within 20 s |
+| Building the image | about 2 minutes, once a week and after each install |
+
+Seen, not explained: during each of the first two image builds by the
+service (17:38 and 18:01), one call of `wsl.exe` from Windows timed out
+(`Wsl/Service/0x8007274c`). WSL did not restart and the supervisor stayed
+active; the next call answered. If calls from Windows fail in a cluster,
+look at `journalctl -u factory-ci-runner.service` for "building the image".
+
+### Install, stop, remove
+
+Install (ADMIN, once; from a checkout of `main`):
+
+```bash
+# from Windows, as root in WSL: Podman, the user factory-ci, the service
+wsl -d Ubuntu-24.04 -u root -- /home/benja/agent-factory/config/ci-runner/root-install install benja
+# as the operator, from the live root: the broker, then send CI to the host
+./bin/ci-runner install
+./bin/ci-runner mode self-hosted
+```
+
+The operator's token must be admin of the repository (it asks for the
+just-in-time runners). After a change to `config/ci-runner/` or to
+`bin/ci-runner` has merged, run the same two installs again: the service
+runs the copy in `/usr/local/lib/factory-ci-runner`, not the checkout.
+
+Stop without removing: `./bin/ci-runner pause` (above), or `./bin/ci-runner
+mode github` to keep CI running elsewhere.
+
+Remove:
+
+```bash
+./bin/ci-runner remove      # CI back to GitHub's runners, the broker, the runners registered at GitHub
+wsl -d Ubuntu-24.04 -u root -- /home/benja/agent-factory/config/ci-runner/root-install remove
+```
+
+The second line removes the service and the user `factory-ci` with its
+images; Podman itself stays (`apt-get remove podman`, root). The runner must
+be removed before this repository ever becomes public (af-5vjm1h): on a
+public repository anyone could run code on the PC through a pull request.
+
+`tests/ci-runner-test.sh` holds the variable, the single lot, the limits of
+the service, the container's options and the hand-off;
+`config/ci-runner/isolation-probe.sh` proves the box on every run.
 
 ## Upgrade
 

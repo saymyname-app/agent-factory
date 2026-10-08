@@ -5,7 +5,9 @@ GitHub bills each job of a private repository for its duration rounded up to
 the minute. The run `timing` API answers 0 and the billing API wants an
 `admin:org` token the Factory does not hold, so this reads the jobs of each
 run (start and end) and applies that rule itself. A job that never got a
-runner (quota reached) has no step that ran and is billed nothing.
+runner (quota reached) has no step that ran and is billed nothing. A job
+that ran on a self-hosted runner (the host's own, af-r1ymfm) is billed
+nothing either: its duration is printed apart, "on the host".
 
     ci-minutes [--repo OWNER/NAME] [--since YYYY-MM-DD] [--runs N]
 
@@ -45,12 +47,22 @@ def moment(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
 
 
-def billed_minutes(job: dict) -> int:
+def run_minutes(job: dict) -> int:
     started, ended = moment(job.get("started_at")), moment(job.get("completed_at"))
     ran = any(step.get("conclusion") not in (None, "skipped") for step in job.get("steps") or [])
     if not (started and ended and ran):
         return 0
     return math.ceil(max(0.0, (ended - started).total_seconds()) / 60)
+
+
+def on_the_host(job: dict) -> bool:
+    """GitHub's own runners are the runner group "GitHub Actions"; any other
+    group that is named is a self-hosted runner, which GitHub does not bill."""
+    return job.get("runner_group_name") not in (None, "", "GitHub Actions")
+
+
+def billed_minutes(job: dict) -> int:
+    return 0 if on_the_host(job) else run_minutes(job)
 
 
 def main() -> int:
@@ -71,23 +83,28 @@ def main() -> int:
                 for job in page.get("jobs", [])]
         minutes = {f"{job['name']}#{job.get('run_attempt', 1)}": billed_minutes(job) for job in jobs}
         total = sum(minutes.values())
+        host = sum(run_minutes(job) for job in jobs if on_the_host(job))
         created = moment(run["created_at"]).astimezone(PARIS)
         day = days[created.strftime("%Y-%m-%d")]
         day["runs"] += 1
         day["minutes"] += total
         day[run["event"]] += total
         day["not_success"] += total if run.get("conclusion") != "success" else 0
+        day["host"] += host
         detail = " ".join(f"{name.removesuffix('#1')}={value}" for name, value in sorted(minutes.items()))
+        if host:
+            detail += f"  (on the host: {host} min, not billed)"
         lines.append(f"{created:%Y-%m-%d %H:%M}  {run['event']:<17} {str(run.get('conclusion')):<10} "
                      f"{total:>4} min  {detail}  [{run['head_branch']}]")
 
     print(f"Billed minutes of {args.repo} since {since} (Europe/Paris), each job rounded up to the minute")
-    print(f"{'day':<11} {'runs':>5} {'minutes':>8} {'pull_request':>13} {'push':>6} {'other':>6} {'not green':>10}")
+    print(f"{'day':<11} {'runs':>5} {'minutes':>8} {'pull_request':>13} {'push':>6} {'other':>6} {'not green':>10}"
+          f" {'on the host':>12}")
     for name in sorted(days):
         day = days[name]
         other = day["minutes"] - day["pull_request"] - day["push"]
         print(f"{name:<11} {day['runs']:>5} {day['minutes']:>8} {day['pull_request']:>13} {day['push']:>6} "
-              f"{other:>6} {day['not_success']:>10}")
+              f"{other:>6} {day['not_success']:>10} {day['host']:>12}")
     if args.runs > 0 and lines:
         print(f"\nLatest {min(args.runs, len(lines))} run(s):")
         print("\n".join(lines[-args.runs:]))
