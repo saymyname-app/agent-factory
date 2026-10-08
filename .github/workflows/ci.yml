@@ -140,7 +140,13 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 3 ]; then
             since=(--changed-since 'HEAD^1')
           fi
-          bin/ci-run-tests --shard "${{ matrix.lot }}/$LOTS" --jobs "$(nproc)" "${since[@]}"
+          # On the host's own runner the run is one lot and costs nothing
+          # billed: the rule checks go first and a red one stops the run
+          # after a minute (af-r1ymfm; Benjamin, 2026-10-08). On GitHub's
+          # runners the four lots keep their order.
+          first=()
+          if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then first=(--rule-checks-first); fi
+          bin/ci-run-tests --shard "${{ matrix.lot }}/$LOTS" --jobs "$(nproc)" "${since[@]}" "${first[@]}"
 
       - name: Wait for the other lots
         if: matrix.lot == 1

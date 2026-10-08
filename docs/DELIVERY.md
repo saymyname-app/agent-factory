@@ -329,12 +329,23 @@ counts both. It waits its turn on the host like a battery. In doubt about
 the kind of change, run the battery
 (`tests/ci-run-tests-rule-checks-test.sh`).
 
-Factory CI itself does not run the rule checks before the long lots
-(Benjamin, his words, 2026-10-08: « A pour la ligne 3 », A being "not in
-CI"). Measured gain: about 2 billed minutes a run (4 of 70 runs, about 35
+On GitHub's runners Factory CI does not run the rule checks before the long
+lots (Benjamin, his words, 2026-10-08: « A pour la ligne 3 », A being "not
+in CI"). Measured gain: about 2 billed minutes a run (4 of 70 runs, about 35
 minutes each). `Tests` must exist from the first second of a run, so it
 cannot wait on a gate job, and the variants that keep it were estimated at
 1 to 3 billed minutes on every run.
+
+On the host's own runner it does (Benjamin, his words, 2026-10-08, about
+22:50 Paris: « oui, vas-y pour la première tranche », the first slice being
+"the rule checks first in CI, and a measure of the long tests"). Mechanism
+(agent interpretation): there the run is one lot and is billed nothing, so
+`bin/ci-run-tests --rule-checks-first` runs the same tests in another order
+inside the job named `Tests`: the rule checks first (110 files, 118 s of
+test time, about half a minute on 4 cores), and a red one stops the run
+there instead of after the long tests. It does not mean a test left out of
+a green run, nor another gate: green, every test ran
+(`tests/ci-run-tests-rule-checks-first-test.sh`).
 
 **One battery at a time on the host (af-7m7ymg).**
 
