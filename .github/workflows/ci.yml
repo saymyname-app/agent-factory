@@ -3,18 +3,37 @@ name: Factory CI
 # The gate that lets agent-factory PRs merge themselves. Without a required
 # check there is nothing to gate on, so branches pile up unmerged — which is
 # exactly what happened up to 2026-09-15 (28 branches, 21 commits of drift).
+#
+# Every minute of a runner is billed (private repository): what a run costs,
+# why it has this shape and what to do when the quota is reached are in
+# docs/OPERATIONS.md, "Factory CI cost and the Actions quota" (af-mzuprx).
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
+  # No run on `push` to main: the ruleset requires a pull request whose
+  # branch is up to date with main, so the run of that pull request already
+  # tested the exact tree the merge puts on main. Running it again after the
+  # merge gated nothing, nothing read it, and it was 30% of the minutes.
+  # A run on main, when one is wanted, is started by hand.
+  workflow_dispatch:
+
+# A new commit on a pull request stops the run of the commit it replaces:
+# that run can no longer let anything merge.
+concurrency:
+  group: factory-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
   # The job named "Tests" reads the result of the other lots of its own run.
   actions: read
 
-# The tests run in LOTS lots, one runner each (bin/ci-run-tests --shard).
+# The tests run in LOTS lots, one runner each (bin/ci-run-tests --shard),
+# and each runner runs as many test files at once as it has cores (--jobs):
+# the tests are bound by the processor, so a core left idle is billed for
+# nothing. More lots end sooner but cost more: each one pays its own setup
+# and rounding to the minute, and the job named "Tests" is billed while it
+# waits for the longest lot.
 # Lot 1 is the job named "Tests": the one status check the repository
 # ruleset requires and bin/pr-autopilot gates on. It exists from the first
 # second of the run, as before, and ends green only when its own lot and
@@ -22,7 +41,7 @@ permissions:
 # would report nothing while they run, which the autopilot reads as "no
 # status check ever reported".
 env:
-  LOTS: 4
+  LOTS: 2
 
 jobs:
   tests:
@@ -31,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lot: [1, 2, 3, 4]
+        lot: [1, 2]
     steps:
       - uses: actions/checkout@v4
 
@@ -80,7 +99,9 @@ jobs:
       # marker instead; tests/ci-registration-test.sh (run below, discovered
       # like any other test) fails closed on a file that does neither.
       - name: Discover and run every registered test of this lot
-        run: bin/ci-run-tests --shard "${{ matrix.lot }}/$LOTS"
+        run: |
+          echo "cores: $(nproc)"
+          bin/ci-run-tests --shard "${{ matrix.lot }}/$LOTS" --jobs "$(nproc)"
 
       - name: Wait for the other lots
         if: matrix.lot == 1

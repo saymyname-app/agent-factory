@@ -27,6 +27,15 @@
 #                            # N runners at once (.github/workflows/ci.yml):
 #                            # run one after the other, the tests took 48 min
 #                            # on 2026-10-07, up from 7 min two days before.
+#   ci-run-tests --jobs J   # run J test files at once (default 1, or
+#                            # CI_RUN_TESTS_JOBS). The tests are bound by the
+#                            # processor -- one file starts thousands of
+#                            # Python processes -- so a runner that runs one
+#                            # file at a time leaves its other cores idle and
+#                            # billed: Factory CI passes its core count
+#                            # (af-mzuprx, docs/OPERATIONS.md "Factory CI
+#                            # cost"). Each result line ends with the seconds
+#                            # the file took.
 
 set -uo pipefail
 
@@ -36,6 +45,7 @@ cd "$REPO_ROOT" || { echo "ci-run-tests: $REPO_ROOT unreachable" >&2; exit 2; }
 MODE="run"
 SHARD_I=""
 SHARD_N=""
+JOBS="${CI_RUN_TESTS_JOBS:-1}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --list) MODE="list" ;;
@@ -46,13 +56,22 @@ while [ "$#" -gt 0 ]; do
       SHARD_I=${BASH_REMATCH[1]}; SHARD_N=${BASH_REMATCH[2]}
       shift
       ;;
+    --jobs) JOBS=${2:-}; shift ;;
     *) echo "ci-run-tests: unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
 done
+if ! [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ci-run-tests: --jobs wants a number of files to run at once (1 or more), got: ${JOBS:-nothing}" >&2; exit 2
+fi
 
 is_local_only() {
   grep -qE '^#[[:space:]]*ci:[[:space:]]*local-only' "$1"
+}
+
+by_size() {  # file paths on stdin -> the same paths, largest file first
+  while IFS= read -r f; do printf '%s %s\n' "$(wc -c < "$f")" "$f"; done \
+    | sort -k1,1nr -k2,2 | cut -d' ' -f2-
 }
 
 mapfile -t files < <(
@@ -67,9 +86,8 @@ if [ -n "$SHARD_N" ]; then
   # Largest file first, dealt in turn: size stands in for duration, so the
   # few very long tests do not all land in the same lot.
   mapfile -t files < <(
-    for f in "${files[@]}"; do printf '%s %s\n' "$(wc -c < "$f")" "$f"; done \
-      | sort -k1,1nr -k2,2 \
-      | awk -v i="$SHARD_I" -v n="$SHARD_N" '(NR - 1) % n == i - 1 { print $2 }' \
+    printf '%s\n' "${files[@]}" | by_size \
+      | awk -v i="$SHARD_I" -v n="$SHARD_N" '(NR - 1) % n == i - 1' \
       | sort
   )
 fi
@@ -91,13 +109,21 @@ fi
 PYTHON=python3
 command -v python3 >/dev/null 2>&1 || PYTHON=python
 
-failed=()
-for f in "${files[@]}"; do
+# Several at once: start the long files first, so the last one to end is not
+# a long file that waited its turn behind short ones.
+if [ "$JOBS" -gt 1 ]; then
+  mapfile -t files < <(printf '%s\n' "${files[@]}" | by_size)
+fi
+
+RESULTS=$(mktemp -d)
+trap 'rm -rf -- "$RESULTS"' EXIT
+
+run_one() {  # index file -> prints its result line, leaves $RESULTS/<index>.failed on failure
+  local index=$1 f=$2 interp out status runtime_dir started=$SECONDS
   case "$f" in
     *.py) interp=$PYTHON ;;
     *.sh) interp=bash ;;
   esac
-  printf '  %-70s ' "$f"
   # Each test gets a throwaway XDG_RUNTIME_DIR, so bin/escalation-door's
   # default lock can never be the host's own -- and a test that still
   # reaches that default instead of setting ESCALATION_DOOR_LOCK_FILE fails
@@ -111,13 +137,33 @@ for f in "${files[@]}"; do
     out+=$'\n'"ci-run-tests: $f reached bin/escalation-door's default lock file -- set ESCALATION_DOOR_LOCK_FILE to a path the test owns (tests/lib/sandbox.sh does)"
   fi
   rm -rf -- "$runtime_dir"
-  if [ "$status" -eq 0 ]; then
-    echo OK
-  else
-    echo FAIL
-    printf '%s\n' "$out" | sed 's/^/    /'
-    failed+=("$f")
+  # One file's result is written whole, never mixed with another's.
+  {
+    flock 9
+    if [ "$status" -eq 0 ]; then
+      printf '  %-70s OK   %4ss\n' "$f" "$((SECONDS - started))"
+    else
+      printf '  %-70s FAIL %4ss\n' "$f" "$((SECONDS - started))"
+      printf '%s\n' "$out" | sed 's/^/    /'
+      : > "$RESULTS/$index.failed"
+    fi
+  } 9>"$RESULTS/print.lock"
+}
+
+running=0
+for index in "${!files[@]}"; do
+  if [ "$running" -ge "$JOBS" ]; then
+    wait -n
+    running=$((running - 1))
   fi
+  run_one "$index" "${files[$index]}" &
+  running=$((running + 1))
+done
+wait
+
+failed=()
+for index in "${!files[@]}"; do
+  [ -e "$RESULTS/$index.failed" ] && failed+=("${files[$index]}")
 done
 
 echo
