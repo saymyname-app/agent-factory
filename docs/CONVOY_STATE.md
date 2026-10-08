@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, T19, T20, T22, T21, T23, T27, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, T19, T20, T22, T21, T23, T27, T26, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -90,6 +90,8 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-end-review-repair  af-convoy --finding F1 (--ticket af-r1 | --refused "<line>")   # bin/convoy-advance, after the patch door
 ./bin/convoy-state stop-end-review        af-convoy --reason end_review_no_result --detail "<line>"   # bin/spec-end-review settle
 ./bin/convoy-state end-review-stop-raised af-convoy --bead af-request                # bin/spec-end-review, once the escalation door accepted
+./bin/convoy-state end-stop-raised  af-convoy --bead af-convoy                       # bin/convoy-advance, once the « non conforme » request reached the operator
+./bin/convoy-state record-delivered af-convoy --commit <integration tip> --pack-digest sha256:<hex>   # bin/spec-end run: the seven conditions met on one commit
 ```
 
 Every answer is one JSON object on stdout.
@@ -149,7 +151,9 @@ Every answer is one JSON object on stdout.
 | Classification of the findings « hors ticket » | `gc.flow.findings` | ticket | T24: `entries`, one per classified finding of the Ticket Handoff: `item` (`out_of_ticket.N`), `handoff_at`, `classification` (`repaired`, `proposal`, `dismissed`), `commit`, `recorded_by`, `at`; `reason` (required for `dismissed`); `draft` (the drafted `repair`, required for `repaired`, with what it `restores`) and, once code published it, `repair` |
 | End code review of the Spec | `gc.flow.end_review` | convoy | T25: `rounds`, oldest first, each `commit` (the commit of the gate it read), `base` (the tip of the protected branch that commit holds), `outcome` (`favorable`, `unfavorable`, `incomplete`; computed), `findings` (`id`, `axis`, `blocking`, `summary`, `citation`, `demoted`; a Blocking Finding with its `repair_draft`, then `repair` or `repair_refused`), `coverage` (`axes`, `files`, `missing`, `missing_count`), `extent` (`files`, `commits`, `insertions`, `deletions`, `digest`), `models` (`authors`, `reviewer`, `same_model`), `recorded_by`, `launched_at`, `duration_seconds`, `at`; `request` while a review is open (`commit`, `base`, `extent`, `models`, `launches`: at most two, each `bead`, `at`, and `result: incomplete`; `at`); `stop` (`reason`: `end_review_no_result`, `end_review_repair_refused`; `detail`, `commit`, `at`, then `bead` and `raised`) |
 | Evidence Pack | `gc.flow.evidence_pack` | convoy | T27: `commit` (the commit of the integration branch the pack is tied to), `digest` (the fingerprint of its page), `path` (its folder, absolute), `conforming` (whether every condition of the end of the Spec it reports was met), `inadmissible` (the number of pieces the evidence store refused), `version` (`evidence-pack/v1`), `at` |
-| Last round of the end counted | `gc.flow.end_round` | convoy | T25: `commit` (the tip of the integration branch the last round of the end was counted for), `source` (`end_review`), `at` |
+| Last round of the end counted | `gc.flow.end_round` | convoy | T25: `commit` (the tip of the integration branch the last round of the end was counted for), `source` (what refused that tip first: `regression`, `fidelity`, `end_review`, `outcome_evaluation`; T26), `at`; T26, optional, for the early stops: `not_observed` (the user stories the Outcome Evaluation did not observe at that tip), `previous_not_observed` (those of the round before), `refused_before` (every story not observed at an earlier counted tip) — numbers of user stories, ascending, each once |
+| Stop of the rounds of the end | `gc.flow.end_stop` | convoy | T26: `reason` (`end_rounds_exhausted`, `stories_not_reduced`, `story_refused_twice`), `detail` (one line), `commit` (the tip that was refused when the stop was written), `source` (as for `end_round`), `rounds` (the rounds counted then), `at`; then `request`, once the « non conforme » request reached the operator: `bead`, `commit` and `digest` (the Evidence Pack it carries), `page` (the absolute path of its page), `at` |
+| Delivered Outcome | `gc.flow.delivered` | convoy | T26: `commit` (the one commit of the integration branch the seven conditions of the end of the Spec were met on), `protected` (the tip of the protected branch that commit holds), `pack` (the fingerprint of the Evidence Pack generated there), `version` (`spec-end/v4`), `at` |
 
 `mark` is idempotent: it marks the tickets first and the convoy last, sets
 each counter to an explicit `0`, and on a later run marks only the tickets
@@ -398,7 +402,9 @@ removes the record. The three refuse a convoy without the mark (exit 4).
 end-of-Spec gate measured, not the regression command; a `--check` outside
 `regression`, `fidelity` is refused. `--end-round` adds one to the convoy
 counter `end_rounds` **in the write that records the red**: the same red
-again writes nothing and counts nothing. `record-spec-end` records the three
+again writes nothing and counts nothing; once the rounds are consumed that
+write counts none and records the stop of the rounds with the red (T26,
+below). `record-spec-end` records the three
 verdicts of the gate with the commit they are tied to. It refuses a convoy
 without an integration branch, one whose integration branch is red, one
 with a ticket left open or closed without a gate record (each named), a
@@ -460,6 +466,7 @@ keeps `launched_at` and `duration_seconds`.
 An **unfavorable** round adds one to the convoy counter `end_rounds` in the
 same tracker write, and writes `gc.flow.end_round` with its commit: a tip
 already counted there is not counted again, whichever source refuses it.
+Once the rounds are consumed it counts none and stops them (T26, below).
 
 `set-end-review-repair` names, on a Blocking Finding of the last round, the
 `repair` ticket published from its draft (`--ticket`: a ticket of the
@@ -469,6 +476,74 @@ convoy of kind `repair`) or the reason the patch door refused the draft
 last round) with a reason of the closed list and a one-line detail;
 `end-review-stop-raised` records the bead of the request once the
 escalation door accepted it.
+
+**The rounds of the end: one counter, one bound, the stop (T26, Spec §8).**
+Every refusal of a tip at the end of a Spec goes through one place,
+whatever refuses it: a mechanical red (`record-integration-red --end-round`,
+source `regression` or `fidelity`), an unfavorable end review
+(`record-end-review`, source `end_review`), and an Outcome Evaluation that
+leaves a user story not observed or a finding « hors ticket » classified
+`repaired` still « à réparer » (`record-outcome-evaluation`, source
+`outcome_evaluation`). There is one counter, `gc.flow.counter.end_rounds`:
+one round per refused tip, counted by the source that refuses it first, in
+the write that records the refusal. The end review and the Outcome
+Evaluation count nothing on a tip `gc.flow.end_round` already names; an
+Outcome Evaluation recorded there adds its stories `not_observed` to that
+record. A mechanical red is counted as it is recorded: once per red.
+
+The bound is `bounds.end_rounds` of `config/delivery-flow.json` (2; a
+starting value, not a measure), read as `bounds.resumes` is, and only by the
+write that would count one more round: a missing or malformed value refuses
+that write (« bounds.end_rounds absent ou invalide »), which then writes
+nothing; a red recorded without `--end-round` reads no bound.
+
+When a tip is refused and the bound is consumed, no round is counted: the
+same write records `gc.flow.end_stop` with `reason: end_rounds_exhausted`,
+the tip, the source, the rounds counted and one line of `detail` that quotes
+what refused. Two **early stops** come before the bound, and before the
+round they would otherwise count; they are defined on the user stories an
+Outcome Evaluation did not observe, and on nothing else (Spec, Further
+Notes 7):
+
+| `reason` | Written when |
+| --- | --- |
+| `story_refused_twice` | a story not observed at this tip was already not observed at an earlier counted tip (`refused_before`) |
+| `stories_not_reduced` | the round before left stories not observed, and as many or more are not observed now (`previous_not_observed`) |
+| `end_rounds_exhausted` | neither of the two, the tip is not counted yet, and the counter has reached the bound |
+
+They are tried in that order. A convoy that carries `end_stop` has nothing
+more counted and no other stop written: a later refusal records what it
+records (the red, the round of the review, the evaluation) and nothing of
+the rounds.
+
+`end-stop-raised` records, in `end_stop.request`, that the « non conforme »
+request reached the operator: `--bead` (the bead the escalation door wrote
+it on) and, read on the convoy, the Evidence Pack it carries — `commit`,
+`digest`, and `page`, the `index.html` of its folder. It refuses a convoy
+whose rounds are not stopped, a missing or malformed bead, a convoy with no
+Evidence Pack generated since the stop, and a pack that is conforming: the
+request carries a dossier whose header says « non conforme ». The same bead
+again writes nothing; another bead once raised is refused.
+
+`record-delivered` is called by `bin/spec-end run` once its seven
+conditions are met on one commit (`docs/SPEC_END.md`), with that commit and
+the fingerprint of the pack. The gate decides; what is refused here, each
+cause named and nothing written, is a record the tracker contradicts: a
+ticket left open or closed without a gate record, a red integration branch,
+stopped rounds, and, **at that commit**, mechanical verdicts not recorded
+under `spec-end/v4`, an Outcome Evaluation that is open, elsewhere or not
+favorable, a finding « hors ticket » `non classé` or `à réparer`, an end
+review that is open, elsewhere or not favorable, an Evidence Pack that is
+not the conforming one of that digest with no inadmissible piece. The same
+record again writes nothing. `gc.flow.delivered` is **withdrawn in the same
+write** by any refusal of the end that counts a round or stops the rounds,
+and by `record-spec-end` at another commit: one commit more outdates every
+verdict.
+
+Not done here, on purpose: no command withdraws `end_stop` — what the
+operator answers to the request (another round, back to planning, abandon)
+is handled by T28 and T29; and `set-counter --counter end_rounds --value 0`
+resets the counter only, it clears neither `end_round` nor `end_stop`.
 
 `lift-park` lifts the parking a ticket caused, once the request `--request`
 (a bead id) was answered, with the letter of the option taken (`--option`,
@@ -715,8 +790,13 @@ the `contradictions`; T24), the end code review of the Spec (`end_review`,
 `null` before the first request, with a computed `state`: the `commit` and
 the `outcome` of its last round and `unsettled`, its Blocking Findings; T25)
 the last round of the end counted (`end_round`, `null` before the first),
+the stop of the rounds of the end (`end_stop`, `null` while they are not
+stopped; T26), the Delivered Outcome (`delivered`, `null` while none is
+recorded; T26),
 the Evidence Pack (`evidence_pack`, `null` before the first generation; T27)
-and the digest of the Spec the publication door wrote (`spec_digest`).
+and the digest of the Spec the publication door wrote (`spec_digest`). An
+`end_stop` or a `delivered` that cannot be read is an « état sans règle »
+like the others: rendered with `unruled` and its raw value, exit 3.
 
 `ticket` answers whether one bead carries the mark, without naming its
 convoy: exit 0 and `"new_flow": true`, or exit 4 and `"new_flow": false`.
@@ -842,3 +922,14 @@ them on the real `gc`/`bd`.
 T27: `tests/convoy-state-test.py` covers `record-evidence-pack` (recorded
 and read back, the same pack again, each refusal, a record written outside
 the command) and `spec_digest`; no trial on the real tracker covers it.
+T26: `tests/convoy-state-test.py` covers the rounds of the end — the tip
+and the source of a counted round, one counter whatever the source (a
+mechanical red, the end review, a red again), a refusal once the two rounds
+are consumed that counts none and records the stop in the write of the red
+or of the review, nothing more on a stopped convoy, the bound read in
+`config/delivery-flow.json` and refused when missing or malformed,
+`end-stop-raised` with each refusal, a stop written outside the command;
+`record-delivered` and its refusals are covered through the gate
+(`tests/evidence-pack-test.py`), the early stops through the pass
+(`tests/convoy-stops-fixture-city-test.py`). No trial on the real tracker
+covers them.

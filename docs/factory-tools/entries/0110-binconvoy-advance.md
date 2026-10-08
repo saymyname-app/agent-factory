@@ -105,9 +105,34 @@ touché : il reste avancé par le Mayor.
   la passe suivante publie le `repair`. Quand Benjamin répond « faire
   réparer » à la demande sur un écart ou un « non fait », la passe publie ce
   `repair` aussi (`item_repairs`).
+- **Deux tours de réparation en fin de Spec, puis une demande « non
+  conforme »** (T26) : chaque refus d'une pointe en fin de Spec compte un
+  tour, quelle que soit sa source — tests ou fidélité rouges, revue de fin
+  défavorable, Outcome Evaluation qui n'observe pas une user story ou garde
+  un constat hors ticket à réparer. Un seul compteur, borné à 2. Au refus
+  suivant, **plus aucun `repair` de fin n'est publié** (ni celui d'un rouge,
+  ni ceux de l'Evaluator, ni ceux de la revue de fin). L'arrêt vient plus
+  tôt, avant le deuxième tour, si un tour n'a pas réduit le nombre de user
+  stories non observées ou si la même user story est refusée deux fois. La
+  passe fait alors générer le dossier de la pointe refusée
+  (`./bin/evidence-pack`, en-tête « Dossier non conforme ») et t'envoie
+  **une** demande : dans `./bin/escalation-door list`, la ligne
+  `<convoi> — Demande « non conforme » — convoi <convoi> : <cause> — dossier : <chemin de la page>`.
+  Ouvre la page, puis réponds par
+  `./bin/escalation-door repondre <convoi> a|b|c` : **a** relancer un tour
+  de réparation, **b** retourner à la planification, **c** abandonner.
+  « Accepter » n'est jamais proposé : un Outcome non conforme ne s'accepte
+  pas par cette demande. `non_conforme` dans la réponse de la passe dit où
+  elle en est (`pending` tant qu'une Outcome Evaluation ou une revue de fin
+  est encore en cours sur la pointe, `raised` une fois la demande partie).
+  **Limites** : ta réponse est enregistrée mais rien ne la lit encore — le
+  convoi reste arrêté, aucun tour ne repart et rien n'est abandonné tant que
+  les tickets suivants (T28, T29) ne sont pas livrés ; si la passe échoue
+  entre l'envoi et son enregistrement, tu reçois le même courrier une
+  seconde fois (une seule ligne dans la liste).
 - **Les bornes se règlent à un seul endroit** : `bounds` de
   `config/delivery-flow.json` — `resumes` (K, 3), `open_planning_exceptions`
-  (2). Changer une valeur change le comportement à la passe suivante ; une
+  (2), `end_rounds` (tours de réparation de fin de Spec, 2). Changer une valeur change le comportement à la passe suivante ; une
   valeur absente ou mal formée est un refus. k (exécutions au vert) se règle
   par projet, dans son profil (`launch.k`).
 - **Relecture des tests restée sans résultat** : la même passe la relance une

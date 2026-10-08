@@ -155,9 +155,21 @@ refusal writes nothing.
 
 ## Limits
 
-- **No bound on the rounds of the end.** A story still not observed after
-  its repair gets a new drafted repair at the next evaluation. The counter
-  of end rounds and its bound are T26's.
+- **The rounds of the end are bounded (T26).** An evaluation that leaves a
+  story not observed, or a finding « hors ticket » still « à réparer »,
+  refuses its tip: `record-outcome-evaluation` counts one round of the end
+  in the same write (`counters.end_rounds`, one counter with the mechanical
+  reds and the end review, once per tip; bound `bounds.end_rounds`, 2), or
+  stops the rounds (`gc.flow.end_stop`) — when the bound is consumed, and,
+  **before the second round is counted**, when the round before did not
+  reduce the number of stories not observed (`stories_not_reduced`) or when
+  a story not observed in an earlier round is not observed again
+  (`story_refused_twice`). Once stopped, the drafted repairs are not
+  published and a « non conforme » request goes to the operator
+  (`docs/CONVOY_STATE.md`, « The rounds of the end »; `docs/CONVOY_ADVANCE.md`,
+  « The rounds of the end are bounded »). The early stops read the stories
+  not observed only: a finding « hors ticket » to repair counts a round and
+  meets the bound, nothing earlier.
 - **No real Evaluator session ran.** The formula and the commands are
   proven with a stand-in for the door and the session; no adoption trial of
   the role on `mol-outcome-evaluation` was run in an isolated city.

@@ -1,6 +1,6 @@
 ## `./bin/spec-end` — la Spec est-elle vérifiée, et sinon que manque-t-il ?
 
-**La porte de fin de Spec** (Spec af-wf4w5r §9, points 1 à 5, T23, T24 et T25). Dans un
+**La porte de fin de Spec** (Spec af-wf4w5r §9 et §8, T23, T24, T25, T27 et T26). Dans un
 convoi qui porte la **marque du nouveau flux**, des tickets tous fermés ne
 font pas une Spec vérifiée : du code rend **trois verdicts mécaniques, tous
 liés au même commit** de la branche d'intégration, la branche protégée
@@ -40,6 +40,23 @@ et la revue de code de fin (`./bin/spec-end-review`).
   d'intégration ; un tour de fin est compté (`counters.end_rounds`) et
   `./bin/convoy-advance` publie le seul `repair`. La porte rejoue tout une
   fois ce `repair` fusionné et fermé.
+- **Deux tours de réparation, pas plus** (T26) : les tours de fin sont un
+  seul compteur pour toutes les sources (tests ou fidélité rouges, revue de
+  fin, Outcome Evaluation), borné par `bounds.end_rounds` de
+  `config/delivery-flow.json` (2, sans base mesurée). Un rouge trouvé une
+  fois les tours consommés est enregistré **avec l'arrêt des tours**, sans
+  tour de plus et sans `repair` : la condition rouge le dit, et tu reçois
+  une demande « non conforme » (`./bin/convoy-advance`). Sous ce rouge, la
+  porte refuse en disant qu'elle attend cette demande.
+- **Delivered** (T26) : quand les sept conditions sont vertes sur la même
+  pointe, dossier compris, `run` l'enregistre sur le convoi
+  (`convoy.delivered` dans `./bin/convoy-state show`) et répond
+  `"delivered": true` ; `check` le dit aussi, tant que rien n'a bougé.
+  Jamais avec une condition rouge, sans dossier, sur un dossier généré
+  pendant qu'une condition était rouge, ni pour un commit de plus.
+  **Delivered est un état du convoi, pas une acceptation** : rien n'est
+  fusionné dans la branche protégée, rien n'est fermé, rien n'est accepté à
+  ta place.
 - **Un commit de plus annule tout** : les verdicts sont enregistrés avec
   leur commit (`convoy.spec_end` dans `./bin/convoy-state show`). Dès que la
   branche d'intégration ou la branche protégée bouge, `check` les dit
@@ -50,8 +67,12 @@ et la revue de code de fin (`./bin/spec-end-review`).
 - **Limites** : la porte tourne dans la passe de l'ordre (délai de 300 s,
   non mesuré sur un vrai projet) ; pas de pièce scellée pour les tests et la
   fidélité de fin (leur relevé est sur le convoi) ; la porte vérifie, elle
-  n'accepte rien et ne ferme rien ; le compteur de tours n'est pas encore
-  comparé à une borne.
+  n'accepte rien et ne ferme rien (ton acceptation viendra avec un ticket
+  suivant) ; une fois les tours arrêtés, aucune commande ne les relance
+  encore, quelle que soit ta réponse à la demande « non conforme » ; sous
+  un rouge de fin, `check` montre les conditions 2 à 7 « non lancé » au lieu
+  de nommer celle qui est rouge (lis `end_stop` et
+  `./bin/convoy-state show`).
 
 Détail : `docs/SPEC_END.md`.
 

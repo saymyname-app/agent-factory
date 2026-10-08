@@ -131,6 +131,17 @@ An unfavorable review counts **one round of the end of the Spec**
 once per tip, whichever source refuses that tip first: `gc.flow.end_round`
 keeps the commit and the source of the last round counted.
 
+The rounds are bounded (T26, Spec §8): `bounds.end_rounds` of
+`config/delivery-flow.json`, 2, one counter for the mechanical reds, the
+Outcome Evaluation and this review. An unfavorable review recorded once the
+rounds are consumed counts none: the same write stops the rounds
+(`gc.flow.end_stop`, `reason: end_rounds_exhausted`, `source: end_review`,
+its `detail` naming the Blocking Findings). The drafted repairs of that
+round are then not published, and the pass sends a « non conforme » request
+to the operator; they are also held while the Outcome Evaluation of the
+same tip is open (`docs/CONVOY_STATE.md`, « The rounds of the end »;
+`docs/CONVOY_ADVANCE.md`, « The rounds of the end are bounded »).
+
 ## What the gate reads
 
 `bin/spec-end` reads condition 6, `end_review` (list `spec-end/v4`), on the
@@ -183,8 +194,9 @@ On the convoy, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 | Key | Value |
 | --- | --- |
 | `gc.flow.end_review` | `rounds`: each recorded round — `commit`, `base`, `outcome`, `findings`, `coverage`, `extent`, `models`, `recorded_by`, `launched_at`, `duration_seconds`, `at`. `request`, while a review is open — `commit`, `base`, `extent`, `models`, `launches` (`bead`, `at`, and `result: incomplete`), `at`. `stop` — `reason`, `detail`, `commit`, `at`, then `bead` and `raised`. |
-| `gc.flow.end_round` | `commit`, `source`, `at`: the tip the last round of the end was counted for. |
+| `gc.flow.end_round` | `commit`, `source`, `at`: the tip the last round of the end was counted for (T26: and the stories not observed, for the early stops). |
 | `gc.flow.counter.end_rounds` | the rounds of the end of the Spec, every source together. |
+| `gc.flow.end_stop` | T26: the stop of the rounds — `reason`, `detail`, `commit`, `source`, `rounds`, `at`, then `request` (`docs/CONVOY_STATE.md`). |
 
 Settings: `config/delivery-flow.json`, `end_review` — `formula`, `role`,
 `rig`, `timeout_seconds`. `mol-end-review` is in the `formulas` list of
@@ -206,7 +218,12 @@ it.
   Outcome Evaluation, then the review, one after the other; the two sessions
   then run side by side. A dispatch the door defers puts one of them a pass
   later.
-- **`end_rounds` is counted, and compared to no bound yet.**
+- **No early stop on review findings.** The rounds stop on the bound
+  (`bounds.end_rounds`). The early stops of the Spec §8 — a round that did
+  not reduce, the same refusal twice — are defined on the user stories the
+  Outcome Evaluation did not observe only (Spec, Further Notes 7): nothing
+  compares the Blocking Findings of one round to those of the round before,
+  so a finding raised again on the next tip costs a round, not a stop.
 - **Nothing lifts a stop of the end review on its tip.** A new tip opens a
   new review; on the same tip the gate goes on refusing.
 - **No closed questions on the tests at the end**: they are asked per ticket.

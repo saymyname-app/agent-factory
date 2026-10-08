@@ -32,6 +32,14 @@ nouveau flux**.
   écrit.
 - **Une condition rouge ne refuse pas la page** : elle est produite avec
   « Dossier non conforme » en en-tête et le verdict de chaque condition.
+  C'est le dossier dont le lien accompagne la demande « non conforme »
+  (T26) : quand les tours de réparation de fin sont arrêtés,
+  `./bin/convoy-advance` le fait générer et t'envoie son chemin
+  (`./bin/escalation-door list`). La rubrique 8, « Tours de fin », dit
+  alors l'arrêt : sa cause (tours épuisés, tour qui n'a pas réduit les user
+  stories non observées, même user story refusée deux fois), le commit,
+  l'heure et la précision. La demande elle-même n'y figure pas : elle est
+  écrite après la page et porte son lien.
 - **Un commit de plus le périme** : `check` répond `à jour`, `absent`,
   `périmé` (un commit de plus, ou un relevé qui a changé depuis), `altéré`
   (page ou pièce réécrite à la main) ou `incomplet` (pièce refusée par le

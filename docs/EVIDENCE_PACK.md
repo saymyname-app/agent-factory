@@ -50,7 +50,7 @@ is shown.
 | 5 | Par ticket | The demonstration line with the proof of the author and the state of the Ticket Evaluation, each criterion with its state and piece, the refusals and resumes, the nine verdicts of the ticket-end gate. |
 | 6 | Éléments suivis | Each deviation, each « non fait » and each finding « hors ticket » with its final state. |
 | 7 | Hors graphe initial | The `repair` tickets created and what each restores, the Planning Exceptions and the answers of Benjamin, the overrides with his words, the stops and requests raised. |
-| 8 | Relevés | The files touched outside the Declared Scope, the models per role, the duration, the rounds of the end, the contradictions between the proof of a ticket and the end of the Spec. |
+| 8 | Relevés | The files touched outside the Declared Scope, the models per role, the duration, the rounds of the end (« Tours de fin » : the count, the last tip counted and its source, and, T26, the stop of the rounds when there is one), the contradictions between the proof of a ticket and the end of the Spec. |
 | 9 | Preuves TDD et constats de revue | Per ticket: red, freeze, green with their pieces, the review of the tests, each round of the code review with every finding, blocking or not; then the end code review. |
 
 Rubric 0 of the Spec, « Depuis ton dernier jugement », belongs to the second
@@ -100,7 +100,21 @@ record-evidence-pack` (`gc.flow.evidence_pack`, rendered as
 `generate` on a convoy one of whose conditions 1 to 6 is not met writes the
 page, with « Dossier non conforme » in its header and the verdict of each
 condition; the record carries `conforming: false`. It is the page of the
-« non conforme » request (T26).
+« non conforme » request (T26): once the repair rounds of the end are
+stopped, `bin/convoy-advance` has it generated on the refused tip and sends
+its link to the operator (`docs/CONVOY_ADVANCE.md`, « The rounds of the end
+are bounded »).
+
+**The stop is in rubric 8, the request is not.** Under « Tours de fin »,
+a convoy that carries `end_stop` gets one more line: « Tours de réparation
+de fin arrêtés (<cause>) au commit …, le … : <detail>. Aucun tour de plus
+ne démarre ; une demande « non conforme » part vers l'opérateur. » — the
+cause being « tours de réparation épuisés », « un tour n'a pas réduit les
+user stories non observées » or « la même user story refusée deux fois ».
+The request itself (its bead, its options) is not printed: it is written
+once the page exists and carries the page's link, so printing it would
+outdate the page it points to. A convoy whose rounds are not stopped gets
+no such line.
 
 ## One commit more outdates the pack
 
@@ -162,7 +176,9 @@ stories, and the rubric that cannot be filled.
   files outside the Declared Scope in their rubrics; « non conforme »; a
   pack outdated by one commit more, by a changed record, rewritten by hand,
   or short of a piece; the gate refusing without a pack and passing its
-  seven conditions with it.
+  seven conditions with it. T26: the stop of the rounds said in rubric 8,
+  unchanged once the request is recorded, and no such line on a convoy that
+  is not stopped; Delivered recorded by the gate (`docs/SPEC_END.md`).
 - `tests/convoy-state-test.py`: `record-evidence-pack` and its refusals, a
   record written outside the command.
 - `tests/convoy-advance-test.py`: the pass generates the pack once the six

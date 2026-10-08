@@ -19,9 +19,11 @@ the convoy marked (bin/convoy-state mark), the integration branch of its
 Spec opened (bin/spec-integration open). Each `advance` plays exactly one
 event and prints `{"event": ..., "idle": ...}`: either one pass of the
 Factory's order (the real bin/convoy-advance, which starts, has reviewed and
-evaluated, measures the fidelity, merges and closes), or what one agent
-session leaves behind. `idle` is true when the event changed nothing.
-`stop` stops whatever product an evaluation left launched.
+evaluated, measures the fidelity, merges and closes, then runs the end of
+the Spec), or what one agent session leaves behind on the ticket at work:
+the walked one, then any `repair` the order published in the convoy. `idle`
+is true when the event changed nothing. `stop` stops whatever product an
+evaluation left launched.
 
 No agent runs here: the author session files its steps the way its scripts
 do (tests/lib/ticket_proofs.py: each piece sealed by the real
@@ -29,10 +31,12 @@ bin/evidence-capture, each step recorded by the real bin/convoy-state); the
 reviewer and the Evaluator are the stand-ins of their own suites
 (tests/fixtures/code-review/reviewer, tests/fixtures/ticket-evaluation/
 evaluator), which answer through the real bin/code-review and
-bin/ticket-evaluation. The tracker is the fake one of
-tests/fixtures/convoy-state/gc. The product is launched on a loopback port
-by the real bin/project-launch, so this driver is not run inside the
-no-socket sandbox of the planning adapters.
+bin/ticket-evaluation; so are the Evaluator and the reviewer of the end
+(tests/fixtures/outcome-evaluation/evaluator, tests/fixtures/spec-end-review/
+reviewer). The tracker is the fake one of tests/fixtures/convoy-state/gc.
+The product is launched on a loopback port by the real bin/project-launch,
+so this driver is not run inside the no-socket sandbox of the planning
+adapters.
 
 `--inject` makes the walk go wrong in one named way:
     criterion-edited   a criterion is edited on the ticket once its author has finished
@@ -40,6 +44,15 @@ no-socket sandbox of the planning adapters.
     three-failures     the convoy holds two more tickets (T20, af-y9pw9z): one whose author
                        session ends three times without a Ticket Exit, and one that waits
                        for it; the walked ticket waits for neither
+    story-not-observed the Spec holds a second user story (the list of the items in JSON at
+                       GET /items) that the walked ticket covers and the product does not
+                       serve (T26, af-vwcflt). The graph is published by the real publication
+                       door (bin/ticket-graph-publish bd-publish, on the fake `bd` of
+                       tests/fixtures/ticket-graph-publish, which shares the tracker file),
+                       so that the order can publish the `repair` the Evaluator of the end
+                       drafts through the patch door; the author session of that repair
+                       makes the product serve GET /items. `publish` then names the convoy
+                       and the ticket, which the door numbered. First project only
 
 `--project` names the project of the fixture the ticket belongs to (T35,
 af-f62cxt); the same events are played on either, each from its own profile:
@@ -48,6 +61,7 @@ af-f62cxt); the same events are played on either, each from its own profile:
     delivery-fixture-city-api   the second one: a JSON API on Node.js, no web page, no prototype
 """
 import argparse
+import hashlib
 import json
 import os
 import pwd
@@ -55,6 +69,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tests" / "lib"))
@@ -68,14 +84,40 @@ EVALUATOR = ROOT / "tests" / "fixtures" / "ticket-evaluation" / "evaluator"
 END_EVALUATOR = ROOT / "tests" / "fixtures" / "outcome-evaluation" / "evaluator"
 END_REVIEWER = ROOT / "tests" / "fixtures" / "spec-end-review" / "reviewer"
 BROWSER = ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"
+# The publication door and what it reads (`story-not-observed`).
+PUBLISHER = BIN / "ticket-graph-publish"
+GRAPH_REVIEW = BIN / "graph-review"
+FAKE_BD = ROOT / "tests" / "fixtures" / "ticket-graph-publish" / "bd-bead-mode"
+REVIEW_FAILOVER = ROOT / "tests" / "fixtures" / "graph-review" / "provider-failover"
 
 CONVOY, SPEC, TICKET, RIG = "fx-convoy", "fx-spec", "fx-t1", "fx-rig"
 # With `three-failures`: the ticket whose sessions fail, and the one behind it.
 SICK, BEHIND = "fx-t2", "fx-t3"
 FAILURES = 3
-BRANCH = f"ticket/{TICKET}"
 INTEGRATION = f"integration/{SPEC}"
-INJECTIONS = ("none", "criterion-edited", "closed-by-hand", "three-failures")
+INJECTIONS = ("none", "criterion-edited", "closed-by-hand", "three-failures", "story-not-observed")
+# With `story-not-observed`: the approved draft the door publishes, its key
+# for the walked ticket, and where the product serves the second user story
+# once the repair is delivered.
+DRAFT, WALKED_KEY = "fx-draft", "T1"
+ITEMS = {"path": "/items", "dataset": "content", "look_for": '"alpha"'}
+ITEMS_ROUTE = (
+    '        if self.path == "/items":\n'
+    '            self._respond_json(200, {"items": self.dataset.get("items", [])})\n'
+    '            return\n')
+ITEMS_BEFORE = '        if self.path == "/":\n'
+ITEMS_TEST = ("test_critere_items.py", '''"""Test de critère du repair : GET /items rend les éléments du jeu de données."""
+import json
+import os
+import unittest
+import urllib.request
+
+
+class Items(unittest.TestCase):
+    def test_get_items_rend_les_elements(self):
+        with urllib.request.urlopen(os.environ["PRODUCT_ADDRESS"] + "/items", timeout=10) as answer:
+            self.assertEqual(["alpha", "beta", "gamma"], json.load(answer)["items"])
+''')
 # What differs from one project of the fixture to the other; everything else
 # of the walk is read by the flow in the profile of the project.
 PROJECTS = {
@@ -113,6 +155,9 @@ class City:
         self.memo = workspace / "driver.json"
         memo = json.loads(self.memo.read_text()) if self.memo.exists() else {}
         self.use(memo.get("project", DEFAULT_PROJECT))
+        # The convoy and the walked ticket: named by the driver, or by the
+        # publication door when it publishes them.
+        self.convoy, self.walked = memo.get("convoy", CONVOY), memo.get("ticket", TICKET)
 
     def use(self, project: str) -> None:
         self.project = PROJECTS[project]
@@ -151,6 +196,15 @@ class City:
             "GIT_CONFIG_SYSTEM": os.devnull,
         }
 
+    def door_environment(self) -> dict[str, str]:
+        """What the publication door and its patch door need to write the
+        tracker the flow reads: the fake `bd`, on the same file."""
+        return {
+            "BD_BIN": str(FAKE_BD),
+            "TICKET_GRAPH_BD_STATE": str(self.tracker),
+            "TICKET_GRAPH_BD_WORKSPACE": str(self.workspace),
+        }
+
     def env(self, **more: str) -> dict[str, str]:
         """The environment of the Factory's order: no agent session."""
         home = self.workspace / "home"
@@ -160,6 +214,7 @@ class City:
             "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "HOME": str(home), "TMPDIR": str(self.workspace / "tmp"),
             "PYTHONDONTWRITEBYTECODE": "1",
             **self.state_environment(),
+            **self.door_environment(),
             "CONVOY_STATE_FAKE_WRITE_LOG": str(self.workspace / "writes.log"),
             "CONVOY_ADVANCE_LOCK_DIR": str(self.workspace / "locks"),
             "SPEC_INTEGRATION_LOCK_DIR": str(self.workspace / "locks"),
@@ -204,9 +259,21 @@ class City:
     def state(self, *args):
         return json.loads(self.run(BIN / "convoy-state", *args).stdout)
 
-    def ticket(self, ticket_id: str = TICKET) -> dict:
-        proc = self.run(BIN / "convoy-state", "show", CONVOY, "--repo", self.root, check=False)
-        return next(entry for entry in json.loads(proc.stdout)["tickets"] if entry["id"] == ticket_id)
+    def tickets(self) -> list[dict]:
+        proc = self.run(BIN / "convoy-state", "show", self.convoy, "--repo", self.root, check=False)
+        return json.loads(proc.stdout)["tickets"]
+
+    def ticket(self, ticket_id: str) -> dict:
+        return next(entry for entry in self.tickets() if entry["id"] == ticket_id)
+
+    def at_work(self) -> dict:
+        """The ticket an author session works on: the walked one, then,
+        once it is closed, a `repair` the order published in the convoy and
+        that is still open. The walked one again when nothing is left."""
+        shown = self.tickets()
+        walked = next(entry for entry in shown if entry["id"] == self.walked)
+        candidates = [walked, *(entry for entry in shown if entry.get("kind") == "repair" and entry["id"] != self.walked)]
+        return next((entry for entry in candidates if entry.get("status") != "closed"), walked)
 
     def remember(self, **values) -> dict:
         memo = json.loads(self.memo.read_text()) if self.memo.exists() else {}
@@ -243,7 +310,16 @@ class City:
         descriptor["rigs"] = [RIG]
         if self.project["regression_command"]:
             descriptor["launch"]["regression_command"] = self.project["regression_command"]
-        (config / "project-descriptors" / "fx.json").write_text(json.dumps(descriptor))
+        through_the_door = inject == "story-not-observed"
+        if through_the_door:
+            # The doors read the project of the Spec by its key: its human
+            # approver, and its profile under the name of the project.
+            (config / "projects" / f"{descriptor['project_id']}.toml").write_text(
+                f'human_approver = "benjamin"\nrig_dir = "rigs/{descriptor["project_id"]}"\nrepo = "example/fx"\n'
+                'protected_branch = "main"\nrequired_ci = "CI"\nsling_target = "fx-worker"\n'
+                'formulas = "fx-start,fx-resume"\n')
+        profile = f"{descriptor['project_id']}.json" if through_the_door else "fx.json"
+        (config / "project-descriptors" / profile).write_text(json.dumps(descriptor))
         (self.root / ".gitignore").write_text("config/\n")
         # The product, launchable; the first project with its Validated Prototype.
         shutil.copytree(ROOT / self.fixture, self.root / self.fixture, ignore=shutil.ignore_patterns("__pycache__"))
@@ -252,18 +328,100 @@ class City:
         self.git("commit", "-q", "-m", "base")
         self.tracker.write_text(json.dumps({"beads": {}, "sessions": []}))
         (self.workspace / "code-review-plan.json").write_text(json.dumps(["favorable"]))
-        # The Evaluator of the end observes each user story on the home page.
-        (self.workspace / "outcome-plan.json").write_text(json.dumps([{}]))
+        # The Evaluator of the end observes each user story on the home page;
+        # with `story-not-observed`, the second one where the Spec says it is
+        # served, on the product as it is launched: not at first.
+        (self.workspace / "outcome-plan.json").write_text(json.dumps(
+            [{"stories": {"2": ITEMS}}] if through_the_door else [{}]))
         # The reviewer of the end finds nothing to block on the assembled diff.
         (self.workspace / "end-review-plan.json").write_text(json.dumps(["favorable"]))
         # The Evaluator is not sent in the pass that sends the reviewer (its
         # door defers once): review and evaluation are observed one by one.
-        (self.workspace / "evaluation-plan.json").write_text(json.dumps(["door-defers", self.project["evaluation"]]))
+        # With `story-not-observed`, the Evaluator of the repair then looks
+        # at the entry point the repair restores.
+        (self.workspace / "evaluation-plan.json").write_text(json.dumps(
+            ["door-defers", self.project["evaluation"], *((ITEMS,) if through_the_door else ())]))
         self.remember(inject=inject, project=project, base=self.git("rev-parse", "HEAD"))
-        return {"convoy": CONVOY, "ticket": TICKET, "repo": str(self.root), "environment": self.state_environment()}
+        where = {"repo": str(self.root), "environment": self.state_environment()}
+        # The publication door numbers the convoy and the ticket: `publish` names them.
+        return where if through_the_door else {"convoy": CONVOY, "ticket": TICKET, **where}
+
+    def publish_through_the_door(self, base: str) -> dict:
+        """`story-not-observed`: what a Planning Run leaves -- an approved
+        Spec with two user stories, an approved Ticket Graph Draft whose one
+        slice covers both, its favorable graph review -- then the real
+        publication door, which writes the convoy, marks it and opens the
+        integration branch of the Spec."""
+        def digest(text: str) -> str:
+            return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+        def favorable(checks: list[str]) -> dict:
+            return {"checks": {name: {"state": "favorable"} for name in checks}}
+
+        descriptor = json.loads((ROOT / self.fixture / "descriptor.json").read_text())
+        spec = (
+            "Spec synthétique de la Fixture City (T26, af-vwcflt). Données de test seulement.\n\n"
+            "## Problem Statement\n\nUn visiteur ne voit pas le jeu de données servi, un intégrateur ne peut pas le relire.\n\n"
+            "## Solution\n\nUne page d'accueil qui affiche le jeu de données, et ses éléments en JSON.\n\n"
+            "## User Stories\n\n"
+            "1. As a visiteur, I want voir l'état et les éléments du jeu de données sur la page d'accueil, "
+            "so that je sache ce qui est servi. [interface]\n"
+            "2. As an intégrateur, I want la liste des éléments en JSON à l'adresse /items, "
+            "so that je puisse la relire par programme.\n\n"
+            f"## Validated Prototype\n\n- branche : `main`\n- commit : `{base}`\n- chemin : `{self.fixture}/prototype`\n"
+            "- états : `empty`, `content`\n\n### Écran : accueil\n\n"
+            "| État | Statut | Détail |\n| --- | --- | --- |\n| vide | prototypé | empty |\n| contenu | prototypé | content |\n"
+            "| chargement | sans objet | la page est rendue en une seule réponse du serveur |\n"
+            "| erreur | non prototypé | |\n| contenu long | non prototypé | |\n| écran étroit | non prototypé | |\n"
+            "| thème sombre | sans objet | la fixture n'a qu'un thème clair |\n\n"
+            "## Implementation Decisions\n\nLa page d'accueil porte les ancres du Validated Prototype.\n\n"
+            "## Testing Decisions\n\nFixture City Oracle et ligne de commande des portes.\n\n"
+            "## Out of Scope\n\nTout le reste.\n")
+        draft = yaml.safe_dump({"flow_contract": "new-flow/v1", "tickets": [{
+            "id": WALKED_KEY, "kind": "vertical_slice", "title": "La page d'accueil affiche le jeu de données",
+            "blocked_by": [], "target_rigs": [RIG],
+            "what_it_delivers": "La page d'accueil du produit affiche l'état et les éléments du jeu de données servi.",
+            "demonstration_line": "Sur le produit lancé avec le jeu de données « content », la page d'accueil (GET /) "
+                                  "affiche les trois éléments « alpha », « beta » et « gamma ».",
+            "user_stories": [1, 2], "prototype_fold": True,
+            "acceptance_criteria": [{
+                "entry_point": "GET / sur le produit lancé avec le jeu de données « content »",
+                "observable": "la liste contient trois lignes, libellées « alpha », « beta », « gamma »",
+                "false_if": "une ligne manque, ou la liste est absente de la page"}]}]},
+            allow_unicode=True, sort_keys=False)
+        self.tracker.write_text(json.dumps({"next_id": 1, "sessions": [], "beads": {
+            DRAFT: {"id": DRAFT, "title": "Draft", "description": draft, "status": "open", "labels": [], "metadata": {
+                "spec_id": SPEC, "display_title": "Fixture City : le jeu de données servi", "language": "fr",
+                "approved_by": "benjamin", "approved_evidence": "« j'approuve le graphe » (Benjamin, fixture)",
+                "approved_digest": digest(draft)}},
+            SPEC: {"id": SPEC, "title": "Spec de la fixture", "description": spec, "status": "open", "labels": [],
+                   "metadata": {"spec_state": "APPROVED_SPEC", "approved_digest": digest(spec),
+                                "gc.project_id": descriptor["project_id"], "planning_run_target": "F01"}}}}))
+        # The graph review reads its reviewer role in settings of its own.
+        factory = self.workspace / "graph-review-factory"
+        (factory / "config").mkdir(parents=True)
+        (factory / "config" / "delivery-roles.json").write_text(
+            json.dumps({"roles": {"reviewer": {"agent": "delivery-reviewer"}}}))
+        (factory / "city.toml").write_text('[providers.reviewer-profile]\nargs_append = ["--model", "modele-relecteur"]\n')
+        reviewing = {"FACTORY_ROOT": str(factory), "DELIVERY_ROLE_READ_ONLY": "1",
+                     "GRAPH_REVIEW_PROVIDER_FAILOVER_BIN": str(REVIEW_FAILOVER)}
+        self.run(GRAPH_REVIEW, "request", DRAFT, "--author-model", "modele-auteur", **reviewing)
+        brief = json.loads(self.run(GRAPH_REVIEW, "brief", DRAFT, **reviewing).stdout)
+        verdict = self.workspace / "graph-verdict.json"
+        verdict.write_text(json.dumps({
+            "digest": brief["digest"], "graph": favorable(brief["graph_checks"]),
+            "tickets": {ticket["id"]: favorable(ticket["checks"]) for ticket in brief["tickets"]}}))
+        self.run(GRAPH_REVIEW, "record", DRAFT, "--verdict-file", verdict, **reviewing)
+        published = json.loads(self.run(
+            PUBLISHER, "bd-publish", DRAFT, "--project", descriptor["project_id"], "--repo-root", self.root).stdout)
+        memo = self.remember(convoy=published["ids"]["_convoy"], ticket=published["ids"][WALKED_KEY],
+                             integration=published["integration"]["branch"])
+        return {"published": True, "convoy": memo["convoy"], "ticket": memo["ticket"]}
 
     def publish(self) -> dict:
         base = json.loads(self.memo.read_text())["base"]
+        if json.loads(self.memo.read_text())["inject"] == "story-not-observed":
+            return self.publish_through_the_door(base)
         interface = self.project["interface"]
         prototype = (
             f"## Validated Prototype\n\n- branche : main\n- commit : {base}\n- chemin : {self.fixture}/prototype\n"
@@ -287,9 +445,9 @@ class City:
                     "metadata": {"gc.ticket_kind": "prefactoring"}, "blocks": blocks}
             beads[CONVOY]["tracks"] = [TICKET, SICK, BEHIND]
         self.tracker.write_text(json.dumps({"beads": beads, "sessions": []}))
-        self.state("mark", CONVOY, "--demonstration-line", f"{TICKET}={self.project['line']}",
+        self.state("mark", self.convoy, "--demonstration-line", f"{TICKET}={self.project['line']}",
                    "--user-stories", f"{TICKET}=1", *(("--prototype-fold", TICKET) if interface else ()))
-        self.run(BIN / "spec-integration", "open", CONVOY, "--repo", self.root, "--protected", "main")
+        self.run(BIN / "spec-integration", "open", self.convoy, "--repo", self.root, "--protected", "main")
         return {"published": True}
 
     # --- the events ------------------------------------------------------------------
@@ -297,16 +455,18 @@ class City:
     def order_pass(self) -> str:
         """One pass of the Factory's order on the convoy. A convoy the pass
         stops (exit 3) is an outcome the oracle reads, not a driver failure."""
-        proc = self.run(BIN / "convoy-advance", CONVOY, "--stopped-ok", check=False)
+        proc = self.run(BIN / "convoy-advance", self.convoy, "--stopped-ok", check=False)
         if proc.returncode not in (0, 3):
             raise SystemExit(f"delivery-driver: convoy-advance failed ({proc.returncode}): {proc.stdout[-800:]}{proc.stderr[-300:]}")
         return "order-pass"
 
-    def commit(self, files: dict[str, str], message: str) -> str:
-        if self.branch_exists():
-            self.git("checkout", "-q", BRANCH)
+    def commit(self, branch: str, files: dict[str, str], message: str) -> str:
+        """One commit of an author on the branch of its ticket, opened at
+        the tip of the integration branch."""
+        if self.branch_exists(branch):
+            self.git("checkout", "-q", branch)
         else:
-            self.git("checkout", "-q", "-b", BRANCH, INTEGRATION)
+            self.git("checkout", "-q", "-b", branch, json.loads(self.memo.read_text()).get("integration", INTEGRATION))
         for path, content in files.items():
             target = self.root / path
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -317,25 +477,39 @@ class City:
         self.git("checkout", "-q", "--detach", "main")
         return tip
 
-    def branch_exists(self) -> bool:
-        return self.run("git", "-C", self.root, "rev-parse", "-q", "--verify", f"refs/heads/{BRANCH}",
+    def branch_exists(self, branch: str) -> bool:
+        return self.run("git", "-C", self.root, "rev-parse", "-q", "--verify", f"refs/heads/{branch}",
                         check=False).returncode == 0
 
     def author(self, shown: dict, memo: dict) -> str:
-        """What the author session leaves, one step of its TDD per event."""
-        env, base, tdd = self.env(), memo["base"], shown.get("tdd") or {}
+        """What the author session of the ticket at work leaves, one step
+        of its TDD per event. The author of a repair writes what the repair
+        restores: the product serves GET /items."""
+        ticket, repair = shown["id"], shown["id"] != self.walked
+        env, branch, tdd = self.env(), f"ticket/{shown['id']}", shown.get("tdd") or {}
         if not shown.get("branch"):
-            self.state("set-branch", CONVOY, TICKET, "--branch", BRANCH)
-            self.run(FAKE_GC, "bd", "update", TICKET, "--status", "in_progress")
-            name, content = self.project["criterion_test"]
-            red = self.commit({f"{self.fixture}/tests/{name}": content}, "tests de critère")
-            ticket_proofs.prove_red(env, self.root, CONVOY, TICKET, red, base)
+            # A repair starts from what the tickets before it merged.
+            base = self.git("rev-parse", memo.get("integration", INTEGRATION)) if repair else memo["base"]
+            self.remember(bases={**memo.get("bases", {}), ticket: base})
+            self.state("set-branch", self.convoy, ticket, "--branch", branch)
+            self.run(FAKE_GC, "bd", "update", ticket, "--status", "in_progress")
+            name, content = ITEMS_TEST if repair else self.project["criterion_test"]
+            red = self.commit(branch, {f"{self.fixture}/tests/{name}": content}, "tests de critère")
+            ticket_proofs.prove_red(env, self.root, self.convoy, ticket, red, base)
             return "session:red"
         if not tdd.get("freeze"):
-            ticket_proofs.prove_freeze(env, self.root, CONVOY, TICKET)
+            ticket_proofs.prove_freeze(env, self.root, self.convoy, ticket)
             return "session:freeze"
-        tip = self.commit({"docs/fixture-ticket.md": "la tranche du ticket\n"}, "travail du ticket")
-        ticket_proofs.finish(env, self.root, CONVOY, TICKET, tip, base, BRANCH)
+        if repair:
+            app = f"{self.fixture}/app.py"
+            served = self.git("show", f"{branch}:{app}") + "\n"
+            if ITEMS_BEFORE not in served:
+                raise SystemExit(f"delivery-driver: {app} no longer routes GET / the way the repair extends it")
+            files = {app: served.replace(ITEMS_BEFORE, ITEMS_ROUTE + ITEMS_BEFORE, 1)}
+        else:
+            files = {"docs/fixture-ticket.md": "la tranche du ticket\n"}
+        tip = self.commit(branch, files, "travail du ticket")
+        ticket_proofs.finish(env, self.root, self.convoy, ticket, tip, memo["bases"][ticket], branch)
         return "session:code"
 
     def failed_session(self, memo: dict) -> str | None:
@@ -348,7 +522,7 @@ class City:
         entries = (sick.get("resume") or {}).get("entries") or []
         if failures and (len(entries) < failures or not entries[-1]["launches"]):
             return None  # the order has not sent the resume of the failure before yet
-        self.state("set-session", CONVOY, SICK, "--session", f"auteur-{failures + 1}")
+        self.state("set-session", self.convoy, SICK, "--session", f"auteur-{failures + 1}")
         if entries:
             self.run(FAKE_GC, "bd", "close", entries[-1]["launches"][-1]["bead"], "--reason", "session terminée sans sortie")
         self.remember(failures=failures + 1)
@@ -357,7 +531,7 @@ class City:
     def advance(self) -> dict:
         memo = json.loads(self.memo.read_text())
         before = self.tracker.read_bytes()
-        shown = self.ticket()
+        shown = self.at_work()
         gates, finished = shown.get("gates") or {}, (shown.get("exit") or {}).get("exit") == "finished"
         failed = self.failed_session(memo) if memo["inject"] == "three-failures" else None
         if failed:
@@ -408,6 +582,9 @@ def main() -> int:
         if args.project not in PROJECTS:
             raise SystemExit(f"delivery-driver: unknown project of the fixture: {args.project} "
                              f"(known: {', '.join(PROJECTS)})")
+        if args.inject == "story-not-observed" and args.project != DEFAULT_PROJECT:
+            raise SystemExit(f"delivery-driver: --inject story-not-observed is played on {DEFAULT_PROJECT} only: "
+                             f"the story it leaves unserved is one {args.project} already serves")
         answer = city.prepare(args.inject, args.project)
     elif args.command == "publish":
         answer = city.publish()
