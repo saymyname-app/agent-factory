@@ -1084,6 +1084,114 @@ class SpecIntegrationTest(unittest.TestCase):
         self.assertIn("parqué", answer["waiting"][0]["reason"])
         self.assertIsNone(self.shown(T2)["merge"])
 
+    # --- T23: the one tip of the end-of-Spec gate (take-up) ---------------------
+
+    def take_up(self, *extra, convoy=CONVOY):
+        return self.run_cmd(TOOL, "take-up", convoy, "--repo", self.repo, "--profile", self.profile, *extra)
+
+    def taken_up(self, *extra, expect=0):
+        proc = self.take_up(*extra)
+        self.assertEqual(expect, proc.returncode, proc.stdout + proc.stderr)
+        return json.loads(proc.stdout)
+
+    def counters(self):
+        return self.show()["convoy"]["counters"]
+
+    def test_take_up_runs_the_regression_command_on_the_tip_even_with_nothing_to_take_up(self):
+        self.opened()
+        before = self.snapshot()
+
+        answer = self.taken_up()
+
+        self.assertEqual((True, INTEGRATION, PROTECTED), (answer["ok"], answer["branch"], answer["protected"]))
+        self.assertEqual((self.base, self.base, None), (answer["integration"], answer["protected_tip"], answer["takeover"]))
+        tests = answer["tests"]
+        self.assertIn("regression.py", tests["command"])
+        self.assertEqual((0, self.base), (tests["exit_code"], tests["commit"]))
+        # Nothing to push, nothing to record.
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(1, len(self.worktrees()))
+
+    def test_take_up_pushes_the_takeover_of_the_protected_branch_once_its_tests_are_green(self):
+        self.opened()
+        ahead = self.advance_protected({"docs/ailleurs.md": "fusionné ailleurs\n"})
+
+        answer = self.taken_up()
+
+        tip = answer["integration"]
+        self.assertEqual(tip, self.remote_tip())
+        self.assertEqual([self.base, ahead], self.parents(tip))
+        self.assertEqual((ahead, tip), (answer["protected_tip"], answer["takeover"]["commit"]))
+        self.assertEqual(tip, answer["tests"]["commit"])
+        self.assertEqual(ahead, self.remote_tip(PROTECTED))
+        self.assertIsNone(self.red())
+        self.assertEqual({"end_rounds": 0}, self.counters())
+
+    def test_a_red_take_up_is_not_pushed_and_records_the_red_of_the_integration_branch(self):
+        self.opened()
+        ahead = self.advance_protected({DATASET: self.BROKEN})
+        refs = self.remote("for-each-ref", "--format=%(refname) %(objectname)")
+
+        answer = self.taken_up(expect=EXIT_REFUSED)
+
+        self.assertFalse(answer["ok"])
+        red = self.red()
+        self.assertEqual((self.base, ahead), (red["integration"], red["protected"]))
+        self.assertIn("regression.py", red["control"])
+        self.assertEqual(red["control"], answer["red"]["control"])
+        self.assertIn(red["control"], answer["error"])
+        self.assertEqual(refs, self.remote("for-each-ref", "--format=%(refname) %(objectname)"))
+        # Asked without --end-round: the red counts no round of the end of the Spec.
+        self.assertEqual({"end_rounds": 0}, self.counters())
+        self.assertEqual(1, len(self.worktrees()))
+
+    def test_a_red_take_up_of_the_end_of_the_spec_counts_one_round_once(self):
+        self.opened()
+        self.advance_protected({DATASET: self.BROKEN})
+
+        self.taken_up("--end-round", expect=EXIT_REFUSED)
+
+        self.assertEqual({"end_rounds": 1}, self.counters())
+        self.assertIn("regression.py", self.red()["control"])
+
+        # Asked again under that red: refused before any control, nothing counted.
+        answer = self.assert_refused_and_nothing_written(
+            lambda: self.take_up("--end-round"), "branche d'intégration rouge", self.red()["control"])
+        self.assertEqual(self.red()["control"], answer["red"]["control"])
+        self.assertEqual({"end_rounds": 1}, self.counters())
+
+    def test_a_take_up_in_conflict_pushes_and_records_nothing(self):
+        self.opened()
+        self.finished(T1, {README: "Le produit, vu par la tranche 1.\n"})
+        self.merged()
+        self.advance_protected({README: "Le produit, vu d'ailleurs.\n"})
+
+        self.assert_refused_and_nothing_written(lambda: self.take_up("--end-round"), "branche protégée", "conflit")
+
+        self.assertIsNone(self.red())
+        self.assertEqual({"end_rounds": 0}, self.counters())
+
+    def test_take_up_refuses_outright_what_merge_refuses(self):
+        # No integration branch yet.
+        self.assert_refused_and_nothing_written(self.take_up, "branche d'intégration")
+        self.opened()
+        self.assert_refused_and_nothing_written(lambda: self.take_up("--timeout", "bientôt"), "--timeout")
+        self.assert_refused_and_nothing_written(lambda: self.take_up("--timeout", "0"), "--timeout")
+        descriptor = json.loads(self.profile.read_text())
+        del descriptor["launch"]["regression_command"]
+        self.profile.write_text(json.dumps(descriptor))
+        self.assert_refused_and_nothing_written(self.take_up, "regression_command")
+
+    def test_take_up_stops_on_a_state_without_rule_and_leaves_an_unmarked_convoy_alone(self):
+        self.opened()
+        self.edit(T2, status="closed")
+        self.assert_refused_and_nothing_written(self.take_up, "état sans règle", status=EXIT_UNRULED)
+
+        before = self.snapshot()
+        proc = self.take_up(convoy=PLAIN_CONVOY)
+        self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(before, self.snapshot())
+
 
 if __name__ == "__main__":
     unittest.main()

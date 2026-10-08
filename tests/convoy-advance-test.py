@@ -1993,6 +1993,138 @@ class ConvoyAdvanceTest(unittest.TestCase):
                 self.assertEqual(before, self.tracker.read_bytes())
                 self.assertEqual([], self.slung())
 
+    # --- the end of the Spec: the gate is run by the pass (T23, af-s5uysn) ---------
+
+    def spec_end_of(self, answer, convoy=CONVOY):
+        return next(c for c in answer["convoys"] if c["id"] == convoy).get("spec_end")
+
+    def convoy_shown(self):
+        return json.loads(self.run_ok(STATE, "show", CONVOY, "--repo", self.root).stdout)["convoy"]
+
+    def every_ticket_closed(self, but=()):
+        """The convoy with its integration branch, its tickets closed by the
+        ticket-end gate (but those named); returns the tip of that branch."""
+        self.integrated()
+        self.env["SPEC_END_LOCK_DIR"] = str(self.tmp / "locks")
+        self.env["SPEC_END_WORK_DIR"] = str(self.tmp / "gate-work")
+        for ticket_id in (T1, T2, T3):
+            if ticket_id not in but:
+                self.close_through_gate(ticket_id)
+        self.write_log.write_text("")
+        return self.git("rev-parse", self.INTEGRATION)
+
+    def regression(self, command):
+        path = self.root / "config" / "project-descriptors" / "fx.json"
+        descriptor = json.loads(path.read_text())
+        descriptor["launch"]["regression_command"] = command
+        path.write_text(json.dumps(descriptor))
+
+    def test_a_pass_runs_the_end_of_spec_gate_once_every_ticket_of_the_convoy_is_closed(self):
+        tip = self.every_ticket_closed()
+
+        answer = self.advance(CONVOY)
+
+        ending = self.spec_end_of(answer)
+        self.assertEqual({"registry": "pass", "tests": "pass", "fidelity": "pass"}, ending["verdicts"])
+        self.assertEqual(("spec-end/v1", tip, True, []),
+                         (ending["version"], ending["commit"], ending["replayed"], ending["missing"]))
+        self.assertTrue(answer["ok"])
+        record = self.convoy_shown()["spec_end"]
+        self.assertEqual((tip, "spec-end/v1"), (record["commit"], record["version"]))
+        self.assertEqual({"end_rounds": 0}, self.convoy_shown()["counters"])
+        self.assertEqual([], self.escalation_list())
+
+        # The next pass, on the same tip: nothing is replayed, nothing is written.
+        before = self.tracker.read_bytes()
+        again = self.spec_end_of(self.advance(CONVOY))
+        self.assertEqual((tip, False), (again["commit"], again["replayed"]))
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_a_pass_does_not_run_the_end_of_spec_gate_while_a_ticket_is_open(self):
+        self.every_ticket_closed(but=(T3,))
+
+        answer = self.advance(CONVOY)
+
+        self.assertIsNone(self.spec_end_of(answer))
+        self.assertEqual([T3], self.started(answer))
+        self.assertIsNone(self.convoy_shown()["spec_end"])
+
+    def test_a_pass_runs_no_end_of_spec_gate_on_a_convoy_without_the_mark_or_without_integration_branch(self):
+        # Every ticket closed, and no integration branch: a convoy the flow has not integrated.
+        for ticket_id in (T1, T2, T3):
+            self.close_through_gate(ticket_id)
+
+        self.assertIsNone(self.spec_end_of(self.advance(CONVOY)))
+        self.assertNotIn("spec_end", json.dumps(self.advance(PLAIN, expect=EXIT_NOT_NEW_FLOW)))
+
+    def test_a_registry_that_refuses_is_an_outcome_of_the_pass_and_launches_nothing_else(self):
+        tip = self.every_ticket_closed()
+        self.run_ok(STATE, "raise-planning-exception", CONVOY, T1, "--kind", "semantic",
+                    "--summary", "La Spec fixe un tri par date, le produit trie par nom.")
+        # Red tests would be recorded: the registry stops the gate before them.
+        self.regression("false")
+        before = self.tracker.read_bytes()
+
+        answer = self.advance(CONVOY)
+
+        ending = self.spec_end_of(answer)
+        self.assertEqual({"registry": "fail", "tests": "not_run", "fidelity": "not_run"}, ending["verdicts"])
+        self.assertEqual([1], ending["missing"])
+        self.assertEqual([("planning_exception", T1)], [(entry["kind"], entry["ticket"]) for entry in ending["refused"]])
+        self.assertIn("Planning Exception ouverte", ending["reason"])
+        self.assertIn(T1, ending["reason"])
+        self.assertNotIn("error", ending)
+        self.assertTrue(answer["ok"])
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertEqual(tip, self.git("rev-parse", self.INTEGRATION))
+
+    def test_red_tests_at_the_end_of_the_spec_are_an_outcome_of_the_pass_and_count_one_round(self):
+        tip = self.every_ticket_closed()
+        self.regression("false")
+
+        answer = self.advance(CONVOY)
+
+        ending = self.spec_end_of(answer)
+        self.assertEqual({"registry": "pass", "tests": "fail", "fidelity": "not_run"}, ending["verdicts"])
+        self.assertEqual(([2], 1), (ending["missing"], ending["end_rounds"]))
+        self.assertIn("condition 2", ending["reason"])
+        self.assertTrue(answer["ok"])
+        shown = self.convoy_shown()
+        self.assertEqual(ending["red"]["control"], shown["integration_red"]["control"])
+        self.assertIn("commande de régression (false)", shown["integration_red"]["control"])
+        self.assertEqual(({"end_rounds": 1}, None), (shown["counters"], shown["spec_end"]))
+        self.assertEqual(tip, self.git("rev-parse", self.INTEGRATION))
+
+    def test_a_red_integration_branch_gets_no_end_of_spec_verdict(self):
+        tip = self.every_ticket_closed()
+        self.red_recorded(tip)
+
+        answer = self.advance(CONVOY)
+
+        self.assertIsNone(self.spec_end_of(answer))
+        self.assertEqual(self.RED_CONTROL, self.stop_of(answer)["control"])
+        self.assertEqual(({"end_rounds": 0}, None), (self.convoy_shown()["counters"], self.convoy_shown()["spec_end"]))
+
+    def test_an_end_of_spec_gate_that_cannot_run_fails_the_pass_and_says_why(self):
+        self.every_ticket_closed()
+        shutil.rmtree(self.root / "config" / "project-descriptors")
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED)
+
+        self.assertFalse(answer["ok"])
+        self.assertIn("profil", self.spec_end_of(answer)["error"])
+        self.assertIsNone(self.convoy_shown()["spec_end"])
+
+    def test_the_end_of_spec_gate_run_from_an_agent_session_renders_no_verdict(self):
+        self.every_ticket_closed()
+        before = self.tracker.read_bytes()
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED, env={**self.env, "GC_SESSION_NAME": "delivery-author-fx"})
+
+        self.assertFalse(answer["ok"])
+        self.assertNotIn("verdicts", self.spec_end_of(answer) or {})
+        self.assertEqual(before, self.tracker.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main()
