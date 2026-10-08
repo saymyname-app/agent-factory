@@ -963,7 +963,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
 
     def test_a_mechanical_red_and_a_finding_of_the_end_review_share_the_two_rounds_of_the_end(self):
         self.delivered()
-        (self.tmp / "end-review-plan.json").write_text(json.dumps([{"findings": [self.END_FINDING]}], ensure_ascii=False))
+        (self.tmp / "end-review-plan.json").write_text(json.dumps([{"findings": [self.END_FINDING]}] * 2, ensure_ascii=False))
 
         # Round 1: the tests are red on the tip, found by the gate of the pass.
         self.assertEqual("fail", self.one_pass()["spec_end"]["verdicts"]["tests"])
@@ -978,7 +978,9 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
         # Round 2: on the new tip, mechanical verdicts and Outcome Evaluation green, the end review finds a Blocking Finding.
         tip = self.git("rev-parse", self.integration)
         self.evaluation_at(tip)
-        self.assertEqual("unfavorable", self.one_pass()["end_review"]["outcome"])
+        launched = self.one_pass()["end_review"]
+        self.assertEqual(("launched", tip), (launched["action"], launched["commit"]))
+        self.assertEqual("unfavorable", self.end_review()["state"]["outcome"])
         counted = self.shown()["convoy"]
         self.assertEqual((2, tip, "end_review", None),
                          (counted["counters"]["end_rounds"], counted["end_round"]["commit"], counted["end_round"]["source"],
@@ -1004,6 +1006,30 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
         again = self.one_pass()
         self.assertNotIn("repairs", again.get("end_review", {}))
         self.assertEqual(tracked, sorted(self.tracked()))
+
+
+    def test_a_mechanical_red_once_the_rounds_are_consumed_gets_no_repair_and_the_request_is_raised_under_the_red(self):
+        self.delivered()
+        self.run_ok(STATE, "set-counter", self.convoy, "--counter", "end_rounds", "--value", "2")
+        tracked = sorted(self.tracked())
+
+        # The gate of the pass finds the tests red on the tip: a third round would start.
+        answer = self.one_pass()
+
+        self.assertEqual("fail", answer["spec_end"]["verdicts"]["tests"])
+        shown = self.shown()["convoy"]
+        self.assertEqual(("end_rounds_exhausted", self.base, "regression", 2),
+                         tuple(shown["end_stop"][name] for name in ("reason", "commit", "source", "rounds")))
+        # The red stands, and stops the convoy; it gets no repair, in this pass or a later one.
+        self.assertEqual(self.base, shown["integration_red"]["commit"])
+        self.assertNotIn("repair", shown["integration_red"])
+        self.assert_non_conforme_request(answer, "end_rounds_exhausted")
+        for _ in range(2):
+            again = self.one_pass()
+            self.assertNotIn("repair", again)
+            self.assertNotIn("non_conforme", again)
+            self.assertEqual(([], tracked, []), (again["started"], sorted(self.tracked()), self.slung()))
+        self.assertEqual((2, 1), (self.end_rounds(), len(self.requests())))
 
 
 if __name__ == "__main__":

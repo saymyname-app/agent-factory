@@ -132,6 +132,53 @@ out=$(door list) || fail "list should succeed"
 grep -Fq "graphe du chantier T09" <<<"$out" \
   || { echo "$out" >&2; fail "list did not display the complete request as before"; }
 
+# --- lien: the optional link of the dossier a request carries (T26) ---------
+# A request may carry the link of the dossier Benjamin reads to decide (the
+# « non conforme » request of a convoy carries its Evidence Pack). One line,
+# longer than 140 characters if the path is; stored, mailed, and printed by
+# `list` on the request's own line.
+reset_beads
+seed af-blocker '{"id":"af-blocker","status":"open","metadata":{},"notes":"","labels":[]}'
+TESTS_RUN=$((TESTS_RUN + 1))
+long_link="/tmp/$(printf 'dossier-%.0s' {1..30})/evidence-pack/index.html"
+(( ${#long_link} > 140 )) || fail "the test link should be longer than a field's 140 characters"
+linked_request=$(jq --arg lien "$long_link" '.lien = $lien' <<<"$COMPLETE_REQUEST")
+door benjamin af-blocker "$linked_request" >/dev/null || fail "a request with a link should be accepted"
+[[ $(jq -r '.metadata["gc.escalation_lien"]' <<<"$(bead af-blocker)") == "$long_link" ]] \
+  || fail "benjamin did not write the link of the dossier"
+grep -Fq "DOSSIER: $long_link" "$TEST_TMP/calls.log" || fail "the escalation mail does not carry the link of the dossier"
+out=$(door list) || fail "list should succeed"
+[[ $(grep -c "af-blocker" <<<"$out") == 1 ]] || { echo "$out" >&2; fail "list must print one line per request"; }
+grep -F "af-blocker" <<<"$out" | grep -Fq "en attente d'approbation — dossier : $long_link" \
+  || { echo "$out" >&2; fail "list did not print the link on the request's line"; }
+
+TESTS_RUN=$((TESTS_RUN + 1))
+before=$(bead af-blocker)
+for bad in '"deux\nlignes"' '""' '12' '["/x"]'; do
+  refused=$(jq --argjson lien "$bad" '.lien = $lien' <<<"$COMPLETE_REQUEST")
+  if door benjamin af-blocker "$refused" >/dev/null 2>&1; then
+    fail "benjamin must refuse a link that is not one non-empty line ($bad)"
+  fi
+  [[ $(bead af-blocker) == "$before" ]] || fail "a refused link ($bad) wrote onto the bead"
+done
+
+# A later request with no link, on the same bead, does not keep the old one.
+TESTS_RUN=$((TESTS_RUN + 1))
+door benjamin af-blocker "$COMPLETE_REQUEST" >/dev/null || fail "a request without a link should be accepted"
+[[ $(jq -r '.metadata["gc.escalation_lien"]' <<<"$(bead af-blocker)") == none ]] \
+  || fail "a request without a link kept the link of the request before"
+out=$(door list) || fail "list should succeed"
+grep -Fq "dossier :" <<<"$out" && { echo "$out" >&2; fail "list printed the link of a request that has none"; }
+
+# A bead that never had a link gets no link field at all.
+reset_beads
+seed af-blocker '{"id":"af-blocker","status":"open","metadata":{},"notes":"","labels":[]}'
+TESTS_RUN=$((TESTS_RUN + 1))
+door benjamin af-blocker "$COMPLETE_REQUEST" >/dev/null || fail "a complete request should be accepted"
+[[ $(jq -r '.metadata | has("gc.escalation_lien")' <<<"$(bead af-blocker)") == false ]] \
+  || fail "a request without a link wrote a link field on a bead that had none"
+grep -Fq "DOSSIER:" "$TEST_TMP/calls.log" && fail "the mail of a request without a link names a dossier"
+
 # --- repondre writes the chosen option, clears, and wakes the Mayor --------
 TESTS_RUN=$((TESTS_RUN + 1))
 : >"$TEST_TMP/calls.log"

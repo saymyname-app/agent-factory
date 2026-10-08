@@ -391,6 +391,12 @@ class Convoy:
         # An unreadable record is an anomaly as well.
         outcome = answer["convoy"].get("outcome_evaluation")
         self.outcome: dict[str, Any] | None = outcome if isinstance(outcome, dict) and "rounds" in outcome else None
+        # The rounds of the end are stopped (T26): no repair of the end is
+        # published any more. An unreadable record is an anomaly below.
+        stop = answer["convoy"].get("end_stop")
+        self.end_stop: dict[str, Any] | None = stop if isinstance(stop, dict) and "reason" in stop else None
+        review = answer["convoy"].get("end_review")
+        self.end_review_open = bool(isinstance(review, dict) and review.get("request"))
         grouped = answer["convoy"].get("grouped_request")
         self.grouped: dict[str, Any] | None = grouped if isinstance(grouped, dict) and "bead" in grouped else None
         self.unruled: list[dict[str, Any]] = [
@@ -510,9 +516,10 @@ class Convoy:
         yet (T24): the repair of each user story the last Outcome Evaluation
         did not observe, and the one of each finding « hors ticket » it
         classified « repaired ». Nothing while an evaluation is open: a
-        classification may still change, and a ticket more would outdate it."""
+        classification may still change, and a ticket more would outdate it.
+        Nothing once the rounds of the end are stopped (T26)."""
         outcome = self.outcome
-        if outcome is None or outcome.get("request"):
+        if outcome is None or outcome.get("request") or self.end_stop:
             return []
         last = outcome["rounds"][-1] if outcome["rounds"] else {"repairs": []}
         due = [{"story": entry["story"], "draft": entry["draft"]} for entry in last["repairs"] if not entry.get("repair")]
@@ -1193,8 +1200,9 @@ def publish_repair(convoy: Convoy, repair: dict[str, Any], label: str, reason: s
 def settle_red(convoy: Convoy) -> dict[str, Any] | None:
     """Spec §8: one `repair` per red, created by code. None when the red
     already has its repair -- open, or closed and waiting for the merge
-    command to run the control again."""
-    if "repair" in convoy.red:
+    command to run the control again -- and when the rounds of the end are
+    stopped (T26): that red has no round left to be repaired in."""
+    if "repair" in convoy.red or convoy.end_stop:
         return None
     try:
         repair = publish_red_repair(convoy, convoy.red)
@@ -1336,7 +1344,7 @@ def settle_spec_end(convoy: Convoy, closing: dict[str, Any] | None) -> dict[str,
     if not isinstance(answer, dict):
         return {"error": f"refus : spec-end run {convoy.id} a rendu une réponse illisible"}
     kept = ("version", "commit", "protected", "replayed", "missing", "refused", "requests", "red", "end_rounds",
-            "error", "message", "unruled")
+            "end_stop", "delivered", "error", "message", "unruled")
     result = {name: answer[name] for name in kept if name in answer}
     if isinstance(answer.get("conditions"), list):
         result["verdicts"] = {str(entry.get("name")): entry.get("verdict") for entry in answer["conditions"]
@@ -1406,6 +1414,12 @@ def settle_end_review(convoy: Convoy) -> dict[str, Any] | None:
         return None
     due = answer.get("repairs_due")
     if isinstance(due, list) and due:
+        # What the review just recorded may have stopped the rounds of the
+        # end (T26): no repair then. None either while the Outcome Evaluation
+        # of the same tip is open: what it hands in may stop them.
+        convoy.load()
+        if convoy.end_stop or (convoy.outcome or {}).get("request"):
+            return result
         result["repairs"] = publish_end_review_repairs(convoy, due)
         if any("error" not in entry and "refused" not in entry for entry in result["repairs"]):
             convoy.load()
@@ -1432,6 +1446,71 @@ def settle_evidence_pack(convoy: Convoy, ending: dict[str, Any] | None) -> dict[
         return {"error": str(answer.get("error") or answer.get("message") or answer)}
     return {"action": "generated", **{name: answer[name] for name in ("commit", "digest", "page", "conforming") if name in answer},
             "inadmissible": len(answer.get("inadmissible") or [])}
+
+
+# --- the rounds of the end are stopped: the « non conforme » request (T26) -------
+
+END_STOP_CAUSES = {
+    "end_rounds_exhausted": "tours de réparation de fin de Spec épuisés",
+    "stories_not_reduced": "un tour de réparation n'a pas réduit les user stories non observées",
+    "story_refused_twice": "la même user story est refusée deux fois",
+}
+
+
+def non_conforme_request(convoy: Convoy, stop: dict[str, Any], page: str) -> dict[str, Any]:
+    """What the operator reads on the escalation door's list (Spec §11):
+    the convoy, why its rounds are stopped, and the link of its Evidence
+    Pack. Three issues; « accepté » is not one of them."""
+    cause = END_STOP_CAUSES.get(stop["reason"], stop["reason"])
+    return {
+        "quoi": one_line(f"Demande « non conforme » — convoi {convoy.id} : {cause}"),
+        "pourquoi": one_line(str(stop["detail"])),
+        "que_faire": [
+            {"option": "Relancer un tour de réparation",
+             "consequence": "Les réparations en attente sont publiées, puis toute la porte de fin de Spec est rejouée."},
+            {"option": "Retourner à la planification",
+             "consequence": "Le convoi reste arrêté ; la Spec ou son graphe sont repris par une Planning Exception."},
+            {"option": "Abandonner",
+             "consequence": "Rien n'est fusionné dans la branche protégée ; la branche d'intégration reste comme source."},
+        ],
+        "langue": operator_language(),
+        "bloquant": True,
+        "lien": page,
+    }
+
+
+def settle_non_conforme(convoy: Convoy) -> dict[str, Any] | None:
+    """Spec §8, §11: once the rounds of the end are stopped, code, and no
+    agent, generates the Evidence Pack of the refused tip -- its header says
+    « non conforme » -- and sends the « non conforme » request that carries
+    its link through bin/escalation-door, on the convoy's own bead. Once per
+    stop: None when there is no stop or its request already reached the
+    operator. It waits for an Outcome Evaluation or an end review still open
+    on the tip, so that the dossier holds what they hand in. A request that
+    could not be raised is a failure of the pass."""
+    try:
+        convoy.load()
+        stop = convoy.end_stop
+        if stop is None or "request" in stop:
+            return None
+        if (convoy.outcome or {}).get("request") or convoy.end_review_open:
+            return {"action": "pending", "reason": stop["reason"]}
+        pack = parsed(run([str(PACK_BIN), "generate", convoy.id, "--repo", str(convoy.repo)]),
+                      f"evidence-pack generate {convoy.id}")
+        if not isinstance(pack, dict) or not pack.get("ok"):
+            error = (pack.get("error") or pack.get("message") or pack) if isinstance(pack, dict) else pack
+            raise Refusal(f"evidence-pack generate {convoy.id} a échoué : {error}")
+        if pack.get("conforming"):
+            raise Refusal(f"l'Evidence Pack du convoi {convoy.id} est conforme alors que ses tours de fin sont arrêtés "
+                          f"({stop['reason']}) : la demande « non conforme » n'est pas envoyée")
+        request = json.dumps(non_conforme_request(convoy, stop, pack["page"]), ensure_ascii=False)
+        passed(run([str(ESCALATION_BIN), "benjamin", convoy.id, request]), "escalation-door benjamin")
+        state_write("end-stop-raised", convoy.id, "--bead", convoy.id)
+        convoy.load()
+    except (Refusal, NotNewFlow) as exc:
+        return {"error": f"refus : {exc}"}
+    return {"action": "raised", "reason": stop["reason"], "commit": pack["commit"], "page": pack["page"],
+            "digest": pack["digest"], "bead": convoy.id}
 
 
 # --- the pass ----------------------------------------------------------------
@@ -1771,6 +1850,11 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
             result["evidence_pack"] = pack
             if "error" not in pack:
                 result["spec_end"] = settle_spec_end(convoys[result["id"]], None) or ending
+        # The rounds of the end are stopped, whatever stopped them and even
+        # under a red: the « non conforme » request reaches the operator.
+        non_conforme = settle_non_conforme(convoys[result["id"]])
+        if non_conforme is not None:
+            result["non_conforme"] = non_conforme
 
     unruled = any("unruled" in result for result in results)
     # A ticket returned or refused by the merge is an outcome of the pass; a
@@ -1784,6 +1868,7 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         or any(key in result.get("spec_end", {}) for key in ("error", "message"))
         or "error" in result.get("end_review", {})
         or "error" in result.get("evidence_pack", {})
+        or "error" in result.get("non_conforme", {})
         or any("error" in entry for entry in result.get("end_review", {}).get("repairs", []))
         or any(key in result.get("integration", {}) for key in ("error", "message"))
         or any(key in result.get("test_review", {}) for key in ("error", "refused"))
