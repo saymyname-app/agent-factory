@@ -8,8 +8,9 @@ start. A convoy without the mark is not touched: the Mayor advances it as
 before.
 
     convoy-advance CONVOY        one pass on that convoy
-    convoy-advance --all         one pass on every open marked convoy
-    convoy-advance --check-only  exit 0 if an open marked convoy exists, else 1
+    convoy-advance --all         one pass on every open marked convoy, and on
+                                 those closed outside acceptance or abandon
+    convoy-advance --check-only  exit 0 if such a convoy exists, else 1
     --stopped-ok                 with CONVOY or --all: exit 0, not 3, for a
                                  stopped convoy whose incident is raised
 
@@ -83,6 +84,12 @@ and the reason. The incident is recorded on the convoy through
 bin/convoy-state, so the next passes on the same anomalies raise nothing
 more. Once the state is valid again the pass withdraws the incident, closes
 its bead and starts the ready tickets: no agent resumes the convoy.
+
+A marked convoy does not close by itself (T22, af-kn83no; Spec §9): it is
+closed only by code, on the operator's words. One found closed any other way
+(bin/convoy-state list, `closed_outside`) is such an "état sans règle": the
+pass walks it too, starts nothing in it and raises the same factory incident,
+withdrawn once the convoy is open again.
 
 Every answer is one JSON object on stdout. Exit status: 0 the pass is done
 (what it started is listed, possibly nothing); 1 refused or could not run,
@@ -207,11 +214,14 @@ def read_bead(bead_id: str) -> dict[str, Any]:
 
 
 def marked_convoys() -> list[str]:
+    """The open marked convoys, and those closed outside the acceptance and
+    abandon commands (T22): a pass starts nothing in these, it raises them."""
     proc = run([str(STATE_BIN), "list"])
     answer = parsed(proc, "convoy-state list")
-    if proc.returncode != 0 or not isinstance(answer.get("convoys"), list):
+    listed = [answer.get("convoys"), answer.get("closed_outside")]
+    if proc.returncode != 0 or not all(isinstance(ids, list) for ids in listed):
         raise Refusal(f"convoy-state list a échoué : {answer.get('error', proc.returncode)}")
-    return answer["convoys"]
+    return [*listed[0], *listed[1]]
 
 
 def ticket_rig(description: Any) -> str | None:
@@ -731,7 +741,7 @@ def settle_ticket_end(convoy: Convoy, merge: dict[str, Any] | None) -> dict[str,
 
 
 def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
-    """`targets` None: every open marked convoy."""
+    """`targets` None: every marked convoy that is open or was closed outside its commands."""
     with advance_lock():
         convoys = {convoy_id: Convoy(convoy_id) for convoy_id in targets or []}
         settings = load_settings()
@@ -810,8 +820,8 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("convoy", nargs="?")
-    parser.add_argument("--all", action="store_true", help="one pass on every open marked convoy")
-    parser.add_argument("--check-only", action="store_true", help="exit 0 if an open marked convoy exists, else 1")
+    parser.add_argument("--all", action="store_true", help="one pass on every open marked convoy, and on those closed outside acceptance or abandon")
+    parser.add_argument("--check-only", action="store_true", help="exit 0 if a marked convoy is open or was closed outside acceptance or abandon, else 1")
     parser.add_argument("--stopped-ok", action="store_true",
                         help="exit 0, not 3, for a stopped convoy whose incident is raised (what the order runs)")
     args = parser.parse_args(argv)

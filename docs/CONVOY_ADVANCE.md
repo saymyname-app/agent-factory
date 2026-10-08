@@ -13,8 +13,8 @@ Mayor advances such a convoy as before.
 
 ```bash
 ./bin/convoy-advance af-convoy      # one pass on that convoy
-./bin/convoy-advance --all          # one pass on every open marked convoy
-./bin/convoy-advance --check-only   # exit 0 if an open marked convoy exists, else 1
+./bin/convoy-advance --all          # one pass on every open marked convoy, and on those closed outside acceptance or abandon
+./bin/convoy-advance --check-only   # exit 0 if such a convoy exists, else 1
 ./bin/convoy-advance --all --stopped-ok   # what the order runs (see « État sans règle »)
 ```
 
@@ -24,7 +24,7 @@ observed on Gas City 1.4.1: a `condition` order is paced by its check, not
 by its `interval`) and runs `--all --stopped-ok` only while `--check-only`
 passes. The
 order costs one tracker read and runs nothing while no marked convoy is
-open.
+open or was closed outside its commands.
 
 ## What one pass does
 
@@ -260,6 +260,27 @@ command has a rule for (`bin/convoy-state show <convoy>` lists what is
 wrong). It never consists in advancing or closing the convoy's tickets by
 hand.
 
+### A marked convoy does not close by itself (T22)
+
+Spec §9, user story 55: a marked convoy stays open when all its tickets are
+closed; it closes only by code, on the operator's words (accepted or
+abandoned: T29, T30). Three things hold that:
+
+- `bin/convoy-state mark` puts the convoy under Gas City's manual lifecycle
+  (the label `owned`): `gc convoy check`, which
+  `orders/convoy-parent-sweep.toml` runs on every closing, leaves it open.
+  A convoy without the mark is closed by that sweep as before.
+- `bin/planning-artifacts-close` closes the Spec and the Ticket Graph Draft
+  of a closed convoy; it leaves alone those of a marked convoy that
+  `bin/convoy-state list` names under `closed_outside`.
+- a marked convoy found closed anyway (by hand, or by a sweep after the
+  label was removed) is an « état sans règle » of the convoy. `--all` walks
+  it with the open ones and `--check-only` passes on it, so the order runs:
+  the pass starts nothing in it and raises the factory incident above,
+  `Incident d'usine : convoi <id> — convoi fermé hors commande …`, in
+  `bin/escalation-door list`. Reopening the convoy is the repair: the next
+  pass withdraws the incident.
+
 `--stopped-ok` makes the pass exit 0 instead of 3 for a stopped convoy whose
 incident is raised. The order runs it that way: without it the order would
 fail on every tick while a convoy is stopped, and `bin/on-order-failed`
@@ -315,6 +336,17 @@ prove nothing was written. `tests/convoy-advance-isolated-city-test.sh`
 supervisor and no Mayor, the city's own order starts a marked convoy's three
 tickets in dependency order under N, the third only after the trial closed
 the two others in the tracker.
+
+T22: the same file covers a marked convoy closed outside its commands
+(raised once on the escalation door's list, withdrawn once reopened, the
+order's check passing on it, an unmarked closed convoy left alone);
+`tests/planning-artifacts-close-test.sh` covers its Spec and Draft left
+open. `tests/convoy-manual-lifecycle-isolated-city-test.sh` (local-only) is
+the adoption trial: in a disposable city with its own supervisor, no Mayor
+and no agent, the city's own `convoy-parent-sweep` order closes an unmarked
+convoy whose tickets are closed and leaves the marked one open with its
+Spec and Draft; closed by hand, the marked convoy is raised by the city's
+own `convoy-advance` order.
 
 T18: the same file covers the pass that merges, through the real
 `bin/spec-integration` on a throwaway repository: one finished ticket merged

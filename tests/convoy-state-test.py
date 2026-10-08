@@ -198,6 +198,75 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual({}, t2["gates"])
         self.assertEqual([], t2["unruled"])
 
+    # --- T22: a marked convoy does not close by itself ---------------------------
+
+    def test_mark_puts_the_convoy_and_not_its_tickets_under_manual_lifecycle(self):
+        """`owned` is what Gas City's convoy sweep (`gc convoy check`) reads
+        to leave a convoy open once all its tickets are closed."""
+        self.ok("mark", CONVOY)
+
+        beads = self.tracker_state()["beads"]
+        self.assertEqual(["owned"], beads[CONVOY].get("labels"))
+        self.assertNotIn("labels", beads[T1])
+        self.assertNotIn("labels", beads[T2])
+
+    def test_marking_again_restores_the_manual_lifecycle_of_a_convoy_that_lost_it(self):
+        self.ok("mark", CONVOY)
+        state = self.tracker_state()
+        state["beads"][CONVOY]["labels"] = ["autre"]
+        self.tracker.write_text(json.dumps(state))
+
+        self.ok("mark", CONVOY)
+
+        self.assertEqual(["autre", "owned"], self.tracker_state()["beads"][CONVOY]["labels"])
+
+    def test_marking_again_writes_nothing_on_a_convoy_already_under_manual_lifecycle(self):
+        self.ok("mark", CONVOY)
+        self.write_log.write_text("")
+
+        self.assertEqual([], self.ok("mark", CONVOY)["marked"])
+        self.assertEqual("", self.write_log.read_text())
+
+    def test_a_marked_convoy_closed_outside_acceptance_or_abandon_is_unruled(self):
+        self.ok("mark", CONVOY)
+        state = self.tracker_state()
+        state["beads"][CONVOY].update(status="closed", close_reason="convoy autoclose: all children closed")
+        self.tracker.write_text(json.dumps(state))
+
+        shown = self.show(expect=EXIT_UNRULED)
+
+        self.assertEqual("closed", shown["convoy"]["status"])
+        reasons = [entry["reason"] for entry in shown["convoy"]["unruled"]]
+        self.assertEqual(1, len(reasons), reasons)
+        self.assertIn("fermé hors commande", reasons[0])
+        self.assertIn("convoy autoclose: all children closed", reasons[0])
+
+    def test_an_open_marked_convoy_whose_tickets_are_all_closed_is_not_unruled_for_that(self):
+        tip = self.started_ticket()
+        self.ok("close-ticket", CONVOY, T1, "--commit", tip, "--file", GATE_REPORT)
+        self.ok("close-ticket", CONVOY, T2, "--commit", tip, "--file", GATE_REPORT)
+
+        shown = self.show()
+
+        self.assertEqual("open", shown["convoy"]["status"])
+        self.assertEqual([], shown["convoy"]["unruled"])
+
+    def test_list_names_apart_the_marked_convoys_closed_outside_acceptance_or_abandon(self):
+        self.ok("mark", CONVOY)
+        state = self.tracker_state()
+        state["beads"]["fx-closed"] = {"title": "fermé à la main", "status": "closed", "issue_type": "convoy",
+                                       "metadata": {"gc.flow.mark": "new-flow/v1"}, "tracks": []}
+        state["beads"]["fx-plain"] = {"title": "sans marque, fermé", "status": "closed", "issue_type": "convoy",
+                                      "metadata": {}, "tracks": []}
+        self.tracker.write_text(json.dumps(state))
+        before = self.tracker.read_bytes()
+
+        listed = self.ok("list")
+
+        self.assertEqual([CONVOY], listed["convoys"])
+        self.assertEqual(["fx-closed"], listed["closed_outside"])
+        self.assertEqual(before, self.tracker.read_bytes())
+
     def test_marking_again_keeps_counters_and_marks_a_ticket_added_since(self):
         self.ok("mark", CONVOY)
         self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")

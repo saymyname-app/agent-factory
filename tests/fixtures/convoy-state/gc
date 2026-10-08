@@ -24,6 +24,11 @@ number and `true`/`false` as a boolean, anything else as a string, and
 refuses a metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*`. Every
 update is appended to CONVOY_STATE_FAKE_WRITE_LOG when set.
 
+For the manual lifecycle of a marked convoy (T22, af-kn83no), observed on gc
+1.4.1 in an isolated city (2026-10-08): `bd update <id> --add-label NAME`
+adds NAME to the bead's `labels` (null while it has none), in the same write
+as its `--set-metadata`.
+
 For bin/convoy-advance (T04, af-gfyj6k), observed on gc 1.4.1 in an isolated
 city (2026-10-06): a leading `--city DIR` is accepted; `bd list --json`
 filters by `--type`, `--status`, `--has-metadata-key` and `--metadata-field`;
@@ -66,7 +71,7 @@ def coerce(value):
 
 
 def view(bead_id, bead):
-    extra = {key: bead[key] for key in ("description", "labels", "assignee") if key in bead}
+    extra = {key: bead[key] for key in ("description", "labels", "assignee", "close_reason") if key in bead}
     return {
         **extra,
         "id": bead_id,
@@ -111,6 +116,8 @@ def update(state, bead_id, rest):
             metadata.pop(rest[i + 1], None)
         elif flag == "--status" and i + 1 < len(rest):
             bead["status"] = rest[i + 1]
+        elif flag == "--add-label" and i + 1 < len(rest):
+            bead["labels"] = sorted({*bead.get("labels", []), rest[i + 1]})
         elif flag == "--append-notes" and i + 1 < len(rest):
             bead["notes"] = (bead.get("notes", "") + "\n" + rest[i + 1]).strip()
         else:
