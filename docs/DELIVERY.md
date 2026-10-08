@@ -314,10 +314,29 @@ opens a pull request on this repository depends on the kind of change. It
 does not mean a change of the merge gate: Factory CI runs on every pull
 request and `Tests` is still the required check.
 
-| Kind of change | Before the pull request | Why (merged pull requests #407 to #438) |
-|---|---|---|
-| A delivery: a `do-work` ticket, or anything that changes a tool, a formula, an order or a configuration | The whole battery: `bin/ci-run-tests --jobs 4` from the work tree | A run aimed at what the change touches is 75 to 96% of the battery there, and batteries queue on the host (below) |
-| Docs, CI or tests alone | The rule checks and the tests the change touches: `bin/ci-run-tests --rule-checks --changed-since origin/main` | 2 to 6% of the battery, and none of the 6 test files that failed in CI in that sample would have been missed |
+Intent (Benjamin, his words, 2026-10-08, about 22:35 Paris): « A. », in
+answer to the two options shown to him once Factory CI ran on the host's own
+runner (af-r1ymfm): A, the rule checks and the touched tests before a
+delivery's pull request, the whole battery left to CI; B, the rule as it
+was. And: « Il faut réduire les tests au minimum requis pour avoir la
+qualité suffisante. »
+Mechanism (agent interpretation): while CI runs on the host, a delivery no
+longer runs the whole battery before its pull request, because CI runs it
+right after on the same machine and a red there is billed nothing. It does
+not mean fewer tests in CI, a test removed, or a merge without the whole
+battery green: his second sentence is a direction for later work, not
+applied here.
+
+| Kind of change | Where CI runs (`./bin/ci-runner mode`) | Before the pull request | Why |
+|---|---|---|---|
+| A delivery: a `do-work` ticket, or anything that changes a tool, a formula, an order or a configuration | `self-hosted`: the host's own runner | The rule checks and the tests the change touches: `bin/ci-run-tests --rule-checks --changed-since origin/main` | The battery by hand (14 minutes on 4 cores) and the CI run that follows (15 minutes on 4 cores) were the same work twice on the same machine, 29 minutes a push; a red in CI is billed nothing there (measured 2026-10-08, `docs/OPERATIONS.md`, "Factory CI on the host's own runner") |
+| The same | `github`, or no clear answer | The whole battery: `bin/ci-run-tests --jobs 4` from the work tree | On GitHub's runners a red is seen after about 37 billed minutes; a run aimed at what the change touches is 75 to 96% of the battery (merged pull requests #407 to #438), and batteries queue on the host (below) |
+| Docs, CI or tests alone | either | The rule checks and the tests the change touches, same command | 2 to 6% of the battery, and none of the 6 test files that failed in CI in that sample would have been missed |
+
+What the lighter check costs: a long test broken by a delivery is seen in
+CI, about 15 minutes after the push, instead of before it; the pull request
+stays unmerged, the agent fixes and pushes again. Nothing merges without the
+whole battery green in CI, on the host as on GitHub's runners.
 
 The rule checks are the test files `config/ci-test-seconds.tsv` gives 5
 seconds or less: catalogues, registration, lints (105 files, 107 s together
@@ -326,15 +345,26 @@ less, a stale generated catalogue most often, and each was seen only after
 about 37 billed minutes of a run. `--changed-since` adds the test files the
 branch changes, committed or not; the run starts with `NOT the battery` and
 counts both. It waits its turn on the host like a battery. In doubt about
-the kind of change, run the battery
-(`tests/ci-run-tests-rule-checks-test.sh`).
+the kind of change, or about where CI runs, run the battery
+(`tests/ci-run-tests-rule-checks-test.sh`, `tests/ci-runner-test.sh`).
 
-Factory CI itself does not run the rule checks before the long lots
-(Benjamin, his words, 2026-10-08: « A pour la ligne 3 », A being "not in
-CI"). Measured gain: about 2 billed minutes a run (4 of 70 runs, about 35
+On GitHub's runners Factory CI does not run the rule checks before the long
+lots (Benjamin, his words, 2026-10-08: « A pour la ligne 3 », A being "not
+in CI"). Measured gain: about 2 billed minutes a run (4 of 70 runs, about 35
 minutes each). `Tests` must exist from the first second of a run, so it
 cannot wait on a gate job, and the variants that keep it were estimated at
 1 to 3 billed minutes on every run.
+
+On the host's own runner it does (Benjamin, his words, 2026-10-08, about
+22:50 Paris: « oui, vas-y pour la première tranche », the first slice being
+"the rule checks first in CI, and a measure of the long tests"). Mechanism
+(agent interpretation): there the run is one lot and is billed nothing, so
+`bin/ci-run-tests --rule-checks-first` runs the same tests in another order
+inside the job named `Tests`: the rule checks first (110 files, 118 s of
+test time, about half a minute on 4 cores), and a red one stops the run
+there instead of after the long tests. It does not mean a test left out of
+a green run, nor another gate: green, every test ran
+(`tests/ci-run-tests-rule-checks-first-test.sh`).
 
 **One battery at a time on the host (af-7m7ymg).**
 

@@ -261,18 +261,18 @@ FAKEGC
 chmod +x "$FAKE_BIN/gc"
 export PATH="$FAKE_BIN:$PATH"
 
-"$SCRIPT" restart-service unknown-service >/tmp/restart.out 2>&1 \
+"$SCRIPT" restart-service unknown-service >"$TMP/restart.out" 2>&1 \
   && fail "restart-service did not refuse an unknown service name"
 grep -q "gesture=restart-service.*status=refused.*name=unknown-service" "$FACTORY_MAINTAIN_LOG" \
   || fail "restart-service did not log the refusal"
 
-"$SCRIPT" restart-service dispatcher >/tmp/restart2.out 2>&1 \
-  || fail "restart-service refused a known service: $(cat /tmp/restart2.out)"
+"$SCRIPT" restart-service dispatcher >"$TMP/restart2.out" 2>&1 \
+  || fail "restart-service refused a known service: $(cat "$TMP/restart2.out")"
 grep -q "gesture=restart-service.*status=restarted.*name=dispatcher" "$FACTORY_MAINTAIN_LOG" \
   || fail "restart-service did not log a successful restart"
 
-"$SCRIPT" reload-city-config >/tmp/reload.out 2>&1 \
-  || fail "reload-city-config failed: $(cat /tmp/reload.out)"
+"$SCRIPT" reload-city-config >"$TMP/reload.out" 2>&1 \
+  || fail "reload-city-config failed: $(cat "$TMP/reload.out")"
 grep -q "gesture=reload-city-config.*status=reloaded" "$FACTORY_MAINTAIN_LOG" \
   || fail "reload-city-config did not log success"
 

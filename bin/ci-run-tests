@@ -59,6 +59,17 @@
 #                            # CI_RUN_TESTS_FULL=1. Without this option every
 #                            # run is a full run. The run says which it is and
 #                            # why, and names each test it left out.
+#   ci-run-tests --rule-checks-first
+#                            # the same tests, in another order: the rule
+#                            # checks first, and when one of them fails the
+#                            # run stops there, red, and says how many tests
+#                            # it did not run. A stale catalogue or a lint is
+#                            # then seen after a minute instead of after the
+#                            # long tests (15 minutes on the host's own
+#                            # runner), and the host is not kept busy by a
+#                            # run already known red. Green, every test ran:
+#                            # the gate is unchanged. Factory CI passes it on
+#                            # the host's own runner, where a run is one lot.
 #   ci-run-tests --rule-checks [--changed-since REF] [--list]
 #                            # not the battery: only the rule checks, the
 #                            # files config/ci-test-seconds.tsv gives
@@ -114,10 +125,12 @@ SHARD_N=""
 JOBS="${CI_RUN_TESTS_JOBS:-1}"
 CHANGED_SINCE=""
 RULE_CHECKS=0
+RULE_CHECKS_FIRST=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --list) MODE="list" ;;
     --rule-checks) RULE_CHECKS=1 ;;
+    --rule-checks-first) RULE_CHECKS_FIRST=1 ;;
     --shard)
       if ! [[ "${2:-}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || [ "${BASH_REMATCH[1]}" -gt "${BASH_REMATCH[2]}" ]; then
         echo "ci-run-tests: --shard wants I/N with 1 <= I <= N, got: ${2:-nothing}" >&2; exit 2
@@ -361,6 +374,20 @@ if [ "$JOBS" -gt 1 ]; then
   mapfile -t files < <(printf '%s\n' "${files[@]}" | by_weight | cut -d' ' -f2-)
 fi
 
+# --rule-checks-first: the rule checks lead, the others keep their order.
+first_count=0
+if [ "$RULE_CHECKS_FIRST" -eq 1 ] && [ "$RULE_CHECKS" -eq 0 ]; then
+  first=(); rest=()
+  for f in "${files[@]}"; do
+    if [ -n "${MEASURED[$f]:-}" ] && [ "${MEASURED[$f]}" -le "$RULE_CHECK_SECONDS" ]; then first+=("$f"); else rest+=("$f"); fi
+  done
+  # Nothing to stop before when one of the two halves is empty.
+  if [ "${#first[@]}" -gt 0 ] && [ "${#rest[@]}" -gt 0 ]; then
+    files=("${first[@]}" "${rest[@]}")
+    first_count=${#first[@]}
+  fi
+fi
+
 RESULTS=$(mktemp -d)
 trap 'rm -rf -- "$RESULTS"' EXIT
 
@@ -460,16 +487,26 @@ run_one() {  # index file -> prints its result line, leaves $RESULTS/<index>.fai
   } 9>"$RESULTS/print.lock"
 }
 
-running=0
-for index in "${!files[@]}"; do
-  if [ "$running" -ge "$JOBS" ]; then
-    wait -n
-    running=$((running - 1))
-  fi
-  run_one "$index" "${files[$index]}" &
-  running=$((running + 1))
-done
-wait
+run_span() {  # first last -> runs files[first..last-1], JOBS at once
+  local index running=0
+  for ((index = $1; index < $2; index++)); do
+    if [ "$running" -ge "$JOBS" ]; then
+      wait -n
+      running=$((running - 1))
+    fi
+    run_one "$index" "${files[$index]}" &
+    running=$((running + 1))
+  done
+  wait
+}
+
+ran=${#files[@]}
+run_span 0 "$first_count"
+if compgen -G "$RESULTS/*.failed" >/dev/null; then
+  ran=$first_count
+else
+  run_span "$first_count" "${#files[@]}"
+fi
 
 failed=()
 for index in "${!files[@]}"; do
@@ -477,7 +514,10 @@ for index in "${!files[@]}"; do
 done
 
 echo
-echo "ci-run-tests: ran ${#files[@]} test(s), ${#failed[@]} failure(s)"
+if [ "$ran" -lt "${#files[@]}" ]; then
+  echo "ci-run-tests: a rule check failed: the $(( ${#files[@]} - ran )) other test(s) were NOT run (--rule-checks-first). Fix it and run again: nothing is known of them."
+fi
+echo "ci-run-tests: ran $ran test(s), ${#failed[@]} failure(s)"
 if [ "${#failed[@]}" -gt 0 ]; then
   printf 'FAILED: %s\n' "${failed[@]}"
   exit 1
