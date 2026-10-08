@@ -526,6 +526,18 @@ waiting contract but leaves the bead `in_progress`; `mol-polecat-commit` and
 `mol-scoped-work` do the same. `pr-autopilot` later calls `deliver-close`, and
 only that verified write closes the PR-backed bead (ADR-0026).
 
+`push-and-pr` opens nothing when there is nothing left to deliver (af-cjaj8o,
+2026-10-08). The worktree's post-commit hook pushes every commit, so on a
+re-dispatch the ticket's open PR can pass CI and merge before `push-and-pr`
+runs: on af-cbp84n, `finish` then opened a second, empty PR #445 after #444
+had merged, and the step rewrote the closed ticket to `waiting` on it, which
+failed pr-autopilot five times. `bin/factory-do-work-workspace finish` now
+exits 4 — no push, no PR, no URL, worktree removed — when the branch's head is
+exactly the head of a PR already merged into the base, or when its tree has no
+difference with the base; the step then only drops `work_dir` and leaves
+`gc.pr_url`, `gc.delivery_status` and the notes as they are. New commits made
+after the merge are still delivered through a new PR.
+
 The SayMyName legacy-automation cutover boundary and its temporary M6
 rollback procedure are dead, product-specific history now retired to
 `legacy/docs/products/saymyname/CUTOVER_AND_M6_ROLLBACK.md`.

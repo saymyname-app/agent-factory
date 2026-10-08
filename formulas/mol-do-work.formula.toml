@@ -389,7 +389,14 @@ if [ "$WORKTREE" = "." ]; then
 else
   PR_URL=$("$FACTORY_ROOT/bin/factory-do-work-workspace" finish \
     "$WORK_BEAD_ID" "$WORKTREE" "$BRANCH" "$BASE_BRANCH")
-  if [ -n "$PR_URL" ]; then
+  FINISH_RC=$?
+  if [ "$FINISH_RC" = "4" ]; then
+    # af-cjaj8o: already merged (or no difference with the base) -- no PR was
+    # opened and the worktree is gone. Do not touch gc.pr_url,
+    # gc.delivery_status or the notes: they are the ticket's merge record.
+    gc bd update "$WORK_BEAD_ID" --unset-metadata work_dir
+    echo "push-and-pr: nothing to deliver for $WORK_BEAD_ID — delivery record left as it is"
+  elif [ -n "$PR_URL" ]; then
     gc bd update "$WORK_BEAD_ID" \
       --set-metadata "gc.pr_url=$PR_URL" \
       --set-metadata "gc.delivery_contract=pr-ci-merged-v1" \
@@ -407,6 +414,15 @@ If `finish` exits 3, nothing failed: the bead asks for PR sections that are
 not written yet. Its message names the file to write; write it, then run the
 block above again. Do not mail anyone for that.
 
+If `finish` exits 4, nothing failed either: the ticket's PR already merged
+with this exact head while the dispatch was running, or the branch has no
+difference with the base. No PR is opened and none must be opened by hand;
+the block above only drops `work_dir` and leaves `gc.pr_url`,
+`gc.delivery_status` and the notes as they are (af-cjaj8o, 2026-10-08: on
+af-cbp84n a second, empty PR #445 was opened after #444 had merged and the
+closed ticket was rewritten to `waiting` on it, which failed pr-autopilot five
+times).
+
 If the push itself fails (`factory-do-work-workspace finish` exits with any
 other non-zero status),
 the worktree is deliberately left in place for a human/next session to
@@ -418,7 +434,8 @@ gc mail send "${GC_ESCALATION_RECIPIENT:-human}" -s "HELP: could not push $BRANC
 
 **Exit criteria:** if this dispatch was isolated in a worktree, the worktree
 no longer exists on disk and the branch is pushed with (when `gh` succeeded)
-an open PR against the base branch; a work bead that `do-work` deferred remains
+an open PR against the base branch (no PR and an untouched delivery record
+when `finish` exited 4); a work bead that `do-work` deferred remains
 `in_progress` with `gc.delivery_status=waiting` until `deliver-close` records
 merge+exact-head-CI proof; otherwise this step is a documented no-op."""
 

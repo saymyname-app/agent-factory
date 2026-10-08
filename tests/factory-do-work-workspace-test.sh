@@ -429,4 +429,91 @@ git -C "$WT13f" commit -qm "plain"
 [ "$(cat "$GH_FAKE_DIR/do-work_af-plain-ticket.body")" = "Closes af-plain-ticket." ] \
   || fail "a plain ticket's PR body is no longer exactly 'Closes <bead>.'"
 
+# ---------------------------------------------------------------------------
+# 14. af-cjaj8o (2026-10-08, af-cbp84n): the post-commit hook pushes every
+#     commit, so a re-dispatched ticket's PR can merge before `finish` runs.
+#     `finish` then opened a second, empty PR (#445 after #444) and the step
+#     rewrote the closed ticket's merge record. When there is nothing left
+#     to deliver, `finish` opens no PR, prints no URL, removes the worktree
+#     and exits 4.
+# ---------------------------------------------------------------------------
+export GH_FAKE_MERGED="$TMP/fake-gh-merged"
+export GH_FAKE_NEXT="$FAKE_GH2_DIR/gh"
+FAKE_GH3_DIR="$TMP/fake-gh3-bin"
+mkdir -p "$GH_FAKE_MERGED" "$FAKE_GH3_DIR"
+cat > "$FAKE_GH3_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+# answers "pr list --state merged" from $GH_FAKE_MERGED/<branch>.head (the
+# merged PR's head SHA); everything else goes to the fake gh of test 13
+if [ "$1 $2" = "pr list" ]; then
+  branch=""; q=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --head) branch="$2"; shift 2 ;;
+      -q|--jq) q="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  key=$(printf '%s' "$branch" | tr '/' '_')
+  [ -f "$GH_FAKE_MERGED/$key.head" ] || exit 0
+  case "$q" in
+    *"$(cat "$GH_FAKE_MERGED/$key.head")"*) echo "https://github.com/example/example/pull/merged-$key" ;;
+  esac
+  exit 0
+fi
+exec "$GH_FAKE_NEXT" "$@"
+EOF
+chmod +x "$FAKE_GH3_DIR/gh"
+export PATH="$FAKE_GH3_DIR:$PATH"
+
+# 14a. the ticket's PR merged (squash) with this exact head during the
+#      dispatch, and the base has moved on since: no second PR
+WT14=$("$SCRIPT" enter af-merged-ticket)
+echo delivered > "$WT14/m"
+git -C "$WT14" add m
+git -C "$WT14" commit -qm "delivered"
+"$SCRIPT" finish af-merged-ticket "$WT14" do-work/af-merged-ticket main >/dev/null 2>"$TMP/s14.err" \
+  || { cat "$TMP/s14.err" >&2; fail "first finish of af-merged-ticket exited non-zero"; }
+WT14b=$("$SCRIPT" enter af-merged-ticket)
+git -C "$WT14b" rev-parse HEAD > "$GH_FAKE_MERGED/do-work_af-merged-ticket.head"
+rm -f "$GH_FAKE_DIR/do-work_af-merged-ticket.url"   # merged: `gh pr create` would succeed again
+git -C "$TMP/root" pull -q origin main
+echo delivered > "$TMP/root/m" && echo later > "$TMP/root/n"
+git -C "$TMP/root" add m n && git -C "$TMP/root" commit -qm "squash of af-merged-ticket, then another ticket"
+git -C "$TMP/root" push -q origin main
+rc=0
+"$SCRIPT" finish af-merged-ticket "$WT14b" do-work/af-merged-ticket main >"$TMP/s14a.out" 2>"$TMP/s14a.err" || rc=$?
+[ "$rc" = "4" ] || { cat "$TMP/s14a.err" >&2; fail "finish on a ticket whose PR already merged with this head exited $rc (expected 4)"; }
+[ -s "$TMP/s14a.out" ] && fail "finish on an already-merged ticket printed a PR URL: $(cat "$TMP/s14a.out")"
+[ -f "$GH_FAKE_DIR/do-work_af-merged-ticket.url" ] && fail "finish opened a duplicate PR for an already-merged ticket"
+[ -d "$WT14b" ] && fail "finish on an already-merged ticket did not remove the worktree"
+grep -qF -- "pull/merged-do-work_af-merged-ticket" "$TMP/s14a.err" \
+  || fail "finish on an already-merged ticket does not name the merged PR"
+
+# 14b. new commits after the merge are real work: a PR is opened as before
+WT14c=$("$SCRIPT" enter af-merged-ticket)
+echo followup > "$WT14c/m2"
+git -C "$WT14c" add m2
+git -C "$WT14c" commit -qm "follow-up after the merge"
+PR_URL_14=$("$SCRIPT" finish af-merged-ticket "$WT14c" do-work/af-merged-ticket main 2>"$TMP/s14b.err") \
+  || { cat "$TMP/s14b.err" >&2; fail "finish with new commits after a merge exited non-zero"; }
+[ -n "$PR_URL_14" ] || fail "finish with new commits after a merge did not open a PR"
+
+# 14c. a branch with no difference with the base (its whole content landed
+#      there, and gh knows no merged PR for it): no PR
+WT14d=$("$SCRIPT" enter af-no-diff-ticket)
+echo landed > "$WT14d/o"
+git -C "$WT14d" add -A
+git -C "$WT14d" commit -qm "landed"
+git -C "$TMP/root" fetch -q origin
+git -C "$TMP/root" merge -q --squash origin/do-work/af-no-diff-ticket >/dev/null
+git -C "$TMP/root" commit -qm "squash of af-no-diff-ticket"
+git -C "$TMP/root" push -q origin main
+rc=0
+"$SCRIPT" finish af-no-diff-ticket "$WT14d" do-work/af-no-diff-ticket main >"$TMP/s14c.out" 2>"$TMP/s14c.err" || rc=$?
+[ "$rc" = "4" ] || { cat "$TMP/s14c.err" >&2; fail "finish on a branch with no difference with the base exited $rc (expected 4)"; }
+[ -s "$TMP/s14c.out" ] && fail "finish on a branch with no difference with the base printed a PR URL"
+[ -f "$GH_FAKE_DIR/do-work_af-no-diff-ticket.url" ] && fail "finish opened an empty PR for a branch with no difference with the base"
+[ -d "$WT14d" ] && fail "finish on a branch with no difference with the base did not remove the worktree"
+
 echo "OK bin/factory-do-work-workspace isolates HQ dispatches AND protected product-rig branches in a worktree, pushes and cleans up on finish, and is a no-op elsewhere"
