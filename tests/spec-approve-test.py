@@ -517,6 +517,21 @@ class SpecOutlineTest(unittest.TestCase):
     def outline(self, text):
         return subprocess.run((str(TOOL), "outline"), input=text, text=True, capture_output=True)
 
+    def test_outline_lists_the_states_of_each_screen_as_the_spec_writes_them(self):
+        """T27 (af-r43we4): what the Evidence Pack lists as not prototyped."""
+        outline = json.loads(self.outline(FIXTURE_SPEC).stdout)
+
+        (screen,) = outline["screens"]
+        self.assertEqual("accueil", screen["name"])
+        self.assertEqual(
+            [("vide", "prototypé", "empty"), ("contenu", "prototypé", "content"),
+             ("chargement", "sans objet", "la page est rendue en une seule réponse du serveur"),
+             ("erreur", "non prototypé", ""), ("contenu long", "non prototypé", ""),
+             ("écran étroit", "non prototypé", ""), ("thème sombre", "sans objet", "la fixture n'a qu'un thème clair")],
+            [(state["name"], state["status"], state["detail"]) for state in screen["states"]])
+        # A Spec without a Validated Prototype lists no screen.
+        self.assertEqual([], json.loads(self.outline("## User Stories\n\n1. As a visiteur, I want lire.\n").stdout)["screens"])
+
     def test_outline_lists_the_numbered_user_stories_and_the_testing_decisions(self):
         proc = self.outline(FIXTURE_SPEC)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)

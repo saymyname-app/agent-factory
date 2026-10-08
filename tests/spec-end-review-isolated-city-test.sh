@@ -124,6 +124,7 @@ export FACTORY_ROOT="$CITY"
 export CONVOY_STATE_LOCK_DIR="$TRIAL/locks" CONVOY_ADVANCE_LOCK_DIR="$TRIAL/locks" SPEC_INTEGRATION_LOCK_DIR="$TRIAL/locks"
 export SPEC_END_LOCK_DIR="$TRIAL/locks" SPEC_END_WORK_DIR="$TRIAL/gate" SPEC_INTEGRATION_WORK_DIR="$TRIAL/merge"
 export EVIDENCE_STORE_DIR="$TRIAL/store"
+export EVIDENCE_PACK_DIR="$TRIAL/packs"
 export ESCALATION_DOOR_LOCK_FILE="$TRIAL/escalation-door.lock" PROPOSAL_DOOR_BIN="$TRIAL/proposal-door"
 export DISPATCH_DOOR_PROVIDER_FAILOVER_BIN="$TRIAL/provider-failover" DISPATCH_DOOR_ROLE_TRIAL_BIN="$TRIAL/role-adoption-trial"
 export DELIVERY_ROLE_PROVIDER_FAILOVER_BIN="$TRIAL/provider-failover"
@@ -455,7 +456,7 @@ outcome() { field "$CONVOY" gc.flow.outcome_evaluation; }
 first_round() { [ "$(end_review | jq -r '.rounds | length' 2>/dev/null)" = 1 ]; }
 wait_for 600 first_round || { dump; fail "no end review was recorded within 600s"; }
 GATE1=$(gate_record | jq -r '.commit')
-[ "$(gate_record | jq -r '.version + " " + ([.conditions[].verdict] | join(","))')" = "spec-end/v3 pass,pass,pass" ] \
+[ "$(gate_record | jq -r '.version + " " + ([.conditions[].verdict] | join(","))')" = "spec-end/v4 pass,pass,pass" ] \
   || fail "the three mechanical verdicts were not rendered by the gate: $(gate_record)"
 git -C "$PRODUCT" merge-base --is-ancestor "$TIP1" "$GATE1" && git -C "$PRODUCT" merge-base --is-ancestor "$BASE" "$GATE1" \
   || fail "the commit of the gate ($GATE1) does not hold the work of the tickets and the protected branch"

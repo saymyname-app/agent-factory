@@ -144,6 +144,7 @@ class City:
             "CONVOY_STATE_FAKE_TRACKER": str(self.tracker),
             "CONVOY_STATE_LOCK_DIR": str(self.workspace / "locks"),
             "EVIDENCE_STORE_DIR": str(self.workspace / "store"),
+            "EVIDENCE_PACK_DIR": str(self.workspace / "packs"),
             # The list of the escalation door also counts the pending proposals.
             "PROPOSAL_DOOR_BIN": str(self.workspace / "proposal-door"),
             "GIT_CONFIG_GLOBAL": os.devnull,

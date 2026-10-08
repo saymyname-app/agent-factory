@@ -91,6 +91,8 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state set-integration-repair CONVOY --ticket TICKET
     convoy-state clear-integration-red  CONVOY
     convoy-state record-spec-end CONVOY --commit SHA --protected SHA --file PATH
+    convoy-state record-evidence-pack CONVOY --commit SHA --digest sha256:HEX --path DIR (--conforming | --non-conforming)
+                                      [--inadmissible N]
     convoy-state open-end-review        CONVOY --commit SHA --file PATH
     convoy-state launch-end-review      CONVOY --bead BEAD
     convoy-state record-end-review      CONVOY --file PATH
@@ -180,6 +182,7 @@ KEY_KIND = "gc.ticket_kind"
 # The Spec a convoy delivers is written by the publication door too
 # (`gc.spec_id`); the evidence store is filed under it (T09). Read only.
 KEY_SPEC = "gc.spec_id"
+KEY_SPEC_DIGEST = "gc.spec_digest"
 # The Declared Scope of a ticket is written by the publication door as well
 # (`gc.scope_paths`, comma-separated paths); it orders tickets and bounds
 # nothing (Spec §2). Read only.
@@ -214,6 +217,7 @@ KEY_GROUPED_REQUEST = PREFIX + "grouped_request"
 KEY_SPEC_END = PREFIX + "spec_end"
 KEY_END_REVIEW = PREFIX + "end_review"
 KEY_END_ROUND = PREFIX + "end_round"
+KEY_EVIDENCE_PACK = PREFIX + "evidence_pack"
 KEY_OUTCOME_EVALUATION = PREFIX + "outcome_evaluation"
 KEY_FINDINGS = PREFIX + "findings"
 # Written by the publication door (bin/ticket-graph-publish): the digest of
@@ -252,13 +256,16 @@ PROTOTYPE_FIELDS = {"branche": "branch", "commit": "commit", "chemin": "path", "
 # The end-of-Spec gate (T23, Spec §9, points 1 to 3): its closed list of
 # mechanical conditions, versioned. bin/spec-end computes the verdicts; a
 # record that is not this list, all passing, is refused.
-SPEC_END_VERSION = "spec-end/v3"
-# A record written under an earlier list (T23's, T24's) is still read: the
-# gate holds it for outdated and replays everything.
-SPEC_END_VERSIONS = ("spec-end/v1", "spec-end/v2", SPEC_END_VERSION)
+SPEC_END_VERSION = "spec-end/v4"
+# A record written under an earlier list (T23's, T24's, T25's) is still read:
+# the gate holds it for outdated and replays everything.
+SPEC_END_VERSIONS = ("spec-end/v1", "spec-end/v2", "spec-end/v3", SPEC_END_VERSION)
 SPEC_END_CONDITIONS = ("registry", "tests", "fidelity")
 SPEC_END_PASS = "pass"
 SPEC_END_RECORDS = ("tests", "fidelity")
+# The Evidence Pack (T27, Spec §10): the page bin/evidence-pack generated,
+# tied to one commit of the integration branch.
+EVIDENCE_PACK_VERSION = "evidence-pack/v1"
 # The end code review of the Spec (T25, Spec §6, « Fin de Spec »): one run on
 # the whole assembled diff, replayed in full on each new tip. An output that
 # is not complete is not a passed review: its launch gave no result.
@@ -1751,6 +1758,27 @@ def spec_end_record(raw: Any) -> dict[str, Any]:
     return record
 
 
+def evidence_pack_record(raw: Any) -> dict[str, Any]:
+    """The Evidence Pack code generated (T27, Spec §10): the commit of the
+    integration branch it is tied to, the fingerprint of its page, where it
+    was written, whether every condition of the end of the Spec it reports
+    was met, and how many pieces it could not take from the evidence store."""
+    record = stored_record(raw, ("commit", "digest", "path", "conforming", "inadmissible", "version", "at"))
+    valid_commit(record["commit"], "commit de l'Evidence Pack")
+    valid_digest(record["digest"])
+    if not isinstance(record["path"], str) or not record["path"].startswith("/") or single_line(
+            record["path"], "dossier de l'Evidence Pack") != record["path"]:
+        raise Refusal(f"dossier de l'Evidence Pack absent ou mal formé (un chemin absolu, sur une ligne) : {record['path']!r}")
+    if not isinstance(record["conforming"], bool):
+        raise Refusal(f"conformité de l'Evidence Pack mal formée : {record['conforming']!r}")
+    count = record["inadmissible"]
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise Refusal(f"nombre de pièces irrecevables de l'Evidence Pack mal formé : {count!r}")
+    if record["version"] != EVIDENCE_PACK_VERSION:
+        raise Refusal(f"version de l'Evidence Pack inconnue : {record['version']!r} (attendu : {EVIDENCE_PACK_VERSION})")
+    return record
+
+
 def end_citation_of(finding: dict[str, Any]) -> tuple[dict[str, str] | None, str | None]:
     """The citation a finding of the end review gives, and why it does not
     hold when it does not: the rule of the review of a ticket (Spec §6), a
@@ -2691,11 +2719,18 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             end_round = {"unruled": f"{KEY_END_ROUND} : {exc}", "raw": metadata[KEY_END_ROUND]}
             convoy_unruled.append({"field": KEY_END_ROUND, "reason": end_round["unruled"]})
+    evidence_pack: dict[str, Any] | None = None
+    if KEY_EVIDENCE_PACK in metadata:
+        try:
+            evidence_pack = evidence_pack_record(metadata[KEY_EVIDENCE_PACK])
+        except Refusal as exc:
+            evidence_pack = {"unruled": f"{KEY_EVIDENCE_PACK} : {exc}", "raw": metadata[KEY_EVIDENCE_PACK]}
+            convoy_unruled.append({"field": KEY_EVIDENCE_PACK, "reason": evidence_pack["unruled"]})
     # The fingerprints of the pieces captured on the assembled product (T24).
     evidence: dict[str, Any] = {}
     for key in sorted(metadata):
         known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_GROUPED_REQUEST, KEY_SPEC_END,
-                 KEY_OUTCOME_EVALUATION, KEY_END_REVIEW, KEY_END_ROUND,
+                 KEY_OUTCOME_EVALUATION, KEY_END_REVIEW, KEY_END_ROUND, KEY_EVIDENCE_PACK,
                  *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(EVIDENCE_PREFIX):
             name = key[len(EVIDENCE_PREFIX):]
@@ -2709,9 +2744,11 @@ def cmd_show(args: argparse.Namespace) -> int:
         elif key.startswith(PREFIX) and key not in known:
             convoy_unruled.append({"field": key, "reason": f"{key} : champ inconnu de la commande d'état, écrit hors d'elle"})
     spec = metadata.get(KEY_SPEC)
+    spec_digest = metadata.get(KEY_SPEC_DIGEST)
     convoy_out: dict[str, Any] = {
         "id": convoy["id"], "title": convoy.get("title"), "status": convoy.get("status"), "mark": mark,
         "spec": spec if isinstance(spec, str) and spec else None,
+        "spec_digest": spec_digest if isinstance(spec_digest, str) and DIGEST_RE.match(spec_digest) else None,
         "counters": render_counters(metadata, CONVOY_COUNTERS, convoy_unruled),
         "incident": incident,
         "integration": integration,
@@ -2720,6 +2757,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         "spec_end": spec_end,
         "end_review": end_review,
         "end_round": end_round,
+        "evidence_pack": evidence_pack,
         "outcome_evaluation": outcome_evaluation,
         "evidence": evidence,
         "unruled": convoy_unruled,
@@ -4529,6 +4567,37 @@ def cmd_record_spec_end(args: argparse.Namespace) -> int:
     return done(args.convoy, args.convoy, values)
 
 
+def cmd_record_evidence_pack(args: argparse.Namespace) -> int:
+    """bin/evidence-pack records the page it generated (T27, Spec §10): the
+    commit of the integration branch it is tied to, its fingerprint and
+    where it is. Nothing compares it to the branches here: bin/evidence-pack
+    check says whether it still holds. The same pack again writes nothing."""
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    if KEY_INTEGRATION not in metadata:
+        raise Refusal(f"le convoi {args.convoy} n'a pas de branche d'intégration : aucun commit auquel lier l'Evidence Pack")
+    if args.conforming is None:
+        raise Refusal("conformité de l'Evidence Pack absente : --conforming ou --non-conforming")
+    try:
+        inadmissible = int(args.inadmissible)
+    except (TypeError, ValueError) as exc:
+        raise Refusal(f"nombre de pièces irrecevables de l'Evidence Pack mal formé : {args.inadmissible!r}") from exc
+    record = {"commit": args.commit, "digest": args.digest, "path": args.path, "conforming": args.conforming,
+              "inadmissible": inadmissible, "version": EVIDENCE_PACK_VERSION, "at": now()}
+    record = evidence_pack_record(encode(record))
+    if KEY_EVIDENCE_PACK in metadata:
+        try:
+            known = evidence_pack_record(metadata[KEY_EVIDENCE_PACK])
+        except Refusal:
+            known = None
+        if known and {**known, "at": record["at"]} == record:
+            return done(args.convoy, args.convoy, {})
+    values = {KEY_EVIDENCE_PACK: encode(record)}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
 # --- the end code review of the Spec, on the assembled diff (T25) ---------------------
 
 
@@ -5445,6 +5514,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--commit")
     p.add_argument("--protected")
     p.add_argument("--file")
+    p = command("record-evidence-pack", cmd_record_evidence_pack, ticket=False)
+    p.add_argument("--commit")
+    p.add_argument("--digest")
+    p.add_argument("--path")
+    p.add_argument("--conforming", dest="conforming", action="store_true", default=None)
+    p.add_argument("--non-conforming", dest="conforming", action="store_false")
+    p.add_argument("--inadmissible", default=0)
     p = command("open-outcome-evaluation", cmd_open_outcome_evaluation, ticket=False)
     p.add_argument("--commit")
     p.add_argument("--file")

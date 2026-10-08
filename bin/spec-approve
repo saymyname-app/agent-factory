@@ -29,8 +29,9 @@ is never re-examined.
 the publication door poses in each ticket (T06, af-cgauf8): the numbered
 user stories and the Testing Decisions; and (T36, af-2nmcxw) which stories
 describe an interface and the reference of the Validated Prototype, as
-written -- the remote repository is not read. It reads no bead and writes
-nothing.
+written -- the remote repository is not read; and (T27, af-r43we4) the
+inventory of the states of each screen (`screens`), as written, for the
+Evidence Pack. It reads no bead and writes nothing.
 
 The file-Spec mode (`approve`/`freeze-check`/`revise`/`expire-check`/
 `status` over a JSON Spec artifact carrying the
@@ -321,6 +322,31 @@ def check_state_inventory(section: list[tuple[int, str, list[str]]], reference_s
         raise SpecApproveError("refus : l'inventaire des états est incomplet : " + " ; ".join(problems))
 
 
+STATUS_LABELS = {PROTOTYPED: "prototypé", NOT_PROTOTYPED: "non prototypé", NOT_APPLICABLE: "sans objet"}
+
+
+def screen_states(section: list[tuple[int, str, list[str]]]) -> list[dict[str, Any]]:
+    """The inventory as the Spec writes it, for a reader that lists it (the
+    Evidence Pack, Spec §10): per screen, each state with its status and its
+    detail. A status outside the three is given as written."""
+    screens = []
+    for _, heading, lines in section[1:]:
+        match = SCREEN_HEADING.match(fold(heading))
+        if not match:
+            continue
+        states = []
+        for line in lines:
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if not line.strip().startswith("|") or len(cells) < 2:
+                continue
+            if not fold(cells[0]) or set(cells[0]) <= set("-: ") or fold(cells[0]) in ("etat", "state"):
+                continue
+            states.append({"name": cells[0], "status": STATUS_LABELS.get(fold(cells[1]), cells[1]),
+                           "detail": bare(cells[2]) if len(cells) > 2 else ""})
+        screens.append({"name": match.group(1), "states": states})
+    return screens
+
+
 def run_git(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[bytes]:
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     try:
@@ -563,6 +589,7 @@ def cmd_outline(args: argparse.Namespace) -> int:
             reference = prototype_reference(section)
         except SpecApproveError as exc:
             problem = str(exc)
+    screens = screen_states(section) if section is not None else []
     print(json.dumps({
         "ok": True,
         "user_stories": [
@@ -572,6 +599,7 @@ def cmd_outline(args: argparse.Namespace) -> int:
         "testing_decisions": testing_decisions(found),
         "validated_prototype": reference,
         "validated_prototype_problem": problem,
+        "screens": screens,
     }, indent=2, ensure_ascii=False))
     return 0
 

@@ -26,6 +26,9 @@ section, or its lines when none is numbered). For the interface tickets
 (T36, af-2nmcxw) it also prints the reference of the Validated Prototype as
 the Spec writes it (`validated_prototype`: `branch`, `commit`, `path`,
 `states`; `null` without a « Validated Prototype » section), and in
+`screens` (T27, af-r43we4) the inventory of the states of each screen as
+written (`name`, and per state `name`, `status`, `detail`), which the
+Evidence Pack lists as not prototyped; in
 `validated_prototype_problem` what an incomplete reference misses -- it does
 not read the remote repository: `bd-approve` did. It reads no bead and
 writes nothing; it exits 1 on a text without numbered user stories. The

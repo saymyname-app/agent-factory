@@ -40,14 +40,17 @@ SLICE, SCREEN = "fx-t1", "fx-t2"
 PLAIN_CONVOY, PLAIN_TICKET = "fx-plain", "fx-q1"
 PROTECTED = "main"
 INTEGRATION = f"integration/{SPEC}"
-VERSION = "spec-end/v3"
+VERSION = "spec-end/v4"
 NAMES = ("registry", "tests", "fidelity")
-# Conditions 4 and 5 (T24) and 6 (T25) when a condition before them is not
-# met, and when the three mechanical verdicts are green and neither an
-# Outcome Evaluation nor an end code review was made.
-JUDGED = ("outcome_evaluation", "findings", "end_review")
-NOT_LAUNCHED = [(4, "outcome_evaluation", "not_run"), (5, "findings", "not_run"), (6, "end_review", "not_run")]
-AWAITED = [(4, "outcome_evaluation", "fail"), (5, "findings", "not_run"), (6, "end_review", "fail")]
+# Conditions 4 and 5 (T24), 6 (T25) and 7 (T27) when a condition before them
+# is not met, and when the three mechanical verdicts are green and neither
+# an Outcome Evaluation nor an end code review was made: the Evidence Pack,
+# the last condition, is read only once every one before it is met.
+JUDGED = ("outcome_evaluation", "findings", "end_review", "evidence_pack")
+NOT_LAUNCHED = [(4, "outcome_evaluation", "not_run"), (5, "findings", "not_run"), (6, "end_review", "not_run"),
+                (7, "evidence_pack", "not_run")]
+AWAITED = [(4, "outcome_evaluation", "fail"), (5, "findings", "not_run"), (6, "end_review", "fail"),
+           (7, "evidence_pack", "not_run")]
 
 EXIT_REFUSED = 1
 EXIT_UNRULED = 3
@@ -124,6 +127,7 @@ class Harness(unittest.TestCase):
             "PROPOSAL_DOOR_BIN": str(self.tmp / "path" / "proposal-door"),
             "GC_ESCALATION_RECIPIENT": "human",
             "EVIDENCE_STORE_DIR": str(self.store),
+            "EVIDENCE_PACK_DIR": str(self.tmp / "packs"),
             "EVIDENCE_CAPTURE_BROWSER": str(FAKE_BROWSER),
             "EVIDENCE_FAKE_BROWSER_LOG": str(self.tmp / "browser.log"),
             "GIT_CONFIG_GLOBAL": os.devnull,
@@ -535,7 +539,7 @@ class SpecEndTest(Harness):
         commit = self.verified()
         before = self.snapshot()
 
-        answer = self.mechanical_green(*self.check(), missing=(4, 5, 6))
+        answer = self.mechanical_green(*self.check(), missing=(4, 5, 6, 7))
 
         self.assertEqual((False, commit), (answer["stale"], answer["commit"]))
         self.assertEqual(before, self.snapshot())
@@ -806,7 +810,7 @@ class SpecEndTest(Harness):
         self.assertEqual(commit, answer["recorded"]["commit"])
         self.assertEqual([(number, name, "stale") for number, name in enumerate((*NAMES, *JUDGED), start=1)],
                          self.verdicts(answer))
-        self.assertEqual([1, 2, 3, 4, 5, 6], answer["missing"])
+        self.assertEqual([1, 2, 3, 4, 5, 6, 7], answer["missing"])
         self.assertIn("périmé", answer["error"])
         self.assertIn("tout est à rejouer", answer["error"])
         self.assertIn(commit[:12], answer["error"])
@@ -817,7 +821,7 @@ class SpecEndTest(Harness):
         replayed = self.mechanical_green(*self.run_gate())
         self.assertEqual((added, True), (replayed["commit"], replayed["replayed"]))
         self.assertEqual(added, self.show()["convoy"]["spec_end"]["commit"])
-        self.assertFalse(self.mechanical_green(*self.check(), missing=(4, 5, 6))["stale"])
+        self.assertFalse(self.mechanical_green(*self.check(), missing=(4, 5, 6, 7))["stale"])
 
     def test_protected_branch_moved_after_the_verdicts_makes_them_stale(self):
         commit = self.verified()

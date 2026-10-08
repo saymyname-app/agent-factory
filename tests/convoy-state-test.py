@@ -3678,7 +3678,7 @@ class ConvoyStateTest(unittest.TestCase):
     SPEC_END_NAMES = ("registry", "tests", "fidelity")
 
     def spec_end_file(self, **changes):
-        report = {"version": "spec-end/v3",
+        report = {"version": "spec-end/v4",
                   "conditions": [{"number": number, "name": name, "verdict": "pass", "detail": "réunie (relevé d'essai)"}
                                  for number, name in enumerate(self.SPEC_END_NAMES, start=1)],
                   "records": {"tests": {"command": "python3 regression.py", "exit_code": 0}, "fidelity": {"prototypes": []}},
@@ -3705,7 +3705,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(1, len([line for line in self.write_log.read_text().splitlines() if line.strip()]))
         shown = self.show()
         record = shown["convoy"]["spec_end"]
-        self.assertEqual(("spec-end/v3", tip, base), (record["version"], record["commit"], record["protected"]))
+        self.assertEqual(("spec-end/v4", tip, base), (record["version"], record["commit"], record["protected"]))
         self.assertEqual([(number, name, "pass") for number, name in enumerate(self.SPEC_END_NAMES, start=1)],
                          [(entry["number"], entry["name"], entry["verdict"]) for entry in record["conditions"]])
         self.assertEqual({"tests", "fidelity"}, set(record["records"]))
@@ -3722,6 +3722,8 @@ class ConvoyStateTest(unittest.TestCase):
             ({"version": "spec-end/v0"}, "version"),
             # The list of T23, three conditions: no longer recorded (T24).
             ({"version": "spec-end/v1"}, "version"),
+            # The list of T25, six conditions: no longer recorded (T27).
+            ({"version": "spec-end/v3"}, "version"),
             ({"conditions": conditions[:2]}, "3 verdicts attendus"),
             ({"conditions": failing}, "condition 2 (tests) non réunie"),
             ({"conditions": renamed}, "verdict 3"),
@@ -3773,7 +3775,7 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_a_spec_end_record_written_outside_the_command_is_a_state_without_rule(self):
         tip, base = self.delivered_convoy()
-        for written in ("à la main", json.dumps({"commit": tip, "protected": base, "version": "spec-end/v3", "at": "x",
+        for written in ("à la main", json.dumps({"commit": tip, "protected": base, "version": "spec-end/v4", "at": "x",
                                                  "conditions": [{"number": 1, "name": "registry", "verdict": "pass",
                                                                  "detail": "seul"}]})):
             with self.subTest(written=written[:12]):
@@ -3783,6 +3785,76 @@ class ConvoyStateTest(unittest.TestCase):
 
                 self.assertIn("unruled", shown["convoy"]["spec_end"])
                 self.assertEqual(["gc.flow.spec_end"], [entry["field"] for entry in shown["convoy"]["unruled"]])
+
+    # --- T27: the Evidence Pack code generated, tied to one commit ---------------------------
+
+    PACK_DIGEST = "sha256:" + "5e" * 32
+
+    def pack(self, tip, *more, digest=None, path="/var/packs/fx-spec/fx-convoy"):
+        return ("record-evidence-pack", CONVOY, "--commit", tip, "--digest", digest or self.PACK_DIGEST, "--path", path,
+                *(more or ("--conforming",)))
+
+    def test_record_evidence_pack_ties_the_page_to_one_commit_and_show_reads_it_back(self):
+        tip, _ = self.integrated()
+        self.assertIsNone(self.show()["convoy"]["evidence_pack"])
+        self.write_log.write_text("")
+
+        self.ok(*self.pack(tip))
+
+        self.assertEqual(1, len([line for line in self.write_log.read_text().splitlines() if line.strip()]))
+        record = self.show()["convoy"]["evidence_pack"]
+        self.assertEqual((tip, self.PACK_DIGEST, "/var/packs/fx-spec/fx-convoy", True, 0, "evidence-pack/v1"),
+                         tuple(record[name] for name in ("commit", "digest", "path", "conforming", "inadmissible", "version")))
+        self.assertIn("at", record)
+        # The same pack again writes nothing; another page replaces the record.
+        before = self.tracker.read_bytes()
+        self.assertEqual({}, self.ok(*self.pack(tip))["written"])
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.ok(*self.pack(tip, "--non-conforming", "--inadmissible", "2", digest="sha256:" + "6f" * 32))
+        record = self.show()["convoy"]["evidence_pack"]
+        self.assertEqual(("sha256:" + "6f" * 32, False, 2), (record["digest"], record["conforming"], record["inadmissible"]))
+
+    def test_record_evidence_pack_refuses_a_malformed_record_and_writes_nothing(self):
+        tip, _ = self.integrated()
+        for command, mention in (
+            (self.pack("pas-un-sha"), "commit"),
+            (self.pack(tip, digest="5e5e"), "sha256"),
+            (self.pack(tip, path="packs/relatif"), "chemin absolu"),
+            (self.pack(tip, "--inadmissible", "1"), "conformité"),
+            (self.pack(tip, "--conforming", "--inadmissible", "-1"), "irrecevables"),
+            (self.pack(tip, "--conforming", "--inadmissible", "deux"), "irrecevables"),
+        ):
+            with self.subTest(mention=mention):
+                self.assert_refused_and_nothing_written(*command, mention=mention)
+        self.assertIsNone(self.show()["convoy"]["evidence_pack"])
+
+    def test_record_evidence_pack_refuses_a_convoy_without_an_integration_branch_or_without_the_mark(self):
+        tip = "a" * 40
+        before = self.tracker.read_bytes()
+
+        proc = self.run_tool(*self.pack(tip))
+
+        self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.ok("mark", CONVOY)
+        self.assert_refused_and_nothing_written(*self.pack(tip), mention="pas de branche d'intégration")
+
+    def test_an_evidence_pack_record_written_outside_the_command_is_a_state_without_rule(self):
+        tip, _ = self.integrated()
+        self.edit_tracker(CONVOY, **{"gc.flow.evidence_pack": json.dumps({"commit": tip, "digest": self.PACK_DIGEST})})
+
+        shown = self.show(expect=EXIT_UNRULED)
+
+        self.assertIn("unruled", shown["convoy"]["evidence_pack"])
+        self.assertEqual(["gc.flow.evidence_pack"], [entry["field"] for entry in shown["convoy"]["unruled"]])
+
+    def test_show_renders_the_digest_of_the_spec_the_publication_door_wrote_on_the_convoy(self):
+        self.ok("mark", CONVOY)
+        self.assertIsNone(self.show()["convoy"]["spec_digest"])
+
+        self.edit_tracker(CONVOY, **{"gc.spec_digest": self.PACK_DIGEST})
+
+        self.assertEqual(self.PACK_DIGEST, self.show()["convoy"]["spec_digest"])
 
     def test_a_red_names_the_control_that_is_red_when_it_is_not_the_regression_command(self):
         tip, base = self.integrated()

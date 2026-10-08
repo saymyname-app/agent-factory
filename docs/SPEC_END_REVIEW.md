@@ -133,7 +133,7 @@ keeps the commit and the source of the last round counted.
 
 ## What the gate reads
 
-`bin/spec-end` reads condition 6, `end_review` (list `spec-end/v3`), on the
+`bin/spec-end` reads condition 6, `end_review` (list `spec-end/v4`), on the
 commit its three verdicts are recorded on, and renders nothing there
 (`docs/SPEC_END.md`). It is read whatever conditions 4 and 5 — the Outcome
 Evaluation and the findings « hors ticket » — say. It is met only by a

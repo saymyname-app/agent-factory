@@ -126,6 +126,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
             "SPEC_INTEGRATION_LOCK_DIR": str(self.tmp / "locks"),
             "SPEC_INTEGRATION_WORK_DIR": str(self.tmp / "work"),
             "EVIDENCE_STORE_DIR": str(self.tmp / "store"),
+            "EVIDENCE_PACK_DIR": str(self.tmp / "packs"),
             "DISPATCH_DOOR_PROVIDER_FAILOVER_BIN": str(self.tmp / "provider-failover"),
             "DISPATCH_DOOR_MEMINFO_FILE": str(self.tmp / "no-meminfo"),
             "ESCALATION_DOOR_LOCK_FILE": str(self.tmp / "escalation-door.lock"),
@@ -429,7 +430,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
 
         # The gate of the end of the Spec, run by the pass: the tests are red on the tip.
         ending = first["spec_end"]
-        self.assertEqual({"registry": "pass", "tests": "fail", "fidelity": "not_run", "outcome_evaluation": "not_run", "findings": "not_run", "end_review": "not_run"}, ending["verdicts"])
+        self.assertEqual({"registry": "pass", "tests": "fail", "fidelity": "not_run", "outcome_evaluation": "not_run", "findings": "not_run", "end_review": "not_run", "evidence_pack": "not_run"}, ending["verdicts"])
         self.assertEqual(1, ending["end_rounds"])
         control = self.shown()["convoy"]["integration_red"]["control"]
         self.assertIn(REGRESSION, control)
@@ -486,7 +487,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
 
         # The registry refuses and names the element: an outcome of the pass, asked of the operator.
         ending = first["spec_end"]
-        self.assertEqual({"registry": "fail", "tests": "not_run", "fidelity": "not_run", "outcome_evaluation": "not_run", "findings": "not_run", "end_review": "not_run"}, ending["verdicts"])
+        self.assertEqual({"registry": "fail", "tests": "not_run", "fidelity": "not_run", "outcome_evaluation": "not_run", "findings": "not_run", "end_review": "not_run", "evidence_pack": "not_run"}, ending["verdicts"])
         self.assertIn(self.NOT_DONE, ending["reason"])
         self.assertEqual([(t4, ["not_done.1"])], [(entry["ticket"], entry["items"]) for entry in ending["requests"]])
         listed = [line for line in self.run_ok(ESCALATION, "list").stdout.splitlines() if line.strip().startswith(f"{t4} ")]
@@ -576,7 +577,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
         (self.tmp / "launches" / "produit.json").write_text(json.dumps({"pid": product.pid}))
         names = ("registry", "tests", "fidelity")
         report = self.json_file("spec-end.json", {
-            "version": "spec-end/v3",
+            "version": "spec-end/v4",
             "conditions": [{"number": number, "name": name, "verdict": "pass", "detail": "vert"}
                            for number, name in enumerate(names, start=1)]})
         self.run_ok(STATE, "record-spec-end", self.convoy, "--commit", self.base, "--protected", self.base, "--file", report)
@@ -684,7 +685,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
         descriptor.write_text(json.dumps(profile))
         report = self.tmp / "spec-end.json"
         report.write_text(json.dumps({
-            "version": "spec-end/v3",
+            "version": "spec-end/v4",
             "conditions": [{"number": number, "name": name, "verdict": "pass", "detail": "réunie (relevé d'essai)"}
                            for number, name in enumerate(("registry", "tests", "fidelity"), start=1)]}))
         self.run_ok(STATE, "record-spec-end", self.convoy, "--commit", self.base, "--protected",

@@ -1,4 +1,4 @@
-# The end-of-Spec gate (T23, T24 and T25; Spec af-wf4w5r §9, points 1 to 5)
+# The end-of-Spec gate (T23, T24, T25 and T27; Spec af-wf4w5r §9, points 1 to 6)
 
 ## What it is for
 
@@ -12,7 +12,8 @@ read, which the gate does not render: the Outcome Evaluation and the
 findings « hors ticket », in what the Evaluator of the end handed in (T24,
 `docs/OUTCOME_EVALUATION.md`, user stories 57 and 60), and the end code
 review of the whole assembled diff (T25, `docs/SPEC_END_REVIEW.md`, user
-story 58).
+story 58). Last, the gate reads the Evidence Pack code generated on that
+commit (T27, `docs/EVIDENCE_PACK.md`, user story 62).
 
 A convoy **without** the mark is not concerned: the gate answers « pas un
 convoi du nouveau flux » (exit 4) and writes nothing.
@@ -23,13 +24,14 @@ is not red (`docs/CONVOY_ADVANCE.md`).
 
 ```bash
 ./bin/spec-end check af-convoy --repo <project repository>                          # the verdicts as they stand now; reads only
+./bin/spec-end check af-convoy --repo <project repository> --before-pack            # conditions 1 to 6 only: what the Evidence Pack reports
 ./bin/spec-end run   af-convoy --repo <project repository> --profile <descriptor>   # the gate; refused from an agent session
 ```
 
 To know where the end of a Spec stands, run `check`: each condition has a
 verdict and one line that says what was read.
 
-## The six conditions (list `spec-end/v3`)
+## The seven conditions (list `spec-end/v4`)
 
 | # | Name | Met when |
 | --- | --- | --- |
@@ -39,12 +41,15 @@ verdict and one line that says what was read.
 | 4 | `outcome_evaluation` | Once 1 to 3 are green: every numbered user story of the Spec is « observée avec preuve » on the assembled product at that commit (`bin/outcome-evaluation verdict`), and no finding « hors ticket » is left unclassified. |
 | 5 | `findings` | Every finding « hors ticket » of a Ticket Handoff is in a final state: « réparé », « proposition pour Benjamin » or « écarté ». |
 | 6 | `end_review` | Once 1 to 3 are green, on that same commit: the end code review of the whole diff of the integration branch against the protected branch is complete and favorable (`bin/spec-end-review`, `docs/SPEC_END_REVIEW.md`). Read in the tracker, not rendered by the gate. Absent, running, stopped without a verdict, made on another commit, or with a Blocking Finding: not met, and the detail says which. |
+| 7 | `evidence_pack` | Once 1 to 6 are met, on that same commit: the Evidence Pack code generated is recorded on the convoy, tied to that commit, complete and still what the recorded state gives (`bin/evidence-pack check`, `docs/EVIDENCE_PACK.md`). Read, not rendered by the gate. Absent, outdated, rewritten, or short of a piece: not met, and the detail says which. |
 
 A condition that is not met stops the gate there: the following ones are
 **not launched** (`not_run`); the end review alone does not wait for the
 Outcome Evaluation: both are made in parallel on the commit of the three
 verdicts (Spec §9, point 4), and condition 6 is read whatever conditions 4
-and 5 say. Changing the list means a new version. Conditions 1 to 3 are the
+and 5 say. Condition 7 is read only once the six before it are met: the
+gate generates nothing, `bin/convoy-advance` has the pack generated
+(`bin/evidence-pack generate`) and runs the gate again in the same pass. Changing the list means a new version. Conditions 1 to 3 are the
 **mechanical** ones: their verdicts are what the gate records, as soon as
 the three are green, and `bin/convoy-state` holds the same names and refuses
 a record that is not those three, all passing. Conditions 4 to 6 are not
@@ -52,8 +57,8 @@ recorded by the gate: they are read at each call in what the Evaluator of
 the end and the reviewer of the end handed in, which is tied to the commit
 of the three verdicts. The gate launches no agent; `bin/convoy-advance` has
 the evaluation and the review settled (`bin/outcome-evaluation settle`,
-`bin/spec-end-review settle`). A record written under `spec-end/v1` or
-`spec-end/v2` is read as outdated: everything is replayed.
+`bin/spec-end-review settle`). A record written under `spec-end/v1`,
+`spec-end/v2` or `spec-end/v3` is read as outdated: everything is replayed.
 
 ## The registry: tracked elements
 
@@ -113,7 +118,7 @@ and the tip of the protected branch that commit holds:
 
 ```json
 {"at": "…", "commit": "<tip of the integration branch>", "protected": "<tip of the protected branch>",
- "version": "spec-end/v3",
+ "version": "spec-end/v4",
  "conditions": [{"number": 1, "name": "registry", "verdict": "pass", "detail": "…"}, "… three entries"],
  "records": {"tests": {"command": "…", "exit_code": 0, "commit": "…"}, "fidelity": {"commit": "…", "prototypes": ["…"]}}}
 ```
@@ -141,7 +146,7 @@ conditions that refused; `check` every condition that is not green.
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | The six conditions are met on the current tip. |
+| 0 | The seven conditions are met on the current tip. |
 | 1 | Refused, or a condition is not met: it is named (`condition N (label) non réunie : …`). |
 | 3 | The convoy is in an « état sans règle »: no verdict. |
 | 4 | The convoy does not carry the mark. |
@@ -153,8 +158,9 @@ conditions that refused; `check` every condition that is not green.
 - Three green verdicts with the end review missing: exit 1, the three
   verdicts are recorded (or kept, `replayed: false`), and `error` names
   condition 6 with what was read, after conditions 4 and 5 if they are not
-  met either. `check` renders conditions 4 to 6 only when the three before
-  them are green on the tip, `not_run` otherwise.
+  met either. `check` renders conditions 4 to 7 only when the three before
+  them are green on the tip, `not_run` otherwise; with `--before-pack` it
+  leaves condition 7 out of its answer.
 - A registry that refuses writes nothing but the request to the operator,
   once. `check` never writes.
 - In the answer of `bin/convoy-advance`, a condition that is not met is an
@@ -218,6 +224,10 @@ conditions that refused; `check` every condition that is not green.
   `tests/spec-end-review-isolated-city-test.sh` (local-only): condition 6,
   the second under the real controller, order and tracker
   (`docs/SPEC_END_REVIEW.md`).
+- `tests/evidence-pack-test.py`: condition 7 — refused while no pack is
+  generated, with a pack generated while a condition was red, with a pack
+  short of a piece; the seven conditions green on one commit
+  (`docs/EVIDENCE_PACK.md`).
 - `tests/spec-integration-test.py` (`take-up`), `tests/convoy-state-test.py`
   (tracked elements, `--item`, `set-item-repair`, `record-spec-end`,
   `--check`, `--end-round`).
