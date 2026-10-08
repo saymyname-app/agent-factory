@@ -50,7 +50,7 @@ def _door_fake_gc():
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.FAKE_GC
+    return module.FAKE_GC.read_text(encoding="utf-8")
 
 
 def free_port():
@@ -82,23 +82,27 @@ def payload_of(bead):
         "pourquoi": metadata["gc.proposal_pourquoi"],
         "que_faire": options,
         "langue": metadata["gc.proposal_langue"],
+        # ADR-0029: every proposal carries a class; these are the operator's.
+        "classe": "decision",
     }
 
 
 # Proposals the door must accept and the Cockpit must show as written.
 # The first two are what bin/upstream-skills-check and
-# bin/overlap-conflict-log file; options without `recommande`/`raison`,
-# straight apostrophes and non-ASCII letters are all fine -- none of them
-# was the cause.
+# bin/overlap-conflict-log file; straight apostrophes and non-ASCII letters
+# are fine -- none of them was the cause. (ADR-0029: a decision carries one
+# recommended option, so every payload here does.)
 DISPLAYABLE = [
     {
         "quoi": "mattpocock/skills a publié v1.3.1, au-delà de la référence Method Baseline",
         "pourquoi": "Référence épinglée à c55ee46073ed, plus ancienne que cette publication",
         "que_faire": [
-            {"option": "Adopter la mise à jour", "consequence": "Réépingle la référence Method Baseline et réécrit ses usages (docs/UPSTREAM_SKILLS.md)."},
+            {"option": "Adopter la mise à jour", "consequence": "Réépingle la référence Method Baseline et réécrit ses usages (docs/UPSTREAM_SKILLS.md).",
+             "recommande": True, "raison": "La référence de méthode suit l'amont ; l'écart est relu avant de réépingler."},
             {"option": "Ne pas adopter pour l'instant", "consequence": "La référence reste inchangée ; le prochain tag sera à nouveau signalé."},
         ],
         "langue": "fr",
+        "classe": "decision",
     },
     {
         "quoi": "Proposer des leases dynamiques : conflits PR non déclarés répétés",
@@ -112,12 +116,14 @@ DISPLAYABLE = [
             }
         ],
         "langue": "fr",
+        "classe": "decision",
     },
     {
         "quoi": "x" * 140,
         "pourquoi": "Une ligne de 140 caractères exactement tient à l'écran",
-        "que_faire": [{"option": "Garder", "consequence": "Rien ne change."}],
+        "que_faire": [{"option": "Garder", "consequence": "Rien ne change.", "recommande": True, "raison": "Rien à décider."}],
         "langue": "fr",
+        "classe": "decision",
     },
 ]
 

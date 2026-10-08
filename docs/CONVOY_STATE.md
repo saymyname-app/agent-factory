@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, T19, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, T19, T20, T22, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -14,7 +14,7 @@ A convoy without the mark is not touched: `show` and every write answer
 published, dispatched, merged and closed exactly as before.
 
 ```bash
-./bin/convoy-state list                                 # the open marked convoys (bin/convoy-advance)
+./bin/convoy-state list                                 # the open marked convoys, and apart those closed outside acceptance or abandon (bin/convoy-advance, bin/planning-artifacts-close)
 ./bin/convoy-state mark af-convoy \
   --demonstration-line af-t1="Sur le produit lancé, …" \
   --user-stories af-t1=4,12 \
@@ -56,6 +56,12 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state open-correction   af-convoy af-t1 --commit <tip>          # bin/correction-round settle: the single correction round
 ./bin/convoy-state launch-correction af-convoy af-t1 --bead af-correction    # bin/correction-round, once the author session is sent
 ./bin/convoy-state override-finding  af-convoy af-t1 --finding F1.1 --approver <human approver> --words "…"   # bin/correction-round override
+./bin/convoy-state open-resume   af-convoy af-t1 --cause interrupted --ref "session:<session name>"   # bin/convoy-advance: one resume counted, before the fresh author session is sent
+./bin/convoy-state launch-resume af-convoy af-t1 --bead af-resume        # bin/convoy-advance, once the author session is sent
+./bin/convoy-state park          af-convoy af-t1 --cause resumes_exhausted --detail "3 reprises, …"   # bin/convoy-advance, at the third resume
+./bin/convoy-state lift-park     af-convoy af-t1 --request <answered request bead> [--option a]   # bin/convoy-advance, on the operator's answer
+./bin/convoy-state record-grouped-request af-convoy --bead af-request [--signature sha256:<hex>] [--lift-option a --lifts af-t1]   # bin/convoy-advance
+./bin/convoy-state clear-grouped-request  af-convoy     # bin/convoy-advance, once a ticket may advance again
 ./bin/convoy-state ticket af-t1                         # does this bead carry the mark? (bin/dispatch-door, the Mayor)
 ./bin/convoy-state record-incident af-convoy --bead af-incident [--signature sha256:<hex>]   # bin/convoy-advance
 ./bin/convoy-state clear-incident  af-convoy            # bin/convoy-advance, once the state is valid again
@@ -75,6 +81,7 @@ Every answer is one JSON object on stdout.
 | Field | Key | On | Values |
 |---|---|---|---|
 | Mark | `gc.flow.mark` | convoy, ticket | `new-flow/v1` |
+| Manual lifecycle | the label `owned` (Gas City's own: `gc convoy create --owned`) | convoy | added by `mark` in the same write as the mark, and again by a later `mark` if it was lost: `gc convoy check` leaves a convoy that carries it open once all its tickets are closed (T22) |
 | Spec | `gc.spec_id` (read only: written by the publication door) | convoy | the id of the Spec the convoy delivers; the evidence store is filed under it (T09, `docs/EVIDENCE_STORE.md`) |
 | Kind | `gc.ticket_kind` (read only: written by the publication door) | ticket | `vertical_slice`, `prefactoring`, `repair` |
 | Demonstration line | `gc.flow.demonstration_line` | ticket (`vertical_slice`, `repair`) | one non-empty line, written once by `mark` |
@@ -98,7 +105,10 @@ Every answer is one JSON object on stdout.
 | Ticket Handoff | `gc.flow.handoff` | ticket | `sections` (`done`, `deviations`, `not_done`, `out_of_ticket`: each `aucun` or a non-empty list of one-line items; an item of `not_done` may be `{what, paths}`), `partial`, the full commit SHA it was taken at, and the `records` written by code |
 | Correction round | `gc.flow.correction` | ticket | `commit` (the full SHA both the code review and the evaluation answered at), `blocking_findings` (the ids of the Blocking Findings of that review), `not_observed` (what the evaluation did not observe there), at least one of the two not empty; `launches`: at most one `{bead, at}`; `at` |
 | Overrides | `gc.flow.overrides` | ticket | `entries`, oldest first, one per overridden Blocking Finding: `finding`, `approver`, `words` (not empty, as given), `commit` (the one of the review), `at` |
-| Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`; the ticket whose Ticket Exit parked it (`origin`); a one-line detail |
+| Parking | `gc.flow.park` | ticket | cause: `planning_exception`, `operator_request`, `resumes_exhausted` (T20); the ticket that caused it (`origin`: the one whose Ticket Exit parked it, or that is out of resumes); a one-line detail |
+| Resumes | `gc.flow.resume` | ticket | `entries`, oldest first, one per resume code opened (T20): `cause` (`interrupted`, `returned`, `unblocked`, `answered`), `ref` (the one-line fact that asked for it), `session` (the author session it takes over from, or null), `exit` (the Ticket Exit it replaced, `{exit, at}`, or null), `launches`: at most one `{bead, at}`; `at` |
+| Parkings lifted | `gc.flow.park_lifts` | ticket | `entries`, oldest first, one per parking lifted on the ticket that caused it (T20): `cause`, `detail`, `parked_at`, `request` (the bead of the answered request), `option` (the letter taken, or null), `resumes` (the counter at that moment), `at` |
+| Grouped request | `gc.flow.grouped_request` | convoy | the bead that carries the one request of a convoy in which nothing but parked tickets is left (T20) and, once it reached the escalation door, the `sha256:` signature of the parkings it names, with `lift_option` (a letter) and `lifts` (the tickets that option lifts), both or neither |
 | Fidelity result | `gc.flow.fidelity` | ticket | `commit`, `verdict` (`favorable` / `unfavorable`, computed), `piece` (the sealed record), `screens`, `states` (state → `viewports`, `anchors` compared), `deviations`: each `state`, `viewport`, `anchor`, `kind` (`absent`, `structure`, `style`, `token`), `property`; a `token` deviation has neither viewport nor anchor |
 | Planning Exceptions | `gc.flow.planning_exceptions` | ticket | `entries`, oldest first: `kind` (`semantic`, `topology`), `summary`, `anchors` (the anchors whose deviation it asks to accept, possibly none), `accept_option` (the letter of the request's option that accepts it; with anchors only), `prior_response_at`, `at`, and `resolution` (`option`, `at`) once a later one was raised |
 | Operator's answer | `gc.needs_benjamin`, `gc.escalation_response_option`, `gc.escalation_response_at` (read only: written by `bin/escalation-door`) | ticket | what resolves the last Planning Exception |
@@ -302,8 +312,57 @@ that waits for it, directly or through others, following the `blocks` edges
 read on each ticket; the descendants first, the ticket last, so that the
 same call completes an interrupted one. A descendant that is closed or
 already parked is left as it is. It refuses a cause outside the list, a
-missing detail, a closed ticket and a ticket already parked. Nothing here
-lifts a parking.
+missing detail, a closed ticket and a ticket already parked. The cause
+`resumes_exhausted` (T20) is accepted only on a ticket that has no resume
+left (`resumes_left` 0, below). `lift-park` is what lifts a parking.
+
+`open-resume`, `launch-resume`, `lift-park`, `record-grouped-request` and
+`clear-grouped-request` are called by `bin/convoy-advance` (T20,
+`docs/CONVOY_ADVANCE.md`, « Resumes, their bound, parking and the grouped
+request »).
+
+`open-resume` counts one resume of a ticket that code sends back to a fresh
+author session, on the same branch (Spec §8). `--cause` is one of
+`interrupted`, `returned`, `unblocked`, `answered`; `--ref` is one line
+naming the fact that asks for it. The record, one more `resumes` and the
+removal of the Ticket Exit the resume replaces (a resumed ticket exits
+again) go in **one tracker write**. The same cause and `--ref` as the last
+resume write nothing and count nothing. It refuses a cause outside the list,
+a missing `--ref`, a closed ticket, a ticket the dispatch door did not
+start, a stopped ticket, a parked ticket, and a ticket that has no resume
+left: that one is parked. `launch-resume` records the bead of the author
+session the last resume was sent to: one per resume, a second is refused, as
+is a launch on a stopped or a parked ticket or with no resume open.
+
+The bound is `RESUMES_MAX = 3` (Spec §8, K: a starting value, not a
+measure), every cause together: `resumes` is the one counter that
+`open-resume`, `open-correction` and `invalidate-verdicts` add to. `show`
+renders `resumes_left`: 3 minus the resumes counted since the last lift of
+a `resumes_exhausted` parking of the ticket (since the start when there is
+none), never below 0.
+
+`lift-park` lifts the parking a ticket caused, once the request `--request`
+(a bead id) was answered, with the letter of the option taken (`--option`,
+optional). It removes the parking from every ticket parked behind it, then
+from the ticket itself — those behind first, so that the same call
+completes an interrupted one — and appends the lift to `park_lifts` with the
+count of `resumes` at that moment: an exhausted ticket takes its three
+resumes again from there, and the counter is not erased. A ticket behind
+that still waits for another ticket that parks is parked behind that one
+instead of being freed. It refuses a ticket that is not parked, a ticket
+parked by another one (a parking is lifted on the ticket that caused it), a
+`--request` that is not a bead id and an `--option` that is not one
+lowercase letter. Whether the answer is one that lifts is the caller's
+decision (`bin/convoy-advance`), not checked here. Nothing here lifts a
+stop.
+
+`record-grouped-request` writes on the convoy the bead of its grouped
+request, first alone, then with `--signature`, `--lift-option` and `--lifts`
+(repeatable) once the escalation door accepted it; it refuses a bead or a
+ticket that is not a bead id, a signature that is not a `sha256:` digest,
+and `--lifts` without `--lift-option` or the reverse.
+`clear-grouped-request` removes it. Both are accepted on any convoy that
+carries a mark, like `record-incident`.
 
 `set-integration`, `set-merge` and `invalidate-verdicts` are called by
 `bin/spec-integration` (T18, `docs/SPEC_INTEGRATION.md`). `set-integration`
@@ -318,7 +377,11 @@ that outdated it and adds one to `resumes`, in one tracker write; a verdict
 already invalidated is left as it is and counts nothing more, so repeating
 the call is harmless. Verdicts that were all given at the commit of the
 ticket's correction round (T17) are invalidated **without** a resume: the
-commit that outdates them is that round, counted when it was opened. It refuses a kind outside the list, a ticket that has
+commit that outdates them is that round, counted when it was opened. The
+same holds (T20) for verdicts that were all given at the commit the merge
+returned (`merge.outcome` `conflict` or `red`), once code opened a
+`returned` resume for that return: `open-resume` counted it. A commit on a
+returned ticket for which no resume was opened still counts one. It refuses a kind outside the list, a ticket that has
 no such verdict, and a verdict that judged that very tip. `set-verdict`
 writes a fresh verdict: replaying is what lifts an invalidation.
 
@@ -412,6 +475,7 @@ ticket; a request, a launch, a record or an answer of the code review as
 described above, or on a stopped ticket; a model for a role outside the
 list; a stop whose reason is outside its closed list or that has no
 detail; a correction round, its launch or an override as described above; a
+resume, its launch, a lift or a grouped request as described above; a
 ticket
 that is not tracked by the convoy, or that does not carry the mark.
 
@@ -449,15 +513,24 @@ TDD (`tdd`, `{step: {commit, at, base?, reason?}}`), its stop (`stop`,
 opened), the overrides of the operator (`overrides`, an empty list when
 none, each with `state`: `dérogation enregistrée`), its Ticket Handoff
 (`handoff`), its parking
-(`park`) and its Declared Scope (`declared_scope`, a list of paths), each
+(`park`; T20: with `answer`, `{option, at}`, the answer the operator gave to
+the request of the ticket — `gc.escalation_response_option` and
+`gc.escalation_response_at`, given since the parking and with no request
+left open — rendered on the ticket that caused the parking only, `null` on
+those behind it and while there is none) and its Declared Scope (`declared_scope`, a list of paths), each
 `null` when the ticket has none, and what the merge command did of it
 (`merge`, `null` while it did nothing), the Planning Exceptions it raised
 (`planning_exceptions`, an empty list when none), the anchors whose
 deviation a resolved one accepts (`accepted_anchors`) and the result of its
-fidelity check (`fidelity`, `null` before the first one); and for the convoy the Spec it
+fidelity check (`fidelity`, `null` before the first one), the resumes code
+opened (`resume`, `null` while there is none), the parkings lifted
+(`park_lifts`, an empty list when none) and the resumes it may still take
+(`resumes_left`; `null` when the counter or the lifts cannot be read, which
+is flagged on its own); and for the convoy the Spec it
 delivers (`spec`, `null` when it names none), its counters, its open factory
-incident (`incident`, `null` when there is none) and the integration branch
-of its Spec (`integration`, `null` before it is opened).
+incident (`incident`, `null` when there is none), the integration branch
+of its Spec (`integration`, `null` before it is opened) and its grouped
+request (`grouped_request`, `null` when there is none).
 
 `ticket` answers whether one bead carries the mark, without naming its
 convoy: exit 0 and `"new_flow": true`, or exit 4 and `"new_flow": false`.
@@ -503,14 +576,24 @@ key), never as a default value:
 - any stored value this command would have refused to write, and any
   `gc.flow.*` key it does not know (a field invented outside the command).
 
+A marked **convoy** found closed is one more « état sans règle », carried
+by the convoy itself (`convoy.unruled`, field `status`, « convoi fermé hors
+commande », with the closing reason it carries): a marked convoy closes only
+by code, on the operator's words — accepted or abandoned (Spec §9). No
+command of this flow closes a convoy yet (the acceptance and the abandon
+come with T29 and T30, which add their record here); until then every
+closed marked convoy is reported, and `list` names them under
+`closed_outside`, apart from the open ones under `convoys`. An open marked
+convoy whose tickets are all closed is a valid state.
+
 `convoy-state` only signals. `bin/convoy-advance` stops the convoy and
 raises the factory incident (`docs/CONVOY_ADVANCE.md`); it records that
 incident here with `record-incident` (first the bead alone, then the
 signature once the escalation door accepted it) and removes it with
 `clear-incident` when the state is valid again. Both are accepted on a
 convoy whose mark is unknown, which is itself an « état sans règle » to
-report. An incident record that this command would not have written is one
-more anomaly of the convoy.
+report. An incident record or a grouped-request record that this command
+would not have written is one more anomaly of the convoy.
 
 ## Proof
 
@@ -528,3 +611,15 @@ reads the correction round, its counters, the stop and an override back
 from the real tracker (T17). `tests/ticket-end-isolated-city-test.sh`
 (local-only) reads the record of the ticket-end gate and the closed status
 back from the real tracker (T19).
+`tests/convoy-manual-lifecycle-isolated-city-test.sh` (local-only) has the
+real `gc convoy check`, run by the city's own order, leave a marked convoy
+open once all its tickets are closed, and close an unmarked one (T22).
+T20: `tests/convoy-state-test.py` covers
+`open-resume` (counted once per fact, every cause on the same counter, each
+refusal), `launch-resume`, the parking for exhausted resumes, `lift-park`
+(the record kept, the resumes given back without erasing the count, a ticket
+left parked behind another one), the answer rendered on a parked ticket, the
+grouped request, and a commit on a returned ticket counted once; on the real
+tracker, `tests/convoy-advance-isolated-city-test.sh` (local-only) goes
+through `open-resume` and `launch-resume` only; no trial there covers
+`lift-park`, the parking for exhausted resumes or the grouped request.

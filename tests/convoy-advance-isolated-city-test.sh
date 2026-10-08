@@ -19,6 +19,12 @@
 #   4. The trial closes a first blocker: the freed place goes to the second
 #      convoy's ticket, the third ticket stays blocked.
 #   5. The trial closes the second blocker: the third ticket is started.
+#   6. A resume (T20, af-y9pw9z): the trial records that the author session
+#      of the third ticket left by the Ticket Exit « interrompu ». The order
+#      counts one resume and sends the ticket to a fresh session, on a bead
+#      of its own routed through the dispatch door on the real formula
+#      mol-ticket-resume; the next passes send no second one and count the
+#      place of the resume on its way.
 # At every observation, no more than N tickets are in flight.
 #
 # The trial prints its record (« relevé d'essai ») on stdout.
@@ -140,9 +146,13 @@ repo = "example/trial"
 protected_branch = "main"
 required_ci = "CI"
 sling_target = "trial-author"
-formulas = "trial-start"
+formulas = "trial-start,mol-ticket-resume"
 TOML
-jq -n --argjson n "$CEILING" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n, start: {formula: "trial-start", role: null}}' \
+# The real resume formula (T20); no role agent exists here, so the door
+# routes it to the project's own agent.
+cp "$ROOT/formulas/mol-ticket-resume.formula.toml" "$CITY/formulas/"
+jq -n --argjson n "$CEILING" '{contract: "agent-factory-delivery-flow/v1", max_sessions: $n, start: {formula: "trial-start", role: null},
+  resume: {formula: "mol-ticket-resume", role: null}}' \
   > "$CITY/config/delivery-flow.json"
 # The role agents of the real Factory do not exist here: the ceiling is
 # exercised by tickets started and not yet picked by a session.
@@ -198,6 +208,7 @@ sleep 3
 gc --city "$CITY" start >/dev/null 2>&1 || true
 grep -q "Controller: supervisor-managed" <<<"$(gc --city "$CITY" status 2>/dev/null)" || fail "the isolated city's controller did not start"
 gc order show convoy-advance --json >/dev/null 2>&1 || fail "the city does not accept orders/convoy-advance.toml"
+grep -q '^mol-ticket-resume$' <<<"$(gc formula list 2>/dev/null)" || fail "the city does not resolve formulas/mol-ticket-resume.formula.toml"
 
 # A ticket is started when the door stamped it; it is in flight until closed.
 started() {
@@ -280,6 +291,36 @@ t3_started() { started "$T3"; }
 wait_for 300 t3_started || fail "T3 was not started after both its blockers were closed"
 wait_passes 1
 observe "après la fermeture de T2 (T3 démarré)"
+
+# --- 6: an interrupted ticket is resumed once, by the order (T20) --------------
+# O1 leaves first: with T3 it holds the two places, and a resume takes one.
+state close-ticket "$OTHER" "$O1" --commit 0123456789abcdef0123456789abcdef01234567 \
+  --file "$ROOT/tests/fixtures/convoy-state/ticket-end-report.json"
+echo "$(date -u +%H:%M:%S) l'essai ferme O1 dans le tracker"
+# What a real author session leaves: the ticket claimed, its session named.
+gc bd update "$T3" --status in_progress >/dev/null
+state set-session "$CONVOY" "$T3" --session trial-author-gone
+state set-exit "$CONVOY" "$T3" --exit interrupted
+echo "$(date -u +%H:%M:%S) l'essai enregistre la sortie « interrompu » de la session d'auteur de T3"
+resumed_beads() { jq -s -r --arg t "$T3" '[.[].convoys[]?.resumed[]? | select(.id == $t) | .bead] | join(" ")' "$PASSES"; }
+t3_resumed() { [ -n "$(resumed_beads)" ]; }
+wait_for 300 t3_resumed || fail "T3 was not sent to a fresh author session within 300s of its interruption"
+RESUME=$(resumed_beads)
+gc bd show "$RESUME" --json | jq -e --arg t "$T3" --arg c "$CONVOY" '.[0] | (.metadata["gc.dispatched_via"] == "dispatch-door")
+    and (.title | startswith("Reprise — ")) and (.description | contains("ticket: " + $t)) and (.description | contains("convoy: " + $c))
+    and (.description | contains("cause: interrupted"))' >/dev/null \
+  || fail "the resume bead $RESUME was not routed through the dispatch door, or does not name the convoy, the ticket and the cause"
+[ "$(gc bd show "$RESUME" --json | jq -r '.[0].metadata["gc.dispatch_formula"]')" = mol-ticket-resume ] \
+  || fail "the resume bead $RESUME was not routed on the formula mol-ticket-resume"
+wait_passes 2
+[ "$(wc -w <<<"$(resumed_beads)")" = 1 ] || fail "T3 was sent more than one resume for one interruption: $(resumed_beads)"
+gc bd show "$T3" --json | jq -e '.[0].metadata["gc.flow.counter.resumes"] | tonumber == 1' >/dev/null \
+  || fail "the interruption of T3 was not counted as exactly one resume"
+tail -n 1 "$PASSES" | jq -e --arg t "$T3" '(.awaiting_a_session | index($t)) != null' >/dev/null \
+  || fail "the resume of T3, sent and not yet taken, holds no place under the ceiling"
+[ "$(gc bd show "$RESUME" --json | jq -r '.[0].status')" != closed ] || fail "the resume bead was closed although no session finished it"
+observe "après l'interruption de T3 (une reprise comptée, un bead « Reprise » $RESUME routé par la porte, une place tenue)"
+echo "$(date -u +%H:%M:%S) sessions de la cité : $(gc session list --json | jq -r '[.sessions[] | "\(.template)=\(.state)"] | join(", ")')"
 
 # --- no ticket was started twice ----------------------------------------------
 for t in "${ALL[@]}"; do

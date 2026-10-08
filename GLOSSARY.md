@@ -34,6 +34,11 @@ A pure-code, traced gesture Benjamin performs from the Cockpit without spending 
 _French conversational alias_: action opérateur (visible dans le cockpit)
 _Avoid_: agent action, API call, unrecorded Bead update
 
+**Proposal**:
+An improvement idea an agent or an order records through the proposal door (`bin/proposal-door`) instead of starting work on it; it carries one of two classes chosen by its producer at creation (ADR-0029). A `maintenance` proposal corrects an observed defect of the Factory without changing what the operator sees or must do nor a method rule: the door turns it into one bug bead authorized by ADR-0029 that the Mayor dispatches, and the Cockpit shows it only in its health zone and journal. A `decision` proposal changes what the operator sees or must do, a method rule, a spend, a consent, personal data, an irreversible effect or a product behaviour: it is an Operator Request, carries exactly one recommended option with its reason, and the operator accepts, rejects or defers it. In doubt the class is `decision`; a maintenance bead that turns out to touch the operator's tier is stopped and reconverted, never pursued.
+_French conversational alias_: proposition (visible dans le cockpit) ; proposition de maintenance, proposition de décision
+_Avoid_: improvement ticket, self-improvement, idea backlog, auto-filed work
+
 **Freshness**:
 Whether a value shown by the Cockpit may be presented as current: fresh when it was read successfully within its Validity window, stale when only an older last known value exists, which is never presented as current, and unknown when it was never read or its source is failing.
 _French conversational alias_: fraîcheur (à jour, périmée, inconnue)

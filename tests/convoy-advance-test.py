@@ -52,6 +52,7 @@ DISPATCH_GATE = "gc.flow.gate.dispatch"
 INCIDENT = "Incident d'usine"
 STARTED_OUTSIDE = "démarré hors porte"
 CLOSED_OUTSIDE = "fermé hors porte"
+CONVOY_CLOSED_OUTSIDE = "fermé hors commande"
 # What Gas City exports into every agent session, the Mayor's included.
 SESSION_IDENTITY = ("GC_AGENT", "GC_ALIAS", "GC_SESSION_NAME", "GC_SESSION_ID", "GC_TEMPLATE")
 MAYOR_SESSION = {"GC_AGENT": "mayor", "GC_ALIAS": "mayor", "GC_SESSION_NAME": "mayor",
@@ -487,6 +488,41 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertIn(T1, incidents[0])
         self.assertIn(CLOSED_OUTSIDE, incidents[0])
 
+    def test_a_marked_convoy_closed_outside_acceptance_or_abandon_is_raised_on_the_escalation_list(self):
+        self.edit(CONVOY, status="closed", close_reason="convoy autoclose: all children closed")
+
+        answer = self.advance("--all", expect=EXIT_UNRULED)
+
+        self.assertEqual([], self.started(answer))
+        self.assertEqual(["fx-o1"], self.slung())
+        incidents = self.escalation_list()
+        self.assertEqual(1, len(incidents), incidents)
+        self.assertIn(CONVOY, incidents[0])
+        self.assertIn(CONVOY_CLOSED_OUTSIDE, incidents[0])
+
+    def test_a_convoy_closed_outside_is_raised_once_and_withdrawn_once_reopened(self):
+        self.edit(CONVOY, status="closed")
+        self.advance("--all", "--stopped-ok")
+        self.advance("--all", "--stopped-ok")
+        self.assertEqual(1, len(self.escalation_list()))
+        self.assertEqual(1, len(self.log("mail")))
+        self.edit(CONVOY, status="open")  # factory maintenance restored a valid state
+
+        answer = self.advance("--all")
+
+        self.assertEqual([T1, T2], self.started(answer))
+        self.assertEqual([], self.escalation_list())
+
+    def test_an_unmarked_convoy_closed_like_today_raises_nothing(self):
+        self.edit(PLAIN, status="closed", close_reason="convoy autoclose: all children closed")
+        before = self.bead(PLAIN)
+
+        answer = self.advance("--all")
+
+        self.assertNotIn(PLAIN, [convoy["id"] for convoy in answer["convoys"]])
+        self.assertEqual([], self.escalation_list())
+        self.assertEqual(before, self.bead(PLAIN))
+
     def test_an_incoherent_counter_stops_the_convoy_and_raises_a_factory_incident(self):
         state = self.tracker_state()
         state["beads"][T2]["metadata"]["gc.flow.counter.resumes"] = -1
@@ -672,13 +708,26 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertEqual(before, self.tracker.read_text())
         self.assertEqual("", self.write_log.read_text())
 
-    def test_check_only_fails_when_no_marked_convoy_is_open(self):
-        self.edit(CONVOY, status="closed")
-        self.edit(OTHER, status="closed")
+    def test_check_only_fails_when_no_marked_convoy_exists(self):
+        state = self.tracker_state()
+        for convoy in (CONVOY, OTHER):
+            del state["beads"][convoy]
+        self.tracker.write_text(json.dumps(state))
 
         proc = self.run_cmd(TOOL, "--check-only")
 
         self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_check_only_passes_when_the_only_marked_convoys_were_closed_outside_acceptance_or_abandon(self):
+        """Otherwise the order would never run the pass that signals them."""
+        self.edit(CONVOY, status="closed")
+        self.edit(OTHER, status="closed")
+        before = self.tracker.read_text()
+
+        proc = self.run_cmd(TOOL, "--check-only")
+
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(before, self.tracker.read_text())
 
     # --- the dispatch door records the start -------------------------------------
 
@@ -1316,6 +1365,407 @@ class ConvoyAdvanceTest(unittest.TestCase):
         answer = self.advance(CONVOY)
 
         self.assertNotIn("test_review", next(c for c in answer["convoys"] if c["id"] == CONVOY))
+
+    # --- resumes counted and bounded, parked tickets, one grouped request (T20) ---
+
+    GROUPED = "Demande groupée"
+    LIFT, LEAVE = "a", "b"
+
+    def resumable(self, ceiling=5):
+        """The settings of a resume, and a project that allows its formula."""
+        (self.root / "config" / "projects" / "fx-rig.toml").write_text(
+            'rig_dir = "."\nrepo = "example/fx"\nprotected_branch = "main"\nrequired_ci = "CI"\n'
+            'sling_target = "fx-worker"\nformulas = "fx-start,fx-resume"\n')
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps({
+            "contract": "agent-factory-delivery-flow/v1", "max_sessions": ceiling,
+            "start": {"formula": "fx-start", "role": None}, "resume": {"formula": "fx-resume", "role": None}}))
+
+    def taken(self, ticket_id, name, alive=False):
+        """An author session took the ticket; it is over unless `alive`."""
+        self.run_ok(STATE, "set-session", CONVOY, ticket_id, "--session", name)
+        self.edit(sessions=[{"id": f"s-{name}", "name": name, "template": "fx-worker", "state": "active",
+                             "closed": False}] if alive else [])
+
+    def interrupted(self, ticket_id, name):
+        """The session that took the ticket left by the Ticket Exit « interrompu »."""
+        self.taken(ticket_id, name)
+        self.run_ok(STATE, "set-exit", CONVOY, ticket_id, "--exit", "interrupted")
+
+    def started_convoy(self):
+        self.resumable()
+        self.advance(CONVOY)
+        self.write_log.write_text("")
+
+    def of(self, answer, name, convoy=CONVOY):
+        return next(c for c in answer["convoys"] if c["id"] == convoy).get(name, [])
+
+    def resumes(self, ticket_id=T1):
+        return self.bead(ticket_id)["metadata"]["gc.flow.counter.resumes"]
+
+    def park_of(self, ticket_id):
+        return self.shown_state(ticket_id)["park"]
+
+    def shown_state(self, ticket_id):
+        proc = self.run_cmd(STATE, "show", CONVOY, "--repo", self.root)
+        return next(t for t in json.loads(proc.stdout)["tickets"] if t["id"] == ticket_id)
+
+    def resume_launches(self):
+        return [entry for entry in self.log("sling") if entry[3] == "fx-resume"]
+
+    def needs(self):
+        """Every line of the operator's list, as bin/escalation-door prints it."""
+        out = self.run_ok(ESCALATION, "list").stdout
+        body = out.split("NEEDS BENJAMIN:", 1)[1].split("Pending proposals", 1)[0]
+        return [line.strip() for line in body.splitlines() if line.strip() and "(none)" not in line]
+
+    def grouped_bead(self):
+        record = self.bead(CONVOY)["metadata"].get("gc.flow.grouped_request")
+        return json.loads(record)["bead"] if record else None
+
+    def exhausted_and_alone(self):
+        """T1 interrupted three times and parked with T3; T2 closed: nothing
+        but parked tickets is left in the convoy."""
+        self.started_convoy()
+        for name in ("auteur-1", "auteur-2", "auteur-3"):
+            self.interrupted(T1, name)
+            self.advance(CONVOY)
+        self.close_through_gate(T2)
+        self.write_log.write_text("")
+
+    def test_a_pass_sends_an_interrupted_ticket_to_a_fresh_author_session_and_counts_the_resume(self):
+        self.started_convoy()
+        self.interrupted(T1, "auteur-1")
+
+        answer = self.advance(CONVOY)
+
+        [resumed] = self.of(answer, "resumed")
+        self.assertEqual((T1, "interrupted"), (resumed["id"], resumed["cause"]))
+        self.assertEqual(1, self.resumes())
+        self.assertEqual([["sling", "fx-worker", resumed["bead"], "fx-resume"]], self.resume_launches())
+        sent = self.bead(resumed["bead"])["description"]
+        self.assertIn(f"convoy: {CONVOY}", sent)
+        self.assertIn(f"ticket: {T1}", sent)
+        # The ticket is at work again: it will exit again.
+        self.assertIsNone(self.shown_state(T1)["exit"])
+        self.assertEqual(0, self.resumes(T2))
+
+    def test_a_session_that_ended_without_an_exit_is_resumed_as_interrupted(self):
+        self.started_convoy()
+        self.taken(T1, "auteur-1", alive=True)
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(0, self.resumes())
+        self.edit(sessions=[])
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "interrupted")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual(1, self.resumes())
+
+    def test_a_second_pass_on_the_same_interruption_counts_and_sends_nothing_more(self):
+        self.started_convoy()
+        self.interrupted(T1, "auteur-1")
+        self.advance(CONVOY)
+        before = self.tickets_snapshot()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual(before, self.tickets_snapshot())
+        self.assertEqual(1, len(self.resume_launches()))
+
+    def test_a_resume_whose_session_ended_without_taking_the_ticket_is_one_more_interruption(self):
+        self.started_convoy()
+        self.interrupted(T1, "auteur-1")
+        [first] = self.of(self.advance(CONVOY), "resumed")
+        self.edit(first["bead"], status="closed")
+
+        [second] = self.of(self.advance(CONVOY), "resumed")
+
+        self.assertNotEqual(first["bead"], second["bead"])
+        self.assertEqual(2, self.resumes())
+
+    def test_a_resume_that_cannot_be_sent_fails_the_pass_is_counted_once_and_is_sent_by_the_next(self):
+        self.started_convoy()
+        self.interrupted(T1, "auteur-1")
+        env = {**self.env, "CONVOY_STATE_FAKE_SLING_FAIL": "fx-new1"}
+
+        proc = self.run_cmd(TOOL, CONVOY, env=env)
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual([T1], [entry["id"] for entry in self.of(json.loads(proc.stdout), "refused")])
+        self.assertEqual([], self.resume_launches())
+        self.assertEqual(1, self.resumes())
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([T1], [entry["id"] for entry in self.of(answer, "resumed")])
+        self.assertEqual(1, len(self.resume_launches()))
+        self.assertEqual(1, self.resumes())
+
+    def test_a_ticket_to_resume_without_resume_settings_is_refused_and_nothing_is_written(self):
+        self.advance(CONVOY)
+        self.interrupted(T1, "auteur-1")
+        before = self.tickets_snapshot()
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED)
+
+        [refused] = self.of(answer, "refused")
+        self.assertEqual(T1, refused["id"])
+        self.assertIn("resume.formula", refused["reason"])
+        self.assertEqual(before, self.tickets_snapshot())
+
+    def test_a_resume_waits_for_a_free_place_under_the_ceiling_and_counts_nothing_meanwhile(self):
+        self.started_convoy()
+        self.interrupted(T1, "auteur-1")
+        self.resumable(ceiling=1)
+        self.edit(sessions=[session("delivery-reviewer")])
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertIn(T1, [entry["id"] for entry in self.of(answer, "waiting")])
+        self.assertEqual(0, self.resumes())
+        self.assertEqual([], self.resume_launches())
+
+    def test_a_resume_sent_and_not_yet_taken_by_a_session_holds_its_place(self):
+        self.started_convoy()
+        self.interrupted(T1, "auteur-1")
+        # T2 alone awaits its session when this pass counts, then T1 is sent.
+        self.assertEqual([T2], self.advance(CONVOY)["awaiting_a_session"])
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([T1, T2], answer["awaiting_a_session"])
+        self.assertEqual(2, answer["occupied"])
+
+    def test_a_resume_whose_session_ended_without_taking_the_ticket_holds_no_place(self):
+        self.started_convoy()
+        self.interrupted(T1, "auteur-1")
+        [sent] = self.of(self.advance(CONVOY), "resumed")
+        self.edit(sent["bead"], status="closed")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([T2], answer["awaiting_a_session"])
+
+    def test_a_stopped_ticket_is_never_resumed_as_interrupted(self):
+        self.started_convoy()
+        self.interrupted(T1, "auteur-1")
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "amendment_exhausted", "--detail", "second amendement")
+        self.run_ok(STATE, "stop-raised", CONVOY, T1)
+        before = self.tickets_snapshot()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual(before, self.tickets_snapshot())
+
+    def test_a_ticket_blocked_by_a_repair_is_resumed_once_the_repair_is_closed(self):
+        self.started_convoy()
+        self.taken(T1, "auteur-1")
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "technically_blocked")
+        self.edit(T1, blocks=["fx-o1"])
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(0, self.resumes())
+        self.run_ok(STATE, "record-gate", OTHER, "fx-o1", "--gate", "withdrawn")
+        self.edit("fx-o1", status="closed")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "unblocked")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual(1, self.resumes())
+
+    def test_a_ticket_the_merge_returned_is_resumed_and_the_resume_is_counted(self):
+        self.integrated(regression="false")
+        self.resumable()
+        self.code_reviewed("favorable")
+        self.evaluated()
+        self.advance(CONVOY)
+        self.finished(T1)
+        self.advance(CONVOY)  # the merge returns it: red tests on the merged result
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, "returned")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertEqual(1, self.resumes())
+        self.assertEqual([], self.of(self.advance(CONVOY), "resumed"))
+        self.assertEqual(1, self.resumes())
+
+    def test_a_ticket_at_its_third_resume_whatever_the_causes_is_parked_with_its_descendants_and_not_restarted(self):
+        self.started_convoy()
+        self.interrupted(T1, "auteur-1")
+        self.advance(CONVOY)  # an interruption: one resume
+        # A correction round, as bin/convoy-state open-correction counts it,
+        # then a commit after a verdict, as invalidate-verdicts counts it.
+        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
+        self.run_ok(STATE, "bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+        self.write_log.write_text("")
+
+        answer = self.advance(CONVOY)
+
+        [parked] = self.of(answer, "parked")
+        self.assertEqual((T1, "resumes_exhausted", [T1, T3]), (parked["id"], parked["cause"], parked["parked"]))
+        for ticket_id in (T1, T3):
+            park = self.park_of(ticket_id)
+            self.assertEqual(("resumes_exhausted", T1), (park["cause"], park["origin"]), ticket_id)
+        self.assertIsNone(self.park_of(T2))
+        self.assertEqual([], self.slung())
+        # Interrupted once more, it is not restarted.
+        self.interrupted(T1, "auteur-2")
+        again = self.advance(CONVOY)
+        self.assertEqual(([], []), (self.of(again, "resumed"), self.slung()))
+        self.assertEqual(3, self.resumes())
+
+    def test_a_ticket_interrupted_three_times_is_restarted_twice_and_parked_at_the_third(self):
+        self.started_convoy()
+        seen = []
+        for name in ("auteur-1", "auteur-2", "auteur-3"):
+            self.interrupted(T1, name)
+            answer = self.advance(CONVOY)
+            seen.append((len(self.of(answer, "resumed")), len(self.of(answer, "parked"))))
+
+        self.assertEqual([(1, 0), (1, 0), (0, 1)], seen)
+        self.assertEqual(2, len(self.resume_launches()))
+        self.assertEqual(3, self.resumes())
+        self.assertEqual("resumes_exhausted", self.park_of(T3)["cause"])
+
+    def test_the_tickets_that_wait_for_no_parked_ticket_keep_starting(self):
+        self.resumable(ceiling=1)
+        self.advance(CONVOY)  # T1 alone: the ceiling
+        self.run_ok(STATE, "set-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--value", 3)
+        self.close_through_gate("fx-o1", OTHER)
+        self.resumable()
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([T1], [entry["id"] for entry in self.of(answer, "parked")])
+        self.assertEqual([T2], self.started(answer))
+        self.assert_started_through_door(T2)
+        self.assertEqual({T3}, {entry["id"] for entry in self.of(answer, "waiting")})
+
+    def test_a_convoy_left_with_parked_tickets_only_raises_exactly_one_request_naming_each_and_its_cause(self):
+        self.exhausted_and_alone()
+
+        answer = self.advance(CONVOY)
+
+        needs = self.needs()
+        self.assertEqual(1, len(needs), needs)
+        self.assertTrue(needs[0].startswith(f"{self.grouped_bead()} — "), needs)
+        for named in (CONVOY, T1, T3, "reprises épuisées"):
+            self.assertIn(named, needs[0])
+        self.assertEqual([["mail", "human", f"NEEDS BENJAMIN: {self.grouped_bead()}"]], self.log("mail"))
+        self.assertTrue(self.of(answer, "grouped_request")["raised"])
+        # One request for the convoy, none per ticket.
+        for ticket_id in (T1, T3):
+            self.assertNotIn("gc.needs_benjamin", self.bead(ticket_id)["metadata"], ticket_id)
+        description = self.bead(self.grouped_bead())["description"]
+        for named in (T1, T3, "reprises épuisées"):
+            self.assertIn(named, description)
+
+    def test_the_grouped_request_names_a_ticket_its_own_exit_parked_with_that_cause(self):
+        self.exhausted_and_alone()
+        self.edit(T2, status="open", metadata={k: v for k, v in self.bead(T2)["metadata"].items()
+                                                if k != "gc.flow.gate.ticket_end"})
+        self.run_ok(STATE, "park", CONVOY, T2, "--cause", "operator_request", "--detail", "Accès à l'horloge")
+
+        self.advance(CONVOY)
+
+        description = self.bead(self.grouped_bead())["description"]
+        self.assertIn(T2, description)
+        self.assertIn("demande opérateur", description)
+
+    def test_no_grouped_request_while_a_ticket_that_is_not_parked_is_left(self):
+        self.started_convoy()
+        for name in ("auteur-1", "auteur-2", "auteur-3"):
+            self.interrupted(T1, name)
+            self.advance(CONVOY)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.needs())
+        self.assertIsNone(self.grouped_bead())
+        self.assertEqual({}, self.of(answer, "grouped_request") or {})
+
+    def test_the_same_parked_convoy_seen_on_several_passes_raises_one_request(self):
+        self.exhausted_and_alone()
+
+        for _ in range(3):
+            self.advance(CONVOY)
+
+        self.assertEqual(1, len(self.needs()))
+        self.assertEqual(1, len(self.log("mail")))
+        self.assertEqual(1, len([entry for entry in self.log("create") if self.GROUPED in entry[2]]))
+
+    def test_a_grouped_request_that_could_not_be_raised_fails_the_pass_and_is_raised_by_the_next(self):
+        self.exhausted_and_alone()
+
+        proc = self.run_cmd(TOOL, CONVOY, env={**self.env, "CONVOY_STATE_FAKE_MAIL_FAIL": "1"})
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        self.advance(CONVOY)
+        self.assertEqual(1, len(self.needs()))
+        self.assertEqual(1, len([entry for entry in self.log("create") if self.GROUPED in entry[2]]))
+
+    def test_the_answer_that_lifts_makes_the_ticket_and_its_descendants_startable_again(self):
+        self.exhausted_and_alone()
+        self.advance(CONVOY)
+        request = self.grouped_bead()
+        self.run_ok(ESCALATION, "repondre", request, self.LIFT)
+        self.write_log.write_text("")
+
+        answer = self.advance(CONVOY)
+
+        [lifted] = self.of(answer, "lifted")
+        self.assertEqual((T1, [T1, T3]), (lifted["id"], lifted["lifted"]))
+        self.assertIsNone(self.park_of(T1))
+        self.assertIsNone(self.park_of(T3))
+        # The ticket is sent again to an author session by the pass itself.
+        self.assertEqual([T1], [entry["id"] for entry in self.of(answer, "resumed")])
+        self.assertEqual(1, len(self.resume_launches()))
+        self.assertEqual(3, self.shown_state(T1)["resumes_left"])
+        # The request is over: off the list, its bead closed, its record gone.
+        self.assertEqual([], self.needs())
+        self.assertEqual("closed", self.bead(request)["status"])
+        self.assertIsNone(self.grouped_bead())
+        # And the ticket that waited for it starts once it is closed.
+        self.close_through_gate(T1)
+        self.assertEqual([T3], self.started(self.advance(CONVOY)))
+
+    def test_the_answer_that_leaves_the_tickets_parked_lifts_nothing_and_is_not_asked_again(self):
+        self.exhausted_and_alone()
+        self.advance(CONVOY)
+        self.run_ok(ESCALATION, "repondre", self.grouped_bead(), self.LEAVE)
+        self.write_log.write_text("")
+
+        for _ in range(2):
+            answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "lifted"))
+        self.assertEqual("resumes_exhausted", self.park_of(T1)["cause"])
+        self.assertEqual([], self.needs())
+        self.assertEqual(([], []), (self.log("mail"), self.slung()))
+
+    def test_an_answer_to_the_request_of_a_ticket_its_own_exit_parked_lifts_it_and_resumes_it(self):
+        self.started_convoy()
+        self.taken(T1, "auteur-1")
+        request = {"quoi": "Accès à l'horloge de référence", "pourquoi": "L'auteur n'a pas cet accès",
+                   "que_faire": [{"option": "Donner l'accès", "consequence": "Le ticket reprend."}],
+                   "langue": "fr", "bloquant": True}
+        self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, T1, "--exit", "operator_request")
+        unanswered = self.advance(CONVOY)
+        self.assertEqual(([], []), (self.of(unanswered, "lifted"), self.of(unanswered, "resumed")))
+        self.assertEqual("operator_request", self.park_of(T3)["cause"])
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the parking
+        self.run_ok(ESCALATION, "repondre", T1, "a")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([(T1, [T1, T3])], [(entry["id"], entry["lifted"]) for entry in self.of(answer, "lifted")])
+        self.assertEqual([(T1, "answered")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertIsNone(self.park_of(T3))
+        self.assertEqual(1, self.resumes())
 
 
 if __name__ == "__main__":

@@ -477,10 +477,12 @@ def invalidate(convoy_id: str, ticket: dict[str, Any], kinds: list[str]) -> dict
                          *(arg for kind in kinds for arg in ("--kind", kind)))
     judged = sorted({ticket["verdicts"][kind]["commit"][:12] for kind in kinds})
     resumes = answer.get("written", {}).get("gc.flow.counter.resumes")
-    # The commit of the correction round was counted when that round was
-    # opened (bin/convoy-state): it is not counted a second time here.
+    # The commit of the correction round, or of the resume of a returned
+    # ticket, was counted when that round or that resume was opened
+    # (bin/convoy-state): it is not counted a second time here.
     counted = ("une reprise est comptée" if resumes is not None
-               else "aucune reprise de plus n'est comptée (ce commit est celui du tour de correction)")
+               else "aucune reprise de plus n'est comptée (ce commit est celui du tour de correction "
+                    "ou d'une reprise déjà comptée)")
     return {
         "id": ticket["id"], "tip": tip, "invalidated": answer.get("invalidated", kinds),
         "resumes": resumes,

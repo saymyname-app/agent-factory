@@ -11,8 +11,12 @@ touched (exit 4).
 
 The author formula ends its sequence with it (`docs/TICKET_AUTHOR.md`).
 The ticket-end gate reads the Handoff (condition 2) and the detector's
-result (condition 5) at the tip of the branch (`docs/TICKET_END.md`); the
-resume of a parked, blocked or interrupted ticket is T20's.
+result (condition 5) at the tip of the branch (`docs/TICKET_END.md`).
+`bin/convoy-advance` reads the exit on each pass and sends an interrupted
+ticket, a blocked ticket whose repair is closed, and a parked ticket whose
+request was answered, to one fresh author session on the same branch; each
+resume is counted, and the third parks the ticket (T20,
+`docs/CONVOY_ADVANCE.md`).
 
 « terminé » on a `vertical_slice` or a `repair` is refused without the
 demonstration proof: the piece `demonstration`, verified by the evidence
@@ -83,7 +87,12 @@ The language and the blocking flag are set by code. The line `<ticket> —
 every ticket of the convoy that waits for it, directly or not, read on the
 tracker's `blocks` edges (`docs/CONVOY_STATE.md`). `bin/convoy-advance` does
 not start a parked ticket and reports it under `waiting`; the tickets that
-wait for none of them keep starting. Lifting a parking is T20's.
+wait for none of them keep starting. A parking is lifted by
+`bin/convoy-advance`, on the operator's answer (T20,
+`docs/CONVOY_ADVANCE.md`): any answer to an `operator_request`; for a
+`planning_exception`, only the option that accepts the deviation. The
+ticket is then sent to a fresh author session (cause `answered`) and the
+tickets behind it are startable again.
 
 **Technically blocked.** `--repair` is a JSON object with exactly `title`,
 `what_it_delivers`, `restores` (`{kind, ref}`), `demonstration_line` and
@@ -178,7 +187,11 @@ writes nothing.
   as a parking and as a request to the operator. It is not written into a
   `bin/planning-exception` register: no register is attached to a marked
   convoy yet.
-- Nothing here resumes a ticket, lifts a parking, or counts a resume (T20).
+- Nothing here resumes a ticket, lifts a parking, or counts a resume:
+  `bin/convoy-advance` does, from the exit recorded here (T20,
+  `docs/CONVOY_ADVANCE.md`). A Planning Exception that names no anchor has
+  no option the code reads as accepting it: its parking is not lifted by
+  the pass.
 
 ## Proof
 

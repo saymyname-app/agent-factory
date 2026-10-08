@@ -437,8 +437,12 @@ touché : il reste avancé par le Mayor.
 - **Formule de démarrage** : `start.formula` dans le même fichier, aujourd'hui
   `mol-ticket-author` (la formule de l'auteur, `docs/TICKET_AUTHOR.md`). À
   `null`, la commande refuse de démarrer quoi que ce soit (sortie 1).
+- **Formule de reprise** : `resume.formula` dans le même fichier, aujourd'hui
+  `mol-ticket-resume`. Sans ce réglage, un ticket à reprendre est refusé par
+  la passe, nommé sous `refused` (sortie 1).
 - **Sorties** : 0 passe faite ; 1 refus (réglage, tracker, porte de dispatch
-  qui refuse un ticket, nommé sous `refused`, ou incident impossible à lever) ;
+  qui refuse un ticket ou une reprise, nommé sous `refused`, incident ou
+  demande groupée impossible à lever) ;
   3 « état sans règle » : rien n'est démarré dans ce convoi ; 4 « pas un convoi
   du nouveau flux ».
 - **Convoi arrêté (« état sans règle »)** : un ticket démarré ou fermé hors de
@@ -471,6 +475,32 @@ touché : il reste avancé par le Mayor.
   (`./bin/ticket-end settle`) ; avant la fusion, elle mesure la fidélité
   d'un ticket d'interface (`./bin/ticket-end fidelity`). Un ticket laissé
   ouvert est listé avec la condition qui manque.
+- **Reprises comptées, parcage à la troisième** (T20) : à chaque passe, un
+  ticket dont l'auteur doit le reprendre part vers **une** session neuve
+  d'auteur, sur la même branche, sur un bead « Reprise — <ticket> ». Causes :
+  `interrupted` (sortie « interrompu », ou session terminée sans sortie),
+  `returned` (la fusion a rendu le ticket : conflit ou rouge), `unblocked`
+  (son `repair` est fermé), `answered` (la demande qui le parquait a sa
+  réponse). Chaque reprise est comptée et prend une place sous N. À la
+  troisième, toutes causes confondues (celles-ci, le tour de correction, un
+  commit après verdict), le ticket est parqué avec ceux qui l'attendent et
+  n'est pas relancé ; les autres continuent. Listes `resumed`, `parked`,
+  `lifted` dans la réponse.
+- **Une seule demande groupée** (T20) : quand il ne reste dans un convoi que
+  des tickets parqués, la passe lève **une** ligne pour le convoi dans
+  `./bin/escalation-door list`, sur un bead « Demande groupée : convoi … »
+  qui nomme chaque ticket parqué et sa cause — jamais une par ticket. Répondre `a`
+  relance les tickets aux reprises épuisées (trois reprises de nouveau) ;
+  `b` les laisse parqués, la demande ne revient pas.
+- **Lever un parcage, c'est répondre** : `./bin/escalation-door repondre` sur
+  la demande du ticket (demande opérateur : toute réponse ; Planning
+  Exception : seulement l'option qui accepte l'écart) ou sur la demande
+  groupée. La passe suivante lève le parcage et reprend le ticket. **Ne
+  jamais reprendre ou déparquer un ticket à la main**, ni dispatcher
+  `mol-ticket-resume`.
+- **Pas repris** : un ticket arrêté ; un ticket dont la session du tour de
+  correction est morte sans fermer son bead ; un ticket que la porte de fin
+  de ticket laisse en attente (fidélité rouge, condition manquante).
 - **Relecture des tests restée sans résultat** : la même passe la relance une
   fois, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune
@@ -708,7 +738,9 @@ protégée (Spec af-wf4w5r §4 et §8, T18). Pour un convoi qui porte la
   4 « pas un convoi du nouveau flux ».
 - **Limites** : les autres conditions de la porte de fin de ticket ne sont
   pas encore exigées avant la fusion (T19) ; la session neuve de l'auteur d'un
-  ticket retourné n'est pas démarrée ici (T20) ; un seul dépôt par convoi.
+  ticket retourné n'est pas démarrée ici : `./bin/convoy-advance` l'envoie à
+  la passe suivante et compte une reprise (`docs/CONVOY_ADVANCE.md`) ; un
+  seul dépôt par convoi.
 
 Détail : `docs/SPEC_INTEGRATION.md`.
 
@@ -757,8 +789,11 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
   échoue et rien n'en est fusionné.
 - **Pas ici** : la revue de code (`./bin/code-review`) et la Ticket
   Evaluation sur le produit lancé (`./bin/ticket-evaluation`), que le flux
-  envoie après la sortie « terminé » ; la porte de fin de ticket (T19) ; la
-  reprise d'un ticket (T20).
+  envoie après la sortie « terminé » ; la porte de fin de ticket
+  (`./bin/ticket-end`) ; la reprise d'un ticket, envoyée par
+  `./bin/convoy-advance` à une session neuve sur la formule
+  `mol-ticket-resume`, qui prend le ticket par le même `start`
+  (`docs/CONVOY_ADVANCE.md`).
 
 Détail : `docs/TICKET_AUTHOR.md`.
 
@@ -1016,13 +1051,58 @@ nouveau flux**.
   `./bin/correction-round` le fait, par `./bin/dispatch-door` et
   `./bin/convoy-state`.
 - **Limites** : aucun délai sur la session de correction (une session morte
-  sans fermer son bead laisse le ticket en attente ; la reprise est à T20) ;
-  rien ne lève un arrêt.
+  sans fermer son bead laisse le ticket en attente : les reprises de
+  `./bin/convoy-advance` ne la couvrent pas) ; rien ne lève un arrêt, et un
+  ticket arrêté n'est jamais repris. Le tour compte parmi les trois reprises
+  qui parquent un ticket (`docs/CONVOY_ADVANCE.md`).
 
 Détail : `docs/CORRECTION_ROUND.md`.
 
 ---
 
+## `./bin/proposal-door` — la porte unique des propositions
+
+Toute proposition d'amélioration passe par cette porte (T07) : jamais de
+`gc bd create -l proposal` à la main. Elle refuse l'écriture (aucun bead)
+si un champ manque, dépasse 140 caractères sur une ligne ou n'est pas dans
+la langue de l'opérateur.
+
+```bash
+./bin/proposal-door create '<json>'            # quoi, pourquoi, que_faire[], langue, classe
+./bin/proposal-door accepter <bead> <acteur>   # -> à planifier
+./bin/proposal-door rejeter <bead> <raison> <acteur>
+./bin/proposal-door reporter <bead> <heure> <acteur>
+./bin/proposal-door reconvertir <bead> <raison> '<que_faire json>' <acteur>
+./bin/proposal-door compte [--classe maintenance|decision|sans_champs]
+./bin/proposal-door list   [--classe ...]      # "<bead>\t<classe>\t<état>\t<quoi>"
+```
+
+**Deux classes** (ADR-0029, Benjamin 2026-10-07 : « oui pour R1 »), choisies
+par le producteur à la création ; en cas de doute, `decision` :
+
+| Classe | Ce que c'est | Ce que fait la porte | Où le Cockpit le montre |
+|---|---|---|---|
+| `maintenance` | corrige un défaut constaté de l'usine sans changer ce que l'opérateur voit ou doit faire, ni une règle de méthode (ordres, gardes, formules, tests, docs, filtres, seuils) | crée un bead bug (`gc.authorized_by=ADR-0029`, `gc.source=proposal-door`, label `maintenance`), le relie à la proposition, passe la proposition en `prise_en_charge` (tracé) et envoie un mail au Mayor, qui le dispatche par `factory-work-dispatch` | zone santé (« L'usine corrige seule N défaut(s) … ») et journal ; jamais dans « Ce qui t'attend » |
+| `decision` | change ce que l'opérateur voit ou doit faire, une règle de méthode, une dépense, un consentement, une donnée personnelle, un effet irréversible, un comportement produit | exige exactement une option `recommande: true` avec sa `raison`, sinon refus | « Ce qui t'attend », Quand tu veux |
+
+Une proposition sans champs (créée avant la porte) n'est jamais réécrite :
+le Cockpit la signale en zone santé « à reformuler par la porte ou à
+fermer ». Un bead `maintenance` qui, en cours de travail, touche un
+comportement visible de l'opérateur est **arrêté, jamais poursuivi** :
+`reconvertir` ferme le bead bug et refait de la proposition une `decision`
+(ADR-0029 point 6). ADR-0017 reste vrai : la porte n'autorise que la
+correction du défaut constaté, jamais un refactor ou un audit.
+
+Pourquoi : le 2026-10-07, sur 8 propositions ouvertes dans le Cockpit, 5
+étaient des filtres d'ordres ou de gardes que l'autorisation de maintenance
+du 2026-09-16 couvrait déjà, et 4 étaient périmées. Benjamin arbitrait des
+décisions qui n'étaient pas de son niveau.
+
+Tests : `tests/proposal-door-test.py` (la porte sur un faux `gc`),
+`tests/proposal-classes-contract-test.py` (la vraie porte puis le vrai
+Cockpit sur les mêmes beads).
+
+---
 ## `./bin/ticket-end` — pourquoi ce ticket n'est-il pas fermé ?
 
 **La porte de fin de ticket** (Spec af-wf4w5r §9, T19). Dans un convoi qui
@@ -1063,8 +1143,10 @@ ticket.
   fermeture hors porte arrête le convoi (incident d'usine). `close` et
   `settle` sont refusés à toute session d'agent.
 - **Un convoi sans marque** garde `./bin/deliver-close`, sans changement.
-- **Limites** : une fidélité rouge laisse le ticket en attente (la reprise
-  est à T20) ; un contrôle de fidélité par passe ; la fin de Spec est à T23.
+- **Limites** : une fidélité rouge, comme toute condition manquante, laisse
+  le ticket en attente : les reprises de `./bin/convoy-advance` ne couvrent
+  pas un ticket que la porte laisse ouvert (`docs/CONVOY_ADVANCE.md`) ; un
+  contrôle de fidélité par passe ; la fin de Spec est à T23.
 
 Détail : `docs/TICKET_END.md`.
 

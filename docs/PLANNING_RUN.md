@@ -109,7 +109,9 @@ Planning Run starts.
    bead is ever dispatched, woken for, or counted as delivery. When the
    convoy closes, the Spec and Ticket Graph Draft beads close with it
    (`bin/planning-artifacts-close`) -- both stay open and readable during
-   delivery.
+   delivery. A convoy that carries the new-flow mark does not close when
+   its last ticket does: it, its Spec and its Draft stay open until the
+   operator's acceptance or abandon (`docs/CONVOY_ADVANCE.md`, T22).
 
 ## Research and prototype tickets
 

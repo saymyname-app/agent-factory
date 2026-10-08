@@ -41,8 +41,11 @@ DELIVERY_RESULT_CONTRACT = "agent-factory-fixture-delivery-result/v1"
 # The lifecycle of one ticket of a marked convoy, in the only order the flow
 # allows (Spec af-wf4w5r §4 to §9).
 DELIVERY_STATES = ("published", "started", "red", "frozen", "coded", "reviewed", "evaluated", "merged", "closed")
-DELIVERY_INJECTIONS = ("none", "criterion-edited", "closed-by-hand")
+DELIVERY_INJECTIONS = ("none", "criterion-edited", "closed-by-hand", "three-failures")
 DELIVERY_MAX_EVENTS = 16
+# A walk that also parks tickets goes on, past the closed ticket, until an
+# event changes nothing (T20).
+DELIVERY_MAX_EVENTS_PARKING = 32
 TICKET_END_VERSION = "ticket-end/v1"
 TICKET_END_CONDITIONS = (
     "criteria", "handoff", "evaluation", "fidelity", "deferral", "merge", "evidence", "tdd", "review")
@@ -1008,13 +1011,17 @@ def validate_delivery_scenario(scenario: dict[str, Any]) -> tuple[str, dict[str,
     if inject not in DELIVERY_INJECTIONS:
         raise OracleError(f"inject.delivery must be one of {', '.join(DELIVERY_INJECTIONS)}")
     expect = as_dict(scenario.get("expect"), "expect")
-    if not isinstance(expect.get("closed"), bool) or set(expect) - {"closed", "missing"}:
+    if not isinstance(expect.get("closed"), bool) or set(expect) - {"closed", "missing", "parked"}:
         raise OracleError("expect must be {closed: true} or {closed: false, missing: [condition numbers]}")
+    # T20: how many tickets the walk leaves parked beside the closed one.
+    parked = expect.get("parked")
+    if "parked" in expect and (isinstance(parked, bool) or not isinstance(parked, int) or parked < 1 or not expect["closed"]):
+        raise OracleError("expect.parked counts the tickets left parked beside a closed ticket: a positive number, with closed: true")
     missing = expect.get("missing", [])
     if expect["closed"] == bool(missing) or any(
             isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= len(TICKET_END_CONDITIONS) for n in missing):
         raise OracleError("expect.missing names the conditions of the ticket-end gate an open ticket misses, and only then")
-    return inject, {"closed": expect["closed"], "missing": sorted(missing)}, project
+    return inject, {"closed": expect["closed"], "missing": sorted(missing), "parked": parked}, project
 
 
 def run_driver(driver: Path, workspace: Path, command: str, *arguments: str) -> dict[str, Any]:
@@ -1056,6 +1063,18 @@ class DeliveryTarget:
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise OracleError(f"{tool} {arguments[0]} failed to run: {exc}") from exc
         return result.returncode, json_output(result, f"{tool} {arguments[0]}")
+
+    def requests(self) -> list[str]:
+        """The lines of the operator's list, as bin/escalation-door prints them."""
+        try:
+            result = subprocess.run((str(BIN / "escalation-door"), "list"), env=self.environment, text=True,
+                                    capture_output=True, stdin=subprocess.DEVNULL, timeout=120, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise OracleError(f"escalation-door list failed to run: {exc}") from exc
+        if result.returncode != 0 or "NEEDS BENJAMIN:" not in result.stdout:
+            raise OracleError(f"escalation-door list failed: {result.stderr.strip() or result.stdout.strip()}")
+        body = result.stdout.split("NEEDS BENJAMIN:", 1)[1].split("Pending proposals", 1)[0]
+        return [line.strip() for line in body.splitlines() if line.strip() and "(none)" not in line]
 
     def is_ancestor(self, commit: Any, of: str) -> bool:
         if not isinstance(commit, str) or not REVISION.fullmatch(commit):
@@ -1148,6 +1167,47 @@ def observe_delivery(target: DeliveryTarget) -> list[tuple[str, str]]:
     return reached
 
 
+def observe_parking(target: DeliveryTarget) -> tuple[list[dict[str, Any]], bool, list[str]]:
+    """The tickets of the convoy that are parked, whether a ticket that is
+    not parked is still open, and the requests on the operator's list (T20)."""
+    _, shown = target.read("convoy-state", "show", target.convoy, "--repo", str(target.repo))
+    left = [entry for entry in as_list(shown.get("tickets"), "convoy tickets")
+            if isinstance(entry, dict) and entry.get("status") != "closed"]
+    parked = [
+        {"id": entry["id"], "cause": entry["park"].get("cause"), "origin": entry["park"].get("origin"),
+         "resumes": (entry.get("counters") or {}).get("resumes")}
+        for entry in left if isinstance(entry.get("park"), dict)]
+    requests = target.requests()
+    if len(requests) > 1:
+        raise OracleError(f"the operator's list shows {len(requests)} requests for one convoy: one per ticket, not one grouped request")
+    if requests and len(parked) < len(left):
+        raise OracleError("a request was raised while a ticket of the convoy that is not parked is still open")
+    return sorted(parked, key=lambda entry: entry["id"]), len(parked) < len(left), requests
+
+
+def parking_result(target: DeliveryTarget, expected: int, reached_after: list[str]) -> dict[str, Any]:
+    """Spec §8, user stories 52 and 54: nothing but parked tickets is left,
+    each parked by a ticket out of resumes or behind one, and one request
+    names them all."""
+    parked, advancing, requests = observe_parking(target)
+    if advancing or len(parked) != expected:
+        raise OracleError(f"the walk leaves {len(parked)} parked ticket(s), the scenario expects {expected}"
+                          + (", and a ticket that is not parked is still open" if advancing else ""))
+    causes = {entry["id"]: entry["cause"] for entry in parked}
+    for entry in parked:
+        if entry["origin"] not in causes or causes[entry["origin"]] != entry["cause"]:
+            raise OracleError(f"ticket {entry['id']} is parked by {entry['origin']}, which is not a parked ticket of the convoy")
+    if len(requests) != 1:
+        raise OracleError("nothing but parked tickets is left in the convoy and the operator's list shows no request for it")
+    unnamed = [entry["id"] for entry in parked if entry["id"] not in requests[0]]
+    if unnamed:
+        raise OracleError(f"the grouped request does not name the parked ticket(s) {', '.join(unnamed)}")
+    if not reached_after:
+        raise OracleError("the ticket that waits for no parked ticket did not advance once the others were parked")
+    return {"parked": parked, "reached_after": reached_after, "requests_before_only_parked_left": 0,
+            "requests": len(requests), "named_by_the_request": sorted(entry["id"] for entry in parked)}
+
+
 def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
     inject, expect, project = validate_delivery_scenario(scenario)
     with tempfile.TemporaryDirectory(prefix="fixture-city-delivery-") as temporary:
@@ -1160,14 +1220,21 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
             if lifecycle != ["published"]:
                 raise OracleError(f"a published ticket shows {', '.join(lifecycle) or 'nothing'}: expected published, not started")
             observations = [list(lifecycle)]
-            for _ in range(DELIVERY_MAX_EVENTS):
+            parking, reached_after = expect["parked"] is not None, None
+            for _ in range(DELIVERY_MAX_EVENTS_PARKING if parking else DELIVERY_MAX_EVENTS):
                 event = run_driver(driver, workspace, "advance")
                 reached = [state for state, _ in observe_delivery(target)]
                 if reached[:len(lifecycle)] != lifecycle:
                     raise OracleError(f"lifecycle went backwards: {', '.join(lifecycle)} then {', '.join(reached)}")
                 observations.append(reached[len(lifecycle):])
+                if parking:
+                    # What the walked ticket reached once tickets were parked.
+                    if reached_after is not None:
+                        reached_after += reached[len(lifecycle):]
+                    elif observe_parking(target)[0]:
+                        reached_after = []
                 lifecycle = reached
-                if lifecycle[-1] == "closed" or event.get("idle") is True:
+                if event.get("idle") is True or (lifecycle[-1] == "closed" and not parking):
                     break
             closed = lifecycle[-1] == "closed"
             status, check = target.read("ticket-end", "check", target.convoy, target.ticket, "--repo", str(target.repo))
@@ -1185,6 +1252,7 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
             verify_status, verified = target.read("evidence-capture", "verify", target.convoy, target.ticket)
             if closed and verify_status != 0:
                 raise OracleError(f"the evidence of the closed ticket does not verify: {verified.get('error')}")
+            parked = parking_result(target, expect["parked"], reached_after or []) if parking else None
         finally:
             run_driver(driver, workspace, "stop")
     result = {
@@ -1204,6 +1272,9 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
     }
     if project:
         result["project"] = project
+    if parked:
+        result["parking"] = parked
+        result["interfaces"]["read"].append("escalation-door list")
     result["oracle_digest"] = canonical_digest(result)
     return result
 

@@ -41,8 +41,11 @@ City lance un contrôle, et c'est lui qui laisse démarrer la suivante.
   échoue et rien n'en est fusionné.
 - **Pas ici** : la revue de code (`./bin/code-review`) et la Ticket
   Evaluation sur le produit lancé (`./bin/ticket-evaluation`), que le flux
-  envoie après la sortie « terminé » ; la porte de fin de ticket (T19) ; la
-  reprise d'un ticket (T20).
+  envoie après la sortie « terminé » ; la porte de fin de ticket
+  (`./bin/ticket-end`) ; la reprise d'un ticket, envoyée par
+  `./bin/convoy-advance` à une session neuve sur la formule
+  `mol-ticket-resume`, qui prend le ticket par le même `start`
+  (`docs/CONVOY_ADVANCE.md`).
 
 Détail : `docs/TICKET_AUTHOR.md`.
 

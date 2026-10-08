@@ -109,7 +109,9 @@ Every answer is one JSON object on stdout.
 ## Limits
 
 - **A red fidelity leaves the ticket waiting.** The check is not run again
-  at the same tip; the author's resume on a refused ticket is T20's.
+  at the same tip, and nothing sends the ticket back to its author: the
+  resumes of T20 (`docs/CONVOY_ADVANCE.md`) do not cover a ticket this gate
+  leaves waiting, for a red fidelity or for any other missing condition.
 - **The link ticket → screen is not recorded at publication.** Every screen
   of the profile that serves a state of the ticket's Validated Prototype is
   compared.

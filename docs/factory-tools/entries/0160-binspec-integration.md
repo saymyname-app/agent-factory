@@ -38,7 +38,9 @@ protégée (Spec af-wf4w5r §4 et §8, T18). Pour un convoi qui porte la
   4 « pas un convoi du nouveau flux ».
 - **Limites** : les autres conditions de la porte de fin de ticket ne sont
   pas encore exigées avant la fusion (T19) ; la session neuve de l'auteur d'un
-  ticket retourné n'est pas démarrée ici (T20) ; un seul dépôt par convoi.
+  ticket retourné n'est pas démarrée ici : `./bin/convoy-advance` l'envoie à
+  la passe suivante et compte une reprise (`docs/CONVOY_ADVANCE.md`) ; un
+  seul dépôt par convoi.
 
 Détail : `docs/SPEC_INTEGRATION.md`.
 

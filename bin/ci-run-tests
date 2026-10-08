@@ -68,6 +68,8 @@ set -uo pipefail
 
 SELF=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")
 REPO_ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+SELF="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
+ARGS=("$@")
 cd "$REPO_ROOT" || { echo "ci-run-tests: $REPO_ROOT unreachable" >&2; exit 2; }
 
 NEVER_READ='2000-01-01'  # the access time given to every entry of a copy
@@ -264,6 +266,44 @@ fi
 if [ "${#files[@]}" -eq 0 ]; then
   echo "ci-run-tests: no discoverable tests under tests/*.sh, tests/*.py" >&2
   exit 1
+fi
+
+# One battery at a time on a host that several sessions share (af-7m7ymg).
+# On 2026-10-08 three batteries ran at once beside the live Factory: load 37,
+# memory full, one file took 504 s instead of 60, and two Cockpit tests failed
+# on "nothing listening on 127.0.0.1:<port> after 5s" that pass alone in 14 s.
+# So a run takes a lock for the host and the next one waits its turn, saying
+# whose battery it waits for. `flock --close` holds the lock in its own
+# process: a server a test leaves behind does not keep the line, and the lock
+# goes when the battery ends, however it ends. After CI_RUN_TESTS_HOST_WAIT
+# seconds (default 5400) the run gives up with exit 75 and says no test ran:
+# that is not a test failure. Not taken on a GitHub runner (one run per
+# machine), by --list, or by a ci-run-tests started from inside a battery
+# (tests of this script): that one inherits its battery's turn.
+# CI_RUN_TESTS_HOST_LOCK_FILE names another lock file (tests only).
+HOST_LOCK="${CI_RUN_TESTS_HOST_LOCK_FILE:-/tmp/agent-factory-ci-run-tests-$(id -u).lock}"
+if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${CI_RUN_TESTS_HOST_LOCK_HELD:-}" != "$HOST_LOCK" ]; then
+  HOST_WAIT="${CI_RUN_TESTS_HOST_WAIT:-5400}"
+  if ! [[ "$HOST_WAIT" =~ ^[0-9]+$ ]]; then
+    echo "ci-run-tests: CI_RUN_TESTS_HOST_WAIT wants a number of seconds, got: $HOST_WAIT" >&2; exit 2
+  fi
+  step=0
+  while :; do
+    CI_RUN_TESTS_HOST_LOCK_HELD="$HOST_LOCK" flock --close --timeout "$step" --conflict-exit-code 75 \
+      "$HOST_LOCK" "$BASH" "$SELF" "${ARGS[@]}"
+    status=$?
+    [ "$status" -eq 75 ] || exit "$status"
+    holder=$(cat "$HOST_LOCK.holder" 2>/dev/null) || holder="another session"
+    if [ "$SECONDS" -ge "$HOST_WAIT" ]; then
+      echo "ci-run-tests: NOT RUN -- the battery of $holder still holds the host after ${SECONDS}s (CI_RUN_TESTS_HOST_WAIT=$HOST_WAIT). No test ran: this is not a test failure. Start it again later." >&2
+      exit 75
+    fi
+    echo "ci-run-tests: waiting for the battery of $holder -- one battery at a time on this host; waited ${SECONDS}s of at most ${HOST_WAIT}s" >&2
+    step=$(( HOST_WAIT - SECONDS < 60 ? HOST_WAIT - SECONDS : 60 ))
+  done
+fi
+if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
+  printf '%s (pid %s, since %s, %s file(s) at once)\n' "$REPO_ROOT" "$$" "$(date +%H:%M)" "$JOBS" > "$HOST_LOCK.holder" 2>/dev/null || true
 fi
 
 PYTHON=python3
