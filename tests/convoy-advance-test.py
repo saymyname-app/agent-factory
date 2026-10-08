@@ -52,6 +52,7 @@ DISPATCH_GATE = "gc.flow.gate.dispatch"
 INCIDENT = "Incident d'usine"
 STARTED_OUTSIDE = "démarré hors porte"
 CLOSED_OUTSIDE = "fermé hors porte"
+CONVOY_CLOSED_OUTSIDE = "fermé hors commande"
 # What Gas City exports into every agent session, the Mayor's included.
 SESSION_IDENTITY = ("GC_AGENT", "GC_ALIAS", "GC_SESSION_NAME", "GC_SESSION_ID", "GC_TEMPLATE")
 MAYOR_SESSION = {"GC_AGENT": "mayor", "GC_ALIAS": "mayor", "GC_SESSION_NAME": "mayor",
@@ -487,6 +488,41 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertIn(T1, incidents[0])
         self.assertIn(CLOSED_OUTSIDE, incidents[0])
 
+    def test_a_marked_convoy_closed_outside_acceptance_or_abandon_is_raised_on_the_escalation_list(self):
+        self.edit(CONVOY, status="closed", close_reason="convoy autoclose: all children closed")
+
+        answer = self.advance("--all", expect=EXIT_UNRULED)
+
+        self.assertEqual([], self.started(answer))
+        self.assertEqual(["fx-o1"], self.slung())
+        incidents = self.escalation_list()
+        self.assertEqual(1, len(incidents), incidents)
+        self.assertIn(CONVOY, incidents[0])
+        self.assertIn(CONVOY_CLOSED_OUTSIDE, incidents[0])
+
+    def test_a_convoy_closed_outside_is_raised_once_and_withdrawn_once_reopened(self):
+        self.edit(CONVOY, status="closed")
+        self.advance("--all", "--stopped-ok")
+        self.advance("--all", "--stopped-ok")
+        self.assertEqual(1, len(self.escalation_list()))
+        self.assertEqual(1, len(self.log("mail")))
+        self.edit(CONVOY, status="open")  # factory maintenance restored a valid state
+
+        answer = self.advance("--all")
+
+        self.assertEqual([T1, T2], self.started(answer))
+        self.assertEqual([], self.escalation_list())
+
+    def test_an_unmarked_convoy_closed_like_today_raises_nothing(self):
+        self.edit(PLAIN, status="closed", close_reason="convoy autoclose: all children closed")
+        before = self.bead(PLAIN)
+
+        answer = self.advance("--all")
+
+        self.assertNotIn(PLAIN, [convoy["id"] for convoy in answer["convoys"]])
+        self.assertEqual([], self.escalation_list())
+        self.assertEqual(before, self.bead(PLAIN))
+
     def test_an_incoherent_counter_stops_the_convoy_and_raises_a_factory_incident(self):
         state = self.tracker_state()
         state["beads"][T2]["metadata"]["gc.flow.counter.resumes"] = -1
@@ -672,13 +708,26 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertEqual(before, self.tracker.read_text())
         self.assertEqual("", self.write_log.read_text())
 
-    def test_check_only_fails_when_no_marked_convoy_is_open(self):
-        self.edit(CONVOY, status="closed")
-        self.edit(OTHER, status="closed")
+    def test_check_only_fails_when_no_marked_convoy_exists(self):
+        state = self.tracker_state()
+        for convoy in (CONVOY, OTHER):
+            del state["beads"][convoy]
+        self.tracker.write_text(json.dumps(state))
 
         proc = self.run_cmd(TOOL, "--check-only")
 
         self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_check_only_passes_when_the_only_marked_convoys_were_closed_outside_acceptance_or_abandon(self):
+        """Otherwise the order would never run the pass that signals them."""
+        self.edit(CONVOY, status="closed")
+        self.edit(OTHER, status="closed")
+        before = self.tracker.read_text()
+
+        proc = self.run_cmd(TOOL, "--check-only")
+
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(before, self.tracker.read_text())
 
     # --- the dispatch door records the start -------------------------------------
 

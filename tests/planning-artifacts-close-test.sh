@@ -161,4 +161,62 @@ out=$(run_tool) || rc=$?
 grep -q "closed=0 skipped=0 failed=0" <<<"$out" || { echo "$out" >&2; fail "a file-draft convoy's artifact/spec ids must be left untouched"; }
 [ -s "$CLOSE_LOG" ] && fail "attempted to close a file-draft artifact/spec id"
 
-echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error)"
+# =============================================================================
+# 4. Marked convoy (new flow, T22): it closes only by the acceptance or the
+#    abandon command. Closed any other way, its Spec and its Draft stay open;
+#    an unmarked convoy closed in the same run still closes its own.
+# =============================================================================
+
+jq -n '{
+  "zz-fixture-spec-marked": {"id": "zz-fixture-spec-marked", "status": "open"},
+  "zz-fixture-draft-marked": {"id": "zz-fixture-draft-marked", "status": "open"},
+  "zz-fixture-spec-plain": {"id": "zz-fixture-spec-plain", "status": "open"},
+  "zz-fixture-draft-plain": {"id": "zz-fixture-draft-plain", "status": "open"}
+}' > "$SHOW_FILE"
+jq -n '[{
+  "id": "zz-fixture-convoy-marked", "title": "Fixture Convoy Marked", "status": "closed", "issue_type": "convoy",
+  "close_reason": "convoy autoclose: all children closed",
+  "metadata": {"gc.flow.mark": "new-flow/v1",
+               "gc.artifact_id": "zz-fixture-draft-marked", "gc.spec_id": "zz-fixture-spec-marked"}
+}, {
+  "id": "zz-fixture-convoy-plain", "title": "Fixture Convoy Plain", "status": "closed", "issue_type": "convoy",
+  "metadata": {"gc.artifact_id": "zz-fixture-draft-plain", "gc.spec_id": "zz-fixture-spec-plain"}
+}]' > "$CONVOYS_FILE"
+: > "$CLOSE_LOG"
+
+rc=0
+out=$(run_tool) || rc=$?
+[ "$rc" -eq 0 ] || { echo "$out" >&2; fail "a marked convoy closed outside its commands must not fail the run"; }
+grep -q "closed=2 skipped=0 failed=0" <<<"$out" || { echo "$out" >&2; fail "expected only the unmarked convoy's Spec and Draft to close"; }
+[ "$(bead_status zz-fixture-spec-marked)" = "open" ] || fail "the Spec of a marked convoy closed outside acceptance or abandon was closed"
+[ "$(bead_status zz-fixture-draft-marked)" = "open" ] || fail "the Draft of a marked convoy closed outside acceptance or abandon was closed"
+[ "$(close_count zz-fixture-spec-marked)" = "0" ] || fail "a close was attempted on the Spec of a marked convoy"
+[ "$(close_count zz-fixture-draft-marked)" = "0" ] || fail "a close was attempted on the Draft of a marked convoy"
+grep -q "zz-fixture-convoy-marked" <<<"$out" || { echo "$out" >&2; fail "the run does not name the marked convoy it left alone"; }
+[ "$(bead_status zz-fixture-spec-plain)" = "closed" ] || fail "an unmarked convoy no longer closes its Spec"
+[ "$(bead_status zz-fixture-draft-plain)" = "closed" ] || fail "an unmarked convoy no longer closes its Draft"
+
+# =============================================================================
+# 5. The state command cannot say which closed convoys are marked: nothing is
+#    closed, and the run fails.
+# =============================================================================
+
+jq -n '{
+  "zz-fixture-spec-5": {"id": "zz-fixture-spec-5", "status": "open"},
+  "zz-fixture-draft-5": {"id": "zz-fixture-draft-5", "status": "open"}
+}' > "$SHOW_FILE"
+jq -n '[{
+  "id": "zz-fixture-convoy-5", "title": "Fixture Convoy Five", "status": "closed", "issue_type": "convoy",
+  "metadata": {"gc.artifact_id": "zz-fixture-draft-5", "gc.spec_id": "zz-fixture-spec-5"}
+}]' > "$CONVOYS_FILE"
+: > "$CLOSE_LOG"
+printf '#!/bin/sh\necho "{\"ok\": false}"\nexit 1\n' > "$TMP/bin/broken-convoy-state"
+chmod +x "$TMP/bin/broken-convoy-state"
+
+rc=0
+out=$(CONVOY_STATE_BIN="$TMP/bin/broken-convoy-state" run_tool) || rc=$?
+[ "$rc" -ne 0 ] || { echo "$out" >&2; fail "the run passed although the state command could not answer"; }
+[ -s "$CLOSE_LOG" ] && fail "something was closed although the marked convoys could not be told apart"
+[ "$(bead_status zz-fixture-spec-5)" = "open" ] || fail "a Spec was closed although the marked convoys could not be told apart"
+
+echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error, marked convoy closed outside its commands keeps its Spec and Draft, unreadable state closes nothing)"

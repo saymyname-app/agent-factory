@@ -28,6 +28,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 REVIEW="$ROOT/bin/graph-review"
 DOOR="$ROOT/bin/ticket-graph-publish"
 FIXTURES="$ROOT/tests/fixtures"
@@ -60,8 +61,7 @@ SYSTEMD_USER_DIR="$HOME/.local/share/systemd/user"
 cleanup() {
   status=$?
   trap - EXIT
-  gc --city "$CITY" stop >/dev/null 2>&1 || true
-  gc supervisor stop >/dev/null 2>&1 || true
+  isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   tmux -L "$(basename "$TRIAL")" kill-server >/dev/null 2>&1 || true
   # The supervisor, the city's managed Dolt server and the reviewer session
   # carry the trial directory on their command line; nothing else does.

@@ -1109,3 +1109,108 @@ Détail : `docs/TICKET_END.md`.
 
 ---
 
+## `./bin/ci-minutes` — combien de minutes GitHub Actions la CI de l'usine a-t-elle consommées ?
+
+**Les minutes facturées, par jour et par run** (af-mzuprx). Le dépôt est
+privé : chaque minute de runner est facturée, chaque job arrondi à la minute
+supérieure. L'API `timing` de GitHub répond 0 et l'API de facturation exige
+un jeton `admin:org` que l'usine n'a pas : ce script lit le début et la fin
+de chaque job et applique lui-même la règle. Lecture seule.
+
+```bash
+./bin/ci-minutes                       # les 3 derniers jours, et le détail des 15 derniers runs
+./bin/ci-minutes --since 2026-10-06    # depuis un jour donné
+./bin/ci-minutes --runs 40             # plus de runs détaillés
+```
+
+- **Jours et heures** : Europe/Paris.
+- **Colonnes** : runs, minutes, dont `pull_request`, dont `push`, dont
+  autres, et minutes des runs qui n'ont pas fini verts.
+- **Un job qui n'a jamais eu de runner** (quota atteint) compte 0.
+- **Quels tests coûtent le plus** : chaque ligne de `./bin/ci-run-tests`
+  finit par les secondes du fichier ; elles se lisent dans le journal du job.
+- **Ce que le script ne dit pas** : le quota restant et le montant facturé.
+  Ils se lisent sur la page d'usage GitHub de l'organisation.
+
+Détail : `docs/OPERATIONS.md`, « Factory CI cost and the Actions quota ».
+
+---
+## `./bin/ci-test-seconds` — pourquoi « Tests » attend-il les autres lots ?
+
+**La durée mesurée de chaque fichier de test** (af-mzuprx). La CI de l'usine
+répartit les tests en lots, un runner par lot. `./bin/ci-run-tests --shard`
+donne chaque fichier, du plus long au plus court, au lot le moins chargé, en
+lisant `config/ci-test-seconds.tsv`. Ce script réécrit cette liste à partir
+des journaux d'un run vert.
+
+```bash
+./bin/ci-test-seconds              # depuis le dernier run vert de Factory CI
+./bin/ci-test-seconds --run <id>   # depuis un run donné
+```
+
+- **Quand le lancer** : quand l'étape « Wait for the other lots » du job
+  `Tests` affiche un avertissement (plus de 3 minutes d'attente, facturées).
+- **Où** : dans un arbre de travail, jamais dans la racine vive ; le fichier
+  réécrit passe par une pull request.
+- **Liste périmée ou absente** : les lots sont moins égaux, rien d'autre. Un
+  fichier absent de la liste est pesé par sa taille ; chaque fichier reste
+  dans exactement un lot.
+
+Détail : `docs/OPERATIONS.md`, « Factory CI cost and the Actions quota ».
+
+---
+## `./bin/factory-revive` — relancer un superviseur que personne n'a arrêté exprès
+
+**Un arrêt non demandé est relancé en 7 minutes au plus** (af-v9t5vz). Le
+2026-10-08 à 04:27 (Paris), le script d'essai d'un ouvrier a lancé `gc
+supervisor stop` sur l'usine vivante. systemd a vu un arrêt propre (code 0)
+et n'a rien relancé, `bin/factory-boot` ne tourne qu'à l'ouverture de session
+Windows, et tous les orders sont morts avec le superviseur : l'usine est
+restée arrêtée 56 minutes.
+
+```bash
+./bin/factory-revive check       # verdict seul, ne touche à rien (sort 1 si arrêt non demandé)
+./bin/factory-revive run         # ce que le minuteur appelle
+./bin/factory-revive install     # écrit et active le minuteur systemd utilisateur (une fois, sur accord de l'opérateur)
+./bin/factory-revive uninstall   # le retire
+```
+
+Ce qui distingue un arrêt non demandé d'un arrêt délibéré : l'arrêt délibéré
+du runbook (§2) commence par `gc stop`, qui retire la cité de la liste du
+superviseur (`~/.gc/cities.toml`).
+
+| État constaté | Ce que fait `run` |
+|---|---|
+| le superviseur répond | rien |
+| superviseur arrêté, cité absente de la liste | rien : arrêt délibéré (une ligne au journal, une seule) |
+| superviseur arrêté, cité encore dans la liste, toujours vrai 45 s plus tard | `bin/factory-boot`, puis un ticket `maintenance` et une escalade « Mayor d'abord » par `bin/escalation-door` (promue à Benjamin au bout de 2 h si rien n'est élucidé) |
+| `factory-boot` n'a pas ramené le superviseur | sort 1, nouvel essai au passage suivant |
+
+- **Délai** : minuteur toutes les 5 min + 45 s de confirmation + le temps de
+  `factory-boot` (environ 1 min), soit 7 minutes au plus.
+- **Ne défait jamais un arrêt délibéré** : il ne relance que par
+  `factory-boot`, qui laisse suspendue une cité suspendue ; il n'arrête, ne
+  suspend et ne désenregistre rien.
+- **Pourquoi un minuteur systemd et pas un order** : un order tourne dans le
+  superviseur, donc pas quand il est arrêté.
+- **Ce qu'il ne voit pas** : un `gc stop` de la cité vivante lancé par erreur
+  (il ressemble à un arrêt délibéré), et une usine qui tourne mais n'avance
+  pas (c'est le rôle de `factory-watchdog` et de la ligne « Usine à l'arrêt ? »
+  du cockpit). Si le minuteur lui-même ne tourne pas, il reste l'alerte
+  externe « Usine muette » du cockpit.
+- **Journal** : `.gc/runtime/factory-revive.log`.
+
+Le même correctif fait démarrer le superviseur par son unité systemd dans
+`bin/factory-boot` quand elle est installée, au lieu de `gc supervisor
+start` : ce dernier lance un superviseur hors de l'unité, que `gc start`
+réactive ensuite et qui redémarre alors en échec toutes les 5 secondes.
+
+Côté tests : aucun test n'arrête une cité ou un superviseur autrement que par
+`isolated_city_stop` (`tests/lib/isolated-city.sh`), qui refuse si `GC_HOME`
+n'est pas dans le répertoire de l'essai.
+
+Tests : `tests/factory-revive-test.sh`, `tests/factory-boot-supervisor-test.sh`,
+`tests/isolated-city-stop-guard-test.sh`. Runbook :
+`docs/RUNBOOK_STOP_AND_RESTART.md` §3.
+
+---

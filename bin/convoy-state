@@ -22,10 +22,14 @@ the operator on a stopped one (T17), the fingerprint of its acceptance
 criteria frozen with the approved graph, the reference of the Validated
 Prototype the publication door posed in an interface ticket (read only) and
 the record of the ticket-end gate, written with the closing of the ticket
-(T19), and the convoy's open factory incident. No other script
+(T19), the convoy's open factory incident, and the manual lifecycle of the
+convoy: the mark puts it out of Gas City's automatic closing, and a marked
+convoy found closed is one closed outside the acceptance and abandon
+commands (T22). No other script
 invents a `gc.flow.*` field: a missing field is added here.
 
-    convoy-state list
+    convoy-state list            (open marked convoys; under `closed_outside`,
+                                  those closed outside acceptance or abandon)
     convoy-state show CONVOY [--repo DIR]
     convoy-state ticket TICKET [--bead-json -]
     convoy-state mark CONVOY [--demonstration-line TICKET=LINE ...] [--user-stories TICKET=N,N ...]
@@ -110,6 +114,12 @@ GC_BIN = os.environ.get("GC_BIN", "gc")
 MARK = "new-flow/v1"
 PREFIX = "gc.flow."
 KEY_MARK = PREFIX + "mark"
+# Gas City's own label for a convoy under manual lifecycle (`gc convoy create
+# --owned`): `gc convoy check`, which the order convoy-parent-sweep runs,
+# leaves a convoy that carries it open once all its tickets are closed (tried
+# on gc 1.4.1 in an isolated city, 2026-10-08). A marked convoy closes only by
+# code, on the operator's words (Spec §9).
+LABEL_MANUAL_LIFECYCLE = "owned"
 KEY_DEMONSTRATION = PREFIX + "demonstration_line"
 KEY_USER_STORIES = PREFIX + "user_stories"
 KEY_LAUNCH_RECIPE = PREFIX + "establishes_launch_recipe"
@@ -345,11 +355,18 @@ def require_marked(convoy: dict[str, Any]) -> None:
         raise Refusal(f"{UNRULED} : le convoi {convoy['id']} porte une marque inconnue ({mark!r})")
 
 
-def write_metadata(bead_id: str, values: dict[str, Any]) -> None:
+def write_metadata(bead_id: str, values: dict[str, Any], labels: tuple[str, ...] = ()) -> None:
     args = ["bd", "update", bead_id]
     for key, value in values.items():
         args += ["--set-metadata", f"{key}={value}"]
+    for label in labels:
+        args += ["--add-label", label]
     run_gc(args)
+
+
+def labels_of(bead: dict[str, Any]) -> list[Any]:
+    labels = bead.get("labels")
+    return labels if isinstance(labels, list) else []
 
 
 @contextmanager
@@ -1533,19 +1550,21 @@ def incident_record(raw: Any) -> dict[str, Any]:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    """The open convoys that carry the mark: what the advance command walks."""
-    out = run_gc(["bd", "list", "--type", "convoy", "--has-metadata-key", KEY_MARK, "--limit", "0", "--json"])
+    """The open convoys that carry the mark, and apart those found closed:
+    no command closes a marked convoy yet, so each was closed outside the
+    acceptance and abandon commands. What the advance command walks."""
+    out = run_gc(["bd", "list", "--all", "--type", "convoy", "--has-metadata-key", KEY_MARK, "--limit", "0", "--json"])
     try:
         data = json.loads(out)
     except json.JSONDecodeError as exc:
         raise Refusal(f"gc bd list a rendu un JSON illisible : {exc}") from exc
     if not isinstance(data, list):
         raise Refusal(f"gc bd list a rendu autre chose qu'une liste : {data!r}")
-    convoys = sorted(
-        bead["id"] for bead in data
-        if isinstance(bead, dict) and bead.get("status") != "closed" and KEY_MARK in metadata_of(bead)
-    )
-    print(json.dumps({"ok": True, "convoys": convoys}, indent=2, sort_keys=True, ensure_ascii=False))
+    marked = [bead for bead in data if isinstance(bead, dict) and KEY_MARK in metadata_of(bead)]
+    convoys = sorted(bead["id"] for bead in marked if bead.get("status") != "closed")
+    closed_outside = sorted(bead["id"] for bead in marked if bead.get("status") == "closed")
+    print(json.dumps({"ok": True, "convoys": convoys, "closed_outside": closed_outside},
+                     indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
 
@@ -1880,6 +1899,12 @@ def cmd_show(args: argparse.Namespace) -> int:
     convoy_unruled: list[dict[str, str]] = []
     if mark != MARK:
         convoy_unruled.append({"field": KEY_MARK, "reason": f"marque inconnue : {mark!r}"})
+    if convoy.get("status") == "closed":
+        said = convoy.get("close_reason")
+        convoy_unruled.append({"field": "status", "reason": (
+            "convoi fermé hors commande (ni acceptation ni abandon enregistré)"
+            + (f" ; raison portée : {said}" if isinstance(said, str) and said else "")
+        )})
     incident: dict[str, Any] | None = None
     if KEY_INCIDENT in metadata:
         try:
@@ -2033,7 +2058,7 @@ def cmd_mark(args: argparse.Namespace) -> int:
             f"plusieurs tickets établissent la recette de lancement ({', '.join(sorted(establishing))}) : "
             "une seule tranche l'établit, la première du graphe"
         )
-    writes: list[tuple[str, dict[str, Any]]] = []
+    writes: list[tuple[str, dict[str, Any], tuple[str, ...]]] = []
     for bead, counters in [*((ticket, TICKET_COUNTERS) for ticket in tickets), (convoy, CONVOY_COUNTERS)]:
         metadata = metadata_of(bead)
         mark = metadata.get(KEY_MARK)
@@ -2098,13 +2123,16 @@ def cmd_mark(args: argparse.Namespace) -> int:
             # is an "état sans règle", never read as a default.
             values[KEY_MARK] = MARK
             values.update({COUNTER_PREFIX + name: 0 for name in counters if COUNTER_PREFIX + name not in metadata})
-        if values:
-            writes.append((bead["id"], values))
+        # The manual lifecycle goes in the same write as the convoy's mark: a
+        # marked convoy is never one the convoy sweep could close.
+        labels = (LABEL_MANUAL_LIFECYCLE,) if bead is convoy and LABEL_MANUAL_LIFECYCLE not in labels_of(bead) else ()
+        if values or labels:
+            writes.append((bead["id"], values, labels))
     # Tickets first, the convoy last: the convoy's mark is what makes this a
     # new-flow convoy, so an interrupted marking leaves an unmarked convoy.
-    for bead_id, values in writes:
-        write_metadata(bead_id, values)
-    print(json.dumps({"ok": True, "convoy": args.convoy, "mark": MARK, "marked": [bead_id for bead_id, _ in writes]},
+    for bead_id, values, labels in writes:
+        write_metadata(bead_id, values, labels)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "mark": MARK, "marked": [bead_id for bead_id, _, _ in writes]},
                      indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 

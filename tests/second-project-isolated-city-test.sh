@@ -43,6 +43,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 PORT="${SECOND_PROJECT_TRIAL_PORT:-18441}"
 CEILING=4
 APPROVER="essai-approbateur"
@@ -62,8 +63,7 @@ FIXTURE="tests/fixtures/delivery-fixture-city-api"
 cleanup() {
   status=$?
   trap - EXIT
-  gc --city "$CITY" stop >/dev/null 2>&1 || true
-  gc supervisor stop >/dev/null 2>&1 || true
+  isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   tmux -L "$(basename "$TRIAL")" kill-server >/dev/null 2>&1 || true
   # A product an evaluation launched and that no pass stopped.
   if [ -d "$TRIAL/launches" ]; then

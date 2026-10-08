@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# factory-revive — restart a supervisor that nobody stopped on purpose
+# (af-v9t5vz).
+#
+# On 2026-10-08, 04:27 Paris, a worker's probe script ran `gc supervisor
+# stop` against the live Factory. systemd saw a clean stop (exit 0) and
+# restarted nothing; bin/factory-boot only runs at the Windows logon; every
+# order died with the supervisor. The Factory stayed down 56 minutes, until
+# an operator session noticed.
+#
+# What tells a stop nobody asked for from a deliberate one: the deliberate
+# stop of docs/RUNBOOK_STOP_AND_RESTART.md §2 begins with `gc stop`, which
+# takes the city off the supervisor's list ($GC_HOME/cities.toml). A
+# supervisor that is down while the city is still on that list was stopped
+# by something else.
+#
+#   supervisor answers                          -> nothing
+#   supervisor down, city not on the list       -> nothing (deliberate stop)
+#   supervisor down, city on the list, and
+#   still so after the grace delay              -> bin/factory-boot, then one
+#                                                  Mayor-first escalation
+#
+# bin/factory-boot keeps its own rule: a city suspended by an operator is
+# not resumed. This script never stops, suspends or unregisters anything.
+#
+# It cannot run as an order (orders die with the supervisor): a systemd user
+# timer runs it every 5 minutes. `install` writes that timer; it is a change
+# of the host, done once, on the operator's word.
+#
+# Usage:
+#   factory-revive check       verdict only, nothing done: exit 0 when the
+#                              supervisor answers or the stop is deliberate,
+#                              1 when the stop was not asked for
+#   factory-revive run         the table above (what the timer calls)
+#   factory-revive install     write and enable the systemd user timer
+#   factory-revive uninstall   disable and remove it
+set -uo pipefail
+
+ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+GC_BIN="${GC_BIN:-gc}"
+BD_BIN="${BD_BIN:-bd}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+GC_HOME_DIR="${GC_HOME:-$HOME/.gc}"
+BOOT_BIN="${FACTORY_BOOT_BIN:-$ROOT/bin/factory-boot}"
+DOOR_BIN="${ESCALATION_DOOR_BIN:-$ROOT/bin/escalation-door}"
+LOG="${FACTORY_REVIVE_LOG:-$ROOT/.gc/runtime/factory-revive.log}"
+STATE="${FACTORY_REVIVE_STATE:-$ROOT/.gc/runtime/factory-revive.state}"
+GRACE_SECONDS="${FACTORY_REVIVE_GRACE_SECONDS:-45}"
+UNIT_DIR="${FACTORY_REVIVE_UNIT_DIR:-$HOME/.config/systemd/user}"
+INTERVAL="${FACTORY_REVIVE_INTERVAL:-5min}"
+
+say() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG"; }
+
+supervisor_running() {
+  grep -qi 'is running' <<<"$(timeout 30 "$GC_BIN" supervisor status 2>/dev/null)"
+}
+
+city_registered() {
+  [ -f "$GC_HOME_DIR/cities.toml" ] && grep -qF "path = \"$ROOT\"" "$GC_HOME_DIR/cities.toml"
+}
+
+verdict() {
+  if supervisor_running; then echo running
+  elif city_registered; then echo unrequested
+  else echo deliberate
+  fi
+}
+
+# One log line per change of verdict, not one per run of the timer.
+last_verdict() { [ -f "$STATE" ] && head -n 1 "$STATE" || true; }
+remember() { printf '%s\n' "$1" > "$STATE"; }
+
+report() {
+  local bead
+  bead=$(cd "$ROOT" && "$BD_BIN" create \
+    --title "Arrêt non demandé du superviseur, relancé par factory-revive le $(TZ=Europe/Paris date '+%Y-%m-%d à %H:%M') (Paris)" \
+    --type bug --labels maintenance --silent \
+    --description "Le superviseur ne répondait plus alors que la cité était encore enregistrée : aucun opérateur n'avait demandé cet arrêt (un arrêt délibéré commence par gc stop, docs/RUNBOOK_STOP_AND_RESTART.md §2). bin/factory-revive a relancé l'usine par bin/factory-boot. À faire : trouver ce qui a lancé l'arrêt (journalctl --user -u gascity-supervisor, .gc/events.jsonl, transcripts des sessions actives à cette heure) et corriger la classe. Journal : .gc/runtime/factory-revive.log." \
+    2>>"$LOG") || bead=""
+  if [ -z "$bead" ]; then
+    say "WARN   revived, but no bead could be filed for the unrequested stop"
+    return 0
+  fi
+  if "$DOOR_BIN" mayor "$bead" "Arrêt non demandé du superviseur, relancé par factory-revive : trouver ce qui l'a arrêté" >>"$LOG" 2>&1; then
+    say "OK     unrequested stop filed as $bead, Mayor first"
+  else
+    say "WARN   $bead filed, but the escalation door refused it (see $LOG)"
+  fi
+}
+
+cmd_check() {
+  local v
+  v=$(verdict)
+  case "$v" in
+    running)     echo "supervisor answers" ;;
+    deliberate)  echo "supervisor down, city not registered: deliberate stop" ;;
+    unrequested) echo "supervisor down while the city is registered: nobody asked for this stop" ;;
+  esac
+  [ "$v" != unrequested ]
+}
+
+cmd_run() {
+  local v
+  mkdir -p "$(dirname "$LOG")" "$(dirname "$STATE")"
+  v=$(verdict)
+  case "$v" in
+    running)
+      rm -f "$STATE"
+      return 0
+      ;;
+    deliberate)
+      [ "$(last_verdict)" = deliberate ] \
+        || say "SKIP   supervisor down, city not registered: deliberate stop, nothing restarted"
+      remember deliberate
+      return 0
+      ;;
+  esac
+  # A restart may be under way (systemd's own RestartSec, factory-boot at the
+  # logon, bin/factory-maintain restart-service): look twice.
+  sleep "$GRACE_SECONDS"
+  [ "$(verdict)" = unrequested ] || return 0
+  say "REVIVE supervisor down while the city is registered: nobody asked for this stop, running factory-boot"
+  remember unrequested
+  "$BOOT_BIN" >>"$LOG" 2>&1
+  if supervisor_running; then
+    say "OK     supervisor answers again"
+    rm -f "$STATE"
+    report
+    return 0
+  fi
+  say "FAILED factory-boot did not bring the supervisor back (see $ROOT/.gc/runtime/factory-boot.log); next try at the next run"
+  return 1
+}
+
+cmd_install() {
+  # The timer must name the running city, never a worktree of it.
+  city_registered || {
+    echo "factory-revive: $ROOT is not a city registered in $GC_HOME_DIR/cities.toml -- run install from the live root" >&2
+    return 1
+  }
+  mkdir -p "$UNIT_DIR"
+  cat > "$UNIT_DIR/factory-revive.service" <<UNIT
+[Unit]
+Description=Agent Factory: restart a supervisor nobody stopped on purpose (bin/factory-revive)
+
+[Service]
+Type=oneshot
+# Only the script itself belongs to this unit: what factory-boot starts (the
+# Cockpit when it is not running) must outlive it.
+KillMode=process
+ExecStart=/bin/bash -lc 'exec "$ROOT/bin/factory-revive" run'
+UNIT
+  cat > "$UNIT_DIR/factory-revive.timer" <<UNIT
+[Unit]
+Description=Agent Factory: every $INTERVAL, restart a supervisor nobody stopped on purpose
+
+[Timer]
+OnStartupSec=3min
+OnUnitActiveSec=$INTERVAL
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+UNIT
+  "$SYSTEMCTL_BIN" --user daemon-reload || return 1
+  "$SYSTEMCTL_BIN" --user enable --now factory-revive.timer || return 1
+  echo "factory-revive: timer installed in $UNIT_DIR, every $INTERVAL"
+}
+
+cmd_uninstall() {
+  "$SYSTEMCTL_BIN" --user disable --now factory-revive.timer >/dev/null 2>&1 || true
+  rm -f -- "$UNIT_DIR/factory-revive.timer" "$UNIT_DIR/factory-revive.service"
+  "$SYSTEMCTL_BIN" --user daemon-reload || return 1
+  echo "factory-revive: timer removed from $UNIT_DIR"
+}
+
+case "${1:-}" in
+  check)     cmd_check ;;
+  run)       cmd_run ;;
+  install)   cmd_install ;;
+  uninstall) cmd_uninstall ;;
+  -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) echo "usage: factory-revive check|run|install|uninstall" >&2; exit 2 ;;
+esac
