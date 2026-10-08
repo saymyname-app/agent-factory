@@ -3678,7 +3678,7 @@ class ConvoyStateTest(unittest.TestCase):
     SPEC_END_NAMES = ("registry", "tests", "fidelity")
 
     def spec_end_file(self, **changes):
-        report = {"version": "spec-end/v1",
+        report = {"version": "spec-end/v2",
                   "conditions": [{"number": number, "name": name, "verdict": "pass", "detail": "réunie (relevé d'essai)"}
                                  for number, name in enumerate(self.SPEC_END_NAMES, start=1)],
                   "records": {"tests": {"command": "python3 regression.py", "exit_code": 0}, "fidelity": {"prototypes": []}},
@@ -3705,7 +3705,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(1, len([line for line in self.write_log.read_text().splitlines() if line.strip()]))
         shown = self.show()
         record = shown["convoy"]["spec_end"]
-        self.assertEqual(("spec-end/v1", tip, base), (record["version"], record["commit"], record["protected"]))
+        self.assertEqual(("spec-end/v2", tip, base), (record["version"], record["commit"], record["protected"]))
         self.assertEqual([(number, name, "pass") for number, name in enumerate(self.SPEC_END_NAMES, start=1)],
                          [(entry["number"], entry["name"], entry["verdict"]) for entry in record["conditions"]])
         self.assertEqual({"tests", "fidelity"}, set(record["records"]))
@@ -3720,6 +3720,8 @@ class ConvoyStateTest(unittest.TestCase):
         silent = [dict(entry, detail=" ") if entry["number"] == 1 else entry for entry in conditions]
         for changes, mention in (
             ({"version": "spec-end/v0"}, "version"),
+            # The list of T23, three conditions: no longer recorded (T24).
+            ({"version": "spec-end/v1"}, "version"),
             ({"conditions": conditions[:2]}, "3 verdicts attendus"),
             ({"conditions": failing}, "condition 2 (tests) non réunie"),
             ({"conditions": renamed}, "verdict 3"),

@@ -451,9 +451,9 @@ The gate renders its three verdicts — `registry`, `tests`, `fidelity` — on
 one tip of the integration branch, the protected branch taken up. The entry
 of the convoy carries `spec_end`:
 
-- three green verdicts: `verdicts`, the `commit` they are tied to, and
-  `replayed` (`false` when they were already recorded on that tip: the pass
-  then wrote nothing);
+- every condition met: `verdicts`, the `commit` they are tied to, and
+  `replayed` (`false` when the mechanical verdicts were already recorded on
+  that tip: the pass then wrote nothing);
 - a condition that is not met: `verdicts`, `missing`, and `reason`, the text
   of the gate. It is **an outcome of the pass, not a failure**: the pass
   exits 0. With it, `refused` and `requests` when the registry refused
@@ -481,6 +481,38 @@ entry carries `item_repairs` (`{id, key, draft, published, ticket, items}`,
 or `error`). One repair per request, whatever the number of passes. A
 repair that could not be published fails the pass and is tried again by the
 next.
+
+## The assembled product is evaluated once the mechanical verdicts are green (T24)
+
+Spec §7 and §9, points 4 and 5 (`docs/OUTCOME_EVALUATION.md`). The gate now
+holds five conditions (`spec-end/v2`): with three green mechanical verdicts
+and no favorable Outcome Evaluation at their commit, `spec_end` carries
+`missing: [4]` and its `reason` — an outcome of the pass, which exits 0.
+
+- **After the gate**, the pass hands the convoy to `bin/outcome-evaluation
+  settle` with the repository and the profile of its project, when the gate
+  was due or when an evaluation has something left to settle (an open
+  request, a launched product to stop, a stop that did not reach the
+  operator). The entry carries `outcome_evaluation` (`action`: `launched`,
+  `relaunched`, `pending`, `waiting`, `stopped`, `escalated`; with `commit`,
+  `bead`, `launches`, `deadline`, `reason`, `stop` as they apply); nothing
+  when there was nothing to do. A settlement that could not run (no
+  `outcome_evaluation` block in the settings, no project) is `error`, and
+  the pass exits 1; the mechanical verdicts are recorded all the same.
+- **At its start**, each pass publishes what the Evaluator of the end
+  drafted and code has not published yet: one `repair` per user story the
+  last Outcome Evaluation did not observe, and one per finding « hors
+  ticket » classified « repaired ». Each goes through the patch door as the
+  Evaluator wrote it, is named where it was drafted (`bin/convoy-state
+  set-outcome-repair`) and starts like any ticket. The entry carries
+  `outcome_repairs` (`{id, key, draft, published, story}` or `{…, finding}`,
+  or `error`). Nothing is published while an evaluation is open. One repair
+  per draft, whatever the number of passes; one that could not be published
+  fails the pass and is tried again by the next.
+
+Once such a repair is merged and closed, the tip moved: the gate renders its
+mechanical verdicts again and the product is evaluated again. No round of
+the end is counted for it (the bound is T26's).
 
 ## Test reviews left without result (T13)
 
@@ -520,13 +552,15 @@ reviews of criterion tests, `code_review` when it settled code reviews,
 correction round was opened, awaited or ended in a stop, `fidelity` when it
 measured an interface ticket, `ticket_end` when the gate settled merged
 tickets, `item_repairs` when the pass published the repair of tracked
-elements and `spec_end` when it ran the end-of-Spec gate (T23). A stopped convoy carries `signal`,
+elements, `spec_end` when it ran the end-of-Spec gate (T23),
+`outcome_repairs` when it published what the Evaluator of the end drafted
+and `outcome_evaluation` when it settled the Outcome Evaluation (T24). A stopped convoy carries `signal`,
 `unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate or the end-of-Spec gate could not run |
+| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate or the Outcome Evaluation could not run, or a repair the Evaluator of the end drafted could not be published |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
