@@ -98,3 +98,20 @@ restent livrés.
 - Ordres producteurs (`upstream-skills-check`, `overlap-conflict-log`) :
   classe déclarée.
 - Tests de contrat producteur → lecteur.
+
+## Précisions (2026-10-08)
+
+Intent (Benjamin, ses mots, 2026-10-08) : « 1 ok, 2 ok, 3 ok, laisse comme
+ça », en réponse aux trois interprétations de la livraison (PR #433, #434).
+Mechanism (interprétation agent, confirmée) :
+
+1. Une proposition écrite par la porte avant la classe (champs présents,
+   pas de `gc.proposal_classe`) est lue comme `decision` : elle reste dans
+   « Ce qui t'attend » jusqu'à ce que Benjamin la traite.
+2. La reconversion du point 6 se fait par `bin/proposal-door reconvertir`
+   (ferme le bead bug, refait de la proposition une `decision` avec ses
+   options). `bin/planning-exception` (ADR-0028) ne s'applique qu'à un
+   ticket d'un graphe de Planning Run.
+3. `bin/upstream-skills-check` recommande « Adopter la mise à jour »
+   (raison : la référence de méthode suit l'amont ; l'écart est relu avant
+   de réépingler).
