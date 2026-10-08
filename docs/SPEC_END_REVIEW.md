@@ -155,8 +155,7 @@ not recorded. It is never left out, and it refuses nothing.
 ## A review that gives no result
 
 A launch gives no result when `timeout_seconds` passed since it was sent
-(`config/delivery-flow.json`, `end_review`; 7200 s, a value without a
-measured base), when its review bead was closed while the request is still
+(`config/delivery-flow.json`, `end_review`; 7200 s, far above the one measure of « Proof »), when its review bead was closed while the request is still
 open, or when its output is `incomplete`. It is not a passed review: the
 gate goes on refusing. The review is launched **once more**, on a new bead,
 for a new session. When that second launch gives no result either, the
@@ -207,8 +206,9 @@ it.
 - **The reviewer role holds one session at a time**: an end review waits
   behind a ticket review, and the time of a launch runs from the dispatch.
 - **The models are the configured ones**, not ones observed in the sessions.
-- **The time limit has no measured base**, and no reviewer agent has yet
-  reviewed a diff of the size of a real convoy (see « Proof »).
+- **The time limit has one measure behind it**: one real reviewer session
+  on 50 files and about 14,000 changed lines took 548 s (see « Proof »);
+  7200 s is far above it, and no real convoy has been reviewed yet.
 
 ## Proof
 
@@ -232,3 +232,14 @@ it.
   demonstration line on a real controller, with the real order, gate,
   formula, dispatch door, publication and patch doors and tracker, and a
   scripted reviewer.
+- `tests/spec-end-review-real-session-test.sh` (local-only, and only with
+  `SPEC_END_REVIEW_TRIAL_SESSION=1`: it costs a model session): one real
+  session of the reviewer role, with its prompt, its `code-review` skill and
+  its read-only profile, reviews a range of this repository's own history of
+  the size of a real convoy. Its record says how long the review took and
+  whether its output covers both axes and every file. Run on
+  2026-10-08 (`delivery-reviewer`, `claude-readonly`, claude-opus-5-5; ten
+  commits, 50 files, +10091 −3917): **the review held** — a complete output
+  in 548 s, 50/50 files and both axes, 21 findings of which 5 blocking, each
+  cited and with its drafted repair. The Spec of the trial is synthetic: the
+  findings of the Spec axis say nothing of that code.

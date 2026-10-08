@@ -171,19 +171,23 @@ while true; do
   REVIEW_BEAD=\$(gc convoy status "\$INPUT" --json | jq -r '.children[0].id')
   CONVOY=\$(gc bd show "\$REVIEW_BEAD" --json | jq -r '.[0].description' | sed -n 's/^convoy: //p')
   OUTCOME=pass
-  BRIEF="$TRIAL/brief.\$REVIEW_BEAD.json"
-  if ! "\$BIN/spec-end-review" brief "\$CONVOY" > "\$BRIEF.new" 2>>"\$LOG"; then
+  # The brief is kept under the commit it is given for: with these stubs
+  # (gc 1.4.1) the session of a later launch may be started on the step of
+  # an earlier one, already closed, and reads the review bead of that one.
+  NEW="$TRIAL/brief.\$\$.new"
+  if ! "\$BIN/spec-end-review" brief "\$CONVOY" > "\$NEW" 2>>"\$LOG"; then
     # Seen with these stubs (gc 1.4.1): once a stub has drained and exited, a
     # session is started again on the step it just closed. Nothing is asked
     # any more: the brief it was given stays, nothing is written.
     say "aucune revue de fin demandée (\$REVIEW_BEAD), rien à faire"
-    rm -f "\$BRIEF.new"
+    rm -f "\$NEW"
     gc runtime drain-ack >/dev/null 2>&1
     exit 0
   fi
-  mv "\$BRIEF.new" "\$BRIEF"
+  BRIEF="$TRIAL/brief.\$(jq -r '.commit' "\$NEW").json"
+  mv "\$NEW" "\$BRIEF"
   echo "\$REVIEW_BEAD \${GC_SESSION_NAME:-?} \$(jq -r '.commit' "\$BRIEF")" >> "$TRIAL/review-sessions"
-  RESULT="$TRIAL/result.\$REVIEW_BEAD.json"
+  RESULT="$TRIAL/result.\$(jq -r '.commit' "\$BRIEF").json"
   DIFF=\$(sh -c "\$(jq -r '.diff.command' "\$BRIEF")")
   FINDINGS='[]'
   if printf '%s' "\$DIFF" | grep -q "ne répond plus" && ! printf '%s' "\$DIFF" | grep -q "répond de nouveau"; then
@@ -449,8 +453,9 @@ jq -e --arg commit "$GATE1" '.spec_end.commit == $commit and .spec_end.replayed 
   || fail "the end review was not launched by the pass that rendered the three verdicts, on their commit: $pass1"
 round1=$(end_review | jq -c '.rounds[0]')
 bead1=$(jq -r '.end_review.bead' <<<"$pass1")
-brief1="$TRIAL/brief.$bead1.json"
-[ -f "$brief1" ] || fail "the reviewer was given no brief for the review bead $bead1"
+brief1="$TRIAL/brief.$GATE1.json"
+[ -f "$brief1" ] || fail "the reviewer was given no brief for the commit of the gate $GATE1"
+grep -q "^$bead1 " "$TRIAL/review-sessions" || fail "no reviewer session read the review bead $bead1 the pass launched"
 expected_files=$(git -C "$PRODUCT" diff --name-only "$BASE" "$GATE1" | sort | tr '\n' ' ')
 [ "$(jq -r '[.diff.files[].path] | sort | join(" ")' "$brief1") " = "$expected_files" ] \
   || fail "the preparation record does not name the whole diff $BASE..$GATE1: $(jq -c '.diff.files' "$brief1")"
@@ -470,7 +475,7 @@ jq -e --arg line "$STORY_ONE" --arg commit "$GATE1" --arg base "$BASE" \
    and .models == {authors: ["modele-auteur"], reviewer: "modele-relecteur", same_model: false}' <<<"$round1" >/dev/null \
   || fail "the end review did not record one cited Blocking Finding with its drafted repair: $round1"
 reviewer1=$(jq -r '.recorded_by' <<<"$round1")
-[ "$reviewer1" = "$(sed -n "s/^$bead1 \\([^ ]*\\) .*/\\1/p" "$TRIAL/review-sessions" | head -1)" ] \
+[ "$reviewer1" = "$(sed -n "s/^[^ ]* \\([^ ]*\\) $GATE1\$/\\1/p" "$TRIAL/review-sessions" | head -1)" ] \
   || fail "the end review was not recorded by the reviewer session Gas City routed it to: $reviewer1"
 [ "$(field "$CONVOY" gc.flow.counter.end_rounds)" = 1 ] || fail "the unfavorable end review did not count one round of the end"
 set +e
@@ -512,7 +517,10 @@ pass2=$(launch_pass "$GATE2")
 jq -e --arg commit "$GATE2" '.spec_end.commit == $commit and .spec_end.verdicts.end_review == "fail"
   and (.spec_end.reason | test("jamais réutilisé"))' <<<"$pass2" >/dev/null \
   || fail "the pass that replayed the gate did not refuse the earlier round and launch the review again: $pass2"
-brief2="$TRIAL/brief.$(jq -r '.end_review.bead' <<<"$pass2").json"
+brief2="$TRIAL/brief.$GATE2.json"
+[ -f "$brief2" ] || fail "the second reviewer was given no brief for the new commit of the gate $GATE2"
+[ "$reviewer2" = "$(sed -n "s/^[^ ]* \\([^ ]*\\) $GATE2\$/\\1/p" "$TRIAL/review-sessions" | head -1)" ] \
+  || fail "the second end review was not recorded by the session that was given the brief of $GATE2: $reviewer2"
 expected_files=$(git -C "$PRODUCT" diff --name-only "$BASE" "$GATE2" | sort | tr '\n' ' ')
 [ "$(jq -r '[.diff.files[].path] | sort | join(" ")' "$brief2") " = "$expected_files" ] \
   || fail "the second review was not given the whole diff $BASE..$GATE2: $(jq -c '.diff.files' "$brief2")"

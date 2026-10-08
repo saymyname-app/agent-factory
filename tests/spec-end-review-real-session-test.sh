@@ -101,7 +101,7 @@ while IFS= read -r name; do unset "$name"; done < <(compgen -e | grep -E '^(GC_|
 export GC_HOME="$TRIAL/h" XDG_RUNTIME_DIR="$TRIAL/r" GC_DISABLE_USAGE_METRICS=1
 unset DBUS_SESSION_BUS_ADDRESS
 export PATH="/usr/local/bin:$HOME/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-mkdir -p "$GC_HOME" "$TRIAL/locks"
+mkdir -p "$GC_HOME"
 mkdir -m 700 "$XDG_RUNTIME_DIR"
 printf '[supervisor]\nport = %s\n' "$PORT" > "$GC_HOME/supervisor.toml"
 
@@ -168,7 +168,12 @@ SH
 printf '#!/bin/sh\necho 0\n' > "$TRIAL/proposal-door"
 chmod +x "$TRIAL/provider-failover" "$TRIAL/role-adoption-trial" "$TRIAL/proposal-door"
 
-export FACTORY_ROOT="$CITY" CONVOY_STATE_LOCK_DIR="$TRIAL/locks"
+# No lock directory of the trial's own: the locks of bin/convoy-state go
+# where they go in the Factory, under XDG_RUNTIME_DIR -- here the trial's --
+# which is what the sandbox of a read-only role leaves writable. A lock
+# directory elsewhere under the trial is read-only in the reviewer session,
+# and its record is refused (seen on the first run of this trial).
+export FACTORY_ROOT="$CITY"
 export DISPATCH_DOOR_PROVIDER_FAILOVER_BIN="$TRIAL/provider-failover" DISPATCH_DOOR_ROLE_TRIAL_BIN="$TRIAL/role-adoption-trial"
 export DELIVERY_ROLE_PROVIDER_FAILOVER_BIN="$TRIAL/provider-failover"
 export ESCALATION_DOOR_LOCK_FILE="$TRIAL/escalation-door.lock" PROPOSAL_DOOR_BIN="$TRIAL/proposal-door"
