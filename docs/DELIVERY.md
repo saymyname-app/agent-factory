@@ -302,6 +302,40 @@ the door — directly or through a script that escalates — sets
 `tests/lib/sandbox.py` do it for every test built on them
 (`tests/ci-run-tests-host-lock-test.sh`).
 
+**What to run before a pull request (af-66bfyx).**
+
+Intent (Benjamin, his words, 2026-10-08): « ok pour ta reco », in answer to
+the table below as it was shown to him; and, earlier that day: « je veux que
+l'usine finisse son taf pendant que je dors, et je veux que ca consomme pas
+toutes les minutes github et que les tests soient intelligents et econome en
+token, mais que la qualité soit là à la fin »
+Mechanism (agent interpretation): what an agent runs on the host before it
+opens a pull request on this repository depends on the kind of change. It
+does not mean a change of the merge gate: Factory CI runs on every pull
+request and `Tests` is still the required check.
+
+| Kind of change | Before the pull request | Why (merged pull requests #407 to #438) |
+|---|---|---|
+| A delivery: a `do-work` ticket, or anything that changes a tool, a formula, an order or a configuration | The whole battery: `bin/ci-run-tests --jobs 4` from the work tree | A run aimed at what the change touches is 75 to 96% of the battery there, and batteries queue on the host (below) |
+| Docs, CI or tests alone | The rule checks and the tests the change touches: `bin/ci-run-tests --rule-checks --changed-since origin/main` | 2 to 6% of the battery, and none of the 6 test files that failed in CI in that sample would have been missed |
+
+The rule checks are the test files `config/ci-test-seconds.tsv` gives 5
+seconds or less: catalogues, registration, lints (105 files, 107 s together
+on 2026-10-08). Of those 6 failed files, 5 were rule checks of 1 second or
+less, a stale generated catalogue most often, and each was seen only after
+about 37 billed minutes of a run. `--changed-since` adds the test files the
+branch changes, committed or not; the run starts with `NOT the battery` and
+counts both. It waits its turn on the host like a battery. In doubt about
+the kind of change, run the battery
+(`tests/ci-run-tests-rule-checks-test.sh`).
+
+Factory CI itself does not run the rule checks before the long lots
+(Benjamin, his words, 2026-10-08: « A pour la ligne 3 », A being "not in
+CI"). Measured gain: about 2 billed minutes a run (4 of 70 runs, about 35
+minutes each). `Tests` must exist from the first second of a run, so it
+cannot wait on a gate job, and the variants that keep it were estimated at
+1 to 3 billed minutes on every run.
+
 **One battery at a time on the host (af-7m7ymg).**
 
 Intent (Benjamin, his words, 2026-10-08): « je veux que l'usine finisse son

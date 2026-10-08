@@ -1,0 +1,2 @@
+Need: What an agent runs on the host before it opens a pull request on the Factory's repository (the whole battery for a delivery, the rule checks and the touched tests for docs, CI or tests alone), what the rule checks are and the one command that runs them
+Read: `DELIVERY.md` ("What to run before a pull request"), `./bin/ci-run-tests` (`--rule-checks`), `config/ci-test-seconds.tsv`, `tests/ci-run-tests-rule-checks-test.sh`
