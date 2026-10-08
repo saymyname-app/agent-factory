@@ -15,8 +15,13 @@ publication door writes it through tests/fixtures/ticket-graph-publish/
 bd-bead-mode, the commands of the flow read and write it through
 tests/fixtures/convoy-state/gc.
 
+The end of the Spec on the same graph (T23, af-s5uysn; Spec §9, points 1 to
+3): once every ticket is closed, the pass runs the real bin/spec-end; red
+tests count one round and their one `repair` is published by code, as is the
+`repair` the operator asks for a « non fait » left without a final state.
+
 No agent runs here: what an author session leaves (a Planning Exception, a
-closed repair) is written the way its tools write it."""
+closed repair, a Ticket Handoff) is written the way its tools write it."""
 
 import importlib.machinery
 import importlib.util
@@ -359,6 +364,162 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
 
         self.assertEqual([self.ids["T5"]], answer["started"])
         self.assertNotIn("stop", answer)
+
+    # --- the end of the Spec: what a pass does once every ticket is closed (T23, af-s5uysn) ---
+
+    NOT_DONE = "L'export CSV de la liste n'est pas livré."
+
+    def delivered(self, not_done=None):
+        """Every ticket of the convoy closed by the ticket-end gate; with
+        `not_done`, T4 left it in its Ticket Handoff. The product is still
+        red from its protected branch on."""
+        self.env["SPEC_END_LOCK_DIR"] = str(self.tmp / "locks")
+        self.env["SPEC_END_WORK_DIR"] = str(self.tmp / "gate-work")
+        if not_done:
+            self.run_ok(STATE, "add-evidence", self.convoy, self.ids["T4"], "--piece", "handoff_records",
+                        "--digest", "sha256:" + "ab" * 32, "--commit", self.base)
+            handoff = self.tmp / "handoff.json"
+            handoff.write_text(json.dumps({
+                "sections": {"done": ["Critère 1 observé sur GET /health."], "deviations": "aucun",
+                             "not_done": [not_done], "out_of_ticket": "aucun"},
+                "partial": False, "commit": self.base, "records": {"commits": [], "deferral_markers": []}}))
+            self.run_ok(STATE, "set-handoff", self.convoy, self.ids["T4"], "--file", handoff)
+        for bead_id in self.tickets.values():
+            self.run_ok(STATE, "close-ticket", self.convoy, bead_id, "--commit", self.base, "--file", GATE_REPORT)
+        self.write_log.write_text("")
+
+    def end_rounds(self):
+        return self.shown()["convoy"]["counters"]["end_rounds"]
+
+    def answer(self, bead_id, option):
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the request
+        self.run_ok(ESCALATION, "repondre", bead_id, option)
+
+    def item(self):
+        return self.shown_ticket(self.ids["T4"])["tracked_items"][0]
+
+    def test_red_tests_at_the_end_of_the_spec_count_one_round_and_code_publishes_the_one_repair(self):
+        self.delivered()
+
+        first = self.one_pass()
+
+        # The gate of the end of the Spec, run by the pass: the tests are red on the tip.
+        ending = first["spec_end"]
+        self.assertEqual({"registry": "pass", "tests": "fail", "fidelity": "not_run"}, ending["verdicts"])
+        self.assertEqual(1, ending["end_rounds"])
+        control = self.shown()["convoy"]["integration_red"]["control"]
+        self.assertIn(REGRESSION, control)
+        self.assertIsNone(self.shown()["convoy"]["spec_end"])
+
+        second = self.one_pass()
+
+        # The next pass: the repair of that red, written by code, added by the patch door, started.
+        repair = second["repair"]
+        self.assertEqual(("R1", True), (repair["key"], repair["published"]))
+        ticket = self.shown_ticket(repair["id"])
+        self.assertEqual(("repair", publication.MARK, "open"), (ticket["kind"], ticket["mark"], ticket["status"]))
+        self.assertIn(f"red_check : {control}", self.beads()[repair["id"]]["description"])
+        self.assertNotIn("approved_by", self.beads()[repair["draft"]]["metadata"])
+        self.assertEqual(repair["id"], self.shown()["convoy"]["integration_red"]["repair"])
+        self.assertEqual([repair["id"]], second["started"])
+        # The gate does not advance while the branch is red, and the red is counted once.
+        self.assertNotIn("spec_end", second)
+        tracked = sorted(self.tracked())
+        third = self.one_pass()
+        self.assertNotIn("repair", third)
+        self.assertNotIn("spec_end", third)
+        self.assertEqual(tracked, sorted(self.tracked()))
+        self.assertEqual(1, self.end_rounds())
+        self.assertFalse(self.shown()["unruled"])
+
+    def test_a_red_fidelity_at_the_end_of_the_spec_gets_its_repair_through_the_patch_door(self):
+        self.delivered()
+        # What bin/spec-end records when the fidelity of the tip is red.
+        control = f"fidélité mécanique au Validated Prototype : écart(s) ouvert(s) sur {self.integration} à {self.base[:12]}"
+        detail = "1 écart(s) ouvert(s) : empty/fixture-items/presence (missing)"
+        self.run_ok(STATE, "record-integration-red", self.convoy, "--commit", self.base, "--integration", self.base,
+                    "--protected", self.base, "--control", control, "--detail", detail, "--check", "fidelity", "--end-round")
+
+        answer = self.one_pass()
+
+        repair = answer["repair"]
+        self.assertTrue(repair["published"])
+        ticket = self.shown_ticket(repair["id"])
+        self.assertEqual(("repair", publication.MARK, "open"), (ticket["kind"], ticket["mark"], ticket["status"]))
+        description = self.beads()[repair["id"]]["description"]
+        self.assertIn(f"anchor : {detail}", description)
+        self.assertIn("Validated Prototype", description)
+        self.assertEqual(repair["id"], self.shown()["convoy"]["integration_red"]["repair"])
+        self.assertEqual([repair["id"]], answer["started"])
+        self.assertEqual(1, self.end_rounds())
+        self.assertFalse(self.shown()["unruled"])
+
+    def test_a_not_done_without_final_state_is_asked_once_and_repaired_by_a_ticket_code_publishes(self):
+        t4 = self.ids["T4"]
+        self.delivered(not_done=self.NOT_DONE)
+
+        first = self.one_pass()
+
+        # The registry refuses and names the element: an outcome of the pass, asked of the operator.
+        ending = first["spec_end"]
+        self.assertEqual({"registry": "fail", "tests": "not_run", "fidelity": "not_run"}, ending["verdicts"])
+        self.assertIn(self.NOT_DONE, ending["reason"])
+        self.assertEqual([(t4, ["not_done.1"])], [(entry["ticket"], entry["items"]) for entry in ending["requests"]])
+        listed = [line for line in self.run_ok(ESCALATION, "list").stdout.splitlines() if line.strip().startswith(f"{t4} ")]
+        self.assertEqual(1, len(listed), listed)
+        self.assertIn(self.NOT_DONE, listed[0])
+        self.assertNotIn("item_repairs", first)
+
+        # Seen again: nothing more is asked, nothing is written.
+        before = self.state_path.read_bytes()
+        again = self.one_pass()
+        self.assertEqual([], again["spec_end"]["requests"])
+        self.assertEqual(before, self.state_path.read_bytes())
+
+        # The operator asks for the repair: code publishes it, names it on the element, starts it.
+        self.answer(t4, "a")
+        asked = self.one_pass()
+        self.assertEqual(1, len(asked["item_repairs"]), asked)
+        repair = asked["item_repairs"][0]
+        self.assertEqual((t4, ["not_done.1"], "R1", True),
+                         tuple(repair[name] for name in ("ticket", "items", "key", "published")))
+        ticket = self.shown_ticket(repair["id"])
+        self.assertEqual(("repair", publication.MARK, "open"), (ticket["kind"], ticket["mark"], ticket["status"]))
+        description = self.beads()[repair["id"]]["description"]
+        self.assertIn(self.NOT_DONE, description)
+        self.assertIn("red_check : registre de la porte de fin de Spec", description)
+        self.assertNotIn("approved_by", self.beads()[repair["draft"]]["metadata"])
+        self.assertEqual(("ouvert", repair["id"]), (self.item()["state"], self.item()["repair"]))
+        self.assertEqual([repair["id"]], asked["started"])
+        # The gate waits for that repair, and a repair the operator asked for counts no round.
+        self.assertNotIn("spec_end", asked)
+        self.assertEqual(0, self.end_rounds())
+
+        # One repair per request, whatever the number of passes.
+        tracked = sorted(self.tracked())
+        self.assertNotIn("item_repairs", self.one_pass())
+        self.assertEqual(tracked, sorted(self.tracked()))
+
+        # Closed by the ticket-end gate, the repair leaves the element « réparé »: the registry passes.
+        self.run_ok(STATE, "close-ticket", self.convoy, repair["id"], "--commit", self.base, "--file", GATE_REPORT)
+        self.assertEqual("réparé", self.item()["state"])
+        self.assertEqual("pass", self.one_pass()["spec_end"]["verdicts"]["registry"])
+        self.assertFalse(self.shown()["unruled"])
+
+    def test_a_not_done_the_operator_accepts_passes_the_registry_and_no_repair_is_published(self):
+        t4 = self.ids["T4"]
+        self.delivered(not_done=self.NOT_DONE)
+        self.assertEqual("fail", self.one_pass()["spec_end"]["verdicts"]["registry"])
+        tracked = sorted(self.tracked())
+
+        self.answer(t4, "b")
+        answer = self.one_pass()
+
+        self.assertEqual("accepté par Benjamin", self.item()["state"])
+        self.assertNotIn("item_repairs", answer)
+        self.assertEqual("pass", answer["spec_end"]["verdicts"]["registry"])
+        self.assertEqual(tracked, sorted(self.tracked()))
+        self.assertEqual("closed", self.shown_ticket(t4)["status"])
 
 
 if __name__ == "__main__":

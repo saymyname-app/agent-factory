@@ -122,8 +122,9 @@ Every answer is one JSON object on stdout.
   pass, repeated at each pass until the profile or the reference is fixed.
 - **Condition 5 reads the detector's result**, as `bin/ticket-exit` recorded
   it at the exit; the gate does not run the detector again.
-- **The gate closes tickets only.** The end of a Spec is T23's; a convoy
-  does not close itself here (T22).
+- **The gate closes tickets only.** The end of a Spec is verified by
+  `bin/spec-end` (T23, `docs/SPEC_END.md`), which reads the records of this
+  gate; a convoy does not close itself here (T22).
 
 ## Proof
 

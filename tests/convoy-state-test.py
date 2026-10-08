@@ -3487,6 +3487,341 @@ class ConvoyStateTest(unittest.TestCase):
                 self.assertEqual(before, self.tracker.read_bytes())
                 self.assertEqual(1, self.run_tool("show", CONVOY, "--repo", self.repo).returncode)
 
+    # --- T23: the tracked elements of a Ticket Handoff, the end-of-Spec gate ----
+
+    ITEM_REPAIR = "fx-r1"
+
+    def handed_off(self):
+        """A marked convoy -- a slice, a prefactoring and a repair -- whose
+        slice left two « non faits » in its Ticket Handoff; returns the tip
+        of the repository."""
+        self.seed(tickets=(T1, T2, self.ITEM_REPAIR), kinds={T1: "vertical_slice", self.ITEM_REPAIR: "repair"})
+        self.init_repo()
+        self.ok("mark", CONVOY, "--demonstration-line", f"{T1}=La page affiche 3", "--user-stories", f"{T1}=1",
+                "--demonstration-line", f"{self.ITEM_REPAIR}=La sonde est branchée")
+        self.sealed_records()
+        self.ok("set-handoff", CONVOY, T1, "--file", self.handoff_file())
+        return self.git("rev-parse", "main")
+
+    def ask(self, *items, option="b", summary="Fin de Spec, ticket fx-t1, sans état final"):
+        return self.ok("raise-planning-exception", CONVOY, T1, "--kind", "semantic", "--summary", summary,
+                       *[arg for item in items for arg in ("--item", item)], "--accept-option", option)
+
+    def items(self, ticket_id=T1):
+        return self.ticket(self.show(), ticket_id)["tracked_items"]
+
+    def test_show_renders_each_deviation_and_not_done_of_a_handoff_as_an_open_tracked_element(self):
+        self.handed_off()
+
+        self.assertEqual(
+            [("not_done.1", "not_done", 1, "La sonde n'est pas branchée.", "ouvert", None, None),
+             ("not_done.2", "not_done", 2, "Le libellé manque.", "ouvert", None, None)],
+            [tuple(item[name] for name in ("id", "section", "number", "text", "state", "request", "repair"))
+             for item in self.items()])
+        # A ticket without a Handoff, or a section that says « aucun », tracks nothing.
+        self.assertEqual([], self.items(T2))
+
+    def test_a_deviation_of_a_handoff_is_a_tracked_element_too(self):
+        self.handed_off()
+        self.ok("set-handoff", CONVOY, T1, "--file", self.handoff_file(
+            sections={**self.SECTIONS, "deviations": ["La liste est triée par nom."], "not_done": "aucun"}))
+
+        self.assertEqual([("deviations.1", "La liste est triée par nom.", "ouvert")],
+                         [(item["id"], item["text"], item["state"]) for item in self.items()])
+
+    def test_a_tracked_element_is_accepted_only_by_the_accepting_answer_to_the_exception_that_names_it(self):
+        self.handed_off()
+
+        self.ask("not_done.1")
+
+        first, second = self.items()
+        self.assertEqual(("ouvert", "open", False), (first["state"], first["request"]["state"], first["request"]["accepted"]))
+        raised = self.ticket(self.show(), T1)["planning_exceptions"][-1]
+        self.assertEqual((["not_done.1"], [], "b", "open"),
+                         (raised["items"], raised["anchors"], raised["accept_option"], raised["state"]))
+
+        self.answer("b")
+
+        first, second = self.items()
+        self.assertEqual(("accepté par Benjamin", "resolved", True),
+                         (first["state"], first["request"]["state"], first["request"]["accepted"]))
+        # The element the exception does not name stays without a final state.
+        self.assertEqual(("ouvert", None), (second["state"], second["request"]))
+
+    def test_a_handoff_rendered_again_starts_its_tracked_elements_over(self):
+        self.handed_off()
+        self.ask("not_done.1")
+        self.answer("b")
+        self.assertEqual("accepté par Benjamin", self.items()[0]["state"])
+
+        handoff = json.loads(self.tracker_state()["beads"][T1]["metadata"]["gc.flow.handoff"])
+        self.edit_tracker(T1, **{"gc.flow.handoff": json.dumps({**handoff, "at": "2999-01-01T00:00:00Z"})})
+
+        self.assertEqual(("ouvert", None), (self.items()[0]["state"], self.items()[0]["request"]))
+
+    def test_raise_planning_exception_refuses_an_item_the_handoff_does_not_carry(self):
+        self.handed_off()
+        base = ("raise-planning-exception", CONVOY, T1, "--kind", "semantic", "--summary", "x")
+        for args, mention in (
+            (("--item", "not_done.0", "--accept-option", "b"), "élément suivi mal formé"),
+            (("--item", "out_of_ticket.1", "--accept-option", "b"), "élément suivi mal formé"),
+            (("--item", "not_done.3", "--accept-option", "b"), "ne porte pas l'élément not_done.3"),
+            (("--item", "deviations.1", "--accept-option", "b"), "ne porte pas l'élément deviations.1"),
+            (("--item", "not_done.1", "--item", "not_done.1", "--accept-option", "b"), "deux fois"),
+            (("--item", "not_done.1"), "option"),
+        ):
+            with self.subTest(args=args):
+                self.assert_refused_and_nothing_written(*base, *args, mention=mention)
+        # A ticket that rendered no Handoff carries no element at all.
+        self.assert_refused_and_nothing_written(
+            "raise-planning-exception", CONVOY, T2, "--kind", "semantic", "--summary", "x", "--item", "not_done.1",
+            "--accept-option", "b", mention="ne porte pas l'élément")
+
+    def test_raising_the_same_exception_on_the_same_items_again_writes_nothing(self):
+        self.handed_off()
+        self.ask("not_done.1", "not_done.2")
+        before = self.tracker.read_bytes()
+
+        self.assertEqual({}, self.ask("not_done.1", "not_done.2")["written"])
+
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_an_element_to_repair_is_repaired_once_the_ticket_end_gate_closed_its_repair(self):
+        tip = self.handed_off()
+        self.ask("not_done.1")
+        # Answered by the option that asks for a repair.
+        self.answer("a")
+        item = self.items()[0]
+        self.assertEqual(("ouvert", "resolved", False, None),
+                         (item["state"], item["request"]["state"], item["request"]["accepted"], item["repair"]))
+
+        self.ok("set-item-repair", CONVOY, T1, "--repair", self.ITEM_REPAIR)
+
+        # Naming the repair repairs nothing.
+        item = self.items()[0]
+        self.assertEqual(("ouvert", self.ITEM_REPAIR), (item["state"], item["repair"]))
+        raised = self.ticket(self.show(), T1)["planning_exceptions"][-1]
+        self.assertEqual((self.ITEM_REPAIR, "a"), (raised["repair"], raised["response"]["option"]))
+
+        self.ok("close-ticket", CONVOY, self.ITEM_REPAIR, "--commit", tip, "--file", GATE_REPORT)
+
+        first, second = self.items()
+        self.assertEqual(("réparé", self.ITEM_REPAIR), (first["state"], first["repair"]))
+        self.assertEqual("ouvert", second["state"])
+        self.assertFalse(self.show()["unruled"])
+
+    def test_a_repair_closed_outside_the_ticket_end_gate_repairs_nothing(self):
+        self.handed_off()
+        self.ask("not_done.1")
+        self.answer("a")
+        self.ok("set-item-repair", CONVOY, T1, "--repair", self.ITEM_REPAIR)
+
+        self.edit_tracker(self.ITEM_REPAIR, status="closed")
+
+        shown = self.show(expect=EXIT_UNRULED)
+        self.assertEqual("ouvert", self.ticket(shown, T1)["tracked_items"][0]["state"])
+
+    def test_naming_the_same_item_repair_again_writes_nothing(self):
+        self.handed_off()
+        self.ask("not_done.1")
+        self.answer("a")
+        self.ok("set-item-repair", CONVOY, T1, "--repair", self.ITEM_REPAIR)
+        before = self.tracker.read_bytes()
+
+        self.assertEqual({}, self.ok("set-item-repair", CONVOY, T1, "--repair", self.ITEM_REPAIR)["written"])
+
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_set_item_repair_refuses_without_an_answer_that_asks_for_the_repair(self):
+        self.handed_off()
+        repair = ("set-item-repair", CONVOY, T1, "--repair", self.ITEM_REPAIR)
+        # No Planning Exception names an element.
+        self.assert_refused_and_nothing_written(*repair, mention="ne nomme aucun élément suivi")
+        # Raised, not answered.
+        self.ask("not_done.1")
+        self.assert_refused_and_nothing_written(*repair, mention="pas de réponse de l'opérateur")
+        # Accepted by the operator.
+        self.answer("b")
+        self.assert_refused_and_nothing_written(*repair, mention="a accepté")
+
+    def test_set_item_repair_refuses_what_is_not_one_tracked_repair_of_the_convoy(self):
+        self.handed_off()
+        self.ask("not_done.1")
+        self.answer("a")
+        base = ("set-item-repair", CONVOY, T1)
+        self.assert_refused_and_nothing_written(*base, "--repair", T2, mention="n'est pas un repair")
+        self.assert_refused_and_nothing_written(*base, "--repair", "fx-absent", mention="n'appartient pas")
+        self.assert_refused_and_nothing_written(*base, mention="ticket absent")
+
+        state = self.tracker_state()
+        state["beads"]["fx-r2"] = {"title": "second repair", "status": "open", "issue_type": "task",
+                                   "metadata": {"gc.ticket_kind": "repair"}}
+        state["beads"][CONVOY]["tracks"].append("fx-r2")
+        self.tracker.write_text(json.dumps(state))
+        self.ok("mark", CONVOY, "--demonstration-line", "fx-r2=La sonde est branchée")
+        self.ok(*base, "--repair", self.ITEM_REPAIR)
+        self.assert_refused_and_nothing_written(*base, "--repair", "fx-r2", mention="un seul repair par demande")
+
+    def test_a_repair_written_on_an_exception_outside_the_command_is_a_state_without_rule(self):
+        self.handed_off()
+        self.ask("not_done.1")
+        entries = json.loads(self.tracker_state()["beads"][T1]["metadata"]["gc.flow.planning_exceptions"])["entries"]
+        # A repair named while the operator has not answered.
+        entries[-1]["repair"] = self.ITEM_REPAIR
+        self.edit_tracker(T1, **{"gc.flow.planning_exceptions": json.dumps({"entries": entries})})
+
+        ticket = self.ticket(self.show(expect=EXIT_UNRULED), T1)
+
+        self.assertIn("unruled", ticket["planning_exceptions"])
+        self.assertIn("gc.flow.planning_exceptions", [entry["field"] for entry in ticket["unruled"]])
+
+    SPEC_END_NAMES = ("registry", "tests", "fidelity")
+
+    def spec_end_file(self, **changes):
+        report = {"version": "spec-end/v1",
+                  "conditions": [{"number": number, "name": name, "verdict": "pass", "detail": "réunie (relevé d'essai)"}
+                                 for number, name in enumerate(self.SPEC_END_NAMES, start=1)],
+                  "records": {"tests": {"command": "python3 regression.py", "exit_code": 0}, "fidelity": {"prototypes": []}},
+                  **changes}
+        path = self.tmp / "spec-end.json"
+        path.write_text(json.dumps({key: value for key, value in report.items() if value is not None}, ensure_ascii=False))
+        return path
+
+    def delivered_convoy(self):
+        """A marked convoy whose integration branch is recorded and whose
+        two tickets were closed by the ticket-end gate; returns its tip."""
+        tip, base = self.integrated()
+        for ticket in (T1, T2):
+            self.ok("close-ticket", CONVOY, ticket, "--commit", tip, "--file", GATE_REPORT)
+        return tip, base
+
+    def test_record_spec_end_ties_three_passing_verdicts_to_one_commit_and_show_reads_them_back(self):
+        tip, base = self.delivered_convoy()
+        self.assertIsNone(self.show()["convoy"]["spec_end"])
+        self.write_log.write_text("")
+
+        self.ok("record-spec-end", CONVOY, "--commit", tip, "--protected", base, "--file", self.spec_end_file())
+
+        self.assertEqual(1, len([line for line in self.write_log.read_text().splitlines() if line.strip()]))
+        shown = self.show()
+        record = shown["convoy"]["spec_end"]
+        self.assertEqual(("spec-end/v1", tip, base), (record["version"], record["commit"], record["protected"]))
+        self.assertEqual([(number, name, "pass") for number, name in enumerate(self.SPEC_END_NAMES, start=1)],
+                         [(entry["number"], entry["name"], entry["verdict"]) for entry in record["conditions"]])
+        self.assertEqual({"tests", "fidelity"}, set(record["records"]))
+        self.assertIn("at", record)
+        self.assertFalse(shown["unruled"])
+
+    def test_record_spec_end_refuses_a_record_that_is_not_the_three_passing_verdicts_of_the_known_version(self):
+        tip, base = self.delivered_convoy()
+        conditions = json.loads(self.spec_end_file().read_text())["conditions"]
+        failing = [dict(entry, verdict="fail") if entry["number"] == 2 else entry for entry in conditions]
+        renamed = [dict(entry, name="autre") if entry["number"] == 3 else entry for entry in conditions]
+        silent = [dict(entry, detail=" ") if entry["number"] == 1 else entry for entry in conditions]
+        for changes, mention in (
+            ({"version": "spec-end/v0"}, "version"),
+            ({"conditions": conditions[:2]}, "3 verdicts attendus"),
+            ({"conditions": failing}, "condition 2 (tests) non réunie"),
+            ({"conditions": renamed}, "verdict 3"),
+            ({"conditions": silent}, "condition 1"),
+            ({"records": {"registre": {}}}, "relevés"),
+            ({"records": {"tests": "vert"}}, "relevés"),
+            ({"closed_by": "auteur"}, "champs inconnus"),
+        ):
+            with self.subTest(mention=mention):
+                self.assert_refused_and_nothing_written(
+                    "record-spec-end", CONVOY, "--commit", tip, "--protected", base,
+                    "--file", self.spec_end_file(**changes), mention=mention)
+        record = ("record-spec-end", CONVOY)
+        self.assert_refused_and_nothing_written(
+            *record, "--commit", "pas-un-sha", "--protected", base, "--file", self.spec_end_file(), mention="commit")
+        self.assert_refused_and_nothing_written(
+            *record, "--commit", tip, "--file", self.spec_end_file(), mention="branche protégée")
+        self.assert_refused_and_nothing_written(
+            *record, "--commit", tip, "--protected", base, "--file", self.tmp / "absent.json", mention="illisible")
+        self.assertIsNone(self.show()["convoy"]["spec_end"])
+
+    def test_record_spec_end_refuses_a_convoy_with_a_ticket_left_open_or_closed_outside_its_gate(self):
+        tip, base = self.integrated()
+        record = ("record-spec-end", CONVOY, "--commit", tip, "--protected", base, "--file", self.spec_end_file())
+        self.ok("close-ticket", CONVOY, T1, "--commit", tip, "--file", GATE_REPORT)
+
+        proc = self.assert_refused_and_nothing_written(*record, mention="tickets ouverts ou fermés hors porte")
+        self.assertIn(T2, json.loads(proc.stdout)["error"])
+        self.assertNotIn(T1, json.loads(proc.stdout)["error"])
+
+        self.edit_tracker(T2, status="closed")
+        self.assert_refused_and_nothing_written(*record, mention=T2)
+
+    def test_record_spec_end_refuses_a_red_integration_branch_and_a_convoy_without_one(self):
+        tip, base = self.delivered_convoy()
+        self.ok("record-integration-red", CONVOY, "--commit", tip, "--integration", tip, "--protected", base,
+                "--control", self.RED_CONTROL)
+
+        self.assert_refused_and_nothing_written(
+            "record-spec-end", CONVOY, "--commit", tip, "--protected", base, "--file", self.spec_end_file(),
+            mention="est rouge")
+
+        self.seed()
+        tip = self.git("rev-parse", "main")
+        self.ok("mark", CONVOY)
+        self.assert_refused_and_nothing_written(
+            "record-spec-end", CONVOY, "--commit", tip, "--protected", tip, "--file", self.spec_end_file(),
+            mention="pas de branche d'intégration")
+
+    def test_a_spec_end_record_written_outside_the_command_is_a_state_without_rule(self):
+        tip, base = self.delivered_convoy()
+        for written in ("à la main", json.dumps({"commit": tip, "protected": base, "version": "spec-end/v1", "at": "x",
+                                                 "conditions": [{"number": 1, "name": "registry", "verdict": "pass",
+                                                                 "detail": "seul"}]})):
+            with self.subTest(written=written[:12]):
+                self.edit_tracker(CONVOY, **{"gc.flow.spec_end": written})
+
+                shown = self.show(expect=EXIT_UNRULED)
+
+                self.assertIn("unruled", shown["convoy"]["spec_end"])
+                self.assertEqual(["gc.flow.spec_end"], [entry["field"] for entry in shown["convoy"]["unruled"]])
+
+    def test_a_red_names_the_control_that_is_red_when_it_is_not_the_regression_command(self):
+        tip, base = self.integrated()
+        red = ("record-integration-red", CONVOY, "--commit", tip, "--integration", tip, "--protected", base,
+               "--control", "fidélité mécanique au Validated Prototype : écart(s) ouvert(s)")
+
+        self.assert_refused_and_nothing_written(*red, "--check", "revue", mention="contrôle rouge (--check)")
+
+        self.ok(*red, "--check", "fidelity")
+        self.assertEqual("fidelity", self.red()["check"])
+        self.assertEqual({"end_rounds": 0}, self.show()["convoy"]["counters"])
+
+    def test_a_red_of_the_end_of_the_spec_counts_one_round_in_the_write_that_records_it(self):
+        tip, base = self.integrated()
+        red = ("record-integration-red", CONVOY, "--commit", tip, "--integration", tip, "--protected", base,
+               "--control", self.RED_CONTROL, "--end-round")
+        self.write_log.write_text("")
+
+        self.ok(*red)
+
+        self.assertEqual(1, len([line for line in self.write_log.read_text().splitlines() if line.strip()]))
+        self.assertEqual({"end_rounds": 1}, self.show()["convoy"]["counters"])
+        self.assertNotIn("check", self.red())
+
+        # The same red seen again is recorded once, and counted once.
+        before = self.tracker.read_bytes()
+        self.assertEqual({}, self.ok(*red)["written"])
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertEqual({"end_rounds": 1}, self.show()["convoy"]["counters"])
+
+    def test_the_end_of_the_spec_of_an_unmarked_convoy_is_not_recorded(self):
+        before = self.tracker.read_text()
+
+        for command in (("set-item-repair", CONVOY, T1, "--repair", T2),
+                        ("record-spec-end", CONVOY, "--commit", ABSENT_COMMIT, "--protected", ABSENT_COMMIT,
+                         "--file", self.spec_end_file())):
+            with self.subTest(command=command[0]):
+                proc = self.run_tool(*command)
+                self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+                self.assertEqual(before, self.tracker.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

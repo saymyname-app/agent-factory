@@ -42,6 +42,11 @@ protégée (Spec af-wf4w5r §4 et §8, T18). Pour un convoi qui porte la
 - **Commit ajouté après un verdict** (revue de code ou Ticket Evaluation) :
   fusion refusée, verdicts marqués invalides, une reprise comptée ; ils se
   rejouent sur la nouvelle pointe.
+- **`take-up`** (T23, lancé par `./bin/spec-end`) : la branche
+  d'intégration reprend la branche protégée et la commande de régression
+  tourne sur le résultat, même sans rien à reprendre. Vert : la reprise est
+  poussée, la pointe est rendue. Rouge : rien n'est poussé, le rouge est
+  enregistré sur le convoi ; avec `--end-round`, un tour de fin est compté.
 - **Sorties** : 0 fait ; 1 refus, ou un ticket refusé ; 3 état sans règle ;
   4 « pas un convoi du nouveau flux ».
 - **Limites** : les autres conditions de la porte de fin de ticket ne sont

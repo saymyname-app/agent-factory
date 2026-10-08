@@ -122,14 +122,27 @@ closed only by code, on the operator's words. One found closed any other way
 pass walks it too, starts nothing in it and raises the same factory incident,
 withdrawn once the convoy is open again.
 
+A pass also runs the end-of-Spec gate (T23, af-s5uysn; Spec §9, points 1 to
+3): once every ticket of the convoy is closed and its integration branch is
+not red, it hands the convoy to bin/spec-end run, which renders three
+mechanical verdicts -- registry, tests, fidelity -- on one tip of the
+integration branch, the protected branch taken up. A condition that is not
+met is an outcome of the pass: the registry names the element (and asks the
+operator, once, about a deviation or a « non fait » left without a final
+state); red tests or a red fidelity are the red of the integration branch,
+with one round of the end counted, whose one `repair` the next pass
+publishes as above. When the operator answered that an element is to be
+repaired, the pass publishes that repair too and names it on the element
+(bin/convoy-state set-item-repair).
+
 Every answer is one JSON object on stdout. Exit status: 0 the pass is done
 (what it started is listed, possibly nothing); 1 refused or could not run,
 the dispatch door refused a ticket (named under `refused`), an incident
 or a grouped request could not be raised or withdrawn, a resume could not
-be sent, or the merge pass or the settlement of
+be sent, a repair could not be published, or the merge pass or the settlement of
 the test reviews, of the code reviews, of the evaluations, of the
-correction rounds, of the fidelity checks or of the ticket-end gate could
-not run; 3 a
+correction rounds, of the fidelity checks, of the ticket-end gate or of the
+end-of-Spec gate could not run; 3 a
 convoy is in an "état sans règle": nothing of it is started (0 with
 --stopped-ok once its incident is raised: what the order runs, so that a
 stopped convoy is not also an order failure);
@@ -168,6 +181,7 @@ CODE_REVIEW_BIN = BIN / "code-review"
 EVALUATION_BIN = BIN / "ticket-evaluation"
 CORRECTION_BIN = BIN / "correction-round"
 TICKET_END_BIN = BIN / "ticket-end"
+SPEC_END_BIN = BIN / "spec-end"
 PUBLISH_BIN = BIN / "ticket-graph-publish"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
 SETTINGS = ROOT / "config" / "delivery-flow.json"
@@ -211,6 +225,10 @@ PARK_CAUSES = {PARK_EXHAUSTED: "reprises épuisées", "operator_request": "deman
 # Spec §8: the two stops of a convoy (T21), and the contract a revision
 # that adds a ticket to a marked convoy declares.
 RED = "branche d'intégration rouge"
+# What is red on the integration branch when it is not its regression
+# command: the mechanical fidelity the end-of-Spec gate measured (T23).
+RED_FIDELITY = "fidelity"
+ITEM_LABELS = {"deviations": "écart", "not_done": "« non fait »"}
 STOP_RED, STOP_EXCEPTIONS = "integration_red", "planning_exceptions"
 BOUND_EXCEPTIONS = "open_planning_exceptions"
 NEW_FLOW = "new-flow/v1"
@@ -434,6 +452,24 @@ class Convoy:
             t["id"] for t in self.tickets
             if t.get("status") != "closed" and (t.get("merge") or {}).get("outcome") == "merged"
         ]
+
+    def end_due(self) -> bool:
+        """Every ticket of the convoy is closed and its integration branch
+        is not red: what makes the end-of-Spec gate worth running (T23)."""
+        return bool(self.integration and self.tickets and not self.red
+                    and all(t.get("status") == "closed" for t in self.tickets))
+
+    def item_repairs_due(self) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+        """The tickets whose tracked elements the operator asked to have
+        repaired, and for which code has published no repair yet (T23)."""
+        due = []
+        for t in self.tickets:
+            items = [item for item in t.get("tracked_items") or []
+                     if (item.get("request") or {}).get("state") == "resolved"
+                     and not item["request"].get("accepted") and not item.get("repair")]
+            if items:
+                due.append((t, items))
+        return due
 
     def finished_unmerged(self) -> list[str]:
         """Tickets whose author has finished and that are not merged yet:
@@ -976,6 +1012,28 @@ def red_repair(convoy: Convoy, red: dict[str, Any]) -> dict[str, Any]:
     that control restored."""
     branch, protected = convoy.integration["branch"], convoy.integration["protected"]
     said = f" Ce que le contrôle a dit : {red['detail']}" if red.get("detail") else ""
+    if red.get("check") == RED_FIDELITY:
+        # The end-of-Spec gate measured a deviation from the Validated
+        # Prototype (T23): the repair is an interface ticket, whose own
+        # fidelity is measured before its merge.
+        return {
+            "title": f"Rétablir la fidélité au Validated Prototype sur la branche d'intégration ({red['commit'][:12]})",
+            "what_it_delivers": (
+                f"La branche d'intégration {branch} repasse le contrôle de fidélité mécanique de fin de Spec qui y est "
+                f"rouge : {red['control']}.{said} Le correctif part de la pointe de {branch}, reprend {protected}, "
+                "et supprime ces écarts sans changer un comportement que la Spec fixe."),
+            "restores": {"kind": "anchor", "ref": red.get("detail") or red["control"]},
+            "demonstration_line": (
+                f"Sur le produit lancé au résultat de la fusion de ce ticket dans {branch}, {protected} reprise, chaque "
+                "écran sert chaque état prototypé avec les ancres, la structure, les styles calculés et les tokens du "
+                "Validated Prototype."),
+            "acceptance_criteria": [{
+                "entry_point": ("chaque écran du profil du projet, servi par le produit lancé sur le jeu de données de "
+                                "chaque état prototypé"),
+                "observable": "ses ancres, leur structure, leurs styles calculés et les tokens sont ceux du Validated Prototype",
+                "false_if": "une ancre du prototype y manque, ou une structure, un style calculé ou un token y diffère",
+            }],
+        }
     return {
         "title": f"Rétablir le contrôle rouge de la branche d'intégration ({red['commit'][:12]})",
         "what_it_delivers": (
@@ -1000,11 +1058,20 @@ def publish_red_repair(convoy: Convoy, red: dict[str, Any]) -> dict[str, Any]:
     it is published, and send it through the patch door: the entry contract
     applies to it as to any added ticket. A repair of this red already
     tracked by the convoy (a pass that failed after the door) is taken as it is."""
+    return publish_repair(convoy, red_repair(convoy, red), RED, f"{RED} : {red['control']}",
+                          "de la branche d'intégration", "sa branche d'intégration")
+
+
+def publish_repair(convoy: Convoy, repair: dict[str, Any], label: str, reason: str, whose: str,
+                   of_what: str) -> dict[str, Any]:
+    """One `repair` written by code, added to the graph as it is published
+    through the patch door (no approval: Spec §2, a repair inside the
+    approved intent needs none). One already tracked by the convoy under
+    the same title is taken as it is."""
     bead = read_bead(convoy.id)
     metadata = bead.get("metadata") or {}
     tracked = [dep for dep in bead.get("dependencies") or []
                if isinstance(dep, dict) and dep.get("dependency_type") == "tracks"]
-    repair = red_repair(convoy, red)
     for dep in tracked:
         if (dep.get("status") != "closed" and dep.get("title") == repair["title"]
                 and (dep.get("metadata") or {}).get("gc.ticket_kind") == "repair"):
@@ -1019,7 +1086,7 @@ def publish_red_repair(convoy: Convoy, red: dict[str, Any]) -> dict[str, Any]:
             "gc.project_id, gc.ticket_id de chaque ticket) : il n'a pas été publié par la porte de publication")
     if not convoy.rig:
         raise Refusal(f"les tickets du convoi {convoy.id} ne nomment pas un seul projet connu de config/projects : "
-                      "le repair de sa branche d'intégration n'a pas de projet")
+                      f"le repair de {of_what} n'a pas de projet")
     number = 1
     while f"R{number}" in keys:
         number += 1
@@ -1028,7 +1095,7 @@ def publish_red_repair(convoy: Convoy, red: dict[str, Any]) -> dict[str, Any]:
         {"flow_contract": NEW_FLOW,
          "tickets": [{"id": key, "kind": "repair", "blocked_by": [], "target_rigs": [convoy.rig], **repair}]},
         allow_unicode=True, sort_keys=False)
-    created = gc_json("bd", "create", f"Révision : repair {key} ({RED}, convoi {convoy.id})",
+    created = gc_json("bd", "create", f"Révision : repair {key} ({label}, convoi {convoy.id})",
                       "-t", "task", "-d", description, "--json")
     if isinstance(created, list):
         created = created[0] if created else None
@@ -1048,7 +1115,7 @@ def publish_red_repair(convoy: Convoy, red: dict[str, Any]) -> dict[str, Any]:
         abandon(reason)
         raise Refusal(f"le brouillon de révision {draft_id} n'a pas pu être préparé : {reason[-300:]}")
     proc = run([str(PUBLISH_BIN), "bd-patch", draft_id, "--project", str(project), "--repo-root", str(ROOT),
-                "--author", PROGRAM, "--reason", one_line(f"{RED} : {red['control']}", 200)])
+                "--author", PROGRAM, "--reason", one_line(reason, 200)])
     try:
         result = json.loads(proc.stdout)
     except json.JSONDecodeError:
@@ -1057,7 +1124,7 @@ def publish_red_repair(convoy: Convoy, red: dict[str, Any]) -> dict[str, Any]:
     if proc.returncode != 0 or not isinstance(ticket_id, str) or not ticket_id:
         reason = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
         abandon(reason)
-        raise Refusal(f"la porte de patch a refusé le ticket repair de la branche d'intégration : {reason[-600:]}")
+        raise Refusal(f"la porte de patch a refusé le ticket repair {whose} : {reason[-600:]}")
     return {"id": ticket_id, "key": key, "draft": draft_id, "published": True}
 
 
@@ -1074,6 +1141,96 @@ def settle_red(convoy: Convoy) -> dict[str, Any] | None:
         return repair
     except Refusal as exc:
         return {"error": f"refus : {exc}"}
+
+
+# --- the end of the Spec: tracked elements to repair, and the gate (T23) ---------
+
+
+def item_repair(ticket: dict[str, Any], items: list[dict[str, Any]]) -> dict[str, Any]:
+    """What code writes of the `repair` the operator asked for the tracked
+    elements of a ticket (Spec §9, « éléments suivis »): it restores the
+    registry of the end-of-Spec gate, red on them, and its demonstration
+    line is each of them delivered."""
+    ticket_id = ticket["id"]
+    named = " ; ".join(f"{ITEM_LABELS.get(item['section'], item['section'])} {item['number']} : « {item['text']} »"
+                       for item in items)
+    ids = ", ".join(item["id"] for item in items)
+    line = ticket.get("demonstration_line")
+    where = (f"le produit lancé, par le point d'entrée de la ligne de démonstration du ticket {ticket_id} "
+             f"(« {line} »)" if isinstance(line, str) and line else "le produit lancé par la recette du profil du projet")
+    return {
+        "title": f"Rétablir les éléments du ticket {ticket_id} laissés sans état final ({ids})",
+        "what_it_delivers": (
+            f"Le Ticket Handoff du ticket {ticket_id} déclare, sans état final : {named}. Benjamin a demandé leur "
+            f"réparation. Ce ticket livre ce qui manque et ce qui a été livré autrement que le ticket {ticket_id} et "
+            "la Spec ne le demandent, sans changer un comportement que la Spec fixe."),
+        "restores": {"kind": "red_check", "ref": one_line(
+            f"registre de la porte de fin de Spec : éléments du ticket {ticket_id} sans état final ({named})", 600)},
+        "demonstration_line": one_line(
+            f"Sur le produit lancé, ce que le ticket {ticket_id} a déclaré manquant ou livré autrement est livré comme "
+            f"le ticket et la Spec le demandent : {named}", 600),
+        "acceptance_criteria": [{
+            "entry_point": where,
+            "observable": one_line(f"ce que le ticket {ticket_id} a déclaré manquant ou livré autrement y est livré "
+                                   f"comme le ticket et la Spec le demandent ({named})", 600),
+            "false_if": "l'un de ces éléments y manque encore, ou y est encore livré autrement",
+        }],
+    }
+
+
+def settle_item_repairs(convoy: Convoy) -> list[dict[str, Any]]:
+    """Spec §9: a deviation or a « non fait » ends repaired or accepted by
+    Benjamin. When the operator answered the Planning Exception that names
+    the elements of a ticket by « faire réparer », code publishes one
+    `repair` for them and names it on the elements; they read « réparé »
+    once the ticket-end gate has closed it."""
+    done = []
+    for ticket, items in convoy.item_repairs_due():
+        ids = [item["id"] for item in items]
+        try:
+            repair = publish_repair(
+                convoy, item_repair(ticket, items), f"éléments suivis de {ticket['id']}",
+                f"éléments du ticket {ticket['id']} sans état final ({', '.join(ids)}) : réparation demandée par l'opérateur",
+                f"des éléments suivis de {ticket['id']}", f"ses éléments suivis ({ticket['id']})")
+            state_write("set-item-repair", convoy.id, ticket["id"], "--repair", repair["id"])
+            done.append({**repair, "ticket": ticket["id"], "items": ids})
+        except Refusal as exc:
+            done.append({"ticket": ticket["id"], "items": ids, "error": f"refus : {exc}"})
+    if any("error" not in entry for entry in done):
+        convoy.load()
+    return done
+
+
+def settle_spec_end(convoy: Convoy, closing: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Spec §9, points 1 to 3: code, and no agent, renders the mechanical
+    verdicts of the end of a Spec, through bin/spec-end run, once every
+    ticket of the convoy is closed. None while a ticket is open or the
+    integration branch is red. A condition that is not met is an outcome of
+    the pass; a gate that could not run is a failure of it."""
+    try:
+        if (closing or {}).get("closed"):
+            convoy.load()  # what this pass closed
+        if not convoy.end_due():
+            return None
+        if not convoy.rig:
+            raise Refusal(f"les tickets du convoi {convoy.id} ne nomment pas un seul projet connu de config/projects : "
+                          "le dépôt de sa branche d'intégration est inconnu")
+        answer = parsed(run([str(SPEC_END_BIN), "run", convoy.id, "--repo", str(convoy.repo),
+                             "--profile", str(rig_profile(convoy.rig))]), f"spec-end run {convoy.id}")
+    except (Refusal, NotNewFlow) as exc:
+        return {"error": f"refus : {exc}"}
+    if not isinstance(answer, dict):
+        return {"error": f"refus : spec-end run {convoy.id} a rendu une réponse illisible"}
+    kept = ("version", "commit", "protected", "replayed", "missing", "refused", "requests", "red", "end_rounds",
+            "error", "message", "unruled")
+    result = {name: answer[name] for name in kept if name in answer}
+    if isinstance(answer.get("conditions"), list):
+        result["verdicts"] = {str(entry.get("name")): entry.get("verdict") for entry in answer["conditions"]
+                              if isinstance(entry, dict)}
+        if "error" in result:
+            # The gate ran and a condition is not met: named, not a failure.
+            result["reason"] = result.pop("error")
+    return result
 
 
 # --- the pass ----------------------------------------------------------------
@@ -1117,6 +1274,11 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
         if repair:
             out["repair"] = repair
         only = {convoy.red["repair"]} if convoy.red and "repair" in convoy.red else set()
+    # The tracked elements the operator asked to have repaired (T23): their
+    # repair is published, and starts like any ticket.
+    item_repairs = settle_item_repairs(convoy)
+    if item_repairs:
+        out["item_repairs"] = item_repairs
     # The answers first: a ticket whose parking is lifted is resumed, and
     # those behind it started, by the same pass.
     settle_lifts(convoy, out)
@@ -1382,6 +1544,11 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         closing = settle_ticket_end(convoys[result["id"]], merge)
         if closing is not None:
             result["ticket_end"] = closing
+        # Once every ticket is closed: the mechanical verdicts of the end of
+        # the Spec, on one tip of the integration branch.
+        ending = settle_spec_end(convoys[result["id"]], closing)
+        if ending is not None:
+            result["spec_end"] = ending
 
     unruled = any("unruled" in result for result in results)
     # A ticket returned or refused by the merge is an outcome of the pass; a
@@ -1389,6 +1556,8 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     refused = any(
         result["refused"] or "error" in result.get("incident", {}) or "error" in result.get("grouped_request", {})
         or "error" in result.get("repair", {})
+        or any("error" in entry for entry in result.get("item_repairs", []))
+        or any(key in result.get("spec_end", {}) for key in ("error", "message"))
         or any(key in result.get("integration", {}) for key in ("error", "message"))
         or any(key in result.get("test_review", {}) for key in ("error", "refused"))
         or any(key in result.get("code_review", {}) for key in ("error", "refused"))

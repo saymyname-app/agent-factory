@@ -124,8 +124,11 @@ anchor: it is repaired, never accepted.
   the screen (`--screen`). For a ticket, the caller is `bin/ticket-end
   fidelity`, run by `bin/convoy-advance` before the merge: it extracts the
   Validated Prototype the ticket names and compares every screen of the
-  profile that serves one of its states (`docs/TICKET_END.md`). The end of a
-  Spec is T23's.
+  profile that serves one of its states (`docs/TICKET_END.md`). At the end
+  of a Spec the caller is `bin/spec-end run` (T23, `docs/SPEC_END.md`): no
+  ticket and no `--screen`, every screen of the profile on the states each
+  Validated Prototype of the convoy lists, at the tip of the integration
+  branch; nothing is filed in the evidence store there.
 - A state is launched on the dataset of the same name; the profile has no
   other mapping.
 - Text content is not compared: both sides render the same synthetic

@@ -511,6 +511,14 @@ touché : il reste avancé par le Mayor.
   nouveau ticket ne démarre, ceux en cours finissent ; y répondre
   (`./bin/escalation-door repondre`) relance les démarrages. **Ne jamais
   lever un rouge ni créer un `repair` à la main.**
+- **Fin de Spec** (T23) : dès que tous les tickets du convoi sont fermés et
+  que la branche d'intégration n'est pas rouge, la passe lance
+  `./bin/spec-end run` et rapporte ses trois verdicts sous `spec_end`. Une
+  condition non réunie est un résultat de la passe, pas un échec. Tests ou
+  fidélité rouges : c'est le rouge ci-dessus, avec un tour de fin compté, et
+  la passe suivante publie le `repair`. Quand Benjamin répond « faire
+  réparer » à la demande sur un écart ou un « non fait », la passe publie ce
+  `repair` aussi (`item_repairs`).
 - **Les bornes se règlent à un seul endroit** : `bounds` de
   `config/delivery-flow.json` — `resumes` (K, 3), `open_planning_exceptions`
   (2). Changer une valeur change le comportement à la passe suivante ; une
@@ -757,6 +765,11 @@ protégée (Spec af-wf4w5r §4 et §8, T18). Pour un convoi qui porte la
 - **Commit ajouté après un verdict** (revue de code ou Ticket Evaluation) :
   fusion refusée, verdicts marqués invalides, une reprise comptée ; ils se
   rejouent sur la nouvelle pointe.
+- **`take-up`** (T23, lancé par `./bin/spec-end`) : la branche
+  d'intégration reprend la branche protégée et la commande de régression
+  tourne sur le résultat, même sans rien à reprendre. Vert : la reprise est
+  poussée, la pointe est rendue. Rouge : rien n'est poussé, le rouge est
+  enregistré sur le convoi ; avec `--end-round`, un tour de fin est compté.
 - **Sorties** : 0 fait ; 1 refus, ou un ticket refusé ; 3 état sans règle ;
   4 « pas un convoi du nouveau flux ».
 - **Limites** : les autres conditions de la porte de fin de ticket ne sont
@@ -1027,7 +1040,8 @@ n'arrive jamais jusqu'à Benjamin sans l'être.
   chemin servi, états prototypés).
 - **Limites** : le lien ticket → écran n'est pas enregistré à la
   publication (l'appelant nomme l'écran) ; l'appel avant la fusion d'un
-  ticket est à T19, celui de fin de Spec à T23 ; le texte affiché n'est pas
+  ticket est fait par `./bin/ticket-end`, celui de fin de Spec par
+  `./bin/spec-end` ; le texte affiché n'est pas
   comparé ; un produit qui interdit d'être encadré ne se mesure pas.
 
 Détail : `docs/PROTOTYPE_FIDELITY.md`.
@@ -1169,7 +1183,8 @@ ticket.
 - **Limites** : une fidélité rouge, comme toute condition manquante, laisse
   le ticket en attente : les reprises de `./bin/convoy-advance` ne couvrent
   pas un ticket que la porte laisse ouvert (`docs/CONVOY_ADVANCE.md`) ; un
-  contrôle de fidélité par passe ; la fin de Spec est à T23.
+  contrôle de fidélité par passe ; la fin de Spec se vérifie par
+  `./bin/spec-end`.
 
 Détail : `docs/TICKET_END.md`.
 
@@ -1280,3 +1295,51 @@ Tests : `tests/factory-revive-test.sh`, `tests/factory-boot-supervisor-test.sh`,
 `docs/RUNBOOK_STOP_AND_RESTART.md` §3.
 
 ---
+## `./bin/spec-end` — la Spec est-elle vérifiée, et sinon que manque-t-il ?
+
+**La porte de fin de Spec** (Spec af-wf4w5r §9, points 1 à 3, T23). Dans un
+convoi qui porte la **marque du nouveau flux**, des tickets tous fermés ne
+font pas une Spec vérifiée : du code rend **trois verdicts mécaniques, tous
+liés au même commit** de la branche d'intégration, la branche protégée
+reprise. Aucun agent ne les rend.
+
+```bash
+./bin/spec-end check <convoi> --repo <dépôt du projet>                      # où en est la fin de Spec ; n'écrit rien
+./bin/spec-end run   <convoi> --repo <dépôt du projet> --profile <profil>   # la porte ; lancée par ./bin/convoy-advance
+```
+
+- **Les trois conditions** (liste `spec-end/v1`), dans l'ordre : 1 registre
+  (tickets fermés par la porte de fin de ticket ou retirés, aucun parqué ;
+  chaque écart et chaque « non fait » d'un Ticket Handoff « réparé » ou
+  « accepté par Benjamin » ; aucune Planning Exception ouverte) ; 2 tests
+  verts sur la pointe, branche protégée reprise ; 3 fidélité mécanique verte
+  sur toutes les ancres de tous les états prototypés. Une condition non
+  réunie arrête la porte : les suivantes ne sont pas lancées.
+- **Pour savoir ce qui manque** : `check` nomme chaque condition non réunie
+  et dit ce qui a été lu.
+- **Un écart ou un « non fait » sans état final** : la porte le nomme et te
+  pose une question, une fois par ticket (`./bin/escalation-door list`).
+  Réponds par `./bin/escalation-door repondre <ticket> a` (faire réparer :
+  du code publie un ticket `repair`) ou `b` (accepter tel quel). **Aucune
+  commande n'écarte un élément** : il finit réparé ou accepté par toi.
+- **Tests rouges ou fidélité rouge** : c'est le rouge de la branche
+  d'intégration ; un tour de fin est compté (`counters.end_rounds`) et
+  `./bin/convoy-advance` publie le seul `repair`. La porte rejoue tout une
+  fois ce `repair` fusionné et fermé.
+- **Un commit de plus annule tout** : les verdicts sont enregistrés avec
+  leur commit (`convoy.spec_end` dans `./bin/convoy-state show`). Dès que la
+  branche d'intégration ou la branche protégée bouge, `check` les dit
+  « périmés » et la porte rejoue tout.
+- **Sorties** : 0 trois verdicts verts sur la pointe actuelle ; 1 refus ou
+  condition non réunie ; 3 état sans règle ; 4 convoi sans marque. `run` est
+  refusé à toute session d'agent.
+- **Limites** : la porte tourne dans la passe de l'ordre (délai de 300 s,
+  non mesuré sur un vrai projet) ; pas de pièce scellée pour les tests et la
+  fidélité de fin (leur relevé est sur le convoi) ; la porte vérifie, elle
+  n'accepte rien et ne ferme rien ; le compteur de tours n'est pas encore
+  comparé à une borne.
+
+Détail : `docs/SPEC_END.md`.
+
+---
+

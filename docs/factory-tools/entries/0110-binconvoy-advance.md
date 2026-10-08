@@ -97,6 +97,14 @@ touché : il reste avancé par le Mayor.
   nouveau ticket ne démarre, ceux en cours finissent ; y répondre
   (`./bin/escalation-door repondre`) relance les démarrages. **Ne jamais
   lever un rouge ni créer un `repair` à la main.**
+- **Fin de Spec** (T23) : dès que tous les tickets du convoi sont fermés et
+  que la branche d'intégration n'est pas rouge, la passe lance
+  `./bin/spec-end run` et rapporte ses trois verdicts sous `spec_end`. Une
+  condition non réunie est un résultat de la passe, pas un échec. Tests ou
+  fidélité rouges : c'est le rouge ci-dessus, avec un tour de fin compté, et
+  la passe suivante publie le `repair`. Quand Benjamin répond « faire
+  réparer » à la demande sur un écart ou un « non fait », la passe publie ce
+  `repair` aussi (`item_repairs`).
 - **Les bornes se règlent à un seul endroit** : `bounds` de
   `config/delivery-flow.json` — `resumes` (K, 3), `open_planning_exceptions`
   (2). Changer une valeur change le comportement à la passe suivante ; une

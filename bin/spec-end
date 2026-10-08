@@ -1,0 +1,723 @@
+#!/usr/bin/env python3
+"""The end-of-Spec gate of a "new flow" convoy: its three mechanical
+conditions, on one tip of the integration branch (T23, af-s5uysn; Spec
+af-wf4w5r §9, points 1 to 3, user stories 56 and 59).
+
+Once every ticket of a convoy that carries the new-flow mark is closed, this
+gate renders three verdicts, in this order, all tied to one commit of the
+integration branch that holds the tip of the protected branch:
+
+  1. registry  every ticket closed by the ticket-end gate or withdrawn by a
+               resolved Planning Exception, none parked; every deviation and
+               every « non fait » of a Ticket Handoff in a final state,
+               « réparé » or « accepté par Benjamin »; no Planning Exception
+               open;
+  2. tests     the regression command of the project green on the tip, the
+               protected branch taken up (bin/spec-integration take-up);
+  3. fidelity  the mechanical fidelity check green on every anchor of every
+               prototyped state (bin/prototype-fidelity, every screen).
+
+    spec-end check CONVOY --repo DIR
+    spec-end run   CONVOY --repo DIR --profile DESCRIPTOR [--timeout SECONDS]
+
+`check` reads and writes nothing: the registry as it is now, and the verdicts
+the gate recorded, « périmés » as soon as the integration branch holds one
+commit more than the commit they were rendered on, or the protected branch
+moved: everything is then to replay. `run` is the gate; it is refused from
+an agent session. A condition that is not met stops it there: the following
+ones are not launched. The registry refuses and names the element; for a
+deviation or a « non fait » left without a final state it raises one request
+to the operator, a Planning Exception that names the elements of the ticket
+(bin/convoy-state raise-planning-exception --item, then bin/escalation-door):
+no command of an agent sets one aside. Red tests or a red fidelity are the
+red of the integration branch (bin/convoy-state record-integration-red): one
+round of the end of the Spec is counted in the same write, and
+bin/convoy-advance publishes the one `repair` of that red by code. Three
+green verdicts are recorded on the convoy with their commit
+(bin/convoy-state record-spec-end); run again on the same tip, the gate
+replays nothing.
+
+Called by bin/convoy-advance on each of its passes, once every ticket of the
+convoy is closed. Every answer is one JSON object on stdout. Exit status: 0
+the three verdicts are green and current; 1 refused, or a condition is not
+met (named); 3 the convoy is in an "état sans règle"; 4 the convoy does not
+carry the new-flow mark. Details: docs/SPEC_END.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterator
+
+
+PROGRAM = "spec-end"
+BIN = Path(__file__).resolve().parent
+STATE_TOOL = BIN / "convoy-state"
+INTEGRATION_TOOL = BIN / "spec-integration"
+FIDELITY_TOOL = BIN / "prototype-fidelity"
+ESCALATION_TOOL = BIN / "escalation-door"
+OPERATOR_CONFIG_TOOL = BIN / "operator-config"
+
+# The closed list (Spec §9, points 1 to 3), versioned: a change of the list
+# is a new version. bin/convoy-state holds the same names and refuses any
+# other record.
+VERSION = "spec-end/v1"
+CONDITIONS = (
+    ("registry", "Registre : tickets fermés par la porte ou retirés, aucun parqué ; écarts et « non faits » dans un "
+                 "état final ; aucune Planning Exception ouverte"),
+    ("tests", "Tests verts sur la pointe de la branche d'intégration, la branche protégée reprise"),
+    ("fidelity", "Fidélité mécanique verte sur toutes les ancres de tous les états prototypés"),
+)
+PASS, FAIL, NOT_RUN, STALE = "pass", "fail", "not_run", "stale"
+
+GATE_TICKET_END, GATE_WITHDRAWN = "ticket_end", "withdrawn"
+ITEM_OPEN, ITEM_REPAIRED, ITEM_ACCEPTED = "ouvert", "réparé", "accepté par Benjamin"
+ITEM_LABELS = {"deviations": "écart", "not_done": "« non fait »"}
+FIDELITY_ACCEPTED = "accepté par Benjamin"
+RED = "branche d'intégration rouge"
+# Gas City exports these into every agent session and into none of the
+# controller's orders (docs/CONVOY_ADVANCE.md).
+SESSION_IDENTITY = ("GC_AGENT", "GC_SESSION_NAME", "GC_SESSION_ID")
+
+EXIT_REFUSED = 1
+EXIT_UNRULED = 3
+EXIT_NOT_NEW_FLOW = 4
+FIDELITY_RED = 1
+
+UNRULED = "état sans règle"
+REMOTE = "origin"
+DEFAULT_TIMEOUT = 600
+MAX_DETAIL = 300
+REQUEST_LINE_MAX = 140
+MAX_NAMED = 5
+
+
+class Refusal(RuntimeError):
+    def __init__(self, message: str, extra: dict[str, Any] | None = None):
+        super().__init__(" ".join(message.split()))
+        self.extra = extra or {}
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark: bin/convoy-state's answer."""
+
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+class Unruled(RuntimeError):
+    """The convoy is in an "état sans règle": carries the anomalies."""
+
+    def __init__(self, anomalies: list[dict[str, Any]]):
+        super().__init__(UNRULED)
+        self.anomalies = anomalies
+
+
+def short(text: Any, limit: int = MAX_DETAIL) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def sha(commit: Any) -> str:
+    return str(commit)[:12]
+
+
+# --- the other commands ----------------------------------------------------------
+
+
+def run(argv: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, errors="replace", stdin=subprocess.DEVNULL, cwd=cwd)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+
+
+def detail_of(proc: subprocess.CompletedProcess[str]) -> str:
+    return short(proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}")
+
+
+def tool(path: Path, *args: str) -> tuple[int, dict[str, Any]]:
+    """One JSON answer of another command of the flow."""
+    proc = run([str(path), *args])
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {detail_of(proc)}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def state_write(*args: str) -> dict[str, Any]:
+    status, answer = tool(STATE_TOOL, *args)
+    if status != 0:
+        raise Refusal(f"{args[0]} refusé par la commande d'état : {refusal_text(answer)}")
+    return answer
+
+
+def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return run(["git", "-C", str(repo), *args])
+
+
+def require_repo(path: str | None) -> Path:
+    if not path:
+        raise Refusal("--repo absent : le dépôt du projet porte la branche d'intégration et la branche protégée")
+    repo = Path(path).resolve()
+    if not repo.is_dir() or git(repo, "rev-parse", "--git-dir").returncode != 0:
+        raise Refusal(f"--repo {repo} n'est pas un dépôt Git")
+    return repo
+
+
+def read_state(convoy_id: str, repo: Path) -> dict[str, Any]:
+    """The convoy as bin/convoy-state renders it. An "état sans règle" gets
+    no verdict: no gate decides on a state the code has no rule for."""
+    status, answer = tool(STATE_TOOL, "show", convoy_id, "--repo", str(repo))
+    if status == EXIT_NOT_NEW_FLOW:
+        raise NotNewFlow(answer)
+    if status not in (0, EXIT_UNRULED) or not isinstance(answer.get("tickets"), list):
+        raise Refusal(f"lecture de l'état du convoi {convoy_id} impossible : {refusal_text(answer)}")
+    anomalies = [
+        *answer["convoy"].get("unruled", []),
+        *({"ticket": ticket["id"], **anomaly} for ticket in answer["tickets"] for anomaly in ticket.get("unruled", [])),
+    ]
+    if anomalies:
+        raise Unruled(anomalies)
+    return answer
+
+
+def integration_of(state: dict[str, Any], convoy_id: str) -> dict[str, Any]:
+    integration = state["convoy"].get("integration")
+    if not integration:
+        raise Refusal(
+            f"le convoi {convoy_id} n'a pas de branche d'intégration : elle s'ouvre à la publication, et la porte de "
+            "fin de Spec rend ses verdicts sur sa pointe")
+    return integration
+
+
+def tips(repo: Path, integration: dict[str, Any]) -> tuple[str, str]:
+    """The tips of the integration and of the protected branches, as they
+    are now: asked of the remote when the repository has one, and nothing
+    is fetched (a read writes nothing)."""
+    found = []
+    remote = REMOTE in git(repo, "remote").stdout.split()
+    for branch in (integration["branch"], integration["protected"]):
+        if remote:
+            proc = git(repo, "ls-remote", REMOTE, f"refs/heads/{branch}")
+            if proc.returncode != 0:
+                raise Refusal(f"git ls-remote {REMOTE} a échoué : {detail_of(proc)}")
+            tip = proc.stdout.split()[0] if proc.stdout.split() else None
+        else:
+            proc = git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}")
+            tip = proc.stdout.strip() if proc.returncode == 0 else None
+        if not tip:
+            raise Refusal(f"branche {branch} introuvable dans le dépôt {repo}")
+        found.append(tip)
+    return found[0], found[1]
+
+
+def holds(repo: Path, commit: str, tip: str) -> bool:
+    """Whether `tip` holds `commit`. A commit this repository does not have
+    yet is one the tip cannot hold."""
+    return git(repo, "merge-base", "--is-ancestor", commit, tip).returncode == 0
+
+
+def refuse_agent_session() -> None:
+    """Spec §0 rule 1: no agent decides whether a Spec is verified. Only the
+    order of the Factory runs the gate; an agent session is refused."""
+    caller = next((os.environ[name] for name in SESSION_IDENTITY if os.environ.get(name)), None)
+    if caller:
+        raise Refusal(
+            f"porte de fin de Spec demandée par la session d'agent « {caller} » : aucun agent ne rend les verdicts "
+            "de fin de Spec ni n'écarte un écart ou un « non fait » ; seule la porte, lancée par l'ordre de l'usine, "
+            "le fait (Spec af-wf4w5r §9) ; rien n'est écrit")
+
+
+# --- condition 1: the registry --------------------------------------------------------
+
+
+def withdrawn(ticket: dict[str, Any]) -> bool:
+    return "at" in (ticket.get("gates") or {}).get(GATE_WITHDRAWN, {})
+
+
+def item_refusal(ticket: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    label = ITEM_LABELS.get(item["section"], item["section"])
+    request = item.get("request") or {}
+    if request.get("state") == "open":
+        why = "sa demande attend la réponse de Benjamin"
+    elif request.get("state") == "resolved":
+        repair = item.get("repair")
+        why = ("réparation demandée par Benjamin, " +
+               (f"son repair {repair} n'est pas encore fermé par la porte de fin de ticket" if repair
+                else "son repair n'est pas encore publié"))
+    else:
+        why = "ni réparé ni accepté par Benjamin"
+    return {"kind": "tracked_item", "ticket": ticket["id"], "item": item["id"], "state": item["state"],
+            "element": f"{label} {item['number']} du ticket {ticket['id']} sans état final ({why}) : « {short(item['text'], 160)} »"}
+
+
+def registry(state: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+    """Spec §9, point 1. Returns what refuses, each element named, and the
+    line that says what was read."""
+    refused: list[dict[str, Any]] = []
+    tickets = state["tickets"]
+    closed = retired = settled = 0
+    accepted = 0
+    if not tickets:
+        refused.append({"kind": "empty", "ticket": None, "element": "le convoi ne suit aucun ticket"})
+    for ticket in tickets:
+        ticket_id, gates = ticket["id"], ticket.get("gates") or {}
+        if ticket.get("status") != "closed":
+            park = ticket.get("park")
+            if park:
+                refused.append({"kind": "parked", "ticket": ticket_id, "element": (
+                    f"ticket {ticket_id} parqué ({park.get('cause')}, par {park.get('origin')})")})
+            else:
+                refused.append({"kind": "open_ticket", "ticket": ticket_id, "element": (
+                    f"ticket {ticket_id} encore ouvert ({ticket.get('status')}) : la porte de fin de Spec se déclenche "
+                    "quand tous les tickets du convoi sont fermés")})
+            continue
+        if withdrawn(ticket):
+            # Out of the graph by a resolved Planning Exception: nothing of
+            # it is delivered, nothing of it is tracked.
+            retired += 1
+            continue
+        if "at" not in gates.get(GATE_TICKET_END, {}):
+            refused.append({"kind": "closed_outside_gate", "ticket": ticket_id, "element": (
+                f"ticket {ticket_id} fermé sans relevé de la porte de fin de ticket ni retrait du graphe")})
+            continue
+        closed += 1
+        raised = ticket.get("planning_exceptions")
+        last = raised[-1] if isinstance(raised, list) and raised else None
+        asked = set(last.get("items") or []) if last else set()
+        if last and last.get("state") == "open" and not asked:
+            refused.append({"kind": "planning_exception", "ticket": ticket_id, "element": (
+                f"Planning Exception ouverte sur le ticket {ticket_id} : « {short(last.get('summary'), 160)} »")})
+        for item in ticket.get("tracked_items") or []:
+            if item["state"] in (ITEM_REPAIRED, ITEM_ACCEPTED):
+                settled += 1
+                accepted += item["state"] == ITEM_ACCEPTED
+            else:
+                refused.append(item_refusal(ticket, item))
+        if last and last.get("state") == "open" and asked and not any(
+                entry["kind"] == "tracked_item" and entry["ticket"] == ticket_id for entry in refused):
+            # Its elements were reworded since: the question is still open.
+            refused.append({"kind": "planning_exception", "ticket": ticket_id, "element": (
+                f"Planning Exception ouverte sur le ticket {ticket_id} : « {short(last.get('summary'), 160)} »")})
+    detail = (f"{closed} ticket(s) fermé(s) par la porte de fin de ticket, {retired} retiré(s) par Planning Exception "
+              f"résolue, aucun parqué ; {settled} écart(s) et « non fait(s) » dans un état final"
+              + (f" ({accepted} {ITEM_ACCEPTED}, {settled - accepted} {ITEM_REPAIRED})" if settled else "")
+              + " ; aucune Planning Exception ouverte")
+    return refused, detail
+
+
+def registry_condition(state: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    refused, detail = registry(state)
+    if refused:
+        named = " ; ".join(entry["element"] for entry in refused[:MAX_NAMED])
+        more = f" ; et {len(refused) - MAX_NAMED} autre(s)" if len(refused) > MAX_NAMED else ""
+        return condition(1, FAIL, named + more), refused
+    return condition(1, PASS, detail), refused
+
+
+def condition(number: int, verdict: str, detail: str) -> dict[str, Any]:
+    name, label = CONDITIONS[number - 1]
+    return {"number": number, "name": name, "label": label, "verdict": verdict, "detail": short(detail, 900)}
+
+
+def missing_text(conditions: list[dict[str, Any]]) -> str:
+    return " ; ".join(
+        f"condition {entry['number']} ({entry['label']}) non réunie : {entry['detail']}"
+        for entry in conditions if entry["verdict"] == FAIL)
+
+
+# --- the request to the operator: a tracked element without a final state ----------------
+
+
+def operator_language() -> str:
+    proc = run([str(OPERATOR_CONFIG_TOOL), "language"])
+    if proc.returncode != 0:
+        raise Refusal(f"langue de l'opérateur illisible : {detail_of(proc)}")
+    return proc.stdout.strip()
+
+
+def item_request(ticket_id: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+    """What the operator reads: the elements of one ticket left without a
+    final state, and the two ends an element may have (Spec §9)."""
+    named = " ; ".join(f"{ITEM_LABELS.get(item['section'], item['section'])} {item['number']} : {item['text']}"
+                       for item in items)
+    head = f"Fin de Spec, ticket {ticket_id}, sans état final : "
+    return {
+        "quoi": head + short(named, REQUEST_LINE_MAX - len(head)),
+        "pourquoi": "Aucun agent n'écarte un écart ou un « non fait » : il finit réparé, ou accepté par toi.",
+        "que_faire": [
+            {"option": "Faire réparer par un ticket repair",
+             "consequence": "Du code publie le repair ; la porte de fin de Spec rejoue tout une fois ce repair fermé."},
+            {"option": "Accepter ce qui est livré, tel quel",
+             "consequence": "Le registre de fin de Spec lit ces éléments comme acceptés par toi."},
+        ],
+    }
+
+
+def raise_requests(convoy_id: str, state: dict[str, Any], refused: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One Planning Exception per ticket whose elements were never asked of
+    the operator: the request first, then its record with the letter of the
+    option that accepts (the door letters the options in order). A ticket
+    whose last Planning Exception is still open is left alone: raising
+    another one would replace a question that has no answer yet."""
+    requests = []
+    for ticket in state["tickets"]:
+        items = [item for item in ticket.get("tracked_items") or []
+                 if item["state"] == ITEM_OPEN and not item.get("request")
+                 and any(entry["kind"] == "tracked_item" and entry["ticket"] == ticket["id"] and entry["item"] == item["id"]
+                         for entry in refused)]
+        raised = ticket.get("planning_exceptions")
+        if not items or (isinstance(raised, list) and raised and raised[-1].get("state") == "open"):
+            continue
+        ids = [item["id"] for item in items]
+        request = item_request(ticket["id"], items)
+        payload = json.dumps({**request, "langue": operator_language(), "bloquant": True}, ensure_ascii=False)
+        proc = run([str(ESCALATION_TOOL), "benjamin", ticket["id"], payload])
+        if proc.returncode != 0:
+            raise Refusal(f"la porte d'escalade a refusé la demande sur {ticket['id']} : {detail_of(proc)}")
+        accept = "abcdefghijklmnopqrstuvwxyz"[len(request["que_faire"]) - 1]
+        command = ["raise-planning-exception", convoy_id, ticket["id"], "--kind", "semantic", "--summary",
+                   short(request["quoi"], 280), "--accept-option", accept]
+        for item_id in ids:
+            command += ["--item", item_id]
+        state_write(*command)
+        requests.append({"ticket": ticket["id"], "items": ids, "accept_option": accept, "raised": True})
+    return requests
+
+
+# --- condition 3: the fidelity of every prototyped state ---------------------------------------
+
+
+def work_dir() -> Path:
+    base = os.environ.get("SPEC_END_WORK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    path = Path(base)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def prototypes_of(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """The Validated Prototypes the convoy delivers: the references the
+    publication door posed in its interface tickets, each once, with every
+    prototyped state a ticket names for it."""
+    found: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for ticket in state["tickets"]:
+        reference = ticket.get("validated_prototype")
+        if withdrawn(ticket) or not isinstance(reference, dict) or "commit" not in reference:
+            continue
+        key = (reference["branch"], reference["commit"], reference["path"])
+        entry = found.setdefault(key, {"branch": key[0], "commit": key[1], "path": key[2], "states": [], "tickets": []})
+        entry["states"] += [name for name in reference["states"] if name not in entry["states"]]
+        entry["tickets"].append(ticket["id"])
+    return list(found.values())
+
+
+def extract_prototype(repo: Path, reference: dict[str, Any], into: Path) -> Path:
+    """The frozen Validated Prototype, as its reference names it: the path
+    at the commit, read in the repository of the project."""
+    commit, path, branch = reference["commit"], reference["path"], reference["branch"]
+    if git(repo, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
+        git(repo, "fetch", "--quiet", REMOTE, branch)
+    try:
+        archive = subprocess.run(["git", "-C", str(repo), "archive", "--format=tar", commit, "--", path],
+                                 capture_output=True, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer git : {exc}") from exc
+    if archive.returncode != 0:
+        raise Refusal(
+            f"le Validated Prototype {path} est introuvable au commit {sha(commit)} (branche {branch}) dans le dépôt "
+            f"{repo} : {short(archive.stderr.decode('utf-8', 'replace'))}")
+    with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+        tar.extractall(into, filter="data")
+    return into / path
+
+
+def measure(repo: Path, profile: str, tip: str, reference: dict[str, Any], accepted: set[str]) -> dict[str, Any]:
+    """Every screen of the profile compared, at the tip, to one Validated
+    Prototype, on the states the Spec lists as prototyped. A deviation on an
+    anchor a resolved Planning Exception accepted is not an open one."""
+    tmp = Path(tempfile.mkdtemp(prefix="spec-end-prototype-", dir=work_dir()))
+    try:
+        prototype = extract_prototype(repo, reference, tmp)
+        status, answer = tool(FIDELITY_TOOL, "check", profile, "--prototype", str(prototype), "--commit", tip,
+                              "--repo-root", str(repo), "--states", ",".join(reference["states"]))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if status not in (0, FIDELITY_RED) or not isinstance(answer.get("states"), dict) \
+            or not isinstance(answer.get("deviations"), list):
+        raise Refusal(f"contrôle de fidélité impossible sur {reference['path']} : {refusal_text(answer)}")
+    deviations = [
+        {**{key: deviation.get(key) for key in ("state", "viewport", "anchor", "kind", "property")},
+         "status": FIDELITY_ACCEPTED if deviation.get("anchor") in accepted else ITEM_OPEN}
+        for deviation in answer["deviations"]
+    ]
+    return {
+        "prototype": {key: reference[key] for key in ("branch", "commit", "path")},
+        "screens": answer.get("screens") or [],
+        "states": {name: {"viewports": compared.get("viewports") or [], "anchors": compared.get("anchors") or []}
+                   for name, compared in answer["states"].items()},
+        "deviations": deviations,
+    }
+
+
+def fidelity(repo: Path, profile: str, tip: str, state: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+    """Spec §9, point 3. Returns whether it is green, the line that says
+    what was compared, and the record."""
+    references = prototypes_of(state)
+    if not references:
+        return True, ("sans objet : aucun ticket du convoi ne touche un écran (aucune référence de Validated "
+                      "Prototype posée à la publication)"), {"prototypes": []}
+    accepted = {anchor for ticket in state["tickets"] for anchor in ticket.get("accepted_anchors") or []}
+    measured = [measure(repo, profile, tip, reference, accepted) for reference in references]
+    record = {"commit": tip, "prototypes": measured}
+    opened = [deviation for entry in measured for deviation in entry["deviations"] if deviation["status"] == ITEM_OPEN]
+    taken = sum(len(entry["deviations"]) for entry in measured) - len(opened)
+    screens = sorted({name for entry in measured for name in entry["screens"]})
+    states = sorted({name for entry in measured for name in entry["states"]})
+    anchors = sorted({name for entry in measured for compared in entry["states"].values() for name in compared["anchors"]})
+    compared = (f"{len(anchors)} ancre(s) de {len(states)} état(s) prototypé(s) ({', '.join(states)}) sur "
+                f"{', '.join(screens)} à {sha(tip)}")
+    if opened:
+        named = ", ".join(f"{d['state']}/{d['anchor'] or 'token'}/{d['property']} ({d['kind']})" for d in opened[:MAX_NAMED])
+        more = f", et {len(opened) - MAX_NAMED} autre(s)" if len(opened) > MAX_NAMED else ""
+        return False, f"{len(opened)} écart(s) ouvert(s) : {named}{more} ; comparé : {compared}", record
+    return True, (f"aucun écart ouvert sur {compared}"
+                  + (f" ; {taken} écart(s) {FIDELITY_ACCEPTED}" if taken else "")), record
+
+
+# --- check -------------------------------------------------------------------------------------
+
+
+def stale_reason(repo: Path, recorded: dict[str, Any], integration: dict[str, Any], tip: str, protected_tip: str) -> str | None:
+    """None while the recorded verdicts hold: their commit is the tip of the
+    integration branch, and that tip holds the tip of the protected branch."""
+    if recorded["commit"] != tip:
+        return (f"verdicts périmés : rendus au commit {sha(recorded['commit'])}, la branche d'intégration "
+                f"{integration['branch']} est à {sha(tip)} ; un commit de plus annule toutes les vérifications, "
+                "tout est à rejouer")
+    if not holds(repo, protected_tip, tip):
+        return (f"verdicts périmés : la branche protégée {integration['protected']} a avancé ({sha(protected_tip)}) "
+                f"depuis le commit {sha(tip)} sur lequel ils ont été rendus ; elle est à reprendre, tout est à rejouer")
+    return None
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    repo = require_repo(args.repo)
+    state = read_state(args.convoy, repo)
+    integration = integration_of(state, args.convoy)
+    tip, protected_tip = tips(repo, integration)
+    first, refused = registry_condition(state)
+    recorded = state["convoy"].get("spec_end")
+    stale = stale_reason(repo, recorded, integration, tip, protected_tip) if recorded else None
+    if recorded and stale:
+        conditions = [condition(number, STALE, stale) for number in (1, 2, 3)]
+    elif recorded:
+        conditions = [first, *({**condition(entry["number"], entry["verdict"], entry["detail"])}
+                               for entry in recorded["conditions"][1:])]
+    else:
+        never = "jamais rendu : la porte de fin de Spec n'a pas encore rendu ce verdict"
+        conditions = [first, condition(2, NOT_RUN, never), condition(3, NOT_RUN, never)]
+    missing = [entry["number"] for entry in conditions if entry["verdict"] != PASS]
+    answer: dict[str, Any] = {
+        "ok": not missing, "convoy": args.convoy, "version": VERSION, "branch": integration["branch"], "commit": tip,
+        "protected": {"branch": integration["protected"], "commit": protected_tip},
+        "recorded": recorded, "stale": bool(stale), "conditions": conditions, "missing": missing, "refused": refused,
+    }
+    if stale:
+        answer["error"] = f"refus : porte de fin de Spec ({VERSION}) : {stale}"
+    elif missing:
+        named = missing_text(conditions) or "les verdicts de fin de Spec n'ont pas encore été rendus sur cette pointe"
+        answer["error"] = f"refus : porte de fin de Spec ({VERSION}) : {named}"
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return EXIT_REFUSED if missing else 0
+
+
+# --- run ---------------------------------------------------------------------------------------
+
+
+@contextmanager
+def gate_lock(convoy_id: str) -> Iterator[None]:
+    """One run of the gate at a time on a convoy."""
+    directory = Path(os.environ.get("SPEC_END_LOCK_DIR") or os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    directory.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", convoy_id)
+    with (directory / f"agent-factory-spec-end-{safe}.lock").open("w") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def end_rounds(convoy_id: str, repo: Path) -> Any:
+    status, answer = tool(STATE_TOOL, "show", convoy_id, "--repo", str(repo))
+    return ((answer.get("convoy") or {}).get("counters") or {}).get("end_rounds")
+
+
+def refused_answer(args: argparse.Namespace, base: dict[str, Any], conditions: list[dict[str, Any]],
+                   **extra: Any) -> int:
+    missing = [entry["number"] for entry in conditions if entry["verdict"] == FAIL]
+    print(json.dumps({
+        **base, "ok": False, "conditions": conditions, "missing": missing, **extra,
+        "error": (f"refus : porte de fin de Spec ({VERSION}) : rien n'avance, aucun verdict n'est enregistré ; "
+                  f"{missing_text(conditions)}"),
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return EXIT_REFUSED
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    refuse_agent_session()
+    repo = require_repo(args.repo)
+    if not args.profile:
+        raise Refusal("--profile absent : le profil du projet déclare la commande de régression et les écrans")
+    try:
+        timeout = float(args.timeout)
+    except (TypeError, ValueError) as exc:
+        raise Refusal(f"--timeout mal formé : {args.timeout!r}") from exc
+    if not 0 < timeout < float("inf"):
+        raise Refusal(f"--timeout mal formé : {args.timeout!r}")
+
+    with gate_lock(args.convoy):
+        state = read_state(args.convoy, repo)
+        integration = integration_of(state, args.convoy)
+        branch, protected = integration["branch"], integration["protected"]
+        base: dict[str, Any] = {"convoy": args.convoy, "version": VERSION, "branch": branch}
+        not_run = "non lancé : une condition qui la précède n'est pas réunie"
+
+        # 1. The registry: nothing else is launched while it refuses.
+        first, refused = registry_condition(state)
+        if refused:
+            requests = raise_requests(args.convoy, state, refused)
+            return refused_answer(args, base, [first, condition(2, NOT_RUN, not_run), condition(3, NOT_RUN, not_run)],
+                                  refused=refused, requests=requests)
+        red = state["convoy"].get("integration_red")
+        if red:
+            raise Refusal(
+                f"{RED} ({red['control']}) : la porte de fin de Spec ne rend aucun verdict avant son repair "
+                f"{red.get('repair') or '(que la passe d’avancement publie)'}, ou avant que ce contrôle repasse au vert",
+                {"red": red})
+
+        # Verdicts rendered on this very tip are not replayed.
+        tip, protected_tip = tips(repo, integration)
+        recorded = state["convoy"].get("spec_end")
+        if recorded and stale_reason(repo, recorded, integration, tip, protected_tip) is None:
+            print(json.dumps({
+                **base, "ok": True, "commit": tip, "protected": {"branch": protected, "commit": protected_tip},
+                "conditions": [first, *(condition(entry["number"], entry["verdict"], entry["detail"])
+                                        for entry in recorded["conditions"][1:])],
+                "missing": [], "replayed": False,
+            }, indent=2, sort_keys=True, ensure_ascii=False))
+            return 0
+
+        # 2. One tip: the protected branch taken up, the tests on the result.
+        status, taken = tool(INTEGRATION_TOOL, "take-up", args.convoy, "--repo", str(repo), "--profile", args.profile,
+                             "--timeout", f"{timeout:g}", "--end-round")
+        if status == EXIT_UNRULED and isinstance(taken.get("unruled"), list):
+            raise Unruled(taken["unruled"])
+        if status != 0:
+            red = taken.get("red")
+            if not isinstance(red, dict) or "control" not in red:
+                raise Refusal(f"reprise de la branche protégée et tests impossibles : {refusal_text(taken)}")
+            second = condition(2, FAIL, f"{red['control']} ; un repair est créé par du code et un tour de fin est compté")
+            return refused_answer(args, base, [first, second, condition(3, NOT_RUN, not_run)], red=red,
+                                  end_rounds=end_rounds(args.convoy, repo))
+        tip, protected_tip = taken["integration"], taken["protected_tip"]
+        tests = taken["tests"]
+        second = condition(2, PASS, (
+            f"commande de régression ({tests['command']}) : code 0 sur {sha(tip)}, {protected} reprise "
+            f"({sha(protected_tip)})"))
+
+        # 3. The fidelity of every prototyped state, on that same tip.
+        green, detail, measured = fidelity(repo, args.profile, tip, state)
+        third = condition(3, PASS if green else FAIL, detail)
+        if not green:
+            control = f"fidélité mécanique au Validated Prototype : écart(s) ouvert(s) sur {branch} à {sha(tip)}"
+            state_write("record-integration-red", args.convoy, "--commit", tip, "--integration", tip,
+                        "--protected", protected_tip, "--control", control, "--detail", short(detail),
+                        "--check", "fidelity", "--end-round")
+            recorded_red = read_state(args.convoy, repo)["convoy"].get("integration_red")
+            third["detail"] = short(f"{detail} ; un repair est créé par du code et un tour de fin est compté", 900)
+            return refused_answer(args, base, [first, second, third], red=recorded_red,
+                                  end_rounds=end_rounds(args.convoy, repo))
+
+        conditions = [first, second, third]
+        with tempfile.TemporaryDirectory(prefix="spec-end-") as tmp:
+            report = Path(tmp) / "report.json"
+            report.write_text(json.dumps({
+                "version": VERSION,
+                "conditions": [{name: entry[name] if name != "detail" else short(entry[name])
+                                for name in ("number", "name", "verdict", "detail")} for entry in conditions],
+                "records": {"tests": tests, "fidelity": measured},
+            }, ensure_ascii=False), encoding="utf-8")
+            state_write("record-spec-end", args.convoy, "--commit", tip, "--protected", protected_tip,
+                        "--file", str(report))
+    print(json.dumps({
+        **base, "ok": True, "commit": tip, "protected": {"branch": protected, "commit": protected_tip},
+        "conditions": conditions, "missing": [], "replayed": True,
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+# --- command line ------------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    # Required values are checked by the handlers, not by argparse: a refusal
+    # is one JSON answer.
+    p = sub.add_parser("check")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.set_defaults(handler=cmd_check)
+    p = sub.add_parser("run")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.add_argument("--profile")
+    p.add_argument("--timeout", default=DEFAULT_TIMEOUT)
+    p.set_defaults(handler=cmd_run)
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.handler(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Unruled as exc:
+        print(json.dumps({
+            "ok": False, "convoy": args.convoy, "unruled": exc.anomalies,
+            "message": f"{UNRULED} : la porte de fin de Spec ne rend aucun verdict sur le convoi {args.convoy}",
+        }, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_UNRULED
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "error": f"refus : {exc}", **exc.extra},
+                         indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
