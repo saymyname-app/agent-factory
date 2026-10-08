@@ -25,8 +25,12 @@ the record of the ticket-end gate, written with the closing of the ticket
 (T19), the convoy's open factory incident, the manual lifecycle of the
 convoy: the mark puts it out of Gas City's automatic closing, and a marked
 convoy found closed is one closed outside the acceptance and abandon
-commands (T22), and the red of its integration branch with the one repair
-that restores it (T21). No other script
+commands (T22), the red of its integration branch with the one repair
+that restores it (T21), and, for the end of the Spec (T23): the final state
+of each deviation and « non fait » of a Ticket Handoff, the Planning
+Exception that names them, the repair that restores them, and the record of
+the end-of-Spec gate, its three verdicts tied to one commit of the
+integration branch. No other script
 invents a `gc.flow.*` field: a missing field is added here.
 
     convoy-state list            (open marked convoys; under `closed_outside`,
@@ -63,7 +67,9 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state set-handoff  CONVOY TICKET --file PATH
     convoy-state park         CONVOY TICKET --cause CAUSE --detail LINE
     convoy-state set-fidelity CONVOY TICKET --commit SHA --piece NAME --file PATH
-    convoy-state raise-planning-exception CONVOY TICKET --kind KIND --summary LINE [--anchor NAME ...] [--accept-option LETTER]
+    convoy-state raise-planning-exception CONVOY TICKET --kind KIND --summary LINE [--anchor NAME ...] [--item ID ...]
+                                          [--accept-option LETTER]
+    convoy-state set-item-repair CONVOY TICKET --repair TICKET
     convoy-state set-integration CONVOY --branch NAME --protected NAME --base SHA
     convoy-state set-merge    CONVOY TICKET --outcome OUTCOME --ticket-commit SHA --integration SHA [--commit SHA]
     convoy-state invalidate-verdicts CONVOY TICKET --tip SHA --kind KIND [--kind KIND]
@@ -73,8 +79,10 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state record-incident CONVOY --bead BEAD [--signature sha256:HEX]
     convoy-state clear-incident  CONVOY
     convoy-state record-integration-red CONVOY --commit SHA --integration SHA --protected SHA --control LINE [--detail LINE]
+                                        [--check regression|fidelity] [--end-round]
     convoy-state set-integration-repair CONVOY --ticket TICKET
     convoy-state clear-integration-red  CONVOY
+    convoy-state record-spec-end CONVOY --commit SHA --protected SHA --file PATH
 
 Every answer is one JSON object on stdout. Exit status: 0 done; 1 refused or
 could not run (nothing written); 3 `show` or `ticket` found an "état sans
@@ -175,6 +183,7 @@ KEY_CRITERIA = PREFIX + "criteria"
 KEY_RESUME = PREFIX + "resume"
 KEY_PARK_LIFTS = PREFIX + "park_lifts"
 KEY_GROUPED_REQUEST = PREFIX + "grouped_request"
+KEY_SPEC_END = PREFIX + "spec_end"
 # Written by the publication door (bin/ticket-graph-publish): the digest of
 # the approved graph the ticket was last published under. Read only here.
 KEY_GRAPH_DIGEST = "gc.graph_digest"
@@ -208,6 +217,23 @@ TICKET_END_PASS = "pass"
 PROTOTYPE_HEADING = "## validated prototype"
 PROTOTYPE_FIELDS = {"branche": "branch", "commit": "commit", "chemin": "path", "états": "states"}
 # The steps bin/tdd-step proves (Spec §5), each tied to a commit.
+# The end-of-Spec gate (T23, Spec §9, points 1 to 3): its closed list of
+# mechanical conditions, versioned. bin/spec-end computes the verdicts; a
+# record that is not this list, all passing, is refused.
+SPEC_END_VERSION = "spec-end/v1"
+SPEC_END_CONDITIONS = ("registry", "tests", "fidelity")
+SPEC_END_PASS = "pass"
+SPEC_END_RECORDS = ("tests", "fidelity")
+# What is red on the integration branch: the regression command (T21), or
+# the mechanical fidelity the end-of-Spec gate measures (T23).
+RED_CHECKS = ("regression", "fidelity")
+# A tracked element (Spec §9, « éléments suivis »): a deviation or a « non
+# fait » an author declared in its Ticket Handoff. It ends repaired or
+# accepted by Benjamin, and code alone reads which.
+ITEM_SECTIONS = ("deviations", "not_done")
+ITEM_OPEN = "ouvert"
+ITEM_REPAIRED = "réparé"
+ITEM_ACCEPTED = "accepté par Benjamin"
 TDD_STEPS = ("red", "freeze", "green", "amendment", "prefactoring")
 TDD_STEPS_WITH_BASE = ("red", "prefactoring")
 KIND_WITHOUT_RED = "prefactoring"
@@ -310,6 +336,7 @@ BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")
 STORY_RE = re.compile(r"^[1-9][0-9]*$")
 BEAD_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$")
 ANCHOR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+ITEM_RE = re.compile(r"^(?:deviations|not_done)\.[1-9][0-9]*$")
 OPTION_LETTER_RE = re.compile(r"^[a-z]$")
 CRITERION_RE = re.compile(r"^\s*-\s+\[[ xX]\]\s+(.*\S)\s*$")
 QUESTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -1296,12 +1323,15 @@ def planning_exceptions_record(raw: Any) -> list[dict[str, Any]]:
     """The Planning Exceptions raised on a ticket (Spec §3, §5), oldest
     first: the question, the anchors whose deviation it asks to accept and
     the option of the request that accepts it, and the answer once a later
-    one was raised (the answer of the last one is read on the ticket)."""
+    one was raised (the answer of the last one is read on the ticket). One
+    raised at the end of the Spec (T23) names tracked elements of the Ticket
+    Handoff instead (`items`), and carries the `repair` code published once
+    the operator asked for one."""
     entries = stored_record(raw, ("entries",))["entries"]
     if not isinstance(entries, list) or not entries:
         raise Refusal(f"Planning Exceptions mal formées : {entries!r}")
     for entry in entries:
-        if not isinstance(entry, dict) or set(entry) - {"resolution"} != {
+        if not isinstance(entry, dict) or set(entry) - {"resolution", "items", "repair"} != {
                 "kind", "summary", "anchors", "accept_option", "prior_response_at", "at"}:
             raise Refusal(f"Planning Exception mal formée : {entry!r}")
         one_of(entry["kind"], PLANNING_EXCEPTION_KINDS, "genre de Planning Exception")
@@ -1309,16 +1339,26 @@ def planning_exceptions_record(raw: Any) -> list[dict[str, Any]]:
         anchors, option = entry["anchors"], entry["accept_option"]
         if not isinstance(anchors, list) or any(not isinstance(a, str) or not ANCHOR_RE.match(a) for a in anchors):
             raise Refusal(f"ancres de la Planning Exception mal formées : {anchors!r}")
-        if bool(anchors) != (option is not None) or (option is not None and not (
+        items = entry.get("items", [])
+        if not isinstance(items, list) or ("items" in entry and not items) or len(set(map(str, items))) != len(items) \
+                or any(not isinstance(item, str) or not ITEM_RE.match(item) for item in items):
+            raise Refusal(f"éléments suivis de la Planning Exception mal formés : {items!r}")
+        if bool(anchors or items) != (option is not None) or (option is not None and not (
                 isinstance(option, str) and OPTION_LETTER_RE.match(option))):
             raise Refusal(
-                f"Planning Exception mal formée : ancres {anchors!r}, option d'acceptation {option!r} "
-                "(l'option qui accepte l'écart va avec les ancres qu'elle nomme)")
+                f"Planning Exception mal formée : ancres {anchors!r}, éléments suivis {items!r}, option d'acceptation "
+                f"{option!r} (l'option qui accepte l'écart va avec les ancres ou les éléments qu'elle nomme)")
         resolution = entry.get("resolution")
         if resolution is not None and not (
                 isinstance(resolution, dict) and set(resolution) == {"option", "at"}
                 and all(isinstance(value, str) and value for value in resolution.values())):
             raise Refusal(f"réponse de Planning Exception mal formée : {resolution!r}")
+        if "repair" in entry and not (
+                isinstance(entry["repair"], str) and BEAD_ID_RE.match(entry["repair"]) and items and resolution
+                and resolution["option"] != option):
+            raise Refusal(
+                f"repair de Planning Exception mal formé : {entry['repair']!r} (il suit une réponse de l'opérateur "
+                "qui demande la réparation des éléments nommés)")
     return entries
 
 
@@ -1343,8 +1383,52 @@ def planning_exceptions_rendered(entries: list[dict[str, Any]], metadata: dict[s
         rendered = {key: value for key, value in entry.items() if key not in ("resolution", "prior_response_at")}
         rendered["state"] = "resolved" if resolution else "open"
         rendered["response"] = resolution
-        rendered["accepted"] = bool(resolution) and bool(entry["anchors"]) and resolution["option"] == entry["accept_option"]
+        rendered["accepted"] = (bool(resolution) and bool(entry["anchors"] or entry.get("items"))
+                                and resolution["option"] == entry["accept_option"])
         out.append(rendered)
+    return out
+
+
+def tracked_items(ticket: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """The tracked elements of a rendered ticket (Spec §9, « éléments
+    suivis »): each deviation and each « non fait » of its Ticket Handoff,
+    with the state code reads for it. « accepté par Benjamin »: the last
+    Planning Exception that names it since that Handoff was answered by the
+    option that accepts it. « réparé »: the operator answered otherwise, and
+    the repair code published for it is a `repair` of the convoy closed by
+    the ticket-end gate. Anything else is « ouvert »: no command sets an
+    element aside."""
+    handoff, raised = ticket.get("handoff"), ticket.get("planning_exceptions")
+    sections = handoff.get("sections") if isinstance(handoff, dict) else None
+    if not isinstance(sections, dict):
+        return []
+    raised = raised if isinstance(raised, list) else []
+    out = []
+    for section in ITEM_SECTIONS:
+        content = sections.get(section)
+        for number, item in enumerate(content if isinstance(content, list) else [], start=1):
+            item_id = f"{section}.{number}"
+            rendered: dict[str, Any] = {
+                "id": item_id, "section": section, "number": number,
+                "text": item.get("what") if isinstance(item, dict) else item,
+                "state": ITEM_OPEN, "request": None, "repair": None,
+            }
+            # A Handoff rendered again (a resumed ticket) starts its
+            # elements over: only what was asked since counts.
+            named = [entry for entry in raised if item_id in entry.get("items", []) and entry["at"] >= handoff["at"]]
+            if named:
+                entry = named[-1]
+                rendered["request"] = {"state": entry["state"], "at": entry["at"], "response": entry["response"],
+                                       "accepted": entry["accepted"]}
+                if entry["accepted"]:
+                    rendered["state"] = ITEM_ACCEPTED
+                elif entry["state"] == "resolved":
+                    rendered["repair"] = entry.get("repair")
+                    repair = by_id.get(str(entry.get("repair")))
+                    if (repair is not None and repair.get("kind") == "repair" and repair.get("status") == "closed"
+                            and "at" in (repair.get("gates") or {}).get(GATE_TICKET_END, {})):
+                        rendered["state"] = ITEM_REPAIRED
+            out.append(rendered)
     return out
 
 
@@ -1547,7 +1631,9 @@ def integration_red_record(raw: Any) -> dict[str, Any]:
     that is red, quoted, the commit it was red on, the tips of the
     integration and of the protected branches then, and the one repair
     ticket that restores it once code has published it."""
-    record = stored_record(raw, ("control", "commit", "integration", "protected", "at"), ("detail", "repair"))
+    record = stored_record(raw, ("control", "commit", "integration", "protected", "at"), ("detail", "repair", "check"))
+    if "check" in record:
+        one_of(record["check"], RED_CHECKS, "contrôle rouge (check)")
     single_line(record["control"], "contrôle rouge")
     valid_commit(record["commit"], "commit du contrôle rouge")
     valid_commit(record["integration"], "pointe de la branche d'intégration")
@@ -1556,6 +1642,44 @@ def integration_red_record(raw: Any) -> dict[str, Any]:
         single_line(record["detail"], "détail du contrôle rouge")
     if "repair" in record and (not isinstance(record["repair"], str) or not BEAD_ID_RE.match(record["repair"])):
         raise Refusal(f"ticket repair du rouge absent ou mal formé : {record['repair']!r}")
+    return record
+
+
+def spec_end_conditions(value: Any) -> list[dict[str, Any]]:
+    """The three verdicts of the end-of-Spec gate, in the order of its list,
+    all passing, each with the one line that says what was read."""
+    if not isinstance(value, list) or len(value) != len(SPEC_END_CONDITIONS):
+        raise Refusal(
+            f"relevé de la porte de fin de Spec mal formé : {len(SPEC_END_CONDITIONS)} verdicts attendus, dans l'ordre "
+            f"de la liste {SPEC_END_VERSION} ({', '.join(SPEC_END_CONDITIONS)})")
+    conditions = []
+    for number, (name, entry) in enumerate(zip(SPEC_END_CONDITIONS, value), start=1):
+        if not isinstance(entry, dict) or set(entry) != {"number", "name", "verdict", "detail"} \
+                or (entry["number"], entry["name"]) != (number, name):
+            raise Refusal(f"verdict {number} du relevé mal formé : {entry!r} (attendu : number, name {name!r}, verdict, detail)")
+        if entry["verdict"] != SPEC_END_PASS:
+            raise Refusal(
+                f"condition {number} ({name}) non réunie : verdict {entry['verdict']!r} ; la porte de fin de Spec "
+                "n'enregistre que trois verdicts verts")
+        conditions.append({**entry, "detail": single_line(entry["detail"], f"détail de la condition {number}")})
+    return conditions
+
+
+def spec_end_record(raw: Any) -> dict[str, Any]:
+    """The record of the end-of-Spec gate (T23, Spec §9): the one commit of
+    the integration branch its three verdicts are tied to, the tip of the
+    protected branch that commit holds, the version of the list, the
+    verdicts and what the controls read."""
+    record = stored_record(raw, ("commit", "protected", "version", "conditions", "at"), ("records",))
+    valid_commit(record["commit"], "commit du relevé de la porte de fin de Spec")
+    valid_commit(record["protected"], "pointe de la branche protégée")
+    if record["version"] != SPEC_END_VERSION:
+        raise Refusal(f"version de la liste de conditions inconnue : {record['version']!r} (attendu : {SPEC_END_VERSION})")
+    record["conditions"] = spec_end_conditions(record["conditions"])
+    records = record.get("records", {})
+    if not isinstance(records, dict) or set(records) - set(SPEC_END_RECORDS) or any(
+            not isinstance(value, dict) for value in records.values()):
+        raise Refusal(f"relevés de la porte de fin de Spec mal formés (attendu : {', '.join(SPEC_END_RECORDS)})")
     return record
 
 
@@ -1998,8 +2122,15 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             grouped_request = {"unruled": f"{KEY_GROUPED_REQUEST} : {exc}", "raw": metadata[KEY_GROUPED_REQUEST]}
             convoy_unruled.append({"field": KEY_GROUPED_REQUEST, "reason": grouped_request["unruled"]})
+    spec_end: dict[str, Any] | None = None
+    if KEY_SPEC_END in metadata:
+        try:
+            spec_end = spec_end_record(metadata[KEY_SPEC_END])
+        except Refusal as exc:
+            spec_end = {"unruled": f"{KEY_SPEC_END} : {exc}", "raw": metadata[KEY_SPEC_END]}
+            convoy_unruled.append({"field": KEY_SPEC_END, "reason": spec_end["unruled"]})
     for key in sorted(metadata):
-        known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_GROUPED_REQUEST,
+        known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_GROUPED_REQUEST, KEY_SPEC_END,
                  *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(PREFIX) and key not in known:
             convoy_unruled.append({"field": key, "reason": f"{key} : champ inconnu de la commande d'état, écrit hors d'elle"})
@@ -2012,6 +2143,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         "integration": integration,
         "integration_red": integration_red,
         "grouped_request": grouped_request,
+        "spec_end": spec_end,
         "unruled": convoy_unruled,
     }
     if convoy_unruled:
@@ -2019,6 +2151,11 @@ def cmd_show(args: argparse.Namespace) -> int:
 
     repo = Repo(args.repo)
     rendered = [render_ticket(ticket, repo) for ticket in tickets]
+    # The tracked elements of each Ticket Handoff and their final state
+    # (T23): a repair is read on the ticket of the convoy that carries it.
+    by_id = {ticket["id"]: ticket for ticket in rendered}
+    for ticket in rendered:
+        ticket["tracked_items"] = tracked_items(ticket, by_id)
     unruled = bool(convoy_unruled) or any(ticket["unruled"] for ticket in rendered)
     answer: dict[str, Any] = {"ok": True, "new_flow": True, "unruled": unruled, "convoy": convoy_out, "tickets": rendered}
     if unruled:
@@ -3235,10 +3372,13 @@ def cmd_raise_planning_exception(args: argparse.Namespace) -> int:
     """Record the Planning Exception a ticket raises (bin/ticket-exit, before
     the request reaches the operator), with the anchors whose deviation from
     the Validated Prototype it asks to accept and the option of the request
-    that accepts it. The answer is the operator's, through the escalation
-    door: nothing here resolves one. The answer given to the previous one is
-    kept with it; the same exception again writes nothing, another one
-    replaces the one that was still open."""
+    that accepts it; or the one the end-of-Spec gate raises (bin/spec-end,
+    T23) for tracked elements of the Ticket Handoff left without a final
+    state (`--item`, a deviation or a « non fait » of that Handoff). The
+    answer is the operator's, through the escalation door: nothing here
+    resolves one. The answer given to the previous one is kept with it; the
+    same exception again writes nothing, another one replaces the one that
+    was still open."""
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
     anchors = list(args.anchor)
@@ -3247,22 +3387,77 @@ def cmd_raise_planning_exception(args: argparse.Namespace) -> int:
             raise Refusal(f"nom d'ancre mal formé : {anchor!r}")
     if len(set(anchors)) != len(anchors):
         raise Refusal(f"ancre nommée deux fois : {anchors!r}")
+    items = list(args.item)
+    if len(set(items)) != len(items):
+        raise Refusal(f"élément suivi nommé deux fois : {items!r}")
+    if items:
+        sections = handoff_record(metadata[KEY_HANDOFF])["sections"] if KEY_HANDOFF in metadata else {}
+        for item in items:
+            if not ITEM_RE.match(item):
+                raise Refusal(f"élément suivi mal formé : {item!r} (attendu : deviations.N ou not_done.N)")
+            section, number = item.split(".")
+            content = sections.get(section)
+            if not isinstance(content, list) or int(number) > len(content):
+                raise Refusal(f"le Ticket Handoff de {args.ticket} ne porte pas l'élément {item}")
     entry = {
         "kind": one_of(args.kind, PLANNING_EXCEPTION_KINDS, "genre de Planning Exception"),
         "summary": single_line(args.summary, "résumé de la Planning Exception"),
         "anchors": anchors, "accept_option": args.accept_option,
+        **({"items": items} if items else {}),
     }
     entries = planning_exceptions_record(metadata[KEY_PLANNING_EXCEPTIONS]) if KEY_PLANNING_EXCEPTIONS in metadata else []
     if entries and "resolution" not in entries[-1]:
         resolution = live_resolution(entries[-1], metadata)
+        asked = {key: entries[-1][key] for key in ("kind", "summary", "anchors", "accept_option", "items")
+                 if key in entries[-1]}
         if resolution:
             entries[-1]["resolution"] = resolution
-        elif {key: entries[-1][key] for key in entry} == entry:
+        elif asked == entry:
             return done(args.convoy, args.ticket, {})
         else:
             entries.pop()
     prior = metadata.get(KEY_RESPONSE_AT)
     entries.append({**entry, "prior_response_at": prior if isinstance(prior, str) else None, "at": now()})
+    values = {KEY_PLANNING_EXCEPTIONS: encode({"entries": planning_exceptions_record(encode({"entries": entries}))})}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_set_item_repair(args: argparse.Namespace) -> int:
+    """Name the repair code published for the tracked elements of a Ticket
+    Handoff (bin/convoy-advance, T23), once the operator answered their
+    Planning Exception by another option than the one that accepts them. The
+    answer is frozen on the exception with the repair. Nothing here says an
+    element is repaired: `show` reads it once the ticket-end gate has closed
+    that repair."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    ticket = marked_ticket_among(tickets, args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    entries = planning_exceptions_record(metadata[KEY_PLANNING_EXCEPTIONS]) if KEY_PLANNING_EXCEPTIONS in metadata else []
+    last = entries[-1] if entries else {}
+    if not last.get("items"):
+        raise Refusal(
+            f"la dernière Planning Exception de {args.ticket} ne nomme aucun élément suivi : aucun repair ne s'y rattache")
+    resolution = last.get("resolution") or live_resolution(last, metadata)
+    if not resolution:
+        raise Refusal(
+            f"la Planning Exception de {args.ticket} sur {', '.join(last['items'])} n'a pas de réponse de l'opérateur : "
+            "un repair ne se publie qu'à sa demande")
+    if resolution["option"] == last["accept_option"]:
+        raise Refusal(
+            f"l'opérateur a accepté {', '.join(last['items'])} de {args.ticket} (option {resolution['option']}) : "
+            "aucun repair ne s'y rattache")
+    repair = marked_ticket_among(tickets, args.convoy, args.repair)
+    if metadata_of(repair).get(KEY_KIND) != "repair":
+        raise Refusal(f"le ticket {args.repair} n'est pas un repair : seul un repair rétablit un élément suivi")
+    if last.get("repair") == args.repair:
+        return done(args.convoy, args.ticket, {})
+    if "repair" in last:
+        raise Refusal(
+            f"les éléments {', '.join(last['items'])} de {args.ticket} ont déjà leur repair ({last['repair']}) : "
+            "un seul repair par demande")
+    entries[-1] = {**last, "resolution": resolution, "repair": args.repair}
     values = {KEY_PLANNING_EXCEPTIONS: encode({"entries": planning_exceptions_record(encode({"entries": entries}))})}
     write_metadata(args.ticket, values)
     return done(args.convoy, args.ticket, values)
@@ -3696,6 +3891,8 @@ def cmd_record_integration_red(args: argparse.Namespace) -> int:
     }
     if args.detail is not None:
         record["detail"] = single_line(args.detail, "détail du contrôle rouge")
+    if args.check is not None:
+        record["check"] = one_of(args.check, RED_CHECKS, "contrôle rouge (--check)")
     if KEY_INTEGRATION_RED in metadata:
         known = integration_red_record(metadata[KEY_INTEGRATION_RED])
         repair = next((ticket for ticket in tickets if ticket.get("id") == known.get("repair")), None)
@@ -3704,7 +3901,43 @@ def cmd_record_integration_red(args: argparse.Namespace) -> int:
             return done(args.convoy, args.convoy, {})
         if "repair" in known and not repaired:
             record["repair"] = known["repair"]
-    values = {KEY_INTEGRATION_RED: encode(integration_red_record(encode({**record, "at": now()})))}
+    values: dict[str, Any] = {KEY_INTEGRATION_RED: encode(integration_red_record(encode({**record, "at": now()})))}
+    if args.end_round:
+        # A mechanical red of the end of the Spec counts one round (Spec §9),
+        # in the write that records it: counted once, like the red.
+        counter = COUNTER_PREFIX + "end_rounds"
+        values[counter] = counter_value(metadata.get(counter), "end_rounds") + 1
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_record_spec_end(args: argparse.Namespace) -> int:
+    """The end-of-Spec gate records its three verdicts (T23, Spec §9): one
+    commit of the integration branch for the three, and the tip of the
+    protected branch that commit holds. The verdicts are computed by
+    bin/spec-end; a list that is not the three conditions, all passing, is
+    refused, as is a convoy with a ticket left open or closed outside its
+    gate, or whose integration branch is red. One commit more outdates the
+    record: nothing rewrites it but a fresh run of the gate."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    if KEY_INTEGRATION not in metadata:
+        raise Refusal(f"le convoi {args.convoy} n'a pas de branche d'intégration : aucun commit auquel lier les verdicts")
+    if KEY_INTEGRATION_RED in metadata:
+        raise Refusal(f"la branche d'intégration du convoi {args.convoy} est rouge : aucun verdict de fin de Spec ne s'y enregistre")
+    left = [str(ticket.get("id")) for ticket in tickets
+            if ticket.get("status") != "closed" or not any(GATE_PREFIX + gate in metadata_of(ticket) for gate in CLOSING_GATES)]
+    if left or not tickets:
+        raise Refusal(
+            f"le convoi {args.convoy} a des tickets ouverts ou fermés hors porte ({', '.join(left) or 'aucun ticket'}) : "
+            "la porte de fin de Spec se déclenche quand tous sont fermés")
+    given = json_argument(args.file, "relevé de la porte de fin de Spec")
+    unknown = sorted(set(given) - {"version", "conditions", "records"})
+    if unknown:
+        raise Refusal(f"champs inconnus dans le relevé de la porte : {', '.join(unknown)}")
+    record = {**given, "commit": args.commit, "protected": args.protected, "at": now()}
+    values = {KEY_SPEC_END: encode(spec_end_record(encode(record)))}
     write_metadata(args.convoy, values)
     return done(args.convoy, args.convoy, values)
 
@@ -3870,7 +4103,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--kind")
     p.add_argument("--summary")
     p.add_argument("--anchor", action="append", default=[])
+    p.add_argument("--item", action="append", default=[])
     p.add_argument("--accept-option")
+    command("set-item-repair", cmd_set_item_repair).add_argument("--repair")
     p = command("set-integration", cmd_set_integration, ticket=False)
     p.add_argument("--branch")
     p.add_argument("--protected")
@@ -3905,6 +4140,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--protected")
     p.add_argument("--control")
     p.add_argument("--detail")
+    p.add_argument("--check")
+    p.add_argument("--end-round", action="store_true")
+    p = command("record-spec-end", cmd_record_spec_end, ticket=False)
+    p.add_argument("--commit")
+    p.add_argument("--protected")
+    p.add_argument("--file")
     command("set-integration-repair", cmd_set_integration_repair, ticket=False).add_argument("--ticket")
     command("clear-integration-red", cmd_clear_integration_red, ticket=False)
     p = sub.add_parser("ticket")

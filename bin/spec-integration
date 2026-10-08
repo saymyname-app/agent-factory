@@ -7,6 +7,7 @@ branch; no ticket opens a pull request toward the protected branch.
 
     spec-integration open  CONVOY --repo DIR --protected BRANCH
     spec-integration merge CONVOY --repo DIR --profile DESCRIPTOR [--limit N] [--timeout SECONDS]
+    spec-integration take-up CONVOY --repo DIR --profile DESCRIPTOR [--timeout SECONDS] [--end-round]
 
 A ticket is merged only once the conditions of the ticket-end gate that are
 read before the merge are met (T19, bin/ticket-end check --before-merge:
@@ -44,6 +45,14 @@ run on the result; a green result is pushed and the red is withdrawn. Once
 a tip moved, or the repair is closed without having been merged, the
 command runs the control again: green, the red is withdrawn and the merges
 resume in the same pass; red, it stays recorded under its new tips.
+
+`take-up` (T23, bin/spec-end): the integration branch takes up the protected
+branch and the regression command is run on the result, whether there was
+anything to take up or not: the one tip the end-of-Spec gate renders its
+verdicts on. Green, the takeover is pushed and the tip is answered with the
+tip of the protected branch it holds. Red, nothing is pushed and the red is
+recorded on the convoy as above -- with `--end-round`, one round of the end
+of the Spec is counted in the same write.
 
 With a remote `origin`, the protected and the integration branches are read
 there (after a fetch) and the integration branch is pushed there; without
@@ -649,12 +658,16 @@ class Pass:
         return "merged", entry
 
 
-def record_red(convoy_id: str, repo: Repo, found: RedControl, tip: str, protected_tip: str) -> dict[str, Any]:
+def record_red(convoy_id: str, repo: Repo, found: RedControl, tip: str, protected_tip: str,
+               end_round: bool = False) -> dict[str, Any]:
     """Write the red of the integration branch on the convoy, and return it
-    as it is recorded (with its repair, when the branch was red already)."""
+    as it is recorded (with its repair, when the branch was red already).
+    `end_round`: the red was found by the end-of-Spec gate, and counts one of
+    its rounds in the same write."""
     state_write("record-integration-red", convoy_id, "--commit", found.commit, "--integration", tip,
                 "--protected", protected_tip, "--control", found.control,
-                *(("--detail", found.detail) if found.detail else ()))
+                *(("--detail", found.detail) if found.detail else ()),
+                *(("--end-round",) if end_round else ()))
     recorded = read_state(convoy_id, repo)["convoy"].get("integration_red")
     if not isinstance(recorded, dict) or "control" not in recorded:
         raise Refusal(f"le rouge de la branche d'intégration du convoi {convoy_id} n'a pas pu être relu après son enregistrement")
@@ -792,6 +805,55 @@ def cmd_merge(args: argparse.Namespace) -> int:
     return EXIT_REFUSED if out["refused"] else 0
 
 
+def cmd_take_up(args: argparse.Namespace) -> int:
+    """Spec §9, « sur une seule pointe après reprise de la branche
+    protégée »: what the end-of-Spec gate asks before its controls."""
+    repo = Repo(args.repo)
+    try:
+        timeout = float(args.timeout)
+    except (TypeError, ValueError) as exc:
+        raise Refusal(f"--timeout mal formé : {args.timeout!r}") from exc
+    if not 0 < timeout < float("inf"):
+        raise Refusal(f"--timeout mal formé : {args.timeout!r}")
+
+    with integration_lock(args.convoy):
+        integration = read_state(args.convoy, repo)["convoy"].get("integration")
+        if not integration:
+            raise Refusal(
+                f"le convoi {args.convoy} n'a pas de branche d'intégration : elle s'ouvre à la publication "
+                f"({PROGRAM} open)")
+        repo.fetch()
+        state = read_state(args.convoy, repo)
+        anomalies = anomalies_of(state)
+        if anomalies:
+            raise Unruled(anomalies)
+        branch, protected = integration["branch"], integration["protected"]
+        tip, protected_tip = repo.tip(branch), repo.tip(protected)
+        if tip is None:
+            raise Refusal(f"branche d'intégration {branch} introuvable dans le dépôt {repo.path}")
+        if protected_tip is None:
+            raise Refusal(f"branche protégée introuvable dans le dépôt {repo.path} : {protected}")
+        red = state["convoy"].get("integration_red")
+        if red:
+            raise Refusal(red_refusal(red), {"red": red})
+        command = regression_command(args.profile)
+        with work_tree(repo, args.convoy, tip) as tree:
+            merges = Pass(repo, args.convoy, branch, protected, tip, tree, command, timeout)
+            try:
+                takeover = merges.take_up_protected(protected_tip, checked=True)
+            except RedControl as found:
+                recorded = record_red(args.convoy, repo, found, tip, protected_tip, end_round=args.end_round)
+                raise Refusal(red_refusal(recorded, found.taken_up), {"red": recorded}) from found
+            tip = merges.tip
+
+    print(json.dumps({
+        "ok": True, "convoy": args.convoy, "branch": branch, "protected": protected, "integration": tip,
+        "protected_tip": protected_tip, "takeover": takeover,
+        "tests": {"command": shlex.join(command), "exit_code": 0, "commit": tip},
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 def cmd_tests(args: argparse.Namespace) -> int:
     """What bin/evidence-capture runs for the tests on a merged result: the
     command, from the root of the work tree. Not a command of its own."""
@@ -826,6 +888,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit")
     p.add_argument("--timeout", default=DEFAULT_TIMEOUT)
     p.set_defaults(handler=cmd_merge)
+    p = sub.add_parser("take-up")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.add_argument("--profile")
+    p.add_argument("--timeout", default=DEFAULT_TIMEOUT)
+    p.add_argument("--end-round", action="store_true")
+    p.set_defaults(handler=cmd_take_up)
     p = sub.add_parser("tests")
     p.add_argument("--tree")
     p.add_argument("argv", nargs=argparse.REMAINDER)
