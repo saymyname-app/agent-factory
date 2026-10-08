@@ -65,6 +65,7 @@ cat > "$T/bin/gh" <<'EOF'
 echo "gh $*" >> "$FAKE_LOG"
 case "$*" in
   "repo view"*) echo "acme/factory" ;;
+  *"select(.busy"*) echo "${FAKE_BUSY:-1}" ;;
   *generate-jitconfig*)
     n=$(cat "$FAKE_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$FAKE_COUNT"
     if [ "$n" = 2 ]; then exit 1; fi
@@ -142,6 +143,10 @@ echo active > "$FAKE_BROKER"
 ci_runner pause >/dev/null
 [ "$(verdict)" = paused ] || fail "after pause the verdict must be 'paused', got $(verdict)"
 [ ! -e "$T/run/stop-now" ] || fail "pause without --now must let the running job end"
+ci_runner resume >/dev/null
+FAKE_BUSY=0 ci_runner pause >/dev/null
+[ -e "$T/run/stop-now" ] || fail "pause must stop a runner that only waits: it would take the next job"
+ci_runner resume >/dev/null
 ci_runner pause --now >/dev/null
 [ -e "$T/run/stop-now" ] || fail "pause --now must tell the loop to kill the running job"
 ci_runner resume >/dev/null

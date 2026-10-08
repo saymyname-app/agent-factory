@@ -108,11 +108,21 @@ cmd_pause() {
   mkdir -p "$STATE_DIR"
   [ -e "$PAUSED" ] || date '+%F %H:%M' > "$PAUSED"
   "$SYSTEMCTL" --user stop "$BROKER_UNIT" 2>/dev/null || true
+  # A runner that waits for a job would still take the next one: it is
+  # stopped too. Only a runner GitHub says is busy is left to end its job.
+  local r busy=unknown
+  if [ "$now" = 0 ] && r=$(repo 2>/dev/null); then
+    busy=$("$GH" api "repos/$r/actions/runners" \
+      --jq "[.runners[] | select(.busy and (.name | startswith(\"$NAME_PREFIX\")))] | length" 2>/dev/null) || busy=unknown
+  fi
   if [ "$now" = 1 ]; then
     [ -d "$RUN_DIR" ] && : > "$RUN_DIR/stop-now"
     echo "paused, and the running job is killed: its run ends red, re-run it after 'ci-runner resume' (gh run rerun <id> --failed)"
+  elif [ "$busy" = 0 ]; then
+    [ -d "$RUN_DIR" ] && : > "$RUN_DIR/stop-now"
+    echo "paused: no job was running, the waiting runner is stopped; no job starts until 'ci-runner resume'"
   else
-    echo "paused: the job that runs now, if any, ends by itself (20 minutes at most for a full run); no new job starts"
+    echo "paused: the job that runs now ends by itself (20 minutes at most for a full run); no new job starts"
   fi
 }
 
