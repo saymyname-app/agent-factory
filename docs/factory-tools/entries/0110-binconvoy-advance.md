@@ -87,6 +87,20 @@ touché : il reste avancé par le Mayor.
 - **Pas repris** : un ticket arrêté ; un ticket dont la session du tour de
   correction est morte sans fermer son bead ; un ticket que la porte de fin
   de ticket laisse en attente (fidélité rouge, condition manquante).
+- **Le convoi s'arrête de lui-même dans deux cas** (T21), lus dans `stop` :
+  **branche d'intégration rouge** — plus aucun ticket ne démarre ni ne
+  fusionne ; la passe publie un seul ticket `repair` qui cite le contrôle
+  rouge, par la porte de patch, et ce `repair` est le seul ticket qu'elle
+  démarre ; dès que le contrôle est vert (`repair` fusionné, ou branche
+  protégée réparée), `./bin/spec-integration` retire le rouge et tout
+  repart ; **deux Planning Exceptions ouvertes sur la Spec** — plus aucun
+  nouveau ticket ne démarre, ceux en cours finissent ; y répondre
+  (`./bin/escalation-door repondre`) relance les démarrages. **Ne jamais
+  lever un rouge ni créer un `repair` à la main.**
+- **Les bornes se règlent à un seul endroit** : `bounds` de
+  `config/delivery-flow.json` — `resumes` (K, 3), `open_planning_exceptions`
+  (2), `green_runs` (k, 3). Changer une valeur change le comportement à la
+  passe suivante ; une valeur absente ou mal formée est un refus.
 - **Relecture des tests restée sans résultat** : la même passe la relance une
   fois, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune

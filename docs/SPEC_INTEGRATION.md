@@ -138,8 +138,42 @@ pass already counted a `returned` resume for that return (T20): the return
 is counted once, not twice. A verdict that is merely unfavorable
 merges nothing and invalidates nothing.
 
+**A red integration branch stops the merges** (T21, Spec §8). Before the
+first merge of a pass the integration branch takes up the protected branch
+and the regression command is run on the result. Red there, the red belongs
+to no ticket: nothing is pushed, no ticket is blamed, and the command
+records it on the convoy — `bin/convoy-state record-integration-red`: the
+control quoted on one line (« commande de régression (<command>) : code N,
+sur <branch> après reprise de <protected> »), the commit it was red on, the
+tips of both branches, and the end of what the command printed. The answer
+is a refusal (exit 1) that carries the record under `red`.
+`bin/convoy-advance` reads it, starts no ticket and publishes its one
+`repair` (`docs/CONVOY_ADVANCE.md`). While a red is recorded, `merge`:
+
+- **refuses**, exit 1, « branche d'intégration rouge (<the control>) », with
+  `red` in the answer, as long as neither tip has moved and the repair is
+  not ready: nothing is run and nothing is written;
+- **merges the repair of that red, and nothing else**, once it is ready
+  like any ticket (finished, reviewed, evaluated, the ticket-end gate
+  before the merge): the protected branch is taken up in the work tree
+  only, the repair is merged on it, and the tests are run on that result.
+  Green: the result is pushed — the takeover with it — and the red is
+  withdrawn (`clear-integration-red`); the other ready tickets are listed
+  under `waiting` and merged by the next pass. Red: the repair returns to
+  its author like any ticket, the red stays;
+- **runs the control again** once a tip moved (the protected branch was
+  mended elsewhere) or once the repair is closed without having been
+  merged. Green: the takeover is pushed, the red is withdrawn and the ready
+  tickets are merged by the same pass. Red: the record is rewritten under
+  the new tips, with its repair while that one is open, and the command
+  refuses.
+
+A regression command that does not finish in `--timeout` is a refusal, not
+a red. A takeover in conflict is one too: a conflict is not a red control.
+
 A profile without `regression_command` is refused when a ticket is ready: no
-test, no merge. A pass with no ready ticket does not read the profile.
+test, no merge. A pass with no ready ticket does not read the profile,
+unless a red makes it run the control again.
 
 ## Limits
 
@@ -165,8 +199,10 @@ test, no merge. A pass with no ready ticket does not read the profile.
   the merged tickets are replayed only as far as that command runs them.
 - **One repository per convoy.** The publication door refuses a new-flow
   graph that targets several rigs.
-- A red integration branch does not stop the convoy yet, and no `repair` is
-  created for a red takeover (T21).
+- A takeover of the protected branch in conflict is refused at each pass:
+  it records no red and has no `repair`.
+- The control of the integration branch is run by `merge` only: when a
+  ticket is ready to merge, or when a recorded red is to be checked again.
 - A frozen harness file changed on the integration branch by another
   ticket's merge is still seen by `bin/tdd-step green` as modified
   (`docs/TDD_STEP.md`, Limits) when an author takes up the integration tip.
@@ -183,7 +219,15 @@ real `bin/evidence-capture`. One test per pass and per refusal, each refusal
 re-reading the tracker, the evidence store and every branch of the remote.
 `tests/ticket-graph-publish-integration-branch-test.py` covers the
 publication door, `tests/convoy-advance-test.py` the pass that merges,
-`tests/convoy-state-test.py` the three records. On the real `gc`/`bd`, in a
+`tests/convoy-state-test.py` the three records. T21: the same
+`tests/spec-integration-test.py` covers a red takeover recorded with its
+control quoted, the refusal while the branch is red (nothing written), the
+refusal on tests recorded red at the tip, the repair merged alone and the
+red withdrawn, the merges that resume at the next pass, a repair that
+leaves the branch red, the control run again once the protected branch is
+mended, and a branch checked again and still red;
+`tests/convoy-stops-fixture-city-test.py` plays it on the graph of the
+Fixture City. On the real `gc`/`bd`, in a
 disposable city (local-only): `tests/spec-integration-demonstration-test.sh`
 (the demonstration line), `tests/convoy-state-real-tracker-test.sh` and
 `tests/ticket-graph-publish-new-flow-real-tracker-test.sh`.

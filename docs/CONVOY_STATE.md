@@ -65,6 +65,9 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state ticket af-t1                         # does this bead carry the mark? (bin/dispatch-door, the Mayor)
 ./bin/convoy-state record-incident af-convoy --bead af-incident [--signature sha256:<hex>]   # bin/convoy-advance
 ./bin/convoy-state clear-incident  af-convoy            # bin/convoy-advance, once the state is valid again
+./bin/convoy-state record-integration-red af-convoy --commit <sha> --integration <sha> --protected <sha> --control "<line>" [--detail "<line>"]   # bin/spec-integration
+./bin/convoy-state set-integration-repair af-convoy --ticket af-r1   # bin/convoy-advance, once the patch door published the repair
+./bin/convoy-state clear-integration-red  af-convoy     # bin/spec-integration, once the control is green again
 ```
 
 Every answer is one JSON object on stdout.
@@ -117,6 +120,7 @@ Every answer is one JSON object on stdout.
 | Declared Scope | `gc.scope_paths` (read only: written by the publication door) | ticket | the declared paths, comma-separated; they order tickets and bound nothing |
 | Acceptance criteria | the bead's description (read only) | ticket | the checkbox lines under `## Acceptance criteria`, in order |
 | Factory incident | `gc.flow.incident` | convoy | the bead that carries the open incident of a stopped convoy and, once it reached the escalation door, the `sha256:` signature of the anomalies it names |
+| Red of the integration branch | `gc.flow.integration_red` | convoy | T21: the control that is red, quoted on one line (`control`), the commit it was red on (`commit`), the tips of the integration and of the protected branches then (`integration`, `protected`), the end of what the control printed (`detail`, optional) and, once code published it, the one `repair` ticket that restores it (`repair`) |
 
 `mark` is idempotent: it marks the tickets first and the convoy last, sets
 each counter to an explicit `0`, and on a later run marks only the tickets
@@ -334,12 +338,31 @@ left: that one is parked. `launch-resume` records the bead of the author
 session the last resume was sent to: one per resume, a second is refused, as
 is a launch on a stopped or a parked ticket or with no resume open.
 
-The bound is `RESUMES_MAX = 3` (Spec §8, K: a starting value, not a
-measure), every cause together: `resumes` is the one counter that
-`open-resume`, `open-correction` and `invalidate-verdicts` add to. `show`
-renders `resumes_left`: 3 minus the resumes counted since the last lift of
-a `resumes_exhausted` parking of the ticket (since the start when there is
-none), never below 0.
+The bound is K (Spec §8: a starting value, not a measure), every cause
+together: `resumes` is the one counter that `open-resume`, `open-correction`
+and `invalidate-verdicts` add to. K is not held in this command: it is
+`bounds.resumes` of `config/delivery-flow.json` (3), the one place the
+bounds of the flow are set (T21, `docs/CONVOY_ADVANCE.md`), read under
+`FACTORY_ROOT` (default: the repository of the command) and, when that root
+sets no `bounds`, in the Factory's own file. A missing or malformed value
+is a refusal (« bounds.resumes absent ou invalide »), of `show` too: never
+a default. `show` renders `resumes_left`: K minus the resumes counted since
+the last lift of a `resumes_exhausted` parking of the ticket (since the
+start when there is none), never below 0.
+
+**The red of the integration branch (T21).** `record-integration-red`
+writes that the integration branch of the convoy is red: the control,
+quoted, and where it was red. It refuses a convoy without a recorded
+integration branch, a malformed commit, a missing control, a `--detail` on
+several lines. The same red again — same control, same commit — writes
+nothing, so a red seen by several passes stays one red. A branch found red
+elsewhere while it is red (its tips moved) updates the record and keeps its
+repair; found red once that repair is closed, the record has no repair any
+more. `set-integration-repair` names the repair code published for the red:
+a tracked ticket of the convoy, of kind `repair`; it refuses a convoy that
+is not red, a ticket that is not a repair, and a second repair while the
+first is open (« un seul repair par rouge »). `clear-integration-red`
+removes the record. The three refuse a convoy without the mark (exit 4).
 
 `lift-park` lifts the parking a ticket caused, once the request `--request`
 (a bead id) was answered, with the letter of the option taken (`--option`,
@@ -529,7 +552,8 @@ opened (`resume`, `null` while there is none), the parkings lifted
 is flagged on its own); and for the convoy the Spec it
 delivers (`spec`, `null` when it names none), its counters, its open factory
 incident (`incident`, `null` when there is none), the integration branch
-of its Spec (`integration`, `null` before it is opened) and its grouped
+of its Spec (`integration`, `null` before it is opened), the red of that
+branch (`integration_red`, `null` while it is not red) and its grouped
 request (`grouped_request`, `null` when there is none).
 
 `ticket` answers whether one bead carries the mark, without naming its
@@ -592,14 +616,20 @@ incident here with `record-incident` (first the bead alone, then the
 signature once the escalation door accepted it) and removes it with
 `clear-incident` when the state is valid again. Both are accepted on a
 convoy whose mark is unknown, which is itself an « état sans règle » to
-report. An incident record or a grouped-request record that this command
-would not have written is one more anomaly of the convoy.
+report. An incident record, a grouped-request record or a record of the
+red of the integration branch that this command would not have written is
+one more anomaly of the convoy.
 
 ## Proof
 
 `tests/convoy-state-test.py` drives the command line on a fake tracker
 state (`tests/fixtures/convoy-state/gc`): one test per pass and per
 refusal, each refusal re-reading the tracker to prove nothing was written.
+Its T21 section covers the red of the integration branch (recorded, read
+back, the same red again, a red found elsewhere, its one repair, a record
+written outside the command) and the bound of the resumes read in the
+settings of the flow: a smaller one parks sooner, a larger one later, a
+malformed one is refused.
 `tests/convoy-state-real-tracker-test.sh` (local-only) replays the same
 contract on the real `gc`/`bd` in a disposable city, a Ticket Handoff of
 20 kB, a parking along real `blocks` edges, and the integration branch, an

@@ -3292,6 +3292,201 @@ class ConvoyStateTest(unittest.TestCase):
             self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
             self.assertEqual(before, self.tracker.read_text())
 
+    # --- T21: the red of the integration branch, the bounds read in one place ---
+
+    RED_CONTROL = "commande de régression (python3 regression.py) : code 1, sur integration/fx-spec après reprise de main"
+    REPAIR = "fx-r1"
+
+    def red_convoy(self):
+        """A marked convoy that tracks a repair, its integration branch
+        recorded and red at its tip; returns that tip."""
+        self.seed(tickets=(T1, T2, self.REPAIR), kinds={self.REPAIR: "repair"})
+        self.init_repo()
+        self.ok("mark", CONVOY, "--demonstration-line", f"{self.REPAIR}=La commande de régression se termine avec le code 0")
+        tip = self.git("rev-parse", "main")
+        self.ok("set-integration", CONVOY, "--branch", "integration/fx-spec", "--protected", "main", "--base", tip)
+        self.ok("record-integration-red", CONVOY, "--commit", tip, "--integration", tip, "--protected", tip,
+                "--control", self.RED_CONTROL)
+        return tip
+
+    def red(self):
+        return self.show()["convoy"]["integration_red"]
+
+    def test_record_integration_red_is_read_back_by_show(self):
+        tip = self.red_convoy()
+
+        red = self.red()
+        self.assertEqual((self.RED_CONTROL, tip, tip, tip),
+                         tuple(red[name] for name in ("control", "commit", "integration", "protected")))
+        self.assertIn("at", red)
+        self.assertNotIn("repair", red)
+
+    def test_a_convoy_whose_integration_branch_is_not_red_shows_none(self):
+        self.integrated()
+
+        self.assertIsNone(self.red())
+
+    def test_the_same_red_recorded_again_writes_nothing(self):
+        tip = self.red_convoy()
+        self.ok("set-integration-repair", CONVOY, "--ticket", self.REPAIR)
+        before = self.tracker.read_bytes()
+
+        answer = self.ok("record-integration-red", CONVOY, "--commit", tip, "--integration", tip, "--protected", tip,
+                         "--control", self.RED_CONTROL)
+
+        self.assertEqual({}, answer["written"])
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertEqual(self.REPAIR, self.red()["repair"])
+
+    def test_a_branch_found_red_elsewhere_while_it_is_red_keeps_its_one_repair(self):
+        tip = self.red_convoy()
+        self.ok("set-integration-repair", CONVOY, "--ticket", self.REPAIR)
+
+        self.ok("record-integration-red", CONVOY, "--commit", ABSENT_COMMIT, "--integration", tip, "--protected", tip,
+                "--control", self.RED_CONTROL, "--detail", "AssertionError: items absent from the home page")
+
+        red = self.red()
+        self.assertEqual((ABSENT_COMMIT, "AssertionError: items absent from the home page"), (red["commit"], red["detail"]))
+        self.assertEqual(self.REPAIR, red["repair"])
+
+    def test_the_same_red_recorded_once_its_repair_is_closed_is_a_red_without_repair(self):
+        tip = self.red_convoy()
+        self.ok("set-integration-repair", CONVOY, "--ticket", self.REPAIR)
+        self.ok("close-ticket", CONVOY, self.REPAIR, "--commit", tip, "--file", GATE_REPORT)
+
+        self.ok("record-integration-red", CONVOY, "--commit", tip, "--integration", tip, "--protected", tip,
+                "--control", self.RED_CONTROL)
+
+        self.assertNotIn("repair", self.red())
+
+    def test_record_integration_red_refuses_what_is_not_a_red_and_writes_nothing(self):
+        tip = self.red_convoy()
+        red = ("record-integration-red", CONVOY)
+        self.assert_refused_and_nothing_written(
+            *red, "--commit", "abc", "--integration", tip, "--protected", tip, "--control", "x", mention="commit")
+        self.assert_refused_and_nothing_written(
+            *red, "--commit", tip, "--integration", tip, "--protected", tip, mention="contrôle rouge")
+        self.assert_refused_and_nothing_written(
+            *red, "--commit", tip, "--integration", tip, "--control", "x", mention="branche protégée")
+        self.assert_refused_and_nothing_written(
+            *red, "--commit", tip, "--integration", tip, "--protected", tip, "--control", "x", "--detail", "a\nb",
+            mention="détail")
+
+    def test_record_integration_red_refuses_a_convoy_without_integration_branch(self):
+        tip = self.started_ticket()
+
+        self.assert_refused_and_nothing_written(
+            "record-integration-red", CONVOY, "--commit", tip, "--integration", tip, "--protected", tip,
+            "--control", self.RED_CONTROL, mention="branche d'intégration")
+
+    def test_the_repair_of_a_red_is_one_tracked_repair_ticket(self):
+        self.red_convoy()
+        self.assert_refused_and_nothing_written(
+            "set-integration-repair", CONVOY, "--ticket", T1, mention="repair")
+        self.assert_refused_and_nothing_written(
+            "set-integration-repair", CONVOY, "--ticket", "fx-absent", mention="n'appartient pas")
+
+        self.ok("set-integration-repair", CONVOY, "--ticket", self.REPAIR)
+
+        self.assertEqual(self.REPAIR, self.red()["repair"])
+        self.assertEqual({}, self.ok("set-integration-repair", CONVOY, "--ticket", self.REPAIR)["written"])
+
+    def test_a_red_takes_one_repair_only_while_that_repair_is_open(self):
+        tip = self.red_convoy()
+        state = self.tracker_state()
+        state["beads"]["fx-r2"] = {"title": "second repair", "status": "open", "issue_type": "task",
+                                   "metadata": {"gc.ticket_kind": "repair"}}
+        state["beads"][CONVOY]["tracks"].append("fx-r2")
+        self.tracker.write_text(json.dumps(state))
+        self.ok("mark", CONVOY, "--demonstration-line", "fx-r2=La commande de régression se termine avec le code 0")
+        self.ok("set-integration-repair", CONVOY, "--ticket", self.REPAIR)
+
+        self.assert_refused_and_nothing_written(
+            "set-integration-repair", CONVOY, "--ticket", "fx-r2", mention="un seul repair par rouge")
+
+        self.ok("close-ticket", CONVOY, self.REPAIR, "--commit", tip, "--file", GATE_REPORT)
+        self.ok("set-integration-repair", CONVOY, "--ticket", "fx-r2")
+        self.assertEqual("fx-r2", self.red()["repair"])
+
+    def test_set_integration_repair_refuses_a_convoy_that_is_not_red(self):
+        self.seed(tickets=(T1, self.REPAIR), kinds={self.REPAIR: "repair"})
+        self.init_repo()
+        self.ok("mark", CONVOY, "--demonstration-line", f"{self.REPAIR}=La commande de régression se termine avec le code 0")
+
+        self.assert_refused_and_nothing_written(
+            "set-integration-repair", CONVOY, "--ticket", self.REPAIR, mention="n'est pas rouge")
+
+    def test_clear_integration_red_removes_it(self):
+        self.red_convoy()
+
+        self.ok("clear-integration-red", CONVOY)
+
+        self.assertIsNone(self.red())
+        self.assertNotIn("gc.flow.integration_red", self.tracker_state()["beads"][CONVOY]["metadata"])
+
+    def test_the_red_of_an_unmarked_convoy_is_not_recorded(self):
+        before = self.tracker.read_text()
+
+        for command in (("record-integration-red", CONVOY, "--commit", ABSENT_COMMIT, "--integration", ABSENT_COMMIT,
+                         "--protected", ABSENT_COMMIT, "--control", self.RED_CONTROL),
+                        ("set-integration-repair", CONVOY, "--ticket", T1), ("clear-integration-red", CONVOY)):
+            with self.subTest(command=command[0]):
+                proc = self.run_tool(*command)
+                self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+                self.assertEqual(before, self.tracker.read_text())
+
+    def test_an_integration_red_written_outside_the_command_is_a_state_without_rule(self):
+        self.red_convoy()
+        self.edit_tracker(CONVOY, **{"gc.flow.integration_red": "à la main"})
+
+        shown = self.show(expect=EXIT_UNRULED)
+
+        self.assertIn("unruled", shown["convoy"]["integration_red"])
+        self.assertEqual("gc.flow.integration_red", shown["convoy"]["unruled"][0]["field"])
+
+    def bounds(self, **values):
+        """A Factory root whose delivery-flow settings give these bounds."""
+        root = self.tmp / "root"
+        (root / "config").mkdir(parents=True, exist_ok=True)
+        (root / "config" / "delivery-flow.json").write_text(json.dumps({"bounds": values}))
+        self.env["FACTORY_ROOT"] = str(root)
+
+    def test_the_bound_of_the_resumes_is_the_one_of_the_delivery_flow_settings(self):
+        self.interrupted_ticket()
+        self.bounds(resumes=2, open_planning_exceptions=2, green_runs=3)
+
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "a")
+        self.assertEqual(1, self.ticket(self.show(), T1)["resumes_left"])
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "b")
+
+        # The second resume is the last one: the ticket is out of resumes, and parked for it.
+        self.assertEqual(0, self.ticket(self.show(), T1)["resumes_left"])
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "c", mention="ses 2 reprises")
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "2 reprises")
+
+    def test_a_larger_bound_of_the_resumes_leaves_the_ticket_at_work_after_three(self):
+        self.interrupted_ticket()
+        self.bounds(resumes=4, open_planning_exceptions=2, green_runs=3)
+        for ref in ("a", "b", "c"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
+
+        self.assertEqual(1, self.ticket(self.show(), T1)["resumes_left"])
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
+
+    def test_a_malformed_bound_of_the_resumes_is_refused_and_nothing_is_written(self):
+        self.interrupted_ticket()
+        for value in (0, "trois", True, None):
+            with self.subTest(value=value):
+                self.bounds(resumes=value, open_planning_exceptions=2, green_runs=3)
+                before = self.tracker.read_bytes()
+                proc = self.run_tool("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "a")
+                self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+                self.assertIn("bounds.resumes", json.loads(proc.stdout)["error"])
+                self.assertEqual(before, self.tracker.read_bytes())
+                self.assertEqual(1, self.run_tool("show", CONVOY, "--repo", self.repo).returncode)
+
 
 if __name__ == "__main__":
     unittest.main()

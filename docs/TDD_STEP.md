@@ -55,8 +55,12 @@ order of the steps under its lock.
 
 `--profile` is the project descriptor (`docs/PROJECT_PLANNING_PROFILE.md`,
 `launch` block). The steps read `test_perimeter`, `frozen_harness_paths`,
-`test_command`, `seam_mode`, `entry_points`, `regression_command`, `k`, and
-the optional `red_error_types` and `import_rule`.
+`test_command`, `seam_mode`, `entry_points`, `regression_command`, and
+the optional `red_error_types` and `import_rule`. `k`, the runs in a row of
+the green step, is not read in the profile: it is a bound of the flow,
+`bounds.green_runs` of `config/delivery-flow.json` (3), set with the others
+in that one place (T21, `docs/CONVOY_ADVANCE.md`). A missing or malformed
+value refuses the step (« bounds.green_runs absent ou invalide »).
 
 **`test_command`** runs one test and writes its report: it carries `{test}`
 (a test id, a file of the test perimeter optionally followed by `::…`) and
@@ -137,7 +141,7 @@ refuses any frozen file that is no longer what was frozen (« fichier gelé
 modifié : … », « fichier gelé supprimé ou déplacé : … » — a removed test, a
 renamed one, a test left out of the table, a harness file). It then runs the
 test ids of the frozen table, from the files of the frozen commit, against
-the product launched at HEAD, `k` times in a row: a test that never passes
+the product launched at HEAD, `k` times in a row (`bounds.green_runs`): a test that never passes
 is « test en échec », a mixed result is « test instable », a skipped test is
 refused.
 

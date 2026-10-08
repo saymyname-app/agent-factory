@@ -1767,6 +1767,232 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertIsNone(self.park_of(T3))
         self.assertEqual(1, self.resumes())
 
+    # --- the stops of the convoy: red integration branch, open Planning Exceptions (T21, af-cbp84n) ---
+
+    RED_BRANCH = "branche d'intégration rouge"
+    RED_CONTROL = "commande de régression (true) : code 1, sur integration/fx-spec"
+    REPAIR = "fx-r1"
+
+    def stop_of(self, answer, convoy=CONVOY):
+        return next(c for c in answer["convoys"] if c["id"] == convoy).get("stop")
+
+    def waiting_reasons(self, answer, convoy=CONVOY):
+        return {entry["id"]: entry["reason"] for entry in self.of(answer, "waiting", convoy)}
+
+    def red_recorded(self, base):
+        """The false state of the ticket: tests red at the tip of the
+        integration branch, the repair of that red published and named."""
+        state = self.tracker_state()
+        state["beads"][self.REPAIR] = {**ticket(self.REPAIR), "metadata": {"gc.ticket_kind": "repair"}}
+        state["beads"][CONVOY]["tracks"].append(self.REPAIR)
+        self.tracker.write_text(json.dumps(state))
+        self.run_ok(STATE, "mark", CONVOY, "--demonstration-line",
+                    f"{self.REPAIR}=La commande de régression se termine avec le code 0")
+        self.run_ok(STATE, "record-integration-red", CONVOY, "--commit", base, "--integration", base,
+                    "--protected", base, "--control", self.RED_CONTROL)
+        self.run_ok(STATE, "set-integration-repair", CONVOY, "--ticket", self.REPAIR)
+        self.write_log.write_text("")
+
+    def test_a_red_integration_branch_starts_no_ticket_but_its_repair(self):
+        self.red_recorded(self.integrated())
+        before = self.tickets_snapshot()
+
+        answer = self.advance(CONVOY)
+
+        # T1 and T2 are ready and places are free: neither starts.
+        self.assertEqual([self.REPAIR], self.started(answer))
+        self.assertEqual([self.REPAIR], self.slung())
+        self.assertEqual(before, self.tickets_snapshot())
+        stop = self.stop_of(answer)
+        self.assertEqual(("integration_red", self.RED_CONTROL, self.REPAIR), (stop["reason"], stop["control"], stop["repair"]))
+        for ticket_id, reason in self.waiting_reasons(answer).items():
+            self.assertIn(self.RED_BRANCH, reason, ticket_id)
+            self.assertIn(self.RED_CONTROL, reason, ticket_id)
+        self.assertEqual({T1, T2, T3}, set(self.waiting_reasons(answer)))
+        self.assertTrue(answer["ok"])
+
+    def test_a_red_integration_branch_merges_no_finished_ticket(self):
+        base = self.integrated()
+        self.advance(CONVOY)
+        self.finished(T1)
+        self.red_recorded(base)
+
+        answer = self.advance(CONVOY)
+
+        integration = self.integration_of(answer)
+        self.assertEqual(self.RED_CONTROL, integration["red"]["control"])
+        self.assertEqual(self.RED_BRANCH, integration["stopped"])
+        self.assertNotIn("merged", integration)
+        self.assertIsNone(self.shown(T1)["merge"])
+        self.assertEqual(base, self.git("rev-parse", self.INTEGRATION))
+        # The convoy is stopped, the pass is not a failure.
+        self.assertTrue(answer["ok"])
+
+    def test_several_passes_on_the_same_red_start_and_merge_nothing_more(self):
+        self.red_recorded(self.integrated())
+        self.advance(CONVOY)
+        self.write_log.write_text("")
+        before = self.tracker.read_bytes()
+
+        for _ in range(2):
+            answer = self.advance(CONVOY)
+            self.assertEqual([], self.started(answer))
+
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertEqual([], self.slung())
+        self.assertEqual([], self.log("create"))
+
+    def test_the_starts_and_the_merges_resume_by_themselves_once_the_red_is_withdrawn(self):
+        base = self.integrated()
+        self.advance(CONVOY)
+        tip = self.finished(T1)
+        self.red_recorded(base)
+        self.advance(CONVOY)
+        # What the merge command writes once the control is green again.
+        self.run_ok(STATE, "clear-integration-red", CONVOY)
+        self.close_through_gate(T2)
+
+        answer = self.advance(CONVOY)
+
+        self.assertIsNone(self.stop_of(answer))
+        self.assertEqual([T1], [entry["id"] for entry in self.integration_of(answer)["merged"]])
+        self.assertEqual(tip, self.shown(T1)["merge"]["ticket_commit"])
+        # T3 waited for T1 and T2: closed by the pass and by the gate, it starts at the next one.
+        self.assertEqual([T3], self.started(self.advance(CONVOY)))
+
+    def test_a_red_without_its_repair_that_the_patch_door_cannot_publish_fails_the_pass_and_starts_nothing(self):
+        base = self.integrated()
+        self.run_ok(STATE, "record-integration-red", CONVOY, "--commit", base, "--integration", base,
+                    "--protected", base, "--control", self.RED_CONTROL)
+        self.write_log.write_text("")
+        before = self.tickets_snapshot()
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED)
+
+        # This convoy was not published by the publication door: nothing to revise.
+        self.assertIn("porte de patch", self.of(answer, "repair")["error"])
+        self.assertEqual(([], []), (self.started(answer), self.slung()))
+        self.assertEqual(before, self.tickets_snapshot())
+
+    # A convoy of four tickets that wait for nothing.
+    A, B, C, D = "fx-a", "fx-b", "fx-c", "fx-d"
+
+    def four_tickets(self, ceiling, bounds=None):
+        beads = {CONVOY: {"title": "convoi d'essai", "status": "open", "issue_type": "convoy",
+                          "metadata": {"gc.spec_id": "fx-spec"}, "tracks": [self.A, self.B, self.C, self.D]},
+                 **{ticket_id: ticket(ticket_id) for ticket_id in (self.A, self.B, self.C, self.D)}}
+        self.tracker.write_text(json.dumps({"beads": beads, "sessions": []}))
+        self.run_ok(STATE, "mark", CONVOY)
+        self.resumable(ceiling)
+        if bounds is not None:
+            settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
+            settings["bounds"] = bounds
+            (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+        self.write_log.write_text("")
+
+    def planning_exception(self, ticket_id):
+        """The author of the ticket left by the Ticket Exit « Planning
+        Exception » (bin/ticket-exit): the request, the exception, the parking."""
+        request = {"quoi": f"Planning Exception (semantic) sur {ticket_id} : la Spec dit X, le produit fait Y",
+                   "pourquoi": "L'auteur ne tranche pas une question d'intention.",
+                   "que_faire": [{"option": "Trancher dans le Planning Run", "consequence": "Le ticket reste parqué."},
+                                 {"option": "Retirer le ticket du graphe", "consequence": "La couverture est recalculée."}],
+                   "langue": "fr", "bloquant": True}
+        self.run_ok(STATE, "raise-planning-exception", CONVOY, ticket_id, "--kind", "semantic",
+                    "--summary", "la Spec dit X, le produit fait Y")
+        self.run_ok(ESCALATION, "benjamin", ticket_id, json.dumps(request))
+        self.run_ok(STATE, "park", CONVOY, ticket_id, "--cause", "planning_exception", "--detail", request["quoi"])
+        self.run_ok(STATE, "set-exit", CONVOY, ticket_id, "--exit", "planning_exception")
+
+    def three_at_work(self, bounds=None):
+        """A, B and C started and taken by their authors; D still waits for
+        a place. C's session then left by « interrompu »."""
+        self.four_tickets(ceiling=3, bounds=bounds)
+        self.assertEqual([self.A, self.B, self.C], self.started(self.advance(CONVOY)))
+        for ticket_id in (self.A, self.B):
+            self.taken(ticket_id, f"auteur-{ticket_id}")
+        self.interrupted(self.C, "auteur-c")
+        self.write_log.write_text("")
+
+    def test_two_open_planning_exceptions_start_no_new_ticket_and_the_tickets_at_work_go_on(self):
+        self.three_at_work()
+        self.planning_exception(self.A)
+        self.planning_exception(self.B)
+        before = self.bead(self.D)
+
+        answer = self.advance(CONVOY)
+
+        # D is ready and places are free: it does not start.
+        self.assertEqual([], self.started(answer))
+        self.assertEqual(before, self.bead(self.D))
+        stop = self.stop_of(answer)
+        self.assertEqual(("planning_exceptions", [self.A, self.B], 2), (stop["reason"], stop["open"], stop["bound"]))
+        self.assertIn("2 Planning Exceptions ouvertes", self.waiting_reasons(answer)[self.D])
+        # C was at work: its resume is sent, it finishes.
+        self.assertEqual([(self.C, "interrupted")], [(r["id"], r["cause"]) for r in self.of(answer, "resumed")])
+        self.assertTrue(answer["ok"])
+
+    def test_one_open_planning_exception_lets_the_tickets_that_are_not_parked_start(self):
+        self.three_at_work()
+        self.planning_exception(self.A)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([self.D], self.started(answer))
+        self.assertIsNone(self.stop_of(answer))
+        # B's session is over without an exit, C left by « interrompu »: both are resumed.
+        self.assertEqual([self.B, self.C], [r["id"] for r in self.of(answer, "resumed")])
+        self.assertEqual("planning_exception", self.park_of(self.A)["cause"])
+
+    def test_the_starts_resume_by_themselves_once_one_of_the_two_planning_exceptions_is_answered(self):
+        self.three_at_work()
+        self.planning_exception(self.A)
+        self.planning_exception(self.B)
+        self.assertEqual([], self.started(self.advance(CONVOY)))
+        self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the exception
+        self.run_ok(ESCALATION, "repondre", self.B, "a")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([self.D], self.started(answer))
+        self.assertIsNone(self.stop_of(answer))
+
+    def test_a_planning_exception_raised_by_an_evaluation_counts_as_an_open_one(self):
+        self.three_at_work()
+        self.planning_exception(self.A)
+        # What bin/ticket-evaluation leaves of a criterion the Evaluator cannot observe: the parking alone.
+        self.run_ok(STATE, "park", CONVOY, self.B, "--cause", "planning_exception",
+                    "--detail", f"Planning Exception sur {self.B} : inobservable sur le produit lancé (critère 1)")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.started(answer))
+        self.assertEqual([self.A, self.B], self.stop_of(answer)["open"])
+
+    def test_the_bound_of_the_open_planning_exceptions_is_the_one_of_the_settings(self):
+        for bound, exceptions, started in ((1, (self.A,), []), (3, (self.A, self.B), [self.D])):
+            with self.subTest(bound=bound):
+                self.three_at_work(bounds={"resumes": 3, "open_planning_exceptions": bound, "green_runs": 3})
+                for ticket_id in exceptions:
+                    self.planning_exception(ticket_id)
+
+                answer = self.advance(CONVOY)
+
+                self.assertEqual(started, self.started(answer))
+                self.assertEqual(bound if not started else None, (self.stop_of(answer) or {}).get("bound"))
+
+    def test_a_malformed_bound_of_the_open_planning_exceptions_refuses_the_pass_and_starts_nothing(self):
+        for value in (0, "deux", None):
+            with self.subTest(value=value):
+                self.four_tickets(ceiling=3, bounds={"resumes": 3, "open_planning_exceptions": value, "green_runs": 3})
+                before = self.tracker.read_bytes()
+
+                answer = self.advance(CONVOY, expect=EXIT_REFUSED)
+
+                self.assertIn("bounds.open_planning_exceptions", answer["error"])
+                self.assertEqual(before, self.tracker.read_bytes())
+                self.assertEqual([], self.slung())
+
 
 if __name__ == "__main__":
     unittest.main()
