@@ -66,6 +66,12 @@
 #       -- before anything is pushed or opened, worktree left as is -- until
 #       that file (or the already-open PR's body) carries all three.
 #
+#       Nothing to deliver (af-cjaj8o): when the branch's head is exactly
+#       the head of a PR already merged into <base-branch>, or its tree has
+#       no difference with origin/<base-branch>, `finish` pushes nothing,
+#       opens no PR, prints no URL, removes the worktree and exits 4. The
+#       caller must then leave the ticket's delivery record untouched.
+#
 #   factory-do-work-workspace restart <bead-id> <worktree-path> <branch> <reason>
 #       O04: "starting over requires a written reason." The one supported
 #       way to discard an existing do-work branch/worktree instead of
@@ -348,29 +354,57 @@ MSG
       fi
     fi
 
-    (
-      cd "$WT" || exit 1
-      if [ -n "$(git status --porcelain)" ]; then
-        git add -A && git commit -qm "chore: capture remaining work ($BEAD_ID)"
-      fi
-      ok=0
-      for attempt in 1 2 3; do
-        if git push -u origin "$BRANCH" >/dev/null 2>&1; then
-          ok=1
-          break
-        fi
-        [ "$attempt" -eq 3 ] && break
-        git fetch origin "$BASE_BRANCH" >/dev/null 2>&1
-        git rebase "origin/$BASE_BRANCH" >/dev/null 2>&1
-      done
-      [ "$ok" = "1" ]
-    ) || {
-      echo "factory-do-work-workspace: could not push $BRANCH after 3 attempts" >&2
-      exit 1
-    }
+    if [ -n "$(git -C "$WT" status --porcelain)" ]; then
+      git -C "$WT" add -A && git -C "$WT" commit -qm "chore: capture remaining work ($BEAD_ID)"
+    fi
+
+    # af-cjaj8o (2026-10-08, af-cbp84n): the post-commit hook pushes every
+    # commit, so on a re-dispatch the ticket's open PR can merge before
+    # `finish` runs. `gh pr create` then succeeds a second time on the branch
+    # left behind (its commits are not in the base after a squash merge) and
+    # opens an empty duplicate (#445 after #444). Nothing is left to deliver
+    # when this exact head already merged, or when the tree is the base's:
+    # push nothing, open nothing, remove the worktree, exit 4.
+    DELIVERED=""
+    HEAD_SHA=$(git -C "$WT" rev-parse HEAD 2>/dev/null || true)
+    if [ -n "$HEAD_SHA" ] && command -v gh >/dev/null 2>&1; then
+      # af-kiy7lm: a failed query is logged, not dropped -- the tree
+      # comparison below still decides.
+      MERGED_ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/factory-do-work-workspace.merged-err.XXXXXX")
+      MERGED_URL=$(cd "$WT" && gh pr list --head "$BRANCH" --base "$BASE_BRANCH" --state merged \
+        --json url,headRefOid -q ".[] | select(.headRefOid == \"$HEAD_SHA\") | .url" 2>"$MERGED_ERR_FILE" | head -n 1) \
+        || { MERGED_ERR=$(head -c 2000 "$MERGED_ERR_FILE"); echo "factory-do-work-workspace: could not ask whether a PR for $BRANCH already merged: ${MERGED_ERR:-<no output>}" >&2; }
+      rm -f "$MERGED_ERR_FILE"
+      [ -n "$MERGED_URL" ] && DELIVERED="its head $HEAD_SHA already merged as $MERGED_URL"
+    fi
+    if [ -z "$DELIVERED" ]; then
+      git -C "$WT" fetch origin "$BASE_BRANCH" >/dev/null 2>&1 || true
+      git -C "$WT" diff --quiet "origin/$BASE_BRANCH" HEAD 2>/dev/null \
+        && DELIVERED="it has no difference with origin/$BASE_BRANCH"
+    fi
+
+    if [ -z "$DELIVERED" ]; then
+      (
+        cd "$WT" || exit 1
+        ok=0
+        for attempt in 1 2 3; do
+          if git push -u origin "$BRANCH" >/dev/null 2>&1; then
+            ok=1
+            break
+          fi
+          [ "$attempt" -eq 3 ] && break
+          git fetch origin "$BASE_BRANCH" >/dev/null 2>&1
+          git rebase "origin/$BASE_BRANCH" >/dev/null 2>&1
+        done
+        [ "$ok" = "1" ]
+      ) || {
+        echo "factory-do-work-workspace: could not push $BRANCH after 3 attempts" >&2
+        exit 1
+      }
+    fi
 
     PR_URL=""
-    if command -v gh >/dev/null 2>&1; then
+    if [ -z "$DELIVERED" ] && command -v gh >/dev/null 2>&1; then
       GH_ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/factory-do-work-workspace.gh-err.XXXXXX")
       # af-kiy7lm: capture stderr instead of `2>/dev/null || true`, so a
       # failed `gh pr create`/`gh pr view` (auth expired, rate-limited,
@@ -412,7 +446,8 @@ MSG
     ORIGIN_REPO=""
     [ -n "$GIT_COMMON_DIR" ] && ORIGIN_REPO=$(cd -- "$(dirname -- "$GIT_COMMON_DIR")" 2>/dev/null && pwd -P)
     # O05: never fall back to rm -rf. By this point $BRANCH is already
-    # pushed (the block above exits before here otherwise), so a failed
+    # pushed (the block above exits before here otherwise) or has nothing
+    # left to deliver (af-cjaj8o), so a failed
     # `worktree remove` loses nothing -- it just leaves a directory for
     # factory-guard's runtime-worktree audit (bin/factory-guard section 6b)
     # to report and a human to clean up by hand.
@@ -423,6 +458,10 @@ MSG
       echo "factory-do-work-workspace: could not resolve the origin repo for worktree $WT; leaving it in place" >&2
     fi
 
+    if [ -n "$DELIVERED" ]; then
+      echo "factory-do-work-workspace: nothing to deliver for $BRANCH -- $DELIVERED. No PR opened; leave the ticket's delivery record as it is." >&2
+      exit 4
+    fi
     [ -n "$PR_URL" ] && echo "$PR_URL"
     exit 0
     ;;
