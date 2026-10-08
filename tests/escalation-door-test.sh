@@ -149,7 +149,7 @@ door benjamin af-blocker "$linked_request" >/dev/null || fail "a request with a 
 grep -Fq "DOSSIER: $long_link" "$TEST_TMP/calls.log" || fail "the escalation mail does not carry the link of the dossier"
 out=$(door list) || fail "list should succeed"
 [[ $(grep -c "af-blocker" <<<"$out") == 1 ]] || { echo "$out" >&2; fail "list must print one line per request"; }
-grep -F "af-blocker" <<<"$out" | grep -Fq "en attente d'approbation — dossier : $long_link" \
+grep -Fq "en attente d'approbation — dossier : $long_link" <<<"$(grep -F "af-blocker" <<<"$out")" \
   || { echo "$out" >&2; fail "list did not print the link on the request's line"; }
 
 TESTS_RUN=$((TESTS_RUN + 1))
