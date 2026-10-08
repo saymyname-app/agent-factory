@@ -60,10 +60,15 @@ take them again to a fresh session (T20, « Resumes, their bound, parking and
 the grouped request » below); after the starts it raises or withdraws the
 grouped request of the convoy.
 
-The last step of a pass, run even under a red: when the repair rounds of
+Run at the end of a pass, even under a red: when the repair rounds of
 the end of the Spec are stopped, the pass has the « non conforme » dossier
 generated and sends the request to the operator, once per stop (T26, « The
 rounds of the end are bounded » below).
+
+The last step of each convoy's pass: on a Delivered Outcome, the pass sends
+the Acceptance Request to the operator, once, and publishes the `repair` of
+an Acceptance Session whose product did not start (T28, « A Delivered
+Outcome waits for Benjamin » below).
 
 A pass decides from the tracker alone: a second pass on the same state
 starts nothing more, because a started ticket carries its `dispatch` gate
@@ -602,14 +607,17 @@ elements, `spec_end` when it ran the end-of-Spec gate (T23),
 when it had the pack generated (T27) and `non_conforme` while the rounds of
 the end are stopped and their request has not reached the operator (T26:
 `{action: raised, reason, commit, page, digest, bead}`, `{action: pending,
-reason}`, or `error`). `spec_end` passes `delivered` and `end_stop` through
+reason}`, or `error`), and `acceptance` when it sent the Acceptance Request
+of a Delivered Outcome or published the repair of an Acceptance Session's
+outage (T28: `{action: requested, commit, page, bead}`, `repair`, or
+`error`). `spec_end` passes `delivered` and `end_stop` through
 as the gate answered them. A stopped convoy carries `signal`,
 `unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, or the « non conforme » request of stopped rounds could not be raised or recorded |
+| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, the « non conforme » request of stopped rounds could not be raised or recorded, or the Acceptance Request of a Delivered Outcome or the repair of an Acceptance Session's outage could not be sent, published or recorded |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
@@ -908,8 +916,9 @@ agent writes the dossier, the request or its wording.
 **What it leaves open.**
 
 - Nothing reads the operator's answer yet: no command withdraws `end_stop`,
-  so a stopped convoy stays stopped whatever option is taken. Acting on the
-  three options is T28 and T29's.
+  so a stopped convoy stays stopped whatever option is taken.
+  `bin/acceptance-session record` hands the chosen issue to the door (T28,
+  `docs/ACCEPTANCE_SESSION.md`); acting on it is T29's.
 - A pass that fails between the door and `end-stop-raised` sends the request
   again at the next pass: the bead carries one request, the operator gets a
   second mail.
@@ -928,3 +937,60 @@ mechanical red and a finding of the end review sharing the two rounds; a
 mechanical red found once the rounds are consumed, left without repair, the
 request raised under the red. No isolated-city trial runs it under the real
 order, and no real convoy reached it.
+
+## A Delivered Outcome waits for Benjamin: the Acceptance Request (T28)
+
+Spec §11. The last step of each convoy's pass is `settle_acceptance`; its
+result is the key `acceptance` of the convoy's entry, absent when nothing
+was due.
+
+**The request.** When the convoy carries `delivered` and its `acceptance`
+record has no `request` at that commit, the pass:
+
+1. checks that the Evidence Pack recorded on the convoy is the one of the
+   Delivered Outcome (commit and fingerprint) — otherwise it is refused and
+   nothing is sent;
+2. sends the Acceptance Request through `bin/escalation-door benjamin
+   <convoy>`, on the convoy's own bead: blocking, `lien` = the `index.html`
+   of the pack, **one** option (« Ouvrir l'Acceptance Session ») and **no
+   recommendation** — its `pourquoi` says only that each condition of the
+   end of the Spec is green at that commit;
+3. notes it with `bin/convoy-state acceptance-requested <convoy> --bead
+   <convoy>` (`docs/CONVOY_STATE.md`, « The acceptance record »).
+
+The answer is `acceptance: {action: requested, commit, page, bead}`. Once
+per Delivered Outcome: a later pass on the same state sends nothing. A
+convoy Delivered again on another commit (after a repair) gets a new
+request.
+
+**The repair of an outage.** When `acceptance.panne` is recorded
+(`bin/acceptance-session open` found that the product does not start at the
+commit of the dossier, `docs/ACCEPTANCE_SESSION.md`) and names no ticket,
+the pass publishes one `repair` through the patch door — written by code:
+it restores the launch by the recipe of the profile, and its demonstration
+line is the product answering its health probe on each synthetic dataset —
+and names it with `set-acceptance-repair`. The answer carries
+`acceptance.repair`. **Not while the rounds of the end are stopped**: under
+`end_stop` no repair is published, this one included.
+
+An error at any step is `acceptance.error`: the pass exits 1 and the next
+one tries again.
+
+**Nothing here reads a clock.** No delay accepts, merges or closes in
+Benjamin's place: a Delivered Outcome stays Delivered until he answers.
+
+**What it leaves open.**
+
+- Recording Benjamin's answer to a Delivered Outcome (accepté, constats
+  rendus, abandonné) and what each triggers is T29's; answering the option
+  of the request on the door triggers nothing.
+- The repair of an outage is published by the pass that follows `open`,
+  not by `open`.
+- A pass that fails between the door and `acceptance-requested` sends the
+  request again at the next pass: one request on the bead, a second mail.
+
+`tests/acceptance-session-test.py` covers the records;
+`tests/convoy-stops-fixture-city-test.py` and
+`tests/fixture-city-oracle-test.py` cover the pass on the graph of the
+Fixture City. No isolated-city trial runs it under the real order, and no
+real convoy reached it.

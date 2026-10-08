@@ -101,6 +101,9 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state end-review-stop-raised CONVOY --bead BEAD
     convoy-state end-stop-raised  CONVOY --bead BEAD
     convoy-state record-delivered CONVOY --commit SHA --pack-digest sha256:HEX
+    convoy-state acceptance-requested     CONVOY --bead BEAD
+    convoy-state acceptance-launch-failed CONVOY --commit SHA --detail LINE
+    convoy-state set-acceptance-repair    CONVOY --ticket TICKET
     convoy-state open-outcome-evaluation    CONVOY --commit SHA --file PATH
     convoy-state launch-outcome-evaluation  CONVOY --bead BEAD
     convoy-state record-outcome-evaluation  CONVOY --file PATH
@@ -224,6 +227,7 @@ KEY_END_ROUND = PREFIX + "end_round"
 KEY_EVIDENCE_PACK = PREFIX + "evidence_pack"
 KEY_END_STOP = PREFIX + "end_stop"
 KEY_DELIVERED = PREFIX + "delivered"
+KEY_ACCEPTANCE = PREFIX + "acceptance"
 KEY_OUTCOME_EVALUATION = PREFIX + "outcome_evaluation"
 KEY_FINDINGS = PREFIX + "findings"
 # Written by the publication door (bin/ticket-graph-publish): the digest of
@@ -2040,6 +2044,33 @@ def delivered_record(raw: Any) -> dict[str, Any]:
     if record["version"] != SPEC_END_VERSION:
         raise Refusal(f"version de la liste de conditions inconnue : {record['version']!r} (attendu : {SPEC_END_VERSION})")
     return record
+
+
+def acceptance_record(raw: Any) -> dict[str, Any]:
+    """What the acceptance of a convoy holds before Benjamin's answer (T28,
+    Spec §11), tied to the one commit of the Evidence Pack he judges: the
+    Acceptance Request that reached him -- the bead the escalation door
+    wrote it on and the page of the dossier -- and the outage of an
+    Acceptance Session whose product did not start, with the `repair` code
+    published for it."""
+    record = stored_record(raw, ("commit", "at"), ("pack", "request", "panne"))
+    valid_commit(record["commit"], "commit du dossier")
+    if "pack" in record:
+        valid_digest(record["pack"])
+    if "request" in record:
+        request = record["request"]
+        if not isinstance(request, dict) or sorted(request) != ["at", "bead", "page"] \
+                or not isinstance(request["bead"], str) or not BEAD_ID_RE.match(request["bead"]):
+            raise Refusal(f"Acceptance Request mal formée : {request!r}")
+        single_line(request["page"], "page de l'Evidence Pack")
+    if "panne" in record:
+        panne = record["panne"]
+        if not isinstance(panne, dict) or not {"at", "detail"} <= set(panne) <= {"at", "detail", "ticket"}:
+            raise Refusal(f"panne de l'Acceptance Session mal formée : {panne!r}")
+        single_line(panne["detail"], "panne de l'Acceptance Session")
+        if "ticket" in panne and (not isinstance(panne["ticket"], str) or not BEAD_ID_RE.match(panne["ticket"])):
+            raise Refusal(f"repair de la panne mal formé : {panne['ticket']!r}")
+    return record
 def restores_record(value: Any, what: str) -> dict[str, str]:
     """What a `repair` restores, cited (Spec §2): one of the kinds the patch
     door knows, and the line that cites it."""
@@ -2816,12 +2847,19 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             delivered = {"unruled": f"{KEY_DELIVERED} : {exc}", "raw": metadata[KEY_DELIVERED]}
             convoy_unruled.append({"field": KEY_DELIVERED, "reason": delivered["unruled"]})
+    acceptance: dict[str, Any] | None = None
+    if KEY_ACCEPTANCE in metadata:
+        try:
+            acceptance = acceptance_record(metadata[KEY_ACCEPTANCE])
+        except Refusal as exc:
+            acceptance = {"unruled": f"{KEY_ACCEPTANCE} : {exc}", "raw": metadata[KEY_ACCEPTANCE]}
+            convoy_unruled.append({"field": KEY_ACCEPTANCE, "reason": acceptance["unruled"]})
     # The fingerprints of the pieces captured on the assembled product (T24).
     evidence: dict[str, Any] = {}
     for key in sorted(metadata):
         known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_GROUPED_REQUEST, KEY_SPEC_END,
                  KEY_OUTCOME_EVALUATION, KEY_END_REVIEW, KEY_END_ROUND, KEY_EVIDENCE_PACK, KEY_END_STOP, KEY_DELIVERED,
-                 *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
+                 KEY_ACCEPTANCE, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(EVIDENCE_PREFIX):
             name = key[len(EVIDENCE_PREFIX):]
             try:
@@ -2849,6 +2887,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         "end_round": end_round,
         "end_stop": end_stop,
         "delivered": delivered,
+        "acceptance": acceptance,
         "evidence_pack": evidence_pack,
         "outcome_evaluation": outcome_evaluation,
         "evidence": evidence,
@@ -4760,6 +4799,106 @@ def cmd_record_delivered(args: argparse.Namespace) -> int:
     return done(args.convoy, args.convoy, values)
 
 
+def judged_dossier(convoy_id: str, metadata: dict[str, Any]) -> dict[str, Any] | None:
+    """The dossier Benjamin judges (T28, Spec §11): the Evidence Pack of
+    the Delivered Outcome, or the one the « non conforme » request of
+    stopped rounds carries. None when the convoy has neither."""
+    delivered = stored_or_none(metadata.get(KEY_DELIVERED), delivered_record)
+    if delivered is not None:
+        return {"commit": delivered["commit"], "pack": delivered["pack"]}
+    stop = stored_or_none(metadata.get(KEY_END_STOP), end_stop_record)
+    if stop is not None and "request" in stop:
+        return {"commit": stop["request"]["commit"], "pack": stop["request"]["digest"]}
+    return None
+
+
+def acceptance_of(metadata: dict[str, Any], dossier: dict[str, Any]) -> dict[str, Any]:
+    """The acceptance record of that dossier: the one written on it, or a
+    new one -- what was noted on another commit went with that commit."""
+    known = acceptance_record(metadata[KEY_ACCEPTANCE]) if KEY_ACCEPTANCE in metadata else None
+    if known is not None and known["commit"] == dossier["commit"]:
+        return known
+    return {"commit": dossier["commit"], "pack": dossier["pack"], "at": now()}
+
+
+def cmd_acceptance_requested(args: argparse.Namespace) -> int:
+    """Record that the Acceptance Request of a Delivered Outcome reached
+    the operator (T28, Spec §11): the bead the escalation door wrote it on
+    and the page of the Evidence Pack it links. One request per Delivered
+    Outcome: the same one again writes nothing, another bead is refused."""
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
+        raise Refusal(f"bead de l'Acceptance Request absent ou mal formé : {args.bead!r}")
+    delivered = stored_or_none(metadata.get(KEY_DELIVERED), delivered_record)
+    if delivered is None:
+        raise Refusal(f"le convoi {args.convoy} n'est pas Delivered : aucune Acceptance Request à noter")
+    pack = stored_or_none(metadata.get(KEY_EVIDENCE_PACK), evidence_pack_record)
+    if pack is None or pack["commit"] != delivered["commit"] or pack["digest"] != delivered["pack"]:
+        raise Refusal(
+            f"l'Evidence Pack enregistré sur le convoi {args.convoy} n'est pas celui de son Delivered Outcome : "
+            "l'Acceptance Request porte le lien de ce dossier")
+    record = acceptance_of(metadata, {"commit": delivered["commit"], "pack": delivered["pack"]})
+    if "request" in record:
+        if record["request"]["bead"] == args.bead:
+            return done(args.convoy, args.convoy, {})
+        raise Refusal(f"l'Acceptance Request du convoi {args.convoy} est déjà remontée ({record['request']['bead']})")
+    record["request"] = {"bead": args.bead, "page": f"{pack['path'].rstrip('/')}/{PACK_PAGE}", "at": now()}
+    values = {KEY_ACCEPTANCE: encode(acceptance_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_acceptance_launch_failed(args: argparse.Namespace) -> int:
+    """Record the outage of an Acceptance Session (T28, Spec §11): the
+    product did not start at the commit of the dossier Benjamin was to
+    judge. An outage is no judgment: nothing else of the convoy changes,
+    and code publishes one `repair` for it. The same outage again writes
+    nothing."""
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    commit = valid_commit(args.commit, "commit du dossier")
+    detail = single_line(args.detail, "panne de l'Acceptance Session")
+    dossier = judged_dossier(args.convoy, metadata)
+    if dossier is None or dossier["commit"] != commit:
+        raise Refusal(
+            f"le commit {commit[:12]} n'est pas celui du dossier que Benjamin juge sur le convoi {args.convoy} : "
+            "une panne d'Acceptance Session se note au commit de ce dossier")
+    record = acceptance_of(metadata, dossier)
+    if "panne" in record:
+        return done(args.convoy, args.convoy, {})
+    record["panne"] = {"detail": detail, "at": now()}
+    values = {KEY_ACCEPTANCE: encode(acceptance_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_set_acceptance_repair(args: argparse.Namespace) -> int:
+    """Name the repair ticket code published for the outage of an
+    Acceptance Session: a tracked ticket of the convoy, of kind `repair`.
+    One repair per outage."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    record = acceptance_record(metadata[KEY_ACCEPTANCE]) if KEY_ACCEPTANCE in metadata else None
+    if record is None or "panne" not in record:
+        raise Refusal(f"aucune panne d'Acceptance Session n'est notée sur le convoi {args.convoy} : aucun repair ne s'y rattache")
+    ticket = marked_ticket_among(tickets, args.convoy, args.ticket)
+    if metadata_of(ticket).get(KEY_KIND) != "repair":
+        raise Refusal(f"le ticket {args.ticket} n'est pas un repair : seul un repair rétablit un produit qui ne démarre pas")
+    if record["panne"].get("ticket") == args.ticket:
+        return done(args.convoy, args.convoy, {})
+    if "ticket" in record["panne"]:
+        raise Refusal(
+            f"la panne de l'Acceptance Session a déjà son repair ({record['panne']['ticket']}) : un seul repair par panne")
+    record["panne"]["ticket"] = args.ticket
+    values = {KEY_ACCEPTANCE: encode(acceptance_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
 def cmd_record_evidence_pack(args: argparse.Namespace) -> int:
     """bin/evidence-pack records the page it generated (T27, Spec §10): the
     commit of the integration branch it is tied to, its fingerprint and
@@ -5834,6 +5973,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("record-delivered", cmd_record_delivered, ticket=False)
     p.add_argument("--commit")
     p.add_argument("--pack-digest")
+    command("acceptance-requested", cmd_acceptance_requested, ticket=False).add_argument("--bead")
+    p = command("acceptance-launch-failed", cmd_acceptance_launch_failed, ticket=False)
+    p.add_argument("--commit")
+    p.add_argument("--detail")
+    command("set-acceptance-repair", cmd_set_acceptance_repair, ticket=False).add_argument("--ticket")
     command("clear-integration-red", cmd_clear_integration_red, ticket=False)
     p = sub.add_parser("ticket")
     p.add_argument("ticket")

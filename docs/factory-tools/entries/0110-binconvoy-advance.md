@@ -127,9 +127,23 @@ touché : il reste avancé par le Mayor.
   est encore en cours sur la pointe, `raised` une fois la demande partie).
   **Limites** : ta réponse est enregistrée mais rien ne la lit encore — le
   convoi reste arrêté, aucun tour ne repart et rien n'est abandonné tant que
-  les tickets suivants (T28, T29) ne sont pas livrés ; si la passe échoue
+  le ticket suivant (T29) n'est pas livré ; si la passe échoue
   entre l'envoi et son enregistrement, tu reçois le même courrier une
   seconde fois (une seule ligne dans la liste).
+- **Acceptance Request** (T28) : dès qu'un convoi est Delivered (les sept
+  conditions de fin de Spec vertes sur un même commit), la passe t'envoie
+  **une** demande, une fois par Delivered Outcome : dans
+  `./bin/escalation-door list`, la ligne
+  `<convoi> — Acceptance Request — convoi <convoi> : un Delivered Outcome attend votre jugement — dossier : <chemin de la page>`,
+  avec une seule option (« Ouvrir l'Acceptance Session ») et aucune
+  recommandation. Tu lances le produit par
+  `./bin/acceptance-session open <convoi>`. Si le produit n'a pas démarré à
+  l'ouverture d'une session, la passe suivante publie **un** `repair` qui
+  rétablit ce démarrage (pas tant que les tours de fin sont arrêtés).
+  `acceptance` dans la réponse de la passe dit ce qu'elle a fait
+  (`action: requested`, `repair`). **Aucun délai ne répond à ta place** :
+  rien n'est accepté, fusionné ni fermé sans ta réponse, dont
+  l'enregistrement est T29.
 - **Les bornes se règlent à un seul endroit** : `bounds` de
   `config/delivery-flow.json` — `resumes` (K, 3), `open_planning_exceptions`
   (2), `end_rounds` (tours de réparation de fin de Spec, 2). Changer une valeur change le comportement à la passe suivante ; une
