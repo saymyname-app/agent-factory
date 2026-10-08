@@ -1,13 +1,16 @@
 """Wires the read model, the sources, and the HTTP server into one process.
 
 ``run_foreground`` is what ``bin/cockpit run`` calls: it blocks until
-SIGTERM/SIGINT, then shuts every poller and the HTTP server down and
-returns cleanly. A source going quiet (gc suspended, city stopped) never
-raises out of here — see the individual pollers.
+SIGTERM/SIGINT, then frees the port, asks every poller to end and returns
+within ``SHUTDOWN_BUDGET_SECONDS`` (see ``shut_down``). A source going
+quiet (gc suspended, city stopped) never raises out of here — see the
+individual pollers.
 """
+import os
 import signal
 import sys
 import threading
+import time
 
 from cockpit.access.guard import ActionGuard, new_session_token
 from cockpit.actions.registry import build_action_handlers
@@ -41,6 +44,10 @@ SOURCE_DISPLAY_NAMES = {
     "gc": "superviseur",
     "beads": "tickets",
 }
+
+# How long a stopping process waits for reads and ticks in flight, all of
+# them together. `bin/cockpit stop` waits longer than this before it kills.
+SHUTDOWN_BUDGET_SECONDS = 5.0
 
 
 def build(config, clock=None):
@@ -263,8 +270,38 @@ def build(config, clock=None):
     return server, pollers
 
 
+def shut_down(server, pollers, budget_seconds=SHUTDOWN_BUDGET_SECONDS, log=None):
+    """Ends a cockpit that has stopped serving.
+
+    The port first: the next process may need it at once. Then every poller
+    is asked to end before any is waited for, and all of them share one
+    budget -- waited for one after the other, 5 s each, eleven of them could
+    hold a stopping process (and its port) for most of a minute. They are
+    daemon threads reading sources: one still busy when the budget runs out
+    ends with the process, and is named in the log."""
+    log = log or sys.stderr
+    started = time.monotonic()
+    server.server_close()
+    for poller in pollers:
+        poller.request_stop()
+    deadline = started + budget_seconds
+    late = [
+        getattr(poller, "source", None) or type(poller).__name__
+        for poller in pollers
+        if not poller.join(deadline - time.monotonic())
+    ]
+    print(
+        "cockpit: stopped in %.1fs%s"
+        % (time.monotonic() - started, " without waiting for: " + ", ".join(late) if late else ""),
+        file=log,
+        flush=True,
+    )
+
+
 def run_foreground(config, clock=None, ready_callback=None):
     server, pollers = build(config, clock=clock)
+    print("cockpit: pid %d listening since %s" % (os.getpid(), time.strftime("%Y-%m-%d %H:%M:%S%z")),
+          file=sys.stderr, flush=True)
     for poller in pollers:
         poller.start()
 
@@ -287,9 +324,8 @@ def run_foreground(config, clock=None, ready_callback=None):
     finally:
         signal.signal(signal.SIGTERM, previous_term)
         signal.signal(signal.SIGINT, previous_int)
-        for poller in pollers:
-            poller.stop()
-        server.server_close()
+        print("cockpit: stopping at %s" % time.strftime("%Y-%m-%d %H:%M:%S%z"), file=sys.stderr, flush=True)
+        shut_down(server, pollers)
     return 0
 
 
