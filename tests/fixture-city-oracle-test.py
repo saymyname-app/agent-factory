@@ -356,6 +356,43 @@ class FixtureCityOracleTest(unittest.TestCase):
                 self.assertEqual("", proc.stdout)
                 self.assertIn(named, proc.stderr)
 
+    # --- a ticket out of resumes is parked, the others go on, one grouped request (T20, af-y9pw9z) ---
+
+    def test_a_ticket_that_fails_three_times_is_parked_with_its_descendant_while_the_other_goes_on_then_one_request(self):
+        proc = self.deliver("three-failures-parked.json")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+
+        # The ticket that waits for no parked ticket walked the whole flow.
+        self.assertTrue(result["closed"])
+        self.assertEqual(DELIVERY_STATES, result["lifecycle"])
+        parking = result["parking"]
+        [sick] = [entry for entry in parking["parked"] if entry["origin"] == entry["id"]]
+        [behind] = [entry for entry in parking["parked"] if entry["origin"] != entry["id"]]
+        self.assertEqual(("resumes_exhausted", 3), (sick["cause"], sick["resumes"]))
+        self.assertEqual((sick["id"], "resumes_exhausted"), (behind["origin"], behind["cause"]))
+        # It went on after the parking, and was closed with the others still parked.
+        self.assertIn("coded", parking["reached_after"])
+        self.assertIn("closed", parking["reached_after"])
+        # No request while a ticket could still advance; then exactly one, which names every parked ticket.
+        self.assertEqual(0, parking["requests_before_only_parked_left"])
+        self.assertEqual(1, parking["requests"])
+        self.assertEqual(sorted([sick["id"], behind["id"]]), parking["named_by_the_request"])
+        self.assertIn("escalation-door list", result["interfaces"]["read"])
+        self.assertEqual(proc.stdout, self.deliver("three-failures-parked.json").stdout)
+
+    def test_a_delivery_scenario_that_expects_parked_tickets_without_a_closed_one_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            broken = Path(temporary) / "broken.json"
+            for expect in ({"closed": False, "missing": [1], "parked": 2}, {"closed": True, "parked": 0},
+                           {"closed": True, "parked": "deux"}):
+                broken.write_text(json.dumps({"contract": "agent-factory-fixture-delivery-scenario/v1",
+                                              "scenario_id": "broken", "expect": expect}))
+                proc = subprocess.run((str(ORACLE), "run", str(broken), "--delivery-driver", str(DELIVERY_DRIVER)),
+                                      cwd=ROOT, text=True, capture_output=True, check=False)
+                self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+                self.assertIn("expect.parked", proc.stderr)
+
     def test_a_scenario_is_walked_only_with_the_adapters_of_its_contract(self):
         planning = ("--operator", str(OPERATOR), "--publication-door", str(OPERATOR))
         proc = self.deliver("one-ticket-end-to-end.json", *planning)
