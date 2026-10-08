@@ -750,3 +750,6 @@ through `bin/outcome-evaluation`, which is their only caller
 (`tests/outcome-evaluation-test.py`, one test per refusal, the tracker
 re-read), and `set-outcome-repair` through the pass
 (`tests/convoy-stops-fixture-city-test.py`).
+`tests/spec-end-real-tracker-test.sh` (local-only) replays these writes and
+their refusals on the real `gc`/`bd`, the user stories read in a Spec bead
+of the disposable city.

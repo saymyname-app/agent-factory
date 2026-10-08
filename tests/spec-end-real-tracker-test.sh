@@ -13,6 +13,14 @@
 # tests/convoy-state-test.py only proves the command against what this trial
 # observes of the real one. No gate runs here: bin/spec-end is proven on the
 # fake tracker (tests/spec-end-test.py).
+#
+# T24 (af-oy7v3i): the same for the Outcome Evaluation and the findings
+# « hors ticket » -- the request, its launch, a classification
+# (`classify-finding`), the states handed in (`record-outcome-evaluation`),
+# the repair code published (`set-outcome-repair`) and a product released --
+# with the user stories read in a Spec bead of the real tracker. No
+# Evaluator session runs here: bin/outcome-evaluation is proven on the fake
+# tracker (tests/outcome-evaluation-test.py).
 
 set -Eeuo pipefail
 
@@ -98,7 +106,7 @@ NOT_DONE="La sonde n'est pas branchée : « a=b » reste à faire."
 HANDOFF="$TRIAL/handoff.json"
 jq -n --arg tip "$TIP" --arg what "$NOT_DONE" '{
   sections: {done: ["Critère 1 observé."], deviations: ["La liste est triée par nom."], not_done: [$what],
-             out_of_ticket: "aucun"},
+             out_of_ticket: ["Le pied de page affiche une année fausse."]},
   partial: false, commit: $tip, records: {commits: [], deferral_markers: []}}' >"$HANDOFF"
 state add-evidence "$CONVOY" "$T1" --piece handoff_records \
   --digest "sha256:$(sha256sum <"$HANDOFF" | cut -d' ' -f1)" --commit "$TIP"
@@ -187,7 +195,7 @@ state record-integration-red "$CONVOY" --commit "$TIP" --integration "$TIP" --pr
 REPORT="$TRIAL/spec-end.json"
 COMMAND="sh -c 'test ! -e rouge' --seuil=1"
 jq -n --arg tip "$TIP" --arg command "$COMMAND" '{
-  version: "spec-end/v1",
+  version: "spec-end/v2",
   conditions: [
     {number: 1, name: "registry", verdict: "pass", detail: "2 ticket(s) fermé(s) par la porte ; 2 écart(s) et « non fait(s) » dans un état final (0 accepté par Benjamin, 2 réparé)"},
     {number: 2, name: "tests", verdict: "pass", detail: "commande de régression (\($command)) : code 0"},
@@ -228,4 +236,134 @@ jq -e --arg tip "$TIP" --arg base "$BASE" --slurpfile report "$REPORT" '
   and .convoy.counters.end_rounds == 1
 ' <<<"$shown" >/dev/null || fail "record of the end-of-Spec gate not read back from the real tracker: $shown"
 
-echo "PASS: tracked elements, their repair, the red of the end with its round and the record of the end-of-Spec gate are written and read back on the real tracker"
+# --- the Outcome Evaluation and the findings « hors ticket » (T24, af-oy7v3i) ---
+# The Spec of the convoy is a bead of the real tracker: its numbered user
+# stories are read there, by the reader bin/spec-approve holds a Spec to.
+SPEC=$(gc bd create --title "Spec d'essai" --type task --body-file "$ROOT/tests/fixtures/delivery-fixture-city/spec.md" --silent 2>/dev/null)
+gc bd update "$CONVOY" --set-metadata "gc.spec_id=$SPEC" >/dev/null
+finding_state() {
+  "$TOOL" show "$CONVOY" | jq -r --arg t "$T1" '.tickets[] | select(.id == $t) | .findings[0].state'
+}
+classify() {
+  "$TOOL" classify-finding "$CONVOY" "$T1" --item out_of_ticket.1 --recorded-by essai-evaluator "$@"
+}
+draft() {  # draft STORY -> a drafted repair that cites that user story
+  jq -n --arg story "$1" '{
+    title: "Rétablir la user story \($story)", what_it_delivers: "Le produit assemblé sert la user story \($story).",
+    restores: {kind: "user_story", ref: "user story \($story)"},
+    demonstration_line: "Sur le produit lancé, la user story \($story) est servie.",
+    acceptance_criteria: [{entry_point: "GET / sur le produit lancé", observable: "la story y est servie",
+                           false_if: "la story n'\''y est pas servie"}]}'
+}
+[ "$(finding_state)" = "non classé" ] || fail "a finding nobody classified does not read « non classé »: $(finding_state)"
+
+# No evaluation open: nothing is classified, nothing is written.
+before=$(gc bd show "$T1" --json)
+set +e
+out=$(classify --as proposal); rc=$?
+set -e
+[ "$rc" = 1 ] || fail "a finding classified outside an Outcome Evaluation exited $rc, want 1"
+grep -q "aucune Outcome Evaluation n'est ouverte" <<<"$out" || fail "the refusal outside an evaluation does not say why: $out"
+[ "$before" = "$(gc bd show "$T1" --json)" ] || fail "a refused classification changed the tracker"
+
+# The evaluation opens at the commit of the gate only; opened again, it writes nothing.
+REQUEST="$TRIAL/outcome-request.json"
+LAUNCH="$TRIAL/launch.json"
+jq -n --arg launch "$LAUNCH" '{
+  roles: {authors: [], evaluator: null, same_provider: null, other_declared: []},
+  environment: [{dataset: null, address: "http://127.0.0.1:18080", state_file: $launch}]}' >"$REQUEST"
+before=$(gc bd show "$CONVOY" --json)
+set +e
+out=$("$TOOL" open-outcome-evaluation "$CONVOY" --commit "$BASE" --file "$REQUEST"); rc=$?
+set -e
+[ "$rc" = 1 ] || fail "an Outcome Evaluation opened off the commit of the gate exited $rc, want 1"
+grep -q "porte sur le commit de la porte" <<<"$out" || fail "the refusal off the commit of the gate does not say why: $out"
+[ "$before" = "$(gc bd show "$CONVOY" --json)" ] || fail "a refused opening changed the tracker"
+state open-outcome-evaluation "$CONVOY" --commit "$TIP" --file "$REQUEST"
+before=$(gc bd show "$CONVOY" --json)
+state open-outcome-evaluation "$CONVOY" --commit "$TIP" --file "$REQUEST"
+[ "$before" = "$(gc bd show "$CONVOY" --json)" ] || fail "the same Outcome Evaluation opened again changed the tracker"
+state launch-outcome-evaluation "$CONVOY" --bead "$SPEC"
+# The stories of the request are those the Spec bead numbers, read on the real tracker.
+STORIES=$(gc bd show "$CONVOY" --json | jq -c '.[0].metadata["gc.flow.outcome_evaluation"] | fromjson | .request.stories')
+[ "$(jq -c 'map(.number)' <<<"$STORIES")" = "[1,2,3]" ] || fail "the stories of the Spec bead are not those of the request: $STORIES"
+
+# « dismissed » without a reason, « repaired » without what it restores, and
+# a citation of a story the Spec does not number: refused, nothing written.
+before=$(gc bd show "$T1" --json)
+set +e
+out=$(classify --as dismissed); rc=$?
+set -e
+[ "$rc" = 1 ] || fail "« dismissed » without a reason exited $rc, want 1"
+grep -q "écarté sans raison" <<<"$out" || fail "the refusal of « dismissed » without a reason does not say why: $out"
+set +e
+out=$(classify --as repaired); rc=$?
+set -e
+[ "$rc" = 1 ] || fail "« repaired » without a citation exited $rc, want 1"
+grep -q "sans citation de ce qu'il rétablit" <<<"$out" || fail "the refusal of « repaired » without a citation does not say why: $out"
+draft 9 >"$TRIAL/draft-9.json"
+set +e
+out=$(classify --as repaired --file "$TRIAL/draft-9.json"); rc=$?
+set -e
+[ "$rc" = 1 ] || fail "« repaired » citing a story the Spec does not number exited $rc, want 1"
+grep -q "cite une user story absente de la Spec $SPEC" <<<"$out" || fail "the refusal of an unknown story does not say why: $out"
+[ "$before" = "$(gc bd show "$T1" --json)" ] || fail "a refused classification changed the tracker"
+draft 2 >"$TRIAL/draft-2.json"
+state classify-finding "$CONVOY" "$T1" --item out_of_ticket.1 --recorded-by essai-evaluator --as repaired --file "$TRIAL/draft-2.json"
+[ "$(finding_state)" = "à réparer" ] || fail "a finding classified « repaired » does not read « à réparer »: $(finding_state)"
+
+# One state per story, each with a piece captured under the convoy at the commit of the gate.
+for number in 1 2 3; do
+  state add-evidence "$CONVOY" "$CONVOY" --piece "outcome.s$number" \
+    --digest "sha256:$(printf 'story %s' "$number" | sha256sum | cut -d' ' -f1)" --commit "$TIP"
+done
+handed() {  # handed FILTER -> what the Evaluator hands in, the stories filtered
+  jq -n --arg tip "$TIP" --argjson stories "$STORIES" --slurpfile repair <(draft 3) '{
+    commit: $tip, recorded_by: "essai-evaluator", exploration: "aucun", fidelity_deviations: "aucun",
+    stories: [$stories[] | . + {evidence: "outcome.s\(.number)"}
+              + (if .number == 3 then {state: "not_observed", reason: "La sonde ne répond pas."} else {state: "observed"} end)],
+    repairs: [$repair[0] + {story: 3}]}' | jq "$1"
+}
+before=$(gc bd show "$CONVOY" --json)
+handed '.stories |= map(select(.number != 2))' >"$TRIAL/outcome-short.json"
+set +e
+out=$("$TOOL" record-outcome-evaluation "$CONVOY" --file "$TRIAL/outcome-short.json"); rc=$?
+set -e
+[ "$rc" = 1 ] || fail "an Outcome Evaluation with a story left without state exited $rc, want 1"
+grep -q "user story 2 sans état" <<<"$out" || fail "the refusal does not name the story left without state: $out"
+handed '. + {verdict: "favorable"}' >"$TRIAL/outcome-verdict.json"
+set +e
+out=$("$TOOL" record-outcome-evaluation "$CONVOY" --file "$TRIAL/outcome-verdict.json"); rc=$?
+set -e
+[ "$rc" = 1 ] || fail "an Outcome Evaluation that hands in its verdict exited $rc, want 1"
+grep -q "le verdict est calculé par du code" <<<"$out" || fail "the refusal of a handed-in verdict does not say why: $out"
+[ "$before" = "$(gc bd show "$CONVOY" --json)" ] || fail "a refused Outcome Evaluation changed the tracker"
+handed . >"$TRIAL/outcome.json"
+out=$("$TOOL" record-outcome-evaluation "$CONVOY" --file "$TRIAL/outcome.json") || fail "record-outcome-evaluation did not pass: $out"
+jq -e '.outcome == "repair" and .verdict == "unfavorable"' <<<"$out" >/dev/null || fail "the computed verdict is not « repair »: $out"
+
+# What code published is named once: on the story, and on the finding, which
+# reads « réparé » since the ticket-end gate closed that repair.
+state set-outcome-repair "$CONVOY" --repair "$R2" --story 3
+state set-outcome-repair "$CONVOY" --repair "$R1" --ticket "$T1" --item out_of_ticket.1
+before=$(gc bd show "$CONVOY" --json)$(gc bd show "$T1" --json)
+state set-outcome-repair "$CONVOY" --repair "$R2" --story 3
+state set-outcome-repair "$CONVOY" --repair "$R1" --ticket "$T1" --item out_of_ticket.1
+[ "$before" = "$(gc bd show "$CONVOY" --json)$(gc bd show "$T1" --json)" ] || fail "a repair named again changed the tracker"
+set +e
+out=$("$TOOL" set-outcome-repair "$CONVOY" --repair "$R1" --story 3); rc=$?
+set -e
+[ "$rc" = 1 ] || fail "a second repair for the same story exited $rc, want 1"
+grep -q "un seul repair par élément" <<<"$out" || fail "the refusal of a second repair of a story does not say why: $out"
+state release-outcome-evaluation "$CONVOY" --state-file "$LAUNCH"
+shown=$("$TOOL" show "$CONVOY") || fail "show after the Outcome Evaluation failed: $shown"
+jq -e --arg t "$T1" --arg tip "$TIP" --arg r1 "$R1" --arg r2 "$R2" '
+  .unruled == false
+  and (.convoy.outcome_evaluation.state
+       == {verdict: "unfavorable", outcome: "repair", commit: $tip, not_observed: [3], unobservable: [],
+           repairs: [{story: 3, repair: $r2}], contradictions: []})
+  and ([.tickets[] | select(.id == $t) | .findings[] | [.id, .state, .classification, .repair]]
+       == [["\($t):out_of_ticket.1", "réparé", "repaired", $r1]])
+' <<<"$shown" >/dev/null || fail "Outcome Evaluation and findings not read back from the real tracker: $shown"
+
+echo "PASS: tracked elements, their repair, the red of the end with its round, the record of the end-of-Spec gate, the Outcome Evaluation and the classified findings are written and read back on the real tracker"

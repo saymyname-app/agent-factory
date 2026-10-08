@@ -186,3 +186,10 @@ refusal writes nothing.
   when it cannot be settled.
 - `tests/convoy-stops-fixture-city-test.py`: the drafted repair of a story
   and of a finding « à réparer » published once by the real patch door.
+- `tests/fixture-city-oracle-test.py`: the walked ticket's convoy reaches
+  the end of its Spec and has its assembled product evaluated by the
+  stand-in Evaluator.
+- `tests/spec-end-real-tracker-test.sh` (local-only): in a disposable city,
+  the state writes of the evaluation and of the findings, and their
+  refusals, on the real `gc`/`bd`; the user stories are read in a Spec bead
+  of that tracker.
