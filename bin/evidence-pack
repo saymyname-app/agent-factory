@@ -76,6 +76,9 @@ ASSET_RE = re.compile(r'(?:src|href)="(pieces/([0-9a-f]{64})\.(?:json|png))"')
 COMPARISON_RE = re.compile(r"^fidelity\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$")
 MAX_OUTPUT = 2000
 NOT_VERIFIED = "Ce qui n'a PAS été vérifié"
+# Rubric 0 of the Spec: it opens the dossier that follows « constats rendus ».
+SINCE = "Depuis ton dernier jugement"
+ROUTES = {"repair": "réparation", "planning_exception": "Planning Exception", "later": "plus tard"}
 RUBRICS = (
     "En-tête", "Ce qui demande les yeux de Benjamin", NOT_VERIFIED, "Par user story", "Par ticket",
     "Éléments suivis", "Hors graphe initial", "Relevés", "Preuves TDD et constats de revue")
@@ -947,6 +950,51 @@ class Page:
                 f"relus : {e(len(coverage.get('missing') or []))} ; durée : {e(entry.get('duration_seconds'))} s.</p>"))
         return "\n".join(blocks) + "\n<h3>Revue de code de fin</h3>\n" + ("\n".join(rounds) or "<p>aucune revue de fin rendue</p>")
 
+    # --- 0. since the last judgement (from the second dossier on) ----------------------------
+
+    def since(self) -> str | None:
+        """Each finding Benjamin returned with his last « constats rendus »,
+        what was done about it and the proof (T29, Spec §10, §11). None on
+        the dossier of an Outcome he returned nothing on."""
+        answers = [answer for answer in (self.convoy.get("judgement") or {}).get("answers") or []
+                   if answer.get("response") == "findings"]
+        if not answers:
+            return None
+        last = answers[-1]
+        by_id = {ticket["id"]: ticket for ticket in self.tickets}
+        exception = last.get("exception") or {}
+        rows = []
+        for number, finding in enumerate(last["findings"], start=1):
+            route = finding["route"]
+            if route == "repair":
+                ticket = by_id.get(finding.get("ticket"))
+                if ticket is None:
+                    done, proof = "aucun repair n'est publié pour ce constat", "aucune"
+                else:
+                    done = f"repair {e(ticket['id'])} ({e(ticket.get('title'))}) : {e(status_of(ticket))}"
+                    merge = ticket.get("merge") if isinstance(ticket.get("merge"), dict) else {}
+                    proof = (f"porte de fin de ticket passée ; fusion {e(sha(merge.get('commit')))} dans la branche "
+                             f"d'intégration ; détail sous « Par ticket » et « Hors graphe initial »"
+                             if closed_by_gate(ticket) else "aucune : le repair n'est pas fermé par la porte de fin de ticket")
+                cited = finding.get("cites") or {}
+                done += f" ; rétablit : {e(cited.get('ref'))}"
+            elif route == "planning_exception":
+                resolved = exception.get("resolved")
+                done = ("Planning Exception du lot résolue" if resolved else
+                        "Planning Exception du lot ouverte : la Spec n'exige pas ce comportement, rien n'a été réparé")
+                proof = (f"mots de {e(resolved['approver'])} le {e(resolved['at'])} : « {e(resolved['words'])} »"
+                         if resolved else "aucune")
+            else:
+                done = "proposition créée par la porte des propositions ; hors de cet Outcome, ne bloque pas"
+                proof = f"proposition {e(finding['proposal'])}" if finding.get("proposal") else "aucune : proposition non créée"
+            rows.append(f'<tr data-owner-finding="{number}" data-route="{e(route)}"><td>{number}</td><td>{e(finding["text"])}</td>'
+                        f"<td>{e(ROUTES[route])}</td><td>{done}</td><td>{proof}</td></tr>")
+        return "\n".join((
+            pairs((("Ta réponse", "constats rendus"), ("Tes mots", f"« {e(last['words'])} »"), ("Le", e(last["at"])),
+                   ("Dossier jugé", f"commit {e(sha(last['commit']))}, empreinte {e(last['pack'])}"))),
+            "<table>\n<tr><th>N°</th><th>Constat rendu</th><th>Route</th><th>Ce qui a été fait</th><th>Preuve</th></tr>",
+            "\n".join(rows), "</table>"))
+
     # --- the whole page ---------------------------------------------------------------------
 
     def render(self) -> str:
@@ -954,10 +1002,14 @@ class Page:
                   "\n".join(self.ticket(ticket) for ticket in self.tickets) or f"<p>{NONE}</p>",
                   self.tracked(), self.outside_graph(), self.records(), self.proofs()]
         bodies[2] = bodies[2].replace("<!--delivery-->", self.delivery_limits())
+        rubrics = list(enumerate(zip(RUBRICS, bodies), start=1))
+        since = self.since()
+        if since is not None:
+            rubrics.insert(0, (0, (SINCE, since)))
         sections = "\n".join(
             f'<section id="rubrique-{number}">\n<h2>{number}. {e(title)}</h2>\n{body}\n</section>'
-            for number, (title, body) in enumerate(zip(RUBRICS, bodies), start=1))
-        nav = " · ".join(f'<a href="#rubrique-{number}">{number}. {e(title)}</a>' for number, title in enumerate(RUBRICS, start=1))
+            for number, (title, body) in rubrics)
+        nav = " · ".join(f'<a href="#rubrique-{number}">{number}. {e(title)}</a>' for number, (title, _) in rubrics)
         title = f"Evidence Pack — Spec {self.spec['id']} — commit {sha(self.commit)}"
         return (
             "<!DOCTYPE html>\n<html lang=\"fr\">\n<head>\n<meta charset=\"utf-8\">\n"

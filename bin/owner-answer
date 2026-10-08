@@ -1,0 +1,457 @@
+#!/usr/bin/env python3
+"""Benjamin's answer to the Outcome he judged, and the route of each Owner
+Finding (T29, Spec §11).
+
+    owner-answer verdict CONVOY --proposition ID --verdict VERDICT --approved-by NAME --words TEXT [--repo DIR]
+    owner-answer record  CONVOY --response RESPONSE --approved-by NAME [--words TEXT]
+                         [--commit SHA --pack-digest DIGEST] [--findings PATH] [--reason LINE] [--repo DIR]
+    owner-answer resolve-exception CONVOY --approved-by NAME --words TEXT [--repo DIR]
+
+The one tool that records what the declared human approver of the project
+answers to a Delivered Outcome. Everything is written through
+bin/convoy-state (`gc.flow.judgement`); it replaces the acceptance
+metadata of the cockpit for a convoy of the new flow.
+
+`verdict` records his verdict on one « proposition » of the dossier:
+« à faire avant d'accepter », « plus tard » (code creates a proposition
+through the proposition door; it does not block), « sans suite ».
+
+`record` takes one of three answers, never « refusé », never a partial
+acceptance:
+
+  accepté          with his words, the commit and the fingerprint of the
+                   dossier. Refused if he is not the declared human
+                   approver, if the commit is no longer the tip of the
+                   integration branch, if the dossier is outdated, or if a
+                   proposition has no verdict or is to do before accepting.
+                   It closes and merges nothing.
+  constats rendus  `--findings` is a JSON file {"findings": [...]}; each
+                   Owner Finding is {"text", "cites"?: {"kind", "ref"},
+                   "repair"?: {title, what_it_delivers, demonstration_line,
+                   acceptance_criteria}, "later"?: true}. Code routes each:
+                   it cites a user story or an anchor the Spec holds -> a
+                   `repair` (published by the next pass of
+                   bin/convoy-advance); « later » -> a proposition, created
+                   here through the proposition door; anything else -> the
+                   one Planning Exception of the batch, never a repair.
+                   Nothing closes; the Outcome is no longer Delivered; the
+                   rounds of the end start again from zero.
+  abandonné        with a one-line reason (`--reason`).
+
+`resolve-exception` records, on his words, that the Planning Exception of
+the last batch is resolved; until then the Outcome is not Delivered again.
+
+A refusal writes nothing. Exit codes: 0 done; 1 refused (JSON, `error`
+starts with "refus : "); 3 « état sans règle »; 4 the convoy does not carry
+the new-flow mark.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import unicodedata
+from pathlib import Path
+from typing import Any
+
+PROGRAM = "owner-answer"
+BIN = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
+GC_BIN = os.environ.get("GC_BIN", "gc")
+STATE_TOOL = BIN / "convoy-state"
+PACK_TOOL = BIN / "evidence-pack"
+ESCALATION_TOOL = BIN / "escalation-door"
+PROJECTS = ROOT / "config" / "projects"
+
+PACK_HELD = "à jour"
+# What Benjamin says, as bin/convoy-state stores it.
+RESPONSES = {"accepte": "accepted", "accepted": "accepted", "constats rendus": "findings", "constats": "findings",
+             "findings": "findings", "abandonne": "abandoned", "abandoned": "abandoned", "abandon": "abandoned"}
+RESPONSE_NAMES = {"accepted": "accepté", "findings": "constats rendus", "abandoned": "abandonné"}
+VERDICTS = {"a faire avant d'accepter": "avant", "avant": "avant", "plus tard": "plus_tard", "plus_tard": "plus_tard",
+            "sans suite": "sans_suite", "sans_suite": "sans_suite"}
+VERDICT_NAMES = {"avant": "à faire avant d'accepter", "plus_tard": "plus tard", "sans_suite": "sans suite"}
+ROUTE_NAMES = {"repair": "réparation", "planning_exception": "Planning Exception", "later": "plus tard"}
+# The proposition door holds each line to this length, without identifiers.
+PROPOSAL_LINE = 140
+IDENTIFIER_RE = re.compile(r"\b[a-z]{2,}-[a-z0-9]{2,}\b|#[0-9]+")
+
+EXIT_REFUSED = 1
+EXIT_UNRULED = 3
+EXIT_NOT_NEW_FLOW = 4
+MAX_DETAIL = 300
+
+RIGS_SECTION_RE = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
+RIG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+class Refusal(RuntimeError):
+    """The call is refused, or could not run."""
+
+    def __init__(self, message: str):
+        super().__init__(" ".join(message.split()))
+
+
+class NotNewFlow(RuntimeError):
+    """The convoy does not carry the new-flow mark: bin/convoy-state's answer."""
+
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+def short(text: str, limit: int = MAX_DETAIL) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+# --- the other commands ----------------------------------------------------------
+
+
+def run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+
+
+def detail_of(proc: subprocess.CompletedProcess[str]) -> str:
+    try:
+        said = json.loads(proc.stdout).get("error")
+    except (json.JSONDecodeError, AttributeError):
+        said = None
+    return short(str(said or proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"))
+
+
+def tool(path: Path, *args: str) -> tuple[int, dict[str, Any]]:
+    """One JSON answer of another command of the flow."""
+    proc = run([str(path), *args])
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {detail_of(proc)}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def state_write(command: str, convoy_id: str, *args: str) -> dict[str, Any]:
+    status, answer = tool(STATE_TOOL, command, convoy_id, *args)
+    if status != 0:
+        raise Refusal(f"{refusal_text(answer)} ; rien n'est écrit")
+    return answer
+
+
+def read_bead(bead_id: str) -> dict[str, Any]:
+    proc = run([GC_BIN, "bd", "show", bead_id, "--json"])
+    try:
+        beads = json.loads(proc.stdout) if proc.returncode == 0 else None
+    except json.JSONDecodeError:
+        beads = None
+    if not isinstance(beads, list) or not beads or not isinstance(beads[0], dict):
+        raise Refusal(f"bead {bead_id} illisible : {detail_of(proc)}")
+    return beads[0]
+
+
+def ticket_rig(ticket_id: str) -> str | None:
+    """The single project the ticket names under « Target rigs », or None."""
+    description = read_bead(ticket_id).get("description")
+    match = RIGS_SECTION_RE.search(description if isinstance(description, str) else "")
+    rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
+    if len(rigs) != 1 or not RIG_RE.match(rigs[0]) or not (PROJECTS / f"{rigs[0]}.toml").is_file():
+        return None
+    return rigs[0]
+
+
+def normalized(word: str) -> str:
+    plain = unicodedata.normalize("NFKD", " ".join(word.replace("’", "'").split()).lower())
+    return "".join(char for char in plain if not unicodedata.combining(char))
+
+
+# --- the convoy, its approver and the dossier Benjamin judges -------------------------
+
+
+class Convoy:
+    """A marked convoy as bin/convoy-state renders it."""
+
+    def __init__(self, convoy_id: str, repo: str | None = None):
+        self.id = convoy_id
+        self.given_repo = Path(repo).resolve() if repo else None
+        # The mark is read first: an unmarked convoy is answered as such.
+        status, answer = tool(STATE_TOOL, "show", convoy_id, *(("--repo", str(self.given_repo)) if self.given_repo else ()))
+        if status == EXIT_NOT_NEW_FLOW:
+            raise NotNewFlow(answer)
+        if status == EXIT_UNRULED:
+            raise Refusal(f"état sans règle sur le convoi {convoy_id} : aucune réponse ne s'y enregistre")
+        if status != 0 or not isinstance(answer.get("tickets"), list):
+            raise Refusal(refusal_text(answer))
+        self.tickets: list[dict[str, Any]] = answer["tickets"]
+        self.state: dict[str, Any] = answer["convoy"]
+
+    def rig(self) -> str:
+        rig = ticket_rig(self.tickets[0]["id"]) if self.tickets else None
+        if not rig:
+            raise Refusal(
+                f"l'approbateur humain du convoi {self.id} est inconnu : ses tickets ne nomment pas un seul projet de "
+                "config/projects sous « Target rigs » ; rien n'est écrit")
+        return rig
+
+    def repo(self) -> Path:
+        if self.given_repo is not None:
+            return self.given_repo
+        import tomllib
+        rig = self.rig()
+        try:
+            rig_dir = tomllib.loads((PROJECTS / f"{rig}.toml").read_text(encoding="utf-8")).get("rig_dir")
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise Refusal(f"config/projects/{rig}.toml illisible : {exc}") from exc
+        if not isinstance(rig_dir, str) or not rig_dir:
+            raise Refusal(f"config/projects/{rig}.toml ne déclare pas rig_dir")
+        return (ROOT / rig_dir).resolve()
+
+    def approved_by(self, name: str | None, what: str) -> str:
+        """The declared human approver of the convoy's project, who alone answers."""
+        rig = self.rig()
+        profile = os.environ.get("PROJECT_PLANNING_PROFILE_BIN") or str(BIN / "project-planning-profile")
+        proc = run([profile, "human-approver", "--project", rig, "--config-dir", str(PROJECTS)])
+        try:
+            approver = json.loads(proc.stdout)["human_approver"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise Refusal(f"l'approbateur humain du projet {rig} est inconnu ({detail_of(proc)}) ; rien n'est écrit") from exc
+        if name != approver:
+            raise Refusal(
+                f"{name!r} n'est pas l'approbateur humain déclaré du projet {rig} ({approver!r}) : lui seul {what} ; "
+                "rien n'est écrit")
+        return approver
+
+    def propositions(self) -> dict[str, str]:
+        return {finding["id"]: finding["text"] for ticket in self.tickets for finding in ticket.get("findings") or []
+                if finding.get("classification") == "proposal"}
+
+    def judgement(self) -> dict[str, Any]:
+        return self.state.get("judgement") or {"verdicts": [], "answers": []}
+
+    def delivered(self, what: str) -> dict[str, Any]:
+        delivered = self.state.get("delivered")
+        if not isinstance(delivered, dict) or "commit" not in delivered:
+            raise Refusal(
+                f"le convoi {self.id} n'est pas Delivered : {what} ne s'enregistre que sur un Delivered Outcome ; "
+                "rien n'est écrit")
+        return delivered
+
+    def request_bead(self) -> str | None:
+        request = (self.state.get("acceptance") or {}).get("request")
+        return request["bead"] if isinstance(request, dict) else None
+
+
+def held_dossier(convoy: Convoy, commit: str | None, digest: str | None, said: str) -> dict[str, Any]:
+    """The dossier of the Delivered Outcome, held to what Benjamin judged:
+    the commit he names is its commit and still the tip of the integration
+    branch, the fingerprint he names is its fingerprint, and the Evidence
+    Pack still holds."""
+    delivered = convoy.delivered(said)
+    if not commit or not digest:
+        raise Refusal(
+            f"{said} s'enregistre avec le commit et l'empreinte du dossier jugé (--commit, --pack-digest) ; rien n'est écrit")
+    if commit != delivered["commit"]:
+        raise Refusal(
+            f"le commit {commit[:12]} n'est pas celui du dossier que Benjamin juge sur le convoi {convoy.id} "
+            f"(Delivered au commit {delivered['commit'][:12]}) ; rien n'est écrit")
+    _, pack = tool(PACK_TOOL, "check", convoy.id, "--repo", str(convoy.repo()))
+    tip = pack.get("tip")
+    if isinstance(tip, str) and tip != commit:
+        raise Refusal(
+            f"le commit {commit[:12]} n'est plus la pointe de la branche d'intégration du convoi {convoy.id} "
+            f"(pointe : {tip[:12]}) : le dossier jugé est périmé, un nouveau dossier est généré par la prochaine passe ; "
+            "rien n'est écrit")
+    if digest != delivered["pack"]:
+        raise Refusal(
+            f"l'empreinte {digest} n'est pas celle du dossier du Delivered Outcome du convoi {convoy.id} "
+            f"({delivered['pack']}) ; rien n'est écrit")
+    if pack.get("state") != PACK_HELD or pack.get("commit") != commit or pack.get("digest") != digest:
+        raise Refusal(
+            f"le dossier du convoi {convoy.id} est {pack.get('state') or 'illisible'} ({refusal_text(pack)}) : dossier "
+            "périmé, la réponse ne s'enregistre que sur le dossier à jour ; rien n'est écrit")
+    return delivered
+
+
+# --- the proposition door ---------------------------------------------------------
+
+
+def proposal_line(text: str) -> str:
+    """One line the proposition door takes: no identifier, bounded."""
+    line = " ".join(IDENTIFIER_RE.sub("", text).split())
+    return line if len(line) <= PROPOSAL_LINE else line[:PROPOSAL_LINE - 1] + "…"
+
+
+def create_proposal(convoy: Convoy, text: str, why: str) -> str:
+    """A proposition created by code, through the proposition door."""
+    door = os.environ.get("PROPOSAL_DOOR_BIN") or str(BIN / "proposal-door")
+    payload = {
+        "quoi": proposal_line(text), "pourquoi": proposal_line(why), "langue": "fr", "classe": "decision",
+        "que_faire": [
+            {"option": "Planifier", "consequence": "Le souhait entre dans un Planning Run comme travail nouveau.",
+             "recommande": True, "raison": "Benjamin l'a noté « plus tard » en jugeant un Outcome."},
+            {"option": "Ne pas donner suite", "consequence": "La proposition est rejetée, rien n'est planifié."}],
+        "details": f"Convoi {convoy.id}. Texte entier : {text}"}
+    proc = run([door, "create", json.dumps(payload, ensure_ascii=False)])
+    match = re.search(r"PROPOSITION CRÉÉE: (\S+)", proc.stdout)
+    if proc.returncode != 0 or not match:
+        raise Refusal(f"la porte des propositions n'a pas créé la proposition : {detail_of(proc)}")
+    return match.group(1)
+
+
+def answer_request(convoy: Convoy) -> str | None:
+    """The Acceptance Request no longer waits for Benjamin once he answered."""
+    bead = convoy.request_bead()
+    if bead is None:
+        return None
+    proc = run([str(ESCALATION_TOOL), "clear", bead])
+    return None if proc.returncode == 0 else f"la demande sur {bead} n'a pas été levée à la porte d'escalade : {detail_of(proc)}"
+
+
+# --- the commands --------------------------------------------------------------------
+
+
+def cmd_verdict(args: argparse.Namespace) -> dict[str, Any]:
+    convoy = Convoy(args.convoy, args.repo)
+    verdict = VERDICTS.get(normalized(args.verdict or ""))
+    if verdict is None:
+        raise Refusal(
+            f"verdict inconnu : {args.verdict!r} (attendu : à faire avant d'accepter, plus tard, sans suite) ; rien n'est écrit")
+    approver = convoy.approved_by(args.approved_by, "rend un verdict sur une proposition")
+    convoy.delivered("un verdict")
+    propositions = convoy.propositions()
+    if args.proposition not in propositions:
+        raise Refusal(
+            f"{args.proposition!r} n'est pas une proposition du convoi {convoy.id} "
+            f"(propositions : {', '.join(propositions) or 'aucune'}) ; rien n'est écrit")
+    state_write("record-proposition-verdict", convoy.id, "--proposition", args.proposition, "--verdict", verdict,
+                "--approver", approver, "--words", args.words or "")
+    answer: dict[str, Any] = {"ok": True, "convoy": convoy.id, "proposition": args.proposition, "verdict": verdict,
+                              "verdict_name": VERDICT_NAMES[verdict]}
+    if verdict == "plus_tard":
+        known = next(entry for entry in Convoy(convoy.id, args.repo).judgement()["verdicts"]
+                     if entry["proposition"] == args.proposition)
+        if "proposal" not in known:
+            bead = create_proposal(convoy, propositions[args.proposition],
+                                   "Benjamin a rendu le verdict « plus tard » sur cette proposition du dossier.")
+            state_write("set-verdict-proposal", convoy.id, "--proposition", args.proposition, "--bead", bead)
+            known = {**known, "proposal": bead}
+        answer["proposal"] = known["proposal"]
+    return answer
+
+
+def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
+    convoy = Convoy(args.convoy, args.repo)
+    said = normalized(args.response or "")
+    response = RESPONSES.get(said)
+    if response is None or args.stories:
+        if "refus" in said or said in ("rejete", "rejected"):
+            raise Refusal(
+                "« refusé » n'est pas une réponse : un Outcome qui ne convient pas se rend avec ses constats "
+                "(constats rendus) ou s'abandonne (abandonné) ; rien n'est écrit")
+        if "accept" in said or "partiel" in said or args.stories:
+            raise Refusal(
+                "aucune acceptation partielle : « accepté » porte sur l'Outcome entier, à un commit, tout ou rien ; "
+                "retirer une story passe par une Planning Exception ; rien n'est écrit")
+        raise Refusal(
+            f"réponse inconnue : {args.response!r} (attendu : accepté, constats rendus, abandonné) ; rien n'est écrit")
+    approver = convoy.approved_by(args.approved_by, f"répond « {RESPONSE_NAMES[response]} »")
+    written: dict[str, Any] = {"ok": True, "convoy": convoy.id, "response": response,
+                               "response_name": RESPONSE_NAMES[response], "approver": approver}
+    if response == "abandoned":
+        if not args.reason or not args.reason.strip() or "\n" in args.reason.strip():
+            raise Refusal(
+                "« abandonné » exige une raison d'une ligne (--reason) : absente, vide ou sur plusieurs lignes ; "
+                "rien n'est écrit")
+        state_write("record-owner-answer", convoy.id, "--response", response, "--approver", approver,
+                    "--reason", args.reason.strip())
+    else:
+        name = f"« {RESPONSE_NAMES[response]} »"
+        if not args.words or not args.words.strip():
+            raise Refusal(f"{name} s'enregistre avec les mots de Benjamin (--words), non vides ; rien n'est écrit")
+        held_dossier(convoy, args.commit, args.pack_digest, name)
+        extra = ["--file", args.findings] if response == "findings" and args.findings else []
+        state_write("record-owner-answer", convoy.id, "--response", response, "--approver", approver,
+                    "--words", args.words, "--commit", args.commit, "--pack-digest", args.pack_digest, *extra)
+    last = Convoy(convoy.id, args.repo).judgement()["answers"][-1]
+    if response == "findings":
+        for number, finding in enumerate(last["findings"], start=1):
+            if finding["route"] == "later" and "proposal" not in finding:
+                bead = create_proposal(convoy, finding["text"], "Benjamin l'a noté « plus tard » en rendant ses constats.")
+                state_write("set-owner-proposal", convoy.id, "--finding", str(number), "--bead", bead)
+                finding["proposal"] = bead
+        written["findings"] = [{**finding, "number": number, "route_name": ROUTE_NAMES[finding["route"]]}
+                               for number, finding in enumerate(last["findings"], start=1)]
+        written["next"] = ("Les repairs sont publiés et livrés par la prochaine passe de l'ordre ; la porte de fin de "
+                           "ticket et toute la porte de fin de Spec repassent, puis un nouveau dossier arrive.")
+    written.update({key: last[key] for key in ("commit", "pack", "words", "reason", "at") if key in last})
+    door = answer_request(convoy)
+    if door:
+        written["door"] = door
+    return written
+
+
+def cmd_resolve_exception(args: argparse.Namespace) -> dict[str, Any]:
+    convoy = Convoy(args.convoy, args.repo)
+    approver = convoy.approved_by(args.approved_by, "résout la Planning Exception d'un lot de constats")
+    state_write("resolve-owner-exception", convoy.id, "--approver", approver, "--words", args.words or "")
+    return {"ok": True, "convoy": convoy.id, "exception": Convoy(convoy.id, args.repo).judgement()["answers"][-1]["exception"]}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog=PROGRAM)
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("verdict")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.add_argument("--proposition")
+    p.add_argument("--verdict")
+    p.add_argument("--approved-by")
+    p.add_argument("--words")
+    p.set_defaults(run=cmd_verdict)
+    p = sub.add_parser("record")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.add_argument("--response")
+    p.add_argument("--approved-by")
+    p.add_argument("--words")
+    p.add_argument("--commit")
+    p.add_argument("--pack-digest")
+    p.add_argument("--findings")
+    p.add_argument("--reason")
+    # Named only to be refused: there is no partial acceptance.
+    p.add_argument("--stories", help=argparse.SUPPRESS)
+    p.set_defaults(run=cmd_record)
+    p = sub.add_parser("resolve-exception")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.add_argument("--approved-by")
+    p.add_argument("--words")
+    p.set_defaults(run=cmd_resolve_exception)
+    args = parser.parse_args()
+    try:
+        answer = args.run(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "convoy": args.convoy, "error": f"refus : {exc}"},
+                         indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
