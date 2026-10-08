@@ -340,7 +340,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
         self.two_at_work()
         self.planning_exception(self.ids["T1"])
         self.planning_exception(self.ids["T4"])
-        self.factory_root(bounds={"resumes": 3, "open_planning_exceptions": 3, "green_runs": 3})
+        self.factory_root(bounds={"resumes": 3, "open_planning_exceptions": 3})
 
         answer = self.one_pass()
 

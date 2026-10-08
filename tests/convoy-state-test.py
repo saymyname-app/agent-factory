@@ -3453,7 +3453,7 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_the_bound_of_the_resumes_is_the_one_of_the_delivery_flow_settings(self):
         self.interrupted_ticket()
-        self.bounds(resumes=2, open_planning_exceptions=2, green_runs=3)
+        self.bounds(resumes=2, open_planning_exceptions=2)
 
         self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "a")
         self.assertEqual(1, self.ticket(self.show(), T1)["resumes_left"])
@@ -3467,7 +3467,7 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_a_larger_bound_of_the_resumes_leaves_the_ticket_at_work_after_three(self):
         self.interrupted_ticket()
-        self.bounds(resumes=4, open_planning_exceptions=2, green_runs=3)
+        self.bounds(resumes=4, open_planning_exceptions=2)
         for ref in ("a", "b", "c"):
             self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
 
@@ -3479,7 +3479,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.interrupted_ticket()
         for value in (0, "trois", True, None):
             with self.subTest(value=value):
-                self.bounds(resumes=value, open_planning_exceptions=2, green_runs=3)
+                self.bounds(resumes=value, open_planning_exceptions=2)
                 before = self.tracker.read_bytes()
                 proc = self.run_tool("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "a")
                 self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)

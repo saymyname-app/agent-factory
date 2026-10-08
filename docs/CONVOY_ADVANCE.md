@@ -411,13 +411,17 @@ delivered so far (Spec §8), and no command holds one in its code:
 |---|---|---|---|---|
 | K, resumes of a ticket, every cause together | `bounds.resumes` | 3 | `bin/convoy-state` | at the last one the ticket is parked with its descendants |
 | Planning Exceptions open on a Spec | `bounds.open_planning_exceptions` | 2 | `bin/convoy-advance` | no new ticket of its convoy starts |
-| k, runs in a row at the green step | `bounds.green_runs` | 3 | `bin/tdd-step` | a mixed result is an unstable test |
 
 Each is an integer of at least 1; a missing or malformed one is a refusal
 of the command that reads it (`bounds.<name>` named), never a default. The
 file is the one under `FACTORY_ROOT`; a root that sets no `bounds` at all (a
 synthetic city of the suites) runs under those of the Factory's own file.
 The values are starting ones with no measured basis (Spec, Further Notes 2).
+
+k, the runs in a row of the green step, is not one of them: it is a
+declaration of each project's profile (`launch.k`, Spec §12,
+`docs/PROJECT_PLANNING_PROFILE.md`), read there and nowhere else by
+`bin/tdd-step`; a missing or malformed one refuses the profile.
 
 ### What these stops leave open
 

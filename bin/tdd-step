@@ -64,10 +64,6 @@ STATE_TOOL = BIN / "convoy-state"
 CAPTURE_TOOL = BIN / "evidence-capture"
 LAUNCH_TOOL = BIN / "project-launch"
 PROFILE_TOOL = BIN / "project-planning-profile"
-# Where the bounds of the flow are set (Spec §8), k among them: one file,
-# read by every command that applies one of them.
-SETTINGS = "config/delivery-flow.json"
-BOUND_GREEN_RUNS = "green_runs"
 
 PIECES = {
     "red": "tdd_red", "freeze": "tdd_freeze", "green": "tdd_green",
@@ -675,31 +671,8 @@ def require_test_review(check: Check, files: dict[str, str]) -> None:
             f"({', '.join(differing)})")
 
 
-def flow_bound(name: str) -> int:
-    """One bound of the flow (Spec §8), read where they are all set: `bounds`
-    of config/delivery-flow.json under FACTORY_ROOT, and in the Factory's own
-    file when that root sets none."""
-    bounds = None
-    for root in dict.fromkeys((Path(os.environ.get("FACTORY_ROOT") or BIN.parent), BIN.parent)):
-        try:
-            data = json.loads((root / SETTINGS).read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            continue
-        except (OSError, json.JSONDecodeError) as exc:
-            raise Refusal(f"{SETTINGS} illisible : {exc}") from exc
-        if isinstance(data, dict) and "bounds" in data:
-            bounds = data["bounds"]
-            break
-    value = bounds.get(name) if isinstance(bounds, dict) else None
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise Refusal(f"bounds.{name} absent ou invalide dans {SETTINGS} : {value!r} (attendu : un entier d'au moins 1)")
-    return value
-
-
 def check_green(check: Check) -> dict[str, Any]:
     check.refuse_prefactoring("l'étape verte")
-    # Spec §8, k: the runs in a row of the green step, a bound of the flow.
-    k = flow_bound(BOUND_GREEN_RUNS)
     if "freeze" not in check.tdd:
         raise Refusal("aucun gel enregistré pour ce ticket : le vert se prouve sur des tests gelés (tdd-step freeze)")
     launch = check.launch
@@ -713,6 +686,7 @@ def check_green(check: Check) -> dict[str, Any]:
     ids = unique_ids(registry["criteria"])
     # The tests run as they were frozen, helpers of the test perimeter included.
     tree = check.tests_tree(frozen_commit, check.head)
+    k = launch["k"]
     runs: dict[str, list[str]] = {test_id: [] for test_id in ids}
     asked: dict[str, list[str]] = {test_id: [] for test_id in ids}
     with check.product(check.head) as (address, launch_error):

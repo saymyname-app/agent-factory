@@ -513,8 +513,9 @@ touché : il reste avancé par le Mayor.
   lever un rouge ni créer un `repair` à la main.**
 - **Les bornes se règlent à un seul endroit** : `bounds` de
   `config/delivery-flow.json` — `resumes` (K, 3), `open_planning_exceptions`
-  (2), `green_runs` (k, 3). Changer une valeur change le comportement à la
-  passe suivante ; une valeur absente ou mal formée est un refus.
+  (2). Changer une valeur change le comportement à la passe suivante ; une
+  valeur absente ou mal formée est un refus. k (exécutions au vert) se règle
+  par projet, dans son profil (`launch.k`).
 - **Relecture des tests restée sans résultat** : la même passe la relance une
   fois, puis arrête le ticket et le fait remonter dans
   `./bin/escalation-door list` (`./bin/test-review settle`), sans qu'aucune

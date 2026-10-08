@@ -1972,7 +1972,7 @@ class ConvoyAdvanceTest(unittest.TestCase):
     def test_the_bound_of_the_open_planning_exceptions_is_the_one_of_the_settings(self):
         for bound, exceptions, started in ((1, (self.A,), []), (3, (self.A, self.B), [self.D])):
             with self.subTest(bound=bound):
-                self.three_at_work(bounds={"resumes": 3, "open_planning_exceptions": bound, "green_runs": 3})
+                self.three_at_work(bounds={"resumes": 3, "open_planning_exceptions": bound})
                 for ticket_id in exceptions:
                     self.planning_exception(ticket_id)
 
@@ -1984,7 +1984,7 @@ class ConvoyAdvanceTest(unittest.TestCase):
     def test_a_malformed_bound_of_the_open_planning_exceptions_refuses_the_pass_and_starts_nothing(self):
         for value in (0, "deux", None):
             with self.subTest(value=value):
-                self.four_tickets(ceiling=3, bounds={"resumes": 3, "open_planning_exceptions": value, "green_runs": 3})
+                self.four_tickets(ceiling=3, bounds={"resumes": 3, "open_planning_exceptions": value})
                 before = self.tracker.read_bytes()
 
                 answer = self.advance(CONVOY, expect=EXIT_REFUSED)

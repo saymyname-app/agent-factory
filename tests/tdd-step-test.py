@@ -561,33 +561,6 @@ class TddStepTest(unittest.TestCase):
                          {test["id"]: test["runs"] for test in proof["tests"]})
         self.assertEqual({"tdd_red", "tdd_freeze", "tdd_green"}, self.verified())
 
-    def flow_bounds(self, **bounds):
-        """A Factory root whose delivery-flow settings give these bounds (T21)."""
-        root = self.tmp / "factory-root"
-        (root / "config").mkdir(parents=True, exist_ok=True)
-        (root / "config" / "delivery-flow.json").write_text(json.dumps({"bounds": bounds}))
-        return {**self.env, "FACTORY_ROOT": str(root)}
-
-    def test_green_runs_the_frozen_tests_as_many_times_as_the_bound_of_the_flow_says(self):
-        self.frozen()
-        self.commit("code du ticket", {APP: self.green_app()})
-
-        self.ok("green", env=self.flow_bounds(resumes=3, open_planning_exceptions=2, green_runs=2))
-
-        _, proof = self.piece("tdd_green")
-        self.assertEqual(("green", 2), (proof["verdict"], proof["k"]))
-        self.assertEqual({COUNT_ID: ["passed"] * 2, HEALTH_ID: ["passed"] * 2},
-                         {test["id"]: test["runs"] for test in proof["tests"]})
-
-    def test_green_is_refused_on_a_malformed_bound_of_the_runs(self):
-        self.frozen()
-        self.commit("code du ticket", {APP: self.green_app()})
-
-        error = self.refused("green", env=self.flow_bounds(resumes=3, open_planning_exceptions=2, green_runs=0))
-
-        self.assertIn("bounds.green_runs", error)
-        self.assertNotIn("green", self.ticket_state()["tdd"])
-
     def test_green_refused_without_a_freeze(self):
         self.commit_tests()
         self.red()
