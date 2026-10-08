@@ -11,6 +11,7 @@
 #   ci-runner status [--local] [--json]  where CI runs and whether the runner is up
 #   ci-runner pause [--now]              no new job (--now: kill the running one too)
 #   ci-runner resume                     take jobs again
+#   ci-runner mode                       where runs go now: prints self-hosted or github
 #   ci-runner mode self-hosted|github    where the next runs go (a repository variable)
 #   ci-runner install                    the operator's half: the broker's user service
 #   ci-runner remove                     undo `install` and send CI back to GitHub's runners
@@ -141,7 +142,14 @@ cmd_mode() {
     github)
       "$GH" variable delete "$VARIABLE" --repo "$r" 2>/dev/null || true
       echo "the next runs of $r go to GitHub's runners (billed). A run already waiting for the host's runner does not move: cancel it and re-run it (gh run cancel <id>; gh run rerun <id>)" ;;
-    *) die "mode self-hosted|github" ;;
+    "")
+      # What an agent asks before a pull request (docs/DELIVERY.md, "What to
+      # run before a pull request"). Anything but a clear answer is not
+      # "self-hosted": in doubt the whole battery runs.
+      local mode
+      mode=$("$GH" api "repos/$r/actions/variables/$VARIABLE" --jq .value 2>/dev/null) || mode=
+      if [ "$mode" = self-hosted ]; then echo self-hosted; else echo github; fi ;;
+    *) die "mode [self-hosted|github]" ;;
   esac
 }
 
