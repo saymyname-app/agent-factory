@@ -11,11 +11,27 @@ on:
 
 permissions:
   contents: read
+  # The job named "Tests" reads the result of the other lots of its own run.
+  actions: read
+
+# The tests run in LOTS lots, one runner each (bin/ci-run-tests --shard).
+# Lot 1 is the job named "Tests": the one status check the repository
+# ruleset requires and bin/pr-autopilot gates on. It exists from the first
+# second of the run, as before, and ends green only when its own lot and
+# every other lot passed -- a job that merely waited on the lots (`needs`)
+# would report nothing while they run, which the autopilot reads as "no
+# status check ever reported".
+env:
+  LOTS: 4
 
 jobs:
   tests:
-    name: Tests
+    name: ${{ matrix.lot == 1 && 'Tests' || format('Lot {0}', matrix.lot) }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lot: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
 
@@ -63,5 +79,28 @@ jobs:
       # runner does not have) opts out with a `# ci: local-only — <reason>`
       # marker instead; tests/ci-registration-test.sh (run below, discovered
       # like any other test) fails closed on a file that does neither.
-      - name: Discover and run every registered test
-        run: bin/ci-run-tests
+      - name: Discover and run every registered test of this lot
+        run: bin/ci-run-tests --shard "${{ matrix.lot }}/$LOTS"
+
+      - name: Wait for the other lots
+        if: matrix.lot == 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          others=$((LOTS - 1))
+          for _ in $(seq 1 360); do
+            jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.name | startswith("Lot ")) | {name, status, conclusion}]') || jobs='[]'
+            total=$(jq length <<<"$jobs")
+            running=$(jq '[.[] | select(.status != "completed")] | length' <<<"$jobs")
+            if [ "$total" -eq "$others" ] && [ "$running" -eq 0 ]; then
+              jq -r '.[] | "\(.name): \(.conclusion)"' <<<"$jobs"
+              [ "$(jq '[.[] | select(.conclusion != "success")] | length' <<<"$jobs")" -eq 0 ] && exit 0
+              echo "a lot failed: see its own job for the failing test" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "the other lots did not finish within an hour" >&2
+          exit 1
