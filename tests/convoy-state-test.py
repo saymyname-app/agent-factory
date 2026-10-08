@@ -2973,6 +2973,229 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual(before, self.tracker.read_text())
 
+    # --- resumes counted and bounded, a parking lifted, one grouped request (T20) ---
+
+    def interrupted_ticket(self, session="auteur-1"):
+        """A started ticket whose author session declared an interruption."""
+        self.seed_chain()
+        self.ok("record-gate", CONVOY, T1, "--gate", "dispatch")
+        self.ok("set-session", CONVOY, T1, "--session", session)
+        self.ok("set-exit", CONVOY, T1, "--exit", "interrupted")
+
+    def resumes(self, ticket_id=T1):
+        return self.ticket(self.show(), ticket_id)["counters"]["resumes"]
+
+    def test_open_resume_counts_one_resume_records_it_and_clears_the_exit_it_replaces(self):
+        self.interrupted_ticket()
+
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "session:auteur-1")
+
+        ticket = self.ticket(self.show(), T1)
+        self.assertEqual(1, ticket["counters"]["resumes"])
+        self.assertEqual(0, ticket["counters"]["correction_rounds"])
+        self.assertIsNone(ticket["exit"])
+        self.assertEqual(2, ticket["resumes_left"])
+        [entry] = ticket["resume"]["entries"]
+        self.assertEqual(("interrupted", "session:auteur-1", "auteur-1", "interrupted", []),
+                         (entry["cause"], entry["ref"], entry["session"], entry["exit"]["exit"], entry["launches"]))
+
+    def test_open_resume_again_for_the_same_fact_counts_nothing_more(self):
+        self.interrupted_ticket()
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "session:auteur-1")
+        before = self.tracker.read_text()
+
+        answer = self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "session:auteur-1")
+
+        self.assertEqual({}, answer["written"])
+        self.assertEqual(before, self.tracker.read_text())
+        self.assertEqual(1, self.resumes())
+
+    def test_every_cause_of_resume_adds_to_the_same_counter(self):
+        self.interrupted_ticket()
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "session:auteur-1")
+        self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
+        self.ok("open-resume", CONVOY, T1, "--cause", "unblocked", "--ref", "exit:2")
+
+        ticket = self.ticket(self.show(), T1)
+
+        self.assertEqual(3, ticket["counters"]["resumes"])
+        self.assertEqual(0, ticket["resumes_left"])
+        self.assertEqual(["interrupted", "returned", "unblocked"], [e["cause"] for e in ticket["resume"]["entries"]])
+
+    def test_open_resume_refuses_what_is_not_a_resume_and_writes_nothing(self):
+        self.interrupted_ticket()
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T1, "--cause", "fatigue", "--ref", "x", mention="cause de reprise")
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T1, "--cause", "interrupted", mention="repère de la reprise")
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T2, "--cause", "interrupted", "--ref", "x", mention="porte de dispatch")
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, "fx-absent", "--cause", "interrupted", "--ref", "x", mention="n'appartient pas")
+
+    def test_open_resume_refuses_a_stopped_a_parked_a_closed_or_an_exhausted_ticket(self):
+        self.interrupted_ticket()
+        self.ok("record-gate", CONVOY, "fx-t4", "--gate", "dispatch")
+        self.ok("stop-ticket", CONVOY, "fx-t4", "--reason", "still_refused", "--detail", "encore refusé")
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, "fx-t4", "--cause", "interrupted", "--ref", "x", mention="arrêté")
+        for ref in ("a", "b", "c"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "d", mention="reprises épuisées")
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 reprises")
+        self.assert_refused_and_nothing_written(
+            "open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "d", mention="parqué")
+
+    def test_launch_resume_records_the_one_session_a_resume_is_sent_to(self):
+        self.interrupted_ticket()
+        self.assert_refused_and_nothing_written("launch-resume", CONVOY, T1, "--bead", "fx-new1", mention="aucune reprise")
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "session:auteur-1")
+
+        self.ok("launch-resume", CONVOY, T1, "--bead", "fx-new1")
+
+        [entry] = self.ticket(self.show(), T1)["resume"]["entries"]
+        self.assertEqual(["fx-new1"], [launch["bead"] for launch in entry["launches"]])
+        self.assertEqual(1, self.resumes())
+        self.assert_refused_and_nothing_written("launch-resume", CONVOY, T1, "--bead", "fx-new2", mention="déjà")
+        self.assert_refused_and_nothing_written("launch-resume", CONVOY, T1, "--bead", "pas un bead", mention="bead")
+
+    def test_a_ticket_is_parked_for_exhausted_resumes_only_once_they_are(self):
+        self.interrupted_ticket()
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "a")
+        self.assert_refused_and_nothing_written(
+            "park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "x", mention="reprises")
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes", "--counter", "correction_rounds")
+        self.ok("bump-counter", CONVOY, "--ticket", T1, "--counter", "resumes")
+
+        answer = self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 reprises")
+
+        self.assertEqual([T1, T2, "fx-t3"], answer["parked"])
+        shown = self.show()
+        self.assertEqual(("resumes_exhausted", T1), tuple(self.ticket(shown, "fx-t3")["park"][k] for k in ("cause", "origin")))
+        self.assertIsNone(self.ticket(shown, "fx-t4")["park"])
+
+    def test_lift_park_unparks_the_ticket_and_those_it_parked_and_keeps_the_record(self):
+        self.seed_chain()
+        self.ok("park", CONVOY, T1, "--cause", "operator_request", "--detail", "Accès à l'horloge")
+        self.ok("park", CONVOY, "fx-t4", "--cause", "operator_request", "--detail", "Autre accès")
+
+        answer = self.ok("lift-park", CONVOY, T1, "--request", T1, "--option", "a")
+
+        self.assertEqual([T1, T2, "fx-t3"], answer["lifted"])
+        shown = self.show()
+        for ticket_id in (T1, T2, "fx-t3"):
+            self.assertIsNone(self.ticket(shown, ticket_id)["park"], ticket_id)
+        self.assertEqual("operator_request", self.ticket(shown, "fx-t4")["park"]["cause"])
+        [lift] = self.ticket(shown, T1)["park_lifts"]
+        self.assertEqual(("operator_request", "Accès à l'horloge", T1, "a"),
+                         (lift["cause"], lift["detail"], lift["request"], lift["option"]))
+        self.assertEqual([], self.ticket(shown, T2)["park_lifts"])
+
+    def test_lifting_an_exhausted_ticket_gives_it_its_resumes_back_without_erasing_the_count(self):
+        self.interrupted_ticket()
+        for ref in ("a", "b", "c"):
+            self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", ref)
+        self.ok("park", CONVOY, T1, "--cause", "resumes_exhausted", "--detail", "3 reprises")
+
+        self.ok("lift-park", CONVOY, T1, "--request", "fx-new1", "--option", "a")
+
+        ticket = self.ticket(self.show(), T1)
+        self.assertEqual(3, ticket["counters"]["resumes"])
+        self.assertEqual(3, ticket["resumes_left"])
+        self.ok("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "d")
+        self.assertEqual(2, self.ticket(self.show(), T1)["resumes_left"])
+
+    def test_a_ticket_that_still_waits_for_another_parked_one_stays_parked_behind_it(self):
+        self.seed(tickets=(T1, T2, "fx-t3"))
+        state = self.tracker_state()
+        state["beads"]["fx-t3"]["blocks"] = [T1, T2]
+        self.tracker.write_text(json.dumps(state))
+        self.ok("mark", CONVOY)
+        self.ok("park", CONVOY, T1, "--cause", "operator_request", "--detail", "Accès")
+        self.ok("park", CONVOY, T2, "--cause", "planning_exception", "--detail", "Question")
+
+        answer = self.ok("lift-park", CONVOY, T1, "--request", T1)
+
+        self.assertEqual([T1], answer["lifted"])
+        park = self.ticket(self.show(), "fx-t3")["park"]
+        self.assertEqual(("planning_exception", T2), (park["cause"], park["origin"]))
+
+    def test_lift_park_refuses_a_ticket_that_parked_nothing_and_writes_nothing(self):
+        self.seed_chain()
+        self.assert_refused_and_nothing_written("lift-park", CONVOY, T1, "--request", T1, mention="n'est pas parqué")
+        self.ok("park", CONVOY, T1, "--cause", "operator_request", "--detail", "Accès")
+        self.assert_refused_and_nothing_written("lift-park", CONVOY, T2, "--request", T2, mention="parqué par")
+        self.assert_refused_and_nothing_written("lift-park", CONVOY, T1, mention="demande")
+        self.assert_refused_and_nothing_written("lift-park", CONVOY, T1, "--request", T1, "--option", "ab", mention="option")
+
+    def test_show_renders_the_answer_given_to_the_request_of_a_parked_ticket(self):
+        self.seed_chain()
+        self.ok("park", CONVOY, T1, "--cause", "operator_request", "--detail", "Accès")
+        self.assertIsNone(self.ticket(self.show(), T1)["park"]["answer"])
+        # What bin/escalation-door repondre writes on the ticket.
+        self.edit_tracker(T1, **{"gc.needs_benjamin": "none", "gc.escalation_response_option": "b",
+                                 "gc.escalation_response_at": "2999-01-01T00:00:00Z"})
+
+        shown = self.show()
+
+        self.assertEqual({"option": "b", "at": "2999-01-01T00:00:00Z"}, self.ticket(shown, T1)["park"]["answer"])
+        # The answer is the one of the ticket that was asked, not of those behind it.
+        self.assertIsNone(self.ticket(shown, T2)["park"]["answer"])
+
+    def test_an_answer_older_than_the_parking_or_a_request_still_open_is_no_answer(self):
+        self.seed_chain()
+        self.ok("park", CONVOY, T1, "--cause", "operator_request", "--detail", "Accès")
+        self.edit_tracker(T1, **{"gc.needs_benjamin": "none", "gc.escalation_response_option": "b",
+                                 "gc.escalation_response_at": "2000-01-01T00:00:00Z"})
+        self.assertIsNone(self.ticket(self.show(), T1)["park"]["answer"])
+        self.edit_tracker(T1, **{"gc.needs_benjamin": "Accès", "gc.escalation_response_at": "2999-01-01T00:00:00Z"})
+        self.assertIsNone(self.ticket(self.show(), T1)["park"]["answer"])
+
+    def test_the_grouped_request_of_a_convoy_is_recorded_read_back_and_cleared(self):
+        self.ok("mark", CONVOY)
+        self.assertIsNone(self.show()["convoy"]["grouped_request"])
+
+        self.ok("record-grouped-request", CONVOY, "--bead", "fx-new1", "--signature", DIGEST, "--lift-option", "a",
+                "--lifts", T1)
+
+        record = self.show()["convoy"]["grouped_request"]
+        self.assertEqual(("fx-new1", DIGEST, "a", [T1]),
+                         (record["bead"], record["signature"], record["lift_option"], record["lifts"]))
+        self.ok("clear-grouped-request", CONVOY)
+        self.assertIsNone(self.show()["convoy"]["grouped_request"])
+
+    def test_record_grouped_request_refuses_a_malformed_record_and_writes_nothing(self):
+        self.ok("mark", CONVOY)
+        self.assert_refused_and_nothing_written("record-grouped-request", CONVOY, "--bead", "pas un bead", mention="bead")
+        self.assert_refused_and_nothing_written(
+            "record-grouped-request", CONVOY, "--bead", "fx-new1", "--signature", "abc", mention="digest")
+        self.assert_refused_and_nothing_written(
+            "record-grouped-request", CONVOY, "--bead", "fx-new1", "--lifts", T1, mention="option")
+
+    def test_a_resume_a_lift_or_a_grouped_request_written_outside_the_command_is_a_state_without_rule(self):
+        self.ok("mark", CONVOY)
+        self.edit_tracker(T1, **{"gc.flow.resume": json.dumps({"entries": [{"cause": "fatigue"}]}),
+                                 "gc.flow.park_lifts": "x"})
+        self.edit_tracker(CONVOY, **{"gc.flow.grouped_request": json.dumps({"bead": "pas un bead", "at": "x"})})
+
+        shown = self.show(expect=EXIT_UNRULED)
+
+        self.assertEqual({"gc.flow.resume", "gc.flow.park_lifts"},
+                         {entry["field"] for entry in self.ticket(shown, T1)["unruled"]})
+        self.assertEqual(["gc.flow.grouped_request"], [entry["field"] for entry in shown["convoy"]["unruled"]])
+
+    def test_resume_lift_and_grouped_request_on_an_unmarked_convoy_write_nothing(self):
+        before = self.tracker.read_text()
+        for command in (("open-resume", CONVOY, T1, "--cause", "interrupted", "--ref", "x"),
+                        ("launch-resume", CONVOY, T1, "--bead", "fx-new1"),
+                        ("lift-park", CONVOY, T1, "--request", T1),
+                        ("record-grouped-request", CONVOY, "--bead", "fx-new1"),
+                        ("clear-grouped-request", CONVOY)):
+            proc = self.run_tool(*command)
+            self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)
+            self.assertEqual(before, self.tracker.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
