@@ -5037,6 +5037,14 @@ def judgement_of(metadata: dict[str, Any]) -> dict[str, Any]:
     return judgement_record(metadata[KEY_JUDGEMENT]) if KEY_JUDGEMENT in metadata else {"verdicts": [], "answers": []}
 
 
+def owner_answer_of(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    """Benjamin's last answer on a convoy, from the metadata of its bead; None
+    without one, or on a record this command would not have written. For
+    the readers that hold a bead and run no command (the cockpit)."""
+    judgement = stored_or_none(metadata.get(KEY_JUDGEMENT), judgement_record)
+    return judgement["answers"][-1] if judgement and judgement["answers"] else None
+
+
 def propositions_of(tickets: list[dict[str, Any]]) -> dict[str, str]:
     """Each « proposition pour Benjamin » of the convoy and its text: the
     findings « hors ticket » the Evaluator of the end kept as a proposal."""
