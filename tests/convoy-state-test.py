@@ -3022,6 +3022,33 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(0, ticket["resumes_left"])
         self.assertEqual(["interrupted", "returned", "unblocked"], [e["cause"] for e in ticket["resume"]["entries"]])
 
+    def test_the_commit_of_a_returned_ticket_resumed_by_code_invalidates_its_verdicts_without_a_second_resume(self):
+        judged, base = self.integrated()
+        self.ok("record-gate", CONVOY, T1, "--gate", "dispatch")
+        self.edit_tracker(T1, status="in_progress")
+        for kind in ("code_review", "evaluation"):
+            self.ok("set-verdict", CONVOY, T1, "--kind", kind, "--state", "favorable", "--commit", judged)
+        self.ok("set-merge", CONVOY, T1, "--outcome", "conflict", "--ticket-commit", judged, "--integration", base)
+        self.ok("open-resume", CONVOY, T1, "--cause", "returned", "--ref", "merge:1")
+        tip = self.commit_on("ticket/t1")
+
+        answer = self.ok("invalidate-verdicts", CONVOY, T1, "--tip", tip, "--kind", "code_review", "--kind", "evaluation")
+
+        self.assertEqual(["code_review", "evaluation"], answer["invalidated"])
+        self.assertEqual(1, self.resumes())
+
+    def test_a_commit_on_a_returned_ticket_no_resume_was_opened_for_still_counts_one_resume(self):
+        judged, base = self.integrated()
+        self.ok("record-gate", CONVOY, T1, "--gate", "dispatch")
+        self.edit_tracker(T1, status="in_progress")
+        self.ok("set-verdict", CONVOY, T1, "--kind", "code_review", "--state", "favorable", "--commit", judged)
+        self.ok("set-merge", CONVOY, T1, "--outcome", "red", "--ticket-commit", judged, "--integration", base,
+                "--commit", ABSENT_COMMIT)
+
+        self.ok("invalidate-verdicts", CONVOY, T1, "--tip", self.commit_on("ticket/t1"), "--kind", "code_review")
+
+        self.assertEqual(1, self.resumes())
+
     def test_open_resume_refuses_what_is_not_a_resume_and_writes_nothing(self):
         self.interrupted_ticket()
         self.assert_refused_and_nothing_written(

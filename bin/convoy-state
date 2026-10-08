@@ -3395,11 +3395,20 @@ def cmd_invalidate_verdicts(args: argparse.Namespace) -> int:
     resume for it, in one tracker write. A verdict already invalidated is
     left as it is and counts nothing more. Verdicts given at the commit of
     the correction round count nothing either: the commit that outdates
-    them is that round, which `open-correction` counted among the resumes."""
+    them is that round, which `open-correction` counted among the resumes.
+    Nor do verdicts given at the commit the merge returned, once code has
+    resumed the ticket for that return (T20): `open-resume` counted it."""
     ticket = marked_ticket(args.convoy, args.ticket)
     metadata = metadata_of(ticket)
     tip = valid_commit(args.tip, "pointe de la branche du ticket")
     corrected = correction_record(metadata[KEY_CORRECTION])["commit"] if KEY_CORRECTION in metadata else None
+    returned = None
+    if KEY_MERGE in metadata and KEY_RESUME in metadata:
+        merge = merge_record(metadata[KEY_MERGE])
+        if merge["outcome"] != "merged" and any(
+                entry["cause"] == "returned" and entry["at"] >= merge["at"]
+                for entry in resume_record(metadata[KEY_RESUME])["entries"]):
+            returned = merge["ticket_commit"]
     judged: set[str] = set()
     if not args.kind:
         raise Refusal("genre de verdict absent : --kind nomme chaque verdict à invalider")
@@ -3417,7 +3426,7 @@ def cmd_invalidate_verdicts(args: argparse.Namespace) -> int:
             judged.add(record["commit"])
     invalidated = [key[len(VERDICT_PREFIX):] for key in values]
     if values:
-        if judged != {corrected}:
+        if judged != {corrected} and judged != {returned}:
             # It counts as a resume (K), not as the correction round.
             resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
             values[COUNTER_PREFIX + "resumes"] = resumes + 1
