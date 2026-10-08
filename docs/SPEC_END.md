@@ -1,4 +1,4 @@
-# The end-of-Spec gate (T23, Spec af-wf4w5r §9, points 1 to 3)
+# The end-of-Spec gate (T23, T25; Spec af-wf4w5r §9, points 1 to 4)
 
 ## What it is for
 
@@ -7,7 +7,9 @@ not the Spec being verified. Once every ticket of the convoy is closed, code
 renders three mechanical verdicts, in this order, **all tied to one commit**
 of the integration branch that holds the tip of the protected branch. No
 agent renders them, and no agent sets a deviation or a « non fait » aside
-(user stories 56 and 59).
+(user stories 56 and 59). On that same commit the gate then reads a fourth
+condition it does not render: the end code review of the whole assembled
+diff (T25, user story 58; `docs/SPEC_END_REVIEW.md`).
 
 A convoy **without** the mark is not concerned: the gate answers « pas un
 convoi du nouveau flux » (exit 4) and writes nothing.
@@ -24,18 +26,23 @@ is not red (`docs/CONVOY_ADVANCE.md`).
 To know where the end of a Spec stands, run `check`: each condition has a
 verdict and one line that says what was read.
 
-## The three conditions (list `spec-end/v1`)
+## The conditions (list `spec-end/v2`)
 
 | # | Name | Met when |
 | --- | --- | --- |
 | 1 | `registry` | Every ticket is closed by the ticket-end gate (`docs/TICKET_END.md`) or withdrawn from the graph by a resolved Planning Exception; none is parked; every deviation and every « non fait » of a Ticket Handoff is in a final state, « réparé » or « accepté par Benjamin »; no Planning Exception is open. |
 | 2 | `tests` | The integration branch has taken up the protected branch and the regression command of the project's profile ends with code 0 on that tip (`bin/spec-integration take-up`, `docs/SPEC_INTEGRATION.md`). |
 | 3 | `fidelity` | On that same tip, the mechanical fidelity check is green on every anchor of every prototyped state, for every screen of the profile (`bin/prototype-fidelity check`, `docs/PROTOTYPE_FIDELITY.md`). A deviation on an anchor a resolved Planning Exception accepted is not an open one. A convoy none of whose tickets names a Validated Prototype passes with « sans objet ». |
+| 4 | `end_review` | On that same commit, the end code review of the whole diff of the integration branch against the protected branch is complete and favorable (`bin/spec-end-review`, `docs/SPEC_END_REVIEW.md`). Read in the tracker, not rendered by the gate. Absent, running, stopped without a verdict, made on another commit, or with a Blocking Finding: not met, and the detail says which. |
 
 A condition that is not met stops the gate there: the following ones are
-**not launched** (`not_run`). Changing the list means a new version.
-`bin/convoy-state` holds the same names and refuses a record that is not the
-three conditions of the version it knows, all passing.
+**not launched** (`not_run`). Changing the list means a new version
+(`spec-end/v1` was the first three alone). Conditions 1 to 3 are the
+**mechanical verdicts**: the gate renders them and records them as soon as
+the three are green, the fourth still missing — the end review is made on
+the commit of that record. `bin/convoy-state` holds the same three names and
+refuses a record that is not those three conditions of the version it knows,
+all passing.
 
 ## The registry: tracked elements
 
@@ -95,7 +102,7 @@ and the tip of the protected branch that commit holds:
 
 ```json
 {"at": "…", "commit": "<tip of the integration branch>", "protected": "<tip of the protected branch>",
- "version": "spec-end/v1",
+ "version": "spec-end/v2",
  "conditions": [{"number": 1, "name": "registry", "verdict": "pass", "detail": "…"}, "… three entries"],
  "records": {"tests": {"command": "…", "exit_code": 0, "commit": "…"}, "fidelity": {"commit": "…", "prototypes": ["…"]}}}
 ```
@@ -106,7 +113,10 @@ now: as soon as the integration branch holds one commit more, or the
 protected branch moved, the three verdicts are `stale` (« périmés ») and
 everything is to replay. `run` on the tip the verdicts were rendered on
 replays nothing and writes nothing (`replayed: false`); on another tip it
-runs the three conditions again and rewrites the record.
+runs the three conditions again and rewrites the record. Condition 4 is
+read against the same commit: a round of the end review made on another
+commit never stands for it (« revue de fin liée à un autre commit »), and
+the review is made again in full on the new tip.
 
 ## Refusals and exit status
 
@@ -117,7 +127,7 @@ and for `run` what it did (`refused`, `requests`, `red`, `end_rounds`,
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | The three verdicts are green and hold on the current tip. |
+| 0 | The four conditions are met on the current tip: three green verdicts recorded on it, and a favorable end review of that commit. |
 | 1 | Refused, or a condition is not met: it is named (`condition N (label) non réunie : …`). |
 | 3 | The convoy is in an « état sans règle »: no verdict. |
 | 4 | The convoy does not carry the mark. |
@@ -126,6 +136,10 @@ and for `run` what it did (`refused`, `requests`, `red`, `end_rounds`,
   or `GC_SESSION_ID` set), whatever its role. `check` is open to anyone.
 - `run` is refused while the integration branch is red, and on a convoy
   without an integration branch.
+- Three green verdicts with the end review missing: exit 1, the three
+  verdicts are recorded (or kept, `replayed: false`), and `error` names
+  condition 4 with what was read. `check` renders condition 4 only when the
+  three before it are green on the tip, `not_run` otherwise.
 - A registry that refuses writes nothing but the request to the operator,
   once. `check` never writes.
 - In the answer of `bin/convoy-advance`, a condition that is not met is an
@@ -153,13 +167,12 @@ and for `run` what it did (`refused`, `requests`, `red`, `end_rounds`,
 - **The repair of tracked elements is written by code** from the text of the
   Handoff: one criterion, on the entry point of the ticket's demonstration
   line. A sharper criterion is a Planning Exception, as for any ticket.
-- **The gate verifies; it accepts nothing and closes nothing.** The final
-  code review, the Outcome Evaluation and the acceptance by Benjamin are
-  T25, T24 and later tickets; the round counted here is not yet compared to
-  a bound.
-- **The Fixture City Oracle has no scenario for the end of a Spec**, and no
-  isolated-city trial runs the gate under the real controller and order:
-  on the real tracker only the state writes were replayed (Proof).
+- **The gate verifies; it accepts nothing and closes nothing.** The Outcome
+  Evaluation and the acceptance by Benjamin are T24 and later tickets; the
+  round counted here is not yet compared to a bound.
+- **The Fixture City Oracle has no scenario for the end of a Spec.** The
+  gate runs under the real controller and order in one isolated-city trial,
+  the one of the end review (Proof).
 
 ## Proof
 
@@ -178,6 +191,10 @@ and for `run` what it did (`refused`, `requests`, `red`, `end_rounds`,
 - `tests/convoy-advance-test.py`: the gate run by the pass once every ticket
   is closed and not before, a registry refusal and red tests as outcomes, a
   gate that cannot run as a failure.
+- `tests/spec-end-review-test.py` and
+  `tests/spec-end-review-isolated-city-test.sh` (local-only): condition 4,
+  the second under the real controller, order and tracker
+  (`docs/SPEC_END_REVIEW.md`).
 - `tests/spec-integration-test.py` (`take-up`), `tests/convoy-state-test.py`
   (tracked elements, `--item`, `set-item-repair`, `record-spec-end`,
   `--check`, `--end-round`).
