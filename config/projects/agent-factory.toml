@@ -42,7 +42,12 @@ sling_target = "factory-worker"
 # ticket either: only bin/correction-round dispatches it, with --role author,
 # to send the findings of the code review and of the Ticket Evaluation of a
 # refused ticket to one fresh author session, once (docs/CORRECTION_ROUND.md).
-formulas = "mol-do-work,mol-graph-review,mol-ticket-author,mol-test-review,mol-code-review,mol-ticket-evaluation,mol-ticket-correction"
+# mol-ticket-resume (T20, af-y9pw9z) is the resume formula of the new flow:
+# only bin/convoy-advance dispatches it, with --role author, to send a ticket
+# whose author must take it again (interrupted, returned by the merge,
+# unblocked, answered) to one fresh author session on the same branch; each
+# resume is counted, the third parks the ticket (docs/CONVOY_ADVANCE.md).
+formulas = "mol-do-work,mol-graph-review,mol-ticket-author,mol-test-review,mol-code-review,mol-ticket-evaluation,mol-ticket-correction,mol-ticket-resume"
 # human_approver (A6b W04) is this project's declared human approver:
 # bin/spec-approve refuses to approve a Spec bead whose --approved-by is
 # anyone else, read via `bin/project-planning-profile human-approver`.

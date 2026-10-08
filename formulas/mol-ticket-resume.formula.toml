@@ -1,0 +1,147 @@
+description = """
+Resume — one fresh author session takes a ticket again, on the same branch,
+where the session before it left it (T20, af-y9pw9z; Spec af-wf4w5r §5, §8,
+user story 52).
+
+Only `bin/convoy-advance` dispatches this formula, through
+`bin/dispatch-door --role author` (`config/delivery-flow.json`,
+`resume.formula`), on a bead of its own that names the convoy, the ticket
+and the cause. The pass counted the resume before it sent it
+(`bin/convoy-state open-resume`): a ticket is resumed for an interrupted
+session, a ticket the merge returned, a repair that is closed or a request
+that was answered, and at its third resume, every cause together, it is
+parked with every ticket that waits for it instead of being sent here.
+
+The session is new: it knows of the ticket only what the tracker and the
+branch hold. It works in the work tree of the ticket, on the ticket branch,
+and never opens a pull request.
+
+What the session says closes nothing. It leaves by a Ticket Exit
+(`bin/ticket-exit`), which refuses « terminé » without the proofs at the tip
+of the branch; after it, code decides from the tracker and the branch: a
+commit added after a verdict makes the code review and the Ticket
+Evaluation replay in full on the new tip, the merge and the ticket-end gate
+follow. A session that ends without an exit is read as interrupted, and
+counted. The stored state and the bound are in docs/CONVOY_ADVANCE.md.
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|--------------|
+| convoy_id | runtime | Input convoy tracking the single resume bead |
+"""
+formula = "mol-ticket-resume"
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "resume"
+title = "Resume one ticket on its branch, where the session before left it"
+description = """
+You are the author who resumes one ticket. Another session worked on it and
+left; you start from what the tracker and the ticket branch hold, never
+from scratch.
+
+**1. Take the ticket and read where it stands:**
+
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+RESUME_BEAD=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+[ -n "$RESUME_BEAD" ] || { echo "mol-ticket-resume requires an input convoy with exactly one tracked member" >&2; exit 1; }
+RESUME_TEXT=$(gc bd show "$RESUME_BEAD" --json | jq -r '.[0].description')
+CONVOY=$(printf '%s\n' "$RESUME_TEXT" | sed -n 's/^convoy: //p')
+TICKET=$(printf '%s\n' "$RESUME_TEXT" | sed -n 's/^ticket: //p')
+CAUSE=$(printf '%s\n' "$RESUME_TEXT" | sed -n 's/^cause: //p')
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+START=$("$FACTORY_ROOT/bin/ticket-author" start "$CONVOY" "$TICKET")
+WORKTREE=$(printf '%s' "$START" | jq -r '.worktree'); BASE=$(printf '%s' "$START" | jq -r '.base')
+PROFILE=$(printf '%s' "$START" | jq -r '.profile')
+INTEGRATION=$(printf '%s' "$START" | jq -r '.integration_branch')
+"$FACTORY_ROOT/bin/ticket-exit" read "$CONVOY" "$TICKET"
+"$FACTORY_ROOT/bin/convoy-state" show "$CONVOY" --repo "$WORKTREE" | jq --arg t "$TICKET" \\
+  '.tickets[] | select(.id == $t) | {resume, resumes_left, park_lifts, merge, tdd, verdicts, handoff, tip}'
+for STEP in workspace red code demonstration exit; do
+  "$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step "$STEP"
+done
+cd "$WORKTREE"
+```
+
+`start` gives you the work tree of the ticket, on its branch, with every
+commit the session before pushed; if it refuses, stop: do not create a work
+tree or a branch by hand. The gates tell you which steps of the sequence
+already hold at the tip of the branch (docs/TICKET_AUTHOR.md) and which do
+not: do only what is missing. Read the ticket, the partial Ticket Handoff
+the session before left (`.handoff`), and the Spec the ticket names in full.
+Work only in the work tree.
+
+**2. Do what the cause asks** (`$CAUSE`):
+
+- `interrupted` — the session before stopped, or ended without an exit.
+  Go on from the first gate that refuses, in the order of the sequence: red
+  proven, reviewed and frozen, then code, then the demonstration line.
+- `returned` — the merge into the integration branch returned the ticket
+  (`.merge.outcome`): `conflict`, or `red` when the profile's tests failed
+  on the merged result. Bring the integration branch into your branch
+  (`git fetch origin && git merge "origin/$INTEGRATION"`), resolve the
+  conflict or correct what the merged result breaks, and commit. That commit
+  comes after the verdicts: the code review and the Ticket Evaluation replay
+  in full on your tip.
+- `unblocked` — the repair the ticket waited for is closed: its Ticket
+  Handoff is among `.blocker_handoffs`. Go on as for `interrupted`.
+- `answered` — the operator answered the request that parked the ticket:
+  `.park_lifts` names the request (`request`) and the letter of the option
+  taken (`option`); read the request and its answer with
+  `gc bd show <request> --json`. Do what the answer says, and nothing it
+  does not say.
+
+The rules of the author hold: follow the `tdd` and `codebase-design`
+skills; you write the code yourself, no writing sub-agent; a frozen test is
+changed by `bin/tdd-step amend` only, once; a behaviour the Spec or another
+ticket fixes is not yours to change. Commit, then prove the ticket at the
+tip of its branch, as its author does (docs/TICKET_AUTHOR.md):
+
+```bash
+# vertical_slice, repair
+"$FACTORY_ROOT/bin/tdd-step" green "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" --dataset <a dataset of the profile>
+"$FACTORY_ROOT/bin/ticket-author" demonstrate "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" \\
+  --dataset <a dataset of the profile> -- <command that observes the demonstration line>
+# prefactoring
+"$FACTORY_ROOT/bin/tdd-step" prefactoring "$CONVOY" "$TICKET" --repo "$WORKTREE" --profile "$PROFILE" --base "$BASE"
+```
+
+**3. Leave by a Ticket Exit, never in free text** (docs/TICKET_EXIT.md).
+« terminé », with your Ticket Handoff of the whole ticket as it now stands
+— the four sections, each with content or `"aucun"` — in a JSON file
+outside the work tree:
+
+```bash
+"$FACTORY_ROOT/bin/ticket-exit" exit "$CONVOY" "$TICKET" --exit finished --repo "$WORKTREE" --handoff <handoff.json>
+```
+
+If you cannot finish, take the exit that fits instead: `planning_exception`,
+`operator_request`, `technically_blocked`, or `interrupted` when you must
+stop before the end. Each resume is counted: at the third the ticket is
+parked with those that wait for it (`.resumes_left`), so do not leave a
+ticket `interrupted` that you could finish.
+
+You do not close the ticket, open a pull request or merge anything: review,
+evaluation, the merge and the ticket-end gate follow, by code.
+
+**4. Close and end the session:**
+
+```bash
+"$FACTORY_ROOT/bin/ticket-author" release "$CONVOY" "$TICKET" || true
+gc bd update "$RESUME_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Resume of $TICKET ($CAUSE) done."
+if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$RESUME_BEAD" ]; then
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Resume of $TICKET ($CAUSE) done."
+fi
+gc runtime drain-ack
+```
+
+If you could not take a Ticket Exit at all, close both the same way with
+`gc.outcome=fail` and the reason in the notes: code reads the ticket as
+interrupted, and counts it.
+
+**Exit criteria:** the ticket carries the Ticket Exit of this session at the
+tip of its branch, and the resume bead and this step are closed."""
