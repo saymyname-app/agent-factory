@@ -54,8 +54,14 @@ export GC_HOME="$TRIAL/h" XDG_RUNTIME_DIR="$TRIAL/r" GC_DISABLE_USAGE_METRICS=1
 cleanup() {
   status=$?
   trap - EXIT
-  gc --city "$CITY" stop >/dev/null 2>&1 || true
-  gc supervisor stop >/dev/null 2>&1 || true
+  # `gc supervisor stop` names no supervisor: it stops the one GC_HOME points
+  # at. Nothing is stopped unless that is this trial's own.
+  case "${GC_HOME:-}" in
+    "$TRIAL"/*)
+      gc --city "$CITY" stop >/dev/null 2>&1 || true
+      gc supervisor stop >/dev/null 2>&1 || true
+      ;;
+  esac
   # The supervisor and the city's managed Dolt server carry the trial
   # directory on their command line; nothing else does.
   pkill -f -- "$TRIAL/" >/dev/null 2>&1 || true
