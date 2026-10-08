@@ -43,9 +43,11 @@ echo "ok   a malformed or out-of-range lot is refused"
 
 # The workflow runs every lot of the number it names, and lot 1 keeps the
 # name the ruleset and bin/pr-autopilot require.
-lots=$(sed -n 's/^  LOTS: *\([0-9][0-9]*\) *$/\1/p' "$CI")
+# On GitHub's runners, that is: the host's own runner takes one job at a time
+# and runs lot 1/1 (tests/ci-runner-test.sh).
+lots=$(sed -n "s/^  LOTS: .*|| '\([0-9][0-9]*\)' }} *\$/\1/p" "$CI")
 [ -n "$lots" ] || fail "$CI does not name its number of lots (env LOTS)"
-matrix=$(sed -n 's/^ *lot: *\[\(.*\)\] *$/\1/p' "$CI" | tr -d ' ')
+matrix=$(sed -n "s/^ *lot: .*|| '\[\(.*\)\]') }} *\$/\1/p" "$CI" | tr -d ' ')
 [ "$matrix" = "$(seq -s, 1 "$lots")" ] || fail "$CI runs lots [$matrix] but names $lots lots: a lot would run nowhere"
 grep -qF 'bin/ci-run-tests --shard "${{ matrix.lot }}/$LOTS"' "$CI" || fail "$CI does not run its matrix lot out of LOTS"
 grep -qF "matrix.lot == 1 && 'Tests'" "$CI" || fail "$CI no longer names lot 1 \"Tests\", the required status check"

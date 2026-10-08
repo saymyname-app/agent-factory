@@ -63,6 +63,44 @@ funnel status` reports `(tailnet only)` before relying on or resetting the
 route, so public exposure fails visibly and unrelated tailnet routes are not
 removed accidentally.
 
+## Factory CI on the host's own runner
+
+Since af-r1ymfm the jobs of Factory CI can run on the operator's PC
+(`docs/OPERATIONS.md`, same title). A pull request's code is then code
+running on that PC: the boundary below is what keeps it from the operator's
+files, his tokens and the live Factory.
+
+Who can make it run: whoever can open a pull request on the repository from
+a branch of the repository itself, that is the operator and the Factory's
+agents. The repository is private; keep "run workflows from fork pull
+requests" off in its Actions settings (GitHub's default for a private
+repository). **Never register this runner on a public repository**: remove
+it first (af-5vjm1h).
+
+| Layer | What it stops | Held by |
+|---|---|---|
+| A dedicated user, `factory-ci`: no sudo, no password, no shell, no group but its own | Reading the operator's home (mode 750: the live Factory, `.gc`, Beads' data, the `gh` and provider tokens); Docker's socket | `config/ci-runner/root-install` |
+| A rootless container per job, nothing of the host mounted, removed after the job | The Windows disks (`/mnt/c` is readable by every user of WSL), the runner's own files, anything a previous job left | `config/ci-runner/runner-loop` (no `-v`, `--rm`) |
+| The container's own network, `allow_host_loopback=false` | The host's `127.0.0.1`: Beads' Dolt server (root without password), the supervisor and its dashboard, the Cockpit | same |
+| The service's address filter | The private networks around the host: the Windows side, the local network, the tailnet | `IPAddressDeny` in `config/ci-runner/factory-ci-runner.service` |
+| No sudo in the image, a non-root user in the container | Root, even inside the container | `config/ci-runner/Containerfile` |
+| The service's limits | Taking the PC: 4 cores, 4 GB, low priority | same service file; `Delegate=yes` keeps Podman, and so the job, inside the service (without it Podman moves to its user's session, out of every limit and of the address filter) |
+| The operator's token stays with the operator | Registering runners, reading the repository's secrets | `bin/ci-runner broker` hands over only a configuration for one job |
+
+What it does not stop, and why that is accepted:
+
+- A job reaches the internet (it must reach GitHub) and holds the
+  `GITHUB_TOKEN` of its run: read access to the repository, as on a GitHub
+  runner.
+- A job holds the credentials of its own just-in-time runner while it runs.
+  They serve that one job and GitHub forgets the runner afterwards.
+- A flaw of the Linux kernel reachable by an unprivileged user would let a
+  job out of its container. The same holds for every agent session on this
+  host; WSL2 is not a security boundary either (above).
+- The isolation probe is a step of the workflow, and a pull request can edit
+  its own workflow: the probe proves the box on every honest run, the layers
+  above are the box.
+
 ## Human gates
 
 Human approval is reserved for:

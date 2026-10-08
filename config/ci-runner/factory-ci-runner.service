@@ -1,0 +1,45 @@
+# Factory CI on the host's own runner (docs/OPERATIONS.md, af-r1ymfm).
+# Installed by config/ci-runner/root-install as
+# /etc/systemd/system/factory-ci-runner.service; @OPERATOR@ and @UID@ are
+# filled in there. tests/ci-runner-test.sh holds the limits below.
+[Unit]
+Description=Factory CI: one job at a time, each in its own rootless container
+After=network-online.target user@@UID@.service
+Wants=network-online.target user@@UID@.service
+
+[Service]
+User=factory-ci
+WorkingDirectory=/var/lib/factory-ci
+Environment=HOME=/var/lib/factory-ci XDG_RUNTIME_DIR=/run/user/@UID@
+# The hand-off directory belongs to the operator, who writes the one-job
+# runner configuration there; the runner's user can only read it.
+ExecStartPre=+/usr/bin/install -d -o @OPERATOR@ -g factory-ci -m 2750 /run/factory-ci-runner
+ExecStart=/usr/local/lib/factory-ci-runner/runner-loop
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+# Rootless Podman moves itself into a scope of its user's own session unless
+# it owns the control group it starts in -- and there none of the limits
+# below would hold (seen 2026-10-08: the job on 12 cores, outside the address
+# filter). Delegate gives it this one; the isolation probe counts the cores.
+Delegate=yes
+
+# The share of the PC (Benjamin, 2026-10-08: 4 cores, 4 GB, one job at a
+# time, low priority). The cores are named, so `nproc` answers 4 in the job
+# and the tests run four at once.
+AllowedCPUs=8-11
+MemoryMax=4G
+MemorySwapMax=512M
+CPUWeight=20
+IOWeight=20
+Nice=10
+TasksMax=8192
+
+# Internet, not the house: a job reaches GitHub, never the private networks
+# around the host (the Windows side, the local network, the tailnet). The
+# container's own network (10.0.2.0/24) and the host's resolver stay open.
+IPAddressAllow=10.0.2.0/24 10.255.255.254
+IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10
+
+[Install]
+WantedBy=multi-user.target

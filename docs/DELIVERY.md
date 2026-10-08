@@ -360,7 +360,9 @@ diagnosis and a second run, and can send a red or a retry to GitHub.
 How it holds: `bin/ci-run-tests` takes `/tmp/agent-factory-ci-run-tests-<uid>.lock`
 through `flock --close` and runs itself under it, so the lock belongs to the
 battery and to nothing a test leaves behind, and it goes when the battery
-ends, however it ends. `--list`, a GitHub runner (one run per machine) and a
+ends, however it ends. `--list`, a GitHub runner (one run per machine), a job
+of the host's own runner (boxed and held to 4 cores and 4 GB:
+`docs/OPERATIONS.md`, "Factory CI on the host's own runner") and a
 `ci-run-tests` started from inside a battery (the tests of the runner) do not
 wait. Proof: `tests/ci-run-tests-host-queue-test.sh`.
 
