@@ -148,6 +148,15 @@ are in: one `repair` per user story it did not observe, and one per finding
 (bin/convoy-state set-outcome-repair). Such a repair starts, merges and
 closes like any ticket; the gate then renders its verdicts on the new tip
 and the product is evaluated again.
+In the same pass, on the commit of those three verdicts, it has the whole
+assembled diff of the Spec reviewed (T25, af-ji2ruy; Spec §6 « Fin de
+Spec », §9 point 4), through bin/spec-end-review settle: one reviewer
+session, one relaunch, then the stop of the review. The gate reads that
+review as its sixth condition. Each Blocking Finding comes with the
+`repair` its reviewer drafted: the pass publishes it through the patch door
+as any added ticket and names it on the finding (bin/convoy-state
+set-end-review-repair); merged, it moves the tip and the review is made
+again in full.
 
 Every answer is one JSON object on stdout. Exit status: 0 the pass is done
 (what it started is listed, possibly nothing); 1 refused or could not run,
@@ -196,6 +205,7 @@ EVALUATION_BIN = BIN / "ticket-evaluation"
 CORRECTION_BIN = BIN / "correction-round"
 TICKET_END_BIN = BIN / "ticket-end"
 SPEC_END_BIN = BIN / "spec-end"
+END_REVIEW_BIN = BIN / "spec-end-review"
 OUTCOME_BIN = BIN / "outcome-evaluation"
 PUBLISH_BIN = BIN / "ticket-graph-publish"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
@@ -1331,6 +1341,71 @@ def settle_spec_end(convoy: Convoy, closing: dict[str, Any] | None) -> dict[str,
     return result
 
 
+def publish_end_review_repairs(convoy: Convoy, due: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Spec §6, « Fin de Spec »: a Blocking Finding of the end review
+    becomes a `repair` its reviewer drafted. Code publishes each draft
+    through the patch door, as any added ticket, and names the ticket on
+    its finding; a draft the door refuses is recorded on the finding with
+    the reason, and bin/spec-end-review raises it to the operator."""
+    done = []
+    for entry in due:
+        finding, repair = entry["finding"], entry["repair"]
+        try:
+            published = publish_repair(
+                convoy, repair, f"revue de fin, {finding}",
+                f"Blocking Finding {finding} de la revue de code de fin au commit {str(entry['commit'])[:12]}",
+                f"du constat {finding} de la revue de fin", f"sa revue de fin ({finding})")
+        except Refusal as exc:
+            try:
+                state_write("set-end-review-repair", convoy.id, "--finding", finding, "--refused", one_line(str(exc), 500))
+                done.append({"finding": finding, "refused": f"refus : {exc}"})
+            except Refusal as second:
+                done.append({"finding": finding, "error": f"refus : {exc} ; {second}"})
+            continue
+        try:
+            state_write("set-end-review-repair", convoy.id, "--finding", finding, "--ticket", published["id"])
+            done.append({**published, "finding": finding})
+        except Refusal as exc:
+            done.append({**published, "finding": finding, "error": f"refus : {exc}"})
+    return done
+
+
+def settle_end_review(convoy: Convoy) -> dict[str, Any] | None:
+    """Spec §6, §9 point 4: code, and no agent, has the assembled diff of
+    the Spec reviewed once the three mechanical verdicts of the end are
+    green, through bin/spec-end-review settle -- in the pass that recorded
+    them, on their commit -- and publishes the repairs drafted for its
+    Blocking Findings. None while a ticket is open or the integration
+    branch is red."""
+    try:
+        if not convoy.end_due():
+            return None
+        if not convoy.rig:
+            raise Refusal(f"les tickets du convoi {convoy.id} ne nomment pas un seul projet connu de config/projects : "
+                          "le dépôt de sa branche d'intégration est inconnu")
+        answer = parsed(run([str(END_REVIEW_BIN), "settle", convoy.id, "--repo", str(convoy.repo)]),
+                        f"spec-end-review settle {convoy.id}")
+    except (Refusal, NotNewFlow) as exc:
+        return {"error": f"refus : {exc}"}
+    if not isinstance(answer, dict):
+        return {"error": f"refus : spec-end-review settle {convoy.id} a rendu une réponse illisible"}
+    kept = ("action", "commit", "base", "outcome", "blocking", "bead", "launches", "deadline", "extent", "stop",
+            "raised", "reason", "error")
+    result = {name: answer[name] for name in kept if name in answer}
+    if answer.get("action") == "deferred":
+        # A launch the dispatch door defers is retried by the next pass.
+        return result
+    if result.get("action") == "waiting" and "error" not in result:
+        # Not due yet (the gate has not rendered its verdicts on the tip): nothing to say.
+        return None
+    due = answer.get("repairs_due")
+    if isinstance(due, list) and due:
+        result["repairs"] = publish_end_review_repairs(convoy, due)
+        if any("error" not in entry and "refused" not in entry for entry in result["repairs"]):
+            convoy.load()
+    return result
+
+
 # --- the pass ----------------------------------------------------------------
 
 
@@ -1656,6 +1731,11 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         outcome = settle_outcome_evaluation(convoys[result["id"]])
         if outcome is not None:
             result["outcome_evaluation"] = outcome
+        # On the commit of those verdicts, in the same pass: the end code
+        # review of the whole assembled diff, and the repairs it drafted.
+        end_review = settle_end_review(convoys[result["id"]])
+        if end_review is not None:
+            result["end_review"] = end_review
 
     unruled = any("unruled" in result for result in results)
     # A ticket returned or refused by the merge is an outcome of the pass; a
@@ -1667,6 +1747,8 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         or any("error" in entry for entry in result.get("outcome_repairs", []))
         or "error" in result.get("outcome_evaluation", {})
         or any(key in result.get("spec_end", {}) for key in ("error", "message"))
+        or "error" in result.get("end_review", {})
+        or any("error" in entry for entry in result.get("end_review", {}).get("repairs", []))
         or any(key in result.get("integration", {}) for key in ("error", "message"))
         or any(key in result.get("test_review", {}) for key in ("error", "refused"))
         or any(key in result.get("code_review", {}) for key in ("error", "refused"))

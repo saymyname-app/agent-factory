@@ -2019,9 +2019,9 @@ class ConvoyAdvanceTest(unittest.TestCase):
     # --- the end of the Spec: the gate is run by the pass (T23, af-s5uysn), and the
     # --- assembled product evaluated once its mechanical verdicts are green (T24) ---
 
-    GATE = "spec-end/v2"
+    GATE = "spec-end/v3"
     MECHANICAL_GREEN = {"registry": "pass", "tests": "pass", "fidelity": "pass"}
-    NOT_LAUNCHED = {"outcome_evaluation": "not_run", "findings": "not_run"}
+    NOT_LAUNCHED = {"outcome_evaluation": "not_run", "findings": "not_run", "end_review": "not_run"}
 
     def outcome_of(self, answer, convoy=CONVOY):
         return next(c for c in answer["convoys"] if c["id"] == convoy).get("outcome_evaluation")
@@ -2045,8 +2045,36 @@ class ConvoyAdvanceTest(unittest.TestCase):
         for ticket_id in (T1, T2, T3):
             if ticket_id not in but:
                 self.close_through_gate(ticket_id)
+        self.end_reviewed("favorable")
         self.write_log.write_text("")
         return self.git("rev-parse", self.INTEGRATION)
+
+    def end_reviewed(self, *plan, timeout_seconds=3600):
+        """The end code review of the Spec (T25): its settings, the Spec the
+        convoy delivers, and what the reviewer session does at each launch
+        (tests/fixtures/spec-end-review/reviewer), the last one repeated."""
+        state = self.tracker_state()
+        state["beads"]["fx-spec"] = {"title": "Spec d'essai", "status": "open", "issue_type": "task",
+                                     "description": f"## User Stories\n\n1. {self.END_SPEC_LINE}"}
+        self.tracker.write_text(json.dumps(state))
+        (self.tmp / "end-review-plan.json").write_text(json.dumps(list(plan), ensure_ascii=False))
+        self.env.update({
+            "SPEC_END_REVIEW_DISPATCH_DOOR_BIN": str(ROOT / "tests" / "fixtures" / "spec-end-review" / "reviewer"),
+            "SPEC_END_REVIEW_FAKE_LOG": str(self.tmp / "end-review-door.log"),
+            "SPEC_END_REVIEW_FAKE_PLAN": str(self.tmp / "end-review-plan.json"),
+            "SPEC_END_REVIEW_FAKE_REPO": str(self.root),
+        })
+        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
+        settings["end_review"] = {"formula": "mol-end-review", "role": "reviewer", "rig": "fx-rig",
+                                  "timeout_seconds": timeout_seconds}
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+
+    def end_review_of(self, answer, convoy=CONVOY):
+        return next(c for c in answer["convoys"] if c["id"] == convoy).get("end_review")
+
+    def end_review_launches(self):
+        log = self.tmp / "end-review-door.log"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
     def regression(self, command):
         path = self.root / "config" / "project-descriptors" / "fx.json"
@@ -2062,10 +2090,12 @@ class ConvoyAdvanceTest(unittest.TestCase):
         # The three mechanical verdicts are rendered and recorded; the gate
         # waits for the Outcome Evaluation of that commit, which is no failure.
         ending = self.spec_end_of(answer)
-        self.assertEqual({**self.MECHANICAL_GREEN, "outcome_evaluation": "fail", "findings": "not_run"}, ending["verdicts"])
-        self.assertEqual((self.GATE, tip, True, [4]),
+        self.assertEqual({**self.MECHANICAL_GREEN, "outcome_evaluation": "fail", "findings": "not_run", "end_review": "fail"},
+                         ending["verdicts"])
+        self.assertEqual((self.GATE, tip, True, [4, 6]),
                          (ending["version"], ending["commit"], ending["replayed"], ending["missing"]))
         self.assertIn("aucune Outcome Evaluation rendue", ending["reason"])
+        self.assertIn("revue de fin absente", ending["reason"])
         self.assertTrue(answer["ok"])
         record = self.convoy_shown()["spec_end"]
         self.assertEqual((tip, self.GATE), (record["commit"], record["version"]))
@@ -2096,11 +2126,12 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertEqual([("favorable", tip)], [(entry["outcome"], entry["commit"]) for entry in rounds])
         self.assertEqual([1], [story["number"] for story in rounds[0]["stories"]])
 
-        # Every story observed with its piece: the five conditions are met.
+        # Every story observed with its piece, the end review favorable: the six conditions are met.
         second = self.advance(CONVOY)
 
         ending = self.spec_end_of(second)
-        self.assertEqual({**self.MECHANICAL_GREEN, "outcome_evaluation": "pass", "findings": "pass"}, ending["verdicts"])
+        self.assertEqual({**self.MECHANICAL_GREEN, "outcome_evaluation": "pass", "findings": "pass", "end_review": "pass"},
+                         ending["verdicts"])
         self.assertEqual(([], False), (ending["missing"], ending["replayed"]))
         self.assertNotIn("reason", ending)
         self.assertIsNone(self.outcome_of(second))
@@ -2252,6 +2283,105 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertFalse(answer["ok"])
         self.assertNotIn("verdicts", self.spec_end_of(answer) or {})
         self.assertEqual(before, self.tracker.read_bytes())
+
+
+    # --- the end of the Spec: the end code review is settled by the pass (T25, af-ji2ruy) ---
+
+    END_SPEC_LINE = "As Benjamin, I want la liste triée par date, so that je voie d'abord le plus récent."
+    END_BLOCKING = {
+        "axis": "spec", "blocking": True, "summary": "Deux tickets se contredisent sur le tri de la liste.",
+        "citation": {"source": "spec", "quote": END_SPEC_LINE},
+        "repair": {"title": "Trier la liste par date",
+                   "what_it_delivers": "La liste est triée par date, quel que soit l'en-tête.",
+                   "restores": {"kind": "spec_line", "ref": END_SPEC_LINE},
+                   "demonstration_line": "Sur le produit lancé, la liste est triée par date.",
+                   "acceptance_criteria": [{"entry_point": "GET /", "observable": "la liste triée par date",
+                                            "false_if": "une ligne plus ancienne précède une plus récente"}]}}
+
+    def test_the_pass_that_renders_the_mechanical_verdicts_launches_the_end_review_on_their_commit(self):
+        tip = self.every_ticket_closed()
+
+        answer = self.advance(CONVOY)
+
+        review = self.end_review_of(answer)
+        self.assertEqual(("launched", tip, 1), (review["action"], review["commit"], review["launches"]))
+        self.assertEqual(self.spec_end_of(answer)["commit"], review["commit"])
+        self.assertEqual([[review["bead"], "--rig", "fx-rig", "--formula", "mol-end-review", "--role", "reviewer"]],
+                         self.end_review_launches())
+        # In parallel with the Outcome Evaluation (Spec §9, point 4): the same pass launches both, on the same commit.
+        evaluation = self.outcome_of(answer)
+        self.assertEqual(("launched", tip), (evaluation["action"], evaluation["commit"]))
+        shown = self.convoy_shown()["end_review"]
+        self.assertEqual({"commit": tip, "outcome": "favorable", "unsettled": []}, shown["state"])
+        # Favorable on the tip, the stories observed: the gate passes its six conditions, and nothing is launched again.
+        again = self.advance(CONVOY)
+        self.assertEqual({**self.MECHANICAL_GREEN, "outcome_evaluation": "pass", "findings": "pass", "end_review": "pass"},
+                         self.spec_end_of(again)["verdicts"])
+        self.assertEqual("reviewed", self.end_review_of(again)["action"])
+        self.assertEqual(1, len(self.end_review_launches()))
+        self.assertTrue(again["ok"])
+
+    def test_no_end_review_is_settled_while_a_ticket_is_open_or_the_gate_refuses_before_its_verdicts(self):
+        self.every_ticket_closed(but=(T3,))
+        self.assertIsNone(self.end_review_of(self.advance(CONVOY)))
+        self.close_through_gate(T3)
+        self.regression("false")
+
+        answer = self.advance(CONVOY)
+
+        # Red tests: no verdict on the tip, so no review of it.
+        self.assertIsNone(self.end_review_of(answer))
+        self.assertEqual([], self.end_review_launches())
+        self.assertIsNone(self.convoy_shown()["end_review"])
+
+    def test_an_end_review_without_result_is_an_outcome_of_the_pass_then_stopped_and_raised_once(self):
+        self.every_ticket_closed()
+        self.end_reviewed("silent", timeout_seconds=0)
+
+        actions = []
+        for _ in range(3):
+            answer = self.advance(CONVOY)
+            self.assertTrue(answer["ok"], answer)
+            actions.append(self.end_review_of(answer)["action"])
+
+        self.assertEqual(["launched", "relaunched", "stopped"], actions)
+        stop = self.convoy_shown()["end_review"]["stop"]
+        self.assertEqual("end_review_no_result", stop["reason"])
+        listed = [line for line in self.run_ok(ESCALATION, "list").stdout.splitlines()
+                  if line.strip().startswith(f"{stop['bead']} ")]
+        self.assertEqual(1, len(listed), listed)
+        self.assertIn("arrêtée sans verdict", self.spec_end_of(self.advance(CONVOY))["reason"])
+
+    def test_an_end_review_that_cannot_be_settled_fails_the_pass_and_says_why(self):
+        self.every_ticket_closed()
+        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
+        del settings["end_review"]
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED)
+
+        self.assertFalse(answer["ok"])
+        self.assertIn("end_review", self.end_review_of(answer)["error"])
+
+    def test_a_drafted_repair_the_patch_door_cannot_take_is_recorded_on_its_finding_then_raised(self):
+        tip = self.every_ticket_closed()
+        self.end_reviewed({"findings": [self.END_BLOCKING]})
+        self.assertEqual("launched", self.end_review_of(self.advance(CONVOY))["action"])
+
+        # This convoy was not published by the publication door: the patch door has nothing to revise.
+        answer = self.advance(CONVOY)
+
+        review = self.end_review_of(answer)
+        self.assertEqual((["F1.1"], ["F1.1"]), (review["blocking"], [entry["finding"] for entry in review["repairs"]]))
+        self.assertIn("porte de patch", review["repairs"][0]["refused"])
+        self.assertTrue(answer["ok"])
+        finding = self.convoy_shown()["end_review"]["rounds"][0]["findings"][0]
+        self.assertIn("porte de patch", finding["repair_refused"])
+        # The next pass stops the review on that tip and raises it once.
+        stopped = self.end_review_of(self.advance(CONVOY))
+        self.assertEqual(("stopped", "end_review_repair_refused"), (stopped["action"], stopped["stop"]))
+        self.assertEqual(tip, self.convoy_shown()["end_review"]["stop"]["commit"])
+        self.assertEqual({"end_rounds": 1}, self.convoy_shown()["counters"])
 
 
 if __name__ == "__main__":

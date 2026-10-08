@@ -485,9 +485,10 @@ next.
 ## The assembled product is evaluated once the mechanical verdicts are green (T24)
 
 Spec §7 and §9, points 4 and 5 (`docs/OUTCOME_EVALUATION.md`). The gate now
-holds five conditions (`spec-end/v2`): with three green mechanical verdicts
-and no favorable Outcome Evaluation at their commit, `spec_end` carries
-`missing: [4]` and its `reason` — an outcome of the pass, which exits 0.
+holds six conditions (`spec-end/v3`; the sixth is the end code review,
+below): with three green mechanical verdicts and no favorable Outcome
+Evaluation at their commit, `spec_end` names condition 4 in `missing` and in
+its `reason` — an outcome of the pass, which exits 0.
 
 - **After the gate**, the pass hands the convoy to `bin/outcome-evaluation
   settle` with the repository and the profile of its project, when the gate
@@ -530,6 +531,34 @@ not run, or a launch the door refused, fails the pass (exit 1). A
 convoy with nothing due is not handed over, and a stopped convoy (« état
 sans règle ») is settled no more than it is started.
 
+## The end code review of the assembled diff (T25)
+
+Spec §6 « Fin de Spec », §9 point 4: right after the gate, in the same pass,
+a convoy whose every ticket is closed and whose integration branch is not
+red is handed to `bin/spec-end-review settle` (`docs/SPEC_END_REVIEW.md`).
+The review is so launched by the pass that recorded the three mechanical
+verdicts, on their commit — the pass, and the commit, the Outcome Evaluation
+is launched in and on (T24): the two are made in parallel. Until the review
+is favorable there, `spec_end` carries the refusal of condition 6 in its
+`reason`.
+
+The entry of the convoy carries `end_review` whenever something is due or
+done: `action` (`launched`, `relaunched`, `pending`, `deferred`, `reviewed`,
+`stopped`, `escalated`), the `commit`, and with it `bead`, `launches`,
+`deadline`, `extent`, `outcome`, `blocking`, `stop`, `raised`. A review that
+is not due yet is not listed.
+
+**Drafted repairs.** On a review with Blocking Findings whose repair is not
+published yet, the pass publishes each draft of the reviewer through the
+patch door, as any added ticket, and names the ticket on its finding
+(`bin/convoy-state set-end-review-repair --ticket`): `end_review.repairs`
+lists `{id, key, draft, published, finding}`. The repair then follows the
+flow of any ticket, started by the next pass. A draft the door refuses is
+written on the finding (`--refused`) and listed with `refused`: it is an
+outcome of the pass, and the next pass stops the review and raises it to the
+operator. A settlement that could not run, or a repair that was published
+but could not be named on its finding, is an `error`: the pass exits 1.
+
 ## Answers
 
 Every answer is one JSON object on stdout: the ceiling, the sessions counted
@@ -553,14 +582,15 @@ correction round was opened, awaited or ended in a stop, `fidelity` when it
 measured an interface ticket, `ticket_end` when the gate settled merged
 tickets, `item_repairs` when the pass published the repair of tracked
 elements, `spec_end` when it ran the end-of-Spec gate (T23),
-`outcome_repairs` when it published what the Evaluator of the end drafted
-and `outcome_evaluation` when it settled the Outcome Evaluation (T24). A stopped convoy carries `signal`,
+`outcome_repairs` when it published what the Evaluator of the end drafted,
+`outcome_evaluation` when it settled the Outcome Evaluation (T24) and
+`end_review` when it settled the end code review (T25). A stopped convoy carries `signal`,
 `unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate or the Outcome Evaluation could not run, or a repair the Evaluator of the end drafted could not be published |
+| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, or a repair the Evaluator of the end drafted could not be published |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 

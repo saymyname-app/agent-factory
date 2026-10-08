@@ -1297,19 +1297,20 @@ Tests : `tests/factory-revive-test.sh`, `tests/factory-boot-supervisor-test.sh`,
 ---
 ## `./bin/spec-end` — la Spec est-elle vérifiée, et sinon que manque-t-il ?
 
-**La porte de fin de Spec** (Spec af-wf4w5r §9, points 1 à 5, T23 et T24). Dans un
+**La porte de fin de Spec** (Spec af-wf4w5r §9, points 1 à 5, T23, T24 et T25). Dans un
 convoi qui porte la **marque du nouveau flux**, des tickets tous fermés ne
 font pas une Spec vérifiée : du code rend **trois verdicts mécaniques, tous
 liés au même commit** de la branche d'intégration, la branche protégée
 reprise. Aucun agent ne les rend. Sur ce même commit, elle lit ensuite
-l'Outcome Evaluation et les constats hors ticket (`./bin/outcome-evaluation`).
+l'Outcome Evaluation et les constats hors ticket (`./bin/outcome-evaluation`),
+et la revue de code de fin (`./bin/spec-end-review`).
 
 ```bash
 ./bin/spec-end check <convoi> --repo <dépôt du projet>                      # où en est la fin de Spec ; n'écrit rien
 ./bin/spec-end run   <convoi> --repo <dépôt du projet> --profile <profil>   # la porte ; lancée par ./bin/convoy-advance
 ```
 
-- **Les cinq conditions** (liste `spec-end/v2`), dans l'ordre : 1 registre
+- **Les six conditions** (liste `spec-end/v3`), dans l'ordre : 1 registre
   (tickets fermés par la porte de fin de ticket ou retirés, aucun parqué ;
   chaque écart et chaque « non fait » d'un Ticket Handoff « réparé » ou
   « accepté par Benjamin » ; aucune Planning Exception ouverte) ; 2 tests
@@ -1317,9 +1318,11 @@ l'Outcome Evaluation et les constats hors ticket (`./bin/outcome-evaluation`).
   sur toutes les ancres de tous les états prototypés ; 4 Outcome Evaluation
   (chaque user story numérotée « observée avec preuve » sur le produit
   assemblé, aucun constat hors ticket non classé) ; 5 constats hors ticket
-  tous dans un état final. Une condition non réunie arrête la porte : les
-  suivantes ne sont pas lancées. Seuls les verdicts 1 à 3 sont enregistrés ;
-  4 et 5 sont relus à chaque appel.
+  tous dans un état final ; 6 revue de code de fin complète et favorable sur
+  tout le diff assemblé, à ce commit précis. Une condition non réunie arrête
+  la porte : les suivantes ne sont pas lancées — sauf la revue de fin, faite
+  en parallèle de l'Outcome Evaluation et lue quoi que disent 4 et 5. Seuls
+  les verdicts 1 à 3 sont enregistrés ; 4, 5 et 6 sont relus à chaque appel.
 - **Pour savoir ce qui manque** : `check` nomme chaque condition non réunie
   et dit ce qui a été lu.
 - **Un écart ou un « non fait » sans état final** : la porte le nomme et te
@@ -1335,7 +1338,7 @@ l'Outcome Evaluation et les constats hors ticket (`./bin/outcome-evaluation`).
   leur commit (`convoy.spec_end` dans `./bin/convoy-state show`). Dès que la
   branche d'intégration ou la branche protégée bouge, `check` les dit
   « périmés » et la porte rejoue tout.
-- **Sorties** : 0 cinq conditions réunies sur la pointe actuelle ; 1 refus ou
+- **Sorties** : 0 six conditions réunies sur la pointe actuelle ; 1 refus ou
   condition non réunie ; 3 état sans règle ; 4 convoi sans marque. `run` est
   refusé à toute session d'agent.
 - **Limites** : la porte tourne dans la passe de l'ordre (délai de 300 s,
@@ -1389,6 +1392,53 @@ Détail : `docs/OUTCOME_EVALUATION.md`.
 
 ---
 
+## `./bin/spec-end-review` — le diff assemblé d'une Spec a-t-il été relu, et qu'a dit la revue ?
+
+**La revue de code de fin** (Spec af-wf4w5r §6 « Fin de Spec », §9 point 4,
+T25). Deux tickets, corrects chacun, peuvent se contredire une fois
+assemblés : aucune revue par ticket ne le voit. Quand la porte de fin de
+Spec a rendu ses trois verdicts mécaniques sur un commit, le flux — jamais
+un auteur — envoie **tout le diff de la branche d'intégration contre la
+branche protégée** à une session neuve du rôle relecteur, en lecture seule.
+Ne concerne qu'un convoi qui porte la **marque du nouveau flux**.
+
+```bash
+./bin/spec-end-review show <convoi>      # où en est la revue de fin : passes, demande, arrêt, tour compté ; n'écrit rien
+./bin/spec-end-review settle <convoi>    # ce qui est dû ; lancé par ./bin/convoy-advance à chaque passe
+```
+
+- **Mêmes règles que la revue d'un ticket** : un constat ne bloque que s'il
+  cite une ligne de la Spec, d'un ticket du convoi ou une règle écrite du
+  dépôt, et que du code retrouve cette ligne dans sa source. L'issue est
+  calculée, jamais donnée par le relecteur.
+- **Un Blocking Finding devient un ticket `repair`** rédigé par le
+  relecteur ; `./bin/convoy-advance` le publie par la porte des tickets
+  ajoutés et il suit le flux d'un ticket ordinaire. Pas de « corrigé /
+  contesté » à la fin.
+- **Rejouée en entier à chaque nouvelle pointe** : le `repair` fusionné
+  déplace la pointe, la porte rejoue ses verdicts et une autre session relit
+  tout le diff. Un verdict d'un tour précédent n'est jamais réutilisé.
+- **La porte de fin de Spec refuse sans elle** : revue absente, en cours,
+  arrêtée, liée à un autre commit, ou avec un Blocking Finding
+  (`./bin/spec-end check` dit lequel).
+- **Une sortie incomplète compte non passée** : un axe ou un fichier du diff
+  non relu, pas de sortie dans le délai (7200 s, sans base mesurée), bead
+  fermé sans sortie. Une relance, puis la revue est arrêtée et te remonte
+  une fois (`./bin/escalation-door list`). Chaque passe garde sa durée et
+  les fichiers non relus.
+- **Un tour de fin est compté** par revue défavorable, une fois par pointe
+  (`counters.end_rounds`).
+- **Indépendance** : `show` dit si le relecteur tourne sur le modèle d'un
+  auteur, ou si un modèle n'est pas relevé.
+- **Limites** : les constats restent le jugement d'un agent ; la couverture
+  est déclarée par le relecteur ; rien ne lève un arrêt de la revue sur sa
+  pointe ; le compteur de tours n'est pas encore comparé à une borne.
+- **En même temps que l'Outcome Evaluation** : la passe qui rend les trois
+  verdicts lance les deux sur le même commit ; aucune n'attend l'autre.
+
+Détail : `docs/SPEC_END_REVIEW.md`.
+
+---
 ## `./bin/ci-runner` — la CI de l'usine tourne-t-elle sur le PC, et le runner est-il debout ?
 
 **Le côté opérateur du runner auto-hébergé** (af-r1ymfm). Un *runner* est la

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """The end-of-Spec gate of a "new flow" convoy: its three mechanical
 conditions, on one tip of the integration branch (T23, af-s5uysn; Spec
-af-wf4w5r §9, points 1 to 3, user stories 56 and 59), then the Outcome
-Evaluation and the findings « hors ticket » on that same commit (T24,
-af-oy7v3i; points 4 and 5, user stories 57 and 60).
+af-wf4w5r §9, points 1 to 3, user stories 56 and 59), then, on that same
+commit, the Outcome Evaluation and the findings « hors ticket » (T24,
+af-oy7v3i; points 4 and 5, user stories 57 and 60) and the end code review
+of the assembled diff (T25, af-ji2ruy; point 4, user story 58).
 
 Once every ticket of a convoy that carries the new-flow mark is closed, this
 gate renders three verdicts, in this order, all tied to one commit of the
@@ -23,7 +24,12 @@ integration branch that holds the tip of the protected branch:
                « observée avec preuve » on the assembled product at that
                commit, and every finding « hors ticket » classified
                (bin/outcome-evaluation verdict);
-  5. findings  every finding « hors ticket » in a final state.
+  5. findings  every finding « hors ticket » in a final state;
+  6. end_review  once 1 to 3 are green, beside 4 (Spec §9, point 4, second
+               half): the end code review of the whole diff of that commit
+               against the protected branch (bin/spec-end-review) is complete
+               and favorable on that very commit. Absent, open, crashed, made
+               on another commit, or with a Blocking Finding: refused.
 
     spec-end check CONVOY --repo DIR
     spec-end run   CONVOY --repo DIR --profile DESCRIPTOR [--timeout SECONDS]
@@ -43,14 +49,16 @@ round of the end of the Spec is counted in the same write, and
 bin/convoy-advance publishes the one `repair` of that red by code. Three
 green verdicts are recorded on the convoy with their commit
 (bin/convoy-state record-spec-end); run again on the same tip, the gate
-replays nothing. Conditions 4 and 5 are not recorded by the gate: they are
-read at each call in what the Evaluator of the end handed in, which is tied
-to the commit of the three verdicts; the gate launches no agent
-(bin/convoy-advance has the evaluation settled).
+replays nothing. Conditions 4 to 6 are not recorded by the gate: they are
+read at each call in what the Evaluator of the end and the reviewer of the
+end handed in, which is tied to the commit of the three verdicts; the gate
+launches no agent (bin/convoy-advance has the evaluation and the review
+settled, in the pass that recorded the verdicts). A round of the end review
+made on another commit never stands for it.
 
 Called by bin/convoy-advance on each of its passes, once every ticket of the
 convoy is closed. Every answer is one JSON object on stdout. Exit status: 0
-the five conditions are met on the current tip; 1 refused, or a condition is
+the six conditions are met on the current tip; 1 refused, or a condition is
 not met (named); 3 the convoy is in an "état sans règle"; 4 the convoy does not
 carry the new-flow mark. Details: docs/SPEC_END.md.
 """
@@ -83,10 +91,11 @@ OUTCOME_TOOL = BIN / "outcome-evaluation"
 OPERATOR_CONFIG_TOOL = BIN / "operator-config"
 
 # The closed list (Spec §9, points 1 to 5), versioned: a change of the list
-# is a new version. The first three are the mechanical conditions: their
+# is a new version (v2: T24's conditions 4 and 5; v3: T25's condition 6). The first three are the mechanical conditions: their
 # verdicts are what the gate records, and bin/convoy-state holds the same
-# names and refuses any other record.
-VERSION = "spec-end/v2"
+# names and refuses any other record. The conditions after them are read in
+# the tracker, on the commit of that record.
+VERSION = "spec-end/v3"
 MECHANICAL = 3
 CONDITIONS = (
     ("registry", "Registre : tickets fermés par la porte ou retirés, aucun parqué ; écarts et « non faits » dans un "
@@ -96,7 +105,10 @@ CONDITIONS = (
     ("outcome_evaluation", "Outcome Evaluation : chaque user story observée avec preuve sur le produit assemblé ; "
                            "constats hors ticket classés"),
     ("findings", "Constats hors ticket tous dans un état final"),
+    ("end_review", "Revue de code de fin favorable sur tout le diff assemblé, à ce commit"),
 )
+END_REVIEW = [name for name, _ in CONDITIONS].index("end_review") + 1
+REVIEW_INCOMPLETE = "incomplete"
 PASS, FAIL, NOT_RUN, STALE = "pass", "fail", "not_run", "stale"
 
 GATE_TICKET_END, GATE_WITHDRAWN = "ticket_end", "withdrawn"
@@ -523,6 +535,52 @@ def fidelity(repo: Path, profile: str, tip: str, state: dict[str, Any]) -> tuple
                   + (f" ; {taken} écart(s) {FIDELITY_ACCEPTED}" if taken else "")), record
 
 
+# --- condition 4: the end code review, read on the commit of the gate ------------------------
+
+
+def end_review_condition(state: dict[str, Any], commit: str) -> dict[str, Any]:
+    """Spec §9, point 4, the end review (T25). The gate renders nothing
+    here: it reads what bin/spec-end-review recorded, on this commit only.
+    Absent, open, without result, made on another commit, incomplete, or
+    with a Blocking Finding: not met, and it says which."""
+    review = state["convoy"].get("end_review") or {"rounds": []}
+    rounds = [round_ for round_ in review["rounds"] if round_["commit"] == commit]
+    done = next((round_ for round_ in reversed(rounds) if round_["outcome"] != REVIEW_INCOMPLETE), None)
+    stop, request = review.get("stop"), review.get("request")
+    if done is None:
+        if stop and stop["commit"] == commit:
+            return condition(END_REVIEW, FAIL, (
+                f"revue de fin arrêtée sans verdict au commit {sha(commit)} ({stop['reason']}) : {stop['detail']}"))
+        if request and request["commit"] == commit:
+            said = (f"sa dernière sortie est incomplète ({len(rounds[-1]['coverage']['missing'])} fichier(s) non relus "
+                    "nommés, ou un axe manquant)" if rounds else "aucune sortie rendue")
+            return condition(END_REVIEW, FAIL, (
+                f"revue de fin en cours au commit {sha(commit)} ({len(request['launches'])} lancement(s), {said}) : "
+                "pas de verdict ; une revue sans résultat ne vaut pas accord"))
+        elsewhere = review["rounds"][-1]["commit"] if review["rounds"] else (request or {}).get("commit")
+        if elsewhere:
+            return condition(END_REVIEW, FAIL, (
+                f"revue de fin liée à un autre commit ({sha(elsewhere)}) : aucune n'est rendue sur {sha(commit)} ; un "
+                "verdict d'un tour précédent n'est jamais réutilisé, elle est rejouée en entier sur cette pointe"))
+        return condition(END_REVIEW, FAIL, (
+            f"revue de fin absente : aucune revue du diff assemblé n'est rendue au commit {sha(commit)}"))
+    extent = done["extent"]
+    read = f"{extent['files']} fichier(s), {extent['commits']} commit(s) du diff {sha(done['base'])}..{sha(commit)}"
+    blocking = [finding for finding in done["findings"] if finding["blocking"]]
+    if blocking:
+        named = " ; ".join(
+            f"{finding['id']} « {short(finding['summary'], 120)} » ("
+            + (f"repair {finding['repair']}" if "repair" in finding
+               else "repair rédigé refusé par la porte de publication" if "repair_refused" in finding
+               else "repair rédigé, pas encore publié") + ")"
+            for finding in blocking[:MAX_NAMED])
+        more = f" ; et {len(blocking) - MAX_NAMED} autre(s)" if len(blocking) > MAX_NAMED else ""
+        return condition(END_REVIEW, FAIL, (
+            f"Blocking Finding de la revue de fin sans verdict favorable au commit {sha(commit)} : {named}{more} ; "
+            "la revue est rejouée en entier une fois le repair fusionné"))
+    return condition(END_REVIEW, PASS, (
+        f"revue de fin favorable au commit {sha(commit)} : {read}, aucun Blocking Finding, "
+        f"{len(done['findings'])} constat(s) non bloquant(s)"))
 # --- conditions 4 and 5: the Outcome Evaluation and the findings « hors ticket » (T24) ----------
 
 
@@ -600,13 +658,15 @@ def cmd_check(args: argparse.Namespace) -> int:
     else:
         conditions = [first, condition(2, NOT_RUN, never), condition(3, NOT_RUN, never)]
     # The three mechanical verdicts green on this tip: what the Outcome
-    # Evaluation is opened on, and what conditions 4 and 5 are read against.
+    # Evaluation and the end review are made on, and what conditions 4 to 6
+    # are read against.
     green = len(conditions) == MECHANICAL and all(entry["verdict"] == PASS for entry in conditions)
     if green:
-        conditions += judged_conditions(args.convoy, repo, tip)
+        conditions += [*judged_conditions(args.convoy, repo, tip), end_review_condition(state, tip)]
     elif len(conditions) == MECHANICAL:
         conditions += [condition(number, NOT_RUN, never if not recorded else (
-            "non lancé : une condition qui la précède n'est pas réunie")) for number in (4, 5)]
+            "non lancé : une condition qui la précède n'est pas réunie"))
+            for number in range(MECHANICAL + 1, len(CONDITIONS) + 1)]
     missing = [entry["number"] for entry in conditions if entry["verdict"] != PASS]
     answer: dict[str, Any] = {
         "ok": not missing, "convoy": args.convoy, "version": VERSION, "branch": integration["branch"], "commit": tip,
@@ -647,11 +707,11 @@ def end_rounds(convoy_id: str, repo: Path) -> Any:
     return ((answer.get("convoy") or {}).get("counters") or {}).get("end_rounds")
 
 
-def judged_answer(args: argparse.Namespace, repo: Path, base: dict[str, Any], mechanical: list[dict[str, Any]],
-                  tip: str, protected: dict[str, str], replayed: bool) -> int:
-    """The three mechanical verdicts are green on `tip`: conditions 4 and 5
+def judged_answer(args: argparse.Namespace, repo: Path, base: dict[str, Any], state: dict[str, Any],
+                  mechanical: list[dict[str, Any]], tip: str, protected: dict[str, str], replayed: bool) -> int:
+    """The three mechanical verdicts are green on `tip`: conditions 4 to 6
     on that commit, and the answer of the gate."""
-    conditions = mechanical + judged_conditions(args.convoy, repo, tip)
+    conditions = [*mechanical, *judged_conditions(args.convoy, repo, tip), end_review_condition(state, tip)]
     missing = [entry["number"] for entry in conditions if entry["verdict"] == FAIL]
     answer = {**base, "ok": not missing, "commit": tip, "protected": protected, "conditions": conditions,
               "missing": missing, "replayed": replayed, "mechanical": {"ok": True, "commit": tip, "reason": None}}
@@ -715,8 +775,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         if recorded and stale_reason(repo, recorded, integration, tip, protected_tip) is None:
             mechanical = [first, *(condition(entry["number"], entry["verdict"], entry["detail"])
                                    for entry in recorded["conditions"][1:])]
-            return judged_answer(args, repo, base, mechanical, tip, {"branch": protected, "commit": protected_tip},
-                                 replayed=False)
+            return judged_answer(args, repo, base, state, mechanical, tip,
+                                 {"branch": protected, "commit": protected_tip}, replayed=False)
 
         # 2. One tip: the protected branch taken up, the tests on the result.
         status, taken = tool(INTEGRATION_TOOL, "take-up", args.convoy, "--repo", str(repo), "--profile", args.profile,
@@ -760,8 +820,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             }, ensure_ascii=False), encoding="utf-8")
             state_write("record-spec-end", args.convoy, "--commit", tip, "--protected", protected_tip,
                         "--file", str(report))
-        return judged_answer(args, repo, base, conditions, tip, {"branch": protected, "commit": protected_tip},
-                             replayed=True)
+        return judged_answer(args, repo, base, state, conditions, tip,
+                             {"branch": protected, "commit": protected_tip}, replayed=True)
 
 
 # --- command line ------------------------------------------------------------------------------

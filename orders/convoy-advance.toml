@@ -49,8 +49,15 @@
 # patch door, each repair the Evaluator drafted: for a story it did not
 # observe, or for a finding « hors ticket » it classified « repaired ». An
 # unfavorable evaluation is an outcome, not an order failure.
+# T25 (af-ji2ruy, §6, §9 point 4): on the commit of those three verdicts, the
+# same pass has the whole assembled diff of the Spec reviewed, through
+# bin/spec-end-review settle (one reviewer session, one relaunch, then the
+# stop of the review), and publishes through the patch door the repair the
+# reviewer drafted for each Blocking Finding. A review that is unfavorable or
+# without result is an outcome, not an order failure; a settlement that could
+# not run fails the order.
 [order]
-description = "Starts the ready tickets of every open convoy that carries the new-flow mark, in dependency order and under the factory-wide ceiling N (config/delivery-flow.json), through bin/dispatch-door; has the code of each finished ticket reviewed through bin/code-review and the ticket evaluated on the launched product through bin/ticket-evaluation, sends what they refuse to one author session once and stops a ticket still refused through bin/correction-round, then merges one reviewed and evaluated ticket per convoy into the integration branch of its Spec through bin/spec-integration; once every ticket of a convoy is closed, renders the three mechanical verdicts of the end of its Spec on one tip of that branch through bin/spec-end, then has the assembled product evaluated story by story through bin/outcome-evaluation and publishes the repairs its Evaluator drafted; stops a convoy in a state without rule and raises one factory incident for it. No agent takes part."
+description = "Starts the ready tickets of every open convoy that carries the new-flow mark, in dependency order and under the factory-wide ceiling N (config/delivery-flow.json), through bin/dispatch-door; has the code of each finished ticket reviewed through bin/code-review and the ticket evaluated on the launched product through bin/ticket-evaluation, sends what they refuse to one author session once and stops a ticket still refused through bin/correction-round, then merges one reviewed and evaluated ticket per convoy into the integration branch of its Spec through bin/spec-integration; once every ticket of a convoy is closed, renders the three mechanical verdicts of the end of its Spec on one tip of that branch through bin/spec-end, then, on that commit, has the assembled product evaluated story by story through bin/outcome-evaluation and the whole assembled diff reviewed through bin/spec-end-review, and publishes the repairs the Evaluator drafted and the repair drafted for each Blocking Finding; stops a convoy in a state without rule and raises one factory incident for it. No agent takes part."
 trigger = "condition"
 interval = "1m"
 check = "/home/benja/agent-factory/bin/convoy-advance --check-only"
