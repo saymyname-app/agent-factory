@@ -992,13 +992,18 @@ def execute(scenario_path: Path, operator: Path, publication_door: Path) -> dict
 # --- the delivery of one ticket of a marked convoy (T19) -------------------------
 
 
-def validate_delivery_scenario(scenario: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def validate_delivery_scenario(scenario: dict[str, Any]) -> tuple[str, dict[str, Any], str | None]:
     scenario_id = required_string(scenario.get("scenario_id"), "scenario_id")
     if not SAFE_ID.fullmatch(scenario_id):
         raise OracleError("scenario_id contains unsupported characters")
-    unknown = sorted(set(scenario) - {"contract", "scenario_id", "inject", "expect"})
+    unknown = sorted(set(scenario) - {"contract", "scenario_id", "project", "inject", "expect"})
     if unknown:
         raise OracleError(f"delivery scenario has unknown fields: {', '.join(unknown)}")
+    # The project of the fixture the ticket belongs to (T35); absent, the
+    # driver walks a ticket of its first project.
+    project = scenario.get("project")
+    if project is not None and (not isinstance(project, str) or not SAFE_ID.fullmatch(project)):
+        raise OracleError(f"project must name a project of the fixture, got {project!r}")
     inject = as_dict(scenario.get("inject", {}), "inject").get("delivery", "none")
     if inject not in DELIVERY_INJECTIONS:
         raise OracleError(f"inject.delivery must be one of {', '.join(DELIVERY_INJECTIONS)}")
@@ -1009,7 +1014,7 @@ def validate_delivery_scenario(scenario: dict[str, Any]) -> tuple[str, dict[str,
     if expect["closed"] == bool(missing) or any(
             isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= len(TICKET_END_CONDITIONS) for n in missing):
         raise OracleError("expect.missing names the conditions of the ticket-end gate an open ticket misses, and only then")
-    return inject, {"closed": expect["closed"], "missing": sorted(missing)}
+    return inject, {"closed": expect["closed"], "missing": sorted(missing)}, project
 
 
 def run_driver(driver: Path, workspace: Path, command: str, *arguments: str) -> dict[str, Any]:
@@ -1144,10 +1149,11 @@ def observe_delivery(target: DeliveryTarget) -> list[tuple[str, str]]:
 
 
 def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
-    inject, expect = validate_delivery_scenario(scenario)
+    inject, expect, project = validate_delivery_scenario(scenario)
     with tempfile.TemporaryDirectory(prefix="fixture-city-delivery-") as temporary:
         workspace = Path(temporary).resolve()
-        target = DeliveryTarget(run_driver(driver, workspace, "prepare", "--inject", inject), workspace)
+        prepare = ("--inject", inject, *(("--project", project) if project else ()))
+        target = DeliveryTarget(run_driver(driver, workspace, "prepare", *prepare), workspace)
         try:
             run_driver(driver, workspace, "publish")
             lifecycle = [state for state, _ in observe_delivery(target)]
@@ -1196,6 +1202,8 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
             "read": ["convoy-state show", "git merge-base", "ticket-end check", "evidence-capture verify"],
         },
     }
+    if project:
+        result["project"] = project
     result["oracle_digest"] = canonical_digest(result)
     return result
 
