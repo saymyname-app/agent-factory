@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, T19, T20, T22, T21, T23, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, T19, T20, T22, T21, T23, T27, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -76,6 +76,7 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-integration-repair af-convoy --ticket af-r1   # bin/convoy-advance, once the patch door published the repair
 ./bin/convoy-state clear-integration-red  af-convoy     # bin/spec-integration, once the control is green again
 ./bin/convoy-state record-spec-end af-convoy --commit <integration tip> --protected <protected tip> --file report.json   # bin/spec-end: three green verdicts, one commit
+./bin/convoy-state record-evidence-pack af-convoy --commit <integration tip> --digest sha256:<hex> --path <folder> (--conforming | --non-conforming) [--inadmissible N]   # bin/evidence-pack generate
 ./bin/convoy-state open-outcome-evaluation    af-convoy --commit <commit of the gate> --file request.json   # bin/outcome-evaluation: the products launched, the roles
 ./bin/convoy-state launch-outcome-evaluation  af-convoy --bead af-e1          # bin/outcome-evaluation: the evaluation sent to an Evaluator session
 ./bin/convoy-state record-outcome-evaluation  af-convoy --file states.json    # bin/outcome-evaluation record: one state per user story; the verdict is computed
@@ -107,6 +108,7 @@ Every answer is one JSON object on stdout.
 | Mark | `gc.flow.mark` | convoy, ticket | `new-flow/v1` |
 | Manual lifecycle | the label `owned` (Gas City's own: `gc convoy create --owned`) | convoy | added by `mark` in the same write as the mark, and again by a later `mark` if it was lost: `gc convoy check` leaves a convoy that carries it open once all its tickets are closed (T22) |
 | Spec | `gc.spec_id` (read only: written by the publication door) | convoy | the id of the Spec the convoy delivers; the evidence store is filed under it (T09, `docs/EVIDENCE_STORE.md`) |
+| Digest of the Spec | `gc.spec_digest` (read only: written by the publication door) | convoy | T27: rendered as `convoy.spec_digest` for the header of the Evidence Pack; `null` when the convoy carries none or it is not a `sha256:` digest |
 | Kind | `gc.ticket_kind` (read only: written by the publication door) | ticket | `vertical_slice`, `prefactoring`, `repair` |
 | Demonstration line | `gc.flow.demonstration_line` | ticket (`vertical_slice`, `repair`) | one non-empty line, written once by `mark` |
 | Covered user stories | `gc.flow.user_stories` | ticket (`vertical_slice`) | the numbers of the Spec's user stories the slice covers, at least one, each once; written once by `mark` |
@@ -142,10 +144,11 @@ Every answer is one JSON object on stdout.
 | Acceptance criteria | the bead's description (read only) | ticket | the checkbox lines under `## Acceptance criteria`, in order |
 | Factory incident | `gc.flow.incident` | convoy | the bead that carries the open incident of a stopped convoy and, once it reached the escalation door, the `sha256:` signature of the anomalies it names |
 | Red of the integration branch | `gc.flow.integration_red` | convoy | T21: the control that is red, quoted on one line (`control`), the commit it was red on (`commit`), the tips of the integration and of the protected branches then (`integration`, `protected`), the end of what the control printed (`detail`, optional) and, once code published it, the one `repair` ticket that restores it (`repair`); T23: `check` (`regression`, `fidelity`; absent means the regression command), what is red |
-| Record of the end-of-Spec gate | `gc.flow.spec_end` | convoy | T23: `commit` (the one commit of the integration branch the three verdicts are tied to), `protected` (the tip of the protected branch that commit holds), `version` (`spec-end/v3`; a record under `spec-end/v1` or `spec-end/v2` is still read, and held outdated by the gate), `conditions` (`registry`, `tests`, `fidelity`, in that order, all `pass`, each with its `detail`), `records` (optional: what `tests` and `fidelity` read), `at` |
+| Record of the end-of-Spec gate | `gc.flow.spec_end` | convoy | T23: `commit` (the one commit of the integration branch the three verdicts are tied to), `protected` (the tip of the protected branch that commit holds), `version` (`spec-end/v4`; a record under `spec-end/v1`, `spec-end/v2` or `spec-end/v3` is still read, and held outdated by the gate), `conditions` (`registry`, `tests`, `fidelity`, in that order, all `pass`, each with its `detail`), `records` (optional: what `tests` and `fidelity` read), `at` |
 | Outcome Evaluation | `gc.flow.outcome_evaluation` | convoy | T24: `rounds` (each: `commit`, `stories` — one per numbered user story of the Spec, with `state` `observed` / `not_observed` / `unobservable` and its `evidence` piece —, `exploration`, `fidelity_deviations`, `repairs` — the `draft` of each story not observed and, once published, its `repair` —, `contradictions`, the computed `outcome` and `verdict`, `roles`, `environment`, `recorded_by`, `at`), the open `request` (`commit`, `stories`, `roles`, `environment`, `launches`, `at`), `live` (launch records of products still to stop) and `stop` (`commit`, `reason` among `outcome_evaluation_no_result`, `outcome_evaluation_outage`, `story_unobservable`, `detail`, `raised`) |
 | Classification of the findings « hors ticket » | `gc.flow.findings` | ticket | T24: `entries`, one per classified finding of the Ticket Handoff: `item` (`out_of_ticket.N`), `handoff_at`, `classification` (`repaired`, `proposal`, `dismissed`), `commit`, `recorded_by`, `at`; `reason` (required for `dismissed`); `draft` (the drafted `repair`, required for `repaired`, with what it `restores`) and, once code published it, `repair` |
 | End code review of the Spec | `gc.flow.end_review` | convoy | T25: `rounds`, oldest first, each `commit` (the commit of the gate it read), `base` (the tip of the protected branch that commit holds), `outcome` (`favorable`, `unfavorable`, `incomplete`; computed), `findings` (`id`, `axis`, `blocking`, `summary`, `citation`, `demoted`; a Blocking Finding with its `repair_draft`, then `repair` or `repair_refused`), `coverage` (`axes`, `files`, `missing`, `missing_count`), `extent` (`files`, `commits`, `insertions`, `deletions`, `digest`), `models` (`authors`, `reviewer`, `same_model`), `recorded_by`, `launched_at`, `duration_seconds`, `at`; `request` while a review is open (`commit`, `base`, `extent`, `models`, `launches`: at most two, each `bead`, `at`, and `result: incomplete`; `at`); `stop` (`reason`: `end_review_no_result`, `end_review_repair_refused`; `detail`, `commit`, `at`, then `bead` and `raised`) |
+| Evidence Pack | `gc.flow.evidence_pack` | convoy | T27: `commit` (the commit of the integration branch the pack is tied to), `digest` (the fingerprint of its page), `path` (its folder, absolute), `conforming` (whether every condition of the end of the Spec it reports was met), `inadmissible` (the number of pieces the evidence store refused), `version` (`evidence-pack/v1`), `at` |
 | Last round of the end counted | `gc.flow.end_round` | convoy | T25: `commit` (the tip of the integration branch the last round of the end was counted for), `source` (`end_review`), `at` |
 
 `mark` is idempotent: it marks the tickets first and the convoy last, sets
@@ -399,7 +402,7 @@ again writes nothing and counts nothing. `record-spec-end` records the three
 verdicts of the gate with the commit they are tied to. It refuses a convoy
 without an integration branch, one whose integration branch is red, one
 with a ticket left open or closed without a gate record (each named), a
-version other than `spec-end/v3`, a list that is not `registry`, `tests`,
+version other than `spec-end/v4`, a list that is not `registry`, `tests`,
 `fidelity` in order, a verdict that is not `pass`, an empty detail, an
 unknown field, `records` other than `tests` and `fidelity`, a malformed
 commit. Nothing compares the record to the branches here: `bin/spec-end
@@ -407,6 +410,17 @@ check` says whether it still holds. The record holds the three mechanical
 verdicts only: conditions 4 and 5 of the list are read by the gate in
 what the Evaluator of the end handed in, and the sixth, `end_review`, in
 `gc.flow.end_review`, below.
+
+**The Evidence Pack (T27, `docs/EVIDENCE_PACK.md`).** `record-evidence-pack`
+is called by `bin/evidence-pack generate` once the page is written: the
+commit it is tied to, the fingerprint of the page, its folder, whether it
+is conforming, and the number of pieces the store refused. It refuses a
+convoy without an integration branch, a malformed commit or digest, a
+folder that is not an absolute path on one line, a record without
+`--conforming` or `--non-conforming`, and a count that is not an integer
+≥ 0. The same pack again writes nothing; another page replaces the record.
+Nothing compares it to the branches here: `bin/evidence-pack check` says
+whether it still holds.
 
 **The end code review of the Spec (T25, `docs/SPEC_END_REVIEW.md`).**
 `open-end-review`, `launch-end-review`, `record-end-review`,
@@ -700,7 +714,9 @@ before one was opened, with `state`: the last `verdict`, `outcome`,
 the `contradictions`; T24), the end code review of the Spec (`end_review`,
 `null` before the first request, with a computed `state`: the `commit` and
 the `outcome` of its last round and `unsettled`, its Blocking Findings; T25)
-and the last round of the end counted (`end_round`, `null` before the first).
+the last round of the end counted (`end_round`, `null` before the first),
+the Evidence Pack (`evidence_pack`, `null` before the first generation; T27)
+and the digest of the Spec the publication door wrote (`spec_digest`).
 
 `ticket` answers whether one bead carries the mark, without naming its
 convoy: exit 0 and `"new_flow": true`, or exit 4 and `"new_flow": false`.
@@ -823,3 +839,6 @@ tip, the repair named or refused once per finding, the stop and its
 raising, a record written outside the command;
 `tests/spec-end-review-isolated-city-test.sh` (local-only) goes through
 them on the real `gc`/`bd`.
+T27: `tests/convoy-state-test.py` covers `record-evidence-pack` (recorded
+and read back, the same pack again, each refusal, a record written outside
+the command) and `spec_digest`; no trial on the real tracker covers it.

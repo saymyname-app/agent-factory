@@ -4,7 +4,8 @@ conditions, on one tip of the integration branch (T23, af-s5uysn; Spec
 af-wf4w5r §9, points 1 to 3, user stories 56 and 59), then, on that same
 commit, the Outcome Evaluation and the findings « hors ticket » (T24,
 af-oy7v3i; points 4 and 5, user stories 57 and 60) and the end code review
-of the assembled diff (T25, af-ji2ruy; point 4, user story 58).
+of the assembled diff (T25, af-ji2ruy; point 4, user story 58), and last the
+Evidence Pack (T27, af-r43we4; point 6, user story 62).
 
 Once every ticket of a convoy that carries the new-flow mark is closed, this
 gate renders three verdicts, in this order, all tied to one commit of the
@@ -30,8 +31,12 @@ integration branch that holds the tip of the protected branch:
                against the protected branch (bin/spec-end-review) is complete
                and favorable on that very commit. Absent, open, crashed, made
                on another commit, or with a Blocking Finding: refused.
+  7. evidence_pack  once 1 to 6 are green (Spec §9, point 6): the Evidence
+               Pack code generated (bin/evidence-pack) is tied to that very
+               commit, complete, and still what the recorded state gives.
+               Absent, outdated, rewritten, or short of a piece: refused.
 
-    spec-end check CONVOY --repo DIR
+    spec-end check CONVOY --repo DIR [--before-pack]
     spec-end run   CONVOY --repo DIR --profile DESCRIPTOR [--timeout SECONDS]
 
 `check` reads and writes nothing: the registry as it is now, and the verdicts
@@ -54,11 +59,15 @@ read at each call in what the Evaluator of the end and the reviewer of the
 end handed in, which is tied to the commit of the three verdicts; the gate
 launches no agent (bin/convoy-advance has the evaluation and the review
 settled, in the pass that recorded the verdicts). A round of the end review
-made on another commit never stands for it.
+made on another commit never stands for it. Condition 7 is read the same
+way, in what bin/evidence-pack check answers: the gate generates nothing
+(bin/convoy-advance has the pack generated once conditions 1 to 6 are
+green). `check --before-pack` renders conditions 1 to 6 only: it is what the
+Evidence Pack reports in its header, the pack not being a verdict on itself.
 
 Called by bin/convoy-advance on each of its passes, once every ticket of the
 convoy is closed. Every answer is one JSON object on stdout. Exit status: 0
-the six conditions are met on the current tip; 1 refused, or a condition is
+the seven conditions are met on the current tip; 1 refused, or a condition is
 not met (named); 3 the convoy is in an "état sans règle"; 4 the convoy does not
 carry the new-flow mark. Details: docs/SPEC_END.md.
 """
@@ -88,14 +97,16 @@ INTEGRATION_TOOL = BIN / "spec-integration"
 FIDELITY_TOOL = BIN / "prototype-fidelity"
 ESCALATION_TOOL = BIN / "escalation-door"
 OUTCOME_TOOL = BIN / "outcome-evaluation"
+PACK_TOOL = BIN / "evidence-pack"
 OPERATOR_CONFIG_TOOL = BIN / "operator-config"
 
 # The closed list (Spec §9, points 1 to 5), versioned: a change of the list
-# is a new version (v2: T24's conditions 4 and 5; v3: T25's condition 6). The first three are the mechanical conditions: their
+# is a new version (v2: T24's conditions 4 and 5; v3: T25's condition 6; v4:
+# T27's condition 7). The first three are the mechanical conditions: their
 # verdicts are what the gate records, and bin/convoy-state holds the same
 # names and refuses any other record. The conditions after them are read in
 # the tracker, on the commit of that record.
-VERSION = "spec-end/v3"
+VERSION = "spec-end/v4"
 MECHANICAL = 3
 CONDITIONS = (
     ("registry", "Registre : tickets fermés par la porte ou retirés, aucun parqué ; écarts et « non faits » dans un "
@@ -106,8 +117,10 @@ CONDITIONS = (
                            "constats hors ticket classés"),
     ("findings", "Constats hors ticket tous dans un état final"),
     ("end_review", "Revue de code de fin favorable sur tout le diff assemblé, à ce commit"),
+    ("evidence_pack", "Evidence Pack généré, complet et à jour, à ce commit"),
 )
 END_REVIEW = [name for name, _ in CONDITIONS].index("end_review") + 1
+PACK = [name for name, _ in CONDITIONS].index("evidence_pack") + 1
 REVIEW_INCOMPLETE = "incomplete"
 PASS, FAIL, NOT_RUN, STALE = "pass", "fail", "not_run", "stale"
 
@@ -621,6 +634,24 @@ def judged_conditions(convoy_id: str, repo: Path, commit: str) -> list[dict[str,
     return [fourth, condition(5, PASS, f"{findings['total']} constat(s) hors ticket dans un état final")]
 
 
+# --- condition 7: the Evidence Pack, read on the commit of the gate (T27) -------------------------
+
+
+def pack_condition(convoy_id: str, repo: Path, commit: str, before: list[dict[str, Any]]) -> dict[str, Any]:
+    """Spec §9, point 6. The gate generates nothing: it reads what
+    bin/evidence-pack check answers about the pack recorded on the convoy.
+    Launched only once every condition before it is met."""
+    if any(entry["verdict"] != PASS for entry in before):
+        return condition(PACK, NOT_RUN, "non lancé : une condition qui la précède n'est pas réunie")
+    status, answer = tool(PACK_TOOL, "check", convoy_id, "--repo", str(repo))
+    if status == 0 and answer.get("ok") is True and answer.get("commit") == commit:
+        return condition(PACK, PASS, (
+            f"Evidence Pack à jour au commit {sha(commit)} : {answer.get('digest')} ({answer.get('page')})"))
+    if not isinstance(answer.get("state"), str):
+        raise Refusal(f"lecture de l'Evidence Pack impossible : {refusal_text(answer)}")
+    return condition(PACK, FAIL, f"Evidence Pack {answer['state']} : {refusal_text(answer)}")
+
+
 # --- check -------------------------------------------------------------------------------------
 
 
@@ -663,10 +694,14 @@ def cmd_check(args: argparse.Namespace) -> int:
     green = len(conditions) == MECHANICAL and all(entry["verdict"] == PASS for entry in conditions)
     if green:
         conditions += [*judged_conditions(args.convoy, repo, tip), end_review_condition(state, tip)]
+        if not args.before_pack:
+            conditions.append(pack_condition(args.convoy, repo, tip, conditions))
     elif len(conditions) == MECHANICAL:
         conditions += [condition(number, NOT_RUN, never if not recorded else (
             "non lancé : une condition qui la précède n'est pas réunie"))
             for number in range(MECHANICAL + 1, len(CONDITIONS) + 1)]
+    if args.before_pack:
+        conditions = [entry for entry in conditions if entry["number"] != PACK]
     missing = [entry["number"] for entry in conditions if entry["verdict"] != PASS]
     answer: dict[str, Any] = {
         "ok": not missing, "convoy": args.convoy, "version": VERSION, "branch": integration["branch"], "commit": tip,
@@ -709,9 +744,10 @@ def end_rounds(convoy_id: str, repo: Path) -> Any:
 
 def judged_answer(args: argparse.Namespace, repo: Path, base: dict[str, Any], state: dict[str, Any],
                   mechanical: list[dict[str, Any]], tip: str, protected: dict[str, str], replayed: bool) -> int:
-    """The three mechanical verdicts are green on `tip`: conditions 4 to 6
+    """The three mechanical verdicts are green on `tip`: conditions 4 to 7
     on that commit, and the answer of the gate."""
     conditions = [*mechanical, *judged_conditions(args.convoy, repo, tip), end_review_condition(state, tip)]
+    conditions.append(pack_condition(args.convoy, repo, tip, conditions))
     missing = [entry["number"] for entry in conditions if entry["verdict"] == FAIL]
     answer = {**base, "ok": not missing, "commit": tip, "protected": protected, "conditions": conditions,
               "missing": missing, "replayed": replayed, "mechanical": {"ok": True, "commit": tip, "reason": None}}
@@ -835,6 +871,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("check")
     p.add_argument("convoy")
     p.add_argument("--repo")
+    p.add_argument("--before-pack", action="store_true")
     p.set_defaults(handler=cmd_check)
     p = sub.add_parser("run")
     p.add_argument("convoy")

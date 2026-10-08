@@ -70,7 +70,10 @@ def repair(story=None, restores=None):
     }
 
 
-class OutcomeEvaluationTest(gate.Harness):
+class Harness(gate.Harness):
+    """The verified convoy of the gate's suite, its assembled product evaluated: shared with
+    tests/evidence-pack-test.py."""
+
     def setUp(self):
         super().setUp()
         self.door_log = self.tmp / "outcome-door.log"
@@ -259,11 +262,20 @@ class OutcomeEvaluationTest(gate.Harness):
     def conditions(self, answer):
         return [(entry["number"], entry["name"], entry["verdict"]) for entry in answer["conditions"]]
 
+    def assert_green_before_the_pack(self):
+        """The six conditions this suite and the end review's judge are met:
+        the gate refuses on its last one alone, the Evidence Pack, which
+        tests/evidence-pack-test.py judges."""
+        status, answer = self.run_gate()
+        self.assertEqual((EXIT_REFUSED, [len(NAMES) + 1]), (status, answer["missing"]), answer)
+
     def reviewed(self):
         """The end code review of the commit of the gate, favorable (T25):
         the gate then refuses on what this suite judges, and on nothing else."""
         self.end_reviewed(self.show()["convoy"]["spec_end"]["commit"])
 
+
+class OutcomeEvaluationTest(Harness):
     # --- AC1: one state and one Evidence Record per numbered user story, at the commit of the gate ------
 
     def test_conforming_fixture_every_story_is_observed_with_proof_and_the_gate_passes(self):
@@ -290,11 +302,13 @@ class OutcomeEvaluationTest(gate.Harness):
         verdict = self.verdict()
         self.assertTrue(verdict["favorable"], verdict)
         self.assertEqual((commit, commit, []), (verdict["commit"], verdict["gate_commit"], verdict["reasons"]))
-        # The gate: six conditions green on that one commit, its end code review made there too.
+        # The gate: six conditions green on that one commit, its end code review made there too. The
+        # seventh, the Evidence Pack generated on that commit, is tests/evidence-pack-test.py's.
         self.reviewed()
         status, answer = self.run_gate()
-        self.assertEqual(0, status, answer)
-        self.assertEqual([(number, name, "pass") for number, name in enumerate(NAMES, start=1)], self.conditions(answer))
+        self.assertEqual((EXIT_REFUSED, [len(NAMES) + 1]), (status, answer["missing"]), answer)
+        self.assertEqual([(number, name, "pass") for number, name in enumerate(NAMES, start=1)],
+                         self.conditions(answer)[:len(NAMES)])
         self.assertEqual(commit, answer["commit"])
         # The products are stopped by code once the states are in.
         self.assertEqual("none", self.settle()["action"])
@@ -424,7 +438,7 @@ class OutcomeEvaluationTest(gate.Harness):
         self.assertEqual(("launched", answer["commit"]), (again["action"], again["commit"]))
         self.assertEqual([commit, answer["commit"]], [round_["commit"] for round_ in self.outcome()["rounds"]])
         self.reviewed()
-        self.assertEqual(0, self.run_gate()[0])
+        self.assert_green_before_the_pack()
 
     def test_evaluation_left_open_on_an_outdated_commit_is_withdrawn_with_its_products(self):
         brief = self.opened()
@@ -593,7 +607,7 @@ class OutcomeEvaluationTest(gate.Harness):
         self.assertEqual(["proposition pour Benjamin", "écarté"], [finding["state"] for finding in shown["findings"]])
         # Both are final: the gate passes.
         self.reviewed()
-        self.assertEqual(0, self.run_gate()[0])
+        self.assert_green_before_the_pack()
 
     def test_classification_outside_the_closed_list_or_of_an_unknown_finding_is_refused(self):
         self.opened(findings=[FINDING])
@@ -635,7 +649,7 @@ class OutcomeEvaluationTest(gate.Harness):
         self.verified()
         self.settle()
         self.reviewed()
-        self.assertEqual(0, self.run_gate()[0])
+        self.assert_green_before_the_pack()
         # A finding the evaluation of this commit did not classify.
         self.declare(SLICE, out_of_ticket=[FINDING])
         before = self.snapshot()
@@ -689,7 +703,7 @@ class OutcomeEvaluationTest(gate.Harness):
         self.assertEqual((exploration, deviations), (shown["exploration"], shown["fidelity_deviations"]))
         self.assertTrue(self.verdict()["favorable"])
         self.reviewed()
-        self.assertEqual(0, self.run_gate()[0])
+        self.assert_green_before_the_pack()
 
     def test_record_without_the_exploration_or_the_fidelity_deviations_is_refused(self):
         brief = self.opened()

@@ -161,8 +161,8 @@ refusal writes nothing.
 - **No real Evaluator session ran.** The formula and the commands are
   proven with a stand-in for the door and the session; no adoption trial of
   the role on `mol-outcome-evaluation` was run in an isolated city.
-- **The Evidence Pack is not generated here.** `show` holds what its
-  generator reads (states, proofs, exploration, fidelity deviations,
+- **The Evidence Pack is not generated here** but by `bin/evidence-pack`
+  (T27, `docs/EVIDENCE_PACK.md`). `show` holds what its generator reads (states, proofs, exploration, fidelity deviations,
   proposals, contradictions, independence).
 - **The products run on the Factory host**, launched inside the pass of the
   order (timeout 300 s, `orders/convoy-advance.toml`); a product that is

@@ -1,0 +1,35 @@
+{
+  "contract": "agent-factory-evidence-pack/v1",
+  "description": "Gabarit fixe de la rubrique « Ce qui n'a PAS été vérifié » de l'Evidence Pack (bin/evidence-pack, T27 ; Spec af-wf4w5r §10, Further Notes 1). baseline_without_mechanism liste les critères du socle de qualité voulu par Benjamin auxquels la Spec ne donne aucun mécanisme : ils sont écrits dans chaque dossier jusqu'à ce qu'un mécanisme soit décidé, et une ligne en sort seulement avec le contrôle qui la vérifie. known_limits liste les limites connues des contrôles du flux, telles que la Spec et les documents des portes les assument. Une liste vide ou absente fait refuser la génération : la rubrique est obligatoire. Une racine d'essai qui n'a pas ce fichier est lue sous celui-ci.",
+  "baseline_without_mechanism": [
+    {
+      "criterion": "Santé du code",
+      "detail": "Aucun contrôle ne mesure la lisibilité, la duplication ni la complexité du code livré ; la revue de code ne bloque que sur une ligne citée de la Spec, du ticket ou d'une règle écrite du dépôt."
+    },
+    {
+      "criterion": "Architecture",
+      "detail": "Aucun contrôle ne vérifie le découpage en modules ni le respect d'une architecture cible ; aucun standard d'architecture n'est écrit."
+    },
+    {
+      "criterion": "Dépendances",
+      "detail": "Aucun contrôle ne lit les dépendances ajoutées, leurs versions, leurs licences ni leurs vulnérabilités connues."
+    },
+    {
+      "criterion": "Secrets",
+      "detail": "Aucun contrôle ne cherche un secret dans le diff livré ni dans les pièces du magasin de preuves."
+    }
+  ],
+  "known_limits": [
+    "L'agent choisit ce qu'il capture : une pièce prouve ce qui a été lancé, pas que rien d'autre ne devait l'être.",
+    "Les captures de l'Evaluator ne sont pas rejouées par du code : seuls les tests de critère rejouent une observation.",
+    "Le scellé d'une pièce prouve qu'elle est passée par l'outil de capture sur cet hôte ; il ne protège pas contre le compte Unix qui possède le magasin.",
+    "Les tests et la fidélité mécanique de fin de Spec n'ont pas de pièce scellée : leur relevé est celui de la porte, écrit sur le convoi.",
+    "La fidélité mécanique compare les tokens, la structure et les styles calculés des ancres ; le contenu textuel n'est pas comparé, et l'image de différence n'a aucun seuil.",
+    "Les captures côte à côte sont celles du dernier contrôle de fidélité de chaque ticket d'écran, à son commit : aucune n'est refaite au commit du dossier.",
+    "Le détecteur de report cherche des marqueurs connus : un report écrit autrement ne se voit que par la ligne de démonstration évaluée sur le produit.",
+    "Le cycle interne du TDD (méthode du skill tdd) n'est pas prouvé : seuls le rouge, le gel et le vert le sont. Un appel de skill ne prouve pas que la méthode a été suivie.",
+    "Qu'un critère soit exécutable n'est pas vérifié à la publication : seul l'arrêt du ticket en livraison le révèle.",
+    "Un changement de comportement venu de la branche protégée et invisible pour les contrôles mécaniques entre sans avoir été vu.",
+    "Le classement d'un constat hors ticket est rendu par l'Evaluator de fin, en boîte noire : il ne lit pas le code."
+  ]
+}

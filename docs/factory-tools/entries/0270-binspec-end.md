@@ -13,7 +13,7 @@ et la revue de code de fin (`./bin/spec-end-review`).
 ./bin/spec-end run   <convoi> --repo <dépôt du projet> --profile <profil>   # la porte ; lancée par ./bin/convoy-advance
 ```
 
-- **Les six conditions** (liste `spec-end/v3`), dans l'ordre : 1 registre
+- **Les sept conditions** (liste `spec-end/v4`), dans l'ordre : 1 registre
   (tickets fermés par la porte de fin de ticket ou retirés, aucun parqué ;
   chaque écart et chaque « non fait » d'un Ticket Handoff « réparé » ou
   « accepté par Benjamin » ; aucune Planning Exception ouverte) ; 2 tests
@@ -22,10 +22,13 @@ et la revue de code de fin (`./bin/spec-end-review`).
   (chaque user story numérotée « observée avec preuve » sur le produit
   assemblé, aucun constat hors ticket non classé) ; 5 constats hors ticket
   tous dans un état final ; 6 revue de code de fin complète et favorable sur
-  tout le diff assemblé, à ce commit précis. Une condition non réunie arrête
+  tout le diff assemblé, à ce commit précis ; 7 Evidence Pack généré par du
+  code, complet et à jour, à ce commit (`./bin/evidence-pack`). Une condition non réunie arrête
   la porte : les suivantes ne sont pas lancées — sauf la revue de fin, faite
   en parallèle de l'Outcome Evaluation et lue quoi que disent 4 et 5. Seuls
-  les verdicts 1 à 3 sont enregistrés ; 4, 5 et 6 sont relus à chaque appel.
+  les verdicts 1 à 3 sont enregistrés ; 4 à 7 sont relus à chaque appel. La
+  porte ne génère pas le dossier : `./bin/convoy-advance` le fait générer
+  quand il ne manque que lui.
 - **Pour savoir ce qui manque** : `check` nomme chaque condition non réunie
   et dit ce qui a été lu.
 - **Un écart ou un « non fait » sans état final** : la porte le nomme et te
@@ -41,7 +44,7 @@ et la revue de code de fin (`./bin/spec-end-review`).
   leur commit (`convoy.spec_end` dans `./bin/convoy-state show`). Dès que la
   branche d'intégration ou la branche protégée bouge, `check` les dit
   « périmés » et la porte rejoue tout.
-- **Sorties** : 0 six conditions réunies sur la pointe actuelle ; 1 refus ou
+- **Sorties** : 0 sept conditions réunies sur la pointe actuelle ; 1 refus ou
   condition non réunie ; 3 état sans règle ; 4 convoi sans marque. `run` est
   refusé à toute session d'agent.
 - **Limites** : la porte tourne dans la passe de l'ordre (délai de 300 s,
