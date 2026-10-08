@@ -44,18 +44,65 @@
 #                            # (af-mzuprx, docs/OPERATIONS.md "Factory CI
 #                            # cost"). Each result line ends with the seconds
 #                            # the file took.
+#   ci-run-tests --changed-since REF [--list]
+#                            # leave the long tests out when every file
+#                            # committed between REF and HEAD is in an area
+#                            # they cannot reach (af-5mw6z0). The long tests
+#                            # are the files config/ci-test-seconds.tsv gives
+#                            # LONG_TEST_SECONDS or more, less those marked
+#                            #   # ci: every-run — <reason>
+#                            # the areas are the closed list
+#                            # config/ci-long-test-blind-areas.txt.
+#                            # Anything else is a full run: a changed file
+#                            # outside the list, no changed file, a REF that
+#                            # cannot be read, uncommitted changes, or
+#                            # CI_RUN_TESTS_FULL=1. Without this option every
+#                            # run is a full run. The run says which it is and
+#                            # why, and names each test it left out.
+#
+# The areas are not believed, they are held: whenever a long test runs, it
+# runs without sight of the real areas (see "blindfold" below), and one that
+# read them fails the run.
 
 set -uo pipefail
 
+SELF=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")
 REPO_ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
 SELF="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
 ARGS=("$@")
 cd "$REPO_ROOT" || { echo "ci-run-tests: $REPO_ROOT unreachable" >&2; exit 2; }
 
+NEVER_READ='2000-01-01'  # the access time given to every entry of a copy
+
+# Internal, the inside of the blindfold (see "blindfold" below):
+#   ci-run-tests --blindfolded COPIES REACHED AREA_PATH... -- COMMAND...
+# COPIES is an empty tmpfs only this mount namespace has. Copy each area
+# there, run COMMAND where the areas are those copies and COPIES itself is
+# hidden, then write to REACHED the entries of the copies that were read.
+if [ "${1:-}" = "--blindfolded" ]; then
+  copies=$2 reached=$3
+  shift 3
+  binds=()
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+    mkdir -p "$copies/$(dirname "$1")" && cp -a "$1" "$copies/$1" || exit 2
+    binds+=(--bind "$copies/$1" "$REPO_ROOT/$1")
+    shift
+  done
+  shift
+  # Listed whole first: the listing itself reads the directories.
+  mapfile -d '' entries < <(find "$copies" -print0)
+  touch -a -h -d "$NEVER_READ" "${entries[@]}" || exit 2
+  bwrap --dev-bind / / --die-with-parent "${binds[@]}" --tmpfs "$copies" -- "$@"
+  status=$?
+  (cd "$copies" && find . -mindepth 1 -newerat '2001-01-01' | sed 's|^\./||' | sort) >"$reached"
+  exit "$status"
+fi
+
 MODE="run"
 SHARD_I=""
 SHARD_N=""
 JOBS="${CI_RUN_TESTS_JOBS:-1}"
+CHANGED_SINCE=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --list) MODE="list" ;;
@@ -67,6 +114,10 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --jobs) JOBS=${2:-}; shift ;;
+    --changed-since)
+      [ -n "${2:-}" ] || { echo "ci-run-tests: --changed-since wants a commit" >&2; exit 2; }
+      CHANGED_SINCE=$2; shift
+      ;;
     *) echo "ci-run-tests: unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -95,6 +146,73 @@ by_weight() {  # file paths on stdin -> "<seconds> <path>" lines, longest first
   done | sort -k1,1nr -k2,2
 }
 
+# --- the long tests and the areas they cannot reach (af-5mw6z0) -------------
+# One line per area: "dir/" is everything under that directory, anything else
+# is a glob on the path. A file that is itself in an area is never a long
+# test: a change to it must run it. Neither is a file marked
+#   # ci: every-run — <reason>
+# which is how a test that does read an area (it asks Git for the state of
+# the whole repository, say) stays in every run.
+LONG_TEST_SECONDS=30
+AREAS_FILE=config/ci-long-test-blind-areas.txt
+AREAS=()
+if [ -r "$AREAS_FILE" ]; then
+  while IFS= read -r line; do
+    line=${line%%#*}
+    line=${line//[[:space:]]/}
+    [ -n "$line" ] && AREAS+=("$line")
+  done < "$AREAS_FILE"
+fi
+
+in_blind_area() {
+  local area
+  for area in "${AREAS[@]}"; do
+    case "$area" in
+      */) [[ "$1" == "$area"* ]] && return 0 ;;
+      *) # shellcheck disable=SC2053  # the area is a glob
+         [[ "$1" == $area ]] && return 0 ;;
+    esac
+  done
+  return 1
+}
+
+is_long() {
+  [ "${#AREAS[@]}" -gt 0 ] && [ "${MEASURED[$1]:-0}" -ge "$LONG_TEST_SECONDS" ] && ! in_blind_area "$1" \
+    && ! grep -qE '^#[[:space:]]*ci:[[:space:]]*every-run' "$1"
+}
+
+# SKIP_LONG stays 0 unless every question below has the answer that allows
+# leaving the long tests out; SELECTION says which one did not.
+SKIP_LONG=0
+SELECTION="full run: no --changed-since"
+select_tests() {
+  local base changed f
+  if [ "${CI_RUN_TESTS_FULL:-0}" = 1 ]; then
+    SELECTION="full run: CI_RUN_TESTS_FULL=1"; return
+  fi
+  if [ "${#AREAS[@]}" -eq 0 ]; then
+    SELECTION="full run: $AREAS_FILE names no area"; return
+  fi
+  if ! base=$(git merge-base --end-of-options "$CHANGED_SINCE" HEAD 2>/dev/null) \
+    || ! changed=$(git diff --name-only --no-renames "$base" HEAD 2>/dev/null); then
+    SELECTION="full run: what changed since $CHANGED_SINCE cannot be read"; return
+  fi
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    SELECTION="full run: the work tree has uncommitted changes"; return
+  fi
+  if [ -z "$changed" ]; then
+    SELECTION="full run: no file changed since $CHANGED_SINCE"; return
+  fi
+  while IFS= read -r f; do
+    if ! in_blind_area "$f"; then
+      SELECTION="full run: $f changed, and it is outside the areas of $AREAS_FILE"; return
+    fi
+  done <<<"$changed"
+  SKIP_LONG=1
+  SELECTION="every file changed since $CHANGED_SINCE is in an area the long tests cannot reach ($AREAS_FILE)"
+}
+[ -n "$CHANGED_SINCE" ] && select_tests
+
 mapfile -t files < <(
   for f in tests/*.sh tests/*.py; do
     [ -e "$f" ] || continue
@@ -103,7 +221,16 @@ mapfile -t files < <(
   done | sort
 )
 
-if [ -n "$SHARD_N" ]; then
+skipped=()
+if [ "$SKIP_LONG" -eq 1 ]; then
+  kept=()
+  for f in "${files[@]}"; do
+    if is_long "$f"; then skipped+=("$f"); else kept+=("$f"); fi
+  done
+  files=("${kept[@]}")
+fi
+
+if [ -n "$SHARD_N" ] && [ "${#files[@]}" -gt 0 ]; then
   mapfile -t files < <(
     printf '%s\n' "${files[@]}" | by_weight \
       | awk -v i="$SHARD_I" -v n="$SHARD_N" '{
@@ -117,8 +244,19 @@ if [ -n "$SHARD_N" ]; then
 fi
 
 if [ "$MODE" = "list" ]; then
-  printf '%s\n' "${files[@]}"
+  [ "${#files[@]}" -eq 0 ] || printf '%s\n' "${files[@]}"
   exit 0
+fi
+
+if [ -n "$CHANGED_SINCE" ]; then
+  if [ "$SKIP_LONG" -eq 1 ]; then
+    echo "ci-run-tests: ${#skipped[@]} long test(s) NOT run: $SELECTION. CI_RUN_TESTS_FULL=1 runs them."
+    for f in "${skipped[@]}"; do
+      printf '  not run: %s (%ss in the last measured run)\n' "$f" "${MEASURED[$f]}"
+    done
+  else
+    echo "ci-run-tests: $SELECTION"
+  fi
 fi
 
 if [ "${#files[@]}" -eq 0 ] && [ -n "$SHARD_N" ]; then
@@ -180,25 +318,89 @@ fi
 RESULTS=$(mktemp -d)
 trap 'rm -rf -- "$RESULTS"' EXIT
 
+# --- the blindfold: a long test never sees the real areas -------------------
+# A change to an area skips the long tests, so none of them may depend on
+# one. Each long test therefore runs in its own mount namespace (bwrap) where
+# every area is replaced by a private copy with the same content, and the
+# copy is read afterwards: an entry whose access time moved was opened or
+# listed by that test or by something it started, and the test fails.
+# The copies are on a tmpfs that exists only in that namespace, and the test
+# reaches them only through the paths of the areas: a process elsewhere on
+# the host that walks the temporary directory (seen on the first battery: it
+# listed the copies of four tests at once) cannot be mistaken for the test,
+# nor can the test walking the temporary directory itself.
+# What this does not see: a path that was only tested for existence (stat),
+# never opened, and content read through Git objects.
+BLIND_PATHS=()  # what exists of the areas
+for area in "${AREAS[@]}"; do
+  case "$area" in
+    */) [ -d "$area" ] && BLIND_PATHS+=("${area%/}") ;;
+    *) for p in $area; do [ -e "$p" ] && BLIND_PATHS+=("$p"); done ;;
+  esac
+done
+
+blindfolded() {  # reached-file command... -> runs command blind to the areas
+  local copies status reached=$1
+  shift
+  copies=$(mktemp -d)
+  bwrap --dev-bind / / --die-with-parent --tmpfs "$copies" -- \
+    bash "$SELF" --blindfolded "$copies" "$reached" "${BLIND_PATHS[@]}" -- "$@"
+  status=$?
+  rmdir -- "$copies"
+  return "$status"
+}
+
+blindfold_works() {  # the namespaces start, and what reads an area is seen
+  local reached=$RESULTS/blindfold-probe
+  # shellcheck disable=SC2016  # $1 belongs to the inner shell
+  blindfolded "$reached" bash -c 'cat "$1" >/dev/null 2>&1 || ls "$1" >/dev/null' - "${BLIND_PATHS[0]}" >/dev/null 2>&1 || return 1
+  [ -s "$reached" ]
+}
+
+blindfold=0
+if [ "${#BLIND_PATHS[@]}" -gt 0 ]; then
+  for f in "${files[@]}"; do
+    is_long "$f" && { blindfold=1; break; }
+  done
+fi
+if [ "$blindfold" -eq 1 ] && ! blindfold_works; then
+  echo "ci-run-tests: the long tests must run without sight of the areas of $AREAS_FILE, and that cannot be set up here: it needs bwrap (package bubblewrap, allowed to create a user namespace inside another) and a tmpfs that records access times." >&2
+  exit 2
+fi
+
 run_one() {  # index file -> prints its result line, leaves $RESULTS/<index>.failed on failure
   local index=$1 f=$2 interp out status runtime_dir started=$SECONDS
+  local reached="" wrap=()
   case "$f" in
     *.py) interp=$PYTHON ;;
     *.sh) interp=bash ;;
   esac
+  if [ "$blindfold" -eq 1 ] && is_long "$f"; then
+    reached=$RESULTS/$index.reached
+    wrap=(blindfolded "$reached")
+  fi
   # Each test gets a throwaway XDG_RUNTIME_DIR, so bin/escalation-door's
   # default lock can never be the host's own -- and a test that still
   # reaches that default instead of setting ESCALATION_DOOR_LOCK_FILE fails
   # here, because run by hand it would wait on (or hold) the live Factory's
   # lock (af-wnj692).
   runtime_dir=$(mktemp -d)
-  out=$(env -u ESCALATION_DOOR_LOCK_FILE XDG_RUNTIME_DIR="$runtime_dir" "$interp" "$f" 2>&1)
+  out=$(unset ESCALATION_DOOR_LOCK_FILE; XDG_RUNTIME_DIR="$runtime_dir" "${wrap[@]}" "$interp" "$f" 2>&1)
   status=$?
   if [ -e "$runtime_dir/agent-factory-escalation-door.lock" ]; then
     status=1
     out+=$'\n'"ci-run-tests: $f reached bin/escalation-door's default lock file -- set ESCALATION_DOOR_LOCK_FILE to a path the test owns (tests/lib/sandbox.sh does)"
   fi
   rm -rf -- "$runtime_dir"
+  if [ -n "$reached" ]; then
+    if [ ! -e "$reached" ]; then
+      status=1
+      out+=$'\n'"ci-run-tests: $f is a long test and what it read of the areas of $AREAS_FILE could not be established: the blindfold did not end."
+    elif [ -s "$reached" ]; then
+      status=1
+      out+=$'\n'"ci-run-tests: $f is a long test and read an area of $AREAS_FILE. A change to that area does not run this test, so it must not depend on it: remove the dependency, take the area out of the list, or keep this test in every run with a '# ci: every-run — <reason>' line. Read:"$'\n'"$(cat "$reached")"
+    fi
+  fi
   # One file's result is written whole, never mixed with another's.
   {
     flock 9

@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# A fake `gc` for bin/proposal-door's tests (tests/proposal-door-test.py,
+# tests/proposal-classes-contract-test.py): beads are one JSON file each
+# under $PD_BEAD_DIR, every call is logged to $PD_CALL_LOG, the next
+# `bd create` takes its id from $PD_NEXT_ID_FILE (a queue, one id per
+# line: the first line is consumed). Refuses every call it was not taught,
+# loudly, like the other fakes in tests/fixtures/ (P10, af-ygibh).
+#
+# Taught: bd create (-l, -t, -d, -p honoured), bd show --json, bd update
+# (--set-metadata, --append-notes), bd list --status --label --json, bd dep
+# relate (logged only), bd close --reason, mail send (logged to
+# $PD_MAIL_LOG when set, else to the call log only).
+set -Eeuo pipefail
+
+: "${PD_BEAD_DIR:?PD_BEAD_DIR must be set by the test}"
+: "${PD_CALL_LOG:?PD_CALL_LOG must be set by the test}"
+: "${PD_NEXT_ID_FILE:?PD_NEXT_ID_FILE must be set by the test}"
+printf '%q ' "$@" >>"$PD_CALL_LOG"
+printf '\n' >>"$PD_CALL_LOG"
+
+bead_file() { printf '%s/%s.json' "$PD_BEAD_DIR" "$1"; }
+
+if [[ ${1:-} == bd && ${2:-} == create ]]; then
+  id=$(head -n1 "$PD_NEXT_ID_FILE")
+  [[ -n $id ]] || { printf 'fake gc: no next id left in PD_NEXT_ID_FILE\n' >&2; exit 65; }
+  tail -n +2 "$PD_NEXT_ID_FILE" >"$PD_NEXT_ID_FILE.tmp" && mv "$PD_NEXT_ID_FILE.tmp" "$PD_NEXT_ID_FILE"
+  shift 2
+  title=$1; shift
+  labels='[]'; type='task'; description=''; priority='2'
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -l|--labels) labels=$(jq -c --arg l "$2" '$l | split(",")' <<<'null'); shift 2 ;;
+      -t|--type) type=$2; shift 2 ;;
+      -d|--description) description=$2; shift 2 ;;
+      -p|--priority) priority=$2; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  jq -n --arg id "$id" --arg title "$title" --argjson labels "$labels" --arg type "$type" \
+    --arg description "$description" --arg priority "$priority" \
+    '{id: $id, title: $title, status: "open", issue_type: $type, priority: $priority,
+      description: $description, metadata: {}, notes: "", labels: $labels}' >"$(bead_file "$id")"
+  printf 'created %s\n' "$id"
+  exit 0
+fi
+
+if [[ ${1:-} == bd && ${2:-} == show && ${4:-} == --json ]]; then
+  id=$3
+  file=$(bead_file "$id")
+  [[ -f $file ]] || { printf 'not found\n' >&2; exit 42; }
+  jq -c '[.]' "$file"
+  exit 0
+fi
+
+if [[ ${1:-} == bd && ${2:-} == update ]]; then
+  id=$3
+  file=$(bead_file "$id")
+  [[ -f $file ]] || printf '{"id":"%s","status":"open","metadata":{},"notes":"","labels":["proposal"]}' "$id" >"$file"
+  shift 3
+  tmp="${file}.tmp"
+  cp "$file" "$tmp"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --set-metadata)
+        pair=$2
+        key=${pair%%=*}
+        value=${pair#*=}
+        jq --arg key "$key" --arg value "$value" '.metadata = (.metadata // {}) | .metadata[$key] = $value' "$tmp" >"${tmp}.next"
+        mv "${tmp}.next" "$tmp"
+        shift 2
+        ;;
+      --append-notes)
+        jq --arg note "$2" '.notes = ((.notes // "") + "\n" + $note)' "$tmp" >"${tmp}.next"
+        mv "${tmp}.next" "$tmp"
+        shift 2
+        ;;
+      *)
+        printf 'unsupported gc bd update flag: %s\n' "$1" >&2
+        exit 64
+        ;;
+    esac
+  done
+  mv "$tmp" "$file"
+  printf '{}\n'
+  exit 0
+fi
+
+if [[ ${1:-} == bd && ${2:-} == close ]]; then
+  id=$3
+  file=$(bead_file "$id")
+  [[ -f $file ]] || { printf 'not found\n' >&2; exit 42; }
+  reason=""
+  shift 3
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --reason|-r) reason=$2; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  jq --arg reason "$reason" '.status = "closed" | .close_reason = $reason' "$file" >"$file.tmp" && mv "$file.tmp" "$file"
+  printf 'closed %s\n' "$id"
+  exit 0
+fi
+
+if [[ ${1:-} == bd && ${2:-} == dep && ${3:-} == relate ]]; then
+  for id in "$4" "$5"; do
+    [[ -f $(bead_file "$id") ]] || { printf 'not found: %s\n' "$id" >&2; exit 42; }
+  done
+  printf 'related %s %s\n' "$4" "$5"
+  exit 0
+fi
+
+if [[ ${1:-} == mail && ${2:-} == send ]]; then
+  if [[ -n ${PD_MAIL_LOG:-} ]]; then
+    printf '%q ' "${@:3}" >>"$PD_MAIL_LOG"
+    printf '\n' >>"$PD_MAIL_LOG"
+  fi
+  printf 'sent\n'
+  exit 0
+fi
+
+if [[ ${1:-} == bd && ${2:-} == list ]]; then
+  shift 2
+  status_filter=""
+  label=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --status) status_filter=$2; shift 2 ;;
+      --label) label=$2; shift 2 ;;
+      --json) shift ;;
+      *) shift ;;
+    esac
+  done
+  matches=()
+  for file in "$PD_BEAD_DIR"/*.json; do
+    [[ -f $file ]] || continue
+    [[ $file == *.tmp* ]] && continue
+    bead=$(jq -c '.' "$file")
+    if [[ -n $status_filter ]]; then
+      status=$(jq -r '.status // "open"' <<<"$bead")
+      IFS=',' read -r -a wanted <<<"$status_filter"
+      keep=0
+      for w in "${wanted[@]}"; do [[ $w == "$status" ]] && keep=1; done
+      [[ $keep == 1 ]] || continue
+    fi
+    if [[ -n $label ]]; then
+      has_label=$(jq -r --arg l "$label" '(.labels // []) | index($l) != null' <<<"$bead")
+      [[ $has_label == true ]] || continue
+    fi
+    matches+=("$bead")
+  done
+  if [[ ${#matches[@]} -eq 0 ]]; then
+    printf '[]\n'
+  else
+    (IFS=,; printf '[%s]\n' "${matches[*]}")
+  fi
+  exit 0
+fi
+
+printf 'unsupported gc fixture command: %s\n' "$*" >&2
+exit 64

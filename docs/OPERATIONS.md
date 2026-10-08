@@ -572,10 +572,55 @@ over half less. Re-measure with `./bin/ci-minutes` on a full day.
 | Each runner ran one test file at a time on its two cores. | Two files at once need 1.3 to 1.4 times fewer runner seconds, not 2: two long files side by side slow each other (`ticket-evaluation-test.py`: 481 s next to short files, 824 s next to `code-review-test.py`). | `bin/ci-run-tests --jobs "$(nproc)"`. |
 | The lots were dealt by file size, which does not follow duration (`spec-integration-test.py`: 908 lines, 628 s; `convoy-state-test.py`: 2,978 lines, 273 s). The job named `Tests` is billed while it waits for the longest lot. | 8 to 11 minutes of waiting per run with four lots by size; 12 with two | Lots dealt by the seconds each file took in a real run: `config/ci-test-seconds.tsv`, written by `./bin/ci-test-seconds`. Still 6 minutes of waiting on the first run: runners are not equally fast. |
 | The tests themselves grew: 391 s of test time on 10-06 at 03:00, 3,284 s on 10-08 at 01:40. Fourteen files of the new delivery flow (`ticket-evaluation`, `spec-integration`, `convoy-advance`, `convoy-state`, `code-review`, `correction-round`, ...) are 88% of it. One of them, `tests/convoy-state-test.py`, starts 5,404 Python processes (2,013 calls of `bin/convoy-state`, 3,391 of the fake `gc`), 40 to 90 ms each. | The reason a run went from 7 to 65 minutes | Not reduced here: it is the largest share left. Each line of `bin/ci-run-tests` now ends with the seconds the file took, so the next growth is visible in the job log. |
-| A change to docs only runs every test. | 4 of 51 merged PRs | Left as is: several tests read the docs (catalogues, registration, prompts), so skipping them would weaken the gate. |
+| A change to docs only ran every test. | 4 of 51 merged PRs | Since af-5mw6z0 it runs without the long tests, which do not read the docs; the tests that do (catalogues, registration, prompts) are short and still run. See "Long tests left out" below. |
 
 `tests/ci-workflow-cost-test.sh` fails if the workflow runs on `push` again,
 stops cancelling a replaced run, or stops using every core.
+
+### Long tests left out when the change cannot reach them (af-5mw6z0)
+
+Intent (Benjamin, his words, 2026-10-08): « y'a pas moyen aussi de ne pas
+tester toute l'usine comme ça à chaque fois ? »
+Mechanism (agent interpretation): Factory CI still runs on every pull
+request and `Tests` is still the required check; inside it the long tests
+are left out only when every changed file is in an area they cannot reach.
+It does not mean a merge without CI, a selection guessed from file names, or
+a test left out when the selection is unsure: unsure is a full run.
+
+| Question | Answer |
+|---|---|
+| Which tests are the long tests? | The files `config/ci-test-seconds.tsv` gives 30 seconds or more, less those that are themselves in an area or carry a `# ci: every-run — <reason>` line: 18 files, 4,412 of the 4,836 test seconds of a run (91%), all of the new delivery flow. The other files (about 130, 424 s) run on every pull request. |
+| Which areas? | The closed list `config/ci-long-test-blind-areas.txt`: `docs/`, `lib/cockpit/`, `bin/cockpit*`, `tests/cockpit-*`, `tests/fixtures/cockpit/`. 38 of the last 100 merged pull requests changed nothing else (measured 2026-10-08). |
+| When is a run reduced? | A `pull_request` run whose merge commit differs from its first parent (`main`) only by files of those areas (`bin/ci-run-tests --changed-since 'HEAD^1'`). |
+| When is it a full run? | One changed file outside the list (the list itself, a test, a tool the Cockpit calls such as `bin/proposal-door` or `bin/convoy-state`), a file moved into or out of an area, no changed file, a commit that cannot be read, uncommitted changes, a run started by hand, the switch below. The battery run by hand and the main-landing gate pass no `--changed-since`: always full. |
+| What does the run say? | Every lot starts with `ci-run-tests: 18 long test(s) NOT run: ...` and one `not run: tests/x (824s ...)` line per test, or with `ci-run-tests: full run: <file> changed, and it is outside the areas ...`. |
+| How is an area held instead of believed? | Whenever a long test runs, it runs in its own mount namespace (`bwrap`) where each area is a private copy with the same content, on a tmpfs no other process has; afterwards an entry of the copy whose access time moved was opened or listed by that test or by a process it started, and the test fails with the paths. A pull request that makes a long test depend on an area changes that test or a tool, so its own run is full and fails. A long test that has to read an area stays in every run with a `# ci: every-run — <reason>` line: `tests/evidence-capture-test.py` (66 s) asks Git for the state of the whole repository. |
+| What does that not see? | A path only tested for existence, and content read through Git objects (`git show`, `git ls-files`) instead of the files. |
+
+**Force a full run:**
+
+- every run: set `CI_RUN_TESTS_FULL: '1'` in `.github/workflows/ci.yml`
+  (the one switch back), or empty the list of areas;
+- one branch, by hand: `gh workflow run ci.yml --ref <branch>` (full, but it
+  is not the `pull_request` run the ruleset reads);
+- locally: `bin/ci-run-tests --jobs 4` is always full;
+  `bin/ci-run-tests --jobs 4 --changed-since origin/main` is the reduced one.
+
+No full run is scheduled on `main`: about six in ten pull requests run
+everything, and the one change that could make a reduced run wrong (a long
+test that starts reading an area) cannot come from a reduced run. A daily
+run would cost about 50 billed minutes a day: Benjamin's decision (spend).
+
+`bin/ci-test-seconds` keeps the seconds of a test the run it reads did not
+execute: read from a reduced run alone, the long tests would look unmeasured,
+stop being long tests, and run on every pull request again.
+`tests/ci-run-tests-selection-test.sh` proves the selection (a change
+outside the list runs everything, any doubt too) and the blindfold (a long
+test that opens or lists an area fails the run).
+
+Adding an area: a place pull requests often change alone, one line in the
+list; the pull request that adds it is a full run and says at once whether a
+long test reads it.
 
 ### Keeping the lots even
 
@@ -596,7 +641,7 @@ files run (`tests/ci-test-seconds-test.sh`).
 The job named `Tests` is still the one status check ruleset
 `AF-main-protection` requires and `bin/pr-autopilot` waits on. It exists from
 the first second of a run and is green only when its own lot and every other
-lot passed. A cancelled run belongs to a commit that is no longer the head of
+lot passed, on a reduced run as on a full one. A cancelled run belongs to a commit that is no longer the head of
 its pull request, so it could not have let anything merge.
 
 ### When the quota is reached
