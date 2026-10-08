@@ -66,8 +66,35 @@
 
 set -uo pipefail
 
+SELF=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")
 REPO_ROOT="${FACTORY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
 cd "$REPO_ROOT" || { echo "ci-run-tests: $REPO_ROOT unreachable" >&2; exit 2; }
+
+NEVER_READ='2000-01-01'  # the access time given to every entry of a copy
+
+# Internal, the inside of the blindfold (see "blindfold" below):
+#   ci-run-tests --blindfolded COPIES REACHED AREA_PATH... -- COMMAND...
+# COPIES is an empty tmpfs only this mount namespace has. Copy each area
+# there, run COMMAND where the areas are those copies and COPIES itself is
+# hidden, then write to REACHED the entries of the copies that were read.
+if [ "${1:-}" = "--blindfolded" ]; then
+  copies=$2 reached=$3
+  shift 3
+  binds=()
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+    mkdir -p "$copies/$(dirname "$1")" && cp -a "$1" "$copies/$1" || exit 2
+    binds+=(--bind "$copies/$1" "$REPO_ROOT/$1")
+    shift
+  done
+  shift
+  # Listed whole first: the listing itself reads the directories.
+  mapfile -d '' entries < <(find "$copies" -print0)
+  touch -a -h -d "$NEVER_READ" "${entries[@]}" || exit 2
+  bwrap --dev-bind / / --die-with-parent "${binds[@]}" --tmpfs "$copies" -- "$@"
+  status=$?
+  (cd "$copies" && find . -mindepth 1 -newerat '2001-01-01' | sed 's|^\./||' | sort) >"$reached"
+  exit "$status"
+fi
 
 MODE="run"
 SHARD_I=""
@@ -256,10 +283,14 @@ trap 'rm -rf -- "$RESULTS"' EXIT
 # one. Each long test therefore runs in its own mount namespace (bwrap) where
 # every area is replaced by a private copy with the same content, and the
 # copy is read afterwards: an entry whose access time moved was opened or
-# listed by that test or by something it started, and the test fails. Nothing
-# else can see the copy, so the reader is known and a reader elsewhere on the
-# host cannot be mistaken for it. What this does not see: a path that was
-# only tested for existence (stat), never opened.
+# listed by that test or by something it started, and the test fails.
+# The copies are on a tmpfs that exists only in that namespace, and the test
+# reaches them only through the paths of the areas: a process elsewhere on
+# the host that walks the temporary directory (seen on the first battery: it
+# listed the copies of four tests at once) cannot be mistaken for the test,
+# nor can the test walking the temporary directory itself.
+# What this does not see: a path that was only tested for existence (stat),
+# never opened, and content read through Git objects.
 BLIND_PATHS=()  # what exists of the areas
 for area in "${AREAS[@]}"; do
   case "$area" in
@@ -267,13 +298,23 @@ for area in "${AREAS[@]}"; do
     *) for p in $area; do [ -e "$p" ] && BLIND_PATHS+=("$p"); done ;;
   esac
 done
-NEVER_READ='2000-01-01'  # the access time given to every entry of a copy
 
-blindfold_works() {  # bwrap starts, and reading a file moves its access time here
-  local probe=$RESULTS/blindfold-probe
-  : >"$probe" && touch -a -d "$NEVER_READ" "$probe" || return 1
-  bwrap --dev-bind / / --die-with-parent -- cat "$probe" >/dev/null 2>&1 || return 1
-  [ -n "$(find "$probe" -newerat '2001-01-01')" ]
+blindfolded() {  # reached-file command... -> runs command blind to the areas
+  local copies status reached=$1
+  shift
+  copies=$(mktemp -d)
+  bwrap --dev-bind / / --die-with-parent --tmpfs "$copies" -- \
+    bash "$SELF" --blindfolded "$copies" "$reached" "${BLIND_PATHS[@]}" -- "$@"
+  status=$?
+  rmdir -- "$copies"
+  return "$status"
+}
+
+blindfold_works() {  # the namespaces start, and what reads an area is seen
+  local reached=$RESULTS/blindfold-probe
+  # shellcheck disable=SC2016  # $1 belongs to the inner shell
+  blindfolded "$reached" bash -c 'cat "$1" >/dev/null 2>&1 || ls "$1" >/dev/null' - "${BLIND_PATHS[0]}" >/dev/null 2>&1 || return 1
+  [ -s "$reached" ]
 }
 
 blindfold=0
@@ -283,29 +324,20 @@ if [ "${#BLIND_PATHS[@]}" -gt 0 ]; then
   done
 fi
 if [ "$blindfold" -eq 1 ] && ! blindfold_works; then
-  echo "ci-run-tests: the long tests must run without sight of the areas of $AREAS_FILE, and that cannot be set up here: it needs bwrap (package bubblewrap, allowed to create a user namespace) and a temporary directory that records access times (not mounted noatime)." >&2
+  echo "ci-run-tests: the long tests must run without sight of the areas of $AREAS_FILE, and that cannot be set up here: it needs bwrap (package bubblewrap, allowed to create a user namespace inside another) and a tmpfs that records access times." >&2
   exit 2
 fi
 
 run_one() {  # index file -> prints its result line, leaves $RESULTS/<index>.failed on failure
   local index=$1 f=$2 interp out status runtime_dir started=$SECONDS
-  local blind="" p reached wrap=() entries=()
+  local reached="" wrap=()
   case "$f" in
     *.py) interp=$PYTHON ;;
     *.sh) interp=bash ;;
   esac
   if [ "$blindfold" -eq 1 ] && is_long "$f"; then
-    blind=$(mktemp -d)
-    wrap=(bwrap --dev-bind / / --die-with-parent)
-    for p in "${BLIND_PATHS[@]}"; do
-      mkdir -p "$blind/$(dirname "$p")"
-      cp -a "$p" "$blind/$p"
-      wrap+=(--bind "$blind/$p" "$REPO_ROOT/$p")
-    done
-    wrap+=(--)
-    # Listed whole first: the listing itself reads the directories.
-    mapfile -d '' entries < <(find "$blind" -print0)
-    touch -a -h -d "$NEVER_READ" "${entries[@]}"
+    reached=$RESULTS/$index.reached
+    wrap=(blindfolded "$reached")
   fi
   # Each test gets a throwaway XDG_RUNTIME_DIR, so bin/escalation-door's
   # default lock can never be the host's own -- and a test that still
@@ -313,20 +345,21 @@ run_one() {  # index file -> prints its result line, leaves $RESULTS/<index>.fai
   # here, because run by hand it would wait on (or hold) the live Factory's
   # lock (af-wnj692).
   runtime_dir=$(mktemp -d)
-  out=$(env -u ESCALATION_DOOR_LOCK_FILE XDG_RUNTIME_DIR="$runtime_dir" "${wrap[@]}" "$interp" "$f" 2>&1)
+  out=$(unset ESCALATION_DOOR_LOCK_FILE; XDG_RUNTIME_DIR="$runtime_dir" "${wrap[@]}" "$interp" "$f" 2>&1)
   status=$?
   if [ -e "$runtime_dir/agent-factory-escalation-door.lock" ]; then
     status=1
     out+=$'\n'"ci-run-tests: $f reached bin/escalation-door's default lock file -- set ESCALATION_DOOR_LOCK_FILE to a path the test owns (tests/lib/sandbox.sh does)"
   fi
   rm -rf -- "$runtime_dir"
-  if [ -n "$blind" ]; then
-    reached=$(cd "$blind" && find . -mindepth 1 -newerat '2001-01-01' | sed 's|^\./||' | sort)
-    if [ -n "$reached" ]; then
+  if [ -n "$reached" ]; then
+    if [ ! -e "$reached" ]; then
       status=1
-      out+=$'\n'"ci-run-tests: $f is a long test and read an area of $AREAS_FILE. A change to that area does not run this test, so it must not depend on it: remove the dependency, take the area out of the list, or keep this test in every run with a '# ci: every-run — <reason>' line. Read:"$'\n'"$reached"
+      out+=$'\n'"ci-run-tests: $f is a long test and what it read of the areas of $AREAS_FILE could not be established: the blindfold did not end."
+    elif [ -s "$reached" ]; then
+      status=1
+      out+=$'\n'"ci-run-tests: $f is a long test and read an area of $AREAS_FILE. A change to that area does not run this test, so it must not depend on it: remove the dependency, take the area out of the list, or keep this test in every run with a '# ci: every-run — <reason>' line. Read:"$'\n'"$(cat "$reached")"
     fi
-    rm -rf -- "$blind"
   fi
   # One file's result is written whole, never mixed with another's.
   {
