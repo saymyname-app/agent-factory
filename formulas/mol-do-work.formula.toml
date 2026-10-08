@@ -396,6 +396,11 @@ else
     # gc.delivery_status or the notes: they are the ticket's merge record.
     gc bd update "$WORK_BEAD_ID" --unset-metadata work_dir
     echo "push-and-pr: nothing to deliver for $WORK_BEAD_ID — delivery record left as it is"
+  elif [ "$FINISH_RC" != "0" ]; then
+    # af-hmqlf5: finish refused (3) or could not push (1) -- nothing was
+    # delivered and the worktree is still there. Write nothing on the bead:
+    # dropping work_dir here made the re-run read "." and do nothing.
+    echo "push-and-pr: finish exited $FINISH_RC for $WORK_BEAD_ID — work_dir kept, run this block again once resolved" >&2
   elif [ -n "$PR_URL" ]; then
     gc bd update "$WORK_BEAD_ID" \
       --set-metadata "gc.pr_url=$PR_URL" \
@@ -413,6 +418,11 @@ fi
 If `finish` exits 3, nothing failed: the bead asks for PR sections that are
 not written yet. Its message names the file to write; write it, then run the
 block above again. Do not mail anyone for that.
+
+On any non-zero exit other than 4 the block writes nothing on the work bead
+and keeps `work_dir`, so running it again resumes the same worktree
+(af-hmqlf5, 2026-10-08: it used to drop `work_dir`, and the re-run printed
+"nothing to do" with the work still unpublished).
 
 If `finish` exits 4, nothing failed either: the ticket's PR already merged
 with this exact head while the dispatch was running, or the branch has no
