@@ -31,6 +31,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 PORT="${CONVOY_MANUAL_LIFECYCLE_TRIAL_PORT:-18397}"
 AUTOCLOSE="convoy autoclose"
 
@@ -54,14 +55,7 @@ export GC_HOME="$TRIAL/h" XDG_RUNTIME_DIR="$TRIAL/r" GC_DISABLE_USAGE_METRICS=1
 cleanup() {
   status=$?
   trap - EXIT
-  # `gc supervisor stop` names no supervisor: it stops the one GC_HOME points
-  # at. Nothing is stopped unless that is this trial's own.
-  case "${GC_HOME:-}" in
-    "$TRIAL"/*)
-      gc --city "$CITY" stop >/dev/null 2>&1 || true
-      gc supervisor stop >/dev/null 2>&1 || true
-      ;;
-  esac
+  isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   # The supervisor and the city's managed Dolt server carry the trial
   # directory on their command line; nothing else does.
   pkill -f -- "$TRIAL/" >/dev/null 2>&1 || true
