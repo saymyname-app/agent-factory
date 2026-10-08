@@ -6,8 +6,10 @@ An Evidence Record is never written by an agent: this tool runs the command,
 or drives the browser, itself, and records what it got with the time and the
 commit. The piece goes into the evidence store, outside any Git history,
 filed by Spec and by ticket; its fingerprint goes on the ticket in the
-tracker through bin/convoy-state. A piece this tool did not produce is
-refused by `verify`.
+tracker through bin/convoy-state. A piece of the end of the Spec, captured on
+the assembled product (the Outcome Evaluation, T24), names the convoy in the
+place of the ticket: it is filed under the convoy and its fingerprint goes on
+it. A piece this tool did not produce is refused by `verify`.
 
     evidence-capture command    CONVOY TICKET --piece NAME [--repo DIR | --launch-state FILE]
                                               [--timeout SECONDS] [--expect-exit CODE] -- COMMAND [ARG ...]
@@ -223,6 +225,10 @@ def read_ticket(convoy_id: str, ticket_id: str) -> tuple[str, dict[str, Any]]:
     spec = answer["convoy"].get("spec")
     if not isinstance(spec, str) or not BEAD_ID_RE.match(spec):
         raise Refusal(f"le convoi {convoy_id} ne nomme pas sa Spec ({spec!r}) : le magasin est rangé par Spec")
+    if ticket_id == convoy_id:
+        # A piece of the end of the Spec, captured on the assembled product
+        # (the Outcome Evaluation, T24): filed under the convoy itself.
+        return spec, answer["convoy"]
     for ticket in answer["tickets"]:
         if ticket.get("id") == ticket_id:
             if ticket.get("mark") != MARK or not BEAD_ID_RE.match(ticket_id):

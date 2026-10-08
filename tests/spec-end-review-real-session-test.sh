@@ -212,7 +212,7 @@ git -C "$PRODUCT" update-ref "refs/heads/$BRANCH" "$TIP"
 state mark "$CONVOY"
 state set-integration "$CONVOY" --branch "$BRANCH" --protected "$SPEC_BRANCH_BASE" --base "$BASE"
 state close-ticket "$CONVOY" "$T1" --commit "$TIP" --file "$ROOT/tests/fixtures/convoy-state/ticket-end-report.json"
-jq -n '{version: "spec-end/v2", conditions: [
+jq -n '{version: "spec-end/v3", conditions: [
   {number: 1, name: "registry", verdict: "pass", detail: "1 ticket fermé par la porte (relevé d'"'"'essai)"},
   {number: 2, name: "tests", verdict: "pass", detail: "réunie (relevé d'"'"'essai)"},
   {number: 3, name: "fidelity", verdict: "pass", detail: "sans objet (relevé d'"'"'essai)"}]}' > "$TRIAL/spec-end.json"

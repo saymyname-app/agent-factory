@@ -3678,7 +3678,7 @@ class ConvoyStateTest(unittest.TestCase):
     SPEC_END_NAMES = ("registry", "tests", "fidelity")
 
     def spec_end_file(self, **changes):
-        report = {"version": "spec-end/v2",
+        report = {"version": "spec-end/v3",
                   "conditions": [{"number": number, "name": name, "verdict": "pass", "detail": "réunie (relevé d'essai)"}
                                  for number, name in enumerate(self.SPEC_END_NAMES, start=1)],
                   "records": {"tests": {"command": "python3 regression.py", "exit_code": 0}, "fidelity": {"prototypes": []}},
@@ -3705,7 +3705,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(1, len([line for line in self.write_log.read_text().splitlines() if line.strip()]))
         shown = self.show()
         record = shown["convoy"]["spec_end"]
-        self.assertEqual(("spec-end/v2", tip, base), (record["version"], record["commit"], record["protected"]))
+        self.assertEqual(("spec-end/v3", tip, base), (record["version"], record["commit"], record["protected"]))
         self.assertEqual([(number, name, "pass") for number, name in enumerate(self.SPEC_END_NAMES, start=1)],
                          [(entry["number"], entry["name"], entry["verdict"]) for entry in record["conditions"]])
         self.assertEqual({"tests", "fidelity"}, set(record["records"]))
@@ -3720,6 +3720,8 @@ class ConvoyStateTest(unittest.TestCase):
         silent = [dict(entry, detail=" ") if entry["number"] == 1 else entry for entry in conditions]
         for changes, mention in (
             ({"version": "spec-end/v0"}, "version"),
+            # The list of T23, three conditions: no longer recorded (T24).
+            ({"version": "spec-end/v1"}, "version"),
             ({"conditions": conditions[:2]}, "3 verdicts attendus"),
             ({"conditions": failing}, "condition 2 (tests) non réunie"),
             ({"conditions": renamed}, "verdict 3"),
@@ -3771,7 +3773,7 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_a_spec_end_record_written_outside_the_command_is_a_state_without_rule(self):
         tip, base = self.delivered_convoy()
-        for written in ("à la main", json.dumps({"commit": tip, "protected": base, "version": "spec-end/v2", "at": "x",
+        for written in ("à la main", json.dumps({"commit": tip, "protected": base, "version": "spec-end/v3", "at": "x",
                                                  "conditions": [{"number": 1, "name": "registry", "verdict": "pass",
                                                                  "detail": "seul"}]})):
             with self.subTest(written=written[:12]):
@@ -3961,7 +3963,7 @@ class ConvoyStateTest(unittest.TestCase):
             (lambda: self.end_review_file(tip, verdict="favorable"), "calculée par du code"),
             (lambda: self.end_review_file(base), "porte sur le commit"),
             (lambda: self.end_review_file(tip, [undrafted]), "sans repair rédigé"),
-            (lambda: self.end_review_file(tip, [hollow]), "acceptance_criteria"),
+            (lambda: self.end_review_file(tip, [hollow]), "sans critère d'acceptation"),
             (lambda: self.end_review_file(tip, [unrestored]), "restores"),
             (lambda: self.end_review_file(tip, [{**self.END_TASTE, "axis": "goût"}]), "axe hors de la liste fermée"),
             (lambda: self.end_review_file(tip, coverage={"axes": ["spec"]}), "coverage"),

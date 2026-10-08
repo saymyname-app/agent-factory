@@ -135,6 +135,19 @@ publishes as above. When the operator answered that an element is to be
 repaired, the pass publishes that repair too and names it on the element
 (bin/convoy-state set-item-repair).
 
+A pass also has the assembled product evaluated (T24, af-oy7v3i; Spec §7,
+§9, points 4 and 5): once the gate has rendered its three mechanical
+verdicts green on a commit, it hands the convoy to bin/outcome-evaluation
+settle, which launches the product from a clean copy of that commit, sends
+it to a session of the Evaluator role, sends it once more when the
+evaluation gave no result, stops it when the relaunch gave none either, and
+stops the products nothing runs on any more. What the Evaluator of the end
+drafted is published by the pass, through the patch door, once its states
+are in: one `repair` per user story it did not observe, and one per finding
+« hors ticket » it classified « repaired », each named where it was drafted
+(bin/convoy-state set-outcome-repair). Such a repair starts, merges and
+closes like any ticket; the gate then renders its verdicts on the new tip
+and the product is evaluated again.
 In the same pass, on the commit of those three verdicts, it has the whole
 assembled diff of the Spec reviewed (T25, af-ji2ruy; Spec §6 « Fin de
 Spec », §9 point 4), through bin/spec-end-review settle: one reviewer
@@ -152,7 +165,7 @@ or a grouped request could not be raised or withdrawn, a resume could not
 be sent, a repair could not be published, or the merge pass or the settlement of
 the test reviews, of the code reviews, of the evaluations, of the
 correction rounds, of the fidelity checks, of the ticket-end gate or of the
-end-of-Spec gate could not run; 3 a
+end-of-Spec gate or of the Outcome Evaluation could not run; 3 a
 convoy is in an "état sans règle": nothing of it is started (0 with
 --stopped-ok once its incident is raised: what the order runs, so that a
 stopped convoy is not also an order failure);
@@ -193,6 +206,7 @@ CORRECTION_BIN = BIN / "correction-round"
 TICKET_END_BIN = BIN / "ticket-end"
 SPEC_END_BIN = BIN / "spec-end"
 END_REVIEW_BIN = BIN / "spec-end-review"
+OUTCOME_BIN = BIN / "outcome-evaluation"
 PUBLISH_BIN = BIN / "ticket-graph-publish"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
 SETTINGS = ROOT / "config" / "delivery-flow.json"
@@ -240,6 +254,9 @@ RED = "branche d'intégration rouge"
 # command: the mechanical fidelity the end-of-Spec gate measured (T23).
 RED_FIDELITY = "fidelity"
 ITEM_LABELS = {"deviations": "écart", "not_done": "« non fait »"}
+# A finding « hors ticket » classified « repaired » whose repair is not
+# closed by the ticket-end gate yet (bin/convoy-state).
+FINDING_TO_REPAIR = "à réparer"
 STOP_RED, STOP_EXCEPTIONS = "integration_red", "planning_exceptions"
 BOUND_EXCEPTIONS = "open_planning_exceptions"
 NEW_FLOW = "new-flow/v1"
@@ -365,6 +382,9 @@ class Convoy:
         # An unreadable record is an anomaly too: the convoy is stopped by it.
         red = answer["convoy"].get("integration_red")
         self.red: dict[str, Any] | None = red if isinstance(red, dict) and "control" in red else None
+        # An unreadable record is an anomaly as well.
+        outcome = answer["convoy"].get("outcome_evaluation")
+        self.outcome: dict[str, Any] | None = outcome if isinstance(outcome, dict) and "rounds" in outcome else None
         grouped = answer["convoy"].get("grouped_request")
         self.grouped: dict[str, Any] | None = grouped if isinstance(grouped, dict) and "bead" in grouped else None
         self.unruled: list[dict[str, Any]] = [
@@ -469,6 +489,31 @@ class Convoy:
         is not red: what makes the end-of-Spec gate worth running (T23)."""
         return bool(self.integration and self.tickets and not self.red
                     and all(t.get("status") == "closed" for t in self.tickets))
+
+    def outcome_due(self) -> bool:
+        """The end-of-Spec gate is due, or the Outcome Evaluation has
+        something left to settle whatever the tickets: an open request, a
+        launched product to stop, a stop that did not reach the operator
+        (T24)."""
+        outcome = self.outcome or {}
+        stop = outcome.get("stop") or {}
+        return bool(self.end_due() or outcome.get("request") or outcome.get("live") or (stop and "raised" not in stop))
+
+    def outcome_repairs_due(self) -> list[dict[str, Any]]:
+        """What the Evaluator of the end drafted and code has not published
+        yet (T24): the repair of each user story the last Outcome Evaluation
+        did not observe, and the one of each finding « hors ticket » it
+        classified « repaired ». Nothing while an evaluation is open: a
+        classification may still change, and a ticket more would outdate it."""
+        outcome = self.outcome
+        if outcome is None or outcome.get("request"):
+            return []
+        last = outcome["rounds"][-1] if outcome["rounds"] else {"repairs": []}
+        due = [{"story": entry["story"], "draft": entry["draft"]} for entry in last["repairs"] if not entry.get("repair")]
+        due += [{"finding": finding["id"], "ticket": finding["ticket"], "item": finding["item"], "draft": finding["draft"]}
+                for t in self.tickets for finding in t.get("findings") or []
+                if finding.get("state") == FINDING_TO_REPAIR and not finding.get("repair")]
+        return due
 
     def item_repairs_due(self) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
         """The tickets whose tracked elements the operator asked to have
@@ -1212,6 +1257,58 @@ def settle_item_repairs(convoy: Convoy) -> list[dict[str, Any]]:
     return done
 
 
+def settle_outcome_repairs(convoy: Convoy) -> list[dict[str, Any]]:
+    """Spec §7, §9: the Evaluator of the end drafts a `repair` and does not
+    publish it. Code publishes each one through the patch door, as the
+    Evaluator wrote it, and names it where it was drafted: on the user story
+    of the last Outcome Evaluation, or on the finding « hors ticket »."""
+    done = []
+    for due in convoy.outcome_repairs_due():
+        if "story" in due:
+            named = {"story": due["story"]}
+            what, where = f"user story {due['story']}", ["--story", str(due["story"])]
+            reason = f"user story {due['story']} non observée sur le produit assemblé par l'Outcome Evaluation"
+        else:
+            named = {"finding": due["finding"]}
+            what, where = f"constat hors ticket {due['finding']}", ["--ticket", due["ticket"], "--item", due["item"]]
+            reason = f"constat hors ticket {due['finding']} classé « réparé » par l'Evaluator de fin"
+        try:
+            repair = publish_repair(convoy, due["draft"], what, reason, f"de la {what}" if "story" in due else f"du {what}",
+                                    f"la {what}" if "story" in due else f"le {what}")
+            state_write("set-outcome-repair", convoy.id, "--repair", repair["id"], *where)
+            done.append({**repair, **named})
+        except Refusal as exc:
+            done.append({**named, "error": f"refus : {exc}"})
+    if any("error" not in entry for entry in done):
+        convoy.load()
+    return done
+
+
+def settle_outcome_evaluation(convoy: Convoy) -> dict[str, Any] | None:
+    """Spec §7, §9, point 4: code, and no agent, has the assembled product
+    evaluated once the mechanical verdicts of the end of the Spec are green,
+    through bin/outcome-evaluation settle. None while the gate is not due
+    and nothing of an evaluation is left to settle, or when the settlement
+    had nothing to do. An evaluation that waits, is pending or is stopped is
+    an outcome of the pass; one that could not be settled is a failure of it."""
+    try:
+        if not convoy.outcome_due():
+            return None
+        if not convoy.rig:
+            raise Refusal(f"les tickets du convoi {convoy.id} ne nomment pas un seul projet connu de config/projects : "
+                          "le produit assemblé à évaluer est inconnu")
+        answer = parsed(run([str(OUTCOME_BIN), "settle", convoy.id, "--repo", str(convoy.repo),
+                             "--profile", str(rig_profile(convoy.rig))]), f"outcome-evaluation settle {convoy.id}")
+    except (Refusal, NotNewFlow) as exc:
+        return {"error": f"refus : {exc}"}
+    if not isinstance(answer, dict):
+        return {"error": f"refus : outcome-evaluation settle {convoy.id} a rendu une réponse illisible"}
+    if answer.get("action") == "none":
+        return None
+    kept = ("action", "commit", "bead", "launches", "deadline", "reason", "stop", "error")
+    return {name: answer[name] for name in kept if name in answer}
+
+
 def settle_spec_end(convoy: Convoy, closing: dict[str, Any] | None) -> dict[str, Any] | None:
     """Spec §9, points 1 to 3: code, and no agent, renders the mechanical
     verdicts of the end of a Spec, through bin/spec-end run, once every
@@ -1355,6 +1452,10 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
     item_repairs = settle_item_repairs(convoy)
     if item_repairs:
         out["item_repairs"] = item_repairs
+    # What the Evaluator of the end drafted (T24): published the same way.
+    outcome_repairs = settle_outcome_repairs(convoy)
+    if outcome_repairs:
+        out["outcome_repairs"] = outcome_repairs
     # The answers first: a ticket whose parking is lifted is resumed, and
     # those behind it started, by the same pass.
     settle_lifts(convoy, out)
@@ -1625,6 +1726,11 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         ending = settle_spec_end(convoys[result["id"]], closing)
         if ending is not None:
             result["spec_end"] = ending
+        # Once its mechanical verdicts are green: the assembled product is
+        # launched and sent to the Evaluator of the end.
+        outcome = settle_outcome_evaluation(convoys[result["id"]])
+        if outcome is not None:
+            result["outcome_evaluation"] = outcome
         # On the commit of those verdicts, in the same pass: the end code
         # review of the whole assembled diff, and the repairs it drafted.
         end_review = settle_end_review(convoys[result["id"]])
@@ -1638,6 +1744,8 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         result["refused"] or "error" in result.get("incident", {}) or "error" in result.get("grouped_request", {})
         or "error" in result.get("repair", {})
         or any("error" in entry for entry in result.get("item_repairs", []))
+        or any("error" in entry for entry in result.get("outcome_repairs", []))
+        or "error" in result.get("outcome_evaluation", {})
         or any(key in result.get("spec_end", {}) for key in ("error", "message"))
         or "error" in result.get("end_review", {})
         or any("error" in entry for entry in result.get("end_review", {}).get("repairs", []))

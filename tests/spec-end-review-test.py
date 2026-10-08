@@ -230,7 +230,7 @@ class SpecEndReviewTest(gate.Harness):
         self.assertNotIn("travail du ticket", text)
         self.assertNotIn("handoff", text.lower())
 
-    def test_a_favorable_end_review_passes_the_gate_and_nothing_is_launched_again(self):
+    def test_a_favorable_end_review_meets_the_condition_of_the_gate_and_nothing_is_launched_again(self):
         tip = self.contradiction()
 
         self.settle()
@@ -238,7 +238,7 @@ class SpecEndReviewTest(gate.Harness):
         review = self.review()
         self.assertEqual({"commit": tip, "outcome": "favorable", "unsettled": []}, review["state"])
         self.assertNotIn("request", review)
-        self.assertEqual((0, True), (lambda s, a: (s, a["ok"]))(*self.run_gate()))
+        self.assert_end_review_met(self.run_gate()[1])
         before = self.snapshot()
         again = self.settle()
         self.assertEqual(("reviewed", "favorable", []), (again["action"], again["outcome"], again["blocking"]))
@@ -444,7 +444,7 @@ class SpecEndReviewTest(gate.Harness):
         self.assertEqual("relaunched", self.settle()["action"])
         review = self.review()
         self.assertEqual(["incomplete", "favorable"], [entry["outcome"] for entry in review["rounds"]])
-        self.assertEqual(0, self.run_gate()[0])
+        self.assert_end_review_met(self.run_gate()[1])
 
     def test_an_output_that_leaves_one_axis_out_is_incomplete_and_two_of_them_stop_the_review(self):
         self.contradiction()
@@ -493,7 +493,7 @@ class SpecEndReviewTest(gate.Harness):
     def test_a_new_tip_has_the_review_replayed_in_full_and_the_verdict_of_the_earlier_round_is_never_reused(self):
         tip = self.contradiction()
         self.settle()
-        self.assertEqual(0, self.run_gate()[0])
+        self.assert_end_review_met(self.run_gate()[1])
         # What the merge of a repair does: one commit more on the integration branch.
         added = self.note(INTEGRATION)
 
@@ -518,7 +518,7 @@ class SpecEndReviewTest(gate.Harness):
                          sorted(entry["path"] for entry in second["diff"]["files"]))
         self.assertEqual([(tip, "favorable"), (added, "favorable")],
                          [(entry["commit"], entry["outcome"]) for entry in self.review()["rounds"]])
-        self.assertEqual(0, self.run_gate()[0])
+        self.assert_end_review_met(self.run_gate()[1])
 
     # --- models, and what the command is not called on ------------------------------
 

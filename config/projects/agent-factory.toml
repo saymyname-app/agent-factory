@@ -38,6 +38,10 @@ sling_target = "factory-worker"
 # only bin/ticket-evaluation dispatches it, with --role evaluator, to have a
 # finished ticket evaluated on the launched product before its merge
 # (docs/TICKET_EVALUATION.md).
+# mol-outcome-evaluation (T24, af-oy7v3i) is not a delivery formula either:
+# only bin/outcome-evaluation dispatches it, with --role evaluator, to have
+# the assembled product of a Spec evaluated story by story once its
+# end-of-Spec gate is mechanically green (docs/OUTCOME_EVALUATION.md).
 # mol-ticket-correction (T17, af-rx0ocp) is not started by the pass as a
 # ticket either: only bin/correction-round dispatches it, with --role author,
 # to send the findings of the code review and of the Ticket Evaluation of a
@@ -51,7 +55,7 @@ sling_target = "factory-worker"
 # whose author must take it again (interrupted, returned by the merge,
 # unblocked, answered) to one fresh author session on the same branch; each
 # resume is counted, the third parks the ticket (docs/CONVOY_ADVANCE.md).
-formulas = "mol-do-work,mol-graph-review,mol-ticket-author,mol-test-review,mol-code-review,mol-ticket-evaluation,mol-ticket-correction,mol-ticket-resume,mol-end-review"
+formulas = "mol-do-work,mol-graph-review,mol-ticket-author,mol-test-review,mol-code-review,mol-ticket-evaluation,mol-outcome-evaluation,mol-ticket-correction,mol-ticket-resume,mol-end-review"
 # human_approver (A6b W04) is this project's declared human approver:
 # bin/spec-approve refuses to approve a Spec bead whose --approved-by is
 # anyone else, read via `bin/project-planning-profile human-approver`.

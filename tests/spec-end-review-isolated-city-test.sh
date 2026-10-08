@@ -441,7 +441,7 @@ launch_pass() { # <commit>: the pass that launched the end review of that commit
 first_round() { [ "$(end_review | jq -r '.rounds | length' 2>/dev/null)" = 1 ]; }
 wait_for 600 first_round || { dump; fail "no end review was recorded within 600s"; }
 GATE1=$(gate_record | jq -r '.commit')
-[ "$(gate_record | jq -r '.version + " " + ([.conditions[].verdict] | join(","))')" = "spec-end/v2 pass,pass,pass" ] \
+[ "$(gate_record | jq -r '.version + " " + ([.conditions[].verdict] | join(","))')" = "spec-end/v3 pass,pass,pass" ] \
   || fail "the three mechanical verdicts were not rendered by the gate: $(gate_record)"
 git -C "$PRODUCT" merge-base --is-ancestor "$TIP1" "$GATE1" && git -C "$PRODUCT" merge-base --is-ancestor "$BASE" "$GATE1" \
   || fail "the commit of the gate ($GATE1) does not hold the work of the tickets and the protected branch"

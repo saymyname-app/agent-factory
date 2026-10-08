@@ -65,6 +65,8 @@ FIXTURES = Path("tests") / "fixtures"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
 REVIEWER = ROOT / "tests" / "fixtures" / "code-review" / "reviewer"
 EVALUATOR = ROOT / "tests" / "fixtures" / "ticket-evaluation" / "evaluator"
+END_EVALUATOR = ROOT / "tests" / "fixtures" / "outcome-evaluation" / "evaluator"
+END_REVIEWER = ROOT / "tests" / "fixtures" / "spec-end-review" / "reviewer"
 BROWSER = ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"
 
 CONVOY, SPEC, TICKET, RIG = "fx-convoy", "fx-spec", "fx-t1", "fx-rig"
@@ -176,6 +178,14 @@ class City:
             "TICKET_EVALUATION_STATE_DIR": str(self.workspace / "launches"),
             "TICKET_EVALUATION_FAKE_LOG": str(self.workspace / "evaluation-door.log"),
             "TICKET_EVALUATION_FAKE_PLAN": str(self.workspace / "evaluation-plan.json"),
+            "OUTCOME_EVALUATION_DISPATCH_DOOR_BIN": str(END_EVALUATOR),
+            "OUTCOME_EVALUATION_STATE_DIR": str(self.workspace / "launches" / "outcome"),
+            "OUTCOME_EVALUATION_FAKE_LOG": str(self.workspace / "outcome-door.log"),
+            "OUTCOME_EVALUATION_FAKE_PLAN": str(self.workspace / "outcome-plan.json"),
+            "SPEC_END_REVIEW_DISPATCH_DOOR_BIN": str(END_REVIEWER),
+            "SPEC_END_REVIEW_FAKE_LOG": str(self.workspace / "end-review-door.log"),
+            "SPEC_END_REVIEW_FAKE_PLAN": str(self.workspace / "end-review-plan.json"),
+            "SPEC_END_REVIEW_FAKE_REPO": str(self.root),
             **more,
         }
 
@@ -224,7 +234,10 @@ class City:
             "start": {"formula": "fx-start", "role": None}, "resume": {"formula": "fx-resume", "role": None},
             "code_review": {"formula": "mol-code-review", "role": "reviewer", "rig": RIG, "timeout_seconds": 3600},
             "evaluation": {"formula": "mol-ticket-evaluation", "role": "evaluator", "rig": RIG,
-                           "timeout_seconds": 3600, "start_timeout_seconds": 15}}))
+                           "timeout_seconds": 3600, "start_timeout_seconds": 15},
+            "outcome_evaluation": {"formula": "mol-outcome-evaluation", "role": "evaluator", "rig": RIG,
+                                   "timeout_seconds": 3600, "start_timeout_seconds": 15},
+            "end_review": {"formula": "mol-end-review", "role": "reviewer", "rig": RIG, "timeout_seconds": 3600}}))
         descriptor = json.loads((ROOT / self.fixture / "descriptor.json").read_text())
         descriptor["rigs"] = [RIG]
         if self.project["regression_command"]:
@@ -238,6 +251,10 @@ class City:
         self.git("commit", "-q", "-m", "base")
         self.tracker.write_text(json.dumps({"beads": {}, "sessions": []}))
         (self.workspace / "code-review-plan.json").write_text(json.dumps(["favorable"]))
+        # The Evaluator of the end observes each user story on the home page.
+        (self.workspace / "outcome-plan.json").write_text(json.dumps([{}]))
+        # The reviewer of the end finds nothing to block on the assembled diff.
+        (self.workspace / "end-review-plan.json").write_text(json.dumps(["favorable"]))
         # The Evaluator is not sent in the pass that sends the reviewer (its
         # door defers once): review and evaluation are observed one by one.
         (self.workspace / "evaluation-plan.json").write_text(json.dumps(["door-defers", self.project["evaluation"]]))

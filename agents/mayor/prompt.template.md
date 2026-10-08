@@ -264,6 +264,7 @@ project file (`config/projects/agent-factory.toml`) currently allows only
 `bin/graph-review` alone, its `mol-test-review` by `bin/test-review` alone,
 its `mol-code-review` by `bin/code-review` alone, its
 `mol-ticket-evaluation` by `bin/ticket-evaluation` alone, its
+`mol-outcome-evaluation` by `bin/outcome-evaluation` alone, its
 `mol-ticket-correction` by `bin/correction-round` alone, its
 `mol-end-review` by `bin/spec-end-review` alone and its
 `mol-ticket-author` and `mol-ticket-resume` by `bin/convoy-advance` alone,

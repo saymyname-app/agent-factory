@@ -76,6 +76,13 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-integration-repair af-convoy --ticket af-r1   # bin/convoy-advance, once the patch door published the repair
 ./bin/convoy-state clear-integration-red  af-convoy     # bin/spec-integration, once the control is green again
 ./bin/convoy-state record-spec-end af-convoy --commit <integration tip> --protected <protected tip> --file report.json   # bin/spec-end: three green verdicts, one commit
+./bin/convoy-state open-outcome-evaluation    af-convoy --commit <commit of the gate> --file request.json   # bin/outcome-evaluation: the products launched, the roles
+./bin/convoy-state launch-outcome-evaluation  af-convoy --bead af-e1          # bin/outcome-evaluation: the evaluation sent to an Evaluator session
+./bin/convoy-state record-outcome-evaluation  af-convoy --file states.json    # bin/outcome-evaluation record: one state per user story; the verdict is computed
+./bin/convoy-state release-outcome-evaluation af-convoy --state-file <launch record> [--withdraw]   # a stopped product; the open request withdrawn
+./bin/convoy-state stop-outcome-evaluation    af-convoy --commit <sha> --reason story_unobservable --detail "…"   # or --raised once the operator was asked
+./bin/convoy-state classify-finding   af-convoy af-t1 --item out_of_ticket.1 --as dismissed --recorded-by <session> --reason "…"   # bin/outcome-evaluation classify
+./bin/convoy-state set-outcome-repair af-convoy --repair af-r3 --story 4      # bin/convoy-advance, once the patch door published a drafted repair (or --ticket af-t1 --item out_of_ticket.1)
 ./bin/convoy-state open-end-review        af-convoy --commit <commit of the gate> --file request.json   # bin/spec-end-review settle
 ./bin/convoy-state launch-end-review      af-convoy --bead af-review                 # bin/spec-end-review, once the reviewer is sent
 ./bin/convoy-state record-end-review      af-convoy --file result.json               # bin/spec-end-review record
@@ -135,7 +142,9 @@ Every answer is one JSON object on stdout.
 | Acceptance criteria | the bead's description (read only) | ticket | the checkbox lines under `## Acceptance criteria`, in order |
 | Factory incident | `gc.flow.incident` | convoy | the bead that carries the open incident of a stopped convoy and, once it reached the escalation door, the `sha256:` signature of the anomalies it names |
 | Red of the integration branch | `gc.flow.integration_red` | convoy | T21: the control that is red, quoted on one line (`control`), the commit it was red on (`commit`), the tips of the integration and of the protected branches then (`integration`, `protected`), the end of what the control printed (`detail`, optional) and, once code published it, the one `repair` ticket that restores it (`repair`); T23: `check` (`regression`, `fidelity`; absent means the regression command), what is red |
-| Record of the end-of-Spec gate | `gc.flow.spec_end` | convoy | T23: `commit` (the one commit of the integration branch the three verdicts are tied to), `protected` (the tip of the protected branch that commit holds), `version` (`spec-end/v2`), `conditions` (`registry`, `tests`, `fidelity`, in that order, all `pass`, each with its `detail`), `records` (optional: what `tests` and `fidelity` read), `at` |
+| Record of the end-of-Spec gate | `gc.flow.spec_end` | convoy | T23: `commit` (the one commit of the integration branch the three verdicts are tied to), `protected` (the tip of the protected branch that commit holds), `version` (`spec-end/v2`; a record under `spec-end/v1` is still read, and held outdated by the gate), `conditions` (`registry`, `tests`, `fidelity`, in that order, all `pass`, each with its `detail`), `records` (optional: what `tests` and `fidelity` read), `at` |
+| Outcome Evaluation | `gc.flow.outcome_evaluation` | convoy | T24: `rounds` (each: `commit`, `stories` — one per numbered user story of the Spec, with `state` `observed` / `not_observed` / `unobservable` and its `evidence` piece —, `exploration`, `fidelity_deviations`, `repairs` — the `draft` of each story not observed and, once published, its `repair` —, `contradictions`, the computed `outcome` and `verdict`, `roles`, `environment`, `recorded_by`, `at`), the open `request` (`commit`, `stories`, `roles`, `environment`, `launches`, `at`), `live` (launch records of products still to stop) and `stop` (`commit`, `reason` among `outcome_evaluation_no_result`, `outcome_evaluation_outage`, `story_unobservable`, `detail`, `raised`) |
+| Classification of the findings « hors ticket » | `gc.flow.findings` | ticket | T24: `entries`, one per classified finding of the Ticket Handoff: `item` (`out_of_ticket.N`), `handoff_at`, `classification` (`repaired`, `proposal`, `dismissed`), `commit`, `recorded_by`, `at`; `reason` (required for `dismissed`); `draft` (the drafted `repair`, required for `repaired`, with what it `restores`) and, once code published it, `repair` |
 | End code review of the Spec | `gc.flow.end_review` | convoy | T25: `rounds`, oldest first, each `commit` (the commit of the gate it read), `base` (the tip of the protected branch that commit holds), `outcome` (`favorable`, `unfavorable`, `incomplete`; computed), `findings` (`id`, `axis`, `blocking`, `summary`, `citation`, `demoted`; a Blocking Finding with its `repair_draft`, then `repair` or `repair_refused`), `coverage` (`axes`, `files`, `missing`, `missing_count`), `extent` (`files`, `commits`, `insertions`, `deletions`, `digest`), `models` (`authors`, `reviewer`, `same_model`), `recorded_by`, `launched_at`, `duration_seconds`, `at`; `request` while a review is open (`commit`, `base`, `extent`, `models`, `launches`: at most two, each `bead`, `at`, and `result: incomplete`; `at`); `stop` (`reason`: `end_review_no_result`, `end_review_repair_refused`; `detail`, `commit`, `at`, then `bead` and `raised`) |
 | Last round of the end counted | `gc.flow.end_round` | convoy | T25: `commit` (the tip of the integration branch the last round of the end was counted for), `source` (`end_review`), `at` |
 
@@ -579,6 +588,27 @@ closed with a record of the ticket-end gate; else `ouvert`. A Handoff
 rendered again starts its elements over: an exception raised before it does
 not count. No command sets an element aside.
 
+T24: `show` renders `findings` on each ticket: one entry per line of the
+`out_of_ticket` section of its Ticket Handoff (`id` `TICKET:out_of_ticket.N`,
+`ticket`, `item`, `number`, `text`, `state`, `classification`, and what the
+classification holds). `state` is computed: `non classé` until
+`classify-finding` named it since that Handoff; `proposition pour Benjamin`
+and `écarté` are final; a finding classified `repaired` is `à réparer` until
+the `repair` named on it is a `repair` of the convoy closed with a record of
+the ticket-end gate, `réparé` then. `classify-finding` refuses `repaired`
+without a drafted repair that cites what it restores, `dismissed` without a
+reason, an item the Handoff does not hold, and a classification outside an
+open Outcome Evaluation. `record-outcome-evaluation` refuses a story of the
+Spec left without state, a story the Spec does not number, a `verdict`, an
+`outcome` or a `contradictions` field handed in, a story `not_observed`
+without a drafted repair that cites it, and any record while a finding is
+`non classé`; it computes the outcome and writes a contradiction for each
+story `not_observed` whose covering tickets were all favorably evaluated.
+The `exploration` and `fidelity_deviations` sections are stored and change
+no verdict. A piece of the end of the Spec is added with `add-evidence
+CONVOY CONVOY`: its fingerprint goes on the convoy
+(`docs/OUTCOME_EVALUATION.md`).
+
 A piece name is made of letters, digits, `_` and `.` only: the tracker
 refuses any metadata key outside `[a-zA-Z_][a-zA-Z0-9_.]*` (observed on bd
 1.2.2), so a hyphen is refused here before it is tried.
@@ -663,10 +693,13 @@ of its Spec (`integration`, `null` before it is opened), the red of that
 branch (`integration_red`, `null` while it is not red), its grouped
 request (`grouped_request`, `null` when there is none), the record of the
 end-of-Spec gate (`spec_end`, `null` before three green verdicts were
-recorded; T23), the end code review of the Spec (`end_review`, `null`
-before the first request, with a computed `state`: the `commit` and the
-`outcome` of its last round and `unsettled`, its Blocking Findings; T25) and
-the last round of the end counted (`end_round`, `null` before the first).
+recorded; T23), its Outcome Evaluation (`outcome_evaluation`, `null`
+before one was opened, with `state`: the last `verdict`, `outcome`,
+`commit`, the stories `not_observed` and `unobservable`, the `repairs` and
+the `contradictions`; T24), the end code review of the Spec (`end_review`,
+`null` before the first request, with a computed `state`: the `commit` and
+the `outcome` of its last round and `unsettled`, its Blocking Findings; T25)
+and the last round of the end counted (`end_round`, `null` before the first).
 
 `ticket` answers whether one bead carries the mark, without naming its
 convoy: exit 0 and `"new_flow": true`, or exit 4 and `"new_flow": false`.
@@ -773,6 +806,14 @@ written outside the command, `--check` and `--end-round` (counted in the
 same write, once). `tests/spec-end-real-tracker-test.sh` (local-only)
 replays these writes and their refusals on the real `gc`/`bd` in a
 disposable city.
+T24: the Outcome Evaluation commands and `classify-finding` are covered
+through `bin/outcome-evaluation`, which is their only caller
+(`tests/outcome-evaluation-test.py`, one test per refusal, the tracker
+re-read), and `set-outcome-repair` through the pass
+(`tests/convoy-stops-fixture-city-test.py`).
+`tests/spec-end-real-tracker-test.sh` (local-only) replays these writes and
+their refusals on the real `gc`/`bd`, the user stories read in a Spec bead
+of the disposable city.
 T25: `tests/convoy-state-test.py` covers each write of the end review with
 its refusals — the request bound to the commit of the gate, the two
 launches, the outcome computed (favorable, unfavorable, incomplete), the
