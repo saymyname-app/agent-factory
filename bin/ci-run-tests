@@ -59,6 +59,16 @@
 #                            # CI_RUN_TESTS_FULL=1. Without this option every
 #                            # run is a full run. The run says which it is and
 #                            # why, and names each test it left out.
+#   ci-run-tests --rule-checks [--changed-since REF] [--list]
+#                            # not the battery: only the rule checks, the
+#                            # files config/ci-test-seconds.tsv gives
+#                            # RULE_CHECK_SECONDS or less (catalogues,
+#                            # registration, lints), and with --changed-since
+#                            # the test files changed since REF, committed or
+#                            # not. What a change to docs, CI or tests alone
+#                            # runs before its pull request; a delivery runs
+#                            # the whole battery, and CI runs it in every case
+#                            # (af-66bfyx, docs/DELIVERY.md).
 #
 # The areas are not believed, they are held: whenever a long test runs, it
 # runs without sight of the real areas (see "blindfold" below), and one that
@@ -103,9 +113,11 @@ SHARD_I=""
 SHARD_N=""
 JOBS="${CI_RUN_TESTS_JOBS:-1}"
 CHANGED_SINCE=""
+RULE_CHECKS=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --list) MODE="list" ;;
+    --rule-checks) RULE_CHECKS=1 ;;
     --shard)
       if ! [[ "${2:-}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || [ "${BASH_REMATCH[1]}" -gt "${BASH_REMATCH[2]}" ]; then
         echo "ci-run-tests: --shard wants I/N with 1 <= I <= N, got: ${2:-nothing}" >&2; exit 2
@@ -211,7 +223,7 @@ select_tests() {
   SKIP_LONG=1
   SELECTION="every file changed since $CHANGED_SINCE is in an area the long tests cannot reach ($AREAS_FILE)"
 }
-[ -n "$CHANGED_SINCE" ] && select_tests
+[ -n "$CHANGED_SINCE" ] && [ "$RULE_CHECKS" -eq 0 ] && select_tests
 
 mapfile -t files < <(
   for f in tests/*.sh tests/*.py; do
@@ -226,6 +238,38 @@ if [ "$SKIP_LONG" -eq 1 ]; then
   kept=()
   for f in "${files[@]}"; do
     if is_long "$f"; then skipped+=("$f"); else kept+=("$f"); fi
+  done
+  files=("${kept[@]}")
+fi
+
+# --- the rule checks alone (af-66bfyx) ---------------------------------------
+# Of the 6 test files that failed in the pull request runs of the 30 pull
+# requests merged before 2026-10-08, 5 were checks of 1 s or less (a stale
+# generated catalogue), each seen after about 37 billed minutes. The files
+# measured at RULE_CHECK_SECONDS or less were 105 of 150 and 107 s together.
+# A file not measured yet is not one of them, unless it changed.
+RULE_CHECK_SECONDS=5
+touched=()
+if [ "$RULE_CHECKS" -eq 1 ]; then
+  declare -A CHANGED_TESTS=()
+  if [ -n "$CHANGED_SINCE" ]; then
+    if ! base=$(git merge-base --end-of-options "$CHANGED_SINCE" HEAD 2>/dev/null); then
+      echo "ci-run-tests: --rule-checks: what changed since $CHANGED_SINCE cannot be read" >&2; exit 2
+    fi
+    while IFS= read -r f; do
+      [ -n "$f" ] && CHANGED_TESTS[$f]=1
+    done < <(
+      git diff --name-only --no-renames "$base" -- tests 2>/dev/null
+      git ls-files --others --exclude-standard -- tests 2>/dev/null
+    )
+  fi
+  kept=()
+  for f in "${files[@]}"; do
+    if [ -n "${CHANGED_TESTS[$f]:-}" ]; then
+      kept+=("$f"); touched+=("$f")
+    elif [ -n "${MEASURED[$f]:-}" ] && [ "${MEASURED[$f]}" -le "$RULE_CHECK_SECONDS" ]; then
+      kept+=("$f")
+    fi
   done
   files=("${kept[@]}")
 fi
@@ -248,7 +292,9 @@ if [ "$MODE" = "list" ]; then
   exit 0
 fi
 
-if [ -n "$CHANGED_SINCE" ]; then
+if [ "$RULE_CHECKS" -eq 1 ]; then
+  echo "ci-run-tests: NOT the battery: the rule checks ($(( ${#files[@]} - ${#touched[@]} )) file(s) of ${RULE_CHECK_SECONDS}s or less in config/ci-test-seconds.tsv) and ${#touched[@]} changed test file(s). Enough before a pull request that changes docs, CI or tests alone; a delivery runs the whole battery (docs/DELIVERY.md)."
+elif [ -n "$CHANGED_SINCE" ]; then
   if [ "$SKIP_LONG" -eq 1 ]; then
     echo "ci-run-tests: ${#skipped[@]} long test(s) NOT run: $SELECTION. CI_RUN_TESTS_FULL=1 runs them."
     for f in "${skipped[@]}"; do
