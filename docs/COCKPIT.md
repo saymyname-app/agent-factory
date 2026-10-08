@@ -210,6 +210,16 @@ partie de son état est illisible. » (agent interpretation of spec .14, not
 a decision of Benjamin's: before, any partial read made the whole source
 unknown).
 
+An error on a block the cockpit shows nothing of is not a health line
+(`health/engine.py` `SUPERVISOR_PARTIAL_UNREAD_BLOCKS`, af-jew53p): today
+`store health:`, gc's own measure of its store on disk. gc 1.4.1 counts
+every retained bead, closed ones included, under a fixed 1 s limit
+(`statusStoreReadTimeout`, no setting) and fails on every read once the
+store is a few thousand beads old (7,293 on 2026-10-08): the line was
+permanent and nothing could be done about it. UPSTREAM, fixed in gc 1.5.0
+(hydration-free count). Any other partial error still shows the line; add a
+block here only when the cockpit reads no value from it.
+
 `tests/fixtures/cockpit/core/fake_gc.py` answers like the real one (HTML on
 `/events` and `/status` included). `tests/cockpit-fake-gc-contract-test.py`
 (local-only) compares the fake with the installed supervisor, endpoint by
