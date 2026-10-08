@@ -20,6 +20,13 @@ The end of the Spec on the same graph (T23, af-s5uysn; Spec §9, points 1 to
 tests count one round and their one `repair` is published by code, as is the
 `repair` the operator asks for a « non fait » left without a final state.
 
+The end code review on the same graph (T25, af-ji2ruy; Spec §6 « Fin de
+Spec »): the three mechanical verdicts green, the pass has the assembled diff
+reviewed; the `repair` its reviewer drafted for a cited Blocking Finding is
+published by the real patch door and starts like any ticket, and the gate
+refuses until a review made in full on the new tip is favorable
+(tests/fixtures/spec-end-review/reviewer stands in for the reviewer session).
+
 No agent runs here: what an author session leaves (a Planning Exception, a
 closed repair, a Ticket Handoff) is written the way its tools write it."""
 
@@ -405,7 +412,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
 
         # The gate of the end of the Spec, run by the pass: the tests are red on the tip.
         ending = first["spec_end"]
-        self.assertEqual({"registry": "pass", "tests": "fail", "fidelity": "not_run"}, ending["verdicts"])
+        self.assertEqual({"registry": "pass", "tests": "fail", "fidelity": "not_run", "end_review": "not_run"}, ending["verdicts"])
         self.assertEqual(1, ending["end_rounds"])
         control = self.shown()["convoy"]["integration_red"]["control"]
         self.assertIn(REGRESSION, control)
@@ -462,7 +469,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
 
         # The registry refuses and names the element: an outcome of the pass, asked of the operator.
         ending = first["spec_end"]
-        self.assertEqual({"registry": "fail", "tests": "not_run", "fidelity": "not_run"}, ending["verdicts"])
+        self.assertEqual({"registry": "fail", "tests": "not_run", "fidelity": "not_run", "end_review": "not_run"}, ending["verdicts"])
         self.assertIn(self.NOT_DONE, ending["reason"])
         self.assertEqual([(t4, ["not_done.1"])], [(entry["ticket"], entry["items"]) for entry in ending["requests"]])
         listed = [line for line in self.run_ok(ESCALATION, "list").stdout.splitlines() if line.strip().startswith(f"{t4} ")]
@@ -520,6 +527,139 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
         self.assertEqual("pass", answer["spec_end"]["verdicts"]["registry"])
         self.assertEqual(tracked, sorted(self.tracked()))
         self.assertEqual("closed", self.shown_ticket(t4)["status"])
+
+
+    # --- the end code review of the assembled diff (T25, af-ji2ruy) --------------------
+
+    STORY_LINE = "As an exploitant, I want une sonde de santé, so that je sache que le produit répond."
+    FINDING = {
+        "axis": "spec", "blocking": True,
+        "summary": "T4 et T5, corrects chacun, se contredisent : la sonde ne répond plus dès qu'elle nomme le jeu de données.",
+        "citation": {"source": "spec", "quote": STORY_LINE},
+        "repair": {
+            "title": "La sonde de santé répond quel que soit le jeu de données servi",
+            "what_it_delivers": "La sonde de santé du produit répond, qu'elle nomme ou non le jeu de données servi.",
+            "restores": {"kind": "spec_line", "ref": STORY_LINE},
+            "demonstration_line": "Sur le produit lancé, GET /health répond 200 avec chaque jeu de données.",
+            "acceptance_criteria": [{
+                "entry_point": "GET /health sur le produit lancé avec le jeu de données « vide »",
+                "observable": "la réponse a le statut 200",
+                "false_if": "la réponse a un autre statut",
+            }],
+        },
+    }
+
+    def verified(self, *plan):
+        """Every ticket closed by the ticket-end gate and the three
+        mechanical verdicts of the end green on the tip of the integration
+        branch; `plan` is what the reviewer session does at each launch."""
+        self.delivered()
+        descriptor = self.repo_root / "config" / "project-descriptors" / f"{PROJECT}.json"
+        profile = json.loads(descriptor.read_text())
+        profile["launch"]["regression_command"] = "true"
+        descriptor.write_text(json.dumps(profile))
+        report = self.tmp / "spec-end.json"
+        report.write_text(json.dumps({
+            "version": "spec-end/v2",
+            "conditions": [{"number": number, "name": name, "verdict": "pass", "detail": "réunie (relevé d'essai)"}
+                           for number, name in enumerate(("registry", "tests", "fidelity"), start=1)]}))
+        self.run_ok(STATE, "record-spec-end", self.convoy, "--commit", self.base, "--protected",
+                    self.git("rev-parse", "main"), "--file", report)
+        settings = self.repo_root / "config" / "delivery-flow.json"
+        flow = json.loads(settings.read_text())
+        flow["end_review"] = {"formula": "mol-end-review", "role": "reviewer", "rig": RIG, "timeout_seconds": 3600}
+        settings.write_text(json.dumps(flow))
+        (self.tmp / "end-review-plan.json").write_text(json.dumps(list(plan), ensure_ascii=False))
+        self.env.update({
+            "SPEC_END_REVIEW_DISPATCH_DOOR_BIN": str(ROOT / "tests" / "fixtures" / "spec-end-review" / "reviewer"),
+            "SPEC_END_REVIEW_FAKE_LOG": str(self.tmp / "end-review-door.log"),
+            "SPEC_END_REVIEW_FAKE_PLAN": str(self.tmp / "end-review-plan.json"),
+            "SPEC_END_REVIEW_FAKE_REPO": str(self.repo_root),
+        })
+        self.write_log.write_text("")
+
+    def end_review(self):
+        return self.shown()["convoy"]["end_review"]
+
+    def test_a_cited_blocking_finding_of_the_end_review_gets_its_drafted_repair_through_the_patch_door(self):
+        self.verified({"findings": [self.FINDING]}, "favorable")
+
+        first = self.one_pass()
+
+        # The pass that reads the three green verdicts launches the review on their commit.
+        self.assertEqual({"registry": "pass", "tests": "pass", "fidelity": "pass", "end_review": "fail"},
+                         first["spec_end"]["verdicts"])
+        self.assertEqual(("launched", self.base), (first["end_review"]["action"], first["end_review"]["commit"]))
+        review = self.end_review()
+        self.assertEqual({"commit": self.base, "outcome": "unfavorable", "unsettled": ["F1.1"]}, review["state"])
+        self.assertEqual(self.STORY_LINE, review["rounds"][0]["findings"][0]["citation"]["quote"])
+        self.assertEqual(1, self.end_rounds())
+
+        second = self.one_pass()
+
+        # The gate refuses on that finding, named; the repair its reviewer drafted is published by the patch door.
+        self.assertIn("F1.1", second["spec_end"]["reason"])
+        self.assertIn("sans verdict favorable", second["spec_end"]["reason"])
+        repairs = second["end_review"]["repairs"]
+        self.assertEqual([("F1.1", "R1", True)], [(entry["finding"], entry["key"], entry["published"]) for entry in repairs])
+        repair = repairs[0]
+        ticket = self.shown_ticket(repair["id"])
+        self.assertEqual(("repair", publication.MARK, "open"), (ticket["kind"], ticket["mark"], ticket["status"]))
+        self.assertEqual(self.FINDING["repair"]["demonstration_line"], ticket["demonstration_line"])
+        description = self.beads()[repair["id"]]["description"]
+        # The drafted repair cites the finding and the line of the Spec it restores.
+        for mention in ("F1.1", self.base[:12], self.FINDING["summary"], f"spec_line : {self.STORY_LINE}"):
+            self.assertIn(mention, description)
+        # Inside the approved intent: no approval of the operator is asked for it.
+        self.assertNotIn("approved_by", self.beads()[repair["draft"]]["metadata"])
+        self.assertEqual(repair["id"], self.end_review()["rounds"][0]["findings"][0]["repair"])
+
+        third = self.one_pass()
+
+        # It follows the flow of an ordinary ticket: started by the next pass, through the dispatch door.
+        self.assertEqual([repair["id"]], third["started"])
+        self.assertIn(repair["id"], self.slung())
+        # One repair per finding, whatever the number of passes; no end verification while it is open.
+        tracked = sorted(self.tracked())
+        fourth = self.one_pass()
+        self.assertNotIn("spec_end", fourth)
+        self.assertNotIn("end_review", fourth)
+        self.assertEqual(tracked, sorted(self.tracked()))
+        self.assertEqual(1, self.end_rounds())
+        self.assertFalse(self.shown()["unruled"])
+
+    def test_the_gate_refuses_after_the_repair_until_the_review_is_replayed_in_full_on_the_new_tip(self):
+        self.verified({"findings": [self.FINDING]}, "favorable")
+        self.one_pass()
+        repair = self.one_pass()["end_review"]["repairs"][0]["id"]
+        # What the flow of that ticket leaves once it is merged and closed by
+        # its gate: one commit more on the integration branch.
+        self.git("checkout", "-q", self.integration)
+        (self.repo_root / "sonde.md").write_text("la sonde répond avec chaque jeu de données\n")
+        self.git("add", "sonde.md")
+        self.git("commit", "-q", "-m", "repair fusionné")
+        tip = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "--detach", "main")
+        self.run_ok(STATE, "close-ticket", self.convoy, repair, "--commit", tip, "--file", GATE_REPORT)
+        # The mechanical verdicts, replayed on the new tip.
+        self.run_ok(STATE, "record-spec-end", self.convoy, "--commit", tip, "--protected",
+                    self.git("rev-parse", "main"), "--file", self.tmp / "spec-end.json")
+
+        answer = self.one_pass()
+
+        # The round of the earlier tip stands for nothing: the gate refuses,
+        # and the same pass launches the review again, on the whole diff.
+        self.assertEqual("fail", answer["spec_end"]["verdicts"]["end_review"])
+        self.assertIn("jamais réutilisé", answer["spec_end"]["reason"])
+        self.assertEqual(("launched", tip), (answer["end_review"]["action"], answer["end_review"]["commit"]))
+        review = self.end_review()
+        self.assertEqual([(self.base, "unfavorable"), (tip, "favorable")],
+                         [(entry["commit"], entry["outcome"]) for entry in review["rounds"]])
+        self.assertEqual(1, review["rounds"][1]["extent"]["files"])
+        final = self.one_pass()
+        self.assertEqual({"registry": "pass", "tests": "pass", "fidelity": "pass", "end_review": "pass"},
+                         final["spec_end"]["verdicts"])
+        self.assertEqual(1, self.end_rounds())
 
 
 if __name__ == "__main__":

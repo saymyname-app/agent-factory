@@ -3678,7 +3678,7 @@ class ConvoyStateTest(unittest.TestCase):
     SPEC_END_NAMES = ("registry", "tests", "fidelity")
 
     def spec_end_file(self, **changes):
-        report = {"version": "spec-end/v1",
+        report = {"version": "spec-end/v2",
                   "conditions": [{"number": number, "name": name, "verdict": "pass", "detail": "réunie (relevé d'essai)"}
                                  for number, name in enumerate(self.SPEC_END_NAMES, start=1)],
                   "records": {"tests": {"command": "python3 regression.py", "exit_code": 0}, "fidelity": {"prototypes": []}},
@@ -3705,7 +3705,7 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(1, len([line for line in self.write_log.read_text().splitlines() if line.strip()]))
         shown = self.show()
         record = shown["convoy"]["spec_end"]
-        self.assertEqual(("spec-end/v1", tip, base), (record["version"], record["commit"], record["protected"]))
+        self.assertEqual(("spec-end/v2", tip, base), (record["version"], record["commit"], record["protected"]))
         self.assertEqual([(number, name, "pass") for number, name in enumerate(self.SPEC_END_NAMES, start=1)],
                          [(entry["number"], entry["name"], entry["verdict"]) for entry in record["conditions"]])
         self.assertEqual({"tests", "fidelity"}, set(record["records"]))
@@ -3771,7 +3771,7 @@ class ConvoyStateTest(unittest.TestCase):
 
     def test_a_spec_end_record_written_outside_the_command_is_a_state_without_rule(self):
         tip, base = self.delivered_convoy()
-        for written in ("à la main", json.dumps({"commit": tip, "protected": base, "version": "spec-end/v1", "at": "x",
+        for written in ("à la main", json.dumps({"commit": tip, "protected": base, "version": "spec-end/v2", "at": "x",
                                                  "conditions": [{"number": 1, "name": "registry", "verdict": "pass",
                                                                  "detail": "seul"}]})):
             with self.subTest(written=written[:12]):
@@ -3811,12 +3811,291 @@ class ConvoyStateTest(unittest.TestCase):
         self.assertEqual(before, self.tracker.read_bytes())
         self.assertEqual({"end_rounds": 1}, self.show()["convoy"]["counters"])
 
+    # --- the end code review of the Spec (T25) ---------------------------------------------
+
+    END_EXTENT = {"files": 3, "commits": 2, "insertions": 40, "deletions": 4, "digest": DIGEST}
+    END_SPEC_LINE = "As Benjamin, I want la page d'accueil afficher le nombre d'éléments."
+    END_DRAFT = {
+        "title": "Afficher le nombre d'éléments sur la page d'accueil",
+        "what_it_delivers": "La page d'accueil affiche de nouveau le nombre d'éléments que deux tickets se disputent.",
+        "restores": {"kind": "spec_line", "ref": END_SPEC_LINE},
+        "demonstration_line": "Sur le produit lancé, la page d'accueil affiche le nombre d'éléments.",
+        "acceptance_criteria": [{"entry_point": "GET /", "observable": "le nombre d'éléments",
+                                 "false_if": "le nombre d'éléments n'y est pas"}],
+    }
+    END_BLOCKING = {"axis": "spec", "blocking": True, "summary": "Deux tickets se contredisent sur le nombre affiché.",
+                    "citation": {"source": "spec", "quote": END_SPEC_LINE}, "repair": END_DRAFT}
+    END_TASTE = {"axis": "standards", "blocking": True, "summary": "Possible Feature Envy dans render()."}
+    END_COVERED = {"axes": ["standards", "spec"], "files": 3, "missing": []}
+
+    def verified_convoy(self):
+        """A delivered convoy whose three mechanical verdicts are recorded
+        at the tip of its integration branch."""
+        tip, base = self.delivered_convoy()
+        self.ok("record-spec-end", CONVOY, "--commit", tip, "--protected", base, "--file", self.spec_end_file())
+        return tip, base
+
+    def end_request_file(self, **changes):
+        return self.json_file("end-review-request.json", {
+            "extent": self.END_EXTENT, "reviewer": {"agent": "delivery-reviewer", "provider": "p-codex", "model": "gpt-5"},
+            **changes})
+
+    def end_review_file(self, tip, findings=(), coverage=None, **changes):
+        return self.json_file("end-review.json", {
+            "commit": tip, "recorded_by": "delivery-reviewer-fx", "findings": list(findings),
+            "coverage": self.END_COVERED if coverage is None else coverage, **changes})
+
+    def end_review(self, expect=0):
+        return self.show(expect)["convoy"]["end_review"]
+
+    def opened_end_review(self):
+        tip, base = self.verified_convoy()
+        self.ok("open-end-review", CONVOY, "--commit", tip, "--file", self.end_request_file())
+        return tip, base
+
+    def refused_end_review(self):
+        """An end review that handed in one cited Blocking Finding with its
+        drafted repair."""
+        tip, base = self.opened_end_review()
+        self.ok("launch-end-review", CONVOY, "--bead", "fx-review1")
+        self.ok("record-end-review", CONVOY, "--file", self.end_review_file(tip, [self.END_BLOCKING]))
+        return tip, base
+
+    def test_open_end_review_ties_the_request_to_the_commit_of_the_gate_and_its_whole_diff(self):
+        tip, base = self.verified_convoy()
+        self.assertIsNone(self.end_review())
+        self.write_log.write_text("")
+
+        self.ok("open-end-review", CONVOY, "--commit", tip, "--file", self.end_request_file())
+
+        self.assertEqual(1, len([line for line in self.write_log.read_text().splitlines() if line.strip()]))
+        review = self.end_review()
+        request = review["request"]
+        # The diff under review is the whole one: from the tip of the
+        # protected branch the commit of the gate holds, to that commit.
+        self.assertEqual((tip, base, self.END_EXTENT, []),
+                         (request["commit"], request["base"], request["extent"], request["launches"]))
+        self.assertEqual("gpt-5", request["models"]["reviewer"])
+        self.assertEqual(([], {"commit": None, "outcome": None, "unsettled": []}), (review["rounds"], review["state"]))
+        # The same request again writes nothing.
+        before = self.tracker.read_bytes()
+        self.assertEqual({}, self.ok("open-end-review", CONVOY, "--commit", tip, "--file", self.end_request_file())["written"])
+        self.assertEqual(before, self.tracker.read_bytes())
+        self.assertFalse(self.show()["unruled"])
+
+    def test_open_end_review_refuses_a_commit_the_three_mechanical_verdicts_were_not_rendered_on(self):
+        tip, base = self.delivered_convoy()
+        open_ = ("open-end-review", CONVOY, "--commit", tip, "--file", self.end_request_file())
+        self.assert_refused_and_nothing_written(*open_, mention="verdicts mécaniques")
+        self.ok("record-spec-end", CONVOY, "--commit", tip, "--protected", base, "--file", self.spec_end_file())
+        self.assert_refused_and_nothing_written(
+            "open-end-review", CONVOY, "--commit", base, "--file", self.end_request_file(), mention="verdicts mécaniques")
+        self.assert_refused_and_nothing_written(
+            "open-end-review", CONVOY, "--commit", tip, "--file", self.end_request_file(extent={"files": "trois"}),
+            mention="étendue")
+        self.assert_refused_and_nothing_written(
+            "open-end-review", CONVOY, "--commit", tip, "--file", self.end_request_file(verdict="favorable"),
+            mention="champs inconnus")
+        self.assert_refused_and_nothing_written(
+            "open-end-review", CONVOY, "--commit", tip, "--file", self.tmp / "absent.json", mention="illisible")
+        self.assertIsNone(self.end_review())
+
+    def test_launch_end_review_counts_the_first_launch_and_one_relaunch(self):
+        tip, _ = self.verified_convoy()
+        self.assert_refused_and_nothing_written("launch-end-review", CONVOY, "--bead", "fx-review1", mention="rien à lancer")
+        self.ok("open-end-review", CONVOY, "--commit", tip, "--file", self.end_request_file())
+        self.ok("launch-end-review", CONVOY, "--bead", "fx-review1")
+        self.ok("launch-end-review", CONVOY, "--bead", "fx-review2")
+
+        self.assertEqual(["fx-review1", "fx-review2"], [entry["bead"] for entry in self.end_review()["request"]["launches"]])
+        self.assert_refused_and_nothing_written("launch-end-review", CONVOY, "--bead", "fx-review3", mention="une seule relance")
+        self.assert_refused_and_nothing_written("launch-end-review", CONVOY, "--bead", "pas un bead", mention="bead")
+
+    def test_a_complete_end_review_without_blocking_finding_is_favorable_at_its_commit(self):
+        tip, base = self.opened_end_review()
+        self.ok("launch-end-review", CONVOY, "--bead", "fx-review1")
+
+        answer = self.ok("record-end-review", CONVOY, "--file", self.end_review_file(tip, [self.END_TASTE]))
+
+        self.assertEqual(("favorable", [], True), (answer["outcome"], answer["blocking"], answer["complete"]))
+        # A finding of taste given as blocking is recorded, and blocks nothing.
+        self.assertEqual(["F1.1"], [entry["id"] for entry in answer["demoted"]])
+        review = self.end_review()
+        self.assertNotIn("request", review)
+        round_ = review["rounds"][0]
+        self.assertEqual((tip, base, "favorable", self.END_EXTENT, "delivery-reviewer-fx"),
+                         (round_["commit"], round_["base"], round_["outcome"], round_["extent"], round_["recorded_by"]))
+        self.assertFalse(round_["findings"][0]["blocking"])
+        # The record says whether the review held: its duration, and that its output is complete.
+        self.assertIsInstance(round_["duration_seconds"], int)
+        self.assertEqual(self.END_COVERED, round_["coverage"])
+        self.assertEqual({"commit": tip, "outcome": "favorable", "unsettled": []}, review["state"])
+        self.assertEqual({"end_rounds": 0}, self.show()["convoy"]["counters"])
+
+    def test_a_cited_blocking_finding_with_its_drafted_repair_is_unfavorable_and_counts_one_round_of_the_end(self):
+        tip, _ = self.opened_end_review()
+        self.ok("launch-end-review", CONVOY, "--bead", "fx-review1")
+        self.write_log.write_text("")
+
+        answer = self.ok("record-end-review", CONVOY, "--file", self.end_review_file(tip, [self.END_BLOCKING, self.END_TASTE]))
+
+        # The round and its count are one tracker write.
+        self.assertEqual(1, len([line for line in self.write_log.read_text().splitlines() if line.strip()]))
+        self.assertEqual(("unfavorable", ["F1.1"]), (answer["outcome"], answer["blocking"]))
+        shown = self.show()["convoy"]
+        review = shown["end_review"]
+        finding = review["rounds"][0]["findings"][0]
+        self.assertEqual((True, self.END_BLOCKING["citation"], self.END_DRAFT),
+                         (finding["blocking"], finding["citation"], finding["repair_draft"]))
+        self.assertEqual({"commit": tip, "outcome": "unfavorable", "unsettled": ["F1.1"]}, review["state"])
+        self.assertEqual({"end_rounds": 1}, shown["counters"])
+        self.assertEqual((tip, "end_review"), (shown["end_round"]["commit"], shown["end_round"]["source"]))
+        self.assertFalse(self.show()["unruled"])
+
+    def test_record_end_review_refuses_what_is_outside_its_contract_and_writes_nothing(self):
+        tip, base = self.opened_end_review()
+        undrafted = {name: value for name, value in self.END_BLOCKING.items() if name != "repair"}
+        hollow = {**self.END_BLOCKING, "repair": {**self.END_DRAFT, "acceptance_criteria": []}}
+        unrestored = {**self.END_BLOCKING, "repair": {**self.END_DRAFT, "restores": {"kind": "red_check", "ref": "x"}}}
+        for build, mention in (
+            (lambda: self.end_review_file(tip, verdict="favorable"), "calculée par du code"),
+            (lambda: self.end_review_file(base), "porte sur le commit"),
+            (lambda: self.end_review_file(tip, [undrafted]), "sans repair rédigé"),
+            (lambda: self.end_review_file(tip, [hollow]), "acceptance_criteria"),
+            (lambda: self.end_review_file(tip, [unrestored]), "restores"),
+            (lambda: self.end_review_file(tip, [{**self.END_TASTE, "axis": "goût"}]), "axe hors de la liste fermée"),
+            (lambda: self.end_review_file(tip, coverage={"axes": ["spec"]}), "coverage"),
+            (lambda: self.end_review_file(tip, recorded_by=" "), "session du relecteur"),
+            (lambda: self.tmp / "absent.json", "illisible"),
+        ):
+            with self.subTest(mention=mention):
+                self.assert_refused_and_nothing_written("record-end-review", CONVOY, "--file", build(), mention=mention)
+        self.assertEqual([], self.end_review()["rounds"])
+
+    def test_a_blocking_finding_whose_citation_does_not_hold_blocks_nothing_and_needs_no_repair(self):
+        tip, _ = self.opened_end_review()
+        refused = {name: value for name, value in self.END_BLOCKING.items() if name != "repair"}
+        refused["citation_refused"] = "la ligne citée n'est pas une ligne de la Spec"
+
+        answer = self.ok("record-end-review", CONVOY, "--file", self.end_review_file(tip, [refused]))
+
+        self.assertEqual(("favorable", []), (answer["outcome"], answer["blocking"]))
+        finding = self.end_review()["rounds"][0]["findings"][0]
+        self.assertEqual((False, True), (finding["blocking"], "n'est pas une ligne de la Spec" in finding["demoted"]))
+
+    def test_an_incomplete_end_review_is_not_a_passed_one_and_leaves_the_request_open(self):
+        tip, _ = self.opened_end_review()
+        self.ok("launch-end-review", CONVOY, "--bead", "fx-review1")
+        partial = {"axes": ["standards", "spec"], "files": 2, "missing": ["docs/fx-t2.md"]}
+
+        answer = self.ok("record-end-review", CONVOY, "--file", self.end_review_file(tip, coverage=partial))
+
+        self.assertEqual(("incomplete", False), (answer["outcome"], answer["complete"]))
+        review = self.end_review()
+        self.assertEqual(("incomplete", partial), (review["rounds"][0]["outcome"], review["rounds"][0]["coverage"]))
+        # No verdict: the request stays open, and its launch gave no result.
+        self.assertEqual("incomplete", review["request"]["launches"][0]["result"])
+        self.assertEqual({"commit": tip, "outcome": "incomplete", "unsettled": []}, review["state"])
+        self.assertEqual({"end_rounds": 0}, self.show()["convoy"]["counters"])
+        # One axis left out is an incomplete output too.
+        self.ok("launch-end-review", CONVOY, "--bead", "fx-review2")
+        one_axis = {"axes": ["spec"], "files": 3, "missing": []}
+        self.assertEqual("incomplete", self.ok(
+            "record-end-review", CONVOY, "--file", self.end_review_file(tip, coverage=one_axis))["outcome"])
+
+    def test_set_end_review_repair_names_the_published_repair_on_its_blocking_finding(self):
+        self.refused_end_review()
+        state = self.tracker_state()
+        state["beads"]["fx-r1"] = {"title": "repair de la revue de fin", "status": "open", "issue_type": "task",
+                                   "metadata": {"gc.ticket_kind": "repair"}}
+        state["beads"][CONVOY]["tracks"].append("fx-r1")
+        self.tracker.write_text(json.dumps(state))
+        self.ok("mark", CONVOY, "--demonstration-line", "fx-r1=Le nombre d'éléments est affiché")
+        name = ("set-end-review-repair", CONVOY, "--finding", "F1.1")
+
+        self.assert_refused_and_nothing_written(*name, "--ticket", T2, mention="n'est pas un repair")
+        self.assert_refused_and_nothing_written(*name, "--ticket", "fx-absent", mention="n'appartient pas")
+        self.assert_refused_and_nothing_written(*name, mention="--ticket ou --refused")
+        self.assert_refused_and_nothing_written(
+            "set-end-review-repair", CONVOY, "--finding", "F9.9", "--ticket", "fx-r1", mention="Blocking Finding")
+        self.ok(*name, "--ticket", "fx-r1")
+
+        self.assertEqual("fx-r1", self.end_review()["rounds"][0]["findings"][0]["repair"])
+        # The same name again writes nothing; another one is refused.
+        self.assertEqual({}, self.ok(*name, "--ticket", "fx-r1")["written"])
+        self.assert_refused_and_nothing_written(*name, "--refused", "la porte a refusé", mention="déjà")
+
+    def test_a_drafted_repair_the_patch_door_refused_is_recorded_on_its_finding(self):
+        self.refused_end_review()
+
+        self.ok("set-end-review-repair", CONVOY, "--finding", "F1.1", "--refused", "critère qui nomme un fichier")
+
+        finding = self.end_review()["rounds"][0]["findings"][0]
+        self.assertEqual("critère qui nomme un fichier", finding["repair_refused"])
+        self.assertNotIn("repair", finding)
+
+    def test_an_end_review_stopped_without_result_opens_nothing_more_on_that_commit(self):
+        tip, _ = self.opened_end_review()
+        self.ok("launch-end-review", CONVOY, "--bead", "fx-review1")
+        self.ok("launch-end-review", CONVOY, "--bead", "fx-review2")
+        stop = ("stop-end-review", CONVOY, "--reason", "end_review_no_result", "--detail", "aucun verdict en 2 lancements")
+        self.assert_refused_and_nothing_written(
+            "stop-end-review", CONVOY, "--reason", "fatigue", "--detail", "x", mention="raison")
+
+        self.ok(*stop)
+
+        review = self.end_review()
+        self.assertEqual((tip, "end_review_no_result"), (review["stop"]["commit"], review["stop"]["reason"]))
+        self.assertNotIn("raised", review["stop"])
+        self.assert_refused_and_nothing_written(
+            "record-end-review", CONVOY, "--file", self.end_review_file(tip), mention="arrêtée")
+        self.assert_refused_and_nothing_written(
+            "open-end-review", CONVOY, "--commit", tip, "--file", self.end_request_file(), mention="arrêtée")
+        self.ok("end-review-stop-raised", CONVOY, "--bead", "fx-request")
+        self.assertEqual("fx-request", self.end_review()["stop"]["bead"])
+        self.assertIn("raised", self.end_review()["stop"])
+
+    def test_a_new_tip_has_the_end_review_opened_again_and_no_earlier_round_stands_for_it(self):
+        tip, base = self.refused_end_review()
+        # One commit more on the integration branch, the gate replayed on it.
+        new_tip = self.commit_on("ticket/t1")
+        self.ok("record-spec-end", CONVOY, "--commit", new_tip, "--protected", base, "--file", self.spec_end_file())
+
+        self.assert_refused_and_nothing_written(
+            "open-end-review", CONVOY, "--commit", tip, "--file", self.end_request_file(), mention="verdicts mécaniques")
+        self.ok("open-end-review", CONVOY, "--commit", new_tip, "--file", self.end_request_file())
+
+        review = self.end_review()
+        self.assertEqual((new_tip, 1), (review["request"]["commit"], len(review["rounds"])))
+        # What the state says is still the round of the earlier tip: it names its commit.
+        self.assertEqual((tip, "unfavorable"), (review["state"]["commit"], review["state"]["outcome"]))
+        self.ok("record-end-review", CONVOY, "--file", self.end_review_file(new_tip))
+        review = self.end_review()
+        self.assertEqual([(tip, "unfavorable"), (new_tip, "favorable")],
+                         [(round_["commit"], round_["outcome"]) for round_ in review["rounds"]])
+        # A review already complete at a commit is not opened again on it.
+        self.assert_refused_and_nothing_written(
+            "open-end-review", CONVOY, "--commit", new_tip, "--file", self.end_request_file(), mention="déjà revue")
+        self.assertEqual({"end_rounds": 1}, self.show()["convoy"]["counters"])
+
+    def test_an_end_review_written_outside_the_command_is_a_state_without_rule(self):
+        self.verified_convoy()
+        self.edit_tracker(CONVOY, **{"gc.flow.end_review": json.dumps({"rounds": [{"outcome": "favorable"}]})})
+
+        shown = self.show(expect=EXIT_UNRULED)
+
+        self.assertIn("unruled", shown["convoy"]["end_review"])
+        self.assertIn("gc.flow.end_review", [entry["field"] for entry in shown["convoy"]["unruled"]])
+
     def test_the_end_of_the_spec_of_an_unmarked_convoy_is_not_recorded(self):
         before = self.tracker.read_text()
 
         for command in (("set-item-repair", CONVOY, T1, "--repair", T2),
                         ("record-spec-end", CONVOY, "--commit", ABSENT_COMMIT, "--protected", ABSENT_COMMIT,
-                         "--file", self.spec_end_file())):
+                         "--file", self.spec_end_file()),
+                        ("open-end-review", CONVOY, "--commit", ABSENT_COMMIT, "--file", self.end_request_file()),
+                        ("record-end-review", CONVOY, "--file", self.end_review_file(ABSENT_COMMIT)),
+                        ("stop-end-review", CONVOY, "--reason", "end_review_no_result", "--detail", "x")):
             with self.subTest(command=command[0]):
                 proc = self.run_tool(*command)
                 self.assertEqual(EXIT_NOT_NEW_FLOW, proc.returncode, proc.stdout + proc.stderr)

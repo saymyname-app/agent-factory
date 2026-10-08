@@ -40,7 +40,7 @@ SLICE, SCREEN = "fx-t1", "fx-t2"
 PLAIN_CONVOY, PLAIN_TICKET = "fx-plain", "fx-q1"
 PROTECTED = "main"
 INTEGRATION = f"integration/{SPEC}"
-VERSION = "spec-end/v1"
+VERSION = "spec-end/v2"
 NAMES = ("registry", "tests", "fidelity")
 
 EXIT_REFUSED = 1
@@ -59,7 +59,10 @@ def branch_of(ticket):
     return f"ticket/{ticket}"
 
 
-class SpecEndTest(unittest.TestCase):
+class Harness(unittest.TestCase):
+    """A delivered convoy of the fixture, walked by the real commands: shared with
+    tests/spec-end-review-test.py."""
+
     @classmethod
     def setUpClass(cls):
         # One directory for the whole class: a stage reached once (a seeded
@@ -371,7 +374,7 @@ class SpecEndTest(unittest.TestCase):
         def build():
             self.delivered()
             status, answer = self.run_gate()
-            self.assertEqual(0, status, answer)
+            self.assert_mechanical_green(status, answer)
             return answer["commit"]
         return self.stage("verified", build)
 
@@ -409,7 +412,38 @@ class SpecEndTest(unittest.TestCase):
         return (self.tracker.read_bytes(), self.store_files(), refs, log)
 
     def verdicts(self, answer):
-        return [(entry["number"], entry["name"], entry["verdict"]) for entry in answer["conditions"]]
+        """The three mechanical verdicts, which the gate renders."""
+        return [(entry["number"], entry["name"], entry["verdict"]) for entry in answer["conditions"][:3]]
+
+    def review_condition(self, answer):
+        """The condition the gate reads after its three verdicts: the end code review."""
+        (entry,) = [entry for entry in answer["conditions"] if entry["name"] == "end_review"]
+        self.assertGreater(entry["number"], len(NAMES))
+        return entry
+
+    def review_verdict(self, answer):
+        return self.review_condition(answer)["verdict"]
+
+    def assert_mechanical_green(self, status, answer):
+        """The three mechanical verdicts are green and hold; the end code
+        review, which no session has made on this commit, is all that is
+        missing."""
+        self.assertEqual((EXIT_REFUSED, False, [self.review_condition(answer)["number"]]),
+                         (status, answer["ok"], answer["missing"]), answer)
+        self.assertEqual([(number, name, "pass") for number, name in enumerate(NAMES, start=1)], self.verdicts(answer))
+        self.assertEqual("fail", self.review_verdict(answer))
+
+    def end_reviewed(self, commit, findings=(), coverage=None, launch=True):
+        """The end code review of the diff assembled at `commit`, as a
+        reviewer session records it through bin/convoy-state."""
+        extent = {"files": 4, "commits": 6, "insertions": 12, "deletions": 0, "digest": "sha256:" + "ab" * 32}
+        self.state("open-end-review", CONVOY, "--commit", commit, "--file", self.json_file(
+            "end-request.json", {"extent": extent, "reviewer": None}))
+        if launch:
+            self.state("launch-end-review", CONVOY, "--bead", "fx-endreview")
+        return self.state("record-end-review", CONVOY, "--file", self.json_file("end-review.json", {
+            "commit": commit, "recorded_by": "delivery-reviewer-fx", "findings": list(findings),
+            "coverage": coverage or {"axes": ["standards", "spec"], "files": 4, "missing": []}}))
 
     def counters(self):
         return self.show()["convoy"]["counters"]
@@ -424,6 +458,7 @@ class SpecEndTest(unittest.TestCase):
         self.assertFalse(answer["ok"])
         self.assertEqual([(1, "registry", "fail"), (2, "tests", "not_run"), (3, "fidelity", "not_run")],
                          self.verdicts(answer))
+        self.assertEqual("not_run", self.review_verdict(answer))
         self.assertEqual([1], answer["missing"])
         self.assertIn("condition 1", answer["error"])
         for mention in mentions:
@@ -437,6 +472,8 @@ class SpecEndTest(unittest.TestCase):
             self.assertEqual(before, after)
         return answer
 
+
+class SpecEndTest(Harness):
     # --- AC1: the three verdicts, on one commit --------------------------------
 
     def test_conforming_convoy_gets_three_green_verdicts_tied_to_one_integration_commit_that_holds_the_protected_tip(self):
@@ -446,9 +483,8 @@ class SpecEndTest(unittest.TestCase):
 
         status, answer = self.run_gate()
 
-        self.assertEqual(0, status, answer)
-        self.assertEqual((True, VERSION, INTEGRATION), (answer["ok"], answer["version"], answer["branch"]))
-        self.assertEqual([(number, name, "pass") for number, name in enumerate(NAMES, start=1)], self.verdicts(answer))
+        self.assert_mechanical_green(status, answer)
+        self.assertEqual((VERSION, INTEGRATION), (answer["version"], answer["branch"]))
         for entry in answer["conditions"]:
             self.assertTrue(entry["detail"].strip(), entry)
         commit = answer["commit"]
@@ -473,9 +509,8 @@ class SpecEndTest(unittest.TestCase):
 
         status, answer = self.check()
 
-        self.assertEqual(0, status, answer)
-        self.assertEqual((True, False, commit), (answer["ok"], answer["stale"], answer["commit"]))
-        self.assertEqual([(number, name, "pass") for number, name in enumerate(NAMES, start=1)], self.verdicts(answer))
+        self.assert_mechanical_green(status, answer)
+        self.assertEqual((False, commit), (answer["stale"], answer["commit"]))
         self.assertEqual(before, self.snapshot())
 
     def test_check_before_the_first_run_says_the_verdicts_were_never_rendered(self):
@@ -496,8 +531,8 @@ class SpecEndTest(unittest.TestCase):
 
         status, answer = self.run_gate()
 
-        self.assertEqual(0, status, answer)
-        self.assertEqual((True, commit, False), (answer["ok"], answer["commit"], answer["replayed"]))
+        self.assert_mechanical_green(status, answer)
+        self.assertEqual((commit, False), (answer["commit"], answer["replayed"]))
         self.assertEqual(before, self.snapshot())
 
     def test_convoy_without_interface_ticket_has_a_fidelity_verdict_that_says_so(self):
@@ -508,8 +543,7 @@ class SpecEndTest(unittest.TestCase):
 
         status, answer = self.run_gate()
 
-        self.assertEqual(0, status, answer)
-        self.assertEqual((3, "fidelity", "pass"), self.verdicts(answer)[2])
+        self.assert_mechanical_green(status, answer)
         self.assertIn("sans objet", answer["conditions"][2]["detail"])
 
     # --- AC6: a ticket of the convoy is still open -----------------------------
@@ -598,8 +632,7 @@ class SpecEndTest(unittest.TestCase):
         item = self.shown(SLICE)["tracked_items"][0]
         self.assertEqual(("not_done.1", NOT_DONE, "accepté par Benjamin"), (item["id"], item["text"], item["state"]))
         status, answer = self.run_gate()
-        self.assertEqual(0, status, answer)
-        self.assertEqual([(number, name, "pass") for number, name in enumerate(NAMES, start=1)], self.verdicts(answer))
+        self.assert_mechanical_green(status, answer)
         self.assertIn("accepté par Benjamin", answer["conditions"][0]["detail"])
         # The ticket the gate closed stays closed: the answer reopens nothing.
         self.assertEqual("closed", self.shown(SLICE)["status"])
@@ -733,7 +766,7 @@ class SpecEndTest(unittest.TestCase):
 
         status, answer = self.run_gate()
 
-        self.assertEqual(0, status, answer)
+        self.assert_mechanical_green(status, answer)
         self.assertIn("accepté par Benjamin", answer["conditions"][2]["detail"])
 
     # --- AC5: one more commit outdates every verdict ----------------------------
@@ -750,7 +783,8 @@ class SpecEndTest(unittest.TestCase):
         self.assertEqual(commit, answer["recorded"]["commit"])
         self.assertEqual([(1, "registry", "stale"), (2, "tests", "stale"), (3, "fidelity", "stale")],
                          self.verdicts(answer))
-        self.assertEqual([1, 2, 3], answer["missing"])
+        self.assertEqual("stale", self.review_verdict(answer))
+        self.assertEqual([entry["number"] for entry in answer["conditions"]], answer["missing"])
         self.assertIn("périmé", answer["error"])
         self.assertIn("tout est à rejouer", answer["error"])
         self.assertIn(commit[:12], answer["error"])
@@ -759,10 +793,10 @@ class SpecEndTest(unittest.TestCase):
 
         # Replayed in full on the new tip: three fresh verdicts, on that commit.
         status, replayed = self.run_gate()
-        self.assertEqual(0, status, replayed)
+        self.assert_mechanical_green(status, replayed)
         self.assertEqual((added, True), (replayed["commit"], replayed["replayed"]))
         self.assertEqual(added, self.show()["convoy"]["spec_end"]["commit"])
-        self.assertEqual((0, False), (lambda s, a: (s, a["stale"]))(*self.check()))
+        self.assertEqual((EXIT_REFUSED, False), (lambda s, a: (s, a["stale"]))(*self.check()))
 
     def test_protected_branch_moved_after_the_verdicts_makes_them_stale(self):
         commit = self.verified()
@@ -775,9 +809,107 @@ class SpecEndTest(unittest.TestCase):
         self.assertIn("branche protégée", answer["error"])
         self.assertIn(moved[:12], answer["error"])
         status, replayed = self.run_gate()
-        self.assertEqual(0, status, replayed)
+        self.assert_mechanical_green(status, replayed)
         self.assertNotEqual(commit, replayed["commit"])
         self.assertTrue(self.holds(moved, replayed["commit"]))
+
+    # --- T25: the end code review, read on the commit of the gate ------------------
+
+    SPEC_LINE = "As Benjamin, I want la page d'accueil afficher la liste des éléments."
+    BLOCKING = {"axis": "spec", "blocking": True, "summary": "Deux tickets se contredisent sur la liste affichée.",
+                "citation": {"source": "spec", "quote": SPEC_LINE},
+                "repair": {"title": "Afficher la liste sur la page d'accueil",
+                           "what_it_delivers": "La page d'accueil affiche de nouveau la liste des éléments.",
+                           "restores": {"kind": "spec_line", "ref": SPEC_LINE},
+                           "demonstration_line": "Sur le produit lancé, la page d'accueil affiche la liste.",
+                           "acceptance_criteria": [{"entry_point": "GET /", "observable": "la liste des éléments",
+                                                    "false_if": "une ligne manque"}]}}
+
+    def assert_refused_at_the_end_review(self, *mentions):
+        """Neither `run` nor `check` passes the gate, both name the end
+        review, and nothing is written."""
+        before = self.snapshot()
+        for status, answer in (self.run_gate(), self.check()):
+            self.assert_mechanical_green(status, answer)
+            self.assertIn(f"condition {self.review_condition(answer)['number']}", answer["error"])
+            for mention in mentions:
+                self.assertIn(mention, answer["error"])
+        self.assertEqual(before, self.snapshot())
+
+    def test_a_favorable_end_review_on_the_commit_of_the_gate_passes_its_four_conditions(self):
+        commit = self.verified()
+        self.end_reviewed(commit)
+        before = self.snapshot()
+
+        for status, answer in (self.run_gate(), self.check()):
+            self.assertEqual((0, True, []), (status, answer["ok"], answer["missing"]), answer)
+            self.assertEqual([(number, name, "pass") for number, name in enumerate(NAMES, start=1)],
+                             self.verdicts(answer))
+            self.assertEqual("pass", self.review_verdict(answer))
+            self.assertIn(commit[:12], self.review_condition(answer)["detail"])
+            self.assertNotIn("error", answer)
+        # The gate reads the review: it writes nothing more.
+        self.assertEqual(before, self.snapshot())
+
+    def test_gate_without_an_end_review_is_refused(self):
+        self.verified()
+
+        self.assert_refused_at_the_end_review("revue de fin absente")
+
+    def test_gate_with_an_end_review_still_open_is_refused(self):
+        commit = self.verified()
+        self.state("open-end-review", CONVOY, "--commit", commit, "--file", self.json_file("end-request.json", {
+            "extent": {"files": 4, "commits": 6, "insertions": 12, "deletions": 0, "digest": "sha256:" + "ab" * 32},
+            "reviewer": None}))
+        self.state("launch-end-review", CONVOY, "--bead", "fx-endreview")
+
+        self.assert_refused_at_the_end_review("revue de fin en cours", "pas de verdict")
+
+    def test_gate_with_an_end_review_that_crashed_without_result_is_refused(self):
+        commit = self.verified()
+        self.state("open-end-review", CONVOY, "--commit", commit, "--file", self.json_file("end-request.json", {
+            "extent": {"files": 4, "commits": 6, "insertions": 12, "deletions": 0, "digest": "sha256:" + "ab" * 32},
+            "reviewer": None}))
+        self.state("launch-end-review", CONVOY, "--bead", "fx-endreview")
+        self.state("launch-end-review", CONVOY, "--bead", "fx-endreview2")
+        self.state("stop-end-review", CONVOY, "--reason", "end_review_no_result",
+                   "--detail", "aucun résultat complet en 2 lancements")
+
+        self.assert_refused_at_the_end_review("arrêtée sans verdict", "end_review_no_result")
+
+    def test_gate_with_an_incomplete_end_review_is_refused(self):
+        commit = self.verified()
+        self.end_reviewed(commit, coverage={"axes": ["standards", "spec"], "files": 3, "missing": ["README.md"]})
+
+        self.assert_refused_at_the_end_review("revue de fin en cours", "incomplète")
+
+    def test_gate_with_an_end_review_tied_to_another_commit_is_refused_and_no_earlier_verdict_is_reused(self):
+        commit = self.verified()
+        self.end_reviewed(commit)
+        self.assertEqual(0, self.run_gate()[0])
+        # One commit more: everything is replayed, the review included.
+        added = self.note(INTEGRATION)
+
+        status, replayed = self.run_gate()
+
+        self.assert_mechanical_green(status, replayed)
+        self.assertEqual((added, True), (replayed["commit"], replayed["replayed"]))
+        self.assertIn("liée à un autre commit", replayed["error"])
+        self.assertIn(commit[:12], replayed["error"])
+        self.assertIn("jamais réutilisé", replayed["error"])
+        # Replayed in full on the new tip, it passes the gate there.
+        self.end_reviewed(added)
+        self.assertEqual((0, "pass"), (lambda s, a: (s, self.review_verdict(a)))(*self.run_gate()))
+
+    def test_gate_with_a_blocking_finding_of_the_end_review_is_refused_and_names_it(self):
+        commit = self.verified()
+        recorded = self.end_reviewed(commit, [self.BLOCKING])
+        self.assertEqual(("unfavorable", ["F1.1"]), (recorded["outcome"], recorded["blocking"]))
+
+        self.assert_refused_at_the_end_review("Blocking Finding", "F1.1", "sans verdict favorable",
+                                              "Deux tickets se contredisent", "pas encore publié")
+
+        self.assertEqual({"end_rounds": 1}, self.counters())
 
     # --- what the gate is not called on ----------------------------------------
 

@@ -1,0 +1,155 @@
+description = """
+End code review — one reviewer session reviews, once, the whole assembled diff
+of a Spec against the protected branch, and hands the result to
+`bin/spec-end-review record` (T25, af-ji2ruy; Spec af-wf4w5r §6 « Fin de
+Spec », §9 point 4).
+
+Only `bin/spec-end-review` dispatches this formula, through `bin/dispatch-door
+--role reviewer`, once the end-of-Spec gate has rendered its three mechanical
+verdicts on one tip of the integration branch: the session is new, runs on
+the read-only reviewer role, and knows nothing of the sessions that wrote the
+code. The step calls Matt Pocock's `code-review` skill as it is written; it
+does not restate it. The outcome is computed by `bin/convoy-state`, never
+written by the reviewer, and the end-of-Spec gate refuses without a complete
+and favorable review on its commit. The stored state, the bounds and the
+stop are in docs/SPEC_END_REVIEW.md.
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|--------------|
+| convoy_id | runtime | Input convoy tracking the single end-review bead |
+"""
+formula = "mol-end-review"
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "review"
+title = "Review the whole assembled diff of the Spec, draft a repair for each Blocking Finding, and record the result"
+description = """
+You are the end reviewer of one Spec. You wrote none of its code. You are
+read-only: do not modify a ticket, the Spec, a branch or any file of a
+repository, and never check out a branch (read a file of the reviewed commit
+with `git show <commit>:<path>`).
+
+**1. Read what you are given:**
+
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+REVIEW_BEAD=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+[ -n "$REVIEW_BEAD" ] || { echo "mol-end-review requires an input convoy with exactly one tracked member" >&2; exit 1; }
+REVIEW_TEXT=$(gc bd show "$REVIEW_BEAD" --json | jq -r '.[0].description')
+SPEC_CONVOY=$(printf '%s\n' "$REVIEW_TEXT" | sed -n 's/^convoy: //p')
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+"$FACTORY_ROOT/bin/spec-end-review" brief "$SPEC_CONVOY" > end-review-brief.json
+jq -r '.commit, .base, .repo, .diff.command, .diff.scope, (.diff.extent | tostring)' end-review-brief.json
+jq -r '.spec.text' end-review-brief.json > end-review-spec.md
+jq -r '.tickets[] | "## Ticket " + .id + " — " + (.title // "") + "\n\n" + .description + "\n\nDemonstration line: " + (.demonstration_line // "none") + "\n"' end-review-brief.json > end-review-tickets.md
+jq -r '.diff.files[].path' end-review-brief.json > end-review-files.txt
+```
+
+The brief is the preparation record of this review, and everything you are
+given: the extent under review (`.diff.scope`, `.diff.extent`: the whole
+diff of the integration branch against the protected branch, its files and
+the SHAs of its commits), the approved Spec (`end-review-spec.md`), the
+approved tickets of the convoy (`end-review-tickets.md`), and the standards
+files of the repository (`.standards`). Do not read anything else of the
+authors: not a Ticket Handoff, not the notes or the comments of a ticket
+bead, not the commit messages (`git log`), not their mail, not their
+sessions. `.independence`, when it is not null, says that your model is the
+one of an author or that it is not known: go on, it is recorded for the
+operator.
+
+You review the assembled whole, not one ticket: what matters here is what
+only shows once every ticket is merged — two tickets, each correct alone,
+that contradict each other on a line of the Spec; a behaviour of the Spec no
+ticket ended up serving; a written rule of the repository the sum breaks.
+
+**2. Call the `code-review` skill, unchanged.**
+
+Invoke the skill `code-review` in the repository `.repo` with:
+
+- the fixed point `.base`, and the reviewed commit `.commit` standing for
+  `HEAD` (the checked-out `HEAD` of the repository is not the Spec: the diff
+  is `.diff.command`, the list of commits is `.diff.commits`);
+- the spec source given as paths: `end-review-spec.md` and
+  `end-review-tickets.md`;
+- the standards sources `.standards`, plus whatever else the skill finds in
+  the repository at `.commit`.
+
+Follow the skill as it is written: its two axes (Standards, Spec), its two
+parallel sub-agents, its smell baseline. Cover **every file** of
+`end-review-files.txt` on both axes: on a large diff, go through it part by
+part rather than sampling it. Then turn the two reports into findings, one
+per reported point, keeping the two axes apart:
+
+- `axis`: `standards` or `spec`.
+- `summary`: one line, in the Operator Language
+  (`"$FACTORY_ROOT/bin/operator-config" language`), naming the files and
+  what is wrong.
+- `blocking`: `true` only when the finding cites a line of the Spec, a line
+  of a ticket of the convoy, or a written rule of the repository, and that
+  line says the assembled diff is wrong. Then give the `citation`: `source`
+  (`spec`, `ticket` or `repo_rule`), `quote` (the cited line, copied
+  exactly, at least a full clause), for `ticket` the `ticket` id it is a
+  line of, and for `repo_rule` the `path` of the file that holds the rule.
+  Code checks that the quote is a line of its source: a finding given as
+  blocking without a citation that holds is recorded as non-blocking.
+- A smell of the baseline, a matter of taste, anything you cannot cite:
+  `blocking: false`. It is recorded and blocks nothing.
+
+**3. Draft one `repair` per Blocking Finding.** There is no « corrigé /
+contesté » at the end of a Spec: each Blocking Finding becomes a `repair`
+ticket that you draft and that code publishes. Give it under `repair`, in the
+Operator Language, every field on one line:
+
+- `title`, and `what_it_delivers`: what the ticket puts right, inside what
+  the Spec already asks. A behaviour the Spec does not ask is never a
+  repair: then the finding is not blocking.
+- `restores`: `kind` (`spec_line`, `user_story`, `repo_rule` or `anchor`) and
+  `ref`, which cites what it restores — for `spec_line` the cited line of
+  the Spec copied exactly, for `user_story` the number of one story.
+- `demonstration_line`: what is observed on the launched product, through
+  its real entry point, once the repair is delivered.
+- `acceptance_criteria`: at least one, each with `entry_point` (a route, a
+  command, a public API — never a test, a file or an internal function),
+  `observable` (what is observed there) and `false_if` (the observation
+  that makes it false).
+
+You give no overall verdict: code computes it.
+
+**4. Say what you covered, and record.** `coverage.axes` lists the axes you
+ran, `coverage.files` every file of the diff you actually reviewed. Be exact:
+an output that leaves an axis or a file out is recorded as incomplete, counts
+as a review that did not pass, and another session is launched — that is the
+right outcome when you could not finish, never a list you did not read.
+
+Write `end-review-result.json` in the current directory in the shape
+`.review_shape` shows, then record it:
+
+```bash
+jq '{commit, findings: [], coverage: {axes: [], files: []}}' end-review-brief.json > end-review-result.json
+# then add each finding (with its repair when blocking), and set .coverage.axes and .coverage.files
+"$FACTORY_ROOT/bin/spec-end-review" record "$SPEC_CONVOY" --file end-review-result.json
+```
+
+**5. If `record` refuses**, it lists what is missing or outside its closed
+lists (a Blocking Finding without its drafted repair, a malformed draft): fix
+the file and run it again. Do not write the review state any other way.
+
+**6. Close:**
+
+```bash
+gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "End code review of $SPEC_CONVOY recorded."
+if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$REVIEW_BEAD" ]; then
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "End code review of $SPEC_CONVOY recorded."
+fi
+```
+
+If you could not record a result, close both with `gc.outcome=fail` and the
+reason in the notes instead: a review without a result is not a passed one.
+
+**Exit criteria:** `bin/spec-end-review record` accepted your result, and the
+review bead and this step are closed."""
