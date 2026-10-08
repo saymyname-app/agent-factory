@@ -22,10 +22,11 @@ the operator on a stopped one (T17), the fingerprint of its acceptance
 criteria frozen with the approved graph, the reference of the Validated
 Prototype the publication door posed in an interface ticket (read only) and
 the record of the ticket-end gate, written with the closing of the ticket
-(T19), the convoy's open factory incident, and the manual lifecycle of the
+(T19), the convoy's open factory incident, the manual lifecycle of the
 convoy: the mark puts it out of Gas City's automatic closing, and a marked
 convoy found closed is one closed outside the acceptance and abandon
-commands (T22). No other script
+commands (T22), and the red of its integration branch with the one repair
+that restores it (T21). No other script
 invents a `gc.flow.*` field: a missing field is added here.
 
     convoy-state list            (open marked convoys; under `closed_outside`,
@@ -71,6 +72,9 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state override-finding  CONVOY TICKET --finding ID --approver NAME --words TEXT
     convoy-state record-incident CONVOY --bead BEAD [--signature sha256:HEX]
     convoy-state clear-incident  CONVOY
+    convoy-state record-integration-red CONVOY --commit SHA --integration SHA --protected SHA --control LINE [--detail LINE]
+    convoy-state set-integration-repair CONVOY --ticket TICKET
+    convoy-state clear-integration-red  CONVOY
 
 Every answer is one JSON object on stdout. Exit status: 0 done; 1 refused or
 could not run (nothing written); 3 `show` or `ticket` found an "état sans
@@ -88,7 +92,12 @@ in `--repo` (default: the current directory): a commit added after it makes
 it invalid, a commit that is not on the branch at all is an "état sans
 règle". `invalidate-verdicts` writes that on the verdicts the merge command
 found outdated, and counts one resume for it -- none when the commit is the
-one of the correction round, which `open-correction` already counted. Closed lists and stored keys:
+one of the correction round, which `open-correction` already counted.
+
+The bound of the resumes of a ticket (K) is read in the one place the
+bounds of the flow are set: `bounds.resumes` of config/delivery-flow.json,
+under FACTORY_ROOT (default: the repository of this script), and in the
+Factory's own file when that root sets no bounds. Closed lists and stored keys:
 docs/CONVOY_STATE.md.
 """
 
@@ -96,6 +105,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import functools
 import hashlib
 import json
 import os
@@ -110,6 +120,10 @@ from typing import Any, Iterator
 
 PROGRAM = "convoy-state"
 GC_BIN = os.environ.get("GC_BIN", "gc")
+BIN = Path(__file__).resolve().parent
+# Where the bounds of the flow are set (Spec §8): one file, read by every
+# command that applies one of them.
+SETTINGS = "config/delivery-flow.json"
 
 MARK = "new-flow/v1"
 PREFIX = "gc.flow."
@@ -147,6 +161,7 @@ KEY_HANDOFF = PREFIX + "handoff"
 KEY_PARK = PREFIX + "park"
 KEY_INCIDENT = PREFIX + "incident"
 KEY_INTEGRATION = PREFIX + "integration"
+KEY_INTEGRATION_RED = PREFIX + "integration_red"
 KEY_MERGE = PREFIX + "merge"
 KEY_SESSION = PREFIX + "session"
 KEY_CODE_REVIEW = PREFIX + "code_review"
@@ -250,9 +265,10 @@ HANDOFF_RECORDS_PIECE = "handoff_records"
 # the bound of the resumes of a ticket (Spec §8, T20).
 PARK_EXHAUSTED = "resumes_exhausted"
 PARK_CAUSES = ("planning_exception", "operator_request", PARK_EXHAUSTED)
-# Spec §8, K: the resumes of a ticket, every cause together. At the third
-# the ticket is parked with its descendants. A starting value, not a measure.
-RESUMES_MAX = 3
+# Spec §8, K: the resumes of a ticket, every cause together; at the last one
+# the ticket is parked with its descendants. The value is a setting
+# (`bounds.resumes` of config/delivery-flow.json, `resumes_max`).
+BOUND_RESUMES = "resumes"
 # Why code sends a ticket back to a fresh author session (T20): its session
 # was interrupted, the merge returned it, the repair it waited for is closed,
 # or the request that parked it was answered. The correction round and a
@@ -391,6 +407,35 @@ def now() -> str:
 
 def encode(record: dict[str, Any]) -> str:
     return json.dumps(record, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+@functools.lru_cache(maxsize=None)
+def flow_bound(name: str) -> int:
+    """One bound of the flow (Spec §8), read where they are all set: `bounds`
+    of config/delivery-flow.json under FACTORY_ROOT, and in the Factory's own
+    file when that root sets none (a synthetic city that sets no bound runs
+    under the Factory's)."""
+    bounds = None
+    for root in dict.fromkeys((Path(os.environ.get("FACTORY_ROOT") or BIN.parent), BIN.parent)):
+        try:
+            data = json.loads((root / SETTINGS).read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue
+        except (OSError, json.JSONDecodeError) as exc:
+            raise Refusal(f"{SETTINGS} illisible : {exc}") from exc
+        if isinstance(data, dict) and "bounds" in data:
+            bounds = data["bounds"]
+            break
+    if not isinstance(bounds, dict):
+        raise Refusal(f"aucune borne (bounds) dans {SETTINGS} : les bornes du flux s'y règlent, et nulle part ailleurs")
+    value = bounds.get(name)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise Refusal(f"bounds.{name} absent ou invalide dans {SETTINGS} : {value!r} (attendu : un entier d'au moins 1)")
+    return value
+
+
+def resumes_max() -> int:
+    return flow_bound(BOUND_RESUMES)
 
 
 # --- validation shared by writes and reads -----------------------------------
@@ -1457,7 +1502,7 @@ def resumes_left(metadata: dict[str, Any]) -> int:
     resumes = counter_value(metadata.get(COUNTER_PREFIX + "resumes"), "resumes")
     lifts = park_lifts_record(metadata[KEY_PARK_LIFTS]) if KEY_PARK_LIFTS in metadata else []
     since = max((lift["resumes"] for lift in lifts if lift["cause"] == PARK_EXHAUSTED), default=0)
-    return max(0, RESUMES_MAX - (resumes - since))
+    return max(0, resumes_max() - (resumes - since))
 
 
 def grouped_request_record(raw: Any) -> dict[str, Any]:
@@ -1494,6 +1539,23 @@ def integration_record(raw: Any) -> dict[str, Any]:
     valid_branch(record["branch"], "branche d'intégration")
     valid_branch(record["protected"], "branche protégée")
     valid_commit(record["base"], "commit de départ de la branche d'intégration")
+    return record
+
+
+def integration_red_record(raw: Any) -> dict[str, Any]:
+    """The red of the convoy's integration branch (Spec §8): the control
+    that is red, quoted, the commit it was red on, the tips of the
+    integration and of the protected branches then, and the one repair
+    ticket that restores it once code has published it."""
+    record = stored_record(raw, ("control", "commit", "integration", "protected", "at"), ("detail", "repair"))
+    single_line(record["control"], "contrôle rouge")
+    valid_commit(record["commit"], "commit du contrôle rouge")
+    valid_commit(record["integration"], "pointe de la branche d'intégration")
+    valid_commit(record["protected"], "pointe de la branche protégée")
+    if "detail" in record:
+        single_line(record["detail"], "détail du contrôle rouge")
+    if "repair" in record and (not isinstance(record["repair"], str) or not BEAD_ID_RE.match(record["repair"])):
+        raise Refusal(f"ticket repair du rouge absent ou mal formé : {record['repair']!r}")
     return record
 
 
@@ -1895,6 +1957,9 @@ def cmd_show(args: argparse.Namespace) -> int:
     mark = metadata.get(KEY_MARK)
     if mark is None:
         raise NotNewFlow(args.convoy)
+    # The resumes each ticket has left are counted against the bound: a
+    # bound that cannot be read is a refusal, never a default.
+    resumes_max()
 
     convoy_unruled: list[dict[str, str]] = []
     if mark != MARK:
@@ -1919,6 +1984,13 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             integration = {"unruled": f"{KEY_INTEGRATION} : {exc}", "raw": metadata[KEY_INTEGRATION]}
             convoy_unruled.append({"field": KEY_INTEGRATION, "reason": integration["unruled"]})
+    integration_red: dict[str, Any] | None = None
+    if KEY_INTEGRATION_RED in metadata:
+        try:
+            integration_red = integration_red_record(metadata[KEY_INTEGRATION_RED])
+        except Refusal as exc:
+            integration_red = {"unruled": f"{KEY_INTEGRATION_RED} : {exc}", "raw": metadata[KEY_INTEGRATION_RED]}
+            convoy_unruled.append({"field": KEY_INTEGRATION_RED, "reason": integration_red["unruled"]})
     grouped_request: dict[str, Any] | None = None
     if KEY_GROUPED_REQUEST in metadata:
         try:
@@ -1927,7 +1999,7 @@ def cmd_show(args: argparse.Namespace) -> int:
             grouped_request = {"unruled": f"{KEY_GROUPED_REQUEST} : {exc}", "raw": metadata[KEY_GROUPED_REQUEST]}
             convoy_unruled.append({"field": KEY_GROUPED_REQUEST, "reason": grouped_request["unruled"]})
     for key in sorted(metadata):
-        known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_GROUPED_REQUEST,
+        known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_GROUPED_REQUEST,
                  *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(PREFIX) and key not in known:
             convoy_unruled.append({"field": key, "reason": f"{key} : champ inconnu de la commande d'état, écrit hors d'elle"})
@@ -1938,6 +2010,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         "counters": render_counters(metadata, CONVOY_COUNTERS, convoy_unruled),
         "incident": incident,
         "integration": integration,
+        "integration_red": integration_red,
         "grouped_request": grouped_request,
         "unruled": convoy_unruled,
     }
@@ -3239,7 +3312,7 @@ def cmd_park(args: argparse.Namespace) -> int:
         raise Refusal(f"le ticket {args.ticket} est déjà parqué")
     if cause == PARK_EXHAUSTED and resumes_left(metadata_of(ticket)) > 0:
         raise Refusal(
-            f"le ticket {args.ticket} n'a pas épuisé ses reprises ({RESUMES_MAX}, toutes causes confondues) : "
+            f"le ticket {args.ticket} n'a pas épuisé ses reprises ({resumes_max()}, toutes causes confondues) : "
             "il ne se parque pas pour cette cause")
     _, tickets = load_convoy(args.convoy)
     parked = waiting_for(tickets, args.ticket)
@@ -3335,7 +3408,7 @@ def cmd_open_resume(args: argparse.Namespace) -> int:
         return done(args.convoy, args.ticket, {})
     if resumes_left(metadata) == 0:
         raise Refusal(
-            f"reprises épuisées : le ticket {args.ticket} a pris ses {RESUMES_MAX} reprises, toutes causes confondues ; "
+            f"reprises épuisées : le ticket {args.ticket} a pris ses {resumes_max()} reprises, toutes causes confondues ; "
             "il se parque avec ses descendants")
     counters = {name: counter_value(metadata.get(COUNTER_PREFIX + name), name) for name in TICKET_COUNTERS}
     counters["resumes"] += 1
@@ -3603,6 +3676,71 @@ def cmd_clear_incident(args: argparse.Namespace) -> int:
     return done(args.convoy, args.convoy, {KEY_INCIDENT: None})
 
 
+def cmd_record_integration_red(args: argparse.Namespace) -> int:
+    """Record that the integration branch of the convoy is red (Spec §8):
+    the control, quoted, and where it was red. The same red again -- same
+    control, same commit -- writes nothing, so a red seen by several passes
+    stays one red. A branch found red elsewhere while it is red (its tips
+    moved) updates the record and keeps its repair: one repair per red. A
+    branch found red once that repair is closed has no repair any more."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    if KEY_INTEGRATION not in metadata:
+        raise Refusal(f"le convoi {args.convoy} n'a pas de branche d'intégration enregistrée : elle ne peut pas être rouge")
+    record: dict[str, Any] = {
+        "control": single_line(args.control, "contrôle rouge"),
+        "commit": valid_commit(args.commit, "commit du contrôle rouge"),
+        "integration": valid_commit(args.integration, "pointe de la branche d'intégration"),
+        "protected": valid_commit(args.protected, "pointe de la branche protégée"),
+    }
+    if args.detail is not None:
+        record["detail"] = single_line(args.detail, "détail du contrôle rouge")
+    if KEY_INTEGRATION_RED in metadata:
+        known = integration_red_record(metadata[KEY_INTEGRATION_RED])
+        repair = next((ticket for ticket in tickets if ticket.get("id") == known.get("repair")), None)
+        repaired = repair is not None and repair.get("status") == "closed"
+        if (known["control"], known["commit"]) == (record["control"], record["commit"]) and not repaired:
+            return done(args.convoy, args.convoy, {})
+        if "repair" in known and not repaired:
+            record["repair"] = known["repair"]
+    values = {KEY_INTEGRATION_RED: encode(integration_red_record(encode({**record, "at": now()})))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_set_integration_repair(args: argparse.Namespace) -> int:
+    """Name the repair ticket code published for the red of the integration
+    branch: a tracked ticket of the convoy, of kind `repair`. One repair per
+    red: another one is refused while the first is open."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    if KEY_INTEGRATION_RED not in metadata:
+        raise Refusal(f"la branche d'intégration du convoi {args.convoy} n'est pas rouge : aucun repair ne s'y rattache")
+    record = integration_red_record(metadata[KEY_INTEGRATION_RED])
+    ticket = marked_ticket_among(tickets, args.convoy, args.ticket)
+    if metadata_of(ticket).get(KEY_KIND) != "repair":
+        raise Refusal(f"le ticket {args.ticket} n'est pas un repair : seul un repair rétablit un contrôle rouge")
+    if record.get("repair") == args.ticket:
+        return done(args.convoy, args.convoy, {})
+    known = next((other for other in tickets if other.get("id") == record.get("repair")), None)
+    if "repair" in record and (known is None or known.get("status") != "closed"):
+        raise Refusal(
+            f"le rouge de la branche d'intégration a déjà son repair ({record['repair']}), encore ouvert : "
+            "un seul repair par rouge")
+    values = {KEY_INTEGRATION_RED: encode(integration_red_record(encode({**record, "repair": args.ticket})))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_clear_integration_red(args: argparse.Namespace) -> int:
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    run_gc(["bd", "update", args.convoy, "--unset-metadata", KEY_INTEGRATION_RED])
+    return done(args.convoy, args.convoy, {KEY_INTEGRATION_RED: None})
+
+
 def cmd_record_grouped_request(args: argparse.Namespace) -> int:
     convoy_with_a_mark(args.convoy)
     record: dict[str, Any] = {"bead": args.bead, "at": now()}
@@ -3761,6 +3899,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lift-option")
     p.add_argument("--lifts", action="append", default=[])
     command("clear-grouped-request", cmd_clear_grouped_request, ticket=False)
+    p = command("record-integration-red", cmd_record_integration_red, ticket=False)
+    p.add_argument("--commit")
+    p.add_argument("--integration")
+    p.add_argument("--protected")
+    p.add_argument("--control")
+    p.add_argument("--detail")
+    command("set-integration-repair", cmd_set_integration_repair, ticket=False).add_argument("--ticket")
+    command("clear-integration-red", cmd_clear_integration_red, ticket=False)
     p = sub.add_parser("ticket")
     p.add_argument("ticket")
     p.add_argument("--bead-json")

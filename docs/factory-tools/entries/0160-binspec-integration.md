@@ -31,6 +31,14 @@ protégée (Spec af-wf4w5r §4 et §8, T18). Pour un convoi qui porte la
   l'environnement, le ticket reste dans `waiting` avec la raison.
 - **Conflit, ou tests rouges sur le résultat** : rien n'est fusionné ni
   poussé, le ticket retourne à son auteur. Aucun agent ne résout à sa place.
+- **Branche d'intégration rouge** (T21) : quand la commande de régression est
+  rouge une fois la branche protégée reprise, rien n'est poussé, aucun
+  ticket n'est accusé, et le rouge est enregistré sur le convoi avec le
+  contrôle cité (`integration_red` de `./bin/convoy-state show`). Tant qu'il
+  y est, `merge` refuse (sortie 1, « branche d'intégration rouge ») et ne
+  fusionne que le `repair` de ce rouge ; il retire le rouge dès que ce
+  `repair` est fusionné vert, ou que le contrôle, rejoué quand une branche
+  a bougé, est vert.
 - **Commit ajouté après un verdict** (revue de code ou Ticket Evaluation) :
   fusion refusée, verdicts marqués invalides, une reprise comptée ; ils se
   rejouent sur la nouvelle pointe.

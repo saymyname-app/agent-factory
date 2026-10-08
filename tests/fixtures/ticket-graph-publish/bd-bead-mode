@@ -77,12 +77,14 @@ def cmd_show(positionals):
     bead = state["beads"].get(positionals[0])
     if bead is None:
         fail(f"issue not found: {positionals[0]}")
-    print(json.dumps([public_view(bead)]))
+    print(json.dumps([public_view({"id": positionals[0], **bead})]))
 
 
 def cmd_list(flags):
+    # A bead written by the other fake tracker of the suites
+    # (tests/fixtures/convoy-state/gc, on the same file) is known by its key.
     state = load_state()
-    print(json.dumps([public_view(b) for b in state["beads"].values()]))
+    print(json.dumps([public_view({"id": bead_id, **b}) for bead_id, b in state["beads"].items()]))
 
 
 def cmd_update(flags, repeated, positionals):

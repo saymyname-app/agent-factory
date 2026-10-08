@@ -33,6 +33,18 @@ whose branch has a commit newer than the commit its code review or its
 Ticket Evaluation judged is refused: those verdicts are written invalid and
 one resume is counted, through bin/convoy-state.
 
+A red integration branch stops the merges (T21, Spec §8). The regression
+command red once the branch has taken up the protected branch belongs to no
+ticket: nothing is pushed, and the red is recorded on the convoy
+(bin/convoy-state record-integration-red: the control, quoted, and where it
+was red), where bin/convoy-advance reads it and publishes its one `repair`.
+While a red is recorded, `merge` refuses (exit 1, `red` in the answer): it
+merges nothing but that repair, on the protected branch taken up, the tests
+run on the result; a green result is pushed and the red is withdrawn. Once
+a tip moved, or the repair is closed without having been merged, the
+command runs the control again: green, the red is withdrawn and the merges
+resume in the same pass; red, it stays recorded under its new tips.
+
 With a remote `origin`, the protected and the integration branches are read
 there (after a fetch) and the integration branch is pushed there; without
 one, the local branches are used. What was done of a ticket is written
@@ -74,6 +86,8 @@ TESTS_PIECE = "merged_tests"
 # The merges are made by code: their author is the Factory, whoever runs it.
 IDENTITY = ("-c", "user.name=Agent Factory", "-c", "user.email=agent-factory@noreply.invalid")
 RETURN_CAUSES = {"conflict": "conflit", "red": "tests rouges sur le résultat fusionné"}
+# Spec §8: a red integration branch stops the merges.
+RED = "branche d'intégration rouge"
 # The one stop a ticket may be merged under: every Blocking Finding its code
 # review left without a favorable verdict carries the recorded override of
 # the operator (Spec §8, « passer outre »; condition 9 of the ticket-end gate).
@@ -106,6 +120,16 @@ class NotNewFlow(RuntimeError):
         self.answer = answer
 
 
+class RedControl(RuntimeError):
+    """The regression command is red on the integration branch itself, the
+    protected branch taken up: no ticket is being merged, the red is the
+    branch's."""
+
+    def __init__(self, control: str, commit: str, detail: str | None, taken_up: str | None):
+        super().__init__(control)
+        self.control, self.commit, self.detail, self.taken_up = control, commit, detail, taken_up
+
+
 class Unruled(RuntimeError):
     """The convoy is in an "état sans règle": carries the anomalies."""
 
@@ -117,6 +141,13 @@ class Unruled(RuntimeError):
 def short(text: str, limit: int = MAX_DETAIL) -> str:
     text = " ".join(text.split())
     return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def last_lines(text: str, limit: int = MAX_DETAIL) -> str | None:
+    """The end of what a red control printed, on one line: where it says
+    what is red."""
+    text = " ".join(text.split())
+    return (text if len(text) <= limit else "…" + text[-(limit - 1):]) or None
 
 
 # --- the other commands ----------------------------------------------------------
@@ -500,6 +531,9 @@ class Pass:
                  command: list[str], timeout: float):
         self.repo, self.convoy_id, self.branch, self.protected = repo, convoy_id, branch, protected
         self.tip, self.tree, self.command, self.timeout = tip, tree, command, timeout
+        # What the work tree holds before a ticket is merged: the pushed tip,
+        # or, under a red, the protected branch taken up on it and not pushed.
+        self.held = tip
 
     def git(self, *args: str) -> subprocess.CompletedProcess[str]:
         return self.repo.git(*args, cwd=self.tree)
@@ -516,36 +550,55 @@ class Pass:
         files = self.git("diff", "--name-only", "--diff-filter=U").stdout.split("\n")
         files = [name for name in files if name]
         self.git("merge", "--abort")
-        self.git("reset", "--quiet", "--hard", self.tip)
+        self.git("reset", "--quiet", "--hard", self.held)
         if not files:
             raise Refusal(f"git merge de {commit[:12]} dans {self.branch} a échoué : {detail_of(proc)}")
         return files
 
-    def take_up_protected(self, protected_tip: str) -> dict[str, Any] | None:
+    def take_up_protected(self, protected_tip: str, checked: bool = False) -> dict[str, Any] | None:
         """Spec §4: the integration branch takes up the protected branch
-        before a ticket is merged. A conflict or a red there belongs to no
-        ticket: nothing is pushed, no ticket is merged."""
-        if self.repo.is_ancestor(protected_tip, self.tip):
+        before a ticket is merged, and the regression command is run on the
+        result. A conflict or a red there belongs to no ticket: nothing is
+        pushed, no ticket is merged; the red is the branch's (`RedControl`).
+        `checked`: run the control even when there is nothing to take up
+        (the branch was recorded red: is it still?)."""
+        taken = not self.repo.is_ancestor(protected_tip, self.tip)
+        if not taken and not checked:
             return None
+        if taken:
+            self.merge_protected(protected_tip)
+        result = self.head()
+        where = f"{self.branch} après reprise de {self.protected}" if taken else self.branch
+        try:
+            proc = run(self.command, cwd=self.tree, timeout=self.timeout)
+        except subprocess.TimeoutExpired as exc:
+            self.git("reset", "--quiet", "--hard", self.tip)
+            raise Refusal(
+                f"la commande de régression n'a pas fini en {self.timeout:g} s sur {where} : rien n'est poussé") from exc
+        if proc.returncode != 0:
+            self.git("reset", "--quiet", "--hard", self.tip)
+            raise RedControl(
+                f"commande de régression ({shlex.join(self.command)}) : code {proc.returncode}, sur {where}",
+                result, last_lines(proc.stdout + "\n" + proc.stderr), self.protected if taken else None)
+        if result != self.tip:
+            self.repo.move(self.branch, result, self.tip)
+        self.tip = self.held = result
+        return {"commit": result, "protected": protected_tip} if taken else None
+
+    def merge_protected(self, protected_tip: str) -> None:
         files = self.try_merge(protected_tip, f"Reprise de {self.protected} dans {self.branch}")
         if files is not None:
             raise Refusal(
                 f"la reprise de la branche protégée {self.protected} dans {self.branch} est en conflit "
                 f"({', '.join(files)}) : aucun ticket n'est fusionné")
-        result = self.head()
-        try:
-            proc = run(self.command, cwd=self.tree, timeout=self.timeout)
-        except subprocess.TimeoutExpired as exc:
-            raise Refusal(
-                f"la commande de régression n'a pas fini en {self.timeout:g} s après la reprise de la branche "
-                f"protégée {self.protected} : rien n'est poussé") from exc
-        if proc.returncode != 0:
-            raise Refusal(
-                f"branche d'intégration rouge après la reprise de la branche protégée {self.protected} "
-                f"(commande de régression : code {proc.returncode}) : rien n'est poussé, aucun ticket n'est fusionné")
-        self.repo.move(self.branch, result, self.tip)
-        self.tip = result
-        return {"commit": result, "protected": protected_tip}
+
+    def hold_protected(self, protected_tip: str) -> None:
+        """Under a red: the protected branch is taken up in the work tree
+        only. The repair is merged on it, and the tests on that result say
+        whether the branch is green again; nothing is pushed before."""
+        if not self.repo.is_ancestor(protected_tip, self.tip):
+            self.merge_protected(protected_tip)
+            self.held = self.head()
 
     def tests(self, ticket_id: str) -> dict[str, Any]:
         """Run the tests on the merged result checked out in the work tree,
@@ -563,7 +616,7 @@ class Pass:
 
     def merge(self, ticket: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """Merge one ticket. Returns `merged` or `returned`, and its entry."""
-        ticket_id, ticket_tip, before = ticket["id"], ticket["tip"], self.tip
+        ticket_id, ticket_tip, before, held = ticket["id"], ticket["tip"], self.tip, self.held
         entry: dict[str, Any] = {"id": ticket_id, "ticket_commit": ticket_tip, "integration": before}
         record = ["set-merge", self.convoy_id, ticket_id, "--ticket-commit", ticket_tip, "--integration", before]
         files = self.try_merge(ticket_tip, f"Fusion de {ticket_id} ({ticket['branch']}) dans {self.branch}")
@@ -578,12 +631,12 @@ class Pass:
         try:
             tests = self.tests(ticket_id)
         except Refusal:
-            self.git("reset", "--quiet", "--hard", before)
+            self.git("reset", "--quiet", "--hard", held)
             raise
         entry.update(commit=result, tests=tests)
         if tests["exit_code"] != 0:
-            # Not pushed: the integration branch stays on its green tip.
-            self.git("reset", "--quiet", "--hard", before)
+            # Not pushed: the integration branch stays on its tip.
+            self.git("reset", "--quiet", "--hard", held)
             state_write(*record, "--outcome", "red", "--commit", result)
             return "returned", {
                 **entry, "cause": "red",
@@ -591,9 +644,31 @@ class Pass:
                            "poussée, le rouge appartient à ce ticket, qui retourne à son auteur"),
             }
         self.repo.move(self.branch, result, before)
-        self.tip = result
+        self.tip = self.held = result
         state_write(*record, "--outcome", "merged", "--commit", result)
         return "merged", entry
+
+
+def record_red(convoy_id: str, repo: Repo, found: RedControl, tip: str, protected_tip: str) -> dict[str, Any]:
+    """Write the red of the integration branch on the convoy, and return it
+    as it is recorded (with its repair, when the branch was red already)."""
+    state_write("record-integration-red", convoy_id, "--commit", found.commit, "--integration", tip,
+                "--protected", protected_tip, "--control", found.control,
+                *(("--detail", found.detail) if found.detail else ()))
+    recorded = read_state(convoy_id, repo)["convoy"].get("integration_red")
+    if not isinstance(recorded, dict) or "control" not in recorded:
+        raise Refusal(f"le rouge de la branche d'intégration du convoi {convoy_id} n'a pas pu être relu après son enregistrement")
+    return recorded
+
+
+def red_refusal(red: dict[str, Any], taken_up: str | None = None) -> str:
+    """Why nothing is merged while the integration branch is red: the
+    control that is red, and what restores it."""
+    after = f" après la reprise de la branche protégée {taken_up}" if taken_up else ""
+    repair = red.get("repair")
+    return (f"{RED}{after} ({red['control']}) : rien n'est poussé, aucun ticket n'est fusionné "
+            + (f"avant son repair {repair}" if repair else "avant son repair, que la passe d'avancement publie")
+            + ", ou avant que ce contrôle repasse au vert")
 
 
 def cmd_merge(args: argparse.Namespace) -> int:
@@ -646,27 +721,73 @@ def cmd_merge(args: argparse.Namespace) -> int:
                 else:
                     ready.append(ticket)
 
+        red = state["convoy"].get("integration_red")
         takeover = None
         try:
-            if ready:
-                command = regression_command(args.profile)
+            merges = None
+
+            def open_pass() -> Pass:
                 tree = stack.enter_context(work_tree(repo, args.convoy, tip))
-                merges = Pass(repo, args.convoy, branch, protected, tip, tree, command, timeout)
-                takeover = merges.take_up_protected(protected_tip)
+                return Pass(repo, args.convoy, branch, protected, tip, tree, regression_command(args.profile), timeout)
+
+            def control(checked: bool) -> dict[str, Any] | None:
+                try:
+                    return merges.take_up_protected(protected_tip, checked)
+                except RedControl as found:
+                    recorded = record_red(args.convoy, repo, found, tip, protected_tip)
+                    raise Refusal(red_refusal(recorded, found.taken_up), {"red": recorded}) from found
+
+            if red:
+                repair = red.get("repair")
+                mine = [ticket for ticket in ready if ticket["id"] == repair]
+                if mine:
+                    # The one ticket a red branch takes: its repair, on the
+                    # protected branch taken up, the tests on that result.
+                    merges = open_pass()
+                    merges.hold_protected(protected_tip)
+                    outcome, entry = merges.merge(mine[0])
+                    out[outcome].append(entry)
+                    if outcome == "merged":
+                        state_write("clear-integration-red", args.convoy)
+                    for ticket in ready:
+                        if ticket["id"] != repair:
+                            out["waiting"].append({"id": ticket["id"], "reason": (
+                                f"{RED} : son repair {repair} est fusionné, la branche est de nouveau verte ; "
+                                "ce ticket se fusionne à la passe suivante" if outcome == "merged"
+                                else red_refusal(red))})
+                    red = None if outcome == "merged" else red
+                    ready = []
+                elif (tip, protected_tip) != (red["integration"], red["protected"]) or any(
+                        ticket["id"] == repair and ticket.get("status") == "closed" for ticket in state["tickets"]):
+                    # A tip moved, or the repair is closed without having
+                    # been merged: is the branch still red?
+                    merges = open_pass()
+                    takeover = control(checked=True)
+                    state_write("clear-integration-red", args.convoy)
+                    red = None
+                else:
+                    raise Refusal(red_refusal(red), {"red": red})
+            if ready:
+                if merges is None:
+                    merges = open_pass()
+                    takeover = control(checked=False)
                 for count, ticket in enumerate(ready):
                     if limit is not None and count >= limit:
                         out["waiting"].append({"id": ticket["id"], "reason": f"limite de la passe atteinte ({limit})"})
                         continue
                     outcome, entry = merges.merge(ticket)
                     out[outcome].append(entry)
+            if merges is not None:
                 tip = merges.tip
         except Refusal as exc:
-            raise Refusal(str(exc), {name: entries for name, entries in out.items() if entries}) from exc
+            raise Refusal(str(exc), {**{name: entries for name, entries in out.items() if entries}, **exc.done}) from exc
 
     answer = {
         "ok": not out["refused"], "convoy": args.convoy, "branch": branch, "protected": protected,
         "integration": tip, "takeover": takeover, **out,
     }
+    if red:
+        answer["red"] = red
     print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
     return EXIT_REFUSED if out["refused"] else 0
 

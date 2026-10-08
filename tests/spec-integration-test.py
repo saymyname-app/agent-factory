@@ -849,10 +849,191 @@ class SpecIntegrationTest(unittest.TestCase):
     def test_a_red_takeover_is_not_pushed_and_no_ticket_is_blamed(self):
         self.two_finished_tickets()
         self.advance_protected({DATASET: json.dumps({"state": "content", "items": []})})
+        refs = self.remote("for-each-ref", "--format=%(refname) %(objectname)")
 
-        self.assert_refused_and_nothing_written(self.merge, "branche protégée", "rouge")
+        proc = self.merge()
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        error = json.loads(proc.stdout)["error"]
+        self.assertIn("branche protégée", error)
+        self.assertIn("rouge", error)
+        # Nothing is pushed and no ticket is blamed: the red belongs to the branch (T21).
+        self.assertEqual(refs, self.remote("for-each-ref", "--format=%(refname) %(objectname)"))
         self.assertEqual(self.base, self.remote_tip())
-        self.assertIsNone(self.shown(T1)["merge"])
+        self.assertEqual((None, None), (self.shown(T1)["merge"], self.shown(T2)["merge"]))
+        self.assertEqual(1, len(self.worktrees()))
+
+    # --- T21: a red integration branch stops the merges, its repair restores it ---
+
+    REPAIR = "fx-r1"
+    BROKEN = json.dumps({"state": "content", "items": []})
+
+    def red(self):
+        return self.show()["convoy"]["integration_red"]
+
+    def red_takeover(self):
+        """Two finished tickets, and a protected branch whose tip turns the
+        regression command red once the integration branch takes it up; the
+        merge command has seen it. Returns that tip."""
+        self.two_finished_tickets()
+        ahead = self.advance_protected({DATASET: self.BROKEN})
+        self.assertEqual(EXIT_REFUSED, self.merge().returncode)
+        return ahead
+
+    def advance_protected_again(self, files, message):
+        """One more commit on the protected branch, on top of its remote tip."""
+        self.git("fetch", "-q", "origin")
+        self.git("checkout", "-q", "-B", PROTECTED, f"origin/{PROTECTED}")
+        for path, content in files.items():
+            target = self.repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", message)
+        self.git("push", "-q", "origin", PROTECTED)
+        tip = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "--detach", self.base)
+        self.git("branch", "-q", "-f", PROTECTED, self.base)
+        return tip
+
+    def repair_ticket(self):
+        """The repair of the red, tracked by the convoy as the patch door
+        leaves it, and named on the red as the advance command does."""
+        state = json.loads(self.tracker.read_text())
+        state["beads"][self.REPAIR] = {
+            "title": "Rétablir le contrôle rouge", "status": "open", "issue_type": "task",
+            "description": "## Acceptance criteria\n\n- [ ] Point d'entrée : la commande de régression — Observable : "
+                           "code 0 — Faux si : code non nul\n\n## Target rigs\n\nfx-rig",
+            "metadata": {"gc.ticket_kind": "repair"}}
+        state["beads"][CONVOY]["tracks"].append(self.REPAIR)
+        self.tracker.write_text(json.dumps(state))
+        self.state("mark", CONVOY, "--demonstration-line", f"{self.REPAIR}=La commande de régression se termine avec le code 0")
+        self.state("set-integration-repair", CONVOY, "--ticket", self.REPAIR)
+
+    def repaired(self, dataset=None):
+        """The author of the repair takes up the integration tip and the
+        protected branch, restores the data set, and finishes."""
+        self.state("record-gate", CONVOY, self.REPAIR, "--gate", "dispatch")
+        self.state("set-branch", CONVOY, self.REPAIR, "--branch", branch_of(self.REPAIR))
+        self.edit(self.REPAIR, status="in_progress")
+        self.git("fetch", "-q", "origin")
+        self.git("checkout", "-q", "-b", branch_of(self.REPAIR), f"origin/{INTEGRATION}")
+        self.git("merge", "-q", "--no-edit", f"origin/{PROTECTED}")
+        (self.repo / DATASET).write_text(dataset if dataset is not None else (ROOT / DATASET).read_text())
+        (self.repo / "docs").mkdir(exist_ok=True)
+        (self.repo / "docs" / "repair.md").write_text("le contrôle rétabli\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "repair du contrôle rouge")
+        self.git("push", "-q", "origin", branch_of(self.REPAIR))
+        tip = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "--detach", self.base)
+        self.finish(self.REPAIR, tip)
+        return tip
+
+    def test_a_red_takeover_records_the_red_of_the_integration_branch_and_quotes_its_control(self):
+        self.two_finished_tickets()
+        ahead = self.advance_protected({DATASET: self.BROKEN})
+
+        answer = self.merged(expect=EXIT_REFUSED)
+
+        red = self.red()
+        self.assertEqual((self.base, ahead), (red["integration"], red["protected"]))
+        self.assertIn("regression.py", red["control"])
+        self.assertIn(INTEGRATION, red["control"])
+        self.assertIn("absent from the home page", red["detail"])
+        self.assertNotIn("repair", red)
+        self.assertEqual(red["control"], answer["red"]["control"])
+        self.assertIn(red["control"], answer["error"])
+
+    def test_merge_refuses_while_the_integration_branch_is_red_and_writes_nothing(self):
+        self.red_takeover()
+        self.repair_ticket()
+
+        answer = self.assert_refused_and_nothing_written(self.merge, "branche d'intégration rouge", self.red()["control"])
+
+        self.assertEqual(self.REPAIR, answer["red"]["repair"])
+        self.assertEqual([], answer.get("merged", []))
+        self.assertEqual(self.base, self.remote_tip())
+
+    def test_merge_refuses_on_tests_recorded_red_at_the_tip_of_the_integration_branch(self):
+        # The false state of the ticket: the red is on the tip itself, and two tickets are ready.
+        self.two_finished_tickets()
+        self.state("record-integration-red", CONVOY, "--commit", self.base, "--integration", self.base,
+                   "--protected", self.base, "--control", "commande de régression : code 1")
+        self.repair_ticket()
+
+        self.assert_refused_and_nothing_written(self.merge, "branche d'intégration rouge", "commande de régression : code 1")
+        self.assertEqual((None, None), (self.shown(T1)["merge"], self.shown(T2)["merge"]))
+
+    def test_the_repair_of_the_red_is_the_one_ticket_merged_and_the_branch_is_green_again(self):
+        ahead = self.red_takeover()
+        self.repair_ticket()
+        tip = self.repaired()
+
+        answer = self.merged()
+
+        self.assertEqual([self.REPAIR], [entry["id"] for entry in answer["merged"]])
+        self.assertEqual(0, answer["merged"][0]["tests"]["exit_code"])
+        self.assertEqual(sorted([T1, T2]), sorted(entry["id"] for entry in answer["waiting"]))
+        # Read on the branches: the integration branch holds the protected tip and the repair, and nothing else.
+        self.assertTrue(self.contains(self.remote_tip(), ahead))
+        self.assertTrue(self.contains(self.remote_tip(), tip))
+        self.assertEqual("merged", self.shown(self.REPAIR)["merge"]["outcome"])
+        self.assertEqual((None, None), (self.shown(T1)["merge"], self.shown(T2)["merge"]))
+        # The condition is gone: the red is withdrawn by the command that saw the green.
+        self.assertIsNone(self.red())
+
+    def test_the_merges_resume_by_themselves_once_the_repair_is_merged(self):
+        self.red_takeover()
+        self.repair_ticket()
+        self.repaired()
+        self.merged()
+
+        answer = self.merged()
+
+        self.assertEqual(sorted([T1, T2]), sorted(entry["id"] for entry in answer["merged"]))
+
+    def test_a_repair_that_leaves_the_branch_red_is_returned_and_the_red_stays(self):
+        self.red_takeover()
+        self.repair_ticket()
+        self.repaired(dataset=self.BROKEN)
+        control = self.red()["control"]
+
+        answer = self.merged()
+
+        self.assertEqual([(self.REPAIR, "red")], [(entry["id"], entry["cause"]) for entry in answer["returned"]])
+        self.assertEqual([], answer["merged"])
+        self.assertEqual(self.base, self.remote_tip())
+        self.assertEqual((control, self.REPAIR), (self.red()["control"], self.red()["repair"]))
+
+    def test_the_merges_resume_by_themselves_once_the_protected_branch_is_green_again(self):
+        self.red_takeover()
+        self.repair_ticket()
+        mended = self.advance_protected_again(
+            {DATASET: (ROOT / DATASET).read_text()}, "la branche protégée réparée ailleurs")
+
+        answer = self.merged()
+
+        self.assertIsNone(self.red())
+        self.assertEqual(mended, answer["takeover"]["protected"])
+        self.assertEqual(sorted([T1, T2]), sorted(entry["id"] for entry in answer["merged"]))
+        self.assertTrue(self.contains(self.remote_tip(), mended))
+
+    def test_a_branch_checked_again_and_still_red_stays_red_under_its_new_tips(self):
+        first = self.red_takeover()
+        self.repair_ticket()
+        second = self.advance_protected_again(
+            {"docs/ailleurs.md": "autre chose, le jeu de données toujours cassé\n"}, "avance, toujours cassée")
+
+        answer = self.merged(expect=EXIT_REFUSED)
+
+        red = self.red()
+        self.assertNotEqual(first, second)
+        self.assertEqual((self.base, second), (red["integration"], red["protected"]))
+        self.assertEqual(self.REPAIR, red["repair"])
+        self.assertIn("branche d'intégration rouge", answer["error"])
+        self.assertEqual(self.base, self.remote_tip())
+        self.assertEqual((None, None), (self.shown(T1)["merge"], self.shown(T2)["merge"]))
 
     # --- what the command refuses outright ------------------------------------
 

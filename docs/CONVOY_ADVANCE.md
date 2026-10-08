@@ -38,6 +38,9 @@ when all of this holds:
   `docs/TICKET_EXIT.md`; T20: so does the third resume of a ticket, below);
   a parked ticket is listed under `waiting`, with its cause and the ticket
   that parked it, and the tickets that wait for none of them keep starting;
+- the convoy is not stopped (T21, « The two stops of a convoy » below): its
+  integration branch is not red — or the ticket is the `repair` of that
+  red — and fewer Planning Exceptions are open on its Spec than the bound;
 - every bead it depends on with a `blocks` edge is closed — which is what
   makes the starts follow the dependency order;
 - a place is free under the ceiling N.
@@ -239,12 +242,12 @@ the counter itself is never reset. No hand is put on a ticket.
 **2. It parks the ticket that is out of resumes.** A ticket at work (started
 through the door, not closed, neither parked nor stopped) whose
 `resumes_left` is 0 is parked with every ticket that waits for it, directly
-or not: `bin/convoy-state park --cause resumes_exhausted`. The bound is
-`RESUMES_MAX = 3` in `bin/convoy-state` (Spec §8, K), **every cause
-together**: the resumes of this section, the correction round (T17), and a
-commit added after a verdict (T18). It is not a setting of
-`config/delivery-flow.json`, and its value is a starting one with no
-measured basis.
+or not: `bin/convoy-state park --cause resumes_exhausted`. The bound is K
+(Spec §8), `bounds.resumes` of `config/delivery-flow.json` (3), read by
+`bin/convoy-state` (T21, « The bounds are set in one place » below), **every
+cause together**: the resumes of this section, the correction round (T17),
+and a commit added after a verdict (T18). Its value is a starting one with
+no measured basis.
 
 **3. It sends a ticket whose author must take it again to one fresh author
 session** (`settle_resumes`), on the same branch. The cause is read on the
@@ -331,6 +334,108 @@ Two decisions taken here:
   live session answers to (`id`, `name`, `session_name`, `alias`). There is
   no timeout on a resume session that stays alive without working.
 
+## The two stops of a convoy: red integration branch, open Planning Exceptions (T21)
+
+Spec §8, user story 53: « le convoi s'arrête entièrement si la branche
+d'intégration est rouge ou si 2 Planning Exceptions sont ouvertes ». Both
+stops are read on the tracker at each pass, and both end by code: no hand is
+put on the convoy.
+
+**Red integration branch.** `bin/spec-integration merge` writes the red on
+the convoy when the regression command of the profile is red on the
+integration branch once it has taken up the protected branch — a red that
+belongs to no ticket (`bin/convoy-state record-integration-red`: the control,
+quoted, the commit it was red on and the tips of both branches;
+`docs/SPEC_INTEGRATION.md`). While `integration_red` is recorded:
+
+- **no ticket starts and no resume is sent**, places free or not; each
+  ready ticket is listed under `waiting` with « branche d'intégration rouge
+  (<the control>) »;
+- **the pass publishes one `repair`** for that red (`settle_red`), created
+  by code: a revision that adds one ticket of kind `repair` to the graph as
+  it is published, sent through the patch door (`bin/ticket-graph-publish
+  bd-patch`, with no approval: Spec §2, a repair inside the approved intent
+  needs none). Its `restores` is `{kind: red_check, ref: <the control>}`,
+  its demonstration line and its one criterion are that control green
+  again, and what the control printed is quoted in what it delivers. The
+  entry contract applies to it as to any added ticket; a refusal of the
+  door fails the pass (`repair.error`) and nothing starts. The repair is
+  then named on the red (`bin/convoy-state set-integration-repair`): **one
+  repair per red**, whatever the number of passes — a red that has its
+  repair publishes nothing more, and a repair of that red already tracked
+  by the convoy (a pass that failed between the door and the record) is
+  taken as it is;
+- **that repair is the one ticket the pass starts**, resumes, has reviewed
+  and evaluated like any ticket, and the one ticket `bin/spec-integration`
+  merges (on the protected branch taken up, the tests on that result);
+- **the merge command is handed the convoy at every pass**, finished
+  ticket or not: it alone merges the repair or sees that the control is
+  green again. While it refuses on the red, the pass reports
+  `integration.stopped` and `integration.red` and is not a failure.
+
+The reviews, the evaluations and the correction rounds of tickets already
+finished are still settled: they judge the branch of a ticket, not the
+integration branch, and nothing of them is merged meanwhile.
+
+**The red ends by code.** `bin/spec-integration` withdraws it
+(`clear-integration-red`) when the merged result of the repair is green, or
+when the control it runs again — once a tip moved, or once the repair is
+closed without having been merged — is green. From the next pass on the
+ready tickets start and the finished ones are merged. A control found red
+again keeps the red, and its repair while that one is open; found red once
+its repair is closed, the red has no repair any more and the next pass
+publishes a new one.
+
+**Open Planning Exceptions.** A Planning Exception is open on a ticket
+while the last one its author raised (`planning_exceptions`, state `open`)
+has no answer of the operator, or while the ticket is parked by one an
+evaluation raised (a criterion the Evaluator could not observe), not
+answered either. When as many are open on the tickets of the convoy — the
+convoy delivers one Spec — as `bounds.open_planning_exceptions` (2), **no
+new ticket starts**: each ready one is listed under `waiting` with « 2
+Planning Exceptions ouvertes sur la Spec ». The tickets at work go on: their
+resumes are sent, they are reviewed, evaluated, merged and closed. With
+fewer open, the starts continue outside the parked tickets, as before. An
+exception the operator answered through `bin/escalation-door repondre` is no
+longer open: the next pass starts again.
+
+A red integration branch is read first: under it the open Planning
+Exceptions change nothing more.
+
+### The bounds are set in one place
+
+`bounds` of `config/delivery-flow.json` holds the bounds of the flow
+delivered so far (Spec §8), and no command holds one in its code:
+
+| Bound | Setting | Value | Read by | Effect |
+|---|---|---|---|---|
+| K, resumes of a ticket, every cause together | `bounds.resumes` | 3 | `bin/convoy-state` | at the last one the ticket is parked with its descendants |
+| Planning Exceptions open on a Spec | `bounds.open_planning_exceptions` | 2 | `bin/convoy-advance` | no new ticket of its convoy starts |
+
+Each is an integer of at least 1; a missing or malformed one is a refusal
+of the command that reads it (`bounds.<name>` named), never a default. The
+file is the one under `FACTORY_ROOT`; a root that sets no `bounds` at all (a
+synthetic city of the suites) runs under those of the Factory's own file.
+The values are starting ones with no measured basis (Spec, Further Notes 2).
+
+k, the runs in a row of the green step, is not one of them: it is a
+declaration of each project's profile (`launch.k`, Spec §12,
+`docs/PROJECT_PLANNING_PROFILE.md`), read there and nowhere else by
+`bin/tdd-step`; a missing or malformed one refuses the profile.
+
+### What these stops leave open
+
+- A takeover of the protected branch **in conflict** is still a refusal of
+  the merge command at each pass, with no red recorded and no repair: a
+  conflict is not a red control.
+- The repair of a red is written by code from the control alone: its one
+  criterion is the regression command green again. When the author needs a
+  criterion on the product, the amendment of a criterion is a Planning
+  Exception, as for any ticket.
+- The red is found by the merge command, so only once a ticket is ready to
+  merge or the convoy is already red: nothing runs the regression command
+  on an integration branch no ticket is being merged into.
+
 ## Test reviews left without result (T13)
 
 Once the starts are made, and before the merge, the pass hands each convoy that has
@@ -359,7 +464,10 @@ next pass) and `refused` (the door refused, with its reason), `resumed`
 cause, parked}`: itself and those behind it) and `lifted` (each parking
 lifted on an answer, `{id, option, request, lifted}`), plus
 `grouped_request` when the convoy has or had one (`{bead, raised}`, `{bead,
-withdrawn}`, or `error`),
+withdrawn}`, or `error`), `stop` when the convoy is stopped by one of its
+two stops (T21: `{reason: integration_red, control, repair}` or `{reason:
+planning_exceptions, open, bound}`), `repair` when the pass published the
+repair of a red (`{id, key, draft, published}`, or `error`),
 `integration` when the pass ran a merge, `test_review` when it settled
 reviews of criterion tests, `code_review` when it settled code reviews,
 `evaluation` when it settled Ticket Evaluations, `correction` when a
@@ -371,7 +479,7 @@ tickets. A stopped convoy carries `signal`,
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check or the ticket-end gate could not run |
+| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check or the ticket-end gate could not run |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
@@ -523,6 +631,24 @@ second one at the next passes and counts its place under N. The agent of
 that trial is a stub: no session runs the step of the formula, and the
 third resume, the lift of a parking and the grouped request are not part
 of it.
+
+T21: the same file covers the two stops on a fake tracker state: tests
+recorded red at the tip of the integration branch that start no ready
+ticket but the repair and merge no finished one, several passes on the same
+red, the starts and the merges that resume once the red is withdrawn, a red
+whose repair the patch door cannot publish, two open Planning Exceptions
+that start no new ticket while a ticket at work is resumed, one that lets
+the others start, an exception raised by an evaluation, an answered one,
+and the bound read in the settings or refused when malformed.
+`tests/convoy-stops-fixture-city-test.py` is the demonstration line of T21:
+on the graph of the Fixture City published by the real publication door, a
+red integration branch stops the starts and the merges and one `repair`
+naming the control appears in the convoy through the real patch door, one
+for several passes; the repair closed and the control green again — the
+real regression command, run again by the real `bin/spec-integration` —
+the convoy goes on by itself; with two Planning Exceptions open no ready
+ticket starts. `tests/spec-integration-test.py` covers the merge command
+under a red (`docs/SPEC_INTEGRATION.md`).
 
 T19: the same file covers the gate in the pass, through the real
 `bin/ticket-end`: a ticket merged and closed by one pass with its nine

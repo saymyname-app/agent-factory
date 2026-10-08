@@ -90,6 +90,22 @@ of the operator that lifts a parking is read by the pass, which lifts it
 (bin/convoy-state lift-park): the ticket and those behind it are startable
 again, with no hand on a ticket.
 
+A pass also holds the two stops of a convoy (T21, af-cbp84n; Spec §8, user
+story 53). While its integration branch is red (bin/convoy-state:
+`integration_red`, written by bin/spec-integration, which then refuses every
+merge), the pass starts no ticket and sends no resume; it publishes one
+`repair` for that red, through the patch door (bin/ticket-graph-publish
+bd-patch), which names the control that is red, and records it on the red
+(bin/convoy-state set-integration-repair): one repair per red, whatever the
+number of passes. That repair is the one ticket the pass starts and
+bin/spec-integration merges. Once the control is green again
+bin/spec-integration withdraws the red, and the starts and the merges go on
+with no hand on the convoy. While as many Planning Exceptions as the bound
+allows (`bounds.open_planning_exceptions` of config/delivery-flow.json, 2)
+are open on the Spec of the convoy, the pass starts no new ticket; the
+tickets at work go on, resumes included. An exception answered by the
+operator is no longer open: the next pass starts again.
+
 A convoy in an "état sans règle" (bin/convoy-state: a ticket started or
 closed outside its door, evidence or a counter that cannot be read) is
 stopped (T34, af-ckwina; Spec §0 rule 5): the pass starts none of its
@@ -136,6 +152,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+import yaml
+
 
 PROGRAM = "convoy-advance"
 BIN = Path(__file__).resolve().parent
@@ -150,8 +168,12 @@ CODE_REVIEW_BIN = BIN / "code-review"
 EVALUATION_BIN = BIN / "ticket-evaluation"
 CORRECTION_BIN = BIN / "correction-round"
 TICKET_END_BIN = BIN / "ticket-end"
+PUBLISH_BIN = BIN / "ticket-graph-publish"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
 SETTINGS = ROOT / "config" / "delivery-flow.json"
+# The Factory's own settings: where the bounds of the flow are read when the
+# settings of FACTORY_ROOT set none (a synthetic city).
+OWN_SETTINGS = BIN.parent / "config" / "delivery-flow.json"
 ROLES = ROOT / "config" / "delivery-roles.json"
 PROJECTS = ROOT / "config" / "projects"
 DESCRIPTORS = ROOT / "config" / "project-descriptors"
@@ -185,6 +207,13 @@ PARK_EXHAUSTED = "resumes_exhausted"
 # The words of the operator for each cause of parking.
 PARK_CAUSES = {PARK_EXHAUSTED: "reprises épuisées", "operator_request": "demande opérateur",
                "planning_exception": "Planning Exception"}
+
+# Spec §8: the two stops of a convoy (T21), and the contract a revision
+# that adds a ticket to a marked convoy declares.
+RED = "branche d'intégration rouge"
+STOP_RED, STOP_EXCEPTIONS = "integration_red", "planning_exceptions"
+BOUND_EXCEPTIONS = "open_planning_exceptions"
+NEW_FLOW = "new-flow/v1"
 
 UNRULED = "état sans règle"
 # bin/escalation-door refuses a field longer than this, or on several lines.
@@ -304,6 +333,9 @@ class Convoy:
         incident = answer["convoy"].get("incident")
         # An unreadable record is one of the anomalies below, not a known incident.
         self.incident: dict[str, Any] | None = incident if isinstance(incident, dict) and "bead" in incident else None
+        # An unreadable record is an anomaly too: the convoy is stopped by it.
+        red = answer["convoy"].get("integration_red")
+        self.red: dict[str, Any] | None = red if isinstance(red, dict) and "control" in red else None
         grouped = answer["convoy"].get("grouped_request")
         self.grouped: dict[str, Any] | None = grouped if isinstance(grouped, dict) and "bead" in grouped else None
         self.unruled: list[dict[str, Any]] = [
@@ -484,7 +516,25 @@ def load_settings() -> dict[str, Any]:
                 or not (resume.get("role") is None or (isinstance(resume["role"], str) and resume["role"])):
             raise Refusal(f"resume invalide dans config/delivery-flow.json : {resume!r} (attendu : formula, role)")
         resume = {"formula": resume["formula"], "role": resume.get("role")}
-    return {"ceiling": ceiling, "formula": formula, "role": role, "resume": resume}
+    return {"ceiling": ceiling, "formula": formula, "role": role, "resume": resume,
+            "open_exceptions": flow_bound(data, BOUND_EXCEPTIONS)}
+
+
+def flow_bound(settings: dict[str, Any], name: str) -> int:
+    """One bound of the flow (Spec §8), read where they are all set:
+    `bounds` of config/delivery-flow.json, and in the Factory's own file when
+    the settings of FACTORY_ROOT set none."""
+    bounds = settings.get("bounds")
+    if "bounds" not in settings:
+        try:
+            bounds = json.loads(OWN_SETTINGS.read_text(encoding="utf-8")).get("bounds")
+        except (OSError, json.JSONDecodeError, AttributeError) as exc:
+            raise Refusal(f"config/delivery-flow.json illisible : {exc}") from exc
+    value = bounds.get(name) if isinstance(bounds, dict) else None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise Refusal(f"bounds.{name} absent ou invalide dans config/delivery-flow.json : {value!r} "
+                      "(attendu : un entier d'au moins 1)")
+    return value
 
 
 # --- the factory incident of a stopped convoy ---------------------------------
@@ -695,10 +745,14 @@ def park_exhausted(convoy: Convoy, ticket: dict[str, Any]) -> dict[str, Any]:
     return {"id": ticket["id"], "cause": PARK_EXHAUSTED, "parked": answer["parked"]}
 
 
-def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: set[str], out: dict[str, Any]) -> None:
+def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: set[str], out: dict[str, Any],
+                   only: set[str] | None = None) -> None:
     """Spec §8: park the ticket that took its last resume; send the ticket
-    that needs its author again to one fresh session, and count it."""
+    that needs its author again to one fresh session, and count it. `only`:
+    the tickets a red integration branch still lets go on."""
     for ticket_id in [t["id"] for t in convoy.tickets if at_work(t)]:
+        if only is not None and ticket_id not in only:
+            continue
         try:
             ticket = convoy.ticket(ticket_id)
             if ticket.get("resumes_left") == 0:
@@ -890,6 +944,138 @@ def settle_grouped_request(convoy: Convoy) -> dict[str, Any] | None:
         return {"error": f"refus : {exc}"}
 
 
+# --- the stops of a convoy: red integration branch, open Planning Exceptions (T21) ---
+
+
+def red_reason(red: dict[str, Any]) -> str:
+    repair = red.get("repair")
+    return (f"{RED} ({red['control']}) : aucun ticket ne démarre avant "
+            + (f"son repair {repair}" if repair else "son repair, pas encore publié"))
+
+
+def open_exceptions(convoy: Convoy) -> list[str]:
+    """The tickets of the convoy on which a Planning Exception is open: the
+    last one a Ticket Exit raised has no answer of the operator yet, or the
+    ticket is parked by one an evaluation raised, not answered either."""
+    opened = []
+    for ticket in convoy.tickets:
+        if ticket.get("status") == "closed":
+            continue
+        raised, park = ticket.get("planning_exceptions"), ticket.get("park") or {}
+        if isinstance(raised, list) and raised and raised[-1].get("state") == "open":
+            opened.append(ticket["id"])
+        elif park.get("origin") == ticket["id"] and park.get("cause") == "planning_exception" and not park.get("answer") \
+                and not (isinstance(raised, list) and raised):
+            opened.append(ticket["id"])
+    return opened
+
+
+def red_repair(convoy: Convoy, red: dict[str, Any]) -> dict[str, Any]:
+    """What code writes of the `repair` of a red integration branch (Spec
+    §2): it names the control that is red, and its demonstration line is
+    that control restored."""
+    branch, protected = convoy.integration["branch"], convoy.integration["protected"]
+    said = f" Ce que le contrôle a dit : {red['detail']}" if red.get("detail") else ""
+    return {
+        "title": f"Rétablir le contrôle rouge de la branche d'intégration ({red['commit'][:12]})",
+        "what_it_delivers": (
+            f"La branche d'intégration {branch} repasse le contrôle qui y est rouge : {red['control']}.{said} "
+            f"Le correctif part de la pointe de {branch}, reprend {protected}, et rend ce contrôle vert sans "
+            "changer un comportement que la Spec fixe."),
+        "restores": {"kind": "red_check", "ref": red["control"]},
+        "demonstration_line": (
+            f"Sur le résultat de la fusion de ce ticket dans {branch}, {protected} reprise, la commande de "
+            "régression du projet se termine avec le code de sortie 0."),
+        "acceptance_criteria": [{
+            "entry_point": (f"la commande de régression du projet, lancée à la racine du dépôt sur la branche "
+                            f"{branch} après reprise de {protected}"),
+            "observable": "elle se termine avec le code de sortie 0",
+            "false_if": "elle se termine avec un code de sortie non nul",
+        }],
+    }
+
+
+def publish_red_repair(convoy: Convoy, red: dict[str, Any]) -> dict[str, Any]:
+    """Draft the revision that adds the `repair` of the red to the graph as
+    it is published, and send it through the patch door: the entry contract
+    applies to it as to any added ticket. A repair of this red already
+    tracked by the convoy (a pass that failed after the door) is taken as it is."""
+    bead = read_bead(convoy.id)
+    metadata = bead.get("metadata") or {}
+    tracked = [dep for dep in bead.get("dependencies") or []
+               if isinstance(dep, dict) and dep.get("dependency_type") == "tracks"]
+    repair = red_repair(convoy, red)
+    for dep in tracked:
+        if (dep.get("status") != "closed" and dep.get("title") == repair["title"]
+                and (dep.get("metadata") or {}).get("gc.ticket_kind") == "repair"):
+            return {"id": dep["id"], "published": False}
+    keys = {str((dep.get("metadata") or {}).get("gc.ticket_id") or "") for dep in tracked}
+    revises, spec_id = metadata.get("gc.graph_digest"), metadata.get("gc.spec_id")
+    project = metadata.get("gc.project_id") or (
+        (read_bead(str(spec_id)).get("metadata") or {}).get("gc.project_id") if spec_id else None)
+    if not revises or not spec_id or not project or "" in keys:
+        raise Refusal(
+            f"le convoi {convoy.id} ne porte pas ce que la porte de patch révise (gc.graph_digest, gc.spec_id, "
+            "gc.project_id, gc.ticket_id de chaque ticket) : il n'a pas été publié par la porte de publication")
+    if not convoy.rig:
+        raise Refusal(f"les tickets du convoi {convoy.id} ne nomment pas un seul projet connu de config/projects : "
+                      "le repair de sa branche d'intégration n'a pas de projet")
+    number = 1
+    while f"R{number}" in keys:
+        number += 1
+    key = f"R{number}"
+    description = yaml.safe_dump(
+        {"flow_contract": NEW_FLOW,
+         "tickets": [{"id": key, "kind": "repair", "blocked_by": [], "target_rigs": [convoy.rig], **repair}]},
+        allow_unicode=True, sort_keys=False)
+    created = gc_json("bd", "create", f"Révision : repair {key} ({RED}, convoi {convoy.id})",
+                      "-t", "task", "-d", description, "--json")
+    if isinstance(created, list):
+        created = created[0] if created else None
+    draft_id = created.get("id") if isinstance(created, dict) else None
+    if not isinstance(draft_id, str) or not draft_id:
+        raise Refusal("gc bd create n'a pas rendu l'identifiant du brouillon de révision")
+
+    def abandon(reason: str) -> None:
+        run([GC_BIN, "--city", str(ROOT), "bd", "close", draft_id, "--reason",
+             f"révision refusée par la porte de patch : {one_line(reason, 200)}"])
+
+    prepared = run([GC_BIN, "--city", str(ROOT), "bd", "update", draft_id,
+                    "--set-metadata", f"spec_id={spec_id}", "--set-metadata", f"revises_digest={revises}",
+                    "--set-metadata", "gc.plane=planning"])
+    if prepared.returncode != 0:
+        reason = prepared.stderr.strip() or prepared.stdout.strip() or f"exit {prepared.returncode}"
+        abandon(reason)
+        raise Refusal(f"le brouillon de révision {draft_id} n'a pas pu être préparé : {reason[-300:]}")
+    proc = run([str(PUBLISH_BIN), "bd-patch", draft_id, "--project", str(project), "--repo-root", str(ROOT),
+                "--author", PROGRAM, "--reason", one_line(f"{RED} : {red['control']}", 200)])
+    try:
+        result = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        result = None
+    ticket_id = (result.get("ids") or {}).get(key) if isinstance(result, dict) and result.get("ok") else None
+    if proc.returncode != 0 or not isinstance(ticket_id, str) or not ticket_id:
+        reason = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        abandon(reason)
+        raise Refusal(f"la porte de patch a refusé le ticket repair de la branche d'intégration : {reason[-600:]}")
+    return {"id": ticket_id, "key": key, "draft": draft_id, "published": True}
+
+
+def settle_red(convoy: Convoy) -> dict[str, Any] | None:
+    """Spec §8: one `repair` per red, created by code. None when the red
+    already has its repair -- open, or closed and waiting for the merge
+    command to run the control again."""
+    if "repair" in convoy.red:
+        return None
+    try:
+        repair = publish_red_repair(convoy, convoy.red)
+        state_write("set-integration-repair", convoy.id, "--ticket", repair["id"])
+        convoy.load()
+        return repair
+    except Refusal as exc:
+        return {"error": f"refus : {exc}"}
+
+
 # --- the pass ----------------------------------------------------------------
 
 
@@ -923,10 +1109,28 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
         out["signal"] = UNRULED
         out["unruled"] = convoy.unruled
         return out
+    # A red integration branch (T21): its one repair is published, and
+    # nothing but that repair starts or is resumed.
+    only: set[str] | None = None
+    if convoy.red:
+        repair = settle_red(convoy)
+        if repair:
+            out["repair"] = repair
+        only = {convoy.red["repair"]} if convoy.red and "repair" in convoy.red else set()
     # The answers first: a ticket whose parking is lifted is resumed, and
     # those behind it started, by the same pass.
     settle_lifts(convoy, out)
-    settle_resumes(convoy, settings, free, alive, out)
+    red, opened = convoy.red, open_exceptions(convoy)
+    held = None
+    if red:
+        out["stop"] = {"reason": STOP_RED, "control": red["control"], "repair": red.get("repair")}
+    elif len(opened) >= settings["open_exceptions"]:
+        # As many Planning Exceptions open on the Spec as the bound allows:
+        # no new ticket starts; the tickets at work go on.
+        out["stop"] = {"reason": STOP_EXCEPTIONS, "open": opened, "bound": settings["open_exceptions"]}
+        held = (f"{len(opened)} Planning Exceptions ouvertes sur la Spec ({', '.join(opened)}) : aucun nouveau "
+                f"ticket ne démarre (borne : {settings['open_exceptions']})")
+    settle_resumes(convoy, settings, free, alive, out, only)
     for ticket in convoy.not_started():
         ticket_id = ticket["id"]
         park = ticket.get("park")
@@ -934,6 +1138,12 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: s
             # Parked by a Ticket Exit (bin/ticket-exit), itself or behind the
             # ticket it waits for: not started until the parking is lifted.
             out["waiting"].append({"id": ticket_id, "reason": f"parqué ({park.get('cause')}, par {park.get('origin')})"})
+            continue
+        if only is not None and ticket_id not in only:
+            out["waiting"].append({"id": ticket_id, "reason": red_reason(red)})
+            continue
+        if held:
+            out["waiting"].append({"id": ticket_id, "reason": held})
             continue
         if len(out["started"]) + len(out["resumed"]) >= free:
             out["waiting"].append({"id": ticket_id, "reason": f"plafond N={settings['ceiling']} atteint"})
@@ -979,8 +1189,10 @@ def rig_profile(rig: str) -> Path:
 def merge_finished(convoy: Convoy) -> dict[str, Any] | None:
     """Spec §4: code merges the finished tickets of the convoy into the
     integration branch of its Spec, one at a time, through
-    bin/spec-integration. None when the convoy has nothing to merge."""
-    if not convoy.integration or not convoy.finished_unmerged():
+    bin/spec-integration. None when the convoy has nothing to merge. A
+    convoy whose integration branch is red is always handed over: the merge
+    command alone merges its repair, or sees that the control is green again."""
+    if not convoy.integration or not (convoy.finished_unmerged() or convoy.red):
         return None
     try:
         if not convoy.rig:
@@ -993,8 +1205,16 @@ def merge_finished(convoy: Convoy) -> dict[str, Any] | None:
         return {"error": f"refus : {exc}"}
     if not isinstance(answer, dict):
         return {"error": f"refus : spec-integration merge {convoy.id} a rendu une réponse illisible"}
-    kept = ("branch", "integration", "takeover", "merged", "returned", "refused", "waiting", "error", "message", "unruled")
-    return {name: answer[name] for name in kept if name in answer}
+    kept = ("branch", "integration", "takeover", "merged", "returned", "refused", "waiting", "error", "message",
+            "unruled", "red")
+    result = {name: answer[name] for name in kept if name in answer}
+    if "red" in result and "error" in result:
+        # The merge command refuses on a red integration branch: the convoy
+        # is stopped for a cause that is recorded and has its repair, which
+        # is an outcome of the pass, not a failure of it.
+        del result["error"]
+        result["stopped"] = RED
+    return result
 
 
 def settle_test_reviews(convoy: Convoy) -> dict[str, Any] | None:
@@ -1168,6 +1388,7 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     # merge pass that could not run is a failure of it.
     refused = any(
         result["refused"] or "error" in result.get("incident", {}) or "error" in result.get("grouped_request", {})
+        or "error" in result.get("repair", {})
         or any(key in result.get("integration", {}) for key in ("error", "message"))
         or any(key in result.get("test_review", {}) for key in ("error", "refused"))
         or any(key in result.get("code_review", {}) for key in ("error", "refused"))
