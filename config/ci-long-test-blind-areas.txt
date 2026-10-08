@@ -1,0 +1,27 @@
+# Areas of the repository the long tests cannot reach (af-5mw6z0).
+#
+# Intent (Benjamin, his words, 2026-10-08): « y'a pas moyen aussi de ne pas
+# tester toute l'usine comme ça à chaque fois ? »
+# Mechanism (agent interpretation): when every file a pull request changes is
+# in one of these areas, Factory CI leaves the long tests out
+# (bin/ci-run-tests --changed-since); one changed file anywhere else is a full
+# run. It does not mean a selection guessed from names, nor a merge without CI.
+#
+# One area per line: "dir/" is everything under that directory, anything else
+# is a glob on the path. The long tests are the files config/ci-test-seconds.tsv
+# gives 30 seconds or more, less those that are themselves in an area.
+#
+# An area is held, not believed: every long test runs without sight of the
+# real areas and fails if it read one (bin/ci-run-tests, "blindfold";
+# tests/ci-run-tests-selection-test.sh). Add an area only for a place a pull
+# request often changes alone; the first full run then says whether a long
+# test reads it. Emptying this file makes every run a full run.
+# docs/OPERATIONS.md, "Factory CI cost and the Actions quota".
+#
+# Measured 2026-10-08 on the last 100 merged pull requests: 38 change these
+# areas only (19 without the Cockpit fixtures and bin/cockpit*).
+docs/
+lib/cockpit/
+bin/cockpit*
+tests/cockpit-*
+tests/fixtures/cockpit/

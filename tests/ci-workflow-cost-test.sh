@@ -8,6 +8,8 @@
 #   - a new commit cancels the run of the commit it replaces;
 #   - each runner runs as many test files at once as it has cores.
 # The pull request run itself, the merge gate, must stay.
+# What a run leaves out when the change cannot reach the long tests
+# (af-5mw6z0) is proven in tests/ci-run-tests-selection-test.sh.
 
 set -Eeuo pipefail
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)

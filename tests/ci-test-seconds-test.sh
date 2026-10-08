@@ -36,6 +36,20 @@ want=$(printf 'tests/a-test.py\t100\ntests/b-test.py\t50\ntests/c-test.py\t50\nt
 grep -q '^# .*run 77' "$TMP/tree/config/ci-test-seconds.tsv" || fail "the list does not name the run it was read from"
 echo "ok   the list is written from the logs of every job of the run"
 
+# --- a test the run left out keeps its seconds (af-5mw6z0) -------------------
+# A run of a docs-only pull request does not execute the long tests: read
+# alone, it would make them unmeasured, so no longer long, so run every time.
+: >"$TMP/tree/tests/long-test.py"
+printf '# old\ntests/long-test.py\t300\ntests/gone-test.py\t200\ntests/a-test.py\t7\n' >"$TMP/tree/config/ci-test-seconds.tsv"
+GH_BIN="$TMP/gh" "$ROOT/bin/ci-test-seconds" --out "$TMP/tree/config/ci-test-seconds.tsv" >/dev/null \
+  || fail "ci-test-seconds failed over an existing list"
+got=$(grep -v '^#' "$TMP/tree/config/ci-test-seconds.tsv")
+want=$(printf 'tests/a-test.py\t100\ntests/b-test.py\t50\ntests/c-test.py\t50\ntests/d-test.sh\t1\ntests/long-test.py\t300')
+[ "$got" = "$want" ] || { echo "$got" >&2; fail "a test the run did not execute lost its seconds, or a deleted one kept them"; }
+rm "$TMP/tree/tests/long-test.py"
+GH_BIN="$TMP/gh" "$ROOT/bin/ci-test-seconds" --out "$TMP/tree/config/ci-test-seconds.tsv" >/dev/null
+echo "ok   a test the run left out keeps its seconds, a deleted test does not"
+
 # --- the lots follow it: longest first, each to the lot that has the least --
 for f in a-test.py b-test.py c-test.py d-test.sh e-test.sh; do : >"$TMP/tree/tests/$f"; done   # e is not measured
 lot() { FACTORY_ROOT="$TMP/tree" "$ROOT/bin/ci-run-tests" --shard "$1/2" --list | tr '\n' ' '; }

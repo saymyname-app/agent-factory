@@ -11,6 +11,10 @@
 #   ci-test-seconds [--repo OWNER/NAME] [--run ID]
 # Without --run: the latest green Factory CI run. Reads the "tests/x OK 12s"
 # lines of the logs of its jobs. Then commit the file through a pull request.
+# A test the run did not execute keeps the seconds the list already gives it:
+# a run that left the long tests out (bin/ci-run-tests --changed-since,
+# af-5mw6z0) must not make them look unmeasured, or they would stop being
+# long tests and run on every pull request again.
 
 set -Eeuo pipefail
 
@@ -41,9 +45,20 @@ for job in $jobs; do
 done | sed -nE 's/^.*[[:space:]](tests\/[^[:space:]]+)[[:space:]]+OK[[:space:]]+([0-9]+)s[[:space:]]*$/\1\t\2/p' | sort -u -k1,1 >"$tmp"
 
 [ -s "$tmp" ] || { echo "ci-test-seconds: run $RUN has no 'tests/x OK 12s' line -- nothing written" >&2; exit 1; }
+kept=0
+if [ -r "$OUT" ]; then
+  tree=$(cd -- "$(dirname -- "$OUT")/.." && pwd -P)
+  while IFS=$'\t' read -r path seconds; do
+    [[ "$seconds" =~ ^[0-9]+$ ]] && [ -e "$tree/$path" ] || continue
+    grep -q "^$path"$'\t' "$tmp" && continue
+    printf '%s\t%s\n' "$path" "$seconds" >>"$tmp"
+    kept=$((kept + 1))
+  done <"$OUT"
+  sort -u -k1,1 -o "$tmp" "$tmp"
+fi
 {
   echo "# Seconds each test file took in Factory CI run $RUN of $REPO."
   echo "# Written by bin/ci-test-seconds, read by bin/ci-run-tests --shard. Do not edit by hand."
   cat "$tmp"
 } >"$OUT"
-echo "ci-test-seconds: $(wc -l <"$tmp") file(s), $(awk -F'\t' '{t += $2} END {print t}' "$tmp") s, from run $RUN -> ${OUT#"$REPO_ROOT"/}"
+echo "ci-test-seconds: $(wc -l <"$tmp") file(s), $(awk -F'\t' '{t += $2} END {print t}' "$tmp") s, from run $RUN ($kept kept from the previous list: not run there) -> ${OUT#"$REPO_ROOT"/}"

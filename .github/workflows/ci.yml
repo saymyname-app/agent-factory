@@ -44,6 +44,12 @@ permissions:
 # status check ever reported".
 env:
   LOTS: 4
+  # A pull request that changes only areas the long tests cannot reach
+  # (config/ci-long-test-blind-areas.txt: docs, the Cockpit) runs without
+  # them; any other pull request, and any doubt, runs everything
+  # (bin/ci-run-tests --changed-since, af-5mw6z0). The switch back: '1' here
+  # makes every run a full run again. A run started by hand is always full.
+  CI_RUN_TESTS_FULL: '0'
 
 jobs:
   tests:
@@ -55,6 +61,10 @@ jobs:
         lot: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The merge commit this run tests and its first parent, the tip of
+          # main: what the pull request changes is read between the two.
+          fetch-depth: 2
 
       - uses: actions/setup-python@v5
         with:
@@ -103,7 +113,13 @@ jobs:
       - name: Discover and run every registered test of this lot
         run: |
           echo "cores: $(nproc)"
-          bin/ci-run-tests --shard "${{ matrix.lot }}/$LOTS" --jobs "$(nproc)"
+          # On a pull request HEAD is the merge of the branch into main, and
+          # main is its first parent. Anything else is a full run.
+          since=()
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 3 ]; then
+            since=(--changed-since 'HEAD^1')
+          fi
+          bin/ci-run-tests --shard "${{ matrix.lot }}/$LOTS" --jobs "$(nproc)" "${since[@]}"
 
       - name: Wait for the other lots
         if: matrix.lot == 1
