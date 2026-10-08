@@ -23,7 +23,7 @@ evaluated, measures the fidelity, merges and closes, then runs the end of
 the Spec), or what one agent session leaves behind on the ticket at work:
 the walked one, then any `repair` the order published in the convoy. `idle`
 is true when the event changed nothing. `stop` stops whatever product an
-evaluation left launched.
+evaluation left launched, and closes an Acceptance Session left open (T28).
 
 No agent runs here: the author session files its steps the way its scripts
 do (tests/lib/ticket_proofs.py: each piece sealed by the real
@@ -144,6 +144,7 @@ PROJECTS = {
     },
 }
 DEFAULT_PROJECT = "delivery-fixture-city"
+SIMULATED_CLOCKS = ("ESCALATION_DOOR_NOW", "PROPOSAL_DOOR_NOW", "PR_AUTOPILOT_NOW_EPOCH")
 GIT_IDENTITY = ("-c", "user.name=Fixture City", "-c", "user.email=fixture@example.invalid")
 
 
@@ -190,6 +191,8 @@ class City:
             "CONVOY_STATE_LOCK_DIR": str(self.workspace / "locks"),
             "EVIDENCE_STORE_DIR": str(self.workspace / "store"),
             "EVIDENCE_PACK_DIR": str(self.workspace / "packs"),
+            # Where an Acceptance Session keeps what it launched (T28).
+            "ACCEPTANCE_SESSION_STATE_DIR": str(self.workspace / "acceptance-sessions"),
             # The list of the escalation door also counts the pending proposals.
             "PROPOSAL_DOOR_BIN": str(self.workspace / "proposal-door"),
             "GIT_CONFIG_GLOBAL": os.devnull,
@@ -215,6 +218,8 @@ class City:
             "PYTHONDONTWRITEBYTECODE": "1",
             **self.state_environment(),
             **self.door_environment(),
+            # The clocks the order reads, when the caller simulates them.
+            **{name: os.environ[name] for name in SIMULATED_CLOCKS if name in os.environ},
             "CONVOY_STATE_FAKE_WRITE_LOG": str(self.workspace / "writes.log"),
             "CONVOY_ADVANCE_LOCK_DIR": str(self.workspace / "locks"),
             "SPEC_INTEGRATION_LOCK_DIR": str(self.workspace / "locks"),
@@ -342,7 +347,8 @@ class City:
         (self.workspace / "evaluation-plan.json").write_text(json.dumps(
             ["door-defers", self.project["evaluation"], *((ITEMS,) if through_the_door else ())]))
         self.remember(inject=inject, project=project, base=self.git("rev-parse", "HEAD"))
-        where = {"repo": str(self.root), "environment": self.state_environment()}
+        where = {"repo": str(self.root), "environment": self.state_environment(),
+                 "profile": str(config / "project-descriptors" / profile)}
         # The publication door numbers the convoy and the ticket: `publish` names them.
         return where if through_the_door else {"convoy": CONVOY, "ticket": TICKET, **where}
 
@@ -562,6 +568,9 @@ class City:
         return {"event": event, "idle": before == self.tracker.read_bytes()}
 
     def stop_products(self) -> None:
+        # An Acceptance Session left open: its product is stopped with it.
+        if (self.workspace / "acceptance-sessions").is_dir():
+            self.run(BIN / "acceptance-session", "close", self.convoy, check=False)
         launches = self.workspace / "launches"
         for record in launches.rglob("*.json") if launches.is_dir() else ():
             self.run(BIN / "project-launch", "stop", "--state-file", record, check=False)

@@ -33,6 +33,8 @@ import struct
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -1073,6 +1075,8 @@ class DeliveryTarget:
         if any(not isinstance(key, str) or not isinstance(value, str) for key, value in environment.items()):
             raise OracleError("prepare.environment must map names to strings")
         self.environment = {**hermetic_env(workspace), **environment}
+        # The profile the product of an Acceptance Session is launched by, when the driver names one.
+        self.profile = prepared.get("profile")
 
     def name(self, published: dict[str, Any]) -> None:
         """The convoy and the walked ticket, as `prepare` named them or, for
@@ -1100,6 +1104,23 @@ class DeliveryTarget:
             raise OracleError(f"escalation-door list failed: {result.stderr.strip() or result.stdout.strip()}")
         body = result.stdout.split("NEEDS BENJAMIN:", 1)[1].split("Pending proposals", 1)[0]
         return [line.strip() for line in body.splitlines() if line.strip() and "(none)" not in line]
+
+    def dossier(self) -> tuple[str | None, str | None]:
+        """The page and the commit of the convoy's Evidence Pack, as bin/evidence-pack check answers them."""
+        _, pack = self.read("evidence-pack", "check", self.convoy, "--repo", str(self.repo))
+        return pack.get("page"), pack.get("commit")
+
+    def acceptance_request(self) -> list[str]:
+        """Once the convoy is Delivered (T28): its Acceptance Request is the
+        one request of the operator's list, and it carries the link of the
+        convoy's Evidence Pack."""
+        requests, (page, _) = self.requests(), self.dossier()
+        if len(requests) != 1 or not requests[0].startswith(f"{self.convoy} "):
+            raise OracleError(f"a Delivered convoy shows {len(requests)} request(s) on the operator's list: "
+                              "expected its one Acceptance Request")
+        if not page or not requests[0].endswith(f" — dossier : {page}"):
+            raise OracleError("the Acceptance Request of the Delivered convoy does not carry the link of its Evidence Pack")
+        return requests
 
     def tip(self, branch: Any) -> str:
         """The commit a branch of the repository is at."""
@@ -1267,8 +1288,8 @@ def observe_outcome(target: DeliveryTarget, published: list[str], expected: int,
     for entry in added:
         # A repair is delivered by the flow of a ticket: same states, same order, same gate.
         observe_delivery(target, str(entry.get("id")))
-    if target.requests():
-        raise OracleError("a request was raised on the operator's list during a walk that expects a Delivered Outcome")
+    if convoy.get("delivered") is None and target.requests():
+        raise OracleError("a request was raised on the operator's list before the Outcome was Delivered")
     status, check = target.read("spec-end", "check", target.convoy, "--repo", str(target.repo))
     rounds = (convoy.get("counters") or {}).get("end_rounds")
     if rounds and "refused" not in seen:
@@ -1285,8 +1306,49 @@ def observe_outcome(target: DeliveryTarget, published: list[str], expected: int,
             "the convoy is recorded Delivered while a condition is missing: bin/spec-end check "
             f"exits {status} and names {missing or 'no condition'}"
             + (f"; ticket(s) still open: {', '.join(left)}" if left else ""))
+    # The pass that records the Delivered Outcome sends its Acceptance Request: one, with the dossier.
+    target.acceptance_request()
     seen["checked"] = seen.get("checked", 0) + 1
     seen.setdefault("repairs_closed_when_first_seen", len(added))
+
+
+def answers(address: str) -> bool:
+    """Whether something serves HTTP at `address`, whatever it answers."""
+    try:
+        with urllib.request.urlopen(address, timeout=5):
+            return True
+    except urllib.error.HTTPError:
+        return True
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def acceptance_session(target: DeliveryTarget, tip: str) -> dict[str, bool]:
+    """Spec §11, on the Delivered convoy: bin/acceptance-session open
+    answers the address of the product launched at the commit of the
+    dossier, which is the tip of the integration branch; close stops it."""
+    _, commit = target.dossier()
+    profile = ("--profile", str(target.profile)) if target.profile else ()
+    status, opened = target.read("acceptance-session", "open", target.convoy, "--repo", str(target.repo), *profile)
+    if status != 0 or opened.get("ok") is not True:
+        raise OracleError(f"the Acceptance Session of the Delivered convoy does not open: {opened.get('error')}")
+    try:
+        addresses = [entry.get("address") for entry in as_list(opened.get("products"), "acceptance-session open products")
+                     if isinstance(entry, dict)]
+        if opened.get("kind") != "acceptance" or not addresses or opened.get("address") not in addresses:
+            raise OracleError("the Acceptance Session of a Delivered convoy does not answer the address of its product")
+        if not all(isinstance(address, str) and answers(address) for address in addresses):
+            raise OracleError("the product of the Acceptance Session does not answer at the address returned")
+        if opened.get("commit") != commit or commit != tip:
+            raise OracleError("the product of the Acceptance Session is not launched at the commit of the Evidence Pack, "
+                              "or that commit is not the tip of the integration branch")
+    finally:
+        status, closed = target.read("acceptance-session", "close", target.convoy)
+    if status != 0 or closed.get("closed") is not True:
+        raise OracleError(f"the Acceptance Session does not close: {closed.get('error')}")
+    if any(answers(address) for address in addresses):
+        raise OracleError("the product still answers once the Acceptance Session is closed")
+    return {"launched_at_dossier_commit": True, "stopped": True}
 
 
 def outcome_result(target: DeliveryTarget, published: list[str], expected: int, idle: bool,
@@ -1330,9 +1392,8 @@ def outcome_result(target: DeliveryTarget, published: list[str], expected: int, 
         raise OracleError(f"the convoy counts {rounds} round(s) of the end for {expected} repair(s)")
     if seen.get("repairs_closed_when_first_seen") != expected:
         raise OracleError("the convoy was recorded Delivered before every repair of the end was closed")
-    requests = target.requests()
-    if requests:
-        raise OracleError("a Delivered convoy leaves a request on the operator's list")
+    requests = target.acceptance_request()
+    acceptance = acceptance_session(target, tip)
     return {
         "state": "delivered",
         "published": sorted(published),
@@ -1345,6 +1406,7 @@ def outcome_result(target: DeliveryTarget, published: list[str], expected: int, 
         "delivered": {"at_the_tip": True, "repairs_closed_when_first_seen": seen["repairs_closed_when_first_seen"],
                       "checked": seen["checked"]},
         "requests": len(requests),
+        "acceptance": {"request": len(requests), "dossier_linked": True, **acceptance},
     }
 
 
@@ -1429,7 +1491,8 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
         result["interfaces"]["read"].append("escalation-door list")
     if outcome:
         result["outcome"] = outcome
-        result["interfaces"]["read"] += ["git rev-parse", "spec-end check", "escalation-door list"]
+        result["interfaces"]["read"] += ["git rev-parse", "spec-end check", "escalation-door list", "evidence-pack check",
+                                         "acceptance-session open", "acceptance-session close"]
     result["oracle_digest"] = canonical_digest(result)
     return result
 
