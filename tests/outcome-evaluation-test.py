@@ -436,8 +436,9 @@ class OutcomeEvaluationTest(gate.Harness):
     # --- AC2: the verdict, computed; a drafted repair per story « non observée » --------------------------
 
     def test_story_not_observed_is_recorded_with_its_proof_a_drafted_repair_and_the_contradiction(self):
-        self.unserved()
         commit = self.verified()
+        # After the stage: reaching a stage restores the tracker it left.
+        self.unserved()
         self.evaluator(UNSERVED_PLAN)
 
         self.settle()
