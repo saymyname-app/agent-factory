@@ -58,6 +58,27 @@ fi
 if grep -qw sudo <<<"$(grep -v '^#' "$ROOT/config/ci-runner/Containerfile")"; then fail "the image installs sudo"; fi
 echo "ok   the job's container is thrown away, mounts nothing of the host, has no way to its 127.0.0.1"
 
+# --- an install that changes nothing of the recipe builds no image --------
+# (af-uw246a: a build makes calls of wsl.exe from Windows hang.) The lines
+# of root-install that copy the recipe, run here on two folders.
+INSTALL="$ROOT/config/ci-runner/root-install"
+copy=$(sed -n '/for recipe in Containerfile entrypoint.sh; do/,/^    done/p' "$INSTALL")
+[ -n "$copy" ] || fail "$INSTALL no longer copies the recipe file by file"
+if grep -qE 'install .*\$HERE/(Containerfile|entrypoint\.sh)' "$INSTALL"; then
+  fail "$INSTALL copies the recipe whether it changed or not: every install would build the image again"
+fi
+mkdir "$T/here" "$T/lib"
+echo one > "$T/here/Containerfile"; echo two > "$T/here/entrypoint.sh"
+cp -p "$T/here/Containerfile" "$T/here/entrypoint.sh" "$T/lib/"
+touch -d "2026-01-01 00:00" "$T/lib/Containerfile" "$T/lib/entrypoint.sh"
+echo three > "$T/here/entrypoint.sh"
+( HERE="$T/here" LIB="$T/lib"; eval "$copy" )
+[ "$(date -r "$T/lib/Containerfile" +%Y)" = 2026 ] && [ "$(date -r "$T/lib/Containerfile" +%m%d)" = 0101 ] \
+  || fail "an unchanged Containerfile lost its date: the image would be built again"
+[ "$(cat "$T/lib/entrypoint.sh")" = three ] && [ "$(date -r "$T/lib/entrypoint.sh" +%m%d)" != 0101 ] \
+  || fail "a changed entrypoint.sh was not installed with a new date"
+echo "ok   an install copies the recipe only when it changed, so only then is the image built again"
+
 # --- the broker and the loop, end to end with a fake GitHub and Podman ----
 mkdir "$T/bin" "$T/run" "$T/state"
 cat > "$T/bin/gh" <<'EOF'

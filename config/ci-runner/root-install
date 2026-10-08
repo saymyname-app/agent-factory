@@ -43,7 +43,12 @@ case "${1:-}" in
 
     # 3. The service.
     install -d -m 755 "$LIB"
-    install -m 644 "$HERE/Containerfile" "$HERE/entrypoint.sh" "$LIB/"
+    # An unchanged recipe keeps its date: runner-loop builds the image again
+    # when the recipe is newer than it, and a build makes calls of wsl.exe
+    # from Windows hang (docs/OPERATIONS.md, af-uw246a).
+    for recipe in Containerfile entrypoint.sh; do
+      cmp -s "$HERE/$recipe" "$LIB/$recipe" || install -m 644 "$HERE/$recipe" "$LIB/"
+    done
     install -m 755 "$HERE/runner-loop" "$LIB/"
     sed -e "s/@OPERATOR@/$operator/g" -e "s/@UID@/$(id -u "$RUNNER_USER")/g" \
       "$HERE/factory-ci-runner.service" > "$UNIT"
