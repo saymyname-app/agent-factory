@@ -139,6 +139,8 @@ class OverlapConflictLogTest(unittest.TestCase):
         self.assertIn("create", calls[0])
         payload = json.loads(calls[0].split(" ", 1)[1])
         self.assertEqual("fr", payload["langue"])
+        self.assertEqual("decision", payload["classe"])  # ADR-0029: a method change
+        self.assertTrue(any(o.get("recommande") for o in payload["que_faire"]))
         self.assertTrue(payload["quoi"])
         self.assertTrue(payload["pourquoi"])
         self.assertTrue(payload["que_faire"])

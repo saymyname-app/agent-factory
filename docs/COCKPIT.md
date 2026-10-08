@@ -505,6 +505,27 @@ bead) or `ouverte` is counted in the health line; `a_planifier`,
 `tests/cockpit-requests-test.py` (inbox side) and
 `tests/cockpit-health-test.py` (health side) cover this through HTTP.
 
+The producer side is `bin/proposal-door create` (the same ADR): `classe`
+is mandatory; a `decision` must carry exactly one `recommande: true`
+option with its `raison` or the door refuses the write; a `maintenance`
+proposal makes the door file one bug bead (`gc.authorized_by=ADR-0029`,
+`gc.source=proposal-door`, `gc.proposal_id`, label `maintenance`, type
+bug), relate the two, set the proposal to `prise_en_charge`
+(`gc.proposal_bug`, trace « PROPOSITION PRISE EN CHARGE par proposal-door
+— ticket … ») and mail the Mayor, who dispatches it with
+`bin/factory-work-dispatch` — never `escalation-door mayor`, whose sweep
+would promote the bead to Benjamin after two hours. `bin/proposal-door
+reconvertir` (point 6) closes that bead and makes the proposal a
+`decision` again with new options. `compte --classe` and `list --classe`
+read the same class rule as the Cockpit (`maintenance`, `decision`,
+`sans_champs`). The orders that produce proposals declare their class:
+`bin/upstream-skills-check` and `bin/overlap-conflict-log` both file a
+`decision` with a recommendation (a re-pin and dynamic leases are method
+rules); `bin/escalation-door` and `bin/dispatch-door` create no proposal
+(the first counts them, the second refuses to dispatch one).
+`tests/proposal-classes-contract-test.py` runs the real door and the real
+Cockpit on the same fake tracker, one proposal of each class.
+
 ## Journal of resolved requests (af-mjfvwx)
 
 `GET /journal` (linked under « Ce qui t'attend ») and `GET /api/journal`

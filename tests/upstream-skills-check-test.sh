@@ -99,6 +99,9 @@ grep -q 'bd create' "$GC_CALLS_LOG" || fail "expected a bd create call, got: $(c
 grep -q -- '-l proposal' "$GC_CALLS_LOG" || fail "expected the bead to be labelled proposal, got: $(cat "$GC_CALLS_LOG")"
 grep -q 'v1.2.3' "$GC_CALLS_LOG" || fail "expected the proposal to name the new tag v1.2.3, got: $(cat "$GC_CALLS_LOG")"
 grep -q 'gc.proposal_state=ouverte' "$GC_CALLS_LOG" || fail "expected proposal-door to record gc.proposal_state=ouverte, got: $(cat "$GC_CALLS_LOG")"
+# ADR-0029: a re-pin is a method rule -> classe decision, with its recommendation.
+grep -q 'gc.proposal_classe=decision' "$GC_CALLS_LOG" || fail "expected the proposal to be of classe decision (ADR-0029), got: $(cat "$GC_CALLS_LOG")"
+grep -q 'recommande' "$GC_CALLS_LOG" || fail "expected a recommended option (ADR-0029 point 3), got: $(cat "$GC_CALLS_LOG")"
 [ -f "$STATE_FILE" ] || fail "expected a state file recording the flagged tag"
 [ "$(jq -r '.last_flagged_tag' "$STATE_FILE")" = "v1.2.3" ] || fail "expected state to record v1.2.3, got $(cat "$STATE_FILE")"
 
