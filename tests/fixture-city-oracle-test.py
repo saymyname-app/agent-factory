@@ -393,6 +393,120 @@ class FixtureCityOracleTest(unittest.TestCase):
                 self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
                 self.assertIn("expect.parked", proc.stderr)
 
+    # --- a story not observed at the end: one repair, the gate replayed, Delivered (T26, af-vwcflt) ---
+
+    def deliver_expecting(self, scenario, **expect):
+        """The walk of `scenario` with what it expects changed."""
+        given = json.loads((FIXTURES / scenario).read_text())
+        with tempfile.TemporaryDirectory() as temporary:
+            changed = Path(temporary) / "scenario.json"
+            changed.write_text(json.dumps({**given, "expect": {**given["expect"], **expect}}))
+            return subprocess.run((str(ORACLE), "run", str(changed), "--delivery-driver", str(DELIVERY_DRIVER)),
+                                  cwd=ROOT, text=True, capture_output=True, check=False)
+
+    def test_a_story_not_observed_at_the_end_is_repaired_by_one_ticket_and_the_convoy_is_delivered_on_the_new_tip(self):
+        proc = self.deliver("story-repaired-delivered.json")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+
+        # The walked ticket went through its nine states before the end of the Spec was tried.
+        self.assertTrue(result["closed"])
+        self.assertEqual(DELIVERY_STATES, result["lifecycle"])
+        outcome = result["outcome"]
+        self.assertEqual("delivered", outcome["state"])
+        # The first gate refused on the Outcome Evaluation, and on nothing before it.
+        refused = outcome["refused"]
+        self.assertEqual(["outcome_evaluation"], [entry["name"] for entry in refused["conditions"] if entry["verdict"] == "fail"])
+        self.assertEqual({"pass"}, {entry["verdict"] for entry in refused["conditions"][:3]})
+        # One round, one repair, published by the flow and delivered like any ticket.
+        self.assertEqual((1, None), (outcome["end_rounds"], outcome["end_stop"]))
+        [repair] = outcome["repairs"]
+        self.assertEqual(("repair", DELIVERY_STATES, True), (repair["kind"], repair["lifecycle"], repair["closed_by_the_gate"]))
+        self.assertNotIn(repair["id"], outcome["published"])
+        # The whole gate replayed on the tip the repair left: its seven conditions, there.
+        gate = outcome["spec_end"]
+        self.assertEqual((True, True, True), (gate["at_the_tip"], gate["holds_every_repair"], gate["delivered"]))
+        self.assertEqual([(number, "pass") for number in range(1, 8)],
+                         [(entry["number"], entry["verdict"]) for entry in gate["conditions"]])
+        self.assertEqual([], gate["missing"])
+        self.assertTrue(outcome["delivered"]["at_the_tip"])
+        # Never Delivered before the repair was closed, nor while the gate named a condition.
+        self.assertEqual(1, outcome["delivered"]["repairs_closed_when_first_seen"])
+        self.assertGreater(outcome["delivered"]["checked"], 0)
+        self.assertEqual(0, outcome["requests"])
+        for read in ("spec-end check", "escalation-door list", "git rev-parse"):
+            self.assertIn(read, result["interfaces"]["read"])
+        for hidden in ("prompt", "formula", "role", "session"):
+            self.assertNotIn(hidden, proc.stdout.lower())
+        # No path, commit or time in the result.
+        self.assertNotRegex(proc.stdout, r"(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])|/tmp/|\d{4}-\d{2}-\d{2}T")
+
+    def test_a_delivered_outcome_with_another_number_of_repairs_than_expected_fails_the_oracle(self):
+        # No story is left unobserved on the walk where nothing goes wrong: no repair is published.
+        proc = self.deliver_expecting("one-ticket-end-to-end.json", outcome="delivered", repairs=1)
+
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("", proc.stdout)
+        self.assertIn("0 repair", proc.stderr)
+        self.assertIn("expects 1", proc.stderr)
+
+    def test_a_repaired_story_expected_without_a_repair_fails_the_oracle(self):
+        proc = self.deliver_expecting("story-repaired-delivered.json", repairs=0)
+
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("", proc.stdout)
+        self.assertIn("1 repair", proc.stderr)
+        self.assertIn("expects 0", proc.stderr)
+
+    def test_the_walk_where_nothing_goes_wrong_is_delivered_without_a_repair_and_without_a_round(self):
+        proc = self.deliver_expecting("one-ticket-end-to-end.json", outcome="delivered")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        outcome = json.loads(proc.stdout)["outcome"]
+
+        self.assertEqual(("delivered", [], 0, None), tuple(outcome[name] for name in ("state", "repairs", "end_rounds", "end_stop")))
+        self.assertNotIn("refused", outcome)
+        self.assertTrue(outcome["spec_end"]["delivered"])
+        # The scenario that asks for no outcome keeps the result it had: nothing of the end in it.
+        plain = json.loads(self.deliver("one-ticket-end-to-end.json").stdout)
+        self.assertNotIn("outcome", plain)
+        self.assertNotIn("spec-end check", plain["interfaces"]["read"])
+
+    def test_a_delivery_scenario_with_a_malformed_expected_outcome_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            broken = Path(temporary) / "broken.json"
+            for expect, named in (({"closed": True, "outcome": "accepted"}, "expect.outcome"),
+                                  ({"closed": False, "missing": [1], "outcome": "delivered"}, "expect.outcome"),
+                                  ({"closed": True, "outcome": "delivered", "parked": 1}, "expect.outcome"),
+                                  ({"closed": True, "repairs": 1}, "expect.repairs"),
+                                  ({"closed": True, "outcome": "delivered", "repairs": -1}, "expect.repairs"),
+                                  ({"closed": True, "outcome": "delivered", "repairs": True}, "expect.repairs")):
+                broken.write_text(json.dumps({"contract": "agent-factory-fixture-delivery-scenario/v1",
+                                              "scenario_id": "broken", "expect": expect}))
+                proc = subprocess.run((str(ORACLE), "run", str(broken), "--delivery-driver", str(DELIVERY_DRIVER)),
+                                      cwd=ROOT, text=True, capture_output=True, check=False)
+                self.assertEqual(1, proc.returncode, expect)
+                self.assertIn(named, proc.stderr, expect)
+
+    def test_the_injection_of_a_story_not_observed_is_one_the_oracle_and_its_driver_both_know(self):
+        proc = subprocess.run((str(DELIVERY_DRIVER), "--workspace", "/nonexistent", "prepare", "--help"),
+                              text=True, capture_output=True, check=False)
+        self.assertIn("story-not-observed", proc.stdout)
+        with tempfile.TemporaryDirectory() as temporary:
+            broken = Path(temporary) / "broken.json"
+            broken.write_text(json.dumps({"contract": "agent-factory-fixture-delivery-scenario/v1", "scenario_id": "broken",
+                                          "inject": {"delivery": "inconnue"}, "expect": {"closed": True}}))
+            proc = subprocess.run((str(ORACLE), "run", str(broken), "--delivery-driver", str(DELIVERY_DRIVER)),
+                                  cwd=ROOT, text=True, capture_output=True, check=False)
+            self.assertEqual(1, proc.returncode)
+            self.assertIn("story-not-observed", proc.stderr)
+            # The second project already serves the story the injection leaves unserved: the driver refuses it.
+            given = json.loads((FIXTURES / "story-repaired-delivered.json").read_text())
+            broken.write_text(json.dumps({**given, "project": "delivery-fixture-city-api"}))
+            proc = subprocess.run((str(ORACLE), "run", str(broken), "--delivery-driver", str(DELIVERY_DRIVER)),
+                                  cwd=ROOT, text=True, capture_output=True, check=False)
+        self.assertEqual(1, proc.returncode, proc.stdout)
+        self.assertIn("delivery-fixture-city only", proc.stderr)
+
     def test_a_scenario_is_walked_only_with_the_adapters_of_its_contract(self):
         planning = ("--operator", str(OPERATOR), "--publication-door", str(OPERATOR))
         proc = self.deliver("one-ticket-end-to-end.json", *planning)
