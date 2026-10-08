@@ -59,8 +59,10 @@
 #       author wrote one (`git rev-parse --absolute-git-dir` inside the
 #       worktree; the file is never committed and goes away with the
 #       worktree). On a resumed PR the body is replaced only when that file
-#       exists. A ticket whose description demands the sections « Non
-#       fait », « Écarts », « Constats hors ticket » is refused with exit 3
+#       exists, through the REST pulls endpoint (af-rki3nh: `gh pr edit`
+#       always fails on this host). A ticket whose description demands
+#       the sections « Non fait », « Écarts », « Constats hors ticket » is
+#       refused with exit 3
 #       -- before anything is pushed or opened, worktree left as is -- until
 #       that file (or the already-open PR's body) carries all three.
 #
@@ -404,9 +406,14 @@ MSG
         if [ -z "$PR_URL" ]; then
           echo "factory-do-work-workspace: could not create or resume a PR for $BRANCH: create: ${CREATE_ERR:-<no output>}; view: ${VIEW_ERR:-<no output>}" >&2
         elif [ "$HAVE_PR_BODY" = "1" ]; then
-          # resumed PR and the author wrote a new body: replace the old one
-          (cd "$WT" && gh pr edit "$BRANCH" --body-file "$PR_BODY_FILE") >/dev/null 2>&1 \
-            || echo "factory-do-work-workspace: could not update the body of the open PR for $BRANCH from $PR_BODY_SRC" >&2
+          # resumed PR and the author wrote a new body: replace the old one.
+          # af-rki3nh: through the REST pulls endpoint, never `gh pr edit` --
+          # the host's gh asks GitHub for the retired Projects (classic)
+          # field on every `pr edit` and fails before the body is touched
+          # (PR #394, #416, #442 kept the text of their first attempt).
+          EDIT_ERR=$(cd "$WT" && gh api -X PATCH "repos/{owner}/{repo}/pulls/${PR_URL##*/}" \
+            -F "body=@$PR_BODY_FILE" 2>&1 >/dev/null) \
+            || echo "factory-do-work-workspace: could not update the body of the open PR for $BRANCH from $PR_BODY_SRC: ${EDIT_ERR:-<no output>}" >&2
         fi
       fi
       rm -f "$GH_ERR_FILE.out" "$GH_ERR_FILE"

@@ -332,6 +332,16 @@ D="$GH_FAKE_DIR"
 sub="$1 $2"; shift 2
 branch=""; body=""; want=""
 case "$sub" in "pr view"|"pr edit") branch="$1"; shift ;; esac
+if [ "$sub" = "api -X" ]; then
+  # af-rki3nh: the REST call that replaces a PR's body --
+  # api -X PATCH repos/{owner}/{repo}/pulls/<n> -F body=@<file>
+  [ "$1" = "PATCH" ] && [ "$3" = "-F" ] || exit 1
+  case "$2" in "repos/{owner}/{repo}/pulls/"*) key="${2##*/}" ;; *) exit 1 ;; esac
+  case "$4" in body=@*) body="${4#body=@}" ;; *) exit 1 ;; esac
+  [ -f "$D/$key.url" ] && [ -f "$body" ] || exit 1
+  cp "$body" "$D/$key.body"; echo edited >> "$D/$key.edits"
+  exit 0
+fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --head) branch="$2"; shift 2 ;;
@@ -353,9 +363,9 @@ case "$sub" in
     if [ "$want" = "body" ]; then cat "$D/$key.body"; else cat "$D/$key.url"; fi
     exit 0 ;;
   "pr edit")
-    [ -f "$D/$key.url" ] || exit 1
-    cp "$body" "$D/$key.body"; echo edited >> "$D/$key.edits"
-    exit 0 ;;
+    # af-rki3nh: what the host's gh answers to every `pr edit`
+    echo "GraphQL: Projects (classic) is being deprecated in favor of the new Projects experience (repository.pullRequest.projectCards)" >&2
+    exit 1 ;;
 esac
 exit 1
 EOF
@@ -418,6 +428,8 @@ printf '## Non fait\nla sonde\n\n## Écarts\naucun\n\n## Constats hors ticket\na
 "$SCRIPT" finish af-sections-a "$WT13e" do-work/af-sections-a main >/dev/null 2>"$TMP/s13e.err" \
   || { cat "$TMP/s13e.err" >&2; fail "re-dispatch finish with a new PR_BODY.md exited non-zero"; }
 grep -qF -- "la sonde" "$B13" || fail "re-dispatch finish did not update the open PR's body from the new PR_BODY.md"
+grep -qF -- "could not update the body" "$TMP/s13e.err" \
+  && fail "re-dispatch finish reported that it could not update the open PR's body"
 
 # 13f. a ticket that does not demand the sections: no file needed, old body
 WT13f=$("$SCRIPT" enter af-plain-ticket)
