@@ -92,6 +92,9 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state end-review-stop-raised af-convoy --bead af-request                # bin/spec-end-review, once the escalation door accepted
 ./bin/convoy-state end-stop-raised  af-convoy --bead af-convoy                       # bin/convoy-advance, once the « non conforme » request reached the operator
 ./bin/convoy-state record-delivered af-convoy --commit <integration tip> --pack-digest sha256:<hex>   # bin/spec-end run: the seven conditions met on one commit
+./bin/convoy-state acceptance-requested     af-convoy --bead af-convoy                 # bin/convoy-advance, once the Acceptance Request reached the operator
+./bin/convoy-state acceptance-launch-failed af-convoy --commit <commit of the dossier> --detail "<line>"   # bin/acceptance-session open: the product did not start
+./bin/convoy-state set-acceptance-repair    af-convoy --ticket af-r4                   # bin/convoy-advance, once the patch door published the repair of that outage
 ```
 
 Every answer is one JSON object on stdout.
@@ -154,6 +157,7 @@ Every answer is one JSON object on stdout.
 | Last round of the end counted | `gc.flow.end_round` | convoy | T25: `commit` (the tip of the integration branch the last round of the end was counted for), `source` (what refused that tip first: `regression`, `fidelity`, `end_review`, `outcome_evaluation`; T26), `at`; T26, optional, for the early stops: `not_observed` (the user stories the Outcome Evaluation did not observe at that tip), `previous_not_observed` (those of the round before), `refused_before` (every story not observed at an earlier counted tip) — numbers of user stories, ascending, each once |
 | Stop of the rounds of the end | `gc.flow.end_stop` | convoy | T26: `reason` (`end_rounds_exhausted`, `stories_not_reduced`, `story_refused_twice`), `detail` (one line), `commit` (the tip that was refused when the stop was written), `source` (as for `end_round`), `rounds` (the rounds counted then), `at`; then `request`, once the « non conforme » request reached the operator: `bead`, `commit` and `digest` (the Evidence Pack it carries), `page` (the absolute path of its page), `at` |
 | Delivered Outcome | `gc.flow.delivered` | convoy | T26: `commit` (the one commit of the integration branch the seven conditions of the end of the Spec were met on), `protected` (the tip of the protected branch that commit holds), `pack` (the fingerprint of the Evidence Pack generated there), `version` (`spec-end/v4`), `at` |
+| Acceptance | `gc.flow.acceptance` | convoy | T28: what the acceptance of the convoy holds before Benjamin's answer, tied to the one commit of the dossier he judges -- `commit`, `pack` (the fingerprint of that Evidence Pack), `at`; then `request`, once the Acceptance Request reached the operator: `bead`, `page` (the absolute path of the page of the pack), `at`; and `panne`, when the product of an Acceptance Session did not start at that commit: `detail` (one line), `at`, then `ticket` (the `repair` published for it) |
 
 `mark` is idempotent: it marks the tickets first and the convoy last, sets
 each counter to an explicit `0`, and on a later run marks only the tickets
@@ -542,8 +546,44 @@ verdict.
 
 Not done here, on purpose: no command withdraws `end_stop` — what the
 operator answers to the request (another round, back to planning, abandon)
-is handled by T28 and T29; and `set-counter --counter end_rounds --value 0`
+is handed to the escalation door by `bin/acceptance-session record` (T28)
+and acted on by T29; and `set-counter --counter end_rounds --value 0`
 resets the counter only, it clears neither `end_round` nor `end_stop`.
+
+### The acceptance record (T28)
+
+Spec §11. `gc.flow.acceptance` (`convoy.acceptance` in `show`) holds what
+happened between a dossier and Benjamin's answer, and is tied to the commit
+of **the dossier he judges**: the Evidence Pack of the Delivered Outcome,
+or the one the « non conforme » request of stopped rounds carries. What was
+noted at another commit went with that commit: the first write at a new
+dossier starts a new record. Recording Delivered again at the same commit
+keeps it. Three commands write it (`docs/ACCEPTANCE_SESSION.md`):
+
+`acceptance-requested` records, in `acceptance.request`, that the
+Acceptance Request reached the operator: `--bead` (the bead the escalation
+door wrote it on) and, read on the convoy, the `index.html` of the Evidence
+Pack. It refuses a missing or malformed bead, a convoy that is not
+Delivered, and an Evidence Pack that is not the one of the Delivered
+Outcome (commit and fingerprint). One request per Delivered Outcome: the
+same bead again writes nothing; another bead is refused.
+
+`acceptance-launch-failed` records, in `acceptance.panne`, the outage of an
+Acceptance Session: `--commit` and one line of `--detail`. It refuses a
+commit that is not the one of the dossier Benjamin judges (and a convoy
+with no such dossier). An outage is no judgment: nothing else of the convoy
+changes — it stays Delivered, its request stays noted. The same outage
+again writes nothing.
+
+`set-acceptance-repair` names, in `acceptance.panne.ticket`, the ticket
+code published for that outage. It refuses a convoy with no outage noted, a
+ticket the convoy does not track, and a ticket that is not of kind
+`repair`. One repair per outage: the same ticket again writes nothing;
+another is refused.
+
+A stored `gc.flow.acceptance` these commands would have refused to write is
+an « état sans règle ». Benjamin's answer itself (accepté, constats rendus,
+abandonné) is not recorded here yet: T29.
 
 `lift-park` lifts the parking a ticket caused, once the request `--request`
 (a bead id) was answered, with the letter of the option taken (`--option`,
@@ -846,8 +886,10 @@ A marked **convoy** found closed is one more « état sans règle », carried
 by the convoy itself (`convoy.unruled`, field `status`, « convoi fermé hors
 commande », with the closing reason it carries): a marked convoy closes only
 by code, on the operator's words — accepted or abandoned (Spec §9). No
-command of this flow closes a convoy yet (the acceptance and the abandon
-come with T29 and T30, which add their record here); until then every
+command of this flow closes a convoy yet: T28 records the Acceptance
+Request and the outage of an Acceptance Session (`gc.flow.acceptance`), not
+Benjamin's answer; the accepted and the abandoned convoy come with T29 and
+T30, which add their record here. Until then every
 closed marked convoy is reported, and `list` names them under
 `closed_outside`, apart from the open ones under `convoys`. An open marked
 convoy whose tickets are all closed is a valid state.
@@ -933,3 +975,9 @@ or of the review, nothing more on a stopped convoy, the bound read in
 (`tests/evidence-pack-test.py`), the early stops through the pass
 (`tests/convoy-stops-fixture-city-test.py`). No trial on the real tracker
 covers them.
+T28: `tests/acceptance-session-test.py` covers the acceptance record — the
+request noted once on the Delivered Outcome with the page of its pack,
+refused on a convoy that is not Delivered and on another bead, kept when
+Delivered is recorded again; the outage noted at the commit of the dossier
+and refused at another, one repair of the convoy per outage. No trial on
+the real tracker covers it.

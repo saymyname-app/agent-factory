@@ -175,6 +175,13 @@ judging a ticket, and an Acceptance Session judging a Delivered Outcome all
 launch the product through the same `bin/project-launch`, never a
 hand-typed command.
 
+The Acceptance Session is `bin/acceptance-session open <convoy>` (T28,
+`docs/ACCEPTANCE_SESSION.md`): it launches the product from a clean copy of
+the commit of the Evidence Pack, by this `launch` block, once per synthetic
+dataset declared under `launch.datasets`. A profile without a launch recipe
+is refused; a product that does not start is an outage, recorded on the
+convoy and repaired by a `repair` ticket.
+
 A descriptor's optional `launch` block is validated by the same `describe`
 command, and -- unlike every other descriptor field -- is all-or-nothing:
 declaring `launch` at all requires every one of these sub-fields, or
