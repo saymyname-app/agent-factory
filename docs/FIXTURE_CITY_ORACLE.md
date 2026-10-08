@@ -253,6 +253,36 @@ The scenario says what the walk must end in: `expect: {closed: true}`, or
 | `one-ticket-missing-condition.json` | a criterion is edited on the ticket once its author has finished | stops at `evaluated`; the gate names conditions 1 and 6 |
 | `one-ticket-closed-by-hand.json` | the ticket is closed in the tracker outside the gate | the oracle fails |
 | `one-ticket-second-project.json` | nothing goes wrong, on a ticket of the second project of the fixture (T35) | the nine states, closed by the gate |
+| `three-failures-parked.json` | the convoy holds two more tickets: one whose author session ends three times without a Ticket Exit, one that waits for it (T20) | the walked ticket reaches its nine states and is closed by the gate; the two others are parked; one grouped request names them both |
+
+### A ticket that fails three times is parked (T20)
+
+`expect: {closed: true, parked: N}` adds to the walk what Spec §8 asks of
+the resumes (`docs/CONVOY_ADVANCE.md`). `parked` is a positive number and
+goes with `closed: true` only. With it:
+
+- the walk does not end when the walked ticket closes: it goes on until an
+  event changes nothing, within 32 events instead of 16;
+- after each event the oracle also reads the parked tickets of the convoy on
+  `bin/convoy-state show` and the operator's list on `bin/escalation-door
+  list`. More than one request for the convoy fails the run, and so does a
+  request raised while a ticket that is not parked is still open;
+- at the end: exactly N tickets are left, all parked, each by a parked
+  ticket of the convoy and for its cause; the operator's list shows exactly
+  one request, which names each of them; and the walked ticket advanced
+  after the first parking — the tickets that wait for no parked ticket keep
+  going.
+
+The result then carries `parking`: the parked tickets (cause, origin, count
+of resumes), the states the walked ticket reached after the first parking,
+the number of requests and the tickets the request names.
+
+With `--inject three-failures` the reference driver adds the two tickets to
+the convoy and plays, for the first, an author session that takes it and
+ends without a Ticket Exit, three times, each once the order has sent the
+resume of the failure before. The order itself — the real
+`bin/convoy-advance` — counts the resumes, parks at the third and raises
+the request.
 
 A scenario may name the `project` of the fixture its ticket belongs to; the
 oracle hands the name to the driver (`prepare --project`) and reports it in

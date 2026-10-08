@@ -95,7 +95,10 @@ whole Factory, shared between the Specs. A place is taken by:
   convoy or the Spec;
 - each ticket of any open marked convoy that was started through the door
   and that no session has picked yet (still `open`): its author session is
-  on its way.
+  on its way;
+- each ticket a resume was sent for (T20) and that no session has taken
+  since, as long as the bead of that resume is not closed: its fresh author
+  session is on its way.
 
 Between the moment an author session appears and the moment it takes its
 ticket, that ticket counts twice. The count is therefore never below the
@@ -104,9 +107,10 @@ real one: the ceiling can be reached early for a moment, never exceeded.
 A resume (T20) takes a place like a start: the pass that sends it counts it
 with its starts, and a ticket to resume when no place is free is listed
 under `waiting` (« reprise (<cause>) : plafond N=… atteint ») and counts
-nothing meanwhile. One exception to « never below »: a resumed ticket is
-already `in_progress`, so between the pass that sent its resume and the
-moment its session is alive, a later pass counts no place for it.
+nothing meanwhile. A resume that was sent keeps its place on the later
+passes until its session takes the ticket (`bin/ticket-author start`); a
+resume whose bead is closed without the ticket taken holds no place: it is
+one more interruption, counted and sent again by that pass.
 
 The settings file also names what the door receives for a start:
 `start.formula` and `start.role`: the author formula `mol-ticket-author`

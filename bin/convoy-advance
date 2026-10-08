@@ -308,8 +308,10 @@ class Convoy:
         raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {self.id}")
 
     def awaiting_a_session(self) -> list[str]:
-        """Tickets started through the door that no session has picked yet."""
-        return [t["id"] for t in self.tickets if started(t) and t.get("status") == "open" and not t.get("exit")]
+        """Tickets started through the door, or sent to a resume, that no
+        session has picked yet."""
+        return [t["id"] for t in self.tickets
+                if (started(t) and t.get("status") == "open" and not t.get("exit")) or resume_on_its_way(t)]
 
     def not_started(self) -> list[dict[str, Any]]:
         return [t for t in self.tickets if t.get("status") == "open" and not t.get("gates") and not t.get("exit")]
@@ -600,6 +602,19 @@ def at_work(ticket: dict[str, Any]) -> bool:
     what a resume or the bound of the resumes may bear on. A stopped ticket
     is never resumed: its sequence failed, it is with the operator."""
     return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") and not ticket.get("stop")
+
+
+def resume_on_its_way(ticket: dict[str, Any]) -> bool:
+    """A resume was sent and nobody took the ticket since: its session
+    holds a place under the ceiling. A resume bead closed without the ticket
+    taken is a session that ended: one more interruption, no place."""
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    if not entries or not at_work(ticket) or ticket.get("status") == "open" or ticket.get("exit"):
+        return False
+    last = entries[-1]
+    if not last.get("launches") or last.get("session") != (ticket.get("session") or {}).get("name"):
+        return False
+    return read_bead(last["launches"][-1]["bead"]).get("status") != "closed"
 
 
 def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] | None:

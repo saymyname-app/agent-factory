@@ -1478,6 +1478,27 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertEqual(0, self.resumes())
         self.assertEqual([], self.resume_launches())
 
+    def test_a_resume_sent_and_not_yet_taken_by_a_session_holds_its_place(self):
+        self.started_convoy()
+        self.interrupted(T1, "auteur-1")
+        # T2 alone awaits its session when this pass counts, then T1 is sent.
+        self.assertEqual([T2], self.advance(CONVOY)["awaiting_a_session"])
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([T1, T2], answer["awaiting_a_session"])
+        self.assertEqual(2, answer["occupied"])
+
+    def test_a_resume_whose_session_ended_without_taking_the_ticket_holds_no_place(self):
+        self.started_convoy()
+        self.interrupted(T1, "auteur-1")
+        [sent] = self.of(self.advance(CONVOY), "resumed")
+        self.edit(sent["bead"], status="closed")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([T2], answer["awaiting_a_session"])
+
     def test_a_stopped_ticket_is_never_resumed_as_interrupted(self):
         self.started_convoy()
         self.interrupted(T1, "auteur-1")
