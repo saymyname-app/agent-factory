@@ -53,6 +53,15 @@ REPONSE_RE = re.compile(r"^RÉPONSE: (?P<lettre>.+?) — (?P<texte>.*)$")
 PROPOSITION_ACCEPTEE_RE = re.compile(r"^PROPOSITION ACCEPTÉE par (?P<acteur>.+?) — passe à planifier$")
 PROPOSITION_REJETEE_RE = re.compile(r"^PROPOSITION REJETÉE par (?P<acteur>.+?) — (?P<raison>.*)$")
 PROPOSITION_RESOLUE_RE = re.compile(r"^PROPOSITION RÉSOLUE par (?P<acteur>.+?) — (?P<preuve>.*)$")
+# ADR-0029: a maintenance proposal taken over by the factory (the door
+# files its bug bead and routes it to the Mayor), and a maintenance bead
+# reconverted into a decision because it touched what the operator sees.
+PROPOSITION_PRISE_EN_CHARGE_RE = re.compile(
+    r"^PROPOSITION PRISE EN CHARGE par (?P<acteur>.+?) — ticket (?P<ticket>\S+)$"
+)
+PROPOSITION_RECONVERTIE_RE = re.compile(
+    r"^PROPOSITION RECONVERTIE en décision par (?P<acteur>.+?) — (?P<raison>.*)$"
+)
 COCKPIT_TRACE_RE = re.compile(
     r"^Cockpit: (?P<quoi>.+?) sur (?P<sur_quoi>.+?) \((?P<detail>.*?)\) — (?P<quand>.+?), par (?P<acteur>.+)$"
 )
@@ -148,6 +157,26 @@ def parse_trace_note(bead_id, comment):
         return JournalEntry(
             bead_id=bead_id,
             quoi="proposition résolue par une livraison — %s" % match.group("preuve"),
+            quand=parsed["created_at"] or "",
+            par=parsed["author"] or match.group("acteur"),
+            voie="proposal-door",
+        )
+
+    match = PROPOSITION_PRISE_EN_CHARGE_RE.match(text)
+    if match:
+        return JournalEntry(
+            bead_id=bead_id,
+            quoi="proposition de maintenance prise en charge par l'usine",
+            quand=parsed["created_at"] or "",
+            par=parsed["author"] or match.group("acteur"),
+            voie="proposal-door",
+        )
+
+    match = PROPOSITION_RECONVERTIE_RE.match(text)
+    if match:
+        return JournalEntry(
+            bead_id=bead_id,
+            quoi="proposition reconvertie en décision — %s" % match.group("raison"),
             quand=parsed["created_at"] or "",
             par=parsed["author"] or match.group("acteur"),
             voie="proposal-door",

@@ -7,12 +7,16 @@ Only two kinds of bead ever become a request here:
     (af-1al0t1; the beads source reads those too) — an escalation-door
     NEEDS BENJAMIN (T06). Its level is Urgent when
     ``gc.escalation_bloquant`` is "true", otherwise À faire (spec .5).
-  * an open bead labelled ``proposal`` whose ``gc.proposal_state`` is not
-    yet ``a_planifier``/``rejetee``/``resolue`` — an open proposal-door
-    proposal (T07), always Quand tu veux. ``resolue`` is the door's
-    ``resoudre`` transition: the delivery that answered the proposal merged
-    (proof on the bead, ``gc.proposal_resolved_by``), so nothing waits on
-    the operator any more.
+  * an open bead labelled ``proposal`` of class ``decision`` whose
+    ``gc.proposal_state`` is not yet ``a_planifier``/``rejetee``/``resolue``
+    — an open proposal-door proposal (T07), always Quand tu veux.
+    ``resolue`` is the door's ``resoudre`` transition: the delivery that
+    answered the proposal merged (proof on the bead,
+    ``gc.proposal_resolved_by``), so nothing waits on the operator any
+    more. Which proposal is a ``decision`` is
+    :mod:`cockpit.requests.proposals` (ADR-0029): a ``maintenance``
+    proposal and a proposal no door wrote (no ``gc.proposal_*`` field)
+    never become a request here — they are health-zone lines.
 
 A bead with only ``gc.escalation_mayor_paged_at`` set (a Mayor-first
 escalation not yet promoted) carries no ``gc.needs_benjamin`` and is never
@@ -36,12 +40,11 @@ from cockpit.requests.model import (
     TYPE_PROPOSAL,
     URGENT,
 )
+from cockpit.requests.proposals import is_open_decision
 from cockpit.text import fallback
 from cockpit.text.validate import request_violations
 
 NEEDS_BENJAMIN_KEY = "gc.needs_benjamin"
-PROPOSAL_LABEL = "proposal"
-_CLOSED_PROPOSAL_STATES = {"a_planifier", "rejetee", "resolue"}
 
 
 def _parse_iso(value):
@@ -113,12 +116,9 @@ def _is_escalation(bead):
 
 
 def _is_open_proposal(bead):
-    labels = bead.get("labels") or []
-    if PROPOSAL_LABEL not in labels:
-        return False
-    metadata = bead.get("metadata") or {}
-    state = metadata.get("gc.proposal_state") or "ouverte"
-    return state not in _CLOSED_PROPOSAL_STATES
+    # ADR-0029: only a pending proposal of class ``decision`` waits on the
+    # operator (cockpit.requests.proposals holds the one reading).
+    return is_open_decision(bead)
 
 
 def _build_one(bead, verifie_a, defects):

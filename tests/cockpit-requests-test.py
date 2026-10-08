@@ -93,7 +93,7 @@ def escalation_bead(bead_id, quoi, pourquoi, que_faire, horodatage, bloquant=Fal
     return {"id": bead_id, "status": "open", "labels": [], "notes": "", "metadata": metadata}
 
 
-def proposal_bead(bead_id, quoi, pourquoi, que_faire, horodatage, state="ouverte", project=None):
+def proposal_bead(bead_id, quoi, pourquoi, que_faire, horodatage, state="ouverte", project=None, classe=None):
     metadata = {
         "gc.proposal_quoi": quoi,
         "gc.proposal_pourquoi": pourquoi,
@@ -103,6 +103,8 @@ def proposal_bead(bead_id, quoi, pourquoi, que_faire, horodatage, state="ouverte
     }
     if project:
         metadata["gc.project_id"] = project
+    if classe:
+        metadata["gc.proposal_classe"] = classe
     return {"id": bead_id, "status": "open", "labels": ["proposal"], "notes": "", "metadata": metadata}
 
 
@@ -359,19 +361,79 @@ class RequestsSeamTest(unittest.TestCase):
         self.assertIn("continuer avec un agent", body)
         self.assertIn("Conséquence non fournie par l", body)
 
-    def test_existing_proposal_without_fields_still_renders_with_fallback(self):
+    def test_proposal_without_fields_is_a_health_anomaly_not_a_request(self):
+        # ADR-0029 point 4: a proposal no door wrote (no gc.proposal_*
+        # field) leaves « Ce qui t'attend » and is said in the health zone
+        # as « à reformuler par la porte ». Before, it rendered as an
+        # incomplete request with every field replaced by a repli.
         self.start_cockpit()
         self.write_beads(
             [
                 {"id": "af-legacy1", "status": "open", "labels": ["proposal"], "notes": "", "metadata": {}},
             ]
         )
-        payload = self.wait_for_requests(lambda p: len(p["requests"]) == 1)
-        req = payload["requests"][0]
-        self.assertTrue(req["incomplete"])
-        self.assertEqual("Quand tu veux", req["niveau"])
-        self.assertIn("quoi", req["missing_fields"])
-        self.assertTrue(req["quoi"].startswith("incomplète : champ"))
+        health = wait_until(
+            lambda: next(
+                (h for h in [http_get_json(self.port, "/api/health")]
+                 if any("reformuler par la porte" in l["text"] for l in h["lines"])),
+                None,
+            )
+        )
+        line = next(l for l in health["lines"] if "reformuler par la porte" in l["text"])
+        self.assertEqual("warn", line["kind"])
+        self.assertNotIn("af-legacy1", line["text"])
+        self.assertFalse(health["ok"])
+        payload = self.requests_payload()
+        self.assertEqual([], [r["id"] for r in payload["requests"]])
+        self.assertIn("reformuler par la porte", self.home_body())
+
+    def test_only_decision_class_proposals_wait_on_the_operator(self):
+        # ADR-0029 points 2-3: a `maintenance` proposal never enters « Ce
+        # qui t'attend » (it is the health zone's « l'usine corrige seule »);
+        # a `decision` one does; a proposal the door wrote before the class
+        # existed (fields, no class) is still the operator's to treat.
+        self.start_cockpit()
+        self.write_beads(
+            [
+                proposal_bead("af-maint1", "filtrer les pages mortes", "trois pages périmées", SOME_OPTIONS,
+                              "2026-10-07T08:00:00Z", state="prise_en_charge", classe="maintenance"),
+                proposal_bead("af-deci1", "changer ce que tu vois", "nouvelle zone", SOME_OPTIONS,
+                              "2026-10-07T08:00:00Z", classe="decision"),
+                proposal_bead("af-avant1", "proposition d'avant la classe", "écrite par la porte", SOME_OPTIONS,
+                              "2026-10-06T08:00:00Z"),
+            ]
+        )
+        payload = self.wait_for_requests(lambda p: len(p["requests"]) == 2)
+        self.assertEqual(["af-avant1", "af-deci1"], sorted(r["id"] for r in payload["requests"]))
+        for req in payload["requests"]:
+            self.assertEqual("Quand tu veux", req["niveau"])
+            self.assertFalse(req["incomplete"])
+        health = wait_until(
+            lambda: next(
+                (h for h in [http_get_json(self.port, "/api/health")]
+                 if any("corrige seule" in l["text"] for l in h["lines"])),
+                None,
+            )
+        )
+        line = next(l for l in health["lines"] if "corrige seule" in l["text"])
+        self.assertEqual("ok", line["kind"])
+        self.assertIn("1 défaut", line["text"])
+        self.assertNotIn("af-maint1", line["text"])
+        self.assertNotIn("Mayor", line["text"])
+        self.assertNotIn("filtrer les pages mortes", self.home_body().split("Santé de l")[0])
+
+        # The maintenance proposal closed by its delivery leaves the health zone.
+        self.write_beads(
+            [
+                proposal_bead("af-maint1", "filtrer les pages mortes", "trois pages périmées", SOME_OPTIONS,
+                              "2026-10-07T08:00:00Z", state="resolue", classe="maintenance"),
+            ]
+        )
+        wait_until(
+            lambda: True
+            if not any("corrige seule" in l["text"] for l in http_get_json(self.port, "/api/health")["lines"])
+            else None
+        )
 
     # ------------------------------------------------------------------
     # AC3 — "Rien ne t'attend — vérifié à HH:MM" when empty; "Inconnu :
