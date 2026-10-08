@@ -43,6 +43,7 @@ is shown.
 
 | # | Rubric | What it holds |
 | --- | --- | --- |
+| 0 | Depuis ton dernier jugement | **Only on a dossier generated after a « constats rendus » answer** (T29, `docs/OWNER_ANSWER.md`), before rubric 1 (`<section id="rubrique-0">`): Benjamin's words, the date, the commit and the fingerprint of the dossier he judged, then one row per finding he returned — its text, its route (réparation, Planning Exception, plus tard), what was done (the `repair` and its state, the Planning Exception open or resolved, the proposition created) and the proof (the ticket-end gate passed and the merge commit, his words of resolution, the proposition's bead, or « aucune »). |
 | 1 | En-tête | The Spec and its digest (the text read, and the digest the publication door wrote on the convoy), the convoy, the integration branch, the commit, the protected branch, the verdict of each condition of the end of the Spec with what was read. « Dossier non conforme » and the conditions that are not met, when one is not. |
 | 2 | Ce qui demande les yeux de Benjamin | Each finding « hors ticket » kept as a proposal; the fidelity deviations the Evaluator of the end listed; the deviations the mechanical checks measured; for each prototyped state and rendering, **the two captures side by side and the image of their difference**; the remarks of exploration with their pieces; each mention « même fournisseur ou même modèle que l'auteur », and apart each independence nobody recorded. |
 | 3 | Ce qui n'a PAS été vérifié | **Mandatory.** The states of each screen the Spec lists as « non prototypé » (and those « sans objet », with their reason); the criteria of the quality baseline that have no mechanism; the known limits of the controls; and what this very delivery leaves unverified: a piece refused by the store, a story not observed, a capture taken at another commit, a condition that is not met. |
@@ -53,8 +54,11 @@ is shown.
 | 8 | Relevés | The files touched outside the Declared Scope, the models per role, the duration, the rounds of the end (« Tours de fin » : the count, the last tip counted and its source, and, T26, the stop of the rounds when there is one), the contradictions between the proof of a ticket and the end of the Spec. |
 | 9 | Preuves TDD et constats de revue | Per ticket: red, freeze, green with their pieces, the review of the tests, each round of the code review with every finding, blocking or not; then the end code review. |
 
-Rubric 0 of the Spec, « Depuis ton dernier jugement », belongs to the second
-pack of an Outcome: it comes with the record of the acceptance (T29, T30).
+Rubric 0 reads the **last « constats rendus » answer** of
+`convoy.judgement` and nothing else of it: the verdicts on the propositions
+and an « accepté » or « abandonné » answer are not rendered, so recording
+one does not outdate the pack Benjamin is judging. A first dossier, on an
+Outcome he returned nothing on, has no rubric 0.
 
 ## « Ce qui n'a PAS été vérifié » cannot be left out
 

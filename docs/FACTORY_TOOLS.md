@@ -546,9 +546,10 @@ touché : il reste avancé par le Mayor.
   pas par cette demande. `non_conforme` dans la réponse de la passe dit où
   elle en est (`pending` tant qu'une Outcome Evaluation ou une revue de fin
   est encore en cours sur la pointe, `raised` une fois la demande partie).
-  **Limites** : ta réponse est enregistrée mais rien ne la lit encore — le
-  convoi reste arrêté, aucun tour ne repart et rien n'est abandonné tant que
-  le ticket suivant (T29) n'est pas livré ; si la passe échoue
+  **Limites** : ta réponse est enregistrée mais rien ne la lit — le
+  convoi reste arrêté et aucun tour ne repart (T29 ne traite que la réponse
+  à un Delivered Outcome ; seul « abandonné » s'enregistre sur ce dossier,
+  par `./bin/owner-answer`, `docs/OWNER_ANSWER.md`) ; si la passe échoue
   entre l'envoi et son enregistrement, tu reçois le même courrier une
   seconde fois (une seule ligne dans la liste).
 - **Acceptance Request** (T28) : dès qu'un convoi est Delivered (les sept
@@ -563,8 +564,19 @@ touché : il reste avancé par le Mayor.
   rétablit ce démarrage (pas tant que les tours de fin sont arrêtés).
   `acceptance` dans la réponse de la passe dit ce qu'elle a fait
   (`action: requested`, `repair`). **Aucun délai ne répond à ta place** :
-  rien n'est accepté, fusionné ni fermé sans ta réponse, dont
-  l'enregistrement est T29.
+  rien n'est accepté, fusionné ni fermé sans ta réponse, qui s'enregistre
+  par `./bin/owner-answer` (T29, `docs/OWNER_ANSWER.md`).
+- **Constats rendus** (T29) : quand ta dernière réponse est « constats
+  rendus », la passe suivante publie **un** `repair` par constat qui cite
+  une user story ou une ancre de la Spec (`acceptance.owner_repairs`), le
+  livre par le flux habituel, puis toute la porte de fin de Spec repasse à
+  la nouvelle pointe et un nouveau dossier arrive avec une nouvelle
+  Acceptance Request. Tant qu'un de ces `repair` n'est pas publié, ou que la
+  Planning Exception du lot est ouverte, la fin de Spec attend
+  (`acceptance.owner_hold`). **Limites** : la Planning Exception se traite
+  par un Planning Run à la main, puis `./bin/owner-answer
+  resolve-exception` — aucun code ne le lance ni ne prévient le Mayor ;
+  « accepté » et « abandonné » ne ferment ni ne fusionnent rien (T30).
 - **Les bornes se règlent à un seul endroit** : `bounds` de
   `config/delivery-flow.json` — `resumes` (K, 3), `open_planning_exceptions`
   (2), `end_rounds` (tours de réparation de fin de Spec, 2). Changer une valeur change le comportement à la passe suivante ; une
@@ -1667,10 +1679,11 @@ ensuite le produit que tu juges et l'arrête.
 - **Sorties** : 0 fait ; 1 refus ou panne (`error` commence par
   « refus : ») ; 3 état sans règle ; 4 convoi sans marque.
 - **Limites** : tes trois réponses à un Delivered Outcome (accepté,
-  constats rendus, abandonné) s'enregistreront par une autre commande
-  (T29), et répondre à l'option de l'Acceptance Request sur la porte ne
-  déclenche rien ; l'issue d'une demande « non conforme » est enregistrée
-  mais rien ne la lit encore (T29) ; le `repair` d'une panne est publié par
+  constats rendus, abandonné) s'enregistrent par une autre commande,
+  `./bin/owner-answer` (T29, `docs/OWNER_ANSWER.md`), et répondre à l'option
+  de l'Acceptance Request sur la porte ne déclenche rien ; l'issue d'une
+  demande « non conforme » est enregistrée mais rien ne la lit (T29 ne
+  traite que le Delivered Outcome) ; le `repair` d'une panne est publié par
   la passe suivante, pas par `open`, et **aucun** n'est publié tant que les
   tours de fin sont arrêtés ; le journal de lancement d'un produit qui ne
   démarre pas n'est pas conservé (une ligne de précision sur la panne) ; le
@@ -1681,5 +1694,74 @@ ensuite le produit que tu juges et l'arrête.
   vrai convoi n'a encore atteint l'acceptation.
 
 Détail : `docs/ACCEPTANCE_SESSION.md`.
+
+---
+## `./bin/owner-answer` — enregistrer ta réponse à un Delivered Outcome
+
+**Ta réponse et la route de chaque Owner Finding** (Spec af-wf4w5r §11,
+T29). Quand tu as jugé le produit dans l'Acceptance Session
+(`./bin/acceptance-session open`), c'est **le seul outil** qui enregistre ce
+que tu réponds. Toi seul réponds : `--approved-by` doit être le
+`human_approver` de `config/projects/<rig>.toml`. Un refus n'écrit rien.
+
+```bash
+./bin/owner-answer verdict <convoi> --proposition <ticket>:out_of_ticket.N --verdict "à faire avant d'accepter"|"plus tard"|"sans suite" --approved-by <toi> --words "<tes mots>"
+./bin/owner-answer record  <convoi> --response accepté --approved-by <toi> --words "<tes mots>" --commit <commit du dossier> --pack-digest <empreinte>
+./bin/owner-answer record  <convoi> --response "constats rendus" --approved-by <toi> --words "<tes mots>" --commit <commit> --pack-digest <empreinte> --findings <fichier.json>
+./bin/owner-answer record  <convoi> --response abandonné --approved-by <toi> --reason "<une ligne>"
+./bin/owner-answer resolve-exception <convoi> --approved-by <toi> --words "<tes mots>"
+```
+
+- **Comment t'en servir** : tu dis ta réponse à ta session opérateur, avec
+  tes mots ; elle lance la commande avec le `commit` et le `digest` que
+  `./bin/acceptance-session open` a rendus.
+- **D'abord un verdict par proposition** du dossier (rubrique 2) :
+  « sans suite » ; « plus tard » (du code crée une proposition par
+  `./bin/proposal-door`, elle ne bloque pas) ; « à faire avant d'accepter »
+  (bloque « accepté » tant que tu ne l'as pas rendue avec tes constats).
+- **« accepté »** porte sur l'Outcome entier, à un commit : tes mots, le
+  commit et l'empreinte du dossier. Refusé si le commit n'est pas celui du
+  dossier ou n'est plus la pointe de la branche d'intégration, si
+  l'empreinte n'est pas la sienne, si le dossier est périmé, si une
+  proposition n'a pas de verdict. **Il ne ferme et ne fusionne rien** (T30).
+- **« constats rendus »** : un fichier
+  `{"findings": [{"text", "cites"?: {"kind", "ref"}, "repair"?: {…}, "later"?: true}]}`.
+  **Le code route chaque constat**, pas l'agent : il cite une user story
+  que la Spec porte, ou une ancre → un `repair` (rédigé avec le constat,
+  obligatoire), publié par la passe suivante de `./bin/convoy-advance` ;
+  `later` → une proposition, hors de cet Outcome ; **tout le reste → la
+  Planning Exception unique du lot, jamais un `repair`** (tu demandes ce que
+  la Spec n'exige pas). L'Outcome n'est plus Delivered, la demande quitte ta
+  liste, les tours de fin repartent de zéro ; une fois les `repair` livrés,
+  toute la porte de fin de Spec repasse et un **nouveau dossier** arrive,
+  qui s'ouvre sur la rubrique 0 « Depuis ton dernier jugement ».
+- **« abandonné »** exige une raison d'une ligne.
+- **« refusé » n'est pas une réponse**, et il n'y a **aucune acceptation
+  partielle** : les deux sont refusés avec la raison.
+- **Rien ne rouvre** un Outcome accepté ou abandonné : un défaut ou un
+  souhait trouvé après entre comme travail nouveau, par un Planning Run.
+- **`resolve-exception`** : tu dis que la Planning Exception du lot est
+  résolue (Spec amendée et graphe révisé, ou souhait abandonné) ; d'ici là
+  la fin de Spec attend.
+- **Cockpit** : sur un convoi du nouveau flux, le bouton « Accepter » est
+  refusé et renvoie ici ; l'étape « Accepté » se lit dans ta réponse
+  enregistrée.
+- **Sorties** : 0 fait ; 1 refus (`error` commence par « refus : », état
+  sans règle compris) ; 4 convoi sans marque.
+- **Limites** : rien n'est fermé ni fusionné sur « accepté » ou
+  « abandonné » (T30) ; la Planning Exception du lot est enregistrée et
+  retient la fin de Spec, mais le Planning Run qui amende la Spec se fait à
+  la main — aucun code ne le lance, rien ne prévient le Mayor, et
+  `resolve-exception` te croit sur parole ; l'issue d'une demande
+  « non conforme » n'est toujours lue par rien (seul « abandonné »
+  s'enregistre sur ce dossier) ; rien n'empêche techniquement un agent
+  d'inventer tes mots ou de passer ton nom — le relevé le rend visible
+  après coup ; une citation `anchor` n'est pas vérifiée contre le Validated
+  Prototype ; le routage lit la citation, pas le sens — un constat qui cite
+  une story existante en demandant plus est routé en `repair` ; si la porte
+  des propositions échoue après l'écriture, la réponse est enregistrée et
+  la proposition manque ; aucun vrai convoi n'a encore reçu de réponse.
+
+Détail : `docs/OWNER_ANSWER.md`.
 
 ---
