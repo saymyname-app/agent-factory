@@ -519,9 +519,34 @@ touché : il reste avancé par le Mayor.
   la passe suivante publie le `repair`. Quand Benjamin répond « faire
   réparer » à la demande sur un écart ou un « non fait », la passe publie ce
   `repair` aussi (`item_repairs`).
+- **Deux tours de réparation en fin de Spec, puis une demande « non
+  conforme »** (T26) : chaque refus d'une pointe en fin de Spec compte un
+  tour, quelle que soit sa source — tests ou fidélité rouges, revue de fin
+  défavorable, Outcome Evaluation qui n'observe pas une user story ou garde
+  un constat hors ticket à réparer. Un seul compteur, borné à 2. Au refus
+  suivant, **plus aucun `repair` de fin n'est publié** (ni celui d'un rouge,
+  ni ceux de l'Evaluator, ni ceux de la revue de fin). L'arrêt vient plus
+  tôt, avant le deuxième tour, si un tour n'a pas réduit le nombre de user
+  stories non observées ou si la même user story est refusée deux fois. La
+  passe fait alors générer le dossier de la pointe refusée
+  (`./bin/evidence-pack`, en-tête « Dossier non conforme ») et t'envoie
+  **une** demande : dans `./bin/escalation-door list`, la ligne
+  `<convoi> — Demande « non conforme » — convoi <convoi> : <cause> — dossier : <chemin de la page>`.
+  Ouvre la page, puis réponds par
+  `./bin/escalation-door repondre <convoi> a|b|c` : **a** relancer un tour
+  de réparation, **b** retourner à la planification, **c** abandonner.
+  « Accepter » n'est jamais proposé : un Outcome non conforme ne s'accepte
+  pas par cette demande. `non_conforme` dans la réponse de la passe dit où
+  elle en est (`pending` tant qu'une Outcome Evaluation ou une revue de fin
+  est encore en cours sur la pointe, `raised` une fois la demande partie).
+  **Limites** : ta réponse est enregistrée mais rien ne la lit encore — le
+  convoi reste arrêté, aucun tour ne repart et rien n'est abandonné tant que
+  les tickets suivants (T28, T29) ne sont pas livrés ; si la passe échoue
+  entre l'envoi et son enregistrement, tu reçois le même courrier une
+  seconde fois (une seule ligne dans la liste).
 - **Les bornes se règlent à un seul endroit** : `bounds` de
   `config/delivery-flow.json` — `resumes` (K, 3), `open_planning_exceptions`
-  (2). Changer une valeur change le comportement à la passe suivante ; une
+  (2), `end_rounds` (tours de réparation de fin de Spec, 2). Changer une valeur change le comportement à la passe suivante ; une
   valeur absente ou mal formée est un refus. k (exécutions au vert) se règle
   par projet, dans son profil (`launch.k`).
 - **Relecture des tests restée sans résultat** : la même passe la relance une
@@ -1297,7 +1322,7 @@ Tests : `tests/factory-revive-test.sh`, `tests/factory-boot-supervisor-test.sh`,
 ---
 ## `./bin/spec-end` — la Spec est-elle vérifiée, et sinon que manque-t-il ?
 
-**La porte de fin de Spec** (Spec af-wf4w5r §9, points 1 à 5, T23, T24 et T25). Dans un
+**La porte de fin de Spec** (Spec af-wf4w5r §9 et §8, T23, T24, T25, T27 et T26). Dans un
 convoi qui porte la **marque du nouveau flux**, des tickets tous fermés ne
 font pas une Spec vérifiée : du code rend **trois verdicts mécaniques, tous
 liés au même commit** de la branche d'intégration, la branche protégée
@@ -1337,6 +1362,23 @@ et la revue de code de fin (`./bin/spec-end-review`).
   d'intégration ; un tour de fin est compté (`counters.end_rounds`) et
   `./bin/convoy-advance` publie le seul `repair`. La porte rejoue tout une
   fois ce `repair` fusionné et fermé.
+- **Deux tours de réparation, pas plus** (T26) : les tours de fin sont un
+  seul compteur pour toutes les sources (tests ou fidélité rouges, revue de
+  fin, Outcome Evaluation), borné par `bounds.end_rounds` de
+  `config/delivery-flow.json` (2, sans base mesurée). Un rouge trouvé une
+  fois les tours consommés est enregistré **avec l'arrêt des tours**, sans
+  tour de plus et sans `repair` : la condition rouge le dit, et tu reçois
+  une demande « non conforme » (`./bin/convoy-advance`). Sous ce rouge, la
+  porte refuse en disant qu'elle attend cette demande.
+- **Delivered** (T26) : quand les sept conditions sont vertes sur la même
+  pointe, dossier compris, `run` l'enregistre sur le convoi
+  (`convoy.delivered` dans `./bin/convoy-state show`) et répond
+  `"delivered": true` ; `check` le dit aussi, tant que rien n'a bougé.
+  Jamais avec une condition rouge, sans dossier, sur un dossier généré
+  pendant qu'une condition était rouge, ni pour un commit de plus.
+  **Delivered est un état du convoi, pas une acceptation** : rien n'est
+  fusionné dans la branche protégée, rien n'est fermé, rien n'est accepté à
+  ta place.
 - **Un commit de plus annule tout** : les verdicts sont enregistrés avec
   leur commit (`convoy.spec_end` dans `./bin/convoy-state show`). Dès que la
   branche d'intégration ou la branche protégée bouge, `check` les dit
@@ -1347,8 +1389,12 @@ et la revue de code de fin (`./bin/spec-end-review`).
 - **Limites** : la porte tourne dans la passe de l'ordre (délai de 300 s,
   non mesuré sur un vrai projet) ; pas de pièce scellée pour les tests et la
   fidélité de fin (leur relevé est sur le convoi) ; la porte vérifie, elle
-  n'accepte rien et ne ferme rien ; le compteur de tours n'est pas encore
-  comparé à une borne.
+  n'accepte rien et ne ferme rien (ton acceptation viendra avec un ticket
+  suivant) ; une fois les tours arrêtés, aucune commande ne les relance
+  encore, quelle que soit ta réponse à la demande « non conforme » ; sous
+  un rouge de fin, `check` montre les conditions 2 à 7 « non lancé » au lieu
+  de nommer celle qui est rouge (lis `end_stop` et
+  `./bin/convoy-state show`).
 
 Détail : `docs/SPEC_END.md`.
 
@@ -1388,7 +1434,16 @@ calculé par du code**.
 - **Arrêts** : aucun résultat après une relance, environnement en panne,
   story inobservable — une demande t'est adressée, une fois.
 - **Sorties** : 0 fait ; 1 refus ; 3 état sans règle ; 4 convoi sans marque.
-- **Limites** : pas de borne sur les tours de fin (T26) ; aucun essai avec
+- **Tours de fin bornés** (T26) : une évaluation qui laisse une user story
+  non observée, ou un constat hors ticket à réparer, compte un tour de fin
+  (`counters.end_rounds`, borne 2, compteur commun aux rouges mécaniques et
+  à la revue de fin). Les tours s'arrêtent **avant le deuxième** si le tour
+  précédent n'a pas réduit le nombre de user stories non observées, ou si
+  une user story déjà refusée l'est de nouveau ; sinon à la borne. Arrêtés,
+  les `repair` rédigés ne sont plus publiés et tu reçois une demande « non
+  conforme » avec le lien du dossier (`./bin/convoy-advance`).
+- **Limites** : l'arrêt anticipé ne lit que les user stories non observées,
+  pas les constats hors ticket ; aucun essai avec
   une vraie session d'Evaluator ; le dossier n'est pas généré ici.
 
 Détail : `docs/OUTCOME_EVALUATION.md`.
@@ -1430,12 +1485,18 @@ Ne concerne qu'un convoi qui porte la **marque du nouveau flux**.
   une fois (`./bin/escalation-door list`). Chaque passe garde sa durée et
   les fichiers non relus.
 - **Un tour de fin est compté** par revue défavorable, une fois par pointe
-  (`counters.end_rounds`).
+  (`counters.end_rounds`) — le même compteur que les rouges mécaniques et
+  l'Outcome Evaluation, borné à 2 (`bounds.end_rounds`, T26). Une revue
+  défavorable une fois les tours consommés n'en compte pas : les tours sont
+  arrêtés, ses `repair` rédigés ne sont pas publiés et tu reçois une demande
+  « non conforme » (`./bin/convoy-advance`).
 - **Indépendance** : `show` dit si le relecteur tourne sur le modèle d'un
   auteur, ou si un modèle n'est pas relevé.
 - **Limites** : les constats restent le jugement d'un agent ; la couverture
   est déclarée par le relecteur ; rien ne lève un arrêt de la revue sur sa
-  pointe ; le compteur de tours n'est pas encore comparé à une borne.
+  pointe ; pas d'arrêt anticipé sur les constats de revue : un même constat
+  relevé deux fois de suite coûte un tour, l'arrêt avant la borne n'existe
+  que pour les user stories non observées.
 - **En même temps que l'Outcome Evaluation** : la passe qui rend les trois
   verdicts lance les deux sur le même commit ; aucune n'attend l'autre.
 
@@ -1507,6 +1568,14 @@ nouveau flux**.
   écrit.
 - **Une condition rouge ne refuse pas la page** : elle est produite avec
   « Dossier non conforme » en en-tête et le verdict de chaque condition.
+  C'est le dossier dont le lien accompagne la demande « non conforme »
+  (T26) : quand les tours de réparation de fin sont arrêtés,
+  `./bin/convoy-advance` le fait générer et t'envoie son chemin
+  (`./bin/escalation-door list`). La rubrique 8, « Tours de fin », dit
+  alors l'arrêt : sa cause (tours épuisés, tour qui n'a pas réduit les user
+  stories non observées, même user story refusée deux fois), le commit,
+  l'heure et la précision. La demande elle-même n'y figure pas : elle est
+  écrite après la page et porte son lien.
 - **Un commit de plus le périme** : `check` répond `à jour`, `absent`,
   `périmé` (un commit de plus, ou un relevé qui a changé depuis), `altéré`
   (page ou pièce réécrite à la main) ou `incomplet` (pièce refusée par le

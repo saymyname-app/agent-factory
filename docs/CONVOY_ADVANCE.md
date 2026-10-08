@@ -1,4 +1,4 @@
-# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, T19, T20, T21, T23, Spec af-wf4w5r §0 rules 3 and 5, §4, §5, §6, §7, §8, §9)
+# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, T19, T20, T21, T23, T26, Spec af-wf4w5r §0 rules 3 and 5, §4, §5, §6, §7, §8, §9, §11)
 
 ## Status and purpose
 
@@ -59,6 +59,11 @@ the operator that lift a parking and sends the tickets whose author must
 take them again to a fresh session (T20, « Resumes, their bound, parking and
 the grouped request » below); after the starts it raises or withdraws the
 grouped request of the convoy.
+
+The last step of a pass, run even under a red: when the repair rounds of
+the end of the Spec are stopped, the pass has the « non conforme » dossier
+generated and sends the request to the operator, once per stop (T26, « The
+rounds of the end are bounded » below).
 
 A pass decides from the tracker alone: a second pass on the same state
 starts nothing more, because a started ticket carries its `dispatch` gate
@@ -411,6 +416,7 @@ delivered so far (Spec §8), and no command holds one in its code:
 |---|---|---|---|---|
 | K, resumes of a ticket, every cause together | `bounds.resumes` | 3 | `bin/convoy-state` | at the last one the ticket is parked with its descendants |
 | Planning Exceptions open on a Spec | `bounds.open_planning_exceptions` | 2 | `bin/convoy-advance` | no new ticket of its convoy starts |
+| Repair rounds at the end of a Spec, every source of findings together | `bounds.end_rounds` | 2 | `bin/convoy-state`, in the write that would count one more round | a refusal more counts no round and publishes no repair: the rounds are stopped and a « non conforme » request goes to the operator (T26) |
 
 Each is an integer of at least 1; a missing or malformed one is a refusal
 of the command that reads it (`bounds.<name>` named), never a default. The
@@ -464,8 +470,10 @@ of the convoy carries `spec_end`:
   pass exits 1.
 
 **Red tests or a red fidelity** are recorded by the gate as the red of the
-integration branch, with one round of the end counted. The next pass treats
-it as any red (above): it publishes the one `repair` and starts it. For a
+integration branch, with one round of the end counted — or, the rounds
+consumed, with the stop of the rounds and no repair (T26, below). The next
+pass treats it as any red (above): it publishes the one `repair` and starts
+it. For a
 red fidelity (`integration_red.check` is `fidelity`) the `repair` restores
 an `anchor` and its criterion is the screens of the profile serving every
 prototyped state as the Validated Prototype does.
@@ -507,13 +515,15 @@ its `reason` — an outcome of the pass, which exits 0.
   Evaluator wrote it, is named where it was drafted (`bin/convoy-state
   set-outcome-repair`) and starts like any ticket. The entry carries
   `outcome_repairs` (`{id, key, draft, published, story}` or `{…, finding}`,
-  or `error`). Nothing is published while an evaluation is open. One repair
+  or `error`). Nothing is published while an evaluation is open, nor once
+  the rounds of the end are stopped (T26). One repair
   per draft, whatever the number of passes; one that could not be published
   fails the pass and is tried again by the next.
 
 Once such a repair is merged and closed, the tip moved: the gate renders its
-mechanical verdicts again and the product is evaluated again. No round of
-the end is counted for it (the bound is T26's).
+mechanical verdicts again and the product is evaluated again. The round is
+counted when the evaluation that refuses the tip is recorded, not when its
+repair is published (T26, below).
 
 ## Test reviews left without result (T13)
 
@@ -559,6 +569,10 @@ outcome of the pass, and the next pass stops the review and raises it to the
 operator. A settlement that could not run, or a repair that was published
 but could not be named on its finding, is an `error`: the pass exits 1.
 
+No draft of the review is published once the rounds of the end are stopped,
+nor while the Outcome Evaluation of the same tip is still open: what it
+hands in may stop the rounds (T26, below).
+
 ## Answers
 
 Every answer is one JSON object on stdout: the ceiling, the sessions counted
@@ -583,14 +597,19 @@ measured an interface ticket, `ticket_end` when the gate settled merged
 tickets, `item_repairs` when the pass published the repair of tracked
 elements, `spec_end` when it ran the end-of-Spec gate (T23),
 `outcome_repairs` when it published what the Evaluator of the end drafted,
-`outcome_evaluation` when it settled the Outcome Evaluation (T24) and
-`end_review` when it settled the end code review (T25). A stopped convoy carries `signal`,
+`outcome_evaluation` when it settled the Outcome Evaluation (T24),
+`end_review` when it settled the end code review (T25), `evidence_pack`
+when it had the pack generated (T27) and `non_conforme` while the rounds of
+the end are stopped and their request has not reached the operator (T26:
+`{action: raised, reason, commit, page, digest, bead}`, `{action: pending,
+reason}`, or `error`). `spec_end` passes `delivered` and `end_stop` through
+as the gate answered them. A stopped convoy carries `signal`,
 `unruled` (the anomalies) and `incident`.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, or a repair the Evaluator of the end drafted could not be published |
+| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, or the « non conforme » request of stopped rounds could not be raised or recorded |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
@@ -810,10 +829,102 @@ vérifié » cannot be filled, the Spec cannot be read — fails the pass, named
 and is tried again by the next. On a state whose pack holds, nothing is
 generated and the entry has no `evidence_pack`.
 
-The pass generates no pack while a condition before it is red: the
-« non conforme » page is generated by the command itself
-(`bin/evidence-pack generate`), for the request T26 raises.
+The pass generates no conforming pack while a condition before it is red.
+The one pack it generates then is the « non conforme » dossier of a convoy
+whose rounds of the end are stopped (T26, below).
 
 `tests/convoy-advance-test.py` covers it: the pass that finds the six
 conditions met has the pack generated on their commit, the gate then passes
 its seven conditions in that same pass, and the next pass generates nothing.
+
+## The rounds of the end are bounded, then a « non conforme » request (T26)
+
+Spec §8 (« Tours de réparation en fin de Spec, toutes sources : 2, puis
+demande « non conforme » à Benjamin »), §9, §11, user story 61. The rounds
+are counted and stopped by `bin/convoy-state`, in the write that records
+each refusal of a tip (`docs/CONVOY_STATE.md`, « The rounds of the end »):
+one counter for the mechanical reds, the end review and the Outcome
+Evaluation, the bound `bounds.end_rounds` (2), and two early stops on the
+user stories an Outcome Evaluation did not observe (a round that did not
+reduce their number, a story refused twice). The pass only reads the result,
+`convoy.end_stop`.
+
+**While `end_stop` is set, no repair of the end is published**, whatever
+the number of passes:
+
+- the red of the integration branch gets no `repair`: the red stays
+  recorded, the convoy stays stopped by it (`stop.reason: integration_red`,
+  `repair: null`) and nothing starts;
+- the repairs the Evaluator of the end drafted stay drafts
+  (`outcome_repairs` absent);
+- so do those of the end review (`end_review.repairs` absent). They are
+  also held while the Outcome Evaluation of the same tip is open, so that a
+  repair is never published by the pass just before the evaluation stops
+  the rounds.
+
+**The request, once per stop.** As its last step, under a red too, the pass
+settles the stop:
+
+1. while an Outcome Evaluation or an end review is still open on the tip,
+   it waits — `non_conforme: {action: pending, reason}` — so that the
+   dossier holds what they hand in;
+2. it runs `bin/evidence-pack generate` on the refused tip: the page says
+   « Dossier non conforme » in its header and the stop in its rubric 8
+   (`docs/EVIDENCE_PACK.md`). A pack that comes out conforming is refused:
+   no request is sent;
+3. it sends the request through `bin/escalation-door benjamin <convoy
+   bead>`, blocking: `quoi` is « Demande « non conforme » — convoi X :
+   <cause> » (tours de réparation de fin de Spec épuisés / un tour de
+   réparation n'a pas réduit les user stories non observées / la même user
+   story est refusée deux fois), `pourquoi` the `detail` of the stop, `lien`
+   the page of the pack, and three options — « Relancer un tour de
+   réparation », « Retourner à la planification », « Abandonner ».
+   « Accepté » is never one of them (Spec §11): a non-conforming Outcome is
+   not accepted through this request;
+4. it records the request on the stop (`bin/convoy-state end-stop-raised`),
+   and answers `non_conforme: {action: raised, reason, commit, page, digest,
+   bead}`.
+
+**The link of the dossier: `lien`, a field of the escalation door.**
+`bin/escalation-door benjamin <bead> '<json>'` takes, beside `quoi`,
+`pourquoi`, `que_faire`, `langue` and `bloquant`, an optional `lien`: the
+dossier the operator reads to decide. It is one non-empty line of any
+length — not held to the 140 characters of the other fields, a path is
+longer — and a value on several lines or empty refuses the request
+(« champ « lien » doit être une ligne de texte non vide »). The door stores
+it as `gc.escalation_lien`, mails it as a `DOSSIER:` line above `EVIDENCE:`,
+and `bin/escalation-door list` prints it on the request's own line:
+`<bead> — <quoi> — dossier : <lien>`. The link belongs to one request: a
+later request without `lien` on the same bead resets it (`none`, printed by
+nothing), and a bead that never carried one gets no such field. The
+« non conforme » request is its one caller so far
+(`tests/escalation-door-test.sh`).
+
+Once `end_stop.request` is written the pass does nothing more about the
+stop and the entry has no `non_conforme`. An error at any of these steps is
+`non_conforme.error`: the pass exits 1 and the next one tries again. No
+agent writes the dossier, the request or its wording.
+
+**What it leaves open.**
+
+- Nothing reads the operator's answer yet: no command withdraws `end_stop`,
+  so a stopped convoy stays stopped whatever option is taken. Acting on the
+  three options is T28 and T29's.
+- A pass that fails between the door and `end-stop-raised` sends the request
+  again at the next pass: the bead carries one request, the operator gets a
+  second mail.
+- The dossier is generated on the tip as it stands when the pass settles
+  the stop; a tip that moved since the stop (the protected branch taken up)
+  gives a dossier on the newer commit, still « non conforme ».
+
+`tests/convoy-stops-fixture-city-test.py` covers it on the graph of the
+Fixture City, with the real gate, patch door, pack generator and escalation
+door: two rounds consumed and a tip refused once more — no third repair,
+one request on the operator's list with the link of the dossier and three
+options, nothing more written by later passes; a round that does not reduce
+the stories not observed and a story refused twice, both stopped before the
+second round; a round that reduces them, whose second round starts; a
+mechanical red and a finding of the end review sharing the two rounds; a
+mechanical red found once the rounds are consumed, left without repair, the
+request raised under the red. No isolated-city trial runs it under the real
+order, and no real convoy reached it.
