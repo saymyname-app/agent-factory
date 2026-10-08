@@ -636,6 +636,13 @@ stop being long tests, and run on every pull request again.
 outside the list runs everything, any doubt too) and the blindfold (a long
 test that opens or lists an area fails the run).
 
+Measured 2026-10-08 (`./bin/ci-minutes`, Paris times):
+
+| Run | Billed minutes |
+|---|---|
+| Full run before the change (06:49 to 07:17) | 46 to 52 |
+| Full run with the blindfold on, the two runs of pull request #441 (07:24, 08:42) | 50 and 47: the blindfold costs nothing measurable, and its nested namespaces start on a GitHub runner |
+
 Adding an area: a place pull requests often change alone, one line in the
 list; the pull request that adds it is a full run and says at once whether a
 long test reads it.
