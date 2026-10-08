@@ -576,12 +576,24 @@ the Factory does not hold, and the run `timing` API answers 0.
 | 2026-10-07 | 46 | 1,546 | 13 | 119 | 16 min (01:00) to 50 min (20:00) |
 | 2026-10-08, before this change | | | | about 230 (same mix of runs as 10-07) | 63 to 72 min, green after 18 to 20 min |
 | 2026-10-08, after (runs of PR #437) | | | | about 100 (same mix) | 50 min, green after 15 min |
+| 2026-10-08, measured (the whole day) | 70 | 2,656 | 31 | 86 | 43 to 49 min from 15:07; billed nothing from 19:07 (the host's own runner) |
 
 On 2026-10-07 a merged pull request cost 3.5 runs: 2.5 on the pull request
 (a branch is often pushed twice in a minute, then caught up with `main`) and
 one on `push` after the merge. After the change it costs the 2.5 pull request
 runs at 50 minutes, less the replaced runs that are now cancelled: a little
-over half less. Re-measure with `./bin/ci-minutes` on a full day.
+over half less.
+
+Measured on 2026-10-08 instead of projected (runs started and pull requests
+merged in each window): 123 billed minutes per merged pull request until
+13:56 (2,218 minutes, 18 merged), then 63 from 13:56 to 19:07 (438 minutes,
+7 merged), once reduced runs (af-5mw6z0) and cheaper tests (af-xhryl7, on
+`main` at 15:50) were in. The morning stayed above the projection of about
+100: a full run went from 50 to 59-69 minutes when tests were merged and the
+lots went uneven, and three sessions pushed CI changes run after run. No
+full day exists with these changes on GitHub's runners: from 19:07 Factory
+CI runs on the host's own runner and is billed nothing ("Factory CI on the
+host's own runner" below), so that window of 7 pull requests is all there is.
 
 | Cause | Measured share | What was done |
 |---|---|---|
@@ -589,7 +601,7 @@ over half less. Re-measure with `./bin/ci-minutes` on a full day.
 | A run on a commit already replaced by a newer one kept going. | 16% of pull request minutes on 10-06, 30% on 10-07 | One `concurrency` group per pull request, `cancel-in-progress`. |
 | Each runner ran one test file at a time on its two cores. | Two files at once need 1.3 to 1.4 times fewer runner seconds, not 2: two long files side by side slow each other (`ticket-evaluation-test.py`: 481 s next to short files, 824 s next to `code-review-test.py`). | `bin/ci-run-tests --jobs "$(nproc)"`. |
 | The lots were dealt by file size, which does not follow duration (`spec-integration-test.py`: 908 lines, 628 s; `convoy-state-test.py`: 2,978 lines, 273 s). The job named `Tests` is billed while it waits for the longest lot. | 8 to 11 minutes of waiting per run with four lots by size; 12 with two | Lots dealt by the seconds each file took in a real run: `config/ci-test-seconds.tsv`, written by `./bin/ci-test-seconds`. Still 6 minutes of waiting on the first run: runners are not equally fast. |
-| The tests themselves grew: 391 s of test time on 10-06 at 03:00, 3,284 s on 10-08 at 01:40. Fourteen files of the new delivery flow (`ticket-evaluation`, `spec-integration`, `convoy-advance`, `convoy-state`, `code-review`, `correction-round`, ...) are 88% of it. One of them, `tests/convoy-state-test.py`, starts 5,404 Python processes (2,013 calls of `bin/convoy-state`, 3,391 of the fake `gc`), 40 to 90 ms each. | The reason a run went from 7 to 65 minutes | Each line of `bin/ci-run-tests` ends with the seconds the file took, so the next growth is visible in the job log. Since af-xhryl7 each start costs less, with every assertion kept: the code of `bin/convoy-state` is the module `lib/convoy_state.py` (Python compiles a program given by path on every start and keeps the compiled form only of what it imports), `bin/evidence-capture` loads its HTTP client only for a screenshot, and the fake `gc` of the tests starts without `site`. Measured on the host, the fourteen files four at once: 3,289 s of processor time before, 2,006 s after; another battery ran during part of the first pass, so the gain is between 23% (`tests/convoy-state-test.py` alone, old and new side by side) and 39%. Still the largest share: about 1% of the processes of a file are the tool it tests, the rest builds a finished ticket again for every test. |
+| The tests themselves grew: 391 s of test time on 10-06 at 03:00, 3,284 s on 10-08 at 01:40. Fourteen files of the new delivery flow (`ticket-evaluation`, `spec-integration`, `convoy-advance`, `convoy-state`, `code-review`, `correction-round`, ...) are 88% of it. One of them, `tests/convoy-state-test.py`, starts 5,404 Python processes (2,013 calls of `bin/convoy-state`, 3,391 of the fake `gc`), 40 to 90 ms each. | The reason a run went from 7 to 65 minutes | Each line of `bin/ci-run-tests` ends with the seconds the file took, so the next growth is visible in the job log. Since af-xhryl7 each start costs less, with every assertion kept: the code of `bin/convoy-state` is the module `lib/convoy_state.py` (Python compiles a program given by path on every start and keeps the compiled form only of what it imports), `bin/evidence-capture` loads its HTTP client only for a screenshot, and the fake `gc` of the tests starts without `site`. Measured on the host, the fourteen files four at once: 3,289 s of processor time before, 2,006 s after; another battery ran during part of the first pass, so the gain is between 23% (`tests/convoy-state-test.py` alone, old and new side by side) and 39%. Billed on GitHub's runners: a full run went from 59 to 69 minutes (62 at 15:02) to 43 to 49 (six complete runs from 15:07 to 18:18), 23 to 31% less than the run of the same hour. Still the largest share: about 1% of the processes of a file are the tool it tests, the rest builds a finished ticket again for every test. |
 | A change to docs only ran every test. | 4 of 51 merged PRs | Since af-5mw6z0 it runs without the long tests, which do not read the docs; the tests that do (catalogues, registration, prompts) are short and still run. See "Long tests left out" below. |
 
 `tests/ci-workflow-cost-test.sh` fails if the workflow runs on `push` again,
@@ -646,10 +658,12 @@ Measured 2026-10-08 (`./bin/ci-minutes`, Paris times):
 | Full run from 11:18, after the tests merged that day | 59 to 69: one lot at 20 minutes against 9 to 15 for the others, `config/ci-test-seconds.tsv` is stale ("Keeping the lots even" below) |
 
 38 of the last 100 merged pull requests stay inside the areas, so about 30%
-fewer billed minutes per merged pull request are expected overall. That
-overall figure is not measured yet: it needs a full day of runs after
-2026-10-08, read with `./bin/ci-minutes`. A reduced run still starts the
-four lots and pays the setup and the rounding of each.
+fewer billed minutes per merged pull request were expected overall. Measured
+from 13:56 to 19:07 on 2026-10-08: 2 of the 7 merged pull requests ran
+reduced, 17 billed minutes together instead of about 120. That is about half
+of what the window saved; the other half is the cheaper full run
+(af-xhryl7). One afternoon, not a full day: since 19:07 the runs are on the
+host's own runner, where a reduced run saves host time, not billed minutes.
 
 Adding an area: a place pull requests often change alone, one line in the
 list; the pull request that adds it is a full run and says at once whether a
