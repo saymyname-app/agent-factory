@@ -1,23 +1,28 @@
 ## `./bin/spec-end` — la Spec est-elle vérifiée, et sinon que manque-t-il ?
 
-**La porte de fin de Spec** (Spec af-wf4w5r §9, points 1 à 3, T23). Dans un
+**La porte de fin de Spec** (Spec af-wf4w5r §9, points 1 à 5, T23 et T24). Dans un
 convoi qui porte la **marque du nouveau flux**, des tickets tous fermés ne
 font pas une Spec vérifiée : du code rend **trois verdicts mécaniques, tous
 liés au même commit** de la branche d'intégration, la branche protégée
-reprise. Aucun agent ne les rend.
+reprise. Aucun agent ne les rend. Sur ce même commit, elle lit ensuite
+l'Outcome Evaluation et les constats hors ticket (`./bin/outcome-evaluation`).
 
 ```bash
 ./bin/spec-end check <convoi> --repo <dépôt du projet>                      # où en est la fin de Spec ; n'écrit rien
 ./bin/spec-end run   <convoi> --repo <dépôt du projet> --profile <profil>   # la porte ; lancée par ./bin/convoy-advance
 ```
 
-- **Les trois conditions** (liste `spec-end/v1`), dans l'ordre : 1 registre
+- **Les cinq conditions** (liste `spec-end/v2`), dans l'ordre : 1 registre
   (tickets fermés par la porte de fin de ticket ou retirés, aucun parqué ;
   chaque écart et chaque « non fait » d'un Ticket Handoff « réparé » ou
   « accepté par Benjamin » ; aucune Planning Exception ouverte) ; 2 tests
   verts sur la pointe, branche protégée reprise ; 3 fidélité mécanique verte
-  sur toutes les ancres de tous les états prototypés. Une condition non
-  réunie arrête la porte : les suivantes ne sont pas lancées.
+  sur toutes les ancres de tous les états prototypés ; 4 Outcome Evaluation
+  (chaque user story numérotée « observée avec preuve » sur le produit
+  assemblé, aucun constat hors ticket non classé) ; 5 constats hors ticket
+  tous dans un état final. Une condition non réunie arrête la porte : les
+  suivantes ne sont pas lancées. Seuls les verdicts 1 à 3 sont enregistrés ;
+  4 et 5 sont relus à chaque appel.
 - **Pour savoir ce qui manque** : `check` nomme chaque condition non réunie
   et dit ce qui a été lu.
 - **Un écart ou un « non fait » sans état final** : la porte le nomme et te
@@ -33,7 +38,7 @@ reprise. Aucun agent ne les rend.
   leur commit (`convoy.spec_end` dans `./bin/convoy-state show`). Dès que la
   branche d'intégration ou la branche protégée bouge, `check` les dit
   « périmés » et la porte rejoue tout.
-- **Sorties** : 0 trois verdicts verts sur la pointe actuelle ; 1 refus ou
+- **Sorties** : 0 cinq conditions réunies sur la pointe actuelle ; 1 refus ou
   condition non réunie ; 3 état sans règle ; 4 convoi sans marque. `run` est
   refusé à toute session d'agent.
 - **Limites** : la porte tourne dans la passe de l'ordre (délai de 300 s,

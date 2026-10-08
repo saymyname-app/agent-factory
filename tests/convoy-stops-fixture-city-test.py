@@ -20,8 +20,15 @@ The end of the Spec on the same graph (T23, af-s5uysn; Spec §9, points 1 to
 tests count one round and their one `repair` is published by code, as is the
 `repair` the operator asks for a « non fait » left without a final state.
 
+The Outcome Evaluation on the same graph (T24, af-oy7v3i; Spec §7, §9,
+points 4 and 5): what the Evaluator of the end drafted -- the `repair` of a
+user story it did not observe, the one of a finding « hors ticket » it
+classified « repaired » -- is published by the pass through the real patch
+door, once, and named where it was drafted.
+
 No agent runs here: what an author session leaves (a Planning Exception, a
-closed repair, a Ticket Handoff) is written the way its tools write it."""
+closed repair, a Ticket Handoff) and what the Evaluator of the end hands in
+are written the way their tools write them."""
 
 import importlib.machinery
 import importlib.util
@@ -147,7 +154,9 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
         (config / "project-descriptors" / f"{PROJECT}.json").write_text(json.dumps(descriptor))
         shutil.copy(ROOT / "config" / "delivery-roles.json", config / "delivery-roles.json")
         settings = {"contract": "agent-factory-delivery-flow/v1", "max_sessions": ceiling,
-                    "start": {"formula": "fx-start", "role": None}}
+                    "start": {"formula": "fx-start", "role": None},
+                    "outcome_evaluation": {"formula": "mol-outcome-evaluation", "role": "evaluator", "rig": RIG,
+                                           "timeout_seconds": 3600, "start_timeout_seconds": 15}}
         if bounds is not None:
             settings["bounds"] = bounds
         (config / "delivery-flow.json").write_text(json.dumps(settings))
@@ -369,19 +378,21 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
 
     NOT_DONE = "L'export CSV de la liste n'est pas livré."
 
-    def delivered(self, not_done=None):
+    def delivered(self, not_done=None, out_of_ticket=None):
         """Every ticket of the convoy closed by the ticket-end gate; with
-        `not_done`, T4 left it in its Ticket Handoff. The product is still
-        red from its protected branch on."""
+        `not_done` or `out_of_ticket`, T4 left it in its Ticket Handoff. The
+        product is still red from its protected branch on."""
         self.env["SPEC_END_LOCK_DIR"] = str(self.tmp / "locks")
         self.env["SPEC_END_WORK_DIR"] = str(self.tmp / "gate-work")
-        if not_done:
+        self.env["OUTCOME_EVALUATION_STATE_DIR"] = str(self.tmp / "launches")
+        if not_done or out_of_ticket:
             self.run_ok(STATE, "add-evidence", self.convoy, self.ids["T4"], "--piece", "handoff_records",
                         "--digest", "sha256:" + "ab" * 32, "--commit", self.base)
             handoff = self.tmp / "handoff.json"
             handoff.write_text(json.dumps({
                 "sections": {"done": ["Critère 1 observé sur GET /health."], "deviations": "aucun",
-                             "not_done": [not_done], "out_of_ticket": "aucun"},
+                             "not_done": [not_done] if not_done else "aucun",
+                             "out_of_ticket": [out_of_ticket] if out_of_ticket else "aucun"},
                 "partial": False, "commit": self.base, "records": {"commits": [], "deferral_markers": []}}))
             self.run_ok(STATE, "set-handoff", self.convoy, self.ids["T4"], "--file", handoff)
         for bead_id in self.tickets.values():
@@ -405,7 +416,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
 
         # The gate of the end of the Spec, run by the pass: the tests are red on the tip.
         ending = first["spec_end"]
-        self.assertEqual({"registry": "pass", "tests": "fail", "fidelity": "not_run"}, ending["verdicts"])
+        self.assertEqual({"registry": "pass", "tests": "fail", "fidelity": "not_run", "outcome_evaluation": "not_run", "findings": "not_run"}, ending["verdicts"])
         self.assertEqual(1, ending["end_rounds"])
         control = self.shown()["convoy"]["integration_red"]["control"]
         self.assertIn(REGRESSION, control)
@@ -462,7 +473,7 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
 
         # The registry refuses and names the element: an outcome of the pass, asked of the operator.
         ending = first["spec_end"]
-        self.assertEqual({"registry": "fail", "tests": "not_run", "fidelity": "not_run"}, ending["verdicts"])
+        self.assertEqual({"registry": "fail", "tests": "not_run", "fidelity": "not_run", "outcome_evaluation": "not_run", "findings": "not_run"}, ending["verdicts"])
         self.assertIn(self.NOT_DONE, ending["reason"])
         self.assertEqual([(t4, ["not_done.1"])], [(entry["ticket"], entry["items"]) for entry in ending["requests"]])
         listed = [line for line in self.run_ok(ESCALATION, "list").stdout.splitlines() if line.strip().startswith(f"{t4} ")]
@@ -520,6 +531,113 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
         self.assertEqual("pass", answer["spec_end"]["verdicts"]["registry"])
         self.assertEqual(tracked, sorted(self.tracked()))
         self.assertEqual("closed", self.shown_ticket(t4)["status"])
+
+    # --- the Outcome Evaluation: what the Evaluator of the end drafted is published by code (T24, af-oy7v3i) ---
+
+    FINDING = "La sonde de santé ne dit pas la version servie."
+    EVALUATOR = "delivery-evaluator-fx"
+
+    def drafted(self, what, restores):
+        return {"title": f"Rétablir {what}", "what_it_delivers": f"Le produit assemblé sert {what}.",
+                "restores": restores, "demonstration_line": f"Sur le produit lancé, {what} est servi.",
+                "acceptance_criteria": [{"entry_point": "GET / sur le produit lancé", "observable": f"{what} y est servi",
+                                         "false_if": f"{what} n'y est pas servi"}]}
+
+    def json_file(self, name, content):
+        path = self.tmp / name
+        path.write_text(json.dumps(content, ensure_ascii=False))
+        return path
+
+    def outcome(self):
+        return self.shown()["convoy"]["outcome_evaluation"]
+
+    def evaluation_open(self):
+        """What bin/spec-end and bin/outcome-evaluation settle leave once the
+        mechanical verdicts are green: their record, and the Outcome
+        Evaluation open at their commit on a launched product, sent to an
+        Evaluator session. A process that does nothing stands for the product."""
+        product = subprocess.Popen(("sleep", "600"))
+        self.addCleanup(product.wait)
+        self.addCleanup(product.kill)
+        (self.tmp / "launches").mkdir()
+        (self.tmp / "launches" / "produit.json").write_text(json.dumps({"pid": product.pid}))
+        names = ("registry", "tests", "fidelity")
+        report = self.json_file("spec-end.json", {
+            "version": "spec-end/v2",
+            "conditions": [{"number": number, "name": name, "verdict": "pass", "detail": "vert"}
+                           for number, name in enumerate(names, start=1)]})
+        self.run_ok(STATE, "record-spec-end", self.convoy, "--commit", self.base, "--protected", self.base, "--file", report)
+        request = self.json_file("outcome-request.json", {
+            "roles": {"authors": [], "evaluator": None, "same_provider": None, "other_declared": []},
+            "environment": [{"dataset": None, "address": "http://127.0.0.1:1",
+                             "state_file": str(self.tmp / "launches" / "produit.json")}]})
+        self.run_ok(STATE, "open-outcome-evaluation", self.convoy, "--commit", self.base, "--file", request)
+        self.run_ok(STATE, "launch-outcome-evaluation", self.convoy, "--bead", self.convoy)
+        return self.outcome()["request"]["stories"]
+
+    def evaluated(self, stories, not_observed):
+        """The Evaluator of the end hands in its states: every story observed
+        with its piece, but `not_observed`, for which it drafts a repair."""
+        self.run_ok(STATE, "add-evidence", self.convoy, self.convoy, "--piece", "outcome.produit",
+                    "--digest", "sha256:" + "cd" * 32, "--commit", self.base)
+        states = [{"number": story["number"], "text": story["text"], "evidence": "outcome.produit",
+                   **({"state": "not_observed", "reason": "le produit lancé ne la sert pas"}
+                      if story["number"] == not_observed else {"state": "observed"})} for story in stories]
+        handed = self.json_file("outcome.json", {
+            "commit": self.base, "stories": states, "exploration": "aucun", "fidelity_deviations": "aucun",
+            "repairs": [{"story": not_observed, **self.drafted(
+                f"la user story {not_observed}", {"kind": "user_story", "ref": f"user story {not_observed}"})}],
+            "recorded_by": self.EVALUATOR})
+        self.run_ok(STATE, "record-outcome-evaluation", self.convoy, "--file", handed)
+
+    def test_what_the_evaluator_of_the_end_drafted_is_published_once_by_the_patch_door_and_named(self):
+        t4 = self.ids["T4"]
+        self.delivered(out_of_ticket=self.FINDING)
+        stories = self.evaluation_open()
+        story = stories[-1]["number"]
+        draft = self.json_file("finding-repair.json", self.drafted(
+            "la version servie par la sonde de santé", {"kind": "user_story", "ref": f"user story {story}"}))
+        self.run_ok(STATE, "classify-finding", self.convoy, t4, "--item", "out_of_ticket.1", "--as", "repaired",
+                    "--file", draft, "--recorded-by", self.EVALUATOR)
+
+        # While the evaluation is open, a classification may still change: nothing is published.
+        tracked = sorted(self.tracked())
+        waiting = self.one_pass()
+        self.assertEqual("pending", waiting["outcome_evaluation"]["action"])
+        self.assertNotIn("outcome_repairs", waiting)
+        self.assertEqual(tracked, sorted(self.tracked()))
+
+        self.evaluated(stories, not_observed=story)
+        answer = self.one_pass()
+
+        # Its states are in: one repair per story not observed, one per finding « réparé », written by
+        # the Evaluator, added by the patch door without approval, each named where it was drafted.
+        published = answer["outcome_repairs"]
+        self.assertEqual([{"story": story}, {"finding": f"{t4}:out_of_ticket.1"}],
+                         [{name: entry[name] for name in ("story", "finding") if name in entry} for entry in published])
+        self.assertEqual([("R1", True), ("R2", True)], [(entry["key"], entry["published"]) for entry in published])
+        for entry in published:
+            ticket = self.shown_ticket(entry["id"])
+            self.assertEqual(("repair", publication.MARK, "open"), (ticket["kind"], ticket["mark"], ticket["status"]))
+            self.assertIn(f"user_story : user story {story}", self.beads()[entry["id"]]["description"])
+            self.assertNotIn("approved_by", self.beads()[entry["draft"]]["metadata"])
+        self.assertIn(f"Rétablir la user story {story}", self.beads()[published[0]["id"]]["title"])
+        self.assertEqual([{"story": story, "repair": published[0]["id"]}], self.outcome()["state"]["repairs"])
+        finding = self.shown_ticket(t4)["findings"][0]
+        self.assertEqual(("à réparer", published[1]["id"]), (finding["state"], finding["repair"]))
+        self.assertEqual(sorted(entry["id"] for entry in published), sorted(answer["started"]))
+        # The gate waits for those repairs.
+        self.assertNotIn("spec_end", answer)
+
+        # One repair per element, whatever the number of passes.
+        tracked = sorted(self.tracked())
+        self.assertNotIn("outcome_repairs", self.one_pass())
+        self.assertEqual(tracked, sorted(self.tracked()))
+
+        # Closed by the ticket-end gate, the repair leaves the finding « réparé ».
+        self.run_ok(STATE, "close-ticket", self.convoy, published[1]["id"], "--commit", self.base, "--file", GATE_REPORT)
+        self.assertEqual("réparé", self.shown_ticket(t4)["findings"][0]["state"])
+        self.assertFalse(self.shown()["unruled"])
 
 
 if __name__ == "__main__":

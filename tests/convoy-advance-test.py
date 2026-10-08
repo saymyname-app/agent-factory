@@ -795,6 +795,7 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.run_ok(INTEGRATION_TOOL, "open", CONVOY, "--repo", self.root, "--protected", "main")
         self.code_reviewed("favorable")
         self.evaluated()
+        self.outcome_evaluated()
         return self.git("rev-parse", "main")
 
     def evaluated(self, *plan, timeout_seconds=3600):
@@ -813,6 +814,28 @@ class ConvoyAdvanceTest(unittest.TestCase):
         settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
         settings["evaluation"] = {"formula": "mol-ticket-evaluation", "role": "evaluator", "rig": "fx-rig",
                                   "timeout_seconds": timeout_seconds, "start_timeout_seconds": 15}
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+
+    def outcome_evaluated(self, *plan, timeout_seconds=3600):
+        """The Outcome Evaluation of the assembled product (T24): the Spec
+        of the convoy with its numbered user stories, its settings, and what
+        the Evaluator session of the end does at each launch
+        (tests/fixtures/outcome-evaluation/evaluator), the last one repeated."""
+        state = self.tracker_state()
+        state["beads"].setdefault("fx-spec", {
+            "title": "Spec de la fixture", "status": "open", "issue_type": "task",
+            "description": (ROOT / FIXTURE / "spec.md").read_text(), "metadata": {}})
+        self.tracker.write_text(json.dumps(state))
+        (self.tmp / "outcome-plan.json").write_text(json.dumps(list(plan or ({},))))
+        self.env.update({
+            "OUTCOME_EVALUATION_DISPATCH_DOOR_BIN": str(ROOT / "tests" / "fixtures" / "outcome-evaluation" / "evaluator"),
+            "OUTCOME_EVALUATION_STATE_DIR": str(self.tmp / "launches" / "outcome"),
+            "OUTCOME_EVALUATION_FAKE_LOG": str(self.tmp / "outcome-door.log"),
+            "OUTCOME_EVALUATION_FAKE_PLAN": str(self.tmp / "outcome-plan.json"),
+        })
+        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
+        settings["outcome_evaluation"] = {"formula": "mol-outcome-evaluation", "role": "evaluator", "rig": "fx-rig",
+                                          "timeout_seconds": timeout_seconds, "start_timeout_seconds": 15}
         (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
 
     def stop_every_product(self):
@@ -1993,7 +2016,19 @@ class ConvoyAdvanceTest(unittest.TestCase):
                 self.assertEqual(before, self.tracker.read_bytes())
                 self.assertEqual([], self.slung())
 
-    # --- the end of the Spec: the gate is run by the pass (T23, af-s5uysn) ---------
+    # --- the end of the Spec: the gate is run by the pass (T23, af-s5uysn), and the
+    # --- assembled product evaluated once its mechanical verdicts are green (T24) ---
+
+    GATE = "spec-end/v2"
+    MECHANICAL_GREEN = {"registry": "pass", "tests": "pass", "fidelity": "pass"}
+    NOT_LAUNCHED = {"outcome_evaluation": "not_run", "findings": "not_run"}
+
+    def outcome_of(self, answer, convoy=CONVOY):
+        return next(c for c in answer["convoys"] if c["id"] == convoy).get("outcome_evaluation")
+
+    def outcome_launches(self):
+        log = self.tmp / "outcome-door.log"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
     def spec_end_of(self, answer, convoy=CONVOY):
         return next(c for c in answer["convoys"] if c["id"] == convoy).get("spec_end")
@@ -2024,21 +2059,109 @@ class ConvoyAdvanceTest(unittest.TestCase):
 
         answer = self.advance(CONVOY)
 
+        # The three mechanical verdicts are rendered and recorded; the gate
+        # waits for the Outcome Evaluation of that commit, which is no failure.
         ending = self.spec_end_of(answer)
-        self.assertEqual({"registry": "pass", "tests": "pass", "fidelity": "pass"}, ending["verdicts"])
-        self.assertEqual(("spec-end/v1", tip, True, []),
+        self.assertEqual({**self.MECHANICAL_GREEN, "outcome_evaluation": "fail", "findings": "not_run"}, ending["verdicts"])
+        self.assertEqual((self.GATE, tip, True, [4]),
                          (ending["version"], ending["commit"], ending["replayed"], ending["missing"]))
+        self.assertIn("aucune Outcome Evaluation rendue", ending["reason"])
         self.assertTrue(answer["ok"])
         record = self.convoy_shown()["spec_end"]
-        self.assertEqual((tip, "spec-end/v1"), (record["commit"], record["version"]))
+        self.assertEqual((tip, self.GATE), (record["commit"], record["version"]))
         self.assertEqual({"end_rounds": 0}, self.convoy_shown()["counters"])
         self.assertEqual([], self.escalation_list())
 
-        # The next pass, on the same tip: nothing is replayed, nothing is written.
-        before = self.tracker.read_bytes()
+        # The next passes, on the same tip: nothing is replayed, and once the
+        # launched products are stopped nothing is written.
         again = self.spec_end_of(self.advance(CONVOY))
         self.assertEqual((tip, False), (again["commit"], again["replayed"]))
+        before = self.tracker.read_bytes()
+        self.advance(CONVOY)
         self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_a_pass_has_the_assembled_product_evaluated_once_the_mechanical_verdicts_are_green(self):
+        tip = self.every_ticket_closed()
+
+        first = self.advance(CONVOY)
+
+        # The same pass that rendered the verdicts launches the product at
+        # their commit and sends it to the Evaluator role, once.
+        launched = self.outcome_of(first)
+        self.assertEqual(("launched", tip, 1), (launched["action"], launched["commit"], launched["launches"]))
+        (call,) = self.outcome_launches()
+        self.assertEqual([launched["bead"], "--rig", "fx-rig", "--formula", "mol-outcome-evaluation", "--role", "evaluator"],
+                         call)
+        rounds = self.convoy_shown()["outcome_evaluation"]["rounds"]
+        self.assertEqual([("favorable", tip)], [(entry["outcome"], entry["commit"]) for entry in rounds])
+        self.assertEqual([1], [story["number"] for story in rounds[0]["stories"]])
+
+        # Every story observed with its piece: the five conditions are met.
+        second = self.advance(CONVOY)
+
+        ending = self.spec_end_of(second)
+        self.assertEqual({**self.MECHANICAL_GREEN, "outcome_evaluation": "pass", "findings": "pass"}, ending["verdicts"])
+        self.assertEqual(([], False), (ending["missing"], ending["replayed"]))
+        self.assertNotIn("reason", ending)
+        self.assertIsNone(self.outcome_of(second))
+        self.assertEqual(1, len(self.outcome_launches()))
+        self.assertEqual([], self.convoy_shown()["outcome_evaluation"].get("live") or [])
+        self.assertEqual([], self.escalation_list())
+
+    def test_a_pass_waits_for_an_outcome_evaluation_that_has_not_answered_and_launches_no_other(self):
+        tip = self.every_ticket_closed()
+        self.outcome_evaluated("silent")
+        self.advance(CONVOY)
+        before = self.tracker.read_bytes()
+
+        answer = self.advance(CONVOY)
+
+        pending = self.outcome_of(answer)
+        self.assertEqual(("pending", tip, 1), (pending["action"], pending["commit"], pending["launches"]))
+        self.assertIn("deadline", pending)
+        self.assertTrue(answer["ok"])
+        self.assertEqual(1, len(self.outcome_launches()))
+        self.assertNotIn("outcome_repairs", next(c for c in answer["convoys"] if c["id"] == CONVOY))
+        self.assertEqual(before, self.tracker.read_bytes())
+
+    def test_a_drafted_repair_of_a_story_not_observed_that_the_patch_door_cannot_publish_fails_the_pass(self):
+        self.every_ticket_closed()
+        # The story of the Spec is looked for on a page the assembled product does not serve.
+        self.outcome_evaluated({"stories": {"1": {"path": "/version"}}})
+        self.advance(CONVOY)
+        state = self.convoy_shown()["outcome_evaluation"]["state"]
+        self.assertEqual(("unfavorable", [1]), (state["verdict"], state["not_observed"]))
+        before = self.tickets_snapshot()
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED)
+
+        # This convoy was not published by the publication door: nothing to revise.
+        (refused,) = self.of(answer, "outcome_repairs")
+        self.assertEqual(1, refused["story"])
+        self.assertIn("porte de patch", refused["error"])
+        self.assertFalse(answer["ok"])
+        # The gate names the story; nothing is started, no ticket is touched.
+        ending = self.spec_end_of(answer)
+        self.assertEqual([4], ending["missing"])
+        self.assertIn("user story 1", ending["reason"])
+        self.assertEqual(([], []), (self.started(answer), self.slung()))
+        self.assertEqual(before, self.tickets_snapshot())
+        self.assertEqual(1, len(self.outcome_launches()))
+
+    def test_an_outcome_evaluation_that_cannot_be_settled_fails_the_pass_and_says_why(self):
+        tip = self.every_ticket_closed()
+        settings = json.loads((self.root / "config" / "delivery-flow.json").read_text())
+        del settings["outcome_evaluation"]
+        (self.root / "config" / "delivery-flow.json").write_text(json.dumps(settings))
+
+        answer = self.advance(CONVOY, expect=EXIT_REFUSED)
+
+        self.assertFalse(answer["ok"])
+        self.assertIn("outcome_evaluation", self.outcome_of(answer)["error"])
+        # The mechanical verdicts are rendered all the same; no evaluation is opened.
+        self.assertEqual(tip, self.convoy_shown()["spec_end"]["commit"])
+        self.assertIsNone(self.convoy_shown()["outcome_evaluation"])
+        self.assertEqual([], self.outcome_launches())
 
     def test_a_pass_does_not_run_the_end_of_spec_gate_while_a_ticket_is_open(self):
         self.every_ticket_closed(but=(T3,))
@@ -2068,7 +2191,8 @@ class ConvoyAdvanceTest(unittest.TestCase):
         answer = self.advance(CONVOY)
 
         ending = self.spec_end_of(answer)
-        self.assertEqual({"registry": "fail", "tests": "not_run", "fidelity": "not_run"}, ending["verdicts"])
+        self.assertEqual({"registry": "fail", "tests": "not_run", "fidelity": "not_run", **self.NOT_LAUNCHED},
+                         ending["verdicts"])
         self.assertEqual([1], ending["missing"])
         self.assertEqual([("planning_exception", T1)], [(entry["kind"], entry["ticket"]) for entry in ending["refused"]])
         self.assertIn("Planning Exception ouverte", ending["reason"])
@@ -2077,6 +2201,9 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertTrue(answer["ok"])
         self.assertEqual(before, self.tracker.read_bytes())
         self.assertEqual(tip, self.git("rev-parse", self.INTEGRATION))
+        # No product is launched while the mechanical verdicts are not green.
+        self.assertEqual("waiting", self.outcome_of(answer)["action"])
+        self.assertEqual([], self.outcome_launches())
 
     def test_red_tests_at_the_end_of_the_spec_are_an_outcome_of_the_pass_and_count_one_round(self):
         tip = self.every_ticket_closed()
@@ -2085,7 +2212,8 @@ class ConvoyAdvanceTest(unittest.TestCase):
         answer = self.advance(CONVOY)
 
         ending = self.spec_end_of(answer)
-        self.assertEqual({"registry": "pass", "tests": "fail", "fidelity": "not_run"}, ending["verdicts"])
+        self.assertEqual({"registry": "pass", "tests": "fail", "fidelity": "not_run", **self.NOT_LAUNCHED},
+                         ending["verdicts"])
         self.assertEqual(([2], 1), (ending["missing"], ending["end_rounds"]))
         self.assertIn("condition 2", ending["reason"])
         self.assertTrue(answer["ok"])

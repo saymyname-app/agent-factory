@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """The end-of-Spec gate of a "new flow" convoy: its three mechanical
 conditions, on one tip of the integration branch (T23, af-s5uysn; Spec
-af-wf4w5r §9, points 1 to 3, user stories 56 and 59).
+af-wf4w5r §9, points 1 to 3, user stories 56 and 59), then the Outcome
+Evaluation and the findings « hors ticket » on that same commit (T24,
+af-oy7v3i; points 4 and 5, user stories 57 and 60).
 
 Once every ticket of a convoy that carries the new-flow mark is closed, this
 gate renders three verdicts, in this order, all tied to one commit of the
@@ -15,7 +17,13 @@ integration branch that holds the tip of the protected branch:
   2. tests     the regression command of the project green on the tip, the
                protected branch taken up (bin/spec-integration take-up);
   3. fidelity  the mechanical fidelity check green on every anchor of every
-               prototyped state (bin/prototype-fidelity, every screen).
+               prototyped state (bin/prototype-fidelity, every screen);
+  4. outcome_evaluation
+               once 1 to 3 are green: every numbered user story of the Spec
+               « observée avec preuve » on the assembled product at that
+               commit, and every finding « hors ticket » classified
+               (bin/outcome-evaluation verdict);
+  5. findings  every finding « hors ticket » in a final state.
 
     spec-end check CONVOY --repo DIR
     spec-end run   CONVOY --repo DIR --profile DESCRIPTOR [--timeout SECONDS]
@@ -35,12 +43,15 @@ round of the end of the Spec is counted in the same write, and
 bin/convoy-advance publishes the one `repair` of that red by code. Three
 green verdicts are recorded on the convoy with their commit
 (bin/convoy-state record-spec-end); run again on the same tip, the gate
-replays nothing.
+replays nothing. Conditions 4 and 5 are not recorded by the gate: they are
+read at each call in what the Evaluator of the end handed in, which is tied
+to the commit of the three verdicts; the gate launches no agent
+(bin/convoy-advance has the evaluation settled).
 
 Called by bin/convoy-advance on each of its passes, once every ticket of the
 convoy is closed. Every answer is one JSON object on stdout. Exit status: 0
-the three verdicts are green and current; 1 refused, or a condition is not
-met (named); 3 the convoy is in an "état sans règle"; 4 the convoy does not
+the five conditions are met on the current tip; 1 refused, or a condition is
+not met (named); 3 the convoy is in an "état sans règle"; 4 the convoy does not
 carry the new-flow mark. Details: docs/SPEC_END.md.
 """
 
@@ -68,17 +79,23 @@ STATE_TOOL = BIN / "convoy-state"
 INTEGRATION_TOOL = BIN / "spec-integration"
 FIDELITY_TOOL = BIN / "prototype-fidelity"
 ESCALATION_TOOL = BIN / "escalation-door"
+OUTCOME_TOOL = BIN / "outcome-evaluation"
 OPERATOR_CONFIG_TOOL = BIN / "operator-config"
 
-# The closed list (Spec §9, points 1 to 3), versioned: a change of the list
-# is a new version. bin/convoy-state holds the same names and refuses any
-# other record.
-VERSION = "spec-end/v1"
+# The closed list (Spec §9, points 1 to 5), versioned: a change of the list
+# is a new version. The first three are the mechanical conditions: their
+# verdicts are what the gate records, and bin/convoy-state holds the same
+# names and refuses any other record.
+VERSION = "spec-end/v2"
+MECHANICAL = 3
 CONDITIONS = (
     ("registry", "Registre : tickets fermés par la porte ou retirés, aucun parqué ; écarts et « non faits » dans un "
                  "état final ; aucune Planning Exception ouverte"),
     ("tests", "Tests verts sur la pointe de la branche d'intégration, la branche protégée reprise"),
     ("fidelity", "Fidélité mécanique verte sur toutes les ancres de tous les états prototypés"),
+    ("outcome_evaluation", "Outcome Evaluation : chaque user story observée avec preuve sur le produit assemblé ; "
+                           "constats hors ticket classés"),
+    ("findings", "Constats hors ticket tous dans un état final"),
 )
 PASS, FAIL, NOT_RUN, STALE = "pass", "fail", "not_run", "stale"
 
@@ -506,12 +523,56 @@ def fidelity(repo: Path, profile: str, tip: str, state: dict[str, Any]) -> tuple
                   + (f" ; {taken} écart(s) {FIDELITY_ACCEPTED}" if taken else "")), record
 
 
+# --- conditions 4 and 5: the Outcome Evaluation and the findings « hors ticket » (T24) ----------
+
+
+def finding_line(finding: dict[str, Any]) -> str:
+    head = f"constat hors ticket {finding['number']} du ticket {finding['ticket']} ({finding['id']})"
+    if finding["state"] == "à réparer":
+        repair = finding.get("repair")
+        head += " à réparer, " + (f"son repair {repair} n'est pas encore fermé par la porte de fin de ticket" if repair
+                                  else "son repair rédigé n'est pas encore publié")
+    else:
+        head += f" {finding['state']}"
+    return f"{head} : « {short(finding['text'], 160)} »"
+
+
+def judged_conditions(convoy_id: str, repo: Path, commit: str) -> list[dict[str, Any]]:
+    """Spec §9, points 4 and 5, on the commit of the three mechanical
+    verdicts: what the Evaluator of the end handed in, as code reads it
+    (bin/outcome-evaluation verdict). The gate launches nothing here."""
+    status, answer = tool(OUTCOME_TOOL, "verdict", convoy_id, "--repo", str(repo))
+    findings = answer.get("findings")
+    if status != 0 or not isinstance(answer.get("reasons"), list) or not isinstance(findings, dict):
+        raise Refusal(f"lecture de l'Outcome Evaluation impossible : {refusal_text(answer)}")
+    reasons = list(answer["reasons"])
+    if findings["unclassified"]:
+        named = " ; ".join(finding_line(finding) for finding in findings["unclassified"][:MAX_NAMED])
+        more = f" ; et {len(findings['unclassified']) - MAX_NAMED} autre(s)" if len(findings["unclassified"]) > MAX_NAMED else ""
+        reasons.append(named + more)
+    if reasons:
+        return [condition(4, FAIL, " ; ".join(reasons)),
+                condition(5, NOT_RUN, "non lancé : une condition qui la précède n'est pas réunie")]
+    fourth = condition(4, PASS, (
+        f"{answer.get('observed')} user story(ies) observée(s) avec preuve sur le produit assemblé à {sha(commit)} ; "
+        f"{findings['total']} constat(s) hors ticket classé(s)"))
+    if findings["open"]:
+        named = " ; ".join(finding_line(finding) for finding in findings["open"][:MAX_NAMED])
+        more = f" ; et {len(findings['open']) - MAX_NAMED} autre(s)" if len(findings["open"]) > MAX_NAMED else ""
+        return [fourth, condition(5, FAIL, named + more)]
+    return [fourth, condition(5, PASS, f"{findings['total']} constat(s) hors ticket dans un état final")]
+
+
 # --- check -------------------------------------------------------------------------------------
 
 
 def stale_reason(repo: Path, recorded: dict[str, Any], integration: dict[str, Any], tip: str, protected_tip: str) -> str | None:
-    """None while the recorded verdicts hold: their commit is the tip of the
-    integration branch, and that tip holds the tip of the protected branch."""
+    """None while the recorded verdicts hold: they are those of this list,
+    their commit is the tip of the integration branch, and that tip holds
+    the tip of the protected branch."""
+    if recorded.get("version") != VERSION:
+        return (f"verdicts périmés : rendus sous la liste {recorded.get('version')}, la porte tient la liste {VERSION} ; "
+                "tout est à rejouer")
     if recorded["commit"] != tip:
         return (f"verdicts périmés : rendus au commit {sha(recorded['commit'])}, la branche d'intégration "
                 f"{integration['branch']} est à {sha(tip)} ; un commit de plus annule toutes les vérifications, "
@@ -530,19 +591,30 @@ def cmd_check(args: argparse.Namespace) -> int:
     first, refused = registry_condition(state)
     recorded = state["convoy"].get("spec_end")
     stale = stale_reason(repo, recorded, integration, tip, protected_tip) if recorded else None
+    never = "jamais rendu : la porte de fin de Spec n'a pas encore rendu ce verdict"
     if recorded and stale:
-        conditions = [condition(number, STALE, stale) for number in (1, 2, 3)]
+        conditions = [condition(number, STALE, stale) for number in range(1, len(CONDITIONS) + 1)]
     elif recorded:
         conditions = [first, *({**condition(entry["number"], entry["verdict"], entry["detail"])}
                                for entry in recorded["conditions"][1:])]
     else:
-        never = "jamais rendu : la porte de fin de Spec n'a pas encore rendu ce verdict"
         conditions = [first, condition(2, NOT_RUN, never), condition(3, NOT_RUN, never)]
+    # The three mechanical verdicts green on this tip: what the Outcome
+    # Evaluation is opened on, and what conditions 4 and 5 are read against.
+    green = len(conditions) == MECHANICAL and all(entry["verdict"] == PASS for entry in conditions)
+    if green:
+        conditions += judged_conditions(args.convoy, repo, tip)
+    elif len(conditions) == MECHANICAL:
+        conditions += [condition(number, NOT_RUN, never if not recorded else (
+            "non lancé : une condition qui la précède n'est pas réunie")) for number in (4, 5)]
     missing = [entry["number"] for entry in conditions if entry["verdict"] != PASS]
     answer: dict[str, Any] = {
         "ok": not missing, "convoy": args.convoy, "version": VERSION, "branch": integration["branch"], "commit": tip,
         "protected": {"branch": integration["protected"], "commit": protected_tip},
         "recorded": recorded, "stale": bool(stale), "conditions": conditions, "missing": missing, "refused": refused,
+        "mechanical": {"ok": green, "commit": recorded["commit"] if recorded else None, "reason": (
+            None if green else stale or missing_text(conditions[:MECHANICAL])
+            or "les verdicts mécaniques de fin de Spec n'ont pas encore été rendus sur cette pointe")},
     }
     if stale:
         answer["error"] = f"refus : porte de fin de Spec ({VERSION}) : {stale}"
@@ -575,8 +647,27 @@ def end_rounds(convoy_id: str, repo: Path) -> Any:
     return ((answer.get("convoy") or {}).get("counters") or {}).get("end_rounds")
 
 
+def judged_answer(args: argparse.Namespace, repo: Path, base: dict[str, Any], mechanical: list[dict[str, Any]],
+                  tip: str, protected: dict[str, str], replayed: bool) -> int:
+    """The three mechanical verdicts are green on `tip`: conditions 4 and 5
+    on that commit, and the answer of the gate."""
+    conditions = mechanical + judged_conditions(args.convoy, repo, tip)
+    missing = [entry["number"] for entry in conditions if entry["verdict"] == FAIL]
+    answer = {**base, "ok": not missing, "commit": tip, "protected": protected, "conditions": conditions,
+              "missing": missing, "replayed": replayed, "mechanical": {"ok": True, "commit": tip, "reason": None}}
+    if missing:
+        answer["error"] = (f"refus : porte de fin de Spec ({VERSION}) : les trois verdicts mécaniques sont verts à "
+                           f"{sha(tip)} ; {missing_text(conditions)}")
+    print(json.dumps(answer, indent=2, sort_keys=True, ensure_ascii=False))
+    return EXIT_REFUSED if missing else 0
+
+
 def refused_answer(args: argparse.Namespace, base: dict[str, Any], conditions: list[dict[str, Any]],
                    **extra: Any) -> int:
+    # A condition that is not met stops the gate there: the following ones
+    # are not launched.
+    conditions = conditions + [condition(number, NOT_RUN, "non lancé : une condition qui la précède n'est pas réunie")
+                               for number in range(len(conditions) + 1, len(CONDITIONS) + 1)]
     missing = [entry["number"] for entry in conditions if entry["verdict"] == FAIL]
     print(json.dumps({
         **base, "ok": False, "conditions": conditions, "missing": missing, **extra,
@@ -622,13 +713,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         tip, protected_tip = tips(repo, integration)
         recorded = state["convoy"].get("spec_end")
         if recorded and stale_reason(repo, recorded, integration, tip, protected_tip) is None:
-            print(json.dumps({
-                **base, "ok": True, "commit": tip, "protected": {"branch": protected, "commit": protected_tip},
-                "conditions": [first, *(condition(entry["number"], entry["verdict"], entry["detail"])
-                                        for entry in recorded["conditions"][1:])],
-                "missing": [], "replayed": False,
-            }, indent=2, sort_keys=True, ensure_ascii=False))
-            return 0
+            mechanical = [first, *(condition(entry["number"], entry["verdict"], entry["detail"])
+                                   for entry in recorded["conditions"][1:])]
+            return judged_answer(args, repo, base, mechanical, tip, {"branch": protected, "commit": protected_tip},
+                                 replayed=False)
 
         # 2. One tip: the protected branch taken up, the tests on the result.
         status, taken = tool(INTEGRATION_TOOL, "take-up", args.convoy, "--repo", str(repo), "--profile", args.profile,
@@ -672,11 +760,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             }, ensure_ascii=False), encoding="utf-8")
             state_write("record-spec-end", args.convoy, "--commit", tip, "--protected", protected_tip,
                         "--file", str(report))
-    print(json.dumps({
-        **base, "ok": True, "commit": tip, "protected": {"branch": protected, "commit": protected_tip},
-        "conditions": conditions, "missing": [], "replayed": True,
-    }, indent=2, sort_keys=True, ensure_ascii=False))
-    return 0
+        return judged_answer(args, repo, base, conditions, tip, {"branch": protected, "commit": protected_tip},
+                             replayed=True)
 
 
 # --- command line ------------------------------------------------------------------------------

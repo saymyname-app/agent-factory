@@ -1297,24 +1297,29 @@ Tests : `tests/factory-revive-test.sh`, `tests/factory-boot-supervisor-test.sh`,
 ---
 ## `./bin/spec-end` — la Spec est-elle vérifiée, et sinon que manque-t-il ?
 
-**La porte de fin de Spec** (Spec af-wf4w5r §9, points 1 à 3, T23). Dans un
+**La porte de fin de Spec** (Spec af-wf4w5r §9, points 1 à 5, T23 et T24). Dans un
 convoi qui porte la **marque du nouveau flux**, des tickets tous fermés ne
 font pas une Spec vérifiée : du code rend **trois verdicts mécaniques, tous
 liés au même commit** de la branche d'intégration, la branche protégée
-reprise. Aucun agent ne les rend.
+reprise. Aucun agent ne les rend. Sur ce même commit, elle lit ensuite
+l'Outcome Evaluation et les constats hors ticket (`./bin/outcome-evaluation`).
 
 ```bash
 ./bin/spec-end check <convoi> --repo <dépôt du projet>                      # où en est la fin de Spec ; n'écrit rien
 ./bin/spec-end run   <convoi> --repo <dépôt du projet> --profile <profil>   # la porte ; lancée par ./bin/convoy-advance
 ```
 
-- **Les trois conditions** (liste `spec-end/v1`), dans l'ordre : 1 registre
+- **Les cinq conditions** (liste `spec-end/v2`), dans l'ordre : 1 registre
   (tickets fermés par la porte de fin de ticket ou retirés, aucun parqué ;
   chaque écart et chaque « non fait » d'un Ticket Handoff « réparé » ou
   « accepté par Benjamin » ; aucune Planning Exception ouverte) ; 2 tests
   verts sur la pointe, branche protégée reprise ; 3 fidélité mécanique verte
-  sur toutes les ancres de tous les états prototypés. Une condition non
-  réunie arrête la porte : les suivantes ne sont pas lancées.
+  sur toutes les ancres de tous les états prototypés ; 4 Outcome Evaluation
+  (chaque user story numérotée « observée avec preuve » sur le produit
+  assemblé, aucun constat hors ticket non classé) ; 5 constats hors ticket
+  tous dans un état final. Une condition non réunie arrête la porte : les
+  suivantes ne sont pas lancées. Seuls les verdicts 1 à 3 sont enregistrés ;
+  4 et 5 sont relus à chaque appel.
 - **Pour savoir ce qui manque** : `check` nomme chaque condition non réunie
   et dit ce qui a été lu.
 - **Un écart ou un « non fait » sans état final** : la porte le nomme et te
@@ -1330,7 +1335,7 @@ reprise. Aucun agent ne les rend.
   leur commit (`convoy.spec_end` dans `./bin/convoy-state show`). Dès que la
   branche d'intégration ou la branche protégée bouge, `check` les dit
   « périmés » et la porte rejoue tout.
-- **Sorties** : 0 trois verdicts verts sur la pointe actuelle ; 1 refus ou
+- **Sorties** : 0 cinq conditions réunies sur la pointe actuelle ; 1 refus ou
   condition non réunie ; 3 état sans règle ; 4 convoi sans marque. `run` est
   refusé à toute session d'agent.
 - **Limites** : la porte tourne dans la passe de l'ordre (délai de 300 s,
@@ -1340,6 +1345,47 @@ reprise. Aucun agent ne les rend.
   comparé à une borne.
 
 Détail : `docs/SPEC_END.md`.
+
+---
+
+## `./bin/outcome-evaluation` — le produit assemblé fait-il ce que la Spec demande, story par story ?
+
+**L'Outcome Evaluation et le classement des constats hors ticket** (Spec
+af-wf4w5r §7 et §9 points 4 et 5, T24). Dans un convoi qui porte la **marque
+du nouveau flux**, une fois les trois verdicts mécaniques de `./bin/spec-end`
+verts sur un commit, un Evaluator de fin — contexte neuf, boîte noire, rôle en
+lecture seule — utilise le produit assemblé lancé par du code à ce commit. Il
+rend **un état et une preuve par user story numérotée** ; **le verdict est
+calculé par du code**.
+
+```bash
+./bin/outcome-evaluation show    <convoi>   # états, preuves, repairs rédigés, contradictions ; n'écrit rien
+./bin/outcome-evaluation verdict <convoi>   # le verdict calculé et ses raisons ; n'écrit rien
+```
+
+- **Verdict** : favorable seulement si chaque story est « observée avec
+  preuve » au commit de la porte. Une story manquante ou sans preuve valide
+  fait refuser l'enregistrement.
+- **Story « non observée »** : l'Evaluator rédige un `repair` qui cite la
+  story et ne le publie pas ; `./bin/convoy-advance` le publie par la porte
+  de patch. **Story inobservable** : l'évaluation s'arrête et une question
+  t'est posée (`./bin/escalation-door list`).
+- **Constats hors ticket** : chacun est classé « réparé » (citation de ce
+  qu'il rétablit et repair rédigé obligatoires), « proposition pour
+  Benjamin » (gardé pour le dossier) ou « écarté » (raison obligatoire). Un
+  constat non classé fait refuser la porte de fin de Spec, qui le nomme.
+- **Contradiction** : une story « non observée » dont tous les tickets
+  couvrants étaient « observés » est inscrite par du code (`show`,
+  `contradictions`).
+- **Exploration libre et écarts de fidélité** : enregistrés, sans effet sur
+  le verdict.
+- **Arrêts** : aucun résultat après une relance, environnement en panne,
+  story inobservable — une demande t'est adressée, une fois.
+- **Sorties** : 0 fait ; 1 refus ; 3 état sans règle ; 4 convoi sans marque.
+- **Limites** : pas de borne sur les tours de fin (T26) ; aucun essai avec
+  une vraie session d'Evaluator ; le dossier n'est pas généré ici.
+
+Détail : `docs/OUTCOME_EVALUATION.md`.
 
 ---
 
