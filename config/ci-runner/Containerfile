@@ -34,7 +34,11 @@ RUN cd /tmp \
 
 # GitHub's runner. A runner too old is refused by GitHub: runner-loop passes
 # the latest release and rebuilds the image every week.
-RUN useradd --create-home --uid 1001 runner \
+#
+# The base image's own `ubuntu` user goes: the isolation probe reads any home
+# but the job's own as a home of the host.
+RUN userdel --remove ubuntu \
+ && useradd --create-home --uid 1001 runner \
  && mkdir /runner && cd /runner \
  && curl -fsSL -o runner.tar.gz \
       "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
