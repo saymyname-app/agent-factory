@@ -10,7 +10,11 @@ nothing here reads project-launch's internals.
 
 from __future__ import annotations
 
+import contextlib
+import ctypes
 import json
+import os
+import signal
 import socket
 import subprocess
 import tempfile
@@ -46,6 +50,45 @@ def _port_is_free(port: int) -> bool:
         except OSError:
             return False
         return True
+
+
+PR_SET_CHILD_SUBREAPER = 36  # <linux/prctl.h>
+
+
+@contextlib.contextmanager
+def _adopting_orphans():
+    """While this holds, a process a command of this test starts and leaves
+    behind becomes a child of this test process instead of the host's init
+    (prctl PR_SET_CHILD_SUBREAPER), so `_children()` can name it."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_CHILD_SUBREAPER) refused")
+    try:
+        yield
+    finally:
+        libc.prctl(PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0)
+
+
+def _children() -> list[int]:
+    """The processes whose parent is this test process, and no other: what
+    another battery, a CI job or a live launch runs on the same host at the
+    same moment is not in this list (af-29xv7v)."""
+    me = str(os.getpid())
+    found = []
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = stat.read_text().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue  # gone between the listing and the read
+        if fields[1] == me:
+            found.append(int(stat.parent.name))
+    return sorted(found)
+
+
+def _end(pids: list[int]) -> None:
+    for pid in pids:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
 
 
 class ProjectLaunchTest(unittest.TestCase):
@@ -189,13 +232,25 @@ class ProjectLaunchTest(unittest.TestCase):
     # AC4 ------------------------------------------------------------------------
 
     def test_start_on_a_project_with_no_launch_recipe_is_refused(self):
-        before_pids = subprocess.run(
-            ("pgrep", "-fa", "project-launch"), capture_output=True, text=True
-        ).stdout
+        # "Nothing was started" is read from what this test owns -- the
+        # processes its own command left behind and its own launch record --
+        # never from the host's process list: a CI job or another battery on
+        # the same host runs these same tests at the same moment (af-29xv7v).
+        with _adopting_orphans():
+            self.assertEqual([], _children())
 
-        result, _ = self.start(
-            "--commit", "HEAD", descriptor=NO_LAUNCH_DESCRIPTOR, check=False
-        )
+            # The probe sees a process a command leaves behind, as a real
+            # launch does: without this, an empty list would prove nothing.
+            subprocess.run(("sh", "-c", "sleep 60 &"), stdout=subprocess.DEVNULL, check=True)
+            left_behind = _children()
+            _end(left_behind)
+            self.assertEqual(1, len(left_behind), "the probe does not see a process left behind")
+
+            result, state_file = self.start(
+                "--commit", "HEAD", descriptor=NO_LAUNCH_DESCRIPTOR, check=False
+            )
+            started = _children()
+            _end(started)
 
         self.assertNotEqual(0, result.returncode)
         error = json.loads(result.stdout)
@@ -203,10 +258,8 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertIn("declares no launch recipe", error["error"])
         self.assertIn("agent-factory", error["error"])
 
-        after_pids = subprocess.run(
-            ("pgrep", "-fa", "project-launch"), capture_output=True, text=True
-        ).stdout
-        self.assertEqual(before_pids, after_pids)
+        self.assertEqual([], started, "the refused start left a process behind")
+        self.assertFalse(state_file.exists(), "the refused start wrote a launch record")
 
 
 if __name__ == "__main__":

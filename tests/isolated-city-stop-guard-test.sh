@@ -37,6 +37,7 @@ cat > "$STUB/gc" <<STUBEOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CALLS"
 STUBEOF
+# host-process: allow — the names of the stubs written below, not calls
 for name in tmux pkill pgrep systemctl; do
   printf '#!/usr/bin/env bash\nexit 1\n' > "$STUB/$name"
 done
