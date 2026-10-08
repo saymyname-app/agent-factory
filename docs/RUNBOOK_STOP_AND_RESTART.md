@@ -199,7 +199,7 @@ Si quelque chose ne revient pas, réparez-le **avant** de continuer.
    décrite dans `OPERATIONS.md` (Backup / restore).
 5. Le store legacy retiré le 2026-09-16 est conservé, non supprimé, dans
    `.beads/embeddeddolt.retired-20260916`, avec une archive vérifiée dans
-   `~/factory-cold-backups/`.
+   `~/factory-archive/factory-cold-backups/`.
 
 ---
 
