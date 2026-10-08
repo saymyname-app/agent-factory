@@ -37,6 +37,9 @@ no-socket sandbox of the planning adapters.
 `--inject` makes the walk go wrong in one named way:
     criterion-edited   a criterion is edited on the ticket once its author has finished
     closed-by-hand     the ticket is closed in the tracker, outside the ticket-end gate
+    three-failures     the convoy holds two more tickets (T20, af-y9pw9z): one whose author
+                       session ends three times without a Ticket Exit, and one that waits
+                       for it; the walked ticket waits for neither
 
 `--project` names the project of the fixture the ticket belongs to (T35,
 af-f62cxt); the same events are played on either, each from its own profile:
@@ -65,9 +68,12 @@ EVALUATOR = ROOT / "tests" / "fixtures" / "ticket-evaluation" / "evaluator"
 BROWSER = ROOT / "tests" / "fixtures" / "prototype-fidelity" / "browser"
 
 CONVOY, SPEC, TICKET, RIG = "fx-convoy", "fx-spec", "fx-t1", "fx-rig"
+# With `three-failures`: the ticket whose sessions fail, and the one behind it.
+SICK, BEHIND = "fx-t2", "fx-t3"
+FAILURES = 3
 BRANCH = f"ticket/{TICKET}"
 INTEGRATION = f"integration/{SPEC}"
-INJECTIONS = ("none", "criterion-edited", "closed-by-hand")
+INJECTIONS = ("none", "criterion-edited", "closed-by-hand", "three-failures")
 # What differs from one project of the fixture to the other; everything else
 # of the walk is read by the flow in the profile of the project.
 PROJECTS = {
@@ -136,6 +142,8 @@ class City:
             "CONVOY_STATE_FAKE_TRACKER": str(self.tracker),
             "CONVOY_STATE_LOCK_DIR": str(self.workspace / "locks"),
             "EVIDENCE_STORE_DIR": str(self.workspace / "store"),
+            # The list of the escalation door also counts the pending proposals.
+            "PROPOSAL_DOOR_BIN": str(self.workspace / "proposal-door"),
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_SYSTEM": os.devnull,
         }
@@ -157,7 +165,6 @@ class City:
             "DISPATCH_DOOR_PROVIDER_FAILOVER_BIN": str(self.workspace / "provider-failover"),
             "DISPATCH_DOOR_MEMINFO_FILE": str(self.workspace / "no-meminfo"),
             "ESCALATION_DOOR_LOCK_FILE": str(self.workspace / "escalation-door.lock"),
-            "PROPOSAL_DOOR_BIN": str(self.workspace / "proposal-door"),
             "GC_ESCALATION_RECIPIENT": "human",
             "EVIDENCE_CAPTURE_BROWSER": str(BROWSER),
             "EVIDENCE_FAKE_BROWSER_LOG": str(self.workspace / "browser.log"),
@@ -186,9 +193,9 @@ class City:
     def state(self, *args):
         return json.loads(self.run(BIN / "convoy-state", *args).stdout)
 
-    def ticket(self) -> dict:
+    def ticket(self, ticket_id: str = TICKET) -> dict:
         proc = self.run(BIN / "convoy-state", "show", CONVOY, "--repo", self.root, check=False)
-        return next(entry for entry in json.loads(proc.stdout)["tickets"] if entry["id"] == TICKET)
+        return next(entry for entry in json.loads(proc.stdout)["tickets"] if entry["id"] == ticket_id)
 
     def remember(self, **values) -> dict:
         memo = json.loads(self.memo.read_text()) if self.memo.exists() else {}
@@ -210,11 +217,11 @@ class City:
         (config / "project-descriptors").mkdir()
         (config / "projects" / f"{RIG}.toml").write_text(
             'rig_dir = "."\nrepo = "example/fx"\nprotected_branch = "main"\nrequired_ci = "CI"\n'
-            'sling_target = "fx-worker"\nformulas = "fx-start"\n')
+            'sling_target = "fx-worker"\nformulas = "fx-start,fx-resume"\n')
         shutil.copy(ROOT / "config" / "delivery-roles.json", config / "delivery-roles.json")
         (config / "delivery-flow.json").write_text(json.dumps({
             "contract": "agent-factory-delivery-flow/v1", "max_sessions": 5,
-            "start": {"formula": "fx-start", "role": None},
+            "start": {"formula": "fx-start", "role": None}, "resume": {"formula": "fx-resume", "role": None},
             "code_review": {"formula": "mol-code-review", "role": "reviewer", "rig": RIG, "timeout_seconds": 3600},
             "evaluation": {"formula": "mol-ticket-evaluation", "role": "evaluator", "rig": RIG,
                            "timeout_seconds": 3600, "start_timeout_seconds": 15}}))
@@ -254,6 +261,13 @@ class City:
             SPEC: {"title": "Spec de la fixture", "status": "open", "issue_type": "task",
                    "description": "## User Stories\n\n1. As Benjamin, I want la liste des éléments."},
         }
+        if json.loads(self.memo.read_text())["inject"] == "three-failures":
+            for ticket_id, title, blocks in ((SICK, "ticket dont l'auteur échoue", []), (BEHIND, "ticket qui l'attend", [SICK])):
+                beads[ticket_id] = {
+                    "title": title, "status": "open", "issue_type": "task",
+                    "description": f"## Acceptance criteria\n\n- [ ] Le comportement est inchangé\n\n## Target rigs\n\n{RIG}",
+                    "metadata": {"gc.ticket_kind": "prefactoring"}, "blocks": blocks}
+            beads[CONVOY]["tracks"] = [TICKET, SICK, BEHIND]
         self.tracker.write_text(json.dumps({"beads": beads, "sessions": []}))
         self.state("mark", CONVOY, "--demonstration-line", f"{TICKET}={self.project['line']}",
                    "--user-stories", f"{TICKET}=1", *(("--prototype-fold", TICKET) if interface else ()))
@@ -306,12 +320,35 @@ class City:
         ticket_proofs.finish(env, self.root, CONVOY, TICKET, tip, base, BRANCH)
         return "session:code"
 
+    def failed_session(self, memo: dict) -> str | None:
+        """`three-failures`: one more author session takes the sick ticket
+        and ends without a Ticket Exit, once the order has sent it one."""
+        failures = memo.get("failures", 0)
+        sick = self.ticket(SICK)
+        if failures >= FAILURES or "dispatch" not in (sick.get("gates") or {}) or sick.get("park"):
+            return None
+        entries = (sick.get("resume") or {}).get("entries") or []
+        if failures and (len(entries) < failures or not entries[-1]["launches"]):
+            return None  # the order has not sent the resume of the failure before yet
+        self.state("set-session", CONVOY, SICK, "--session", f"auteur-{failures + 1}")
+        if entries:
+            self.run(FAKE_GC, "bd", "close", entries[-1]["launches"][-1]["bead"], "--reason", "session terminée sans sortie")
+        self.remember(failures=failures + 1)
+        return "session:ended-without-exit"
+
     def advance(self) -> dict:
         memo = json.loads(self.memo.read_text())
         before = self.tracker.read_bytes()
         shown = self.ticket()
         gates, finished = shown.get("gates") or {}, (shown.get("exit") or {}).get("exit") == "finished"
-        if "dispatch" not in gates or shown.get("status") == "closed":
+        failed = self.failed_session(memo) if memo["inject"] == "three-failures" else None
+        if failed:
+            event = failed
+        elif memo["inject"] == "three-failures" and "dispatch" in gates and not self.ticket(SICK).get("park"):
+            # The sick ticket fails before the walked one goes on: the order
+            # counts the failure, then resumes or parks.
+            event = self.order_pass()
+        elif "dispatch" not in gates or shown.get("status") == "closed":
             event = self.order_pass()
         elif not finished:
             event = self.author(shown, memo)

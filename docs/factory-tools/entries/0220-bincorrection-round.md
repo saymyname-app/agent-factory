@@ -41,8 +41,10 @@ nouveau flux**.
   `./bin/correction-round` le fait, par `./bin/dispatch-door` et
   `./bin/convoy-state`.
 - **Limites** : aucun délai sur la session de correction (une session morte
-  sans fermer son bead laisse le ticket en attente ; la reprise est à T20) ;
-  rien ne lève un arrêt.
+  sans fermer son bead laisse le ticket en attente : les reprises de
+  `./bin/convoy-advance` ne la couvrent pas) ; rien ne lève un arrêt, et un
+  ticket arrêté n'est jamais repris. Le tour compte parmi les trois reprises
+  qui parquent un ticket (`docs/CONVOY_ADVANCE.md`).
 
 Détail : `docs/CORRECTION_ROUND.md`.
 

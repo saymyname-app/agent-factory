@@ -75,6 +75,21 @@ bin/ticket-end settle, which closes the ticket once the nine conditions of
 the ticket-end gate are met and leaves it open, with what is missing named,
 otherwise. No agent closes a ticket of a marked convoy.
 
+A pass also counts and bounds the resumes of a ticket (T20, af-y9pw9z; Spec
+§5, §8): a ticket whose author session was interrupted (by its Ticket Exit,
+or ended without one), that the merge returned, whose repair is closed or
+whose request was answered is sent to one fresh author session on the same
+branch, through bin/dispatch-door, and the resume is counted
+(bin/convoy-state open-resume). At its third resume, whatever counted them
+-- these, the correction round, a commit after a verdict -- the ticket is
+parked with every ticket that waits for it and is not restarted; the others
+keep starting. When nothing but parked tickets is left in a convoy, the pass
+raises one request for the convoy, on a bead of its own, through
+bin/escalation-door: it names each parked ticket and its cause. The answer
+of the operator that lifts a parking is read by the pass, which lifts it
+(bin/convoy-state lift-park): the ticket and those behind it are startable
+again, with no hand on a ticket.
+
 A convoy in an "état sans règle" (bin/convoy-state: a ticket started or
 closed outside its door, evidence or a counter that cannot be read) is
 stopped (T34, af-ckwina; Spec §0 rule 5): the pass starts none of its
@@ -94,7 +109,8 @@ withdrawn once the convoy is open again.
 Every answer is one JSON object on stdout. Exit status: 0 the pass is done
 (what it started is listed, possibly nothing); 1 refused or could not run,
 the dispatch door refused a ticket (named under `refused`), an incident
-could not be raised or withdrawn, or the merge pass or the settlement of
+or a grouped request could not be raised or withdrawn, a resume could not
+be sent, or the merge pass or the settlement of
 the test reviews, of the code reviews, of the evaluations, of the
 correction rounds, of the fidelity checks or of the ticket-end gate could
 not run; 3 a
@@ -161,6 +177,15 @@ EVALUATION_STOPS = ("evaluation_no_result", "evaluation_outage")
 # The stop of a ticket still refused after its correction round (bin/correction-round).
 CORRECTION_STOP = "still_refused"
 
+# Spec §5: the exits that park their ticket; what the merge returns.
+PARKING_EXITS = ("planning_exception", "operator_request")
+RETURNED_MERGES = ("conflict", "red")
+# Spec §8, K: a ticket out of resumes is parked for this cause (bin/convoy-state).
+PARK_EXHAUSTED = "resumes_exhausted"
+# The words of the operator for each cause of parking.
+PARK_CAUSES = {PARK_EXHAUSTED: "reprises épuisées", "operator_request": "demande opérateur",
+               "planning_exception": "Planning Exception"}
+
 UNRULED = "état sans règle"
 # bin/escalation-door refuses a field longer than this, or on several lines.
 REQUEST_LINE_MAX = 140
@@ -176,6 +201,10 @@ class Refusal(RuntimeError):
 
 class NotNewFlow(RuntimeError):
     """The convoy does not carry the new-flow mark; carries convoy-state's answer."""
+
+
+class Deferred(RuntimeError):
+    """The dispatch door deferred a launch: the next pass retries it."""
 
 
 # --- reads -------------------------------------------------------------------
@@ -248,6 +277,12 @@ class Convoy:
 
     def __init__(self, convoy_id: str) -> None:
         self.id = convoy_id
+        self.load()
+
+    def load(self) -> None:
+        """Read the convoy again: a pass that parked, lifted or resumed
+        decides the rest from what it wrote."""
+        convoy_id = self.id
         tracked = [
             dep for dep in read_bead(convoy_id).get("dependencies") or []
             if isinstance(dep, dict) and dep.get("dependency_type") == "tracks"
@@ -269,14 +304,24 @@ class Convoy:
         incident = answer["convoy"].get("incident")
         # An unreadable record is one of the anomalies below, not a known incident.
         self.incident: dict[str, Any] | None = incident if isinstance(incident, dict) and "bead" in incident else None
+        grouped = answer["convoy"].get("grouped_request")
+        self.grouped: dict[str, Any] | None = grouped if isinstance(grouped, dict) and "bead" in grouped else None
         self.unruled: list[dict[str, Any]] = [
             *answer["convoy"].get("unruled", []),
             *({"ticket": ticket["id"], **anomaly} for ticket in self.tickets for anomaly in ticket.get("unruled", [])),
         ]
 
+    def ticket(self, ticket_id: str) -> dict[str, Any]:
+        for ticket in self.tickets:
+            if ticket["id"] == ticket_id:
+                return ticket
+        raise Refusal(f"le ticket {ticket_id} n'appartient pas au convoi {self.id}")
+
     def awaiting_a_session(self) -> list[str]:
-        """Tickets started through the door that no session has picked yet."""
-        return [t["id"] for t in self.tickets if started(t) and t.get("status") == "open" and not t.get("exit")]
+        """Tickets started through the door, or sent to a resume, that no
+        session has picked yet."""
+        return [t["id"] for t in self.tickets
+                if (started(t) and t.get("status") == "open" and not t.get("exit")) or resume_on_its_way(t)]
 
     def not_started(self) -> list[dict[str, Any]]:
         return [t for t in self.tickets if t.get("status") == "open" and not t.get("gates") and not t.get("exit")]
@@ -380,21 +425,30 @@ def open_blockers(ticket_id: str) -> list[str]:
     ]
 
 
-def role_sessions() -> dict[str, int]:
+def live_sessions() -> list[dict[str, Any]]:
+    """The sessions that are not over, every convoy and Spec together."""
+    answer = gc_json("session", "list", "--json")
+    sessions = answer.get("sessions") if isinstance(answer, dict) else None
+    if not isinstance(sessions, list):
+        raise Refusal("gc session list n'a pas rendu de liste de sessions : le plafond ne peut pas être compté")
+    return [entry for entry in sessions
+            if isinstance(entry, dict) and not entry.get("closed") and entry.get("state") != "closed"]
+
+
+def session_names(sessions: list[dict[str, Any]]) -> set[str]:
+    """Every name a live session answers to (as bin/ticket-exit reads them)."""
+    return {str(entry[key]) for entry in sessions for key in ("id", "name", "session_name", "alias") if entry.get(key)}
+
+
+def role_sessions(sessions: list[dict[str, Any]]) -> dict[str, int]:
     """Live sessions per delivery role, every convoy and Spec together."""
     try:
         roles = json.loads(ROLES.read_text(encoding="utf-8"))["roles"]
         agents = {role: entry["agent"] for role, entry in roles.items()}
     except (OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
         raise Refusal(f"config/delivery-roles.json illisible : {exc!r}") from exc
-    answer = gc_json("session", "list", "--json")
-    sessions = answer.get("sessions") if isinstance(answer, dict) else None
-    if not isinstance(sessions, list):
-        raise Refusal("gc session list n'a pas rendu de liste de sessions : le plafond ne peut pas être compté")
     counts = dict.fromkeys(agents, 0)
     for entry in sessions:
-        if not isinstance(entry, dict) or entry.get("closed") or entry.get("state") == "closed":
-            continue
         template = str(entry.get("template", "")).rsplit("/", 1)[-1]
         for role, agent in agents.items():
             if template == agent:
@@ -421,7 +475,16 @@ def load_settings() -> dict[str, Any]:
                       "aucun ticket d'un convoi marqué n'est démarré tant qu'elle n'est pas réglée")
     if role is not None and (not isinstance(role, str) or not role):
         raise Refusal(f"start.role invalide dans config/delivery-flow.json : {role!r}")
-    return {"ceiling": ceiling, "formula": formula, "role": role}
+    # What the door receives to send a resumed ticket to a fresh author
+    # session (T20). Absent: nothing is resumed, and a ticket to resume is
+    # refused by the pass, by name.
+    resume = data.get("resume")
+    if resume is not None:
+        if not isinstance(resume, dict) or not isinstance(resume.get("formula"), str) or not resume["formula"] \
+                or not (resume.get("role") is None or (isinstance(resume["role"], str) and resume["role"])):
+            raise Refusal(f"resume invalide dans config/delivery-flow.json : {resume!r} (attendu : formula, role)")
+        resume = {"formula": resume["formula"], "role": resume.get("role")}
+    return {"ceiling": ceiling, "formula": formula, "role": role, "resume": resume}
 
 
 # --- the factory incident of a stopped convoy ---------------------------------
@@ -532,6 +595,301 @@ def settle_incident(convoy: Convoy) -> dict[str, Any] | None:
         return {"error": f"refus : {exc}"}
 
 
+# --- resumes counted and bounded, parked tickets, one grouped request (T20) -----
+
+
+def state_write(*args: str) -> dict[str, Any]:
+    proc = run([str(STATE_BIN), *args])
+    answer = parsed(proc, f"convoy-state {args[0]}")
+    if proc.returncode != 0 or not isinstance(answer, dict):
+        error = answer.get("error", proc.returncode) if isinstance(answer, dict) else proc.returncode
+        raise Refusal(f"convoy-state {args[0]} a échoué : {error}")
+    return answer
+
+
+def at_work(ticket: dict[str, Any]) -> bool:
+    """Started through the door, not closed, neither parked nor stopped:
+    what a resume or the bound of the resumes may bear on. A stopped ticket
+    is never resumed: its sequence failed, it is with the operator."""
+    return started(ticket) and ticket.get("status") != "closed" and not ticket.get("park") and not ticket.get("stop")
+
+
+def resume_on_its_way(ticket: dict[str, Any]) -> bool:
+    """A resume was sent and nobody took the ticket since: its session
+    holds a place under the ceiling. A resume bead closed without the ticket
+    taken is a session that ended: one more interruption, no place."""
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    if not entries or not at_work(ticket) or ticket.get("status") == "open" or ticket.get("exit"):
+        return False
+    last = entries[-1]
+    if not last.get("launches") or last.get("session") != (ticket.get("session") or {}).get("name"):
+        return False
+    return read_bead(last["launches"][-1]["bead"]).get("status") != "closed"
+
+
+def resume_due(ticket: dict[str, Any], alive: set[str]) -> tuple[str, str, str] | None:
+    """What the pass owes a ticket at work, read on the tracker alone:
+    ("new", cause, ref) a fact that asks for a resume not counted yet;
+    ("launch", cause, ref) a counted resume no session was sent for; None
+    nothing, or a session on its way."""
+    exit_record = ticket.get("exit") or {}
+    exit_name, exit_at = exit_record.get("exit"), exit_record.get("at")
+    session = (ticket.get("session") or {}).get("name")
+    entries = (ticket.get("resume") or {}).get("entries") or []
+    last = entries[-1] if entries else None
+    if last and exit_name is None and last.get("session") == session:
+        # Nobody took the ticket since its last resume was counted.
+        if not last["launches"]:
+            return "launch", last["cause"], last["ref"]
+        sent = last["launches"][-1]["bead"]
+        if read_bead(sent).get("status") == "closed":
+            return "new", "interrupted", f"launch:{sent}"
+        return None
+    if exit_name == "interrupted":
+        return "new", "interrupted", f"session:{session}" if session else f"exit:{exit_at}"
+    if exit_name == "technically_blocked":
+        return None if open_blockers(ticket["id"]) else ("new", "unblocked", f"exit:{exit_at}")
+    if exit_name in PARKING_EXITS:
+        # Its parking was lifted: the answer goes to a fresh session.
+        return "new", "answered", f"exit:{exit_at}"
+    if exit_name == "finished":
+        merge = ticket.get("merge") or {}
+        if merge.get("outcome") in RETURNED_MERGES and merge.get("ticket_commit") == ticket.get("tip"):
+            return "new", "returned", f"merge:{merge.get('at')}/exit:{exit_at}"
+        return None
+    if exit_name is None and ticket.get("status") == "in_progress" and session and session not in alive:
+        # Spec §5: a session that died without an exit is read as interrupted.
+        return "new", "interrupted", f"session:{session}"
+    return None
+
+
+def launch_resume(convoy: Convoy, ticket_id: str, cause: str, rig: str, settings: dict[str, Any]) -> str:
+    """Send the resume to one fresh author session: a bead of its own,
+    routed through the dispatch door."""
+    created = gc_json(
+        "bd", "create", f"Reprise — {ticket_id}", "-p", "1", "-t", "task", "-d",
+        f"Resume of ticket {ticket_id} by a fresh author session, on the same branch ({cause}).\n\n"
+        f"convoy: {convoy.id}\nticket: {ticket_id}\ncause: {cause}\n", "--json")
+    if isinstance(created, list):
+        created = created[0] if created else None
+    bead_id = created.get("id") if isinstance(created, dict) else None
+    if not isinstance(bead_id, str) or not bead_id:
+        raise Refusal("gc bd create n'a pas rendu l'identifiant du bead de la reprise")
+    argv = [str(DOOR_BIN), bead_id, "--rig", rig, "--formula", settings["resume"]["formula"]]
+    if settings["resume"]["role"]:
+        argv += ["--role", settings["resume"]["role"]]
+    routed = run(argv)
+    if routed.returncode != 0:
+        run([GC_BIN, "--city", str(ROOT), "bd", "close", bead_id, "--reason",
+             "Reprise non routée par la porte de dispatch."])
+        reason = (routed.stderr.strip() or routed.stdout.strip() or f"exit {routed.returncode}").splitlines()[-1]
+        raise Deferred(reason) if routed.returncode == DOOR_DEFERRED else Refusal(reason)
+    state_write("launch-resume", convoy.id, ticket_id, "--bead", bead_id)
+    return bead_id
+
+
+def park_exhausted(convoy: Convoy, ticket: dict[str, Any]) -> dict[str, Any]:
+    resumes = (ticket.get("counters") or {}).get("resumes")
+    answer = state_write("park", convoy.id, ticket["id"], "--cause", PARK_EXHAUSTED,
+                         "--detail", f"{resumes} reprises, toutes causes confondues : le ticket ne redémarre plus")
+    return {"id": ticket["id"], "cause": PARK_EXHAUSTED, "parked": answer["parked"]}
+
+
+def settle_resumes(convoy: Convoy, settings: dict[str, Any], free: int, alive: set[str], out: dict[str, Any]) -> None:
+    """Spec §8: park the ticket that took its last resume; send the ticket
+    that needs its author again to one fresh session, and count it."""
+    for ticket_id in [t["id"] for t in convoy.tickets if at_work(t)]:
+        try:
+            ticket = convoy.ticket(ticket_id)
+            if ticket.get("resumes_left") == 0:
+                out["parked"].append(park_exhausted(convoy, ticket))
+                convoy.load()
+                continue
+            due = resume_due(ticket, alive)
+            if due is None:
+                continue
+            what, cause, ref = due
+            rig = convoy.rigs.get(ticket_id)
+            if not settings["resume"]:
+                raise Refusal("aucune formule de reprise (resume.formula) dans config/delivery-flow.json : "
+                              f"le ticket attend une reprise ({cause}) que rien ne peut lancer")
+            if not rig:
+                raise Refusal("le ticket ne nomme pas un seul projet connu de config/projects sous « Target rigs »")
+            if len(out["started"]) + len(out["resumed"]) >= free:
+                out["waiting"].append({"id": ticket_id, "reason": f"reprise ({cause}) : plafond N={settings['ceiling']} atteint"})
+                continue
+            if what == "new":
+                state_write("open-resume", convoy.id, ticket_id, "--cause", cause, "--ref", ref)
+                convoy.load()
+                ticket = convoy.ticket(ticket_id)
+                if ticket.get("resumes_left") == 0:
+                    # The third: parked with its descendants, not restarted.
+                    out["parked"].append(park_exhausted(convoy, ticket))
+                    convoy.load()
+                    continue
+            bead_id = launch_resume(convoy, ticket_id, cause, rig, settings)
+            out["resumed"].append({"id": ticket_id, "cause": cause, "bead": bead_id})
+            convoy.load()
+        except Deferred as exc:
+            out["deferred"].append({"id": ticket_id, "reason": str(exc)})
+        except Refusal as exc:
+            out["refused"].append({"id": ticket_id, "reason": str(exc)})
+
+
+def request_answer(bead: dict[str, Any], since: str) -> str | None:
+    """The letter the operator answered a request with
+    (bin/escalation-door repondre), once it is no longer open."""
+    metadata = bead.get("metadata") or {}
+    option, at = metadata.get("gc.escalation_response_option"), metadata.get("gc.escalation_response_at")
+    if metadata.get("gc.needs_benjamin") not in (None, "none") or not isinstance(option, str) or not isinstance(at, str):
+        return None
+    return option if at >= since else None
+
+
+def settle_lifts(convoy: Convoy, out: dict[str, Any]) -> None:
+    """An answer of the operator that lifts a parking is applied by the
+    pass: any answer to the request an operator request left on its ticket;
+    the option that accepts the deviation a Planning Exception asked about;
+    the lifting option of the convoy's grouped request, for the tickets it
+    names. Any other answer leaves the ticket parked."""
+    lifts: list[tuple[str, str, str]] = []
+    for ticket in convoy.tickets:
+        park = ticket.get("park") or {}
+        answer = park.get("answer")
+        if ticket.get("status") == "closed" or park.get("origin") != ticket["id"] or not answer:
+            continue
+        exceptions = ticket.get("planning_exceptions") or []
+        accepted = bool(exceptions) and isinstance(exceptions, list) and exceptions[-1].get("accepted")
+        if park.get("cause") == "operator_request" or (park.get("cause") == "planning_exception" and accepted):
+            lifts.append((ticket["id"], ticket["id"], answer["option"]))
+    try:
+        grouped = convoy.grouped or {}
+        if grouped.get("lifts"):
+            letter = request_answer(read_bead(grouped["bead"]), grouped["at"])
+            if letter == grouped["lift_option"]:
+                for ticket_id in grouped["lifts"]:
+                    park = convoy.ticket(ticket_id).get("park") or {}
+                    if park.get("origin") == ticket_id and park.get("cause") == PARK_EXHAUSTED:
+                        lifts.append((ticket_id, grouped["bead"], letter))
+    except Refusal as exc:
+        out["refused"].append({"id": convoy.id, "reason": str(exc)})
+    for ticket_id, request, letter in lifts:
+        try:
+            answer = state_write("lift-park", convoy.id, ticket_id, "--request", request, "--option", letter)
+            out["lifted"].append({"id": ticket_id, "option": letter, "request": request, "lifted": answer["lifted"]})
+        except Refusal as exc:
+            out["refused"].append({"id": ticket_id, "reason": str(exc)})
+    if lifts:
+        convoy.load()
+
+
+def parked_origins(convoy: Convoy) -> dict[str, list[str]] | None:
+    """Each ticket that parks, with those parked behind it, when nothing
+    but parked tickets is left in the convoy; None otherwise."""
+    left = [t for t in convoy.tickets if t.get("status") != "closed"]
+    if not left or not all(isinstance(t.get("park"), dict) and "origin" in t["park"] for t in left):
+        return None
+    origins: dict[str, list[str]] = {}
+    for ticket in left:
+        origins.setdefault(ticket["park"]["origin"], [])
+        if ticket["park"]["origin"] != ticket["id"]:
+            origins[ticket["park"]["origin"]].append(ticket["id"])
+    return origins
+
+
+def grouped_request(convoy: Convoy, origins: dict[str, list[str]]) -> tuple[dict[str, Any], str, list[str]]:
+    """What the operator reads, once, for the whole convoy: each parked
+    ticket and its cause. Returns the request, the full text and the
+    tickets its first option lifts."""
+    cause_of = {t["id"]: t["park"]["cause"] for t in convoy.tickets if isinstance(t.get("park"), dict)}
+    detail_of = {t["id"]: t["park"].get("detail", "") for t in convoy.tickets if isinstance(t.get("park"), dict)}
+    named, lines = [], []
+    for origin, behind in origins.items():
+        cause = PARK_CAUSES.get(cause_of.get(origin, ""), str(cause_of.get(origin)))
+        named.append(f"{origin} ({cause})" + (f" + {', '.join(behind)}" if behind else ""))
+        lines.append(f"- {origin} : {cause} — {detail_of.get(origin, '')}")
+        lines += [f"- {ticket_id} : parqué derrière {origin} ({cause})" for ticket_id in behind]
+    exhausted = [origin for origin in origins if cause_of.get(origin) == PARK_EXHAUSTED]
+    lift = ({"option": "Relancer les tickets aux reprises épuisées",
+             "consequence": "Chacun repart avec ses reprises ; les tickets qui l'attendent redeviennent démarrables."}
+            if exhausted else
+            {"option": "Répondre à la demande de chaque ticket parqué, sur sa propre ligne",
+             "consequence": "Un ticket repart dès que sa propre demande a la réponse qui lève son parcage."})
+    request = {
+        "quoi": one_line(f"Convoi {convoy.id} : il ne reste que des tickets parqués — {' ; '.join(named)}"),
+        "pourquoi": one_line(f"Plus aucun ticket du convoi {convoy.id} ne démarre ni ne fusionne sans ta réponse"),
+        "que_faire": [lift, {"option": "Laisser ces tickets parqués",
+                             "consequence": "Rien ne démarre ; le convoi reste ouvert, cette demande ne revient pas."}],
+        "langue": operator_language(),
+        "bloquant": True,
+    }
+    text = "\n".join([
+        f"Il ne reste dans le convoi {convoy.id} que des tickets parqués : le script d'avancement "
+        "(bin/convoy-advance) ne peut plus rien y démarrer.", "", "Tickets parqués et cause :", *lines, "",
+        "Un ticket aux reprises épuisées repart quand tu réponds à cette demande par l'option qui le relance. "
+        "Un ticket parqué par sa propre sortie (demande opérateur, Planning Exception) repart quand sa propre "
+        "demande a sa réponse. Aucun ticket ne se reprend à la main."])
+    return request, text, exhausted
+
+
+def parkings_signature(convoy: Convoy) -> str:
+    rows = sorted([t["id"], str(t["park"].get("cause")), str(t["park"].get("origin")), str(t["park"].get("at"))]
+                  for t in convoy.tickets if t.get("status") != "closed" and isinstance(t.get("park"), dict))
+    return "sha256:" + hashlib.sha256(json.dumps(rows, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def record_grouped(convoy: Convoy, bead_id: str, signature: str | None = None, lifts: list[str] | None = None) -> None:
+    argv = ["record-grouped-request", convoy.id, "--bead", bead_id]
+    if signature:
+        argv += ["--signature", signature]
+    if lifts:
+        # The door letters the options in order: the first one lifts.
+        argv += ["--lift-option", "a", *(part for ticket_id in lifts for part in ("--lifts", ticket_id))]
+    state_write(*argv)
+
+
+def settle_grouped_request(convoy: Convoy) -> dict[str, Any] | None:
+    """Spec §8, user story 54: one request per convoy, on a bead of its own,
+    when nothing but parked tickets is left -- never one per ticket; raised
+    once per set of parkings, withdrawn once a ticket may advance again."""
+    try:
+        origins = parked_origins(convoy)
+        if origins is None:
+            if not convoy.grouped:
+                return None
+            bead_id = convoy.grouped["bead"]
+            passed(run([str(ESCALATION_BIN), "clear", bead_id]), "escalation-door clear")
+            if read_bead(bead_id).get("status") != "closed":
+                passed(run([GC_BIN, "--city", str(ROOT), "bd", "close", bead_id, "--reason",
+                            f"Le convoi {convoy.id} n'est plus fait que de tickets parqués."]), "gc bd close")
+            state_write("clear-grouped-request", convoy.id)
+            return {"bead": bead_id, "withdrawn": True}
+        signature = parkings_signature(convoy)
+        if convoy.grouped and convoy.grouped.get("signature") == signature:
+            return {"bead": convoy.grouped["bead"], "raised": False}
+        request, text, lifts = grouped_request(convoy, origins)
+        if convoy.grouped:
+            bead_id = convoy.grouped["bead"]
+            passed(run([GC_BIN, "--city", str(ROOT), "bd", "update", bead_id, "--append-notes", text]), "gc bd update")
+        else:
+            created = gc_json("bd", "create", f"Demande groupée : convoi {convoy.id}, il ne reste que des tickets parqués",
+                              "-p", "1", "-t", "task", "-d", text, "--json")
+            if isinstance(created, list):
+                created = created[0] if created else None
+            bead_id = created.get("id") if isinstance(created, dict) else None
+            if not isinstance(bead_id, str) or not bead_id:
+                raise Refusal("gc bd create n'a pas rendu l'identifiant du bead de la demande groupée")
+            # Recorded before the escalation: a pass that fails after this
+            # point is retried on the same bead, never on a second one.
+            record_grouped(convoy, bead_id)
+        passed(run([str(ESCALATION_BIN), "benjamin", bead_id, json.dumps(request, ensure_ascii=False)]),
+               "escalation-door benjamin")
+        record_grouped(convoy, bead_id, signature, lifts)
+        return {"bead": bead_id, "raised": True}
+    except Refusal as exc:
+        return {"error": f"refus : {exc}"}
+
+
 # --- the pass ----------------------------------------------------------------
 
 
@@ -555,8 +913,9 @@ def dispatch(convoy: Convoy, ticket_id: str, rig: str, settings: dict[str, Any])
     return run(argv)
 
 
-def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int) -> dict[str, Any]:
-    out: dict[str, Any] = {"id": convoy.id, "started": [], "waiting": [], "deferred": [], "refused": []}
+def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int, alive: set[str]) -> dict[str, Any]:
+    out: dict[str, Any] = {"id": convoy.id, "started": [], "waiting": [], "deferred": [], "refused": [],
+                           "resumed": [], "parked": [], "lifted": []}
     incident = settle_incident(convoy)
     if incident:
         out["incident"] = incident
@@ -564,6 +923,10 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int) -> dict[
         out["signal"] = UNRULED
         out["unruled"] = convoy.unruled
         return out
+    # The answers first: a ticket whose parking is lifted is resumed, and
+    # those behind it started, by the same pass.
+    settle_lifts(convoy, out)
+    settle_resumes(convoy, settings, free, alive, out)
     for ticket in convoy.not_started():
         ticket_id = ticket["id"]
         park = ticket.get("park")
@@ -572,7 +935,7 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int) -> dict[
             # ticket it waits for: not started until the parking is lifted.
             out["waiting"].append({"id": ticket_id, "reason": f"parqué ({park.get('cause')}, par {park.get('origin')})"})
             continue
-        if len(out["started"]) >= free:
+        if len(out["started"]) + len(out["resumed"]) >= free:
             out["waiting"].append({"id": ticket_id, "reason": f"plafond N={settings['ceiling']} atteint"})
             continue
         blockers = open_blockers(ticket_id)
@@ -590,6 +953,12 @@ def advance_convoy(convoy: Convoy, settings: dict[str, Any], free: int) -> dict[
         else:
             reason = (proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}").splitlines()[-1]
             out["deferred" if proc.returncode == DOOR_DEFERRED else "refused"].append({"id": ticket_id, "reason": reason})
+    # Once the starts are made: is anything but parked tickets left?
+    if out["started"] or out["resumed"] or out["parked"] or out["lifted"]:
+        convoy.load()
+    grouped = settle_grouped_request(convoy)
+    if grouped:
+        out["grouped_request"] = grouped
     return out
 
 
@@ -748,15 +1117,16 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         for convoy_id in marked_convoys():
             if convoy_id not in convoys:
                 convoys[convoy_id] = Convoy(convoy_id)
-        sessions = role_sessions()
+        live = live_sessions()
+        sessions = role_sessions(live)
         awaiting = sorted(ticket for convoy in convoys.values() for ticket in convoy.awaiting_a_session())
         occupied = sum(sessions.values()) + len(awaiting)
         free = max(0, settings["ceiling"] - occupied)
 
         results = []
         for convoy_id in targets if targets is not None else sorted(convoys):
-            result = advance_convoy(convoys[convoy_id], settings, free)
-            free -= len(result["started"])
+            result = advance_convoy(convoys[convoy_id], settings, free, session_names(live))
+            free -= len(result["started"]) + len(result["resumed"])
             results.append(result)
 
     # Outside the lock of the starts: the tests on a merged result take the
@@ -797,7 +1167,7 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
     # A ticket returned or refused by the merge is an outcome of the pass; a
     # merge pass that could not run is a failure of it.
     refused = any(
-        result["refused"] or "error" in result.get("incident", {})
+        result["refused"] or "error" in result.get("incident", {}) or "error" in result.get("grouped_request", {})
         or any(key in result.get("integration", {}) for key in ("error", "message"))
         or any(key in result.get("test_review", {}) for key in ("error", "refused"))
         or any(key in result.get("code_review", {}) for key in ("error", "refused"))

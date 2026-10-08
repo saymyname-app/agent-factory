@@ -1,4 +1,4 @@
-# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, T19, Spec af-wf4w5r §0 rules 3 and 5, §4, §6, §7, §8, §9)
+# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, T19, T20, Spec af-wf4w5r §0 rules 3 and 5, §4, §5, §6, §7, §8, §9)
 
 ## Status and purpose
 
@@ -35,9 +35,9 @@ when all of this holds:
   Ticket Exit yet (it was never started);
 - the ticket is not parked (T11: a Ticket Exit `planning_exception` or
   `operator_request` parks its ticket and every ticket that waits for it,
-  `docs/TICKET_EXIT.md`); a parked ticket is listed under `waiting`, with
-  its cause and the ticket that parked it, and the tickets that wait for
-  none of them keep starting;
+  `docs/TICKET_EXIT.md`; T20: so does the third resume of a ticket, below);
+  a parked ticket is listed under `waiting`, with its cause and the ticket
+  that parked it, and the tickets that wait for none of them keep starting;
 - every bead it depends on with a `blocks` edge is closed — which is what
   makes the starts follow the dependency order;
 - a place is free under the ceiling N.
@@ -50,6 +50,12 @@ records the `dispatch` gate through `bin/convoy-state`. The project is the
 single one the ticket names under « Target rigs »; a ticket that names none,
 several, or one without a `config/projects/<name>.toml` is not started and
 is reported under `refused`.
+
+Before the starts, and under the same lock, the pass reads the answers of
+the operator that lift a parking and sends the tickets whose author must
+take them again to a fresh session (T20, « Resumes, their bound, parking and
+the grouped request » below); after the starts it raises or withdraws the
+grouped request of the convoy.
 
 A pass decides from the tracker alone: a second pass on the same state
 starts nothing more, because a started ticket carries its `dispatch` gate
@@ -89,16 +95,30 @@ whole Factory, shared between the Specs. A place is taken by:
   convoy or the Spec;
 - each ticket of any open marked convoy that was started through the door
   and that no session has picked yet (still `open`): its author session is
-  on its way.
+  on its way;
+- each ticket a resume was sent for (T20) and that no session has taken
+  since, as long as the bead of that resume is not closed: its fresh author
+  session is on its way.
 
 Between the moment an author session appears and the moment it takes its
 ticket, that ticket counts twice. The count is therefore never below the
 real one: the ceiling can be reached early for a moment, never exceeded.
 
+A resume (T20) takes a place like a start: the pass that sends it counts it
+with its starts, and a ticket to resume when no place is free is listed
+under `waiting` (« reprise (<cause>) : plafond N=… atteint ») and counts
+nothing meanwhile. A resume that was sent keeps its place on the later
+passes until its session takes the ticket (`bin/ticket-author start`); a
+resume whose bead is closed without the ticket taken holds no place: it is
+one more interruption, counted and sent again by that pass.
+
 The settings file also names what the door receives for a start:
 `start.formula` and `start.role`: the author formula `mol-ticket-author`
 and the role `author` (`docs/TICKET_AUTHOR.md`). With no formula the
-command refuses and starts nothing.
+command refuses and starts nothing. `resume.formula` and `resume.role` name
+what the door receives for a resume: the formula `mol-ticket-resume` and the
+role `author`. Without a `resume` entry nothing is resumed: a ticket that
+needs a resume is listed under `refused`, by name, and the pass exits 1.
 
 ## The code of a finished ticket is reviewed before its merge (T14)
 
@@ -192,6 +212,125 @@ asks nothing of the `correction` settings. A launch the door deferred is
 retried by the next pass; a settlement that could not run, or a launch the
 door refused, fails the pass (exit 1).
 
+## Resumes, their bound, parking and the grouped request (T20)
+
+Spec §5 and §8, user stories 52 and 54. On each pass, for each marked convoy
+that is not stopped (« état sans règle »), before the starts and under their
+lock, the pass does three things from the tracker alone; a fourth follows
+the starts.
+
+**1. It lifts the parkings the operator answered** (`settle_lifts`). Read on
+`bin/convoy-state show` (`park.answer`, rendered on the ticket that caused
+the parking only):
+
+| Parked for | Lifted by |
+|---|---|
+| `operator_request` (its own Ticket Exit) | any answer given to the request of that ticket (`bin/escalation-door repondre`) after the parking |
+| `planning_exception` (its own Ticket Exit) | only the option that accepts the deviation: the last Planning Exception of the ticket is `accepted` (it names anchors and was answered by its `accept_option`, `docs/CONVOY_STATE.md`). Any other answer leaves the ticket parked |
+| `resumes_exhausted` | option `a` of the convoy's grouped request (below), for the tickets that request names as lifted |
+
+The lift is `bin/convoy-state lift-park <convoy> <ticket> --request <bead>
+--option <letter>`: the parking is removed from the ticket and from those
+parked behind it — a ticket that still waits for another parked ticket is
+parked behind that one instead — and kept on the ticket under `park_lifts`.
+An exhausted ticket takes its three resumes again, counted from the lift;
+the counter itself is never reset. No hand is put on a ticket.
+
+**2. It parks the ticket that is out of resumes.** A ticket at work (started
+through the door, not closed, neither parked nor stopped) whose
+`resumes_left` is 0 is parked with every ticket that waits for it, directly
+or not: `bin/convoy-state park --cause resumes_exhausted`. The bound is
+`RESUMES_MAX = 3` in `bin/convoy-state` (Spec §8, K), **every cause
+together**: the resumes of this section, the correction round (T17), and a
+commit added after a verdict (T18). It is not a setting of
+`config/delivery-flow.json`, and its value is a starting one with no
+measured basis.
+
+**3. It sends a ticket whose author must take it again to one fresh author
+session** (`settle_resumes`), on the same branch. The cause is read on the
+ticket:
+
+| Cause | Read on the tracker |
+|---|---|
+| `interrupted` | the Ticket Exit is `interrupted`; or the ticket is `in_progress` with no Ticket Exit and its recorded session is not among the live ones (`gc session list`); or the bead of its last resume is closed and no session took the ticket since |
+| `returned` | the Ticket Exit is `finished` and the merge returned the ticket (`merge.outcome` `conflict` or `red`) at the tip of its branch |
+| `unblocked` | the Ticket Exit is `technically_blocked` and no bead it waits for with a `blocks` edge is open any more (its repair is closed) |
+| `answered` | the Ticket Exit is `planning_exception` or `operator_request` and the ticket is no longer parked: its parking was lifted |
+
+The pass counts the resume first — `bin/convoy-state open-resume <convoy>
+<ticket> --cause <cause> --ref <fact>`: one more `resumes`, the record under
+`resume`, and the Ticket Exit it replaces removed, in one tracker write; the
+same fact again counts nothing. If that was the third, the ticket is parked
+as in 2 and **not** restarted: a ticket interrupted three times is restarted
+twice. Otherwise the pass files a bead of its own, « Reprise — <ticket> »,
+whose description carries `convoy:`, `ticket:` and `cause:`, routes it
+through `bin/dispatch-door <bead> --rig <project> --formula
+mol-ticket-resume --role author`, and records it (`bin/convoy-state
+launch-resume`): one session per resume. The session takes the ticket with
+`bin/ticket-author start`, does only what is missing, and leaves by a Ticket
+Exit (`formulas/mol-ticket-resume.formula.toml`).
+
+A ticket to resume that names no single known project, or when the
+settings have no `resume` entry, is listed under `refused` (exit 1) before
+anything is counted or written. A resume the door deferred is listed under
+`deferred`, one the door refused under `refused` (exit 1): the bead that was
+filed is closed, the resume stays counted once, and the next pass sends it
+without counting it again. The tickets of the convoy that wait for no parked
+ticket keep starting in the same pass.
+
+**4. When nothing but parked tickets is left, it raises one request for the
+convoy** (`settle_grouped_request`), after the starts. « Nothing but parked
+tickets » means: every ticket of the convoy that is not closed is parked.
+The pass files one bead, « Demande groupée : convoi … , il ne reste que des
+tickets parqués », whose text names each parked ticket, its cause and the
+tickets parked behind it, and sends it through `bin/escalation-door
+benjamin`: one line on the operator's list for the convoy, never one per
+ticket. It is recorded on the convoy (`bin/convoy-state
+record-grouped-request`, `convoy.grouped_request`) with a signature of the
+parkings: the next passes on the same parkings raise nothing, an answer
+included. If the parkings change, the same bead is completed and raised
+again. Once a ticket of the convoy may advance again, the pass withdraws the
+request (`bin/escalation-door clear`), closes its bead and removes the
+record (`clear-grouped-request`).
+
+The request has two options. Option `a`, when at least one ticket is parked
+for exhausted resumes: « Relancer les tickets aux reprises épuisées » — the
+next pass lifts those tickets, sends the resume that was counted and not
+sent when there is one, and the tickets behind them are startable again. When no ticket is
+exhausted, option `a` only sends the operator to the request of each ticket,
+and lifts nothing. Option `b`, « Laisser ces tickets parqués »: nothing
+starts, the convoy stays open, the request does not come back.
+
+Two decisions taken here:
+
+- **A ticket parked for exhausted resumes raises no request of its own.**
+  The operator hears of it through the grouped request only, that is once
+  nothing else can advance in the convoy; until then it is visible under
+  `parked` in the answer of the pass and under `waiting` afterwards.
+- **A ticket parked by its own Ticket Exit keeps the request that exit
+  raised**, and the grouped request names it too: the operator may see the
+  ticket's line and the convoy's line together. The grouped request never
+  lifts such a ticket; the answer to its own request does.
+
+### What is not resumed
+
+- **A stopped ticket.** Its sequence failed and it is with the operator;
+  it is never read as interrupted, and nothing lifts a stop.
+- **A correction session that dies without closing its bead**
+  (`docs/CORRECTION_ROUND.md`): the ticket still carries its Ticket Exit
+  `finished` and was not returned by the merge, so nothing here reads it as
+  interrupted. It waits.
+- **A ticket the ticket-end gate leaves waiting** — a red fidelity, a
+  missing condition (`docs/TICKET_END.md`).
+- **A Planning Exception that names no anchor**, or that was answered by
+  another option than the one that accepts the deviation: the pass does not
+  lift its parking.
+- **A stopped convoy** (« état sans règle »): nothing is lifted, resumed,
+  parked or grouped until its state is valid again.
+- A session is read as ended from `gc session list` alone, by the names a
+  live session answers to (`id`, `name`, `session_name`, `alias`). There is
+  no timeout on a resume session that stays alive without working.
+
 ## Test reviews left without result (T13)
 
 Once the starts are made, and before the merge, the pass hands each convoy that has
@@ -214,7 +353,13 @@ Every answer is one JSON object on stdout: the ceiling, the sessions counted
 per role, the tickets awaiting a session, and per convoy the tickets
 `started`, `waiting` (with the reason: blocker ids, or the ceiling),
 `deferred` (the door deferred: low memory, hot path held — retried on the
-next pass) and `refused` (the door refused, with its reason), plus
+next pass) and `refused` (the door refused, with its reason), `resumed`
+(T20: each ticket sent to a fresh author session, `{id, cause, bead}`),
+`parked` (each ticket parked for exhausted resumes by this pass, `{id,
+cause, parked}`: itself and those behind it) and `lifted` (each parking
+lifted on an answer, `{id, option, request, lifted}`), plus
+`grouped_request` when the convoy has or had one (`{bead, raised}`, `{bead,
+withdrawn}`, or `error`),
 `integration` when the pass ran a merge, `test_review` when it settled
 reviews of criterion tests, `code_review` when it settled code reviews,
 `evaluation` when it settled Ticket Evaluations, `correction` when a
@@ -226,7 +371,7 @@ tickets. A stopped convoy carries `signal`,
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, tracker), the door refused a ticket, an incident could not be raised or withdrawn, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check or the ticket-end gate could not run |
+| 1 | refused or could not run (settings, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check or the ticket-end gate could not run |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
@@ -357,6 +502,27 @@ T17: the same file covers the settlement of the correction rounds through
 the real `bin/correction-round`: a ticket its review refused sent to one
 author session, a ticket still refused stopped and raised once, a round
 that cannot be sent, a convoy nothing refused.
+
+T20: the same file covers the resumes in the pass, through the real
+`bin/convoy-state`, `bin/dispatch-door` and `bin/escalation-door`: one test
+per cause of resume, a session ended without an exit, a resume bead closed
+without the ticket being taken, a resume that cannot be sent (counted once,
+sent by the next pass), no `resume` setting, the ceiling, a stopped ticket
+never resumed, the third resume parking the ticket and its descendants
+whatever the causes, the unrelated tickets still starting, exactly one
+grouped request naming each parked ticket and its cause, none while a
+ticket that is not parked is left, one for several passes, the answer that
+lifts and the one that leaves the tickets parked, and the answer to the
+request of a ticket its own exit parked. `tests/convoy-state-test.py`
+covers the state commands (`docs/CONVOY_STATE.md`).
+`tests/convoy-advance-isolated-city-test.sh` (local-only) ends on a resume:
+once the third ticket's author session has left by the exit « interrompu »,
+the city's own order counts one resume, routes one bead « Reprise — »
+through the real dispatch door on the real `mol-ticket-resume`, sends no
+second one at the next passes and counts its place under N. The agent of
+that trial is a stub: no session runs the step of the formula, and the
+third resume, the lift of a parking and the grouped request are not part
+of it.
 
 T19: the same file covers the gate in the pass, through the real
 `bin/ticket-end`: a ticket merged and closed by one pass with its nine
