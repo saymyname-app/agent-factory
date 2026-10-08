@@ -38,7 +38,8 @@ image_is_fresh() {
   local created
   created=$("$PODMAN" image inspect "$IMAGE" --format '{{.Created.Unix}}' 2>/dev/null) || return 1
   [ $(( $(date +%s) - created )) -lt $(( IMAGE_MAX_AGE_DAYS * 86400 )) ] || return 1
-  # A new install of its recipe (config/ci-runner/root-install) is a new image.
+  # A changed recipe (config/ci-runner/root-install leaves an unchanged one
+  # its date) is a new image.
   local recipe
   for recipe in "$LIB/Containerfile" "$LIB/entrypoint.sh"; do
     [ ! -e "$recipe" ] || [ "$(stat -c %Y "$recipe")" -le "$created" ] || return 1
