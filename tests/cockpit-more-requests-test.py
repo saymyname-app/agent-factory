@@ -175,6 +175,21 @@ class JournalTest(unittest.TestCase):
         self.assertTrue(any("acceptée" in q for q in quois))
         self.assertTrue(any("rejetée" in q for q in quois))
 
+    def test_journal_reads_a_maintenance_proposal_taken_over_and_a_reconversion(self):
+        # ADR-0029: the door's two new traces read as resolutions by the
+        # proposal door -- what happened, never the bead id as the text.
+        taken = parse_trace_note("af-m1", "PROPOSITION PRISE EN CHARGE par proposal-door — ticket af-bug1")
+        self.assertIsNotNone(taken)
+        self.assertEqual("proposal-door", taken.voie)
+        self.assertIn("prise en charge", taken.quoi)
+        self.assertEqual("proposal-door", taken.par)
+        back = parse_trace_note("af-m1", "PROPOSITION RECONVERTIE en décision par mayor — touche ce que l'opérateur voit")
+        self.assertIsNotNone(back)
+        self.assertEqual("proposal-door", back.voie)
+        self.assertIn("reconvertie en décision", back.quoi)
+        self.assertIn("touche ce que l'opérateur voit", back.quoi)
+        self.assertEqual("mayor", back.par)
+
     def test_non_resolving_cockpit_actions_are_not_journalled(self):
         """acquitter and reporter never close a request at the source --
         their trace comments must not show up as a "resolved" row."""

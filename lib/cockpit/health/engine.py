@@ -122,6 +122,42 @@ def red_ci_lines(red_ci, now):
     return out
 
 
+def maintenance_proposal_lines(maintenance, now):
+    """ADR-0029 point 2: a maintenance proposal « reste visible dans la
+    zone santé ». One informative line (kind ``ok``: nothing is wrong,
+    the factory is correcting a defect it found itself) for all of them,
+    dated from the oldest -- never a bead id, never the Mayor's name."""
+    items = list(maintenance or ())
+    if not items:
+        return []
+    count = len(items)
+    sinces = [item.get("since") for item in items if item.get("since") is not None]
+    suffix = " depuis %s" % _duration_fr(now - min(sinces)) if sinces else ""
+    plural = "s" if count > 1 else ""
+    return [
+        {
+            "kind": OK,
+            "text": "L'usine corrige seule %d défaut%s qu'elle a constaté%s%s." % (count, plural, plural, suffix),
+        }
+    ]
+
+
+def proposal_sans_champs_lines(sans_champs):
+    """ADR-0029 point 4: a proposal no door wrote is an anomaly here, not
+    a request -- « à reformuler par la porte ou à fermer »."""
+    count = len(list(sans_champs or ()))
+    if not count:
+        return []
+    plural = "s" if count > 1 else ""
+    return [
+        {
+            "kind": WARN,
+            "text": "%d proposition%s sans champs lisibles : à reformuler par la porte des propositions, ou à fermer."
+            % (count, plural),
+        }
+    ]
+
+
 def compute_health(
     now,
     commits_behind=None,
@@ -133,6 +169,8 @@ def compute_health(
     loops=(),
     order_failures=(),
     red_ci=(),
+    maintenance_proposals=(),
+    proposals_sans_champs=(),
     extra_lines=(),
     supervisor_unreachable_after_seconds=SUPERVISOR_UNREACHABLE_AFTER_SECONDS,
     factory_stalled_after_seconds=FACTORY_STALLED_AFTER_SECONDS,
@@ -141,7 +179,9 @@ def compute_health(
 
     Returns ``{"ok": bool, "lines": [...]}``. ``ok`` is true only when
     nothing is wrong — never a bare true/false without this list, so the
-    page never shows "tout va bien" without the lines that justify it.
+    page never shows "tout va bien" without the lines that justify it. A
+    line of kind ``ok`` (the factory correcting a defect it found itself,
+    ADR-0029) is information, not a problem: it does not make ``ok`` false.
     """
     lines = []
     for line in (
@@ -156,7 +196,9 @@ def compute_health(
     lines.extend(loop_lines(loops, now))
     lines.extend(order_failure_lines(order_failures, now))
     lines.extend(red_ci_lines(red_ci, now))
+    lines.extend(proposal_sans_champs_lines(proposals_sans_champs))
+    lines.extend(maintenance_proposal_lines(maintenance_proposals, now))
     # What the cockpit's own parts say about themselves (notifications,
     # heartbeat: spec .59, .98), already as health lines.
     lines.extend(extra_lines)
-    return {"ok": not lines, "lines": lines}
+    return {"ok": not any(line.get("kind") != OK for line in lines), "lines": lines}
