@@ -31,6 +31,9 @@
 # and sends it to one fresh author session, through bin/correction-round
 # settle; a ticket still refused after that round is stopped and raised once.
 # A stopped ticket is an outcome, not an order failure.
+# T22 (af-kn83no, §9): a marked convoy closes only by code, on the operator's
+# words. One found closed any other way makes the check pass too, and the
+# pass raises it as the same factory incident; it starts nothing in it.
 [order]
 description = "Starts the ready tickets of every open convoy that carries the new-flow mark, in dependency order and under the factory-wide ceiling N (config/delivery-flow.json), through bin/dispatch-door; has the code of each finished ticket reviewed through bin/code-review and the ticket evaluated on the launched product through bin/ticket-evaluation, sends what they refuse to one author session once and stops a ticket still refused through bin/correction-round, then merges one reviewed and evaluated ticket per convoy into the integration branch of its Spec through bin/spec-integration; stops a convoy in a state without rule and raises one factory incident for it. No agent takes part."
 trigger = "condition"

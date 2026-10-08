@@ -1,4 +1,4 @@
-# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, T19, Spec af-wf4w5r §0 rules 2 and 5)
+# Convoy State (T33, T34, T10, T11, T13, T14, T15, T16, T17, T18, T19, T22, Spec af-wf4w5r §0 rules 2 and 5)
 
 ## Status and purpose
 
@@ -14,7 +14,7 @@ A convoy without the mark is not touched: `show` and every write answer
 published, dispatched, merged and closed exactly as before.
 
 ```bash
-./bin/convoy-state list                                 # the open marked convoys (bin/convoy-advance)
+./bin/convoy-state list                                 # the open marked convoys, and apart those closed outside acceptance or abandon (bin/convoy-advance, bin/planning-artifacts-close)
 ./bin/convoy-state mark af-convoy \
   --demonstration-line af-t1="Sur le produit lancé, …" \
   --user-stories af-t1=4,12 \
@@ -75,6 +75,7 @@ Every answer is one JSON object on stdout.
 | Field | Key | On | Values |
 |---|---|---|---|
 | Mark | `gc.flow.mark` | convoy, ticket | `new-flow/v1` |
+| Manual lifecycle | the label `owned` (Gas City's own: `gc convoy create --owned`) | convoy | added by `mark` in the same write as the mark, and again by a later `mark` if it was lost: `gc convoy check` leaves a convoy that carries it open once all its tickets are closed (T22) |
 | Spec | `gc.spec_id` (read only: written by the publication door) | convoy | the id of the Spec the convoy delivers; the evidence store is filed under it (T09, `docs/EVIDENCE_STORE.md`) |
 | Kind | `gc.ticket_kind` (read only: written by the publication door) | ticket | `vertical_slice`, `prefactoring`, `repair` |
 | Demonstration line | `gc.flow.demonstration_line` | ticket (`vertical_slice`, `repair`) | one non-empty line, written once by `mark` |
@@ -503,6 +504,16 @@ key), never as a default value:
 - any stored value this command would have refused to write, and any
   `gc.flow.*` key it does not know (a field invented outside the command).
 
+A marked **convoy** found closed is one more « état sans règle », carried
+by the convoy itself (`convoy.unruled`, field `status`, « convoi fermé hors
+commande », with the closing reason it carries): a marked convoy closes only
+by code, on the operator's words — accepted or abandoned (Spec §9). No
+command of this flow closes a convoy yet (the acceptance and the abandon
+come with T29 and T30, which add their record here); until then every
+closed marked convoy is reported, and `list` names them under
+`closed_outside`, apart from the open ones under `convoys`. An open marked
+convoy whose tickets are all closed is a valid state.
+
 `convoy-state` only signals. `bin/convoy-advance` stops the convoy and
 raises the factory incident (`docs/CONVOY_ADVANCE.md`); it records that
 incident here with `record-incident` (first the bead alone, then the
@@ -528,3 +539,6 @@ reads the correction round, its counters, the stop and an override back
 from the real tracker (T17). `tests/ticket-end-isolated-city-test.sh`
 (local-only) reads the record of the ticket-end gate and the closed status
 back from the real tracker (T19).
+`tests/convoy-manual-lifecycle-isolated-city-test.sh` (local-only) has the
+real `gc convoy check`, run by the city's own order, leave a marked convoy
+open once all its tickets are closed, and close an unmarked one (T22).
