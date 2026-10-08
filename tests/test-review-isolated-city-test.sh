@@ -33,6 +33,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 PORT="${TEST_REVIEW_TRIAL_PORT:-18399}"
 CEILING=6
 SPEC="fx-spec"
@@ -53,8 +54,7 @@ FIXTURE="tests/fixtures/delivery-fixture-city"
 cleanup() {
   status=$?
   trap - EXIT
-  gc --city "$CITY" stop >/dev/null 2>&1 || true
-  gc supervisor stop >/dev/null 2>&1 || true
+  isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   tmux -L "$(basename "$TRIAL")" kill-server >/dev/null 2>&1 || true
   # The supervisor, the city's managed Dolt server, the stub sessions and a
   # product left launched carry the trial directory on their command line.
