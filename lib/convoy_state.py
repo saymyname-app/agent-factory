@@ -29,8 +29,11 @@ commands (T22), the red of its integration branch with the one repair
 that restores it (T21), and, for the end of the Spec (T23): the final state
 of each deviation and « non fait » of a Ticket Handoff, the Planning
 Exception that names them, the repair that restores them, and the record of
-the end-of-Spec gate, its three verdicts tied to one commit of the
-integration branch. No other script
+the end-of-Spec gate, its three mechanical verdicts tied to one commit of
+the integration branch; and the Outcome Evaluation of the convoy on the
+assembled product at that commit, the fingerprints of its pieces, the
+classification of each finding « hors ticket » of a Ticket Handoff and the
+repairs drafted then published for them (T24). No other script
 invents a `gc.flow.*` field: a missing field is added here.
 
     convoy-state list            (open marked convoys; under `closed_outside`,
@@ -46,6 +49,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state set-counter  CONVOY [--ticket TICKET] --counter NAME --value N
     convoy-state bump-counter CONVOY [--ticket TICKET] --counter NAME [--counter NAME]
     convoy-state add-evidence CONVOY TICKET --piece NAME --digest sha256:HEX --commit SHA
+                              (TICKET is CONVOY for a piece of the end of the Spec)
     convoy-state record-gate  CONVOY TICKET --gate GATE [--commit SHA]
     convoy-state close-ticket CONVOY TICKET --commit SHA --file PATH
     convoy-state set-tdd      CONVOY TICKET --step STEP --commit SHA [--base SHA] [--reason TEXT]
@@ -83,6 +87,14 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state set-integration-repair CONVOY --ticket TICKET
     convoy-state clear-integration-red  CONVOY
     convoy-state record-spec-end CONVOY --commit SHA --protected SHA --file PATH
+    convoy-state open-outcome-evaluation    CONVOY --commit SHA --file PATH
+    convoy-state launch-outcome-evaluation  CONVOY --bead BEAD
+    convoy-state record-outcome-evaluation  CONVOY --file PATH
+    convoy-state release-outcome-evaluation CONVOY --state-file PATH [--state-file PATH] [--withdraw]
+    convoy-state stop-outcome-evaluation    CONVOY (--commit SHA --reason REASON --detail LINE | --raised)
+    convoy-state classify-finding   CONVOY TICKET --item out_of_ticket.N --as repaired|proposal|dismissed
+                                    --recorded-by SESSION [--reason LINE] [--file PATH]
+    convoy-state set-outcome-repair CONVOY --repair TICKET (--story N | --ticket TICKET --item out_of_ticket.N)
 
 Every answer is one JSON object on stdout. Exit status: 0 done; 1 refused or
 could not run (nothing written); 3 `show` or `ticket` found an "état sans
@@ -190,6 +202,8 @@ KEY_RESUME = PREFIX + "resume"
 KEY_PARK_LIFTS = PREFIX + "park_lifts"
 KEY_GROUPED_REQUEST = PREFIX + "grouped_request"
 KEY_SPEC_END = PREFIX + "spec_end"
+KEY_OUTCOME_EVALUATION = PREFIX + "outcome_evaluation"
+KEY_FINDINGS = PREFIX + "findings"
 # Written by the publication door (bin/ticket-graph-publish): the digest of
 # the approved graph the ticket was last published under. Read only here.
 KEY_GRAPH_DIGEST = "gc.graph_digest"
@@ -226,7 +240,10 @@ PROTOTYPE_FIELDS = {"branche": "branch", "commit": "commit", "chemin": "path", "
 # The end-of-Spec gate (T23, Spec §9, points 1 to 3): its closed list of
 # mechanical conditions, versioned. bin/spec-end computes the verdicts; a
 # record that is not this list, all passing, is refused.
-SPEC_END_VERSION = "spec-end/v1"
+SPEC_END_VERSION = "spec-end/v2"
+# A record written under the list of T23 is still read: the gate holds it for
+# outdated and replays everything.
+SPEC_END_VERSIONS = ("spec-end/v1", SPEC_END_VERSION)
 SPEC_END_CONDITIONS = ("registry", "tests", "fidelity")
 SPEC_END_PASS = "pass"
 SPEC_END_RECORDS = ("tests", "fidelity")
@@ -237,6 +254,24 @@ RED_CHECKS = ("regression", "fidelity")
 # fait » an author declared in its Ticket Handoff. It ends repaired or
 # accepted by Benjamin, and code alone reads which.
 ITEM_SECTIONS = ("deviations", "not_done")
+# The findings « hors ticket » of a Ticket Handoff, classified by the
+# Evaluator of the end (T24, Spec §9), and the states code reads for them.
+FINDING_SECTION = "out_of_ticket"
+FINDING_CLASSES = ("repaired", "proposal", "dismissed")
+FINDING_UNCLASSIFIED = "non classé"
+FINDING_TO_REPAIR = "à réparer"
+FINDING_REPAIRED = "réparé"
+FINDING_PROPOSAL = "proposition pour Benjamin"
+FINDING_DISMISSED = "écarté"
+# What a `repair` may restore: the kinds bin/ticket-graph-publish knows.
+RESTORES_KINDS = ("user_story", "anchor", "spec_line", "repo_rule", "red_check")
+REPAIR_DRAFT_FIELDS = ("title", "what_it_delivers", "restores", "demonstration_line", "acceptance_criteria")
+REPAIR_CRITERION_FIELDS = ("entry_point", "observable", "false_if")
+# The Outcome Evaluation (T24, Spec §7): the same states as a Ticket
+# Evaluation, one per numbered user story; its two non-blocking sections.
+OUTCOME_OUTCOMES = ("favorable", "repair", "planning_exception", "environment_outage")
+OUTCOME_SECTIONS = ("exploration", "fidelity_deviations")
+OUTCOME_STOPS = ("outcome_evaluation_no_result", "outcome_evaluation_outage", "story_unobservable")
 ITEM_OPEN = "ouvert"
 ITEM_REPAIRED = "réparé"
 ITEM_ACCEPTED = "accepté par Benjamin"
@@ -343,6 +378,7 @@ STORY_RE = re.compile(r"^[1-9][0-9]*$")
 BEAD_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$")
 ANCHOR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 ITEM_RE = re.compile(r"^(?:deviations|not_done)\.[1-9][0-9]*$")
+FINDING_ITEM_RE = re.compile(r"^out_of_ticket\.[1-9][0-9]*$")
 OPTION_LETTER_RE = re.compile(r"^[a-z]$")
 CRITERION_RE = re.compile(r"^\s*-\s+\[[ xX]\]\s+(.*\S)\s*$")
 QUESTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -1679,7 +1715,7 @@ def spec_end_record(raw: Any) -> dict[str, Any]:
     record = stored_record(raw, ("commit", "protected", "version", "conditions", "at"), ("records",))
     valid_commit(record["commit"], "commit du relevé de la porte de fin de Spec")
     valid_commit(record["protected"], "pointe de la branche protégée")
-    if record["version"] != SPEC_END_VERSION:
+    if record["version"] not in SPEC_END_VERSIONS:
         raise Refusal(f"version de la liste de conditions inconnue : {record['version']!r} (attendu : {SPEC_END_VERSION})")
     record["conditions"] = spec_end_conditions(record["conditions"])
     records = record.get("records", {})
@@ -1687,6 +1723,292 @@ def spec_end_record(raw: Any) -> dict[str, Any]:
             not isinstance(value, dict) for value in records.values()):
         raise Refusal(f"relevés de la porte de fin de Spec mal formés (attendu : {', '.join(SPEC_END_RECORDS)})")
     return record
+
+
+def restores_record(value: Any, what: str) -> dict[str, str]:
+    """What a `repair` restores, cited (Spec §2): one of the kinds the patch
+    door knows, and the line that cites it."""
+    if not isinstance(value, dict) or set(value) != {"kind", "ref"}:
+        raise Refusal(
+            f"{what} sans citation de ce qu'il rétablit (attendu : restores avec kind parmi {', '.join(RESTORES_KINDS)}, "
+            "et ref qui le cite)")
+    one_of(value["kind"], RESTORES_KINDS, f"genre de ce que rétablit {what}")
+    return {"kind": value["kind"], "ref": single_line(value["ref"], f"citation de ce que rétablit {what}")}
+
+
+def repair_draft(value: Any, what: str) -> dict[str, Any]:
+    """A `repair` an agent of the end of the Spec drafted, not published
+    (Spec §2, §7): what the patch door is given once code publishes it."""
+    if not isinstance(value, dict) or set(value) != set(REPAIR_DRAFT_FIELDS):
+        raise Refusal(f"{what} mal formé (attendu : {', '.join(REPAIR_DRAFT_FIELDS)})")
+    draft: dict[str, Any] = {name: single_line(value[name], f"{name} de {what}")
+                             for name in ("title", "what_it_delivers", "demonstration_line")}
+    draft["restores"] = restores_record(value["restores"], what)
+    criteria = value["acceptance_criteria"]
+    if not isinstance(criteria, list) or not criteria:
+        raise Refusal(f"{what} sans critère d'acceptation")
+    draft["acceptance_criteria"] = []
+    for criterion in criteria:
+        if not isinstance(criterion, dict) or set(criterion) != set(REPAIR_CRITERION_FIELDS):
+            raise Refusal(f"critère de {what} mal formé (attendu : {', '.join(REPAIR_CRITERION_FIELDS)}) : {criterion!r}")
+        draft["acceptance_criteria"].append(
+            {name: single_line(criterion[name], f"{name} d'un critère de {what}") for name in REPAIR_CRITERION_FIELDS})
+    return draft
+
+
+def cited_story(restores: dict[str, str]) -> str | None:
+    """The number of the one user story a citation names, as the patch door
+    reads it: exactly one number in the reference."""
+    numbers = [str(int(number)) for number in re.findall(r"[0-9]+", restores["ref"])]
+    return numbers[0] if restores["kind"] == "user_story" and len(numbers) == 1 else None
+
+
+def findings_record(raw: Any) -> list[dict[str, Any]]:
+    """The classifications the Evaluator of the end gave the findings « hors
+    ticket » of a Ticket Handoff (T24, Spec §7, §9): « repaired » always
+    with the citation of what it restores and the drafted `repair`,
+    « dismissed » always with its reason, « proposal » kept for the operator."""
+    entries = stored_record(raw, ("entries",))["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise Refusal(f"classements de constats hors ticket mal formés : {entries!r}")
+    seen = set()
+    for entry in entries:
+        common = {"item", "handoff_at", "classification", "commit", "recorded_by", "at"}
+        if not isinstance(entry, dict) or not common <= set(entry) or set(entry) - common - {"reason", "draft", "repair"}:
+            raise Refusal(f"classement de constat hors ticket mal formé : {entry!r}")
+        if not isinstance(entry["item"], str) or not FINDING_ITEM_RE.match(entry["item"]) or entry["item"] in seen:
+            raise Refusal(f"constat hors ticket mal nommé, ou classé deux fois : {entry['item']!r}")
+        seen.add(entry["item"])
+        classification = one_of(entry["classification"], FINDING_CLASSES, "classement de constat hors ticket")
+        valid_commit(entry["commit"], "commit du classement")
+        single_line(entry["recorded_by"], "session de l'Evaluator")
+        if "reason" in entry:
+            single_line(entry["reason"], "raison du classement")
+        if classification == "dismissed" and "reason" not in entry:
+            raise Refusal(f"constat {entry['item']} écarté sans raison")
+        if (classification == "repaired") != ("draft" in entry):
+            raise Refusal(f"constat {entry['item']} : un repair rédigé va avec le classement « repaired », et avec lui seul")
+        if "draft" in entry:
+            repair_draft(entry["draft"], f"le repair du constat {entry['item']}")
+        if "repair" in entry and not (
+                classification == "repaired" and isinstance(entry["repair"], str) and BEAD_ID_RE.match(entry["repair"])):
+            raise Refusal(f"repair du constat {entry['item']} mal formé : {entry['repair']!r}")
+    return entries
+
+
+def findings_rendered(ticket: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """The findings « hors ticket » of a rendered ticket (Spec §9,
+    « éléments suivis ») with the state code reads for each: « non classé »
+    until the Evaluator of the end classified it since that Handoff;
+    « proposition pour Benjamin » and « écarté » are final; a finding
+    classified « repaired » is « à réparer » until the `repair` code
+    published for it is closed by the ticket-end gate, « réparé » then."""
+    handoff, classified = ticket.get("handoff"), ticket.get("finding_classifications")
+    sections = handoff.get("sections") if isinstance(handoff, dict) else None
+    if not isinstance(sections, dict) or "at" in (ticket.get("gates") or {}).get("withdrawn", {}):
+        return []
+    known = {entry["item"]: entry for entry in classified if entry["handoff_at"] == handoff["at"]} \
+        if isinstance(classified, list) else {}
+    content = sections.get(FINDING_SECTION)
+    out = []
+    for number, text in enumerate(content if isinstance(content, list) else [], start=1):
+        item = f"{FINDING_SECTION}.{number}"
+        rendered: dict[str, Any] = {"id": f"{ticket['id']}:{item}", "ticket": ticket["id"], "item": item, "number": number,
+                                    "text": text, "state": FINDING_UNCLASSIFIED, "classification": None}
+        entry = known.get(item)
+        if entry:
+            rendered.update({key: entry[key] for key in ("classification", "reason", "draft", "repair", "commit",
+                                                         "recorded_by", "at") if key in entry})
+            if entry["classification"] == "proposal":
+                rendered["state"] = FINDING_PROPOSAL
+            elif entry["classification"] == "dismissed":
+                rendered["state"] = FINDING_DISMISSED
+            else:
+                repair = by_id.get(str(entry.get("repair")))
+                closed = (repair is not None and repair.get("kind") == "repair" and repair.get("status") == "closed"
+                          and "at" in (repair.get("gates") or {}).get(GATE_TICKET_END, {}))
+                rendered["state"] = FINDING_REPAIRED if closed else FINDING_TO_REPAIR
+        out.append(rendered)
+    return out
+
+
+def outcome_roles(value: Any) -> dict[str, Any]:
+    """The suppliers the authors of the convoy's tickets and the Evaluator of
+    the end ran on (Spec §7): `same_provider` is null when one is not
+    recorded, true when the Evaluator ran on the supplier of an author."""
+    if not isinstance(value, dict) or set(value) != {"authors", "evaluator", "same_provider", "other_declared"}:
+        raise Refusal(f"relevé des rôles de l'Outcome Evaluation mal formé : {value!r}")
+    entries = [value["evaluator"], *(value["authors"] if isinstance(value["authors"], list) else [None, None])]
+    if not isinstance(value["authors"], list) or any(
+            entry is not None and (not isinstance(entry, dict) or set(entry) != {"provider", "supplier"}
+                                   or any(not isinstance(v, str) or not v.strip() for v in entry.values()))
+            for entry in entries) or None in value["authors"]:
+        raise Refusal(f"relevé des rôles de l'Outcome Evaluation mal formé : {value!r}")
+    same, other = value["same_provider"], value["other_declared"]
+    if (same is not None and not isinstance(same, bool)) or (same is None) != (
+            value["evaluator"] is None or not value["authors"]):
+        raise Refusal("relevé des rôles de l'Outcome Evaluation incohérent : same_provider ne dit pas ce que disent ses rôles")
+    if not isinstance(other, list) or any(not isinstance(name, str) or not name.strip() for name in other):
+        raise Refusal(f"relevé des rôles de l'Outcome Evaluation mal formé : other_declared {other!r}")
+    return value
+
+
+def outcome_stories(value: Any) -> list[dict[str, Any]]:
+    """The numbered user stories of the Spec an Outcome Evaluation walks."""
+    if not isinstance(value, list) or not value:
+        raise Refusal(f"user stories de l'Outcome Evaluation absentes ou mal formées : {value!r}")
+    for story in value:
+        if not isinstance(story, dict) or set(story) != {"number", "text"} or isinstance(story["number"], bool) \
+                or not isinstance(story["number"], int) or story["number"] < 1:
+            raise Refusal(f"user story de l'Outcome Evaluation mal formée : {story!r}")
+        single_line(story["text"], f"texte de la user story {story['number']}")
+    if len({story["number"] for story in value}) != len(value):
+        raise Refusal("user stories de l'Outcome Evaluation mal formées : un numéro y figure deux fois")
+    return value
+
+
+def outcome_notes(value: Any, name: str) -> Any:
+    """A non-blocking section of an Outcome Evaluation (Spec §7): its lines,
+    each with the piece that shows it when there is one, or the word for
+    "nothing"; never left out."""
+    if value == HANDOFF_NOTHING:
+        return value
+    if not isinstance(value, list) or not value:
+        raise Refusal(f"rubrique {name} absente ou mal formée : {value!r} (attendu : une liste non vide, ou « {HANDOFF_NOTHING} »)")
+    for note in value:
+        if not isinstance(note, dict) or not {"text"} <= set(note) or set(note) - {"text", "evidence"}:
+            raise Refusal(f"rubrique {name} : élément mal formé : {note!r} (attendu : text, et evidence en option)")
+        single_line(note["text"], f"élément de la rubrique {name}")
+        if "evidence" in note and (not isinstance(note["evidence"], str) or not PIECE_RE.match(note["evidence"])):
+            raise Refusal(f"rubrique {name} : pièce de preuve mal nommée : {note['evidence']!r}")
+    return value
+
+
+def outcome_request(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"commit", "stories", "roles", "environment", "launches", "at"}:
+        raise Refusal(f"demande d'Outcome Evaluation mal formée : {value!r}")
+    valid_commit(value["commit"], "commit de l'Outcome Evaluation")
+    outcome_stories(value["stories"])
+    outcome_roles(value["roles"])
+    evaluation_environment(value["environment"], launched=True)
+    evaluation_launches(value["launches"])
+    return value
+
+
+def outcome_of_stories(stories: list[dict[str, Any]]) -> str:
+    """Spec §7, the same form of verdict as a Ticket Evaluation: favorable
+    only when every story is « observé ». A story that cannot be observed by
+    itself goes back to the Planning Run, a « non observé » to a `repair`;
+    when the environment alone hid something, it is an outage."""
+    if any(story["state"] == "unobservable" and story["cause"] == "criterion" for story in stories):
+        return "planning_exception"
+    if any(story["state"] == "not_observed" for story in stories):
+        return "repair"
+    if any(story["state"] == "unobservable" for story in stories):
+        return "environment_outage"
+    return "favorable"
+
+
+def outcome_round(value: Any) -> dict[str, Any]:
+    fields = {"commit", "stories", "exploration", "fidelity_deviations", "repairs", "contradictions", "outcome", "verdict",
+              "roles", "environment", "recorded_by", "at"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise Refusal(f"passe d'Outcome Evaluation mal formée : {value!r}")
+    valid_commit(value["commit"], "commit de l'Outcome Evaluation")
+    if not isinstance(value["stories"], list) or not value["stories"]:
+        raise Refusal(f"passe d'Outcome Evaluation sans état par user story : {value['stories']!r}")
+    for story in value["stories"]:
+        number = story.get("number") if isinstance(story, dict) else None
+        if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+            raise Refusal(f"user story sans numéro dans une passe d'Outcome Evaluation : {story!r}")
+        evaluation_item(story, f"user story {number}")
+    numbers = [story["number"] for story in value["stories"]]
+    if len(set(numbers)) != len(numbers):
+        raise Refusal("passe d'Outcome Evaluation mal formée : deux états pour une user story")
+    for name in OUTCOME_SECTIONS:
+        outcome_notes(value[name], name)
+    not_observed = {story["number"] for story in value["stories"] if story["state"] == "not_observed"}
+    repairs = value["repairs"]
+    if not isinstance(repairs, list) or {entry.get("story") if isinstance(entry, dict) else None
+                                         for entry in repairs} != not_observed or len(repairs) != len(not_observed):
+        raise Refusal("passe d'Outcome Evaluation mal formée : un repair rédigé par user story « non observée », et aucun autre")
+    for entry in repairs:
+        if set(entry) - {"story", "draft", "repair"} or "draft" not in entry:
+            raise Refusal(f"repair rédigé mal formé : {entry!r}")
+        draft = repair_draft(entry["draft"], f"le repair de la user story {entry['story']}")
+        if cited_story(draft["restores"]) != str(entry["story"]):
+            raise Refusal(f"le repair de la user story {entry['story']} ne la cite pas (restores : {draft['restores']!r})")
+        if "repair" in entry and (not isinstance(entry["repair"], str) or not BEAD_ID_RE.match(entry["repair"])):
+            raise Refusal(f"repair publié de la user story {entry['story']} mal formé : {entry['repair']!r}")
+    contradictions = value["contradictions"]
+    if not isinstance(contradictions, list):
+        raise Refusal(f"contradictions mal formées : {contradictions!r}")
+    for entry in contradictions:
+        if not isinstance(entry, dict) or set(entry) != {"story", "tickets"} or entry["story"] not in not_observed \
+                or not isinstance(entry["tickets"], list) or not entry["tickets"] or any(
+                    not isinstance(ticket, dict) or set(ticket) != {"id", "commit", "at"} for ticket in entry["tickets"]):
+            raise Refusal(f"contradiction mal formée : {entry!r}")
+    outcome = one_of(value["outcome"], OUTCOME_OUTCOMES, "issue de l'Outcome Evaluation")
+    if outcome != outcome_of_stories(value["stories"]) or value["verdict"] != verdict_of_outcome(outcome):
+        raise Refusal("issue ou verdict d'Outcome Evaluation qui n'est pas celui de ses états")
+    outcome_roles(value["roles"])
+    evaluation_environment(value["environment"], launched=False)
+    single_line(value["recorded_by"], "session de l'Evaluator")
+    return value
+
+
+def outcome_evaluation_record(raw: Any) -> dict[str, Any]:
+    """The Outcome Evaluation of a convoy (T24, Spec §7): the rounds
+    recorded, each bound to the commit the end-of-Spec gate rendered its
+    mechanical verdicts on, the request that is open, the launch records of
+    the products still to stop (`live`), and what stopped it at a commit
+    (`stop`: no result, an environment that failed twice, a story that
+    cannot be observed)."""
+    record = stored_record(raw, ("rounds",), ("request", "live", "stop"))
+    if not isinstance(record["rounds"], list):
+        raise Refusal(f"passes d'Outcome Evaluation mal formées : {record['rounds']!r}")
+    for value in record["rounds"]:
+        outcome_round(value)
+    if "request" in record:
+        outcome_request(record["request"])
+    if "live" in record:
+        live = record["live"]
+        if not isinstance(live, list) or not live or any(not isinstance(path, str) or not path.strip() for path in live):
+            raise Refusal(f"produits lancés à arrêter mal formés : {live!r}")
+    if "stop" in record:
+        stop = record["stop"]
+        if not isinstance(stop, dict) or not {"reason", "detail", "commit", "at"} <= set(stop) \
+                or set(stop) - {"reason", "detail", "commit", "at", "raised"}:
+            raise Refusal(f"arrêt de l'Outcome Evaluation mal formé : {stop!r}")
+        one_of(stop["reason"], OUTCOME_STOPS, "raison d'arrêt de l'Outcome Evaluation")
+        single_line(stop["detail"], "précision de l'arrêt")
+        valid_commit(stop["commit"], "commit de l'arrêt")
+    return record
+
+
+def outcome_state(record: dict[str, Any]) -> dict[str, Any]:
+    """What the Outcome Evaluation says of the convoy now: the issue of its
+    last round, its commit, each story that is not « observé », the repairs
+    drafted for them and the contradictions with the tickets that cover them."""
+    last = record["rounds"][-1] if record["rounds"] else None
+    state: dict[str, Any] = {"verdict": None, "outcome": None, "commit": None, "not_observed": [], "unobservable": [],
+                             "repairs": [], "contradictions": []}
+    if last is None:
+        return state
+    state.update(verdict=last["verdict"], outcome=last["outcome"], commit=last["commit"],
+                 repairs=[{"story": entry["story"], "repair": entry.get("repair")} for entry in last["repairs"]],
+                 contradictions=last["contradictions"])
+    for story in last["stories"]:
+        if story["state"] == "not_observed":
+            state["not_observed"].append(story["number"])
+        elif story["state"] == "unobservable":
+            state["unobservable"].append({"what": story["number"], "cause": story["cause"]})
+    return state
+
+
+def outcome_evaluation_rendered(raw: Any) -> dict[str, Any]:
+    record = outcome_evaluation_record(raw)
+    return {**record, "state": outcome_state(record)}
 
 
 def merge_record(raw: Any) -> dict[str, Any]:
@@ -1942,7 +2264,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
             KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION, KEY_TEST_REVIEW, KEY_CODE_REVIEW, KEY_MODELS,
             KEY_EVALUATION, KEY_FIDELITY, KEY_PLANNING_EXCEPTIONS, KEY_CORRECTION, KEY_OVERRIDES, KEY_CRITERIA,
-            KEY_RESUME, KEY_PARK_LIFTS,
+            KEY_RESUME, KEY_PARK_LIFTS, KEY_FINDINGS,
         ):
             continue
         raw = metadata[key]
@@ -2015,6 +2337,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         ("merge", KEY_MERGE, merge_record),
         ("session", KEY_SESSION, session_record),
         ("resume", KEY_RESUME, resume_record),
+        ("finding_classifications", KEY_FINDINGS, findings_record),
     ):
         out[name] = None
         if key in metadata:
@@ -2135,10 +2458,28 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             spec_end = {"unruled": f"{KEY_SPEC_END} : {exc}", "raw": metadata[KEY_SPEC_END]}
             convoy_unruled.append({"field": KEY_SPEC_END, "reason": spec_end["unruled"]})
+    outcome_evaluation: dict[str, Any] | None = None
+    if KEY_OUTCOME_EVALUATION in metadata:
+        try:
+            outcome_evaluation = outcome_evaluation_rendered(metadata[KEY_OUTCOME_EVALUATION])
+        except Refusal as exc:
+            outcome_evaluation = {"unruled": f"{KEY_OUTCOME_EVALUATION} : {exc}", "raw": metadata[KEY_OUTCOME_EVALUATION]}
+            convoy_unruled.append({"field": KEY_OUTCOME_EVALUATION, "reason": outcome_evaluation["unruled"]})
+    # The fingerprints of the pieces captured on the assembled product (T24).
+    evidence: dict[str, Any] = {}
     for key in sorted(metadata):
         known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_GROUPED_REQUEST, KEY_SPEC_END,
-                 *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
-        if key.startswith(PREFIX) and key not in known:
+                 KEY_OUTCOME_EVALUATION, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
+        if key.startswith(EVIDENCE_PREFIX):
+            name = key[len(EVIDENCE_PREFIX):]
+            try:
+                evidence[name] = stored_record(metadata[key], ("digest", "commit", "at"))
+                valid_digest(evidence[name]["digest"])
+                valid_commit(evidence[name]["commit"])
+            except Refusal as exc:
+                evidence[name] = {"unruled": f"{key} : {exc}", "raw": metadata[key]}
+                convoy_unruled.append({"field": key, "reason": evidence[name]["unruled"]})
+        elif key.startswith(PREFIX) and key not in known:
             convoy_unruled.append({"field": key, "reason": f"{key} : champ inconnu de la commande d'état, écrit hors d'elle"})
     spec = metadata.get(KEY_SPEC)
     convoy_out: dict[str, Any] = {
@@ -2150,6 +2491,8 @@ def cmd_show(args: argparse.Namespace) -> int:
         "integration_red": integration_red,
         "grouped_request": grouped_request,
         "spec_end": spec_end,
+        "outcome_evaluation": outcome_evaluation,
+        "evidence": evidence,
         "unruled": convoy_unruled,
     }
     if convoy_unruled:
@@ -2162,6 +2505,8 @@ def cmd_show(args: argparse.Namespace) -> int:
     by_id = {ticket["id"]: ticket for ticket in rendered}
     for ticket in rendered:
         ticket["tracked_items"] = tracked_items(ticket, by_id)
+        # The findings « hors ticket » of that Handoff and their state (T24).
+        ticket["findings"] = findings_rendered(ticket, by_id)
     unruled = bool(convoy_unruled) or any(ticket["unruled"] for ticket in rendered)
     answer: dict[str, Any] = {"ok": True, "new_flow": True, "unruled": unruled, "convoy": convoy_out, "tickets": rendered}
     if unruled:
@@ -2463,7 +2808,12 @@ def cmd_bump_counter(args: argparse.Namespace) -> int:
 
 
 def cmd_add_evidence(args: argparse.Namespace) -> int:
-    marked_ticket(args.convoy, args.ticket)
+    if args.ticket == args.convoy:
+        # A piece of the end of the Spec (the Outcome Evaluation, T24) is
+        # captured on the assembled product: it belongs to the convoy.
+        require_marked(load_convoy(args.convoy)[0])
+    else:
+        marked_ticket(args.convoy, args.ticket)
     if not isinstance(args.piece, str) or not PIECE_RE.match(args.piece):
         raise Refusal(f"nom de pièce absent ou mal formé : {args.piece!r} (lettres, chiffres, _ et . seulement)")
     valid_digest(args.digest)
@@ -3942,6 +4292,8 @@ def cmd_record_spec_end(args: argparse.Namespace) -> int:
     unknown = sorted(set(given) - {"version", "conditions", "records"})
     if unknown:
         raise Refusal(f"champs inconnus dans le relevé de la porte : {', '.join(unknown)}")
+    if given.get("version") != SPEC_END_VERSION:
+        raise Refusal(f"version de la liste de conditions inconnue : {given.get('version')!r} (attendu : {SPEC_END_VERSION})")
     record = {**given, "commit": args.commit, "protected": args.protected, "at": now()}
     values = {KEY_SPEC_END: encode(spec_end_record(encode(record)))}
     write_metadata(args.convoy, values)
@@ -3998,6 +4350,440 @@ def cmd_clear_grouped_request(args: argparse.Namespace) -> int:
     convoy_with_a_mark(args.convoy)
     run_gc(["bd", "update", args.convoy, "--unset-metadata", KEY_GROUPED_REQUEST])
     return done(args.convoy, args.convoy, {KEY_GROUPED_REQUEST: None})
+
+
+# --- the Outcome Evaluation and the findings « hors ticket » (T24) ----------------
+
+
+def spec_of(convoy: dict[str, Any]) -> dict[str, Any]:
+    """The Spec the convoy delivers, as the reader `bin/spec-approve` holds
+    it to (`outline`): its numbered user stories, and its text. Nobody hands
+    them in."""
+    spec_id = metadata_of(convoy).get(KEY_SPEC)
+    if not isinstance(spec_id, str) or not BEAD_ID_RE.match(spec_id):
+        raise Refusal(f"le convoi {convoy['id']} ne nomme pas sa Spec ({spec_id!r}) : ses user stories sont introuvables")
+    try:
+        bead = json.loads(run_gc(["bd", "show", spec_id, "--json"]))
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"gc bd show {spec_id} a rendu un JSON illisible : {exc}") from exc
+    bead = bead[0] if isinstance(bead, list) and bead else bead
+    text = bead.get("description") if isinstance(bead, dict) else None
+    if not isinstance(text, str) or not text.strip():
+        raise Refusal(f"la Spec {spec_id} est introuvable ou vide : ses user stories sont introuvables")
+    reader = os.environ.get("SPEC_APPROVE_BIN") or str(BIN / "spec-approve")
+    try:
+        proc = subprocess.run([reader, "outline"], input=text, capture_output=True, text=True)
+        outline = json.loads(proc.stdout)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise Refusal(f"lecture de la Spec {spec_id} impossible ({Path(reader).name} outline) : {exc}") from exc
+    if proc.returncode != 0 or not isinstance(outline, dict) or not outline.get("ok"):
+        raise Refusal(f"la Spec {spec_id} n'a pas de user stories numérotées lisibles : "
+                      f"{outline.get('error') if isinstance(outline, dict) else proc.stderr.strip()}")
+    stories = [{"number": int(story["number"]), "text": " ".join(str(story["text"]).split())}
+               for story in outline["user_stories"]]
+    return {"id": spec_id, "text": text, "stories": outcome_stories(stories)}
+
+
+def outcome_target(args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    """The convoy an Outcome Evaluation write lands on, its tickets, its
+    metadata and its Outcome Evaluation so far."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    record = outcome_evaluation_record(metadata[KEY_OUTCOME_EVALUATION]) if KEY_OUTCOME_EVALUATION in metadata \
+        else {"rounds": []}
+    return convoy, tickets, metadata, record
+
+
+def handoff_findings(ticket: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+    """The Ticket Handoff of a ticket of the convoy and its findings « hors
+    ticket »; none for a ticket withdrawn from the graph."""
+    metadata = metadata_of(ticket)
+    if KEY_HANDOFF not in metadata or GATE_PREFIX + "withdrawn" in metadata:
+        return None, []
+    handoff = handoff_record(metadata[KEY_HANDOFF])
+    content = handoff["sections"].get(FINDING_SECTION)
+    return handoff, content if isinstance(content, list) else []
+
+
+def unclassified_findings(tickets: list[dict[str, Any]]) -> list[str]:
+    """Each finding « hors ticket » of the convoy the Evaluator of the end
+    has not classified since the Handoff that declares it."""
+    left = []
+    for ticket in tickets:
+        handoff, content = handoff_findings(ticket)
+        metadata = metadata_of(ticket)
+        known = {entry["item"] for entry in findings_record(metadata[KEY_FINDINGS])
+                 if entry["handoff_at"] == handoff["at"]} if handoff and KEY_FINDINGS in metadata else set()
+        left += [f"{ticket['id']}:{FINDING_SECTION}.{number}" for number in range(1, len(content) + 1)
+                 if f"{FINDING_SECTION}.{number}" not in known]
+    return left
+
+
+def check_citation(restores: dict[str, str], spec: dict[str, Any], what: str) -> None:
+    """Spec §0 rule 6: a citation names something the Spec holds. A user
+    story is one of its numbered ones; a line of the Spec is in its text."""
+    if restores["kind"] == "user_story" and cited_story(restores) not in {str(story["number"]) for story in spec["stories"]}:
+        raise Refusal(
+            f"{what} cite une user story absente de la Spec {spec['id']} (restores.ref : « {restores['ref']} » ; attendu : "
+            "le numéro d'une seule de ses user stories)")
+    if restores["kind"] == "spec_line" and restores["ref"] not in " ".join(spec["text"].split()):
+        raise Refusal(f"{what} cite une ligne absente de la Spec {spec['id']} (restores.ref : « {restores['ref']} »)")
+
+
+def cmd_open_outcome_evaluation(args: argparse.Namespace) -> int:
+    """Open the Outcome Evaluation of a convoy (T24, Spec §7, §9 point 4) at
+    the commit the end-of-Spec gate rendered its mechanical verdicts on, on
+    the products code launched from a clean copy of that commit. The user
+    stories are read here, in the Spec: nobody hands them in. The same
+    request again writes nothing; one at the same commit on other products
+    keeps its launches."""
+    convoy, tickets, metadata, record = outcome_target(args)
+    commit = valid_commit(args.commit, "commit de l'Outcome Evaluation")
+    gate = spec_end_record(metadata[KEY_SPEC_END]) if KEY_SPEC_END in metadata else None
+    if gate is None or gate["commit"] != commit:
+        raise Refusal(
+            f"la porte de fin de Spec n'a pas rendu ses verdicts mécaniques au commit {commit} "
+            f"({'aucun relevé' if gate is None else 'relevé au commit ' + gate['commit']}) : l'Outcome Evaluation porte "
+            "sur le commit de la porte")
+    if KEY_INTEGRATION_RED in metadata or any(ticket.get("status") != "closed" for ticket in tickets):
+        raise Refusal(f"le convoi {args.convoy} a un ticket ouvert ou une branche d'intégration rouge : "
+                      "l'Outcome Evaluation suit les verdicts mécaniques de fin de Spec")
+    stop = record.get("stop")
+    if stop and stop["commit"] == commit:
+        raise Refusal(f"l'Outcome Evaluation du convoi {args.convoy} est arrêtée au commit {commit} ({stop['reason']})")
+    given = json_argument(args.file, "demande d'Outcome Evaluation")
+    unknown = sorted(set(given) - {"roles", "environment"})
+    if unknown:
+        raise Refusal(f"champs inconnus dans la demande d'Outcome Evaluation : {', '.join(unknown)}")
+    roles = outcome_roles(given.get("roles"))
+    environment = evaluation_environment(given.get("environment"), launched=True)
+    last = record["rounds"][-1] if record["rounds"] else None
+    if last and last["commit"] == commit and last["verdict"] is not None:
+        raise Refusal(f"le convoi {args.convoy} a déjà son Outcome Evaluation au commit {commit} ({last['outcome']})")
+    stories = spec_of(convoy)["stories"]
+    request = record.get("request")
+    wanted = {"commit": commit, "stories": stories}
+    if request and {name: request[name] for name in wanted} == wanted:
+        if request["roles"] == roles and request["environment"] == environment:
+            return done(args.convoy, args.convoy, {})
+        request.update(roles=roles, environment=environment)
+    else:
+        record["request"] = {**wanted, "roles": roles, "environment": environment, "launches": [], "at": now()}
+    record.pop("stop", None)
+    record["live"] = list(dict.fromkeys([entry["state_file"] for entry in environment] + record.get("live", [])))
+    values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_launch_outcome_evaluation(args: argparse.Namespace) -> int:
+    """Record that an Evaluator session was sent the open Outcome
+    Evaluation: the first launch, then one relaunch."""
+    _, _, _, record = outcome_target(args)
+    request = record.get("request")
+    if not request:
+        raise Refusal(f"aucune Outcome Evaluation n'est demandée sur {args.convoy} : rien à lancer")
+    if not isinstance(args.bead, str) or not BEAD_ID_RE.match(args.bead):
+        raise Refusal(f"bead d'évaluation absent ou mal formé : {args.bead!r}")
+    if len(request["launches"]) >= EVALUATION_MAX_LAUNCHES:
+        raise Refusal(
+            f"une seule relance par évaluation : {args.convoy} en a déjà lancé {len(request['launches'])} sans résultat")
+    request["launches"].append({"bead": args.bead, "at": now()})
+    values = {KEY_OUTCOME_EVALUATION: encode(record)}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_classify_finding(args: argparse.Namespace) -> int:
+    """The Evaluator of the end classifies one finding « hors ticket » of a
+    Ticket Handoff (T24, Spec §0 rule 6, §9): `repaired`, with the citation
+    of what it restores and the `repair` it drafts (`--file`), refused
+    without them; `dismissed`, refused without its reason; `proposal`, kept
+    for the operator. Only while an Outcome Evaluation is open; classified
+    again while it is open, the last classification stands, unless code has
+    already published its repair."""
+    convoy, tickets, _, record = outcome_target(args)
+    request = record.get("request")
+    if not request:
+        raise Refusal(f"aucune Outcome Evaluation n'est ouverte sur {args.convoy} : un constat hors ticket est classé "
+                      "par l'Evaluator de fin, pendant son évaluation")
+    ticket = marked_ticket_among(tickets, args.convoy, args.ticket)
+    metadata = metadata_of(ticket)
+    handoff, content = handoff_findings(ticket)
+    if not isinstance(args.item, str) or not FINDING_ITEM_RE.match(args.item) or handoff is None \
+            or int(args.item.split(".")[1]) > len(content):
+        raise Refusal(f"le Ticket Handoff de {args.ticket} ne porte pas le constat hors ticket {args.item!r}")
+    classification = one_of(args.classification, FINDING_CLASSES, "classement du constat hors ticket")
+    entry: dict[str, Any] = {"item": args.item, "handoff_at": handoff["at"], "classification": classification,
+                             "commit": request["commit"],
+                             "recorded_by": single_line(args.recorded_by, "session de l'Evaluator"), "at": now()}
+    if args.reason is not None:
+        entry["reason"] = single_line(args.reason, "raison du classement")
+    what = f"le constat {args.item} du ticket {args.ticket}"
+    if classification == "dismissed" and "reason" not in entry:
+        raise Refusal(f"{what} est écarté sans raison : un constat ne s'écarte qu'avec sa raison (--reason)")
+    if classification == "repaired":
+        given = json_argument(args.file, "repair rédigé") if args.file is not None else {}
+        if not isinstance(given.get("restores"), dict):
+            raise Refusal(
+                f"{what} est classé « repaired » sans citation de ce qu'il rétablit : un classement « réparé » cite une user "
+                f"story, une ancre, une ligne de la Spec, une règle écrite du dépôt ou un contrôle rouge (restores, dans --file)")
+        entry["draft"] = repair_draft(given, f"le repair de {what}")
+        check_citation(entry["draft"]["restores"], spec_of(convoy), f"le repair de {what}")
+    elif args.file is not None:
+        raise Refusal(f"{what} : un repair ne se rédige que pour un classement « repaired »")
+    entries = [known for known in (findings_record(metadata[KEY_FINDINGS]) if KEY_FINDINGS in metadata else [])
+               if known["handoff_at"] == handoff["at"]]
+    known = next((other for other in entries if other["item"] == args.item), None)
+    if known and "repair" in known:
+        raise Refusal(f"{what} a déjà son repair publié ({known['repair']}) : son classement ne change plus")
+    entries = [other for other in entries if other["item"] != args.item] + [entry]
+    entries.sort(key=lambda other: int(other["item"].split(".")[1]))
+    values = {KEY_FINDINGS: encode({"entries": findings_record(encode({"entries": entries}))})}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def given_notes(given: Any, name: str, metadata: dict[str, Any], commit: str, problems: list[str]) -> Any:
+    """A non-blocking section as it is stored; what is wrong with it goes to `problems`."""
+    if given == HANDOFF_NOTHING:
+        return given
+    if not isinstance(given, list) or not given:
+        problems.append(f"rubrique {name} absente : ni contenu ni « {HANDOFF_NOTHING} »")
+        return HANDOFF_NOTHING
+    stored = []
+    for note in given:
+        note = {"text": note} if isinstance(note, str) else note
+        text = " ".join(str(note.get("text") or "").split())[:MAX_FINDING_LINE] if isinstance(note, dict) else ""
+        if not text or set(note) - {"text", "evidence"}:
+            problems.append(f"rubrique {name} : élément mal formé : {note!r} (attendu : text, et evidence en option)")
+            continue
+        entry = {"text": text}
+        if "evidence" in note:
+            refusal = evidence_at(metadata, note["evidence"], commit)
+            if refusal:
+                problems.append(f"rubrique {name} : {refusal}")
+                continue
+            entry["evidence"] = note["evidence"]
+        stored.append(entry)
+    return stored or HANDOFF_NOTHING
+
+
+def contradictions_of(stories: list[dict[str, Any]], tickets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Spec §10 rubric 8, user story 63: a story « non observée » on the
+    assembled product while every ticket that covers it had all its
+    criteria « observés » by its Ticket Evaluation contradicts a ticket's
+    proof. Written by code, never by the Evaluator."""
+    found = []
+    for story in stories:
+        if story["state"] != "not_observed":
+            continue
+        covering = []
+        for ticket in tickets:
+            metadata = metadata_of(ticket)
+            if GATE_PREFIX + "withdrawn" in metadata or KEY_USER_STORIES not in metadata \
+                    or str(story["number"]) not in stored_user_stories(metadata[KEY_USER_STORIES]):
+                continue
+            rounds = evaluation_record(metadata[KEY_EVALUATION])["rounds"] if KEY_EVALUATION in metadata else []
+            last = rounds[-1] if rounds else None
+            observed = last is not None and last["kind"] == "evaluation" and last["outcome"] == "favorable"
+            covering.append((ticket["id"], last if observed else None))
+        if covering and all(last is not None for _, last in covering):
+            found.append({"story": story["number"],
+                          "tickets": [{"id": ticket_id, "commit": last["commit"], "at": last["at"]}
+                                      for ticket_id, last in covering]})
+    return found
+
+
+def cmd_record_outcome_evaluation(args: argparse.Namespace) -> int:
+    """Record what the Evaluator of the end hands in for the open Outcome
+    Evaluation, and compute the verdict (T24, Spec §7): one state per
+    numbered user story of the Spec, each with a piece captured at the
+    commit of the gate; the free exploration and the list of fidelity
+    deviations, which change nothing to the verdict; one drafted `repair`
+    per story « non observée », that cites it. Refused while a finding
+    « hors ticket » is left unclassified. A story « non observée » whose
+    covering tickets were all « observés » is written as a contradiction."""
+    convoy, tickets, metadata, record = outcome_target(args)
+    request = record.get("request")
+    if not request:
+        raise Refusal(f"aucune Outcome Evaluation n'est demandée sur {args.convoy} : des états répondent à une demande ouverte")
+    commit = request["commit"]
+    given = json_argument(args.file, "Outcome Evaluation")
+    problems = [
+        "le verdict est calculé par du code, jamais donné par l'Evaluator" if name in ("verdict", "outcome")
+        else "une contradiction est inscrite par du code, jamais rendue par l'Evaluator" if name == "contradictions"
+        else f"champ inconnu : {name}"
+        for name in sorted(set(given) - {"commit", "stories", "repairs", "recorded_by", *OUTCOME_SECTIONS})]
+    if given.get("commit") != commit:
+        problems.append(f"l'évaluation rendue porte sur le commit {given.get('commit')!r}, la porte de fin de Spec sur {commit}")
+    recorded_by = given.get("recorded_by")
+    if not isinstance(recorded_by, str) or not recorded_by.strip() or "\n" in recorded_by:
+        problems.append(f"session de l'Evaluator absente ou mal formée : {recorded_by!r}")
+    spec = spec_of(convoy)
+    if spec["stories"] != request["stories"]:
+        problems.append("les user stories de la Spec ne sont plus celles de la demande d'évaluation : elles sont gelées "
+                        "avec la Spec approuvée")
+    handed = given.get("stories")
+    if not isinstance(handed, list):
+        problems.append("stories mal formé : une liste d'états, un par user story numérotée, est attendue")
+        handed = []
+    wanted = {story["number"]: story["text"] for story in request["stories"]}
+    by_number: dict[Any, Any] = {}
+    for item in handed:
+        number = item.get("number") if isinstance(item, dict) else None
+        if isinstance(number, bool) or number not in wanted:
+            problems.append(f"état rendu pour une user story que la Spec n'a pas : {number!r}")
+        elif number in by_number:
+            problems.append(f"user story {number} : deux états rendus")
+        else:
+            by_number[number] = item
+    stories = []
+    for number, text in wanted.items():
+        if number not in by_number:
+            problems.append(f"user story {number} sans état : aucun état rendu pour « {text} »")
+            continue
+        stories.append({"number": number, **given_state(by_number[number], f"user story {number}", text, metadata, commit,
+                                                        problems)})
+    notes = {name: given_notes(given.get(name), name, metadata, commit, problems) for name in OUTCOME_SECTIONS}
+    drafts = given.get("repairs", [])
+    if not isinstance(drafts, list):
+        problems.append("repairs mal formé : une liste de repairs rédigés est attendue")
+        drafts = []
+    repairs: dict[int, dict[str, Any]] = {}
+    not_observed = [story["number"] for story in stories if story["state"] == "not_observed"]
+    for draft in drafts:
+        number = draft.get("story") if isinstance(draft, dict) else None
+        try:
+            if number not in not_observed or number in repairs:
+                raise Refusal(f"repair rédigé pour {number!r} : un repair se rédige une fois, pour une user story rendue "
+                              "« not_observed »")
+            body = repair_draft({key: value for key, value in draft.items() if key != "story"},
+                                f"le repair de la user story {number}")
+            if cited_story(body["restores"]) != str(number):
+                raise Refusal(f"le repair rédigé pour la user story {number} ne la cite pas (restores : {body['restores']!r} ; "
+                              f"attendu : kind user_story, et ref qui porte son seul numéro)")
+            repairs[number] = body
+        except Refusal as exc:
+            problems.append(str(exc))
+    problems += [f"user story {number} « not_observed » sans repair rédigé qui la cite" for number in not_observed
+                 if number not in repairs and not any(isinstance(d, dict) and d.get("story") == number for d in drafts)]
+    left = unclassified_findings(tickets)
+    if left:
+        problems.append(f"constat(s) hors ticket non classé(s) : {', '.join(left)} ; chaque constat est classé avant que "
+                        "l'évaluation soit rendue")
+    if problems:
+        raise Refusal("Outcome Evaluation hors contrat : " + " ; ".join(problems))
+    round_: dict[str, Any] = {
+        "commit": commit, "stories": stories, **notes,
+        "repairs": [{"story": number, "draft": repairs[number]} for number in not_observed],
+        "contradictions": contradictions_of(stories, tickets), "roles": request["roles"],
+        "environment": [{"dataset": entry["dataset"], "address": entry["address"]} for entry in request["environment"]],
+        "recorded_by": recorded_by.strip(), "at": now()}
+    round_["outcome"] = outcome_of_stories(stories)
+    round_["verdict"] = verdict_of_outcome(round_["outcome"])
+    record["rounds"].append(outcome_round(round_))
+    del record["request"]
+    values = {KEY_OUTCOME_EVALUATION: encode(record)}
+    write_metadata(args.convoy, values)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.convoy, "outcome": round_["outcome"],
+                      "verdict": round_["verdict"], "state": outcome_state(record), "written": values},
+                     indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_release_outcome_evaluation(args: argparse.Namespace) -> int:
+    """Record that the launched products of an Outcome Evaluation were
+    stopped by code (`--state-file`, repeatable). A product an open
+    evaluation still runs on is not released, unless the evaluation is
+    withdrawn with it (`--withdraw`: the commit of the gate moved, nothing
+    can be observed there any more)."""
+    _, _, _, record = outcome_target(args)
+    live = record.get("live", [])
+    if not args.state_file:
+        raise Refusal("relevé de lancement absent : --state-file nomme chaque produit arrêté")
+    unknown = [path for path in args.state_file if path not in live]
+    if unknown:
+        raise Refusal(f"produit lancé inconnu de l'Outcome Evaluation de {args.convoy} : {', '.join(unknown)}")
+    used = {entry["state_file"] for entry in (record.get("request") or {}).get("environment", [])}
+    held = [path for path in args.state_file if path in used]
+    if held and args.withdraw:
+        del record["request"]
+    elif held:
+        raise Refusal(f"une Outcome Evaluation est ouverte sur ce produit lancé : il ne se libère pas ({', '.join(held)})")
+    left = [path for path in live if path not in args.state_file]
+    record.pop("live", None)
+    if left:
+        record["live"] = left
+    values = {KEY_OUTCOME_EVALUATION: encode(record)}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_stop_outcome_evaluation(args: argparse.Namespace) -> int:
+    """Record that the Outcome Evaluation of a convoy does not go on at a
+    commit (`--reason`, `--detail`): it gave no result, relaunch included,
+    its environment failed twice, or a story cannot be observed. The open
+    request ends with it. `--raised` records that the escalation door put it
+    on the operator's list. A gate that renders its verdicts on another
+    commit starts a new evaluation."""
+    _, _, _, record = outcome_target(args)
+    stop = record.get("stop")
+    if args.raised:
+        if not stop:
+            raise Refusal(f"l'Outcome Evaluation du convoi {args.convoy} n'est pas arrêtée : aucune remontée à noter")
+        if "raised" in stop:
+            return done(args.convoy, args.convoy, {})
+        stop["raised"] = now()
+    else:
+        commit = valid_commit(args.commit, "commit de l'arrêt")
+        if stop and stop["commit"] == commit:
+            raise Refusal(f"l'Outcome Evaluation du convoi {args.convoy} est déjà arrêtée au commit {commit}")
+        record["stop"] = {"reason": one_of(args.reason, OUTCOME_STOPS, "raison d'arrêt de l'Outcome Evaluation"),
+                          "detail": single_line(args.detail, "précision de l'arrêt"), "commit": commit, "at": now()}
+        record.pop("request", None)
+    values = {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_set_outcome_repair(args: argparse.Namespace) -> int:
+    """Name the `repair` code published through the patch door
+    (bin/convoy-advance) for what the Evaluator of the end drafted: the one
+    of a story « non observée » of the last Outcome Evaluation (`--story`),
+    or the one of a finding « hors ticket » classified « repaired »
+    (`--ticket`, `--item`). Nothing here says a finding is repaired: `show`
+    reads it once the ticket-end gate has closed that repair."""
+    _, tickets, _, record = outcome_target(args)
+    repair = marked_ticket_among(tickets, args.convoy, args.repair)
+    if metadata_of(repair).get(KEY_KIND) != "repair":
+        raise Refusal(f"le ticket {args.repair} n'est pas un repair")
+    if (args.story is None) == (args.ticket is None and args.item is None):
+        raise Refusal("--story, ou --ticket et --item : un repair publié se rattache à une user story ou à un constat hors ticket")
+    if args.story is not None:
+        last = record["rounds"][-1] if record["rounds"] else {"repairs": []}
+        entry = next((entry for entry in last["repairs"] if str(entry["story"]) == str(args.story)), None)
+        if entry is None:
+            raise Refusal(f"la dernière Outcome Evaluation de {args.convoy} n'a rédigé aucun repair pour la user story {args.story}")
+        target, values_of = args.convoy, lambda: {KEY_OUTCOME_EVALUATION: encode(outcome_evaluation_record(encode(record)))}
+        what = f"la user story {args.story}"
+    else:
+        ticket = marked_ticket_among(tickets, args.convoy, args.ticket)
+        entries = findings_record(metadata_of(ticket)[KEY_FINDINGS]) if KEY_FINDINGS in metadata_of(ticket) else []
+        entry = next((entry for entry in entries if entry["item"] == args.item and entry["classification"] == "repaired"), None)
+        if entry is None:
+            raise Refusal(f"le constat {args.item!r} du ticket {args.ticket} n'est pas classé « repaired » : aucun repair ne s'y rattache")
+        target, values_of = args.ticket, lambda: {KEY_FINDINGS: encode({"entries": findings_record(encode({"entries": entries}))})}
+        what = f"le constat {args.item} du ticket {args.ticket}"
+    if entry.get("repair") == args.repair:
+        return done(args.convoy, target, {})
+    if "repair" in entry:
+        raise Refusal(f"{what} a déjà son repair ({entry['repair']}) : un seul repair par élément")
+    entry["repair"] = args.repair
+    values = values_of()
+    write_metadata(target, values)
+    return done(args.convoy, target, values)
 
 
 # --- command line ------------------------------------------------------------
@@ -4152,6 +4938,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--commit")
     p.add_argument("--protected")
     p.add_argument("--file")
+    p = command("open-outcome-evaluation", cmd_open_outcome_evaluation, ticket=False)
+    p.add_argument("--commit")
+    p.add_argument("--file")
+    command("launch-outcome-evaluation", cmd_launch_outcome_evaluation, ticket=False).add_argument("--bead")
+    command("record-outcome-evaluation", cmd_record_outcome_evaluation, ticket=False).add_argument("--file")
+    p = command("release-outcome-evaluation", cmd_release_outcome_evaluation, ticket=False)
+    p.add_argument("--state-file", action="append", default=[])
+    p.add_argument("--withdraw", action="store_true")
+    p = command("stop-outcome-evaluation", cmd_stop_outcome_evaluation, ticket=False)
+    p.add_argument("--commit")
+    p.add_argument("--reason")
+    p.add_argument("--detail")
+    p.add_argument("--raised", action="store_true")
+    p = command("classify-finding", cmd_classify_finding)
+    p.add_argument("--item")
+    p.add_argument("--as", dest="classification")
+    p.add_argument("--reason")
+    p.add_argument("--file")
+    p.add_argument("--recorded-by")
+    p = command("set-outcome-repair", cmd_set_outcome_repair, ticket=False)
+    p.add_argument("--repair")
+    p.add_argument("--story")
+    p.add_argument("--ticket")
+    p.add_argument("--item")
     command("set-integration-repair", cmd_set_integration_repair, ticket=False).add_argument("--ticket")
     command("clear-integration-red", cmd_clear_integration_red, ticket=False)
     p = sub.add_parser("ticket")

@@ -1,0 +1,194 @@
+description = """
+Outcome Evaluation — one Evaluator session uses the assembled product of a
+whole Spec once its end-of-Spec gate is mechanically green, hands one state
+per numbered user story, each with a captured piece of evidence, to
+`bin/outcome-evaluation record`, and classifies each finding « hors ticket »
+of the Ticket Handoffs (T24, af-oy7v3i; Spec af-wf4w5r §7, §9).
+
+Only `bin/outcome-evaluation` dispatches this formula, through
+`bin/dispatch-door --role evaluator`: the session is new, runs on the
+read-only Evaluator role, and knows nothing of the sessions that wrote the
+code. Code launched the assembled product from a clean copy of the commit of
+the gate and stops it afterwards; the session is given the numbered user
+stories of the Spec, the launched products and the findings to classify.
+The verdict is computed by `bin/convoy-state`, never written by the
+Evaluator, and `bin/spec-end` passes nothing without a favorable one. A
+`repair` the session drafts is published by code, through the patch door.
+The stored state, the bounds and the stops are in docs/OUTCOME_EVALUATION.md.
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|--------------|
+| convoy_id | runtime | Input convoy tracking the single evaluation bead |
+"""
+formula = "mol-outcome-evaluation"
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[[steps]]
+id = "evaluate"
+title = "Use the assembled product, record one state per user story, and classify the findings out of ticket"
+description = """
+You are the Evaluator of the end of one Spec. You wrote none of its code and
+you judge the assembled product, not the code: this is a black box. You are
+read-only: do not modify a ticket, the Spec, a branch or any file of a
+repository.
+
+**1. Read what you are given:**
+
+```bash
+CONVOY_STATUS=$(gc convoy status {{convoy_id}} --json)
+EVALUATION_BEAD=$(printf '%s' "$CONVOY_STATUS" | jq -r 'if (.children | length) == 1 then .children[0].id else empty end')
+[ -n "$EVALUATION_BEAD" ] || { echo "mol-outcome-evaluation requires an input convoy with exactly one tracked member" >&2; exit 1; }
+EVALUATION_TEXT=$(gc bd show "$EVALUATION_BEAD" --json | jq -r '.[0].description')
+SPEC_CONVOY=$(printf '%s\n' "$EVALUATION_TEXT" | sed -n 's/^convoy: //p')
+FACTORY_ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
+"$FACTORY_ROOT/bin/outcome-evaluation" brief "$SPEC_CONVOY" > outcome-brief.json
+jq -r '.commit, (.stories[] | "\\(.number). \\(.text)"), (.environments[] | "\\(.dataset): \\(.address)"), (.findings[] | "\\(.finding) [\\(.state)] \\(.text)")' outcome-brief.json
+```
+
+The brief is everything you are given: the numbered user stories of the
+Spec (`.stories`), the launched products (`.environments`: one per dataset,
+each at its own address on this host, with the launch record you name to
+the capture tool), the entry points of the product (`.entry_points`), the
+Validated Prototypes the Spec delivers (`.prototypes`), and the findings
+« hors ticket » the authors declared (`.findings`). Do not read anything
+else of the authors: not the ticket beads, their notes or their comments,
+not the Ticket Handoffs, not a diff, a branch or the repository of the
+product, not the commit messages, not their mail, not their sessions. Do
+not launch the product yourself and do not use one that somebody else
+launched: only the addresses of `.environments` are what you evaluate.
+`.independence`, when it is not null, says that you run on the supplier of
+an author or that it is not known: go on, it is recorded for the operator.
+
+**2. Use the product, and capture what you observe.**
+
+For each user story, use the launched product through its entry points
+until you can say whether it does what the story describes. Every state
+rests on a piece of evidence captured by the capture tool on one of the
+launched products -- never a text you write yourself. A command, with its
+real output:
+
+```bash
+ADDRESS=$(jq -r '.environments[0].address' outcome-brief.json)
+LAUNCH_STATE=$(jq -r '.environments[0].launch_state' outcome-brief.json)
+"$FACTORY_ROOT/bin/evidence-capture" command "$SPEC_CONVOY" "$SPEC_CONVOY" --piece outcome.s1 \\
+  --launch-state "$LAUNCH_STATE" -- curl -s -i "$ADDRESS/"
+```
+
+or a screenshot of one address of that product:
+
+```bash
+"$FACTORY_ROOT/bin/evidence-capture" screenshot "$SPEC_CONVOY" "$SPEC_CONVOY" --piece outcome.s1.page \\
+  --launch-state "$LAUNCH_STATE" --path /
+```
+
+Name your pieces `outcome.<something>` (letters, digits, `_` and `.`). The
+answer of the tool gives the `path` of the record: read it to see what was
+captured. Pick the product whose dataset shows what the story is about; a
+piece may back several states.
+
+**3. Give one state per user story.**
+
+- `observed` — you saw on the launched product what the story describes,
+  and the piece shows it.
+- `not_observed` — you used the product as the story says and what it
+  describes is not there, or is false. Give a one-line `reason` in the
+  Operator Language (`"$FACTORY_ROOT/bin/operator-config" language`); the
+  piece shows what the product did instead. Draft one `repair` for it (step
+  5).
+- `unobservable` — you could not get to an observation at all. Give the
+  `cause` and a one-line `reason`:
+  - `criterion`: the story names nothing that can be observed on the
+    launched product (no entry point reaches it, no dataset shows it, it
+    cannot be made false);
+  - `environment`: the launched product, or the tools you use it with,
+    failed (it stopped answering, the capture tool could not run).
+
+You do not reword a story, you do not skip one, and you do not waive one:
+copy each `text` exactly as the brief gives it. You give no overall
+verdict: code computes it.
+
+**4. Explore freely, and list the fidelity deviations.** Neither blocks
+anything; both are recorded for the operator.
+
+- `exploration`: what you saw outside the stories while using the product
+  as its user would -- a list of `{text, evidence}` (`evidence` optional, a
+  piece you captured), or the word `aucun`.
+- `fidelity_deviations`: where the launched product differs, to the eye,
+  from the Validated Prototypes of `.prototypes` -- the same shape, or
+  `aucun`.
+
+**5. Draft a `repair` for each story you did not observe.** You draft it;
+you do not publish it: code sends it through the patch door. Its shape is
+`.repair_shape`: `restores` is `{"kind": "user_story", "ref": "user story
+N"}` with the one number of that story, the demonstration line is the
+observation restored on the launched product, and each acceptance criterion
+names an entry point, what is seen there, and what would make it false.
+
+**6. Classify each finding « hors ticket »** of `.findings` whose state is
+`non classé`, one command each (`.classify` gives them):
+
+- `repaired` — the finding is a defect against something written: cite what
+  it restores (a user story, an anchor, a line of the Spec, a written rule
+  of the repository, a red check) in the `restores` of the `repair` you
+  draft for it. Refused without that citation. A finding you cannot tie to
+  anything written is not `repaired`.
+
+  ```bash
+  "$FACTORY_ROOT/bin/outcome-evaluation" classify "$SPEC_CONVOY" "<finding>" --as repaired --file finding-repair.json
+  ```
+
+- `proposal` — worth the operator's attention, and inside nothing the Spec
+  approved: kept for the dossier, decided by the operator.
+
+  ```bash
+  "$FACTORY_ROOT/bin/outcome-evaluation" classify "$SPEC_CONVOY" "<finding>" --as proposal
+  ```
+
+- `dismissed` — not a defect and not a proposal: give the one-line reason,
+  in the Operator Language. Refused without it.
+
+  ```bash
+  "$FACTORY_ROOT/bin/outcome-evaluation" classify "$SPEC_CONVOY" "<finding>" --as dismissed --reason "<one line>"
+  ```
+
+Every finding is classified before you record: `record` refuses while one
+is left `non classé`.
+
+**7. Record.** Write `outcome-result.json` in the current directory in the
+shape `.result_shape` shows, then record it:
+
+```bash
+jq '{commit, stories: [.stories[] | {number, text, state: null, evidence: null}],
+     exploration: "aucun", fidelity_deviations: "aucun", repairs: []}' outcome-brief.json > outcome-result.json
+# then set, for each story: .state, .evidence (the piece name), and .reason (unless observed) and .cause
+# (unobservable only); the two sections of step 4; and one entry of .repairs per not_observed story
+# ({"story": N, ...the repair of step 5})
+"$FACTORY_ROOT/bin/outcome-evaluation" record "$SPEC_CONVOY" --file outcome-result.json
+```
+
+**8. If `record` or `classify` refuses**, it lists what is missing or
+outside its closed lists: fix the file (capture the missing piece on a
+launched product) and run it again. Do not write the evaluation state any
+other way.
+
+**9. Close:**
+
+```bash
+gc bd update "$EVALUATION_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Outcome Evaluation of $SPEC_CONVOY recorded."
+if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$EVALUATION_BEAD" ]; then
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Outcome Evaluation of $SPEC_CONVOY recorded."
+fi
+```
+
+Stories that are `not_observed` or `unobservable` are your output, not a
+failure of this step: close with `gc.outcome=pass`. If you could not record
+any result, close both with `gc.outcome=fail` and the reason in the notes
+instead: an evaluation without a result is not a passed one.
+
+**Exit criteria:** every finding « hors ticket » is classified,
+`bin/outcome-evaluation record` accepted your states, and the evaluation
+bead and this step are closed."""
