@@ -13,6 +13,7 @@ Decisions ("une porte est testée par sa ligne de commande").
 """
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -313,6 +314,112 @@ class CockpitCliLifecycleTest(unittest.TestCase):
         stop = self.cockpit("stop")
         self.assertEqual(0, stop.returncode, stop.stdout + stop.stderr)
         self.assertEqual(1, self.cockpit("status").returncode)
+
+    # -- stop / start / restart keep their word (2026-10-08) ----------------
+    # That night `stop` gave up after 10 s, dropped the pid file and left the
+    # process holding the port; `start` then printed "started" for a process
+    # that died at once on "Address already in use".
+
+    def quiet_supervisor(self):
+        """A supervisor whose event stream says nothing for 30 s: a city at
+        night, between two heartbeats."""
+        quiet = FakeGc(heartbeat_seconds=30).start()
+        self.addCleanup(quiet.stop)
+        self.env["COCKPIT_GC_BASE_URL"] = quiet.base_url
+
+    def start_and_wait_for_the_stream(self):
+        start = self.cockpit("start")
+        self.assertEqual(0, start.returncode, start.stdout + start.stderr)
+        # The supervisor is read for the first time when its stream opens.
+        wait_until(lambda: http_get(self.port, "/api/status")[1]["gc"]["read_at"] is not None, timeout=10)
+        return int(Path(self.pid_file).read_text())
+
+    def assert_port_free(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("127.0.0.1", self.port))
+
+    def test_stop_does_not_wait_for_the_supervisor_to_speak(self):
+        self.quiet_supervisor()
+        self.start_and_wait_for_the_stream()
+
+        began = time.monotonic()
+        stop = self.cockpit("stop")
+        elapsed = time.monotonic() - began
+
+        self.assertEqual(0, stop.returncode, stop.stdout + stop.stderr)
+        self.assertEqual("cockpit: stopped\n", stop.stdout)
+        self.assertLess(elapsed, 5, "stop waited for the supervisor's next frame")
+        self.assert_port_free()
+
+    def test_restart_puts_a_new_process_on_the_same_port(self):
+        self.quiet_supervisor()
+        old_pid = self.start_and_wait_for_the_stream()
+
+        restart = self.cockpit("restart")
+
+        self.assertEqual(0, restart.returncode, restart.stdout + restart.stderr)
+        new_pid = int(Path(self.pid_file).read_text())
+        self.assertNotEqual(old_pid, new_pid)
+        self.assertIn("cockpit: started (pid %d)" % new_pid, restart.stdout)
+        self.assertFalse(os.path.exists("/proc/%d" % old_pid), "the old process is still there")
+        self.assertEqual(200, http_get(self.port, "/api/status")[0])
+        self.assertEqual(0, self.cockpit("status").returncode)
+
+    def test_start_fails_loudly_while_another_process_holds_the_port(self):
+        # The old process outlived its pid file, as it did that night.
+        orphan_pid = self.start_and_wait_for_the_stream()
+        self.addCleanup(lambda: os.path.exists("/proc/%d" % orphan_pid) and os.kill(orphan_pid, signal.SIGKILL))
+        os.remove(self.pid_file)
+
+        start = self.cockpit("start")
+
+        self.assertNotEqual(0, start.returncode, start.stdout + start.stderr)
+        self.assertNotIn("started", start.stdout)
+        self.assertIn("Address already in use", start.stderr)
+        self.assertEqual(1, self.cockpit("status").returncode)
+        self.assertFalse(os.path.exists(self.pid_file), "a pid file names a process that is not running")
+
+    def test_stop_kills_a_process_that_ignores_sigterm(self):
+        deaf = Path(self.tmp.name) / "bin" / "cockpit"
+        deaf.parent.mkdir()
+        deaf.write_text(
+            "import signal, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "signal.signal(signal.SIGUSR1, signal.SIG_IGN)\n"
+            "print('deaf', flush=True)\n"
+            "time.sleep(60)\n"
+        )
+        proc = subprocess.Popen([sys.executable, str(deaf), "run"], stdout=subprocess.PIPE)
+        self.addCleanup(proc.stdout.close)
+        self.addCleanup(proc.kill)
+        self.assertEqual(b"deaf\n", proc.stdout.readline())
+        Path(self.pid_file).write_text(str(proc.pid))
+        self.env["COCKPIT_STOP_WAIT_SECONDS"] = "1"
+
+        stop = self.cockpit("stop")
+
+        self.assertEqual(0, stop.returncode, stop.stdout + stop.stderr)
+        self.assertEqual(-signal.SIGKILL, proc.wait(timeout=5))
+        self.assertIn("SIGKILL", stop.stderr)
+        self.assertEqual("cockpit: stopped (killed)\n", stop.stdout)
+        self.assertFalse(os.path.exists(self.pid_file))
+
+    def test_a_pid_file_naming_another_process_is_not_the_cockpit(self):
+        # After a WSL restart the pid file's number belongs to someone else.
+        other = subprocess.Popen(["sleep", "30"])
+        self.addCleanup(other.wait)
+        self.addCleanup(other.kill)
+        Path(self.pid_file).write_text(str(other.pid))
+
+        self.assertEqual(1, self.cockpit("status").returncode)
+        self.assertEqual(0, self.cockpit("stop").returncode)
+        time.sleep(0.2)
+        self.assertIsNone(other.poll(), "stop signalled a process that is not the cockpit")
+
+        start = self.cockpit("start")
+        self.assertEqual(0, start.returncode, start.stdout + start.stderr)
+        self.assertNotEqual(other.pid, int(Path(self.pid_file).read_text()))
 
 
 class FactoryBootCockpitLaunchTest(unittest.TestCase):

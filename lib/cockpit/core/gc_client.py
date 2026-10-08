@@ -24,7 +24,10 @@ reconnects with backoff and the read model ages ``gc`` toward
 stale/unknown on its own in the meantime.
 """
 import json
+import os
+import socket
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -47,6 +50,21 @@ PROGRESS_EVENT_PREFIXES = ("session.",)
 STATUS_EVENT_PREFIXES = ("session.", "city.")
 
 DELIVERY_PLANE = "delivery"
+
+
+def _end_read(response):
+    """Ends a read in progress on ``response`` from another thread.
+
+    ``response.close()`` does not: it waits for the buffer the reading
+    thread holds, so it returns only when gc sends its next frame -- up to
+    15 s on a quiet city, during which the cockpit could not stop
+    (2026-10-08). Shutting the connection down makes that read return at
+    once; the reading thread then closes the response itself."""
+    try:
+        with socket.socket(fileno=os.dup(response.fileno())) as connection:
+            connection.shutdown(socket.SHUT_RDWR)
+    except (OSError, ValueError, AttributeError):
+        pass  # already closed: nothing is reading
 
 
 class GcSsePoller:
@@ -84,17 +102,24 @@ class GcSsePoller:
             thread.start()
         return self
 
-    def stop(self):
+    def request_stop(self):
+        """Ask both threads to end; never waits (process.shut_down)."""
         self._stop.set()
         self._status_wake.set()
         response = self._response
         if response is not None:
-            try:
-                response.close()
-            except OSError:
-                pass
+            _end_read(response)
+
+    def join(self, timeout):
+        """True once both threads have ended."""
+        deadline = time.monotonic() + timeout
         for thread in self._threads:
-            thread.join(timeout=5)
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        return not any(thread.is_alive() for thread in self._threads)
+
+    def stop(self):
+        self.request_stop()
+        self.join(5)
 
     def poll_now(self):
         """Force an immediate status read ("revérifier maintenant", spec .65)."""

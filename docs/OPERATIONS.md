@@ -271,7 +271,9 @@ Cockpit V2 (`bin/cockpit`, spec af-oohx2x, C01) is the approved operator
 surface for the factory's day-to-day state — NEEDS BENJAMIN, proposals,
 project/chantier status, Operator Actions. It listens on
 `127.0.0.1:8173` (default; `COCKPIT_PORT`) inside WSL and refuses any
-other bind address outright (`lib/cockpit/core/server.py`). The Gas City
+other bind address outright (`lib/cockpit/core/server.py`). After a merge
+that changes it, the running process still runs the old code until
+`bin/cockpit restart` (`COCKPIT.md`, "Process lifecycle"). The Gas City
 dashboard on port `8372` (`gc`'s own API/UI, see "Detailed Gas City
 dashboard" above) is a separate, engineering-only surface and is **never**
 exposed to the tailnet: only the cockpit's own port gets a Tailscale Serve

@@ -52,10 +52,20 @@ class Ticker:
         self._thread.start()
         return self
 
-    def stop(self):
+    def request_stop(self):
+        """Ask the thread to end; never waits (process.shut_down)."""
         self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=5)
+
+    def join(self, timeout):
+        """True once the thread has ended, False while it is still busy."""
+        if self._thread is None:
+            return True
+        self._thread.join(timeout=max(0.0, timeout))
+        return not self._thread.is_alive()
+
+    def stop(self):
+        self.request_stop()
+        self.join(5)
 
     def _run(self):
         while not self._stop.is_set():
