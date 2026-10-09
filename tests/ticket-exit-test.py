@@ -840,6 +840,28 @@ class TechnicallyBlockedTest(publication.Harness):
                              beads[self.ids[key]]["metadata"]["gc.blocked_by"], key)
         self.assertIsNone(self.shown_ticket(self.convoy, self.ids["T2"])["park"])
 
+    def test_the_red_control_a_technical_block_names_is_recorded_on_the_convoy(self):
+        # T40: the patch door publishes a repair of a red control only if the
+        # convoy carries a record of it; the exit records the one it names.
+        self.assertEqual([], self.convoy_state(self.convoy)["convoy"]["red_checks"])
+
+        self.assertEqual(0, self.exit(self.REPAIR).returncode)
+
+        self.assertEqual(
+            [{"name": self.REPAIR["restores"]["ref"], "source": "technically_blocked", "ticket": self.ids["T2"]}],
+            self.convoy_state(self.convoy)["convoy"]["red_checks"])
+
+    def test_a_refused_technical_block_leaves_no_red_control_on_the_convoy(self):
+        repair = {**self.REPAIR, "acceptance_criteria": ["La réponse liste trois éléments."]}
+        before = self.beads()
+
+        proc = self.exit(repair)
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        beads = self.beads()
+        self.assertEqual(before, {bead_id: beads[bead_id] for bead_id in before})
+        self.assertEqual([], self.convoy_state(self.convoy)["convoy"]["red_checks"])
+
     def test_a_second_technical_block_adds_a_second_repair(self):
         self.assertEqual(0, self.exit(self.REPAIR).returncode)
         proc = self.exit({**self.REPAIR, "title": "Le harnais retrouve son port"})

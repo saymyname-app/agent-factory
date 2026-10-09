@@ -107,6 +107,15 @@ and its blockers still open; the patch door holds the repair to the entry
 contract and publishes it, marked and tracked by the convoy. If the door
 refuses, the revision bead is closed and the exit is refused.
 
+The door reads what the repair cites against its source
+(`docs/ENTRY_CONTRACT.md`, T40): a user story or a line in the Spec, an
+anchor in its Validated Prototype, a rule in its file at the commit of the
+integration branch (`ref`: `<path> : <rule>`). A red control
+(`restores.kind: red_check`) must be one the convoy carries a record of:
+the exit records the control the author names on the ticket first
+(`bin/convoy-state record-blocking-red`, shown among `convoy.red_checks`),
+and withdraws it if the door refuses the repair.
+
 **Interrupted, and a session that ended without an exit.** `read` renders a
 started ticket that is `in_progress`, has no recorded exit, and whose
 session (`assignee`, `gc.session_name`, `gc.session_id`) is closed or absent

@@ -58,11 +58,22 @@ A ticket carries only fields the door knows; any other field is refused.
 | `prototype_fold` | `vertical_slice` | optional, `true` only: this slice is the Prototype Fold of a Validated Prototype of the Spec (see "Interface tickets and the Prototype Fold") |
 | `prototype` | all | optional, a non-empty string: the path (`chemin`) of the ticket's Validated Prototype as the Spec writes it. Required on every interface ticket, each Fold included, when the Spec names several (T46, af-lb9zkz) |
 
-A `repair` is also held to what the door can read in the approved Spec:
-`restores.kind: user_story` must cite the number of exactly one story of
-the Spec, and `restores.kind: spec_line` a line found word for word in its
-text. An `anchor`, a `repo_rule` or a `red_check` is recorded as cited: the
-door has nothing to read it against.
+A `repair` restores something that already exists: the door reads each
+citation against its source and refuses, naming the ticket and what it
+cites, when the source does not hold it (Spec §2: a behaviour the Spec does
+not require is never a repair, it is a Planning Exception).
+
+| `restores.kind` | `ref` | Read against |
+| --- | --- | --- |
+| `user_story` | the number of exactly one story | the numbered user stories of the approved Spec |
+| `spec_line` | a line, word for word | the text of the approved Spec |
+| `anchor` (T40, af-o6tu3z) | the name of one anchor | the named anchors of every prototyped state of the Validated Prototypes the Spec names, read by `bin/prototype-conformance anchors` in the repository of the project at the commit of each reference (fetched from `origin` when absent). Refused when the Spec names no Validated Prototype, or when the prototype cannot be read |
+| `repo_rule` (T40) | `<file path> : <the rule, word for word>` | the file at the tip of the integration branch of the convoy, in the repository of the project (of the protected branch at a first publication, before that branch is opened). Refused when the reference names no file, the file does not exist at that commit, or does not contain the citation |
+| `red_check` (T40) | the name of the control | the red controls the convoy carries a record of (`convoy.red_checks` in `bin/convoy-state show`, `docs/CONVOY_STATE.md`). Refused when none bears that name — always at a first publication, which has no convoy yet |
+
+A `repair` that restores a red of the mechanical fidelity (`red_check`
+naming a recorded red whose `check` is `fidelity`) is an interface ticket,
+as the repair of an anchor is.
 
 A criterion names its entry point (the route, command or public API it is
 observed through), its observable (field, role and label) and the
@@ -131,7 +142,8 @@ which user stories describe an interface (the `[interface]` tag
 Prototypes (branch, commit, path, states). An **interface ticket** is:
 
 - a `vertical_slice` that covers an interface story;
-- a `repair` that restores an interface story or an anchor;
+- a `repair` that restores an interface story, an anchor, or a recorded
+  red of the mechanical fidelity (T40);
 - the Prototype Fold itself.
 
 There is one Prototype Fold per Validated Prototype the Spec names (T46,
@@ -326,6 +338,11 @@ both doors: coverage, operator needs and `lift-need`, launch recipe,
 pointers read on the published ticket, a patch that adds, changes or
 withdraws tickets, with and without approval, the Planning Exception
 register being written by the real `bin/planning-exception`.
+`tests/ticket-graph-publish-citation-test.py` does the same for T40 on the
+patch door, with a real repository: an anchor absent from or held by the
+Validated Prototype, a prototype that cannot be read, a rule whose file is
+missing at the commit of the integration branch or does not contain it, a
+red control the convoy does or does not carry.
 `tests/ticket-graph-publish-prototype-fold-test.py` does the same for T36:
 an interface graph without Prototype Fold, an interface ticket that does
 not wait for it, the reference read on each published interface ticket, a

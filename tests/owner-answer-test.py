@@ -10,11 +10,14 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import json
+import sys
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests" / "lib"))
+from fixture_prototype import materialize  # noqa: E402
 TOOL = ROOT / "bin" / "owner-answer"
 
 
@@ -319,6 +322,71 @@ class OwnerAnswerTest(sessions.AcceptanceSessionTest):
         self.assertIn("Planning Exception", error)
         self.assertEqual(before, self.everything())
 
+    def anchored(self, anchor):
+        """An Owner Finding that cites an anchor, with its drafted repair.
+        The prototype branch of the Spec lives on the remote of the
+        project, never merged: it is read from there."""
+        materialize(self.origin)
+        return {**cited("La liste n'est pas où le prototype la place."), "cites": {"kind": "anchor", "ref": anchor}}
+
+    def test_a_finding_that_cites_an_anchor_the_validated_prototype_does_not_hold_is_a_planning_exception(self):
+        commit, digest = self.delivered_dossier()
+        self.passed(self.give_verdict("sans suite"))
+
+        answer = self.passed(self.respond("constats rendus", commit, digest, "--findings",
+                                          self.findings_file(self.anchored("pied-de-page"))))
+
+        self.assertEqual(["planning_exception"], [finding["route"] for finding in answer["findings"]])
+        (last,) = self.judgement()["answers"]
+        # No repair is drafted for it, and it joins the Planning Exception of the batch.
+        self.assertNotIn("draft", last["findings"][0])
+        self.assertNotIn("ticket", last["findings"][0])
+        self.assertEqual([1], last["exception"]["findings"])
+
+    def test_a_finding_that_cites_an_anchor_of_the_validated_prototype_is_a_repair(self):
+        commit, digest = self.delivered_dossier()
+        self.passed(self.give_verdict("sans suite"))
+
+        answer = self.passed(self.respond("constats rendus", commit, digest, "--findings",
+                                          self.findings_file(self.anchored("fixture-items"))))
+
+        self.assertEqual(["repair"], [finding["route"] for finding in answer["findings"]])
+        (last,) = self.judgement()["answers"]
+        self.assertEqual({"kind": "anchor", "ref": "fixture-items"}, last["findings"][0]["draft"]["restores"])
+        self.assertNotIn("exception", last)
+
+    def test_findings_that_cite_an_anchor_are_refused_when_the_validated_prototype_cannot_be_read(self):
+        commit, digest = self.delivered_dossier()
+        self.passed(self.give_verdict("sans suite"))
+        self.env["PROTOTYPE_CONFORMANCE_BIN"] = "/bin/false"
+        findings = self.findings_file(self.anchored("fixture-items"))
+
+        error = self.refusal_of(lambda: self.respond("constats rendus", commit, digest, "--findings", findings))
+
+        self.assertIn("ancres du Validated Prototype", error)
+
+    def amended_spec_published(self):
+        """The Spec amended and approved again, and the revised graph
+        published from it: what the patch door leaves on the convoy (its
+        digest, tests/ticket-graph-publish-citation-test.py)."""
+        raised_on = self.show()["convoy"]["spec_digest"]
+        amended = "sha256:" + "5" * 64
+        self.assertNotEqual(raised_on, amended)
+        self.edit(CONVOY, **{"gc.spec_digest": amended})
+
+    def test_the_planning_exception_of_the_batch_is_not_resolved_while_the_spec_has_not_been_amended(self):
+        commit, digest = self.delivered_dossier()
+        self.passed(self.give_verdict("sans suite"))
+        self.passed(self.respond("constats rendus", commit, digest, "--findings",
+                                 self.findings_file({"text": "Je veux un mode sombre."})))
+        self.assertEqual(self.show()["convoy"]["spec_digest"], self.judgement()["answers"][-1]["exception"]["spec_digest"])
+
+        error = self.refusal_of(
+            lambda: self.owner("resolve-exception", "--approved-by", APPROVER, "--words", "La Spec est amendée."))
+
+        self.assertIn("n'a pas été amendée", error)
+        self.assertNotIn("resolved", self.judgement()["answers"][-1]["exception"])
+
     def test_the_planning_exception_of_the_batch_holds_delivered_until_it_is_resolved_on_the_approver_words(self):
         commit, digest = self.delivered_dossier()
         self.passed(self.give_verdict("sans suite"))
@@ -326,6 +394,7 @@ class OwnerAnswerTest(sessions.AcceptanceSessionTest):
                                  self.findings_file({"text": "Je veux un mode sombre."})))
         refused = self.run_cmd(gate.STATE_TOOL, "record-delivered", CONVOY, "--commit", commit, "--pack-digest", digest)
         self.assertEqual(EXIT_REFUSED, refused.returncode, refused.stdout)
+        self.amended_spec_published()
         self.assertIn("approbateur humain", self.refusal_of(
             lambda: self.owner("resolve-exception", "--approved-by", "delivery-author", "--words", "C'est réglé.")))
 
