@@ -268,7 +268,7 @@ class CorrectionRoundTest(unittest.TestCase):
                    self.json_file({"files": fingerprints, "criteria": {"1": [COUNT_ID]}}))
         self.state("record-test-review", CONVOY, ticket, "--file", self.json_file({
             "commit": red, "files": fingerprints, "tests": {COUNT_ID: {"state": "favorable"}},
-            "recorded_by": "delivery-reviewer-tests"}))
+            "recorded_by": f"delivery-reviewer-tests-{ticket}"}))
         self.state("set-tdd", CONVOY, ticket, "--step", "freeze", "--commit", red)
         self.finish(ticket, tip)
         return tip
@@ -289,7 +289,7 @@ class CorrectionRoundTest(unittest.TestCase):
                                       if finding["id"] in refused else {"state": "favorable"})
                       for finding in findings["findings"] if finding["blocking"]}
         return self.state("record-code-review", CONVOY, ticket, "--file", self.json_file(
-            {"commit": tip, "recorded_by": "delivery-reviewer-second", "judgements": judgements}))
+            {"commit": tip, "recorded_by": f"delivery-reviewer-second-{ticket}-{tip[:6]}", "judgements": judgements}))
 
     def open_evaluation(self, tip, ticket=SLICE):
         self.state("open-evaluation", CONVOY, ticket, "--commit", tip, "--file", self.json_file({
@@ -306,7 +306,7 @@ class CorrectionRoundTest(unittest.TestCase):
         if not observed:
             criterion.update(state="not_observed", reason=NOT_SEEN)
         return self.state("record-evaluation", CONVOY, ticket, "--file", self.json_file({
-            "commit": tip, "recorded_by": "delivery-evaluator-fx", "criteria": [criterion],
+            "commit": tip, "recorded_by": f"delivery-evaluator-{ticket}-{tip[:6]}", "criteria": [criterion],
             "demonstration_line": {"text": LINE, "state": "observed", "evidence": "evaluation.seen"}}))
 
     def refused_by_both(self):

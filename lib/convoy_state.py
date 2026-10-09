@@ -912,6 +912,19 @@ def review_tests(criteria: dict[str, list[str]]) -> list[str]:
     return list(dict.fromkeys(test_id for number in sorted(criteria, key=int) for test_id in criteria[number]))
 
 
+def review_launch(launch: Any) -> bool:
+    """One launch of a review, a code review or a Ticket Evaluation: the bead
+    sent to the role, and `refused` when the session that answered it had
+    already rendered another one of the convoy (T42): that launch gave no
+    result."""
+    if not isinstance(launch, dict) or set(launch) - {"refused"} != {"bead", "at"} \
+            or not isinstance(launch["bead"], str) or not BEAD_ID_RE.match(launch["bead"]):
+        return False
+    refused = launch.get("refused", {"session": "-", "at": ""})
+    return isinstance(refused, dict) and set(refused) == {"session", "at"} \
+        and isinstance(refused["session"], str) and bool(refused["session"].strip()) and "\n" not in refused["session"]
+
+
 def review_request(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != {"commit", "files", "criteria", "launches", "at"}:
         raise Refusal(f"demande de relecture mal formée : {value!r}")
@@ -921,8 +934,7 @@ def review_request(value: Any) -> dict[str, Any]:
     if not isinstance(launches, list) or len(launches) > TEST_REVIEW_MAX_LAUNCHES:
         raise Refusal(f"lancements de relecture mal formés : {launches!r}")
     for launch in launches:
-        if not isinstance(launch, dict) or set(launch) != {"bead", "at"} or not isinstance(launch["bead"], str) \
-                or not BEAD_ID_RE.match(launch["bead"]):
+        if not review_launch(launch):
             raise Refusal(f"lancement de relecture mal formé : {launch!r}")
     return value
 
@@ -1073,8 +1085,7 @@ def code_review_request(value: Any) -> dict[str, Any]:
     if not isinstance(launches, list) or len(launches) > CODE_REVIEW_MAX_LAUNCHES:
         raise Refusal(f"lancements de revue mal formés : {launches!r}")
     for launch in launches:
-        if not isinstance(launch, dict) or set(launch) != {"bead", "at"} or not isinstance(launch["bead"], str) \
-                or not BEAD_ID_RE.match(launch["bead"]):
+        if not review_launch(launch):
             raise Refusal(f"lancement de revue mal formé : {launch!r}")
     return value
 
@@ -1215,8 +1226,7 @@ def evaluation_launches(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list) or len(value) > EVALUATION_MAX_LAUNCHES:
         raise Refusal(f"lancements d'évaluation mal formés : {value!r}")
     for launch in value:
-        if not isinstance(launch, dict) or set(launch) != {"bead", "at"} or not isinstance(launch["bead"], str) \
-                or not BEAD_ID_RE.match(launch["bead"]):
+        if not review_launch(launch):
             raise Refusal(f"lancement d'évaluation mal formé : {launch!r}")
     return value
 
@@ -3492,6 +3502,47 @@ def json_argument(path: Any, what: str) -> dict[str, Any]:
     return given
 
 
+RENDERED_BY = ((KEY_TEST_REVIEW, "la relecture des tests"), (KEY_CODE_REVIEW, "la revue de code"),
+               (KEY_EVALUATION, "la Ticket Evaluation"))
+
+
+def rendered_by(convoy_id: str) -> dict[str, str]:
+    """Every session that rendered a review of tests, a code review or a
+    Ticket Evaluation on a ticket of the convoy, with what it rendered."""
+    _, tickets = load_convoy(convoy_id)
+    sessions: dict[str, str] = {}
+    for ticket in tickets:
+        metadata = metadata_of(ticket)
+        for key, what in RENDERED_BY:
+            try:
+                rounds = json.loads(metadata.get(key) or "{}").get("rounds")
+            except (TypeError, ValueError, AttributeError):
+                continue
+            for round_ in rounds if isinstance(rounds, list) else []:
+                session = round_.get("recorded_by") if isinstance(round_, dict) else None
+                if isinstance(session, str) and session.strip():
+                    sessions.setdefault(session.strip(), f"{what} du ticket {ticket.get('id')}")
+    return sessions
+
+
+def refuse_served_session(args: argparse.Namespace, key: str, record: dict[str, Any], given: dict[str, Any]) -> None:
+    """A fresh session per review, code review or Ticket Evaluation (Spec
+    §5, T42): what a session hands in is refused when it already rendered
+    another one of the convoy. The launch it answered is counted without
+    result — one relaunch, then the stop — and nothing else is written."""
+    session = given.get("recorded_by")
+    served = rendered_by(args.convoy).get(session.strip()) if isinstance(session, str) else None
+    if served is None:
+        return
+    launches = record["request"]["launches"]
+    if launches and "refused" not in launches[-1]:
+        launches[-1]["refused"] = {"session": session.strip(), "at": now()}
+        write_metadata(args.ticket, {key: encode(record)})
+    raise Refusal(
+        f"la session {session.strip()} a déjà rendu {served} : une session neuve par relecture, revue ou évaluation ; "
+        "ce lancement est compté sans résultat (une relance, puis l'arrêt), rien d'autre n'est écrit")
+
+
 def cmd_open_test_review(args: argparse.Namespace) -> int:
     """Open the review of a ticket's criterion tests (T13): the tests proven
     red at `--commit`, with the fingerprints the freeze will seal. The same
@@ -3559,6 +3610,7 @@ def cmd_record_test_review(args: argparse.Namespace) -> int:
     if not request:
         raise Refusal(f"aucune relecture n'est demandée sur {args.ticket} : un verdict répond à une demande ouverte")
     given = json_argument(args.file, "verdict de relecture")
+    refuse_served_session(args, KEY_TEST_REVIEW, record, given)
     problems = [f"champ inconnu : {name}" for name in sorted(set(given) - {"commit", "files", "tests", "recorded_by"})]
     if given.get("commit") != request["commit"]:
         problems.append(f"le verdict porte sur le commit {given.get('commit')!r}, la demande sur {request['commit']}")
@@ -3772,6 +3824,7 @@ def cmd_record_code_review(args: argparse.Namespace) -> int:
     if not request:
         raise Refusal(f"aucune revue de code n'est demandée sur {args.ticket} : un verdict répond à une demande ouverte")
     given = json_argument(args.file, "revue de code")
+    refuse_served_session(args, KEY_CODE_REVIEW, record, given)
     review = request["kind"] == "review"
     known = {"commit", "recorded_by"} | ({"findings", "answers"} if review else {"judgements"})
     problems = [
@@ -3813,11 +3866,6 @@ def cmd_record_code_review(args: argparse.Namespace) -> int:
         refused = [finding["id"] for finding in findings if finding["blocking"]]
     else:
         reviewed = record["rounds"][-1]
-        if isinstance(recorded_by, str) and recorded_by.strip() == reviewed["recorded_by"]:
-            # Spec §6: a second reviewer session judges the answers.
-            problems.append(
-                f"le jugement est rendu par la session qui a fait la revue ({reviewed['recorded_by']}) : "
-                "une seconde session relecteur juge les réponses")
         expected = blocking_ids(reviewed)
         judgements = given.get("judgements") if isinstance(given.get("judgements"), dict) else {}
         problems += [f"{name} n'est pas un Blocking Finding de la revue jugée" for name in sorted(set(judgements) - set(expected))]
@@ -4053,6 +4101,7 @@ def cmd_record_evaluation(args: argparse.Namespace) -> int:
     if not request:
         raise Refusal(f"aucune évaluation n'est demandée sur {args.ticket} : des états répondent à une demande ouverte")
     given = json_argument(args.file, "évaluation")
+    refuse_served_session(args, KEY_EVALUATION, record, given)
     problems = [
         "le verdict est calculé par du code, jamais donné par l'Evaluator" if name in ("verdict", "outcome")
         else f"champ inconnu : {name}"

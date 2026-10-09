@@ -289,7 +289,7 @@ class TestReviewTest(unittest.TestCase):
         self.assertEqual(("unfavorable", True, 1), (answer["verdict"], answer["returned"], answer["refusals"]))
         self.assertEqual([{"test": COUNT_ID, "criteria": ["1"], "reason": STATUS_ONLY}], answer["refused"])
         (round_,) = self.shown()["test_review"]["rounds"]
-        self.assertEqual(("unfavorable", head, "delivery-reviewer-fixture"),
+        self.assertEqual(("unfavorable", head, "delivery-reviewer-fixture-tests-1"),
                          (round_["verdict"], round_["commit"], round_["recorded_by"]))
         self.assertEqual({COUNT_ID: {"state": "unfavorable", "reason": STATUS_ONLY}, HEALTH_ID: {"state": "favorable"}},
                          round_["tests"])
@@ -639,6 +639,134 @@ class TestReviewTest(unittest.TestCase):
         answer = json.loads(proc.stdout)
         self.assertEqual((1, None, None), (answer["refusals"], answer["request"], answer["stop"]))
         self.assertEqual(["unfavorable"], [r["verdict"] for r in answer["rounds"]])
+
+
+    # --- T42: a fresh session per review ------------------------------------------
+
+    def other_review_open(self):
+        """The review of SLICE rendered by one session, then the review of
+        OTHER_SLICE launched and left without an answer: the verdict a
+        session would hand in on it, and the session that served SLICE."""
+        self.red()
+        self.review()
+        (served,) = [round_["recorded_by"] for round_ in self.shown()["test_review"]["rounds"]]
+        head = self.red(ticket=OTHER_SLICE)
+        self.reviewer("favorable", "silent")
+        self.review(ticket=OTHER_SLICE, expect=EXIT_PENDING)
+        fingerprints = self.shown(OTHER_SLICE)["test_review"]["request"]["files"]
+        verdict = {"commit": head, "files": fingerprints,
+                   "tests": {COUNT_ID: {"state": "favorable"}, HEALTH_ID: {"state": "favorable"}}}
+        return verdict, served
+
+    def beads(self):
+        """The tracker, each review record decoded, the mark of a launch
+        counted without result set apart."""
+        beads = json.loads(self.tracker.read_text())["beads"]
+        counted = {}
+        for bead_id, bead in beads.items():
+            raw = (bead.get("metadata") or {}).get("gc.flow.test_review")
+            if raw is None:
+                continue
+            record = json.loads(raw)
+            for launch in (record.get("request") or {}).get("launches") or []:
+                if "refused" in launch:
+                    counted.setdefault(bead_id, []).append(launch.pop("refused")["session"])
+            bead["metadata"]["gc.flow.test_review"] = record
+        return beads, counted
+
+    def test_show_names_the_session_that_rendered_each_review(self):
+        head = self.red(COUNT_TEST_STATUS_ONLY)
+        self.reviewer({COUNT_ID: STATUS_ONLY}, "favorable")
+        self.review(expect=EXIT_RETURNED)
+        self.red(COUNT_TEST)
+        self.review()
+
+        rounds = self.shown()["test_review"]["rounds"]
+
+        self.assertEqual(["delivery-reviewer-fixture-tests-1", "delivery-reviewer-fixture-tests-2"],
+                         [round_["recorded_by"] for round_ in rounds])
+        self.assertEqual(head, rounds[0]["commit"])
+
+    def test_a_review_is_recorded_under_the_session_and_never_under_the_slot_of_the_agent(self):
+        """GC_AGENT names a place in the pool of the agent: the next session
+        of the role takes the same one."""
+        verdict, _ = self.other_review_open()
+        command, _ = self.record(verdict, ticket=OTHER_SLICE)
+
+        self.refused(*command, mention="session", env={"DELIVERY_ROLE_READ_ONLY": "1", "GC_AGENT": "delivery-reviewer-1"})
+        proc = self.run_cmd(TOOL, *command, env={"DELIVERY_ROLE_READ_ONLY": "1", "GC_AGENT": "delivery-reviewer-1",
+                                                 "GC_SESSION_ID": "fx-s9"})
+
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(["fx-s9"], [round_["recorded_by"] for round_ in self.shown(OTHER_SLICE)["test_review"]["rounds"]])
+
+    def test_a_verdict_from_a_session_that_rendered_another_review_of_the_convoy_is_refused_and_counted_without_result(self):
+        # Demonstration line of the ticket, last part.
+        verdict, served = self.other_review_open()
+        before, _ = self.beads()
+        writes = self.launches()
+        command, _ = self.record(verdict, ticket=OTHER_SLICE)
+
+        proc = self.run_cmd(TOOL, *command, env={"DELIVERY_ROLE_READ_ONLY": "1", "GC_SESSION_NAME": served})
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        text = json.loads(proc.stdout)["error"]
+        self.assertIn(served, text)
+        self.assertIn("session neuve", text)
+        self.assertIn(SLICE, text)
+        after, counted = self.beads()
+        self.assertEqual({OTHER_SLICE: [served]}, counted)
+        self.assertEqual(before, after)
+        self.assertEqual(writes, self.launches())
+        self.assertEqual([], self.shown(OTHER_SLICE)["test_review"]["rounds"])
+        self.assertNotIn("freeze", self.shown(OTHER_SLICE)["tdd"])
+
+    def test_a_review_refused_for_its_session_is_launched_once_more_to_another_session(self):
+        verdict, served = self.other_review_open()
+        command, _ = self.record(verdict, ticket=OTHER_SLICE)
+        self.run_cmd(TOOL, *command, env={"DELIVERY_ROLE_READ_ONLY": "1", "GC_SESSION_NAME": served})
+        self.reviewer("favorable")
+
+        answer = self.review(ticket=OTHER_SLICE)
+
+        self.assertEqual(("favorable", 2), (answer["verdict"], answer["launches"]))
+        self.assertNotEqual(served, answer["recorded_by"])
+        self.assertEqual(3, len(self.launches()))
+
+    def test_a_review_refused_for_its_session_twice_stops_the_ticket(self):
+        verdict, served = self.other_review_open()
+        command, _ = self.record(verdict, ticket=OTHER_SLICE)
+        session = {"DELIVERY_ROLE_READ_ONLY": "1", "GC_SESSION_NAME": served}
+        self.run_cmd(TOOL, *command, env=session)
+        self.review(ticket=OTHER_SLICE, expect=EXIT_PENDING)
+        again = self.run_cmd(TOOL, *command, env=session)
+        self.assertEqual(EXIT_REFUSED, again.returncode, again.stdout + again.stderr)
+
+        answer = self.review(ticket=OTHER_SLICE, expect=EXIT_STOPPED)
+
+        self.assertEqual((True, "test_review_no_result"), (answer["stopped"], answer["stop"]))
+        self.assertEqual([], self.shown(OTHER_SLICE)["test_review"]["rounds"])
+        self.assertEqual(3, len(self.launches()))
+        requests = self.escalation_list()
+        self.assertEqual(1, len(requests), requests)
+        self.assertTrue(requests[0].startswith(f"{OTHER_SLICE} — "), requests)
+
+    def test_the_session_that_refused_the_tests_of_a_ticket_does_not_review_them_again(self):
+        self.red(COUNT_TEST_STATUS_ONLY)
+        self.reviewer({COUNT_ID: STATUS_ONLY}, "silent")
+        self.review(expect=EXIT_RETURNED)
+        (served,) = [round_["recorded_by"] for round_ in self.shown()["test_review"]["rounds"]]
+        head = self.red(COUNT_TEST)
+        self.review(expect=EXIT_PENDING)
+        fingerprints = self.shown()["test_review"]["request"]["files"]
+        command, _ = self.record({"commit": head, "files": fingerprints,
+                                  "tests": {COUNT_ID: {"state": "favorable"}, HEALTH_ID: {"state": "favorable"}}})
+
+        proc = self.run_cmd(TOOL, *command, env={"DELIVERY_ROLE_READ_ONLY": "1", "GC_SESSION_NAME": served})
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("session neuve", json.loads(proc.stdout)["error"])
+        self.assertEqual(["unfavorable"], [round_["verdict"] for round_ in self.shown()["test_review"]["rounds"]])
 
 
 if __name__ == "__main__":

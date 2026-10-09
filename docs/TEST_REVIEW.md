@@ -100,6 +100,26 @@ the freeze stays refused. The review is launched **once more**, on a new
 bead, for a new session. When that second launch gives no result either,
 the ticket is stopped (`test_review_no_result`).
 
+## A fresh session per review
+
+One reviewer session renders one review (Spec §5, T42). Two things hold it:
+
+- `agents/delivery-reviewer/agent.toml` carries the work query of the
+  author agent: a session that has ever been assigned a bead is offered, of
+  the unassigned work, only that of the workflows it already works. Once it
+  has rendered its review it is offered nothing and leaves; the next review
+  starts a new session.
+- `bin/convoy-state record-test-review` refuses a verdict whose session
+  (`recorded_by`) already rendered a review of tests, a code review or a
+  Ticket Evaluation on any ticket of the convoy. The refusal marks the
+  launch it answered (`refused`: the session and the time) and writes
+  nothing else: that launch gave no result, so the next pass relaunches
+  once, then stops the ticket, as above.
+
+`record` signs the verdict with `GC_SESSION_NAME`, else `GC_SESSION_ID` —
+never `GC_AGENT`, which names a place in the pool of the agent that the next
+session takes.
+
 A dispatch the door refuses or defers (no adoption trial for the role, total
 provider exhaustion, low memory) launched nothing: it counts no launch, its
 bead is closed, and `review` exits 1 with the door's reason. In `settle`, a
@@ -139,7 +159,7 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.test_review` | `rounds`: each recorded pass — `commit`, `files` (path → fingerprint), `verdict`, `tests` (test id → `state`, and `reason` when unfavorable), `recorded_by` (the reviewer session), `at`; `request`, while a review is open — `commit`, `files`, `criteria` (the criterion → test table), `launches` (`bead`, `at`), `at` |
+| `gc.flow.test_review` | `rounds`: each recorded pass — `commit`, `files` (path → fingerprint), `verdict`, `tests` (test id → `state`, and `reason` when unfavorable), `recorded_by` (the reviewer session), `at`; `request`, while a review is open — `commit`, `files`, `criteria` (the criterion → test table), `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at` |
 | `gc.flow.stop` | reason `test_review_refused` or `test_review_no_result`, a one-line detail, and `raised` once the escalation door accepted the request |
 
 The verdict is not written under `gc.flow.verdict.test_review`: a verdict of
@@ -184,3 +204,10 @@ state write; `tests/convoy-advance-test.py` the settlement by the pass.
 cases — a refusal corrected then frozen, a second refusal, a review without
 result — on a real controller, with the real formulas, the real dispatch
 door and a scripted author and reviewer.
+`tests/fresh-sessions-isolated-city-test.sh` (local-only) runs the delivery
+agents as they are delivered, caps and work queries untouched, on a real
+controller: two ready tickets held by two author sessions alive at the same
+moment under N = 2, two reviews one after the other rendered by two distinct
+sessions, and the verdict of a session that already served refused.
+`tests/delivery-agents-test.sh` holds, in CI, the cap of the author agent
+equal to `max_sessions` and the work query of each delivery agent.

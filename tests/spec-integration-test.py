@@ -233,12 +233,12 @@ class SpecIntegrationTest(unittest.TestCase):
         path.write_text(json.dumps(content, ensure_ascii=False))
         return path
 
-    def reviewed(self, ticket, commit, findings=(), session="delivery-reviewer-fx"):
+    def reviewed(self, ticket, commit, findings=(), session=None):
         """A round of the code review of the ticket at `commit`, as a
         reviewer session records it: favorable unless a finding blocks."""
         self.state("open-code-review", CONVOY, ticket, "--kind", "review", "--commit", commit, "--base", self.base)
         return self.state("record-code-review", CONVOY, ticket, "--file", self.json_file(f"review-{ticket}.json", {
-            "commit": commit, "recorded_by": session, "findings": list(findings), "answers": {}}))
+            "commit": commit, "recorded_by": session or f"delivery-reviewer-{ticket}-{commit[:6]}", "findings": list(findings), "answers": {}}))
 
     def evaluated(self, ticket, commit):
         """A favorable Ticket Evaluation of the ticket at `commit`, as an
@@ -251,7 +251,7 @@ class SpecIntegrationTest(unittest.TestCase):
                 "environment": [{"dataset": None, "address": "http://127.0.0.1:1", "state_file": "/launch.json"}]}))
         ticket_proofs.capture(self.env, self.repo, CONVOY, ticket, "evaluation.seen", commit)
         return self.state("record-evaluation", CONVOY, ticket, "--file", self.json_file(f"evaluation-{ticket}.json", {
-            "commit": commit, "recorded_by": "delivery-evaluator-fx",
+            "commit": commit, "recorded_by": f"delivery-evaluator-{ticket}-{commit[:6]}",
             "criteria": [{"number": number, "text": text, "state": "observed", "evidence": "evaluation.seen"}
                          for number, text in enumerate(shown["criteria"], start=1)],
             "demonstration_line": {"text": shown["demonstration_line"], "state": "observed",

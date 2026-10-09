@@ -5,6 +5,14 @@ min_active_sessions = 0
 max_active_sessions = 1
 idle_timeout = "2h"
 
+# A fresh session per review (Spec §5, T42). Same work query as
+# agents/delivery-author: a session that has ever been assigned a bead is
+# offered, of the unassigned work, only that of the workflows it already
+# works. Once it has rendered its review it is offered nothing, and leaves;
+# the next review starts a new session. bin/convoy-state refuses what a
+# session that already served hands in anyway.
+work_query = '''sh -c 'for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do [ -z "$id" ] && continue; r=$(bd list --status in_progress --assignee="$id" --json --limit=1 2>/dev/null); [ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; done; for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do [ -z "$id" ] && continue; r=$(bd ready --assignee="$id" --json --limit=1 2>/dev/null); [ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; done; mine=$(for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do [ -z "$id" ] && continue; bd list --all --assignee="$id" --json --limit=0 2>/dev/null; done | jq -sc "[.[][] | .metadata[\"gc.root_bead_id\"] // empty] | unique" 2>/dev/null); r=$(bd ready --metadata-field "gc.routed_to=$1" --unassigned --exclude-type=epic --json --sort oldest --limit=20 2>/dev/null); [ -n "$r" ] || r="[]"; case "$mine" in ""|"[]") ;; *) r=$(printf "%s" "$r" | jq -c --argjson mine "$mine" "[.[] | select(.metadata[\"gc.root_bead_id\"] as \$root | \$mine | index(\$root))]" 2>/dev/null); [ -n "$r" ] || r="[]" ;; esac; printf "%s" "$r"' -- delivery-reviewer'''
+
 # Fallback only: the effective provider comes from city.provider.toml
 # (bin/provider-failover, target delivery-reviewer). A read-only role must
 # never fall back to the workspace provider, which can write.
