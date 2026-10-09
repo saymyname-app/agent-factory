@@ -31,6 +31,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import struct
 import subprocess
@@ -1052,7 +1053,115 @@ def validate_delivery_scenario(scenario: dict[str, Any]) -> tuple[str, dict[str,
                     "outcome": outcome, "repairs": repairs}, project
 
 
-def run_driver(driver: Path, workspace: Path, command: str, *arguments: str) -> dict[str, Any]:
+# T37 (af-fg8lhx): the commands of the flow run during a delivery walk are
+# recorded by the oracle itself. The driver is given a directory that holds
+# one entry per command of bin/; each entry runs the real command and leaves
+# one line in the record of the walk. For a gate of the author's step, the
+# line also says which states of the ticket the gate wrote, read on
+# bin/convoy-state show before and after it ran.
+FLOW_BIN_VARIABLE = "FIXTURE_CITY_FLOW_BIN"
+FLOW_VERBS = ("tdd-step", "test-review", "ticket-author", "ticket-exit", "convoy-state")
+# Each state of the author's step: its name in the flow, and the gate that writes it.
+AUTHOR_STATES = {
+    "red": ("rouge", "tdd-step red"),
+    "freeze": ("gel", "tdd-step freeze"),
+    "test_review": ("relecture des tests", "test-review review"),
+    "green": ("vert", "tdd-step green"),
+    "handoff": ("Handoff", "ticket-exit exit"),
+    "exit": ("terminé", "ticket-exit exit"),
+}
+AUTHOR_GATES = sorted({gate for _, gate in AUTHOR_STATES.values()} | {"ticket-author start", "ticket-author demonstrate"})
+
+
+def author_states(ticket: dict[str, Any]) -> dict[str, str]:
+    """The states of the author's step a ticket shows, each with the
+    digest of its public record."""
+    tdd = ticket.get("tdd") or {}
+    records = {step: tdd.get(step) for step in ("red", "freeze", "green")}
+    records["test_review"] = (ticket.get("test_review") or {}).get("rounds")
+    handoff, exit_record = ticket.get("handoff") or {}, ticket.get("exit") or {}
+    records["handoff"] = handoff if handoff.get("partial") is False else None
+    records["exit"] = exit_record if exit_record.get("exit") == "finished" else None
+    return {state: canonical_digest(record) for state, record in records.items() if record}
+
+
+def flow_command(name: str, arguments: list[str]) -> str:
+    return f"{name} {arguments[0]}" if name in FLOW_VERBS and arguments else name
+
+
+def traced(record: Path, name: str, arguments: list[str]) -> int:
+    """One command of the flow, run for the driver and recorded."""
+    command = flow_command(name, arguments)
+    gate = command in AUTHOR_GATES and len(arguments) >= 3
+
+    def states() -> dict[str, str]:
+        shown = subprocess.run((str(BIN / "convoy-state"), "show", arguments[1]), text=True, capture_output=True,
+                               stdin=subprocess.DEVNULL, check=False)
+        try:
+            tickets = json.loads(shown.stdout).get("tickets") or []
+        except (json.JSONDecodeError, AttributeError):
+            return {}
+        return next((author_states(entry) for entry in tickets
+                     if isinstance(entry, dict) and entry.get("id") == arguments[2]), {})
+
+    before = states() if gate else {}
+    code = subprocess.run((str(BIN / name), *arguments), check=False).returncode
+    line = {"command": command, "exit": code}
+    if gate:
+        line["ticket"] = arguments[2]
+        line["wrote"] = {state: digest for state, digest in states().items() if before.get(state) != digest}
+    with record.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(line, sort_keys=True) + "\n")
+    return code
+
+
+class FlowRecord:
+    """What the oracle saw of the flow during one delivery walk."""
+
+    def __init__(self, workspace: Path):
+        self.directory, self.record = workspace / "flow-bin", workspace / "flow-record.jsonl"
+        self.directory.mkdir()
+        self.record.touch()
+        for tool in sorted(BIN.iterdir()):
+            if tool.is_file() and os.access(tool, os.X_OK):
+                entry = self.directory / tool.name
+                entry.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(Path(__file__).resolve()))} "
+                                 f"traced {shlex.quote(str(self.record))} {shlex.quote(tool.name)} \"$@\"\n")
+                entry.chmod(0o755)
+
+    def lines(self) -> list[dict[str, Any]]:
+        return [json.loads(line) for line in self.record.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def commands(self) -> list[str]:
+        return sorted({str(line.get("command")) for line in self.lines()})
+
+    def observe(self, target: "DeliveryTarget") -> int:
+        """Refuses a state of the author's step that its gate did not
+        write; answers how many closed tickets went through every gate of
+        the author."""
+        _, shown = target.read("convoy-state", "show", target.convoy, "--repo", str(target.repo))
+        lines, through = [line for line in self.lines() if line.get("exit") == 0], 0
+        for ticket in as_list(shown.get("tickets"), "convoy tickets"):
+            if not isinstance(ticket, dict):
+                continue
+            ran = {line["command"] for line in lines if line.get("ticket") == ticket.get("id")}
+            states = author_states(ticket)
+            for state, digest in states.items():
+                name, gate = AUTHOR_STATES[state]
+                if not any(line.get("ticket") == ticket.get("id") and line["command"] == gate
+                           and (line.get("wrote") or {}).get(state) == digest for line in lines):
+                    raise OracleError(f"the state « {name} » of ticket {ticket.get('id')} was written outside its gate ({gate})")
+            if ticket.get("status") == "closed" and ticket.get("kind") != "prefactoring":
+                missing = [gate for gate in AUTHOR_GATES if gate not in ran] + [
+                    AUTHOR_STATES[state][1] for state in AUTHOR_STATES if state not in states]
+                if missing:
+                    raise OracleError(f"ticket {ticket.get('id')} is closed without having gone through the gates of "
+                                      f"the author's step: {', '.join(sorted(set(missing)))}")
+                through += 1
+        return through
+
+
+def run_driver(driver: Path, workspace: Path, command: str, *arguments: str, flow: FlowRecord | None = None) -> dict[str, Any]:
     """One call of the delivery driver. It launches the product on a
     loopback port, so it is not contained by the no-socket sandbox of the
     planning adapters; it gets a clean environment and its own workspace."""
@@ -1061,7 +1170,8 @@ def run_driver(driver: Path, workspace: Path, command: str, *arguments: str) -> 
     try:
         result = subprocess.run(
             (str(driver), "--workspace", str(workspace), command, *arguments),
-            cwd=workspace, env=hermetic_env(workspace), text=True, capture_output=True,
+            cwd=workspace, env={**hermetic_env(workspace), **({FLOW_BIN_VARIABLE: str(flow.directory)} if flow else {})},
+            text=True, capture_output=True,
             stdin=subprocess.DEVNULL, timeout=600, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise OracleError(f"delivery driver {command} failed to run: {exc}") from exc
@@ -1523,13 +1633,15 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
         answering = expect["outcome"] in DELIVERY_ANSWERS
         prepare = ("--inject", inject, *(("--project", project) if project else ()),
                    *(("--answer", expect["outcome"]) if answering else ()))
-        target = DeliveryTarget(run_driver(driver, workspace, "prepare", *prepare), workspace)
+        flow = FlowRecord(workspace)
+        target = DeliveryTarget(run_driver(driver, workspace, "prepare", *prepare, flow=flow), workspace)
         try:
-            target.name(run_driver(driver, workspace, "publish"))
+            target.name(run_driver(driver, workspace, "publish", flow=flow))
             lifecycle = [state for state, _ in observe_delivery(target)]
             if lifecycle != ["published"]:
                 raise OracleError(f"a published ticket shows {', '.join(lifecycle) or 'nothing'}: expected published, not started")
             observations = [list(lifecycle)]
+            through_the_gates = flow.observe(target)
             parking, reached_after = expect["parked"] is not None, None
             # T26: a walk that expects an outcome goes on past the closed
             # ticket, and watches the end of the Spec after each event.
@@ -1574,8 +1686,10 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
             final = None
             for _ in range(DELIVERY_MAX_EVENTS_OUTCOME if watching else
                            DELIVERY_MAX_EVENTS_PARKING if parking else DELIVERY_MAX_EVENTS):
-                event = run_driver(driver, workspace, "advance")
+                event = run_driver(driver, workspace, "advance", flow=flow)
                 reached = [state for state, _ in observe_delivery(target)]
+                # T37: each state of the author's step is one its gate wrote.
+                through_the_gates = flow.observe(target)
                 if reached[:len(lifecycle)] != lifecycle:
                     raise OracleError(f"lifecycle went backwards: {', '.join(lifecycle)} then {', '.join(reached)}")
                 observations.append(reached[len(lifecycle):])
@@ -1606,7 +1720,8 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
             else:
                 final["outcome"] = {**final["outcome"], **seen["closing"]}
         finally:
-            run_driver(driver, workspace, "stop")
+            run_driver(driver, workspace, "stop", flow=flow)
+        flow_commands = flow.commands()
     result = {
         "contract": DELIVERY_RESULT_CONTRACT,
         "ok": True,
@@ -1619,7 +1734,11 @@ def execute_delivery(scenario: dict[str, Any], driver: Path) -> dict[str, Any]:
         "interfaces": {
             "driver": ["prepare", "publish", "advance", "stop"],
             "read": ["convoy-state show", "git merge-base", "ticket-end check", "evidence-capture verify"],
+            # The commands of the flow the oracle saw run during the walk: nothing the driver declares.
+            "flow": flow_commands,
         },
+        # The closed tickets whose author's step went through each of these gates.
+        "author_gates": {"tickets": through_the_gates, "commands": AUTHOR_GATES},
     }
     if project:
         result["project"] = project
@@ -1664,6 +1783,8 @@ def run_scenario(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["traced"] and len(sys.argv) >= 4:
+        return traced(Path(sys.argv[2]), sys.argv[3], sys.argv[4:])
     try:
         args = parser().parse_args()
         result = run_scenario(args)
