@@ -69,7 +69,10 @@ A second call on the same state does nothing.
 ## The product that is evaluated
 
 For an evaluation `settle` launches the product **once per dataset** the
-profile declares (`launch.datasets`), each on its own free port, through
+profile declares (`launch.datasets`, at least one: a profile that declares
+none is refused before anything is launched or recorded — « le profil … ne
+déclare aucun jeu de données (launch.datasets) » — the ticket listed under
+`refused`, no startup verdict recorded), each on its own free port, through
 `bin/project-launch start --commit <tip>` on the repository of the project:
 a detached `git worktree` checkout of that exact commit in a temporary
 directory, never the directory the author works in. The launch records are
