@@ -221,13 +221,14 @@ requires its lifecycle, in this order and with none skipped:
 
 The **driver** makes the flow advance; the **oracle** observes. The driver
 is called as `<driver> --workspace <dir> prepare [--inject NAME] [--project
-NAME] | publish | advance | stop`. `prepare` says where the public state is read (convoy,
+NAME] [--answer NAME] | publish | advance | stop`. `prepare` says where the public state is read (convoy,
 ticket, repository, environment of the state commands, and optionally the
 `profile` an Acceptance Session launches the product by); a driver that
 publishes through a door that numbers the convoy and the ticket names them
 in the answer of `publish` instead. Each `advance`
 plays one event: one pass of the Factory's order (the real
-`bin/convoy-advance`) or what one agent session leaves behind. After each
+`bin/convoy-advance`), what one agent session leaves behind or, on a walk
+that goes on to it, Benjamin's answer (T30). After each
 event the oracle itself runs `bin/convoy-state show`, reads the branches of
 the repository, and at the end runs `bin/ticket-end check` and
 `bin/evidence-capture verify`. It reads no prompt, no formula and no role,
@@ -258,6 +259,8 @@ The scenario says what the walk must end in: `expect: {closed: true}`, or
 | `one-ticket-second-project.json` | nothing goes wrong, on a ticket of the second project of the fixture (T35) | the nine states, closed by the gate |
 | `three-failures-parked.json` | the convoy holds two more tickets: one whose author session ends three times without a Ticket Exit, one that waits for it (T20) | the walked ticket reaches its nine states and is closed by the gate; the two others are parked; one grouped request names them both |
 | `story-repaired-delivered.json` | the Spec holds a second user story the product does not serve when the walked ticket closes (T26) | the end of the Spec refuses once on the Outcome Evaluation; one `repair` is published and delivered by the flow of a ticket; the whole gate is replayed on the new tip; the convoy is Delivered |
+| `outcome-accepted.json` | the same walk, then Benjamin answers « accepté » (T30) | Delivered, then Accepted, as two observed states; the protected branch holds no commit of the convoy before the answer and one merge after it; the convoy is closed on his words |
+| `outcome-abandoned.json` | nothing goes wrong, then Benjamin answers « abandonné » (T30) | Delivered, then abandoned; the convoy is closed with the reason; the protected branch does not move and the integration branch stays |
 
 ### A ticket that fails three times is parked (T20)
 
@@ -378,6 +381,71 @@ the door had not created, the whole end of the Spec runs again, the second
 dossier opens with « Depuis ton dernier jugement », and « accepté » is
 recorded (`docs/OWNER_ANSWER.md`).
 
+### After Benjamin's answer: Delivered, then Accepted (T30)
+
+`expect: {closed: true, outcome: "accepted"}` (or `"abandoned"`, with
+`repairs: N` as for `delivered`) makes the walk go on past the Delivered
+Outcome (Spec §9 and §11, `docs/OWNER_ANSWER.md`). The oracle asks the
+driver for the answer (`prepare --answer accepted|abandoned`) and requires
+what `delivered` requires, then that Delivered and the state the answer
+ends the Outcome in are **two states, observed one after the other** on
+`convoy.outcome` of `bin/convoy-state show`:
+
+- the oracle reads the tip of the protected branch once the graph is
+  published, and at every observation after it. Until « accepté » stands
+  in the judgement of the convoy that tip has not moved and none of the
+  commits of the integration branch is reachable from it (`git rev-list`):
+  a protected branch that moves before the answer fails the run;
+- the observation that first shows Delivered is made before any answer: an
+  answer recorded by the event that recorded Delivered fails the run, and
+  so does a convoy found closed « accepté » or « abandonné » that was never
+  observed Delivered. Everything `delivered` reads — `bin/ticket-end check`
+  and `bin/evidence-capture verify` on the walked ticket, the end-of-Spec
+  gate, the Acceptance Request, the Acceptance Session — is read at that
+  observation: the acceptance purges the evidence store it is read on;
+- once the answer stands the end of the Spec is no longer observed: the
+  Outcome is judged, and the request leaves the operator's list;
+- `accepted`: the convoy is closed (`convoy.closed`: `how`, the approver,
+  his words), every ticket is closed, and the tip of the protected branch
+  is **one merge commit** — the only new commit on its first-parent line —
+  whose first parent is the tip it had and whose second parent is the tip
+  of the integration branch, still at the commit of the Delivered Outcome.
+  `convoy.promotion` names those commits: `judged`, `merged`, `protected`,
+  `tip`;
+- `abandoned`: the convoy is closed with the reason, it carries no
+  promotion, the protected branch is where it was, and the integration
+  branch still exists at the commit of the Delivered Outcome;
+- the walk ends when an event changes nothing, on the two states in that
+  order. An Outcome nobody answered, or closed in another way than the
+  scenario expects, fails the run.
+
+The `outcome` of the result keeps what `delivered` reports, with `state`
+(`accepted` or `abandoned`) and, added: `states` (`["delivered",
+"accepted"]`), `closed` (`how`, `approver`, `said`), `protected_branch`
+(`moved_before_the_answer: false`, `convoy_commits_before_the_answer: 0`,
+`merges`, and `first_parent_is_the_previous_tip`,
+`second_parent_is_the_integration_tip` for a merge or `unchanged` without
+one), `integration_branch` (`kept`, `at_the_judged_commit`) and
+`requests_once_closed: 0`. `interfaces.read` gains `git rev-list`. A
+scenario that expects `delivered` is walked and reported as before: the
+driver is given no `--answer`.
+
+With `--answer accepted` or `--answer abandoned` the reference driver
+declares the human approver of the project the tickets target, whatever the
+injection. The event that follows the pass that recorded the Outcome
+Delivered is then his answer (`owner:accepted`, `owner:abandoned`), played
+through the real `bin/owner-answer` in the environment of the operator —
+no agent session is named in it: a verdict « sans suite » on each
+« proposition » left without one, then `record --response accepté` with
+his words, the commit and the fingerprint of the dossier of the Delivered
+Outcome; or `record --response abandonné --reason`. The next `advance` is
+a pass of the order, which follows the answer by itself
+(`bin/outcome-promote run`, `docs/CONVOY_ADVANCE.md`): the merge, the
+record of the promotion, the note in the dossier, the purge of the evidence
+store and the closing; or the closing alone. The pass after it changes
+nothing. Without `--answer` (the default, `none`) nobody answers and every
+other walk is what it was.
+
 Whatever the injection, each pass of the order the driver plays also writes
 the answer of `bin/convoy-advance` to `<workspace>/order-pass.json`, where
 a test reads what the pass said it did.
@@ -426,12 +494,15 @@ Limits of the reference driver (`tests/fixtures/fixture-city/delivery-driver`):
   (`tests/fixtures/outcome-evaluation/evaluator`,
   `tests/fixtures/spec-end-review/reviewer`). The other ways the end can go
   — a second round, the rounds exhausted and the « non conforme » request, a
-  red integration branch, a Blocking Finding of the end review — and
-  Benjamin's answer to the Acceptance Request are not scenarios of this
-  oracle: they are proven by the suites of the gate and of the pass
-  (`docs/SPEC_END.md`, `docs/CONVOY_ADVANCE.md`); his answer is walked on
-  the Fixture City by `OwnerAnswerOnTheFixtureCity`, outside
-  `bin/fixture-city-oracle run`. Of the acceptance the
+  red integration branch, a Blocking Finding of the end review — are not
+  scenarios of this oracle: they are proven by the suites of the gate and
+  of the pass (`docs/SPEC_END.md`, `docs/CONVOY_ADVANCE.md`). Of Benjamin's
+  answer the oracle walks « accepté » and « abandonné » on a Delivered
+  Outcome whose protected branch did not move (T30); « constats rendus »
+  and the verdicts on a proposition are walked on the Fixture City by
+  `OwnerAnswerOnTheFixtureCity`, outside `bin/fixture-city-oracle run`, and
+  a protected branch that moved since the judgement, a red replay and a
+  conflict by the suite of `bin/outcome-promote`. Of the acceptance the
   oracle walks the request, the opening and the closing of the session; the
   session outage, the « non conforme » session and « no delay accepts » are
   in `tests/convoy-stops-fixture-city-test.py`.

@@ -71,6 +71,8 @@ EXIT_UNRULED = 3
 EXIT_NOT_NEW_FLOW = 4
 
 PAGE = "index.html"
+# The note of the merge of an accepted Outcome, beside the page Benjamin judged (T30).
+PROMOTION_PAGE = "fusion.html"
 PIECES = "pieces"
 ASSET_RE = re.compile(r'(?:src|href)="(pieces/([0-9a-f]{64})\.(?:json|png))"')
 COMPARISON_RE = re.compile(r"^fidelity\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$")
@@ -1150,6 +1152,62 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0 if state == HELD else EXIT_REFUSED
 
 
+def cmd_promoted(args: argparse.Namespace) -> int:
+    """Once the accepted Outcome is merged into the protected branch (T30,
+    Spec §9): the dossier Benjamin judged notes the two commits -- the one
+    he judged and the one merge the protected branch received. The page he
+    judged keeps its bytes and its fingerprint; the note is one more page
+    of the same folder, written from the promotion bin/convoy-state holds.
+    Written again, it is the same page."""
+    repo = require_repo(args.repo)
+    status, shown = tool(STATE_TOOL, "show", args.convoy, "--repo", str(repo))
+    if status != 0 or not isinstance(shown.get("convoy"), dict):
+        raise PassedOn(status, shown)
+    convoy = shown["convoy"]
+    promotion, recorded = convoy.get("promotion"), convoy.get("evidence_pack")
+    if not isinstance(promotion, dict) or "unruled" in promotion:
+        raise Refusal(f"l'Outcome du convoi {args.convoy} n'est pas fusionné vers la branche protégée : le dossier n'a "
+                      "pas de fusion à noter ; rien n'est écrit")
+    if not isinstance(recorded, dict) or "unruled" in recorded or recorded["commit"] != promotion["judged"]:
+        raise Refusal(f"le dossier du commit jugé {sha(promotion['judged'])} n'est pas celui que le convoi {args.convoy} "
+                      "enregistre : rien n'est écrit")
+    folder = Path(recorded["path"])
+    if altered(folder, recorded):
+        raise Refusal(f"dossier altéré depuis sa génération : {altered(folder, recorded)} ; rien n'est écrit")
+    # The « accepté » the merge follows: the last answer, on the judged commit.
+    answers = (convoy.get("judgement") or {}).get("answers") or []
+    accepted = answers[-1] if answers and answers[-1].get("commit") == promotion["judged"] else {}
+    integration = convoy.get("integration") or {}
+    rows = [
+        ("Spec", e(convoy.get("spec"))),
+        ("Convoi", f"{e(args.convoy)} — {e(convoy.get('title') or '')}"),
+        ("Commit jugé", e(promotion["judged"])),
+        ("Commit fusionné", e(promotion["merged"])),
+        ("Branche protégée", f"{e(integration.get('protected'))}, à {e(promotion['protected'])} avant la fusion"),
+        ("Branche d'intégration fusionnée", f"{e(integration.get('branch'))} à {e(promotion['tip'])}" + (
+            "" if promotion["tip"] == promotion["judged"] else
+            " (le commit jugé, plus la reprise de la branche protégée : contrôles mécaniques rejoués verts)")),
+        ("Fusion enregistrée", e(promotion["at"])),
+        ("Mots de l'approbateur", f"{e(accepted.get('approver'))} : {e(accepted.get('words'))}" if accepted else "non lus"),
+    ]
+    page = ("<!doctype html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\">"
+            f"<title>Fusion de l'Outcome accepté — {e(args.convoy)}</title></head><body>\n"
+            "<h1>Outcome accepté : fusion vers la branche protégée</h1>\n"
+            f'<p>Le dossier jugé est <a href="{PAGE}">{PAGE}</a>, inchangé (empreinte {e(recorded["digest"])}).</p>\n'
+            '<table id="promotion">\n' + "\n".join(
+                f"<tr><th>{e(name)}</th><td>{value}</td></tr>" for name, value in rows)
+            + "\n</table>\n</body></html>\n").encode("utf-8")
+    target = folder / PROMOTION_PAGE
+    written = not target.is_file() or target.read_bytes() != page
+    if written:
+        staging = folder / f".{PROMOTION_PAGE}.tmp"
+        staging.write_bytes(page)
+        os.replace(staging, target)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "page": str(target), "judged": promotion["judged"],
+                      "merged": promotion["merged"], "written": written}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 # --- command line ------------------------------------------------------------------------
 
 
@@ -1158,7 +1216,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     # Required values are checked by the handlers, not by argparse: a refusal
     # is one JSON answer. No option carries a text for the page.
-    for name, handler in (("generate", cmd_generate), ("check", cmd_check)):
+    for name, handler in (("generate", cmd_generate), ("check", cmd_check), ("promoted", cmd_promoted)):
         p = sub.add_parser(name)
         p.add_argument("convoy")
         p.add_argument("--repo")

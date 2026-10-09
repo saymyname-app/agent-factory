@@ -47,6 +47,11 @@ nouveau flux**.
   dernière condition et refuse sans dossier complet à jour.
 - **Deux générations sur le même état** donnent la même page, octet pour
   octet : elle ne porte aucune heure de génération.
+- **Après la fusion d'un Outcome accepté (T30)** : `promoted`, lancé par
+  `./bin/outcome-promote`, écrit `fusion.html` dans le dossier du commit
+  que tu as jugé — le commit jugé, le commit de fusion, la branche protégée
+  avant la fusion, tes mots. `index.html`, la page que tu as jugée, ne
+  change pas d'un octet et garde son empreinte.
 - **Sorties** : 0 fait, ou dossier à jour ; 1 refus, ou dossier qui ne tient
   pas ; 3 état sans règle ; 4 convoi sans marque.
 - **Limites** : les captures côte à côte sont celles du dernier contrôle de
