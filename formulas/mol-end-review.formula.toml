@@ -110,7 +110,11 @@ Operator Language, every field on one line:
   repair: then the finding is not blocking.
 - `restores`: `kind` (`spec_line`, `user_story`, `repo_rule` or `anchor`) and
   `ref`, which cites what it restores — for `spec_line` the cited line of
-  the Spec copied exactly, for `user_story` the number of one story.
+  the Spec copied exactly, for `user_story` the number of one story, for
+  `repo_rule` the file then the rule copied exactly (`<path> : <rule>`),
+  for `anchor` the name of one anchor of the Validated Prototype. Code
+  reads each against its source and refuses a repair whose citation it
+  does not find there.
 - `demonstration_line`: what is observed on the launched product, through
   its real entry point, once the repair is delivered.
 - `acceptance_criteria`: at least one, each with `entry_point` (a route, a

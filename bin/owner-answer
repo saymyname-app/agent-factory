@@ -30,17 +30,23 @@ acceptance:
                    Owner Finding is {"text", "cites"?: {"kind", "ref"},
                    "repair"?: {title, what_it_delivers, demonstration_line,
                    acceptance_criteria}, "later"?: true}. Code routes each:
-                   it cites a user story or an anchor the Spec holds -> a
-                   `repair` (published by the next pass of
-                   bin/convoy-advance); « later » -> a proposition, created
-                   here through the proposition door; anything else -> the
-                   one Planning Exception of the batch, never a repair.
+                   it cites a user story of the Spec, or an anchor of a
+                   prototyped state of its Validated Prototype (read at
+                   the commit the Spec names) -> a `repair` (published by
+                   the next pass of bin/convoy-advance); « later » -> a
+                   proposition, created here through the proposition door;
+                   anything else -- an anchor the prototype does not hold
+                   included -> the one Planning Exception of the batch,
+                   never a repair.
                    Nothing closes; the Outcome is no longer Delivered; the
                    rounds of the end start again from zero.
   abandonné        with a one-line reason (`--reason`).
 
 `resolve-exception` records, on his words, that the Planning Exception of
 the last batch is resolved; until then the Outcome is not Delivered again.
+Refused while the Spec has not been amended: the convoy is still published
+from the approved Spec the exception was raised against (the amended Spec
+is approved, then the revised graph is published by the patch door).
 
 `proposals` creates the proposition of each « plus tard » he gave that has
 none yet. A proposition door that fails is not a refusal of his answer: the
@@ -446,7 +452,8 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
         if not args.words or not args.words.strip():
             raise Refusal(f"{name} s'enregistre avec les mots de Benjamin (--words), non vides ; rien n'est écrit")
         held_dossier(convoy, args.commit, args.pack_digest, name)
-        extra = ["--file", args.findings] if response == "findings" and args.findings else []
+        # An anchor a finding cites is read in the repository of the project (T40).
+        extra = ["--file", args.findings, "--repo", str(convoy.repo())] if response == "findings" and args.findings else []
         state_write("record-owner-answer", convoy.id, "--response", response, "--approver", approver,
                     "--words", args.words, "--commit", args.commit, "--pack-digest", args.pack_digest, *extra)
     # His answer is recorded: a proposition the door does not create is named, not a refusal.
