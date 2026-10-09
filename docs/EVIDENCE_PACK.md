@@ -15,10 +15,11 @@ as its seventh and last condition (`docs/SPEC_END.md`).
 ```bash
 ./bin/evidence-pack generate af-convoy --repo <project repository>   # writes the page, records it on the convoy
 ./bin/evidence-pack check    af-convoy --repo <project repository>   # does the recorded pack still hold? reads only
+./bin/evidence-pack promoted af-convoy --repo <project repository>   # once the accepted Outcome is merged: writes fusion.html beside the page (bin/outcome-promote)
 ```
 
-A convoy **without** the mark is not concerned: both commands answer « pas
-un convoi du nouveau flux » (exit 4) and write nothing.
+A convoy **without** the mark is not concerned: the three commands answer
+« pas un convoi du nouveau flux » (exit 4) and write nothing.
 
 ## What the page is made of
 
@@ -84,6 +85,7 @@ fixed line: no state of a screen is prototyped.
 <packs>/<spec id>/<convoy id>/<commit>/index.html          the page
 <packs>/<spec id>/<convoy id>/<commit>/pieces/<sha256>.json  a sealed record the page links
 <packs>/<spec id>/<convoy id>/<commit>/pieces/<sha256>.png   an image the page shows
+<packs>/<spec id>/<convoy id>/<commit>/fusion.html         the note of the merge, once the Outcome is accepted and merged (T30)
 ```
 
 `<packs>` is `EVIDENCE_PACK_DIR`, default
@@ -98,6 +100,35 @@ record-evidence-pack` (`gc.flow.evidence_pack`, rendered as
 `convoy.evidence_pack`): `commit`, `digest` (of the page), `path`,
 `conforming`, `inadmissible` (the number of pieces the store refused),
 `version` (`evidence-pack/v1`), `at`. The same pack again writes nothing.
+
+## Once the accepted Outcome is merged: `fusion.html` (T30)
+
+Spec §9: the dossier keeps the two commits, the one Benjamin judged and the
+one the protected branch received. `promoted` writes them in **one more
+page of the folder of the judged commit**, `fusion.html`, from the
+promotion `bin/convoy-state` holds (`convoy.promotion`,
+`docs/CONVOY_STATE.md`). `bin/outcome-promote` calls it once the merge is
+recorded and before the convoy is closed (`docs/OUTCOME_PROMOTE.md`).
+
+**`index.html` is not touched**: the page he judged keeps its bytes, and
+the fingerprint his « accepté » names still is the one of the record.
+`fusion.html` links it and gives its fingerprint, then one table
+(`<table id="promotion">`): the Spec, the convoy, « Commit jugé », « Commit
+fusionné », the protected branch and its tip before the merge, the
+integration branch and the tip that was merged — with « le commit jugé,
+plus la reprise de la branche protégée : contrôles mécaniques rejoués
+verts » when that tip is not the judged commit —, the time the merge was
+recorded, and the approver with his words. It takes no text from its
+caller, like the page.
+
+The answer is `{page, judged, merged, written}`; written again on the same
+state it is the same page and `written` is false. `fusion.html` is not
+named in the record of the pack and `check` does not read it: it neither
+outdates nor alters the pack.
+
+`promoted` refuses, and writes nothing: a convoy that carries no promotion;
+a recorded pack that is not the one of the judged commit; a pack whose page
+or pieces no longer have their fingerprints (« dossier altéré »).
 
 ## A red condition does not refuse the page
 
@@ -143,7 +174,8 @@ Every answer is one JSON object on stdout. Exit 0 done, or the pack holds;
 règle »; 4 the convoy does not carry the mark. A refusal writes nothing.
 `generate` refuses a missing `--repo`, a convoy without an integration
 branch, a convoy that names no Spec or whose Spec has no numbered user
-stories, and the rubric that cannot be filled.
+stories, and the rubric that cannot be filled. The refusals of `promoted`
+are under « Once the accepted Outcome is merged ».
 
 ## Limits
 
@@ -167,7 +199,15 @@ stories, and the rubric that cannot be filled.
   at each call, which the gate makes at each pass once conditions 1 to 6 are
   green. Not measured on a real convoy.
 - **Nothing purges a pack.** A pack of an earlier commit stays in its own
-  folder.
+  folder. The promotion of an accepted Outcome purges the evidence store of
+  its Spec (`bin/evidence-capture purge`), not its packs: each page keeps
+  the copies of the pieces it shows, and `check`, which verifies every
+  piece against the store, no longer answers « à jour » after that purge.
+- **`fusion.html` is covered by no fingerprint.** It is written from the
+  recorded promotion and can be written again; nothing detects a rewrite by
+  hand.
+- **An abandoned Outcome, and an acceptance that was voided, leave no
+  note**: `fusion.html` exists only for a merge.
 - **No real convoy was packed.** The page was opened in a headless Chromium
   on the fixture only.
 
@@ -185,6 +225,9 @@ stories, and the rubric that cannot be filled.
   seven conditions with it. T26: the stop of the rounds said in rubric 8,
   unchanged once the request is recorded, and no such line on a convoy that
   is not stopped; Delivered recorded by the gate (`docs/SPEC_END.md`).
+- `tests/outcome-promote-test.py`, T30: `fusion.html` holds the judged and
+  the merged commit, the judged page keeps its bytes and its fingerprint;
+  on a tip that took the protected branch up, both commits are kept.
 - `tests/convoy-state-test.py`: `record-evidence-pack` and its refusals, a
   record written outside the command.
 - `tests/convoy-advance-test.py`: the pass generates the pack once the six

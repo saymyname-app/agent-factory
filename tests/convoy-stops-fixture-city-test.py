@@ -1458,5 +1458,132 @@ class OwnerAnswerOnTheFixtureCity(FixtureCityWalk):
         self.assertFalse(shown["unruled"])
 
 
+class PromotionOnTheFixtureCity(OwnerAnswerOnTheFixtureCity):
+    """T30 (af-vlzc6v; Spec §9 and §11) on the convoy the reference driver
+    walks to its Delivered Outcome: Benjamin's answer is recorded by the real
+    bin/owner-answer, and the next pass of the order follows it by itself --
+    the one merge into the protected branch and the closing of the convoy,
+    or the closing alone."""
+
+    WORDS = "Accepté, c'est ce que je voulais."
+    REASON = "Le besoin a disparu."
+    test_accepted_waits_for_the_verdicts_a_returned_finding_is_repaired_and_judged_again_then_accepted = None
+
+    def judged(self):
+        """The Delivered Outcome, every proposition of its dossier judged.
+        Returns its record, the integration branch and the protected tip."""
+        delivered = self.walk_to_delivered(inject="proposition")
+        shown = self.shown()
+        for ticket in shown["tickets"]:
+            for finding in ticket.get("findings") or []:
+                if finding["classification"] == "proposal":
+                    self.owner_ok("verdict", "--proposition", finding["id"], "--verdict", "sans suite", "--words", "Vu.")
+        return delivered, shown["convoy"]["integration"]["branch"], self.tip("main")
+
+    def accept(self, delivered):
+        return self.owner_ok("record", "--response", "accepté", "--words", self.WORDS,
+                             "--commit", delivered["commit"], "--pack-digest", delivered["pack"])
+
+    def rev_list(self, *args):
+        return subprocess.run(("git", "-C", str(self.repo), "rev-list", *args), text=True, capture_output=True,
+                              check=True).stdout.split()
+
+    def commit_to_main(self, path, text):
+        """The protected branch receives a commit from elsewhere."""
+        tree = self.workspace / "elsewhere"
+        git = ("git", "-c", "user.name=Ailleurs", "-c", "user.email=ailleurs@example.invalid")
+        subprocess.run((*git, "-C", str(self.repo), "worktree", "add", "-q", "--detach", str(tree), "main"), check=True)
+        try:
+            (tree / path).parent.mkdir(parents=True, exist_ok=True)
+            (tree / path).write_text(text)
+            subprocess.run((*git, "-C", str(tree), "add", "-A"), check=True)
+            subprocess.run((*git, "-C", str(tree), "commit", "-q", "-m", "écrit ailleurs"), check=True)
+            commit = subprocess.run(("git", "-C", str(tree), "rev-parse", "HEAD"), text=True, capture_output=True,
+                                    check=True).stdout.strip()
+            subprocess.run(("git", "-C", str(self.repo), "update-ref", "refs/heads/main", commit), check=True)
+            return commit
+        finally:
+            subprocess.run(("git", "-C", str(self.repo), "worktree", "remove", "--force", str(tree)), check=True)
+
+    def test_the_protected_branch_holds_nothing_of_the_convoy_before_accepted_then_one_merge_and_the_convoy_is_closed(self):
+        delivered, integration, main = self.judged()
+        # Delivered, and judged: the protected branch holds no commit of the convoy.
+        convoy_commits = self.rev_list(f"main..{integration}")
+        self.assertIn(delivered["commit"], convoy_commits)
+        self.assertEqual([], self.rev_list("main", "--not", f"{integration}"))
+        self.accept(delivered)
+        self.assertEqual(main, self.tip("main"))
+        self.assertEqual(("open", "delivered"), (self.shown()["convoy"]["status"], self.shown()["convoy"]["outcome"]))
+
+        self.order_pass()
+
+        promotion = self.last_pass()["promotion"]
+        merged = self.tip("main")
+        self.assertEqual((True, merged, delivered["commit"], True, "accepted"),
+                         tuple(promotion[key] for key in ("promoted", "merged", "judged", "closed", "how")))
+        self.assertEqual([merged], self.rev_list("--first-parent", f"{main}..main"))
+        self.assertEqual([merged, main, delivered["commit"]], self.rev_list("--parents", "-n", "1", merged))
+        self.assertEqual([], self.rev_list(f"main..{integration}"))
+        shown = self.shown()
+        self.assertEqual(("closed", "accepted", self.WORDS, self.APPROVER),
+                         (shown["convoy"]["status"], shown["convoy"]["outcome"], shown["convoy"]["closed"]["said"],
+                          shown["convoy"]["closed"]["approver"]))
+        self.assertEqual((delivered["commit"], merged),
+                         (shown["convoy"]["promotion"]["judged"], shown["convoy"]["promotion"]["merged"]))
+        self.assertFalse(shown["unruled"])
+        self.assertEqual([], self.requests())
+        # The passes that follow leave it alone: closed by command, it is no longer walked.
+        before = self.tracker.read_bytes()
+        answer = json.loads(self.tool(ADVANCE, "--all", "--stopped-ok").stdout or "{}")
+        self.assertNotIn(self.convoy, [result["id"] for result in answer.get("convoys", [])])
+        self.assertEqual((before, merged), (self.tracker.read_bytes(), self.tip("main")))
+
+    def test_an_abandoned_convoy_is_closed_with_the_reason_and_the_protected_branch_does_not_move(self):
+        delivered, integration, main = self.judged()
+        self.owner_ok("record", "--response", "abandonné", "--reason", self.REASON)
+
+        self.order_pass()
+
+        promotion = self.last_pass()["promotion"]
+        self.assertEqual((False, None, True, "abandoned", self.REASON),
+                         tuple(promotion[key] for key in ("promoted", "merged", "closed", "how", "said")))
+        shown = self.shown()
+        self.assertEqual(("closed", "abandoned", None),
+                         (shown["convoy"]["status"], shown["convoy"]["outcome"], shown["convoy"]["promotion"]))
+        self.assertEqual((main, delivered["commit"]), (self.tip("main"), self.tip(integration)))
+        self.assertFalse(shown["unruled"])
+
+    def test_a_protected_branch_in_conflict_after_accepted_merges_nothing_and_the_pass_publishes_one_repair(self):
+        delivered, integration, _ = self.judged()
+        self.accept(delivered)
+        tracked = [ticket["id"] for ticket in self.shown()["tickets"]]
+        [written] = [path for path in subprocess.run(
+            ("git", "-C", str(self.repo), "diff", "--name-only", "--diff-filter=A", "main", integration),
+            text=True, capture_output=True, check=True).stdout.split()][:1]
+        moved = self.commit_to_main(written, "écrit ailleurs, autrement\n")
+
+        self.driver("advance")
+
+        promotion = self.last_pass()["promotion"]
+        self.assertEqual((False, "conflict"), (promotion["promoted"], promotion["cause"]))
+        self.assertIn("rien n'est fusionné", promotion["reason"])
+        self.assertNotIn("error", promotion)
+        self.assertEqual((moved, delivered["commit"]), (self.tip("main"), self.tip(integration)))
+        shown = self.shown()
+        [repair] = [ticket for ticket in shown["tickets"] if ticket["id"] not in tracked]
+        self.assertEqual(("repair", "open", repair["id"]), (repair["kind"], repair["status"], promotion["repair"]["id"]))
+        self.assertEqual(repair["id"], shown["convoy"]["integration_red"]["repair"])
+        # Back before the end of the Spec: neither Delivered nor accepted, and not closed.
+        last = shown["convoy"]["judgement"]["answers"][-1]
+        self.assertEqual(("accepted", "conflict"), (last["response"], last["voided"]["cause"]))
+        self.assertEqual((None, None, "open"),
+                         (shown["convoy"]["delivered"], shown["convoy"]["acceptance"], shown["convoy"]["status"]))
+        self.assertFalse(shown["unruled"])
+        # One repair, whatever the number of passes.
+        self.order_pass()
+        self.assertEqual(tracked + [repair["id"]], [ticket["id"] for ticket in self.shown()["tickets"]])
+        self.assertEqual(moved, self.tip("main"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -154,8 +154,17 @@ touché : il reste avancé par le Mayor.
   Planning Exception du lot est ouverte, la fin de Spec attend
   (`acceptance.owner_hold`). **Limites** : la Planning Exception se traite
   par un Planning Run à la main, puis `./bin/owner-answer
-  resolve-exception` — aucun code ne le lance ni ne prévient le Mayor ;
-  « accepté » et « abandonné » ne ferment ni ne fusionnent rien (T30).
+  resolve-exception` — aucun code ne le lance ni ne prévient le Mayor.
+- **Après « accepté » ou « abandonné » (T30)** : la passe suit ta réponse
+  par `./bin/outcome-promote run` et ne fait rien d'autre sur ce convoi —
+  une seule fusion de la branche d'intégration vers la branche protégée et
+  la fermeture du convoi sur tes mots, ou la fermeture seule (`promotion`).
+  Si la branche protégée a bougé et que les contrôles mécaniques rejoués
+  sont rouges, ou s'il y a conflit, rien n'est fusionné : ton acceptation
+  est annulée, la passe publie le `repair`, puis la fin de Spec repasse et
+  une nouvelle Acceptance Request t'arrive. Un convoi fermé ainsi n'est
+  plus parcouru. **Limites** : fusion par poussée directe, sans pull
+  request ; rien ne te prévient d'une acceptation annulée.
 - **Les bornes se règlent à un seul endroit** : `bounds` de
   `config/delivery-flow.json` — `resumes` (K, 3), `open_planning_exceptions`
   (2), `end_rounds` (tours de réparation de fin de Spec, 2). Changer une valeur change le comportement à la passe suivante ; une
