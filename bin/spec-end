@@ -805,7 +805,23 @@ def refused_answer(args: argparse.Namespace, base: dict[str, Any], conditions: l
     return EXIT_REFUSED
 
 
-def cmd_run(args: argparse.Namespace) -> int:
+def replayed_answer(base: dict[str, Any], conditions: list[dict[str, Any]], tip: str, protected: dict[str, str],
+                    replayed: bool) -> int:
+    print(json.dumps({**base, "ok": True, "conditions": conditions, "commit": tip, "protected": protected,
+                      "replayed": replayed}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    """After « accepté » (T30, Spec §9): take the protected branch up and
+    replay only the mechanical controls -- the three first conditions, on
+    one tip. No judged condition is read, nothing is Delivered again, and a
+    red counts no round of the end: the rounds belong to the judgement that
+    follows."""
+    return cmd_run(args, mechanical_only=True)
+
+
+def cmd_run(args: argparse.Namespace, mechanical_only: bool = False) -> int:
     refuse_agent_session()
     repo = require_repo(args.repo)
     if not args.profile:
@@ -826,6 +842,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         # 1. The registry: nothing else is launched while it refuses.
         first, refused = registry_condition(state)
+        if refused and mechanical_only:
+            return refused_answer(args, base, [first, condition(2, NOT_RUN, not_run), condition(3, NOT_RUN, not_run)],
+                                  refused=refused)
         if refused:
             requests = raise_requests(args.convoy, state, refused)
             return refused_answer(args, base, [first, condition(2, NOT_RUN, not_run), condition(3, NOT_RUN, not_run)],
@@ -845,18 +864,22 @@ def cmd_run(args: argparse.Namespace) -> int:
         if recorded and stale_reason(repo, recorded, integration, tip, protected_tip) is None:
             mechanical = [first, *(condition(entry["number"], entry["verdict"], entry["detail"])
                                    for entry in recorded["conditions"][1:])]
+            if mechanical_only:
+                return replayed_answer(base, mechanical, tip, {"branch": protected, "commit": protected_tip}, False)
             return judged_answer(args, repo, base, state, mechanical, tip,
                                  {"branch": protected, "commit": protected_tip}, replayed=False)
 
         # 2. One tip: the protected branch taken up, the tests on the result.
         status, taken = tool(INTEGRATION_TOOL, "take-up", args.convoy, "--repo", str(repo), "--profile", args.profile,
-                             "--timeout", f"{timeout:g}", "--end-round")
+                             "--timeout", f"{timeout:g}", *(() if mechanical_only else ("--end-round",)))
         if status == EXIT_UNRULED and isinstance(taken.get("unruled"), list):
             raise Unruled(taken["unruled"])
         if status != 0:
             red = taken.get("red")
             if not isinstance(red, dict) or "control" not in red:
                 raise Refusal(f"reprise de la branche protégée et tests impossibles : {refusal_text(taken)}")
+            if mechanical_only:
+                return refused_answer(args, base, [first, condition(2, FAIL, red["control"])], red=red)
             left = end_rounds(args.convoy, repo)
             second = condition(2, FAIL, f"{red['control']} ; {red_consequence(left)}")
             return refused_answer(args, base, [first, second, condition(3, NOT_RUN, not_run)], red=red, **left)
@@ -873,8 +896,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             control = f"fidélité mécanique au Validated Prototype : écart(s) ouvert(s) sur {branch} à {sha(tip)}"
             state_write("record-integration-red", args.convoy, "--commit", tip, "--integration", tip,
                         "--protected", protected_tip, "--control", control, "--detail", short(detail),
-                        "--check", "fidelity", "--end-round")
+                        "--check", "fidelity", *(() if mechanical_only else ("--end-round",)))
             recorded_red = read_state(args.convoy, repo)["convoy"].get("integration_red")
+            if mechanical_only:
+                return refused_answer(args, base, [first, second, third], red=recorded_red)
             left = end_rounds(args.convoy, repo)
             third["detail"] = short(f"{detail} ; {red_consequence(left)}", 900)
             return refused_answer(args, base, [first, second, third], red=recorded_red, **left)
@@ -890,6 +915,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             }, ensure_ascii=False), encoding="utf-8")
             state_write("record-spec-end", args.convoy, "--commit", tip, "--protected", protected_tip,
                         "--file", str(report))
+        if mechanical_only:
+            return replayed_answer(base, conditions, tip, {"branch": protected, "commit": protected_tip}, True)
         return judged_answer(args, repo, base, state, conditions, tip,
                              {"branch": protected, "commit": protected_tip}, replayed=True)
 
@@ -913,6 +940,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile")
     p.add_argument("--timeout", default=DEFAULT_TIMEOUT)
     p.set_defaults(handler=cmd_run)
+    p = sub.add_parser("replay")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.add_argument("--profile")
+    p.add_argument("--timeout", default=DEFAULT_TIMEOUT)
+    p.set_defaults(handler=cmd_replay)
     return parser
 
 

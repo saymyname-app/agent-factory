@@ -242,6 +242,17 @@ OWNER_VERDICTS = ("avant", "plus_tard", "sans_suite")
 OWNER_VERDICT_NAMES = {"avant": "à faire avant d'accepter", "plus_tard": "plus tard", "sans_suite": "sans suite"}
 OWNER_RESPONSES = ("accepted", "findings", "abandoned")
 OWNER_FINAL_RESPONSES = ("accepted", "abandoned")
+# What follows Benjamin's answer (T30, Spec §9, §11). After « accepté », code
+# takes the protected branch up and replays the mechanical controls; green,
+# the one merge into the protected branch is noted with the commit he judged
+# (the promotion); red or in conflict, his acceptance is voided -- it stays
+# in the judgement, with the control that voided it -- and the Outcome goes
+# back to the end of the Spec. The convoy is then closed by command, on his
+# words: accepted after its merge, abandoned without any.
+KEY_PROMOTION = PREFIX + "promotion"
+KEY_CLOSED = PREFIX + "closed"
+VOID_CAUSES = ("regression", "fidelity", "start", "conflict")
+CLOSINGS = {"accepted": "accepté", "abandoned": "abandonné"}
 OWNER_ROUTES = ("repair", "planning_exception", "later")
 # What an Owner Finding cites to be a repair (Spec §11): the story or the anchor.
 OWNER_CITED_KINDS = ("user_story", "anchor")
@@ -514,6 +525,17 @@ def require_marked(convoy: dict[str, Any]) -> None:
         raise NotNewFlow(convoy["id"])
     if mark != MARK:
         raise Refusal(f"{UNRULED} : le convoi {convoy['id']} porte une marque inconnue ({mark!r})")
+    never_reopened(convoy)
+
+
+def never_reopened(convoy: dict[str, Any]) -> None:
+    """Every write of the flow passes here: none follows the closing of a
+    convoy on Benjamin's words (Spec §11)."""
+    closed = stored_or_none(metadata_of(convoy).get(KEY_CLOSED), closed_record)
+    if closed is not None:
+        raise Refusal(
+            f"l'Outcome du convoi {convoy['id']} est {CLOSINGS[closed['how']]} et son convoi est fermé : rien ne le rouvre, "
+            "ni lui ni ses tickets ; un défaut ou un souhait trouvé après entre comme travail nouveau, par un Planning Run")
 
 
 def write_metadata(bead_id: str, values: dict[str, Any], labels: tuple[str, ...] = ()) -> None:
@@ -2427,6 +2449,23 @@ def incident_record(raw: Any) -> dict[str, Any]:
 # --- list --------------------------------------------------------------------
 
 
+def closing_of(convoy: dict[str, Any]) -> dict[str, Any] | None:
+    """The closing of a convoy by command, from its bead: the record of
+    close-convoy, when it is the one the judgement of the convoy calls for
+    -- the answer that ends it, and for « accepté » its merge. None for a
+    convoy closed outside the two commands, whatever it carries."""
+    metadata = metadata_of(convoy)
+    closed = stored_or_none(metadata.get(KEY_CLOSED), closed_record)
+    judgement = stored_or_none(metadata.get(KEY_JUDGEMENT), judgement_record)
+    last = final_answer(judgement) if judgement else None
+    if closed is None or last is None or closed["how"] != last["response"]:
+        return None
+    promotion = stored_or_none(metadata.get(KEY_PROMOTION), promotion_record)
+    if (closed["how"] == "accepted") != (promotion is not None and promotion["judged"] == last["commit"]):
+        return None
+    return closed
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     """The open convoys that carry the mark, and apart those found closed:
     no command closes a marked convoy yet, so each was closed outside the
@@ -2440,8 +2479,9 @@ def cmd_list(args: argparse.Namespace) -> int:
         raise Refusal(f"gc bd list a rendu autre chose qu'une liste : {data!r}")
     marked = [bead for bead in data if isinstance(bead, dict) and KEY_MARK in metadata_of(bead)]
     convoys = sorted(bead["id"] for bead in marked if bead.get("status") != "closed")
-    closed_outside = sorted(bead["id"] for bead in marked if bead.get("status") == "closed")
-    print(json.dumps({"ok": True, "convoys": convoys, "closed_outside": closed_outside},
+    by_command = sorted(bead["id"] for bead in marked if bead.get("status") == "closed" and closing_of(bead) is not None)
+    closed_outside = sorted(bead["id"] for bead in marked if bead.get("status") == "closed" and bead["id"] not in by_command)
+    print(json.dumps({"ok": True, "convoys": convoys, "closed": by_command, "closed_outside": closed_outside},
                      indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
@@ -2781,7 +2821,12 @@ def cmd_show(args: argparse.Namespace) -> int:
     convoy_unruled: list[dict[str, str]] = []
     if mark != MARK:
         convoy_unruled.append({"field": KEY_MARK, "reason": f"marque inconnue : {mark!r}"})
-    if convoy.get("status") == "closed":
+    closing = closing_of(convoy)
+    if KEY_CLOSED in metadata_of(convoy) and convoy.get("status") != "closed":
+        convoy_unruled.append({"field": "status", "reason": (
+            "convoi rouvert hors commande après sa fermeture sur les mots de l'approbateur : rien ne rouvre un Outcome "
+            "accepté ou abandonné")})
+    if convoy.get("status") == "closed" and closing is None:
         said = convoy.get("close_reason")
         convoy_unruled.append({"field": "status", "reason": (
             "convoi fermé hors commande (ni acceptation ni abandon enregistré)"
@@ -2865,6 +2910,13 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             judgement = {"unruled": f"{KEY_JUDGEMENT} : {exc}", "raw": metadata[KEY_JUDGEMENT]}
             convoy_unruled.append({"field": KEY_JUDGEMENT, "reason": judgement["unruled"]})
+    promotion: dict[str, Any] | None = None
+    if KEY_PROMOTION in metadata:
+        try:
+            promotion = promotion_record(metadata[KEY_PROMOTION])
+        except Refusal as exc:
+            promotion = {"unruled": f"{KEY_PROMOTION} : {exc}", "raw": metadata[KEY_PROMOTION]}
+            convoy_unruled.append({"field": KEY_PROMOTION, "reason": promotion["unruled"]})
     delivered: dict[str, Any] | None = None
     if KEY_DELIVERED in metadata:
         try:
@@ -2884,7 +2936,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     for key in sorted(metadata):
         known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_GROUPED_REQUEST, KEY_SPEC_END,
                  KEY_OUTCOME_EVALUATION, KEY_END_REVIEW, KEY_END_ROUND, KEY_EVIDENCE_PACK, KEY_END_STOP, KEY_DELIVERED,
-                 KEY_ACCEPTANCE, KEY_JUDGEMENT, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
+                 KEY_ACCEPTANCE, KEY_JUDGEMENT, KEY_PROMOTION, KEY_CLOSED, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(EVIDENCE_PREFIX):
             name = key[len(EVIDENCE_PREFIX):]
             try:
@@ -2914,6 +2966,12 @@ def cmd_show(args: argparse.Namespace) -> int:
         "delivered": delivered,
         "acceptance": acceptance,
         "judgement": judgement,
+        "promotion": promotion,
+        "closed": closing if convoy.get("status") == "closed" else None,
+        # Delivered and Accepted are two states (Spec §9): an Outcome is
+        # Accepted once merged and its convoy closed on Benjamin's words.
+        "outcome": (closing["how"] if closing is not None and convoy.get("status") == "closed" else
+                    "delivered" if isinstance(delivered, dict) and "unruled" not in delivered else None),
         "evidence_pack": evidence_pack,
         "outcome_evaluation": outcome_evaluation,
         "evidence": evidence,
@@ -3028,6 +3086,7 @@ def user_stories(entries: list[str], tickets: list[dict[str, Any]], convoy_id: s
 
 def cmd_mark(args: argparse.Namespace) -> int:
     convoy, tickets = load_convoy(args.convoy)
+    never_reopened(convoy)
     lines = demonstration_lines(args.demonstration_line, tickets, args.convoy)
     stories = user_stories(args.user_stories, tickets, args.convoy)
     tracked = {ticket.get("id") for ticket in tickets}
@@ -4995,13 +5054,18 @@ def judgement_record(raw: Any) -> dict[str, Any]:
     for index, answer in enumerate(record["answers"]):
         required = {"response", "approver", "commit", "pack", "at"}
         if not isinstance(answer, dict) or not required <= set(answer) \
-                or not set(answer) <= required | {"words", "reason", "findings", "exception"}:
+                or not set(answer) <= required | {"words", "reason", "findings", "exception", "voided"}:
             raise Refusal(f"réponse de l'approbateur mal formée : {answer!r}")
         response = one_of(answer["response"], OWNER_RESPONSES, "réponse de l'approbateur")
         single_line(answer["approver"], "approbateur")
         valid_commit(answer["commit"], "commit du dossier")
         valid_digest(answer["pack"])
-        if response in OWNER_FINAL_RESPONSES and index != len(record["answers"]) - 1:
+        if "voided" in answer:
+            voided = answer["voided"]
+            if response != "accepted" or not isinstance(voided, dict) or set(voided) != {"cause", "at"}:
+                raise Refusal(f"acceptation annulée mal formée : {answer!r}")
+            one_of(voided["cause"], VOID_CAUSES, "cause de l'annulation")
+        elif response in OWNER_FINAL_RESPONSES and index != len(record["answers"]) - 1:
             raise Refusal("une réponse suit un Outcome accepté ou abandonné : rien ne le rouvre")
         if (response == "abandoned") != ("reason" in answer) or (response == "findings") != ("findings" in answer) \
                 or ("exception" in answer and response != "findings") or (response != "abandoned" and "words" not in answer):
@@ -5035,6 +5099,37 @@ def judgement_record(raw: Any) -> dict[str, Any]:
 
 def judgement_of(metadata: dict[str, Any]) -> dict[str, Any]:
     return judgement_record(metadata[KEY_JUDGEMENT]) if KEY_JUDGEMENT in metadata else {"verdicts": [], "answers": []}
+
+
+def final_answer(judgement: dict[str, Any]) -> dict[str, Any] | None:
+    """The answer that ends the judgement of an Outcome: the last one, when
+    it is « accepté » or « abandonné » and no red replay voided it."""
+    last = judgement["answers"][-1] if judgement["answers"] else None
+    return last if last is not None and last["response"] in OWNER_FINAL_RESPONSES and "voided" not in last else None
+
+
+def promotion_record(raw: Any) -> dict[str, Any]:
+    """The promotion of an accepted Outcome (T30, Spec §9): the commit
+    Benjamin judged, the tip of the integration branch that was merged (the
+    same, or the one that took the protected branch up), the tip the
+    protected branch had before, and the one merge it received."""
+    record = stored_record(raw, ("judged", "merged", "protected", "tip", "at"))
+    for name, what in (("judged", "commit jugé"), ("merged", "commit de la fusion"),
+                       ("protected", "pointe de la branche protégée avant la fusion"),
+                       ("tip", "pointe fusionnée de la branche d'intégration")):
+        valid_commit(record[name], what)
+    return record
+
+
+def closed_record(raw: Any) -> dict[str, Any]:
+    """The closing of a convoy by command (T30, Spec §9): accepted or
+    abandoned, with Benjamin's words -- his acceptance, or the reason of the
+    abandon -- and who said them."""
+    record = stored_record(raw, ("how", "said", "approver", "at"))
+    one_of(record["how"], tuple(CLOSINGS), "fermeture du convoi")
+    single_line(record["said"], "mots de la fermeture")
+    single_line(record["approver"], "approbateur")
+    return record
 
 
 def owner_answer_of(metadata: dict[str, Any]) -> dict[str, Any] | None:
@@ -5081,8 +5176,8 @@ def owner_findings_open(metadata: dict[str, Any], tickets: list[dict[str, Any]])
 
 
 def not_reopened(convoy_id: str, judgement: dict[str, Any]) -> None:
-    last = judgement["answers"][-1] if judgement["answers"] else None
-    if last is not None and last["response"] in OWNER_FINAL_RESPONSES:
+    last = final_answer(judgement)
+    if last is not None:
         said = "accepté" if last["response"] == "accepted" else "abandonné"
         raise Refusal(
             f"l'Outcome du convoi {convoy_id} est {said} : rien ne le rouvre ; un défaut ou un souhait trouvé après "
@@ -5272,6 +5367,96 @@ def cmd_record_owner_answer(args: argparse.Namespace) -> int:
     values[KEY_JUDGEMENT] = encode(judgement_record(encode(judgement)))
     write_metadata(args.convoy, values)
     return done(args.convoy, args.convoy, values)
+
+
+def accepted_answer(convoy_id: str, metadata: dict[str, Any], what: str) -> dict[str, Any]:
+    last = final_answer(judgement_of(metadata))
+    if last is None or last["response"] != "accepted":
+        raise Refusal(f"aucun « accepté » de l'approbateur ne tient sur le convoi {convoy_id} : {what}")
+    return last
+
+
+def cmd_record_promotion(args: argparse.Namespace) -> int:
+    """Note the one merge of an accepted Outcome into the protected branch
+    (T30, Spec §9), with the commit Benjamin judged: the two commits the
+    dossier reads. Refused without an « accepté » that stands for that
+    commit, and recorded once. That the merge exists and holds the judged
+    commit is the proof of the caller, bin/outcome-promote, which made it."""
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    answer = accepted_answer(args.convoy, metadata, "rien ne se fusionne vers la branche protégée")
+    if KEY_PROMOTION in metadata:
+        raise Refusal(f"la fusion de l'Outcome du convoi {args.convoy} vers la branche protégée est déjà enregistrée")
+    judged = valid_commit(args.judged, "commit jugé")
+    if judged != answer["commit"]:
+        raise Refusal(
+            f"le commit {judged[:12]} n'est pas celui que Benjamin a accepté sur le convoi {args.convoy} "
+            f"({answer['commit'][:12]}) : la fusion se lie au commit jugé")
+    record = {"judged": judged, "merged": args.merged, "protected": args.protected, "tip": args.tip, "at": now()}
+    values = {KEY_PROMOTION: encode(promotion_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_void_acceptance(args: argparse.Namespace) -> int:
+    """After « accepté », the replay of the mechanical controls on the
+    protected branch taken up was red, or the two branches conflict (T30,
+    Spec §9): nothing is merged and the acceptance no longer stands. It
+    stays in the judgement with the control that voided it; Delivered and
+    the Acceptance Request are withdrawn and the rounds of the end start
+    again from zero, as after « constats rendus », so the Outcome passes the
+    end of the Spec again and Benjamin judges it again."""
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    accepted_answer(args.convoy, metadata, "il n'y a pas d'acceptation à annuler")
+    if KEY_PROMOTION in metadata:
+        raise Refusal(f"l'Outcome du convoi {args.convoy} est déjà fusionné vers la branche protégée : son acceptation tient")
+    cause = one_of(args.cause, VOID_CAUSES, "cause de l'annulation (--cause)")
+    judgement = judgement_of(metadata)
+    judgement["answers"][-1]["voided"] = {"cause": cause, "at": now()}
+    values: dict[str, Any] = {KEY_JUDGEMENT: encode(judgement_record(encode(judgement))),
+                              KEY_DELIVERED: None, COUNTER_PREFIX + BOUND_END_ROUNDS: 0}
+    values.update({key: None for key in (KEY_ACCEPTANCE, KEY_END_ROUND) if key in metadata})
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_close_convoy(args: argparse.Namespace) -> int:
+    """Close a marked convoy on Benjamin's words (T30, Spec §9): accepted,
+    once its Outcome is merged into the protected branch; abandoned, without
+    any merge. The closed status and the record of the closing go in one
+    tracker write. Nothing else closes a marked convoy, and nothing reopens
+    one closed here."""
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    last = final_answer(judgement_of(metadata))
+    if last is None:
+        raise Refusal(
+            f"ni « accepté » ni « abandonné » ne tient sur le convoi {args.convoy} : un convoi ne se ferme que sur "
+            "l'une de ces deux réponses de l'approbateur")
+    if convoy.get("status") == "closed":
+        raise Refusal(f"le convoi {args.convoy} est fermé hors commande : cette fermeture se signale, elle ne se régularise pas")
+    if last["response"] == "accepted":
+        promotion = stored_or_none(metadata.get(KEY_PROMOTION), promotion_record)
+        if promotion is None or promotion["judged"] != last["commit"]:
+            raise Refusal(
+                f"l'Outcome accepté du convoi {args.convoy} n'est pas fusionné vers la branche protégée : "
+                "la fermeture suit la fusion")
+    elif KEY_PROMOTION in metadata:
+        raise Refusal(f"le convoi {args.convoy} est abandonné et porte une fusion : état sans règle")
+    record = {"how": last["response"], "said": last["words"] if last["response"] == "accepted" else last["reason"],
+              "approver": last["approver"], "at": now()}
+    values = {KEY_CLOSED: encode(closed_record(encode(record)))}
+    update = ["bd", "update", args.convoy, "--status", "closed"]
+    for key, value in values.items():
+        update += ["--set-metadata", f"{key}={value}"]
+    run_gc(update)
+    print(json.dumps({"ok": True, "convoy": args.convoy, "bead": args.convoy, "closed": True, "how": record["how"],
+                      "written": values}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
 
 
 def last_owner_findings(convoy_id: str, judgement: dict[str, Any], number: Any, route: str) -> dict[str, Any]:
@@ -6439,6 +6624,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pack-digest")
     p.add_argument("--file")
     p.add_argument("--reason")
+    p = command("record-promotion", cmd_record_promotion, ticket=False)
+    p.add_argument("--judged")
+    p.add_argument("--merged")
+    p.add_argument("--protected")
+    p.add_argument("--tip")
+    command("void-acceptance", cmd_void_acceptance, ticket=False).add_argument("--cause")
+    command("close-convoy", cmd_close_convoy, ticket=False)
     p = command("set-owner-repair", cmd_set_owner_repair, ticket=False)
     p.add_argument("--finding")
     p.add_argument("--ticket")

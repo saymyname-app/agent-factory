@@ -1,0 +1,534 @@
+#!/usr/bin/env python3
+"""outcome-promote — what code does once Benjamin has answered an Outcome
+(T30, Spec af-wf4w5r §9 and §11, user stories 72 and 73).
+
+  outcome-promote run CONVOY [--repo DIR] [--profile FILE] [--timeout S]
+  outcome-promote check CONVOY [--repo DIR]
+
+`run` reads the answer bin/owner-answer recorded and follows it:
+
+  « accepté »    If the protected branch moved since the judgement, it is
+                 taken up in the integration branch and only the mechanical
+                 controls are replayed there: the regression command and
+                 the fidelity to the Validated Prototype (bin/spec-end
+                 replay), then the start of the product from a clean copy
+                 of that tip (bin/project-launch). Green: the integration
+                 branch is merged into the protected branch by one merge
+                 commit, the promotion is recorded with the two commits
+                 (judged, merged), the Evidence Pack notes them, the convoy
+                 is closed on Benjamin's words, its Spec and its draft are
+                 closed, and the evidence store of the Spec is purged. Red,
+                 or the two branches conflict: nothing is merged, the red
+                 is recorded on the integration branch (the next pass of
+                 bin/convoy-advance publishes its `repair`), and the
+                 acceptance is voided, so the Outcome passes the end of the
+                 Spec again and Benjamin judges it again.
+  « abandonné »  Nothing is merged: the convoy is closed with the reason;
+                 the integration branch stays where it is, as a source.
+
+No merge into the protected branch without an « accepté » recorded for the
+tip of the integration branch: `run` refuses, and so does a tip that moved
+after the judgement other than by this command's own take-up. A step that
+was interrupted is resumed by the next `run`; a convoy already closed by
+command answers `done` and writes nothing. `check` reads and says what `run`
+would do (`due`: merge, close, nothing), without writing.
+
+Only the order of the Factory runs it (bin/convoy-advance): an agent session
+is refused. Exit codes: 0 done, or nothing to do; 1 refused, or red (JSON,
+`error` starts with "refus : ", `red` names the control); 3 « état sans
+règle »; 4 the convoy does not carry the new-flow mark.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+PROGRAM = "outcome-promote"
+BIN = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
+STATE_TOOL = BIN / "convoy-state"
+SPEC_END_TOOL = BIN / "spec-end"
+LAUNCH_TOOL = BIN / "project-launch"
+PACK_TOOL = BIN / "evidence-pack"
+CAPTURE_TOOL = BIN / "evidence-capture"
+ARTIFACTS_TOOL = BIN / "planning-artifacts-close"
+PROJECTS = ROOT / "config" / "projects"
+DESCRIPTORS = ROOT / "config" / "project-descriptors"
+REMOTE = "origin"
+IDENTITY = ("-c", "user.name=Agent Factory", "-c", "user.email=agent-factory@noreply.invalid")
+SESSION_IDENTITY = ("GC_AGENT", "GC_SESSION_NAME", "GC_SESSION_ID")
+DEFAULT_TIMEOUT = "900"
+START_TIMEOUT = 30.0
+START_ATTEMPTS = 2
+EXIT_REFUSED = 1
+EXIT_UNRULED = 3
+EXIT_NOT_NEW_FLOW = 4
+MAX_DETAIL = 300
+
+
+class Refusal(RuntimeError):
+    """The call is refused, or could not run."""
+
+    def __init__(self, message: str, extra: dict[str, Any] | None = None):
+        super().__init__(" ".join(message.split()))
+        self.extra = extra or {}
+
+
+class NotNewFlow(RuntimeError):
+    def __init__(self, answer: dict[str, Any]):
+        super().__init__(answer.get("message", ""))
+        self.answer = answer
+
+
+class Unruled(RuntimeError):
+    def __init__(self, anomalies: Any):
+        super().__init__("état sans règle")
+        self.anomalies = anomalies
+
+
+def short(text: str, limit: int = MAX_DETAIL) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def sha(commit: str) -> str:
+    return commit[:12]
+
+
+# --- the other commands ----------------------------------------------------------
+
+
+def run(argv: list[str], timeout: float | None = None, detached: bool = False) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout,
+                              start_new_session=detached)
+    except subprocess.TimeoutExpired as exc:
+        raise Refusal(f"{Path(argv[0]).name} n'a pas répondu en {timeout:.0f} s") from exc
+    except OSError as exc:
+        raise Refusal(f"impossible de lancer {Path(argv[0]).name} : {exc}") from exc
+
+
+def detail_of(proc: subprocess.CompletedProcess[str]) -> str:
+    try:
+        said = json.loads(proc.stdout).get("error")
+    except (json.JSONDecodeError, AttributeError):
+        said = None
+    return short(str(said or proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"))
+
+
+def tool(path: Path, *args: str) -> tuple[int, dict[str, Any]]:
+    """One JSON answer of another command of the flow."""
+    proc = run([str(path), *args])
+    try:
+        answer = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {detail_of(proc)}") from exc
+    if not isinstance(answer, dict):
+        raise Refusal(f"{path.name} {args[0]} a rendu une réponse illisible : {answer!r}")
+    return proc.returncode, answer
+
+
+def refusal_text(answer: dict[str, Any]) -> str:
+    text = str(answer.get("error") or answer.get("message") or answer)
+    return text[len("refus : "):] if text.startswith("refus : ") else text
+
+
+def state_write(command: str, convoy_id: str, *args: str) -> dict[str, Any]:
+    status, answer = tool(STATE_TOOL, command, convoy_id, *args)
+    if status != 0:
+        raise Refusal(f"convoy-state {command} : {refusal_text(answer)}")
+    return answer
+
+
+def refuse_agent_session() -> None:
+    """Spec §0 rule 1: no agent merges an Outcome into the protected branch
+    nor closes its convoy. Only the order of the Factory does."""
+    caller = next((os.environ[name] for name in SESSION_IDENTITY if os.environ.get(name)), None)
+    if caller:
+        raise Refusal(
+            f"fusion ou fermeture demandée par la session d'agent « {caller} » : aucun agent ne fusionne un Outcome vers "
+            "la branche protégée ni ne ferme son convoi ; seul l'ordre de l'usine le fait, après la réponse de "
+            "l'approbateur (Spec af-wf4w5r §9) ; rien n'est écrit")
+
+
+# --- the repository ----------------------------------------------------------------
+
+
+class Repo:
+    """The repository of the convoy's project: its protected branch and its
+    integration branch, on the remote when it has one."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        if self.git("rev-parse", "--git-dir").returncode != 0:
+            raise Refusal(f"{path} n'est pas un dépôt Git : les branches du convoi y sont lues")
+        self.remote = REMOTE if REMOTE in self.git("remote").stdout.split() else None
+
+    def git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+        return subprocess.run(["git", "-C", str(self.path), *args], capture_output=True, text=True, env=env)
+
+    def fetch(self) -> None:
+        if self.remote:
+            proc = self.git("fetch", "--quiet", "--prune", self.remote)
+            if proc.returncode != 0:
+                raise Refusal(f"git fetch {self.remote} a échoué : {short(proc.stderr)}")
+
+    def tip(self, branch: str) -> str:
+        ref = f"refs/remotes/{self.remote}/{branch}" if self.remote else f"refs/heads/{branch}"
+        proc = self.git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        if proc.returncode != 0:
+            raise Refusal(f"la branche {branch} est introuvable dans {self.path}")
+        return proc.stdout.strip()
+
+    def is_ancestor(self, commit: str, tip: str) -> bool:
+        return self.git("merge-base", "--is-ancestor", commit, tip).returncode == 0
+
+    def parents(self, commit: str) -> list[str]:
+        return self.git("rev-list", "--parents", "-n", "1", commit).stdout.split()[1:]
+
+    def conflicts(self, ours: str, theirs: str) -> list[str] | None:
+        """The files in conflict between two commits; None when they merge."""
+        proc = self.git("merge-tree", "--write-tree", "--name-only", "--no-messages", ours, theirs)
+        if proc.returncode == 0:
+            return None
+        if proc.returncode != 1:
+            raise Refusal(f"git merge-tree a échoué : {short(proc.stderr)}")
+        return [line for line in proc.stdout.splitlines()[1:] if line.strip()] or ["(fichiers non nommés)"]
+
+    def merge_commit(self, protected_tip: str, tip: str, message: str) -> str:
+        """The one merge of the integration branch into the protected
+        branch: the integration tip already holds the protected tip, so the
+        merged tree is its own."""
+        proc = self.git(*IDENTITY, "commit-tree", f"{tip}^{{tree}}", "-p", protected_tip, "-p", tip, "-m", message)
+        if proc.returncode != 0:
+            raise Refusal(f"le commit de fusion n'a pas pu être créé : {short(proc.stderr)}")
+        return proc.stdout.strip()
+
+    def move(self, branch: str, new: str, old: str) -> None:
+        """Move the protected branch from `old` to `new`, and only from there."""
+        if self.remote:
+            proc = self.git("push", "--quiet", f"--force-with-lease=refs/heads/{branch}:{old}", self.remote,
+                            f"{new}:refs/heads/{branch}")
+        else:
+            proc = self.git("update-ref", f"refs/heads/{branch}", new, old)
+        if proc.returncode != 0:
+            raise Refusal(
+                f"la branche protégée {branch} n'a pas reçu la fusion {sha(new)} ({short(proc.stderr)}) : l'Outcome reste "
+                "accepté et non fusionné ; la prochaine passe réessaie")
+        if self.remote:
+            self.git("fetch", "--quiet", self.remote)
+
+
+# --- the convoy ----------------------------------------------------------------------
+
+
+class Convoy:
+    """A marked convoy as bin/convoy-state renders it."""
+
+    def __init__(self, convoy_id: str, repo: str | None):
+        self.id = convoy_id
+        self.given_repo = Path(repo).resolve() if repo else None
+        self.load()
+
+    def load(self) -> None:
+        status, answer = tool(STATE_TOOL, "show", self.id, *(("--repo", str(self.given_repo)) if self.given_repo else ()))
+        if status == EXIT_NOT_NEW_FLOW:
+            raise NotNewFlow(answer)
+        if status == EXIT_UNRULED:
+            raise Unruled(answer.get("unruled") or (answer.get("convoy") or {}).get("unruled"))
+        if status != 0 or not isinstance(answer.get("convoy"), dict):
+            raise Refusal(refusal_text(answer))
+        self.state: dict[str, Any] = answer["convoy"]
+        self.tickets: list[dict[str, Any]] = answer.get("tickets") or []
+
+    def answer(self) -> dict[str, Any] | None:
+        """The answer that ends the judgement: « accepté » or « abandonné »,
+        the last one, that no red replay voided."""
+        answers = (self.state.get("judgement") or {}).get("answers") or []
+        last = answers[-1] if answers else None
+        if isinstance(last, dict) and last.get("response") in ("accepted", "abandoned") and "voided" not in last:
+            return last
+        return None
+
+    def integration(self) -> dict[str, Any]:
+        integration = self.state.get("integration")
+        if not isinstance(integration, dict) or not integration.get("branch") or not integration.get("protected"):
+            raise Refusal(f"le convoi {self.id} n'a pas de branche d'intégration enregistrée : rien ne peut être fusionné")
+        return integration
+
+    def rig(self) -> str:
+        import re
+        section = re.compile(r"^## Target rigs[ \t]*\n+([^\n#]*)$", re.MULTILINE)
+        for ticket in self.tickets[:1]:
+            proc = run([os.environ.get("GC_BIN", "gc"), "bd", "show", ticket["id"], "--json"])
+            try:
+                description = json.loads(proc.stdout)[0].get("description") or ""
+            except (ValueError, IndexError, AttributeError, KeyError):
+                break
+            match = section.search(description)
+            rigs = [rig.strip() for rig in match.group(1).split(",") if rig.strip()] if match else []
+            if len(rigs) == 1 and (PROJECTS / f"{rigs[0]}.toml").is_file():
+                return rigs[0]
+        raise Refusal(f"les tickets du convoi {self.id} ne nomment pas un seul projet connu de config/projects : "
+                      "son dépôt et son profil sont inconnus")
+
+    def repo(self) -> Path:
+        if self.given_repo is not None:
+            return self.given_repo
+        import tomllib
+        rig = self.rig()
+        try:
+            rig_dir = tomllib.loads((PROJECTS / f"{rig}.toml").read_text(encoding="utf-8")).get("rig_dir")
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise Refusal(f"config/projects/{rig}.toml illisible : {exc}") from exc
+        if not isinstance(rig_dir, str) or not rig_dir:
+            raise Refusal(f"config/projects/{rig}.toml ne déclare pas rig_dir")
+        return (ROOT / rig_dir).resolve()
+
+    def profile(self, given: str | None) -> Path:
+        if given:
+            return Path(given)
+        rig = self.rig()
+        for path in sorted(DESCRIPTORS.glob("*.json")):
+            try:
+                rigs = json.loads(path.read_text(encoding="utf-8")).get("rigs")
+            except (OSError, json.JSONDecodeError, AttributeError):
+                continue
+            if isinstance(rigs, list) and rig in rigs:
+                return path
+        raise Refusal(f"aucun profil de projet de config/project-descriptors ne couvre le rig {rig} : "
+                      "les contrôles mécaniques à rejouer ne sont déclarés nulle part")
+
+
+# --- the mechanical controls, replayed -----------------------------------------------
+
+
+def starts(convoy: Convoy, repo: Repo, profile: Path, tip: str) -> str | None:
+    """Launch the product from a clean copy of `tip` by the recipe of its
+    profile, once per synthetic dataset, and stop it. None when it starts;
+    else what was said."""
+    try:
+        launch = json.loads(profile.read_text(encoding="utf-8")).get("launch")
+    except (OSError, json.JSONDecodeError, AttributeError) as exc:
+        raise Refusal(f"profil de projet illisible ({profile}) : {exc}") from exc
+    if not isinstance(launch, dict) or not launch.get("recipe"):
+        raise Refusal(f"le profil {profile} ne déclare aucune recette de lancement : le démarrage ne peut pas être rejoué")
+    with tempfile.TemporaryDirectory(prefix="outcome-promote-") as tmp:
+        for dataset in sorted(launch.get("datasets") or {}) or [None]:
+            state_file = Path(tmp) / f"launch-{dataset or 'product'}.json"
+            argv = [str(LAUNCH_TOOL), "--repo-root", str(repo.path), "start", str(profile), "--commit", tip,
+                    "--timeout", str(START_TIMEOUT), "--state-file", str(state_file)]
+            if dataset is not None:
+                argv += ["--dataset", dataset]
+            try:
+                for _ in range(START_ATTEMPTS):
+                    started = run(argv, timeout=START_TIMEOUT + 60, detached=True)
+                    if started.returncode == 0 and state_file.is_file():
+                        break
+                else:
+                    return (f"le produit ne démarre pas depuis une copie propre du commit {sha(tip)}"
+                            f"{f' sur le jeu {dataset}' if dataset else ''} : {detail_of(started)}")
+            finally:
+                if state_file.is_file():
+                    run([str(LAUNCH_TOOL), "stop", "--state-file", str(state_file)], timeout=60)
+    return None
+
+
+def red(convoy: Convoy, cause: str, control: str, detail: str, tip: str, protected_tip: str,
+        recorded: bool = False) -> int:
+    """Nothing is merged: the red is on the integration branch, where the
+    next pass publishes its repair, and the acceptance no longer stands."""
+    if not recorded:
+        state_write("record-integration-red", convoy.id, "--commit", tip, "--integration", tip,
+                    "--protected", protected_tip, "--control", control, "--detail", short(detail))
+    state_write("void-acceptance", convoy.id, "--cause", cause)
+    convoy.load()
+    print(json.dumps({
+        "ok": False, "convoy": convoy.id, "promoted": False, "merged": None, "closed": False, "cause": cause,
+        "red": convoy.state.get("integration_red"),
+        "error": (f"refus : après « accepté », {control} ; rien n'est fusionné vers la branche protégée ; l'acceptation "
+                  "est annulée, un repair suit, puis la porte de fin de Spec et une nouvelle demande d'acceptation"),
+    }, indent=2, sort_keys=True, ensure_ascii=False))
+    return EXIT_REFUSED
+
+
+# --- the commands ----------------------------------------------------------------------
+
+
+def due(convoy: Convoy) -> str:
+    if convoy.state.get("status") == "closed":
+        return "nothing"
+    answer = convoy.answer()
+    if answer is None:
+        return "nothing"
+    if answer["response"] == "abandoned" or convoy.state.get("promotion"):
+        return "close"
+    return "merge"
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    convoy = Convoy(args.convoy, args.repo)
+    answer = convoy.answer()
+    print(json.dumps({"ok": True, "convoy": convoy.id, "due": due(convoy), "outcome": convoy.state.get("outcome"),
+                      "response": answer["response"] if answer else None, "promotion": convoy.state.get("promotion"),
+                      "closed": convoy.state.get("closed")}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def close(convoy: Convoy, base: dict[str, Any]) -> int:
+    """Close the convoy on Benjamin's words, then what follows its closing:
+    its Spec and its draft, and for an accepted Outcome its two commits in
+    the dossier and the purge of the evidence store. What follows is
+    replayed by the next run when a step of it fails: `pending` names it."""
+    if convoy.state.get("status") != "closed":
+        state_write("close-convoy", convoy.id)
+        convoy.load()
+    closed = convoy.state.get("closed") or {}
+    pending: list[str] = []
+    accepted = closed.get("how") == "accepted"
+    if accepted:
+        status, noted = tool(PACK_TOOL, "promoted", convoy.id, "--repo", str(convoy.repo()))
+        if status != 0:
+            pending.append(f"dossier : {refusal_text(noted)}")
+    proc = run([str(ARTIFACTS_TOOL)])
+    if proc.returncode != 0:
+        pending.append(f"Spec et brouillon : {detail_of(proc)}")
+    purged = None
+    spec = convoy.state.get("spec")
+    if accepted and not pending and spec:
+        status, purge = tool(CAPTURE_TOOL, "purge", "--spec", spec)
+        if status != 0:
+            pending.append(f"purge des preuves : {refusal_text(purge)}")
+        else:
+            purged = purge.get("removed")
+    print(json.dumps({**base, "ok": True, "convoy": convoy.id, "closed": True, "how": closed.get("how"),
+                      "said": closed.get("said"), "outcome": convoy.state.get("outcome"),
+                      "promotion": convoy.state.get("promotion"), "purged": purged,
+                      **({"pending": pending} if pending else {})}, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    refuse_agent_session()
+    convoy = Convoy(args.convoy, args.repo)
+    if convoy.state.get("status") == "closed":
+        # Closed by command (a convoy closed otherwise is unruled): what
+        # follows the closing is replayed, nothing else is written.
+        return close(convoy, {"done": True, "promoted": False})
+    answer = convoy.answer()
+    if answer is None:
+        raise Refusal(
+            f"ni « accepté » ni « abandonné » ne tient sur le convoi {convoy.id} : rien n'est fusionné vers la branche "
+            "protégée et rien n'est fermé sans la réponse de l'approbateur ; rien n'est écrit")
+    if answer["response"] == "abandoned":
+        return close(convoy, {"promoted": False, "merged": None})
+    if convoy.state.get("promotion"):
+        return close(convoy, {"promoted": True, "merged": convoy.state["promotion"]["merged"], "resumed": True})
+
+    integration = convoy.integration()
+    branch, protected = integration["branch"], integration["protected"]
+    repo = Repo(convoy.repo())
+    repo.fetch()
+    judged = answer["commit"]
+    tip, protected_tip = repo.tip(branch), repo.tip(protected)
+
+    def held(tip: str) -> bool:
+        """The tip is the commit Benjamin accepted, or this command's own
+        take-up of the protected branch on it."""
+        parents = repo.parents(tip)
+        return tip == judged or (len(parents) == 2 and parents[0] == judged and repo.is_ancestor(parents[1], protected_tip))
+
+    # A merge made by a run that was interrupted before recording it.
+    parents = repo.parents(protected_tip)
+    if len(parents) == 2 and parents[1] == tip and held(tip):
+        merged, before = protected_tip, parents[0]
+    else:
+        if not held(tip):
+            raise Refusal(
+                f"aucun « accepté » n'est enregistré pour la pointe {sha(tip)} de {branch} : l'approbateur a accepté le "
+                f"commit {sha(judged)} ; rien n'est fusionné vers {protected} ; rien n'est écrit")
+        if not repo.is_ancestor(protected_tip, tip):
+            # The protected branch moved since the judgement.
+            files = repo.conflicts(tip, protected_tip)
+            if files is not None:
+                control = f"la reprise de {protected} ({sha(protected_tip)}) dans {branch} est en conflit"
+                return red(convoy, "conflict", control, f"fichiers en conflit : {', '.join(files)}", tip, protected_tip)
+            profile = convoy.profile(args.profile)
+            status, replay = tool(SPEC_END_TOOL, "replay", convoy.id, "--repo", str(repo.path), "--profile", str(profile),
+                                  "--timeout", str(args.timeout))
+            if status == EXIT_UNRULED:
+                raise Unruled(replay.get("unruled"))
+            if status != 0:
+                recorded = replay.get("red")
+                if not isinstance(recorded, dict) or "control" not in recorded:
+                    raise Refusal(f"les contrôles mécaniques n'ont pas pu être rejoués : {refusal_text(replay)}")
+                cause = "fidelity" if recorded.get("check") == "fidelity" else "regression"
+                return red(convoy, cause, f"le contrôle rejoué est rouge ({recorded['control']})", "", tip, protected_tip,
+                           recorded=True)
+            repo.fetch()
+            tip, protected_tip = repo.tip(branch), repo.tip(protected)
+            if not held(tip) or not repo.is_ancestor(protected_tip, tip):
+                raise Refusal(f"{branch} ou {protected} a bougé pendant le rejeu des contrôles : la prochaine passe reprend")
+            said = starts(convoy, repo, profile, tip)
+            if said is not None:
+                return red(convoy, "start", f"le produit ne démarre plus sur {branch} à {sha(tip)}", said, tip, protected_tip)
+        spec = convoy.state.get("spec") or "sans Spec"
+        merged = repo.merge_commit(protected_tip, tip, (
+            f"Outcome accepté : Spec {spec}, convoi {convoy.id}\n\n"
+            f"Commit jugé : {judged}\nBranche d'intégration : {branch} à {tip}\n"
+            f"Accepté par {answer['approver']} : {answer.get('words', '')}"))
+        before = protected_tip
+        repo.move(protected, merged, before)
+    state_write("record-promotion", convoy.id, "--judged", judged, "--merged", merged, "--protected", before, "--tip", tip)
+    convoy.load()
+    return close(convoy, {"promoted": True, "merged": merged, "judged": judged})
+
+
+# --- command line ------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("check")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.set_defaults(handler=cmd_check)
+    p = sub.add_parser("run")
+    p.add_argument("convoy")
+    p.add_argument("--repo")
+    p.add_argument("--profile")
+    p.add_argument("--timeout", default=DEFAULT_TIMEOUT)
+    p.set_defaults(handler=cmd_run)
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.handler(args)
+    except NotNewFlow as exc:
+        print(json.dumps(exc.answer, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_NOT_NEW_FLOW
+    except Unruled as exc:
+        print(json.dumps({
+            "ok": False, "convoy": args.convoy, "unruled": exc.anomalies,
+            "message": f"état sans règle : rien n'est fusionné ni fermé sur le convoi {args.convoy}",
+        }, indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_UNRULED
+    except Refusal as exc:
+        print(json.dumps({"ok": False, "error": f"refus : {exc}", **exc.extra},
+                         indent=2, sort_keys=True, ensure_ascii=False))
+        return EXIT_REFUSED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
