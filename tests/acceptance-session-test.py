@@ -131,6 +131,19 @@ class AcceptanceSessionTest(packs.EvidencePackTest):
         path.write_text(json.dumps(profile), encoding="utf-8")
         return path
 
+    def profile_without_dataset(self):
+        """The profile of the project with no dataset declared; its recipe
+        names the file of one, so that it would start if it were launched."""
+        profile = json.loads(Path(self.profile).read_text(encoding="utf-8"))
+        launch = profile["launch"]
+        content = launch["datasets"]["content"]
+        launch["recipe"] = [content if token == "{dataset}" else token for token in launch["recipe"]]
+        launch["datasets"] = {}
+        launch.pop("screens", None)
+        path = self.tmp / "descriptor-without-dataset.json"
+        path.write_text(json.dumps(profile), encoding="utf-8")
+        return path
+
     def refused(self, command, *args, status=EXIT_REFUSED):
         before = self.everything()
         code, answer = self.acc(command, *args)
@@ -268,6 +281,17 @@ class AcceptanceSessionTest(packs.EvidencePackTest):
         status, answer = self.acc("open", "--repo", self.repo, "--profile", self.profile, convoy=PLAIN_CONVOY)
         self.assertEqual(EXIT_NOT_NEW_FLOW, status, answer)
         self.assertEqual(before, self.everything())
+
+    def test_open_on_a_project_without_a_named_dataset_is_refused_and_launches_nothing(self):
+        """T38 (af-8o4jcp): refused, not an outage of the product."""
+        self.delivered_outcome()
+
+        answer = self.refused("open", "--repo", self.repo, "--profile", self.profile_without_dataset())
+
+        self.assertIn("aucun jeu de données", answer["error"])
+        self.assertNotIn("outage", answer)
+        self.assertNotIn("address", answer)
+        self.assertEqual({}, self.session_files())
 
     # --- a product that does not start -------------------------------------------------------
 

@@ -103,6 +103,8 @@ case "$1" in
   exec) case "${FAKE_JOB_RUNS:-0}" in
           1) echo busy ;; 0) echo idle ;;
           # The job arrives 2.5 s after the container started.
+          # The loop's own look, run for real on this machine's processes.
+          real) shift 2; exec "$@" ;;
           late) [ $(( ($(date +%s%N) - $(cat "$FAKE_WPID.since")) / 1000000 )) -ge 2500 ] && echo busy || echo idle ;;
           *) exit 125 ;;
         esac ;;
@@ -134,7 +136,7 @@ echo "ok   an image that is only old is built between 05:00 and 07:00, at any ho
 
 # A runner that only waits is stopped when the image comes due; one that
 # serves a job is not; a build that failed is not tried again at once.
-waiting_runner() { # <job: 0 none, 1 one runs, x the look fails> <build fails: 0|1> <hour> <seconds before a new try> -> what the fake Podman was asked, two turns
+waiting_runner() { # <job: 0 none, 1 one runs, x the look fails, real the loop's own look> <build fails: 0|1> <hour> <seconds before a new try> -> what the fake Podman was asked, two turns
   : > "$FAKE_WLOG"; rm -f "$T/wrun/handoff"; mkfifo "$T/wrun/handoff"
   # One configuration per opening of the pipe by the loop, as the broker does.
   ( for _ in 1 2 3; do echo CONFIG > "$T/wrun/handoff"; sleep 0.3; done ) 2>/dev/null &
@@ -177,6 +179,29 @@ got=$(FACTORY_CI_RUNNER_JOB_MAX_SECONDS=0 waiting_runner x 0 14 0)
 got=$(FACTORY_CI_RUNNER_JOB_MAX_SECONDS=3 FAKE_RUN_SECONDS=4 waiting_runner late 0 14 0)
 [ "$got" = "run run " ] || fail "a job that started after a wait must get its whole limit: got '$got'"
 echo "ok   the job's limit counts from the job: a wait is never killed, nor a job for the wait before it"
+
+# The look itself, not a fake's word for it (af-7i1q2r, 2026-10-09: it matched
+# the shell that ran it, every runner read as busy, and a job 9 minutes old
+# was killed 2 h after its container started). The fake Podman runs what the
+# loop asks of the container on this machine's processes; the process a job
+# starts has a name of this test's own, since the test can itself run in a job.
+grep -qxF 'WORKER=${FACTORY_CI_RUNNER_WORKER:-Runner.Worker}' "$LOOP" \
+  || fail "$LOOP no longer looks for Runner.Worker, the process GitHub's runner starts for a job"
+worker="Job$RANDOM.Worker" # 15 characters at most: the kernel keeps no more of a process's name
+got=$(FACTORY_CI_RUNNER_WORKER=$worker FACTORY_CI_RUNNER_JOB_MAX_SECONDS=0 waiting_runner real 0 14 0)
+[ "$got" = "run run " ] || fail "the loop's own look read a runner that only waits as serving a job, and the job's limit killed it: got '$got'"
+got=$(FACTORY_CI_RUNNER_WORKER=$worker waiting_runner real 0 5 0)
+[ "$got" = "build run kill build run kill " ] || fail "the loop's own look did not read a waiting runner as waiting: it was not stopped for the build: got '$got'"
+printf '#!/bin/bash\ntrap '"'"'kill $! 2>/dev/null; exit'"'"' TERM EXIT\nsleep 60 & wait\n' > "$T/wbin/$worker"
+chmod +x "$T/wbin/$worker"
+"$T/wbin/$worker" & job=$!
+for _ in $(seq 50); do [ "$(cat "/proc/$job/comm" 2>/dev/null)" = "$worker" ] && break; sleep 0.1; done
+got=$(FACTORY_CI_RUNNER_WORKER=$worker FACTORY_CI_RUNNER_JOB_MAX_SECONDS=0 waiting_runner real 0 14 0)
+got_due=$(FACTORY_CI_RUNNER_WORKER=$worker waiting_runner real 0 5 0)
+kill "$job" 2>/dev/null || true; wait "$job" 2>/dev/null || true
+[ "$got" = "run kill run kill " ] || fail "the loop's own look did not see the job's process: a job past its limit was not killed: got '$got'"
+[ "$got_due" = "build run build run " ] || fail "the loop's own look did not see the job's process: a runner serving a job was stopped for a build: got '$got_due'"
+echo "ok   the loop's own look, on real processes: a runner that only waits reads as waiting, one whose job runs as serving it"
 
 # --- the broker and the loop, end to end with a fake GitHub and Podman ----
 mkdir "$T/bin" "$T/run" "$T/state"

@@ -51,7 +51,7 @@ stopped rounds carries (same door, same session). It refuses unless
 integration branch and is the one of the request. It then launches the
 product through `bin/project-launch`, from a clean copy of the commit of
 the dossier, by the recipe of the project profile, **once per synthetic
-dataset** the profile declares, each on its own free loopback port — all of
+dataset** the profile declares (at least one), each on its own free loopback port — all of
 them or none (two start attempts each, 30 s). It answers `kind`
 (`acceptance` or `non_conforme`), `commit`, `digest`, `page`, `address`
 (the first product), `products` (`{dataset, address}` each), `rules`, and,
@@ -82,6 +82,7 @@ mark (answered as `bin/convoy-state` answers it, nothing touched).
 | `open` | the pack is `absent`, `périmé`, `altéré` or `incomplet`, or is no longer the one of the request | nothing launched; the next pass generates a new dossier |
 | `open` | an outage is already recorded at this commit: it says the detail and the repair ticket, or that the next pass publishes it | nothing launched |
 | `open` | no profile spans the convoy or it declares no launch recipe; the tickets name no single project and `--repo` is absent; the convoy is in an « état sans règle » | nothing |
+| `open` | the profile declares no dataset (`launch.datasets`): « le profil … ne déclare aucun jeu de données », a refusal and not an outage | nothing launched, no breakdown recorded |
 | `close` | no session is open on the convoy | nothing |
 | `close` | a port is still held after the stop | the session record, to close again |
 | `record` | the convoy carries no « non conforme » request (a Delivered Outcome is answered by `bin/owner-answer`, `docs/OWNER_ANSWER.md`) | nothing |

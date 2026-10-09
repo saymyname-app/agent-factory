@@ -22,9 +22,14 @@ per-rig promotion_branch -- and never accept a production or language field.
 Spec af-wf4w5r .12 (D01, T01) extends the descriptor with one more optional
 block, `launch`: the Delivery Workflow's launch recipe, entry points, health
 probe, named synthetic datasets, test perimeter, frozen harness paths,
-per-test test command, seam mode, regression command and k. A descriptor
-that declares `launch` must declare every one of those sub-fields -- a
-partial launch block fails loudly instead of launching with a silent gap.
+per-test test command, a mode per seam, regression command and k. A
+descriptor that declares `launch` must declare every one of those sub-fields
+-- a partial launch block fails loudly instead of launching with a silent
+gap -- with two readings of its own (T38): at least one dataset is named,
+since a product is never launched without one, and k is 3 when the profile
+declares none. The seams are declared either as `seams` (several, each with
+its own mode and the test paths that go through it) or as `seam_mode` (one
+seam for the whole test perimeter).
 A descriptor with no `launch` block at all (e.g. the Factory's own
 descriptor) is unaffected: `bin/project-launch` refuses to start a project
 with no declared recipe.
@@ -33,7 +38,8 @@ A project whose interface is not a web page (a command line, an API) has no
 anchor attribute to carry: its `launch` block declares `anchors` instead
 (spec af-wf4w5r .12, T35) -- either the equivalent of the anchors, each a
 named observable of a declared entry point, or `not_applicable` with its
-reason. `describe` renders it.
+reason. `describe` renders it, and refuses a launch block that declares
+neither a screen nor `anchors` (T38).
 """
 
 from __future__ import annotations
@@ -76,12 +82,18 @@ LAUNCH_REQUIRED_FIELDS = (
     "test_perimeter",
     "frozen_harness_paths",
     "test_command",
-    "seam_mode",
     "regression_command",
-    "k",
+    "datasets",
 )
 
 SEAM_MODES = ("black_box", "import_rule")
+SEAM_FIELDS = ("name", "mode", "test_paths")
+# The one seam of a profile that declares `seam_mode` instead of `seams`.
+DEFAULT_SEAM = "default"
+
+# Runs of the frozen tests at the green step when the profile declares no k
+# (spec af-wf4w5r .8, "Exécutions au vert (k)": starting value 3).
+DEFAULT_K = 3
 
 # The equivalent of the anchors for an interface that is not a web page
 # (spec af-wf4w5r .12, T35): exactly one of these two forms.
@@ -291,7 +303,7 @@ def load_launch(raw: Any, name: str) -> dict[str, Any]:
     """Validate a descriptor's `launch` block (spec af-wf4w5r .12, T01): the
     Delivery Workflow's launch recipe, entry points, health probe, named
     synthetic datasets, test perimeter, frozen harness paths, per-test test
-    command, seam mode, regression command and k. Every required sub-field
+    command, mode per seam, regression command and k. Every required sub-field
     must be present -- a missing one fails loudly instead of launching, or
     describing, with a silent gap."""
     launch = as_dict(raw, name)
@@ -346,15 +358,18 @@ def load_launch(raw: Any, name: str) -> dict[str, Any]:
     test_command = required_string(launch["test_command"], f"{name}.test_command")
     regression_command = required_string(launch["regression_command"], f"{name}.regression_command")
 
-    seam_mode = required_string(launch["seam_mode"], f"{name}.seam_mode")
-    if seam_mode not in SEAM_MODES:
-        raise ProfileError(f"{name}.seam_mode must be one of {SEAM_MODES}, got {seam_mode!r}")
+    seams = load_seams(launch, name, test_perimeter)
 
-    k = launch["k"]
+    k = launch.get("k", DEFAULT_K)
     if isinstance(k, bool) or not isinstance(k, int) or k < 1:
         raise ProfileError(f"{name}.k must be a positive integer, got {k!r}")
 
-    datasets_raw = as_dict(launch.get("datasets", {}), f"{name}.datasets")
+    datasets_raw = as_dict(launch["datasets"], f"{name}.datasets")
+    if not datasets_raw:
+        raise ProfileError(
+            f"{name}.datasets must name at least one dataset: a product is launched on a named "
+            "synthetic dataset, never without one"
+        )
     datasets = {
         safe_id(dataset_name, f"{name}.datasets key {dataset_name!r}"): required_string(
             dataset_path, f"{name}.datasets.{dataset_name}"
@@ -370,10 +385,12 @@ def load_launch(raw: Any, name: str) -> dict[str, Any]:
         "test_perimeter": test_perimeter,
         "frozen_harness_paths": frozen_harness_paths,
         "test_command": test_command,
-        "seam_mode": seam_mode,
+        "seams": seams,
         "regression_command": regression_command,
         "k": k,
     }
+    if "seam_mode" in launch:
+        loaded["seam_mode"] = launch["seam_mode"]
 
     # Optional declarations read by bin/tdd-step (T10): the error types that
     # are a valid red on a library seam, and the rule of the import-rule seam.
@@ -427,7 +444,71 @@ def load_launch(raw: Any, name: str) -> dict[str, Any]:
         loaded["screens"] = screens
     if "anchors" in launch:
         loaded["anchors"] = load_anchors(launch["anchors"], f"{name}.anchors", entry_points)
+    elif "screens" not in launch:
+        raise ProfileError(
+            f"{name}.anchors is required when the profile declares no screen ({name}.screens): declare "
+            f"{ANCHORS_EQUIVALENT!r} (the equivalent of the anchors) or {ANCHORS_NOT_APPLICABLE!r} with its reason"
+        )
     return loaded
+
+
+def path_within(path: str, parent: str) -> bool:
+    path, parent = path.rstrip("/"), parent.rstrip("/")
+    return path == parent or path.startswith(parent + "/")
+
+
+def load_seams(launch: dict[str, Any], name: str, test_perimeter: list[str]) -> list[dict[str, Any]]:
+    """The seams the criterion tests go through, each with its own mode
+    (spec af-wf4w5r .12, "mode par seam"). `seams` names them: a name, a
+    mode and the paths of the test perimeter whose tests go through it.
+    `seam_mode` alone is the profile of one seam: every test of the
+    perimeter goes through it."""
+    if ("seams" in launch) == ("seam_mode" in launch):
+        raise ProfileError(
+            f"{name} must declare exactly one of 'seams' (a mode per seam) or 'seam_mode' (one seam for "
+            "the whole test perimeter)"
+        )
+    if "seam_mode" in launch:
+        seam_mode = required_string(launch["seam_mode"], f"{name}.seam_mode")
+        if seam_mode not in SEAM_MODES:
+            raise ProfileError(f"{name}.seam_mode must be one of {SEAM_MODES}, got {seam_mode!r}")
+        return [{"name": DEFAULT_SEAM, "mode": seam_mode, "test_paths": list(test_perimeter)}]
+
+    seams: list[dict[str, Any]] = []
+    for index, raw_seam in enumerate(as_list(launch["seams"], f"{name}.seams")):
+        field = f"{name}.seams[{index}]"
+        seam = as_dict(raw_seam, field)
+        unknown = sorted(set(seam) - set(SEAM_FIELDS))
+        if unknown:
+            raise ProfileError(f"{field} has unknown field(s): {', '.join(unknown)}")
+        seam_name = safe_id(seam.get("name"), f"{field}.name")
+        if any(other["name"] == seam_name for other in seams):
+            raise ProfileError(f"{name}.seams declares the seam {seam_name!r} twice")
+        mode = required_string(seam.get("mode"), f"{field}.mode")
+        if mode not in SEAM_MODES:
+            raise ProfileError(f"{field}.mode must be one of {SEAM_MODES}, got {mode!r}")
+        test_paths = [
+            required_string(entry, f"{field}.test_paths[{position}]")
+            for position, entry in enumerate(as_list(seam.get("test_paths"), f"{field}.test_paths"))
+        ]
+        if not test_paths:
+            raise ProfileError(f"{field}.test_paths must name at least one path of the test perimeter")
+        for test_path in test_paths:
+            if not any(path_within(test_path, perimeter) for perimeter in test_perimeter):
+                raise ProfileError(
+                    f"{field}.test_paths names {test_path!r}, which is outside the test perimeter ({test_perimeter})"
+                )
+            for other in seams:
+                for other_path in other["test_paths"]:
+                    if path_within(test_path, other_path) or path_within(other_path, test_path):
+                        raise ProfileError(
+                            f"{name}.seams: {test_path!r} belongs to the seams {other['name']!r} and "
+                            f"{seam_name!r}; a test goes through one seam"
+                        )
+        seams.append({"name": seam_name, "mode": mode, "test_paths": test_paths})
+    if not seams:
+        raise ProfileError(f"{name}.seams must name at least one seam")
+    return seams
 
 
 def load_anchors(raw: Any, name: str, entry_points: list[dict[str, Any]]) -> dict[str, Any]:
