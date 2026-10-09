@@ -28,10 +28,13 @@ every declared operator need is lifted (`lift-need`), the project has a
 launch recipe or its first slice establishes it, and the door itself poses
 the pointers in each ticket (Spec and digest, user stories, sibling tickets
 with their demonstration line, seams). In each interface ticket it also
-poses the reference of the Spec's Validated Prototype (branch, commit, path,
+poses the reference of the ticket's Validated Prototype (branch, commit, path,
 states), and it refuses an interface graph without the one vertical_slice
 that is the Prototype Fold (`prototype_fold: true`), or with an interface
-ticket that does not wait for it (T36, Spec §3). `bd-patch` applies all of it to the
+ticket that does not wait for it (T36, Spec §3). A Spec that names several
+Validated Prototypes has one Prototype Fold per prototype: each interface
+ticket names its own by path (`prototype: <chemin>`) and waits for the Fold
+of that one (T46, af-lb9zkz). `bd-patch` applies all of it to the
 graph that results from the patch, tickets added or withdrawn included, and
 publishes without a new approval a patch that only adds `repair` tickets.
 A first publication is also refused without a graph review that holds for
@@ -299,7 +302,7 @@ CRITERION_FIELD_NAMES = {
 TICKET_FIELDS = (
     "id", "kind", "title", "blocked_by", "target_rigs", "scope", "split_from", "what_it_delivers",
     "demonstration_line", "unblocks", "restores", "acceptance_criteria",
-    "user_stories", "establishes_launch_recipe", "prototype_fold",
+    "user_stories", "establishes_launch_recipe", "prototype_fold", "prototype",
 )
 KIND_COVERING_STORIES = "vertical_slice"
 OPERATOR_NEED_FIELDS = ("id", "kind", "what")
@@ -564,6 +567,11 @@ def entry_contract_refusals(
                         "prototype_fold mal formé (attendu : true, sur la seule tranche qui replie le Validated "
                         "Prototype dans le vrai code)"
                     )
+            if "prototype" in ticket and not (isinstance(ticket["prototype"], str) and ticket["prototype"].strip()):
+                refuse(
+                    "prototype mal formé (attendu : le chemin du Validated Prototype de ce ticket, tel que la "
+                    "Spec l'écrit)"
+                )
 
         for index, criterion in enumerate(ticket["acceptance_criteria"], start=1):
             quoted, reasons = criterion_reasons(criterion)
@@ -617,6 +625,9 @@ def spec_view(spec_id: str, spec_bead: dict[str, Any]) -> dict[str, Any]:
         "testing_decisions": [one_line(line) for line in outline["testing_decisions"]],
         "interface_stories": {str(story["number"]) for story in outline["user_stories"] if story.get("interface")},
         "prototype": outline.get("validated_prototype"),
+        "prototypes": outline.get("validated_prototypes") or [
+            reference for reference in [outline.get("validated_prototype")] if reference
+        ],
         "prototype_problem": outline.get("validated_prototype_problem"),
     }
 
@@ -704,11 +715,47 @@ def graph_ticket(ticket: dict[str, Any], stories: dict[str, str]) -> dict[str, A
         "restored_story": restored_user_story(ticket, stories),
         "establishes": ticket.get("establishes_launch_recipe") is True,
         "fold": ticket.get("prototype_fold") is True,
+        "prototype": named_prototype(ticket.get("prototype")),
         "restores_anchor": isinstance(ticket.get("restores"), dict) and ticket["restores"].get("kind") == "anchor",
         "posed_prototype": False,
         "closed": False,
         "blocked_by": [str(blocker) for blocker in ticket["blocked_by"]],
     }
+
+
+def named_prototype(raw: Any) -> str | None:
+    """The Validated Prototype a ticket names as its own: its path."""
+    return raw.strip().strip("`").strip("/") if isinstance(raw, str) and raw.strip() else None
+
+
+def posed_prototype(description: str) -> str | None:
+    """The path of the reference the door posed in a published ticket."""
+    _, found, section = description.partition(f"\n\n## {PROTOTYPE_POINTER}\n\n")
+    match = re.search(r"^- chemin : (.+)$", section.split("\n## ")[0], re.MULTILINE) if found else None
+    return named_prototype(match.group(1)) if match else None
+
+
+def prototype_of(ticket: dict[str, Any], spec: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """The Validated Prototype of an interface ticket, or why it has none:
+    the one it names, else the only one the Spec names."""
+    prototypes = spec["prototypes"]
+    paths = ", ".join(prototype["path"] for prototype in prototypes)
+    if ticket["prototype"] is not None:
+        for prototype in prototypes:
+            if prototype["path"] == ticket["prototype"]:
+                return prototype, None
+        return None, (
+            f"prototype : {ticket['prototype']} n'est le chemin d'aucun Validated Prototype de la Spec "
+            f"{spec['id']} (attendu : {paths or 'la Spec n\'en nomme aucun'})"
+        )
+    if len(prototypes) == 1:
+        return prototypes[0], None
+    if not prototypes:
+        return None, None
+    return None, (
+        f"ticket d'interface qui ne dit pas quel Validated Prototype est le sien : la Spec {spec['id']} en nomme "
+        f"plusieurs ({paths}) ; champ prototype: <chemin>"
+    )
 
 
 def waits_for(by_key: dict[str, dict[str, Any]], key: str, blocker: str) -> bool:
@@ -745,11 +792,11 @@ def prototype_fold_of(graph: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def prototype_fold_refusals(graph: list[dict[str, Any]], spec: dict[str, Any]) -> list[tuple[str, str]]:
     """Spec §3, « Prototype Fold »: one vertical_slice per Validated
     Prototype folds it into the real code, and every other interface ticket
-    waits for it."""
-    prototype = spec["prototype"]
+    of that prototype waits for it."""
+    prototypes = spec["prototypes"]
     folds = prototype_fold_of(graph)
     interface = [ticket for ticket in graph if is_interface_ticket(ticket, spec)]
-    if prototype is None:
+    if not prototypes:
         problem = spec["prototype_problem"]
         if problem and interface:
             return [(
@@ -762,9 +809,31 @@ def prototype_fold_refusals(graph: list[dict[str, Any]], spec: dict[str, Any]) -
             ticket["key"],
             f"prototype_fold : la Spec {spec['id']} ne nomme aucun Validated Prototype à replier",
         ) for ticket in folds]
+    refusals: list[tuple[str, str]] = []
+    own: dict[str, list[dict[str, Any]]] = {prototype["path"]: [] for prototype in prototypes}
+    for ticket in graph:
+        if not (ticket["prototype"] is not None or ticket in interface):
+            continue
+        prototype, problem = prototype_of(ticket, spec)
+        if problem:
+            refusals.append((ticket["key"], problem))
+        elif prototype is not None and ticket in interface:
+            own[prototype["path"]].append(ticket)
+    by_key = {ticket["key"]: ticket for ticket in graph}
+    for prototype in prototypes:
+        refusals += one_prototype_fold_refusals(prototype, own[prototype["path"]], by_key, interface, len(prototypes))
+    return refusals
+
+
+def one_prototype_fold_refusals(
+    prototype: dict[str, Any], interface: list[dict[str, Any]], by_key: dict[str, dict[str, Any]],
+    every_interface: list[dict[str, Any]], named_by_spec: int,
+) -> list[tuple[str, str]]:
+    """The Fold rules for one Validated Prototype and its interface tickets."""
     named = (
         f"le Validated Prototype {prototype['path']} (branche {prototype['branch']}, commit {prototype['commit']})"
     )
+    folds = [ticket for ticket in interface if ticket["fold"] and ticket["kind"] == KIND_COVERING_STORIES]
     if len(folds) > 1:
         names = ", ".join(ticket["key"] for ticket in folds)
         return [(
@@ -773,19 +842,25 @@ def prototype_fold_refusals(graph: list[dict[str, Any]], spec: dict[str, Any]) -
             "Validated Prototype",
         ) for ticket in folds]
     if not folds:
-        if not interface:
-            return []
-        return [(
-            WHERE_GRAPH,
-            f"{named} n'a pas de Prototype Fold : le graphe porte des tickets d'interface "
-            f"({', '.join(ticket['key'] for ticket in interface)}) et aucune vertical_slice ne déclare "
-            "prototype_fold: true (la tranche qui sert tous les états prototypés à la vraie adresse sur les "
-            "données d'exemple, et que tout autre ticket d'interface attend)",
-        )]
+        if interface:
+            return [(
+                WHERE_GRAPH,
+                f"{named} n'a pas de Prototype Fold : le graphe porte des tickets d'interface "
+                f"({', '.join(ticket['key'] for ticket in interface)}) et aucune vertical_slice ne déclare "
+                "prototype_fold: true (la tranche qui sert tous les états prototypés à la vraie adresse sur les "
+                "données d'exemple, et que tout autre ticket d'interface attend)",
+            )]
+        if named_by_spec > 1 and every_interface:
+            return [(
+                WHERE_GRAPH,
+                f"{named} n'a pas de Prototype Fold : la Spec nomme {named_by_spec} Validated Prototypes et "
+                f"chacun a le sien ; aucune vertical_slice ne déclare prototype_fold: true avec prototype: "
+                f"{prototype['path']}",
+            )]
+        return []
     fold = folds[0]
     if fold["closed"]:
         return []  # delivered: nothing is left to wait for
-    by_key = {ticket["key"]: ticket for ticket in graph}
     refusals: list[tuple[str, str]] = []
     for ticket in interface:
         key = ticket["key"]
@@ -884,15 +959,18 @@ def pointer_sections(
         "User stories": "\n".join(stories) or "aucune",
         "Sibling tickets": "\n".join(siblings) or "aucun",
     }
-    prototype = spec["prototype"]
-    if prototype is not None and is_interface_ticket(ticket, spec):
+    prototype = prototype_of(ticket, spec)[0] if is_interface_ticket(ticket, spec) else None
+    if prototype is not None:
         reference = [
             f"- branche : {prototype['branch']}",
             f"- commit : {prototype['commit']}",
             f"- chemin : {prototype['path']}",
             f"- états : {', '.join(prototype['states'])}",
         ]
-        for fold in prototype_fold_of(graph)[:1]:
+        own_folds = [
+            fold for fold in prototype_fold_of(graph) if prototype_of(fold, spec)[0] is prototype
+        ]
+        for fold in own_folds[:1]:
             reference.append(
                 "- Prototype Fold : ce ticket ; il sert tous ces états à la vraie adresse sur les données "
                 "d'exemple, et le fichier du prototype n'est pas promu tel quel"
@@ -1901,6 +1979,7 @@ def published_ticket(member: dict[str, Any], state: dict[str, Any]) -> dict[str,
         "restored_story": None,
         "establishes": state.get("establishes_launch_recipe") is True,
         "fold": state.get("prototype_fold") is True,
+        "prototype": posed_prototype(member["description"]),
         "restores_anchor": False,
         "posed_prototype": f"\n\n## {PROTOTYPE_POINTER}\n\n" in member["description"],
         "closed": member["status"] == "closed",

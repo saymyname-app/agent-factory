@@ -67,6 +67,15 @@ the prototype declares a theme the browser cannot render; the product does
 not start on the dataset of a state; a page does not answer; the browser
 returns no measure; or the prototype shows no anchor in a state.
 
+**Never the prototype promoted as is (T46, af-lb9zkz).** Before anything is
+compared, the command refuses (exit 2, nothing written or filed) a delivered
+page of a compared state, or a file that page links from its own address
+(`href` of a `<link>`, `src` of any element, same origin), whose sha256 is
+that of a file of the prototype directory: « prototype promu tel quel »,
+naming the served path, the state and the prototype file. The manifest
+`validated-prototype.json` and the datasets it names are not counted: the
+product is launched on the same example data.
+
 ## Screens
 
 The profile declares the screens (`launch.screens`,
@@ -168,3 +177,4 @@ with the real Chromium.
 | Side-by-side captures and a difference image per state, Evidence Records of the capture tool; no pixel threshold | `test_named_ticket_files_side_by_side_and_difference_captures_per_state`, `test_no_pixel_threshold_fails_the_command` |
 | A named ticket: only the anchors of its screen; the result on the ticket by the state command, tied to the commit | `test_named_ticket_compares_only_the_anchors_of_the_screen_it_touches`, `test_named_ticket_records_the_result_on_the_ticket_tied_to_the_commit`, `test_red_result_is_recorded_on_the_ticket_with_the_anchor_state_and_property` |
 | A deviation declared in the Handoff stays red; a resolved Planning Exception that names the anchor turns it « accepté par Benjamin »; no author command lifts the red | `test_deviation_declared_in_the_handoff_stays_red`, `test_resolved_planning_exception_naming_the_anchor_turns_it_accepted_by_benjamin`, `test_planning_exception_answered_otherwise_or_naming_another_anchor_leaves_it_red`, `test_no_option_of_the_command_lifts_a_red` |
+| T46: a delivered file with the digest of a prototype file is refused and named, before anything is filed | `test_delivered_file_with_the_digest_of_a_prototype_file_is_refused_and_named`, `test_named_ticket_serving_a_prototype_file_as_is_is_refused_before_anything_is_filed` |
