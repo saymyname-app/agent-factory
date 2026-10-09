@@ -225,6 +225,39 @@ def subtree(found: list[tuple[int, str, list[str]]], title: str) -> list[tuple[i
     return None
 
 
+PROTOTYPE_TITLE = "validated prototype"
+
+
+def prototype_sections(found: list[tuple[int, str, list[str]]]) -> list[list[tuple[int, str, list[str]]]]:
+    """One subtree per Validated Prototype the Spec names (T46, af-lb9zkz):
+    the section titled « Validated Prototype », and each one titled
+    « Validated Prototype : <name> » when the Spec names several."""
+    found_sections, index = [], 0
+    while index < len(found):
+        level, heading, _ = found[index]
+        title = fold(heading)
+        end = index + 1
+        if title == PROTOTYPE_TITLE or title.startswith((PROTOTYPE_TITLE + " :", PROTOTYPE_TITLE + ":")):
+            while end < len(found) and found[end][0] > level:
+                end += 1
+            found_sections.append(found[index:end])
+        index = end
+    return found_sections
+
+
+def prototype_references(sections_found: list[list[tuple[int, str, list[str]]]]) -> list[dict[str, Any]]:
+    """The reference of each section; a path names one Validated Prototype."""
+    references = [prototype_reference(section) for section in sections_found]
+    paths = [reference["path"] for reference in references]
+    repeated = sorted({path for path in paths if paths.count(path) > 1})
+    if repeated:
+        raise SpecApproveError(
+            "refus : plusieurs références de Validated Prototype nomment le même chemin ("
+            + ", ".join(repeated) + ") ; chaque Validated Prototype a son chemin"
+        )
+    return references
+
+
 def numbered_user_stories(found: list[tuple[int, str, list[str]]]) -> list[tuple[str, str]]:
     stories_section = subtree(found, "user stories")
     stories = [
@@ -449,20 +482,21 @@ def check_entry_contract(
     found = sections(description)
     stories = numbered_user_stories(found)
     interface_stories = [number for number, text in stories if INTERFACE_TAG in text.lower()]
-    section = subtree(found, "validated prototype")
-    if section is None:
+    prototypes = prototype_sections(found)
+    if not prototypes:
         if interface_stories:
             raise SpecApproveError(
                 "refus : la référence du Validated Prototype manque (branche, commit, chemin, états) alors que "
                 "la Spec décrit une interface : user stories " + ", ".join(interface_stories)
             )
         return
-    reference = prototype_reference(section)
-    check_state_inventory(section, reference["states"])
+    references = prototype_references(prototypes)
+    for section, reference in zip(prototypes, references):
+        check_state_inventory(section, reference["states"])
     remote = prototype_remote(explicit_remote, repo_root)
-    check_validated_prototype(
-        reference, remote, repo_root, conformance_bin, protected_branch(project, config_dir, remote)
-    )
+    protected = protected_branch(project, config_dir, remote)
+    for reference in references:
+        check_validated_prototype(reference, remote, repo_root, conformance_bin, protected)
 
 
 def cmd_bd_approve(args: argparse.Namespace) -> int:
@@ -618,14 +652,13 @@ def cmd_outline(args: argparse.Namespace) -> int:
         return 1
     # The reference as the Spec writes it; what an incomplete one misses is
     # said, not raised: only a graph with interface tickets needs it.
-    reference, problem = None, None
-    section = subtree(found, "validated prototype")
-    if section is not None:
-        try:
-            reference = prototype_reference(section)
-        except SpecApproveError as exc:
-            problem = str(exc)
-    screens = screen_states(section) if section is not None else []
+    references, problem = [], None
+    prototypes = prototype_sections(found)
+    try:
+        references = prototype_references(prototypes)
+    except SpecApproveError as exc:
+        problem = str(exc)
+    screens = [screen for section in prototypes for screen in screen_states(section)]
     print(json.dumps({
         "ok": True,
         "user_stories": [
@@ -633,7 +666,9 @@ def cmd_outline(args: argparse.Namespace) -> int:
             for number, text in stories
         ],
         "testing_decisions": testing_decisions(found),
-        "validated_prototype": reference,
+        # The first one, for a reader that knows one; every one, in the Spec's order.
+        "validated_prototype": references[0] if references else None,
+        "validated_prototypes": references,
         "validated_prototype_problem": problem,
         "screens": screens,
     }, indent=2, ensure_ascii=False))

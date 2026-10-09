@@ -550,6 +550,46 @@ class SpecApproveEntryContractTest(unittest.TestCase):
             spec, "non conforme", "anchors", "état empty", "<nav>", "sa propre ancre", remote=remote
         )
 
+    # --- T46 : une Spec peut nommer plusieurs Validated Prototypes ---------------------
+
+    SECOND_REFERENCE = (
+        "## Validated Prototype : réglages\n\n- branche : `prototype/delivery-fixture-city`\n"
+        "- commit : `{commit}`\n- chemin : `{path}`\n- états : `empty`, `content`\n\n## Implementation Decisions"
+    )
+
+    def with_second_prototype(self, path, commit=FROZEN_COMMIT):
+        return self.replaced(
+            "## Implementation Decisions", self.SECOND_REFERENCE.format(commit=commit, path=path)
+        )
+
+    def test_outline_gives_every_validated_prototype_the_spec_names(self):
+        proc = subprocess.run(
+            (str(TOOL), "outline"), input=self.with_second_prototype("prototypes/reglages"),
+            text=True, capture_output=True,
+        )
+        outline = json.loads(proc.stdout)
+        self.assertEqual(
+            ["tests/fixtures/delivery-fixture-city/prototype", "prototypes/reglages"],
+            [reference["path"] for reference in outline["validated_prototypes"]],
+        )
+        self.assertEqual(outline["validated_prototypes"][0], outline["validated_prototype"])
+        self.assertIsNone(outline["validated_prototype_problem"])
+
+    def test_refuses_two_validated_prototypes_that_name_the_same_path(self):
+        spec = self.with_second_prototype("tests/fixtures/delivery-fixture-city/prototype")
+        self.assert_refused_untouched(spec, "même chemin", "tests/fixtures/delivery-fixture-city/prototype")
+
+    def test_refuses_when_the_second_validated_prototype_has_no_state_inventory(self):
+        self.assert_refused_untouched(self.with_second_prototype("prototypes/reglages"), "inventaire des états")
+
+    def test_refuses_when_the_second_validated_prototype_is_not_on_the_remote(self):
+        spec = self.with_second_prototype("prototypes/reglages").replace(
+            "\n\n## Implementation Decisions",
+            "\n\n### Écran : réglages\n\n" + FIXTURE_SPEC.split("### Écran : accueil\n\n")[1].split("\n## ")[0]
+            + "\n## Implementation Decisions", 1,
+        )
+        self.assert_refused_untouched(spec, "prototypes/reglages", "n'existe pas au commit")
+
     # --- les Specs déjà approuvées restent approuvées ----------------------------
 
     def test_an_already_approved_spec_without_numbered_stories_stays_approved(self):
