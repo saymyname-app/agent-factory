@@ -224,9 +224,9 @@ def check_bd_dependency_direction():
     finally:
         # The city's managed Dolt server outlives `gc init`; its command line
         # carries the trial directory, and nothing else does.
-        subprocess.run(["pkill", "-f", "--", f"{trial}/"], capture_output=True)
+        subprocess.run(["pkill", "-f", "--", str(trial) + "/"], capture_output=True)
         subprocess.run(["sleep", "1"])
-        subprocess.run(["pkill", "-9", "-f", "--", f"{trial}/"], capture_output=True)
+        subprocess.run(["pkill", "-9", "-f", "--", str(trial) + "/"], capture_output=True)
         shutil.rmtree(trial, ignore_errors=True)
 
 
