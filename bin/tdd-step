@@ -23,7 +23,9 @@ the Spec, outside any work tree. `green`: the frozen files are unchanged and the
 tests pass k times in a row against the product at HEAD. `amend`: the one
 change of frozen tests a ticket is allowed, with its reason, a new red and a
 new freeze, recorded with its diff. `prefactoring`: the regression command of
-the profile passes before and after, and no existing test was touched.
+the profile passes before and after, and no existing test was touched; with
+no test at the start commit, characterization tests are demanded first, in
+commits that add nothing but files of the test perimeter.
 
 The check of a step runs inside bin/evidence-capture, so its report is a
 sealed piece of the evidence store (tdd_red, tdd_freeze, tdd_green,
@@ -447,6 +449,36 @@ class Check:
                 changed[path] = f"fichier gelé modifié : {path}"
         return changed
 
+    def tests_at(self, commit: str) -> list[str]:
+        """The tests a commit holds: the files of the test perimeter, the
+        frozen harness aside."""
+        proc = git(self.repo, "ls-tree", "-r", "--name-only", "-z", commit)
+        if proc.returncode != 0:
+            raise Refusal(f"git ls-tree {commit} a échoué : {short(proc.stderr.decode(errors='replace'))}")
+        paths = proc.stdout.decode(errors="surrogateescape").split("\0")
+        return [path for path in paths if path and in_paths(path, self.launch["test_perimeter"])
+                and not in_paths(path, self.launch["frozen_harness_paths"])]
+
+    def characterization_commit(self, base: str) -> str:
+        """The last of the commits that, first after a start commit without
+        any test, add nothing but files of the test perimeter."""
+        proc = git(self.repo, "rev-list", "--reverse", "--first-parent", f"{base}..{self.head}")
+        if proc.returncode != 0:
+            raise Refusal(f"git rev-list {base}..{self.head} a échoué : {short(proc.stderr.decode(errors='replace'))}")
+        found, previous = None, base
+        for commit in proc.stdout.decode().split():
+            changes = self.changes(previous, commit)
+            if not changes or any(status != "A" or not in_paths(path, self.test_scope) for status, path in changes):
+                break
+            found = previous = commit
+        if found is None or not self.tests_at(found):
+            raise Refusal(
+                f"aucun test dans le périmètre de test au commit de départ ({base}) : la commande de régression n'y "
+                "exécute aucun test. Écrire d'abord des tests de caractérisation, dans un premier commit qui n'ajoute "
+                "que des fichiers du périmètre de test et qui passe sur le produit du commit de départ, puis le changement"
+            )
+        return found
+
     def refuse_prefactoring(self, step: str) -> None:
         if self.kind == KIND_PREFACTORING:
             raise Refusal(
@@ -759,12 +791,15 @@ def check_prefactoring(check: Check) -> dict[str, Any]:
         )
     base = check.start_commit(check.args.base)
     scope = check.test_scope
-    touched = [path for status, path in check.changes(base, check.head) if status != "A" and in_paths(path, scope)]
+    # With no test at the start commit, the tests the first commits add are
+    # the « avant »: they run on the product of the start commit, unchanged.
+    before = base if check.tests_at(base) else check.characterization_commit(base)
+    touched = [path for status, path in check.changes(before, check.head) if status != "A" and in_paths(path, scope)]
     if touched:
         raise Refusal(" ; ".join(f"test existant modifié : {path}" for path in touched))
     command = shlex.split(check.launch["regression_command"])
     regression = []
-    for commit, moment in ((base, "avant"), (check.head, "après")):
+    for commit, moment in ((before, "avant"), (check.head, "après")):
         tree = check.export(commit)
         try:
             proc = subprocess.run(command, cwd=tree, stdin=subprocess.DEVNULL, capture_output=True, timeout=COMMAND_TIMEOUT,
@@ -780,8 +815,11 @@ def check_prefactoring(check: Check) -> dict[str, Any]:
                 f"{short(output)}"
             )
         regression.append({"commit": commit, "exit_code": proc.returncode, "output": short(output)})
-    return {"step": "prefactoring", "verdict": "unchanged", "commit": check.head, "base": base,
-            "command": check.launch["regression_command"], "regression": regression}
+    proof = {"step": "prefactoring", "verdict": "unchanged", "commit": check.head, "base": base,
+             "command": check.launch["regression_command"], "regression": regression}
+    if before != base:
+        proof["characterization"] = before
+    return proof
 
 
 CHECKS = {"red": check_red, "freeze": check_freeze, "green": check_green, "amend": check_amend,
