@@ -34,9 +34,8 @@ For a change:
 
 - Desktop Codex, CLI Codex, and Codex Remote are operator surfaces for the same local Factory.
 - New work enters through the Planning Run flow (`docs/PLANNING_RUN.md`);
-  the Mayor executes approved ticket graphs, except a convoy that carries the
-  new-flow mark, which code advances (`docs/DELIVERY.md`, "Marked convoys").
-  The pre-refactor product queue is retired to `legacy/`.
+  the Mayor executes approved ticket graphs. The pre-refactor product queue is
+  retired to `legacy/`.
 - A remote/mobile session has the same authority as its request, not broader authority because the host is reachable.
 - “Full access” means the tools may be available. It never means blanket permission to mutate, publish, expose, spend, handle secrets, or perform destructive operations.
 - Follow `docs/OPERATOR_BRIDGE.md` for the human protocol and access boundaries.
