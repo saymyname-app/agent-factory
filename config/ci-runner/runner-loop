@@ -42,6 +42,10 @@ DUE_CHECK_TICKS=${FACTORY_CI_RUNNER_DUE_CHECK_TICKS:-30}
 # runner can wait hours for a job, and the wait took its job's time (af-rqovxb,
 # 2026-10-09: started 09:59, job at 11:41, killed at 11:59).
 JOB_MAX_SECONDS=${FACTORY_CI_RUNNER_JOB_MAX_SECONDS:-7200}
+# The process GitHub's runner starts for a job and for nothing else: a runner
+# that only waits has none. Tests only: another name, as a test can itself run
+# in a job.
+WORKER=${FACTORY_CI_RUNNER_WORKER:-Runner.Worker}
 # Tests only: stop after this many turns of the loop.
 MAX_TURNS=${FACTORY_CI_RUNNER_MAX_TURNS:-0}
 PAUSE=${FACTORY_CI_RUNNER_LOOP_PAUSE:-5}
@@ -138,12 +142,16 @@ while :; do
     fi
     # A runner can wait for a job for days: without this the image would be
     # built only when a job happens to end inside the hours. A runner that
-    # only waits (no Runner.Worker in its container) is stopped; one that
+    # only waits (no $WORKER in its container) is stopped; one that
     # serves a job is left alone and the next look decides.
     ticks=$((ticks + 1))
     if [ $((ticks % DUE_CHECK_TICKS)) -eq 0 ]; then
       # Only on the container's own word: a look that fails stops nothing.
-      state=$("$PODMAN" exec "$NAME" sh -c 'pgrep -f Runner.Worker >/dev/null && echo busy || echo idle' 2>/dev/null)
+      # By the process's name (-x), never by command lines (-f): the shell
+      # that runs the look has the name in its own, and every runner read as
+      # busy from its first minute (af-7i1q2r, 2026-10-09: a job killed after
+      # 9 minutes, 2 h after its container started).
+      state=$("$PODMAN" exec "$NAME" sh -c 'pgrep -x "$1" >/dev/null && echo busy || echo idle' sh "$WORKER" 2>/dev/null)
       if [ "$state" = busy ]; then
         [ -n "$job_started" ] || job_started=$(date +%s)
         if [ $(( $(date +%s) - job_started )) -ge "$JOB_MAX_SECONDS" ]; then
