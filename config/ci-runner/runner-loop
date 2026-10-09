@@ -37,7 +37,10 @@ BUILD_RETRY_SECONDS=${FACTORY_CI_RUNNER_BUILD_RETRY_SECONDS:-3600}
 # every DUE_CHECK_TICKS looks whether the image is due.
 WATCH_PAUSE=${FACTORY_CI_RUNNER_WATCH_PAUSE:-2}
 DUE_CHECK_TICKS=${FACTORY_CI_RUNNER_DUE_CHECK_TICKS:-30}
-# A job that never ends would hold the only runner for ever.
+# A job that never ends would hold the only runner for ever. Counted from the
+# moment the runner is seen serving a job, not from the container's start: a
+# runner can wait hours for a job, and the wait took its job's time (af-rqovxb,
+# 2026-10-09: started 09:59, job at 11:41, killed at 11:59).
 JOB_MAX_SECONDS=${FACTORY_CI_RUNNER_JOB_MAX_SECONDS:-7200}
 # Tests only: stop after this many turns of the loop.
 MAX_TURNS=${FACTORY_CI_RUNNER_MAX_TURNS:-0}
@@ -123,10 +126,11 @@ while :; do
   # No -v: nothing of the host is in the container.
   printf '%s\n' "$jit" | "$PODMAN" run --rm -i --name "$NAME" \
     --cgroups=disabled --network slirp4netns:allow_host_loopback=false \
-    --timeout "$JOB_MAX_SECONDS" "$IMAGE" &
+    "$IMAGE" &
   pid=$!
   jit=
   ticks=0
+  job_started=
   while kill -0 "$pid" 2>/dev/null; do
     if [ -e "$RUN_DIR/stop-now" ]; then
       log "stop-now: killing the job container"
@@ -137,11 +141,19 @@ while :; do
     # only waits (no Runner.Worker in its container) is stopped; one that
     # serves a job is left alone and the next look decides.
     ticks=$((ticks + 1))
-    # Only on the container's own word: a look that fails stops nothing.
-    if [ $((ticks % DUE_CHECK_TICKS)) -eq 0 ] && ! image_is_fresh && ! build_was_just_tried \
-       && [ "$("$PODMAN" exec "$NAME" sh -c 'pgrep -f Runner.Worker >/dev/null && echo busy || echo idle' 2>/dev/null)" = idle ]; then
-      log "the image is due and the runner only waits: stopping it to build"
-      "$PODMAN" kill "$NAME" >/dev/null 2>&1 || true
+    if [ $((ticks % DUE_CHECK_TICKS)) -eq 0 ]; then
+      # Only on the container's own word: a look that fails stops nothing.
+      state=$("$PODMAN" exec "$NAME" sh -c 'pgrep -f Runner.Worker >/dev/null && echo busy || echo idle' 2>/dev/null)
+      if [ "$state" = busy ]; then
+        [ -n "$job_started" ] || job_started=$(date +%s)
+        if [ $(( $(date +%s) - job_started )) -ge "$JOB_MAX_SECONDS" ]; then
+          log "the job ran for more than $JOB_MAX_SECONDS s: killing its container"
+          "$PODMAN" kill "$NAME" >/dev/null 2>&1 || true
+        fi
+      elif [ "$state" = idle ] && ! image_is_fresh && ! build_was_just_tried; then
+        log "the image is due and the runner only waits: stopping it to build"
+        "$PODMAN" kill "$NAME" >/dev/null 2>&1 || true
+      fi
     fi
     sleep "$WATCH_PAUSE"
   done
