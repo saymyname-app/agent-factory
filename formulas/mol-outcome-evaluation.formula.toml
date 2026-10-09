@@ -135,7 +135,11 @@ names an entry point, what is seen there, and what would make it false.
   it restores (a user story, an anchor, a line of the Spec, a written rule
   of the repository, a red check) in the `restores` of the `repair` you
   draft for it. Refused without that citation. A finding you cannot tie to
-  anything written is not `repaired`.
+  anything written is not `repaired`. The door that publishes the repair
+  reads the citation against its source and refuses it otherwise: an
+  `anchor` is the name of one anchor of the Validated Prototype, a
+  `repo_rule` is `<path> : <rule copied exactly>`, a `red_check` is the
+  name of a red control recorded on the convoy.
 
   ```bash
   "$FACTORY_ROOT/bin/outcome-evaluation" classify "$SPEC_CONVOY" "<finding>" --as repaired --file finding-repair.json

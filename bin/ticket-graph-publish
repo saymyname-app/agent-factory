@@ -419,8 +419,137 @@ def cited_user_stories(ticket: dict[str, Any]) -> list[str] | None:
     return numbers if len(set(numbers)) == len(numbers) else None
 
 
+class CitationSources:
+    """What a `repair` cites besides the text of the Spec, read where it
+    lives (T40, af-o6tu3z; Spec §2, §11), and only when a ticket cites it:
+    the anchors of the Validated Prototypes the Spec names, in the
+    repository of the project at the commit of each reference; the files of
+    that repository at the tip of the integration branch (of the protected
+    branch, before the first publication opens it); the red controls the
+    convoy carries a record of, as bin/convoy-state shows them. A source
+    that cannot be read verifies nothing: the citation is refused."""
+
+    def __init__(self, spec: dict[str, Any], target: Any, state: dict[str, Any] | None):
+        self.spec = spec
+        self._target = target  # () -> {"repo", "protected"} of the one rig the graph targets
+        self.state = state
+        self._anchors: tuple[set[str], str | None] | None = None
+
+    def repo(self) -> tuple[Path | None, str | None, str | None]:
+        """The repository of the project and its protected branch, or why
+        there is none."""
+        try:
+            target = self._target()
+        except PublishError as exc:
+            return None, None, one_line(str(exc))
+        return target["repo"], target["protected"], None
+
+    def anchors(self) -> tuple[set[str], str | None]:
+        """The named anchors of every prototyped state of the Spec's
+        Validated Prototypes, or why they cannot be read."""
+        if self._anchors is None:
+            self._anchors = self._read_anchors()
+        return self._anchors
+
+    def _read_anchors(self) -> tuple[set[str], str | None]:
+        prototypes = self.spec["prototypes"]
+        if not prototypes:
+            return set(), None
+        repo, _, problem = self.repo()
+        if repo is None:
+            return set(), problem
+        names: set[str] = set()
+        reader = tool_path("PROTOTYPE_CONFORMANCE_BIN", "prototype-conformance")
+        for prototype in prototypes:
+            argv = [reader, "anchors", "--repo", str(repo), "--commit", str(prototype["commit"]),
+                    "--path", str(prototype["path"]), "--branch", str(prototype["branch"]),
+                    "--states", ",".join(str(state) for state in prototype["states"])]
+            try:
+                proc = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+                answer = json.loads(proc.stdout)
+            except (OSError, json.JSONDecodeError) as exc:
+                return set(), f"{Path(reader).name} anchors : {exc}"
+            if proc.returncode != 0 or not isinstance(answer.get("anchors"), dict):
+                return set(), one_line(str(answer.get("error") or proc.stderr.strip() or f"exit {proc.returncode}"))
+            names.update(name for state in answer["anchors"].values() for name in state)
+        return names, None
+
+    def rule_problem(self, path: str, quote: str) -> str | None:
+        """Why the repository does not hold `quote` in the file `path`, at
+        the tip of the integration branch; None when it does."""
+        repo, protected, problem = self.repo()
+        if repo is None:
+            return f"le dépôt du projet est illisible ({problem})"
+        integration = ((self.state or {}).get("convoy") or {}).get("integration")
+        branch = integration["branch"] if isinstance(integration, dict) and "branch" in integration else protected
+        where = "la branche d'intégration" if branch != protected else "la branche protégée"
+
+        def git(*argv: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(["git", "-C", str(repo), *argv], capture_output=True, text=True, errors="replace")
+
+        tip = next((ref for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}")
+                    if git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode == 0), None)
+        if tip is None:
+            return f"{where} {branch} est introuvable dans le dépôt {repo}"
+        if path.startswith(("/", "-")) or ".." in Path(path).parts or git("cat-file", "-e", f"{tip}:{path}").returncode != 0 \
+                or git("cat-file", "-t", f"{tip}:{path}").stdout.strip() != "blob":
+            return f"le fichier {path} n'existe pas au commit de {where} {branch}"
+        if one_line(quote) not in one_line(git("show", f"{tip}:{path}").stdout):
+            return f"le fichier {path} ne contient pas la citation au commit de {where} {branch}"
+        return None
+
+    def red_checks(self) -> list[str]:
+        recorded = ((self.state or {}).get("convoy") or {}).get("red_checks")
+        return [str(check.get("name")) for check in recorded if isinstance(check, dict)] if isinstance(recorded, list) else []
+
+    def fidelity_red(self, ticket: dict[str, Any]) -> bool:
+        """Whether a repair restores the mechanical fidelity the convoy
+        carries a red of: an interface ticket, as the repair of an anchor."""
+        restores = ticket.get("restores")
+        if not isinstance(restores, dict) or restores.get("kind") != "red_check":
+            return False
+        recorded = ((self.state or {}).get("convoy") or {}).get("red_checks")
+        return any(isinstance(check, dict) and check.get("check") == "fidelity" and check.get("name") == restores.get("ref")
+                   for check in (recorded if isinstance(recorded, list) else []))
+
+
+REPO_RULE_REF = re.compile(r"^(?P<path>\S+) : (?P<quote>.+)$", re.DOTALL)
+
+
+def citation_refusal(restores: dict[str, Any], sources: CitationSources) -> str | None:
+    """Why what a repair cites outside the text of the Spec is not held by
+    its source (T40); None when it is, or when the Spec itself is cited."""
+    spec_id = sources.spec["id"]
+    ref = text_field(restores, "ref")
+    quoted = truncate_line(ref, MAX_QUOTED_CRITERION)
+    if restores["kind"] == "anchor":
+        name = ref.strip("`")
+        anchors, problem = sources.anchors()
+        if problem:
+            return (f"cite l'ancre « {quoted} » et les ancres du Validated Prototype de la Spec {spec_id} sont "
+                    f"illisibles ({problem}) : une citation qui ne se vérifie pas n'est pas publiée")
+        if name not in anchors:
+            return (
+                f"cite l'ancre « {quoted} », qui n'est dans aucun état du Validated Prototype nommé par la Spec {spec_id} "
+                f"(restores.ref ; attendu : le nom d'une ancre, parmi {', '.join(sorted(anchors)) or 'aucune : la Spec ne nomme aucun Validated Prototype'}) : "
+                "un comportement que la Spec n'exige pas n'est pas un repair, c'est une Planning Exception")
+    if restores["kind"] == "repo_rule":
+        match = REPO_RULE_REF.match(ref)
+        if not match:
+            return (f"cite une règle du dépôt sans nommer son fichier (restores.ref : « {quoted} » ; attendu : "
+                    "« <chemin du fichier> : <la règle, citée mot pour mot> »)")
+        problem = sources.rule_problem(match.group("path"), match.group("quote"))
+        if problem:
+            return f"cite une règle absente du dépôt (restores.ref : « {quoted} ») : {problem}"
+    if restores["kind"] == "red_check" and ref not in sources.red_checks():
+        return (f"cite un contrôle rouge que le convoi ne porte pas (restores.ref : « {quoted} » ; contrôles rouges "
+                f"enregistrés : {' ; '.join(f'« {truncate_line(name, MAX_QUOTED_CRITERION)} »' for name in sources.red_checks()) or 'aucun'}) : "
+                "un repair rétablit un contrôle rouge enregistré sur son convoi (bin/convoy-state show)")
+    return None
+
+
 def entry_contract_refusals(
-    parsed: dict[str, Any], tickets: list[dict[str, Any]], spec: dict[str, Any],
+    parsed: dict[str, Any], tickets: list[dict[str, Any]], spec: dict[str, Any], sources: CitationSources,
 ) -> list[tuple[str, str]]:
     """Every reason a draft that declares the new-flow contract does not meet
     it, as (ticket id or "brouillon", reason), in the order of the draft: the
@@ -506,8 +635,8 @@ def entry_contract_refusals(
                         f"{', '.join(RESTORES_KINDS)}, et ref qui le cite)"
                     )
                 else:
-                    # What the door can read in the approved Spec, it checks:
-                    # a repair restores something the Spec already holds.
+                    # A repair restores something the Spec already holds:
+                    # the door checks each citation against its source.
                     ref = text_field(restores, "ref")
                     quoted = truncate_line(ref, MAX_QUOTED_CRITERION)
                     if restores["kind"] == "user_story" and restored_user_story(ticket, stories) is None:
@@ -520,6 +649,10 @@ def entry_contract_refusals(
                             f"cite une ligne absente de la Spec {spec['id']} (restores.ref : « {quoted} ») : "
                             "une ligne citée s'y retrouve mot pour mot"
                         )
+                    # What it cites elsewhere is read at its source (T40).
+                    unheld = citation_refusal(restores, sources)
+                    if unheld:
+                        refuse(unheld)
             elif "restores" in ticket:
                 refuse(f"champ restores sur un {kind} : seul un repair nomme ce qu'il rétablit")
 
@@ -1865,7 +1998,8 @@ def cmd_bd_publish(args: argparse.Namespace) -> int:
         # the graph against its Spec and its project (T06).
         spec = spec_view(spec_id, spec_bead)
         launch, descriptor = project_launch(project_id, descriptors_dir(args, repo_root), profile_bin)
-        refusals = entry_contract_refusals(parsed, tickets, spec)
+        sources = CitationSources(spec, lambda: integration_target(draft_id, tickets, config_dir, repo_root), None)
+        refusals = entry_contract_refusals(parsed, tickets, spec, sources)
         refusals += operator_need_refusals(parsed, metadata, human_approver, draft_id)
         if "withdrawn" in parsed:
             refusals.append((WHERE_DRAFT, "withdrawn : une première publication ne retire aucun ticket (porte de patch)"))
@@ -2230,7 +2364,9 @@ def cmd_bd_patch_new_flow(args: argparse.Namespace, bead: dict[str, Any], human_
             "patched": [], "created": [], "merged": {}, "superseded": {}, "resumed": True,
         }
     else:
-        refusals = entry_contract_refusals(parsed, tickets, spec)
+        config_dir = Path(args.config_dir) if args.config_dir else repo_root / "config" / "projects"
+        sources = CitationSources(spec, lambda: integration_target(draft_id, tickets, config_dir, repo_root), state)
+        refusals = entry_contract_refusals(parsed, tickets, spec, sources)
         for ticket in tickets:
             key = str(ticket["id"])
             if key not in members:
@@ -2257,7 +2393,13 @@ def cmd_bd_patch_new_flow(args: argparse.Namespace, bead: dict[str, Any], human_
             for key, member in members.items()
             if key not in drafted and key not in withdrawn
             and "withdrawn" not in (states[member["id"]].get("gates") or {})
-        ] + [graph_ticket(ticket, spec["stories"]) for ticket in tickets]
+        ] + [
+            # The repair of a red of the mechanical fidelity is an interface
+            # ticket, as the repair of an anchor (T40).
+            {**graph_ticket(ticket, spec["stories"]),
+             **({"restores_anchor": True} if sources.fidelity_red(ticket) else {})}
+            for ticket in tickets
+        ]
         refusals += graph_refusals(graph, spec, launch, project_id, descriptor)
         refuse_unless_contract_met(draft_id, refusals)
 

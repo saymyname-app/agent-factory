@@ -404,6 +404,11 @@ class Convoy:
         # An unreadable record is an anomaly too: the convoy is stopped by it.
         red = answer["convoy"].get("integration_red")
         self.red: dict[str, Any] | None = red if isinstance(red, dict) and "control" in red else None
+        # The red controls the convoy carries a record of, under the name a
+        # repair cites: the patch door refuses any other (T40).
+        recorded = answer["convoy"].get("red_checks")
+        self.red_checks: list[dict[str, Any]] = [c for c in recorded if isinstance(c, dict)] \
+            if isinstance(recorded, list) else []
         # An unreadable record is an anomaly as well.
         outcome = answer["convoy"].get("outcome_evaluation")
         self.outcome: dict[str, Any] | None = outcome if isinstance(outcome, dict) and "rounds" in outcome else None
@@ -579,6 +584,11 @@ class Convoy:
         outcome = self.outcome or {}
         stop = outcome.get("stop") or {}
         return bool(self.end_due() or outcome.get("request") or outcome.get("live") or (stop and "raised" not in stop))
+
+    def red_check(self, source: str, ticket: str | None = None) -> str | None:
+        """The name of the red control the convoy records from `source`."""
+        return next((check["name"] for check in self.red_checks
+                     if check.get("source") == source and check.get("ticket") == ticket), None)
 
     def outcome_repairs_due(self) -> list[dict[str, Any]]:
         """What the Evaluator of the end drafted and code has not published
@@ -1160,7 +1170,9 @@ def red_repair(convoy: Convoy, red: dict[str, Any]) -> dict[str, Any]:
                 f"La branche d'intégration {branch} repasse le contrôle de fidélité mécanique de fin de Spec qui y est "
                 f"rouge : {red['control']}.{said} Le correctif part de la pointe de {branch}, reprend {protected}, "
                 "et supprime ces écarts sans changer un comportement que la Spec fixe."),
-            "restores": {"kind": "anchor", "ref": red.get("detail") or red["control"]},
+            # The control the convoy records as red: the patch door reads it
+            # there, and takes its repair for an interface ticket (T40).
+            "restores": {"kind": "red_check", "ref": red["control"]},
             "demonstration_line": (
                 f"Sur le produit lancé au résultat de la fusion de ce ticket dans {branch}, {protected} reprise, chaque "
                 "écran sert chaque état prototypé avec les ancres, la structure, les styles calculés et les tokens du "
@@ -1309,14 +1321,15 @@ def outage_repair(convoy: Convoy, outage: dict[str, Any], commit: str) -> dict[s
     product did not start (Spec §11): it restores the launch by the recipe
     of the profile, and its demonstration line is the product answering."""
     branch = convoy.integration["branch"]
-    control = f"lancement du produit par la recette du profil au commit {commit[:12]} (Acceptance Session)"
+    control = convoy.red_check("acceptance_session") \
+        or f"lancement du produit par la recette du profil au commit {commit[:12]} (Acceptance Session)"
     return {
         "title": f"Rétablir le démarrage du produit pour l'Acceptance Session ({commit[:12]})",
         "what_it_delivers": one_line(
             f"À l'ouverture de l'Acceptance Session, le produit n'a pas démarré depuis une copie propre du commit "
             f"{commit[:12]} de {branch} : {outage['detail']} Ce ticket rétablit ce démarrage par la recette du profil "
             "du projet, sur ses données synthétiques, sans changer un comportement que la Spec fixe.", 900),
-        "restores": {"kind": "red_check", "ref": one_line(control, 600)},
+        "restores": {"kind": "red_check", "ref": control},
         "demonstration_line": (
             f"Depuis une copie propre de la pointe de {branch} après fusion de ce ticket, la recette du profil lance le "
             "produit sur chaque jeu de données synthétiques et sa sonde de santé répond."),
@@ -1436,12 +1449,15 @@ def settle_promotion(convoy: Convoy) -> dict[str, Any] | None:
 # --- the end of the Spec: tracked elements to repair, and the gate (T23) ---------
 
 
-def item_repair(ticket: dict[str, Any], items: list[dict[str, Any]]) -> dict[str, Any]:
+def item_repair(ticket: dict[str, Any], items: list[dict[str, Any]], control: str | None = None) -> dict[str, Any]:
     """What code writes of the `repair` the operator asked for the tracked
     elements of a ticket (Spec §9, « éléments suivis »): it restores the
     registry of the end-of-Spec gate, red on them, and its demonstration
     line is each of them delivered."""
     ticket_id = ticket["id"]
+    # The name the convoy records this red under (bin/convoy-state show).
+    control = control or (f"registre de la porte de fin de Spec : éléments du ticket {ticket_id} sans état final "
+                          f"({', '.join(item['id'] for item in items)})")
     named = " ; ".join(f"{ITEM_LABELS.get(item['section'], item['section'])} {item['number']} : « {item['text']} »"
                        for item in items)
     ids = ", ".join(item["id"] for item in items)
@@ -1454,8 +1470,7 @@ def item_repair(ticket: dict[str, Any], items: list[dict[str, Any]]) -> dict[str
             f"Le Ticket Handoff du ticket {ticket_id} déclare, sans état final : {named}. Benjamin a demandé leur "
             f"réparation. Ce ticket livre ce qui manque et ce qui a été livré autrement que le ticket {ticket_id} et "
             "la Spec ne le demandent, sans changer un comportement que la Spec fixe."),
-        "restores": {"kind": "red_check", "ref": one_line(
-            f"registre de la porte de fin de Spec : éléments du ticket {ticket_id} sans état final ({named})", 600)},
+        "restores": {"kind": "red_check", "ref": control},
         "demonstration_line": one_line(
             f"Sur le produit lancé, ce que le ticket {ticket_id} a déclaré manquant ou livré autrement est livré comme "
             f"le ticket et la Spec le demandent : {named}", 600),
@@ -1479,7 +1494,8 @@ def settle_item_repairs(convoy: Convoy) -> list[dict[str, Any]]:
         ids = [item["id"] for item in items]
         try:
             repair = publish_repair(
-                convoy, item_repair(ticket, items), f"éléments suivis de {ticket['id']}",
+                convoy, item_repair(ticket, items, convoy.red_check("tracked_items", ticket["id"])),
+                f"éléments suivis de {ticket['id']}",
                 f"éléments du ticket {ticket['id']} sans état final ({', '.join(ids)}) : réparation demandée par l'opérateur",
                 f"des éléments suivis de {ticket['id']}", f"ses éléments suivis ({ticket['id']})")
             state_write("set-item-repair", convoy.id, ticket["id"], "--repair", repair["id"])

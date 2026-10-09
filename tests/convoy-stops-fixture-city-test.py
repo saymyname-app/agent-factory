@@ -502,8 +502,11 @@ class ConvoyStopsOnTheFixtureCity(publication.Harness):
         ticket = self.shown_ticket(repair["id"])
         self.assertEqual(("repair", publication.MARK, "open"), (ticket["kind"], ticket["mark"], ticket["status"]))
         description = self.beads()[repair["id"]]["description"]
-        self.assertIn(f"anchor : {detail}", description)
-        self.assertIn("Validated Prototype", description)
+        # It cites the red control the convoy records (T40), and is an
+        # interface ticket: the door posed the reference of the prototype.
+        self.assertIn(f"red_check : {control}", description)
+        self.assertIn(detail, description)
+        self.assertIn("\n## Validated Prototype\n", description)
         self.assertEqual(repair["id"], self.shown()["convoy"]["integration_red"]["repair"])
         self.assertEqual([repair["id"]], answer["started"])
         self.assertEqual(1, self.end_rounds())
