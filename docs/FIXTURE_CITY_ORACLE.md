@@ -234,6 +234,16 @@ the repository, and at the end runs `bin/ticket-end check` and
 `bin/evidence-capture verify`. It reads no prompt, no formula and no role,
 and it does not trust what the driver prints beyond « nothing changed ».
 
+The oracle also records, by itself, the commands of the flow run during the
+walk (T37). In its workspace it builds a directory that holds one entry per
+executable of `bin/`; each entry runs the real command and adds one line to
+the record of the walk. The driver receives that directory in the
+environment variable `FIXTURE_CITY_FLOW_BIN` and runs the commands of the
+flow from it. For a gate of the author's step the line also says which
+states of the ticket the gate wrote: the oracle reads `bin/convoy-state
+show` before and after the gate ran. Nothing the driver declares in its
+answers is used for this.
+
 What the oracle requires at every observation:
 
 - the states reached are a prefix of the lifecycle, never one without those
@@ -246,6 +256,26 @@ What the oracle requires at every observation:
   passing verdicts, the commit that was merged. A ticket closed without it
   fails the run;
 - the convoy is never in an « état sans règle ».
+
+After the publication and after each `advance`, for every ticket of the
+convoy, each state of the author's step the public state shows must have
+been written by its gate (T37):
+
+| State | Gate |
+| --- | --- |
+| « rouge » | `tdd-step red` |
+| « gel » | `tdd-step freeze` |
+| « relecture des tests » | `test-review review` |
+| « vert » | `tdd-step green` |
+| « Handoff », « terminé » | `ticket-exit exit` |
+
+A state written another way — a direct `bin/convoy-state` write, for
+instance — fails the run (exit 1), with on stderr: `fixture-city-oracle:
+the state « rouge » of ticket fx-t1 was written outside its gate (tdd-step
+red)`. A closed ticket whose kind is not `prefactoring` must also have gone
+through `ticket-author start` and `ticket-author demonstrate` and show the
+six states; otherwise the run fails with `ticket <id> is closed without
+having gone through the gates of the author's step: <commands>`.
 
 The scenario says what the walk must end in: `expect: {closed: true}`, or
 `{closed: false, missing: [numbers]}` — the ticket stays open and
@@ -464,16 +494,38 @@ The result is one deterministic JSON object
 observation added, the verdicts of the gate, the names of the verified
 pieces. It holds no path, commit or time.
 
+`interfaces.flow` lists the commands of the flow the oracle saw run, sorted
+and each once: `tool verb` for `tdd-step`, `test-review`, `ticket-author`,
+`ticket-exit` and `convoy-state`, the name of the tool alone otherwise. On
+`one-ticket-end-to-end.json`: `convoy-advance`, `convoy-state mark`,
+`convoy-state show`, `project-launch`, `spec-integration`, `tdd-step
+freeze`, `tdd-step green`, `tdd-step red`, `test-review review`,
+`ticket-author demonstrate`, `ticket-author start`, `ticket-exit exit`.
+`author_gates` is `{"tickets": N, "commands": [...]}`: the number of closed
+tickets that went through every gate of the author, and those gates
+(`tdd-step freeze`, `tdd-step green`, `tdd-step red`, `test-review review`,
+`ticket-author demonstrate`, `ticket-author start`, `ticket-exit exit`).
+
 Limits of the reference driver (`tests/fixtures/fixture-city/delivery-driver`):
 
 - It is **not contained by the no-socket sandbox** of the planning adapters:
   the evaluation and the fidelity check launch the product on a loopback
   port. It gets a clean environment and a throwaway workspace.
 - The tracker is the fake one of `tests/fixtures/convoy-state/gc`. No agent
-  runs: the reviewer and the Evaluator are the stand-ins of their suites,
-  the author files its steps through `tests/lib/ticket_proofs.py` (each
-  piece sealed by the real `bin/evidence-capture`), not through
-  `bin/tdd-step`, `bin/demonstrate` and `bin/ticket-exit`.
+  runs: the reviewer and the Evaluator are the stand-ins of their suites.
+  Of the author the driver writes only what a session leaves — the
+  criterion test, the criteria table and the commits in the worktree of the
+  ticket, the sections of the Ticket Handoff — and runs the real gates:
+  `ticket-author start`, `tdd-step red`, `test-review review` (answered by
+  the stand-in `tests/fixtures/test-review/reviewer` through the real
+  `test-review record`), `tdd-step freeze`, the product commit, `tdd-step
+  green`, `ticket-author demonstrate`, `ticket-exit exit --exit finished`.
+  It writes no state of the author through `bin/convoy-state`.
+- The criterion of the walked ticket is false at the start commit and made
+  true by the ticket: the health probe names the dataset served (`/health`
+  gains a `dataset` field), on both projects. The criterion test of the
+  repair asks `GET /items`, which the driver declares as an entry point of
+  the profile for the scenarios published through the door.
 - `publish` leaves what the publication door leaves (the ticket, the mark,
   the integration branch) without calling `bin/ticket-graph-publish`,
   except with `--inject story-not-observed`, where the real door publishes
