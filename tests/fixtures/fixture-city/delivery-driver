@@ -637,7 +637,8 @@ class City:
         entries = (sick.get("resume") or {}).get("entries") or []
         if failures and (len(entries) < failures or not entries[-1]["launches"]):
             return None  # the order has not sent the resume of the failure before yet
-        self.state("set-session", self.convoy, SICK, "--session", f"auteur-{failures + 1}")
+        self.gate("ticket-author", "start", self.convoy, SICK, "--repo", self.root,
+                  "--session", f"auteur-{failures + 1}")
         if entries:
             self.run(FAKE_GC, "bd", "close", entries[-1]["launches"][-1]["bead"], "--reason", "session terminée sans sortie")
         self.remember(failures=failures + 1)
