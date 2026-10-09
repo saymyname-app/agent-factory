@@ -103,7 +103,7 @@ ROLES = (("author", "auteur"), ("reviewer", "relecteur"), ("evaluator", "Evaluat
 PARK_CAUSES = {"planning_exception": "Planning Exception", "operator_request": "demande opérateur",
                "resumes_exhausted": "reprises épuisées"}
 RESUME_CAUSES = {"interrupted": "session interrompue", "returned": "retour de la fusion", "unblocked": "bloqueur levé",
-                 "answered": "réponse de l'opérateur"}
+                 "answered": "réponse de l'opérateur", "behind": "pointe d'intégration à reprendre avant la revue"}
 NONE = "aucun"
 
 
