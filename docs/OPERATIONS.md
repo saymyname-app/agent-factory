@@ -739,7 +739,7 @@ What he chose on 2026-10-08, each among options put to him in the live chat:
 | Question | His choice | How it is held |
 |---|---|---|
 | The runner is down while the Factory runs | The pull request waits; switching back to GitHub's billed runners is one command, by hand | `bin/factory-doctor` reports the runner down; `./bin/ci-runner mode github` |
-| Share of the PC | 4 cores, 4 GB, one job at a time, low priority; pause and resume in his hand, no automatic game detection | The limits of `factory-ci-runner.service`; `./bin/ci-runner pause` and `resume` |
+| Share of the PC | 4 cores (8 since 2026-10-09, "The job's cores" below), 4 GB, one job at a time, low priority; pause and resume in his hand, no automatic game detection | The limits of `factory-ci-runner.service`; `./bin/ci-runner pause` and `resume` |
 | Where pull request code runs | An ephemeral container per job, started by a dedicated unprivileged user, rootless Podman (not Docker Desktop) | `config/ci-runner/runner-loop`; `docs/SECURITY.md`, same title |
 | Root in WSL (`sudo` asks a password, `wsl -u root` does not) | Three gestures: Podman, the user, the service | `config/ci-runner/root-install` |
 
@@ -802,8 +802,30 @@ self-hosted` comes back. The Actions budget is capped (20 dollars, his words,
 A job does not wait behind a battery started by hand, and a battery does not
 wait behind a job (`bin/ci-run-tests` skips the host's lock under
 `GITHUB_ACTIONS`, and the job's `/tmp` is not the host's). What bounds the
-sum is the service: 4 named cores and 4 GB for the job whatever else runs,
+sum is the service: 8 named cores and 4 GB for the job whatever else runs,
 at a lower priority than the Factory and the batteries.
+
+### The job's cores: 8 of the host's 12 (af-guzs0o)
+
+Intent (Benjamin, his words, 2026-10-09, about 01:45 Paris): « Ok pour plus
+de coeurs », in answer to "plus de coeurs pour la CI (4 -> 8) [...] C'est ta
+décision (part du PC)".
+Mechanism (agent interpretation): the job gets 8 named cores instead of 4
+(the figure shown to him; he named none himself) and runs eight test files
+at once (`--jobs "$(nproc)"`). It does not mean more than one job at a time,
+another priority, more memory (4 GB still), a change of the merge gate, or
+automatic game detection.
+
+| Where the figure lives | What |
+|---|---|
+| `config/ci-runner/factory-ci-runner.service` | `AllowedCPUs=4-11` |
+| `config/ci-runner/isolation-probe.sh` | fails the run when the job sees more than 8 cores |
+| `tests/ci-runner-test.sh` | holds both |
+
+The service runs its installed copy: the figure changes on the host at the
+root install ("Install, stop, remove" below), not at the merge. Back to 4:
+`AllowedCPUs=8-11` in the service file and the test, through a pull request,
+then the root install again.
 
 ### Measured 2026-10-08 (pull request #457, Paris times)
 

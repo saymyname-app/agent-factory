@@ -53,7 +53,7 @@ done
 
 # The share of the PC: the job sees the cores it was given, not the host's.
 cores=$(nproc)
-if [ "$cores" -le 6 ]; then printf 'ok   %s cores for the job\n' "$cores"; else reached "$cores cores: the service's limit does not hold"; fi
+if [ "$cores" -le 8 ]; then printf 'ok   %s cores for the job\n' "$cores"; else reached "$cores cores: the service's limit does not hold"; fi
 
 if [ "$bad" = 0 ]; then echo "PASS: the job cannot reach the host"; else echo "FAIL: see the lines above" >&2; fi
 exit "$bad"

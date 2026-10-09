@@ -38,13 +38,15 @@ echo "ok   the workflow goes to the host's runner on the variable only, as one l
 
 # --- the service ----------------------------------------------------------
 grep -qxF 'Delegate=yes' "$UNIT" || fail "$UNIT lost Delegate=yes: Podman would move the job out of the service, and of every limit of it"
-for line in 'User=factory-ci' 'AllowedCPUs=8-11' 'MemoryMax=4G' 'MemorySwapMax=512M' 'Nice=10' 'CPUWeight=20'; do
-  grep -qxF "$line" "$UNIT" || fail "$UNIT lost '$line' (the share of the PC Benjamin gave CI, 2026-10-08)"
+for line in 'User=factory-ci' 'AllowedCPUs=4-11' 'MemoryMax=4G' 'MemorySwapMax=512M' 'Nice=10' 'CPUWeight=20'; do
+  grep -qxF "$line" "$UNIT" || fail "$UNIT lost '$line' (the share of the PC Benjamin gave CI, 2026-10-08; 8 cores since 2026-10-09)"
 done
+grep -qF 'if [ "$cores" -le 8 ]; then' "$ROOT/config/ci-runner/isolation-probe.sh" \
+  || fail "the isolation probe no longer holds the job to the 8 cores of $UNIT"
 grep -q '^IPAddressDeny=.*10\.0\.0\.0/8.*172\.16\.0\.0/12.*192\.168\.0\.0/16.*100\.64\.0\.0/10' "$UNIT" \
   || fail "$UNIT no longer closes the private networks to the job"
 if grep -qE '^(User|Group)=root|^SupplementaryGroups=' "$UNIT"; then fail "$UNIT gives the runner root or an extra group"; fi
-echo "ok   the service keeps 4 cores, 4 GB, low priority, and closes the private networks"
+echo "ok   the service keeps 8 cores, 4 GB, low priority, and closes the private networks; the probe counts the cores"
 
 run_line=$(grep -n '"\$PODMAN" run ' "$LOOP" | cut -d: -f1)
 [ -n "$run_line" ] || fail "$LOOP no longer starts the job with podman run"

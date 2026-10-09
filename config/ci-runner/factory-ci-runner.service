@@ -24,10 +24,10 @@ TimeoutStopSec=30
 # filter). Delegate gives it this one; the isolation probe counts the cores.
 Delegate=yes
 
-# The share of the PC (Benjamin, 2026-10-08: 4 cores, 4 GB, one job at a
-# time, low priority). The cores are named, so `nproc` answers 4 in the job
-# and the tests run four at once.
-AllowedCPUs=8-11
+# The share of the PC (Benjamin, 2026-10-08: 4 GB, one job at a time, low
+# priority; 2026-10-09: 8 cores instead of 4, af-guzs0o). The cores are
+# named, so `nproc` answers 8 in the job and the tests run eight at once.
+AllowedCPUs=4-11
 MemoryMax=4G
 MemorySwapMax=512M
 CPUWeight=20
