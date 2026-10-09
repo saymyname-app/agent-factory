@@ -35,6 +35,7 @@ EXIT_STOPPED = 5
 TESTS = f"{FIXTURE}/tests"
 APP = f"{FIXTURE}/app.py"
 TABLE = f"{TESTS}/criteria.json"
+REGRESSION_FILE = f"{TESTS}/regression.py"
 COUNT_FILE, HEALTH_FILE = f"{TESTS}/test_count.py", f"{TESTS}/test_health.py"
 COUNT_ID = f"{COUNT_FILE}::CountTest.test_count_is_shown"
 HEALTH_ID = f"{HEALTH_FILE}::HealthTest.test_dataset_is_named"
@@ -756,6 +757,69 @@ class TddStepTest(unittest.TestCase):
 
         self.assertIn("commande de régression", error)
         self.assertIn("après", error)
+
+    # A project whose regression command has nothing to run at the start
+    # commit: only the frozen harness sits in its test perimeter.
+
+    def start_without_tests(self):
+        self.characterization = (self.repo / REGRESSION_FILE).read_text()
+        return self.commit("départ sans test", remove=[REGRESSION_FILE])
+
+    def test_prefactoring_refuses_to_start_when_no_test_runs_at_the_start_commit(self):
+        start = self.start_without_tests()
+        self.commit("rendu rangé", {APP: self.refactored_app()})
+
+        error = self.refused("prefactoring", PREFACTORING, "--base", start)
+
+        self.assertIn("tests de caractérisation", error)
+        self.assertNotIn("prefactoring", self.ticket_state(PREFACTORING).get("tdd", {}))
+
+    def test_prefactoring_refuses_characterization_tests_committed_with_the_change(self):
+        start = self.start_without_tests()
+        self.commit("rendu rangé et tests", {APP: self.refactored_app(), REGRESSION_FILE: self.characterization})
+
+        error = self.refused("prefactoring", PREFACTORING, "--base", start)
+
+        self.assertIn("tests de caractérisation", error)
+
+    def test_prefactoring_accepted_once_a_commit_adds_only_characterization_tests(self):
+        start = self.start_without_tests()
+        tests = self.commit("tests de caractérisation", {REGRESSION_FILE: self.characterization})
+
+        answer = self.ok("prefactoring", PREFACTORING, "--base", start)
+
+        self.assertEqual(("prefactoring", tests), (answer["step"], answer["commit"]))
+        _, proof = self.piece("tdd_prefactoring", PREFACTORING)
+        self.assertEqual((start, tests), (proof["base"], proof["characterization"]))
+        self.assertEqual([(tests, 0), (tests, 0)], [(run["commit"], run["exit_code"]) for run in proof["regression"]])
+
+    def test_prefactoring_runs_the_characterization_tests_before_and_after_the_change(self):
+        start = self.start_without_tests()
+        tests = self.commit("tests de caractérisation", {REGRESSION_FILE: self.characterization})
+        head = self.commit("rendu rangé", {APP: self.refactored_app()})
+
+        self.ok("prefactoring", PREFACTORING, "--base", start)
+
+        _, proof = self.piece("tdd_prefactoring", PREFACTORING)
+        self.assertEqual([(tests, 0), (head, 0)], [(run["commit"], run["exit_code"]) for run in proof["regression"]])
+
+    def test_prefactoring_refuses_a_characterization_test_touched_by_the_change(self):
+        start = self.start_without_tests()
+        self.commit("tests de caractérisation", {REGRESSION_FILE: self.characterization})
+        self.commit("rendu rangé", {APP: self.refactored_app(), REGRESSION_FILE: self.characterization + "# retouché\n"})
+
+        error = self.refused("prefactoring", PREFACTORING, "--base", start)
+
+        self.assertIn(f"test existant modifié : {REGRESSION_FILE}", error)
+
+    def test_prefactoring_refuses_characterization_tests_that_fail_at_the_start_commit(self):
+        start = self.start_without_tests()
+        self.commit("tests de caractérisation", {REGRESSION_FILE: self.characterization.replace("fixture-items", "fixture-list")})
+
+        error = self.refused("prefactoring", PREFACTORING, "--base", start)
+
+        self.assertIn("commande de régression", error)
+        self.assertIn("avant", error)
 
     def test_red_step_refused_on_a_prefactoring(self):
         self.commit_tests()
