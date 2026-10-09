@@ -2,7 +2,11 @@ description = "Delivery role: ticket author (tdd, codebase-design; reads impleme
 scope = "city"
 work_dir = ".gc/agents/delivery-author"
 min_active_sessions = 0
-max_active_sessions = 1
+# N authors in parallel (Spec §4): the ceiling of config/delivery-flow.json
+# (max_sessions), which bin/convoy-advance enforces across the three roles.
+# A lower cap here leaves a started ticket waiting for the session of another
+# (tests/delivery-agents-test.sh holds the two equal).
+max_active_sessions = 2
 idle_timeout = "2h"
 
 # One session works one ticket. Gas City's default work query offers the

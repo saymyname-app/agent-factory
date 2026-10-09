@@ -606,8 +606,12 @@ def launched_at(launched: dict[str, Any]) -> int:
 
 
 def expired(launched: dict[str, Any], timeout: int) -> bool:
-    """A launch that gave no result: its time is over, or its bead was
-    closed without a verdict (the verdict closes the request first)."""
+    """A launch that gave no result: its time is over, its bead was
+    closed without a verdict (the verdict closes the request first),
+    or the session that answered it had already rendered another review of
+    the convoy (`refused`, set by bin/convoy-state)."""
+    if launched.get("refused"):
+        return True
     if time.time() >= launched_at(launched) + timeout:
         return True
     try:
@@ -872,7 +876,8 @@ def cmd_record(args: argparse.Namespace) -> int:
     if request is None:
         raise Refusal(
             f"aucune revue de code n'est demandée sur le ticket {args.ticket} : un verdict répond à une demande ouverte")
-    session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_AGENT") or ""
+    # Never GC_AGENT: it names a place in the pool of the agent, which the next session takes.
+    session = os.environ.get("GC_SESSION_NAME") or os.environ.get("GC_SESSION_ID") or ""
     if request["kind"] == REVIEW and isinstance(given.get("findings"), list):
         text = ticket_text(ticket)
         sources = {"spec": spec_of(convoy)["text"],
