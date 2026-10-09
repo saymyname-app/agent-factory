@@ -6,7 +6,7 @@ TICKET_GRAPH_GC_CWD_LOG when set. TICKET_GRAPH_GC_MAIL_FAIL=1 makes the mail
 fail the way a real gc does outside a city.
 
 It also serves the two tracker calls bin/convoy-state makes (`gc bd show <id>
---json`, `gc bd update <id> [--status S] [--add-label L] --set-metadata k=v ...`) on the same store as the
+--json`, `gc bd update <id> [--status S] [--add-label L] [--unset-metadata k] --set-metadata k=v ...`) on the same store as the
 fake `bd` beside this file (TICKET_GRAPH_BD_STATE), so one tracker state is
 published by the door and then marked and re-read by the state command. The
 shapes are the ones observed on the real bd 1.2.2 (see
@@ -93,7 +93,7 @@ if command[:1] == ["bd"] and os.environ.get("TICKET_GRAPH_BD_STATE"):
             raise SystemExit(1)
         rest = command[3:]
         metadata = dict(beads[command[2]].get("metadata") or {})
-        if len(rest) % 2 or any(flag not in ("--set-metadata", "--status", "--add-label") for flag in rest[::2]):
+        if len(rest) % 2 or any(flag not in ("--set-metadata", "--unset-metadata", "--status", "--add-label") for flag in rest[::2]):
             print(f"unexpected fake gc arguments: {args}", file=sys.stderr)
             raise SystemExit(2)
         status = [value for flag, value in zip(rest[::2], rest[1::2]) if flag == "--status"]
@@ -105,6 +105,8 @@ if command[:1] == ["bd"] and os.environ.get("TICKET_GRAPH_BD_STATE"):
                 print(f"fake gc: invalid metadata edit: {entry}", file=sys.stderr)
                 raise SystemExit(1)
             metadata[key] = coerce(value)
+        for key in (value for flag, value in zip(rest[::2], rest[1::2]) if flag == "--unset-metadata"):
+            metadata.pop(key, None)
         beads[command[2]]["metadata"] = metadata
         added = [value for flag, value in zip(rest[::2], rest[1::2]) if flag == "--add-label"]
         if added:
