@@ -6,6 +6,9 @@
 #   1. ARM     every open non-draft PR targeting a rig's protected branch with GitHub
 #              auto-merge (squash). GitHub then merges it itself the moment the
 #              required status check goes green. Nothing polls, nothing watches.
+#              When GitHub does not (PR #479, 2026-10-09: armed, green on its
+#              head, CLEAN, open 17 minutes), the PR is merged here by the
+#              direct path once it has been green for a short delay (af-n8gft2).
 #   2. FINALIZE merged PRs through bin/deliver-close only after the configured
 #              required workflow succeeded on the exact PR head. The door
 #              writes merge_result/merged_sha/merged_target + CI proof and
@@ -262,6 +265,45 @@ RECONCILE_WAKE_WINDOW_SECONDS="${PR_AUTOPILOT_RECONCILE_WAKE_WINDOW_SECONDS:-360
 RECONCILE_NOW_EPOCH="${PR_AUTOPILOT_NOW_EPOCH:-$(date -u +%s)}"
 case "$RECONCILE_WAKE_WINDOW_SECONDS" in *[!0-9]*|'') log "invalid reconciliation wake window"; exit 2 ;; esac
 case "$RECONCILE_NOW_EPOCH" in *[!0-9]*|'') log "invalid reconciliation clock"; exit 2 ;; esac
+
+# af-n8gft2: armed is not merged. GitHub's auto-merge left PR #479 open for 17
+# minutes on 2026-10-09 with its required check green on the exact head and
+# mergeStateStatus CLEAN (PR #459: 13 minutes the day before); `gh pr merge
+# --squash` then merged it at once. The cause is GitHub's and was not found in
+# the ruleset or the PR's events (UPSTREAM). So an armed PR that is CLEAN and
+# whose required check completed green at least this long ago is merged by the
+# direct path below: same gate as auto-merge, which normally fires within two
+# minutes. The age is read from the check's own completion time, so nothing
+# is remembered between ticks; a check without one is never merged on a guess.
+ARMED_MERGE_DELAY_SECONDS="${PR_AUTOPILOT_ARMED_MERGE_DELAY_SECONDS:-180}"
+case "$ARMED_MERGE_DELAY_SECONDS" in *[!0-9]*|'') log "invalid armed merge delay"; exit 2 ;; esac
+
+# The direct path: one squash merge, pinned to the head this tick read (GitHub
+# refuses it if the head moved). The caller has established that the required
+# check is green and the state CLEAN, which is the gate auto-merge waits for.
+# Hard rule (gastown land-and-deploy): never retry `gh pr merge` after a
+# non-zero exit. It does NOT mean the merge failed: gh also returns non-zero
+# when it merged fine but could not delete the local branch -- which is what
+# happens whenever a leftover worktree still pins it. Ask the server what
+# actually happened.
+direct_merge() {  # repo num head_sha
+  local repo=$1 num=$2 sha=$3 rc d_rc final
+  local -a args=(pr merge "$num" --repo "$repo" --squash --delete-branch)
+  [ "$sha" != "unknown" ] && args+=(--match-head-commit "$sha")
+  if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: gh ${args[*]}"; return 0; fi
+  bounded "$AP_WRITE_CAP" gh "${args[@]}" >/dev/null 2>&1; d_rc=$?
+  if [ "$d_rc" = 0 ]; then log "    merged"; ARMED=$((ARMED+1)); return 0; fi
+  final=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json state \
+    --jq .state 2>/dev/null); rc=$?
+  if [ "$final" = "MERGED" ]; then
+    log "    merged (local cleanup failed; see factory-guard worktrees)"
+    ARMED=$((ARMED+1))
+  elif timed_out "$d_rc" || timed_out "$rc"; then
+    log "    direct merge outcome unknown (a gh call timed out) -- re-read next tick"
+  else
+    log "    direct merge failed — left for a human"; ERRORS=$((ERRORS+1))
+  fi
+}
 
 merge_is_recent() {  # mergedAt -> 0 when within the bounded wake window
   local merged_at=$1 merged_epoch age
@@ -778,7 +820,7 @@ for entry in "${RIGS[@]}"; do
     log "  (could not list open PRs)"; ERRORS=$((ERRORS+1)); open_prs='[]'
   fi
 
-  while IFS=$'\t' read -r num draft armed state checks sha labels; do
+  while IFS=$'\t' read -r num draft armed state checks sha green_at labels; do
     [ -z "${num:-}" ] && continue
     if over_budget; then not_checked "$repo open PR #$num and any open PR after it"; break; fi
     if [ "$draft" = "true" ]; then
@@ -900,6 +942,16 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
     fi
 
     if [ "$armed" != "null" ] && [ -n "$armed" ]; then
+      # af-n8gft2: armed, green and CLEAN is GitHub's turn -- for a short
+      # delay. Past it, GitHub has not merged what it was armed to merge.
+      case "$green_at" in ''|*[!0-9]*) green_at=0 ;; esac
+      green_for=$((RECONCILE_NOW_EPOCH - green_at))
+      if [ "$checks" = "OK" ] && [ "$state" = "CLEAN" ] && [ "$green_at" -gt 0 ] \
+          && [ "$green_for" -ge "$ARMED_MERGE_DELAY_SECONDS" ]; then
+        log "  PR #$num: armed, required check green for ${green_for}s, CLEAN, still open -> direct squash merge"
+        direct_merge "$repo" "$num" "$sha"
+        continue
+      fi
       vlog "PR #$num: auto-merge already armed"; SKIPPED=$((SKIPPED+1)); continue
     fi
 
@@ -932,27 +984,7 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
             # green, which is the same gate auto-merge would have waited for.
             if [ "$checks" = "OK" ] && [ "$state" = "CLEAN" ]; then
               log "    auto-merge unavailable; checks green -> direct squash merge"
-              bounded "$AP_WRITE_CAP" gh pr merge "$num" --repo "$repo" --squash --delete-branch >/dev/null 2>&1; rc=$?
-              if [ "$rc" = 0 ]; then
-                log "    merged"; ARMED=$((ARMED+1))
-              else
-                # A non-zero exit here does NOT mean the merge failed. gh also
-                # returns non-zero when it merged fine but could not delete the
-                # local branch -- which is what happens whenever a leftover
-                # worktree still pins it. Same rule as above: never retry, ask
-                # the server what actually happened.
-                d_rc=$rc
-                final=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json state \
-                  --jq .state 2>/dev/null); rc=$?
-                if [ "$final" = "MERGED" ]; then
-                  log "    merged (local cleanup failed; see factory-guard worktrees)"
-                  ARMED=$((ARMED+1))
-                elif timed_out "$d_rc" || timed_out "$rc"; then
-                  log "    direct merge outcome unknown (a gh call timed out) -- re-read next tick"
-                else
-                  log "    direct merge failed — left for a human"; ERRORS=$((ERRORS+1))
-                fi
-              fi
+              direct_merge "$repo" "$num" "$sha"
             else
               log "    not armable and checks are '$checks'/'$state' — waiting, not merging"
             fi ;;
@@ -979,6 +1011,12 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
          elif ($req|any((.status//"COMPLETED")!="COMPLETED" or .state=="PENDING" or .state=="EXPECTED")) then "PENDING"
          else "OK" end),
       (.headRefOid//"unknown"),
+      # af-n8gft2: when the required check completed (epoch seconds), 0 when
+      # any matching entry carries no usable completion time.
+      ((.statusCheckRollup//[])
+       | map(select((((.name//.context//"")=="") or ((.name//.context//"")==$reqcheck)))
+             | (.completedAt//"") as $t | try ($t|fromdateiso8601) catch 0)
+       | if length==0 or any(.<=0) then 0 else max end),
       ((.labels//[])|map(.name)|join(",")|if .=="" then "-" else . end)
     ]|@tsv' 2>/dev/null)
 
