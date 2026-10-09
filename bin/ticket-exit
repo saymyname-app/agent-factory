@@ -7,7 +7,7 @@ An author never ends in free text. Each Ticket Exit has a destination fixed
 here, by code:
 
     ticket-exit exit CONVOY TICKET --exit finished --repo DIR --handoff FILE
-    ticket-exit exit CONVOY TICKET --exit planning_exception --kind semantic|topology --summary LINE [--anchor NAME ...]
+    ticket-exit exit CONVOY TICKET --exit planning_exception --repo DIR --handoff FILE --kind semantic|topology --summary LINE [--anchor NAME ...]
     ticket-exit exit CONVOY TICKET --exit operator_request --request FILE
     ticket-exit exit CONVOY TICKET --exit technically_blocked --repair FILE
     ticket-exit exit CONVOY TICKET --exit interrupted --repo DIR [--handoff FILE]
@@ -21,16 +21,20 @@ demonstrate; a `prefactoring` has no such line), and while the diff of the ticke
 deferral marker (TODO, FIXME, « not wired », « à brancher ») that no declared
 « non fait » covers. `planning_exception` and `operator_request`: the ticket
 and every ticket that waits for it are parked, and the request reaches the
-operator through bin/escalation-door; a Planning Exception about a deviation
-from the Validated Prototype names its anchors (`--anchor`), and the request
-then offers the operator to accept that deviation: the fidelity check reads
-it as « accepté par Benjamin » once answered so, never before (T16).
+operator through bin/escalation-door. A Planning Exception comes after the
+Ticket Handoff (Spec §3; T41, af-rqgtpi): it is refused without a Handoff
+that has its four sections, and that Handoff is written on the ticket before
+the exception is. A Planning Exception about a deviation from the Validated
+Prototype names its anchors (`--anchor`), each of which the « Écarts » of
+the Handoff must mention, and the request then offers the operator to accept
+that deviation: the fidelity check reads it as « accepté par Benjamin » once
+answered so, never before (T16).
 `technically_blocked`: a `repair`
 ticket is drafted by code and published by the patch door
 (bin/ticket-graph-publish bd-patch); it blocks the ticket, the rest of the
 convoy goes on. `interrupted`: the branch is pushed and a partial Handoff is
-recorded. Every exit but `finished` takes `--repo` and `--handoff` too, for
-a partial Handoff.
+recorded. `operator_request` and `technically_blocked` take `--repo` and
+`--handoff` too, for a partial Handoff.
 
 The records of a Handoff -- commits, files touched outside the Declared
 Scope, proof of the red, proof of the demonstration, deferral markers -- are never given by the author:
@@ -78,6 +82,9 @@ OPERATOR_CONFIG_TOOL = BIN / "operator-config"
 
 EXITS = ("finished", "planning_exception", "operator_request", "technically_blocked", "interrupted")
 PARKING_EXITS = ("planning_exception", "operator_request")
+# The exits a complete Ticket Handoff comes before (Spec §3, §5).
+HANDOFF_FIRST_EXITS = ("finished", "planning_exception")
+EXIT_NAMES = {"finished": "terminé", "planning_exception": "Planning Exception"}
 SECTIONS = ("done", "deviations", "not_done", "out_of_ticket")
 SECTION_NAMES = {"done": "Fait", "deviations": "Écarts", "not_done": "Non fait", "out_of_ticket": "Constats hors ticket"}
 NOTHING = "aucun"
@@ -276,13 +283,15 @@ def demonstration_proof(ticket: Ticket, required: bool) -> dict[str, Any] | None
 # --- the Ticket Handoff: what the author writes ----------------------------------
 
 
-def author_sections(path: str | None, complete: bool) -> dict[str, Any]:
+def author_sections(path: str | None, complete: bool, exit_name: str = "finished") -> dict[str, Any]:
     """The four sections of the author, as given. A complete Handoff has
     every one, each with content or « aucun »; a partial one may leave some
     out. The records are never read from the author."""
     if path is None:
         if complete:
-            raise Refusal("sortie « terminé » sans Ticket Handoff (--handoff) : ses quatre rubriques sont attendues")
+            raise Refusal(
+                f"sortie « {EXIT_NAMES[exit_name]} » sans Ticket Handoff (--handoff) : ses quatre rubriques sont "
+                f"attendues ({', '.join(f'« {SECTION_NAMES[name]} »' for name in SECTIONS)})")
         return {}
     given = read_json_file(path, "Ticket Handoff")
     if not isinstance(given, dict):
@@ -477,7 +486,7 @@ def cmd_records(args: argparse.Namespace) -> int:
     try:
         repo = Path(args.repo or ".").resolve()
         ticket = Ticket(args.convoy, args.ticket, repo)
-        sections = author_sections(args.handoff, complete=args.exit == "finished")
+        sections = author_sections(args.handoff, args.exit in HANDOFF_FIRST_EXITS, args.exit)
         records = build_records(ticket, repo, args.exit, sections)
     except NotNewFlow as exc:
         print(json.dumps(exc.answer, sort_keys=True, ensure_ascii=False))
@@ -614,6 +623,22 @@ def planning_exception_request(args: argparse.Namespace) -> dict[str, Any]:
         "pourquoi": "L'auteur ne tranche pas une question d'intention, de comportement ou de découpage.",
         "que_faire": options,
     }
+
+
+def deviations_name(anchors: list[str], sections: dict[str, Any]) -> None:
+    """A deviation from the Validated Prototype is written in the Handoff
+    before it is raised (Spec §3): each anchor the Planning Exception names
+    is read under « Écarts »."""
+    deviations = sections.get("deviations")
+    lines = deviations if isinstance(deviations, list) else []
+    missing = [
+        anchor for anchor in anchors
+        if not any(re.search(rf"(?<![A-Za-z0-9_-]){re.escape(anchor)}(?![A-Za-z0-9_-])", line) for line in lines)]
+    if missing:
+        named = "les ancres" if len(missing) > 1 else "l'ancre"
+        raise Refusal(
+            f"la rubrique « {SECTION_NAMES['deviations']} » (deviations) du Ticket Handoff ne mentionne pas {named} "
+            f"{', '.join(missing)} que la Planning Exception nomme (--anchor) : l'écart s'écrit d'abord dans le Handoff")
 
 
 def record_planning_exception(args: argparse.Namespace, request: dict[str, Any]) -> None:
@@ -765,7 +790,7 @@ def cmd_exit(args: argparse.Namespace) -> int:
     if args.exit in ("finished", "interrupted") and not args.repo:
         raise Refusal(f"sortie « {args.exit} » sans dépôt (--repo) : la branche du ticket y est lue")
     # Everything the author gives is read before anything is written.
-    sections = author_sections(args.handoff, complete=finished)
+    sections = author_sections(args.handoff, args.exit in HANDOFF_FIRST_EXITS, args.exit)
     if sections and not args.repo:
         raise Refusal("Ticket Handoff sans dépôt (--repo) : ses relevés se prennent sur la branche du ticket")
     answer: dict[str, Any] = {"ok": True, "convoy": args.convoy, "ticket": args.ticket, "exit": args.exit}
@@ -776,6 +801,7 @@ def cmd_exit(args: argparse.Namespace) -> int:
         request = operator_request(args)
     elif args.exit == "planning_exception":
         request = planning_exception_request(args)
+        deviations_name(args.anchor, sections)
     elif args.exit == "technically_blocked":
         repair = repair_of(args)
     if args.repo:
@@ -789,7 +815,10 @@ def cmd_exit(args: argparse.Namespace) -> int:
             if push.returncode != 0:
                 raise Refusal(f"la branche {branch} n'a pas pu être poussée sur origin : {short(push.stderr)}")
             written.append(f"branche {branch} poussée sur origin")
+        handoff = None
         if args.exit == "planning_exception":
+            # The Handoff first (Spec §3): the exception is raised on what it says.
+            handoff = record_handoff(args, sections, written)
             record_planning_exception(args, request)
             written.append("Planning Exception sur le ticket")
         if request is not None:
@@ -800,7 +829,8 @@ def cmd_exit(args: argparse.Namespace) -> int:
         if repair is not None:
             answer["repair"] = publish_repair(args, ticket, repair)
             written.append(f"ticket repair {answer['repair']['id']}")
-        handoff = record_handoff(args, sections, written)
+        if args.exit != "planning_exception":
+            handoff = record_handoff(args, sections, written)
         state_write("set-exit", args.convoy, args.ticket, "--exit", args.exit)
     except Refusal as exc:
         raise Refusal(str(exc), written) from exc
