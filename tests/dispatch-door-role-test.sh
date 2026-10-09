@@ -72,10 +72,15 @@ export CALLS GC_BIN="$TMP/gc" DISPATCH_DOOR_PROVIDER_FAILOVER_BIN="$TMP/provider
 status_json() { # <author provider> <reviewer provider> <evaluator provider>
   printf '{"total_exhaustion":{"active":false},"targets":{"delivery-author":{"effective":"%s"},"delivery-reviewer":{"effective":"%s"},"delivery-evaluator":{"effective":"%s"}}}' "$1" "$2" "$3"
 }
-record() { # <role> <provider> <passed true|false> [digest]
-  local digest=${4:-$("$TRIAL" digest --role "$1" --provider "$2")}
-  jq -n --arg k "$1/$2" --arg d "$digest" --argjson p "$3" \
-    '{contract:"agent-factory-role-adoption-trials/v1",trials:{($k):{passed:$p,digest:$d,observed_at:"2026-10-06T00:00:00Z",failures:(if $p then [] else ["synthetic failure"] end)}}}' > "$RECORD"
+record() { # <role> <provider> <passed true|false> [digest] [launched review skills, JSON list]
+  local digest=${4:-$("$TRIAL" digest --role "$1" --provider "$2")} launched=${5:-}
+  if [ -z "$launched" ]; then
+    launched='[]'
+    [ "$1" = reviewer ] && launched='["code-review"]'
+  fi
+  jq -n --arg k "$1/$2" --arg d "$digest" --argjson p "$3" --argjson l "$launched" \
+    '{contract:"agent-factory-role-adoption-trials/v1",trials:{($k):{passed:$p,digest:$d,observed_at:"2026-10-06T00:00:00Z",failures:(if $p then [] else ["synthetic failure"] end),
+      review_launch:{launched:$l,attempts:[("code-review","security-review","review") as $s | {skill:$s,launched:($l|index($s) != null),result:"synthetic"}]}}}}' > "$RECORD"
 }
 # refused <label> <expected stderr fragment> -- <door args...>
 refused() {
@@ -135,6 +140,48 @@ refused "changed distribution" "was run on another distribution" -- \
 cp "$FAKE/skills/engineering/code-review/SKILL.md" "$FAKE/agents/delivery-reviewer/skills/code-review/SKILL.md"
 "$DOOR" af-fixture --rig agent-factory --formula mol-do-work --role reviewer >/dev/null \
   || fail "still refused after the distribution was restored to what the trial saw"
+
+# 5b. Refusal (T47): the record itself says a review skill the role must not
+#     have was launched. `passed: true` written by an older trial does not
+#     cover it: the check reads the launches and names the skill.
+record reviewer alpha-readonly true "" '["code-review","security-review"]'
+rc=0; "$TRIAL" check --role reviewer --provider alpha-readonly >"$TMP/out" 2>"$TMP/err" || rc=$?
+[ "$rc" -eq 1 ] || fail "check accepted a reviewer record where security-review was launched (exit $rc)"
+grep -qF -- "security-review" "$TMP/err" || fail "check does not name the review skill that was launched: $(cat "$TMP/err")"
+refused "reviewer launched security-review" "security-review" -- \
+  af-fixture --rig agent-factory --formula mol-do-work --role reviewer
+
+record reviewer alpha-readonly true "" '["code-review","review"]'
+refused "reviewer launched review" "launched review" -- \
+  af-fixture --rig agent-factory --formula mol-do-work --role reviewer
+
+#     The reviewer's own skill must have been launched: a trial where
+#     code-review did not start proves nothing about the role.
+record reviewer alpha-readonly true "" '[]'
+refused "reviewer launched nothing" "code-review was not launched" -- \
+  af-fixture --rig agent-factory --formula mol-do-work --role reviewer
+
+#     Evaluator and author: no review skill at all, code-review included.
+record evaluator alpha-readonly true "" '["code-review"]'
+refused "evaluator launched code-review" "launched code-review" -- \
+  af-fixture --rig agent-factory --formula mol-do-work --role evaluator
+record author alpha true "" '["security-review"]'
+refused "author launched security-review" "launched security-review" -- \
+  af-fixture --rig agent-factory --formula mol-do-work --role author
+
+#     A record that does not say which review skills were launched vouches
+#     for nothing.
+jq 'del(.trials[].review_launch)' "$RECORD" > "$TMP/r" && cp "$TMP/r" "$RECORD"
+refused "record without launches" "does not say which review skills were launched" -- \
+  af-fixture --rig agent-factory --formula mol-do-work --role author
+
+#     Pass: code-review alone for the reviewer, nothing for the Evaluator.
+record reviewer alpha-readonly true
+"$DOOR" af-fixture --rig agent-factory --formula mol-do-work --role reviewer >/dev/null \
+  || fail "refused a reviewer whose trial launched code-review alone"
+record evaluator alpha-readonly true
+"$DOOR" af-fixture --rig agent-factory --formula mol-do-work --role evaluator >/dev/null \
+  || fail "refused an Evaluator whose trial launched no review skill"
 
 # 6. Refusal: not a delivery role.
 refused "unknown role" "'janitor' is not a delivery role" -- \
