@@ -25,7 +25,9 @@ its numbered user stories (`user_stories`: `number`, `text`, and
 section, or its lines when none is numbered). For the interface tickets
 (T36, af-2nmcxw) it also prints the reference of the Validated Prototype as
 the Spec writes it (`validated_prototype`: `branch`, `commit`, `path`,
-`states`; `null` without a « Validated Prototype » section), and in
+`states`; `null` without a « Validated Prototype » section) and, for a Spec
+that names several (T46, af-lb9zkz), every reference in the Spec's order
+(`validated_prototypes`; `validated_prototype` stays the first one), and in
 `screens` (T27, af-r43we4) the inventory of the states of each screen as
 written (`name`, and per state `name`, `status`, `detail`), which the
 Evidence Pack lists as not prototyped; in
@@ -51,7 +53,9 @@ Before any write, `bd-approve` refuses unless, in order:
 6. The Spec holds its side of the delivery entry contract (T07, see
    "Entry contract" below): numbered user stories, and, when a story
    describes an interface, a complete Validated Prototype reference, a
-   state inventory and a conformant Validated Prototype.
+   state inventory and a conformant Validated Prototype on a `prototype/`
+   branch never merged into the protected branch (T46) -- for each
+   Validated Prototype the Spec names.
 
 On success it sets `spec_state=APPROVED_SPEC`, `approved_by`,
 `approved_evidence` and `approved_digest` (`sha256:` of the bead's current
@@ -89,6 +93,12 @@ What `bd-approve` reads in the Spec's description:
   `écran étroit`, `thème sombre` -- are each listed for every screen;
   only they may be `sans objet`. Every state of the reference is
   prototyped in at least one screen.
+- **Several Validated Prototypes (T46, af-lb9zkz).** A Spec may name more
+  than one: the section `Validated Prototype`, plus one section
+  `Validated Prototype : <name>` per further prototype, each with its own
+  four reference items and its own screens and state inventory. Each is
+  checked as above; two references naming the same path (`chemin`) are
+  refused.
 
 ```markdown
 ## User Stories
@@ -125,6 +135,15 @@ not on that branch, or when the path is absent at that commit, then runs
 (`docs/VALIDATED_PROTOTYPE.md`) and refuses a prototype that is not
 conformant, quoting each failed property.
 
+It passes the reference to that check (T46, af-lb9zkz), so it also refuses,
+nothing written, a reference whose branch is not a `prototype/` branch or
+whose commit is reachable from the protected branch of the remote -- the
+prototype branch was merged. The protected branch is `protected_branch` of
+`config/projects/<project>.toml`, else the remote's default branch (its
+HEAD), else `main`. The same check refuses a page of a losing variant left
+in the directory, a region element without its own anchor and an anchor
+that holds the whole page.
+
 A Planning Run for a project whose repository is not this one passes that
 project's repository as `--prototype-remote`.
 
@@ -140,5 +159,6 @@ project's repository as `--prototype-remote`.
 | T07: an interface story without a prototype reference (branch, commit, path, states), or a commit absent from the remote repository, is refused naming what is missing. | `test_refuses_an_interface_story_without_prototype_reference`, `test_refuses_a_reference_without_commit`, `test_refuses_a_reference_without_branch_path_or_states`, `test_refuses_a_reference_whose_commit_is_not_on_the_remote_repository` (and `..._branch_...`, `..._path_...`). |
 | T07: a missing or incomplete state inventory is refused. | `test_refuses_a_spec_without_state_inventory`, `test_refuses_an_inventory_missing_one_of_the_six_control_states`, `test_refuses_a_state_that_is_neither_prototyped_nor_not_prototyped`, `test_refuses_a_control_state_without_object_and_without_reason`, `test_refuses_a_prototyped_state_that_the_reference_does_not_list`. |
 | T07: a Validated Prototype that is not conformant is refused. | `test_refuses_when_an_anchor_is_removed_from_the_prototype`, `test_refuses_when_a_state_dataset_is_missing_from_the_prototype`, on a prototype branch whose frozen files differ from the fixture's by one edit. |
+| T46: a reference that is no `prototype/` branch, or whose commit the protected branch reaches, is refused; each Validated Prototype of a Spec that names several is checked, and two references to one path are refused; `outline` gives every reference. | `test_refuses_a_reference_whose_branch_is_not_a_prototype_branch`, `test_refuses_a_reference_whose_commit_is_reachable_from_the_protected_branch_of_the_remote`, `test_the_protected_branch_is_the_one_the_project_declares`, `test_refuses_a_prototype_that_keeps_a_page_its_manifest_does_not_reference`, `test_refuses_when_the_second_validated_prototype_is_not_on_the_remote` (and `..._has_no_state_inventory`), `test_refuses_two_validated_prototypes_that_name_the_same_path`, `test_outline_gives_every_validated_prototype_the_spec_names`. |
 | T07: the fixture Spec is approved; a Spec without interface is approved without reference; approved Specs stay approved. | `test_approves_the_fixture_spec`, `test_approves_a_spec_without_interface_and_without_prototype_reference`, `test_an_already_approved_spec_without_numbered_stories_stays_approved`. |
 | CI is green. | `tests/spec-approve-test.py`, `tests/project-planning-profile-test.py` and `tests/project-registry-test.sh` run under `bin/ci-run-tests`. |
