@@ -1,0 +1,6 @@
+{
+  "contract": "agent-factory-fixture-delivery-scenario/v1",
+  "scenario_id": "outcome-accepted",
+  "inject": {"delivery": "story-not-observed"},
+  "expect": {"closed": true, "outcome": "accepted", "repairs": 1}
+}

@@ -25,7 +25,10 @@ que tu réponds. Toi seul réponds : `--approved-by` doit être le
   commit et l'empreinte du dossier. Refusé si le commit n'est pas celui du
   dossier ou n'est plus la pointe de la branche d'intégration, si
   l'empreinte n'est pas la sienne, si le dossier est périmé, si une
-  proposition n'a pas de verdict. **Il ne ferme et ne fusionne rien** (T30).
+  proposition n'a pas de verdict. Cette commande ne ferme et ne fusionne
+  rien elle-même : **la passe suivante fusionne et ferme le convoi**
+  (`./bin/outcome-promote`), ou annule ton acceptation si la branche
+  protégée a bougé et que sa reprise est rouge.
 - **« constats rendus »** : un fichier
   `{"findings": [{"text", "cites"?: {"kind", "ref"}, "repair"?: {…}, "later"?: true}]}`.
   **Le code route chaque constat**, pas l'agent : il cite une user story
@@ -37,7 +40,8 @@ que tu réponds. Toi seul réponds : `--approved-by` doit être le
   liste, les tours de fin repartent de zéro ; une fois les `repair` livrés,
   toute la porte de fin de Spec repasse et un **nouveau dossier** arrive,
   qui s'ouvre sur la rubrique 0 « Depuis ton dernier jugement ».
-- **« abandonné »** exige une raison d'une ligne.
+- **« abandonné »** exige une raison d'une ligne ; la passe suivante ferme
+  le convoi avec elle, sans rien fusionner.
 - **« refusé » n'est pas une réponse**, et il n'y a **aucune acceptation
   partielle** : les deux sont refusés avec la raison.
 - **Rien ne rouvre** un Outcome accepté ou abandonné : un défaut ou un
@@ -50,8 +54,10 @@ que tu réponds. Toi seul réponds : `--approved-by` doit être le
   enregistrée.
 - **Sorties** : 0 fait ; 1 refus (`error` commence par « refus : », état
   sans règle compris) ; 4 convoi sans marque.
-- **Limites** : rien n'est fermé ni fusionné sur « accepté » ou
-  « abandonné » (T30) ; la Planning Exception du lot est enregistrée et
+- **Limites** : entre ta réponse et la passe qui la suit, l'Outcome est
+  accepté et pas encore fusionné ; un « plus tard » dont la proposition
+  n'était pas encore créée à ce moment n'est plus relancé par la passe ; la
+  Planning Exception du lot est enregistrée et
   retient la fin de Spec, mais le Planning Run qui amende la Spec se fait à
   la main — aucun code ne le lance, rien ne prévient le Mayor, et
   `resolve-exception` te croit sur parole ; l'issue d'une demande

@@ -575,8 +575,17 @@ touché : il reste avancé par le Mayor.
   Planning Exception du lot est ouverte, la fin de Spec attend
   (`acceptance.owner_hold`). **Limites** : la Planning Exception se traite
   par un Planning Run à la main, puis `./bin/owner-answer
-  resolve-exception` — aucun code ne le lance ni ne prévient le Mayor ;
-  « accepté » et « abandonné » ne ferment ni ne fusionnent rien (T30).
+  resolve-exception` — aucun code ne le lance ni ne prévient le Mayor.
+- **Après « accepté » ou « abandonné » (T30)** : la passe suit ta réponse
+  par `./bin/outcome-promote run` et ne fait rien d'autre sur ce convoi —
+  une seule fusion de la branche d'intégration vers la branche protégée et
+  la fermeture du convoi sur tes mots, ou la fermeture seule (`promotion`).
+  Si la branche protégée a bougé et que les contrôles mécaniques rejoués
+  sont rouges, ou s'il y a conflit, rien n'est fusionné : ton acceptation
+  est annulée, la passe publie le `repair`, puis la fin de Spec repasse et
+  une nouvelle Acceptance Request t'arrive. Un convoi fermé ainsi n'est
+  plus parcouru. **Limites** : fusion par poussée directe, sans pull
+  request ; rien ne te prévient d'une acceptation annulée.
 - **Les bornes se règlent à un seul endroit** : `bounds` de
   `config/delivery-flow.json` — `resumes` (K, 3), `open_planning_exceptions`
   (2), `end_rounds` (tours de réparation de fin de Spec, 2). Changer une valeur change le comportement à la passe suivante ; une
@@ -1422,8 +1431,11 @@ et la revue de code de fin (`./bin/spec-end-review`).
 - **Limites** : la porte tourne dans la passe de l'ordre (délai de 300 s,
   non mesuré sur un vrai projet) ; pas de pièce scellée pour les tests et la
   fidélité de fin (leur relevé est sur le convoi) ; la porte vérifie, elle
-  n'accepte rien et ne ferme rien (ton acceptation viendra avec un ticket
-  suivant) ; une fois les tours arrêtés, aucune commande ne les relance
+  n'accepte rien et ne ferme rien (ta réponse : `./bin/owner-answer` ; la
+  fusion et la fermeture : `./bin/outcome-promote`, qui appelle ici
+  `replay` — les seuls contrôles mécaniques, sans tour de fin compté —
+  quand la branche protégée a bougé depuis ton jugement) ; une fois les
+  tours arrêtés, aucune commande ne les relance
   encore, quelle que soit ta réponse à la demande « non conforme » ; sous
   un rouge de fin, `check` montre les conditions 2 à 7 « non lancé » au lieu
   de nommer celle qui est rouge (lis `end_stop` et
@@ -1616,6 +1628,11 @@ nouveau flux**.
   dernière condition et refuse sans dossier complet à jour.
 - **Deux générations sur le même état** donnent la même page, octet pour
   octet : elle ne porte aucune heure de génération.
+- **Après la fusion d'un Outcome accepté (T30)** : `promoted`, lancé par
+  `./bin/outcome-promote`, écrit `fusion.html` dans le dossier du commit
+  que tu as jugé — le commit jugé, le commit de fusion, la branche protégée
+  avant la fusion, tes mots. `index.html`, la page que tu as jugée, ne
+  change pas d'un octet et garde son empreinte.
 - **Sorties** : 0 fait, ou dossier à jour ; 1 refus, ou dossier qui ne tient
   pas ; 3 état sans règle ; 4 convoi sans marque.
 - **Limites** : les captures côte à côte sont celles du dernier contrôle de
@@ -1723,7 +1740,10 @@ que tu réponds. Toi seul réponds : `--approved-by` doit être le
   commit et l'empreinte du dossier. Refusé si le commit n'est pas celui du
   dossier ou n'est plus la pointe de la branche d'intégration, si
   l'empreinte n'est pas la sienne, si le dossier est périmé, si une
-  proposition n'a pas de verdict. **Il ne ferme et ne fusionne rien** (T30).
+  proposition n'a pas de verdict. Cette commande ne ferme et ne fusionne
+  rien elle-même : **la passe suivante fusionne et ferme le convoi**
+  (`./bin/outcome-promote`), ou annule ton acceptation si la branche
+  protégée a bougé et que sa reprise est rouge.
 - **« constats rendus »** : un fichier
   `{"findings": [{"text", "cites"?: {"kind", "ref"}, "repair"?: {…}, "later"?: true}]}`.
   **Le code route chaque constat**, pas l'agent : il cite une user story
@@ -1735,7 +1755,8 @@ que tu réponds. Toi seul réponds : `--approved-by` doit être le
   liste, les tours de fin repartent de zéro ; une fois les `repair` livrés,
   toute la porte de fin de Spec repasse et un **nouveau dossier** arrive,
   qui s'ouvre sur la rubrique 0 « Depuis ton dernier jugement ».
-- **« abandonné »** exige une raison d'une ligne.
+- **« abandonné »** exige une raison d'une ligne ; la passe suivante ferme
+  le convoi avec elle, sans rien fusionner.
 - **« refusé » n'est pas une réponse**, et il n'y a **aucune acceptation
   partielle** : les deux sont refusés avec la raison.
 - **Rien ne rouvre** un Outcome accepté ou abandonné : un défaut ou un
@@ -1748,8 +1769,10 @@ que tu réponds. Toi seul réponds : `--approved-by` doit être le
   enregistrée.
 - **Sorties** : 0 fait ; 1 refus (`error` commence par « refus : », état
   sans règle compris) ; 4 convoi sans marque.
-- **Limites** : rien n'est fermé ni fusionné sur « accepté » ou
-  « abandonné » (T30) ; la Planning Exception du lot est enregistrée et
+- **Limites** : entre ta réponse et la passe qui la suit, l'Outcome est
+  accepté et pas encore fusionné ; un « plus tard » dont la proposition
+  n'était pas encore créée à ce moment n'est plus relancé par la passe ; la
+  Planning Exception du lot est enregistrée et
   retient la fin de Spec, mais le Planning Run qui amende la Spec se fait à
   la main — aucun code ne le lance, rien ne prévient le Mayor, et
   `resolve-exception` te croit sur parole ; l'issue d'une demande
@@ -1763,5 +1786,62 @@ que tu réponds. Toi seul réponds : `--approved-by` doit être le
   la proposition manque ; aucun vrai convoi n'a encore reçu de réponse.
 
 Détail : `docs/OWNER_ANSWER.md`.
+
+---
+## `./bin/outcome-promote` — ce que le code fait une fois que tu as répondu « accepté » ou « abandonné »
+
+**La fusion unique et la fermeture du convoi** (Spec af-wf4w5r §9 et §11,
+T30). Tu n'as **rien à lancer** : dès que ta réponse est enregistrée par
+`./bin/owner-answer`, la passe suivante de `./bin/convoy-advance` lance
+cette commande. Aucun agent ne peut la lancer : `run` est refusé à toute
+session d'agent.
+
+```bash
+./bin/outcome-promote check <convoi>   # ce que run ferait : merge, close ou nothing ; n'écrit rien
+./bin/outcome-promote run   <convoi>   # ce que l'ordre de l'usine lance ; refusé à une session d'agent
+```
+
+- **Avant « accepté »**, rien du convoi n'est dans la branche protégée :
+  tout est sur la branche d'intégration.
+- **« accepté »** : la branche d'intégration est fusionnée dans la branche
+  protégée par **un seul commit de fusion**. Le relevé garde les deux
+  commits — celui que tu as jugé et celui de la fusion
+  (`./bin/convoy-state show`, `promotion`) — et une page `fusion.html` les
+  note à côté du dossier que tu as jugé, qui ne change pas d'un octet. Les
+  preuves de la Spec sont purgées, le convoi est fermé sur tes mots, sa
+  Spec et son brouillon de graphe sont fermés.
+- **Si la branche protégée a bougé depuis ton jugement**, le code la
+  reprend d'abord dans la branche d'intégration et rejoue **seulement les
+  contrôles mécaniques** : commande de régression, fidélité au Validated
+  Prototype, démarrage du produit. Verts : la fusion se fait, et le relevé
+  dit que la pointe fusionnée est ton commit plus cette reprise.
+- **Rouges, ou les deux branches sont en conflit** : **rien n'est
+  fusionné** et **ton acceptation est annulée** (elle reste au relevé, avec
+  la cause). Un `repair` est publié, puis toute la porte de fin de Spec
+  repasse et tu reçois une **nouvelle Acceptance Request** : tu juges de
+  nouveau.
+- **« abandonné »** : rien n'est fusionné ; le convoi est fermé avec ta
+  raison ; la branche d'intégration reste où elle est, comme source.
+- **Rien ne rouvre** un convoi fermé ainsi, ni lui ni ses tickets : toute
+  écriture y est refusée. Un défaut ou un souhait trouvé après entre comme
+  travail nouveau, par un Planning Run.
+- **Un convoi fermé autrement** (à la main), même avec ta réponse, reste un
+  « état sans règle » signalé sur ta liste.
+- **Sorties** : 0 fait, ou rien à faire ; 1 refus, ou rouge (`error`
+  commence par « refus : », `red` nomme le contrôle) ; 3 état sans règle ;
+  4 convoi sans marque.
+- **Limites** : sur un dépôt avec remote, la fusion est une **poussée
+  directe** vers la branche protégée (gardée par un bail sur sa pointe),
+  pas une pull request — si une protection de branche la refuse, l'Outcome
+  reste accepté et non fusionné, chaque passe réessaie et le dit, rien
+  d'autre ne te prévient ; sans remote, un répertoire de travail qui a la
+  branche protégée extraite n'est pas rafraîchi ; **rien ne te prévient
+  qu'une acceptation est annulée**, tu reçois seulement la nouvelle demande
+  après le `repair` ; un rejeu coupé par le délai de l'ordre après la
+  reprise fusionne à la passe suivante sans rejouer la fidélité ni le
+  démarrage ; les dossiers ne sont jamais purgés ; aucun vrai convoi n'a
+  encore été fusionné ainsi.
+
+Détail : `docs/OUTCOME_PROMOTE.md`.
 
 ---

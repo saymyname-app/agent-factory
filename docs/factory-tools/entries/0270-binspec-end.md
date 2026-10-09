@@ -67,8 +67,11 @@ et la revue de code de fin (`./bin/spec-end-review`).
 - **Limites** : la porte tourne dans la passe de l'ordre (délai de 300 s,
   non mesuré sur un vrai projet) ; pas de pièce scellée pour les tests et la
   fidélité de fin (leur relevé est sur le convoi) ; la porte vérifie, elle
-  n'accepte rien et ne ferme rien (ton acceptation viendra avec un ticket
-  suivant) ; une fois les tours arrêtés, aucune commande ne les relance
+  n'accepte rien et ne ferme rien (ta réponse : `./bin/owner-answer` ; la
+  fusion et la fermeture : `./bin/outcome-promote`, qui appelle ici
+  `replay` — les seuls contrôles mécaniques, sans tour de fin compté —
+  quand la branche protégée a bougé depuis ton jugement) ; une fois les
+  tours arrêtés, aucune commande ne les relance
   encore, quelle que soit ta réponse à la demande « non conforme » ; sous
   un rouge de fin, `check` montre les conditions 2 à 7 « non lancé » au lieu
   de nommer celle qui est rouge (lis `end_stop` et
