@@ -827,6 +827,36 @@ root install ("Install, stop, remove" below), not at the merge. Back to 4:
 `AllowedCPUs=8-11` in the service file and the test, through a pull request,
 then the root install again.
 
+Measured 2026-10-09 (Paris times), two full runs of the same 161 tests the
+same night, the Factory delivering beside them (no battery by hand):
+
+| What | 4 cores (pull request #469, 02:58 to 03:25) | 8 cores (run 37872828394 on `main`, 04:04 to 04:24) |
+|---|---|---|
+| The job | 27 min 11 s | 19 min 43 s: 27% less, not the half that was estimated |
+| Load of the host (1-minute load, 12 cores) | 13.4 on average, 21.1 at most | 14.6 on average, 23.1 at most; 14.7 on average over the 20 minutes before the run |
+| Memory of the job (sampled every 15 s; the control group's own peak) | 0.66 GB | 0.79 GB sampled, 0.97 GB peak, of its 4 GB: the limit stays (Benjamin, his words, 2026-10-09: « ok, on laisse 4 Go ») |
+| Orders of the Factory that failed during the run | none; one, `escalation-door-sweep`, during the next 4-core run (03:36, load 25) | one: `escalation-door-sweep` at 04:07, "context deadline exceeded" |
+| The isolation probe | 4 cores seen | 8 cores seen, every attempt refused |
+
+Why not half: the run cannot be shorter than its longest file, and the long
+files slow each other. On 8 cores `tests/convoy-advance-test.py` took 923 s
+of the job's 1,183 s, `tests/fixture-city-oracle-test.py` 796 s; four more
+took 400 to 600 s. More cores no longer help until those files are cheaper
+or cut in two (af-97io9q). The 15 min 23 s of 2026-10-08 is not the
+reference any more: on the same 4 cores a full run took 25 to 32 minutes on
+the night of 2026-10-09, with six more tests and a busier Factory.
+
+The failed order is not the cores: `escalation-door-sweep` (60 s to answer,
+every 15 minutes) failed five times in the 12 hours before 04:30, once
+before the host's runner existed (2026-10-08 16:52) and three times during
+runs on 4 cores. It fails when the host is loaded, whatever loads it; its
+own work is af-io8tb7.
+
+What the PC feels during a run: for about 20 minutes, 8 of the 12 cores can
+be busy with the job at low priority (cores 4 to 11; 0 to 3 are never the
+job's), instead of 4 for about 27 minutes. Nothing was measured with a game
+running: `./bin/ci-runner pause` before one, as before.
+
 ### Measured 2026-10-08 (pull request #457, Paris times)
 
 | What | Measure |
