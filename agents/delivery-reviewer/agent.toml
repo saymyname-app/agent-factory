@@ -9,3 +9,10 @@ idle_timeout = "2h"
 # (bin/provider-failover, target delivery-reviewer). A read-only role must
 # never fall back to the workspace provider, which can write.
 provider = "claude-readonly"
+
+# The role's only review skill is its own copy of Matt Pocock's code-review.
+# Claude Code ships review skills of its own (security-review, code-review,
+# simplify) that the reviewer's formula never calls; this switch removes them
+# (role-adoption-trial proves it, and that the role's copy still loads).
+[env]
+CLAUDE_CODE_DISABLE_BUNDLED_SKILLS = "1"
