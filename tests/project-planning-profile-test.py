@@ -220,15 +220,17 @@ class ProjectPlanningProfileTest(unittest.TestCase):
         error = json.loads(proc.stdout)
         self.assertFalse(error["valid"])
         self.assertIn("launch", error["error"])
-        self.assertIn("k", error["error"])
+        self.assertIn("datasets", error["error"])
 
 
     # --- optional launch declarations read by bin/tdd-step (T10, af-j8jo02) --
 
-    def describe_launch(self, **launch):
+    def describe_launch(self, without=(), **launch):
         """The fixture descriptor with other launch declarations."""
         descriptor = json.loads(self.LAUNCH_FIXTURE_DESCRIPTOR.read_text())
         descriptor["launch"].update(launch)
+        for field in without:
+            del descriptor["launch"][field]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "descriptor.json"
             path.write_text(json.dumps(descriptor))
@@ -249,6 +251,103 @@ class ProjectPlanningProfileTest(unittest.TestCase):
 
         self.assertNotIn("red_error_types", launch)
         self.assertNotIn("import_rule", launch)
+
+    # --- datasets, mode per seam, anchors and k required (T38, af-8o4jcp) -----
+
+    SECOND_FIXTURE_DESCRIPTOR = ROOT / "tests" / "fixtures" / "delivery-fixture-city-api" / "descriptor.json"
+    TESTS_OF_THE_FIXTURE = "tests/fixtures/delivery-fixture-city/tests"
+
+    def test_a_launchable_profile_that_declares_no_dataset_is_refused_and_the_field_is_named(self):
+        for change in ({"without": ("datasets", "screens"), "anchors": {"not_applicable": "sans écran"}},
+                       {"without": ("screens",), "anchors": {"not_applicable": "sans écran"}, "datasets": {}}):
+            with self.subTest(change=change):
+                status, answer = self.describe_launch(**change)
+
+                self.assertEqual(1, status)
+                self.assertFalse(answer["valid"])
+                self.assertIn("datasets", answer["error"])
+
+    def test_listing_the_projects_refuses_a_launchable_profile_without_a_dataset(self):
+        descriptor = json.loads(self.LAUNCH_FIXTURE_DESCRIPTOR.read_text())
+        del descriptor["launch"]["screens"]
+        descriptor["launch"].update(datasets={}, anchors={"not_applicable": "sans écran"})
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "fixture.json").write_text(json.dumps(descriptor))
+            before = sorted(path.name for path in Path(tmp).iterdir())
+            proc = subprocess.run((str(TOOL), "list", "--descriptors-dir", tmp), cwd=ROOT, text=True,
+                                  capture_output=True)
+            after = sorted(path.name for path in Path(tmp).iterdir())
+
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("datasets", json.loads(proc.stdout)["error"])
+        self.assertEqual(before, after, "the refusal wrote something")
+
+    def test_a_profile_with_two_seams_of_different_modes_is_accepted_and_describes_each(self):
+        seams = [
+            {"name": "http", "mode": "black_box", "test_paths": [f"{self.TESTS_OF_THE_FIXTURE}/test_health.py"]},
+            {"name": "library", "mode": "import_rule", "test_paths": [f"{self.TESTS_OF_THE_FIXTURE}/test_count.py"]},
+        ]
+
+        status, result = self.describe_launch(without=("seam_mode",), seams=seams)
+
+        self.assertEqual(0, status, result)
+        self.assertEqual(seams, result["launch"]["seams"])
+
+    def test_a_profile_with_one_seam_mode_describes_one_seam_over_the_test_perimeter(self):
+        launch = json.loads(self.describe(self.LAUNCH_FIXTURE_DESCRIPTOR, check=True).stdout)["launch"]
+
+        self.assertEqual([{"name": "default", "mode": "black_box", "test_paths": launch["test_perimeter"]}],
+                         launch["seams"])
+
+    def test_malformed_seams_are_rejected(self):
+        inside = f"{self.TESTS_OF_THE_FIXTURE}/test_health.py"
+        seam = {"name": "http", "mode": "black_box", "test_paths": [inside]}
+        for change, named in (
+            ({"without": ("seam_mode",)}, "seam_mode"),
+            ({"seams": [seam]}, "exactly one"),
+            ({"without": ("seam_mode",), "seams": []}, "launch.seams"),
+            ({"without": ("seam_mode",), "seams": [{**seam, "mode": "grey_box"}]}, "launch.seams[0].mode"),
+            ({"without": ("seam_mode",), "seams": [{**seam, "test_paths": []}]}, "launch.seams[0].test_paths"),
+            ({"without": ("seam_mode",), "seams": [{**seam, "test_paths": ["lib/"]}]}, "outside the test perimeter"),
+            ({"without": ("seam_mode",), "seams": [seam, {**seam, "mode": "import_rule"}]}, "twice"),
+            ({"without": ("seam_mode",), "seams": [seam, {"name": "library", "mode": "import_rule",
+                                                         "test_paths": [self.TESTS_OF_THE_FIXTURE]}]},
+             "a test goes through one seam"),
+            ({"without": ("seam_mode",), "seams": [{**seam, "rule": "x"}]}, "rule"),
+        ):
+            with self.subTest(change=change):
+                status, result = self.describe_launch(**change)
+
+                self.assertEqual(1, status)
+                self.assertFalse(result["valid"])
+                self.assertIn(named, result["error"])
+
+    def test_a_profile_without_a_screen_must_declare_the_equivalent_of_the_anchors_or_not_applicable(self):
+        status, answer = self.describe_launch(without=("screens",))
+
+        self.assertEqual(1, status)
+        self.assertFalse(answer["valid"])
+        self.assertIn("launch.anchors", answer["error"])
+
+        status, answer = self.describe_launch(without=("screens",), anchors={"not_applicable": "une file de messages"})
+        self.assertEqual(0, status, answer)
+        self.assertEqual({"not_applicable": "une file de messages"}, answer["launch"]["anchors"])
+
+    def test_the_two_profiles_of_the_fixture_city_are_accepted(self):
+        for descriptor in (self.LAUNCH_FIXTURE_DESCRIPTOR, self.SECOND_FIXTURE_DESCRIPTOR):
+            with self.subTest(descriptor=descriptor.parent.name):
+                self.assertEqual(0, self.describe(descriptor).returncode)
+
+    def test_a_profile_without_k_is_read_with_k_3_and_a_declared_k_is_kept(self):
+        status, result = self.describe_launch(without=("k",))
+        self.assertEqual((0, 3), (status, result["launch"]["k"]))
+
+        status, result = self.describe_launch(k=5)
+        self.assertEqual((0, 5), (status, result["launch"]["k"]))
+
+        status, result = self.describe_launch(k=0)
+        self.assertEqual(1, status)
+        self.assertIn("launch.k", result["error"])
 
     # --- screens compared to the Validated Prototype (T16, af-622nya) ---------
 

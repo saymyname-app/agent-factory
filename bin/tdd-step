@@ -362,17 +362,38 @@ class Check:
             subprocess.run([str(LAUNCH_TOOL), "--repo-root", str(self.repo), "stop", "--state-file", str(state)],
                            capture_output=True, stdin=subprocess.DEVNULL)
 
-    def tests_tree(self, tests_commit: str, product_commit: str) -> Path:
-        """The tree the criterion tests run in. Black box: the test perimeter
-        and the frozen harness only, so a test cannot reach the code of the
-        product. Import rule: the product too, under the tests."""
-        if self.launch["seam_mode"] == "black_box":
-            return self.export(tests_commit, keep=self.test_scope)
-        tree = self.export(product_commit)
-        self.prune(tree, lambda path: in_paths(path, self.test_scope))
-        tests = self.export(tests_commit, keep=self.test_scope)
-        shutil.copytree(tests, tree, symlinks=True, dirs_exist_ok=True)
-        return tree
+    def seam_of(self, test_id: str) -> dict[str, Any]:
+        """The seam a criterion test goes through: the one whose test paths
+        hold the file of the test."""
+        path = test_id.partition("::")[0]
+        for seam in self.launch["seams"]:
+            if in_paths(path, seam["test_paths"]):
+                return seam
+        raise Refusal(
+            f"test hors de tout seam : {test_id} (aucun seam du profil ne déclare {path} dans ses test_paths ; "
+            f"seams déclarés : {', '.join(seam['name'] for seam in self.launch['seams'])})")
+
+    @staticmethod
+    def seam_modes(seams: dict[str, dict[str, Any]]) -> str:
+        """The modes of the seams the tests went through, as one field of a record."""
+        return "+".join(sorted({seam["mode"] for seam in seams.values()}))
+
+    def tests_trees(self, tests_commit: str, product_commit: str, ids: list[str]) -> dict[str, Path]:
+        """The tree each criterion test runs in, by the mode of its seam.
+        Black box: the test perimeter and the frozen harness only, so a test
+        cannot reach the code of the product. Import rule: the product too,
+        under the tests."""
+        trees: dict[str, Path] = {}
+        for mode in dict.fromkeys(self.seam_of(test_id)["mode"] for test_id in ids):
+            if mode == "black_box":
+                trees[mode] = self.export(tests_commit, keep=self.test_scope)
+                continue
+            tree = self.export(product_commit)
+            self.prune(tree, lambda path: in_paths(path, self.test_scope))
+            tests = self.export(tests_commit, keep=self.test_scope)
+            shutil.copytree(tests, tree, symlinks=True, dirs_exist_ok=True)
+            trees[mode] = tree
+        return trees
 
     def run_test(self, test_id: str, tree: Path, address: str) -> list[dict[str, str]]:
         """One run of one test: its test cases, each `passed`, `failure`
@@ -408,7 +429,7 @@ class Check:
 
     def entry_points(self) -> list[tuple[str, str]]:
         declared = [(e["method"].upper(), e["path"]) for e in self.launch["entry_points"] if e["kind"] == "http"]
-        if self.launch["seam_mode"] == "black_box" and not declared:
+        if any(seam["mode"] == "black_box" for seam in self.launch["seams"]) and not declared:
             raise Refusal("le profil ne déclare aucun point d'entrée http : la preuve boîte noire du seam est impossible")
         return declared
 
@@ -501,15 +522,17 @@ def read_table(check: Check, table_path: str | None) -> dict[str, list[str]]:
 
 
 def import_rule_problems(check: Check, ids: list[str], base: str) -> list[str]:
-    """Import-rule seam: a line of a test that imports the product imports
-    one of its entry points, and every criterion test imports one."""
+    """Import-rule seams: a line of a test that imports the product imports
+    one of its entry points, and every criterion test imports one. `ids`
+    are the criterion tests that go through a seam of that mode."""
     rule = check.launch.get("import_rule")
     if not rule:
         raise Refusal("seam_mode import_rule : le profil ne déclare pas launch.import_rule (product_import, entry_point_import)")
     product, entry_point = re.compile(rule["product_import"]), re.compile(rule["entry_point_import"])
     criterion_files = list(dict.fromkeys(test_id.partition("::")[0] for test_id in ids))
+    seam_paths = [path for seam in check.launch["seams"] if seam["mode"] == "import_rule" for path in seam["test_paths"]]
     touched = [path for status, path in check.changes(base, check.head)
-               if status != "D" and in_paths(path, check.launch["test_perimeter"])]
+               if status != "D" and in_paths(path, seam_paths)]
     problems = []
     for path in dict.fromkeys([*criterion_files, *touched]):
         lines = (check.blob(check.head, path) or b"").decode("utf-8", errors="replace").splitlines()
@@ -526,17 +549,19 @@ def red_proof(check: Check, base: str, table_path: str | None, amendment: bool) 
     """Every criterion test fails by assertion against the product at the
     start commit, and goes through an entry point of it."""
     launch = check.launch
-    mode = launch["seam_mode"]
     check.test_command()
     declared = check.entry_points()
     criteria = read_table(check, table_path)
     ids = unique_ids(criteria)
-    if mode == "import_rule":
-        problems = import_rule_problems(check, ids, base)
+    # Each criterion test is proven by the mode of the seam it goes through.
+    seams = {test_id: check.seam_of(test_id) for test_id in ids}
+    by_import_rule = [test_id for test_id in ids if seams[test_id]["mode"] == "import_rule"]
+    if by_import_rule:
+        problems = import_rule_problems(check, by_import_rule, base)
         if problems:
             raise Refusal(" ; ".join(problems))
     expects_launch_failure = check.ticket.get("establishes_launch_recipe") is True
-    tree = check.tests_tree(check.head, base)
+    trees = check.tests_trees(check.head, base, ids)
 
     with check.product(base) as (address, launch_error):
         if address is None and not expects_launch_failure:
@@ -545,7 +570,7 @@ def red_proof(check: Check, base: str, table_path: str | None, amendment: bool) 
         try:
             results = []
             for test_id in ids:
-                cases = check.run_test(test_id, tree, recorder.address)
+                cases = check.run_test(test_id, trees[seams[test_id]["mode"]], recorder.address)
                 asked = recorder.take()
                 results.append((test_id, cases, list(dict.fromkeys(f"{m} {p}" for m, p in asked if (m, p) in declared))))
         finally:
@@ -556,7 +581,8 @@ def red_proof(check: Check, base: str, table_path: str | None, amendment: bool) 
     for test_id, cases, entry_points in results:
         outcomes = [case["outcome"] for case in cases]
         outcome = next((o for o in ("error", "skipped", "passed", "failure") if o in outcomes), "empty")
-        entry: dict[str, Any] = {"id": test_id, "outcome": outcome}
+        seam, mode = seams[test_id]["name"], seams[test_id]["mode"]
+        entry: dict[str, Any] = {"id": test_id, "outcome": outcome, "seam": seam, "seam_mode": mode}
         if mode == "black_box":
             entry["entry_points"] = entry_points
         errors = [case for case in cases if case["outcome"] == "error"]
@@ -567,7 +593,9 @@ def red_proof(check: Check, base: str, table_path: str | None, amendment: bool) 
             problems.append(f"test vide : {test_id} (aucun test exécuté)")
             continue
         if mode == "black_box" and not entry_points:
-            problems.append(f"aucun point d'entrée du produit : {test_id} (boîte noire : le test n'a rien demandé à un point d'entrée déclaré)")
+            problems.append(
+                f"aucun point d'entrée du produit : {test_id} (seam {seam}, boîte noire : le test n'a rien demandé "
+                "à un point d'entrée déclaré)")
         if "skipped" in outcomes:
             problems.append(f"test ignoré : {test_id}")
         # Declared cases: a launch that fails is the red of the slice that
@@ -594,7 +622,7 @@ def red_proof(check: Check, base: str, table_path: str | None, amendment: bool) 
         ), stop=STOP_ALREADY_GREEN)
     return {
         "verdict": "red", "commit": check.head, "base": base, "table": table_path, "criteria": criteria,
-        "tests": tests, "seam_mode": mode, "launch": {"healthy": address is not None, "commit": base},
+        "tests": tests, "seam_mode": check.seam_modes(seams), "launch": {"healthy": address is not None, "commit": base},
         "frozen_harness_paths": launch["frozen_harness_paths"],
     }
 
@@ -685,7 +713,8 @@ def check_green(check: Check) -> dict[str, Any]:
     frozen_commit = check.tdd["freeze"]["commit"]
     ids = unique_ids(registry["criteria"])
     # The tests run as they were frozen, helpers of the test perimeter included.
-    tree = check.tests_tree(frozen_commit, check.head)
+    seams = {test_id: check.seam_of(test_id) for test_id in ids}
+    trees = check.tests_trees(frozen_commit, check.head, ids)
     k = launch["k"]
     runs: dict[str, list[str]] = {test_id: [] for test_id in ids}
     asked: dict[str, list[str]] = {test_id: [] for test_id in ids}
@@ -696,7 +725,8 @@ def check_green(check: Check) -> dict[str, Any]:
         try:
             for _ in range(k):
                 for test_id in ids:
-                    outcomes = [case["outcome"] for case in check.run_test(test_id, tree, recorder.address)]
+                    outcomes = [case["outcome"] for case in
+                                check.run_test(test_id, trees[seams[test_id]["mode"]], recorder.address)]
                     runs[test_id].append(
                         next((o for o in ("error", "skipped", "failure", "passed") if o in outcomes), "empty"))
                     asked[test_id] += [f"{m} {p}" for m, p in recorder.take() if (m, p) in declared]
@@ -715,9 +745,10 @@ def check_green(check: Check) -> dict[str, Any]:
             problems.append(f"test en échec : {test_id} ({', '.join(runs[test_id])} sur {k} exécutions)")
     if problems:
         raise Refusal(" ; ".join(problems))
-    tests = [{"id": test_id, "runs": runs[test_id], "entry_points": list(dict.fromkeys(asked[test_id]))} for test_id in ids]
+    tests = [{"id": test_id, "runs": runs[test_id], "entry_points": list(dict.fromkeys(asked[test_id])),
+              "seam": seams[test_id]["name"], "seam_mode": seams[test_id]["mode"]} for test_id in ids]
     return {"step": "green", "verdict": "green", "commit": check.head, "k": k, "criteria": registry["criteria"],
-            "tests": tests, "seam_mode": launch["seam_mode"], "frozen": frozen_commit,
+            "tests": tests, "seam_mode": check.seam_modes(seams), "frozen": frozen_commit,
             "launch": {"healthy": True, "commit": check.head}}
 
 

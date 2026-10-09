@@ -178,31 +178,33 @@ hand-typed command.
 The Acceptance Session is `bin/acceptance-session open <convoy>` (T28,
 `docs/ACCEPTANCE_SESSION.md`): it launches the product from a clean copy of
 the commit of the Evidence Pack, by this `launch` block, once per synthetic
-dataset declared under `launch.datasets`. A profile without a launch recipe
-is refused; a product that does not start is an outage, recorded on the
+dataset declared under `launch.datasets`. A profile without a launch recipe,
+or that declares no dataset, is refused; a product that does not start is an outage, recorded on the
 convoy and repaired by a `repair` ticket.
 
 A descriptor's optional `launch` block is validated by the same `describe`
 command, and -- unlike every other descriptor field -- is all-or-nothing:
-declaring `launch` at all requires every one of these sub-fields, or
-`describe`/`validate` fails loudly naming exactly which is missing:
+declaring `launch` at all requires every one of these sub-fields that is not
+marked optional, or `describe`/`validate` fails loudly naming exactly which
+is missing:
 
 | Field | Meaning |
 | --- | --- |
 | `recipe` | argv tokens to launch the product; `{python}`, `{port}`, `{dataset}` are substituted by `project-launch`. |
 | `entry_points` | the product's public interfaces (`kind`, `method`, `path`), named so an Evaluator or criterion test knows where to look. |
 | `health_probe` | `{path, expect_status}` — polled by `project-launch start` until it answers or the timeout expires. |
-| `datasets` | named synthetic dataset files (fixed `generated_at` time included) a launch can select with `--dataset`. |
+| `datasets` | named synthetic dataset files (fixed `generated_at` time included) a launch selects with `--dataset`. **At least one**: a launchable profile that names none is refused by `describe`/`list` and by every tool that loads the descriptor, the error naming `launch.datasets`. |
 | `test_perimeter` | paths a ticket's red step may write criterion tests under. |
 | `frozen_harness_paths` | test harness/config paths frozen at the ticket's freeze step. |
 | `test_command` | runs one criterion test and writes its per-test report: it carries `{test}` (the test id) and `{report}` (the JUnit XML file to write, where an assertion `failure` is distinct from an `error` and from `skipped`); read by `bin/tdd-step` (`docs/TDD_STEP.md`). |
-| `seam_mode` | `black_box` or `import_rule` — how a criterion test is proven to go through a real entry point. |
+| `seam_mode` | `black_box` or `import_rule` — how a criterion test is proven to go through a real entry point. Declares one seam named `default` over the whole `test_perimeter`. A profile declares **exactly one** of `seam_mode` and `seams`; `describe` always renders the normalized `seams` list, and `seam_mode` too when that is what the profile declared. |
+| `seams` | the alternative to `seam_mode`, for a product with several seams — `[{name, mode, test_paths}]`: `name` a safe id unique in the list, `mode` `black_box` or `import_rule`, `test_paths` a non-empty list of paths inside `test_perimeter`. A path belongs to one seam only: two seams whose paths overlap are rejected. A criterion test is proven by the mode of the seam whose `test_paths` hold its file (`docs/TDD_STEP.md`). |
 | `regression_command` | the `prefactoring` regime's before/after command; also the tests `bin/spec-integration` runs on each merged result of the integration branch (T18, `docs/SPEC_INTEGRATION.md`): it runs from the root of a clean tree and exits 0 when green. |
-| `k` | consecutive green runs required at the ticket's green step. |
-| `red_error_types` | optional — error types (e.g. `AttributeError`) that are a valid red on a library seam, where a missing symbol is the red. Absent: only an assertion failure is a red. |
+| `k` | optional — consecutive green runs required at the ticket's green step, a positive integer. Absent: 3 (spec af-wf4w5r §8, starting value); a declared `k` is kept. |
+| `red_error_types` | optional, shared by all seams — error types (e.g. `AttributeError`) that are a valid red on a library seam, where a missing symbol is the red. Absent: only an assertion failure is a red. |
 | `screens` | optional, required by `bin/prototype-fidelity` (T16, `docs/PROTOTYPE_FIDELITY.md`) — the screens compared to the Validated Prototype: `[{name, path, states}]`, the path the launched product serves the screen at and its prototyped states. A state is the dataset of the same name and belongs to one screen; a duplicate name, a path that does not start with `/`, an empty list of states or a state that is no declared dataset is rejected. |
-| `anchors` | optional — the equivalent of the anchors for an interface that is **not a web page** (a command line, an API; T35, spec af-wf4w5r §12). Exactly one of: `{"equivalent": [{name, entry_point, observable}]}`, what stands for the anchors of a screen — each a unique name, the declared entry point that answers it (`"METHOD path"`) and the observable read there (a field, an exit status, a line of output); or `{"not_applicable": "<reason>"}`. An empty list, a missing reason, both forms at once, an unknown field, a duplicate name or an entry point that is not declared is rejected. `describe` renders it. |
-| `import_rule` | optional, required by `bin/tdd-step` when `seam_mode` is `import_rule` — `{product_import, entry_point_import}`, two regular expressions applied to each line of a test: a line that imports the product must import one of its entry points. |
+| `anchors` | **required when the profile declares no `screens`** (the error names `launch.anchors`), not needed otherwise — the equivalent of the anchors for an interface that is **not a web page** (a command line, an API; T35, spec af-wf4w5r §12). Exactly one of: `{"equivalent": [{name, entry_point, observable}]}`, what stands for the anchors of a screen — each a unique name, the declared entry point that answers it (`"METHOD path"`) and the observable read there (a field, an exit status, a line of output); or `{"not_applicable": "<reason>"}`. An empty list, a missing reason, both forms at once, an unknown field, a duplicate name or an entry point that is not declared is rejected. `describe` renders it. |
+| `import_rule` | optional, required by `bin/tdd-step` when a seam's mode is `import_rule` — `{product_import, entry_point_import}`, two regular expressions applied to each line of a test: a line that imports the product must import one of its entry points. |
 
 A descriptor with no `launch` block at all (e.g. the Factory's own
 `agent-factory.json`) is unaffected — `describe` reports `launch: null`,
@@ -221,7 +223,10 @@ when it is not the Factory's own; the profile tool is always the one next
 to the launcher (T10: `bin/tdd-step` launches the product of a ticket
 worktree this way).
 
-`start` resolves `--commit` to an exact SHA and checks it out into a fresh
+`start` refuses without `--dataset`, whatever the recipe (« no dataset
+named: … », the declared datasets listed): a product is launched on a named
+dataset only, and nothing is launched and no launch record written. It
+resolves `--commit` to an exact SHA and checks it out into a fresh
 `git worktree` — never the caller's current working tree, so an
 uncommitted local change is never what gets served — picks a free
 127.0.0.1 port, substitutes it (and the chosen dataset's absolute path)
@@ -257,9 +262,9 @@ with no screen and no Validated Prototype passes condition 4 of the gate
 | `one-ticket-second-project.json` (CI, `docs/FIXTURE_CITY_ORACLE.md`) | one of its tickets walks the nine lifecycle states and is closed by the ticket-end gate, observed at the same events and with the same verdicts as a ticket of the first project |
 | `tests/second-project-isolated-city-test.sh` (local-only) | on a real controller, order and tracker, one of its tickets goes from started to closed by the gate through the real `mol-ticket-author`, `mol-code-review` and `mol-ticket-evaluation` |
 
-Limits. The `anchors` declaration is read by `describe` only: no gate
-compares a delivered API to a prototype, and a profile with neither `screens`
-nor `anchors` is still accepted. The black-box seam of `bin/tdd-step` records
+Limits. The `anchors` declaration is required of a profile without `screens`
+but read by `describe` only: no gate compares a delivered API to a
+prototype. The black-box seam of `bin/tdd-step` records
 HTTP entry points: a project whose only interface is a command line has no
 mechanical proof of its seam yet. A recipe names its interpreter itself
 (`node`); only `{python}` is substituted by the launcher.
