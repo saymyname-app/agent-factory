@@ -78,6 +78,8 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state raise-planning-exception CONVOY TICKET --kind KIND --summary LINE [--anchor NAME ...] [--item ID ...]
                                           [--accept-option LETTER]
     convoy-state set-item-repair CONVOY TICKET --repair TICKET
+    convoy-state record-blocking-red CONVOY TICKET --control LINE
+    convoy-state clear-blocking-red  CONVOY TICKET
     convoy-state set-integration CONVOY --branch NAME --protected NAME --base SHA
     convoy-state set-merge    CONVOY TICKET --outcome OUTCOME --ticket-commit SHA --integration SHA [--commit SHA]
     convoy-state invalidate-verdicts CONVOY TICKET --tip SHA --kind KIND [--kind KIND]
@@ -108,6 +110,7 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state set-verdict-proposal     CONVOY --proposition ID --bead BEAD
     convoy-state record-owner-answer      CONVOY --response accepted|findings|abandoned --approver NAME
                                           [--words TEXT --commit SHA --pack-digest DIGEST] [--file PATH] [--reason LINE]
+                                          [--repo DIR]
     convoy-state set-owner-repair         CONVOY --finding N --ticket TICKET
     convoy-state set-owner-proposal       CONVOY --finding N --bead BEAD
     convoy-state resolve-owner-exception  CONVOY --approver NAME --words TEXT
@@ -226,6 +229,9 @@ KEY_MODELS = PREFIX + "models"
 KEY_EVALUATION = PREFIX + "evaluation"
 KEY_FIDELITY = PREFIX + "fidelity"
 KEY_PLANNING_EXCEPTIONS = PREFIX + "planning_exceptions"
+# The red control the author of a ticket says blocks it technically (T40):
+# what the `repair` its exit asks for cites, read by the patch door.
+KEY_BLOCKING_RED = PREFIX + "blocking_red"
 KEY_CORRECTION = PREFIX + "correction"
 KEY_OVERRIDES = PREFIX + "overrides"
 KEY_CRITERIA = PREFIX + "criteria"
@@ -1781,6 +1787,14 @@ def integration_record(raw: Any) -> dict[str, Any]:
     return record
 
 
+def blocking_red_record(raw: Any) -> dict[str, Any]:
+    """The red control the author of a ticket named when it left
+    « bloqué technique » (T40): one line, as its `repair` cites it."""
+    record = stored_record(raw, ("control", "at"))
+    single_line(record["control"], "contrôle rouge")
+    return record
+
+
 def integration_red_record(raw: Any) -> dict[str, Any]:
     """The red of the convoy's integration branch (Spec §8): the control
     that is red, quoted, the commit it was red on, the tips of the
@@ -2534,6 +2548,37 @@ class Repo:
         return self.git("merge-base", "--is-ancestor", commit, tip).returncode == 0
 
 
+def red_checks_rendered(convoy: dict[str, Any], tickets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The red controls the convoy carries a record of, each under the name
+    a `repair` cites to restore it (`restores.kind: red_check`, T40): the
+    red of its integration branch, the outage of its Acceptance Session,
+    the control the author of a ticket named when it left « bloqué
+    technique », and the registry of the end-of-Spec gate, red on the
+    tracked elements of a ticket the operator asked to have repaired."""
+    found: list[dict[str, Any]] = []
+    red = convoy.get("integration_red")
+    if isinstance(red, dict) and "control" in red:
+        found.append({"name": red["control"], "source": "integration", "check": red.get("check", RED_CHECKS[0])})
+    acceptance = convoy.get("acceptance")
+    if isinstance(acceptance, dict) and "panne" in acceptance:
+        found.append({
+            "name": f"lancement du produit par la recette du profil au commit {acceptance['commit'][:12]} "
+                    "(Acceptance Session)",
+            "source": "acceptance_session"})
+    for ticket in tickets:
+        blocking = ticket.get("blocking_red")
+        if isinstance(blocking, dict) and "control" in blocking:
+            found.append({"name": blocking["control"], "source": "technically_blocked", "ticket": ticket["id"]})
+        asked = [item["id"] for item in ticket.get("tracked_items") or []
+                 if (item.get("request") or {}).get("state") == "resolved" and not item["request"].get("accepted")]
+        if asked:
+            found.append({
+                "name": f"registre de la porte de fin de Spec : éléments du ticket {ticket['id']} sans état final "
+                        f"({', '.join(asked)})",
+                "source": "tracked_items", "ticket": ticket["id"]})
+    return found
+
+
 def render_counters(metadata: dict[str, Any], names: tuple[str, ...], unruled: list[dict[str, str]]) -> dict[str, Any]:
     counters: dict[str, Any] = {}
     coherent = True
@@ -2682,7 +2727,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
             KEY_MARK, KEY_DEMONSTRATION, KEY_USER_STORIES, KEY_LAUNCH_RECIPE, KEY_PROTOTYPE_FOLD, KEY_BRANCH, KEY_EXIT,
             KEY_STOP, KEY_HANDOFF, KEY_PARK, KEY_MERGE, KEY_SESSION, KEY_TEST_REVIEW, KEY_CODE_REVIEW, KEY_MODELS,
             KEY_EVALUATION, KEY_FIDELITY, KEY_PLANNING_EXCEPTIONS, KEY_CORRECTION, KEY_OVERRIDES, KEY_CRITERIA,
-            KEY_RESUME, KEY_PARK_LIFTS, KEY_FINDINGS,
+            KEY_RESUME, KEY_PARK_LIFTS, KEY_FINDINGS, KEY_BLOCKING_RED,
         ):
             continue
         raw = metadata[key]
@@ -2756,6 +2801,7 @@ def render_ticket(ticket: dict[str, Any], repo: Repo) -> dict[str, Any]:
         ("session", KEY_SESSION, session_record),
         ("resume", KEY_RESUME, resume_record),
         ("finding_classifications", KEY_FINDINGS, findings_record),
+        ("blocking_red", KEY_BLOCKING_RED, blocking_red_record),
     ):
         out[name] = None
         if key in metadata:
@@ -3003,6 +3049,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         ticket["tracked_items"] = tracked_items(ticket, by_id)
         # The findings « hors ticket » of that Handoff and their state (T24).
         ticket["findings"] = findings_rendered(ticket, by_id)
+    convoy_out["red_checks"] = red_checks_rendered(convoy_out, rendered)
     unruled = bool(convoy_unruled) or any(ticket["unruled"] for ticket in rendered)
     answer: dict[str, Any] = {"ok": True, "new_flow": True, "unruled": unruled, "convoy": convoy_out, "tickets": rendered}
     if unruled:
@@ -4315,6 +4362,35 @@ def cmd_raise_planning_exception(args: argparse.Namespace) -> int:
     return done(args.convoy, args.ticket, values)
 
 
+def cmd_record_blocking_red(args: argparse.Namespace) -> int:
+    """Record the red control the author of a ticket says blocks it
+    technically (bin/ticket-exit, T40), before the `repair` that cites it
+    goes through the patch door: a red control a repair restores is one the
+    convoy carries a record of. The same control again writes nothing;
+    another one replaces it."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    ticket = marked_ticket_among(tickets, args.convoy, args.ticket)
+    control = single_line(args.control, "contrôle rouge")
+    metadata = metadata_of(ticket)
+    if KEY_BLOCKING_RED in metadata and blocking_red_record(metadata[KEY_BLOCKING_RED])["control"] == control:
+        return done(args.convoy, args.ticket, {})
+    values = {KEY_BLOCKING_RED: encode(blocking_red_record(encode({"control": control, "at": now()})))}
+    write_metadata(args.ticket, values)
+    return done(args.convoy, args.ticket, values)
+
+
+def cmd_clear_blocking_red(args: argparse.Namespace) -> int:
+    """Withdraw that record: the patch door refused the repair that cites it."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    ticket = marked_ticket_among(tickets, args.convoy, args.ticket)
+    if KEY_BLOCKING_RED not in metadata_of(ticket):
+        return done(args.convoy, args.ticket, {})
+    run_gc(["bd", "update", args.ticket, "--unset-metadata", KEY_BLOCKING_RED])
+    return done(args.convoy, args.ticket, {KEY_BLOCKING_RED: None})
+
+
 def cmd_set_item_repair(args: argparse.Namespace) -> int:
     """Name the repair code published for the tracked elements of a Ticket
     Handoff (bin/convoy-advance, T23), once the operator answered their
@@ -5138,8 +5214,10 @@ def judgement_record(raw: Any) -> dict[str, Any]:
             if bool(excepted) != (exception is not None):
                 raise Refusal("la Planning Exception du lot ne couvre pas les constats qui en relèvent")
             if exception is not None:
-                if not isinstance(exception, dict) or not {"findings", "at"} <= set(exception) <= {"findings", "at", "resolved"} \
-                        or exception["findings"] != excepted:
+                if not isinstance(exception, dict) or not {"findings", "at"} <= set(exception) <= {"findings", "at", "resolved", "spec_digest"} \
+                        or exception["findings"] != excepted \
+                        or ("spec_digest" in exception and not (isinstance(exception["spec_digest"], str)
+                                                                and DIGEST_RE.match(exception["spec_digest"]))):
                     raise Refusal(f"Planning Exception du lot mal formée : {exception!r}")
                 resolved = exception.get("resolved")
                 if resolved is not None:
@@ -5297,11 +5375,13 @@ def cmd_set_verdict_proposal(args: argparse.Namespace) -> int:
     return done(args.convoy, args.convoy, values)
 
 
-def routed_owner_finding(given: Any, number: int, spec: dict[str, Any]) -> dict[str, Any]:
+def routed_owner_finding(given: Any, number: int, spec: dict[str, Any], repo: str | None = None) -> dict[str, Any]:
     """The route of one Owner Finding, by code (Spec §11): « plus tard » is
-    a proposition; a finding that cites a story or an anchor the Spec holds
-    is a `repair`; anything else asks for what the Spec does not require,
-    and is a Planning Exception -- never a repair."""
+    a proposition; a finding that cites a story of the Spec or an anchor of
+    a prototyped state of its Validated Prototype (T40, read in `repo`) is
+    a `repair`; anything else asks for what the Spec does not require, and
+    is a Planning Exception -- never a repair. A prototype that cannot be
+    read routes nothing: the answer is refused."""
     what = f"le constat n° {number}"
     if not isinstance(given, dict) or "text" not in given or not set(given) <= {"text", "cites", "repair", "later"}:
         raise Refusal(f"{what} est mal formé (attendu : text, et au besoin cites, repair, later) : {given!r}")
@@ -5318,7 +5398,9 @@ def routed_owner_finding(given: Any, number: int, spec: dict[str, Any]) -> dict[
             raise Refusal(f"{what} est « plus tard » et porte un repair : un souhait hors de cet Outcome est une proposition")
         return {**finding, "route": "later"}
     held = False
-    if cites is not None and finding["cites"]["kind"] in OWNER_CITED_KINDS:
+    if cites is not None and finding["cites"]["kind"] == "anchor":
+        held = finding["cites"]["ref"].strip("`") in prototype_anchors(spec, repo)
+    elif cites is not None and finding["cites"]["kind"] in OWNER_CITED_KINDS:
         try:
             check_citation(finding["cites"], spec, what)
             held = True
@@ -5401,7 +5483,8 @@ def cmd_record_owner_answer(args: argparse.Namespace) -> int:
                     "« constats rendus » sans aucun constat : la réponse porte au moins un Owner Finding (--file), ou une "
                     "proposition « à faire avant d'accepter »")
             spec = spec_of(convoy)
-            findings = [routed_owner_finding(finding, number, spec) for number, finding in enumerate(given, start=1)]
+            findings = [routed_owner_finding(finding, number, spec, args.repo)
+                        for number, finding in enumerate(given, start=1)]
             for entry in before:
                 # A proposition to do first is asked by Benjamin, not by the Spec.
                 findings.append({"text": single_line(" ".join(known[entry["proposition"]].split()), "texte de la proposition"),
@@ -5411,7 +5494,12 @@ def cmd_record_owner_answer(args: argparse.Namespace) -> int:
             excepted = [number for number, finding in enumerate(findings, start=1) if finding["route"] == "planning_exception"]
             if excepted:
                 # One Planning Exception per batch: each such finding joins it.
-                answer["exception"] = {"findings": excepted, "at": answer["at"]}
+                # ... raised against the approved Spec the graph is published
+                # from: it is resolved once that Spec is amended (T40).
+                raised_on = metadata.get(KEY_SPEC_DIGEST)
+                answer["exception"] = {"findings": excepted, "at": answer["at"],
+                                       **({"spec_digest": raised_on} if isinstance(raised_on, str)
+                                          and DIGEST_RE.match(raised_on) else {})}
             # Nothing closes; the Outcome goes back to delivery, and the
             # rounds of the end start again from zero for this batch.
             values.update({KEY_DELIVERED: None, COUNTER_PREFIX + BOUND_END_ROUNDS: 0})
@@ -5563,12 +5651,15 @@ def cmd_set_owner_proposal(args: argparse.Namespace) -> int:
 
 def cmd_resolve_owner_exception(args: argparse.Namespace) -> int:
     """Record that the Planning Exception of the last batch of returned
-    findings is resolved, on the operator's words: the Spec was amended and
-    its graph revised, or he gave the wish up. Until then the Outcome is
-    not Delivered again."""
+    findings is resolved, on the operator's words, once the Spec is amended
+    and its graph revised (Spec §11): refused while the convoy is still
+    published from the approved Spec it was raised against (T40) -- the
+    patch door writes the digest of the newly approved Spec on the convoy.
+    Until then the Outcome is not Delivered again."""
     convoy, _ = load_convoy(args.convoy)
     require_marked(convoy)
-    judgement = judgement_of(metadata_of(convoy))
+    metadata = metadata_of(convoy)
+    judgement = judgement_of(metadata)
     last = judgement["answers"][-1] if judgement["answers"] else None
     if last is None or "exception" not in last:
         raise Refusal(f"aucune Planning Exception de lot n'est ouverte sur le convoi {args.convoy}")
@@ -5576,6 +5667,14 @@ def cmd_resolve_owner_exception(args: argparse.Namespace) -> int:
     words = owner_words(args.words, "résolution")
     if "resolved" in last["exception"]:
         return done(args.convoy, args.convoy, {})
+    raised_on = last["exception"].get("spec_digest")
+    if raised_on is not None and metadata.get(KEY_SPEC_DIGEST) == raised_on:
+        spec_id = metadata.get(KEY_SPEC)
+        raise Refusal(
+            f"la Spec {spec_id} n'a pas été amendée depuis que la Planning Exception du lot a été levée : le convoi "
+            f"{args.convoy} est toujours publié depuis sa version approuvée d'alors ({raised_on}) ; la Planning Exception "
+            "se résout une fois la Spec amendée approuvée (bin/spec-approve) et le graphe révisé publié depuis elle "
+            "(bin/ticket-graph-publish bd-patch)")
     last["exception"]["resolved"] = {"approver": approver, "words": words, "at": now()}
     values = {KEY_JUDGEMENT: encode(judgement_record(encode(judgement)))}
     write_metadata(args.convoy, values)
@@ -6020,7 +6119,41 @@ def spec_of(convoy: dict[str, Any]) -> dict[str, Any]:
                       f"{outline.get('error') if isinstance(outline, dict) else proc.stderr.strip()}")
     stories = [{"number": int(story["number"]), "text": " ".join(str(story["text"]).split())}
                for story in outline["user_stories"]]
-    return {"id": spec_id, "text": text, "stories": outcome_stories(stories)}
+    prototypes = outline.get("validated_prototypes") or [
+        reference for reference in [outline.get("validated_prototype")] if reference]
+    return {"id": spec_id, "text": text, "stories": outcome_stories(stories), "prototypes": prototypes}
+
+
+def prototype_anchors(spec: dict[str, Any], repo: str | None) -> set[str]:
+    """The named anchors of every prototyped state of the Validated
+    Prototypes the Spec names (T40), read at the commit of each reference in
+    the repository of the project: what a citation of an anchor is checked
+    against. Empty when the Spec names no Validated Prototype. One
+    definition of an anchor: the reader of bin/prototype-conformance."""
+    prototypes = spec.get("prototypes") or []
+    if not prototypes:
+        return set()
+    if not repo:
+        raise Refusal(
+            f"une ancre du Validated Prototype de la Spec {spec['id']} est citée et le dépôt du projet n'est pas donné "
+            "(--repo) : la citation ne peut pas être vérifiée")
+    reader = os.environ.get("PROTOTYPE_CONFORMANCE_BIN") or str(BIN / "prototype-conformance")
+    names: set[str] = set()
+    for reference in prototypes:
+        argv = [reader, "anchors", "--repo", str(repo), "--commit", str(reference.get("commit")),
+                "--path", str(reference.get("path")), "--branch", str(reference.get("branch")),
+                "--states", ",".join(str(state) for state in reference.get("states") or [])]
+        try:
+            proc = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+            answer = json.loads(proc.stdout)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise Refusal(f"lecture des ancres du Validated Prototype impossible ({Path(reader).name} anchors) : {exc}") from exc
+        if proc.returncode != 0 or not isinstance(answer, dict) or not isinstance(answer.get("anchors"), dict):
+            raise Refusal(
+                f"les ancres du Validated Prototype {reference.get('path')} de la Spec {spec['id']} sont illisibles : "
+                f"{answer.get('error') if isinstance(answer, dict) else proc.stderr.strip()}")
+        names.update(name for state in answer["anchors"].values() for name in state)
+    return names
 
 
 def outcome_target(args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
@@ -6567,6 +6700,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--item", action="append", default=[])
     p.add_argument("--accept-option")
     command("set-item-repair", cmd_set_item_repair).add_argument("--repair")
+    command("record-blocking-red", cmd_record_blocking_red).add_argument("--control")
+    command("clear-blocking-red", cmd_clear_blocking_red)
     p = command("set-integration", cmd_set_integration, ticket=False)
     p.add_argument("--branch")
     p.add_argument("--protected")
@@ -6677,6 +6812,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pack-digest")
     p.add_argument("--file")
     p.add_argument("--reason")
+    p.add_argument("--repo")
     p = command("record-promotion", cmd_record_promotion, ticket=False)
     p.add_argument("--judged")
     p.add_argument("--merged")

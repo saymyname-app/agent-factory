@@ -29,7 +29,8 @@ ensuite le produit que tu juges et l'arrête.
   demande « non conforme ») ; session déjà ouverte sur ce convoi ; dossier
   qui n'est pas « à jour » selon `./bin/evidence-pack check`, ou qui n'est
   plus celui de la demande (la prochaine passe en génère un nouveau) ;
-  aucun profil ou aucune recette de lancement ; état sans règle.
+  aucun profil ou aucune recette de lancement ; profil qui ne nomme aucun
+  jeu de données (rien n'est lancé) ; état sans règle.
 - **Une panne n'est pas un jugement** : si le produit ne démarre pas, `open`
   le dit (`outage: true`), n'ouvre aucune session et note la panne sur le
   convoi ; la **passe suivante** de `./bin/convoy-advance` publie un

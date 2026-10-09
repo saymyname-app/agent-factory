@@ -18,5 +18,7 @@ provider = "claude-readonly"
 
 # No Matt Pocock skill for this role, and none of Claude Code's bundled
 # review skills either (one of them is also named code-review).
+# The overlay's settings.local.json keeps the claude.ai account's plugins and
+# skills out as well: they carry another code-review (T47).
 [env]
 CLAUDE_CODE_DISABLE_BUNDLED_SKILLS = "1"

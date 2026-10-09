@@ -89,7 +89,8 @@ Planning Run starts.
    declared operator need lifted (`lift-need`), a launch recipe in the
    project profile or established by the first slice, and, when the Spec
    names a Validated Prototype, one Prototype Fold (`prototype_fold: true`)
-   that every other interface ticket waits for -- and refused
+   per Validated Prototype, which every other interface ticket of that
+   prototype waits for -- and refused
    without a graph review that holds for its current digest and leaves
    no refusal without Benjamin's decision (`docs/GRAPH_REVIEW.md`); the
    door poses
@@ -147,7 +148,9 @@ other map ticket.
   Validated Prototype -- and runs `bin/prototype-conformance check` on it
   before showing it to Benjamin, who confirms it once
   (`docs/VALIDATED_PROTOTYPE.md`); the Spec names it by branch, commit,
-  path and states.
+  path and states. The frozen directory holds the winning variant alone,
+  and `spec-approve` refuses a reference whose commit the protected branch
+  reaches (T46, af-lb9zkz).
 - Either way, the local worktree for the ticket is removed when the ticket
   closes, so finished planning leaves no worktree behind.
 - A prototype is never a delivery ticket (Benjamin, 2026-09-30): a design

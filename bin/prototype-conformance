@@ -7,14 +7,28 @@ project owner chose. `check --prototype <dir>` reads the directory's
 `validated-prototype.json` manifest and the static pages and datasets it
 names, and reports one record per property:
 
-  variant           one winning variant only, no variant command bar left
+  variant           one winning variant only: no variant command bar left,
+                    no page file the manifest does not reference
   states            every prototyped state opens at its own address
   encoding          the encoding is declared, and every page declares it
   viewports_themes  reference screen sizes and themes are declared
-  anchors           every visible element sits inside a named anchor
+  anchors           every visible element sits inside a named anchor; each
+                    region element (header, nav, main, aside, footer, form,
+                    table, dialog) carries its own; no anchor holds the page
   datasets          one synthetic dataset per state, fixed time included
 
-Exit 0 when the six hold, 1 otherwise. `--states a,b` names the states a
+`--branch B --commit C --remote R --protected P` (T46, af-lb9zkz) gives the
+reference and adds a seventh record, `reference`: B is a `prototype/`
+branch, and C is not reachable from the protected branch P of the remote R
+(a Validated Prototype lives on its prototype branch, never merged).
+
+`anchors --repo DIR --commit C --path P [--branch B] [--states a,b]` (T40,
+af-o6tu3z) reads the frozen version in the repository of the project, at
+the commit its reference names, and prints the named anchors of each state
+(`{"ok": true, "anchors": {state: [names]}}`): what a citation of an anchor
+is checked against. Exit 1 with `error` when it cannot be read.
+
+Exit 0 when every record holds, 1 otherwise. `--states a,b` names the states a
 Spec lists as prototyped: each must be a state of the prototype. Failure
 messages are in French: they reach the project owner through the refusal
 of `bin/spec-approve`. The agent
@@ -26,9 +40,13 @@ from __future__ import annotations
 
 import argparse
 import codecs
+import io
 import json
 import re
+import subprocess
 import sys
+import tarfile
+import tempfile
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -51,6 +69,11 @@ VOID_ELEMENTS = {
 # Subtrees that render nothing.
 UNRENDERED_ELEMENTS = {"head", "script", "style", "template", "noscript"}
 # Elements that are visible without holding any text of their own.
+REGION_ELEMENTS = {"header", "nav", "main", "aside", "footer", "form", "table", "dialog"}
+PAGE_SUFFIXES = {".html", ".htm", ".xhtml"}
+PROTOTYPE_BRANCH_PREFIX = "prototype/"
+# The record of the reference, added to the six properties when a reference is given.
+REFERENCE = "reference"
 REPLACED_ELEMENTS = {
     "audio", "button", "canvas", "embed", "hr", "iframe", "img", "input", "meter", "object", "progress",
     "select", "svg", "textarea", "video",
@@ -133,6 +156,17 @@ def check_variant(prototype: Path, manifest: dict[str, Any], _: list[str] | None
     for relative, page in pages(prototype, manifest):
         if COMMAND_BAR.search(page.read_bytes().decode("utf-8", errors="replace")):
             failures.append(f"{relative} porte encore la barre de commandes des variantes")
+    referenced = {page.resolve() for _, page in pages(prototype, manifest)}
+    states = declared_states(manifest)
+    # A state without an address is the failure of `states`; until each state
+    # names its page, no page can be told from a losing variant.
+    addressed = all(non_empty_string(state.get("address")) for state in states)
+    for path in sorted(prototype.rglob("*")) if addressed else []:
+        if path.suffix.lower() in PAGE_SUFFIXES and path.is_file() and path.resolve() not in referenced:
+            failures.append(
+                f"{path.relative_to(prototype).as_posix()} : fichier de page qu'aucun état du manifeste ne "
+                "référence (variante perdante) ; un Validated Prototype ne porte que la variante retenue"
+            )
     return failures
 
 
@@ -231,46 +265,71 @@ def check_viewports_themes(prototype: Path, manifest: dict[str, Any], _: list[st
 
 
 class AnchorCoverage(HTMLParser):
-    """Collects every visible element that sits outside all named anchors."""
+    """Collects every visible element that sits outside all named anchors,
+    every region element without an anchor of its own, and how many visible
+    elements each anchor holds."""
 
     def __init__(self, attribute: str) -> None:
         super().__init__(convert_charrefs=True)
         self.attribute = attribute
-        # One frame per open element: tag, inside an anchor, renders nothing,
-        # start line, already reported as outside.
+        # One frame per open element: tag, enclosing anchors (innermost last),
+        # renders nothing, start line, already counted as visible.
         self.stack: list[list[Any]] = []
         self.outside: list[tuple[str, int]] = []
         self.unnamed: list[tuple[str, int]] = []
-        self.anchors = 0
+        self.regions: list[tuple[str, int]] = []
+        # One record per named anchor: tag, line, name, visible elements it
+        # holds, and those among them with no nearer anchor.
+        self.anchors: list[dict[str, Any]] = []
+        self.visible = 0
 
     def frame(self, tag: str, attrs: list[tuple[str, str | None]]) -> list[Any]:
         attributes = dict(attrs)
-        anchored = bool(self.stack and self.stack[-1][1])
+        enclosing = list(self.stack[-1][1]) if self.stack else []
         unrendered = bool(self.stack and self.stack[-1][2])
         line = self.getpos()[0]
+        named = False
         if self.attribute in attributes:
             if non_empty_string(attributes[self.attribute]):
-                anchored = True
-                self.anchors += 1
+                named = True
+                enclosing.append(len(self.anchors))
+                self.anchors.append(
+                    {"tag": tag, "line": line, "name": attributes[self.attribute], "held": 0, "nearest": 0}
+                )
             else:
                 self.unnamed.append((tag, line))
         if tag in UNRENDERED_ELEMENTS or "hidden" in attributes:
             unrendered = True
         if tag == "input" and (attributes.get("type") or "").lower() == "hidden":
             unrendered = True
-        return [tag, anchored, unrendered, line, False]
+        if tag in REGION_ELEMENTS and not named and not unrendered:
+            self.regions.append((tag, line))
+        return [tag, enclosing, unrendered, line, False]
+
+    def see(self, frame: list[Any]) -> None:
+        """Count one visible element, once."""
+        if frame[2] or frame[4]:
+            return
+        frame[4] = True
+        self.visible += 1
+        if not frame[1]:
+            self.outside.append((frame[0], frame[3]))
+            return
+        for index in frame[1]:
+            self.anchors[index]["held"] += 1
+        self.anchors[frame[1][-1]]["nearest"] += 1
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         frame = self.frame(tag, attrs)
-        if tag in REPLACED_ELEMENTS and not frame[1] and not frame[2]:
-            self.outside.append((tag, frame[3]))
+        if tag in REPLACED_ELEMENTS:
+            self.see(frame)
         if tag not in VOID_ELEMENTS:
             self.stack.append(frame)
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         frame = self.frame(tag, attrs)
-        if tag in REPLACED_ELEMENTS and not frame[1] and not frame[2]:
-            self.outside.append((tag, frame[3]))
+        if tag in REPLACED_ELEMENTS:
+            self.see(frame)
 
     def handle_endtag(self, tag: str) -> None:
         for index in range(len(self.stack) - 1, -1, -1):
@@ -279,30 +338,50 @@ class AnchorCoverage(HTMLParser):
                 return
 
     def handle_data(self, data: str) -> None:
-        if not data.strip() or not self.stack:
-            return
-        frame = self.stack[-1]
-        if frame[1] or frame[2] or frame[4]:
-            return
-        frame[4] = True
-        self.outside.append((frame[0], frame[3]))
+        if data.strip() and self.stack:
+            self.see(self.stack[-1])
+
+    def page_wide(self) -> list[dict[str, Any]]:
+        """The anchors that hold every visible element of the page. A region's
+        own anchor may span the page when each element it holds has a nearer
+        anchor: it names the region, it is not the page's only cover."""
+        if self.visible < 2:
+            return []
+        return [
+            anchor for anchor in self.anchors
+            if anchor["held"] == self.visible and (anchor["tag"] not in REGION_ELEMENTS or anchor["nearest"])
+        ]
 
 
 def check_anchors(prototype: Path, manifest: dict[str, Any], _: list[str] | None) -> list[str]:
     attribute = manifest.get("anchor_attribute")
     if not non_empty_string(attribute):
         return ["anchor_attribute n'est pas déclaré"]
+    opened_by: dict[str, list[str]] = {}
+    for index, state in enumerate(declared_states(manifest)):
+        if non_empty_string(state.get("address")):
+            opened_by.setdefault(address_page(prototype, state["address"])[0], []).append(state_label(state, index))
     failures = []
     for relative, page in pages(prototype, manifest):
         coverage = AnchorCoverage(attribute.lower())
         coverage.feed(page.read_bytes().decode("utf-8", errors="replace"))
         coverage.close()
+        where = f"état {', '.join(opened_by[relative])} ({relative})"
         for tag, line in coverage.outside:
             failures.append(f"{relative} : <{tag}> ligne {line} est visible hors de toute ancre")
         for tag, line in coverage.unnamed:
             failures.append(f"{relative} : <{tag}> ligne {line} porte {attribute} sans nom")
         if not coverage.anchors:
             failures.append(f"{relative} : aucune ancre nommée")
+        for tag, line in coverage.regions:
+            failures.append(
+                f"{where} : l'élément de région <{tag}> ligne {line} n'a pas sa propre ancre ({attribute})"
+            )
+        for anchor in coverage.page_wide():
+            failures.append(
+                f"{where} : l'ancre {anchor['name']} (<{anchor['tag']}> ligne {anchor['line']}) contient tous les "
+                "éléments visibles de la page ; chaque région et chaque sorte de composant porte sa propre ancre"
+            )
     return failures
 
 
@@ -352,11 +431,112 @@ CHECKS = {
 }
 
 
+# --- the reference: a prototype branch that was never merged ----------------------
+
+
+def git(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", "-C", str(repository), *args], capture_output=True, text=True)
+
+
+def check_reference(branch: str, commit: str, remote: str, protected: str) -> list[str]:
+    """Spec section 3: a Validated Prototype lives on its prototype branch,
+    never merged."""
+    failures = []
+    if not branch.startswith(PROTOTYPE_BRANCH_PREFIX) or branch == PROTOTYPE_BRANCH_PREFIX:
+        failures.append(
+            f"la branche {branch} ne commence pas par {PROTOTYPE_BRANCH_PREFIX} : ce n'est pas une branche de "
+            "prototype"
+        )
+    with tempfile.TemporaryDirectory(prefix="prototype-conformance-") as tmp:
+        repository = Path(remote)
+        if not repository.is_dir() or git(repository, "rev-parse", "--git-dir").returncode != 0:
+            repository = Path(tmp) / "remote.git"
+            cloned = subprocess.run(
+                ["git", "clone", "--quiet", "--bare", remote, str(repository)], capture_output=True, text=True
+            )
+            if cloned.returncode != 0:
+                return [*failures, f"le dépôt distant {remote} est illisible : {cloned.stderr.strip()}"]
+        if git(repository, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
+            return [*failures, f"le commit {commit} est introuvable sur le dépôt distant {remote}"]
+        tip = f"refs/heads/{protected}"
+        # A protected branch the remote does not hold has merged nothing.
+        if git(repository, "rev-parse", "--verify", "--quiet", tip).returncode == 0:
+            if git(repository, "merge-base", "--is-ancestor", commit, tip).returncode == 0:
+                failures.append(
+                    f"le commit {commit} est atteignable depuis la branche protégée {protected} du dépôt distant : "
+                    f"la branche de prototype {branch} a été fusionnée, un Validated Prototype vit sur sa branche "
+                    "jamais fusionnée"
+                )
+    return failures
+
+
+# --- the anchors of the frozen version, read at its reference (T40) -----------------
+
+
+def anchors_by_state(prototype: Path, manifest: dict[str, Any], named: list[str] | None) -> dict[str, list[str]]:
+    """The named anchors of the page of each state, in document order, each
+    once. `named` keeps the states a Spec lists as prototyped."""
+    attribute = manifest.get("anchor_attribute")
+    if not non_empty_string(attribute):
+        raise ConformanceError("anchor_attribute n'est pas déclaré")
+    found: dict[str, list[str]] = {}
+    for index, state in enumerate(declared_states(manifest)):
+        label = state_label(state, index)
+        if named is not None and label not in named:
+            continue
+        page = address_page(prototype, state["address"])[1] if non_empty_string(state.get("address")) else None
+        if page is None:
+            raise ConformanceError(f"l'état {label} n'ouvre aucune page du prototype")
+        coverage = AnchorCoverage(attribute.lower())
+        coverage.feed(page.read_bytes().decode("utf-8", errors="replace"))
+        coverage.close()
+        found[label] = list(dict.fromkeys(anchor["name"].strip() for anchor in coverage.anchors))
+    missing = [name for name in named or [] if name not in found]
+    if missing:
+        raise ConformanceError(f"état(s) absent(s) du prototype : {', '.join(missing)}")
+    return found
+
+
+def cmd_anchors(args: argparse.Namespace) -> int:
+    repository, commit, path = Path(args.repo), args.commit, args.path.strip("/")
+    named = [name.strip() for name in args.states.split(",") if name.strip()] if args.states else None
+    try:
+        if git(repository, "rev-parse", "--git-dir").returncode != 0:
+            raise ConformanceError(f"{repository} n'est pas un dépôt Git")
+        if git(repository, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0 and args.branch:
+            git(repository, "fetch", "--quiet", "origin", args.branch)
+        archive = subprocess.run(
+            ["git", "-C", str(repository), "archive", "--format=tar", commit, "--", path],
+            capture_output=True, stdin=subprocess.DEVNULL,
+        )
+        if archive.returncode != 0:
+            raise ConformanceError(
+                f"le Validated Prototype {path} est introuvable au commit {commit} dans le dépôt {repository}"
+            )
+        with tempfile.TemporaryDirectory(prefix="prototype-conformance-") as tmp:
+            with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+                tar.extractall(tmp, filter="data")
+            prototype = Path(tmp) / path
+            found = anchors_by_state(prototype, load_manifest(prototype), named)
+    except (ConformanceError, OSError, tarfile.TarError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
+        return 1
+    print(json.dumps({"ok": True, "commit": commit, "path": path, "anchors": found}, indent=2, ensure_ascii=False))
+    return 0
+
+
 # --- CLI ---------------------------------------------------------------------------
 
 
 def cmd_check(args: argparse.Namespace) -> int:
     prototype = Path(args.prototype)
+    reference = [args.branch, args.commit, args.remote, args.protected]
+    if any(reference) and not all(reference):
+        print(json.dumps(
+            {"ok": False, "error": "la référence se donne entière : --branch, --commit, --remote et --protected"},
+            indent=2, ensure_ascii=False,
+        ))
+        return 1
     named = [name.strip() for name in args.states.split(",") if name.strip()] if args.states else None
     try:
         manifest = load_manifest(prototype)
@@ -367,6 +547,9 @@ def cmd_check(args: argparse.Namespace) -> int:
     for name in PROPERTIES:
         failures = CHECKS[name](prototype, manifest, named)
         records.append({"property": name, "ok": not failures, "failures": failures})
+    if all(reference):
+        failures = check_reference(*reference)
+        records.append({"property": REFERENCE, "ok": not failures, "failures": failures})
     ok = all(record["ok"] for record in records)
     print(
         json.dumps(
@@ -385,7 +568,20 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument(
         "--states", default=None, help="comma-separated state ids a Spec names as prototyped; each must be declared"
     )
+    check.add_argument("--branch", default=None, help="branch of the reference; must be a prototype/ branch")
+    check.add_argument("--commit", default=None, help="commit of the reference")
+    check.add_argument("--remote", default=None, help="remote repository (URL or path) holding the reference")
+    check.add_argument(
+        "--protected", default=None, help="protected branch of the remote; the commit must not be reachable from it"
+    )
     check.set_defaults(func=cmd_check)
+    anchors = subparsers.add_parser("anchors", help="the named anchors of each state, read at the reference")
+    anchors.add_argument("--repo", required=True, help="repository of the project holding the prototype commit")
+    anchors.add_argument("--commit", required=True, help="commit of the reference")
+    anchors.add_argument("--path", required=True, help=f"path of the directory holding {MANIFEST_NAME} at that commit")
+    anchors.add_argument("--branch", default=None, help="branch of the reference, fetched from origin if the commit is absent")
+    anchors.add_argument("--states", default=None, help="comma-separated state ids a Spec names as prototyped")
+    anchors.set_defaults(func=cmd_anchors)
     return parser
 
 

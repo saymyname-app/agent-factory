@@ -167,6 +167,141 @@ class PrototypeConformanceTest(unittest.TestCase):
         proc, report = self.check()
         self.assert_only_property_fails(proc, report, "viewports_themes")
 
+    # --- T46 (af-lb9zkz): winning variant alone, anchors per region, branch ----
+
+    def test_fails_when_the_directory_holds_a_page_the_manifest_does_not_reference(self):
+        losing = self.prototype / "states" / "content-variant-b.html"
+        shutil.copy(self.prototype / "states" / "content.html", losing)
+        proc, report = self.check()
+        failures = self.assert_only_property_fails(proc, report, "variant")
+        self.assertEqual(1, len(failures))
+        self.assertIn("states/content-variant-b.html", failures[0])
+        self.assertIn("variante perdante", failures[0])
+
+    def test_fails_when_one_anchor_holds_every_visible_element_of_a_state(self):
+        self.edit_page("content.html", "<body>", '<body><div data-anchor="page">')
+        self.edit_page("content.html", "</body>", "</div></body>")
+        proc, report = self.check()
+        failures = self.assert_only_property_fails(proc, report, "anchors")
+        self.assertEqual(1, len(failures))
+        for fragment in ("content", "states/content.html", "<div>", "page", "tous les éléments visibles"):
+            self.assertIn(fragment, failures[0])
+
+    def test_fails_when_a_single_anchor_is_the_only_one_of_a_state(self):
+        self.edit_page("empty.html", "<body>", '<body data-anchor="page">')
+        for name in ("fixture-state", "fixture-generated-at", "fixture-items"):
+            self.edit_page("empty.html", f' data-anchor="{name}"', "")
+        proc, report = self.check()
+        failures = self.assert_only_property_fails(proc, report, "anchors")
+        self.assertIn("empty", failures[0])
+        self.assertIn("<body>", failures[0])
+
+    def test_fails_when_a_region_element_has_no_anchor_of_its_own(self):
+        for region in ("header", "nav", "main", "aside", "footer", "form", "table", "dialog"):
+            with self.subTest(region=region):
+                shutil.rmtree(self.prototype)
+                shutil.copytree(FIXTURE_PROTOTYPE, self.prototype)
+                inner = "<tr><td>x</td></tr>" if region == "table" else "<span>x</span>"
+                self.edit_page(
+                    "content.html", "</body>",
+                    f'<div data-anchor="extra"><{region}>{inner}</{region}></div></body>',
+                )
+                proc, report = self.check()
+                failures = self.assert_only_property_fails(proc, report, "anchors")
+                self.assertEqual(1, len(failures))
+                for fragment in ("content", "states/content.html", f"<{region}>", "sa propre ancre"):
+                    self.assertIn(fragment, failures[0])
+
+    def test_passes_when_each_region_has_its_own_anchor_even_if_main_holds_the_page(self):
+        self.edit_page("content.html", "<body>", '<body><main data-anchor="fixture-main">')
+        self.edit_page(
+            "content.html", "</body>",
+            '<form data-anchor="fixture-form"><input name="q"></form></main></body>',
+        )
+        proc, report = self.check()
+        self.assertEqual(0, proc.returncode, proc.stdout)
+        self.assertTrue(report["ok"])
+
+    def test_fails_when_a_region_anchor_holds_the_page_and_leaves_elements_without_a_nearer_anchor(self):
+        self.edit_page("content.html", "<body>", '<body><main data-anchor="fixture-main">')
+        self.edit_page("content.html", "</body>", "<p>hors ancre plus proche</p></main></body>")
+        proc, report = self.check()
+        failures = self.assert_only_property_fails(proc, report, "anchors")
+        self.assertIn("<main>", failures[0])
+
+    # --- T46: the reference lives on a prototype branch that was never merged ---
+
+    def git(self, *args, cwd):
+        env = {
+            "PATH": "/usr/bin:/bin", "HOME": str(self.tmp), "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
+        }
+        proc = subprocess.run(("git", *args), cwd=cwd, env=env, text=True, capture_output=True)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return proc.stdout.strip()
+
+    def remote_with(self, branch, merged):
+        """A remote whose protected branch is main and whose `branch` holds the
+        prototype; `merged` merges that branch into main."""
+        work = self.tmp / "work"
+        work.mkdir()
+        self.git("init", "-q", "-b", "main", ".", cwd=work)
+        (work / "README").write_text("produit\n")
+        self.git("add", "-A", cwd=work)
+        self.git("commit", "-q", "-m", "produit", cwd=work)
+        self.git("checkout", "-q", "-b", branch, cwd=work)
+        shutil.copytree(FIXTURE_PROTOTYPE, work / "prototype")
+        self.git("add", "-A", cwd=work)
+        self.git("commit", "-q", "-m", "prototype", cwd=work)
+        commit = self.git("rev-parse", "HEAD", cwd=work)
+        if merged:
+            self.git("checkout", "-q", "main", cwd=work)
+            self.git("merge", "-q", "--no-ff", "-m", "fusion", branch, cwd=work)
+        remote = self.tmp / "remote.git"
+        self.git("clone", "-q", "--bare", str(work), str(remote), cwd=self.tmp)
+        return remote, commit
+
+    def check_reference(self, branch, merged):
+        remote, commit = self.remote_with(branch, merged)
+        return self.check("--branch", branch, "--commit", commit, "--remote", str(remote), "--protected", "main")
+
+    def test_passes_on_a_prototype_branch_never_merged_with_a_seventh_record_for_the_reference(self):
+        proc, report = self.check_reference("prototype/fixture", merged=False)
+        self.assertEqual(0, proc.returncode, proc.stdout)
+        self.assertEqual([*PROPERTIES, "reference"], [record["property"] for record in report["properties"]])
+
+    def test_fails_when_the_branch_is_not_a_prototype_branch(self):
+        proc, report = self.check_reference("feature/fixture", merged=False)
+        failures = self.assert_only_property_fails(proc, report, "reference")
+        self.assertEqual(1, len(failures))
+        self.assertIn("feature/fixture", failures[0])
+        self.assertIn("prototype/", failures[0])
+
+    def test_fails_when_the_commit_is_reachable_from_the_protected_branch_of_the_remote(self):
+        proc, report = self.check_reference("prototype/fixture", merged=True)
+        failures = self.assert_only_property_fails(proc, report, "reference")
+        self.assertEqual(1, len(failures))
+        for fragment in ("atteignable", "branche protégée main", "fusionnée"):
+            self.assertIn(fragment, failures[0])
+
+    def test_fails_when_the_commit_of_the_reference_is_not_in_the_remote(self):
+        remote, _ = self.remote_with("prototype/fixture", merged=False)
+        proc, report = self.check(
+            "--branch", "prototype/fixture", "--commit", "0" * 40, "--remote", str(remote), "--protected", "main",
+        )
+        failures = self.assert_only_property_fails(proc, report, "reference")
+        self.assertIn("introuvable", failures[0])
+
+    def test_refuses_a_reference_given_in_part(self):
+        proc = subprocess.run(
+            (str(TOOL), "check", "--prototype", str(self.prototype), "--branch", "prototype/fixture"),
+            text=True, capture_output=True,
+        )
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("--commit", json.loads(proc.stdout)["error"])
+
+
     def test_fails_without_a_manifest(self):
         (self.prototype / "validated-prototype.json").unlink()
         proc, report = self.check()

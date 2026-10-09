@@ -77,7 +77,7 @@ session receives.
 | `ticket_text` | the approved ticket: title, description, criteria, demonstration line, covered user stories, Declared Scope |
 | `standards` | the standards files found at the reviewed commit (`AGENTS.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, `docs/agents/*`, …): a hint, the skill looks for them itself |
 | `records` | the records written by scripts: the proven TDD steps, the evidence fingerprints, the merge record, and the *records* of the Ticket Handoff |
-| `tests` | the test perimeter, the frozen harness, the frozen criterion tests with their fingerprints, the listed seams (the profile's entry points) |
+| `tests` | the test perimeter, the frozen harness, the frozen criterion tests with their fingerprints, the listed seams (the profile's entry points, and under `declared` the seams it names with the mode of each) |
 | `questions` | the closed questions on the tests (below) |
 | `models`, `independence` | the model of the author and of the reviewer, and the mention when they are identical or not known |
 

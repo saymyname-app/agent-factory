@@ -247,6 +247,12 @@ class TicketExitTest(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return json.loads(proc.stdout)
 
+    def raise_exception(self, *args, **changes):
+        """The exit « Planning Exception », with the Handoff it comes after:
+        the complete one, with some sections changed."""
+        return self.exited("--exit", "planning_exception", "--repo", self.repo, "--handoff", self.handoff(**changes),
+                           *args)
+
     def finish(self, handoff=None):
         return self.exit("--exit", "finished", "--repo", self.repo, *(("--handoff", handoff) if handoff else ()))
 
@@ -536,8 +542,9 @@ class TicketExitTest(unittest.TestCase):
 
     def test_planning_exception_parks_the_ticket_and_its_descendants(self):
         # Demonstration line of the ticket, last part.
-        answer = self.exited("--exit", "planning_exception", "--kind", "semantic",
-                             "--summary", "La Spec fixe l'ordre alphabétique, la démonstration demande l'ordre de saisie")
+        answer = self.raise_exception(
+            "--kind", "semantic",
+            "--summary", "La Spec fixe l'ordre alphabétique, la démonstration demande l'ordre de saisie")
 
         self.assertEqual(sorted([T2, T3]), answer["parked"])
         self.assert_parked_with_descendants("planning_exception")
@@ -547,12 +554,88 @@ class TicketExitTest(unittest.TestCase):
         self.assertIn(T2, requests[0])
         self.assertIn("Planning Exception (semantic)", requests[0])
 
+    # --- T41 (af-rqgtpi): the Ticket Handoff first, then the Planning Exception --
+
+    EXCEPTION = ("--exit", "planning_exception", "--kind", "semantic", "--summary", "La liste est livrée sans sa région")
+    DEVIATION = "La région de l'ancre fixture-items n'est pas livrée : la liste est rendue à plat."
+
+    def writes_of(self, key):
+        """The positions, in the order the tracker received them, of the
+        writes that set this field of the ticket."""
+        lines = [json.loads(line) for line in self.write_log.read_text().splitlines() if line]
+        return [i for i, entry in enumerate(lines) if any(str(part).startswith(key + "=") for part in entry)]
+
+    def test_planning_exception_is_refused_without_a_handoff(self):
+        self.assert_refused_and_nothing_written(
+            lambda: self.exit(*self.EXCEPTION), "Ticket Handoff", "Fait", "Écarts", "Non fait", "Constats hors ticket")
+        self.assert_refused_and_nothing_written(
+            lambda: self.exit(*self.EXCEPTION, "--repo", self.repo), "Ticket Handoff", "Écarts")
+        self.assertEqual([], self.shown()["planning_exceptions"])
+        self.assertEqual([], self.escalation_list())
+
+    def test_planning_exception_is_refused_when_a_section_of_the_handoff_is_missing(self):
+        for name, label in (("done", "Fait"), ("deviations", "Écarts"), ("not_done", "Non fait"),
+                            ("out_of_ticket", "Constats hors ticket")):
+            with self.subTest(section=name):
+                self.assert_refused_and_nothing_written(
+                    lambda: self.exit(*self.EXCEPTION, "--repo", self.repo, "--handoff", self.handoff(**{name: None})),
+                    label)
+        self.assert_refused_and_nothing_written(
+            lambda: self.exit(*self.EXCEPTION, "--repo", self.repo, "--handoff", self.handoff(deviations=[])), "Écarts")
+        self.assert_refused_and_nothing_written(
+            lambda: self.exit(*self.EXCEPTION, "--handoff", self.handoff()), "--repo")
+        self.assertEqual([], self.shown()["planning_exceptions"])
+        self.assertEqual([], self.escalation_list())
+
+    def test_planning_exception_records_the_handoff_first_then_parks(self):
+        # Demonstration line of T41: « aucun » stands for an empty section.
+        head = self.code()
+
+        answer = self.raise_exception("--kind", "semantic", "--summary", "Question sur l'ordre",
+                                      done="aucun", out_of_ticket="aucun")
+
+        ticket = self.shown()
+        self.assertEqual({name: "aucun" for name in COMPLETE}, ticket["handoff"]["sections"])
+        self.assertEqual(head, ticket["handoff"]["records"]["head"])
+        self.assertEqual(["Question sur l'ordre"], [e["summary"] for e in ticket["planning_exceptions"]])
+        handoff, raised = self.writes_of("gc.flow.handoff"), self.writes_of("gc.flow.planning_exceptions")
+        self.assertEqual((1, 1), (len(handoff), len(raised)))
+        self.assertLess(handoff[0], raised[0])
+        self.assertLessEqual(ticket["handoff"]["at"], ticket["planning_exceptions"][0]["at"])
+        self.assertEqual(sorted([T2, T3]), answer["parked"])
+        self.assert_parked_with_descendants("planning_exception")
+        self.assertEqual("planning_exception", ticket["exit"]["exit"])
+        self.assertEqual(1, len(self.escalation_list()))
+
+    def test_planning_exception_is_refused_when_the_deviations_do_not_name_its_anchor(self):
+        for deviations in ("aucun", ["La liste est rendue à plat."], ["L'ancre fixture-items-bis n'est pas livrée."]):
+            with self.subTest(deviations=deviations):
+                self.assert_refused_and_nothing_written(
+                    lambda: self.exit(*self.EXCEPTION, "--anchor", "fixture-items", "--repo", self.repo,
+                                      "--handoff", self.handoff(deviations=deviations)),
+                    "fixture-items", "Écarts")
+        # Each anchor named is looked for: one of two is not enough.
+        self.assert_refused_and_nothing_written(
+            lambda: self.exit(*self.EXCEPTION, "--anchor", "fixture-items", "--anchor", "fixture-title",
+                              "--repo", self.repo, "--handoff", self.handoff(deviations=[self.DEVIATION])),
+            "fixture-title", "Écarts")
+        self.assertEqual([], self.shown()["planning_exceptions"])
+        self.assertEqual([], self.escalation_list())
+
+    def test_planning_exception_names_under_deviations_the_anchor_it_raises(self):
+        self.raise_exception("--kind", "semantic", "--summary", "La liste est livrée sans sa région",
+                             "--anchor", "fixture-items", deviations=[self.DEVIATION])
+
+        ticket = self.shown()
+        self.assertEqual([self.DEVIATION], ticket["handoff"]["sections"]["deviations"])
+        self.assertEqual([["fixture-items"]], [e["anchors"] for e in ticket["planning_exceptions"]])
+
     def test_planning_exception_naming_an_anchor_offers_its_acceptance_to_the_operator(self):
         """T16: a deviation from the Validated Prototype is never decided by
         the author; the request names the anchor and one of its options
         accepts the deviation. Only the operator's answer accepts it."""
-        self.exited("--exit", "planning_exception", "--kind", "semantic",
-                    "--summary", "La liste est livrée sans sa région", "--anchor", "fixture-items")
+        self.raise_exception("--kind", "semantic", "--summary", "La liste est livrée sans sa région",
+                             "--anchor", "fixture-items", deviations=[self.DEVIATION])
 
         raised = self.shown()["planning_exceptions"]
         self.assertEqual([("semantic", ["fixture-items"], "open", False)],
@@ -569,7 +652,7 @@ class TicketExitTest(unittest.TestCase):
         self.assertEqual(["fixture-items"], self.shown()["accepted_anchors"])
 
     def test_planning_exception_without_anchor_offers_no_acceptance(self):
-        self.exited("--exit", "planning_exception", "--kind", "semantic", "--summary", "Question sur l'ordre")
+        self.raise_exception("--kind", "semantic", "--summary", "Question sur l'ordre")
 
         raised = self.shown()["planning_exceptions"]
         self.assertEqual([([], None)], [(e["anchors"], e["accept_option"]) for e in raised])
@@ -579,14 +662,14 @@ class TicketExitTest(unittest.TestCase):
 
     def test_planning_exception_is_refused_with_a_malformed_anchor(self):
         self.assert_refused_and_nothing_written(
-            lambda: self.exit("--exit", "planning_exception", "--kind", "semantic", "--summary", "x",
+            lambda: self.exit(*self.EXCEPTION, "--repo", self.repo, "--handoff", self.handoff(),
                               "--anchor", "une ancre"), "ancre")
         self.assert_refused_and_nothing_written(
             lambda: self.exit("--exit", "operator_request", "--request", self.file("r.json", {}), "--anchor", "liste"),
             "--anchor")
 
     def test_tickets_unrelated_to_a_parked_ticket_keep_starting(self):
-        self.exited("--exit", "planning_exception", "--kind", "topology", "--summary", "Le ticket recouvre T4")
+        self.raise_exception("--kind", "topology", "--summary", "Le ticket recouvre T4")
         # The parked ticket is given back to the pool, as a resumed one would be.
         self.edit(T2, status="open")
 
@@ -600,10 +683,12 @@ class TicketExitTest(unittest.TestCase):
 
     def test_planning_exception_is_refused_for_a_technical_repair_or_without_summary(self):
         self.assert_refused_and_nothing_written(
-            lambda: self.exit("--exit", "planning_exception", "--kind", "repair", "--summary", "le harnais est cassé"),
+            lambda: self.exit("--exit", "planning_exception", "--kind", "repair", "--summary", "le harnais est cassé",
+                              "--repo", self.repo, "--handoff", self.handoff()),
             "bloqué technique")
         self.assert_refused_and_nothing_written(
-            lambda: self.exit("--exit", "planning_exception", "--kind", "semantic"), "--summary")
+            lambda: self.exit("--exit", "planning_exception", "--kind", "semantic",
+                              "--repo", self.repo, "--handoff", self.handoff()), "--summary")
         self.assertEqual([], self.escalation_list())
 
     def test_operator_request_parks_and_appears_on_the_escalation_door_list(self):
@@ -699,7 +784,7 @@ class TicketExitTest(unittest.TestCase):
         self.edit(T2, status="open")
         self.assertIsNone(self.read()["exit"])
         self.edit(T2, status="in_progress", assignee="delivery-author-fx-s1")
-        self.exited("--exit", "planning_exception", "--kind", "semantic", "--summary", "Question sur l'ordre")
+        self.raise_exception("--kind", "semantic", "--summary", "Question sur l'ordre")
         read = self.read()["exit"]
         self.assertEqual(("planning_exception", True), (read["exit"], read["declared"]))
 
@@ -839,6 +924,28 @@ class TechnicallyBlockedTest(publication.Harness):
             self.assertEqual(before[self.ids[key]]["metadata"]["gc.blocked_by"],
                              beads[self.ids[key]]["metadata"]["gc.blocked_by"], key)
         self.assertIsNone(self.shown_ticket(self.convoy, self.ids["T2"])["park"])
+
+    def test_the_red_control_a_technical_block_names_is_recorded_on_the_convoy(self):
+        # T40: the patch door publishes a repair of a red control only if the
+        # convoy carries a record of it; the exit records the one it names.
+        self.assertEqual([], self.convoy_state(self.convoy)["convoy"]["red_checks"])
+
+        self.assertEqual(0, self.exit(self.REPAIR).returncode)
+
+        self.assertEqual(
+            [{"name": self.REPAIR["restores"]["ref"], "source": "technically_blocked", "ticket": self.ids["T2"]}],
+            self.convoy_state(self.convoy)["convoy"]["red_checks"])
+
+    def test_a_refused_technical_block_leaves_no_red_control_on_the_convoy(self):
+        repair = {**self.REPAIR, "acceptance_criteria": ["La réponse liste trois éléments."]}
+        before = self.beads()
+
+        proc = self.exit(repair)
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        beads = self.beads()
+        self.assertEqual(before, {bead_id: beads[bead_id] for bead_id in before})
+        self.assertEqual([], self.convoy_state(self.convoy)["convoy"]["red_checks"])
 
     def test_a_second_technical_block_adds_a_second_repair(self):
         self.assertEqual(0, self.exit(self.REPAIR).returncode)

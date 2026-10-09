@@ -97,10 +97,12 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-acceptance-repair    af-convoy --ticket af-r4                   # bin/convoy-advance, once the patch door published the repair of that outage
 ./bin/convoy-state record-proposition-verdict af-convoy --proposition af-t3:out_of_ticket.1 --verdict avant|plus_tard|sans_suite --approver benjamin --words "<his words>"   # bin/owner-answer verdict
 ./bin/convoy-state set-verdict-proposal     af-convoy --proposition af-t3:out_of_ticket.1 --bead af-p1   # bin/owner-answer, once the proposition door created it
-./bin/convoy-state record-owner-answer      af-convoy --response accepted|findings|abandoned --approver benjamin [--words "<his words>" --commit <commit of the dossier> --pack-digest sha256:<hex>] [--file findings.json] [--reason "<line>"]   # bin/owner-answer record
+./bin/convoy-state record-owner-answer      af-convoy --response accepted|findings|abandoned --approver benjamin [--words "<his words>" --commit <commit of the dossier> --pack-digest sha256:<hex>] [--file findings.json] [--reason "<line>"] [--repo <project repository>]   # bin/owner-answer record
 ./bin/convoy-state set-owner-repair         af-convoy --finding 1 --ticket af-r5       # bin/convoy-advance, once the patch door published the repair of that Owner Finding
 ./bin/convoy-state set-owner-proposal       af-convoy --finding 2 --bead af-p2         # bin/owner-answer, for a finding « plus tard »
 ./bin/convoy-state resolve-owner-exception  af-convoy --approver benjamin --words "<his words>"   # bin/owner-answer resolve-exception
+./bin/convoy-state record-blocking-red af-convoy af-ticket --control "<the red control, one line>"   # bin/ticket-exit, « bloqué technique » (T40)
+./bin/convoy-state clear-blocking-red  af-convoy af-ticket                                          # its repair was refused by the patch door
 ./bin/convoy-state record-promotion af-convoy --judged <accepted commit> --merged <merge commit> --protected <protected tip before> --tip <integration tip merged>   # bin/outcome-promote, once the protected branch took the merge
 ./bin/convoy-state void-acceptance  af-convoy --cause regression|fidelity|start|conflict   # bin/outcome-promote: the take-up after « accepté » is red or in conflict
 ./bin/convoy-state close-convoy     af-convoy            # bin/outcome-promote: the closed status and the record of the closing, in one write
@@ -158,6 +160,7 @@ Every answer is one JSON object on stdout.
 | Acceptance criteria | the bead's description (read only) | ticket | the checkbox lines under `## Acceptance criteria`, in order |
 | Factory incident | `gc.flow.incident` | convoy | the bead that carries the open incident of a stopped convoy and, once it reached the escalation door, the `sha256:` signature of the anomalies it names |
 | Red of the integration branch | `gc.flow.integration_red` | convoy | T21: the control that is red, quoted on one line (`control`), the commit it was red on (`commit`), the tips of the integration and of the protected branches then (`integration`, `protected`), the end of what the control printed (`detail`, optional) and, once code published it, the one `repair` ticket that restores it (`repair`); T23: `check` (`regression`, `fidelity`; absent means the regression command), what is red |
+| Red control of a technical block | `gc.flow.blocking_red` | ticket | T40: the red control the author of the ticket named when it left « bloqué technique » (`control`, one line; `at`), written by `bin/ticket-exit` (`record-blocking-red`) before the `repair` that cites it goes through the patch door, and withdrawn (`clear-blocking-red`) if the door refuses it. Rendered as `blocking_red` on the ticket and among `convoy.red_checks` |
 | Record of the end-of-Spec gate | `gc.flow.spec_end` | convoy | T23: `commit` (the one commit of the integration branch the three verdicts are tied to), `protected` (the tip of the protected branch that commit holds), `version` (`spec-end/v4`; a record under `spec-end/v1`, `spec-end/v2` or `spec-end/v3` is still read, and held outdated by the gate), `conditions` (`registry`, `tests`, `fidelity`, in that order, all `pass`, each with its `detail`), `records` (optional: what `tests` and `fidelity` read), `at` |
 | Outcome Evaluation | `gc.flow.outcome_evaluation` | convoy | T24: `rounds` (each: `commit`, `stories` — one per numbered user story of the Spec, with `state` `observed` / `not_observed` / `unobservable` and its `evidence` piece —, `exploration`, `fidelity_deviations`, `repairs` — the `draft` of each story not observed and, once published, its `repair` —, `contradictions`, the computed `outcome` and `verdict`, `roles`, `environment`, `recorded_by`, `at`), the open `request` (`commit`, `stories`, `roles`, `environment`, `launches`, `at`), `live` (launch records of products still to stop) and `stop` (`commit`, `reason` among `outcome_evaluation_no_result`, `outcome_evaluation_outage`, `story_unobservable`, `detail`, `raised`) |
 | Classification of the findings « hors ticket » | `gc.flow.findings` | ticket | T24: `entries`, one per classified finding of the Ticket Handoff: `item` (`out_of_ticket.N`), `handoff_at`, `classification` (`repaired`, `proposal`, `dismissed`), `commit`, `recorded_by`, `at`; `reason` (required for `dismissed`); `draft` (the drafted `repair`, required for `repaired`, with what it `restores`) and, once code published it, `repair` |
@@ -192,11 +195,12 @@ given once, and a list that differs from the one already written.
 establishes the project's launch recipe: refused on anything but a
 `vertical_slice`, on more than one ticket of the convoy, and on a ticket
 that already carries the mark without it. `--prototype-fold <ticket>`
-(T36) names the slice that is the Prototype Fold of the Spec's Validated
-Prototype: refused on anything but a `vertical_slice` of the convoy and on
-a ticket that already carries the mark without it. That a graph has one
-Fold, and that the interface tickets wait for it, is the publication
-door's check (`docs/ENTRY_CONTRACT.md`).
+(T36; repeatable) names a slice that is the Prototype Fold of a Validated
+Prototype of the Spec: refused on anything but a `vertical_slice` of the
+convoy and on a ticket that already carries the mark without it. That a
+graph has one Fold per Validated Prototype (T46), and that the interface
+tickets of each wait for it, is the publication door's check
+(`docs/ENTRY_CONTRACT.md`).
 
 `add-evidence` is called by `bin/evidence-capture` (T09), which files the
 piece in the evidence store and computes its fingerprint
@@ -663,7 +667,30 @@ nothing; another is refused.
 
 `resolve-owner-exception` records, with `--approver` and `--words`, that
 the Planning Exception of the last batch is resolved. It refuses an answer
-that carries none. The same call again writes nothing.
+that carries none. The same call again writes nothing. T40 (af-o6tu3z): the
+exception keeps, as `spec_digest`, the `gc.spec_digest` of the convoy when
+it was raised — the approved Spec its graph is published from —, and the
+call is refused while the convoy still carries that digest: the Spec has
+not been amended (the patch door writes the digest of the amended Spec once
+it is approved and the revised graph published). An exception without
+`spec_digest` is resolved on the words alone.
+
+`record-owner-answer --repo DIR` (T40) names the repository of the project:
+an Owner Finding that cites an `anchor` is a `repair` only if a prototyped
+state of a Validated Prototype of the Spec holds an anchor of that name
+(`bin/prototype-conformance anchors`, at the commit the Spec names);
+otherwise it joins the Planning Exception of the batch. A prototype that
+cannot be read, or no `--repo` while an anchor is cited, refuses the answer.
+
+`show` renders `convoy.red_checks` (T40): the red controls the convoy
+carries a record of, each as `{name, source}` — `integration` (the
+`control` of `gc.flow.integration_red`, with its `check`),
+`acceptance_session` (the outage of `gc.flow.acceptance`),
+`technically_blocked` (with `ticket`: the `control` of its
+`gc.flow.blocking_red`) and `tracked_items` (with `ticket`: the tracked
+elements of that ticket the operator asked to have repaired). `name` is what a `repair` cites
+(`restores: {kind: red_check, ref: <name>}`): the patch door refuses any
+other. It is derived at each `show` and stored nowhere.
 
 **Nothing reopens an accepted or an abandoned Outcome**:
 `record-proposition-verdict` and `record-owner-answer` refuse once the last

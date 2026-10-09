@@ -527,6 +527,29 @@ class TicketEvaluationTest(unittest.TestCase):
         captured = self.piece(self.capture("evaluation.c1", request["environment"][0]))
         self.assertEqual((request["environment"][0]["address"], tip), (captured["address"], captured["commit"]))
 
+    def test_settle_on_a_project_without_a_named_dataset_is_refused_and_launches_no_product(self):
+        """T38 (af-8o4jcp): no dataset declared, so nothing is launched and
+        nothing is recorded, although the recipe would start."""
+        self.finished_slice(self.realized())
+        profile = json.loads(self.profile.read_text())
+        launch = profile["launch"]
+        content = launch["datasets"]["content"]
+        launch["recipe"] = [content if token == "{dataset}" else token for token in launch["recipe"]]
+        launch["datasets"] = {}
+        launch.pop("screens", None)
+        self.profile.write_text(json.dumps(profile))
+        self.evaluator("silent")
+
+        before = (self.tracker.read_bytes(), self.write_log.read_text(), self.launches())
+
+        answer = self.settle(expect=EXIT_REFUSED)
+
+        self.assertFalse(answer["ok"])
+        self.assertEqual([SLICE], [entry["ticket"] for entry in answer["refused"]])
+        self.assertIn("aucun jeu de données", answer["refused"][0]["reason"])
+        self.assertEqual([], self.launch_records(), "un produit a été lancé sans jeu de données")
+        self.assertEqual(before, (self.tracker.read_bytes(), self.write_log.read_text(), self.launches()))
+
     def test_the_address_and_the_commit_of_the_launched_product_are_in_the_evidence_of_each_state(self):
         tip = self.finished_slice(self.realized())
 

@@ -14,6 +14,7 @@ import contextlib
 import ctypes
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -230,6 +231,30 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertTrue(_port_is_free(record_a["port"]))
 
     # AC4 ------------------------------------------------------------------------
+
+    def test_start_without_a_named_dataset_is_refused_and_launches_nothing(self):
+        """T38 (af-8o4jcp): a recipe that needs no dataset path still launches
+        on a named dataset only."""
+        descriptor = json.loads(DESCRIPTOR.read_text())
+        content = descriptor["launch"]["datasets"]["content"]
+        descriptor["launch"]["recipe"] = [
+            content if token == "{dataset}" else token for token in descriptor["launch"]["recipe"]]
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        path = Path(folder) / "descriptor.json"
+        path.write_text(json.dumps(descriptor))
+
+        with _adopting_orphans():
+            result, state_file = self.start("--commit", "HEAD", descriptor=path, check=False)
+            started = _children()
+            _end(started)
+
+        self.assertNotEqual(0, result.returncode)
+        error = json.loads(result.stdout)
+        self.assertFalse(error["started"])
+        self.assertIn("no dataset named", error["error"])
+        self.assertEqual([], started, "the refused start left a process behind")
+        self.assertFalse(state_file.exists(), "the refused start wrote a launch record")
 
     def test_start_on_a_project_with_no_launch_recipe_is_refused(self):
         # "Nothing was started" is read from what this test owns -- the

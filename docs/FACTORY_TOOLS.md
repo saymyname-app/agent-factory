@@ -386,7 +386,7 @@ af-wf4w5r §1) :
 | Rôle | Agent | Skills de Matt reçus | Lecture seule |
 |---|---|---|---|
 | auteur | `delivery-author` | `tdd`, `codebase-design` (lit `implement`) | non |
-| relecteur | `delivery-reviewer` | `code-review` (masque celui de Claude Code) | oui |
+| relecteur | `delivery-reviewer` | `code-review`, seul skill de revue qu'il peut lancer | oui |
 | Evaluator | `delivery-evaluator` | aucun | oui |
 
 Ce qu'une session reçoit vraiment dépend de Gas City et du CLI du
@@ -394,9 +394,19 @@ fournisseur : cela ne se lit pas dans un fichier, cela s'essaie. `run` monte
 une **cité isolée** (son propre `GC_HOME`, son port de superviseur, jamais la
 cité live), ouvre une session réelle par rôle et par fournisseur déclaré, et
 relève : les skills chargés (lus dans le transcript de la session), l'empreinte
-du `code-review` chargé par le relecteur, le résultat d'une demande de revue
-faite à un rôle qui n'en a pas le skill, et le résultat d'une demande d'écrire,
-de committer et de pousser faite à un rôle en lecture seule.
+du `code-review` chargé par le relecteur, le résultat d'une demande de lancer
+`code-review`, `security-review` et `review` faite à chaque rôle, et le résultat
+d'une demande d'écrire, de committer et de pousser faite à un rôle en lecture
+seule.
+
+Règle des skills de revue (user story 75, T47) : le relecteur lance son
+`code-review` et rien d'autre ; l'auteur et l'Evaluator n'en lancent aucun. Un
+skill de revue listé ou lancé en plus fait échouer l'essai. Deux réglages
+tiennent cette règle chez les trois rôles : `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`
+(`agents/<agent>/agent.toml`) retire les skills intégrés à Claude Code, dont
+`security-review` ; `syncClaudeAiPlugins` et `syncClaudeAiSkills` à `false`
+(`agents/<agent>/overlay/.claude/settings.local.json`) retirent les plugins et
+skills du compte claude.ai, dont un autre `code-review`.
 
 ```bash
 ./bin/role-adoption-trial status                # chaque rôle × fournisseur déclaré : essai valide ou non
@@ -407,6 +417,11 @@ de committer et de pousser faite à un rôle en lecture seule.
 
 - **Relevé** : `config/role-adoption-trials.json`, versionné. Il se committe par
   PR depuis un worktree ; ne jamais l'éditer à la main, relancer l'essai.
+- **`check`** (lu par `bin/dispatch-door --role`) ne se fie pas au seul
+  `passed` du relevé : il relit les lancements relevés et refuse, en nommant le
+  skill, un relevé où un skill de revue hors du rôle s'est lancé, où le
+  `code-review` du relecteur ne s'est pas lancé, ou qui ne dit pas ce qui s'est
+  lancé.
 - **Empreinte** : un essai vaut pour un rôle, un fournisseur et une empreinte
   (entrée du rôle, tous les fichiers de `agents/<agent>/`, profil du fournisseur
   dans `city.toml`, `bin/delivery-role-sandbox`). Changer l'un d'eux annule
@@ -727,7 +742,9 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   chaque critère a un test, le produit lancé au commit de départ est en bonne
   santé, chaque test échoue par assertion et passe par un point d'entrée du
   produit. Un test en erreur, vide, ou qui ne demande rien au produit est
-  refusé et nommé.
+  refusé et nommé. Chaque test est prouvé selon le **mode du seam** par
+  lequel il passe (boîte noire ou règle d'import, déclaré par seam dans le
+  profil) ; le relevé nomme le seam et le mode de chaque test.
 - **Critère déjà vert** : le ticket est arrêté (sortie 5), le critère est
   nommé, l'arrêt est écrit dans le tracker.
 - **Gel** : refusé tant que le relecteur de tests n'a pas passé chaque test
@@ -735,8 +752,8 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   (`./bin/test-review`) ; ensuite les empreintes des tests, de la table et
   du harnais vont dans le magasin de preuves, hors de tout dépôt Git.
 - **Vert** : refus si un fichier gelé a été modifié, supprimé ou déplacé ;
-  sinon les tests gelés passent k fois de suite. Un résultat mixte nomme le
-  test instable.
+  sinon les tests gelés passent k fois de suite (k du profil ; 3 s'il n'en
+  déclare pas). Un résultat mixte nomme le test instable.
 - **Amendement** : le seul moyen de changer un test gelé, une fois par
   ticket, avec sa raison ; nouveau rouge, nouveau gel, diff enregistré. Le
   second arrête le ticket (sortie 5).
@@ -762,7 +779,7 @@ sortie a une destination fixée par du code, et le compte rendu du ticket
 
 ```bash
 ./bin/ticket-exit exit <convoi> <ticket> --exit finished --repo <worktree> --handoff <compte rendu.json>
-./bin/ticket-exit exit <convoi> <ticket> --exit planning_exception --kind semantic|topology --summary "<la question>"
+./bin/ticket-exit exit <convoi> <ticket> --exit planning_exception --repo <worktree> --handoff <compte rendu.json> --kind semantic|topology --summary "<la question>"
 ./bin/ticket-exit exit <convoi> <ticket> --exit operator_request --request <demande.json>
 ./bin/ticket-exit exit <convoi> <ticket> --exit technically_blocked --repair <ticket repair.json>
 ./bin/ticket-exit exit <convoi> <ticket> --exit interrupted --repo <worktree> [--handoff <partiel.json>]
@@ -780,6 +797,11 @@ sortie a une destination fixée par du code, et le compte rendu du ticket
 - **Planning Exception** et **demande opérateur** : le ticket et tous ceux
   qui l'attendent sont parqués ; la demande apparaît dans
   `./bin/escalation-door list`. Les tickets sans lien continuent de démarrer.
+- **Planning Exception, le compte rendu d'abord** : refusée sans un compte
+  rendu qui a ses quatre rubriques (le refus nomme celle qui manque, rien
+  n'est écrit) ; le compte rendu est enregistré avant elle. Si elle nomme
+  une ancre du prototype (`--anchor`), la rubrique « Écarts » doit
+  mentionner cette ancre, sinon refus.
 - **Bloqué technique** : un ticket `repair` est créé par du code et publié
   par la porte de patch ; il bloque le ticket, rien n'est parqué.
 - **Interrompu** : la branche est poussée, un compte rendu partiel est
@@ -1060,9 +1082,10 @@ convoi qui porte la **marque du nouveau flux**.
   apparaît **une seule fois** dans `./bin/escalation-door list`. Le délai
   d'un lancement est `evaluation.timeout_seconds` dans
   `config/delivery-flow.json` (3600 s, valeur sans base mesurée).
-- **Produits lancés** : ils restent debout entre deux passes, le temps de
-  l'évaluation, puis du code les arrête. `show` liste ceux qui tournent
-  encore (`live`).
+- **Produits lancés** : une fois par jeu de données nommé du profil ; un
+  profil qui n'en nomme aucun est refusé et rien n'est lancé. Ils restent
+  debout entre deux passes, le temps de l'évaluation, puis du code les
+  arrête. `show` liste ceux qui tournent encore (`live`).
 - **Ne jamais dispatcher `mol-ticket-evaluation` à la main** ni écrire
   `gc.flow.evaluation` : seul `./bin/ticket-evaluation` le fait, par
   `./bin/dispatch-door` et `./bin/convoy-state`.
@@ -1109,7 +1132,8 @@ n'arrive jamais jusqu'à Benjamin sans l'être.
   noté, aucun seuil n'existe. Elles servent aux yeux de Benjamin.
 - **Un écart voulu** ne se lève pas ici, et pas par l'auteur : l'auteur
   sort par `./bin/ticket-exit exit … --exit planning_exception --anchor
-  <ancre>` ; la demande propose à Benjamin « Accepter l'écart sur l'ancre
+  <ancre>`, après avoir écrit l'écart et son ancre sous « Écarts » dans son
+  compte rendu (sinon refus) ; la demande propose à Benjamin « Accepter l'écart sur l'ancre
   … » ; sa réponse par `./bin/escalation-door repondre` fait lire l'écart
   « accepté par Benjamin ». Toute autre réponse le laisse rouge. Un écart
   de token se répare.
@@ -1686,7 +1710,8 @@ ensuite le produit que tu juges et l'arrête.
   demande « non conforme ») ; session déjà ouverte sur ce convoi ; dossier
   qui n'est pas « à jour » selon `./bin/evidence-pack check`, ou qui n'est
   plus celui de la demande (la prochaine passe en génère un nouveau) ;
-  aucun profil ou aucune recette de lancement ; état sans règle.
+  aucun profil ou aucune recette de lancement ; profil qui ne nomme aucun
+  jeu de données (rien n'est lancé) ; état sans règle.
 - **Une panne n'est pas un jugement** : si le produit ne démarre pas, `open`
   le dit (`outage: true`), n'ouvre aucune session et note la panne sur le
   convoi ; la **passe suivante** de `./bin/convoy-advance` publie un

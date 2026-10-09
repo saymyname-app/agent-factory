@@ -527,8 +527,11 @@ class TicketAuthorTest(unittest.TestCase):
         self.gate_refused("exit", mention="pointe")
 
     def test_an_exit_other_than_finished_closes_the_sequence_and_an_older_one_does_not(self):
-        self.start()
+        _, worktree = self.start()
+        handoff = self.tmp / "handoff.json"
+        handoff.write_text(json.dumps(HANDOFF, ensure_ascii=False))
         proc = self.run_cmd(EXIT_TOOL, "exit", CONVOY, T1, "--exit", "planning_exception", "--kind", "semantic",
+                            "--repo", worktree, "--handoff", handoff,
                             "--summary", "La Spec fixe le libellé, la démonstration en demande un autre")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual("planning_exception", self.shown()["park"]["cause"])

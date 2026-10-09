@@ -161,6 +161,19 @@ records what was verified about the machinery underneath.
 3. GitHub merges the PR itself the moment the required check goes green —
    `Maven verify` (ruleset `22629508`) or `Tests and build` (ruleset
    `22629678`). Nothing polls; no session waits on CI.
+   GitHub does not always do it: on 2026-10-09 pull request #479 stayed open
+   17 minutes while armed, with `Tests` green on its exact head and a `CLEAN`
+   merge state, and `gh pr merge --squash` merged it at once (#459 had waited
+   13 minutes the day before). The cause is on GitHub's side and was not
+   found in the ruleset or in the pull request's events (af-n8gft2). So
+   `pr-autopilot` merges such a pull request itself, by its direct path
+   (`gh pr merge --squash --delete-branch --match-head-commit <head>`), when
+   it is armed, `CLEAN`, and its required check completed green at least
+   `PR_AUTOPILOT_ARMED_MERGE_DELAY_SECONDS` ago (default 180; GitHub
+   normally merges within two minutes). It is the same gate as auto-merge.
+   A non-zero exit is never retried in the same pass: the server state is
+   read again, and a pull request still open counts as one error of the run
+   (`tests/pr-autopilot-armed-not-merged-test.sh`).
 4. On its next pass, `pr-autopilot` loads the complete Beads history explicitly
    (`gc bd list --all --limit 0`), matches bead `gc.work_branch` to the PR
    `headRefName`, and calls `bin/deliver-close`. The door independently reads

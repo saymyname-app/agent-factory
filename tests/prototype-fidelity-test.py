@@ -304,6 +304,30 @@ class PrototypeFidelityTest(unittest.TestCase):
 
         self.assertIn("validated-prototype.json", self.refused())
 
+    def test_delivered_file_with_the_digest_of_a_prototype_file_is_refused_and_named(self):
+        """T46 (af-lb9zkz): the prototype file is not promoted as is."""
+        self.edit_product(
+            "self._respond_html(200, self._render_page())",
+            'self._respond_html(200, (Path(__file__).parent / "prototype" / "states" / '
+            '(self.dataset["state"] + ".html")).read_text(encoding="utf-8"))',
+            "le fichier du prototype servi tel quel",
+        )
+
+        error = self.refused()
+
+        for fragment in ("states/content.html", "states/empty.html", "même empreinte", "promu tel quel"):
+            self.assertIn(fragment, error)
+
+    def test_named_ticket_serving_a_prototype_file_as_is_is_refused_before_anything_is_filed(self):
+        self.edit_product(
+            "self._respond_html(200, self._render_page())",
+            'self._respond_html(200, (Path(__file__).parent / "prototype" / "states" / '
+            '(self.dataset["state"] + ".html")).read_text(encoding="utf-8"))',
+            "le fichier du prototype servi tel quel",
+        )
+
+        self.assertIn("promu tel quel", self.refused("--convoy", CONVOY, "--ticket", T1))
+
     # --- AC3: side-by-side captures and a difference image, never a threshold --
 
     def test_named_ticket_files_side_by_side_and_difference_captures_per_state(self):
@@ -429,7 +453,13 @@ class PrototypeFidelityTest(unittest.TestCase):
 
     def raise_planning_exception(self, *anchors):
         args = [arg for anchor in anchors for arg in ("--anchor", anchor)]
+        # The deviation is written in the Ticket Handoff first (T41), anchor by anchor.
+        handoff = self.tmp / "handoff-exception.json"
+        handoff.write_text(json.dumps({
+            "done": "aucun", "not_done": "aucun", "out_of_ticket": "aucun",
+            "deviations": [f"L'ancre {anchor} s'écarte du prototype." for anchor in anchors] or "aucun"}))
         self.run_door(EXIT_TOOL, "exit", CONVOY, T1, "--exit", "planning_exception", "--kind", "semantic",
+                      "--repo", self.repo, "--handoff", handoff,
                       "--summary", "La liste est livrée sans sa région, le prototype la montre", *args)
 
     def accept_letter(self):
