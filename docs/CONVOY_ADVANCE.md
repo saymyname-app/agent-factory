@@ -1,4 +1,4 @@
-# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, T19, T20, T21, T23, T26, Spec af-wf4w5r §0 rules 3 and 5, §4, §5, §6, §7, §8, §9, §11)
+# Convoy Advance (T04, T34, T18, T13, T14, T15, T17, T19, T20, T21, T23, T26, T45, Spec af-wf4w5r §0 rules 3 and 5, §4, §5, §6, §7, §8, §9, §11)
 
 ## Status and purpose
 
@@ -553,6 +553,28 @@ not run, or a launch the door refused, fails the pass (exit 1). A
 convoy with nothing due is not handed over, and a stopped convoy (« état
 sans règle ») is settled no more than it is started.
 
+## A ticket stopped at its second amendment reaches the operator (T45)
+
+`bin/tdd-step amend` stops a ticket at its second amendment
+(`amendment_exhausted`, `docs/TDD_STEP.md`; Spec §8: one amendment per
+ticket, then « ticket bloqué, remonte »). It runs in the author's session
+and writes the stop only; no review or evaluation settles that stop. The
+pass raises it itself, before the reviews: for each ticket whose stop is
+`amendment_exhausted` and has not reached the operator, it posts one request
+through `bin/escalation-door benjamin` on the ticket — « Ticket <id> arrêté
+: amendement épuisé — <the refusal `bin/tdd-step` recorded> », in the
+Operator Language — then records it with `bin/convoy-state stop-raised`.
+The convoy's entry carries `tdd_stops` (`escalated`: `[{ticket, reason}]`).
+A later pass on the same state sees `raised` on the stop (`bin/convoy-state
+show`) and posts nothing more. A request the door could not post is an
+`error` in `tdd_stops` and fails the pass (exit 1); nothing is recorded, so
+the next pass posts it.
+
+The stopped ticket is never resumed and never merged (a stopped ticket is
+not at work, and it has no Ticket Exit « terminé »); the tickets it blocks
+do not start; the others keep starting and merging. Nothing lifts the stop
+yet: the request offers a Planning Exception or leaving the ticket stopped.
+
 ## The end code review of the assembled diff (T25)
 
 Spec §6 « Fin de Spec », §9 point 4: right after the gate, in the same pass,
@@ -601,7 +623,8 @@ withdrawn}`, or `error`), `stop` when the convoy is stopped by one of its
 two stops (T21: `{reason: integration_red, control, repair}` or `{reason:
 planning_exceptions, open, bound}`), `repair` when the pass published the
 repair of a red (`{id, key, draft, published}`, or `error`),
-`integration` when the pass ran a merge, `test_review` when it settled
+`integration` when the pass ran a merge, `tdd_stops` when it raised a ticket
+stopped at its second amendment (T45), `test_review` when it settled
 reviews of criterion tests, `code_review` when it settled code reviews,
 `evaluation` when it settled Ticket Evaluations, `correction` when a
 correction round was opened, awaited or ended in a stop, `fidelity` when it

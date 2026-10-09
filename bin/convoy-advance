@@ -41,6 +41,11 @@ which launches once more a review left without result, stops the ticket
 when the relaunch gave none either, and raises the stop through
 bin/escalation-door. No author session has to be alive for that.
 
+A pass also raises a ticket bin/tdd-step stopped at its second amendment
+(T45, af-7y457s; Spec §8): one request through bin/escalation-door that
+names the ticket and « amendement épuisé », recorded by bin/convoy-state
+stop-raised so that a later pass raises nothing more.
+
 A pass also has the code of each finished ticket reviewed before its merge
 (T14, af-96cusm; Spec §6, §8): it hands each convoy that has a finished
 ticket not merged yet to bin/code-review settle, which sends the diff of the
@@ -259,6 +264,9 @@ CODE_REVIEW_STOP = "code_review_no_result"
 EVALUATION_STOPS = ("evaluation_no_result", "evaluation_outage")
 # The stop of a ticket still refused after its correction round (bin/correction-round).
 CORRECTION_STOP = "still_refused"
+# The stops bin/tdd-step writes on a ticket and that no settlement of a review
+# or of an evaluation raises: this pass raises them itself (T45, Spec §8).
+TDD_STOPS = {"amendment_exhausted": "amendement épuisé"}
 
 # Spec §5: the exits that park their ticket; what the merge returns.
 PARKING_EXITS = ("planning_exception", "operator_request")
@@ -493,6 +501,12 @@ class Convoy:
             elif not t.get("park") and t["id"] in self.finished_unmerged():
                 due.append(t["id"])
         return due
+
+    def tdd_stops_due(self) -> list[dict[str, Any]]:
+        """Tickets a step of their TDD stopped without the stop having
+        reached the operator."""
+        return [t for t in self.tickets
+                if (t.get("stop") or {}).get("reason") in TDD_STOPS and "raised" not in t["stop"]]
 
     def corrections_due(self) -> list[str]:
         """Tickets whose author has finished and that are not merged yet --
@@ -1887,6 +1901,43 @@ def merge_finished(convoy: Convoy) -> dict[str, Any] | None:
     return result
 
 
+def tdd_stop_request(ticket: dict[str, Any]) -> str:
+    """What the operator reads on the escalation door's list: the ticket and
+    the cause of its stop."""
+    stop = ticket["stop"]
+    return json.dumps({
+        "quoi": one_line(f"Ticket {ticket['id']} arrêté : {TDD_STOPS[stop['reason']]} — {stop.get('detail', '')}"),
+        "pourquoi": "Un test gelé ne s'amende qu'une fois par ticket : le travail de ce ticket ne reprend pas sans ta réponse.",
+        "que_faire": [
+            {"option": "Faire reprendre ce ticket ou ses tests de critère par une Planning Exception",
+             "consequence": "Le ticket reste arrêté tant que son arrêt n'est pas levé."},
+            {"option": "Laisser le ticket arrêté",
+             "consequence": "Rien de ce ticket ne fusionne ; les tickets qui l'attendent ne démarrent pas."},
+        ],
+        "langue": operator_language(),
+        "bloquant": True,
+    }, ensure_ascii=False)
+
+
+def settle_tdd_stops(convoy: Convoy) -> dict[str, Any] | None:
+    """Spec §8: a ticket bin/tdd-step stopped at its second amendment reaches
+    the operator through bin/escalation-door, once per stop: bin/convoy-state
+    records that it did. None when the convoy has no such stop to raise."""
+    due = convoy.tdd_stops_due()
+    if not due:
+        return None
+    result: dict[str, Any] = {"escalated": []}
+    for ticket in due:
+        try:
+            passed(run([str(ESCALATION_BIN), "benjamin", ticket["id"], tdd_stop_request(ticket)]), "escalation-door benjamin")
+            state_write("stop-raised", convoy.id, ticket["id"])
+        except Refusal as exc:
+            result["error"] = f"refus : {exc}"
+            break
+        result["escalated"].append({"ticket": ticket["id"], "reason": ticket["stop"]["reason"]})
+    return result
+
+
 def settle_test_reviews(convoy: Convoy) -> dict[str, Any] | None:
     """Spec §5, §8: code, not a session, launches once more a review of
     criterion tests left without result, stops the ticket after that, and
@@ -2031,6 +2082,10 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         if promotion is not None:
             result["promotion"] = promotion
             continue
+        # A ticket a step of its TDD stopped reaches the operator.
+        tdd_stops = settle_tdd_stops(convoys[result["id"]])
+        if tdd_stops is not None:
+            result["tdd_stops"] = tdd_stops
         # The reviews first: a ticket whose verdict is already there is
         # merged by the same pass.
         reviews = settle_test_reviews(convoys[result["id"]])
@@ -2112,6 +2167,7 @@ def one_pass(targets: list[str] | None, stopped_ok: bool = False) -> int:
         or "error" in result.get("promotion", {}).get("repair", {})
         or any("error" in entry for entry in result.get("end_review", {}).get("repairs", []))
         or any(key in result.get("integration", {}) for key in ("error", "message"))
+        or "error" in result.get("tdd_stops", {})
         or any(key in result.get("test_review", {}) for key in ("error", "refused"))
         or any(key in result.get("code_review", {}) for key in ("error", "refused"))
         or any(key in result.get("evaluation", {}) for key in ("error", "refused"))

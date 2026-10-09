@@ -1585,6 +1585,76 @@ class ConvoyAdvanceTest(unittest.TestCase):
         self.assertEqual([], self.of(answer, "resumed"))
         self.assertEqual(before, self.tickets_snapshot())
 
+    # --- a ticket stopped for an exhausted amendment reaches the operator (T45) ---
+
+    AMENDMENT_DETAIL = f"un seul amendement par ticket : {T1} a déjà amendé ses tests gelés au commit {COMMIT}"
+
+    def amendment_exhausted(self, ceiling=5):
+        """T1 at work under an author session that is over, then stopped as
+        bin/tdd-step amend stops it at its second amendment."""
+        self.resumable(ceiling)
+        self.advance(CONVOY)
+        self.edit(T1, status="in_progress")
+        self.taken(T1, "auteur-1")
+        self.run_ok(STATE, "stop-ticket", CONVOY, T1, "--reason", "amendment_exhausted", "--detail", self.AMENDMENT_DETAIL)
+        self.write_log.write_text("")
+
+    def test_a_pass_raises_a_ticket_stopped_for_an_exhausted_amendment_naming_it_and_the_cause(self):
+        self.amendment_exhausted()
+        self.assertEqual([], self.needs())
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([{"ticket": T1, "reason": "amendment_exhausted"}], self.of(answer, "tdd_stops")["escalated"])
+        needs = self.needs()
+        self.assertEqual(1, len(needs), needs)
+        self.assertIn(T1, needs[0])
+        self.assertIn("amendement épuisé", needs[0])
+        mails = self.log("mail")
+        self.assertEqual(1, len(mails), mails)
+        self.assertEqual("human", mails[0][1])
+
+    def test_a_second_pass_on_the_same_exhausted_amendment_raises_nothing_more_and_the_state_shows_it_was_raised(self):
+        self.amendment_exhausted()
+        self.advance(CONVOY)
+        self.assertIn("raised", self.shown_state(T1)["stop"])
+        before = self.tickets_snapshot()
+        self.write_log.write_text("")
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "tdd_stops"))
+        self.assertEqual(1, len([line for line in self.needs() if T1 in line]))
+        self.assertEqual([], self.log("mail"))
+        self.assertEqual(before, self.tickets_snapshot())
+
+    def test_a_ticket_stopped_for_an_exhausted_amendment_is_neither_merged_nor_resumed_and_the_others_go_on(self):
+        self.amendment_exhausted(ceiling=1)
+        self.assert_not_started(T2)
+
+        answer = self.advance(CONVOY)
+
+        self.assertEqual([], self.of(answer, "resumed"))
+        self.assertEqual([], self.resume_launches())
+        self.assertNotIn("integration", next(c for c in answer["convoys"] if c["id"] == CONVOY))
+        self.assertEqual("in_progress", self.bead(T1)["status"])
+        self.assertEqual([T2], self.started(answer))
+        self.assert_started_through_door(T2)
+        self.assert_not_started(T3)
+
+    def test_an_exhausted_amendment_the_door_could_not_raise_fails_the_pass_and_is_raised_by_the_next(self):
+        self.amendment_exhausted()
+
+        failed = self.advance(CONVOY, expect=EXIT_REFUSED, env={**self.env, "CONVOY_STATE_FAKE_MAIL_FAIL": "1"})
+
+        self.assertIn("error", self.of(failed, "tdd_stops"))
+        self.assertNotIn("raised", self.shown_state(T1)["stop"])
+
+        self.advance(CONVOY)
+
+        self.assertIn("raised", self.shown_state(T1)["stop"])
+        self.assertEqual(1, len([line for line in self.needs() if T1 in line]))
+
     def test_a_ticket_blocked_by_a_repair_is_resumed_once_the_repair_is_closed(self):
         self.started_convoy()
         self.taken(T1, "auteur-1")
