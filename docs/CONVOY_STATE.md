@@ -248,7 +248,9 @@ author). `set-tdd --step freeze` is refused unless the last pass is
 favorable, was given at the commit being frozen, and no review is open; the
 freeze that ends an amendment is exempt (Spec §6: the code review reads an
 amended test). `stop-raised` records that the stop of a ticket reached the
-operator, so the code that stopped it raises it once; it refuses a ticket
+operator, so the code that stopped it raises it once (`bin/convoy-advance`
+itself for `amendment_exhausted`, which `bin/tdd-step` writes from the
+author's session); it refuses a ticket
 that is not stopped, and the same record again writes nothing.
 
 `set-model`, `open-code-review`, `launch-code-review`, `record-code-review`
