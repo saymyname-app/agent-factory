@@ -798,7 +798,8 @@ def cmd_brief(args: argparse.Namespace) -> int:
                 "perimeter": launch_.get("test_perimeter") or [],
                 "frozen_harness_paths": launch_.get("frozen_harness_paths") or [],
                 "frozen": frozen_tests(ticket),
-                "seams": {"mode": launch_.get("seam_mode"), "entry_points": launch_.get("entry_points") or []},
+                "seams": {"mode": launch_.get("seam_mode"), "declared": launch_.get("seams") or [],
+                          "entry_points": launch_.get("entry_points") or []},
             },
             "questions": request["questions"], "answers": list(ANSWERS),
             "review_shape": {

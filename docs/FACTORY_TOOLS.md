@@ -727,7 +727,9 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   chaque critère a un test, le produit lancé au commit de départ est en bonne
   santé, chaque test échoue par assertion et passe par un point d'entrée du
   produit. Un test en erreur, vide, ou qui ne demande rien au produit est
-  refusé et nommé.
+  refusé et nommé. Chaque test est prouvé selon le **mode du seam** par
+  lequel il passe (boîte noire ou règle d'import, déclaré par seam dans le
+  profil) ; le relevé nomme le seam et le mode de chaque test.
 - **Critère déjà vert** : le ticket est arrêté (sortie 5), le critère est
   nommé, l'arrêt est écrit dans le tracker.
 - **Gel** : refusé tant que le relecteur de tests n'a pas passé chaque test
@@ -735,8 +737,8 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   (`./bin/test-review`) ; ensuite les empreintes des tests, de la table et
   du harnais vont dans le magasin de preuves, hors de tout dépôt Git.
 - **Vert** : refus si un fichier gelé a été modifié, supprimé ou déplacé ;
-  sinon les tests gelés passent k fois de suite. Un résultat mixte nomme le
-  test instable.
+  sinon les tests gelés passent k fois de suite (k du profil ; 3 s'il n'en
+  déclare pas). Un résultat mixte nomme le test instable.
 - **Amendement** : le seul moyen de changer un test gelé, une fois par
   ticket, avec sa raison ; nouveau rouge, nouveau gel, diff enregistré. Le
   second arrête le ticket (sortie 5).
@@ -1065,9 +1067,10 @@ convoi qui porte la **marque du nouveau flux**.
   apparaît **une seule fois** dans `./bin/escalation-door list`. Le délai
   d'un lancement est `evaluation.timeout_seconds` dans
   `config/delivery-flow.json` (3600 s, valeur sans base mesurée).
-- **Produits lancés** : ils restent debout entre deux passes, le temps de
-  l'évaluation, puis du code les arrête. `show` liste ceux qui tournent
-  encore (`live`).
+- **Produits lancés** : une fois par jeu de données nommé du profil ; un
+  profil qui n'en nomme aucun est refusé et rien n'est lancé. Ils restent
+  debout entre deux passes, le temps de l'évaluation, puis du code les
+  arrête. `show` liste ceux qui tournent encore (`live`).
 - **Ne jamais dispatcher `mol-ticket-evaluation` à la main** ni écrire
   `gc.flow.evaluation` : seul `./bin/ticket-evaluation` le fait, par
   `./bin/dispatch-door` et `./bin/convoy-state`.
@@ -1692,7 +1695,8 @@ ensuite le produit que tu juges et l'arrête.
   demande « non conforme ») ; session déjà ouverte sur ce convoi ; dossier
   qui n'est pas « à jour » selon `./bin/evidence-pack check`, ou qui n'est
   plus celui de la demande (la prochaine passe en génère un nouveau) ;
-  aucun profil ou aucune recette de lancement ; état sans règle.
+  aucun profil ou aucune recette de lancement ; profil qui ne nomme aucun
+  jeu de données (rien n'est lancé) ; état sans règle.
 - **Une panne n'est pas un jugement** : si le produit ne démarre pas, `open`
   le dit (`outage: true`), n'ouvre aucune session et note la panne sur le
   convoi ; la **passe suivante** de `./bin/convoy-advance` publie un
