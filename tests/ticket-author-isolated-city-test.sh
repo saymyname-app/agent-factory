@@ -164,6 +164,7 @@ while true; do
         say "ferme l'étape rouge sans rien prouver" ;;
       red:exception)
         tool "\$BIN/ticket-exit" exit "\$CONVOY" "\$TICKET" --exit planning_exception --kind semantic \\
+          --repo "\$WT" --handoff "$TRIAL/handoff.json" \\
           --summary "La Spec fixe le libellé de la page, la ligne de démonstration en demande un autre" ;;
       code:honest)
         cp "$TRIAL/code/app.py" "\$WT/$FIXTURE/app.py"

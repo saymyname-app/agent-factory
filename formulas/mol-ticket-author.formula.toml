@@ -115,7 +115,11 @@ Exit that fits through `bin/ticket-exit exit` (docs/TICKET_EXIT.md):
 `planning_exception` when the demonstration line would need a behaviour the
 Spec or another ticket fixes; `operator_request` when only the operator can
 answer; `technically_blocked` when a defect outside your ticket stops you;
-`interrupted` when you must stop before the end. Then close each remaining
+`interrupted` when you must stop before the end. A `planning_exception`
+comes after your Ticket Handoff: commit your work, write the four sections
+(`"aucun"` for an empty one) and pass `--repo` and `--handoff`; a deviation
+from the Validated Prototype is written under « Écarts » with the name of
+its anchor, then named by `--anchor`. Then close each remaining
 step as it comes to you, without doing its work: its gate passes once the
 exit is recorded."""
 
