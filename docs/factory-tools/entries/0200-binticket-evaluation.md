@@ -48,9 +48,10 @@ convoi qui porte la **marque du nouveau flux**.
   apparaît **une seule fois** dans `./bin/escalation-door list`. Le délai
   d'un lancement est `evaluation.timeout_seconds` dans
   `config/delivery-flow.json` (3600 s, valeur sans base mesurée).
-- **Produits lancés** : ils restent debout entre deux passes, le temps de
-  l'évaluation, puis du code les arrête. `show` liste ceux qui tournent
-  encore (`live`).
+- **Produits lancés** : une fois par jeu de données nommé du profil ; un
+  profil qui n'en nomme aucun est refusé et rien n'est lancé. Ils restent
+  debout entre deux passes, le temps de l'évaluation, puis du code les
+  arrête. `show` liste ceux qui tournent encore (`live`).
 - **Ne jamais dispatcher `mol-ticket-evaluation` à la main** ni écrire
   `gc.flow.evaluation` : seul `./bin/ticket-evaluation` le fait, par
   `./bin/dispatch-door` et `./bin/convoy-state`.
