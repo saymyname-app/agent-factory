@@ -32,7 +32,8 @@ n'arrive jamais jusqu'à Benjamin sans l'être.
   noté, aucun seuil n'existe. Elles servent aux yeux de Benjamin.
 - **Un écart voulu** ne se lève pas ici, et pas par l'auteur : l'auteur
   sort par `./bin/ticket-exit exit … --exit planning_exception --anchor
-  <ancre>` ; la demande propose à Benjamin « Accepter l'écart sur l'ancre
+  <ancre>`, après avoir écrit l'écart et son ancre sous « Écarts » dans son
+  compte rendu (sinon refus) ; la demande propose à Benjamin « Accepter l'écart sur l'ancre
   … » ; sa réponse par `./bin/escalation-door repondre` fait lire l'écart
   « accepté par Benjamin ». Toute autre réponse le laisse rouge. Un écart
   de token se répare.

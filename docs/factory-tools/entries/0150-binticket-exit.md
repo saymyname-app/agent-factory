@@ -7,7 +7,7 @@ sortie a une destination fixée par du code, et le compte rendu du ticket
 
 ```bash
 ./bin/ticket-exit exit <convoi> <ticket> --exit finished --repo <worktree> --handoff <compte rendu.json>
-./bin/ticket-exit exit <convoi> <ticket> --exit planning_exception --kind semantic|topology --summary "<la question>"
+./bin/ticket-exit exit <convoi> <ticket> --exit planning_exception --repo <worktree> --handoff <compte rendu.json> --kind semantic|topology --summary "<la question>"
 ./bin/ticket-exit exit <convoi> <ticket> --exit operator_request --request <demande.json>
 ./bin/ticket-exit exit <convoi> <ticket> --exit technically_blocked --repair <ticket repair.json>
 ./bin/ticket-exit exit <convoi> <ticket> --exit interrupted --repo <worktree> [--handoff <partiel.json>]
@@ -25,6 +25,11 @@ sortie a une destination fixée par du code, et le compte rendu du ticket
 - **Planning Exception** et **demande opérateur** : le ticket et tous ceux
   qui l'attendent sont parqués ; la demande apparaît dans
   `./bin/escalation-door list`. Les tickets sans lien continuent de démarrer.
+- **Planning Exception, le compte rendu d'abord** : refusée sans un compte
+  rendu qui a ses quatre rubriques (le refus nomme celle qui manque, rien
+  n'est écrit) ; le compte rendu est enregistré avant elle. Si elle nomme
+  une ancre du prototype (`--anchor`), la rubrique « Écarts » doit
+  mentionner cette ancre, sinon refus.
 - **Bloqué technique** : un ticket `repair` est créé par du code et publié
   par la porte de patch ; il bloque le ticket, rien n'est parqué.
 - **Interrompu** : la branche est poussée, un compte rendu partiel est
