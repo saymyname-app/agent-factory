@@ -104,6 +104,13 @@ invents a `gc.flow.*` field: a missing field is added here.
     convoy-state acceptance-requested     CONVOY --bead BEAD
     convoy-state acceptance-launch-failed CONVOY --commit SHA --detail LINE
     convoy-state set-acceptance-repair    CONVOY --ticket TICKET
+    convoy-state record-proposition-verdict CONVOY --proposition ID --verdict avant|plus_tard|sans_suite --approver NAME --words TEXT
+    convoy-state set-verdict-proposal     CONVOY --proposition ID --bead BEAD
+    convoy-state record-owner-answer      CONVOY --response accepted|findings|abandoned --approver NAME
+                                          [--words TEXT --commit SHA --pack-digest DIGEST] [--file PATH] [--reason LINE]
+    convoy-state set-owner-repair         CONVOY --finding N --ticket TICKET
+    convoy-state set-owner-proposal       CONVOY --finding N --bead BEAD
+    convoy-state resolve-owner-exception  CONVOY --approver NAME --words TEXT
     convoy-state open-outcome-evaluation    CONVOY --commit SHA --file PATH
     convoy-state launch-outcome-evaluation  CONVOY --bead BEAD
     convoy-state record-outcome-evaluation  CONVOY --file PATH
@@ -228,6 +235,17 @@ KEY_EVIDENCE_PACK = PREFIX + "evidence_pack"
 KEY_END_STOP = PREFIX + "end_stop"
 KEY_DELIVERED = PREFIX + "delivered"
 KEY_ACCEPTANCE = PREFIX + "acceptance"
+# Benjamin's judgement of the Outcome (T29, Spec §11): his verdict on each
+# proposition and each of his answers, oldest first, with his words.
+KEY_JUDGEMENT = PREFIX + "judgement"
+OWNER_VERDICTS = ("avant", "plus_tard", "sans_suite")
+OWNER_VERDICT_NAMES = {"avant": "à faire avant d'accepter", "plus_tard": "plus tard", "sans_suite": "sans suite"}
+OWNER_RESPONSES = ("accepted", "findings", "abandoned")
+OWNER_FINAL_RESPONSES = ("accepted", "abandoned")
+OWNER_ROUTES = ("repair", "planning_exception", "later")
+# What an Owner Finding cites to be a repair (Spec §11): the story or the anchor.
+OWNER_CITED_KINDS = ("user_story", "anchor")
+OWNER_REPAIR_FIELDS = ("title", "what_it_delivers", "demonstration_line", "acceptance_criteria")
 KEY_OUTCOME_EVALUATION = PREFIX + "outcome_evaluation"
 KEY_FINDINGS = PREFIX + "findings"
 # Written by the publication door (bin/ticket-graph-publish): the digest of
@@ -2840,6 +2858,13 @@ def cmd_show(args: argparse.Namespace) -> int:
         except Refusal as exc:
             end_stop = {"unruled": f"{KEY_END_STOP} : {exc}", "raw": metadata[KEY_END_STOP]}
             convoy_unruled.append({"field": KEY_END_STOP, "reason": end_stop["unruled"]})
+    judgement: dict[str, Any] | None = None
+    if KEY_JUDGEMENT in metadata:
+        try:
+            judgement = judgement_record(metadata[KEY_JUDGEMENT])
+        except Refusal as exc:
+            judgement = {"unruled": f"{KEY_JUDGEMENT} : {exc}", "raw": metadata[KEY_JUDGEMENT]}
+            convoy_unruled.append({"field": KEY_JUDGEMENT, "reason": judgement["unruled"]})
     delivered: dict[str, Any] | None = None
     if KEY_DELIVERED in metadata:
         try:
@@ -2859,7 +2884,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     for key in sorted(metadata):
         known = (KEY_MARK, KEY_INCIDENT, KEY_INTEGRATION, KEY_INTEGRATION_RED, KEY_GROUPED_REQUEST, KEY_SPEC_END,
                  KEY_OUTCOME_EVALUATION, KEY_END_REVIEW, KEY_END_ROUND, KEY_EVIDENCE_PACK, KEY_END_STOP, KEY_DELIVERED,
-                 KEY_ACCEPTANCE, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
+                 KEY_ACCEPTANCE, KEY_JUDGEMENT, *(COUNTER_PREFIX + name for name in CONVOY_COUNTERS))
         if key.startswith(EVIDENCE_PREFIX):
             name = key[len(EVIDENCE_PREFIX):]
             try:
@@ -2888,6 +2913,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         "end_stop": end_stop,
         "delivered": delivered,
         "acceptance": acceptance,
+        "judgement": judgement,
         "evidence_pack": evidence_pack,
         "outcome_evaluation": outcome_evaluation,
         "evidence": evidence,
@@ -4786,6 +4812,7 @@ def cmd_record_delivered(args: argparse.Namespace) -> int:
     pack = stored_or_none(metadata.get(KEY_EVIDENCE_PACK), evidence_pack_record)
     if pack is None or pack["commit"] != commit or pack["digest"] != digest or not pack["conforming"] or pack["inadmissible"]:
         reasons.append("l'Evidence Pack enregistré n'est pas le dossier conforme et complet de ce commit")
+    reasons += owner_findings_open(metadata, tickets)
     if reasons:
         raise Refusal(
             f"le convoi {args.convoy} n'est pas Delivered au commit {commit[:12]} : " + " ; ".join(reasons)
@@ -4895,6 +4922,424 @@ def cmd_set_acceptance_repair(args: argparse.Namespace) -> int:
             f"la panne de l'Acceptance Session a déjà son repair ({record['panne']['ticket']}) : un seul repair par panne")
     record["panne"]["ticket"] = args.ticket
     values = {KEY_ACCEPTANCE: encode(acceptance_record(encode(record)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+# --- Benjamin's judgement: verdicts on the propositions, answers, Owner Findings (T29) ---
+
+
+def owner_words(value: Any, what: str) -> str:
+    """The operator's own words, kept as given."""
+    if not isinstance(value, str) or not value.strip():
+        raise Refusal(f"{what} sans les mots de l'approbateur (--words), non vides")
+    return value.strip()
+
+
+def owner_finding_record(value: Any) -> dict[str, Any]:
+    """One Owner Finding of an answer « constats rendus » and the route code
+    gave it (Spec §11)."""
+    if not isinstance(value, dict) or not {"text", "route"} <= set(value) \
+            or not set(value) <= {"text", "route", "cites", "draft", "ticket", "proposal", "proposition"}:
+        raise Refusal(f"Owner Finding mal formé : {value!r}")
+    single_line(value["text"], "texte de l'Owner Finding")
+    route = one_of(value["route"], OWNER_ROUTES, "route de l'Owner Finding")
+    if "cites" in value:
+        cites = value["cites"]
+        if not isinstance(cites, dict) or set(cites) != {"kind", "ref"} or not isinstance(cites["kind"], str):
+            raise Refusal(f"citation de l'Owner Finding mal formée : {cites!r}")
+        single_line(cites["ref"], "citation de l'Owner Finding")
+    if (route == "repair") != ("draft" in value) or ("ticket" in value and route != "repair") \
+            or ("proposal" in value and route != "later"):
+        raise Refusal(f"Owner Finding dont la route ({route}) contredit ce qu'il porte : {sorted(value)}")
+    if "draft" in value:
+        draft = repair_draft(value["draft"], "le repair de l'Owner Finding")
+        if draft["restores"]["kind"] not in OWNER_CITED_KINDS:
+            raise Refusal("le repair d'un Owner Finding rétablit la story ou l'ancre que le constat cite")
+    for name in ("ticket", "proposal"):
+        if name in value and (not isinstance(value[name], str) or not BEAD_ID_RE.match(value[name])):
+            raise Refusal(f"{name} de l'Owner Finding mal formé : {value[name]!r}")
+    if "proposition" in value:
+        single_line(value["proposition"], "proposition de l'Owner Finding")
+    return value
+
+
+def judgement_record(raw: Any) -> dict[str, Any]:
+    """Benjamin's judgement of the Outcome of a convoy (T29, Spec §11): his
+    verdict on each proposition, and each of his answers, oldest first --
+    his words, the commit and the fingerprint of the dossier he judged, and
+    for « constats rendus » each Owner Finding with its route. Nothing
+    follows an accepted or an abandoned Outcome."""
+    record = stored_record(raw, ("verdicts", "answers"))
+    if not isinstance(record["verdicts"], list) or not isinstance(record["answers"], list):
+        raise Refusal(f"jugement mal formé : {raw!r}")
+    seen = set()
+    for verdict in record["verdicts"]:
+        required = {"proposition", "verdict", "approver", "words", "commit", "at"}
+        if not isinstance(verdict, dict) or not required <= set(verdict) <= required | {"proposal", "answer"}:
+            raise Refusal(f"verdict de proposition mal formé : {verdict!r}")
+        single_line(verdict["proposition"], "proposition")
+        one_of(verdict["verdict"], OWNER_VERDICTS, "verdict de proposition")
+        single_line(verdict["approver"], "approbateur")
+        owner_words(verdict["words"], "verdict")
+        valid_commit(verdict["commit"], "commit du dossier")
+        if verdict["proposition"] in seen:
+            raise Refusal(f"deux verdicts sur la proposition {verdict['proposition']}")
+        seen.add(verdict["proposition"])
+        if "proposal" in verdict and (verdict["verdict"] != "plus_tard" or not isinstance(verdict["proposal"], str)
+                                      or not BEAD_ID_RE.match(verdict["proposal"])):
+            raise Refusal(f"proposition créée mal formée ou hors d'un verdict « plus tard » : {verdict!r}")
+        if "answer" in verdict and (verdict["verdict"] != "avant" or type(verdict["answer"]) is not int
+                                    or not 1 <= verdict["answer"] <= len(record["answers"])):
+            raise Refusal(f"renvoi d'un verdict à une réponse inconnue : {verdict!r}")
+    for index, answer in enumerate(record["answers"]):
+        required = {"response", "approver", "commit", "pack", "at"}
+        if not isinstance(answer, dict) or not required <= set(answer) \
+                or not set(answer) <= required | {"words", "reason", "findings", "exception"}:
+            raise Refusal(f"réponse de l'approbateur mal formée : {answer!r}")
+        response = one_of(answer["response"], OWNER_RESPONSES, "réponse de l'approbateur")
+        single_line(answer["approver"], "approbateur")
+        valid_commit(answer["commit"], "commit du dossier")
+        valid_digest(answer["pack"])
+        if response in OWNER_FINAL_RESPONSES and index != len(record["answers"]) - 1:
+            raise Refusal("une réponse suit un Outcome accepté ou abandonné : rien ne le rouvre")
+        if (response == "abandoned") != ("reason" in answer) or (response == "findings") != ("findings" in answer) \
+                or ("exception" in answer and response != "findings") or (response != "abandoned" and "words" not in answer):
+            raise Refusal(f"réponse « {response} » dont les champs ne sont pas les siens : {sorted(answer)}")
+        if "words" in answer:
+            owner_words(answer["words"], "réponse")
+        if "reason" in answer:
+            single_line(answer["reason"], "raison de l'abandon")
+        if "findings" in answer:
+            if not isinstance(answer["findings"], list) or not answer["findings"]:
+                raise Refusal("« constats rendus » sans aucun constat")
+            for finding in answer["findings"]:
+                owner_finding_record(finding)
+            excepted = [number for number, finding in enumerate(answer["findings"], start=1)
+                        if finding["route"] == "planning_exception"]
+            exception = answer.get("exception")
+            if bool(excepted) != (exception is not None):
+                raise Refusal("la Planning Exception du lot ne couvre pas les constats qui en relèvent")
+            if exception is not None:
+                if not isinstance(exception, dict) or not {"findings", "at"} <= set(exception) <= {"findings", "at", "resolved"} \
+                        or exception["findings"] != excepted:
+                    raise Refusal(f"Planning Exception du lot mal formée : {exception!r}")
+                resolved = exception.get("resolved")
+                if resolved is not None:
+                    if not isinstance(resolved, dict) or set(resolved) != {"approver", "words", "at"}:
+                        raise Refusal(f"résolution de la Planning Exception du lot mal formée : {resolved!r}")
+                    single_line(resolved["approver"], "approbateur")
+                    owner_words(resolved["words"], "résolution")
+    return record
+
+
+def judgement_of(metadata: dict[str, Any]) -> dict[str, Any]:
+    return judgement_record(metadata[KEY_JUDGEMENT]) if KEY_JUDGEMENT in metadata else {"verdicts": [], "answers": []}
+
+
+def owner_answer_of(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    """Benjamin's last answer on a convoy, from the metadata of its bead; None
+    without one, or on a record this command would not have written. For
+    the readers that hold a bead and run no command (the cockpit)."""
+    judgement = stored_or_none(metadata.get(KEY_JUDGEMENT), judgement_record)
+    return judgement["answers"][-1] if judgement and judgement["answers"] else None
+
+
+def propositions_of(tickets: list[dict[str, Any]]) -> dict[str, str]:
+    """Each « proposition pour Benjamin » of the convoy and its text: the
+    findings « hors ticket » the Evaluator of the end kept as a proposal."""
+    known: dict[str, str] = {}
+    for ticket in tickets:
+        handoff, content = handoff_findings(ticket)
+        metadata = metadata_of(ticket)
+        if not handoff or KEY_FINDINGS not in metadata:
+            continue
+        for entry in findings_record(metadata[KEY_FINDINGS]):
+            number = int(entry["item"].rsplit(".", 1)[1])
+            if entry["handoff_at"] == handoff["at"] and entry["classification"] == "proposal" and number <= len(content):
+                known[f"{ticket['id']}:{entry['item']}"] = content[number - 1]
+    return known
+
+
+def owner_findings_open(metadata: dict[str, Any], tickets: list[dict[str, Any]]) -> list[str]:
+    """What the last « constats rendus » still holds the Outcome out of
+    Delivered for: a returned finding whose `repair` is not published, and
+    the Planning Exception of the batch while it is open."""
+    judgement = stored_or_none(metadata.get(KEY_JUDGEMENT), judgement_record)
+    last = judgement["answers"][-1] if judgement and judgement["answers"] else None
+    if last is None or last["response"] != "findings":
+        return []
+    known = {str(ticket.get("id")) for ticket in tickets}
+    reasons = []
+    unpublished = [str(number) for number, finding in enumerate(last["findings"], start=1)
+                   if finding["route"] == "repair" and finding.get("ticket") not in known]
+    if unpublished:
+        reasons.append(f"constat(s) rendu(s) par l'approbateur sans repair publié (n° {', '.join(unpublished)})")
+    if "exception" in last and "resolved" not in last["exception"]:
+        reasons.append("Planning Exception du lot de constats rendus encore ouverte")
+    return reasons
+
+
+def not_reopened(convoy_id: str, judgement: dict[str, Any]) -> None:
+    last = judgement["answers"][-1] if judgement["answers"] else None
+    if last is not None and last["response"] in OWNER_FINAL_RESPONSES:
+        said = "accepté" if last["response"] == "accepted" else "abandonné"
+        raise Refusal(
+            f"l'Outcome du convoi {convoy_id} est {said} : rien ne le rouvre ; un défaut ou un souhait trouvé après "
+            "entre comme travail nouveau, par un Planning Run")
+
+
+def judged_delivered(convoy_id: str, metadata: dict[str, Any], what: str) -> dict[str, Any]:
+    delivered = stored_or_none(metadata.get(KEY_DELIVERED), delivered_record)
+    if delivered is None:
+        raise Refusal(f"le convoi {convoy_id} n'est pas Delivered : {what} ne s'enregistre que sur un Delivered Outcome")
+    return delivered
+
+
+def cmd_record_proposition_verdict(args: argparse.Namespace) -> int:
+    """Record Benjamin's verdict on one « proposition » of the Delivered
+    Outcome (T29, Spec §11): à faire avant d'accepter, plus tard, sans
+    suite. A verdict may change until code acted on it. That `--approver`
+    is the declared human approver is the refusal of the caller,
+    bin/owner-answer."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    judgement = judgement_of(metadata)
+    not_reopened(args.convoy, judgement)
+    delivered = judged_delivered(args.convoy, metadata, "un verdict")
+    verdict = one_of(args.verdict, OWNER_VERDICTS, "verdict de proposition")
+    approver = single_line(args.approver, "approbateur")
+    words = owner_words(args.words, "verdict")
+    if args.proposition not in propositions_of(tickets):
+        raise Refusal(
+            f"{args.proposition!r} n'est pas une proposition du convoi {args.convoy} : un verdict porte sur un constat "
+            "hors ticket gardé comme « proposition pour Benjamin »")
+    known = next((entry for entry in judgement["verdicts"] if entry["proposition"] == args.proposition), None)
+    if known is not None:
+        if known["verdict"] == verdict:
+            return done(args.convoy, args.convoy, {})
+        if "proposal" in known or "answer" in known:
+            raise Refusal(
+                f"le verdict « {OWNER_VERDICT_NAMES[known['verdict']]} » de la proposition {args.proposition} a déjà "
+                "eu sa suite : il ne se change plus")
+        judgement["verdicts"].remove(known)
+    judgement["verdicts"].append({"proposition": args.proposition, "verdict": verdict, "approver": approver, "words": words,
+                                  "commit": delivered["commit"], "at": now()})
+    values = {KEY_JUDGEMENT: encode(judgement_record(encode(judgement)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_set_verdict_proposal(args: argparse.Namespace) -> int:
+    """Name the proposition the door created for a verdict « plus tard »."""
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    judgement = judgement_of(metadata_of(convoy))
+    known = next((entry for entry in judgement["verdicts"] if entry["proposition"] == args.proposition), None)
+    if known is None or known["verdict"] != "plus_tard":
+        raise Refusal(f"la proposition {args.proposition!r} n'a pas de verdict « plus tard » sur le convoi {args.convoy}")
+    if known.get("proposal") == args.bead:
+        return done(args.convoy, args.convoy, {})
+    if "proposal" in known:
+        raise Refusal(f"le verdict « plus tard » de {args.proposition} a déjà sa proposition ({known['proposal']})")
+    known["proposal"] = args.bead
+    values = {KEY_JUDGEMENT: encode(judgement_record(encode(judgement)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def routed_owner_finding(given: Any, number: int, spec: dict[str, Any]) -> dict[str, Any]:
+    """The route of one Owner Finding, by code (Spec §11): « plus tard » is
+    a proposition; a finding that cites a story or an anchor the Spec holds
+    is a `repair`; anything else asks for what the Spec does not require,
+    and is a Planning Exception -- never a repair."""
+    what = f"le constat n° {number}"
+    if not isinstance(given, dict) or "text" not in given or not set(given) <= {"text", "cites", "repair", "later"}:
+        raise Refusal(f"{what} est mal formé (attendu : text, et au besoin cites, repair, later) : {given!r}")
+    finding: dict[str, Any] = {"text": single_line(given["text"], f"texte de {what}")}
+    if given.get("later") not in (None, False, True):
+        raise Refusal(f"{what} : later vaut true ou false, pas {given['later']!r}")
+    cites = given.get("cites")
+    if cites is not None:
+        if not isinstance(cites, dict) or set(cites) != {"kind", "ref"} or not isinstance(cites["kind"], str):
+            raise Refusal(f"{what} : citation mal formée (attendu : kind et ref) : {cites!r}")
+        finding["cites"] = {"kind": cites["kind"], "ref": single_line(cites["ref"], f"citation de {what}")}
+    if given.get("later"):
+        if "repair" in given:
+            raise Refusal(f"{what} est « plus tard » et porte un repair : un souhait hors de cet Outcome est une proposition")
+        return {**finding, "route": "later"}
+    held = False
+    if cites is not None and finding["cites"]["kind"] in OWNER_CITED_KINDS:
+        try:
+            check_citation(finding["cites"], spec, what)
+            held = True
+        except Refusal:
+            held = False
+    if not held:
+        return {**finding, "route": "planning_exception"}
+    repair = given.get("repair")
+    if not isinstance(repair, dict) or set(repair) != set(OWNER_REPAIR_FIELDS):
+        raise Refusal(
+            f"{what} cite {finding['cites']['ref']!r} sans son repair rédigé : un constat qui cite la story ou l'ancre "
+            f"porte le repair à publier (repair, avec {', '.join(OWNER_REPAIR_FIELDS)})")
+    return {**finding, "route": "repair", "draft": repair_draft({**repair, "restores": finding["cites"]}, f"le repair de {what}")}
+
+
+def cmd_record_owner_answer(args: argparse.Namespace) -> int:
+    """Record Benjamin's answer to the Outcome he judged (T29, Spec §11),
+    with his words, the commit and the fingerprint of the dossier.
+    « accepted » is refused while a proposition has no verdict or is to do
+    before accepting; it closes and merges nothing. « findings » routes each
+    Owner Finding by code, withdraws Delivered and the Acceptance Request,
+    and starts the rounds of the end again from zero. « abandoned » takes a
+    one-line reason. Nothing follows an accepted or an abandoned Outcome.
+    That `--approver` is the declared human approver, that the commit is
+    still the tip and that the dossier still holds are the refusals of the
+    caller, bin/owner-answer, which reads the project and its repository."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    metadata = metadata_of(convoy)
+    judgement = judgement_of(metadata)
+    response = one_of(args.response, OWNER_RESPONSES, "réponse de l'approbateur")
+    approver = single_line(args.approver, "approbateur")
+    not_reopened(args.convoy, judgement)
+    values: dict[str, Any] = {}
+    if response == "abandoned":
+        dossier = judged_dossier(args.convoy, metadata)
+        if dossier is None:
+            raise Refusal(
+                f"le convoi {args.convoy} n'est pas Delivered et ne porte aucune demande « non conforme » : "
+                "il n'y a rien à quoi répondre « abandonné »")
+        if not isinstance(args.reason, str) or not args.reason.strip():
+            raise Refusal("« abandonné » sans raison : l'abandon s'enregistre avec une raison d'une ligne (--reason)")
+        answer: dict[str, Any] = {"response": response, "approver": approver, "commit": dossier["commit"],
+                                  "pack": dossier["pack"], "reason": single_line(args.reason, "raison de l'abandon"),
+                                  "at": now()}
+    else:
+        said = "« accepté »" if response == "accepted" else "« constats rendus »"
+        delivered = judged_delivered(args.convoy, metadata, said)
+        commit = valid_commit(args.commit, "commit du dossier")
+        digest = valid_digest(args.pack_digest)
+        if commit != delivered["commit"]:
+            raise Refusal(
+                f"le commit {commit[:12]} n'est pas celui du dossier que Benjamin juge sur le convoi {args.convoy} "
+                f"(Delivered au commit {delivered['commit'][:12]}) : {said} se lie au commit jugé")
+        if digest != delivered["pack"]:
+            raise Refusal(
+                f"l'empreinte {digest} n'est pas celle du dossier du Delivered Outcome du convoi {args.convoy} : "
+                f"{said} se lie au dossier jugé")
+        answer = {"response": response, "approver": approver, "words": owner_words(args.words, said), "commit": commit,
+                  "pack": digest, "at": now()}
+        known = propositions_of(tickets)
+        verdicts = {entry["proposition"]: entry for entry in judgement["verdicts"] if entry["proposition"] in known}
+        before = [entry for entry in verdicts.values() if entry["verdict"] == "avant" and "answer" not in entry]
+        if response == "accepted":
+            pending = [proposition for proposition in known if proposition not in verdicts]
+            if pending:
+                raise Refusal(
+                    f"proposition(s) sans verdict ({', '.join(pending)}) : chaque proposition reçoit son verdict "
+                    "(à faire avant d'accepter, plus tard, sans suite) avant « accepté »")
+            if before:
+                raise Refusal(
+                    f"proposition(s) « à faire avant d'accepter » ({', '.join(entry['proposition'] for entry in before)}) : "
+                    "elles se rendent avec les constats (« constats rendus ») ; « accepté » vient après")
+        else:
+            given = json_argument(args.file, "constats rendus").get("findings") if args.file is not None else []
+            if not isinstance(given, list):
+                raise Refusal(f"constats rendus mal formés (attendu : findings, une liste) : {given!r}")
+            if not given and not before:
+                raise Refusal(
+                    "« constats rendus » sans aucun constat : la réponse porte au moins un Owner Finding (--file), ou une "
+                    "proposition « à faire avant d'accepter »")
+            spec = spec_of(convoy)
+            findings = [routed_owner_finding(finding, number, spec) for number, finding in enumerate(given, start=1)]
+            for entry in before:
+                # A proposition to do first is asked by Benjamin, not by the Spec.
+                findings.append({"text": single_line(" ".join(known[entry["proposition"]].split()), "texte de la proposition"),
+                                 "route": "planning_exception", "proposition": entry["proposition"]})
+                entry["answer"] = len(judgement["answers"]) + 1
+            answer["findings"] = findings
+            excepted = [number for number, finding in enumerate(findings, start=1) if finding["route"] == "planning_exception"]
+            if excepted:
+                # One Planning Exception per batch: each such finding joins it.
+                answer["exception"] = {"findings": excepted, "at": answer["at"]}
+            # Nothing closes; the Outcome goes back to delivery, and the
+            # rounds of the end start again from zero for this batch.
+            values.update({KEY_DELIVERED: None, COUNTER_PREFIX + BOUND_END_ROUNDS: 0})
+            values.update({key: None for key in (KEY_ACCEPTANCE, KEY_END_ROUND) if key in metadata})
+    judgement["answers"].append(answer)
+    values[KEY_JUDGEMENT] = encode(judgement_record(encode(judgement)))
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def last_owner_findings(convoy_id: str, judgement: dict[str, Any], number: Any, route: str) -> dict[str, Any]:
+    last = judgement["answers"][-1] if judgement["answers"] else None
+    if last is None or last["response"] != "findings":
+        raise Refusal(f"la dernière réponse enregistrée sur le convoi {convoy_id} n'est pas « constats rendus »")
+    if not isinstance(number, str) or not re.fullmatch(r"[1-9][0-9]*", number) or int(number) > len(last["findings"]):
+        raise Refusal(f"constat inconnu : {number!r} (le lot en porte {len(last['findings'])})")
+    finding = last["findings"][int(number) - 1]
+    if finding["route"] != route:
+        raise Refusal(f"le constat n° {number} n'a pas la route {route} (route : {finding['route']})")
+    return finding
+
+
+def cmd_set_owner_repair(args: argparse.Namespace) -> int:
+    """Name the repair ticket code published for an Owner Finding that
+    cites a story or an anchor: a tracked ticket of the convoy, of kind
+    `repair`. One repair per finding."""
+    convoy, tickets = load_convoy(args.convoy)
+    require_marked(convoy)
+    judgement = judgement_of(metadata_of(convoy))
+    finding = last_owner_findings(args.convoy, judgement, args.finding, "repair")
+    ticket = marked_ticket_among(tickets, args.convoy, args.ticket)
+    if metadata_of(ticket).get(KEY_KIND) != "repair":
+        raise Refusal(f"le ticket {args.ticket} n'est pas un repair : un constat qui cite la story ou l'ancre se répare")
+    if finding.get("ticket") == args.ticket:
+        return done(args.convoy, args.convoy, {})
+    if "ticket" in finding:
+        raise Refusal(f"le constat n° {args.finding} a déjà son repair ({finding['ticket']}) : un seul repair par constat")
+    finding["ticket"] = args.ticket
+    values = {KEY_JUDGEMENT: encode(judgement_record(encode(judgement)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_set_owner_proposal(args: argparse.Namespace) -> int:
+    """Name the proposition the door created for an Owner Finding « plus tard »."""
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    judgement = judgement_of(metadata_of(convoy))
+    finding = last_owner_findings(args.convoy, judgement, args.finding, "later")
+    if finding.get("proposal") == args.bead:
+        return done(args.convoy, args.convoy, {})
+    if "proposal" in finding:
+        raise Refusal(f"le constat n° {args.finding} a déjà sa proposition ({finding['proposal']})")
+    finding["proposal"] = args.bead
+    values = {KEY_JUDGEMENT: encode(judgement_record(encode(judgement)))}
+    write_metadata(args.convoy, values)
+    return done(args.convoy, args.convoy, values)
+
+
+def cmd_resolve_owner_exception(args: argparse.Namespace) -> int:
+    """Record that the Planning Exception of the last batch of returned
+    findings is resolved, on the operator's words: the Spec was amended and
+    its graph revised, or he gave the wish up. Until then the Outcome is
+    not Delivered again."""
+    convoy, _ = load_convoy(args.convoy)
+    require_marked(convoy)
+    judgement = judgement_of(metadata_of(convoy))
+    last = judgement["answers"][-1] if judgement["answers"] else None
+    if last is None or "exception" not in last:
+        raise Refusal(f"aucune Planning Exception de lot n'est ouverte sur le convoi {args.convoy}")
+    approver = single_line(args.approver, "approbateur")
+    words = owner_words(args.words, "résolution")
+    if "resolved" in last["exception"]:
+        return done(args.convoy, args.convoy, {})
+    last["exception"]["resolved"] = {"approver": approver, "words": words, "at": now()}
+    values = {KEY_JUDGEMENT: encode(judgement_record(encode(judgement)))}
     write_metadata(args.convoy, values)
     return done(args.convoy, args.convoy, values)
 
@@ -5978,6 +6423,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--commit")
     p.add_argument("--detail")
     command("set-acceptance-repair", cmd_set_acceptance_repair, ticket=False).add_argument("--ticket")
+    p = command("record-proposition-verdict", cmd_record_proposition_verdict, ticket=False)
+    p.add_argument("--proposition")
+    p.add_argument("--verdict")
+    p.add_argument("--approver")
+    p.add_argument("--words")
+    p = command("set-verdict-proposal", cmd_set_verdict_proposal, ticket=False)
+    p.add_argument("--proposition")
+    p.add_argument("--bead")
+    p = command("record-owner-answer", cmd_record_owner_answer, ticket=False)
+    p.add_argument("--response")
+    p.add_argument("--approver")
+    p.add_argument("--words")
+    p.add_argument("--commit")
+    p.add_argument("--pack-digest")
+    p.add_argument("--file")
+    p.add_argument("--reason")
+    p = command("set-owner-repair", cmd_set_owner_repair, ticket=False)
+    p.add_argument("--finding")
+    p.add_argument("--ticket")
+    p = command("set-owner-proposal", cmd_set_owner_proposal, ticket=False)
+    p.add_argument("--finding")
+    p.add_argument("--bead")
+    p = command("resolve-owner-exception", cmd_resolve_owner_exception, ticket=False)
+    p.add_argument("--approver")
+    p.add_argument("--words")
     command("clear-integration-red", cmd_clear_integration_red, ticket=False)
     p = sub.add_parser("ticket")
     p.add_argument("ticket")

@@ -84,7 +84,7 @@ mark (answered as `bin/convoy-state` answers it, nothing touched).
 | `open` | no profile spans the convoy or it declares no launch recipe; the tickets name no single project and `--repo` is absent; the convoy is in an « état sans règle » | nothing |
 | `close` | no session is open on the convoy | nothing |
 | `close` | a port is still held after the stop | the session record, to close again |
-| `record` | the convoy carries no « non conforme » request (a Delivered Outcome is answered by another command, T29) | nothing |
+| `record` | the convoy carries no « non conforme » request (a Delivered Outcome is answered by `bin/owner-answer`, `docs/OWNER_ANSWER.md`) | nothing |
 | `record` | `--response` is « accepté » or not one of the three issues; or the escalation door did not record the answer | nothing |
 
 ## An outage is not a judgment
@@ -120,8 +120,12 @@ the answer, not in a prompt to find:
 1. `./bin/escalation-door list`, open the page of the dossier in a browser.
 2. Ask the operator session to run `./bin/acceptance-session open <convoy>`
    and open the address(es) it returns.
-3. Judge the product. For a « non conforme » request, give one of the three
-   issues: the session runs `record --response …`.
+3. Judge the product. For a Delivered Outcome, give a verdict on each
+   proposition of the dossier, then one of the three answers (accepté,
+   constats rendus, abandonné): the session runs `./bin/owner-answer`
+   with your words, the `commit` and the `digest` `open` answered
+   (`docs/OWNER_ANSWER.md`). For a « non conforme » request, give one of
+   the three issues: the session runs `record --response …`.
 4. `./bin/acceptance-session close <convoy>`.
 
 ## Proof
@@ -148,14 +152,17 @@ the answer, not in a prompt to find:
 ## Limits
 
 - **Benjamin's three answers to a Delivered Outcome** (accepté, constats
-  rendus, abandonné) are recorded by another command: T29. Answering the
-  one option of the Acceptance Request on the door triggers nothing here.
+  rendus, abandonné) are recorded by another command, `bin/owner-answer`
+  (T29, `docs/OWNER_ANSWER.md`), which also clears the Acceptance Request
+  on the door. Answering the one option of the request on the door
+  triggers nothing.
 - **`record` hands the issue of a « non conforme » request to the door and
-  nothing acts on it yet**: no round restarts, nothing is abandoned, the
-  stop is not withdrawn (T29).
+  nothing acts on it**: no round restarts, the stop is not withdrawn. T29
+  covers the Delivered Outcome only; « abandonné » alone can be recorded on
+  a « non conforme » dossier, by `bin/owner-answer`.
 - **The `repair` of an outage is published by the next pass**, not by
   `open`; **under stopped end rounds none is published**: the outage of a
-  « non conforme » session is recorded and said, nothing more (T29).
+  « non conforme » session is recorded and said, nothing more.
 - **The launch log of a product that does not start is not kept**:
   `bin/project-launch` removes its worktree; the outage keeps one line of
   detail.

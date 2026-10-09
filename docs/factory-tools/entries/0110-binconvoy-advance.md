@@ -125,9 +125,10 @@ touché : il reste avancé par le Mayor.
   pas par cette demande. `non_conforme` dans la réponse de la passe dit où
   elle en est (`pending` tant qu'une Outcome Evaluation ou une revue de fin
   est encore en cours sur la pointe, `raised` une fois la demande partie).
-  **Limites** : ta réponse est enregistrée mais rien ne la lit encore — le
-  convoi reste arrêté, aucun tour ne repart et rien n'est abandonné tant que
-  le ticket suivant (T29) n'est pas livré ; si la passe échoue
+  **Limites** : ta réponse est enregistrée mais rien ne la lit — le
+  convoi reste arrêté et aucun tour ne repart (T29 ne traite que la réponse
+  à un Delivered Outcome ; seul « abandonné » s'enregistre sur ce dossier,
+  par `./bin/owner-answer`, `docs/OWNER_ANSWER.md`) ; si la passe échoue
   entre l'envoi et son enregistrement, tu reçois le même courrier une
   seconde fois (une seule ligne dans la liste).
 - **Acceptance Request** (T28) : dès qu'un convoi est Delivered (les sept
@@ -142,8 +143,19 @@ touché : il reste avancé par le Mayor.
   rétablit ce démarrage (pas tant que les tours de fin sont arrêtés).
   `acceptance` dans la réponse de la passe dit ce qu'elle a fait
   (`action: requested`, `repair`). **Aucun délai ne répond à ta place** :
-  rien n'est accepté, fusionné ni fermé sans ta réponse, dont
-  l'enregistrement est T29.
+  rien n'est accepté, fusionné ni fermé sans ta réponse, qui s'enregistre
+  par `./bin/owner-answer` (T29, `docs/OWNER_ANSWER.md`).
+- **Constats rendus** (T29) : quand ta dernière réponse est « constats
+  rendus », la passe suivante publie **un** `repair` par constat qui cite
+  une user story ou une ancre de la Spec (`acceptance.owner_repairs`), le
+  livre par le flux habituel, puis toute la porte de fin de Spec repasse à
+  la nouvelle pointe et un nouveau dossier arrive avec une nouvelle
+  Acceptance Request. Tant qu'un de ces `repair` n'est pas publié, ou que la
+  Planning Exception du lot est ouverte, la fin de Spec attend
+  (`acceptance.owner_hold`). **Limites** : la Planning Exception se traite
+  par un Planning Run à la main, puis `./bin/owner-answer
+  resolve-exception` — aucun code ne le lance ni ne prévient le Mayor ;
+  « accepté » et « abandonné » ne ferment ni ne fusionnent rien (T30).
 - **Les bornes se règlent à un seul endroit** : `bounds` de
   `config/delivery-flow.json` — `resumes` (K, 3), `open_planning_exceptions`
   (2), `end_rounds` (tours de réparation de fin de Spec, 2). Changer une valeur change le comportement à la passe suivante ; une

@@ -95,6 +95,12 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state acceptance-requested     af-convoy --bead af-convoy                 # bin/convoy-advance, once the Acceptance Request reached the operator
 ./bin/convoy-state acceptance-launch-failed af-convoy --commit <commit of the dossier> --detail "<line>"   # bin/acceptance-session open: the product did not start
 ./bin/convoy-state set-acceptance-repair    af-convoy --ticket af-r4                   # bin/convoy-advance, once the patch door published the repair of that outage
+./bin/convoy-state record-proposition-verdict af-convoy --proposition af-t3:out_of_ticket.1 --verdict avant|plus_tard|sans_suite --approver benjamin --words "<his words>"   # bin/owner-answer verdict
+./bin/convoy-state set-verdict-proposal     af-convoy --proposition af-t3:out_of_ticket.1 --bead af-p1   # bin/owner-answer, once the proposition door created it
+./bin/convoy-state record-owner-answer      af-convoy --response accepted|findings|abandoned --approver benjamin [--words "<his words>" --commit <commit of the dossier> --pack-digest sha256:<hex>] [--file findings.json] [--reason "<line>"]   # bin/owner-answer record
+./bin/convoy-state set-owner-repair         af-convoy --finding 1 --ticket af-r5       # bin/convoy-advance, once the patch door published the repair of that Owner Finding
+./bin/convoy-state set-owner-proposal       af-convoy --finding 2 --bead af-p2         # bin/owner-answer, for a finding « plus tard »
+./bin/convoy-state resolve-owner-exception  af-convoy --approver benjamin --words "<his words>"   # bin/owner-answer resolve-exception
 ```
 
 Every answer is one JSON object on stdout.
@@ -158,6 +164,7 @@ Every answer is one JSON object on stdout.
 | Stop of the rounds of the end | `gc.flow.end_stop` | convoy | T26: `reason` (`end_rounds_exhausted`, `stories_not_reduced`, `story_refused_twice`), `detail` (one line), `commit` (the tip that was refused when the stop was written), `source` (as for `end_round`), `rounds` (the rounds counted then), `at`; then `request`, once the « non conforme » request reached the operator: `bead`, `commit` and `digest` (the Evidence Pack it carries), `page` (the absolute path of its page), `at` |
 | Delivered Outcome | `gc.flow.delivered` | convoy | T26: `commit` (the one commit of the integration branch the seven conditions of the end of the Spec were met on), `protected` (the tip of the protected branch that commit holds), `pack` (the fingerprint of the Evidence Pack generated there), `version` (`spec-end/v4`), `at` |
 | Acceptance | `gc.flow.acceptance` | convoy | T28: what the acceptance of the convoy holds before Benjamin's answer, tied to the one commit of the dossier he judges -- `commit`, `pack` (the fingerprint of that Evidence Pack), `at`; then `request`, once the Acceptance Request reached the operator: `bead`, `page` (the absolute path of the page of the pack), `at`; and `panne`, when the product of an Acceptance Session did not start at that commit: `detail` (one line), `at`, then `ticket` (the `repair` published for it) |
+| Judgement | `gc.flow.judgement` | convoy | T29: what Benjamin answered to the Outcome he judged, written through `bin/owner-answer` -- `verdicts`, one per « proposition » of the dossier: `proposition` (`<ticket>:out_of_ticket.N`), `verdict` (`avant`, `plus_tard`, `sans_suite`), `approver`, `words`, `commit` (the Delivered commit it was given on), `at`, then `proposal` (the proposition created for « plus tard ») or `answer` (the number of the « constats rendus » answer that returned a proposition « à faire avant d'accepter »); `answers`, oldest first: `response` (`accepted`, `findings`, `abandoned`), `approver`, `commit` and `pack` (the dossier judged), `at`, `words` (accepted, findings), `reason` (abandoned, one line), `findings` (findings: each `text`, `route` -- `repair`, `planning_exception`, `later` --, and `cites` `{kind, ref}`, `draft` (the repair to publish, route `repair` only), `ticket` (the `repair` published), `proposal` (route `later`), `proposition` (a returned proposition)), `exception` (the one Planning Exception of the batch: `findings`, the numbers of its findings, `at`, then `resolved` `{approver, words, at}`). Nothing follows an `accepted` or `abandoned` answer |
 
 `mark` is idempotent: it marks the tickets first and the convoy last, sets
 each counter to an explicit `0`, and on a later run marks only the tickets
@@ -547,8 +554,10 @@ verdict.
 Not done here, on purpose: no command withdraws `end_stop` — what the
 operator answers to the request (another round, back to planning, abandon)
 is handed to the escalation door by `bin/acceptance-session record` (T28)
-and acted on by T29; and `set-counter --counter end_rounds --value 0`
-resets the counter only, it clears neither `end_round` nor `end_stop`.
+and read by nothing: T29 records his answer to a Delivered Outcome only
+(`docs/OWNER_ANSWER.md`, Limits); and `set-counter --counter end_rounds
+--value 0` resets the counter only, it clears neither `end_round` nor
+`end_stop`.
 
 ### The acceptance record (T28)
 
@@ -583,7 +592,82 @@ another is refused.
 
 A stored `gc.flow.acceptance` these commands would have refused to write is
 an « état sans règle ». Benjamin's answer itself (accepté, constats rendus,
-abandonné) is not recorded here yet: T29.
+abandonné) is not part of this record: it is the judgement record below.
+
+### The judgement record (T29)
+
+Spec §11. `gc.flow.judgement` (`convoy.judgement` in `show`) holds
+Benjamin's verdicts on the propositions of the dossier and each of his
+answers, oldest first. Six commands write it; `bin/owner-answer` calls the
+first two and the last, and names the propositions it creates
+(`docs/OWNER_ANSWER.md`); the pass names the repairs
+(`docs/CONVOY_ADVANCE.md`). **Whether `--approver` is the declared human
+approver, whether the commit is still the tip of the integration branch and
+whether the dossier still holds are the caller's refusals**
+(`bin/owner-answer`), as for `override-finding`: this command reads neither
+the project nor its repository.
+
+`record-proposition-verdict` records one verdict (`--verdict avant`,
+`plus_tard` or `sans_suite`, `--approver`, `--words`) on a « proposition »:
+a finding « hors ticket » of the current Handoff classified `proposal`,
+named `<ticket>:out_of_ticket.N`. It refuses a convoy that is not
+Delivered, an id that is not such a proposition, empty words. One verdict
+per proposition: the same again writes nothing; another replaces it, unless
+the first already had its follow-up (`proposal` or `answer`).
+
+`set-verdict-proposal` names, on a verdict `plus_tard`, the bead the
+proposition door created (`--bead`). One per verdict: the same again writes
+nothing; another is refused.
+
+`record-owner-answer` appends one answer (`--response accepted`, `findings`
+or `abandoned`, `--approver`):
+
+- `accepted` and `findings` take `--words`, `--commit` and `--pack-digest`,
+  and refuse a convoy that is not Delivered, a commit or a fingerprint that
+  is not the one of the Delivered Outcome.
+- `accepted` refuses while a proposition has no verdict, or has the verdict
+  `avant` and was not returned. It writes the answer and nothing else: the
+  convoy stays Delivered and open.
+- `findings` reads `--file` (`{"findings": [{text, cites?, repair?,
+  later?}]}`) and gives each finding its route: `later` when it says so; a
+  `repair` when it cites a `user_story` whose number the Spec holds or an
+  `anchor` — its drafted `repair` is then required, and stored as `draft`;
+  `planning_exception` otherwise, never a repair. Each proposition of
+  verdict `avant` not yet returned is added as a `planning_exception`
+  finding, and its verdict names the answer. Every `planning_exception`
+  finding joins the one `exception` of the batch. It refuses a batch with
+  no finding and no such proposition. **In the same write** it withdraws
+  `gc.flow.delivered`, `gc.flow.acceptance` and `gc.flow.end_round` and
+  sets `gc.flow.counter.end_rounds` to 0. It closes nothing.
+- `abandoned` takes `--reason`, one line, and is recorded with the commit
+  and the fingerprint of the dossier Benjamin judges (the Delivered
+  Outcome, or the one of the « non conforme » request); it refuses a convoy
+  that has neither.
+
+`set-owner-repair` names, on finding `--finding N` of the last « constats
+rendus », the ticket code published for it (`--ticket`): a tracked ticket
+of the convoy, of kind `repair`, on a finding of route `repair`. One repair
+per finding. `set-owner-proposal` names, on a finding of route `later`, the
+bead of its proposition (`--bead`). For both the same value again writes
+nothing; another is refused.
+
+`resolve-owner-exception` records, with `--approver` and `--words`, that
+the Planning Exception of the last batch is resolved. It refuses an answer
+that carries none. The same call again writes nothing.
+
+**Nothing reopens an accepted or an abandoned Outcome**:
+`record-proposition-verdict` and `record-owner-answer` refuse once the last
+answer is one of the two, and name the way in — new work, through a
+Planning Run.
+
+`record-delivered` also refuses while the last « constats rendus » has a
+finding of route `repair` whose ticket is not a tracked ticket of the
+convoy, or an `exception` that is not resolved.
+
+A stored `gc.flow.judgement` these commands would have refused to write —
+an answer after an accepted one, a route that contradicts what the finding
+carries, an `exception` that does not cover its findings — is an « état
+sans règle ».
 
 `lift-park` lifts the parking a ticket caused, once the request `--request`
 (a bead id) was answered, with the letter of the option taken (`--option`,
@@ -886,10 +970,10 @@ A marked **convoy** found closed is one more « état sans règle », carried
 by the convoy itself (`convoy.unruled`, field `status`, « convoi fermé hors
 commande », with the closing reason it carries): a marked convoy closes only
 by code, on the operator's words — accepted or abandoned (Spec §9). No
-command of this flow closes a convoy yet: T28 records the Acceptance
-Request and the outage of an Acceptance Session (`gc.flow.acceptance`), not
-Benjamin's answer; the accepted and the abandoned convoy come with T29 and
-T30, which add their record here. Until then every
+command of this flow closes a convoy yet: T29 records Benjamin's answer —
+accepté, constats rendus, abandonné — in `gc.flow.judgement`
+(`docs/OWNER_ANSWER.md`) and closes nothing; closing the accepted and the
+abandoned convoy comes with T30. Until then every
 closed marked convoy is reported, and `list` names them under
 `closed_outside`, apart from the open ones under `convoys`. An open marked
 convoy whose tickets are all closed is a valid state.
@@ -981,3 +1065,9 @@ refused on a convoy that is not Delivered and on another bead, kept when
 Delivered is recorded again; the outage noted at the commit of the dossier
 and refused at another, one repair of the convoy per outage. No trial on
 the real tracker covers it.
+T29: `tests/owner-answer-test.py` covers the judgement record through
+`bin/owner-answer` — the three verdicts, the three answers, the route of
+each finding of a batch, Delivered refused while a repair is unpublished or
+the Planning Exception of the batch is open, the repair named once and only
+by a repair of the convoy, nothing recorded after an accepted Outcome. No
+trial on the real tracker covers it.

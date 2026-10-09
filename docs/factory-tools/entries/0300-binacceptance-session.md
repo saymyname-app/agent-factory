@@ -49,10 +49,11 @@ ensuite le produit que tu juges et l'arrête.
 - **Sorties** : 0 fait ; 1 refus ou panne (`error` commence par
   « refus : ») ; 3 état sans règle ; 4 convoi sans marque.
 - **Limites** : tes trois réponses à un Delivered Outcome (accepté,
-  constats rendus, abandonné) s'enregistreront par une autre commande
-  (T29), et répondre à l'option de l'Acceptance Request sur la porte ne
-  déclenche rien ; l'issue d'une demande « non conforme » est enregistrée
-  mais rien ne la lit encore (T29) ; le `repair` d'une panne est publié par
+  constats rendus, abandonné) s'enregistrent par une autre commande,
+  `./bin/owner-answer` (T29, `docs/OWNER_ANSWER.md`), et répondre à l'option
+  de l'Acceptance Request sur la porte ne déclenche rien ; l'issue d'une
+  demande « non conforme » est enregistrée mais rien ne la lit (T29 ne
+  traite que le Delivered Outcome) ; le `repair` d'une panne est publié par
   la passe suivante, pas par `open`, et **aucun** n'est publié tant que les
   tours de fin sont arrêtés ; le journal de lancement d'un produit qui ne
   démarre pas n'est pas conservé (une ligne de précision sur la panne) ; le
