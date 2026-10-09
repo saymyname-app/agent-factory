@@ -212,6 +212,7 @@ SPEC_END_BIN = BIN / "spec-end"
 END_REVIEW_BIN = BIN / "spec-end-review"
 OUTCOME_BIN = BIN / "outcome-evaluation"
 PACK_BIN = BIN / "evidence-pack"
+OWNER_BIN = BIN / "owner-answer"
 PACK_CONDITION = "evidence_pack"
 PUBLISH_BIN = BIN / "ticket-graph-publish"
 OPERATOR_CONFIG_BIN = BIN / "operator-config"
@@ -403,6 +404,10 @@ class Convoy:
         acceptance = answer["convoy"].get("acceptance")
         self.acceptance: dict[str, Any] | None = (
             acceptance if isinstance(acceptance, dict) and "commit" in acceptance else None)
+        # Benjamin's verdicts and answers, with the route of each Owner Finding (T29).
+        judgement = answer["convoy"].get("judgement")
+        self.judgement: dict[str, Any] | None = (
+            judgement if isinstance(judgement, dict) and "answers" in judgement else None)
         pack = answer["convoy"].get("evidence_pack")
         self.pack: dict[str, Any] | None = pack if isinstance(pack, dict) and "path" in pack else None
         grouped = answer["convoy"].get("grouped_request")
@@ -507,8 +512,36 @@ class Convoy:
     def end_due(self) -> bool:
         """Every ticket of the convoy is closed and its integration branch
         is not red: what makes the end-of-Spec gate worth running (T23)."""
-        return bool(self.integration and self.tickets and not self.red
+        return bool(self.integration and self.tickets and not self.red and not self.owner_hold()
                     and all(t.get("status") == "closed" for t in self.tickets))
+
+    def owner_findings(self) -> list[dict[str, Any]]:
+        """The Owner Findings of Benjamin's last answer, when it is
+        « constats rendus » (T29, Spec §11)."""
+        answers = (self.judgement or {}).get("answers") or []
+        return answers[-1]["findings"] if answers and answers[-1].get("response") == "findings" else []
+
+    def later_without_proposal(self) -> bool:
+        """A « plus tard » Benjamin gave -- a verdict on a proposition, an
+        Owner Finding of his last answer -- has no proposition yet."""
+        answers = (self.judgement or {}).get("answers") or []
+        return any(v.get("verdict") == "plus_tard" and "proposal" not in v
+                   for v in (self.judgement or {}).get("verdicts") or []) \
+            or any(f.get("route") == "later" and "proposal" not in f
+                   for f in (answers[-1].get("findings") or [] if answers else []))
+
+    def owner_hold(self) -> str | None:
+        """What Benjamin's last « constats rendus » holds the end of the
+        Spec for: a returned finding whose `repair` is not published yet,
+        or the Planning Exception of the batch while it is open."""
+        answers = (self.judgement or {}).get("answers") or []
+        tracked = {t["id"] for t in self.tickets}
+        if any(f["route"] == "repair" and f.get("ticket") not in tracked for f in self.owner_findings()):
+            return "un constat rendu par Benjamin attend son repair"
+        if answers and "exception" in answers[-1] and "resolved" not in answers[-1]["exception"]:
+            return ("la Planning Exception du lot de constats rendus par Benjamin est ouverte : la Spec et son graphe "
+                    "sont à reprendre par un Planning Run, puis bin/owner-answer resolve-exception")
+        return None
 
     def outcome_due(self) -> bool:
         """The end-of-Spec gate is due, or the Outcome Evaluation has
@@ -1301,6 +1334,32 @@ def settle_acceptance(convoy: Convoy) -> dict[str, Any] | None:
             state_write("set-acceptance-repair", convoy.id, "--ticket", repair["id"])
             convoy.load()
             answer["repair"] = repair
+        # Benjamin returned findings: each one that cites the story or the
+        # anchor gets the `repair` drafted with it, published by code (T29).
+        tracked = {t["id"] for t in convoy.tickets}
+        for number, finding in enumerate(convoy.owner_findings(), start=1):
+            if finding["route"] != "repair" or finding.get("ticket") in tracked:
+                continue
+            label = f"constat n° {number} rendu par Benjamin"
+            repair = publish_repair(convoy, finding["draft"], label, f"{label} : {finding['text']}",
+                                    "de l'approbateur", "son constat")
+            state_write("set-owner-repair", convoy.id, "--finding", str(number), "--ticket", repair["id"])
+            answer.setdefault("owner_repairs", []).append({"finding": number, **repair})
+        if "owner_repairs" in answer:
+            convoy.load()
+        # A « plus tard » of his whose proposition the door did not create
+        # when he answered gets it now; a door that still fails holds nothing.
+        if convoy.later_without_proposal():
+            said = parsed(run([str(OWNER_BIN), "proposals", convoy.id, "--repo", str(convoy.repo)]),
+                          "owner-answer proposals")
+            for key in ("created", "proposals_pending"):
+                if said.get(key):
+                    answer["owner_proposals" if key == "created" else key] = said[key]
+            if said.get("error"):
+                answer["proposals_pending"] = said["error"]
+        held = convoy.owner_hold()
+        if held and not convoy.delivered:
+            answer["owner_hold"] = held
     except (Refusal, NotNewFlow) as exc:
         return {"error": f"refus : {exc}"}
     return answer or None

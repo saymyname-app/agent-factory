@@ -286,7 +286,9 @@ caller:
 - « Problème remonté » and « À toi de jouer » are one click from where
   Benjamin acts: the request carrying the question, or — on a Livré
   chantier — its acceptance panel in place, with « Accepter »
-  (`POST /api/actions/accepter_chantier`, two-step, traced on the convoy)
+  (`POST /api/actions/accepter_chantier`, two-step, traced on the convoy;
+  refused on a convoy of the new flow, see « A delivered chantier asks for
+  acceptance only with something to judge » below)
   and « Pas bon → agent » (`pas_bon_vers_agent`, a prompt to copy).
 
 Two rules the real data needed:
@@ -327,6 +329,24 @@ Pack exists and the button changed a label only. It is not accepted in
 Benjamin's name (no `gc.cockpit_chantier_accepted` is written), and nothing
 changes for a convoy of the Delivery Workflow. A note the main-text control
 refuses (`text/validate.py`) falls back to the fixed phrase.
+
+**A convoy of the new flow is not accepted by the click (T29, Spec
+af-wf4w5r §11).** For a convoy that carries `gc.flow.mark`:
+
+- `accepter_chantier` is **refused and writes nothing**, with a French
+  message that sends Benjamin to the Acceptance Session: its acceptance is
+  his answer recorded by `bin/owner-answer`, with his words, the commit and
+  the fingerprint of the dossier (`docs/OWNER_ANSWER.md`) — three things
+  the click does not know. A convoy that cannot be read is refused too.
+- the stage « Accepté » is read from that recorded answer
+  (`convoy_state.owner_answer_of`: the last answer of `gc.flow.judgement`
+  is `accepted`), in `stage.py` and for Promu (`promu.py`), **not** from
+  `gc.cockpit_chantier_accepted`, which is ignored there.
+
+A convoy without the mark is unchanged: the click writes
+`gc.cockpit_chantier_accepted` and the stage reads it. Limit: the panel
+still shows « Accepter » on a closed marked convoy with no recorded answer;
+the click is refused. `tests/cockpit-chantiers-test.py` covers both.
 
 Set a note: `gc bd update <convoy> --set-metadata
 "gc.cockpit_acceptance_note=<one line, plain French, 140 characters>"`.

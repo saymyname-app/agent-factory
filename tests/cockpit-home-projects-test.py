@@ -64,9 +64,11 @@ def convoy(bead_id, title, status, digest=None, project=None):
     metadata = {}
     if digest:
         metadata["gc.graph_digest"] = digest
-        # A convoy of the Delivery Workflow: delivered, it waits for an
-        # acceptance (an unmarked one asks nothing -- cockpit-chantiers-test).
-        metadata["gc.flow.mark"] = "new-flow/v1"
+        # Delivered, it waits for an acceptance by the cockpit's click: it
+        # says what to look at (one without a note asks nothing; one of the
+        # Delivery Workflow is accepted by bin/owner-answer, never by the
+        # click -- cockpit-chantiers-test).
+        metadata["gc.cockpit_acceptance_note"] = "Vérifier le résultat livré avant d'accepter"
     if project:
         metadata["gc.project_id"] = project
     return {

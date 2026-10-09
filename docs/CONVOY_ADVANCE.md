@@ -655,7 +655,8 @@ hand.
 
 Spec §9, user story 55: a marked convoy stays open when all its tickets are
 closed; it closes only by code, on the operator's words (accepted or
-abandoned: T29, T30). Three things hold that:
+abandoned: recorded by `bin/owner-answer`, T29, `docs/OWNER_ANSWER.md`; the
+closing itself is T30). Three things hold that:
 
 - `bin/convoy-state mark` puts the convoy under Gas City's manual lifecycle
   (the label `owned`): `gc convoy check`, which
@@ -918,7 +919,8 @@ agent writes the dossier, the request or its wording.
 - Nothing reads the operator's answer yet: no command withdraws `end_stop`,
   so a stopped convoy stays stopped whatever option is taken.
   `bin/acceptance-session record` hands the chosen issue to the door (T28,
-  `docs/ACCEPTANCE_SESSION.md`); acting on it is T29's.
+  `docs/ACCEPTANCE_SESSION.md`) and nothing reads it: T29 covers the answer
+  to a Delivered Outcome only (`docs/OWNER_ANSWER.md`, Limits).
 - A pass that fails between the door and `end-stop-raised` sends the request
   again at the next pass: the bead carries one request, the operator gets a
   second mail.
@@ -973,6 +975,34 @@ and names it with `set-acceptance-repair`. The answer carries
 `acceptance.repair`. **Not while the rounds of the end are stopped**: under
 `end_stop` no repair is published, this one included.
 
+**The repairs of the findings Benjamin returned (T29).** When his last
+answer is « constats rendus » (`convoy.judgement`, written by
+`bin/owner-answer`, `docs/OWNER_ANSWER.md`), the pass publishes, for each
+Owner Finding of route `repair` that names no tracked ticket, **one**
+`repair` through the patch door — the draft recorded with the finding,
+restoring the user story or the anchor it cites — and names it with
+`bin/convoy-state set-owner-repair`. The answer carries
+`acceptance.owner_repairs`: `{finding, …the published ticket}` each. A
+finding of another route gets no repair, ever.
+
+**The propositions of his « plus tard » (T29).** While a verdict « plus
+tard » or an Owner Finding « plus tard » of his last answer names no
+proposition — the proposition door failed when he answered — the pass runs
+`bin/owner-answer proposals`: what it created is under
+`acceptance.owner_proposals`, what the door still did not create under
+`acceptance.proposals_pending`. Neither holds the end of the Spec.
+
+**The end of the Spec is held** (`Convoy.end_due()` is false) while such a
+finding has no published repair, or while the Planning Exception of the
+batch is open: `acceptance.owner_hold` says which. The exception is lifted
+by `bin/owner-answer resolve-exception`, on Benjamin's words; no code
+starts the Planning Run that amends the Spec, and nothing notifies the
+Mayor. Once the repairs are closed by their ticket-end gate and nothing is
+held, the unchanged flow runs again at the new tip: the whole end-of-Spec
+gate, a fresh Outcome Evaluation and end review (freshness is commit
+equality), a new Evidence Pack — with its rubric 0 — and a new Acceptance
+Request. The rounds of the end were set back to 0 by the answer.
+
 An error at any step is `acceptance.error`: the pass exits 1 and the next
 one tries again.
 
@@ -981,14 +1011,17 @@ Benjamin's place: a Delivered Outcome stays Delivered until he answers.
 
 **What it leaves open.**
 
-- Recording Benjamin's answer to a Delivered Outcome (accepté, constats
-  rendus, abandonné) and what each triggers is T29's; answering the option
-  of the request on the door triggers nothing.
+- Benjamin's answer to a Delivered Outcome (accepté, constats rendus,
+  abandonné) is recorded by `bin/owner-answer`, not by the pass
+  (`docs/OWNER_ANSWER.md`); answering the option of the request on the door
+  triggers nothing. « accepté » and « abandonné » close and merge nothing:
+  T30.
 - The repair of an outage is published by the pass that follows `open`,
   not by `open`.
 - A pass that fails between the door and `acceptance-requested` sends the
   request again at the next pass: one request on the bead, a second mail.
 
+`tests/owner-answer-test.py` covers the judgement record and its holds;
 `tests/acceptance-session-test.py` covers the records;
 `tests/convoy-stops-fixture-city-test.py` and
 `tests/fixture-city-oracle-test.py` cover the pass on the graph of the

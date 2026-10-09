@@ -53,6 +53,14 @@ adapters.
                        drafts through the patch door; the author session of that repair
                        makes the product serve GET /items. `publish` then names the convoy
                        and the ticket, which the door numbered. First project only
+    proposition        the same Spec and the same door as `story-not-observed`, but the
+                       Evaluator of the end observes both user stories on the home page, so
+                       the Outcome is Delivered without a round; the author of the walked
+                       ticket leaves one finding « hors ticket » in its Ticket Handoff, which
+                       the Evaluator of the end classifies as a « proposition »; and the
+                       project the ticket targets declares its human approver (T29,
+                       af-mcd7pw). The author session of a `repair` the order publishes
+                       afterwards makes the product serve GET /items. First project only
 
 `--project` names the project of the fixture the ticket belongs to (T35,
 af-f62cxt); the same events are played on either, each from its own profile:
@@ -95,7 +103,11 @@ CONVOY, SPEC, TICKET, RIG = "fx-convoy", "fx-spec", "fx-t1", "fx-rig"
 SICK, BEHIND = "fx-t2", "fx-t3"
 FAILURES = 3
 INTEGRATION = f"integration/{SPEC}"
-INJECTIONS = ("none", "criterion-edited", "closed-by-hand", "three-failures", "story-not-observed")
+INJECTIONS = ("none", "criterion-edited", "closed-by-hand", "three-failures", "story-not-observed", "proposition")
+# The injections whose graph is published by the real publication door.
+THROUGH_THE_DOOR = ("story-not-observed", "proposition")
+# With `proposition`: what the author of the walked ticket found « hors ticket ».
+OUT_OF_TICKET = "La page d'accueil gagnerait à afficher la date du jeu de données."
 # With `story-not-observed`: the approved draft the door publishes, its key
 # for the walked ticket, and where the product serves the second user story
 # once the repair is delivered.
@@ -299,7 +311,9 @@ class City:
         (config / "projects").mkdir(parents=True)
         (config / "project-descriptors").mkdir()
         (config / "projects" / f"{RIG}.toml").write_text(
-            'rig_dir = "."\nrepo = "example/fx"\nprotected_branch = "main"\nrequired_ci = "CI"\n'
+            # With `proposition`, the project the tickets target declares who answers for it.
+            ('human_approver = "benjamin"\n' if inject == "proposition" else "")
+            + 'rig_dir = "."\nrepo = "example/fx"\nprotected_branch = "main"\nrequired_ci = "CI"\n'
             'sling_target = "fx-worker"\nformulas = "fx-start,fx-resume"\n')
         shutil.copy(ROOT / "config" / "delivery-roles.json", config / "delivery-roles.json")
         (config / "delivery-flow.json").write_text(json.dumps({
@@ -315,7 +329,7 @@ class City:
         descriptor["rigs"] = [RIG]
         if self.project["regression_command"]:
             descriptor["launch"]["regression_command"] = self.project["regression_command"]
-        through_the_door = inject == "story-not-observed"
+        through_the_door = inject in THROUGH_THE_DOOR
         if through_the_door:
             # The doors read the project of the Spec by its key: its human
             # approver, and its profile under the name of the project.
@@ -337,7 +351,7 @@ class City:
         # with `story-not-observed`, the second one where the Spec says it is
         # served, on the product as it is launched: not at first.
         (self.workspace / "outcome-plan.json").write_text(json.dumps(
-            [{"stories": {"2": ITEMS}}] if through_the_door else [{}]))
+            [{"stories": {"2": ITEMS}}] if inject == "story-not-observed" else [{}]))
         # The reviewer of the end finds nothing to block on the assembled diff.
         (self.workspace / "end-review-plan.json").write_text(json.dumps(["favorable"]))
         # The Evaluator is not sent in the pass that sends the reviewer (its
@@ -426,7 +440,7 @@ class City:
 
     def publish(self) -> dict:
         base = json.loads(self.memo.read_text())["base"]
-        if json.loads(self.memo.read_text())["inject"] == "story-not-observed":
+        if json.loads(self.memo.read_text())["inject"] in THROUGH_THE_DOOR:
             return self.publish_through_the_door(base)
         interface = self.project["interface"]
         prototype = (
@@ -464,6 +478,8 @@ class City:
         proc = self.run(BIN / "convoy-advance", self.convoy, "--stopped-ok", check=False)
         if proc.returncode not in (0, 3):
             raise SystemExit(f"delivery-driver: convoy-advance failed ({proc.returncode}): {proc.stdout[-800:]}{proc.stderr[-300:]}")
+        # What the pass answered, for whoever reads the walk afterwards.
+        (self.workspace / "order-pass.json").write_text(proc.stdout)
         return "order-pass"
 
     def commit(self, branch: str, files: dict[str, str], message: str) -> str:
@@ -515,7 +531,9 @@ class City:
         else:
             files = {"docs/fixture-ticket.md": "la tranche du ticket\n"}
         tip = self.commit(branch, files, "travail du ticket")
-        ticket_proofs.finish(env, self.root, self.convoy, ticket, tip, memo["bases"][ticket], branch)
+        sections = ({**ticket_proofs.SECTIONS, "out_of_ticket": [OUT_OF_TICKET]}
+                    if memo["inject"] == "proposition" and not repair else None)
+        ticket_proofs.finish(env, self.root, self.convoy, ticket, tip, memo["bases"][ticket], branch, sections=sections)
         return "session:code"
 
     def failed_session(self, memo: dict) -> str | None:
@@ -591,8 +609,8 @@ def main() -> int:
         if args.project not in PROJECTS:
             raise SystemExit(f"delivery-driver: unknown project of the fixture: {args.project} "
                              f"(known: {', '.join(PROJECTS)})")
-        if args.inject == "story-not-observed" and args.project != DEFAULT_PROJECT:
-            raise SystemExit(f"delivery-driver: --inject story-not-observed is played on {DEFAULT_PROJECT} only: "
+        if args.inject in THROUGH_THE_DOOR and args.project != DEFAULT_PROJECT:
+            raise SystemExit(f"delivery-driver: --inject {args.inject} is played on {DEFAULT_PROJECT} only: "
                              f"the story it leaves unserved is one {args.project} already serves")
         answer = city.prepare(args.inject, args.project)
     elif args.command == "publish":

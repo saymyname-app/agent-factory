@@ -153,8 +153,12 @@ merged into the protected branch and nothing is closed. Once Delivered is
 recorded, the next step of the pass sends the operator the **Acceptance
 Request** with the link of the Evidence Pack, once, and
 `bin/acceptance-session` launches the product he judges (T28,
-`docs/ACCEPTANCE_SESSION.md`). No delay answers in his place. Recording his
-judgment and what it triggers are T29's.
+`docs/ACCEPTANCE_SESSION.md`). No delay answers in his place. His answer
+is recorded by `bin/owner-answer` (T29, `docs/OWNER_ANSWER.md`):
+« constats rendus » withdraws Delivered and sets the rounds of the end back
+to 0; the gate is not run again, and `record-delivered` refuses, while a
+returned finding waits for its `repair` or the Planning Exception of the
+batch is open. « accepté » leaves the convoy Delivered and open.
 
 ## One commit more outdates every verdict
 
@@ -240,12 +244,14 @@ conditions that refused; `check` every condition that is not green.
   line. A sharper criterion is a Planning Exception, as for any ticket.
 - **The gate verifies; it accepts nothing and closes nothing.** Delivered
   is recorded and the Acceptance Request is sent by the pass (T28,
-  `docs/ACCEPTANCE_SESSION.md`); recording the acceptance by Benjamin is a
-  later ticket (T29).
+  `docs/ACCEPTANCE_SESSION.md`); Benjamin's answer is recorded by
+  `bin/owner-answer` (T29, `docs/OWNER_ANSWER.md`), which closes and merges
+  nothing either: that is a later ticket (T30).
 - **Nothing withdraws the stop of the rounds yet.** Once `end_stop` is
   written the convoy stays stopped whatever the operator answers to the
   « non conforme » request: `bin/acceptance-session record` hands his issue
-  to the escalation door (T28), acting on it is T29's.
+  to the escalation door (T28) and nothing reads it — T29 covers the answer
+  to a Delivered Outcome only (`docs/OWNER_ANSWER.md`, Limits).
 - **`check` under a red of the end names no red condition.** While the
   integration branch is red, nothing is recorded on the tip: `check` shows
   condition 1 as it reads it and conditions 2 to 7 as `not_run` (« non
