@@ -25,9 +25,16 @@ the walked one, then any `repair` the order published in the convoy. `idle`
 is true when the event changed nothing. `stop` stops whatever product an
 evaluation left launched, and closes an Acceptance Session left open (T28).
 
-No agent runs here: the author session files its steps the way its scripts
-do (tests/lib/ticket_proofs.py: each piece sealed by the real
-bin/evidence-capture, each step recorded by the real bin/convoy-state); the
+No agent runs here. The driver writes what an author session leaves (the
+criterion tests and their table, the commits, the Ticket Handoff it says),
+in the worktree of the ticket; each state of the author's step is written by
+the real gate that is responsible for it (T37, af-fg8lhx): bin/ticket-author
+start and demonstrate, bin/tdd-step red, freeze and green, bin/test-review
+review (answered by the stand-in of its suite, tests/fixtures/test-review/
+reviewer, through the real bin/test-review record) and bin/ticket-exit exit.
+The driver never writes one of these states through bin/convoy-state: the
+oracle refuses a walk where it does. The commands are the ones the oracle
+hands over in FIXTURE_CITY_FLOW_BIN, which it records. The code
 reviewer and the Evaluator are the stand-ins of their own suites
 (tests/fixtures/code-review/reviewer, tests/fixtures/ticket-evaluation/
 evaluator), which answer through the real bin/code-review and
@@ -92,13 +99,13 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "tests" / "lib"))
-import ticket_proofs  # noqa: E402
-
-BIN = ROOT / "bin"
+# The commands of the flow: the ones the oracle hands over, which it records
+# (T37, af-fg8lhx), or the ones of the checkout when the driver is run alone.
+BIN = Path(os.environ.get("FIXTURE_CITY_FLOW_BIN") or ROOT / "bin")
 FIXTURES = Path("tests") / "fixtures"
 FAKE_GC = ROOT / "tests" / "fixtures" / "convoy-state" / "gc"
 REVIEWER = ROOT / "tests" / "fixtures" / "code-review" / "reviewer"
+TEST_REVIEWER = ROOT / "tests" / "fixtures" / "test-review" / "reviewer"
 EVALUATOR = ROOT / "tests" / "fixtures" / "ticket-evaluation" / "evaluator"
 END_EVALUATOR = ROOT / "tests" / "fixtures" / "outcome-evaluation" / "evaluator"
 END_REVIEWER = ROOT / "tests" / "fixtures" / "spec-end-review" / "reviewer"
@@ -135,18 +142,33 @@ ITEMS_ROUTE = (
     '            self._respond_json(200, {"items": self.dataset.get("items", [])})\n'
     '            return\n')
 ITEMS_BEFORE = '        if self.path == "/":\n'
-ITEMS_TEST = ("test_critere_items.py", '''"""Test de critère du repair : GET /items rend les éléments du jeu de données."""
+ITEMS_ENTRY_POINT = {"kind": "http", "method": "GET", "path": "/items"}
+# What the author of the repair leaves: a criterion test that fails by
+# assertion while the product does not serve /items, and the route.
+REPAIR = {
+    "test": ("test_critere_items.py", "Items.test_get_items_rend_les_elements", '''"""Test de critère du repair : GET /items rend les éléments du jeu de données."""
 import json
 import os
 import unittest
+import urllib.error
 import urllib.request
 
 
 class Items(unittest.TestCase):
     def test_get_items_rend_les_elements(self):
-        with urllib.request.urlopen(os.environ["PRODUCT_ADDRESS"] + "/items", timeout=10) as answer:
-            self.assertEqual(["alpha", "beta", "gamma"], json.load(answer)["items"])
-''')
+        try:
+            with urllib.request.urlopen(os.environ["PRODUCT_ADDRESS"] + "/items", timeout=10) as answer:
+                served = json.load(answer)
+        except urllib.error.HTTPError as refused:
+            self.fail(f"GET /items répond {refused.code}")
+        self.assertEqual(["alpha", "beta", "gamma"], served["items"])
+'''),
+    "product": ("app.py", ITEMS_BEFORE, ITEMS_ROUTE + ITEMS_BEFORE),
+    "demonstration": "/items",
+}
+# What an author session says of its work in the Ticket Handoff.
+HANDOFF = {"done": ["Le critère du ticket est observable sur le produit lancé."], "deviations": "aucun",
+           "not_done": "aucun", "out_of_ticket": "aucun"}
 # What differs from one project of the fixture to the other; everything else
 # of the walk is read by the flow in the profile of the project.
 PROJECTS = {
@@ -154,7 +176,25 @@ PROJECTS = {
         "criterion": "Point d'entrée : GET / — Observable : liste — Faux si : une ligne manque",
         "line": "La page d'accueil affiche les trois éléments",
         "interface": True,
-        "criterion_test": ("test_critere_fixture.py", "# test de critère du ticket\n"),
+        # What the author leaves: a criterion test false of the product at
+        # the start commit (the health probe does not name the dataset yet),
+        # the change of the product that makes it true, and where the
+        # demonstration line is observed.
+        "test": ("test_critere_fixture.py", "Sante.test_le_jeu_de_donnees_est_nomme", '''"""Test de critère du ticket : la sonde de santé nomme le jeu de données servi."""
+import json
+import os
+import unittest
+import urllib.request
+
+
+class Sante(unittest.TestCase):
+    def test_le_jeu_de_donnees_est_nomme(self):
+        with urllib.request.urlopen(os.environ["PRODUCT_ADDRESS"] + "/health", timeout=10) as answer:
+            self.assertEqual("content", json.load(answer).get("dataset"))
+'''),
+        "product": ("app.py", 'self._respond_json(200, {"status": "ok"})',
+                    'self._respond_json(200, {"status": "ok", "dataset": self.dataset.get("state")})'),
+        "demonstration": "/",
         # The Evaluator captures the home page.
         "evaluation": {},
         # The merged result is tested by the command of the suites of the flow.
@@ -165,7 +205,20 @@ PROJECTS = {
         "criterion": "Point d'entrée : GET /items — Observable : champ items — Faux si : un élément manque",
         "line": "GET /items répond les trois éléments",
         "interface": False,
-        "criterion_test": ("critere_fixture.test.js", "// test de critère du ticket\n"),
+        "test": ("critere_fixture.test.js", "le_jeu_de_donnees_est_nomme", """'use strict';
+// Test de critère du ticket : la sonde de santé nomme le jeu de données servi.
+const assert = require('node:assert');
+
+module.exports = {
+  async le_jeu_de_donnees_est_nomme() {
+    const body = await (await fetch(process.env.PRODUCT_ADDRESS + '/health')).json();
+    assert.strictEqual(body.dataset, 'content');
+  },
+};
+"""),
+        "product": ("server.js", "respond(response, 200, { status: 'ok' });",
+                    "respond(response, 200, { status: 'ok', dataset: String(dataset.state ?? '') });"),
+        "demonstration": "/items",
         "evaluation": {"path": "/items", "look_for": '"alpha"'},
         # The merged result is tested by the regression command of the profile.
         "regression_command": None,
@@ -276,6 +329,13 @@ class City:
             "SPEC_END_REVIEW_FAKE_LOG": str(self.workspace / "end-review-door.log"),
             "SPEC_END_REVIEW_FAKE_PLAN": str(self.workspace / "end-review-plan.json"),
             "SPEC_END_REVIEW_FAKE_REPO": str(self.root),
+            # The author's step (T37): where its worktrees are, and the
+            # stand-in that answers the review of the criterion tests.
+            "TICKET_AUTHOR_WORKTREES_DIR": str(self.workspace / "worktrees"),
+            "TEST_REVIEW_DISPATCH_DOOR_BIN": str(TEST_REVIEWER),
+            "TEST_REVIEW_POLL_SECONDS": "0",
+            "TEST_REVIEW_FAKE_LOG": str(self.workspace / "test-review-door.log"),
+            "TEST_REVIEW_FAKE_PLAN": str(self.workspace / "test-review-plan.json"),
             **more,
         }
 
@@ -341,13 +401,17 @@ class City:
                            "timeout_seconds": 3600, "start_timeout_seconds": 15},
             "outcome_evaluation": {"formula": "mol-outcome-evaluation", "role": "evaluator", "rig": RIG,
                                    "timeout_seconds": 3600, "start_timeout_seconds": 15},
-            "end_review": {"formula": "mol-end-review", "role": "reviewer", "rig": RIG, "timeout_seconds": 3600}}))
+            "end_review": {"formula": "mol-end-review", "role": "reviewer", "rig": RIG, "timeout_seconds": 3600},
+            "test_review": {"formula": "mol-test-review", "role": "reviewer", "rig": RIG, "timeout_seconds": 3600}}))
         descriptor = json.loads((ROOT / self.fixture / "descriptor.json").read_text())
         descriptor["rigs"] = [RIG]
         if self.project["regression_command"]:
             descriptor["launch"]["regression_command"] = self.project["regression_command"]
         through_the_door = inject in THROUGH_THE_DOOR
         if through_the_door:
+            # Where the Spec says the second user story is served: the entry
+            # point the criterion test of the repair asks.
+            descriptor["launch"]["entry_points"].append(ITEMS_ENTRY_POINT)
             # The doors read the project of the Spec by its key: its human
             # approver, and its profile under the name of the project.
             (config / "projects" / f"{descriptor['project_id']}.toml").write_text(
@@ -364,6 +428,8 @@ class City:
         self.git("commit", "-q", "-m", "base")
         self.tracker.write_text(json.dumps({"beads": {}, "sessions": []}))
         (self.workspace / "code-review-plan.json").write_text(json.dumps(["favorable"]))
+        # The reviewer of the criterion tests finds each of them favorable.
+        (self.workspace / "test-review-plan.json").write_text(json.dumps(["favorable"]))
         # The Evaluator of the end observes each user story on the home page;
         # with `story-not-observed`, the second one where the Spec says it is
         # served, on the product as it is launched: not at first.
@@ -377,9 +443,10 @@ class City:
         # at the entry point the repair restores.
         (self.workspace / "evaluation-plan.json").write_text(json.dumps(
             ["door-defers", self.project["evaluation"], *((ITEMS,) if through_the_door else ())]))
-        self.remember(inject=inject, project=project, answer=answer, base=self.git("rev-parse", "HEAD"))
         where = {"repo": str(self.root), "environment": self.state_environment(),
                  "profile": str(config / "project-descriptors" / profile)}
+        self.remember(inject=inject, project=project, answer=answer, base=self.git("rev-parse", "HEAD"),
+                      profile=where["profile"])
         # The publication door numbers the convoy and the ticket: `publish` names them.
         return where if through_the_door else {"convoy": CONVOY, "ticket": TICKET, **where}
 
@@ -499,58 +566,65 @@ class City:
         (self.workspace / "order-pass.json").write_text(proc.stdout)
         return "order-pass"
 
-    def commit(self, branch: str, files: dict[str, str], message: str) -> str:
-        """One commit of an author on the branch of its ticket, opened at
-        the tip of the integration branch."""
-        if self.branch_exists(branch):
-            self.git("checkout", "-q", branch)
-        else:
-            self.git("checkout", "-q", "-b", branch, json.loads(self.memo.read_text()).get("integration", INTEGRATION))
+    def gate(self, tool: str, *args, **more: str) -> dict:
+        """One gate of the author's step, as an author session runs it:
+        the real command, which writes the state it is responsible for."""
+        return json.loads(self.run(BIN / tool, *args, **more).stdout)
+
+    def commit(self, worktree: Path, files: dict[str, str], message: str) -> None:
+        """One commit of an author in the worktree of its ticket."""
         for path, content in files.items():
-            target = self.root / path
+            target = worktree / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content)
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", message)
-        tip = self.git("rev-parse", "HEAD")
-        self.git("checkout", "-q", "--detach", "main")
-        return tip
+        self.run("git", "-C", worktree, *GIT_IDENTITY, "add", "-A")
+        self.run("git", "-C", worktree, *GIT_IDENTITY, "commit", "-q", "-m", message)
 
-    def branch_exists(self, branch: str) -> bool:
-        return self.run("git", "-C", self.root, "rev-parse", "-q", "--verify", f"refs/heads/{branch}",
-                        check=False).returncode == 0
+    def criteria(self, ticket: str) -> int:
+        """How many acceptance criteria the ticket carries in the tracker."""
+        description = json.loads(self.tracker.read_text())["beads"][ticket].get("description") or ""
+        section = description.split("## Acceptance criteria", 1)[-1].split("\n## ", 1)[0]
+        return max(1, sum(1 for line in section.splitlines() if line.lstrip().startswith("- [")))
 
     def author(self, shown: dict, memo: dict) -> str:
-        """What the author session of the ticket at work leaves, one step
-        of its TDD per event. The author of a repair writes what the repair
-        restores: the product serves GET /items."""
+        """One event of an author session. What the session leaves (test
+        files, commits, its Handoff) is written here; each state of the
+        ticket is written by the gate that is responsible for it."""
         ticket, repair = shown["id"], shown["id"] != self.walked
-        env, branch, tdd = self.env(), f"ticket/{shown['id']}", shown.get("tdd") or {}
+        work = REPAIR if repair else self.project
+        worktree = self.workspace / "worktrees" / ticket
+        tests = f"{self.fixture}/tests"
+        (name, test, content), table = work["test"], f"{tests}/criteria-{'repair' if repair else 'ticket'}.json"
+        profile = ("--profile", memo["profile"], "--dataset", "content")
         if not shown.get("branch"):
-            # A repair starts from what the tickets before it merged.
-            base = self.git("rev-parse", memo.get("integration", INTEGRATION)) if repair else memo["base"]
-            self.remember(bases={**memo.get("bases", {}), ticket: base})
-            self.state("set-branch", self.convoy, ticket, "--branch", branch)
-            self.run(FAKE_GC, "bd", "update", ticket, "--status", "in_progress")
-            name, content = ITEMS_TEST if repair else self.project["criterion_test"]
-            red = self.commit(branch, {f"{self.fixture}/tests/{name}": content}, "tests de critère")
-            ticket_proofs.prove_red(env, self.root, self.convoy, ticket, red, base)
+            started = self.gate("ticket-author", "start", self.convoy, ticket, "--repo", self.root,
+                                "--session", f"auteur-{ticket}")
+            self.commit(Path(started["worktree"]), {
+                f"{tests}/{name}": content,
+                table: json.dumps({"criteria": {str(number): [f"{tests}/{name}::{test}"]
+                                                for number in range(1, self.criteria(ticket) + 1)}}) + "\n",
+            }, "tests de critère")
+            self.gate("tdd-step", "red", self.convoy, ticket, "--repo", worktree, *profile,
+                      "--base", started["base"], "--table", table)
             return "session:red"
-        if not tdd.get("freeze"):
-            ticket_proofs.prove_freeze(env, self.root, self.convoy, ticket)
+        if not (shown.get("tdd") or {}).get("freeze"):
+            self.gate("test-review", "review", self.convoy, ticket, "--repo", worktree, "--wait", "0",
+                      TEST_REVIEW_FAKE_REPO=str(worktree))
+            self.gate("tdd-step", "freeze", self.convoy, ticket, "--repo", worktree)
             return "session:freeze"
-        if repair:
-            app = f"{self.fixture}/app.py"
-            served = self.git("show", f"{branch}:{app}") + "\n"
-            if ITEMS_BEFORE not in served:
-                raise SystemExit(f"delivery-driver: {app} no longer routes GET / the way the repair extends it")
-            files = {app: served.replace(ITEMS_BEFORE, ITEMS_ROUTE + ITEMS_BEFORE, 1)}
-        else:
-            files = {"docs/fixture-ticket.md": "la tranche du ticket\n"}
-        tip = self.commit(branch, files, "travail du ticket")
-        sections = ({**ticket_proofs.SECTIONS, "out_of_ticket": [OUT_OF_TICKET]}
-                    if memo["inject"] == "proposition" and not repair else None)
-        ticket_proofs.finish(env, self.root, self.convoy, ticket, tip, memo["bases"][ticket], branch, sections=sections)
+        product, before, after = work["product"]
+        served = (worktree / self.fixture / product).read_text()
+        if before not in served:
+            raise SystemExit(f"delivery-driver: {self.fixture / product} no longer holds what the ticket changes: {before.strip()}")
+        self.commit(worktree, {f"{self.fixture}/{product}": served.replace(before, after, 1)}, "travail du ticket")
+        self.gate("tdd-step", "green", self.convoy, ticket, "--repo", worktree, *profile)
+        self.gate("ticket-author", "demonstrate", self.convoy, ticket, "--repo", worktree, "--dataset", "content",
+                  "--profile", memo["profile"], "--", "sh", "-c",
+                  f'curl -sf "$PRODUCT_ADDRESS{work["demonstration"]}" | grep -F alpha')
+        handoff = self.workspace / "tmp" / f"handoff-{ticket}.json"
+        handoff.write_text(json.dumps({**HANDOFF, **({"out_of_ticket": [OUT_OF_TICKET]}
+                                                     if memo["inject"] == "proposition" and not repair else {})}))
+        self.gate("ticket-exit", "exit", self.convoy, ticket, "--exit", "finished", "--repo", worktree, "--handoff", handoff)
         return "session:code"
 
     def failed_session(self, memo: dict) -> str | None:
@@ -563,7 +637,8 @@ class City:
         entries = (sick.get("resume") or {}).get("entries") or []
         if failures and (len(entries) < failures or not entries[-1]["launches"]):
             return None  # the order has not sent the resume of the failure before yet
-        self.state("set-session", self.convoy, SICK, "--session", f"auteur-{failures + 1}")
+        self.gate("ticket-author", "start", self.convoy, SICK, "--repo", self.root,
+                  "--session", f"auteur-{failures + 1}")
         if entries:
             self.run(FAKE_GC, "bd", "close", entries[-1]["launches"][-1]["bead"], "--reason", "session terminée sans sortie")
         self.remember(failures=failures + 1)
