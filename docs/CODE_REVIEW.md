@@ -195,6 +195,14 @@ stopped (`code_review_no_result`) and raised once to the operator through
 `bin/escalation-door`; `bin/convoy-state stop-raised` records it, and a stop
 whose request could not be sent is raised by the next pass.
 
+A round handed in by a session that already rendered a review of tests, a
+code review or a Ticket Evaluation of the convoy is refused the same way
+(Spec §5, T42; `docs/TEST_REVIEW.md`, « A fresh session per review »): the
+launch it answered is marked `refused` and gave no result. That is also what
+holds the judgement to a second session: the session that reviewed cannot
+judge the answers. `record` signs with `GC_SESSION_NAME`, else
+`GC_SESSION_ID`.
+
 A dispatch the door refuses or defers launched nothing: it counts no launch
 and its bead is closed. A deferral is listed under `deferred` and tried
 again by the next pass; a refusal is listed under `refused` and makes
@@ -206,7 +214,7 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
 
 | Key | Value |
 |---|---|
-| `gc.flow.code_review` | `rounds`: each recorded round — `kind` (`review`, `judgement`), `commit`, `base`, `verdict`, `models`, `recorded_by`, `at`; a review with its `findings`, `answers` and, once given, `responses`; a judgement with its `judgements`. `request`, while a round is open — `kind`, `commit`, `base`, `questions`, `models`, `launches` (`bead`, `at`), `at` |
+| `gc.flow.code_review` | `rounds`: each recorded round — `kind` (`review`, `judgement`), `commit`, `base`, `verdict`, `models`, `recorded_by`, `at`; a review with its `findings`, `answers` and, once given, `responses`; a judgement with its `judgements`. `request`, while a round is open — `kind`, `commit`, `base`, `questions`, `models`, `launches` (`bead`, `at`, and `refused`: `{session, at}` when the session that answered had already served), `at` |
 | `gc.flow.verdict.code_review` | the verdict of the last round and the commit it judged |
 | `gc.flow.models` | per delivery role: `agent`, `provider`, `model`, `at` |
 | `gc.flow.stop` | reason `code_review_no_result`, a one-line detail, and `raised` once the escalation door accepted the request |

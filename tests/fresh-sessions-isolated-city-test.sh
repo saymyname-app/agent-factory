@@ -30,10 +30,10 @@
 #      One reading of `gc session list` shows the two sessions alive.
 #   2. A proves its red and asks for the review of its tests: a reviewer
 #      session renders it. That session stays alive.
-#   3. B then asks for its review. The session that served A asks Gas City
-#      for more work and is offered none. Before it leaves it hands in a
+#   3. B then asks for its review. The session that served A hands in a
 #      verdict on B anyway: bin/test-review refuses it, the launch is counted
-#      as one without result and nothing else is written.
+#      as one without result and nothing else is written. It then asks Gas
+#      City for more work and is offered none.
 #   4. A second reviewer session renders the review of B.
 #
 # The trial prints its record (« relevé d'essai ») on stdout.
@@ -189,8 +189,8 @@ chmod +x "$TRIAL/stub-author"
 # mol-test-review (the brief, one answer per test, `test-review record`),
 # close, ask again, and leave when nothing is offered. The first session to
 # serve a review waits, before it asks again, until the trial says the next
-# review is launched; offered nothing, it hands in a verdict on that review
-# anyway, as a session that kept working would.
+# review is launched; it hands in a verdict on that review anyway, as a
+# session that kept working would, then asks again and is offered nothing.
 cat > "$TRIAL/stub-reviewer" <<STUB
 #!/bin/bash
 . "$TRIAL/env"
@@ -212,13 +212,6 @@ while true; do
     if [ "\$SERVED" = 0 ]; then sleep 3; continue; fi
     echo "\${GC_SESSION_NAME:-?} none" >> "$TRIAL/asked-again"
     say "a redemandé du travail : rien n'est offert"
-    if [ "\$FIRST" = 1 ]; then
-      NEXT=\$(cat "$TRIAL/second-launched")
-      verdict "\$CONVOY" "\$NEXT" "$TRIAL/verdict.served.json"
-      "\$BIN/test-review" record "\$CONVOY" "\$NEXT" --verdict-file "$TRIAL/verdict.served.json" > "$TRIAL/served.out" 2>&1
-      echo "\$?" > "$TRIAL/served.rc"
-      say "verdict remis sur \$NEXT par une session qui a déjà servi : statut \$(cat "$TRIAL/served.rc")"
-    fi
     gc runtime drain-ack >/dev/null 2>&1
     exit 0
   fi
@@ -238,6 +231,13 @@ while true; do
   if [ "\$SERVED" = 0 ] && mkdir "$TRIAL/first-served" 2>/dev/null; then
     FIRST=1
     for _ in \$(seq 1 300); do [ -e "$TRIAL/second-launched" ] && break; sleep 2; done
+    # Handed in before it asks again: Gas City ends a session of the pool
+    # once it is offered nothing.
+    NEXT=\$(cat "$TRIAL/second-launched")
+    verdict "\$CONVOY" "\$NEXT" "$TRIAL/verdict.served.json"
+    "\$BIN/test-review" record "\$CONVOY" "\$NEXT" --verdict-file "$TRIAL/verdict.served.json" > "$TRIAL/served.out" 2>>"\$LOG"
+    echo "\$?" > "$TRIAL/served.rc"
+    say "verdict remis sur \$NEXT par une session qui a déjà servi : statut \$(cat "$TRIAL/served.rc")"
   fi
   SERVED=1
 done
@@ -463,10 +463,10 @@ wait_for 900 b_reviewed || { dump; fail "the review of the tests of B was not re
 second=$(round_session "$B")
 [ "$second" != "$first" ] || fail "the two reviews were rendered by one session: $first"
 known=$(gc session list --state all --json | jq -c '[.sessions[] | select((.template | split("/") | last) == "delivery-reviewer") | .session_name]')
-for session in "$first" "$second"; do
-  printf '%s' "$known" | jq -e --arg s "$session" 'index($s) != null' >/dev/null \
-    || fail "$session is not a session of the delivered reviewer agent: $known"
-done
+# $first was read alive among the sessions of that agent at step 2; it has
+# left since, and Gas City no longer lists it.
+printf '%s' "$known" | jq -e --arg s "$second" 'index($s) != null' >/dev/null \
+  || fail "$second is not a session of the delivered reviewer agent: $known"
 [ "$(review_of "$A" | jq -c '[.rounds[].recorded_by]')" = "[\"$first\"]" ] || fail "A does not carry exactly the review of $first"
 [ "$(review_of "$B" | jq -c '[.rounds[].recorded_by]')" = "[\"$second\"]" ] || fail "B does not carry exactly the review of $second"
 b_frozen() { [ -n "$(field "$B" gc.flow.tdd.freeze)" ]; }
