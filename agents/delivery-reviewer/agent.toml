@@ -14,5 +14,7 @@ provider = "claude-readonly"
 # Claude Code ships review skills of its own (security-review, code-review,
 # simplify) that the reviewer's formula never calls; this switch removes them
 # (role-adoption-trial proves it, and that the role's copy still loads).
+# The overlay's settings.local.json keeps the claude.ai account's plugins and
+# skills out as well: they carry other review skills (T47).
 [env]
 CLAUDE_CODE_DISABLE_BUNDLED_SKILLS = "1"

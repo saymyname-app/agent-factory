@@ -27,6 +27,9 @@ the sandbox wrapper). bin/dispatch-door asks `check` before a role is
 dispatched: no passing record for the role's effective provider and the
 current digest means no dispatch, so a provider switch or a changed
 distribution cannot send a session out without its skills.
+`check` also re-reads the review launches the record carries: a role whose
+session launched a review skill other than its own code-review is refused by
+name, whatever the record's `passed` says (T47).
 
 usage:
   role-adoption-trial run [--role R]... [--trial-dir DIR] [--port N] [--no-record]
