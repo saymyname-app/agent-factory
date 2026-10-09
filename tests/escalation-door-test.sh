@@ -364,6 +364,63 @@ ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should s
   || fail "a resolved Mayor-first escalation must not be swept to Benjamin"
 grep -Fq 'mail send human' "$TEST_TMP/calls.log" && fail "sweep mailed Benjamin for a resolved escalation"
 
+# The sweep's cost follows the escalations still pending, not every bead that
+# ever carried one (af-io8tb7, 2026-10-09: 25 settled beads, one `gc bd show`
+# each, 32 s for nothing due on an idle host, over the order's 60 s on a
+# loaded one). A settled escalation keeps its key at "none" for ever.
+reset_beads
+for n in 1 2 3 4 5; do
+  seed "af-settled$n" "$(jq -nc --arg id "af-settled$n" '
+    {id: $id, status: "closed",
+     metadata: {"gc.escalation_mayor_paged_at": "none", "gc.escalation_mayor_reason": "none",
+                "gc.needs_benjamin": "none"},
+     notes: "", labels: []}')"
+done
+seed af-promoted '{"id":"af-promoted","status":"open","metadata":{"gc.escalation_mayor_paged_at":"2026-09-01T00:00:00Z","gc.escalation_mayor_reason":"stuck PR","gc.needs_benjamin":"Déjà chez Benjamin"},"notes":"","labels":[]}'
+TESTS_RUN=$((TESTS_RUN + 1))
+: >"$TEST_TMP/calls.log"
+out=$(ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep) || fail "sweep should succeed with nothing pending"
+[[ $out == "SWEPT: nothing due" ]] || { echo "$out" >&2; fail "sweep with nothing pending should report nothing due"; }
+[[ $(wc -l <"$TEST_TMP/calls.log") -eq 1 ]] && grep -q '^bd list .*--limit 0 ' "$TEST_TMP/calls.log" \
+  || { cat "$TEST_TMP/calls.log" >&2; fail "sweep with nothing pending must cost one unlimited list and nothing else"; }
+
+# One pending page among the settled ones: that bead alone is read again.
+seed af-pending "$(jq -nc --arg paged "$(date -u -d "@$T0" +%Y-%m-%dT%H:%M:%SZ)" '
+  {id: "af-pending", status: "open",
+   metadata: {"gc.escalation_mayor_paged_at": $paged, "gc.escalation_mayor_reason": "stuck PR"},
+   notes: "", labels: []}')"
+TESTS_RUN=$((TESTS_RUN + 1))
+: >"$TEST_TMP/calls.log"
+ESCALATION_DOOR_NOW=$((T0 + 3600)) door sweep >/dev/null || fail "sweep should succeed with one page pending"
+[[ $(grep -c '^bd show ' "$TEST_TMP/calls.log") -eq 1 ]] && grep -q '^bd show af-pending ' "$TEST_TMP/calls.log" \
+  || { cat "$TEST_TMP/calls.log" >&2; fail "sweep must read the pending bead and no settled one"; }
+TESTS_RUN=$((TESTS_RUN + 1))
+ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should succeed on the pending page at 2h"
+[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-pending.json") == *"non résolue après 2h"* ]] \
+  || fail "the pending page among settled ones must still be promoted at 2h"
+
+# A bead the list returns without its metadata is read, never skipped: a
+# pending page must not be lost to a thinner list.
+TESTS_RUN=$((TESTS_RUN + 1))
+thin_gc="$TEST_TMP/thin-gc"
+cat >"$thin_gc" <<THIN
+#!/usr/bin/env bash
+if [[ \${1:-} == bd && \${2:-} == list ]]; then
+  printf '%q ' "\$@" >>"\$ED_CALL_LOG"; printf '\\n' >>"\$ED_CALL_LOG"
+  printf '[{"id":"af-thin"}]\\n'
+  exit 0
+fi
+exec "$FIXTURE" "\$@"
+THIN
+chmod +x "$thin_gc"
+reset_beads
+seed af-thin '{"id":"af-thin","status":"open","metadata":{"gc.escalation_mayor_paged_at":"2026-09-01T00:00:00Z","gc.escalation_mayor_reason":"stuck PR"},"notes":"","labels":[]}'
+GC_BIN="$thin_gc" ED_BEAD_DIR="$TEST_TMP/beads" ED_CALL_LOG="$TEST_TMP/calls.log" \
+  ESCALATION_DOOR_LOCK_FILE="$TEST_TMP/lock" ESCALATION_DOOR_NOW=$((T0 + 7200)) "$SCRIPT" sweep >/dev/null \
+  || fail "sweep should succeed on a list without metadata"
+[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-thin.json") == *"non résolue après 2h"* ]] \
+  || fail "a pending page listed without its metadata must still be promoted"
+
 # A page about the bead's own PR is resolved by that PR's verified merge: the
 # sweep clears it instead of promoting it (af-53v22s, 2026-10-01: PR #360
 # merged at 00:16 Paris, its "rejected 3 times" page reached Benjamin at

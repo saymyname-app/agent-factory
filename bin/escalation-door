@@ -92,7 +92,9 @@
 #                              pourquoi", "continuer avec un agent").
 #                              Deterministic: the clock is `date +%s`,
 #                              overridable with $ESCALATION_DOOR_NOW for
-#                              tests.
+#                              tests. Reads one list, then one bead per
+#                              escalation still pending: a settled one
+#                              costs nothing (af-io8tb7).
 #   clear <bead>                Once the decision is resolved without a
 #                              recorded answer, clear gc.needs_benjamin and
 #                              any Mayor-first paging state on <bead>, and
@@ -382,7 +384,9 @@ sweep_payload() {  # bead issue_json reason
 cmd_sweep() {
   local now due_json
   now=$(now_epoch)
-  due_json=$("$GC_BIN" bd list --all --has-metadata-key gc.escalation_mayor_paged_at --json 2>/dev/null) \
+  # --limit 0: `bd list` stops at 50 beads by default, and this list only
+  # grows (below).
+  due_json=$("$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.escalation_mayor_paged_at --json 2>/dev/null) \
     || die "Could not list Mayor-first escalations."
   [[ -n $due_json ]] || due_json='[]'
   local count=0
@@ -420,7 +424,17 @@ cmd_sweep() {
       || die "sweep could not escalate $bead to $OPERATOR_NAME."
     printf 'SWEPT: %s promoted to %s after %ds unresolved\n' "$bead" "$OPERATOR_NAME" "$age"
     count=$((count + 1))
-  done < <(jq -r '(if type == "array" then . else [.] end)[] | .id' <<<"$due_json")
+  # Only a page still pending is read again, one `gc bd show` each. A settled
+  # escalation keeps its key for ever, at "none", so the list only grows:
+  # reading every bead of it cost 25 `gc bd show` and 32 s for nothing due on
+  # an idle host on 2026-10-09, and more than the order's 60 s on a loaded one
+  # (af-io8tb7). A bead listed without its metadata is read, never skipped.
+  done < <(jq -r '(if type == "array" then . else [.] end)[]
+    | select((.metadata | type) != "object"
+        or (((.metadata["gc.escalation_mayor_paged_at"] // "") | tostring) as $paged
+            | ((.metadata["gc.needs_benjamin"] // "") | tostring) as $needs
+            | $paged != "" and $paged != "none" and ($needs == "" or $needs == "none")))
+    | .id' <<<"$due_json")
   ((count > 0)) || printf 'SWEPT: nothing due\n'
 }
 
