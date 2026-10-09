@@ -604,6 +604,17 @@ host's own runner" below), so that window of 7 pull requests is all there is.
 | The tests themselves grew: 391 s of test time on 10-06 at 03:00, 3,284 s on 10-08 at 01:40. Fourteen files of the new delivery flow (`ticket-evaluation`, `spec-integration`, `convoy-advance`, `convoy-state`, `code-review`, `correction-round`, ...) are 88% of it. One of them, `tests/convoy-state-test.py`, starts 5,404 Python processes (2,013 calls of `bin/convoy-state`, 3,391 of the fake `gc`), 40 to 90 ms each. | The reason a run went from 7 to 65 minutes | Each line of `bin/ci-run-tests` ends with the seconds the file took, so the next growth is visible in the job log. Since af-xhryl7 each start costs less, with every assertion kept: the code of `bin/convoy-state` is the module `lib/convoy_state.py` (Python compiles a program given by path on every start and keeps the compiled form only of what it imports), `bin/evidence-capture` loads its HTTP client only for a screenshot, and the fake `gc` of the tests starts without `site`. Measured on the host, the fourteen files four at once: 3,289 s of processor time before, 2,006 s after; another battery ran during part of the first pass, so the gain is between 23% (`tests/convoy-state-test.py` alone, old and new side by side) and 39%. Billed on GitHub's runners: a full run went from 59 to 69 minutes (62 at 15:02) to 43 to 49 (six complete runs from 15:07 to 18:18), 23 to 31% less than the run of the same hour. Still the largest share: about 1% of the processes of a file are the tool it tests, the rest builds a finished ticket again for every test. |
 | A change to docs only ran every test. | 4 of 51 merged PRs | Since af-5mw6z0 it runs without the long tests, which do not read the docs; the tests that do (catalogues, registration, prompts) are short and still run. See "Long tests left out" below. |
 
+Since af-97io9q (2026-10-09) the finished ticket a suite asks
+`tests/lib/ticket_proofs.py` for is walked through the real tools once per
+distinct request and per test process, and copied afterwards: 230 requests
+for 32 distinct ones in the four files that use it most. Measured side by
+side on a loaded host: 1,297 s before, 870 s after (-33%), no test file
+changed. What that measure also showed: one long file starts about 14,000
+Python processes, each near its floor (11 ms for the fake `gc`, 40 ms for
+`bin/convoy-state`); `bin/convoy-advance` and the simulated deliveries of
+the oracle have no step to shorten, only fewer processes would
+(af-9wznku, to be planned).
+
 `tests/ci-workflow-cost-test.sh` fails if the workflow runs on `push` again,
 stops cancelling a replaced run, or stops using every core.
 
@@ -728,7 +739,7 @@ What he chose on 2026-10-08, each among options put to him in the live chat:
 | Question | His choice | How it is held |
 |---|---|---|
 | The runner is down while the Factory runs | The pull request waits; switching back to GitHub's billed runners is one command, by hand | `bin/factory-doctor` reports the runner down; `./bin/ci-runner mode github` |
-| Share of the PC | 4 cores, 4 GB, one job at a time, low priority; pause and resume in his hand, no automatic game detection | The limits of `factory-ci-runner.service`; `./bin/ci-runner pause` and `resume` |
+| Share of the PC | 4 cores (8 since 2026-10-09, "The job's cores" below), 4 GB, one job at a time, low priority; pause and resume in his hand, no automatic game detection | The limits of `factory-ci-runner.service`; `./bin/ci-runner pause` and `resume` |
 | Where pull request code runs | An ephemeral container per job, started by a dedicated unprivileged user, rootless Podman (not Docker Desktop) | `config/ci-runner/runner-loop`; `docs/SECURITY.md`, same title |
 | Root in WSL (`sudo` asks a password, `wsl -u root` does not) | Three gestures: Podman, the user, the service | `config/ci-runner/root-install` |
 
@@ -791,8 +802,30 @@ self-hosted` comes back. The Actions budget is capped (20 dollars, his words,
 A job does not wait behind a battery started by hand, and a battery does not
 wait behind a job (`bin/ci-run-tests` skips the host's lock under
 `GITHUB_ACTIONS`, and the job's `/tmp` is not the host's). What bounds the
-sum is the service: 4 named cores and 4 GB for the job whatever else runs,
+sum is the service: 8 named cores and 4 GB for the job whatever else runs,
 at a lower priority than the Factory and the batteries.
+
+### The job's cores: 8 of the host's 12 (af-guzs0o)
+
+Intent (Benjamin, his words, 2026-10-09, about 01:45 Paris): « Ok pour plus
+de coeurs », in answer to "plus de coeurs pour la CI (4 -> 8) [...] C'est ta
+décision (part du PC)".
+Mechanism (agent interpretation): the job gets 8 named cores instead of 4
+(the figure shown to him; he named none himself) and runs eight test files
+at once (`--jobs "$(nproc)"`). It does not mean more than one job at a time,
+another priority, more memory (4 GB still), a change of the merge gate, or
+automatic game detection.
+
+| Where the figure lives | What |
+|---|---|
+| `config/ci-runner/factory-ci-runner.service` | `AllowedCPUs=4-11` |
+| `config/ci-runner/isolation-probe.sh` | fails the run when the job sees more than 8 cores |
+| `tests/ci-runner-test.sh` | holds both |
+
+The service runs its installed copy: the figure changes on the host at the
+root install ("Install, stop, remove" below), not at the merge. Back to 4:
+`AllowedCPUs=8-11` in the service file and the test, through a pull request,
+then the root install again.
 
 ### Measured 2026-10-08 (pull request #457, Paris times)
 
