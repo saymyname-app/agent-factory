@@ -111,7 +111,8 @@ Benjamin » only through a resolved Planning Exception that names its anchor
 (Spec §3, §9):
 
 1. the author exits by `bin/ticket-exit exit … --exit planning_exception
-   --anchor <name>` (`docs/TICKET_EXIT.md`): the request that reaches the
+   --anchor <name>` (`docs/TICKET_EXIT.md`), with a Ticket Handoff whose
+   « Écarts » mentions that anchor (refused otherwise): the request that reaches the
    operator offers, beside the two usual options, « Accepter l'écart sur
    l'ancre <name> », and the Planning Exception is written on the ticket
    with its anchors and the letter of that option;

@@ -26,7 +26,7 @@ it as `demonstration_proof`.
 
 ```bash
 ./bin/ticket-exit exit af-convoy af-t1 --exit finished --repo <ticket worktree> --handoff handoff.json
-./bin/ticket-exit exit af-convoy af-t1 --exit planning_exception --kind semantic --summary "La Spec fixe X, la démonstration demande Y" [--anchor liste]
+./bin/ticket-exit exit af-convoy af-t1 --exit planning_exception --repo <ticket worktree> --handoff handoff.json --kind semantic --summary "La Spec fixe X, la démonstration demande Y" [--anchor liste]
 ./bin/ticket-exit exit af-convoy af-t1 --exit operator_request --request request.json
 ./bin/ticket-exit exit af-convoy af-t1 --exit technically_blocked --repair repair.json
 ./bin/ticket-exit exit af-convoy af-t1 --exit interrupted --repo <ticket worktree> [--handoff partial.json]
@@ -51,25 +51,37 @@ exits again).
 | `--exit` | Asks for | What the code does | Effect on the convoy |
 |---|---|---|---|
 | `finished` | `--repo`, `--handoff` (complete) | seals the records, writes the Handoff, then the exit | none: the code review (`docs/CODE_REVIEW.md`) and the Ticket Evaluation on the launched product (`docs/TICKET_EVALUATION.md`) follow, in parallel |
-| `planning_exception` | `--kind semantic\|topology`, `--summary` (one line) | sends the question to the operator through `bin/escalation-door benjamin`, parks, writes the exit | the ticket and every ticket that waits for it are parked |
+| `planning_exception` | `--repo`, `--handoff` (its four sections), `--kind semantic\|topology`, `--summary` (one line) | seals the records, writes the Handoff, then the Planning Exception; sends the question to the operator through `bin/escalation-door benjamin`, parks, writes the exit | the ticket and every ticket that waits for it are parked |
 | `operator_request` | `--request` (`quoi`, `pourquoi`, `que_faire`) | sends the request through `bin/escalation-door benjamin`, parks, writes the exit | the ticket and every ticket that waits for it are parked |
 | `technically_blocked` | `--repair` (the fields of a `repair`) | drafts a revision that adds the `repair` in front of the ticket and sends it through `bin/ticket-graph-publish bd-patch`, writes the exit | the ticket waits for the repair; nothing is parked, the rest goes on |
 | `interrupted` | `--repo`, optional `--handoff` (partial) | pushes the branch to `origin`, seals the records, writes a partial Handoff, then the exit | none: a fresh session resumes on the same branch |
 
-Every exit but `finished` also takes `--repo` and `--handoff` for a partial
-Handoff. Everything the author gives is read before anything is written.
+`operator_request` and `technically_blocked` also take `--repo` and
+`--handoff` for a partial Handoff. Everything the author gives is read
+before anything is written.
 
 **Planning Exception.** `--kind` is what `bin/planning-exception classify`
 calls a Planning Exception (`semantic`, `topology`); `repair` is refused: a
 technical defect outside the ticket exits by `technically_blocked`. The
 request on the operator's list reads « Planning Exception (kind) sur
-<ticket> : <summary> ». It is written on the ticket first
-(`bin/convoy-state raise-planning-exception`, `docs/CONVOY_STATE.md`).
+<ticket> : <summary> ». It is written on the ticket before the request
+leaves (`bin/convoy-state raise-planning-exception`, `docs/CONVOY_STATE.md`).
+
+**The Ticket Handoff first** (T41, af-rqgtpi; Spec §3, user story 20). A
+Planning Exception is refused without a Ticket Handoff (`--repo`,
+`--handoff`) that has its four sections, each with content or `"aucun"`:
+the refusal names the section that is missing, and nothing is written. The
+Handoff is sealed and written on the ticket before the Planning Exception
+is, so the exception is raised on what the Handoff says. That Handoff is
+recorded `partial`: only the Handoff of a `finished` exit is read as the
+account of a finished ticket by the gates that follow.
 
 **A deviation from the Validated Prototype** (T16, Spec §3) is never decided
 by the author: it exits by a Planning Exception that names the anchors
 (`--anchor`, repeatable; refused on any other exit and for a malformed
-name). The request then carries a third option, « Accepter l'écart sur
+name). The deviation is written in the Handoff first: the exit is refused
+when the « Écarts » (`deviations`) of the Handoff does not mention each
+anchor named, by its name. The request then carries a third option, « Accepter l'écart sur
 l'ancre <name> », and the ticket records the letter the escalation door
 gives it. Once the operator answers by that letter (`bin/escalation-door
 repondre`), the fidelity check reads the deviation as « accepté par
@@ -128,8 +140,8 @@ nothing else:
 Each section is `"aucun"` or a non-empty list of one-line items. An item of
 `not_done` may be `{"what": "<line>", "paths": ["<file or directory>"]}`:
 `paths` is what the deferral detector matches. `finished` is refused when a
-section is absent or empty, or when the file carries any other field; a
-partial Handoff may leave sections out.
+section is absent or empty, or when the file carries any other field, and
+so is `planning_exception`; a partial Handoff may leave sections out.
 
 **Records.** No option and no field carries them: they are computed by
 `ticket-exit records`, run inside `bin/evidence-capture command
