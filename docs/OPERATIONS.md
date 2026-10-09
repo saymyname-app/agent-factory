@@ -849,8 +849,12 @@ the night of 2026-10-09, with six more tests and a busier Factory.
 The failed order is not the cores: `escalation-door-sweep` (60 s to answer,
 every 15 minutes) failed five times in the 12 hours before 04:30, once
 before the host's runner existed (2026-10-08 16:52) and three times during
-runs on 4 cores. It fails when the host is loaded, whatever loads it; its
-own work is af-io8tb7.
+runs on 4 cores. It fails when the host is loaded, whatever loads it. The
+cause was the sweep itself (af-io8tb7): it read again, one `gc bd show`
+each, every bead that ever carried a Mayor-first escalation, settled ones
+included (25 on 2026-10-09: 32 s for nothing due on an idle host, half its
+60 s before any load). It now reads one list, then only the escalations
+still pending.
 
 What the PC feels during a run: for about 20 minutes, 8 of the 12 cores can
 be busy with the job at low priority (cores 4 to 11; 0 to 3 are never the
