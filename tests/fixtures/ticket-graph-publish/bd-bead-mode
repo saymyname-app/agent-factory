@@ -19,6 +19,10 @@ STATE_PATH = Path(os.environ["TICKET_GRAPH_BD_STATE"])
 BOOLEAN_FLAGS = {"--all", "--json", "--silent"}
 VALUE_FLAGS = {"--limit", "--title", "--description", "--type", "--priority", "--labels", "--metadata", "--deps", "--graph",
                "--status"}
+# `create --deps <type>:<id>`, as the real bd 1.2.2 stores it (compared with
+# the real tool by tests/fake-tool-contract-test.py): `blocks:<id>` makes
+# <id> wait for the new issue; the others make the new issue wait for <id>.
+DEPS_NEW_WAITS = {"", "depends-on", "blocked-by"}
 REPEATABLE_VALUE_FLAGS = {"--set-metadata", "--append-notes"}
 
 
@@ -62,7 +66,28 @@ def public_view(bead):
         "status": bead.get("status", "open"),
         "labels": bead.get("labels", []),
         "metadata": bead.get("metadata", {}),
+        **({"dependencies": bead["dependencies"]} if bead.get("dependencies") else {}),
     }
+
+
+def dependencies_of(state, bead):
+    """What `bd show --json` lists under `dependencies`: the issues this one
+    waits for (`blocks`) and the ones it tracks."""
+    return [
+        {"id": dep_id, "status": state["beads"].get(dep_id, {}).get("status", "open"), "dependency_type": dep_type}
+        for dep_type, key in (("blocks", "waits_for"), ("tracks", "tracks"))
+        for dep_id in bead.get(key, [])
+    ]
+
+
+def add_dependency(state, issue_id, depends_on_id, dep_type):
+    """`issue_id` depends on `depends_on_id`: the sense of `bd dep add`."""
+    for known in (issue_id, depends_on_id):
+        if known not in state["beads"]:
+            fail(f"issue not found: {known}")
+    held = state["beads"][issue_id].setdefault("waits_for" if dep_type == "blocks" else "tracks", [])
+    if depends_on_id not in held:
+        held.append(depends_on_id)
 
 
 def fail(message):
@@ -77,7 +102,7 @@ def cmd_show(positionals):
     bead = state["beads"].get(positionals[0])
     if bead is None:
         fail(f"issue not found: {positionals[0]}")
-    print(json.dumps([public_view({"id": positionals[0], **bead})]))
+    print(json.dumps([public_view({"id": positionals[0], **bead, "dependencies": dependencies_of(state, bead)})]))
 
 
 def cmd_list(flags):
@@ -139,6 +164,16 @@ def cmd_create(flags, positionals):
         "id": new_id, "title": flags.get("--title", ""), "description": flags.get("--description", ""),
         "status": "open", "labels": labels, "metadata": metadata,
     }
+    for entry in [e for e in flags.get("--deps", "").split(",") if e]:
+        dep_type, _, other_id = entry.rpartition(":")
+        if dep_type == "blocks":
+            add_dependency(state, other_id, new_id, "blocks")
+        elif dep_type in DEPS_NEW_WAITS:
+            add_dependency(state, new_id, other_id, "blocks")
+        elif dep_type == "tracks":
+            add_dependency(state, new_id, other_id, "tracks")
+        else:
+            fail(f"no canned behaviour for the dependency {entry!r} of bd create --deps")
     save_state(state)
     print(new_id)
 
@@ -159,13 +194,19 @@ def main(argv):
     elif command == "create":
         cmd_create(flags, positionals)
     elif command == "dep":
-        # `dep add <convoy> <ticket> --type tracks`: the convoy tracks the
-        # ticket, as the `tracks` edges of the graph transaction do. Any
-        # other edge is accepted and not stored.
-        if positionals[:1] == ["add"] and flags.get("--type") == "tracks":
-            state = load_state()
-            state["beads"][positionals[1]].setdefault("tracks", []).append(positionals[2])
-            save_state(state)
+        # `dep add <issue> <depends-on> [--type tracks]`: the issue waits
+        # for the other one, or (tracks) the convoy tracks the ticket, as
+        # the `tracks` edges of the graph transaction do.
+        state = load_state()
+        if positionals[:1] == ["add"] and len(positionals) == 3:
+            add_dependency(state, positionals[1], positionals[2], flags.get("--type", "blocks"))
+        elif positionals[:1] == ["remove"] and len(positionals) == 3:
+            waits_for = state["beads"].get(positionals[1], {}).get("waits_for", [])
+            if positionals[2] in waits_for:
+                waits_for.remove(positionals[2])
+        else:
+            fail(f"no canned response configured for: bd {' '.join(argv)}")
+        save_state(state)
     else:
         fail(f"no canned response configured for: bd {' '.join(argv)}")
     return 0

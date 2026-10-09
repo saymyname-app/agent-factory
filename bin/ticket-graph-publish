@@ -1653,7 +1653,10 @@ def patch(
             resulting_id = member["id"]
         else:
             edge_ids = as_list(node.get("_blocked_by_keys", []), f"{key}._blocked_by_keys")
-            deps = ",".join(f"blocks:{resolve_id(str(edge_key))}" for edge_key in edge_ids)
+            # The added ticket waits for its blockers. `--deps blocks:<id>`
+            # is the reverse edge: on bd 1.2.2 it makes <id> wait for the new
+            # ticket (T48, af-1zxao6; tests/fake-tool-contract-test.py).
+            deps = ",".join(f"depends-on:{resolve_id(str(edge_key))}" for edge_key in edge_ids)
             if not new_flow:
                 deps = f"tracks:{convoy_id}" + (f",{deps}" if deps else "")
             metadata_json = json.dumps(node["metadata"], ensure_ascii=False)
