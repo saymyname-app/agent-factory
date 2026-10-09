@@ -1139,5 +1139,90 @@ class TicketEvaluationTest(unittest.TestCase):
         self.refused("settle", CONVOY, "--repo", self.repo, mention="la Ticket Evaluation n'est pas réglée")
 
 
+    # --- T42: a fresh session per evaluation -----------------------------------------
+
+    def beads(self):
+        """The tracker, each Ticket Evaluation record decoded, the mark of a launch
+        counted without result set apart."""
+        beads = json.loads(self.tracker.read_text())["beads"]
+        counted = {}
+        for bead_id, bead in beads.items():
+            raw = (bead.get("metadata") or {}).get("gc.flow.evaluation")
+            if raw is None:
+                continue
+            record = json.loads(raw)
+            for launch in (record.get("request") or {}).get("launches") or []:
+                if "refused" in launch:
+                    counted.setdefault(bead_id, []).append(launch.pop("refused")["session"])
+            bead["metadata"]["gc.flow.evaluation"] = record
+        return beads, counted
+
+    def served_session(self):
+        """The session that rendered the review of the tests of SLICE."""
+        (served,) = [round_["recorded_by"] for round_ in self.shown()["test_review"]["rounds"]]
+        return {**SESSION, "GC_SESSION_NAME": served}
+
+    def test_show_names_the_session_that_rendered_the_evaluation(self):
+        tip, request = self.open_evaluation()
+
+        self.recorded(self.handed(tip, request))
+
+        self.assertEqual([SESSION["GC_SESSION_NAME"]], [round_["recorded_by"] for round_ in self.evaluation()["rounds"]])
+
+    def test_states_from_a_session_that_rendered_another_review_of_the_convoy_are_refused_and_counted_without_result(self):
+        tip, request = self.open_evaluation()
+        handed = self.handed(tip, request)
+        session = self.served_session()
+        before, _ = self.beads()
+        sent, products = self.launches(), self.launch_records()
+
+        proc = self.record(handed, env=session)
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        text = json.loads(proc.stdout)["error"]
+        self.assertIn(session["GC_SESSION_NAME"], text)
+        self.assertIn("session neuve", text)
+        after, counted = self.beads()
+        self.assertEqual({SLICE: [session["GC_SESSION_NAME"]]}, counted)
+        self.assertEqual(before, after)
+        self.assertEqual((sent, products), (self.launches(), self.launch_records()))
+        self.assertEqual([], self.evaluation()["rounds"])
+        self.assertNotIn("evaluation", self.shown()["verdicts"])
+
+    def test_an_evaluation_refused_for_its_session_is_launched_once_more_to_another_session(self):
+        tip, request = self.open_evaluation()
+        self.record(self.handed(tip, request), env=self.served_session())
+        self.evaluator("silent", {"look_for": COUNT_SHOWN, "dataset": "content"})
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["relaunched"]])
+        evaluation = self.evaluation()
+        self.assertEqual("favorable", evaluation["state"]["verdict"])
+        self.assertEqual(["delivery-evaluator-fixture-2"], [round_["recorded_by"] for round_ in evaluation["rounds"]])
+
+    def test_an_evaluation_refused_for_its_session_twice_stops_the_ticket(self):
+        tip, request = self.open_evaluation()
+        session = self.served_session()
+        self.record(self.handed(tip, request), env=session)
+        self.settle()
+        again = self.record(self.handed(tip, self.evaluation()["request"]), env=session)
+        self.assertEqual(EXIT_REFUSED, again.returncode, again.stdout + again.stderr)
+
+        stopped = self.settle()
+
+        self.assertEqual([{"ticket": SLICE, "stop": "evaluation_no_result"}], stopped["stopped"])
+        self.assertEqual([], self.evaluation()["rounds"])
+        self.assertEqual(2, len(self.launches()))
+
+    def test_states_are_recorded_under_the_session_and_never_under_the_slot_of_the_agent(self):
+        """GC_AGENT names a place in the pool of the agent: the next session
+        of the role takes the same one."""
+        tip, request = self.open_evaluation()
+
+        self.record_refused(self.handed(tip, request), "session",
+                            env={"DELIVERY_ROLE_READ_ONLY": "1", "GC_AGENT": "delivery-evaluator-1"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -931,5 +931,87 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual(("unfavorable", True), (answer["verdict"]["state"], answer["verdict"]["valid"]))
 
 
+    # --- T42: a fresh session per review ------------------------------------------
+
+    def beads(self):
+        """The tracker, each code review record decoded, the mark of a launch
+        counted without result set apart."""
+        beads = json.loads(self.tracker.read_text())["beads"]
+        counted = {}
+        for bead_id, bead in beads.items():
+            raw = (bead.get("metadata") or {}).get("gc.flow.code_review")
+            if raw is None:
+                continue
+            record = json.loads(raw)
+            for launch in (record.get("request") or {}).get("launches") or []:
+                if "refused" in launch:
+                    counted.setdefault(bead_id, []).append(launch.pop("refused")["session"])
+            bead["metadata"]["gc.flow.code_review"] = record
+        return beads, counted
+
+    def review_open(self):
+        """The code review of SLICE launched and left without an answer:
+        what a session would hand in, and the session that rendered the
+        review of the tests of that ticket."""
+        _, tip = self.finished_slice()
+        self.reviewer("silent")
+        self.settle()
+        (served,) = [round_["recorded_by"] for round_ in self.shown()["test_review"]["rounds"]]
+        handed = ("record", CONVOY, SLICE, "--repo", self.repo, "--file",
+                  self.record_file({"commit": tip, "findings": [], "answers": {}}))
+        return handed, {"DELIVERY_ROLE_READ_ONLY": "1", "GC_SESSION_NAME": served}
+
+    def test_a_review_from_a_session_that_rendered_another_review_of_the_convoy_is_refused_and_counted_without_result(self):
+        handed, session = self.review_open()
+        before, _ = self.beads()
+        sent = self.launches()
+
+        proc = self.run_cmd(TOOL, *handed, env=session)
+
+        self.assertEqual(EXIT_REFUSED, proc.returncode, proc.stdout + proc.stderr)
+        text = json.loads(proc.stdout)["error"]
+        self.assertIn(session["GC_SESSION_NAME"], text)
+        self.assertIn("session neuve", text)
+        after, counted = self.beads()
+        self.assertEqual({SLICE: [session["GC_SESSION_NAME"]]}, counted)
+        self.assertEqual(before, after)
+        self.assertEqual(sent, self.launches())
+        self.assertEqual([], self.review()["rounds"])
+        self.assertNotIn("code_review", self.shown()["verdicts"])
+
+    def test_a_review_refused_for_its_session_is_launched_once_more_to_another_session(self):
+        handed, session = self.review_open()
+        self.run_cmd(TOOL, *handed, env=session)
+        self.reviewer("silent", "favorable")
+
+        settled = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in settled["relaunched"]])
+        review = self.review()
+        self.assertEqual("favorable", review["state"]["verdict"])
+        self.assertEqual(["delivery-reviewer-fixture-2"], [round_["recorded_by"] for round_ in review["rounds"]])
+
+    def test_a_review_refused_for_its_session_twice_stops_the_ticket(self):
+        handed, session = self.review_open()
+        self.run_cmd(TOOL, *handed, env=session)
+        self.settle()
+        again = self.run_cmd(TOOL, *handed, env=session)
+        self.assertEqual(EXIT_REFUSED, again.returncode, again.stdout + again.stderr)
+
+        stopped = self.settle()
+
+        self.assertEqual([SLICE], [entry["ticket"] for entry in stopped["stopped"]])
+        self.assertEqual("code_review_no_result", self.shown()["stop"]["reason"])
+        self.assertEqual([], self.review()["rounds"])
+        self.assertEqual(2, len(self.launches()))
+
+    def test_a_review_is_recorded_under_the_session_and_never_under_the_slot_of_the_agent(self):
+        """GC_AGENT names a place in the pool of the agent: the next session
+        of the role takes the same one."""
+        handed, _ = self.review_open()
+
+        self.refused(*handed, mention="session", env={"DELIVERY_ROLE_READ_ONLY": "1", "GC_AGENT": "delivery-reviewer-1"})
+
+
 if __name__ == "__main__":
     unittest.main()
