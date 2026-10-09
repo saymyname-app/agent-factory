@@ -94,7 +94,15 @@ Delivered Outcome, or the one of a « non conforme » request. The next pass
 closes the convoy with that reason and merges nothing.
 
 **`resolve-exception`** records, on his words, that the Planning Exception
-of the last batch is resolved.
+of the last batch is resolved — once the Spec is amended (T40, af-o6tu3z;
+Spec §11, « Spec amendée et graphe révisé »). The exception keeps the
+digest of the approved Spec the convoy was published from when it was
+raised (`exception.spec_digest`); while the convoy still carries that
+digest (`convoy.spec_digest` in `bin/convoy-state show`), the call is
+refused and says the Spec has not been amended. The digest changes when the
+amended Spec is approved (`bin/spec-approve`) and the revised graph is
+published from it (`bin/ticket-graph-publish bd-patch`, which writes it on
+the convoy).
 
 **`proposals`** creates the proposition of each « plus tard » he gave — a
 verdict on a proposition, an Owner Finding of his last answer — that has
@@ -118,8 +126,8 @@ nothing is recorded on such a convoy); 4 the convoy does not carry the mark
 | The finding | Route | What follows |
 | --- | --- | --- |
 | carries `later: true` | `later` (« plus tard ») | a proposition created at once through the proposition door, named on the finding (`proposal`); outside this Outcome, blocks nothing. A `repair` with it is refused |
-| cites (`cites.kind`) a `user_story` whose number the Spec holds, or an `anchor` | `repair` (« réparation ») | the drafted `repair` is **required** — refused without it; it is stored as `draft`, restoring what the finding cites, and published by the next pass |
-| anything else: no citation, a story the Spec does not have, another kind of citation | `planning_exception` | joins the **one** Planning Exception of the batch (`exception.findings`); **never a repair**: Benjamin asks for what the Spec does not require |
+| cites (`cites.kind`) a `user_story` whose number the Spec holds, or an `anchor` that a prototyped state of a Validated Prototype of the Spec holds (T40: read by `bin/prototype-conformance anchors` in the repository of the project, at the commit the Spec names; `cites.ref` is the name of the anchor) | `repair` (« réparation ») | the drafted `repair` is **required** — refused without it; it is stored as `draft`, restoring what the finding cites, and published by the next pass |
+| anything else: no citation, a story the Spec does not have, an anchor no prototyped state holds (or a Spec that names no Validated Prototype), another kind of citation | `planning_exception` | joins the **one** Planning Exception of the batch (`exception.findings`); **never a repair**: Benjamin asks for what the Spec does not require |
 | a proposition whose verdict is « à faire avant d'accepter » | `planning_exception` | added by code to the batch, with its text; the verdict then names the answer and no longer blocks |
 
 ## What « constats rendus » triggers
@@ -167,9 +175,9 @@ nothing is recorded on such a convoy); 4 the convoy does not carry the mark
 | `record` accepté, constats rendus | no words; no `--commit` or `--pack-digest`; the convoy is not Delivered | nothing |
 | `record` accepté, constats rendus | the commit is not the one of the dossier; it is no longer the tip of the integration branch (`bin/evidence-pack check`, `tip`); the fingerprint is not the dossier's; the pack is not « à jour » (périmé, altéré, absent, incomplet) | nothing; the next pass generates a new dossier |
 | `record` accepté | a proposition has no verdict; a proposition « à faire avant d'accepter » has not been returned | nothing |
-| `record` constats rendus | no finding and no proposition to do first; a malformed finding; a finding that cites a held story or an anchor without its drafted `repair`; `later` with a `repair` | nothing |
+| `record` constats rendus | no finding and no proposition to do first; a malformed finding; a finding that cites a held story or an anchor without its drafted `repair`; `later` with a `repair`; a finding that cites an anchor while the Validated Prototype cannot be read (the commit is neither in the repository nor on its `origin`): nothing is routed on a citation that cannot be checked | nothing |
 | `record` abandonné | no `--reason`, empty or on several lines; the convoy is neither Delivered nor carrying a « non conforme » request | nothing |
-| `resolve-exception` | the last answer carries no Planning Exception; no words | nothing |
+| `resolve-exception` | the last answer carries no Planning Exception; no words; the Spec has not been amended since the exception was raised (the convoy still carries the digest of the approved Spec of then) | nothing |
 
 Refused by `bin/convoy-state` itself, whoever calls it: `set-owner-repair`
 with a ticket the convoy does not track or that is not a `repair`, or a
@@ -259,7 +267,11 @@ unchanged.
 - **The Planning Exception of a batch is recorded and holds the end of the
   Spec, nothing more.** Amending the Spec and revising the graph is a
   Planning Run done by hand: no code starts it and nothing notifies the
-  Mayor. `resolve-exception` is trusted on Benjamin's words.
+  Mayor. `resolve-exception` checks that the convoy is published from
+  another approved Spec than the one the exception was raised on (T40);
+  that the amendment answers the findings is Benjamin's word. An exception
+  recorded before T40, or on a convoy that carries no Spec digest, keeps no
+  digest and is resolved on his words alone.
 - **The issue of a « non conforme » request is still read by nothing**
   (`bin/acceptance-session record`: relancer, planification, abandon):
   T29's acceptance criteria cover the Delivered Outcome only. « abandonné »
@@ -269,8 +281,6 @@ unchanged.
 - **Nothing prevents an agent from inventing Benjamin's words** or passing
   his name in `--approved-by`, as the Spec assumes: the record makes it
   visible afterwards.
-- **A citation of kind `anchor` is not checked** against the Validated
-  Prototype: it routes to `repair` as given.
 - **Routing reads the citation, not the meaning**: a finding that cites an
   existing story while asking for behaviour beyond it is routed as a
   repair. The patch door and the review of the ticket are the next guard.

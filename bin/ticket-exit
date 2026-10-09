@@ -827,7 +827,23 @@ def cmd_exit(args: argparse.Namespace) -> int:
             answer["parked"] = park(args, ticket, request["quoi"])
             written.append("parcage")
         if repair is not None:
-            answer["repair"] = publish_repair(args, ticket, repair)
+            # A red control the repair cites is one the convoy carries a
+            # record of: the patch door reads it there (T40).
+            restores = repair.get("restores")
+            cited = restores.get("ref") if isinstance(restores, dict) and restores.get("kind") == "red_check" else None
+            known = (ticket.state.get("blocking_red") or {}).get("control")
+            recorded = isinstance(cited, str) and bool(cited.strip()) and "\n" not in cited and cited.strip() != known
+            if recorded:
+                state_write("record-blocking-red", args.convoy, args.ticket, "--control", cited)
+            try:
+                answer["repair"] = publish_repair(args, ticket, repair)
+            except Refusal:
+                # A refusal leaves the convoy as it was.
+                if recorded and isinstance(known, str):
+                    state_write("record-blocking-red", args.convoy, args.ticket, "--control", known)
+                elif recorded:
+                    state_write("clear-blocking-red", args.convoy, args.ticket)
+                raise
             written.append(f"ticket repair {answer['repair']['id']}")
         if args.exit != "planning_exception":
             handoff = record_handoff(args, sections, written)

@@ -22,6 +22,12 @@ reference and adds a seventh record, `reference`: B is a `prototype/`
 branch, and C is not reachable from the protected branch P of the remote R
 (a Validated Prototype lives on its prototype branch, never merged).
 
+`anchors --repo DIR --commit C --path P [--branch B] [--states a,b]` (T40,
+af-o6tu3z) reads the frozen version in the repository of the project, at
+the commit its reference names, and prints the named anchors of each state
+(`{"ok": true, "anchors": {state: [names]}}`): what a citation of an anchor
+is checked against. Exit 1 with `error` when it cannot be read.
+
 Exit 0 when every record holds, 1 otherwise. `--states a,b` names the states a
 Spec lists as prototyped: each must be a state of the prototype. Failure
 messages are in French: they reach the project owner through the refusal
@@ -34,10 +40,12 @@ from __future__ import annotations
 
 import argparse
 import codecs
+import io
 import json
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 from datetime import datetime
 from html.parser import HTMLParser
@@ -462,6 +470,61 @@ def check_reference(branch: str, commit: str, remote: str, protected: str) -> li
     return failures
 
 
+# --- the anchors of the frozen version, read at its reference (T40) -----------------
+
+
+def anchors_by_state(prototype: Path, manifest: dict[str, Any], named: list[str] | None) -> dict[str, list[str]]:
+    """The named anchors of the page of each state, in document order, each
+    once. `named` keeps the states a Spec lists as prototyped."""
+    attribute = manifest.get("anchor_attribute")
+    if not non_empty_string(attribute):
+        raise ConformanceError("anchor_attribute n'est pas déclaré")
+    found: dict[str, list[str]] = {}
+    for index, state in enumerate(declared_states(manifest)):
+        label = state_label(state, index)
+        if named is not None and label not in named:
+            continue
+        page = address_page(prototype, state["address"])[1] if non_empty_string(state.get("address")) else None
+        if page is None:
+            raise ConformanceError(f"l'état {label} n'ouvre aucune page du prototype")
+        coverage = AnchorCoverage(attribute.lower())
+        coverage.feed(page.read_bytes().decode("utf-8", errors="replace"))
+        coverage.close()
+        found[label] = list(dict.fromkeys(anchor["name"].strip() for anchor in coverage.anchors))
+    missing = [name for name in named or [] if name not in found]
+    if missing:
+        raise ConformanceError(f"état(s) absent(s) du prototype : {', '.join(missing)}")
+    return found
+
+
+def cmd_anchors(args: argparse.Namespace) -> int:
+    repository, commit, path = Path(args.repo), args.commit, args.path.strip("/")
+    named = [name.strip() for name in args.states.split(",") if name.strip()] if args.states else None
+    try:
+        if git(repository, "rev-parse", "--git-dir").returncode != 0:
+            raise ConformanceError(f"{repository} n'est pas un dépôt Git")
+        if git(repository, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0 and args.branch:
+            git(repository, "fetch", "--quiet", "origin", args.branch)
+        archive = subprocess.run(
+            ["git", "-C", str(repository), "archive", "--format=tar", commit, "--", path],
+            capture_output=True, stdin=subprocess.DEVNULL,
+        )
+        if archive.returncode != 0:
+            raise ConformanceError(
+                f"le Validated Prototype {path} est introuvable au commit {commit} dans le dépôt {repository}"
+            )
+        with tempfile.TemporaryDirectory(prefix="prototype-conformance-") as tmp:
+            with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+                tar.extractall(tmp, filter="data")
+            prototype = Path(tmp) / path
+            found = anchors_by_state(prototype, load_manifest(prototype), named)
+    except (ConformanceError, OSError, tarfile.TarError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
+        return 1
+    print(json.dumps({"ok": True, "commit": commit, "path": path, "anchors": found}, indent=2, ensure_ascii=False))
+    return 0
+
+
 # --- CLI ---------------------------------------------------------------------------
 
 
@@ -512,6 +575,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--protected", default=None, help="protected branch of the remote; the commit must not be reachable from it"
     )
     check.set_defaults(func=cmd_check)
+    anchors = subparsers.add_parser("anchors", help="the named anchors of each state, read at the reference")
+    anchors.add_argument("--repo", required=True, help="repository of the project holding the prototype commit")
+    anchors.add_argument("--commit", required=True, help="commit of the reference")
+    anchors.add_argument("--path", required=True, help=f"path of the directory holding {MANIFEST_NAME} at that commit")
+    anchors.add_argument("--branch", default=None, help="branch of the reference, fetched from origin if the commit is absent")
+    anchors.add_argument("--states", default=None, help="comma-separated state ids a Spec names as prototyped")
+    anchors.set_defaults(func=cmd_anchors)
     return parser
 
 

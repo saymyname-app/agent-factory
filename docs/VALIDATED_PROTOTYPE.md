@@ -32,6 +32,23 @@ The delivered screen is compared to this frozen version, state by state, by
 `bin/prototype-fidelity` (`docs/PROTOTYPE_FIDELITY.md`): the anchors named
 here are what it measures.
 
+## The anchors a citation is read against (T40, af-o6tu3z)
+
+```bash
+./bin/prototype-conformance anchors --repo <project repository> --commit <sha> \
+  --path <chemin> [--branch prototype/<map>-<topic>] [--states empty,content]
+```
+
+Reads the frozen version at the commit of its reference, in the repository
+of the project (the commit is fetched from `origin` on `--branch` when the
+repository does not hold it), and prints the named anchors of each state,
+in document order: `{"ok": true, "anchors": {"empty": ["…"], …}}`.
+`--states` keeps the states a Spec lists as prototyped. Exit 1 with `error`
+when the prototype cannot be read. It is the one definition of « an anchor
+of the Validated Prototype » for the two callers that check a citation of
+kind `anchor`: the publication doors (`docs/ENTRY_CONTRACT.md`) and the
+route of an Owner Finding (`docs/OWNER_ANSWER.md`).
+
 ## The frozen version
 
 A directory holding static pages, datasets and one manifest,
