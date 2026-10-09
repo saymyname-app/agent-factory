@@ -18,6 +18,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "bin" / "tdd-step"
+ADVANCE_TOOL = ROOT / "bin" / "convoy-advance"
+ESCALATION_TOOL = ROOT / "bin" / "escalation-door"
 STATE_TOOL = ROOT / "bin" / "convoy-state"
 CAPTURE_TOOL = ROOT / "bin" / "evidence-capture"
 FIXTURE = Path("tests") / "fixtures" / "delivery-fixture-city"
@@ -783,6 +785,50 @@ class TddStepTest(unittest.TestCase):
         self.assertEqual(before, state["tdd"])
         self.assertEqual("amendment_exhausted", state["stop"]["reason"])
         self.assertEqual(store_before, self.store_files())
+
+    def test_a_ticket_stopped_at_its_second_amendment_reaches_the_operator_at_the_next_advance_pass(self):
+        """The demonstration line of T45: bin/tdd-step amend stops the
+        ticket, one pass of bin/convoy-advance puts exactly one request on
+        the operator's list, a second pass adds none."""
+        self.frozen()
+        self.commit("code et test corrigé", {APP: self.amended_app(), HEALTH_FILE: self.AMENDED_HEALTH_TEST})
+        self.ok("amend", SLICE, "--reason", "le champ s'appelle dataset_name dans la Spec")
+        self.commit("second changement de test", {COUNT_FILE: COUNT_TEST.replace(">3<", "> 3 <")})
+        self.assertEqual(EXIT_STOPPED, self.run_tool("amend", SLICE, "--reason", "autre erreur de test").returncode)
+        root = self.tmp / "root"
+        (root / "config").mkdir(parents=True)
+        (root / "config" / "delivery-flow.json").write_text(json.dumps({
+            "contract": "agent-factory-delivery-flow/v1", "max_sessions": 5, "start": {"formula": "fx-start", "role": None}}))
+        shutil.copy(ROOT / "config" / "delivery-roles.json", root / "config" / "delivery-roles.json")
+        proposal_door = self.tmp / "proposal-door"
+        proposal_door.write_text("#!/bin/sh\necho 0\n")
+        proposal_door.chmod(0o755)
+        env = {**self.env, "FACTORY_ROOT": str(root), "CONVOY_ADVANCE_LOCK_DIR": str(self.tmp / "locks"),
+               "ESCALATION_DOOR_LOCK_FILE": str(self.tmp / "escalation-door.lock"), "GC_ESCALATION_RECIPIENT": "human",
+               "PROPOSAL_DOOR_BIN": str(proposal_door)}
+        for name in ("GC_AGENT", "GC_ALIAS", "GC_SESSION_NAME", "GC_SESSION_ID", "GC_TEMPLATE"):
+            env.pop(name, None)
+
+        def advance():
+            # The other tickets of this tracker name no rig: their start is
+            # refused, which is not what this test is about.
+            proc = subprocess.run((str(ADVANCE_TOOL), CONVOY), env=env, text=True, capture_output=True)
+            return next(c for c in json.loads(proc.stdout)["convoys"] if c["id"] == CONVOY)
+
+        def requests():
+            proc = subprocess.run((str(ESCALATION_TOOL), "list"), env=env, text=True, capture_output=True, check=True)
+            return [line.strip() for line in proc.stdout.splitlines() if SLICE in line]
+
+        first = advance()
+        second = advance()
+
+        self.assertEqual([{"ticket": SLICE, "reason": "amendment_exhausted"}], first["tdd_stops"]["escalated"])
+        self.assertNotIn("tdd_stops", second)
+        listed = requests()
+        self.assertEqual(1, len(listed), listed)
+        self.assertIn("amendement épuisé", listed[0])
+        self.assertIn("raised", self.ticket_state()["stop"])
+        self.assertEqual("open", json.loads(self.tracker.read_text())["beads"][SLICE]["status"])
 
     def test_amendment_refused_without_a_reason(self):
         self.frozen()

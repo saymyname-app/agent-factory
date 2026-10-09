@@ -477,6 +477,11 @@ touché : il reste avancé par le Mayor.
   demande groupée impossible à lever) ;
   3 « état sans règle » : rien n'est démarré dans ce convoi ; 4 « pas un convoi
   du nouveau flux ».
+- **Ticket arrêté pour amendement épuisé** : au second amendement d'un test
+  gelé, `./bin/tdd-step amend` arrête le ticket ; la passe suivante pose
+  **une seule** demande, « Ticket <id> arrêté : amendement épuisé — … », dans
+  `./bin/escalation-door list`. Le ticket n'est ni repris ni fusionné, les
+  tickets qui ne l'attendent pas continuent. Rien ne lève encore cet arrêt.
 - **Convoi arrêté (« état sans règle »)** : un ticket démarré ou fermé hors de
   sa porte, une preuve sans empreinte, un compteur incohérent. La passe ne
   démarre plus rien dans ce convoi et lève **un seul** incident d'usine : la

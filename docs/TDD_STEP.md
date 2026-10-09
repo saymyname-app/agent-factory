@@ -165,7 +165,9 @@ red proof of the amended tests is `tdd_amendment`; `tdd_red` stays the first
 one.
 
 A second `amend` on the same ticket stops it (`amendment_exhausted`, exit
-5). If the freeze that ends an amendment could not be recorded, `tdd-step
+5). The next pass of `bin/convoy-advance` raises that stop to the operator,
+once (`docs/CONVOY_ADVANCE.md`, « A ticket stopped at its second amendment
+reaches the operator »). If the freeze that ends an amendment could not be recorded, `tdd-step
 freeze` at the same commit completes it.
 
 ## Prefactoring
