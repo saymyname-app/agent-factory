@@ -52,6 +52,24 @@ close reason.
 `pr-autopilot`. Nothing rechecks an approved graph's readiness automatically
 any more: the Mayor releases a published graph's tickets when it is woken.
 
+*Amendment 2026-10-09:* (authority: approved Spec `af-wf4w5r` §9, Planning
+Run D01, tickets T19, T22 and T30.) For a convoy that carries the new-flow
+mark, the closing proof of this ADR -- pull request merged and exact-head CI
+green -- no longer closes a ticket. The ticket-end gate succeeds it
+(`bin/ticket-end`, `docs/TICKET_END.md`): nine conditions read by code on the
+durable state of the convoy and on the evidence store, the closing written
+in one tracker write with its gate record (`docs/CONVOY_STATE.md`), and the
+author never closes its ticket. `bin/deliver-close` refuses a marked ticket
+before any Beads write. The tickets of such a convoy open no pull request
+toward the protected branch: they merge into one integration branch per
+Spec, and the protected branch receives one merge, made by code, only after
+the owner's recorded « accepté » (`bin/outcome-promote`,
+`docs/OUTCOME_PROMOTE.md`). A marked convoy has no automatic closing: code
+closes it on the owner's recorded « accepté » or « abandonné ». Unmarked
+convoys and all other PR-backed work keep points 1 to 6 unchanged. The
+deviations are recorded in the Adaptation Register
+(`docs/ADAPTATION_REGISTER.md`): AR-022, AR-023, AR-033.
+
 ## Consequences and verification
 
 - PR creation no longer means done; the merge actor is also the finalizer.

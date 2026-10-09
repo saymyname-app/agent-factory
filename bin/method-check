@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""method-check — two read-only controls on what the Factory says of its own
+method (D01 T31, Spec af-wf4w5r §9 and §16, user stories 77 and 78).
+
+Usage:
+  method-check table [--root DIR]
+      docs/REQUIREMENT_TABLE.md, the requirement → mechanism → proof table:
+      every row has a mechanism that names at least one command of the
+      Factory (`bin/<name>`), every command it names is an executable file
+      of bin/, and every row has a proof.
+  method-check register [--root DIR]
+      docs/ADAPTATION_REGISTER.md: every entry has its reason (field `But`);
+      every deviation of the list « Écarts de la Spec D01 » names at least
+      one entry, each of them present and naming the comparison baseline
+      v1.3.1 in its field `Baseline`.
+
+--root is the tree to read (default: the tree this script is in); tests point
+it at a copy. Nothing is ever written.
+
+Exit 0: the control passes, one line on stdout.
+Exit 1: one French reason per line on stderr, each naming its row or entry.
+Exit 2: usage.
+"""
+import os
+import re
+import sys
+
+PROGRAM = "method-check"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+TABLE_FILE = os.path.join("docs", "REQUIREMENT_TABLE.md")
+TABLE_HEAD = ("Exigence", "Mécanisme", "Preuve produite")
+COMMAND = re.compile(r"(?<![\w/.-])(?:\./)?bin/([A-Za-z0-9][A-Za-z0-9_.-]*)")
+
+REGISTER_FILE = os.path.join("docs", "ADAPTATION_REGISTER.md")
+DEVIATIONS_HEADING = "## Écarts de la Spec D01"
+DEVIATIONS_HEAD = ("Résolution", "Écart", "Entrées")
+ENTRY_HEADING = re.compile(r"^## (AR-\d{3})\b")
+ENTRY_ID = re.compile(r"\bAR-\d{3}\b")
+BASELINE = "v1.3.1"
+
+
+def cells(line):
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def is_rule(row):
+    return all(cell and set(cell) <= set("-: ") for cell in row)
+
+
+def read(root, relative, problems):
+    path = os.path.join(root, relative)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read().splitlines()
+    except OSError:
+        problems.append("%s est introuvable ou illisible." % relative)
+        return None
+
+
+def table_after(lines, head):
+    """The rows of the first Markdown table whose head row is `head`."""
+    rows, inside = [], False
+    for line in lines:
+        if not line.lstrip().startswith("|"):
+            if inside:
+                break
+            continue
+        row = cells(line)
+        if not inside:
+            inside = tuple(row) == head
+        elif not is_rule(row):
+            rows.append(row)
+    return rows if inside else None
+
+
+def check_table(root):
+    problems = []
+    lines = read(root, TABLE_FILE, problems)
+    if lines is None:
+        return problems, 0
+    rows = table_after(lines, TABLE_HEAD)
+    if not rows:
+        problems.append(
+            "%s ne contient aucune ligne sous « %s »."
+            % (TABLE_FILE, " | ".join(TABLE_HEAD))
+        )
+        return problems, 0
+    for number, row in enumerate(rows, 1):
+        name = "ligne « %s »" % (row[0] or "n° %d, sans exigence" % number)
+        if len(row) != len(TABLE_HEAD):
+            problems.append("%s : %d colonnes au lieu de 3." % (name, len(row)))
+            continue
+        requirement, mechanism, proof = row
+        if not requirement:
+            problems.append("%s : l'exigence est vide." % name)
+        if not mechanism:
+            problems.append("%s : le mécanisme est vide." % name)
+        else:
+            commands = sorted(set(COMMAND.findall(mechanism)))
+            if not commands:
+                problems.append(
+                    "%s : le mécanisme ne nomme aucune commande de l'usine "
+                    "(`bin/<nom>`)." % name
+                )
+            for command in commands:
+                path = os.path.join(root, "bin", command)
+                if not (os.path.isfile(path) and os.access(path, os.X_OK)):
+                    problems.append(
+                        "%s : le mécanisme nomme bin/%s, qui n'est pas une "
+                        "commande de l'usine." % (name, command)
+                    )
+        if not proof:
+            problems.append("%s : la preuve est vide." % name)
+    return problems, len(rows)
+
+
+def register_entries(lines):
+    """{AR-NNN: {field: text}} from the `| Champ | Enregistrement |` tables."""
+    entries, current = {}, None
+    for line in lines:
+        heading = ENTRY_HEADING.match(line)
+        if heading:
+            current = entries.setdefault(heading.group(1), {})
+        elif line.startswith("## "):
+            current = None
+        elif current is not None and line.lstrip().startswith("|"):
+            field, _, value = line.strip().strip("|").partition("|")
+            current.setdefault(field.strip(), value.strip())
+    return entries
+
+
+def deviation_rows(lines):
+    for index, line in enumerate(lines):
+        if line.startswith(DEVIATIONS_HEADING):
+            section = []
+            for following in lines[index + 1:]:
+                if following.startswith("## "):
+                    break
+                section.append(following)
+            return table_after(section, DEVIATIONS_HEAD)
+    return None
+
+
+def check_register(root):
+    problems = []
+    lines = read(root, REGISTER_FILE, problems)
+    if lines is None:
+        return problems, 0
+    entries = register_entries(lines)
+    if not entries:
+        problems.append("%s ne contient aucune entrée AR-NNN." % REGISTER_FILE)
+    for name in sorted(entries):
+        if not entries[name].get("But"):
+            problems.append("entrée %s : pas de raison (champ `But` vide ou absent)." % name)
+    rows = deviation_rows(lines)
+    if not rows:
+        problems.append(
+            "%s ne contient aucune ligne sous « %s » (%s)."
+            % (REGISTER_FILE, DEVIATIONS_HEADING[3:], " | ".join(DEVIATIONS_HEAD))
+        )
+        return problems, 0
+    for number, row in enumerate(rows, 1):
+        if len(row) != len(DEVIATIONS_HEAD):
+            problems.append(
+                "écart n° %d : %d colonnes au lieu de 3." % (number, len(row))
+            )
+            continue
+        resolution, deviation, named = row
+        name = "écart « %s » (%s)" % (deviation or "n° %d" % number, resolution)
+        if not deviation:
+            problems.append("%s : l'écart est vide." % name)
+        cited = ENTRY_ID.findall(named)
+        if not cited:
+            problems.append("%s : aucune entrée nommée." % name)
+        for entry in cited:
+            if entry not in entries:
+                problems.append("%s : l'entrée %s n'existe pas." % (name, entry))
+            elif BASELINE not in entries[entry].get("Baseline", ""):
+                problems.append(
+                    "%s : l'entrée %s ne nomme pas la base de comparaison %s "
+                    "dans son champ `Baseline`." % (name, entry, BASELINE)
+                )
+    return problems, len(rows)
+
+
+CHECKS = {
+    "table": (check_table, "%d exigences, chacune avec son mécanisme et sa preuve."),
+    "register": (check_register, "%d écarts, chacun avec son entrée, sa raison et sa base."),
+}
+
+
+def main(argv):
+    args = argv[1:]
+    if not args or args[0] in ("-h", "--help") or args[0] not in CHECKS:
+        sys.stderr.write(__doc__)
+        return 2
+    root = ROOT
+    if len(args) == 3 and args[1] == "--root":
+        root = args[2]
+    elif len(args) != 1:
+        sys.stderr.write(__doc__)
+        return 2
+    check, passed = CHECKS[args[0]]
+    problems, count = check(root)
+    if problems:
+        for problem in dict.fromkeys(problems):
+            sys.stderr.write("%s %s: %s\n" % (PROGRAM, args[0], problem))
+        return 1
+    sys.stdout.write("%s %s: %s\n" % (PROGRAM, args[0], passed % count))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
