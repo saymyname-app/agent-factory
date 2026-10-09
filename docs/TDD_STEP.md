@@ -45,9 +45,9 @@ order of the steps under its lock.
 
 | Step | Piece | Report (`output` of the piece, JSON) |
 |---|---|---|
-| `red` | `tdd_red` | `verdict: red`, `base`, `table`, `criteria` {number: [test id]}, `tests` [{`id`, `outcome`, `entry_points`}], `seam_mode`, `launch.healthy` |
+| `red` | `tdd_red` | `verdict: red`, `base`, `table`, `criteria` {number: [test id]}, `tests` [{`id`, `outcome`, `seam`, `seam_mode`, `entry_points` for a black-box test}], `seam_mode` (the modes the tests went through, joined by `+`: `black_box`, `black_box+import_rule`), `launch.healthy` |
 | `freeze` | `tdd_freeze` | `files` {path: `sha256:`}, `table`, `criteria`: the **registry of fingerprints** |
-| `green` | `tdd_green` | `verdict: green`, `k`, `tests` [{`id`, `runs`: k outcomes}], `frozen` (the commit of the freeze) |
+| `green` | `tdd_green` | `verdict: green`, `k`, `tests` [{`id`, `runs`: k outcomes, `seam`, `seam_mode`}], `frozen` (the commit of the freeze) |
 | `amend` | `tdd_amendment` | the red report of the amended tests, plus `amendment` {`reason`, `diff`, `files`, `previous_freeze`} |
 | `prefactoring` | `tdd_prefactoring` | `verdict: unchanged`, `regression` [{`commit`, `exit_code`}] before and after |
 
@@ -55,8 +55,11 @@ order of the steps under its lock.
 
 `--profile` is the project descriptor (`docs/PROJECT_PLANNING_PROFILE.md`,
 `launch` block). The steps read `test_perimeter`, `frozen_harness_paths`,
-`test_command`, `seam_mode`, `entry_points`, `regression_command`, `k`, and
-the optional `red_error_types` and `import_rule`.
+`test_command`, `seams` (the normalized list: a profile that declares
+`seam_mode` has one seam named `default` over the whole test perimeter),
+`entry_points`, `regression_command`, `k` (3 when the profile declares
+none), and the optional `red_error_types` and `import_rule`, both shared by
+all seams.
 
 **`test_command`** runs one test and writes its report: it carries `{test}`
 (a test id, a file of the test perimeter optionally followed by `::…`) and
@@ -98,17 +101,23 @@ refused by every step.
 
 ### Proof of the seam
 
-- `black_box`: the tests run in a tree that holds only the test perimeter
+Each criterion test is proven by the mode of the seam it goes through: the
+seam whose `test_paths` hold the file of the test. A test under no declared
+seam is refused (« test hors de tout seam : … », the declared seams named).
+The report names, per test, its `seam` and `seam_mode`.
+
+- `black_box`: the tests of such a seam run in a tree that holds only the test perimeter
   and the frozen harness paths, so they cannot read or import the code of
   the product; they reach the product through a recording proxy placed in
   front of it. A test that sent no request to a declared `http` entry point
   is refused (« aucun point d'entrée du produit : … »); the entry points each
   test went through are in the report (`"entry_points": ["GET /"]`).
-- `import_rule`: the tests run in the tree of the start commit, under the
-  tests of HEAD. The profile's `import_rule` gives two regular expressions
+- `import_rule`: the tests of such a seam run in the tree of the start
+  commit, under the tests of HEAD. The profile's `import_rule` gives two regular expressions
   applied to each line: a line matching `product_import` must match
   `entry_point_import` (« règle d'import », file, line and text named), and
-  every criterion test file must import an entry point.
+  every criterion test file must import an entry point. The rule is applied
+  to the files of import-rule seams only.
 
 ## Freeze
 
@@ -137,7 +146,8 @@ refuses any frozen file that is no longer what was frozen (« fichier gelé
 modifié : … », « fichier gelé supprimé ou déplacé : … » — a removed test, a
 renamed one, a test left out of the table, a harness file). It then runs the
 test ids of the frozen table, from the files of the frozen commit, against
-the product launched at HEAD, `k` times in a row: a test that never passes
+the product launched at HEAD, each in the tree of its seam's mode, `k` times
+in a row (3 when the profile declares no `k`): a test that never passes
 is « test en échec », a mixed result is « test instable », a skipped test is
 refused.
 

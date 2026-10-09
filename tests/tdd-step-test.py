@@ -208,9 +208,12 @@ class TddStepTest(unittest.TestCase):
         ).replace('{"status": "ok"}', '{"status": "ok", "dataset": self.dataset.get("state")}')
 
     def descriptor(self, **launch):
-        """The profile of the fixture, with other launch declarations."""
+        """The profile of the fixture, with other launch declarations; a
+        declaration given as None is removed."""
         profile = json.loads(DESCRIPTOR.read_text())
         profile["launch"].update(launch)
+        for field in [field for field, value in launch.items() if value is None]:
+            del profile["launch"][field]
         path = self.tmp / "descriptor.json"
         path.write_text(json.dumps(profile))
         return path
@@ -436,6 +439,69 @@ class TddStepTest(unittest.TestCase):
         requests = {test["id"]: test["entry_points"] for test in proof["tests"]}
         self.assertEqual({COUNT_ID: ["GET /"], HEALTH_ID: ["GET /health"]}, requests)
 
+    # --- red step: a mode per seam (T38, af-8o4jcp) ---------------------------
+
+    IMPORT_RULE = {"product_import": r"^\s*(?:import|from)\s+app\b", "entry_point_import": r"^import app$"}
+
+    def two_seams(self, black_box, import_rule):
+        """A profile with two seams of different modes, each over one test file."""
+        return self.descriptor(
+            seam_mode=None, import_rule=self.IMPORT_RULE, red_error_types=["AttributeError"],
+            seams=[{"name": "http", "mode": "black_box", "test_paths": [black_box]},
+                   {"name": "library", "mode": "import_rule", "test_paths": [import_rule]}])
+
+    def test_red_proves_each_criterion_test_by_the_mode_of_its_seam_and_names_both_per_test(self):
+        self.commit_tests({COUNT_FILE: IMPORT_TEST})
+
+        self.red(profile=self.two_seams(black_box=HEALTH_FILE, import_rule=COUNT_FILE))
+
+        _, proof = self.piece("tdd_red")
+        tests = {test["id"]: test for test in proof["tests"]}
+        self.assertEqual({COUNT_ID: ("library", "import_rule"), HEALTH_ID: ("http", "black_box")},
+                         {test_id: (test["seam"], test["seam_mode"]) for test_id, test in tests.items()})
+        # Black box: the entry point the test asked. Import rule: none is recorded.
+        self.assertEqual(["GET /health"], tests[HEALTH_ID]["entry_points"])
+        self.assertNotIn("entry_points", tests[COUNT_ID])
+        self.assertEqual("black_box+import_rule", proof["seam_mode"])
+
+    def test_red_applies_the_import_rule_to_the_tests_of_the_import_rule_seam_only(self):
+        """The same tests, the modes exchanged: the test that asks the
+        product over http is now held to the import rule, and fails it; the
+        rule is not applied to the test of the black-box seam."""
+        self.commit_tests({COUNT_FILE: IMPORT_TEST})
+
+        error = self.red_refused(profile=self.two_seams(black_box=COUNT_FILE, import_rule=HEALTH_FILE))
+
+        self.assertIn(f"aucun point d'entrée du produit : {HEALTH_ID} (règle d'import", error)
+        self.assertNotIn(f"{COUNT_ID} (règle d'import", error)
+
+    def test_red_refuses_the_test_of_a_black_box_seam_that_asks_no_entry_point(self):
+        silent = f"{HEALTH_FILE}::CountTest.test_count_is_shown"
+        self.commit_tests({COUNT_FILE: IMPORT_TEST, HEALTH_FILE: COUNT_TEST_WITHOUT_THE_PRODUCT},
+                          table=self.table({"1": [COUNT_ID], "2": [silent]}))
+
+        error = self.red_refused(profile=self.two_seams(black_box=HEALTH_FILE, import_rule=COUNT_FILE))
+
+        self.assertIn(f"aucun point d'entrée du produit : {silent} (seam http, boîte noire", error)
+        self.assertNotIn(f"aucun point d'entrée du produit : {COUNT_ID}", error)
+
+    def test_red_refuses_a_criterion_test_that_goes_through_no_declared_seam(self):
+        self.commit_tests()
+        profile = self.descriptor(seam_mode=None, seams=[
+            {"name": "http", "mode": "black_box", "test_paths": [HEALTH_FILE]}])
+
+        error = self.red_refused(profile=profile)
+
+        self.assertIn(f"test hors de tout seam : {COUNT_ID}", error)
+
+    def test_red_names_the_seam_and_the_mode_of_each_test_of_a_profile_with_one_seam_mode(self):
+        self.commit_tests()
+
+        self.red()
+
+        _, proof = self.piece("tdd_red")
+        self.assertEqual({("default", "black_box")}, {(test["seam"], test["seam_mode"]) for test in proof["tests"]})
+
     def test_red_refuses_a_black_box_test_that_reaches_the_code_without_an_entry_point(self):
         self.commit_tests({COUNT_FILE: COUNT_TEST_THROUGH_THE_CODE})
 
@@ -561,6 +627,29 @@ class TddStepTest(unittest.TestCase):
         self.assertEqual({COUNT_ID: ["passed"] * 3, HEALTH_ID: ["passed"] * 3},
                          {test["id"]: test["runs"] for test in proof["tests"]})
         self.assertEqual({"tdd_red", "tdd_freeze", "tdd_green"}, self.verified())
+
+    def test_green_runs_the_tests_3_times_when_the_profile_declares_no_k(self):
+        self.frozen()
+        self.commit("code du ticket", {APP: self.green_app()})
+
+        self.ok("green", profile=self.descriptor(k=None))
+
+        _, proof = self.piece("tdd_green")
+        self.assertEqual(3, proof["k"])
+        self.assertEqual({COUNT_ID: ["passed"] * 3, HEALTH_ID: ["passed"] * 3},
+                         {test["id"]: test["runs"] for test in proof["tests"]})
+
+    def test_green_runs_the_tests_as_many_times_as_the_k_the_profile_declares(self):
+        self.frozen()
+        self.commit("code du ticket", {APP: self.green_app()})
+
+        self.ok("green", profile=self.descriptor(k=2))
+
+        _, proof = self.piece("tdd_green")
+        self.assertEqual(2, proof["k"])
+        self.assertEqual({COUNT_ID: ["passed"] * 2, HEALTH_ID: ["passed"] * 2},
+                         {test["id"]: test["runs"] for test in proof["tests"]})
+        self.assertEqual({("default", "black_box")}, {(test["seam"], test["seam_mode"]) for test in proof["tests"]})
 
     def test_green_refused_without_a_freeze(self):
         self.commit_tests()

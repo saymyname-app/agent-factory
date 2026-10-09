@@ -17,7 +17,9 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   chaque critère a un test, le produit lancé au commit de départ est en bonne
   santé, chaque test échoue par assertion et passe par un point d'entrée du
   produit. Un test en erreur, vide, ou qui ne demande rien au produit est
-  refusé et nommé.
+  refusé et nommé. Chaque test est prouvé selon le **mode du seam** par
+  lequel il passe (boîte noire ou règle d'import, déclaré par seam dans le
+  profil) ; le relevé nomme le seam et le mode de chaque test.
 - **Critère déjà vert** : le ticket est arrêté (sortie 5), le critère est
   nommé, l'arrêt est écrit dans le tracker.
 - **Gel** : refusé tant que le relecteur de tests n'a pas passé chaque test
@@ -25,8 +27,8 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   (`./bin/test-review`) ; ensuite les empreintes des tests, de la table et
   du harnais vont dans le magasin de preuves, hors de tout dépôt Git.
 - **Vert** : refus si un fichier gelé a été modifié, supprimé ou déplacé ;
-  sinon les tests gelés passent k fois de suite. Un résultat mixte nomme le
-  test instable.
+  sinon les tests gelés passent k fois de suite (k du profil ; 3 s'il n'en
+  déclare pas). Un résultat mixte nomme le test instable.
 - **Amendement** : le seul moyen de changer un test gelé, une fois par
   ticket, avec sa raison ; nouveau rouge, nouveau gel, diff enregistré. Le
   second arrête le ticket (sortie 5).

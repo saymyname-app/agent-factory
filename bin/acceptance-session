@@ -256,6 +256,16 @@ class Convoy:
             raise Refusal(f"le profil {path} ne déclare aucune recette de lancement : le produit ne peut pas être lancé")
         return path, launch
 
+    def datasets(self) -> list[str]:
+        """The named datasets the product is launched on: at least one."""
+        path, launch = self.profile()
+        declared = launch.get("datasets")
+        if not isinstance(declared, dict) or not declared:
+            raise Refusal(
+                f"le profil {path} ne déclare aucun jeu de données (launch.datasets) : le produit ne se lance "
+                "que sur un jeu de données nommé")
+        return sorted(declared)
+
     def dossier(self) -> dict[str, Any]:
         """What Benjamin was asked to judge: the kind of the request, and
         the commit and fingerprint of its Evidence Pack."""
@@ -330,16 +340,15 @@ def launch_products(convoy: Convoy, commit: str, folder: Path) -> list[dict[str,
     """Launch the product from a clean copy of `commit`, once per synthetic
     dataset the profile declares, each on its own free port. All of them,
     or none: one that does not start is the outage of the session."""
-    profile, launch = convoy.profile()
-    datasets = sorted(launch.get("datasets") or {}) or [None]
+    profile, _ = convoy.profile()
+    datasets = convoy.datasets()
     launched: list[dict[str, Any]] = []
     try:
         for dataset in datasets:
-            state_file = folder / f"launch-{dataset or 'product'}.json"
+            state_file = folder / f"launch-{dataset}.json"
             argv = [str(LAUNCH_TOOL), "--repo-root", str(convoy.repo()), "start", str(profile), "--commit", commit,
                     "--timeout", str(START_TIMEOUT), "--state-file", str(state_file)]
-            if dataset is not None:
-                argv += ["--dataset", dataset]
+            argv += ["--dataset", dataset]
             for _ in range(START_ATTEMPTS):
                 started = run(argv, timeout=START_TIMEOUT + 60, detached=True)
                 if started.returncode == 0 and state_file.is_file():
@@ -347,7 +356,7 @@ def launch_products(convoy: Convoy, commit: str, folder: Path) -> list[dict[str,
             else:
                 raise Outage(
                     f"le produit ne démarre pas depuis une copie propre du commit {commit[:12]}"
-                    f"{f' sur le jeu {dataset}' if dataset else ''} : {detail_of(started)}")
+                    f" sur le jeu {dataset} : {detail_of(started)}")
             record = json.loads(state_file.read_text(encoding="utf-8"))
             launched.append({"dataset": dataset, "address": record["address"], "port": int(record["port"]),
                              "state_file": str(state_file)})
@@ -376,6 +385,8 @@ def cmd_open(args: argparse.Namespace) -> dict[str, Any]:
         raise Refusal(
             f"le produit ne démarre pas au commit {dossier['commit'][:12]} de ce dossier ({outage['detail']}) ; "
             f"{repair} ; la session s'ouvrira sur le dossier du produit réparé")
+    # Refused before anything is launched or written: no named dataset.
+    convoy.datasets()
     folder = session_folder(convoy.id)
     folder.mkdir(parents=True, exist_ok=True)
     try:
