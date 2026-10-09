@@ -173,6 +173,10 @@ if TYPE_CHECKING:
 PROGRAM = "convoy-state"
 GC_BIN = os.environ.get("GC_BIN", "gc")
 BIN = Path(__file__).resolve().parents[1] / "bin"  # this module is in lib/
+# The city is named to gc on every call: left to find it by itself, gc 1.4.1
+# starts one more command before each read, and the same `bd show` takes 2.5
+# times longer (af-2o6oyl). Same root as bin/convoy-advance.
+CITY = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
 # Where the bounds of the flow are set (Spec §8): one file, read by every
 # command that applies one of them.
 SETTINGS = "config/delivery-flow.json"
@@ -485,7 +489,7 @@ class NotNewFlow(RuntimeError):
 
 def run_gc(args: list[str]) -> str:
     try:
-        proc = subprocess.run([GC_BIN, *args], capture_output=True, text=True)
+        proc = subprocess.run([GC_BIN, "--city", str(CITY), *args], capture_output=True, text=True)
     except OSError as exc:
         raise Refusal(f"impossible de lancer {GC_BIN} : {exc}") from exc
     if proc.returncode != 0:

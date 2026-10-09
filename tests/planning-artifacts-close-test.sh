@@ -29,6 +29,9 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gc" <<'STUB'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+# A leading `--city DIR` is accepted, as gc does: bin/convoy-state names the
+# city on every call (af-2o6oyl).
+if [[ ${1:-} == --city ]]; then shift 2; fi
 if [[ ${1:-} == bd && ${2:-} == list ]]; then
   cat "$CONVOYS_FILE"
   exit 0
