@@ -835,6 +835,61 @@ class CodeReviewTest(unittest.TestCase):
         self.assertEqual(([], []), (settled["launched"], self.launches()))
         self.assertIn("vert", settled["waiting"][0]["reason"])
 
+    def integration_moved(self):
+        """One commit more on the integration branch of the Spec, as the
+        merge of another ticket leaves it; return the new tip."""
+        self.git("fetch", "-q", "origin")
+        self.git("checkout", "-q", "--detach", f"origin/{INTEGRATION}")
+        (self.repo / "AUTRE.md").write_text("un autre ticket a fusionné\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "un autre ticket fusionne")
+        self.git("push", "-q", "origin", f"HEAD:refs/heads/{INTEGRATION}")
+        tip = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "--detach", self.base)
+        return tip
+
+    def test_no_review_is_launched_on_a_branch_that_has_not_taken_the_integration_tip(self):
+        _, tip = self.finished_slice()
+        integration = self.integration_moved()
+        before = (self.tracker.read_bytes(), self.write_log.read_text())
+
+        settled = self.settle(expect=EXIT_REFUSED)
+
+        self.assertFalse(settled["ok"])
+        self.assertEqual([(SLICE, "behind", integration, tip)],
+                         [(r["ticket"], r["cause"], r["integration"], r["commit"]) for r in settled["refused"]])
+        self.assertIn(integration[:12], settled["refused"][0]["reason"])
+        self.assertIn(tip[:12], settled["refused"][0]["reason"])
+        self.assertEqual((before, [], []),
+                         ((self.tracker.read_bytes(), self.write_log.read_text()), settled["launched"], self.launches()))
+        self.assertIsNone(self.review())
+        self.assertIsNone(self.shown().get("verdicts", {}).get("code_review"))
+        self.assertEqual({"integration": integration, "commit": tip}, self.tool_show()["behind"])
+
+    def test_a_branch_that_took_the_integration_tip_is_reviewed_as_before(self):
+        self.started(SLICE)
+        integration = self.integration_moved()
+        tip = self.commit_on(SLICE, {NOTE: "parti de la pointe courante\n"})
+        self.finish(SLICE, tip)
+
+        settled = self.settle()
+
+        self.assertEqual([(SLICE, tip)], [(r["ticket"], r["commit"]) for r in settled["launched"]])
+        self.assertEqual([(integration, tip, "favorable")],
+                         [(r["base"], r["commit"], r["verdict"]) for r in self.review()["rounds"]])
+        self.assertIsNone(self.tool_show()["behind"])
+
+    def test_a_review_already_sent_is_awaited_when_the_integration_branch_moves(self):
+        self.finished_slice()
+        self.reviewer("silent")
+        self.settle()
+        self.integration_moved()
+
+        settled = self.settle()
+
+        self.assertEqual(([], [SLICE]), (settled["refused"], [r["ticket"] for r in settled["pending"]]))
+        self.assertIsNone(self.tool_show()["behind"])
+
     def test_a_ticket_that_is_not_finished_stopped_or_parked_is_left_alone(self):
         self.started(OTHER_SLICE)
         self.commit_on(OTHER_SLICE, {NOTE: "en cours\n"})

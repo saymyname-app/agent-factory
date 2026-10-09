@@ -87,6 +87,12 @@ Work only in the work tree.
   conflict or correct what the merged result breaks, and commit. That commit
   comes after the verdicts: the code review and the Ticket Evaluation replay
   in full on your tip.
+- `behind` — you finished, and the integration branch moved since your
+  branch last took it: the code review is not sent on a branch that does
+  not hold its tip (`bin/code-review show` names the two commits under
+  `behind`). Bring the integration branch into your branch
+  (`git fetch origin && git merge "origin/$INTEGRATION"`), resolve what
+  conflicts, correct what the merged result breaks, and commit.
 - `unblocked` — the repair the ticket waited for is closed: its Ticket
   Handoff is among `.blocker_handoffs`. Go on as for `interrupted`.
 - `answered` — the operator answered the request that parked the ticket:
