@@ -98,8 +98,14 @@ case "$1" in
       exists) exit 0 ;;
     esac ;;
   build) echo build >> "$FAKE_WLOG"; exit "${FAKE_BUILD_FAILS:-0}" ;;
-  run) IFS= read -r _; echo run >> "$FAKE_WLOG"; sleep 1.5 & echo $! > "$FAKE_WPID"; wait ;;
-  exec) case "${FAKE_JOB_RUNS:-0}" in 1) echo busy ;; 0) echo idle ;; *) exit 125 ;; esac ;;
+  run) IFS= read -r _; echo run >> "$FAKE_WLOG"; date +%s%N > "$FAKE_WPID.since"
+       sleep "${FAKE_RUN_SECONDS:-1.5}" & echo $! > "$FAKE_WPID"; wait ;;
+  exec) case "${FAKE_JOB_RUNS:-0}" in
+          1) echo busy ;; 0) echo idle ;;
+          # The job arrives 2.5 s after the container started.
+          late) [ $(( ($(date +%s%N) - $(cat "$FAKE_WPID.since")) / 1000000 )) -ge 2500 ] && echo busy || echo idle ;;
+          *) exit 125 ;;
+        esac ;;
   kill) echo kill >> "$FAKE_WLOG"; kill "$(cat "$FAKE_WPID")" 2>/dev/null ;;
 esac
 exit 0
@@ -155,6 +161,22 @@ got=$(waiting_runner 0 1 5 3600)
 got=$(waiting_runner 0 0 14 0)
 [ "$got" = "run run " ] || fail "outside the hours a waiting runner must be left alone: got '$got'"
 echo "ok   in the hours a runner that only waits is stopped for the build, one that serves a job never; a failed build waits an hour"
+
+# The longest a job may run counts from the job, not from the container
+# (af-rqovxb, 2026-10-09: a runner that had waited 1 h 41 lost its job after
+# 18 minutes, and the pull request was rejected for it).
+if grep -qF -- '--timeout' <<<"$run"; then fail "$LOOP: a limit on the container counts the wait for a job as the job's time"; fi
+got=$(FACTORY_CI_RUNNER_JOB_MAX_SECONDS=0 waiting_runner 1 0 14 0)
+[ "$got" = "run kill run kill " ] || fail "a job past its limit must be killed: got '$got'"
+grep -q 'the job ran for more than 0 s: killing its container' "$T/wloop.out" || fail "the loop did not say why it killed the job"
+got=$(FACTORY_CI_RUNNER_JOB_MAX_SECONDS=0 waiting_runner 0 0 14 0)
+[ "$got" = "run run " ] || fail "a runner that only waits must never be killed by the job's limit: got '$got'"
+got=$(FACTORY_CI_RUNNER_JOB_MAX_SECONDS=0 waiting_runner x 0 14 0)
+[ "$got" = "run run " ] || fail "a look into the container that fails must not kill the job: got '$got'"
+# A container 4 s old whose job took the last 1.5 s, limit 3 s.
+got=$(FACTORY_CI_RUNNER_JOB_MAX_SECONDS=3 FAKE_RUN_SECONDS=4 waiting_runner late 0 14 0)
+[ "$got" = "run run " ] || fail "a job that started after a wait must get its whole limit: got '$got'"
+echo "ok   the job's limit counts from the job: a wait is never killed, nor a job for the wait before it"
 
 # --- the broker and the loop, end to end with a fake GitHub and Podman ----
 mkdir "$T/bin" "$T/run" "$T/state"
