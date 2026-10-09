@@ -19,7 +19,7 @@ A convoy without the mark is not touched: `show` and every write answer
 published, dispatched, merged and closed exactly as before.
 
 ```bash
-./bin/convoy-state list                                 # the open marked convoys, and apart those closed outside acceptance or abandon (bin/convoy-advance, bin/planning-artifacts-close)
+./bin/convoy-state list                                 # the open marked convoys, and apart those closed by command and those closed outside acceptance or abandon (bin/convoy-advance, bin/planning-artifacts-close)
 ./bin/convoy-state mark af-convoy \
   --demonstration-line af-t1="Sur le produit lancé, …" \
   --user-stories af-t1=4,12 \
@@ -101,6 +101,9 @@ published, dispatched, merged and closed exactly as before.
 ./bin/convoy-state set-owner-repair         af-convoy --finding 1 --ticket af-r5       # bin/convoy-advance, once the patch door published the repair of that Owner Finding
 ./bin/convoy-state set-owner-proposal       af-convoy --finding 2 --bead af-p2         # bin/owner-answer, for a finding « plus tard »
 ./bin/convoy-state resolve-owner-exception  af-convoy --approver benjamin --words "<his words>"   # bin/owner-answer resolve-exception
+./bin/convoy-state record-promotion af-convoy --judged <accepted commit> --merged <merge commit> --protected <protected tip before> --tip <integration tip merged>   # bin/outcome-promote, once the protected branch took the merge
+./bin/convoy-state void-acceptance  af-convoy --cause regression|fidelity|start|conflict   # bin/outcome-promote: the take-up after « accepté » is red or in conflict
+./bin/convoy-state close-convoy     af-convoy            # bin/outcome-promote: the closed status and the record of the closing, in one write
 ```
 
 Every answer is one JSON object on stdout.
@@ -627,7 +630,8 @@ or `abandoned`, `--approver`):
   is not the one of the Delivered Outcome.
 - `accepted` refuses while a proposition has no verdict, or has the verdict
   `avant` and was not returned. It writes the answer and nothing else: the
-  convoy stays Delivered and open.
+  convoy stays Delivered and open (what follows it: « The promotion and
+  the closing » below).
 - `findings` reads `--file` (`{"findings": [{text, cites?, repair?,
   later?}]}`) and gives each finding its route: `later` when it says so; a
   `repair` when it cites a `user_story` whose number the Spec holds or an
@@ -658,16 +662,79 @@ that carries none. The same call again writes nothing.
 **Nothing reopens an accepted or an abandoned Outcome**:
 `record-proposition-verdict` and `record-owner-answer` refuse once the last
 answer is one of the two, and name the way in — new work, through a
-Planning Run.
+Planning Run. An « accepté » that carries `voided` (T30, below) is not such
+an answer: Benjamin answers again after it.
 
 `record-delivered` also refuses while the last « constats rendus » has a
 finding of route `repair` whose ticket is not a tracked ticket of the
 convoy, or an `exception` that is not resolved.
 
 A stored `gc.flow.judgement` these commands would have refused to write —
-an answer after an accepted one, a route that contradicts what the finding
-carries, an `exception` that does not cover its findings — is an « état
-sans règle ».
+an answer after an accepted one that is not voided, a `voided` on another
+answer than « accepté » or with a cause outside the list, a route that
+contradicts what the finding carries, an `exception` that does not cover
+its findings — is an « état sans règle ».
+
+### The promotion and the closing (T30)
+
+Spec §9 and §11. Three commands write what follows Benjamin's « accepté »
+or « abandonné »; `bin/outcome-promote` is their only caller
+(`docs/OUTCOME_PROMOTE.md`). The answer that **ends the judgement** is the
+last one of `gc.flow.judgement` when it is `accepted` or `abandoned` and
+carries no `voided`.
+
+`record-promotion` writes `gc.flow.promotion` (`convoy.promotion` in
+`show`): `{judged, merged, protected, tip, at}` — the commit Benjamin
+judged, the one merge commit the protected branch received, the tip that
+branch had before, and the tip of the integration branch that was merged
+(the judged commit, or the one that took the protected branch up). It
+refuses a convoy on which no « accepté » stands, a `--judged` that is not
+the commit of that answer, a value that is not a full commit SHA, and a
+second promotion. **That the merge exists and holds the judged commit is
+the caller's proof**: this command reads no repository.
+
+`void-acceptance` records that the acceptance no longer stands: the take-up
+of the protected branch after « accepté » was red, or in conflict
+(`--cause regression`, `fidelity`, `start` or `conflict`). **In one tracker
+write** it sets `voided: {cause, at}` on the last answer — which stays in
+the judgement —, withdraws `gc.flow.delivered`, `gc.flow.acceptance` and
+`gc.flow.end_round`, and sets `gc.flow.counter.end_rounds` to 0, as
+« constats rendus » does: the Outcome passes the end of its Spec again and
+Benjamin judges it again. It refuses a convoy on which no « accepté »
+stands, a cause outside the list, and a convoy whose promotion is recorded
+(« son acceptation tient »). It records no red: the red of the integration
+branch is `record-integration-red`'s.
+
+`close-convoy` closes the convoy on Benjamin's words. The status `closed`
+and `gc.flow.closed` — `{how: accepted|abandoned, said, approver, at}`,
+`said` being his words of acceptance or the reason of the abandon — go in
+**one tracker write**. It refuses a convoy without an answer that ends the
+judgement; an accepted convoy whose promotion is not recorded for the
+accepted commit (« la fermeture suit la fusion »); an abandoned convoy that
+carries a promotion; and a convoy already closed outside the command
+(« cette fermeture se signale, elle ne se régularise pas »). **Nothing else
+closes a marked convoy, and nothing reopens one closed here.**
+
+**Every write of the flow refuses a convoy closed by command**, on the
+convoy and on each of its tickets, `mark` included:
+
+> refus : l'Outcome du convoi <id> est accepté et son convoi est fermé :
+> rien ne le rouvre, ni lui ni ses tickets ; un défaut ou un souhait trouvé
+> après entre comme travail nouveau, par un Planning Run
+
+The refusal reads `gc.flow.closed`, so it also holds on a convoy someone
+reopened by hand. Four writes are not concerned, the ones accepted on any
+convoy that carries a mark so that an anomaly can still be raised:
+`record-incident`, `clear-incident`, `record-grouped-request` and
+`clear-grouped-request`.
+
+`show` renders three fields from these records: `convoy.promotion`;
+`convoy.closed`, the record of the closing when the convoy is closed and
+that record is the one its judgement calls for, `null` otherwise; and
+`convoy.outcome` — `accepted` or `abandoned` on a convoy closed by command,
+`delivered` on one that carries a Delivered Outcome, `null` otherwise.
+Delivered and Accepted are two states: an Outcome is Accepted once merged
+and its convoy closed on his words, not when « accepté » is recorded.
 
 `lift-park` lifts the parking a ticket caused, once the request `--request`
 (a bead id) was answered, with the letter of the option taken (`--option`,
@@ -851,7 +918,9 @@ list; a stop whose reason is outside its closed list or that has no
 detail; a correction round, its launch or an override as described above; a
 resume, its launch, a lift or a grouped request as described above; a
 ticket
-that is not tracked by the convoy, or that does not carry the mark.
+that is not tracked by the convoy, or that does not carry the mark; and
+(T30) any write on a convoy closed by command or on one of its tickets,
+the incident and the grouped request apart.
 
 Writes on one convoy are serialised by a lock (`CONVOY_STATE_LOCK_DIR`,
 default `$XDG_RUNTIME_DIR` or `/tmp`), so concurrent counter bumps are all
@@ -867,9 +936,14 @@ T19: each ticket is rendered with `criteria_frozen` (the stored record plus
 the ticket has no such section) and `interface` (true when it has one: the
 ticket touches a screen). Neither is written here.
 
-`list` answers `{"convoys": [...]}`: the ids of the convoys that carry the
-mark and are not closed. It is what `bin/convoy-advance` walks
-(`docs/CONVOY_ADVANCE.md`); an unmarked convoy never appears in it.
+`list` answers three lists of ids of convoys that carry the mark:
+`convoys`, those that are not closed; `closed` (T30), those closed by
+`close-convoy` with a record consistent with their judgement; and
+`closed_outside`, those found closed any other way. `bin/convoy-advance
+--all` walks `convoys` and `closed_outside`, never `closed`
+(`docs/CONVOY_ADVANCE.md`); `bin/planning-artifacts-close` leaves alone the
+Spec and the draft of a convoy under `closed_outside`. An unmarked convoy
+never appears in any of the three.
 
 `show` renders, per ticket: mark, kind, demonstration line, covered user
 stories (`user_stories`, a list of numbers or `null`), whether it
@@ -917,7 +991,9 @@ the last round of the end counted (`end_round`, `null` before the first),
 the stop of the rounds of the end (`end_stop`, `null` while they are not
 stopped; T26), the Delivered Outcome (`delivered`, `null` while none is
 recorded; T26),
-the Evidence Pack (`evidence_pack`, `null` before the first generation; T27)
+the Evidence Pack (`evidence_pack`, `null` before the first generation; T27),
+the promotion, the closing and the state of the Outcome (`promotion`,
+`closed`, `outcome`; T30, « The promotion and the closing »)
 and the digest of the Spec the publication door wrote (`spec_digest`). An
 `end_stop` or a `delivered` that cannot be read is an « état sans règle »
 like the others: rendered with `unruled` and its raw value, exit 3.
@@ -966,17 +1042,26 @@ key), never as a default value:
 - any stored value this command would have refused to write, and any
   `gc.flow.*` key it does not know (a field invented outside the command).
 
-A marked **convoy** found closed is one more « état sans règle », carried
-by the convoy itself (`convoy.unruled`, field `status`, « convoi fermé hors
-commande », with the closing reason it carries): a marked convoy closes only
-by code, on the operator's words — accepted or abandoned (Spec §9). No
-command of this flow closes a convoy yet: T29 records Benjamin's answer —
-accepté, constats rendus, abandonné — in `gc.flow.judgement`
-(`docs/OWNER_ANSWER.md`) and closes nothing; closing the accepted and the
-abandoned convoy comes with T30. Until then every
-closed marked convoy is reported, and `list` names them under
-`closed_outside`, apart from the open ones under `convoys`. An open marked
-convoy whose tickets are all closed is a valid state.
+A marked **convoy** closed otherwise than by `close-convoy` is one more
+« état sans règle », carried by the convoy itself (`convoy.unruled`, field
+`status`, « convoi fermé hors commande (ni acceptation ni abandon
+enregistré) », with the closing reason it carries): a marked convoy closes
+only by code, on the operator's words — accepted or abandoned (Spec §9).
+T29 records Benjamin's answer in `gc.flow.judgement`
+(`docs/OWNER_ANSWER.md`); T30 closes the convoy on it (`close-convoy`, « The
+promotion and the closing »). A closed convoy is **ruled** — no anomaly,
+exit 0 — only when it carries a `gc.flow.closed` whose `how` is the answer
+that ends its judgement and, for `accepted`, a promotion for the accepted
+commit (for `abandoned`, none). Closed by hand, it stays « fermé hors
+commande » whatever answer it carries: a closing is reported, never
+regularised. `list` names the first kind under `closed` and the second
+under `closed_outside`, apart from the open ones under `convoys`.
+
+Two more anomalies of the convoy come with T30: a convoy that carries
+`gc.flow.closed` and is **no longer closed** (field `status`, « convoi
+rouvert hors commande après sa fermeture sur les mots de l'approbateur »),
+and a stored `gc.flow.promotion` `record-promotion` would have refused to
+write. An open marked convoy whose tickets are all closed is a valid state.
 
 `convoy-state` only signals. `bin/convoy-advance` stops the convoy and
 raises the factory incident (`docs/CONVOY_ADVANCE.md`); it records that
@@ -1012,6 +1097,12 @@ back from the real tracker (T19).
 `tests/convoy-manual-lifecycle-isolated-city-test.sh` (local-only) has the
 real `gc convoy check`, run by the city's own order, leave a marked convoy
 open once all its tickets are closed, and close an unmarked one (T22).
+T30: the same trial closes one marked convoy on « abandonné » and one on
+« accepté » with `close-convoy` on the real tracker — the status and the
+record in one `gc bd update`, the convoy under `closed` and ruled, every
+later write refused, the bead unchanged by the controller afterwards — the
+judgement written by hand and the commits of the promotion being
+placeholders.
 T20: `tests/convoy-state-test.py` covers
 `open-resume` (counted once per fact, every cause on the same counter, each
 refusal), `launch-resume`, the parking for exhausted resumes, `lift-park`
@@ -1071,3 +1162,14 @@ each finding of a batch, Delivered refused while a repair is unpublished or
 the Planning Exception of the batch is open, the repair named once and only
 by a repair of the convoy, nothing recorded after an accepted Outcome. No
 trial on the real tracker covers it.
+T30: `tests/convoy-close-test.py` covers `record-promotion` (the two
+commits read back, the commit Benjamin judged kept on a taken-up tip,
+refused without an « accepté », for another commit, a second time),
+`void-acceptance` (Delivered and the request withdrawn, an answer following
+a voided one, refused without an « accepté », for an unknown cause, once
+promoted) and `close-convoy` (accepted with his words in one write and
+ruled, not before its merge, abandoned with the reason and without a merge,
+not without an answer that ends the judgement; a convoy closed or reopened
+by hand still unruled; no write of the flow on a closed convoy or on its
+tickets). `tests/outcome-promote-test.py` goes through the three with a
+real repository (`docs/OUTCOME_PROMOTE.md`).

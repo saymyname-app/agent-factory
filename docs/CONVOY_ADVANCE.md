@@ -24,7 +24,9 @@ observed on Gas City 1.4.1: a `condition` order is paced by its check, not
 by its `interval`) and runs `--all --stopped-ok` only while `--check-only`
 passes. The
 order costs one tracker read and runs nothing while no marked convoy is
-open or was closed outside its commands.
+open or was closed outside its commands. A convoy closed by command, on
+Benjamin's words (T30), is neither walked by `--all` nor a reason for the
+order to run.
 
 ## What one pass does
 
@@ -69,6 +71,11 @@ The last step of each convoy's pass: on a Delivered Outcome, the pass sends
 the Acceptance Request to the operator, once, and publishes the `repair` of
 an Acceptance Session whose product did not start (T28, « A Delivered
 Outcome waits for Benjamin » below).
+
+Once Benjamin answered « accepté » or « abandonné », none of the above is
+rendered on that convoy: after the starts, the pass follows his answer
+through `bin/outcome-promote run` and does nothing else on it (T30, « After
+Benjamin's answer » below).
 
 A pass decides from the tracker alone: a second pass on the same state
 starts nothing more, because a started ticket carries its `dispatch` gate
@@ -610,14 +617,16 @@ the end are stopped and their request has not reached the operator (T26:
 reason}`, or `error`), and `acceptance` when it sent the Acceptance Request
 of a Delivered Outcome or published the repair of an Acceptance Session's
 outage (T28: `{action: requested, commit, page, bead}`, `repair`, or
-`error`). `spec_end` passes `delivered` and `end_stop` through
-as the gate answered them. A stopped convoy carries `signal`,
-`unruled` (the anomalies) and `incident`.
+`error`), and `promotion` once « accepté » or « abandonné » stands (T30,
+« After Benjamin's answer »). `spec_end` passes `delivered` and `end_stop`
+through as the gate answered them. A stopped convoy carries `signal`,
+`unruled` (the anomalies) and `incident`. A convoy closed by command, when
+it is named as CONVOY, carries `closed`, the record of its closing.
 
 | Exit | Meaning |
 |---|---|
 | 0 | the pass is done; what it started is listed, possibly nothing |
-| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, the « non conforme » request of stopped rounds could not be raised or recorded, or the Acceptance Request of a Delivered Outcome or the repair of an Acceptance Session's outage could not be sent, published or recorded |
+| 1 | refused or could not run (settings, a bound, tracker), the door refused a ticket or a resume (named under `refused`), a ticket to resume has no `resume` setting or no project, a parking could not be lifted, an incident or a grouped request could not be raised or withdrawn, the repair of a red integration branch or of tracked elements could not be published, or the merge pass, the settlement of the test reviews, of the code reviews, of the evaluations or of the correction rounds, a fidelity check, the ticket-end gate, the end-of-Spec gate, the Outcome Evaluation or the settlement of the end code review could not run, a repair the Evaluator of the end drafted could not be published, the Evidence Pack could not be generated, the « non conforme » request of stopped rounds could not be raised or recorded, the Acceptance Request of a Delivered Outcome or the repair of an Acceptance Session's outage could not be sent, published or recorded, or the merge or the closing that follows the operator's answer could not be made (`promotion.error`, `promotion.message`, `promotion.pending`, or the `repair` of a voided acceptance that could not be published) |
 | 3 | a convoy is in an « état sans règle »: none of its tickets is started, the anomalies are listed (0 with `--stopped-ok` once its incident is raised) |
 | 4 | the convoy does not carry the mark: « pas un convoi du nouveau flux » |
 
@@ -655,8 +664,9 @@ hand.
 
 Spec §9, user story 55: a marked convoy stays open when all its tickets are
 closed; it closes only by code, on the operator's words (accepted or
-abandoned: recorded by `bin/owner-answer`, T29, `docs/OWNER_ANSWER.md`; the
-closing itself is T30). Three things hold that:
+abandoned: recorded by `bin/owner-answer`, T29, `docs/OWNER_ANSWER.md`;
+closed by `bin/outcome-promote`, T30, « After Benjamin's answer » below).
+Three things hold that:
 
 - `bin/convoy-state mark` puts the convoy under Gas City's manual lifecycle
   (the label `owned`): `gc convoy check`, which
@@ -664,9 +674,11 @@ closing itself is T30). Three things hold that:
   A convoy without the mark is closed by that sweep as before.
 - `bin/planning-artifacts-close` closes the Spec and the Ticket Graph Draft
   of a closed convoy; it leaves alone those of a marked convoy that
-  `bin/convoy-state list` names under `closed_outside`.
-- a marked convoy found closed anyway (by hand, or by a sweep after the
-  label was removed) is an « état sans règle » of the convoy. `--all` walks
+  `bin/convoy-state list` names under `closed_outside`, and closes those of
+  a marked convoy closed by command (`closed`).
+- a marked convoy found closed any other way (by hand, or by a sweep after
+  the label was removed), whatever answer it carries, is an « état sans
+  règle » of the convoy. `--all` walks
   it with the open ones and `--check-only` passes on it, so the order runs:
   the pass starts nothing in it and raises the factory incident above,
   `Incident d'usine : convoi <id> — convoi fermé hors commande …`, in
@@ -1014,8 +1026,8 @@ Benjamin's place: a Delivered Outcome stays Delivered until he answers.
 - Benjamin's answer to a Delivered Outcome (accepté, constats rendus,
   abandonné) is recorded by `bin/owner-answer`, not by the pass
   (`docs/OWNER_ANSWER.md`); answering the option of the request on the door
-  triggers nothing. « accepté » and « abandonné » close and merge nothing:
-  T30.
+  triggers nothing. What the pass does once « accepté » or « abandonné » is
+  recorded is the next section.
 - The repair of an outage is published by the pass that follows `open`,
   not by `open`.
 - A pass that fails between the door and `acceptance-requested` sends the
@@ -1027,3 +1039,74 @@ Benjamin's place: a Delivered Outcome stays Delivered until he answers.
 `tests/fixture-city-oracle-test.py` cover the pass on the graph of the
 Fixture City. No isolated-city trial runs it under the real order, and no
 real convoy reached it.
+
+## After Benjamin's answer: the merge and the closing (T30)
+
+Spec §9 and §11, user stories 72 and 73. Once the last answer of
+`convoy.judgement` is « accepté » or « abandonné » and no red replay voided
+it, the pass hands the convoy to `bin/outcome-promote run <convoy> --repo
+<rig_dir>` (`settle_promotion`, `docs/OUTCOME_PROMOTE.md`) **before any
+other settlement, and renders nothing else on that Outcome**: no review, no
+merge of a ticket, no ticket-end gate, no end-of-Spec gate, no Outcome
+Evaluation, no Evidence Pack, no request. The end of the Spec is not run
+again on a commit he judged. The pass is the order of the Factory, not an
+agent session: `run` refuses any other caller that carries a session
+identity.
+
+The result is the key `promotion` of the convoy's entry, absent while
+neither answer stands:
+
+| What happened | `promotion` | The pass |
+| --- | --- | --- |
+| « accepté », merged and closed | `{promoted: true, merged, judged, closed: true, how: accepted, said, outcome: accepted, purged}` (`resumed: true` when an earlier run had recorded the merge) | exit 0 |
+| « abandonné », closed, nothing merged | `{promoted: false, merged: null, closed: true, how: abandoned, said, outcome: abandoned}` | exit 0 |
+| the take-up of the protected branch is red or in conflict | `{promoted: false, merged: null, closed: false, cause, red, reason, repair}` | exit 0: an outcome of the pass |
+| the Spec or the draft could not be closed | the entry above, with `pending` | exit 1; the next pass, and `orders/planning-artifacts-close.toml`, take it up |
+| the merge, the note, the purge or the closing could not be made | `{error: "refus : …"}` | exit 1; the next pass tries again |
+| « état sans règle » found by the command | `{message, unruled}` | exit 1 |
+
+**A red is not a failure.** When the protected branch moved since the
+judgement and the mechanical controls replayed on its take-up are red, or
+the two branches conflict, `bin/outcome-promote` merges nothing, records
+the red of the integration branch and voids the acceptance. The pass moves
+its `error` to `reason` and, **in the same pass**, publishes the one
+`repair` of that red through the patch door (`settle_red`, « The two stops
+of a convoy » above): `promotion.repair`. From the next pass on no answer
+stands any more, so the unchanged flow runs: only that `repair` starts, the
+red is cleared once it is delivered, the whole end-of-Spec gate runs at the
+new tip with a fresh Outcome Evaluation and end review, a new Evidence
+Pack, Delivered, and a new Acceptance Request. The rounds of the end were
+set back to 0 by the voiding.
+
+**A convoy closed by command is not advanced.** `bin/convoy-state list`
+names it under `closed`, which `--all` does not walk and `--check-only`
+does not count. Named as CONVOY, the pass starts nothing in it, answers
+`closed` (the record of its closing) and `promotion: {done: true, …}`:
+`bin/outcome-promote run` writes nothing on the convoy and only has the
+closing of its Spec and its draft replayed.
+
+**What it leaves open.**
+
+- The merge is made inside the pass, under the 300 s timeout of the order;
+  a replay of the mechanical controls killed there is taken up by the next
+  pass (`docs/OUTCOME_PROMOTE.md`, Limits).
+- Once an answer that ends the judgement stands, `settle_acceptance` no
+  longer runs: a « plus tard » whose proposition the door had not created
+  yet (`acceptance.proposals_pending`) is not retried by the pass, and
+  after the closing `bin/convoy-state` refuses to name it on the convoy.
+- A protected branch that refuses the push leaves the Outcome accepted and
+  unmerged: each pass exits 1 with `promotion.error`, so the order fails on
+  every tick until it is settled.
+- Nothing tells Benjamin that his acceptance was voided, other than the new
+  Acceptance Request that follows the repair.
+
+`tests/outcome-promote-test.py` covers the command;
+`tests/convoy-stops-fixture-city-test.py`, class
+`PromotionOnTheFixtureCity`, covers the pass on the graph of the Fixture
+City with the real patch door — one merge and the convoy closed on
+« accepté », the convoy closed and the protected branch unmoved on
+« abandonné », a conflict after « accepté » merging nothing and the pass
+publishing one `repair`. `tests/convoy-manual-lifecycle-isolated-city-test.sh`
+(local-only) shows, under the real order, that no pass names a convoy
+closed by command any more. No isolated-city trial runs a merge under the
+real order, and no real convoy reached it.

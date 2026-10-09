@@ -486,7 +486,7 @@ class FixtureCityOracleTest(unittest.TestCase):
     def test_a_delivery_scenario_with_a_malformed_expected_outcome_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             broken = Path(temporary) / "broken.json"
-            for expect, named in (({"closed": True, "outcome": "accepted"}, "expect.outcome"),
+            for expect, named in (({"closed": True, "outcome": "rejected"}, "expect.outcome"),
                                   ({"closed": False, "missing": [1], "outcome": "delivered"}, "expect.outcome"),
                                   ({"closed": True, "outcome": "delivered", "parked": 1}, "expect.outcome"),
                                   ({"closed": True, "repairs": 1}, "expect.repairs"),
@@ -498,6 +498,134 @@ class FixtureCityOracleTest(unittest.TestCase):
                                       cwd=ROOT, text=True, capture_output=True, check=False)
                 self.assertEqual(1, proc.returncode, expect)
                 self.assertIn(named, proc.stderr, expect)
+
+    # --- after Benjamin's answer: Delivered, then Accepted or abandoned (T30, af-vlzc6v) ---
+
+    FAULTY_DRIVER = '''#!/usr/bin/env python3
+"""The reference delivery driver, going wrong in one named way."""
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+REAL, FAULT = {real!r}, {fault!r}
+workspace, command, options = Path(sys.argv[2]), sys.argv[3], sys.argv[4:]
+
+
+def real(*arguments):
+    proc = subprocess.run((REAL, "--workspace", str(workspace), *arguments), text=True, capture_output=True)
+    if proc.returncode != 0:
+        raise SystemExit(proc.stderr or proc.stdout)
+    return json.loads(proc.stdout)
+
+
+def git(*arguments):
+    return subprocess.run(("git", "-C", str(workspace / "city"), *arguments), text=True, capture_output=True).stdout.strip()
+
+
+if command == "prepare" and FAULT == "nobody-answers":
+    options = [option for option in options if option not in ("--answer", "accepted", "abandoned")]
+answer = real(command, *options)
+if command == "advance" and FAULT == "answers-in-the-event-of-delivered":
+    # Everything up to the pass that follows the answer, as one event.
+    while not answer["idle"] and not answer["event"].startswith("owner:"):
+        answer = real("advance")
+    answer = real("advance")
+if command == "advance" and FAULT == "protected-branch-moved":
+    integration = git("for-each-ref", "--format=%(objectname)", "refs/heads/integration")
+    if integration and integration != git("rev-parse", "refs/heads/main"):
+        git("update-ref", "refs/heads/main", integration)
+print(json.dumps(answer))
+'''
+
+    def deliver_with_a_faulty_driver(self, scenario, fault):
+        """The walk of `scenario` by the reference driver made to go wrong in one way."""
+        with tempfile.TemporaryDirectory() as temporary:
+            driver = Path(temporary) / "delivery-driver"
+            driver.write_text(self.FAULTY_DRIVER.format(real=str(DELIVERY_DRIVER), fault=fault))
+            driver.chmod(0o755)
+            return self.deliver(scenario, "--delivery-driver", str(driver))
+
+    def test_the_complete_scenario_is_observed_delivered_then_accepted_and_the_protected_branch_receives_one_merge(self):
+        proc = self.deliver("outcome-accepted.json")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+
+        self.assertTrue(result["closed"])
+        self.assertEqual(DELIVERY_STATES, result["lifecycle"])
+        outcome = result["outcome"]
+        # Two states, observed one after the other on the public state.
+        self.assertEqual(("accepted", ["delivered", "accepted"]), (outcome["state"], outcome["states"]))
+        # While it was Delivered: the whole end-of-Spec gate at the tip, after the one repair, and the
+        # Acceptance Request with its dossier; the evidence of the walked ticket was read then.
+        self.assertEqual((1, None), (outcome["end_rounds"], outcome["end_stop"]))
+        [repair] = outcome["repairs"]
+        self.assertEqual(("repair", DELIVERY_STATES, True), (repair["kind"], repair["lifecycle"], repair["closed_by_the_gate"]))
+        self.assertEqual((True, True, []), (outcome["spec_end"]["at_the_tip"], outcome["spec_end"]["delivered"],
+                                            outcome["spec_end"]["missing"]))
+        self.assertEqual({"request": 1, "dossier_linked": True, "launched_at_dossier_commit": True, "stopped": True},
+                         outcome["acceptance"])
+        self.assertTrue(result["evidence"]["verified"])
+        # Before « accepté » was recorded the protected branch held no commit of the convoy; after it,
+        # one merge: its first parent is the tip it had, its second the tip of the integration branch.
+        self.assertEqual({"moved_before_the_answer": False, "convoy_commits_before_the_answer": 0, "merges": 1,
+                          "first_parent_is_the_previous_tip": True, "second_parent_is_the_integration_tip": True},
+                         outcome["protected_branch"])
+        self.assertEqual({"kept": True, "at_the_judged_commit": True}, outcome["integration_branch"])
+        # The convoy is closed on the words of its approver, and nothing is left on the operator's list.
+        closed = outcome["closed"]
+        self.assertEqual(("accepted", "benjamin"), (closed["how"], closed["approver"]))
+        self.assertTrue(closed["said"].strip())
+        self.assertEqual((1, 0), (outcome["requests"], outcome["requests_once_closed"]))
+        self.assertIn("git rev-list", result["interfaces"]["read"])
+        self.assertEqual(["prepare", "publish", "advance", "stop"], result["interfaces"]["driver"])
+        for hidden in ("prompt", "formula", "role", "session"):
+            self.assertNotIn(hidden, proc.stdout.lower().replace("acceptance-session", ""))
+        self.assertNotRegex(proc.stdout, r"(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])|/tmp/|\d{4}-\d{2}-\d{2}T|127\.0\.0\.1")
+
+    def test_an_abandoned_convoy_is_closed_with_its_reason_and_the_protected_branch_does_not_move(self):
+        proc = self.deliver("outcome-abandoned.json")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        outcome = json.loads(proc.stdout)["outcome"]
+
+        self.assertEqual(("abandoned", ["delivered", "abandoned"]), (outcome["state"], outcome["states"]))
+        closed = outcome["closed"]
+        self.assertEqual(("abandoned", "benjamin"), (closed["how"], closed["approver"]))
+        self.assertTrue(closed["said"].strip())
+        # Nothing is merged, and the integration branch stays where the Outcome was Delivered.
+        self.assertEqual({"moved_before_the_answer": False, "convoy_commits_before_the_answer": 0, "merges": 0,
+                          "unchanged": True}, outcome["protected_branch"])
+        self.assertEqual({"kept": True, "at_the_judged_commit": True}, outcome["integration_branch"])
+        self.assertEqual(0, outcome["requests_once_closed"])
+        self.assertNotRegex(proc.stdout, r"(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])|/tmp/|\d{4}-\d{2}-\d{2}T|127\.0\.0\.1")
+
+    def test_a_convoy_closed_accepted_without_having_been_observed_delivered_first_fails_the_oracle(self):
+        proc = self.deliver_with_a_faulty_driver("outcome-accepted.json", "answers-in-the-event-of-delivered")
+
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("", proc.stdout)
+        self.assertIn("without having been observed Delivered first", proc.stderr)
+
+    def test_a_protected_branch_that_moves_before_the_answer_is_recorded_fails_the_oracle(self):
+        proc = self.deliver_with_a_faulty_driver("outcome-accepted.json", "protected-branch-moved")
+
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("", proc.stdout)
+        self.assertIn("the protected branch moved before « accepté » was recorded", proc.stderr)
+        self.assertIn("commit(s) of the convoy", proc.stderr)
+
+    def test_an_expected_answer_that_nobody_gives_fails_the_oracle(self):
+        proc = self.deliver_with_a_faulty_driver("outcome-abandoned.json", "nobody-answers")
+
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("", proc.stdout)
+        self.assertIn("observed delivered", proc.stderr)
+        self.assertIn("expects delivered, then abandoned", proc.stderr)
+
+    def test_the_answer_of_the_owner_is_one_the_driver_plays_only_when_asked(self):
+        proc = subprocess.run((str(DELIVERY_DRIVER), "--workspace", "/nonexistent", "prepare", "--help"),
+                              text=True, capture_output=True, check=False)
+        self.assertIn("--answer {none,accepted,abandoned}", proc.stdout)
 
     def test_the_injection_of_a_story_not_observed_is_one_the_oracle_and_its_driver_both_know(self):
         proc = subprocess.run((str(DELIVERY_DRIVER), "--workspace", "/nonexistent", "prepare", "--help"),

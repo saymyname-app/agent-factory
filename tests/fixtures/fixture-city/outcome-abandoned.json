@@ -1,0 +1,6 @@
+{
+  "contract": "agent-factory-fixture-delivery-scenario/v1",
+  "scenario_id": "outcome-abandoned",
+  "inject": {"delivery": "none"},
+  "expect": {"closed": true, "outcome": "abandoned"}
+}
