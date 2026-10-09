@@ -24,7 +24,8 @@ refuse goes, once, to another fresh author session on the formula
 (T17, `docs/CORRECTION_ROUND.md`). A merged ticket is closed by the
 ticket-end gate (T19, `docs/TICKET_END.md`). A ticket whose author must take
 it again — session interrupted, ticket returned by the merge, repair closed,
-request answered — goes to one fresh author session on the formula
+request answered, finished branch behind the tip of the integration branch
+(T44) — goes to one fresh author session on the formula
 `mol-ticket-resume`, which takes it with the same `start`, on the same
 branch; resumes are counted and the third parks the ticket (T20,
 `docs/CONVOY_ADVANCE.md`). A stopped ticket is not resumed.
@@ -131,6 +132,16 @@ The code that stopped the ticket is what raises it to the operator
 - **The approved intent, not a list of files.** The Declared Scope orders
   tickets; no gate reads it. A file touched outside it is written in the
   records of the Handoff (`files_outside_declared_scope`) by code.
+- **A deviation of a sibling ticket is never a convention.** The formula
+  says it at the `workspace` step, where the author receives the Ticket
+  Handoffs of its blockers: what a Handoff lists under « Écarts » or « Non
+  fait » is a fact to know, never a precedent to follow (Spec af-wf4w5r §5,
+  « Précédent »). No gate reads it: the rule is the formula's text, verified
+  by reading.
+- **Characterization tests first.** A `prefactoring` on a project with no
+  test at its start commit is refused by `bin/tdd-step prefactoring` until a
+  first commit adds nothing but tests, green on the product as received
+  (`docs/TDD_STEP.md`, « Prefactoring »).
 - **A behaviour the Spec fixes.** The author commits nothing that changes it
   and takes the exit `planning_exception`: the ticket is parked, its branch
   is not merged.

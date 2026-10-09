@@ -29,7 +29,7 @@ touched (exit 4): it is merged as before.
 ./bin/code-review brief   af-convoy af-t1                               # the reviewer session (formula mol-code-review)
 ./bin/code-review record  af-convoy af-t1 --file result.json            # the reviewer session
 ./bin/code-review respond af-convoy af-t1 --file responses.json         # the fresh author session, after a refusal
-./bin/code-review show    af-convoy af-t1                               # rounds, open request, verdict, models
+./bin/code-review show    af-convoy af-t1 [--repo <project repository>] # rounds, open request, verdict, models; with --repo, `behind`
 ```
 
 Every answer is one JSON object on stdout.
@@ -55,6 +55,23 @@ The diff under review is the ticket's own: from the merge base of the ticket
 branch and the integration branch of the Spec (`bin/spec-integration`) to
 the tip. A ticket that is not there yet is listed under `waiting` with the
 reason. A second call on the same state does nothing.
+
+**No reviewer is sent on a branch that has not taken the integration tip**
+(T44, Spec §6). Before it sends a reviewer — to open a round, review or
+judgement, or for the one relaunch of a launch that gave no result —
+`settle` checks that the ticket branch contains the current tip of the
+integration branch (`git merge-base --is-ancestor <integration tip> <ticket
+tip>`). When it does not, the launch is refused: the ticket is listed under
+`refused` with `cause: "behind"`, `integration` (the tip of the integration
+branch) and `commit` (the tip of the ticket branch), the reason names both
+commits, and `settle` exits 1. No round is opened, no reviewer session is
+launched, nothing is written in the tracker. A review already sent and still
+awaited when the integration branch moves is not refused: it stays
+`pending`; only a new launch is. `show --repo` gives the same fact, read
+only, under `behind`: `{"integration": <sha>, "commit": <sha>}` when the
+reviewer the next settlement would send would be refused for that reason,
+else `null`. `bin/convoy-advance` reads it and hands the ticket back to its
+author, cause `behind` (`docs/CONVOY_ADVANCE.md`).
 
 | State of the review | What `settle` does |
 |---|---|
@@ -226,10 +243,15 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
   not check that the cited line really says the diff is wrong.
 - The citation check is textual: the quote must be found in the Spec, the
   ticket or the named file. Any tracked file may be named as a written rule.
-- The review is opened on the tip the author finished at. It does not ask
-  that the ticket branch already contains the tip of the integration
-  branch: the merge command tests the merged result, and returns a conflict
-  to the author, whose new commit has the review replayed.
+- The check of the integration tip is made when a reviewer is sent, not
+  afterwards: a review sent before the integration branch moved is awaited
+  and its verdict stands at that tip. The merge command still tests the
+  merged result, and returns a conflict or a red to the author, whose new
+  commit has the review replayed.
+- This command hands no ticket back: `bin/convoy-advance` does, in its
+  resumes. While the integration branch is red, only its repair is resumed:
+  a ticket behind is not handed back until the branch is green again, and
+  its review stays refused meanwhile.
 - An internal test file is detected by the profile's test perimeter and by
   its name. A test that lives elsewhere under another name is not asked
   about.
@@ -238,7 +260,8 @@ On the ticket, written by `bin/convoy-state` only (`docs/CONVOY_STATE.md`):
   a judgement is distinguished from the review by the session name.
 - The Ticket Evaluation of the launched product is another control, sent
   by the same pass on the same tip (`docs/TICKET_EVALUATION.md`): the merge
-  asks for both.
+  asks for both. It has no check of the integration tip of its own: it is
+  kept off the old tip by the Ticket Exit the `behind` resume takes back.
 - The reviewer role holds one session at a time: a review waits behind
   another one, and the time of a launch runs from the dispatch.
 - Nothing lifts a stop yet. A ticket still refused after its judgement is
@@ -251,7 +274,11 @@ state, against a copy of the Delivery Fixture City in a throwaway repository
 with its own remote; the merge control is the real `bin/spec-integration`,
 and a stop is read back from the list of the real `bin/escalation-door`. No
 agent runs in CI: `tests/fixtures/code-review/reviewer` stands in for the
-dispatch door and the reviewer sessions. `tests/convoy-state-test.py` holds
+dispatch door and the reviewer sessions. The integration tip (T44):
+`test_no_review_is_launched_on_a_branch_that_has_not_taken_the_integration_tip`,
+`test_a_branch_that_took_the_integration_tip_is_reviewed_as_before` and
+`test_a_review_already_sent_is_awaited_when_the_integration_branch_moves`.
+`tests/convoy-state-test.py` holds
 each state write and its refusals, `tests/spec-integration-test.py` the
 merge control, `tests/convoy-advance-test.py` the settlement by the pass,
 `tests/ticket-author-test.py` the model of the author.

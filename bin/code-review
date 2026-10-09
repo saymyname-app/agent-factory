@@ -23,6 +23,12 @@ diff. bin/spec-integration merges nothing without a favorable verdict at the
 tip. A review that gives no result is not a passed one: it is launched once
 more, then the ticket is stopped and raised to the operator once.
 
+No reviewer is sent on a branch that does not contain the tip of the
+integration branch of the Spec (T44, af-m1iibk; Spec §6): `settle` refuses
+that launch (`refused`, cause `behind`, the two commits named) and writes
+nothing; a review already sent is awaited. `show --repo` says it, read
+only, under `behind`; bin/convoy-advance hands the ticket back to its author.
+
     code-review settle  CONVOY [--repo DIR]                     bin/convoy-advance, at each pass
     code-review brief   CONVOY TICKET [--repo DIR] [--profile FILE]   the reviewer session
     code-review record  CONVOY TICKET --file FILE [--repo DIR]  the reviewer session
@@ -83,6 +89,9 @@ STOP_NO_RESULT = "code_review_no_result"
 # bin/convoy-state holds the bound (launch-code-review refuses a third
 # launch): the first launch, then one relaunch.
 MAX_LAUNCHES = 2
+# The cause a settlement names when it refuses to send a reviewer on a branch
+# that did not take the tip of the integration branch.
+BEHIND = "behind"
 AXES = ("standards", "spec")
 CITATION_SOURCES = ("spec", "ticket", "repo_rule")
 ANSWERS = ("oui", "non")
@@ -125,6 +134,18 @@ class Refusal(RuntimeError):
 class Deferred(Refusal):
     """The dispatch door deferred the launch (low memory, a hot path held):
     nothing was sent, and the next call tries again."""
+
+
+class Behind(Refusal):
+    """The branch of the ticket does not hold the current tip of the
+    integration branch: no reviewer is sent on it (Spec §6)."""
+
+    def __init__(self, integration: str, commit: str):
+        super().__init__(
+            f"la branche du ticket ({commit[:12]}) ne contient pas la pointe courante de la branche d'intégration "
+            f"({integration[:12]}) : aucune revue n'est lancée, le ticket retourne à son auteur pour la reprendre")
+        self.integration = integration
+        self.commit = commit
 
 
 class NotNewFlow(RuntimeError):
@@ -655,6 +676,47 @@ def raise_stop(convoy_id: str, ticket: dict[str, Any], stop: dict[str, Any]) -> 
 # --- settle: what is due on one ticket ----------------------------------------------
 
 
+def held_request(ticket: dict[str, Any], kind: str, commit: str, base: str) -> dict[str, Any] | None:
+    """The open request of the review, when it is the round that is due."""
+    request = review_of(ticket).get("request")
+    if request and (request["kind"], request["commit"], request["base"]) == (kind, commit, base):
+        return request
+    return None
+
+
+def launch_due(request: dict[str, Any] | None, timeout: int) -> bool:
+    """A reviewer is to be sent: a round to open, or the one relaunch of a
+    launch that gave no result. Not a launch still awaited, nor a round
+    whose launches are spent (the ticket is stopped)."""
+    launches = request["launches"] if request else []
+    if not launches:
+        return True
+    return expired(launches[-1], timeout) and len(launches) < MAX_LAUNCHES
+
+
+def behind_integration(convoy: Convoy, commit: str) -> tuple[str, str] | None:
+    """(tip of the integration branch, commit) when the branch of the ticket
+    does not hold that tip: it was reviewed on an old base before T44."""
+    _, integration = convoy.integration_tip()
+    return None if is_ancestor(convoy.repo, integration, commit) else (integration, commit)
+
+
+def behind_of(convoy: Convoy, ticket: dict[str, Any], settings: dict[str, Any]) -> dict[str, str] | None:
+    """Read only: the two commits when the reviewer the next settlement
+    would send is refused because the branch is behind the integration
+    branch. bin/convoy-advance reads it to hand the ticket back."""
+    if review_stop(ticket):
+        return None
+    what, detail = wanted_round(convoy, ticket)
+    if what != "open":
+        return None
+    kind, commit, base = detail
+    if not launch_due(held_request(ticket, kind, commit, base), settings["timeout_seconds"]):
+        return None
+    behind = behind_integration(convoy, commit)
+    return {"integration": behind[0], "commit": behind[1]} if behind else None
+
+
 def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> dict[str, Any]:
     """Do what is due on the code review of one ticket, from the tracker
     and its branch alone: raise a stop that did not reach the operator, open
@@ -673,13 +735,17 @@ def settle_ticket(convoy: Convoy, ticket_id: str, settings: dict[str, Any]) -> d
         if what == "waiting":
             return {"ticket": ticket_id, "action": "waiting", "reason": detail}
         kind, commit, base = detail
-        request = review_of(ticket).get("request")
-        if not request or (request["kind"], request["commit"], request["base"]) != (kind, commit, base):
+        request = held_request(ticket, kind, commit, base)
+        timeout = settings["timeout_seconds"]
+        if launch_due(request, timeout):
+            behind = behind_integration(convoy, commit)
+            if behind:
+                raise Behind(*behind)
+        if not request:
             open_round(convoy, ticket, kind, commit, base)
             convoy.load()
             request = review_of(convoy.ticket(ticket_id))["request"]
         launches = request["launches"]
-        timeout = settings["timeout_seconds"]
         if launches and not expired(launches[-1], timeout):
             deadline = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(launched_at(launches[-1]) + timeout))
             return {"ticket": ticket_id, "action": "pending", "kind": kind, "commit": commit,
@@ -707,6 +773,10 @@ def cmd_settle(args: argparse.Namespace) -> int:
             done = settle_ticket(convoy, ticket_id, settings)
         except Deferred as exc:
             answer["deferred"].append({"ticket": ticket_id, "reason": str(exc)})
+            continue
+        except Behind as exc:
+            answer["refused"].append({"ticket": ticket_id, "reason": str(exc), "cause": BEHIND,
+                                      "integration": exc.integration, "commit": exc.commit})
             continue
         except Refusal as exc:
             answer["refused"].append({"ticket": ticket_id, "reason": str(exc)})
@@ -939,8 +1009,12 @@ def cmd_show(args: argparse.Namespace) -> int:
     review = review_of(ticket)
     last = review["rounds"][-1] if review["rounds"] else None
     models = (review.get("request") or last or {}).get("models")
+    try:
+        behind = behind_of(convoy, ticket, load_settings())
+    except Refusal:
+        behind = None
     print(json.dumps({
-        "ok": True, "convoy": args.convoy, "ticket": args.ticket, "tip": ticket.get("tip"),
+        "ok": True, "convoy": args.convoy, "ticket": args.ticket, "tip": ticket.get("tip"), "behind": behind,
         "rounds": review["rounds"], "request": review.get("request"), "state": review["state"],
         "verdict": (ticket.get("verdicts") or {}).get("code_review"),
         "models": ticket.get("models"), "independence": independence(models) if models else None,

@@ -513,7 +513,9 @@ touché : il reste avancé par le Mayor.
   `interrupted` (sortie « interrompu », ou session terminée sans sortie),
   `returned` (la fusion a rendu le ticket : conflit ou rouge), `unblocked`
   (son `repair` est fermé), `answered` (la demande qui le parquait a sa
-  réponse). Chaque reprise est comptée et prend une place sous N. À la
+  réponse), `behind` (terminé sur une branche qui ne contient pas la pointe
+  de la branche d'intégration : `bin/code-review` n'y envoie aucun
+  relecteur, T44). Chaque reprise est comptée et prend une place sous N. À la
   troisième, toutes causes confondues (celles-ci, le tour de correction, un
   commit après verdict), le ticket est parqué avec ceux qui l'attendent et
   n'est pas relancé ; les autres continuent. Listes `resumed`, `parked`,
@@ -758,7 +760,10 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   ticket, avec sa raison ; nouveau rouge, nouveau gel, diff enregistré. Le
   second arrête le ticket (sortie 5).
 - **Prefactoring** : pas d'étape rouge ; la commande de régression passe
-  avant et après ; aucun test existant n'est modifié.
+  avant et après ; aucun test existant n'est modifié. Sans aucun test au
+  commit de départ, refus : d'abord des tests de caractérisation, dans un
+  premier commit qui n'ajoute que des fichiers du périmètre de test ; ils
+  passent sur le produit de départ et restent intouchés ensuite.
 - **Sorties** : 0 étape prouvée ; 1 refus, rien n'est écrit ; 4 « pas un
   convoi du nouveau flux » ; 5 ticket arrêté.
 - **Limite** : le script prouve l'ordre et les résultats, pas qu'un test

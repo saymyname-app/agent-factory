@@ -33,7 +33,10 @@ du magasin de preuves, puis inscrit l'étape sur le ticket.
   ticket, avec sa raison ; nouveau rouge, nouveau gel, diff enregistré. Le
   second arrête le ticket (sortie 5).
 - **Prefactoring** : pas d'étape rouge ; la commande de régression passe
-  avant et après ; aucun test existant n'est modifié.
+  avant et après ; aucun test existant n'est modifié. Sans aucun test au
+  commit de départ, refus : d'abord des tests de caractérisation, dans un
+  premier commit qui n'ajoute que des fichiers du périmètre de test ; ils
+  passent sur le produit de départ et restent intouchés ensuite.
 - **Sorties** : 0 étape prouvée ; 1 refus, rien n'est écrit ; 4 « pas un
   convoi du nouveau flux » ; 5 ticket arrêté.
 - **Limite** : le script prouve l'ordre et les résultats, pas qu'un test
