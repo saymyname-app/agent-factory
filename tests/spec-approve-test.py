@@ -487,6 +487,69 @@ class SpecApproveEntryContractTest(unittest.TestCase):
         )
         self.assert_refused_untouched(spec, "non conforme", "datasets", remote=remote)
 
+    # --- T46 (af-lb9zkz) : branche de prototype jamais fusionnée, variante seule, ancres par région ---
+
+    def remote_git(self, *args):
+        proc = subprocess.run(("git", "-C", str(self.remote), *args), text=True, capture_output=True)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+
+    def test_refuses_a_reference_whose_branch_is_not_a_prototype_branch(self):
+        self.remote_git("update-ref", "refs/heads/feature/delivery-fixture-city", self.frozen_commit)
+        spec = self.replaced("prototype/delivery-fixture-city", "feature/delivery-fixture-city")
+        self.assert_refused_untouched(
+            spec, "non conforme", "reference", "feature/delivery-fixture-city", "ne commence pas par prototype/"
+        )
+
+    def test_refuses_a_reference_whose_commit_is_reachable_from_the_protected_branch_of_the_remote(self):
+        self.remote_git("update-ref", "refs/heads/main", self.frozen_commit)
+        self.assert_refused_untouched(
+            FIXTURE_SPEC, "non conforme", "reference", "atteignable", "branche protégée main", "fusionnée"
+        )
+
+    def test_the_protected_branch_is_the_one_the_project_declares(self):
+        self.remote_git("update-ref", "refs/heads/dev", self.frozen_commit)
+        projects = self.tmp / "projects"
+        projects.mkdir()
+        (projects / "delivery-fixture-city.toml").write_text(
+            'human_approver = "benjamin"\nprotected_branch = "dev"\n', encoding="utf-8"
+        )
+        self.seed_spec(FIXTURE_SPEC)
+        before = self.current_state()
+        proc = self.invoke(
+            "bd-approve", "--spec", "spec-1", "--approved-by", "benjamin", "--evidence", "« J'approuve »",
+            "--project", "delivery-fixture-city", "--repo-root", self.repo_root, "--config-dir", projects,
+            "--prototype-remote", self.remote,
+        )
+        self.assertNotEqual(0, proc.returncode, proc.stdout)
+        self.assertIn("branche protégée dev", json.loads(proc.stdout)["error"])
+        self.assertEqual(before, self.current_state())
+
+    def test_refuses_a_prototype_that_keeps_a_page_its_manifest_does_not_reference(self):
+        altered = self.tmp / "with-losing-variant"
+        shutil.copytree(PROTOTYPE_SOURCE, altered)
+        shutil.copy(altered / "states" / "content.html", altered / "states" / "content-variant-b.html")
+        remote = self.tmp / "losing-variant-remote.git"
+        spec = self.replaced(self.frozen_commit, materialize(remote, altered))
+        self.assert_refused_untouched(
+            spec, "non conforme", "variant", "states/content-variant-b.html", "variante perdante", remote=remote
+        )
+
+    def test_refuses_a_state_whose_single_anchor_holds_the_whole_page(self):
+        spec, remote = self.spec_on_altered_prototype(
+            "states/content.html", "<body>", '<body data-anchor="page">'
+        )
+        self.assert_refused_untouched(
+            spec, "non conforme", "anchors", "état content", "<body>", "tous les éléments visibles", remote=remote
+        )
+
+    def test_refuses_a_state_whose_region_element_has_no_anchor_of_its_own(self):
+        spec, remote = self.spec_on_altered_prototype(
+            "states/empty.html", '<ul data-anchor="fixture-items">', '<ul data-anchor="fixture-items"><li><nav>x</nav></li>'
+        )
+        self.assert_refused_untouched(
+            spec, "non conforme", "anchors", "état empty", "<nav>", "sa propre ancre", remote=remote
+        )
+
     # --- les Specs déjà approuvées restent approuvées ----------------------------
 
     def test_an_already_approved_spec_without_numbered_stories_stays_approved(self):

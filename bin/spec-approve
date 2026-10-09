@@ -21,7 +21,9 @@ it refuses a Spec without numbered user stories, a Spec with an interface
 story but no complete Validated Prototype reference (branch, commit, path,
 states) or no state inventory, a reference whose commit is not on the
 remote repository, and a Validated Prototype that
-`bin/prototype-conformance` reports as not conformant. A Spec with no
+`bin/prototype-conformance` reports as not conformant -- its reference
+included (T46, af-lb9zkz): a branch that is not a `prototype/` branch, or a
+commit reachable from the project's protected branch on the remote. A Spec with no
 interface story is approved without a reference; an already approved Spec
 is never re-examined.
 
@@ -52,6 +54,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -368,9 +371,29 @@ def prototype_remote(explicit: str | None, repo_root: Path) -> str:
     return remote
 
 
-def check_validated_prototype(reference: dict[str, Any], remote: str, repo_root: Path, conformance_bin: str) -> None:
+DEFAULT_PROTECTED_BRANCH = "main"
+REMOTE_HEAD = re.compile(r"^ref: refs/heads/(\S+)\s+HEAD$", re.MULTILINE)
+
+
+def protected_branch(project: str, config_dir: Path, remote: str) -> str:
+    """The branch a Validated Prototype must never have been merged into:
+    the one the project declares, else the remote's default branch."""
+    try:
+        declared = tomllib.loads((config_dir / f"{project}.toml").read_text(encoding="utf-8")).get("protected_branch")
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        declared = None
+    if isinstance(declared, str) and declared.strip():
+        return declared.strip()
+    head = REMOTE_HEAD.search(run_git(["ls-remote", "--symref", remote, "HEAD"]).stdout.decode("utf-8", "replace"))
+    return head.group(1) if head else DEFAULT_PROTECTED_BRANCH
+
+
+def check_validated_prototype(
+    reference: dict[str, Any], remote: str, repo_root: Path, conformance_bin: str, protected: str,
+) -> None:
     """Read the referenced commit from the remote repository only (a commit
-    that exists just locally does not count) and check the prototype there."""
+    that exists just locally does not count) and check the prototype there,
+    its branch included: a prototype branch, never merged into `protected`."""
     branch, commit, path = reference["branch"], reference["commit"], reference["path"]
     with tempfile.TemporaryDirectory(prefix="spec-approve-prototype-") as tmp:
         clone = Path(tmp) / "remote.git"
@@ -392,11 +415,16 @@ def check_validated_prototype(reference: dict[str, Any], remote: str, repo_root:
             raise SpecApproveError(
                 f"refus : le chemin {path} de la référence du Validated Prototype n'existe pas au commit {commit}"
             )
+        # The protected branch as the remote holds it; one it does not hold has merged nothing.
+        run_git(["fetch", "--quiet", remote, f"+refs/heads/{protected}:refs/heads/{protected}"], cwd=clone)
         tree = Path(tmp) / "tree"
         with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
             tar.extractall(tree, filter="data")
         proc = subprocess.run(
-            [conformance_bin, "check", "--prototype", str(tree / path), "--states", ",".join(reference["states"])],
+            [
+                conformance_bin, "check", "--prototype", str(tree / path), "--states", ",".join(reference["states"]),
+                "--branch", branch, "--commit", commit, "--remote", str(clone), "--protected", protected,
+            ],
             capture_output=True, text=True,
         )
         try:
@@ -415,7 +443,9 @@ def check_validated_prototype(reference: dict[str, Any], remote: str, repo_root:
         )
 
 
-def check_entry_contract(description: str, explicit_remote: str | None, repo_root: Path, conformance_bin: str) -> None:
+def check_entry_contract(
+    description: str, explicit_remote: str | None, repo_root: Path, conformance_bin: str, project: str, config_dir: Path,
+) -> None:
     found = sections(description)
     stories = numbered_user_stories(found)
     interface_stories = [number for number, text in stories if INTERFACE_TAG in text.lower()]
@@ -429,7 +459,10 @@ def check_entry_contract(description: str, explicit_remote: str | None, repo_roo
         return
     reference = prototype_reference(section)
     check_state_inventory(section, reference["states"])
-    check_validated_prototype(reference, prototype_remote(explicit_remote, repo_root), repo_root, conformance_bin)
+    remote = prototype_remote(explicit_remote, repo_root)
+    check_validated_prototype(
+        reference, remote, repo_root, conformance_bin, protected_branch(project, config_dir, remote)
+    )
 
 
 def cmd_bd_approve(args: argparse.Namespace) -> int:
@@ -493,7 +526,10 @@ def cmd_bd_approve(args: argparse.Namespace) -> int:
             )
         evidence = required_string(args.evidence, "--evidence")
 
-        check_entry_contract(spec_bead.get("description") or "", args.prototype_remote, repo_root, conformance_bin)
+        check_entry_contract(
+            spec_bead.get("description") or "", args.prototype_remote, repo_root, conformance_bin,
+            args.project, config_dir,
+        )
 
         digest = canonical_bead_digest(spec_bead.get("description") or "")
 
