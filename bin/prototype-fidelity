@@ -34,6 +34,10 @@ lifted here: it reads « accepté par Benjamin » only once a Planning Exception
 that names its anchor (bin/ticket-exit --anchor) was answered so by the
 operator (bin/escalation-door repondre).
 
+Before anything is compared, a delivered page or a file it links from its
+own address that has the digest of a file of the prototype is refused, file
+named (T46, af-lb9zkz): the prototype file is not promoted as is.
+
 Every answer is one JSON object on stdout. Exit status: 0 green, or every
 deviation accepted by Benjamin; 1 red; 2 refused (nothing was compared to the
 end, nothing is written on the ticket); 4 the convoy does not carry the mark
@@ -45,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import hashlib
 import html
 import http.server
 import importlib.machinery
@@ -352,6 +357,73 @@ def fetch(url: str, what: str) -> str:
         raise Refusal(f"{what} ne répond pas ({url}) : {getattr(exc, 'reason', exc)}") from exc
 
 
+class ServedFiles(HTMLParser):
+    """The files a page asks its own server for: `href` of a `<link>`, `src`
+    of anything."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.references: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        reference = attributes.get("href") if tag == "link" else attributes.get("src")
+        if reference:
+            self.references.append(reference)
+
+
+def served_digests(page_url: str, what: str) -> dict[str, str]:
+    """sha256 of every file the delivered page serves: the page itself and
+    what it links from its own address, keyed by the path served."""
+    def body(url: str) -> bytes | None:
+        try:
+            with urllib.request.urlopen(url, timeout=10) as response:
+                return response.read()
+        except (urllib.error.URLError, OSError):
+            return None
+
+    page = body(page_url)
+    if page is None:
+        raise Refusal(f"{what} ne répond pas ({page_url})")
+    found = {urllib.parse.urlsplit(page_url).path or "/": hashlib.sha256(page).hexdigest()}
+    links = ServedFiles()
+    links.feed(page.decode("utf-8", errors="replace"))
+    origin = urllib.parse.urlsplit(page_url)[:2]
+    for reference in links.references:
+        url = urllib.parse.urljoin(page_url, reference)
+        if urllib.parse.urlsplit(url)[:2] != origin:
+            continue
+        linked = body(url)
+        if linked is not None:
+            found.setdefault(urllib.parse.urlsplit(url).path, hashlib.sha256(linked).hexdigest())
+    return found
+
+
+def refuse_promoted_prototype(prototype: Path, manifest: dict[str, Any], states: list[dict[str, Any]]) -> None:
+    """Spec section 3, « Prototype Fold »: the prototype file is not promoted
+    as is. The manifest and the example datasets are not prototype pages: the
+    product is launched on the same data."""
+    kept = {MANIFEST} | {
+        urllib.parse.urlsplit(state["dataset"]).path.lstrip("/")
+        for state in manifest.get("states") or [] if isinstance(state, dict) and isinstance(state.get("dataset"), str)
+    }
+    frozen: dict[str, str] = {}
+    for path in sorted(prototype.rglob("*")):
+        relative = path.relative_to(prototype).as_posix()
+        if path.is_file() and relative not in kept:
+            frozen.setdefault(hashlib.sha256(path.read_bytes()).hexdigest(), relative)
+    promoted = []
+    for state in states:
+        for served, digest in served_digests(state["delivered_url"], f"le produit lancé (état {state['id']})").items():
+            if digest in frozen:
+                promoted.append(f"{served} (état {state['id']}) a la même empreinte que {frozen[digest]}")
+    if promoted:
+        raise Refusal(
+            "prototype promu tel quel : un fichier servi par le livré est un fichier du Validated Prototype, "
+            "recopié sans être replié dans le vrai code — " + " ; ".join(promoted)
+        )
+
+
 def css_rules(css: str, context: str = "") -> list[tuple[str, str, str]]:
     """(at-rule context, selector, declarations) of every rule, `@media` and
     `@supports` blocks opened."""
@@ -648,6 +720,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             state["state_file"] = str(state_file)
             state["delivered_url"] = record["address"] + state["path"]
             state["prototype_url"] = f"{prototype_address}/{state['address'].lstrip('/')}"
+        refuse_promoted_prototype(prototype, manifest, selected)
         plan = {
             "browser": browser, "anchor_attribute": manifest["anchor_attribute"], "commit": commit,
             "screens": compared_screens, "renderings": renderings(manifest), "states": selected,

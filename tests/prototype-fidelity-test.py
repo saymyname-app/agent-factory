@@ -304,6 +304,30 @@ class PrototypeFidelityTest(unittest.TestCase):
 
         self.assertIn("validated-prototype.json", self.refused())
 
+    def test_delivered_file_with_the_digest_of_a_prototype_file_is_refused_and_named(self):
+        """T46 (af-lb9zkz): the prototype file is not promoted as is."""
+        self.edit_product(
+            "self._respond_html(200, self._render_page())",
+            'self._respond_html(200, (Path(__file__).parent / "prototype" / "states" / '
+            '(self.dataset["state"] + ".html")).read_text(encoding="utf-8"))',
+            "le fichier du prototype servi tel quel",
+        )
+
+        error = self.refused()
+
+        for fragment in ("states/content.html", "states/empty.html", "même empreinte", "promu tel quel"):
+            self.assertIn(fragment, error)
+
+    def test_named_ticket_serving_a_prototype_file_as_is_is_refused_before_anything_is_filed(self):
+        self.edit_product(
+            "self._respond_html(200, self._render_page())",
+            'self._respond_html(200, (Path(__file__).parent / "prototype" / "states" / '
+            '(self.dataset["state"] + ".html")).read_text(encoding="utf-8"))',
+            "le fichier du prototype servi tel quel",
+        )
+
+        self.assertIn("promu tel quel", self.refused("--convoy", CONVOY, "--ticket", T1))
+
     # --- AC3: side-by-side captures and a difference image, never a threshold --
 
     def test_named_ticket_files_side_by_side_and_difference_captures_per_state(self):

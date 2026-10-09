@@ -281,6 +281,158 @@ class PrototypeFoldPublicationTest(FoldHarness):
         self.assertNotIn(POINTER, self.description(result["ids"]["T2"]))
 
 
+SECOND_PATH = "prototypes/reglages"
+SECOND_COMMIT = "89abcdef0123456789abcdef0123456789abcdef"
+SPEC_WITH_TWO_PROTOTYPES = FIXTURE_SPEC.replace(
+    "## Implementation Decisions",
+    "## Validated Prototype : réglages\n\n"
+    "- branche : `prototype/fixture-reglages`\n"
+    f"- commit : `{SECOND_COMMIT}`\n"
+    f"- chemin : `{SECOND_PATH}`\n"
+    "- états : `reglages`\n\n"
+    "## Implementation Decisions",
+    1,
+)
+SECOND_FOLD = {
+    **SLICE, "id": "T5", "title": "L'écran des réglages replié dans le vrai code", "blocked_by": ["T1"],
+    "prototype_fold": True, "prototype": SECOND_PATH,
+}
+SECOND_SLICE = {**SLICE, "id": "T6", "title": "Les réglages affichent l'heure", "blocked_by": ["T5"],
+                "prototype": SECOND_PATH}
+
+
+class SeveralValidatedPrototypesTest(FoldHarness):
+    """T46 (af-lb9zkz): one Prototype Fold per Validated Prototype the Spec
+    names; each interface ticket waits for the Fold of its own prototype."""
+
+    def two_prototype_draft(self, *added, first=PROTOTYPE_PATH):
+        draft = self.conformant()
+        for key in ("T2", "T3"):
+            self.ticket(draft, key)["prototype"] = first
+        draft["tickets"] += [copy.deepcopy(ticket) for ticket in added]
+        return draft
+
+    def seed_two(self, draft):
+        self.seed(draft)
+        self.amend_spec(SPEC_WITH_TWO_PROTOTYPES)
+
+    def refused(self, *mentions):
+        proc = self.assert_refused_and_nothing_written(self.door, "rien n'est écrit", *mentions)
+        self.assertEqual({"draft-1", "spec-1"}, set(self.beads()))
+        return proc
+
+    def test_publishes_one_prototype_fold_per_validated_prototype(self):
+        self.seed_two(self.two_prototype_draft(SECOND_FOLD, SECOND_SLICE))
+        result = self.published()
+        ids, convoy = result["ids"], result["ids"]["_convoy"]
+
+        for key, fold in (("T2", True), ("T5", True), ("T3", False), ("T6", False)):
+            self.assertIs(fold, self.shown_ticket(convoy, ids[key])["prototype_fold"], key)
+        self.assertTrue(self.waits_for(ids, "T3", "T2"))
+        self.assertTrue(self.waits_for(ids, "T6", "T5"))
+        self.assertFalse(self.waits_for(ids, "T6", "T2"))
+
+    def test_each_interface_ticket_shows_the_reference_and_the_fold_of_its_own_prototype(self):
+        self.seed_two(self.two_prototype_draft(SECOND_FOLD, SECOND_SLICE))
+        ids = self.published()["ids"]
+
+        first, second = self.prototype_pointer(ids["T3"]), self.prototype_pointer(ids["T6"])
+        for fragment in (f"- chemin : {PROTOTYPE_PATH}", f"- commit : {COMMIT}", "Prototype Fold : T2"):
+            self.assertIn(fragment, first)
+        for fragment in (f"- chemin : {SECOND_PATH}", f"- commit : {SECOND_COMMIT}", "- états : reglages",
+                         "Prototype Fold : T5"):
+            self.assertIn(fragment, second)
+        self.assertNotIn(SECOND_PATH, first)
+        self.assertNotIn(PROTOTYPE_PATH, second)
+        self.assertIn("Prototype Fold : ce ticket", self.prototype_pointer(ids["T5"]))
+        self.assertIn(f"- chemin : {SECOND_PATH}", self.prototype_pointer(ids["T5"]))
+
+    def test_refuses_a_graph_where_one_validated_prototype_has_no_fold(self):
+        self.seed_two(self.two_prototype_draft({**SECOND_SLICE, "blocked_by": ["T2"]}))
+
+        proc = self.refused(SECOND_PATH, "n'a pas de Prototype Fold")
+        self.assertNotIn(f"{PROTOTYPE_PATH} (", "".join(self.refusal_lines(proc, "graphe")))
+
+    def test_refuses_a_graph_that_folds_only_one_of_the_two_validated_prototypes(self):
+        self.seed_two(self.two_prototype_draft())
+
+        self.refused(SECOND_PATH, "n'a pas de Prototype Fold")
+
+    def test_refuses_an_interface_ticket_that_waits_for_the_fold_of_another_prototype(self):
+        self.seed_two(self.two_prototype_draft(SECOND_FOLD, {**SECOND_SLICE, "blocked_by": ["T2"]}))
+
+        proc = self.refused()
+        self.assertTrue(any("Prototype Fold T5" in line for line in self.refusal_lines(proc, "T6")), proc.stderr)
+
+    def test_refuses_an_interface_ticket_that_does_not_say_which_validated_prototype_is_its_own(self):
+        slice_without = {key: value for key, value in SECOND_SLICE.items() if key != "prototype"}
+        self.seed_two(self.two_prototype_draft(SECOND_FOLD, slice_without))
+
+        proc = self.refused()
+        lines = "".join(self.refusal_lines(proc, "T6"))
+        for fragment in ("prototype", PROTOTYPE_PATH, SECOND_PATH):
+            self.assertIn(fragment, lines)
+
+    def test_refuses_a_ticket_that_names_a_prototype_the_spec_does_not(self):
+        self.seed_two(self.two_prototype_draft(SECOND_FOLD, {**SECOND_SLICE, "prototype": "prototypes/absent"}))
+
+        proc = self.refused()
+        self.assertIn("prototypes/absent", "".join(self.refusal_lines(proc, "T6")))
+
+    def test_refuses_two_prototype_folds_for_the_same_validated_prototype_among_several(self):
+        self.seed_two(self.two_prototype_draft(
+            SECOND_FOLD, {**SECOND_FOLD, "id": "T6", "title": "Un second repli des réglages"}))
+
+        proc = self.refused("un seul")
+        for key in ("T5", "T6"):
+            self.assertTrue(self.refusal_lines(proc, key), key)
+        self.assertFalse(self.refusal_lines(proc, "T2"))
+
+    def test_refuses_a_malformed_prototype_field(self):
+        for value in (True, 3, "", ["a"]):
+            with self.subTest(value=value):
+                self.seed_two(self.two_prototype_draft(SECOND_FOLD, {**SECOND_SLICE, "prototype": value}))
+                proc = self.refused()
+                self.assertIn("prototype", "".join(self.refusal_lines(proc, "T6")))
+
+    def test_one_validated_prototype_needs_no_prototype_field_and_accepts_its_own(self):
+        draft = self.conformant()
+        self.ticket(draft, "T3")["prototype"] = PROTOTYPE_PATH
+        self.seed(draft)
+
+        self.assertIn(f"- chemin : {PROTOTYPE_PATH}", self.prototype_pointer(self.published()["ids"]["T3"]))
+
+
+class SeveralValidatedPrototypesPatchTest(FoldHarness):
+    def setUp(self):
+        super().setUp()
+        self.draft = self.conformant()
+        for key in ("T2", "T3"):
+            self.ticket(self.draft, key)["prototype"] = PROTOTYPE_PATH
+        self.draft["tickets"] += [copy.deepcopy(SECOND_FOLD), copy.deepcopy(SECOND_SLICE)]
+        self.seed(self.draft)
+        self.amend_spec(SPEC_WITH_TWO_PROTOTYPES)
+        self.first = self.published()
+        self.ids = self.first["ids"]
+
+    def propose(self, added):
+        draft = copy.deepcopy(self.draft)
+        draft["tickets"].append(added)
+        self.add_draft("draft-2", draft, approved=True, revises_digest=self.first["graph_digest"])
+
+    def test_refuses_an_added_interface_ticket_that_waits_for_the_fold_of_another_prototype(self):
+        self.propose({**SECOND_SLICE, "id": "T7", "title": "Un autre réglage", "blocked_by": ["T2"]})
+
+        proc = self.assert_refused_and_nothing_written(self.patch, "rien n'est écrit")
+        self.assertTrue(any("Prototype Fold T5" in line for line in self.refusal_lines(proc, "T7")), proc.stderr)
+
+    def test_added_interface_ticket_waits_for_the_fold_of_its_own_prototype(self):
+        self.propose({**SECOND_SLICE, "id": "T7", "title": "Un autre réglage", "blocked_by": ["T5"]})
+
+        proc = self.patch()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+
+
 class PrototypeFoldPatchTest(FoldHarness):
     """The same rules on the graph that results from a patch."""
 

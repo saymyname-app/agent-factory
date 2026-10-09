@@ -192,11 +192,12 @@ given once, and a list that differs from the one already written.
 establishes the project's launch recipe: refused on anything but a
 `vertical_slice`, on more than one ticket of the convoy, and on a ticket
 that already carries the mark without it. `--prototype-fold <ticket>`
-(T36) names the slice that is the Prototype Fold of the Spec's Validated
-Prototype: refused on anything but a `vertical_slice` of the convoy and on
-a ticket that already carries the mark without it. That a graph has one
-Fold, and that the interface tickets wait for it, is the publication
-door's check (`docs/ENTRY_CONTRACT.md`).
+(T36; repeatable) names a slice that is the Prototype Fold of a Validated
+Prototype of the Spec: refused on anything but a `vertical_slice` of the
+convoy and on a ticket that already carries the mark without it. That a
+graph has one Fold per Validated Prototype (T46), and that the interface
+tickets of each wait for it, is the publication door's check
+(`docs/ENTRY_CONTRACT.md`).
 
 `add-evidence` is called by `bin/evidence-capture` (T09), which files the
 piece in the evidence store and computes its fingerprint
