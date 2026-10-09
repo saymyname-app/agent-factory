@@ -105,7 +105,11 @@ lists the orphan numbers. Coverage is computed on the whole graph: for a
 patch, on the graph that results from it.
 
 **Operator needs.** Every need known at planning is declared in the draft,
-under the approved digest:
+under the approved digest. The field is required: a draft with no need
+writes `operator_needs: []`, and a draft without the field is refused --
+nothing else tells "no need" from "nobody thought of it".
+The refusal reads `- brouillon : champ operator_needs absent : …` and says
+to write the empty list.
 
 ```yaml
 operator_needs:
@@ -119,7 +123,8 @@ could start with a need open. A need is lifted by `lift-need`, which
 records on the draft bead (`operator_need.<id>`) who lifted it, his exact
 words and when; it refuses anyone but the project's declared human
 approver, empty words, and a need the draft does not declare. A revised
-draft declares only the needs its own changes bring.
+draft declares only the needs its own changes bring -- an empty list when
+they bring none; the field is required of a revision too.
 
 **Launch recipe.** The recipe and the entry points live in the project
 profile (`config/project-descriptors/<project>.json`, block `launch`; the

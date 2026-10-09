@@ -481,7 +481,7 @@ class City:
             "## Implementation Decisions\n\nLa page d'accueil porte les ancres du Validated Prototype.\n\n"
             "## Testing Decisions\n\nFixture City Oracle et ligne de commande des portes.\n\n"
             "## Out of Scope\n\nTout le reste.\n")
-        draft = yaml.safe_dump({"flow_contract": "new-flow/v1", "tickets": [{
+        draft = yaml.safe_dump({"flow_contract": "new-flow/v1", "operator_needs": [], "tickets": [{
             "id": WALKED_KEY, "kind": "vertical_slice", "title": "La page d'accueil affiche le jeu de données",
             "blocked_by": [], "target_rigs": [RIG],
             "what_it_delivers": "La page d'accueil du produit affiche l'état et les éléments du jeu de données servi.",

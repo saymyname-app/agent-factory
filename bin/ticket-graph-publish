@@ -24,7 +24,8 @@ field, criteria that name their entry point, their observable and what
 would make them false -- and its convoy is published with the new-flow mark
 through `bin/convoy-state`. The same contract holds the graph to the Spec
 it slices (T06): every numbered user story is cited by a vertical_slice,
-every declared operator need is lifted (`lift-need`), the project has a
+the draft carries its `operator_needs` field (an empty list when there is
+none, T39) and every declared need is lifted (`lift-need`), the project has a
 launch recipe or its first slice establishes it, and the door itself poses
 the pointers in each ticket (Spec and digest, user stories, sibling tickets
 with their demonstration line, seams). In each interface ticket it also
@@ -789,13 +790,19 @@ def operator_need_refusals(
     parsed: dict[str, Any], metadata: dict[str, Any], human_approver: str, draft_id: str,
 ) -> list[tuple[str, str]]:
     """Spec §2, « besoins opérateur »: every need known at planning is
-    declared in the graph, and nothing is published while one is not lifted."""
-    if "operator_needs" not in parsed:
-        return []
+    declared in the graph, and nothing is published while one is not lifted.
+    The field itself is required: without it nothing tells « no need » from
+    « nobody thought of it »."""
     expected = (
         f"attendu : une liste de besoins, chacun {{id, kind, what}} ; id en minuscules, chiffres et _ ; "
         f"kind parmi {', '.join(OPERATOR_NEED_KINDS)} ; what qui dit ce qu'il faut ; aucun autre champ"
     )
+    if "operator_needs" not in parsed:
+        return [(
+            WHERE_DRAFT,
+            "champ operator_needs absent : le brouillon déclare ses besoins opérateur, ou écrit une liste vide "
+            f"(operator_needs: []) s'il n'y en a aucun ({expected})",
+        )]
     needs = parsed["operator_needs"]
     if not isinstance(needs, list):
         return [(WHERE_DRAFT, f"besoin opérateur mal formé : operator_needs n'est pas une liste ({expected})")]

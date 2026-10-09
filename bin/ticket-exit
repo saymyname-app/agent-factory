@@ -743,7 +743,7 @@ def publish_repair(args: argparse.Namespace, ticket: Ticket, repair: dict[str, A
     added = {"id": repair_key, "kind": "repair", "blocked_by": [],
              "target_rigs": list(rigs) if isinstance(rigs, list) else rigs, **repair}
     description = yaml.safe_dump(
-        {"flow_contract": NEW_FLOW, "tickets": [added, *carried.values()]}, allow_unicode=True, sort_keys=False)
+        {"flow_contract": NEW_FLOW, "operator_needs": [], "tickets": [added, *carried.values()]}, allow_unicode=True, sort_keys=False)
 
     title = f"Révision : repair {repair_key} devant {own_key} (bloqué technique, {ticket.id})"
     created = gc_json("bd", "create", title, "-t", "task", "-d", description, "--json")
