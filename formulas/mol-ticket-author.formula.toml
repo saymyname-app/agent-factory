@@ -99,6 +99,13 @@ It carries the text of the ticket, its criteria, its demonstration line and
 the Ticket Handoff of each of its direct blockers. Read the Spec it names
 in full (`gc bd show <spec> --json | jq -r '.[0].description'`).
 
+**A deviation of a sibling ticket is never a convention.** What a Handoff
+lists under « Écarts » or « Non fait » is what that ticket delivered
+otherwise than asked, or left out: a fact you must know, never a precedent
+you may follow. Your reference stays the Spec and your own ticket. If you
+cannot deliver without repeating the deviation, that is a Ticket Exit
+(`planning_exception`), not a second deviation.
+
 From here on, work only in your work tree (`cd` there). Never check out or
 edit anything in the Factory root or in the repository of the project.
 
@@ -148,8 +155,12 @@ cd "$WORKTREE"
 ```
 
 **A `prefactoring` has no red step.** If no test covers the behaviour you
-are about to move, write the characterization tests now and commit them;
-then close this step.
+are about to move, write the characterization tests now and commit them
+alone, before any change: a commit that adds nothing but files of the test
+perimeter, green on the product as you received it. `bin/tdd-step
+prefactoring` refuses a project with no test at the start commit until that
+commit exists, and refuses the change if it touches those tests afterwards.
+Then close this step.
 
 **A `vertical_slice` or a `repair`:** call the `tdd` skill and write every
 criterion test of the ticket first, before any code of the product. Change

@@ -177,8 +177,22 @@ refuses another kind). The profile's `regression_command` is run in a clean
 tree of `--base`, then of HEAD: both must exit 0 (« commande de régression
 en échec avant / après le changement »). A file of the test perimeter or of
 the frozen harness that existed at `--base` and was modified or deleted is
-refused (« test existant modifié : … »); added tests (characterization tests
-first) are allowed.
+refused (« test existant modifié : … »); added tests are allowed.
+
+**Characterization tests first.** When the test perimeter holds no file at
+`--base` (the frozen harness aside), the regression command has no test to
+run there and the regime refuses to start (« … Écrire d'abord des tests de
+caractérisation … »), nothing recorded. It is accepted once the first
+commits after `--base` add nothing but files of the test perimeter: the last
+of them is the characterization commit. The « avant » run is then taken at
+that commit — the product of the start commit, with those tests — and must
+exit 0; from there those tests are existing tests, so a later commit that
+modifies or deletes one is refused. The proof names the commit
+(`characterization`). Tests added in the same commit as the change do not
+count: nothing shows they passed before it.
+
+The control is on the files, not on what the command runs: a
+`regression_command` is opaque and reports no count of tests.
 
 ## Limits
 
