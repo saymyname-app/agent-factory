@@ -938,7 +938,11 @@ What holds today (`config/ci-runner/runner-loop`):
 | There is none | At once |
 
 A job is killed 2 hours after the runner took it (`JOB_MAX_SECONDS`, seen
-within a minute); the wait for a job does not count (af-rqovxb).
+within a minute); the wait for a job does not count (af-rqovxb). The loop
+tells the two apart by one process, `Runner.Worker`, which GitHub's runner
+starts for a job only; it looks for it by name (`pgrep -x`), since a look by
+command line matched the shell that ran it and every runner read as serving a
+job (af-7i1q2r).
 
 A build that fails is tried again an hour later; the old image serves
 meanwhile. A waiting runner stopped at the very second GitHub hands it a job
